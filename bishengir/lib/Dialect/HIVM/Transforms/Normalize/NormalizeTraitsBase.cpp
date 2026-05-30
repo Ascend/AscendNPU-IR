@@ -138,8 +138,24 @@ static mlir::Value createHIVMBinaryOp(mlir::PatternRewriter &rewriter,
       .getResults()[0];
 }
 
+template <typename TernaryOp>
+mlir::Value createHIVMTernaryOp(mlir::PatternRewriter *rewriter,
+                                mlir::Location loc, mlir::Value lhs,
+                                mlir::Value mid, mlir::Value rhs,
+                                mlir::Value dst) {
+  return rewriter
+      ->template create<TernaryOp>(loc, mlir::TypeRange{dst.getType()},
+                         mlir::ValueRange{lhs, mid, rhs},
+                         mlir::ValueRange{dst}, mlir::Value{},
+                         llvm::ArrayRef<int64_t>{},
+                         llvm::ArrayRef<int64_t>{})
+      .getResults()[0];
+}
+
 using UnaryOpFn = Value (*)(PatternRewriter &, Location, Value, Value);
 using BinaryOpFn = Value (*)(PatternRewriter &, Location, Value, Value, Value);
+using TernaryOpFn =
+    Value (*)(PatternRewriter *, Location, Value, Value, Value, Value);
 using UnaryOpMatcherFn = bool (*)(Operation *);
 using BinaryOpMatcherFn = bool (*)(Operation *);
 
@@ -147,6 +163,22 @@ template <typename OpType>
 static bool matchHIVMOp(Operation *op) {
   auto typedOp = dyn_cast_or_null<OpType>(op);
   return typedOp && typedOp.hasPureTensorSemantics();
+}
+
+template <typename Kind, typename Fn>
+static std::optional<Fn>
+lookupMappedFn(const llvm::DenseMap<Kind, Fn> &kindToFn, Kind kind) {
+  auto it = kindToFn.find(kind);
+  if (it == kindToFn.end())
+    return std::nullopt;
+  return it->second;
+}
+
+static std::optional<TernaryOpFn> mapTernaryKindToCreator(TernaryKind kind) {
+  static const llvm::DenseMap<TernaryKind, TernaryOpFn> kindToFn = {
+      {TernaryKind::Select, createHIVMTernaryOp<hivm::VSelOp>},
+  };
+  return lookupMappedFn(kindToFn, kind);
 }
 
 static const llvm::DenseMap<UnaryKind, UnaryOpFn> unaryOpMap = {
@@ -290,6 +322,12 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createUnaryOp(
       rewriter, loc, input, dst);
 }
 
+mlir::Value mlir::hivm::NormalizeTraitsBase::createFloorOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst) {
+  return createCastOp(rewriter, loc, input, getElementTypeOrSelf(dst.getType()),
+                      CastRoundKind::Floor);
+}
+
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBinaryOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
     BinaryKind kind) {
@@ -313,7 +351,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
         .getResult()[0];
   case ShiftKind::RightSigned:
   case ShiftKind::RightUnsigned: {
-    BoolAttr round = rewriter.getBoolAttr(false);
+    BoolAttr round = rewriter.getBoolAttr(true);
     if (sourceOp) {
       auto shiftOp = cast<hivm::VShROp>(sourceOp);
       round = shiftOp.getRoundAttr();
@@ -326,6 +364,15 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
   }
   }
   llvm_unreachable("unsupported shift kind");
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createTernaryOp(
+    PatternRewriter &rewriter, Location loc, Value lhs, Value mid, Value rhs,
+    Value dst, TernaryKind kind) {
+  auto fn = mapTernaryKindToCreator(kind);
+  if (!fn)
+    llvm_unreachable("unsupported ternary kind");
+  return (*fn)(&rewriter, loc, lhs, mid, rhs, dst);
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
@@ -392,7 +439,8 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
     llvm_unreachable(
         "NormalizeTraitsBase::createFillOp only supports scalar-to-tensor fills");
   return rewriter
-      .create<hivm::VBrcOp>(loc, TypeRange(dst.getType()), input, dst)
+      .create<VBrcOp>(loc, TypeRange(dst), input, dst,
+                      rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}))
       .getResult()[0];
 }
 

@@ -38,6 +38,7 @@ enum class BinaryKind {
   Powf
 };
 enum class ShiftKind { Left, RightSigned, RightUnsigned };
+enum class TernaryKind { Select };
 enum class CompareKind { EQ, NE, LT, GT, GE, LE };
 enum class CastRoundKind {
   Default,

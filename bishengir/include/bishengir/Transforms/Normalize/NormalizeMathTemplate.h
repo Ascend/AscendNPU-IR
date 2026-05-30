@@ -20,12 +20,14 @@
 
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/Utils/Kinds.h"
+#include "bishengir/Transforms/Normalize/Utils/ScalarTemplateHelpers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "llvm/ADT/APFloat.h"
+#include "llvm/Support/ErrorHandling.h"
 
 #include <cmath>
 
@@ -495,6 +497,498 @@ public:
   }
 };
 
+/// Shared normalize template that rewrites `ldexp(x, y)` to `x * y`.
+///
+/// eg.
+///   y = ldexp(x, y)
+///   is normalized to
+///   y = mul(x, y)
+template <typename LdexpOpType, typename Traits>
+struct NormalizeLdexpOpTemplate : public OpRewritePattern<LdexpOpType> {
+public:
+  using OpRewritePattern<LdexpOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(LdexpOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeLdexp(op))
+      return failure();
+
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value input = dpsOp.getDpsInputs()[0];
+    Value exponent = dpsOp.getDpsInputs()[1];
+#ifndef NDEBUG
+    Type inputElemType = getElementTypeOrSelf(input.getType());
+    if (!inputElemType.isF16() && !inputElemType.isF32())
+      llvm::report_fatal_error("only support input Type is f16 or f32");
+#endif
+    Value result = Traits::createBinaryOp(
+        rewriter, op.getLoc(), input, exponent,
+        utils::createEmptyOp(rewriter, op.getLoc(), input), BinaryKind::Mul);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Shared normalize template for `powf(x, y)`.
+///
+/// Constant-exponent paths:
+///   powf(base, 0)   -> fill(1)
+///   powf(base, 0.5) -> sqrt(base)
+///   powf(base, 2)   -> base * base
+///   powf(base, 3)   -> base * base * base
+///
+/// Dynamic-exponent path lowers to exp + log with boundary-case selects.
+template <typename PowfOpType, typename Traits>
+struct NormalizePowfOpTemplate : public OpRewritePattern<PowfOpType> {
+public:
+  using OpRewritePattern<PowfOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(PowfOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizePowf(op))
+      return failure();
+
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value base = dpsOp.getDpsInputs()[0];
+    Value exponent = dpsOp.getDpsInputs()[1];
+    Type inputElemType = getElementTypeOrSelf(base.getType());
+    if (!inputElemType.isF16() && !inputElemType.isF32())
+      return failure();
+
+    Location loc = op.getLoc();
+    // Step 1a. Try to recover the exponent as a scalar constant even when the
+    // input IR wrapped it in a broadcast-like container.
+    // Example:
+    //   - HFusion may feed `powf` with `linalg.fill(0.5)` or
+    //     `hfusion.cast(linalg.fill(0.5))`
+    //   - HIVM may feed `vpow` with `hivm.hir.vbrc(0.5)`
+    arith::ConstantOp exponentConstOp =
+        getPowfExponentScalarConstant(exponent, rewriter);
+
+    // Step 1. Try the short constant-exponent rewrites first.
+    // Example:
+    //   powf(base, 0)   -> fill(1)
+    //   powf(base, 0.5) -> sqrt(base)
+    //   powf(base, 2)   -> base * base
+    //   powf(base, 3)   -> base * base * base
+    // If one of these cases matches, we can stop here and avoid building the
+    // longer select/log/exp expansion below.
+    if (Value result =
+            normalizeConstantExponentPowf(rewriter, loc, base, exponentConstOp)) {
+      rewriter.replaceOp(op, result);
+      return success();
+    }
+
+    // Step 2. Normalize the exponent input shape before building the main
+    // elementwise rewrite.
+    // Example:
+    //   base     : tensor<16xf32>
+    //   exponent : dense<0.5> : tensor<1xf32>
+    // The later abs/ln/mul/exp/select ops want to treat the exponent as a
+    // normal elementwise tensor input, so we first materialize that single
+    // scalar value into a tensor with the same shape as `base`.
+    // This keeps the remaining path uniform instead of carrying a separate
+    // "single-element dense tensor exponent" special case through every step.
+    Value expTensor = materializeExponentTensor(rewriter, loc, base, exponent);
+
+    // Step 3. Build the two runtime candidates used by the original HFusion
+    // control flow, then select between them.
+    //   (a) General magnitude path:
+    //       exp(exponent * ln(abs(base)))
+    //       Example: `powf(2, y)` -> `exp(y * ln(2))`
+    //   (b) Negative-base integer-exponent path:
+    //       sign_correction(exponent) * exp(exponent * ln(abs(base)))
+    //       Example: powf(-2, 3) needs the same magnitude as powf(2, 3), but
+    //       the final sign must stay negative because the exponent is odd.
+    Value negativeCondition =
+        isNegativeBaseAndIntegerExponent(rewriter, loc, base, expTensor);
+    Value negativeResult =
+        calculateNegativeBaseIntegerExponentPower(rewriter, loc, base, expTensor);
+    Value positiveResult =
+        calculatePositiveBaseOrNonIntegerExponentPower(rewriter, loc, base,
+                                                       exponent);
+    Value partialResult0 = createPowfSelect(rewriter, loc, negativeCondition,
+                                            negativeResult, positiveResult);
+
+    // Step 4. Apply the special boundary overrides on top of the main result.
+    // These are runtime per-element tensor conditions, so the final result is
+    // still assembled by chaining selects on top of the already-built main
+    // result. The selects are layered in priority order:
+    //   (a) abs(base) == 1 && abs(exponent) == inf -> 1
+    //       Example: powf(-1, +inf) should return 1 instead of flowing through
+    //       the generic log/exp path.
+    //   (b) negative finite base with finite non-integer exponent -> nan
+    //       Example: powf(-2, 0.5) should return nan.
+    //   (c) exponent == 0 -> 1
+    //       Example: powf(base, 0) must return 1 for every finite base.
+    Value one = createFloatConstant(rewriter, loc, base, 1.0);
+    Value boundaryForOne = isAbsOneAndExponentInf(rewriter, loc, base,
+                                                  expTensor);
+    Value partialResult1 =
+        createPowfSelect(rewriter, loc, boundaryForOne, one, partialResult0);
+
+    Value nan = createNanConstant(rewriter, loc, base);
+    Value nanCondition = shouldYieldNan(rewriter, loc, base, expTensor);
+    Value partialResult2 =
+        createPowfSelect(rewriter, loc, nanCondition, nan, partialResult1);
+
+    Value partialResult3 = createPowfSelect(
+        rewriter, loc, isZeroExponent(rewriter, loc, exponent), one,
+        partialResult2);
+
+    rewriter.replaceOp(op, partialResult3);
+    return success();
+  }
+
+private:
+  /// Rewrites the small constant-exponent cases that do not need the full
+  /// select-based powf expansion.
+  static Value normalizeConstantExponentPowf(PatternRewriter &rewriter,
+                                             Location loc, Value base,
+                                             arith::ConstantOp exponentConstOp) {
+    if (!exponentConstOp)
+      return nullptr;
+
+    auto constFloatAttr = dyn_cast<FloatAttr>(exponentConstOp.getValue());
+    if (!constFloatAttr)
+      return nullptr;
+
+    APFloat exponentValue = constFloatAttr.getValue();
+    Type resultElemType = getElementTypeOrSelf(base.getType());
+    Value empty = utils::createEmptyOp(rewriter, loc, base);
+
+    if (exponentValue.isZero()) {
+      Value one = rewriter.create<arith::ConstantOp>(
+          loc, resultElemType, rewriter.getFloatAttr(resultElemType, 1.0));
+      return Traits::createFillOp(rewriter, loc, one, empty);
+    }
+
+    APFloat halfValue(exponentValue.getSemantics(), "5e-1");
+    if (exponentValue.compare(halfValue) == APFloat::cmpEqual) {
+      return Traits::createUnaryOp(rewriter, loc, base, empty, UnaryKind::Sqrt);
+    }
+
+    double roundedValue = std::round(exponentValue.convertToDouble());
+    if (!exponentValue.isInteger() || roundedValue < 1.0 || roundedValue > 3.0)
+      return nullptr;
+
+    return calculatePower(rewriter, loc, base, static_cast<int>(roundedValue));
+  }
+
+  /// Builds `base ^ exponent` for small positive integer exponents by
+  /// recursive repeated multiply.
+  static Value calculatePower(PatternRewriter &rewriter, Location loc,
+                              Value base, int exponent) {
+    if (exponent <= 1)
+      return base;
+    Value partial = calculatePower(rewriter, loc, base, exponent - 1);
+    return Traits::createBinaryOp(rewriter, loc, base, partial,
+                                  utils::createEmptyOp(rewriter, loc, base),
+                                  BinaryKind::Mul);
+  }
+
+  /// Broadcasts a single-element dense exponent into the shape of `base` so
+  /// later elementwise ops can consume a tensor exponent.
+  static Value materializeExponentTensor(PatternRewriter &rewriter, Location loc,
+                                         Value base, Value exponent) {
+    std::optional<Value> scalar = singleElemDenseTensorToScalar(exponent, rewriter);
+    if (!scalar.has_value())
+      return exponent;
+    return Traits::createFillOp(
+        rewriter, loc, scalar.value(),
+        utils::createEmptyOp(rewriter, loc, base));
+  }
+
+  /// Tries to recover the exponent as a scalar constant op.
+  /// There are two sources:
+  ///   1. a dialect-specific wrapper form such as `linalg.fill(0.5)`,
+  ///      `hfusion.cast(linalg.fill(0.5))`, or `hivm.hir.vbrc(0.5)`
+  ///   2. a bare `arith.constant` that feeds `powf` directly
+  /// Example for case 2:
+  ///   `powf(base, %cst)` where `%cst = arith.constant 2.0 : f32`
+  static arith::ConstantOp getPowfExponentScalarConstant(
+      Value exponent, PatternRewriter &rewriter) {
+    if (arith::ConstantOp constOp =
+            Traits::getPowfExponentScalarConstant(exponent, rewriter)) {
+      return materializeExponentConstant(constOp, exponent.getLoc(), rewriter,
+                                        getElementTypeOrSelf(exponent.getType()));
+    }
+
+    if (auto constOp =
+            dyn_cast_or_null<arith::ConstantOp>(exponent.getDefiningOp())) {
+      return materializeExponentConstant(constOp, exponent.getLoc(), rewriter,
+                                        getElementTypeOrSelf(exponent.getType()));
+    }
+
+    return nullptr;
+  }
+
+  /// Converts the recovered exponent constant into a float constant with the
+  /// same element type as the exponent input.
+  /// Integer constants are intentionally converted to floating-point here.
+  /// Example:
+  ///   `arith.constant 2 : i32` becomes floating `2.0` when the exponent input
+  ///   type for `powf` is `f32`.
+  /// The powf normalize logic only reasons about floating-point exponents, so
+  /// once we recover a scalar constant we materialize it in the exponent's
+  /// floating-point element type before matching the `0`, `0.5`, `1`, `2`,
+  /// or `3` fast paths.
+  static arith::ConstantOp materializeExponentConstant(
+      arith::ConstantOp constOp, Location loc, PatternRewriter &rewriter,
+      Type targetType) {
+    if (!constOp)
+      return nullptr;
+    if (auto floatAttr = dyn_cast<FloatAttr>(constOp.getValue())) {
+      return rewriter.create<arith::ConstantOp>(
+          loc, targetType,
+          rewriter.getFloatAttr(targetType, floatAttr.getValue().convertToDouble()));
+    }
+    if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue())) {
+      return rewriter.create<arith::ConstantOp>(
+          loc, targetType,
+          rewriter.getFloatAttr(
+              targetType,
+              llvm::APIntOps::RoundAPIntToDouble(intAttr.getValue())));
+    }
+    return nullptr;
+  }
+
+  /// Creates a scalar floating-point constant matching `like`'s element type.
+  static Value createFloatConstant(PatternRewriter &rewriter, Location loc,
+                                   Value like, double value) {
+    Type elemType = getElementTypeOrSelf(like.getType());
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+
+  /// Creates a scalar NaN constant matching `like`'s element type.
+  static Value createNanConstant(PatternRewriter &rewriter, Location loc,
+                                 Value like) {
+    Type elemType = getElementTypeOrSelf(like.getType());
+    auto floatType = cast<FloatType>(elemType);
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType,
+        rewriter.getFloatAttr(elemType,
+                              APFloat::getNaN(floatType.getFloatSemantics())));
+  }
+
+  /// Creates the floating-point `inf` constant used by the powf boundary
+  /// checks.
+  static Value createPowfBoundaryInfConstant(PatternRewriter &rewriter,
+                                             Location loc, Value like) {
+    Type elemType = getElementTypeOrSelf(like.getType());
+    if (elemType.isF16()) {
+      return rewriter.create<arith::ConstantOp>(
+          loc, elemType, rewriter.getFloatAttr(elemType, 0x7C00));
+    }
+    if (elemType.isF32()) {
+      return rewriter.create<arith::ConstantOp>(
+          loc, elemType, rewriter.getFloatAttr(elemType, 0x7F800000));
+    }
+    llvm_unreachable("powf only supports f16/f32");
+  }
+
+  /// Checks the `abs(base) == 1 && abs(exponent) == inf` boundary that should
+  /// return `1`.
+  static Value isAbsOneAndExponentInf(PatternRewriter &rewriter, Location loc,
+                                      Value base, Value exponent) {
+    Value absBase = Traits::createUnaryOp(
+        rewriter, loc, base, utils::createEmptyOp(rewriter, loc, base),
+        UnaryKind::Abs);
+    Value one = rewriter.create<arith::ConstantOp>(
+        loc, getElementTypeOrSelf(base.getType()),
+        rewriter.getFloatAttr(getElementTypeOrSelf(base.getType()), 1.0));
+    Value isAbsBaseOne =
+        Traits::createCmpOp(rewriter, loc, absBase, one, CompareKind::EQ);
+
+    Value absExponent = Traits::createUnaryOp(
+        rewriter, loc, exponent, utils::createEmptyOp(rewriter, loc, exponent),
+        UnaryKind::Abs);
+    Value inf = createPowfBoundaryInfConstant(rewriter, loc, base);
+    Value isAbsExponentInf =
+        Traits::createCmpOp(rewriter, loc, absExponent, inf, CompareKind::EQ);
+    return Traits::createBinaryOp(
+        rewriter, loc, isAbsBaseOne, isAbsExponentInf,
+        utils::createEmptyOp(rewriter, loc, isAbsBaseOne), BinaryKind::And);
+  }
+
+  /// Extracts the sign bit of `base` as an i1 predicate.
+  static Value getSignBitAsPredicate(PatternRewriter &rewriter, Location loc,
+                                     Value base) {
+    Type elemType = getElementTypeOrSelf(base.getType());
+    auto shapedType = cast<ShapedType>(base.getType());
+    Type intType = rewriter.getIntegerType(elemType.getIntOrFloatBitWidth());
+    Type bitcastType = shapedType.clone(intType);
+    Value bitcast = Traits::createBitcastOp(rewriter, loc, bitcastType, base);
+    Value shiftValue = rewriter.create<arith::ConstantOp>(
+        loc, intType,
+        rewriter.getIntegerAttr(intType, elemType.getIntOrFloatBitWidth() - 1));
+    Value shifted = Traits::createShiftOp(
+        rewriter, loc, bitcast, shiftValue,
+        utils::createEmptyOp(rewriter, loc, bitcast),
+        ShiftKind::RightSigned);
+    Value negOne = rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, -1));
+    return Traits::createCmpOp(rewriter, loc, shifted, negOne, CompareKind::EQ);
+  }
+
+  /// Checks whether the exponent is an integer by comparing it with floor(x).
+  static Value isIntegerValue(PatternRewriter &rewriter, Location loc,
+                              Value exponent) {
+    Value floorValue = Traits::createFloorOp(
+        rewriter, loc, exponent, utils::createEmptyOp(rewriter, loc, exponent));
+    return Traits::createCmpOp(rewriter, loc, floorValue, exponent,
+                               CompareKind::EQ);
+  }
+
+  /// Identifies the `base < 0 && exponent is integer` path that needs sign
+  /// correction.
+  static Value isNegativeBaseAndIntegerExponent(PatternRewriter &rewriter,
+                                                Location loc, Value base,
+                                                Value exponent) {
+    Value isNegative = getSignBitAsPredicate(rewriter, loc, base);
+    Value isInteger = isIntegerValue(rewriter, loc, exponent);
+    return Traits::createBinaryOp(
+        rewriter, loc, isNegative, isInteger,
+        utils::createEmptyOp(rewriter, loc, isNegative), BinaryKind::And);
+  }
+
+  /// Builds the sign coefficient for the negative-base integer-exponent path.
+  /// It works in three simple steps:
+  ///   1. Take `abs(exponent)` so `-3` and `3` follow the same odd/even rule.
+  ///   2. Compute `abs(exponent) mod 2` to ask whether the integer exponent is
+  ///      odd (`1`) or even (`0`).
+  ///   3. Map that parity to the final coefficient with `(-2 * parity) + 1`,
+  ///      so odd -> `-1` and even -> `1`.
+  /// Example:
+  ///   exponent = 3 -> abs(3) = 3 -> 3 mod 2 = 1 -> (-2 * 1) + 1 = -1
+  ///   exponent = 4 -> abs(4) = 4 -> 4 mod 2 = 0 -> (-2 * 0) + 1 = 1
+  /// That coefficient is multiplied with the shared magnitude result so
+  /// `powf(-2, 3)` stays negative while `powf(-2, 4)` becomes positive.
+  static Value calculateOddIntegerCoefficient(PatternRewriter &rewriter,
+                                              Location loc, Value exponent) {
+    Type elemType = getElementTypeOrSelf(exponent.getType());
+    Value positiveOne = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, 1.0));
+    Value positiveTwo = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, 2.0));
+    Value negativeTwo = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, -2.0));
+
+    Value absExponent = Traits::createUnaryOp(
+        rewriter, loc, exponent, utils::createEmptyOp(rewriter, loc, exponent),
+        UnaryKind::Abs);
+    Value mod = Traits::createBinaryOp(
+        rewriter, loc, absExponent, positiveTwo,
+        utils::createEmptyOp(rewriter, loc, exponent), BinaryKind::Mod);
+    return Traits::computeParityCoefficient(
+        rewriter, loc, mod, negativeTwo, positiveOne);
+  }
+
+  /// Builds the `base < 0 && exponent is integer` candidate:
+  /// `sign_correction(exponent) * exp(exponent * ln(abs(base)))`.
+  static Value calculateNegativeBaseIntegerExponentPower(
+      PatternRewriter &rewriter, Location loc, Value base, Value exponent) {
+    Value lnEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value mulEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value coefficient = calculateOddIntegerCoefficient(rewriter, loc, exponent);
+    Value absEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value absBase = Traits::createUnaryOp(rewriter, loc, base, absEmpty,
+                                          UnaryKind::Abs);
+    Value lnBase =
+        Traits::createUnaryOp(rewriter, loc, absBase, lnEmpty, UnaryKind::Ln);
+    Value mul =
+        Traits::createBinaryOp(rewriter, loc, lnBase, exponent, mulEmpty,
+                               BinaryKind::Mul);
+    Value expEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value magnitude =
+        Traits::createUnaryOp(rewriter, loc, mul, expEmpty, UnaryKind::Exp);
+    return Traits::createBinaryOp(
+        rewriter, loc, magnitude, coefficient,
+        utils::createEmptyOp(rewriter, loc, base), BinaryKind::Mul);
+  }
+
+  /// Builds the general candidate `exp(exponent * ln(abs(base)))`.
+  static Value calculatePositiveBaseOrNonIntegerExponentPower(
+      PatternRewriter &rewriter, Location loc, Value base, Value exponent) {
+    Value lnEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value mulEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value resultEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value absEmpty = utils::createEmptyOp(rewriter, loc, base);
+    Value absBase = Traits::createUnaryOp(rewriter, loc, base, absEmpty,
+                                          UnaryKind::Abs);
+    Value lnBase =
+        Traits::createUnaryOp(rewriter, loc, absBase, lnEmpty, UnaryKind::Ln);
+    Value mul =
+        Traits::createBinaryOp(rewriter, loc, lnBase, exponent, mulEmpty,
+                               BinaryKind::Mul);
+    return Traits::createUnaryOp(rewriter, loc, mul, resultEmpty,
+                                 UnaryKind::Exp);
+  }
+
+  /// Builds one `select` node in the final boundary-resolution chain.
+  static Value createPowfSelect(PatternRewriter &rewriter, Location loc,
+                                Value predicate, Value trueValue,
+                                Value falseValue) {
+    Value selectInit = utils::createEmptyOp(rewriter, loc, falseValue);
+    return Traits::createTernaryOp(rewriter, loc, predicate, trueValue,
+                                   falseValue, selectInit,
+                                   TernaryKind::Select);
+  }
+
+  /// Checks whether the input is finite by testing `abs(x) != inf`.
+  static Value isFinite(PatternRewriter &rewriter, Location loc, Value input) {
+    Value absInput = Traits::createUnaryOp(
+        rewriter, loc, input, utils::createEmptyOp(rewriter, loc, input),
+        UnaryKind::Abs);
+    Value inf = rewriter.create<arith::ConstantOp>(
+        loc, getElementTypeOrSelf(input.getType()),
+        rewriter.getFloatAttr(getElementTypeOrSelf(input.getType()),
+                              std::numeric_limits<double>::infinity()));
+    Value isInf =
+        Traits::createCmpOp(rewriter, loc, absInput, inf, CompareKind::EQ);
+    return Traits::createUnaryOp(rewriter, loc, isInf,
+                                 utils::createEmptyOp(rewriter, loc, isInf),
+                                 UnaryKind::Not);
+  }
+
+  /// Checks the boundary that should produce NaN: negative finite base with a
+  /// finite non-integer exponent.
+  static Value shouldYieldNan(PatternRewriter &rewriter, Location loc,
+                              Value base, Value exponent) {
+    Value zero = rewriter.create<arith::ConstantOp>(
+        loc, getElementTypeOrSelf(base.getType()),
+        rewriter.getFloatAttr(getElementTypeOrSelf(base.getType()), 0.0));
+    Value isNegative =
+        Traits::createCmpOp(rewriter, loc, base, zero, CompareKind::LT);
+    Value baseFinite = isFinite(rewriter, loc, base);
+    Value negativeFinite = Traits::createBinaryOp(
+        rewriter, loc, isNegative, baseFinite,
+        utils::createEmptyOp(rewriter, loc, isNegative), BinaryKind::And);
+
+    Value exponentFinite = isFinite(rewriter, loc, exponent);
+    Value exponentInteger = isIntegerValue(rewriter, loc, exponent);
+    Value exponentNotInteger = Traits::createUnaryOp(
+        rewriter, loc, exponentInteger,
+        utils::createEmptyOp(rewriter, loc, exponentInteger), UnaryKind::Not);
+    Value finiteNonInteger = Traits::createBinaryOp(
+        rewriter, loc, exponentFinite, exponentNotInteger,
+        utils::createEmptyOp(rewriter, loc, exponentFinite), BinaryKind::And);
+
+    return Traits::createBinaryOp(
+        rewriter, loc, negativeFinite, finiteNonInteger,
+        utils::createEmptyOp(rewriter, loc, negativeFinite), BinaryKind::And);
+  }
+
+  /// Checks the final `exponent == 0` override.
+  static Value isZeroExponent(PatternRewriter &rewriter, Location loc,
+                              Value exponent) {
+    Value zero = rewriter.create<arith::ConstantOp>(
+        loc, getElementTypeOrSelf(exponent.getType()),
+        rewriter.getFloatAttr(getElementTypeOrSelf(exponent.getType()), 0.0));
+    return Traits::createCmpOp(rewriter, loc, exponent, zero, CompareKind::EQ);
+  }
+};
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZEMATHTEMPLATE_H

@@ -453,42 +453,17 @@ struct HFusionNormalizeIlogbTraits : public NormalizeTraitsBase {
 using NormalizeIlogbOp =
     mlir::NormalizeIlogbOpTemplate<hfusion::ElemwiseUnaryOp,
                                    HFusionNormalizeIlogbTraits>;
-/// nomalize frexp(x), which is mantissa for frexp(x), to x * (ilogb(x) +
-/// 1)^(-1)
-struct NormalizeLdexpOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::BinaryFn::ldexp) {
-      return failure();
-    }
-
-    Value input = op.getInputs()[0];
-#ifndef NDEBUG
-    auto inType = getElementTypeOrSelf(input.getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-#endif
-    auto loc = op->getLoc();
-
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-
-    auto xMul =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{input, op.getInputs()[1]}, ValueRange(mulEmptyOp))
-            ->getResult(0);
-
-    rewriter.replaceOp(op, xMul);
-    return success();
+/// normalize `ldexp(x, y)` to `x * y`
+struct HFusionNormalizeLdexpTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeLdexp(hfusion::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::BinaryFn::ldexp;
   }
 };
+
+using NormalizeLdexpOp =
+    mlir::NormalizeLdexpOpTemplate<hfusion::ElemwiseBinaryOp,
+                                   HFusionNormalizeLdexpTraits>;
 
 /// normalize powf(baseNum, exponent) as below
 /// powf(x, y) = 1, when abs(x) = 1 and abs(y) = inf
@@ -508,564 +483,75 @@ public:
 /// pow(x, y) = select(y == 0, 1, partialRes2)
 /// TODO : support nan boundary case
 /// note: hardware vln will output -inf when x == 0
-struct NormalizePowfOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-
-  /// generate boundary condition when result is one, namely
-  /// when abs(x) = 1 and abs(y) = inf, power(x, y) = 1
-  Value genBoundaryConditionForOne(PatternRewriter &rewriter, Value baseNum,
-                                   Value exponent, Location loc) const {
-    /// step1: judge whether abs(x) = 1
-    ///   1. absx = abs(x)
-    auto absBaseInit = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto absBase = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                          linalg::UnaryFn, linalg::UnaryFnAttr>(
-                       rewriter, loc, linalg::UnaryFn::abs, ValueRange(baseNum),
-                       ValueRange(absBaseInit))
-                       ->getResult(0);
-
-    ///   2. mask0 = cmp_eq(absx, 1)
-    auto elementType = getElementTypeOrSelf(baseNum.getType());
-    arith::ConstantOp constOne = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1.0));
-    auto mask0 =
-        createCmpOp(rewriter, loc, absBase, constOne, hfusion::CompareFn::veq)
-            ->getResult(0);
-
-    /// step2: judge whether abs(y) = inf
-    ///   1. absy = abs(y)
-    auto absExpInit = utils::createEmptyOp(rewriter, loc, exponent);
-    auto absExp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                         linalg::UnaryFn, linalg::UnaryFnAttr>(
-                      rewriter, loc, linalg::UnaryFn::abs, ValueRange(exponent),
-                      ValueRange(absExpInit))
-                      ->getResult(0);
-    ///   2. mask1 = cmp_eq(absy, inf)
-    arith::ConstantOp constInf = nullptr;
-    if (elementType.isF16()) {
-      constInf = rewriter.create<arith::ConstantOp>(
-          loc, elementType, rewriter.getFloatAttr(elementType, 0x7C00));
-    } else if (elementType.isF32()) {
-      constInf = rewriter.create<arith::ConstantOp>(
-          loc, elementType, rewriter.getFloatAttr(elementType, 0x7F800000));
-    }
-    auto mask1 =
-        createCmpOp(rewriter, loc, absExp, constInf, hfusion::CompareFn::veq)
-            ->getResult(0);
-
-    /// step3: return boundary condition judgement
-    /// 1. res = vand(mask0, mask1)
-    return createVandOp(rewriter, loc, mask0, mask1)->getResult(0);
+struct HFusionNormalizePowfTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizePowf(hfusion::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::BinaryFn::powf;
   }
 
-  Value getSignbitOfBaseNum(PatternRewriter &rewriter, Location loc,
-                            Value baseNum) const {
-    auto elementType = getElementTypeOrSelf(baseNum.getType());
-    auto bitWidth = elementType.getIntOrFloatBitWidth();
-    Type intType = rewriter.getIntegerType(bitWidth);
-    ///    1. x_uint = bitcast(x)
-    auto shapedType = dyn_cast_if_present<ShapedType>(baseNum.getType());
-    auto bitcastEmptyOp =
-        utils::createEmptyOpWithTargetElemType(rewriter, loc, baseNum, intType);
-    auto bitcastOp = rewriter.create<hfusion::BitcastOp>(
-        loc, TypeRange{shapedType.clone(intType)}, ValueRange{baseNum},
-        ValueRange{bitcastEmptyOp});
-
-    ///    2. signbit = shr(x_uint, 31)
-    arith::ConstantOp shiftValue = rewriter.create<arith::ConstantOp>(
-        loc, intType, rewriter.getIntegerAttr(intType, bitWidth - 1));
-    auto shrEmptyOp =
-        utils::createEmptyOp(rewriter, loc, bitcastOp.getResults()[0]);
-    auto signbit =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::shrsi,
-            ValueRange({bitcastOp.getResults()[0], shiftValue}),
-            ValueRange{shrEmptyOp})
-            ->getResult(0);
-
-    ///    3. mask0 = cmp_eq(signbit, -1)
-    arith::ConstantOp constOne = rewriter.create<arith::ConstantOp>(
-        loc, intType, rewriter.getIntegerAttr(intType, -1));
-    return createCmpOp(rewriter, loc, signbit, constOne, CompareFn::veq)
-        ->getResult(0);
-  }
-
-  Value judgeIntegerValue(PatternRewriter &rewriter, Location loc,
-                          Value baseNum, Value exponent) const {
-    ///    1. y_floor = cast_floor(y)
-    auto floorEmptyOp = utils::createEmptyOp(rewriter, loc, exponent);
-    auto floor = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
-                     rewriter, loc, linalg::UnaryFn::floor,
-                     ValueRange({exponent}), ValueRange(floorEmptyOp))
-                     ->getResult(0);
-
-    ///    2. mask1 = cmp_eq(y, y_floor)
-    return createCmpOp(rewriter, loc, floor, exponent, CompareFn::veq)
-        ->getResult(0);
-  }
-
-  /// when the signbit of base number x is 1 and exponent y is int value
-  ///  step1: judge the signbit of base number x
-  ///    1. x_uint = bitcast(x)
-  ///    2. signbit = shr(x_uint, 31)
-  ///    3. mask0 = cmp_eq(signbit, -1)
-  ///  step2: judge whether y is an integer value
-  ///    1. y_floor = cast_floor(y)
-  ///    2. mask1 = cmp_eq(y, y_floor)
-  ///  step3.: return negative condition judgement
-  ///    1. res = vand(mask0, mask1)
-  Value isNegCondition(PatternRewriter &rewriter, Value baseNum, Value exponent,
-                       Location loc) const {
-    ///  step1: judge the signbit of base number x
-    auto isNeg = getSignbitOfBaseNum(rewriter, loc, baseNum);
-
-    ///  step2: judge whether y is an integer value
-    auto isInteger = judgeIntegerValue(rewriter, loc, baseNum, exponent);
-
-    ///  step3.: return negative condition judgement
-    ///    1. res = vand(mask0, mask1)
-    return createVandOp(rewriter, loc, isNeg, isInteger)->getResult(0);
-  }
-
-  /// caculate coef of (-1)^y
-  /// (-1)^y = [-2 * (|y| % 2) + 1], when y is integer,
-  /// otherwise invalid value calculateCoef
-  Value calculateCof(PatternRewriter &rewriter, Location loc,
-                     Value input) const {
-    auto elementType = getElementTypeOrSelf(input.getType());
-    arith::ConstantOp positiveOne = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 1));
-
-    arith::ConstantOp positiveTwo = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, 2));
-
-    arith::ConstantOp negativeTwo = rewriter.create<arith::ConstantOp>(
-        loc, elementType, rewriter.getFloatAttr(elementType, -2));
-
-    auto absEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto absBase = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                          linalg::UnaryFn, linalg::UnaryFnAttr>(
-                       rewriter, loc, linalg::UnaryFn::abs, ValueRange(input),
-                       ValueRange(absEmptyOp))
-                       ->getResult(0);
-
-    auto modEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-    auto mod =
-        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
-                                hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusion::BinaryFn::mod,
-            ValueRange({absBase, positiveTwo}), ValueRange(modEmptyOp))
-            ->getResult(0);
-
-    Value res;
-    if (archisAscend950 && elementType.isF32()) { 
-      auto fmaEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-      res  = hfusion::createTernaryOp<hfusion::ElemwiseTernaryOp, hfusion::TernaryFn,
-                                           hfusion::TernaryFnAttr>(
-              rewriter, loc, hfusion::TernaryFn::fma,
-              ValueRange({mod, negativeTwo, positiveOne}), ValueRange(fmaEmptyOp))
-              ->getResult(0);
-    } else {
-
-      auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-      auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
-                     rewriter, loc, linalg::BinaryFn::mul,
-                     ValueRange({mod, negativeTwo}), ValueRange(mulEmptyOp))
-                     ->getResult(0);
-
-      auto addEmptyOp = utils::createEmptyOp(rewriter, loc, input);
-      res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                         linalg::BinaryFn, linalg::BinaryFnAttr>(
-                     rewriter, loc, linalg::BinaryFn::add,
-                     ValueRange({mul, positiveOne}), ValueRange(addEmptyOp))
-                     ->getResult(0);
-    }
-
-    return res;
-  }
-
-  /// calculate ((-1) ^ y) * exp(y * ln|x|), where x is baseNum and y is
-  /// exponent
-  Value calculateNegativeCompute(PatternRewriter &rewriter, mlir::Value baseNum,
-                                 mlir::Value exponent, Location loc) const {
-    auto lnEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto coff = calculateCof(rewriter, loc, exponent);
-
-    ///  step1: compute abs(baseNum)
-    auto absEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto absBase = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                          linalg::UnaryFn, linalg::UnaryFnAttr>(
-                       rewriter, loc, linalg::UnaryFn::abs, baseNum,
-                       ValueRange(absEmptyOp))
-                       ->getResult(0);
-
-    ///  step2: compute ln(abs(baseNum))
-    auto lnBase = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                         linalg::UnaryFn, linalg::UnaryFnAttr>(
-                      rewriter, loc, linalg::UnaryFn::log,
-                      ValueRange({absBase}), ValueRange(lnEmptyOp))
-                      ->getResult(0);
-
-    ///  step3: compute exponent*ln(abs(baseNum))
-    auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange({lnBase, exponent}), ValueRange(mulEmptyOp))
-                   ->getResult(0);
-
-    ///  step4: compute exp(exponent*ln(abs(baseNum)))
-    auto expEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto exp =
-        hfusion::createBinaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                linalg::UnaryFnAttr>(
-            rewriter, loc, linalg::UnaryFn::exp, mul, ValueRange(expEmptyOp))
-            ->getResult(0);
-
-    ///  step5: compute coef*exp(exponent*ln(abs(baseNum)))
-    auto mulCoffEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange({exp, coff}), ValueRange(mulCoffEmptyOp))
-                   ->getResult(0);
-    return res;
-  }
-
-  /// calculate exp(y * ln|x|), where x is baseNum and y is exponent
-  Value calculatePositiveCompute(PatternRewriter &rewriter, mlir::Value baseNum,
-                                 mlir::Value exponent, Location loc) const {
-    auto lnEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto resEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto absEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-
-    ///  step1: compute abs(baseNum)
-    auto absBase = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                          linalg::UnaryFn, linalg::UnaryFnAttr>(
-                       rewriter, loc, linalg::UnaryFn::abs, baseNum,
-                       ValueRange(absEmptyOp))
-                       ->getResult(0);
-    ///  step2: compute ln(abs(baseNum))
-    auto lnBase = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
-                                         linalg::UnaryFn, linalg::UnaryFnAttr>(
-                      rewriter, loc, linalg::UnaryFn::log, ValueRange(absBase),
-                      ValueRange(lnEmptyOp))
-                      ->getResult(0);
-
-    ///  step3: compute exponent*ln(abs(baseNum))
-    auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
-                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange({lnBase, exponent}), ValueRange(mulEmptyOp))
-                   ->getResult(0);
-
-    /// step4: compute exp(exponent*ln(abs(baseNum)))
-    auto res = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                      linalg::UnaryFnAttr>(
-                   rewriter, loc, linalg::UnaryFn::exp, ValueRange(mul),
-                   ValueRange(resEmptyOp))
-                   ->getResult(0);
-    return res;
-  }
-
-  Value calculatePower(OpBuilder &rewriter, Location loc, Value baseNum,
-                       int exponent) const {
-    auto resEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    if (exponent <= 1) {
-      return baseNum;
-    }
-    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                   linalg::BinaryFnAttr>(
-               rewriter, loc, linalg::BinaryFn::mul,
-               ValueRange({baseNum, calculatePower(rewriter, loc, baseNum,
-                                                   exponent - 1)}),
-               ValueRange(resEmptyOp))
-        ->getResult(0);
-  }
-
-  /// pow(x, 0.5) converts to sqrt(x)
-  void createSqrtOp(hfusion::ElemwiseBinaryOp op, PatternRewriter &rewriter,
-                    Value baseNum) const {
-    Location loc = op->getLoc();
-    auto resEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto res = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
-                                      hfusion::UnaryFn, hfusion::UnaryFnAttr>(
-                   rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange(baseNum),
-                   ValueRange(resEmptyOp))
-                   ->getResult(0);
-    rewriter.replaceOp(op, res);
-  }
-
-  float getFillValue(Operation *fillOp) const {
-    Value constValue = fillOp->getOperand(0);
-    bool isInt = constValue.getType().isIntOrIndex();
-    auto constOp =
-        dyn_cast_or_null<arith::ConstantOp>(constValue.getDefiningOp());
-    if (isInt) {
-      auto constFloatAttr = dyn_cast<IntegerAttr>(constOp.getValue());
-      return llvm::APIntOps::RoundAPIntToFloat(constFloatAttr.getValue());
-    }
-    auto constFloatAttr = dyn_cast<FloatAttr>(constOp.getValue());
-    return constFloatAttr.getValue().convertToFloat();
-  }
-
-  arith::ConstantOp getExponentConstOp(Value exponent,
-                                       PatternRewriter &rewriter) const {
+  /// Recovers and returns a scalar `arith::ConstantOp` for the exponent from
+  /// the wrapper forms that are common on the HFusion path.
+  /// Example:
+  ///   1. `linalg.fill(0.5)` feeding `powf`
+  ///   2. `hfusion.cast(linalg.fill(0.5))` feeding `powf`
+  ///   3. a shaped `arith.constant dense<0.5>`
+  static arith::ConstantOp getPowfExponentScalarConstant(
+      Value exponent, PatternRewriter &rewriter) {
     if (auto castOp = exponent.getDefiningOp<hfusion::CastOp>()) {
-      if (auto fillOp =
-              castOp.getDpsInputs()[0].getDefiningOp<linalg::FillOp>()) {
-        auto fillValue = getFillValue(fillOp);
-        auto loc = castOp->getLoc();
-        auto elementType =
-            getElementTypeOrSelf(castOp.getDpsInits()[0].getType());
-        auto insertInit = rewriter.create<arith::ConstantOp>(
-            loc, elementType, rewriter.getFloatAttr(elementType, fillValue));
-        return insertInit;
+      if (auto fillOp = castOp.getDpsInputs()[0].getDefiningOp<linalg::FillOp>()) {
+        return dyn_cast_or_null<arith::ConstantOp>(
+            fillOp.getInputs()[0].getDefiningOp());
       }
     }
 
-    if (auto fillOp = exponent.getDefiningOp<linalg::FillOp>()) {
-      return dyn_cast_if_present<arith::ConstantOp>(
+    if (auto fillOp = exponent.getDefiningOp<linalg::FillOp>())
+      return dyn_cast_or_null<arith::ConstantOp>(
           fillOp.getInputs()[0].getDefiningOp());
-    }
-    auto constOp =
-        dyn_cast_or_null<arith::ConstantOp>(exponent.getDefiningOp());
-    if (constOp == nullptr)
-      return constOp;
-    auto shapedType = dyn_cast<ShapedType>(constOp.getType());
-    if (shapedType) {
+
+    if (auto constOp = dyn_cast_or_null<arith::ConstantOp>(
+            exponent.getDefiningOp())) {
+      if (!isa<ShapedType>(constOp.getType()))
+        return constOp;
       auto scalarElem =
           getScalarFromConstantOp(rewriter, exponent.getLoc(), constOp);
       if (scalarElem.has_value())
-        return dyn_cast_or_null<arith::ConstantOp>(scalarElem->getDefiningOp());
+        return dyn_cast_or_null<arith::ConstantOp>(
+            scalarElem->getDefiningOp());
     }
-    return constOp;
+
+    return nullptr;
   }
 
-  Value getExponent(PatternRewriter &rewriter, Value baseNum, Value exponent,
-                    Location loc) const {
-    auto singleElem = singleElemDenseTensorToScalar(exponent, rewriter);
-    if (singleElem.has_value()) {
-      auto fillEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-      return rewriter
-          .create<linalg::FillOp>(loc, TypeRange(fillEmptyOp),
-                                  ValueRange{singleElem.value()},
-                                  ValueRange(fillEmptyOp))
+  /// Computes the parity coefficient `(-2 * mod) + 1` that maps the integer
+  /// exponent parity (`abs(exponent) % 2`) to `-1` (odd) or `1` (even).
+  /// On Ascend950 with f32, fuses `mul + add` into a single HFusion FMA.
+  static Value computeParityCoefficient(PatternRewriter &rewriter,
+                                        Location loc, Value mod,
+                                        Value negativeTwo,
+                                        Value positiveOne) {
+    Type elemType = getElementTypeOrSelf(mod.getType());
+    if (archisAscend950 && elemType.isF32()) {
+      auto fmaInit = utils::createEmptyOp(rewriter, loc, mod);
+      return hfusion::createTernaryOp<hfusion::ElemwiseTernaryOp,
+                                      hfusion::TernaryFn,
+                                      hfusion::TernaryFnAttr>(
+                 rewriter, loc, hfusion::TernaryFn::fma,
+                 ValueRange({mod, negativeTwo, positiveOne}),
+                 ValueRange(fmaInit))
           ->getResult(0);
     }
-    return exponent;
-  }
-
-  LogicalResult normalizedCstExponentPowf(PatternRewriter &rewriter,
-                                          Location loc,
-                                          hfusion::ElemwiseBinaryOp op,
-                                          Value baseNum, Value exponent) const {
-    auto exponentConstOp = getExponentConstOp(exponent, rewriter);
-    if (!exponentConstOp)
-      return failure();
-    auto inType = getElementTypeOrSelf(baseNum.getType());
-    auto constFloatAttr = dyn_cast<FloatAttr>(exponentConstOp.getValue());
-    auto constFloatValue = constFloatAttr.getValue();
-    llvm::APFloat zeroFloat(constFloatValue.getSemantics(), 0);
-    if (constFloatValue.isZero()) {
-      auto oneConst = rewriter.create<arith::ConstantOp>(
-          op->getLoc(), inType, rewriter.getFloatAttr(inType, 1));
-      auto fillEmptyOp = utils::createEmptyOp(rewriter, loc, baseNum);
-      auto fillOp = rewriter
-                        .create<linalg::FillOp>(loc, TypeRange(fillEmptyOp),
-                                                ValueRange{oneConst},
-                                                ValueRange(fillEmptyOp))
-                        ->getResult(0);
-      rewriter.replaceOp(op, fillOp);
-      return success();
-    }
-
-    llvm::APFloat halfFloat(constFloatValue.getSemantics(), "5e-1");
-    if (constFloatValue == halfFloat) {
-      createSqrtOp(op, rewriter, baseNum);
-      return success();
-    }
-
-    float constValue = constFloatValue.convertToFloat();
-    float intValue = std::round(constValue);
-    const int upperLimit = 3;
-    if (constFloatValue.isInteger() && intValue <= upperLimit &&
-        intValue >= 1) {
-      auto resPower =
-          calculatePower(rewriter, loc, baseNum, static_cast<int>(intValue));
-      rewriter.replaceOp(op, resPower);
-      return success();
-    }
-    return failure();
-  }
-
-  /// is_inf = !(abs(input) == inf)
-  Value isFinite(PatternRewriter &rewriter, Location loc, Value input) const {
-    auto elementType = getElementTypeOrSelf(input.getType());
-    // constantOp for inf
-    auto constInf = utils::createConstantOp<double>(
-        rewriter, loc, elementType, std::numeric_limits<double>::infinity());
-    /// abs_input = abs(input)
-    auto absInit = utils::createEmptyOp(rewriter, loc, input);
-    auto absInput =
-        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                               linalg::UnaryFnAttr>(
-            rewriter, loc, linalg::UnaryFn::abs, ValueRange(input),
-            ValueRange(absInit))
-            ->getResult(0);
-
-    /// is_infinite = abs_input == inf
-    auto isInfinite =
-        createCmpOp(rewriter, loc, absInput, constInf, hfusion::CompareFn::veq)
-            ->getResult(0);
-    auto isFiniteInit = utils::createEmptyOp(rewriter, loc, isInfinite);
-
-    /// is_finite = !is_infinite
-    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                                  hfusion::UnaryFnAttr>(
-               rewriter, loc, hfusion::UnaryFn::vnot, ValueRange(isInfinite),
-               ValueRange(isFiniteInit))
-        ->getResult(0);
-  }
-
-  /// is_nan = x < 0 and x is finite and y is finite and y is not integer
-  Value isPowfNanResult(PatternRewriter &rewriter, Location loc, Value baseNum,
-                        Value exponent) const {
-    /// step1: mask1 = x < 0 and x is finite
-    ///   1. is_neg = x < 0
-    auto constZero = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getF32Type(),
-        rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
-    auto isNeg =
-        createCmpOp(rewriter, loc, baseNum, constZero, hfusion::CompareFn::vlt)
-            ->getResult(0);
-    ///   2. is_x_finite = is_finite(x)
-    auto isXFinite = isFinite(rewriter, loc, baseNum);
-    auto mask1 = createVandOp(rewriter, loc, isNeg, isXFinite)->getResult(0);
-
-    /// step2: mask2 = y is finite and y is not integer
-    ///   1. is_y_finite = is_finite(y)
-    auto isYFinite = isFinite(rewriter, loc, exponent);
-    ///   2. is_y_float = !isInteger(y)
-    auto isInteger = judgeIntegerValue(rewriter, loc, baseNum, exponent);
-    auto vnotInit = utils::createEmptyOp(rewriter, loc, isInteger);
-    auto isYFloat =
-        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
-                               hfusion::UnaryFnAttr>(
-            rewriter, loc, hfusion::UnaryFn::vnot, ValueRange(isInteger),
-            ValueRange(vnotInit))
-            ->getResult(0);
-    auto mask2 = createVandOp(rewriter, loc, isYFinite, isYFloat)->getResult(0);
-
-    /// step3: is_nan = mask1 and mask2
-    return createVandOp(rewriter, loc, mask1, mask2)->getResult(0);
-  }
-
-  // is_zero_pow_zero = y == 0
-  Value isZeroPowZeroResult(PatternRewriter &rewriter, Location loc,
-                            Value exponent) const {
-    /// step1: mask = y == 0
-    auto constZero = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getF32Type(),
-        rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
-    auto mask =
-        createCmpOp(rewriter, loc, exponent, constZero, hfusion::CompareFn::veq)
-            ->getResult(0);
-    return mask;
-  }
-
-  LogicalResult normalizePowf(PatternRewriter &rewriter,
-                              hfusion::ElemwiseBinaryOp op) const {
-    auto inputs = op.getDpsInputs();
-    Value baseNum = inputs[0];
-    Value exponent = inputs[1];
-    Location loc = op->getLoc();
-    if (succeeded(
-            normalizedCstExponentPowf(rewriter, loc, op, baseNum, exponent)))
-      return success();
-
-    // after support scalar value for hfusion op, delete the getExponet func
-    // here and directly use the exponent
-    auto expTensor = getExponent(rewriter, baseNum, exponent, loc);
-    Value isNegativeCond = isNegCondition(rewriter, baseNum, expTensor, loc);
-    Value negComRes =
-        calculateNegativeCompute(rewriter, baseNum, expTensor, loc);
-    Value posComRes =
-        calculatePositiveCompute(rewriter, baseNum, exponent, loc);
-    auto partialRes0InitOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto partialRes0 =
-        rewriter
-            .create<hfusion::SelectOp>(
-                loc, TypeRange(partialRes0InitOp),
-                ValueRange({isNegativeCond, negComRes, posComRes}),
-                ValueRange(partialRes0InitOp))
-            ->getResult(0);
-
-    auto inType = getElementTypeOrSelf(baseNum.getType());
-    Value constOne = rewriter.create<arith::ConstantOp>(
-        loc, inType, rewriter.getFloatAttr(inType, 1.0));
-    Value boundaryCondForOne =
-        genBoundaryConditionForOne(rewriter, baseNum, expTensor, loc);
-    auto partialRes1InitOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto partialRes1 =
-        rewriter
-            .create<hfusion::SelectOp>(
-                loc, TypeRange(partialRes1InitOp),
-                ValueRange({boundaryCondForOne, constOne, partialRes0}),
-                ValueRange(partialRes1InitOp))
-            ->getResult(0);
-
-    auto floatTy = cast<mlir::FloatType>(inType);
-    Value constNan = rewriter.create<arith::ConstantOp>(
-        loc, inType,
-        rewriter.getFloatAttr(inType,
-                              APFloat::getNaN(floatTy.getFloatSemantics())));
-    Value isNanCond = isPowfNanResult(rewriter, loc, baseNum, expTensor);
-    auto partialRes2InitOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto partialRes2 = rewriter
-                           .create<hfusion::SelectOp>(
-                               loc, TypeRange(partialRes2InitOp),
-                               ValueRange({isNanCond, constNan, partialRes1}),
-                               ValueRange(partialRes2InitOp))
-                           ->getResult(0);
-
-    Value isZeroPowZeroCond = isZeroPowZeroResult(rewriter, loc, exponent);
-    auto partialRes3InitOp = utils::createEmptyOp(rewriter, loc, baseNum);
-    auto partialRes3 =
-        rewriter
-            .create<hfusion::SelectOp>(
-                loc, TypeRange(partialRes3InitOp),
-                ValueRange({isZeroPowZeroCond, constOne, partialRes2}),
-                ValueRange(partialRes3InitOp))
-            ->getResult(0);
-
-    rewriter.replaceOp(op, partialRes3);
-    return success();
-  }
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    if (op.getFun() != hfusion::BinaryFn::powf) {
-      return failure();
-    }
-
-    auto inputs = op.getDpsInputs();
-    Value baseNum = inputs[0];
-    auto inType = getElementTypeOrSelf(baseNum.getType());
-    if (!inType.isF16() && !inType.isF32())
-      return failure();
-
-    return normalizePowf(rewriter, op);
+    Value mul = createBinaryOp(rewriter, loc, mod, negativeTwo,
+                               utils::createEmptyOp(rewriter, loc, mod),
+                               BinaryKind::Mul);
+    return createBinaryOp(rewriter, loc, mul, positiveOne,
+                          utils::createEmptyOp(rewriter, loc, mod),
+                          BinaryKind::Add);
   }
 };
+
+using NormalizePowfOp =
+    mlir::NormalizePowfOpTemplate<hfusion::ElemwiseBinaryOp,
+                                  HFusionNormalizePowfTraits>;
 
 void populateNormalizeModPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeModOp>(patterns.getContext());

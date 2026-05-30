@@ -315,6 +315,32 @@ func.func @test_NormalizeVModOp_i64_native(%src0: tensor<256xi64>, %src1: tensor
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeVLdexp_hivm_vldexp
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>, %[[ARG1:.*]]: tensor<16xf32>)
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[ARG0]], %[[ARG1]] : tensor<16xf32>, tensor<16xf32>) outs(%[[EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: return %[[MUL]]
+func.func @test_NormalizeVLdexp_hivm_vldexp(%arg0: tensor<16xf32>, %arg1: tensor<16xf32>) -> tensor<16xf32> {
+  %0 = tensor.empty() : tensor<16xf32>
+  %1 = hivm.hir.vldexp ins(%arg0, %arg1 : tensor<16xf32>, tensor<16xf32>) outs(%0 : tensor<16xf32>) -> tensor<16xf32>
+  return %1 : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVLdexp_hivm_vldexp_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>, %[[ARG1:.*]]: tensor<16xf16>)
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[ARG0]], %[[ARG1]] : tensor<16xf16>, tensor<16xf16>) outs(%[[EMPTY]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: return %[[MUL]]
+func.func @test_NormalizeVLdexp_hivm_vldexp_f16(%arg0: tensor<16xf16>, %arg1: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = tensor.empty() : tensor<16xf16>
+  %1 = hivm.hir.vldexp ins(%arg0, %arg1 : tensor<16xf16>, tensor<16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>
+  return %1 : tensor<16xf16>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeVModOp_i8
 // CHECK-SAME: (%arg0: tensor<256xi8>, %arg1: tensor<256xi8>)
 // CHECK: %[[cast0f16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<256xi8>) outs(%{{.*}} : tensor<256xf16>) -> tensor<256xf16>
@@ -343,6 +369,65 @@ func.func @test_NormalizeVModUIOp_i1_native(%src0: tensor<256xi1>, %src1: tensor
     %0 = tensor.empty() : tensor<256xi1>
     %1 = hivm.hir.vmodui ins(%src0, %src1 : tensor<256xi1>, tensor<256xi1>) outs(%0 : tensor<256xi1>) -> tensor<256xi1>
     return %1 : tensor<256xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowf_hivm_vpow_half
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>, %[[DST:.*]]: tensor<16xf32>)
+// CHECK: %[[SQRT_EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[SQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<16xf32>) outs(%[[SQRT_EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: return %[[SQRT]]
+func.func @test_NormalizeVPowf_hivm_vpow_half(%arg0: tensor<16xf32>, %dst: tensor<16xf32>) -> tensor<16xf32> {
+  %cst = arith.constant 5.000000e-01 : f32
+  %0 = hivm.hir.vbrc ins(%cst : f32) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  %1 = hivm.hir.vpow ins(%arg0, %0 : tensor<16xf32>, tensor<16xf32>) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  return %1 : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowf_hivm_vpow_two
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>, %[[DST:.*]]: tensor<16xf32>)
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[ARG0]], %[[ARG0]] : tensor<16xf32>, tensor<16xf32>) outs(%[[EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: return %[[MUL]]
+func.func @test_NormalizeVPowf_hivm_vpow_two(%arg0: tensor<16xf32>, %dst: tensor<16xf32>) -> tensor<16xf32> {
+  %cst = arith.constant 2.000000e+00 : f32
+  %0 = hivm.hir.vbrc ins(%cst : f32) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  %1 = hivm.hir.vpow ins(%arg0, %0 : tensor<16xf32>, tensor<16xf32>) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  return %1 : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowf_hivm_vpow_dynamic
+// CHECK-SAME: (%[[BASE:.*]]: tensor<16xf32>, %[[EXPONENT:.*]]: tensor<16xf32>, %[[DST:.*]]: tensor<16xf32>)
+// CHECK-DAG: %[[ONE:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK-DAG: %[[NEG_TWO:.*]] = arith.constant -2.000000e+00 : f32
+// CHECK-DAG: %[[POS_TWO:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK-DAG: %[[NAN:.*]] = arith.constant 0x7FC00000 : f32
+// CHECK-DAG: %[[INF:.*]] = arith.constant 0x7F800000 : f32
+// CHECK: %[[BASE_SIGN:.*]] = hivm.hir.bitcast %[[BASE]] : tensor<16xf32> -> tensor<16xi32>
+// CHECK: %[[NEG_COND:.*]] = hivm.hir.vcmp
+// CHECK: %[[ABS_EXP0:.*]] = hivm.hir.vabs ins(%[[EXPONENT]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[DIVHALF:.*]] = hivm.hir.vdiv ins(%[[ABS_EXP0]], %[[POS_TWO]] : tensor<16xf32>, f32) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[TRUNC:.*]] = hivm.hir.vcast ins(%[[DIVHALF]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) round_mode = <trunc> -> tensor<16xf32>
+// CHECK: %[[MULMOD:.*]] = hivm.hir.vmul ins(%[[TRUNC]], %[[POS_TWO]] : tensor<16xf32>, f32) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[MOD:.*]] = hivm.hir.vsub ins(%[[ABS_EXP0]], %[[MULMOD]] : tensor<16xf32>, tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[NEG_MAG:.*]] = hivm.hir.vexp
+// CHECK: %[[NEG_RESULT:.*]] = hivm.hir.vmul ins(%[[NEG_MAG]], %{{.*}} : tensor<16xf32>, tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[POS_RESULT:.*]] = hivm.hir.vexp
+// CHECK: %[[SELECT0:.*]] = hivm.hir.vsel ins(%{{.*}}, %[[NEG_RESULT]], %[[POS_RESULT]] : tensor<16xi1>, tensor<16xf32>, tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[ABS_BASE0:.*]] = hivm.hir.vabs ins(%[[BASE]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[ABS_EXP1:.*]] = hivm.hir.vabs ins(%[[EXPONENT]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[SELECT1:.*]] = hivm.hir.vsel
+// CHECK: %[[SELECT2:.*]] = hivm.hir.vsel
+// CHECK: %[[SELECT3:.*]] = hivm.hir.vsel
+// CHECK: return %[[SELECT3]]
+func.func @test_NormalizeVPowf_hivm_vpow_dynamic(%arg0: tensor<16xf32>, %arg1: tensor<16xf32>, %dst: tensor<16xf32>) -> tensor<16xf32> {
+  %0 = hivm.hir.vpow ins(%arg0, %arg1 : tensor<16xf32>, tensor<16xf32>) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  return %0 : tensor<16xf32>
 }
 
 // -----
@@ -531,4 +616,66 @@ func.func @test_NormalizeVModOp_f32(%src0: tensor<256xf32>, %src1: tensor<256xf3
     %0 = tensor.empty() : tensor<256xf32>
     %1 = hivm.hir.vmod ins(%src0, %src1 : tensor<256xf32>, tensor<256xf32>) outs(%0 : tensor<256xf32>) -> tensor<256xf32>
     return %1 : tensor<256xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeVPowf_hivm_vpow_zero
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>, %[[DST:.*]]: tensor<16xf32>)
+// CHECK: %[[ONE:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[FILL:.*]] = hivm.hir.vbrc ins(%[[ONE]] : f32) outs(%[[EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: return %[[FILL]]
+func.func @test_NormalizeVPowf_hivm_vpow_zero(%arg0: tensor<16xf32>, %dst: tensor<16xf32>) -> tensor<16xf32> {
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = hivm.hir.vbrc ins(%cst : f32) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  %1 = hivm.hir.vpow ins(%arg0, %0 : tensor<16xf32>, tensor<16xf32>) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+  return %1 : tensor<16xf32>
+}
+
+// -----
+
+// Ascend950: use math.fma instead of vmul+vadd for vpow coefficient
+// CHECK-LABEL: func.func @test_NormalizeVPowf_hivm_vpow_dynamic_ascend950
+// CHECK: %cst = arith.constant 0x7F800000 : f32
+// CHECK: %[[INF:.*]] = arith.constant 2.13909504E+9 : f32
+// CHECK: %[[NAN:.*]] = arith.constant 0x7FC00000 : f32
+// CHECK: %[[NEG_TWO:.*]] = arith.constant -2.000000e+00 : f32
+// CHECK: %[[POS_TWO:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK: %[[POS_ONE:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[NEG_ONE:.*]] = arith.constant -1 : i32
+// CHECK: %[[BITCAST0:.*]] = hivm.hir.bitcast %arg0 : tensor<16xf32> -> tensor<16xi32>
+// CHECK: %[[SHIFT:.*]] = hivm.hir.vshr ins(%[[BITCAST0]], {{.*}} : tensor<16xi32>, i32) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: %[[NEG_COND:.*]] = hivm.hir.vcmp ins(%[[SHIFT]], %[[NEG_ONE]] : tensor<16xi32>, i32) outs({{.*}} : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[EXP_FLOOR:.*]] = hivm.hir.vcast ins(%arg1 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
+// CHECK: %[[IS_INT:.*]] = hivm.hir.vcmp ins(%[[EXP_FLOOR]], %arg1 : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[NEG_AND_INT:.*]] = hivm.hir.vand ins(%[[NEG_COND]], %[[IS_INT]] : tensor<16xi1>, tensor<16xi1>) outs({{.*}} : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[ABS_EXP:.*]] = hivm.hir.vabs ins(%arg1 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[ABS_EXP]], %[[POS_TWO]] : tensor<16xf32>, f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[TRUNC:.*]] = hivm.hir.vcast ins(%[[DIV]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) round_mode = <trunc> -> tensor<16xf32>
+// CHECK: %[[MUL_MOD:.*]] = hivm.hir.vmul ins(%[[TRUNC]], %[[POS_TWO]] : tensor<16xf32>, f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[MOD:.*]] = hivm.hir.vsub ins(%[[ABS_EXP]], %[[MUL_MOD]] : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[MOD_SEL:.*]] = hivm.hir.vsel ins({{.*}}, {{.*}}, %[[MOD]] : tensor<16xi1>, f32, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[VBRC_NEG:.*]] = hivm.hir.vbrc ins(%[[NEG_TWO]] : f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[VBRC_POS:.*]] = hivm.hir.vbrc ins(%[[POS_ONE]] : f32) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[FMA:.*]] = math.fma %[[MOD_SEL]], %[[VBRC_NEG]], %[[VBRC_POS]] : tensor<16xf32>
+// CHECK: %[[ABS_BASE0:.*]] = hivm.hir.vabs ins(%arg0 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[LN0:.*]] = hivm.hir.vln ins(%[[ABS_BASE0]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[MUL0:.*]] = hivm.hir.vmul ins(%[[LN0]], %arg1 : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EXP0:.*]] = hivm.hir.vexp ins(%[[MUL0]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[NEG_MAG:.*]] = hivm.hir.vmul ins(%[[EXP0]], %[[FMA]] : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[ABS_BASE1:.*]] = hivm.hir.vabs ins(%arg0 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[LN1:.*]] = hivm.hir.vln ins(%[[ABS_BASE1]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[MUL1:.*]] = hivm.hir.vmul ins(%[[LN1]], %arg1 : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EXP1:.*]] = hivm.hir.vexp ins(%[[MUL1]] : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[SEL0:.*]] = hivm.hir.vsel ins(%[[NEG_AND_INT]], %[[NEG_MAG]], %[[EXP1]] : tensor<16xi1>, tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[SEL1:.*]] = hivm.hir.vsel{{.*}} outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[SEL2:.*]] = hivm.hir.vsel{{.*}} outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[SEL3:.*]] = hivm.hir.vsel{{.*}} outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: return %[[SEL3]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeVPowf_hivm_vpow_dynamic_ascend950(%arg0: tensor<16xf32>, %arg1: tensor<16xf32>, %dst: tensor<16xf32>) -> tensor<16xf32> {
+    %0 = hivm.hir.vpow ins(%arg0, %arg1 : tensor<16xf32>, tensor<16xf32>) outs(%dst : tensor<16xf32>) -> tensor<16xf32>
+    return %0 : tensor<16xf32>
+  }
 }
