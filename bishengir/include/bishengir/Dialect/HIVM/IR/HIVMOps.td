@@ -1094,6 +1094,15 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
             DenseI32ArrayAttr::get(getContext(), i32Indices));
       }
 
+      static constexpr StringLiteral kSymbolAttrName = "symbol";
+      std::optional<std::string> getSymbol() {
+        auto op = getOperation();
+        if (auto symbol = op->template getAttrOfType<StringAttr>(kSymbolAttrName)) {
+          return symbol.getValue().str();
+        }
+        return std::nullopt;
+      }
+
       bool isBuiltin() { return kBuiltins.contains(getName()); }
 
       // Builtins helpers

@@ -2263,7 +2263,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %empty0 = tensor.empty() : tensor<16xf32>
     %empty1 = tensor.empty() : tensor<16xf32>
     %0:2 = hivm.hir.custom
-        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>}
+        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "custom_todo"}
         "my_custom_op" outs(%empty0, %empty1 : tensor<16xf32>, tensor<16xf32>)
         -> (tensor<16xf32>, tensor<16xf32>)
     hivm.hir.store ins(%0#0 : tensor<16xf32>) outs(%arg0 : memref<16xf32>)
