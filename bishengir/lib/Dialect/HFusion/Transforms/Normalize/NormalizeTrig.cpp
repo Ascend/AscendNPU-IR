@@ -21,6 +21,44 @@
 #include "bishengir/Transforms/Normalize/NormalizeTrigTemplate.h"
 
 namespace mlir {
+struct HFusionNormalizeHighPrecisionTrigTraitsBase : public hfusion::NormalizeTraitsBase {
+  static std::optional<Value> getCastInput(Value input) {
+    auto castOp = input.getDefiningOp<hfusion::CastOp>();
+    if (!castOp)
+      return std::nullopt;
+    return castOp.getInputs()[0];
+  }
+
+  static Value getUnaryInput(Operation *op) {
+    return cast<hfusion::ElemwiseUnaryOp>(op).getInputs()[0];
+  }
+
+  static bool isHighPrecisionProducer(Operation *op) {
+    auto unaryOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op);
+    if (!unaryOp)
+      return false;
+
+    auto fun = unaryOp.getFun();
+    return fun == hfusion::UnaryFn::rec || fun == hfusion::UnaryFn::rsqrt ||
+           fun == hfusion::UnaryFn::sqrt;
+  }
+
+  static bool isHighPrecisionRsqrt(Operation *op) {
+    auto unaryOp = dyn_cast_or_null<hfusion::ElemwiseUnaryOp>(op);
+    return unaryOp && unaryOp.getFun() == hfusion::UnaryFn::rsqrt;
+  }
+
+  static FailureOr<Value>
+  buildHighPrecisionSinOrCos(PatternRewriter &rewriter,
+                             hfusion::ElemwiseUnaryOp op, Value input,
+                             HighPrecisionTrigMode mode) {
+    return hfusion::buildSinOrCos(
+        rewriter, op, input,
+        mode == HighPrecisionTrigMode::Sin ? hfusion::CalcMode::SIN
+                                           : hfusion::CalcMode::COS);
+  }
+};
+
 struct HFusionNormalizeSinTraits : public hfusion::NormalizeTraitsBase {
 public:
   static bool shouldNormalizeSin(hfusion::ElemwiseUnaryOp op) {
@@ -32,9 +70,33 @@ public:
   }
 };
 
+struct HFusionNormalizeHighPrecisionSinTraits
+    : public HFusionNormalizeHighPrecisionTrigTraitsBase {
+public:
+  static bool shouldNormalizeHighPrecisionSin(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::sin) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
 struct HFusionNormalizeCosTraits : public hfusion::NormalizeTraitsBase {
 public:
   static bool shouldNormalizeCos(hfusion::ElemwiseUnaryOp op) {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::cos) {
+      return false;
+    }
+    Type inputType = getElementTypeOrSelf(op.getDpsInputs()[0].getType());
+    return inputType.isF16() || inputType.isF32();
+  }
+};
+
+struct HFusionNormalizeHighPrecisionCosTraits
+    : public HFusionNormalizeHighPrecisionTrigTraitsBase {
+public:
+  static bool shouldNormalizeHighPrecisionCos(hfusion::ElemwiseUnaryOp op) {
     if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::cos) {
       return false;
     }
@@ -81,6 +143,12 @@ using NormalizeSinOp =
     NormalizeSinOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeSinTraits>;
 using NormalizeCosOp =
     NormalizeCosOpTemplate<hfusion::ElemwiseUnaryOp, HFusionNormalizeCosTraits>;
+using HighPrecisionNormalizeSinOp =
+    HighPrecisionNormalizeSinOpTemplate<hfusion::ElemwiseUnaryOp,
+                                        HFusionNormalizeHighPrecisionSinTraits>;
+using HighPrecisionNormalizeCosOp =
+    HighPrecisionNormalizeCosOpTemplate<hfusion::ElemwiseUnaryOp,
+                                        HFusionNormalizeHighPrecisionCosTraits>;
 using NormalizeAtanOp = NormalizeAtanOpTemplate<hfusion::ElemwiseUnaryOp,
                                                 HFusionNormalizeAtanTraits>;
 using NormalizeTanOp =
@@ -90,158 +158,6 @@ using NormalizeTanhOp = NormalizeTanhOpTemplate<hfusion::ElemwiseUnaryOp,
 } // namespace mlir
 
 namespace mlir::hfusion {
-static Value rebuildHighPrecisionRsqrtForTrig(PatternRewriter &rewriter,
-                                              Operation *trigOp, Value input) {
-  auto rsqrtOp = input.getDefiningOp<hfusion::ElemwiseUnaryOp>();
-  if (!rsqrtOp || rsqrtOp.getFun() != hfusion::UnaryFn::rsqrt ||
-      !input.hasOneUse()) {
-    return {};
-  }
-
-  auto srcElemType = getElementTypeOrSelf(rsqrtOp.getInputs()[0].getType());
-  if (!srcElemType.isF16())
-    return {};
-
-  Location loc = trigOp->getLoc();
-  Value fp32Input =
-      hfusion::castTo(rewriter, rsqrtOp.getInputs()[0], rewriter.getF32Type(),
-                      hfusion::RoundMode::ROUND);
-  Value sqrtInit = utils::createEmptyOpWithTargetElemType(
-      rewriter, loc, fp32Input, rewriter.getF32Type());
-  Value sqrtValue = NormalizeTraitsBase::createUnaryOp(
-      rewriter, loc, fp32Input, sqrtInit, UnaryKind::Sqrt);
-  Value recInit = utils::createEmptyOpWithTargetElemType(
-      rewriter, loc, sqrtValue, rewriter.getF32Type());
-  return NormalizeTraitsBase::createUnaryOp(rewriter, loc, sqrtValue, recInit,
-                                            UnaryKind::Rec);
-}
-
-static Value getPreferredHighPrecisionTrigInput(PatternRewriter &rewriter,
-                                                Operation *trigOp,
-                                                Value input) {
-  if (Value rebuiltRsqrt =
-          rebuildHighPrecisionRsqrtForTrig(rewriter, trigOp, input)) {
-    return rebuiltRsqrt;
-  }
-
-  auto castOp = input.getDefiningOp<hfusion::CastOp>();
-  if (!castOp)
-    return {};
-
-  Type srcType = getElementTypeOrSelf(castOp.getInputs()[0].getType());
-  Type dstType = getElementTypeOrSelf(castOp.getOutputs()[0].getType());
-  if (!srcType.isF32() || !dstType.isF16())
-    return {};
-
-  auto unaryOp = castOp.getInputs()[0].getDefiningOp<hfusion::ElemwiseUnaryOp>();
-  if (!unaryOp)
-    return {};
-
-  auto fun = unaryOp.getFun();
-  if (fun != hfusion::UnaryFn::rec && fun != hfusion::UnaryFn::rsqrt &&
-      fun != hfusion::UnaryFn::sqrt) {
-    return {};
-  }
-
-  // Reuse the existing f32 producer when trig consumes the result of another
-  // high-precision unary op. This avoids a transient f32->f16->f32 roundtrip
-  // before lowering sin/cos.
-  return castOp.getInputs()[0];
-}
-
-struct HighPrecisionNormalizeSinOp
-    : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::sin) {
-      return failure();
-    }
-
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-
-    Value input = op.getDpsInputs()[0];
-    if (inType.isF16()) {
-      if (Value preferredInput =
-              getPreferredHighPrecisionTrigInput(rewriter, op, input)) {
-        input = preferredInput;
-      } else {
-        // for high precision, cast src to fp32 and compute and then cast it
-        // back
-        // TODO: remove cast after enable automatical high precision computing
-        input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                                hfusion::RoundMode::ROUND);
-      }
-    }
-    auto resOr = buildSinOrCos(rewriter, op, input, CalcMode::SIN);
-    if (failed(resOr))
-      return failure();
-    Value res = *resOr;
-
-    if (inType.isF16()) {
-      // TODO: remove cast after enable automatical high precision computing
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-    rewriter.replaceOp(op, res);
-    return success();
-  }
-};
-
-struct HighPrecisionNormalizeCosOp
-    : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != hfusion::UnaryFn::cos) {
-      return failure();
-    }
-
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    assert((inType.isF16() || inType.isF32()) &&
-           "only support input Type is f16 or f32");
-    Value input = op.getDpsInputs()[0];
-    if (inType.isF16()) {
-      if (Value preferredInput =
-              getPreferredHighPrecisionTrigInput(rewriter, op, input)) {
-        input = preferredInput;
-      } else {
-        // for high precision, cast src to fp32 and compute and then cast it
-        // back
-        input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
-                                hfusion::RoundMode::ROUND);
-      }
-    }
-
-    auto resOr = buildSinOrCos(rewriter, op, input, CalcMode::COS);
-    if (failed(resOr))
-      return failure();
-    Value res = *resOr;
-
-    if (inType.isF16()) {
-      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
-                            hfusion::RoundMode::ROUND);
-    }
-
-    rewriter.replaceOp(op, res);
-    return success();
-  }
-};
-
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns,
                                    bool enableHighPrecision) {
   MLIRContext *ctx = patterns.getContext();

@@ -89,6 +89,9 @@ public:
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
 
+  static Value createGather1DOp(PatternRewriter &rewriter, Location loc,
+                                Value source, Value indices);
+
   static bool matchCastRoundMode(VCastOp op, CastRoundKind kind);
 
   static bool matchCastUnsignedMode(VCastOp op, CastUnsignedModeKind kind);

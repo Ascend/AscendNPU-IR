@@ -641,3 +641,55 @@ func.func @test_NormalizeTanh_hfusion_tanh_ops_f16(%arg0 : tensor<32xf16>) ->  t
   %ret = hfusion.elemwise_unary {fun = #hfusion.unary_fn<tanh>} ins(%arg0 : tensor<32xf16>) outs(%0 : tensor<32xf16>) -> tensor<32xf16>
   return %ret : tensor<32xf16>
 }
+
+// -----
+
+// Verify that for fp16 -> rsqrt -> sin (single use of rsqrt),
+// the sin computation uses the f32 rec(sqrt(x)) result directly
+// without f32->f16->f32 roundtrip before sin.
+// CHECK-LABEL: func.func @test_NormalizeSin_rsqrt_sin_f16_single_use(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<8xf16>) -> tensor<8xf16> {
+// CHECK: %[[CAST_IN:.*]] = hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<8xf16>) outs(%{{.*}} : tensor<8xf32>) -> tensor<8xf32>
+// CHECK: %[[SQRT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[CAST_IN]] : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) -> tensor<8xf32>
+// CHECK: %[[REC:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} ins(%[[SQRT]] : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) -> tensor<8xf32>
+// CHECK-NOT: hfusion.cast {{.*}} ins(%{{.*}} : tensor<8xf32>) outs(%{{.*}} : tensor<8xf16>)
+// CHECK: %[[BITCAST:.*]] = hfusion.bitcast ins(%[[REC]] : tensor<8xf32>) outs(%{{.*}} : tensor<8xi32>) -> tensor<8xi32>
+// CHECK-NOT: tensor.collapse_shape
+// CHECK-NOT: tensor.expand_shape
+// CHECK: %[[EMPTY_OUT:.*]] = tensor.empty() : tensor<8xf16>
+// CHECK: %[[OUT:.*]] = hfusion.cast {{.*}} ins(%{{.*}} : tensor<8xf32>) outs(%[[EMPTY_OUT]] : tensor<8xf16>) -> tensor<8xf16>
+// CHECK: return %[[OUT]] : tensor<8xf16>
+// CHECK: }
+func.func @test_NormalizeSin_rsqrt_sin_f16_single_use(%arg0 : tensor<8xf16>) -> tensor<8xf16> {
+  %e0 = tensor.empty() : tensor<8xf16>
+  %rsqrt = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%arg0 : tensor<8xf16>) outs(%e0 : tensor<8xf16>) -> tensor<8xf16>
+  %e1 = tensor.empty() : tensor<8xf16>
+  %sin = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sin>} ins(%rsqrt : tensor<8xf16>) outs(%e1 : tensor<8xf16>) -> tensor<8xf16>
+  return %sin : tensor<8xf16>
+}
+
+// -----
+
+// Verify that for fp16 -> rsqrt -> cos (single use of rsqrt),
+// the cos computation uses the f32 rec(sqrt(x)) result directly
+// without f32->f16->f32 roundtrip before cos.
+// CHECK-LABEL: func.func @test_NormalizeCos_rsqrt_cos_f16_single_use(
+// CHECK-SAME: %[[ARG0:.*]]: tensor<8xf16>) -> tensor<8xf16> {
+// CHECK: %[[CAST_IN:.*]] = hfusion.cast {{.*}} ins(%[[ARG0]] : tensor<8xf16>) outs(%{{.*}} : tensor<8xf32>) -> tensor<8xf32>
+// CHECK: %[[SQRT:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<sqrt>} ins(%[[CAST_IN]] : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) -> tensor<8xf32>
+// CHECK: %[[REC:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rec>} ins(%[[SQRT]] : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) -> tensor<8xf32>
+// CHECK-NOT: hfusion.cast {{.*}} ins(%{{.*}} : tensor<8xf32>) outs(%{{.*}} : tensor<8xf16>)
+// CHECK: %[[BITCAST:.*]] = hfusion.bitcast ins(%[[REC]] : tensor<8xf32>) outs(%{{.*}} : tensor<8xi32>) -> tensor<8xi32>
+// CHECK-NOT: tensor.collapse_shape
+// CHECK-NOT: tensor.expand_shape
+// CHECK: %[[EMPTY_OUT:.*]] = tensor.empty() : tensor<8xf16>
+// CHECK: %[[OUT:.*]] = hfusion.cast {{.*}} ins(%{{.*}} : tensor<8xf32>) outs(%[[EMPTY_OUT]] : tensor<8xf16>) -> tensor<8xf16>
+// CHECK: return %[[OUT]] : tensor<8xf16>
+// CHECK: }
+func.func @test_NormalizeCos_rsqrt_cos_f16_single_use(%arg0 : tensor<8xf16>) -> tensor<8xf16> {
+  %e0 = tensor.empty() : tensor<8xf16>
+  %rsqrt = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>} ins(%arg0 : tensor<8xf16>) outs(%e0 : tensor<8xf16>) -> tensor<8xf16>
+  %e1 = tensor.empty() : tensor<8xf16>
+  %cos = hfusion.elemwise_unary {fun = #hfusion.unary_fn<cos>} ins(%rsqrt : tensor<8xf16>) outs(%e1 : tensor<8xf16>) -> tensor<8xf16>
+  return %cos : tensor<8xf16>
+}

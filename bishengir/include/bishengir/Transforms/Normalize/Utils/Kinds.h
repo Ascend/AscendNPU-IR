@@ -29,6 +29,7 @@ enum class BinaryKind {
   Mod,
   ModUnsigned,
   And,
+  Xor,
   Min,
   Max,
   Or,
@@ -68,6 +69,8 @@ enum class OverflowCastKind {
   I32ToI8,
   I16ToI8,
 };
+
+enum class TaylerMode { SIN, ATAN };
 
 } // namespace mlir
 

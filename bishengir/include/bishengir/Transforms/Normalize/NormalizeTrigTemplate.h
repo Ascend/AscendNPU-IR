@@ -24,6 +24,43 @@
 
 namespace mlir {
 
+template <typename Traits>
+Value getPreferredHighPrecisionTrigInput(PatternRewriter &rewriter,
+                                         Operation &trigOp, Value input) {
+  if (auto source = Traits::getCastInput(input)) {
+    Type srcType = getElementTypeOrSelf(source->getType());
+    Type dstType = getElementTypeOrSelf(input.getType());
+    if (srcType.isF32() && dstType.isF16() &&
+        Traits::isHighPrecisionProducer(source->getDefiningOp())) {
+      return *source;
+    }
+  }
+
+  auto sourceOp = input.getDefiningOp();
+  if (!sourceOp || !input.hasOneUse() ||
+      !Traits::isHighPrecisionRsqrt(sourceOp)) {
+    return {};
+  }
+
+  auto srcInput = Traits::getUnaryInput(sourceOp);
+  Type srcElemType = getElementTypeOrSelf(srcInput.getType());
+  if (!srcElemType.isF16())
+    return {};
+
+  Location loc = trigOp.getLoc();
+  Value fp32Input =
+      Traits::createCastOp(rewriter, loc, srcInput, rewriter.getF32Type(),
+                           CastRoundKind::Round);
+  Value sqrtInit = utils::createEmptyOpWithTargetElemType(
+      rewriter, loc, fp32Input, rewriter.getF32Type());
+  Value sqrtValue =
+      Traits::createUnaryOp(rewriter, loc, fp32Input, sqrtInit, UnaryKind::Sqrt);
+  Value recInit = utils::createEmptyOpWithTargetElemType(
+      rewriter, loc, sqrtValue, rewriter.getF32Type());
+  return Traits::createUnaryOp(rewriter, loc, sqrtValue, recInit,
+                               UnaryKind::Rec);
+}
+
 /// Rewrites `sin(x)` as:
 ///   1. k = round(x / pi)
 ///   2. r = x - k * pi
@@ -71,7 +108,7 @@ public:
     // on the reduced input.
     Value sinApproximation = buildTaylorApproximation<Traits>(
         rewriter, loc, rangeReducedInput,
-        getTaylorSeriesCoefficients(hfusion::TaylerMode::SIN, 5));
+        getTaylorSeriesCoefficients(TaylerMode::SIN, 5));
     // sin(x + k * pi) = (-1)^k * sin(x).
     Value sinSign =
         buildSinParitySign<Traits>(rewriter, loc, roundedPiMultiple);
@@ -131,12 +168,141 @@ public:
     //   sin(r) ~= r - r^3 / 3! + r^5 / 5! - r^7 / 7! + r^9 / 9!.
     Value cosApproximation = buildTaylorApproximation<Traits>(
         rewriter, loc, rangeReducedInput,
-        getTaylorSeriesCoefficients(hfusion::TaylerMode::SIN, 5));
+        getTaylorSeriesCoefficients(TaylerMode::SIN, 5));
     // cos(x) = (-1)^k * sin(r) for the reduced form above.
     Value cosSign =
         buildSinParitySign<Traits>(rewriter, loc, roundedPiMultiple);
     Value result = Traits::createBinaryOp(rewriter, loc, cosApproximation,
                                           cosSign, empty, BinaryKind::Mul);
+
+    if (inputType.isF16()) {
+      result =
+          Traits::createCastOp(rewriter, loc, result, rewriter.getF16Type(),
+                               CastRoundKind::Round);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Rewrites high-precision `sin(x)` through the shared helper used by both
+/// HFusion and HIVM traits.
+///
+/// The helper performs Payne-Hanek style range reduction instead of the simple
+/// `round(x / pi)` path:
+///   1. q = floor(|x| / pi)
+///   2. r = |x| - q * pi, with r in [0, pi)
+///   3. y = min(r, pi - r), so y is folded into [0, pi / 2]
+///   4. sin(x) ~= sign(x) * (-1)^q * TaylorSin(y)
+///
+/// Example:
+///   x = 3.5 * pi + 0.1
+///   q = 3, r = 0.1, y = 0.1
+///   sin(x) ~= (-1)^3 * TaylorSin(0.1) = -TaylorSin(0.1)
+///
+/// The template keeps the algorithm dialect-agnostic, while `Traits` supplies
+/// the concrete ops for casts, gathers, selects, and arithmetic. F16 inputs
+/// are promoted to F32 for the reduction/polynomial work and cast back after.
+template <typename SinOpType, typename Traits>
+struct HighPrecisionNormalizeSinOpTemplate
+    : public OpRewritePattern<SinOpType> {
+public:
+  using OpRewritePattern<SinOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SinOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeHighPrecisionSin(op))
+      return failure();
+
+    Value originalInput = op.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(originalInput.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Location loc = op.getLoc();
+    Value input = originalInput;
+    if (inputType.isF16()) {
+      if (Value preferredInput =
+              getPreferredHighPrecisionTrigInput<Traits>(rewriter, *op, input)) {
+        input = preferredInput;
+      } else {
+        input = Traits::createCastOp(rewriter, loc, input,
+                                     rewriter.getF32Type(),
+                                     CastRoundKind::Round);
+      }
+    }
+
+    auto resultOr =
+        Traits::buildHighPrecisionSinOrCos(rewriter, op, input,
+                                           HighPrecisionTrigMode::Sin);
+    if (failed(resultOr))
+      return failure();
+    Value result = *resultOr;
+
+    if (inputType.isF16()) {
+      result =
+          Traits::createCastOp(rewriter, loc, result, rewriter.getF16Type(),
+                               CastRoundKind::Round);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Rewrites high-precision `cos(x)` with the same shared reduction helper, but
+/// dispatches to the cosine branch after the `mod pi` reduction.
+///
+/// After Payne-Hanek reduction:
+///   1. q = floor(|x| / pi)
+///   2. r = |x| - q * pi, with r in [0, pi)
+///   3. y = pi / 2 - r
+///   4. cos(x) = (-1)^q * sin(y)
+///
+/// Example:
+///   x = 2 * pi + 0.2
+///   q = 2, r = 0.2, y = pi / 2 - 0.2
+///   cos(x) ~= (+1) * TaylorSin(pi / 2 - 0.2)
+///
+/// This lets cosine reuse the same sine Taylor polynomial as the high-
+/// precision sine rewrite while keeping the HFusion/HIVM-specific details in
+/// `Traits`.
+template <typename CosOpType, typename Traits>
+struct HighPrecisionNormalizeCosOpTemplate
+    : public OpRewritePattern<CosOpType> {
+public:
+  using OpRewritePattern<CosOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CosOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeHighPrecisionCos(op))
+      return failure();
+
+    Value originalInput = op.getDpsInputs()[0];
+    Type inputType = getElementTypeOrSelf(originalInput.getType());
+    if (!inputType.isF16() && !inputType.isF32())
+      return failure();
+
+    Location loc = op.getLoc();
+    Value input = originalInput;
+    if (inputType.isF16()) {
+      if (Value preferredInput =
+              getPreferredHighPrecisionTrigInput<Traits>(rewriter, *op, input)) {
+        input = preferredInput;
+      } else {
+        input = Traits::createCastOp(rewriter, loc, input,
+                                     rewriter.getF32Type(),
+                                     CastRoundKind::Round);
+      }
+    }
+
+    auto resultOr =
+        Traits::buildHighPrecisionSinOrCos(rewriter, op, input,
+                                           HighPrecisionTrigMode::Cos);
+    if (failed(resultOr))
+      return failure();
+    Value result = *resultOr;
 
     if (inputType.isF16()) {
       result =

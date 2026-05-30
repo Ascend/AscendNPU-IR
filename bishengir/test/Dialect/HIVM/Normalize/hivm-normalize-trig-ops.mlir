@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hivm-normalize-ops="enable-high-precision=false" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeSin_hivm_vsin_f32(
 // CHECK-SAME: %[[ARG0:.*]]: tensor<4xf32>) -> tensor<4xf32> {

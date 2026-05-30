@@ -169,6 +169,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Min, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::Max, createHIVMBinaryOp<hivm::VMaxOp>},
     {BinaryKind::And, createHIVMBinaryOp<hivm::VAndOp>},
+    {BinaryKind::Xor, createHIVMBinaryOp<hivm::VXorOp>},
     {BinaryKind::Or, createHIVMBinaryOp<hivm::VOrOp>},
     {BinaryKind::Powf, createHIVMBinaryOp<hivm::VPowOp>},
     {BinaryKind::MinSigned, createHIVMBinaryOp<hivm::VMinOp>},
@@ -194,6 +195,7 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
     {BinaryKind::And, matchHIVMOp<hivm::VAndOp>},
     {BinaryKind::Powf, matchHIVMOp<hivm::VPowOp>},
+    {BinaryKind::Xor, matchHIVMOp<hivm::VXorOp>},
     {BinaryKind::MinSigned, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::MaxSigned, matchHIVMOp<hivm::VMaxOp>},
 };
@@ -436,6 +438,16 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBroadcastOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
     PatternRewriter &rewriter, Location loc, Type resultType, Value source) {
   return rewriter.create<BitcastOp>(loc, resultType, source).getResult();
+}
+
+mlir::Value mlir::hivm::NormalizeTraitsBase::createGather1DOp(
+    PatternRewriter &rewriter, Location loc, Value source, Value indices) {
+  Type sourceElemType = getElementTypeOrSelf(source.getType());
+  Value init = utils::createEmptyOpWithTargetElemType(rewriter, loc, indices,
+                                                      sourceElemType);
+  return rewriter
+      .create<VGatherOp>(loc, TypeRange(init.getType()), source, indices, init)
+      .getResult()[0];
 }
 
 bool mlir::hivm::NormalizeTraitsBase::matchCastRoundMode(

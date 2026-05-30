@@ -132,6 +132,7 @@ mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
       {BinaryKind::Max, hfusion::BinaryFn::maxf},
       {BinaryKind::ModUnsigned, hfusion::BinaryFn::modui},
       {BinaryKind::And, hfusion::BinaryFn::vand},
+      {BinaryKind::Xor, hfusion::BinaryFn::vxor},
       {BinaryKind::Or, hfusion::BinaryFn::vor},
       {BinaryKind::Powf, hfusion::BinaryFn::powf},
   };
@@ -378,6 +379,16 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createSelectOp(
                                  mlir::ValueRange{cond, a, b},
                                  mlir::ValueRange{dst})
       .getResults()[0];
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createGather1DOp(
+    PatternRewriter &rewriter, Location loc, Value source, Value indices) {
+  Type sourceElemType = getElementTypeOrSelf(source.getType());
+  Value init = utils::createEmptyOpWithTargetElemType(rewriter, loc, indices,
+                                                      sourceElemType);
+  return rewriter.create<hfusion::GatherOp>(loc, source, indices, init,
+                                            /*axis=*/0)
+      ->getResult(0);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createIsInfOp(

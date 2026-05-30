@@ -41,7 +41,7 @@ def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   ];
 }
 
-def Normalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
+def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize HIVM";
   let constructor = "mlir::hivm::createHIVMNormalizeOpsPass()";
   let dependentDialects = [
@@ -49,6 +49,14 @@ def Normalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
     "arith::ArithDialect",
     "hivm::HIVMDialect",
     "tensor::TensorDialect",
+    "bufferization::BufferizationDialect",
+    "memref::MemRefDialect",
+  ];
+  let options = [
+    Option<
+      "enableHighPrecision", "enable-high-precision", "bool",
+      /*default=*/"true",
+      "Enable high precision calculation for sin/cos in HIVM.">
   ];
 }
 
