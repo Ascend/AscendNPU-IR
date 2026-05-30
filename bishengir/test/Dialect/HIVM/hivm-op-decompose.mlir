@@ -1117,7 +1117,7 @@ module {
   func.func @test_decompose_vbrc_mark_buffer_size_static(%2 : index, %3 : index) {
   // CHECK: %[[alloc_1:.*]] = memref.alloc() : memref<32768xi8>
   // CHECK: %[[alloc_2:.*]] = memref.alloc(%arg1) : memref<1x?x4096xf32>
-  // CHECK: annotation.mark %[[alloc_2]] {buffer_size_in_byte = 131072 : i64} : memref<1x?x4096xf32>
+  // CHECK: annotation.mark %[[alloc_2]] {buffer_size_in_byte = 32768 : i64} : memref<1x?x4096xf32>
     %c0 = arith.constant 0: index
     %src = memref.alloc() : memref<1x1x4096xf32>
     %alloc_0 = memref.alloc() : memref<32768xi8>

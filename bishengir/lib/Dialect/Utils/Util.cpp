@@ -475,6 +475,11 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   }
   int64_t allocSize =
       maybeStaticTotalSize.value() / static_cast<int64_t>(i8TypeWidth);
+  auto sourceElemTypeWidth =
+      getElementTypeOrSelf(source.getType()).getIntOrFloatBitWidth();
+  auto srcAllocElemTypeWidth =
+      getElementTypeOrSelf(srcAllocMemref).getIntOrFloatBitWidth();
+  allocSize = allocSize * srcAllocElemTypeWidth / sourceElemTypeWidth;
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));
