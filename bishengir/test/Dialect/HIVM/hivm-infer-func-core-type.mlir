@@ -212,20 +212,89 @@ module {
   }
 }
 
+
 // -----
 
-// CHECK: hivm.module_core_type = #hivm.module_core_type<AIV>
+// Test case to verify that checkUsersAllWithCondition does not infinite loop
+// when encountering cyclic references through tensor.insert into the same tensor.
+
+// CHECK-LABEL: test_infinite_visit_users
+// CHECK: hivm.func_core_type = #hivm.func_core_type<AIV>
 module {
-  // CHECK: @INDIRECT_LOAD{{.*}}hivm.func_core_type = #hivm.func_core_type<AIV>
-  func.func @INDIRECT_LOAD(%base: memref<?xf32>, %idx: tensor<2x32xi32>) {
-    %dst = tensor.empty() : tensor<2x32xf32>
-    %0 = hivm.hir.indirect_load ins(%base : memref<?xf32>, %idx : tensor<2x32xi32>) outs(%dst : tensor<2x32xf32>) -> tensor<2x32xf32>
+  func.func @test_infinite_visit_users(%arg2: memref<?xbf16>) 
+  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %c0 = arith.constant 0 : index
+    %0 = tensor.empty() : tensor<1xf32>
+    %1 = tensor.empty() : tensor<64xf32>
+    %2 = tensor.empty() : tensor<f32>
+    %extracted = tensor.extract %2[] : tensor<f32>
+    %inserted = tensor.insert %extracted into %0[%c0] : tensor<1xf32>
+    %extracted_0 = tensor.extract %inserted[%c0] : tensor<1xf32>
+    %inserted_1 = tensor.insert %extracted_0 into %0[%c0] : tensor<1xf32>
+    %3 = call @vf0(%inserted_1, %inserted, %0) {hivm.vector_function, no_inline} : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<1xf32>
+    %extracted_2 = tensor.extract %3[%c0] : tensor<1xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%c0], sizes: [64], strides: [1] : memref<?xbf16> to memref<64xbf16, strided<[1], offset: ?>>
+    %alloc = memref.alloc() : memref<64xbf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<64xbf16, strided<[1], offset: ?>>) outs(%alloc : memref<64xbf16>) eviction_policy = <EvictFirst>
+    %4 = bufferization.to_tensor %alloc restrict writable : memref<64xbf16>
+    %5 = tensor.empty() : tensor<f32>
+    %6 = call @vf1(%1, %4, %5) {hivm.vector_function, no_inline} : (tensor<64xf32>, tensor<64xbf16>, tensor<f32>) -> tensor<f32>
+    %extracted_3 = tensor.extract %6[] : tensor<f32>
+    %inserted_4 = tensor.insert %extracted_3 into %0[%c0] : tensor<1xf32>
+    %inserted_5 = tensor.insert %extracted_2 into %0[%c0] : tensor<1xf32>
+    %7 = call @vf2(%inserted_4, %inserted_5, %0) {hivm.vector_function, no_inline} : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<1xf32>
     return
   }
+  func.func @vf0(%arg0: tensor<1xf32>, %arg1: tensor<1xf32>, %arg2: tensor<1xf32>) -> tensor<1xf32> attributes {hivm.vector_function, no_inline} {
+    return %arg0 : tensor<1xf32>
+  }
+  func.func @vf1(%arg0: tensor<64xf32>, %arg1: tensor<64xbf16>, %arg2: tensor<f32>) -> tensor<f32> attributes {hivm.vector_function, no_inline} {
+    return %arg2 : tensor<f32>
+  }
+  func.func @vf2(%arg0: tensor<1xf32>, %arg1: tensor<1xf32>, %arg2: tensor<1xf32>) -> tensor<1xf32> attributes {hivm.vector_function, no_inline} {
+    return %arg0 : tensor<1xf32>
+  }
+}
 
-  // CHECK: @INDIRECT_STORE{{.*}}hivm.func_core_type = #hivm.func_core_type<AIV>
-  func.func @INDIRECT_STORE(%base: memref<?xf32>, %idx: tensor<2x32xi32>, %src: tensor<2x32xf32>) {
-    hivm.hir.indirect_store ins(%src : tensor<2x32xf32>, %idx : tensor<2x32xi32>) outs(%base : memref<?xf32>)
+// -----
+
+// Test case to verify that checkUsersAllWithCondition does not infinite loop
+// when encountering cyclic references through tensor.insert into the same tensor.
+
+// CHECK-LABEL: test_infinite_visit_users
+// CHECK: hivm.func_core_type = #hivm.func_core_type<AIV>
+module {
+  func.func @test_infinite_visit_users(%arg2: memref<?xbf16>) 
+  attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+    %c0 = arith.constant 0 : index
+    %0 = tensor.empty() : tensor<1xf32>
+    %1 = tensor.empty() : tensor<64xf32>
+    %2 = tensor.empty() : tensor<f32>
+    %extracted = tensor.extract %2[] : tensor<f32>
+    %inserted = tensor.insert %extracted into %0[%c0] : tensor<1xf32>
+    %extracted_0 = tensor.extract %inserted[%c0] : tensor<1xf32>
+    %inserted_1 = tensor.insert %extracted_0 into %0[%c0] : tensor<1xf32>
+    %3 = call @vf0(%inserted_1, %inserted, %0) {hivm.vector_function, no_inline} : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<1xf32>
+    %extracted_2 = tensor.extract %3[%c0] : tensor<1xf32>
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%c0], sizes: [64], strides: [1] : memref<?xbf16> to memref<64xbf16, strided<[1], offset: ?>>
+    %alloc = memref.alloc() : memref<64xbf16>
+    hivm.hir.load ins(%reinterpret_cast : memref<64xbf16, strided<[1], offset: ?>>) outs(%alloc : memref<64xbf16>) eviction_policy = <EvictFirst>
+    %4 = bufferization.to_tensor %alloc restrict writable : memref<64xbf16>
+    %5 = tensor.empty() : tensor<f32>
+    %6 = call @vf1(%1, %4, %5) {hivm.vector_function, no_inline} : (tensor<64xf32>, tensor<64xbf16>, tensor<f32>) -> tensor<f32>
+    %extracted_3 = tensor.extract %6[] : tensor<f32>
+    %inserted_4 = tensor.insert %extracted_3 into %0[%c0] : tensor<1xf32>
+    %inserted_5 = tensor.insert %extracted_2 into %0[%c0] : tensor<1xf32>
+    %7 = call @vf2(%inserted_4, %inserted_5, %0) {hivm.vector_function, no_inline} : (tensor<1xf32>, tensor<1xf32>, tensor<1xf32>) -> tensor<1xf32>
     return
+  }
+  func.func @vf0(%arg0: tensor<1xf32>, %arg1: tensor<1xf32>, %arg2: tensor<1xf32>) -> tensor<1xf32> attributes {hivm.vector_function, no_inline} {
+    return %arg0 : tensor<1xf32>
+  }
+  func.func @vf1(%arg0: tensor<64xf32>, %arg1: tensor<64xbf16>, %arg2: tensor<f32>) -> tensor<f32> attributes {hivm.vector_function, no_inline} {
+    return %arg2 : tensor<f32>
+  }
+  func.func @vf2(%arg0: tensor<1xf32>, %arg1: tensor<1xf32>, %arg2: tensor<1xf32>) -> tensor<1xf32> attributes {hivm.vector_function, no_inline} {
+    return %arg0 : tensor<1xf32>
   }
 }

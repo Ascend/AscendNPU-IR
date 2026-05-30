@@ -44,3 +44,23 @@ func.func @softmax_f32_8_8192_outlined_vf_6(%arg0: index, %arg1: memref<1x?xf32,
   }
   return
 }
+
+// -----
+
+  // CHECK-LABEL: func.func @plt_no_conversion_when_min_operand_is_not_loop_iv
+func.func @plt_no_conversion_when_min_operand_is_not_loop_iv() -> vector<64xi1> {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c704 = arith.constant 704 : index
+  %all = ave.hir.pge <ALL> : vector<64xi1>
+  %mask = scf.for %arg0 = %c0 to %c64 step %c64 iter_args(%iter = %all) -> (vector<64xi1>) {
+    %0 = arith.addi %arg0, %c704 : index
+    %1 = affine.min affine_map<(d0) -> (-d0 + 1500, 64)>(%0)
+    // CHECK-NOT: ave.hir.pltm
+    // CHECK: ave.hir.plt
+    // CHECK-NOT: ave.hir.pltm
+    %res, %new_true_shape = ave.hir.plt %1 : vector<64xi1>, index
+    scf.yield %res : vector<64xi1>
+  }
+  return %mask : vector<64xi1>
+}
