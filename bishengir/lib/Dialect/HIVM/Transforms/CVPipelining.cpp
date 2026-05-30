@@ -329,6 +329,22 @@ static int getMultibufferCount(annotation::MarkOp marker) {
   return multibufferAttr.getInt();
 }
 
+static void removeWorkspaceMultiBufferMarks(Operation *root) {
+  SmallVector<annotation::MarkOp> marksToErase;
+  root->walk([&](annotation::MarkOp markOp) {
+    if (!markOp->hasAttr(MultiBufferAttr::name))
+      return WalkResult::advance();
+    if (!isa_and_nonnull<AllocWorkspaceOp>(markOp.getSrc().getDefiningOp()))
+      return WalkResult::advance();
+    markOp->removeAttr(MultiBufferAttr::name);
+    if (!markOp->hasAttr(PreloadLocalBufferAttr::name))
+      marksToErase.push_back(markOp);
+    return WalkResult::advance();
+  });
+  for (annotation::MarkOp markOp : marksToErase)
+    markOp.erase();
+}
+
 static Value traceValueDef(Value v) {
   if (!v)
     return nullptr;
@@ -2196,6 +2212,8 @@ void CVPipeliningPass::runOnOperation() {
     if (impl.run().succeeded())
       pipelinedLoops.insert(loop);
   });
+
+  removeWorkspaceMultiBufferMarks(func);
 }
 
 std::unique_ptr<Pass>
