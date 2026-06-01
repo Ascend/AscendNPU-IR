@@ -162,3 +162,94 @@ func.func @indirect_atomic_no_mask_test(%dst: memref<?xf32, #hivm.address_space<
       outs(%out : memref<16xf32, #hivm.address_space<ub>>)
   return
 }
+
+// CHECK-LABEL: indirect_atomic_or_test
+func.func @indirect_atomic_or_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                   %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                   %value: memref<16xi32, #hivm.address_space<ub>>,
+                                   %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                   %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_soft_or_int32_t_int32_t
+  hivm.hir.custom
+      {extra_attr = "operate=or"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_soft_xor_no_mask_test
+func.func @indirect_atomic_soft_xor_no_mask_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                                 %offsets: memref<16xi64, #hivm.address_space<ub>>,
+                                                 %value: memref<16xi32, #hivm.address_space<ub>>,
+                                                 %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_soft_xor_no_mask_int32_t_int64_t
+  hivm.hir.custom
+      {extra_attr = "operate=xor"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi64, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_block_or_test
+func.func @indirect_atomic_block_or_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                       %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                       %value: memref<16xi32, #hivm.address_space<ub>>,
+                                       %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                       %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_block_or_int32_t_int32_t
+  hivm.hir.custom
+      {extra_attr = "scope=cta, operate=or"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_block_and_no_mask_test
+func.func @indirect_atomic_block_and_no_mask_test(%dst: memref<?xi64, #hivm.address_space<gm>>,
+                                                %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                                %value: memref<16xi64, #hivm.address_space<ub>>,
+                                                %out: memref<16xi64, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_block_and_no_mask_int64_t_int32_t
+  hivm.hir.custom
+      {extra_attr = "scope=cta, operate=and"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value
+          : memref<?xi64, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi64, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi64, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_block_xor_test
+func.func @indirect_atomic_block_xor_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                        %offsets: memref<16xi64, #hivm.address_space<ub>>,
+                                        %value: memref<16xi32, #hivm.address_space<ub>>,
+                                        %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                        %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_block_xor_int32_t_int64_t
+  hivm.hir.custom
+      {extra_attr = "scope=cta, operate=xor"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi64, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
