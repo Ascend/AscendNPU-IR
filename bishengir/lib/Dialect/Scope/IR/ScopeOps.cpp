@@ -76,9 +76,7 @@ void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
 
 void ScopeOp::getEntrySuccessorRegions(
     ArrayRef<Attribute> operands, SmallVectorImpl<RegionSuccessor> &regions) {
-  FoldAdaptor adaptor(operands, *this);
   regions.emplace_back(&getRegion());
-  regions.emplace_back(getResults());
 }
 
 void ScopeOp::getRegionInvocationBounds(

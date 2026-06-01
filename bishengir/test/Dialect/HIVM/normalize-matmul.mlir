@@ -1001,3 +1001,27 @@ module {
     return
   }
 }
+
+// -----
+// CHECK-LABEL: func.func @matmul_operands_from_scope_result
+// CHECK: scope.scope
+// CHECK: hivm.hir.mmadL1
+module {
+  func.func @matmul_operands_from_scope_result() -> tensor<16x16xf32> {
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<16x16xf16>
+    %alloc_b = memref.alloc() : memref<16x16xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<16x16xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<16x16xf16>
+    %scope_a = scope.scope : () -> tensor<16x16xf16> {
+      scope.return %a : tensor<16x16xf16>
+    }
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %init = scope.scope : () -> tensor<16x16xf32> {
+      scope.return %empty : tensor<16x16xf32>
+    }
+    %mmad = hivm.hir.mmadL1 ins(%scope_a, %b, %false, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%init : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mmad : tensor<16x16xf32>
+  }
+}
