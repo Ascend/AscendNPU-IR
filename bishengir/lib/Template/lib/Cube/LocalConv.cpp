@@ -254,6 +254,32 @@ __aicore__ __attribute__((always_inline)) void conv2d_group(
   auto k_actual = k;
   auto k_ceil = CEIL_FACTOR(k, L1_ALIGN_BYTES / sizeof(SRC_TYPE));
 
+  // L0 buffers
+  __cc__ DST_TYPE *output_base = output->aligned + output->offset;
+  __ca__ SRC_TYPE *l0a_base = reinterpret_cast<__ca__ SRC_TYPE *>((uintptr_t)0);
+  __cb__ SRC_TYPE *l0b_base = reinterpret_cast<__cb__ SRC_TYPE *>((uintptr_t)0);
+
+  int64_t mn_max = m > n ? m : n;
+  int64_t elem_num_per_block = L1_ALIGN_BYTES / sizeof(SRC_TYPE);
+  int64_t align_block = wH * wW * elem_num_per_block;
+  bool enable_double_buffer = true;
+  int64_t l0ab_pingpong_buffer_len =
+      L0AB_BUFFER_BYTES / 2 / sizeof(SRC_TYPE);
+  int64_t k_part = l0ab_pingpong_buffer_len /
+                   CEIL_FACTOR(mn_max, FRACTAL_BLOCK_NUM) / align_block *
+                   align_block;
+  if (k_part == 0) {
+    enable_double_buffer = false;
+    l0ab_pingpong_buffer_len = L0AB_BUFFER_BYTES / sizeof(SRC_TYPE);
+    k_part = l0ab_pingpong_buffer_len /
+             CEIL_FACTOR(mn_max, FRACTAL_BLOCK_NUM) / align_block *
+             align_block;
+  }
+
+  if (k_part == 0 || k_actual == 0) {
+    trap();
+  }
+
   if (back_pipe_m_pipe_mte1_db_event0 == -1) {
     INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
   }
@@ -261,22 +287,6 @@ __aicore__ __attribute__((always_inline)) void conv2d_group(
     INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
   }
 
-  // L0 buffers
-  __cc__ DST_TYPE *output_base = output->aligned + output->offset;
-  __ca__ SRC_TYPE *l0a_base = reinterpret_cast<__ca__ SRC_TYPE *>((uintptr_t)0);
-  __cb__ SRC_TYPE *l0b_base = reinterpret_cast<__cb__ SRC_TYPE *>((uintptr_t)0);
-
-  int64_t mn_max = m > n ? m : n;
-  int64_t L0AB_PINGPONG_BUFFER_LEN = L0AB_BUFFER_BYTES / 2 / sizeof(SRC_TYPE);
-  int64_t elem_num_per_block = L1_ALIGN_BYTES / sizeof(SRC_TYPE);
-
-  int64_t align_block = wH * wW * elem_num_per_block;
-  int64_t k_part = L0AB_PINGPONG_BUFFER_LEN /
-                   CEIL_FACTOR(mn_max, FRACTAL_BLOCK_NUM) / align_block *
-                   align_block;
-#ifdef ENABLE_CPU_TRACE_INTRINSIC
-  assert(k_part != 0 && "k_part should not be zero");
-#endif
   int64_t k_part_loop = (k_actual + k_part - 1) / k_part;
 
   // -----------------------------
@@ -304,19 +314,20 @@ __aicore__ __attribute__((always_inline)) void conv2d_group(
                                     ? k_part
                                     : k_actual - k_part_idx * k_part;
 
-        auto mte1_conv_ping_flag = 1 - part_idx % 2;
-        auto mte1_conv_event_id = mte1_conv_ping_flag
-                                      ? (back_pipe_m_pipe_mte1_db_event0 != -1
-                                             ? back_pipe_m_pipe_mte1_db_event0
-                                             : EVENT_ID0)
-                                      : (back_pipe_m_pipe_mte1_db_event1 != -1
-                                             ? back_pipe_m_pipe_mte1_db_event1
-                                             : EVENT_ID1);
+        int64_t ping_pong_id = enable_double_buffer ? part_idx % 2 : 0;
+        auto mte1_conv_event_id =
+            (ping_pong_id == 0)
+                ? (back_pipe_m_pipe_mte1_db_event0 != -1
+                       ? back_pipe_m_pipe_mte1_db_event0
+                       : EVENT_ID0)
+                : (back_pipe_m_pipe_mte1_db_event1 != -1
+                       ? back_pipe_m_pipe_mte1_db_event1
+                       : EVENT_ID1);
 
         __ca__ SRC_TYPE *l0a_buf =
-            l0a_base + (1 - mte1_conv_ping_flag) * L0AB_PINGPONG_BUFFER_LEN;
+            l0a_base + ping_pong_id * l0ab_pingpong_buffer_len;
         __cb__ SRC_TYPE *l0b_buf =
-            l0b_base + (1 - mte1_conv_ping_flag) * L0AB_PINGPONG_BUFFER_LEN;
+            l0b_base + ping_pong_id * l0ab_pingpong_buffer_len;
 
         INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, mte1_conv_event_id);
         // load input from L1 to L0A

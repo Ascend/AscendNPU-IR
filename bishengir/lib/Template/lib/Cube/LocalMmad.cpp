@@ -359,7 +359,7 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
   int64_t k_part = FLOOR_FACTOR(l0ab_pingpong_buffer_len /
                                     CEIL_FACTOR(mn_max, max_align_value),
                                 max_align_value);
-  if (k_part <= 0) {
+  if (k_part == 0) {
     enable_double_buffer = false;
     l0ab_pingpong_buffer_len = L0AB_BUFFER_BYTES / sizeof(SRC_TYPE);
     k_part = FLOOR_FACTOR(l0ab_pingpong_buffer_len /
@@ -367,20 +367,8 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
       max_align_value);
   }
 
-  if (k_part <= 0 || k_actual <= 0) {
-    if (mmad_l1_wait_l1a_event != -1) {
-      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, mmad_l1_wait_l1a_event);
-    }
-    if (mmad_l1_wait_l1b_event != -1) {
-      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, mmad_l1_wait_l1b_event);
-    }
-    if (l1a_wait_mmad_l1_event != -1) {
-      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1a_wait_mmad_l1_event);
-    }
-    if (l1b_wait_mmad_l1_event != -1) {
-      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1b_wait_mmad_l1_event);
-    }
-    return;
+  if (k_part == 0 || k_actual == 0) {
+    trap();
   }
 
   if (back_pipe_m_pipe_mte1_db_event0 == -1) {
