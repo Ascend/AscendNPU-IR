@@ -200,3 +200,98 @@ func.func @test_scalar_bf16_u16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2:
   bufferization.materialize_in_destination %2 in writable %reinterpret_cast : (tensor<6x5x15xi16>, memref<6x5x15xi16, strided<[75, 15, 1]>>) -> ()
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @cast_kernel(
+// CHECK: arith.uitofp {{.*}} : i64 to f32
+// CHECK: arith.truncf {{.*}} : f32 to f16
+// CHECK: tensor.insert {{.*}} : tensor<1xf16>
+func.func @cast_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1], strides: [1] : memref<?xi64> to memref<1xi64, strided<[1]>>
+  %0 = memref.load %reinterpret_cast[%c0] : memref<1xi64, strided<[1]>>
+  %1 = arith.uitofp %0 : i64 to f16
+  %2 = tensor.empty() : tensor<1xf16>
+  %inserted = tensor.insert %1 into %2[%c0] : tensor<1xf16>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xf16> to memref<1xf16, strided<[1]>>
+  bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_0 : (tensor<1xf16>, memref<1xf16, strided<[1]>>) -> ()
+  return
+}
+
+
+// -----
+
+// CHECK-LABEL: func.func @cast_kernel(
+// CHECK: arith.uitofp {{.*}} : i64 to f32
+// CHECK: arith.truncf {{.*}} : f32 to bf16
+// CHECK: tensor.insert {{.*}} : tensor<1xbf16>
+func.func @cast_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1], strides: [1] : memref<?xi64> to memref<1xi64, strided<[1]>>
+  %0 = memref.load %reinterpret_cast[%c0] : memref<1xi64, strided<[1]>>
+  %1 = arith.uitofp %0 : i64 to bf16
+  %2 = tensor.empty() : tensor<1xbf16>
+  %inserted = tensor.insert %1 into %2[%c0] : tensor<1xbf16>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xbf16> to memref<1xbf16, strided<[1]>>
+  bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_0 : (tensor<1xbf16>, memref<1xbf16, strided<[1]>>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @cast_kernel(
+// CHECK: arith.sitofp {{.*}} : i64 to f32
+// CHECK: arith.truncf {{.*}} : f32 to bf16
+// CHECK: tensor.insert {{.*}} : tensor<1xbf16>
+func.func @cast_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1], strides: [1] : memref<?xi64> to memref<1xi64, strided<[1]>>
+  %0 = memref.load %reinterpret_cast[%c0] : memref<1xi64, strided<[1]>>
+  %1 = arith.sitofp %0 : i64 to bf16
+  %2 = tensor.empty() : tensor<1xbf16>
+  %inserted = tensor.insert %1 into %2[%c0] : tensor<1xbf16>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xbf16> to memref<1xbf16, strided<[1]>>
+  bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_0 : (tensor<1xbf16>, memref<1xbf16, strided<[1]>>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @cast_kernel(
+// CHECK: arith.extsi {{.*}} : i16 to i32
+// CHECK: tensor.from_elements {{.*}} : tensor<1xi32>
+// CHECK: arith.sitofp {{.*}} : tensor<1xi32> to tensor<1xbf16>
+// CHECK: tensor.extract {{.*}} : tensor<1xbf16>
+// CHECK: tensor.insert {{.*}} : tensor<1xbf16>
+func.func @cast_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1], strides: [1] : memref<?xi16> to memref<1xi16, strided<[1]>>
+  %0 = memref.load %reinterpret_cast[%c0] : memref<1xi16, strided<[1]>>
+  %1 = arith.sitofp %0 : i16 to bf16
+  %2 = tensor.empty() : tensor<1xbf16>
+  %inserted = tensor.insert %1 into %2[%c0] : tensor<1xbf16>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xbf16> to memref<1xbf16, strided<[1]>>
+  bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_0 : (tensor<1xbf16>, memref<1xbf16, strided<[1]>>) -> ()
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @cast_kernel(
+// CHECK: arith.extui {{.*}} : i16 to i32
+// CHECK: tensor.from_elements {{.*}} : tensor<1xi32>
+// CHECK: arith.uitofp {{.*}} : tensor<1xi32> to tensor<1xbf16>
+// CHECK: tensor.extract {{.*}} : tensor<1xbf16>
+// CHECK: tensor.insert {{.*}} : tensor<1xbf16>
+func.func @cast_kernel(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1], strides: [1] : memref<?xi16> to memref<1xi16, strided<[1]>>
+  %0 = memref.load %reinterpret_cast[%c0] : memref<1xi16, strided<[1]>>
+  %1 = arith.uitofp %0 : i16 to bf16
+  %2 = tensor.empty() : tensor<1xbf16>
+  %inserted = tensor.insert %1 into %2[%c0] : tensor<1xbf16>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xbf16> to memref<1xbf16, strided<[1]>>
+  bufferization.materialize_in_destination %inserted in writable %reinterpret_cast_0 : (tensor<1xbf16>, memref<1xbf16, strided<[1]>>) -> ()
+  return
+}

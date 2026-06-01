@@ -21,6 +21,7 @@ class Pass;
 
 namespace hfusion {
 void populateMathToHFusionConversionPatterns(RewritePatternSet &patterns);
+void populateScalarMathPromotionPatterns(RewritePatternSet &patterns);
 } // namespace hfusion
 
 /// Creates a pass to convert the HFusion dialect to the HIVM dialect.
