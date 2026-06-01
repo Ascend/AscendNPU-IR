@@ -69,6 +69,11 @@ static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
 static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
     "MayImplicitTransposeWithLastAxis";
 
+// Marks the iteration-counter alloca created by NormalizeMatmul::initCounter so
+// downstream passes (e.g. CVPipelining) can recognize it.
+static constexpr llvm::StringLiteral kNormalizeMatmulCounterAttr =
+    "normalize_matmul_counter";
+
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr int VBITSORT_NUM_PER_REPEAT = 32;
 
