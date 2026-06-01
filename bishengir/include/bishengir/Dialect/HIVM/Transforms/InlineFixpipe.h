@@ -19,10 +19,6 @@ struct InsertFixpipePatternOptions {
   bool inferFixpipeDmaMode = false;
 };
 
-struct InlineFixpipePatternOptions {
-  bool enableV2SliceSwapOpt = false;
-};
-
 /// Populate patterns that insert `hivm.fixpipe` ops.
 void populateInsertFixpipePatterns(
     RewritePatternSet &patterns,
@@ -30,8 +26,7 @@ void populateInsertFixpipePatterns(
 
 /// Populate patterns that inline / fold around `hivm.fixpipe` ops.
 void populateInlineFixpipePatterns(
-    RewritePatternSet &patterns,
-    InlineFixpipePatternOptions options = InlineFixpipePatternOptions{});
+    RewritePatternSet &patterns);
 
 } // namespace hivm
 } // namespace mlir

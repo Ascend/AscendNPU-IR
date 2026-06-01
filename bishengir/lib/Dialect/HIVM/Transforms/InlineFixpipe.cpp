@@ -25,8 +25,6 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 
-#include <bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h>
-
 namespace mlir {
 #define GEN_PASS_DEF_INSERTFIXPIPE
 #define GEN_PASS_DEF_INLINEFIXPIPE
@@ -466,10 +464,7 @@ int64_t getSiftedUsersNum(Value v) {
 // Potential optimization is to fuse condition 1&2&3 into fixpipe.
 struct InlineFixpipeOpPattern : public OpRewritePattern<FixpipeOp> {
 public:
-  InlineFixpipeOpPattern(MLIRContext *context,
-                         InlineFixpipePatternOptions options)
-      : OpRewritePattern<FixpipeOp>(context),
-        options(options) {}
+  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
@@ -568,8 +563,6 @@ private:
     }
     return matched ? success() : failure();
   }
-
-  InlineFixpipePatternOptions options;
 
   void inlineFixPipeWithRreQuant(PatternRewriter &rewriter, Location loc,
                                  hivm::FixpipeOp op, hivm::VCastOp castOp,
@@ -818,10 +811,9 @@ void mlir::hivm::populateInsertFixpipePatterns(RewritePatternSet &patterns,
   patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx, options);
 }
 
-void mlir::hivm::populateInlineFixpipePatterns(
-    RewritePatternSet &patterns, InlineFixpipePatternOptions options) {
+void mlir::hivm::populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
-  patterns.add<InlineFixpipeOpPattern>(ctx, options);
+  patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 
 struct InsertFixpipeForDevicePrint : public OpRewritePattern<DebugOp> {
@@ -885,14 +877,7 @@ void InsertFixpipe::runOnOperation() {
 
 void InlineFixpipe::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  InlineFixpipePatternOptions options;
-  options.enableV2SliceSwapOpt = enableV2SliceSwapOpt;
-  mlir::hivm::populateInlineFixpipePatterns(patterns, options);
-  if (options.enableV2SliceSwapOpt) {
-    // dogshit pattern
-    populateFixpipeExtractSlice(patterns, &getContext());
-    populateCombineOptimizedConvertLayoutPatterns(patterns, &getContext());
-  }
+  mlir::hivm::populateInlineFixpipePatterns(patterns);
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }
@@ -903,7 +888,6 @@ std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass(
   return std::make_unique<InsertFixpipe>(options);
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass(
-    const InlineFixpipeOptions &options) {
-  return std::make_unique<InlineFixpipe>(options);
+std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass() {
+  return std::make_unique<InlineFixpipe>();
 }

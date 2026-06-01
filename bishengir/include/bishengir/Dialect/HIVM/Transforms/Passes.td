@@ -636,11 +636,6 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
-  let options = [
-    Option<"enableV2SliceSwapOpt", "enable-v2-slice-swap-opt", "bool",
-           /*default=*/"false",
-           "Enable fixpipe/extract_slice and fixpipe/insert_slice swap optimization.">
-  ];
 }
 
 def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
@@ -653,13 +648,6 @@ def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
            /*default=*/"false",
            "Infer fixpipe dma_mode from source/destination shape compatibility.">
   ];
-}
-
-def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {
-  let summary = "Convert ops to HIVM Fixpipe op";
-  let constructor = "mlir::hivm::createInlineFixpipeV2Pass()";
-  let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
 }
 
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {

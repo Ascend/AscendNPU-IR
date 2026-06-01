@@ -55,7 +55,6 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   CVPipelining.cpp
   EnableMultiBuffer.cpp
   Fixpipe/FixpipeExtractSlice.cpp
-  Fixpipe/InlineFixpipeV2.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp
   HIVMBubbleUpExtractSlice.cpp
