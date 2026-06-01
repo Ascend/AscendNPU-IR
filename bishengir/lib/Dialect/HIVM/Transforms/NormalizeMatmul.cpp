@@ -42,6 +42,7 @@ using namespace mlir::hivm;
 #define DEBUG_TYPE "hivm-normalize-matmul"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
+
 bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
                                         Operation *hookOp = nullptr);
 namespace {
@@ -133,6 +134,16 @@ struct NormalizeMatmulPass
   void runOnOperation() override;
 };
 
+SmallVector<Value> getShapeFromMixedSizes(ArrayRef<OpFoldResult> mixedSizes,
+                                          Location loc,
+                                          PatternRewriter &rewriter) {
+  SmallVector<Value> sizes;
+  for (OpFoldResult size : mixedSizes) {
+    sizes.push_back(mlir::getValueOrCreateConstantIndexOp(rewriter, loc, size));
+  }
+  return sizes;
+}
+
 // If value is from memref, we get shape from memref.subview or memref.alloc.
 // If value is from tensor, we get shape from value directly.
 FailureOr<SmallVector<Value>>
@@ -145,24 +156,21 @@ getRealShapeFromMemrefOrTensor(Value val, Location loc,
           dyn_cast_if_present<bufferization::ToTensorOp>(val.getDefiningOp())) {
     if (auto memspace = dyn_cast_if_present<memref::MemorySpaceCastOp>(
             toTensor.getMemref().getDefiningOp())) {
-      SmallVector<Value> mixedSizes;
-      for (OpFoldResult size :
-           memref::getMixedSizes(rewriter, loc, memspace->getResult(0))) {
-        mixedSizes.push_back(
-            mlir::getValueOrCreateConstantIndexOp(rewriter, loc, size));
-      }
-      return mixedSizes;
+      return getShapeFromMixedSizes(
+          memref::getMixedSizes(rewriter, loc, memspace->getResult(0)), loc,
+          rewriter);
     }
   }
+  if (isa<RankedTensorType>(val.getType()) &&
+      !val.getDefiningOp<bufferization::ToTensorOp>())
+    return getShapeFromMixedSizes(tensor::getMixedSizes(rewriter, loc, val),
+                                  loc, rewriter);
+
   FailureOr<memref::AllocOp> status = getMemRefAlloc(val);
-  if (failed(status)) {
-    SmallVector<Value> tensorMixedSizes;
-    for (OpFoldResult size : tensor::getMixedSizes(rewriter, loc, val)) {
-      tensorMixedSizes.push_back(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, size));
-    }
-    return tensorMixedSizes;
-  }
+  if (failed(status))
+    return getShapeFromMixedSizes(tensor::getMixedSizes(rewriter, loc, val),
+                                  loc, rewriter);
+
   memref::AllocOp rootAlloc = *(status);
   SmallVector<Operation *> candidateSubViews;
   // Find all SubViewOps that uses the root AllocOp.
@@ -252,7 +260,7 @@ FailureOr<SmallVector<Value>> extractRealMKN(hivm::MmadMxL1Op op,
   if (failed(realKN) || (*realKN).size() != matrixSize) {
     return failure();
   }
- 
+
   // set m,k,n
   return SmallVector<Value>{(*realMK)[0], (*realMK)[1], (*realKN)[1]};
 }

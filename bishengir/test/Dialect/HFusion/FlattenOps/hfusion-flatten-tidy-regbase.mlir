@@ -1310,15 +1310,17 @@ func.func @indirect_store(%arg0: memref<?xi32>){
 // CHECK-LABEL: test_gather_load_multi_dim_flatten
 // CHECK-DAG: %[[IDX:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xi64> into tensor<8xi64>
 // CHECK-DAG: %[[MASK:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xi1> into tensor<8xi1>
-// CHECK: %[[INIT:.*]] = tensor.empty() : tensor<2x4xf32>
-// CHECK: %[[INIT_FLAT:.*]] = tensor.collapse_shape %[[INIT]] {{\[\[}}0, 1]] : tensor<2x4xf32> into tensor<8xf32>
-// CHECK: %[[OUT:.*]] = hfusion.gather_load ins(%{{.*}} : memref<?xf32>, %[[IDX]] : tensor<8xi64>, %{{.*}} : i64, %[[MASK]] : tensor<8xi1>, %{{.*}} : f32) outs(%[[INIT_FLAT]] : tensor<8xf32>) -> tensor<8xf32>
+// CHECK-DAG: %[[INIT:.*]] = tensor.empty() : tensor<2x4xf32>
+// CHECK-DAG: %[[INIT_FLAT:.*]] = tensor.collapse_shape %[[INIT]] {{\[\[}}0, 1]] : tensor<2x4xf32> into tensor<8xf32>
+// CHECK-DAG: %[[OTHER:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]] : tensor<2x4xf32> into tensor<8xf32>
+// CHECK: %[[OUT:.*]] = hfusion.gather_load ins(%{{.*}} : memref<?xf32>, %[[IDX]] : tensor<8xi64>, %{{.*}} : i64, %[[MASK]] : tensor<8xi1>, %[[OTHER]] : tensor<8xf32>) outs(%[[INIT_FLAT]] : tensor<8xf32>) -> tensor<8xf32>
 // CHECK: tensor.expand_shape %[[OUT]] {{\[\[}}0, 1]] output_shape {{\[}}2, 4] : tensor<8xf32> into tensor<2x4xf32>
 func.func @test_gather_load_multi_dim_flatten(%base: memref<?xf32>, %idx: tensor<2x4xi64>, %mask: tensor<2x4xi1>) -> tensor<2x4xf32> {
   %c1 = arith.constant 1 : i64
-  %other = arith.constant 0.000000e+00 : f32
+  %cst = arith.constant 0.000000e+00 : f32
+  %other = tensor.splat %cst : tensor<2x4xf32>
   %init = tensor.empty() : tensor<2x4xf32>
-  %res = hfusion.gather_load ins(%base : memref<?xf32>, %idx : tensor<2x4xi64>, %c1 : i64, %mask : tensor<2x4xi1>, %other : f32) outs(%init : tensor<2x4xf32>) -> tensor<2x4xf32>
+  %res = hfusion.gather_load ins(%base : memref<?xf32>, %idx : tensor<2x4xi64>, %c1 : i64, %mask : tensor<2x4xi1>, %other : tensor<2x4xf32>) outs(%init : tensor<2x4xf32>) -> tensor<2x4xf32>
   return %res : tensor<2x4xf32>
 }
 
