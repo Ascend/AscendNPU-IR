@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-alloc-extra-buffer))" -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -pass-pipeline="builtin.module(func.func(hivm-alloc-extra-buffer))" -split-input-file -verify-diagnostics %s | FileCheck %s
 
 func.func @test_vbrc_temp_buffer_first_axis_align() {
   %src = memref.alloc() : memref<1x32xf16>
@@ -606,5 +606,135 @@ func.func @test_vmins_2d_last_axis_inline_brc_temp_buffer() {
   // CHECK: hivm.hir.vmin{{.*}}temp_buffer({{.*}}memref<64xf32>)
   hivm.hir.vmin ins(%src0_last_inline_brc, %c8 : memref<8x1xf32, #hivm.address_space<ub>>, f32)
                 outs(%dst : memref<8x8xf32, #hivm.address_space<ub>>) broadcast = [1]
+  return
+}
+
+// -----
+
+func.func @custom_indirect_atomic_block_alloc_temp_buffer(
+    %dst: memref<32xi32, #hivm.address_space<gm>>,
+    %offsets: memref<16xi32, #hivm.address_space<ub>>,
+    %value: memref<16xi32, #hivm.address_space<ub>>,
+    %mask: memref<16xi8, #hivm.address_space<ub>>,
+    %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK-LABEL: func.func @custom_indirect_atomic_block_alloc_temp_buffer
+  // CHECK: %[[TMP:.*]] = memref.alloc() : memref<16xi32>
+  // CHECK: hivm.hir.custom
+  // CHECK-SAME: temp_buffer(%[[TMP]] : memref<16xi32>)
+  hivm.hir.custom {extra_attr = "scope=cta, operate=or",
+                   extra_buffers_sizes = [16 : i64],
+                   extra_buffers_types = [i32]}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<32xi32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+func.func @custom_indirect_atomic_soft_alloc_temp_buffer(
+    %dst: memref<32xi32, #hivm.address_space<gm>>,
+    %offsets: memref<16xi32, #hivm.address_space<ub>>,
+    %value: memref<16xi32, #hivm.address_space<ub>>,
+    %mask: memref<16xi8, #hivm.address_space<ub>>,
+    %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK-LABEL: func.func @custom_indirect_atomic_soft_alloc_temp_buffer
+  // CHECK: %[[TMP:.*]] = memref.alloc() : memref<16xi32>
+  // CHECK: hivm.hir.custom
+  // CHECK-SAME: temp_buffer(%[[TMP]] : memref<16xi32>)
+  hivm.hir.custom {extra_attr = "operate=or",
+                   extra_buffers_sizes = [16 : i64],
+                   extra_buffers_types = [i32]}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<32xi32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+func.func @custom_indirect_atomic_dynamic_offset_error(
+    %dst: memref<32xi32, #hivm.address_space<gm>>,
+    %offsets: memref<?xi32, #hivm.address_space<ub>>,
+    %value: memref<?xi32, #hivm.address_space<ub>>,
+    %mask: memref<?xi8, #hivm.address_space<ub>>,
+    %out: memref<?xi32, #hivm.address_space<ub>>) {
+  // expected-error@+1 {{indirect atomic requires static offset shape to allocate extra temp buffer}}
+  hivm.hir.custom {extra_attr = "operate=xor"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<32xi32, #hivm.address_space<gm>>,
+            memref<?xi32, #hivm.address_space<ub>>,
+            memref<?xi32, #hivm.address_space<ub>>,
+            memref<?xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<?xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+func.func @custom_attr_extra_buffer_alloc(
+    %src: memref<16xf32, #hivm.address_space<gm>>,
+    %out: memref<16xf32, #hivm.address_space<ub>>) {
+  // CHECK-LABEL: func.func @custom_attr_extra_buffer_alloc
+  // CHECK: %[[TMP0:.*]] = memref.alloc() : memref<32xf32>
+  // CHECK: %[[TMP1:.*]] = memref.alloc() : memref<64xi32>
+  // CHECK: hivm.hir.custom
+  // CHECK-SAME: temp_buffer(%[[TMP0]], %[[TMP1]] : memref<32xf32>, memref<64xi32>)
+  hivm.hir.custom
+      {extra_buffers_sizes = [32 : i64, 64 : i64],
+       extra_buffers_types = [f32, i32],
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       symbol = "custom_attr_extra_buffer_impl"}
+      "my_custom_op"
+      ins(%src : memref<16xf32, #hivm.address_space<gm>>)
+      outs(%out : memref<16xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+func.func @custom_attr_extra_buffer_missing_size(
+    %src: memref<16xf32, #hivm.address_space<gm>>,
+    %out: memref<16xf32, #hivm.address_space<ub>>) {
+  // expected-error@+1 {{Either extra buffers' types or sizes missing}}
+  hivm.hir.custom
+      {extra_buffers_types = [f32],
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       symbol = "custom_attr_extra_buffer_missing_size_impl"}
+      "my_custom_op"
+      ins(%src : memref<16xf32, #hivm.address_space<gm>>)
+      outs(%out : memref<16xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+func.func @custom_attr_extra_buffer_size_mismatch(
+    %src: memref<16xf32, #hivm.address_space<gm>>,
+    %out: memref<16xf32, #hivm.address_space<ub>>) {
+  // expected-error@+1 {{Extra buffers' types and sizes mismatch}}
+  hivm.hir.custom
+      {extra_buffers_sizes = [32 : i64],
+       extra_buffers_types = [f32, i32],
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       symbol = "custom_attr_extra_buffer_size_mismatch_impl"}
+      "my_custom_op"
+      ins(%src : memref<16xf32, #hivm.address_space<gm>>)
+      outs(%out : memref<16xf32, #hivm.address_space<ub>>)
   return
 }

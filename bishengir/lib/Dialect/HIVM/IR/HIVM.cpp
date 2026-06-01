@@ -30,6 +30,7 @@
 #include "mlir/Support/LLVM.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 // For function inliner support
@@ -1259,7 +1260,9 @@ static ParseResult parseForCustomOps(OpAsmParser &parser,
       return success();
     };
 
-    if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs"))) {
+    if (failed(parseVariadicArgs("ins")) ||
+        failed(parseVariadicArgs("outs")) ||
+        failed(parseVariadicArgs("temp_buffer"))) {
       return failure();
     }
 
@@ -1324,6 +1327,7 @@ static void printForCustomOps(CustomOp op, OpAsmPrinter &p) {
 
   printVariadicArgs(op.getInputs(), "ins");
   printVariadicArgs(op.getOutputs(), "outs");
+  printVariadicArgs(op.getTempBuffer(), "temp_buffer");
 
   if (!op.getResults().empty())
     p.printOptionalArrowTypeList(op.getResultTypes());
@@ -1332,6 +1336,54 @@ static void printForCustomOps(CustomOp op, OpAsmPrinter &p) {
 void CustomOp::print(OpAsmPrinter &p) { printForCustomOps(*this, p); }
 
 void CustomMacroOp::print(OpAsmPrinter &p) { printForCustomOps(*this, p); }
+
+SmallVector<std::pair<Type, int64_t>> CustomOp::getExtraBuffersInfo() {
+  SmallVector<std::pair<Type, int64_t>> res;
+  const auto typesAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersTypesName);
+  const auto sizesAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersSizesName);
+  if (!typesAttr)
+    return res;
+
+  for (auto [typeAttr, sizeAttr] : llvm::zip(typesAttr, sizesAttr)) {
+    const Type type = cast<TypeAttr>(typeAttr).getValue();
+    const int64_t size = cast<IntegerAttr>(sizeAttr).getInt();
+    res.push_back(std::make_pair(type, size));
+  }
+  return res;
+}
+
+template <typename CustomOpT>
+static LogicalResult verifyCustomOpExtraBufferAttrs(CustomOpT op) {
+  const auto typesAttr = op->template getAttrOfType<ArrayAttr>(
+      CustomOpT::kExtraBuffersTypesName);
+  const auto sizesAttr = op->template getAttrOfType<ArrayAttr>(
+      CustomOpT::kExtraBuffersSizesName);
+  if (!typesAttr && !sizesAttr)
+    return success();
+  if (!typesAttr || !sizesAttr)
+    return op.emitOpError()
+           << "Either extra buffers' types or sizes missing";
+  if (typesAttr.size() != sizesAttr.size())
+    return op.emitOpError() << "Extra buffers' types and sizes mismatch";
+
+  for (Attribute typeAttr : typesAttr) {
+    if (!isa<TypeAttr>(typeAttr))
+      return op.emitOpError()
+             << "Extra buffers' types must be an array of type attributes";
+  }
+  for (Attribute sizeAttr : sizesAttr) {
+    auto intAttr = dyn_cast<IntegerAttr>(sizeAttr);
+    if (!intAttr)
+      return op.emitOpError()
+             << "Extra buffers' sizes must be an array of integer attributes";
+    if (intAttr.getInt() < 0)
+      return op.emitOpError() << "Extra buffer size must be non-negative";
+  }
+
+  return success();
+}
 
 template <typename CustomOpT>
 static LogicalResult verifyBuiltins(CustomOpT op) {
@@ -1360,6 +1412,10 @@ static LogicalResult verifyCustomOp(CustomOpT op) {
   // Check builtins
   if (op.isBuiltin())
     return verifyBuiltins(op);
+
+  // Check extra buffer attributes
+  if (failed(verifyCustomOpExtraBufferAttrs(op)))
+    return failure();
 
   // Check core type attribute
   const auto coreType = op.getCoreType();
@@ -1423,8 +1479,7 @@ std::string getIndexSelectLibraryCallName(CustomOpT op) {
   int idxRank = idxType.getRank();
   const std::string idxDim = std::to_string(idxRank) + "d";
 
-  auto srcRank =
-      op->template getAttrOfType<StringAttr>("extra_attr").getValue().str();
+  auto srcRank = op.getExtraAttr().getValue().str();
   const std::string srcDim = srcRank.substr(srcRank.length() - 1, 1) + "d";
 
   // get embedding data type
@@ -1442,13 +1497,22 @@ std::string getIndexSelectLibraryCallName(CustomOpT op) {
 template <typename CustomOpT>
 static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
   std::string opName = "unknown";
-  if (auto extraAttr = op->template getAttrOfType<StringAttr>("extra_attr")) {
-    StringRef key;
-    StringRef value;
-    std::tie(key, value) = extraAttr.getValue().split('=');
-    value = value.trim();
-    if (key.trim() == "operate" && !value.empty())
-      opName = value.str();
+  bool isBlockScope = false;
+  if (auto extraAttr = op.getExtraAttr()) {
+    SmallVector<StringRef> entries;
+    extraAttr.getValue().split(entries, ',');
+    for (StringRef entry : entries) {
+      StringRef key;
+      StringRef value;
+      std::tie(key, value) = entry.split('=');
+      key = key.trim();
+      value = value.trim();
+      if (key == "operate" && !value.empty()) {
+        opName = value.str();
+      } else if (key == "scope") {
+        isBlockScope = value == "cta";
+      }
+    }
   }
 
   ValueRange inputs = op.getInputs();
@@ -1462,8 +1526,15 @@ static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
   const std::string offsetsTypeStr =
       hivm::detail::getTypeName(op->getLoc(), getElementTypeOrSelf(offsetsType));
 
-  return "indirect_atomic_" + opName + (hasMask ? "" : "_no_mask") + "_" +
-         valueTypeStr + "_" + offsetsTypeStr;
+  const bool isSoftwareAcceleratedOp =
+      opName == "or" || opName == "and" || opName == "xor";
+  std::string scopePrefix = "";
+  if (isSoftwareAcceleratedOp)
+    scopePrefix = isBlockScope ? "block_" : "soft_";
+
+  return "indirect_atomic_" + scopePrefix + opName +
+         (hasMask ? "" : "_no_mask") + "_" + valueTypeStr + "_" +
+         offsetsTypeStr;
 }
 
 template <typename CustomOpT>
