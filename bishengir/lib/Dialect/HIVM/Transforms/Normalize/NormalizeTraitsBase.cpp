@@ -206,6 +206,8 @@ static const llvm::DenseMap<BinaryKind, BinaryOpFn> binaryOpMap = {
     {BinaryKind::Powf, createHIVMBinaryOp<hivm::VPowOp>},
     {BinaryKind::MinSigned, createHIVMBinaryOp<hivm::VMinOp>},
     {BinaryKind::MaxSigned, createHIVMBinaryOp<hivm::VMaxOp>},
+    {BinaryKind::MinUnsigned, createHIVMBinaryOp<hivm::VMinOp>},
+    {BinaryKind::MaxUnsigned, createHIVMBinaryOp<hivm::VMaxOp>},
 };
 
 static const llvm::DenseMap<UnaryKind, UnaryOpMatcherFn> unaryOpMatcherMap = {
@@ -227,9 +229,12 @@ static const llvm::DenseMap<BinaryKind, BinaryOpMatcherFn> binaryOpMatcherMap = 
     {BinaryKind::Max, matchHIVMOp<hivm::VMaxOp>},
     {BinaryKind::And, matchHIVMOp<hivm::VAndOp>},
     {BinaryKind::Powf, matchHIVMOp<hivm::VPowOp>},
+    {BinaryKind::Or, matchHIVMOp<hivm::VOrOp>},
     {BinaryKind::Xor, matchHIVMOp<hivm::VXorOp>},
     {BinaryKind::MinSigned, matchHIVMOp<hivm::VMinOp>},
     {BinaryKind::MaxSigned, matchHIVMOp<hivm::VMaxOp>},
+    {BinaryKind::MinUnsigned, matchHIVMOp<hivm::VMinOp>},
+    {BinaryKind::MaxUnsigned, matchHIVMOp<hivm::VMaxOp>},
 };
 
 bool mlir::hivm::NormalizeTraitsBase::matchOp(Operation *op, UnaryKind kind) {

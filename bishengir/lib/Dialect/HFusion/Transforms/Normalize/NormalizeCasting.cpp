@@ -119,6 +119,32 @@ struct HFusionNormalizeScalarCastTraits : public hfusion::NormalizeTraitsBase {
   }
 };
 
+struct HFusionNormalizeSortTraits : public hfusion::NormalizeTraitsBase {
+  static bool isSupportedSortElementType(Type elemType) {
+    auto floatType = dyn_cast<FloatType>(elemType);
+    if (floatType && (floatType.isF16() || floatType.isF32()))
+      return true;
+
+    auto intType = dyn_cast<IntegerType>(elemType);
+    return intType && (intType.isInteger(32) || intType.isInteger(64));
+  }
+
+  static Value createCastOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Type targetElemType) {
+    return NormalizeTraitsBase::createCastOp(rewriter, loc, input,
+                                             targetElemType,
+                                             CastRoundKind::Round);
+  }
+
+  static Value createSortOp(PatternRewriter &rewriter, hfusion::SortOp op,
+                            Value input) {
+    return rewriter
+        .create<hfusion::SortOp>(op.getLoc(), input.getType(), input,
+                                 op.getDescending(), op.getSortAxis())
+        ->getResult(0);
+  }
+};
+
 using NormalizeBrcCast =
     NormalizeBrcCastTemplate<hfusion::CastOp, HFusionNormalizeBrcCastTraits>;
 using NormalizefillCastToTensorBrc =
@@ -143,6 +169,8 @@ using NormalizeCastLoweringOp =
 using NormalizeScalarCastOp =
     NormalizeScalarCastOpTemplate<hfusion::CastOp,
                                   HFusionNormalizeScalarCastTraits>;
+using NormalizeSortOp =
+    NormalizeSortOpTemplate<hfusion::SortOp, HFusionNormalizeSortTraits>;
 
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
@@ -162,5 +190,9 @@ void populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeScalarExtension<arith::ExtFOp>>(ctx);
   if (archIsRegbased)
     patterns.add<NormalizeScalarCastOp>(ctx);
+}
+
+void populateNormalizeSortPatterns(RewritePatternSet &patterns) {
+  patterns.add<NormalizeSortOp>(patterns.getContext());
 }
 } // namespace mlir::hfusion

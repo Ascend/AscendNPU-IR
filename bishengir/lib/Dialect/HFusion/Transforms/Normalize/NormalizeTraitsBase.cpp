@@ -121,6 +121,8 @@ mapBinaryKindToLinalgBinaryFn(BinaryKind kind) {
       {BinaryKind::Div, linalg::BinaryFn::div},
       {BinaryKind::MinSigned, linalg::BinaryFn::min_signed},
       {BinaryKind::MaxSigned, linalg::BinaryFn::max_signed},
+      {BinaryKind::MinUnsigned, linalg::BinaryFn::min_unsigned},
+      {BinaryKind::MaxUnsigned, linalg::BinaryFn::max_unsigned},
       {BinaryKind::Sub, linalg::BinaryFn::sub},
   };
 
