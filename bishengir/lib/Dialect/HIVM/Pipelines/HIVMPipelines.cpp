@@ -206,6 +206,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(
       tensor::createPropagateReshapePass(propagateOption));
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
+  canonicalizationHIVMPipeline(pm);
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
   pm.addPass(mlir::hivm::createNormalizeConvOpsPass());
   pm.addPass(mlir::hivm::createNormalizeBitwiseSelectPass());

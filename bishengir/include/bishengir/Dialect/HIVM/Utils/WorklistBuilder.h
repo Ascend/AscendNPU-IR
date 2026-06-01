@@ -173,8 +173,8 @@ private:
 
   DenseSet<Operation *> toBePipelined;
   SmallVector<Operation *> separators;
-  // Counter alloca value -> vector-safe clone advancing it (set by CV
-  // pipeline).
+
+  // Counter alloca value -> vector-safe clone advancing it (set by CV pipeline).
   DenseMap<Value, Operation *> counterClones;
   DenseMap<Operation *, DenseSet<Operation *>> dependenceMap;
   DenseMap<Operation *, DenseSet<Operation *>> loopCarriedDependenceMap;

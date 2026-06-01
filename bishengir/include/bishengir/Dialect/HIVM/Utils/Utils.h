@@ -89,17 +89,26 @@ static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
 static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
     "MayImplicitTransposeWithLastAxis";
 
-const std::string Ascend910BCubeTriple = "ascend_910b_cube-unknown-cce-unknown";
-const std::string Ascend910BDataLayout =
-    "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
-
 // Marks the iteration-counter alloca created by NormalizeMatmul::initCounter so
 // downstream passes (e.g. CVPipelining) can recognize it.
 static constexpr llvm::StringLiteral kNormalizeMatmulCounterAttr =
     "normalize_matmul_counter";
 
 // The amount of data processed by the VBITSORT instruction in one repeat.
-constexpr const int VBITSORT_NUM_PER_REPEAT = 32;
+constexpr int VBITSORT_NUM_PER_REPEAT = 32;
+
+// CTRL[48] is for saturation control of FP8/Hif8/FP16/BF16 computation in
+// CUBE/FIXPIPE/VECTOR/SCALAR /AIPP/WAIPP.
+static constexpr unsigned int SaturationControlBit = 48;
+static constexpr unsigned int MaskControlBit = 56;
+
+// CTRL[60] is the control bit to override saturation behavior for Vector Thread
+// Extension Instructions SIMD.VCVTFI, SIMD.VCVTII, SIMD.VCVTFF and SIMT.F2F.
+static constexpr unsigned int OverrideSaturationBit = 60;
+
+const std::string Ascend910BCubeTriple = "ascend_910b_cube-unknown-cce-unknown";
+const std::string Ascend910BDataLayout =
+    "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
 
 // CTRL[48] is for saturation control of FP8/Hif8/FP16/BF16 computation in
 // CUBE/FIXPIPE/VECTOR/SCALAR /AIPP/WAIPP.
