@@ -256,6 +256,187 @@ public:
   }
 };
 
+/// For narrow unsigned integer to bf16 conversions the hardware does not
+/// natively support the direct cast. Extend the operand to i32 first, then
+/// promote i32 to bf16 via tensor<1> (same strategy as
+/// LegalizeScalarCastOps<UIToFPOp>).
+///
+/// Before:
+///   %res = arith.uitofp %a : i16 to bf16
+/// After:
+///   %ext = arith.extui %a : i16 to i32
+///   %ta = tensor.from_elements %ext : tensor<1xi32>
+///   %tr = arith.uitofp %ta : tensor<1xi32> to tensor<1xbf16>
+///   %res = tensor.extract %tr[%c0] : tensor<1xbf16>
+struct LegalizeNarrowUIToBF16 : public OpRewritePattern<arith::UIToFPOp> {
+  using OpRewritePattern<arith::UIToFPOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::UIToFPOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resultType = op.getType();
+    if (!resultType.isBF16()) {
+      return failure();
+    }
+
+    auto operandType = op.getOperand().getType();
+    auto intOperandType = dyn_cast<IntegerType>(operandType);
+    if (!intOperandType || intOperandType.getWidth() >= 32) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    auto i32Type = rewriter.getI32Type();
+
+    Value extI32 =
+        rewriter.create<arith::ExtUIOp>(loc, i32Type, op.getOperand());
+
+    auto inTensorTy = RankedTensorType::get({1}, i32Type);
+    auto outTensorTy = RankedTensorType::get({1}, resultType);
+    Value inTensor =
+        rewriter.create<tensor::FromElementsOp>(loc, inTensorTy, extI32);
+    Value tensorOp =
+        rewriter.create<arith::UIToFPOp>(loc, outTensorTy, inTensor);
+    auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    SmallVector<Value> indices = {extractIndex};
+    auto extractOp =
+        rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
+
+    rewriter.replaceOp(op, extractOp);
+    return success();
+  }
+};
+
+/// For narrow signed integer to bf16 conversions the hardware does not
+/// natively support the direct cast. Extend the operand to i32 first, then
+/// promote i32 to bf16 via tensor<1> (same strategy as
+/// LegalizeScalarCastOps<SIToFPOp>).
+///
+/// Before:
+///   %res = arith.sitofp %a : i16 to bf16
+/// After:
+///   %ext = arith.extsi %a : i16 to i32
+///   %ta = tensor.from_elements %ext : tensor<1xi32>
+///   %tr = arith.sitofp %ta : tensor<1xi32> to tensor<1xbf16>
+///   %res = tensor.extract %tr[%c0] : tensor<1xbf16>
+struct LegalizeNarrowSIToBF16 : public OpRewritePattern<arith::SIToFPOp> {
+  using OpRewritePattern<arith::SIToFPOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::SIToFPOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resultType = op.getType();
+    if (!resultType.isBF16()) {
+      return failure();
+    }
+
+    auto operandType = op.getOperand().getType();
+    auto intOperandType = dyn_cast<IntegerType>(operandType);
+    if (!intOperandType || intOperandType.getWidth() >= 32) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    auto i32Type = rewriter.getI32Type();
+
+    Value extI32 =
+        rewriter.create<arith::ExtSIOp>(loc, i32Type, op.getOperand());
+
+    auto inTensorTy = RankedTensorType::get({1}, i32Type);
+    auto outTensorTy = RankedTensorType::get({1}, resultType);
+    Value inTensor =
+        rewriter.create<tensor::FromElementsOp>(loc, inTensorTy, extI32);
+    Value tensorOp =
+        rewriter.create<arith::SIToFPOp>(loc, outTensorTy, inTensor);
+    auto extractIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    SmallVector<Value> indices = {extractIndex};
+    auto extractOp =
+        rewriter.create<tensor::ExtractOp>(loc, tensorOp, indices);
+
+    rewriter.replaceOp(op, extractOp);
+    return success();
+  }
+};
+
+/// For i64 to bf16 sitofp conversions the hardware does not natively support
+/// the direct cast. Convert i64 to f32 first, then truncate f32 to bf16.
+///
+/// Before:
+///   %res = arith.sitofp %a : i64 to bf16
+/// After:
+///   %f32 = arith.sitofp %a : i64 to f32
+///   %res = arith.truncf %f32 : f32 to bf16
+struct LegalizeWideSIToNarrowFP : public OpRewritePattern<arith::SIToFPOp> {
+  using OpRewritePattern<arith::SIToFPOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::SIToFPOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resultType = op.getType();
+    if (!resultType.isBF16()) {
+      return failure();
+    }
+
+    auto operandType = op.getOperand().getType();
+    auto intOperandType = dyn_cast<IntegerType>(operandType);
+    if (!intOperandType || intOperandType.getWidth() <= 32) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    auto f32Type = rewriter.getF32Type();
+
+    Value f32Val =
+        rewriter.create<arith::SIToFPOp>(loc, f32Type, op.getOperand());
+    Value bf16Val =
+        rewriter.create<arith::TruncFOp>(loc, resultType, f32Val);
+
+    rewriter.replaceOp(op, bf16Val);
+    return success();
+  }
+};
+
+/// For u64 to f16/bf16 uitofp conversions the hardware does not natively
+/// support the direct cast. Convert u64 to f32 first, then truncate f32 to
+/// the target type.
+///
+/// Before:
+///   %res = arith.uitofp %a : u64 to bf16
+/// After:
+///   %f32 = arith.uitofp %a : u64 to f32
+///   %res = arith.truncf %f32 : f32 to bf16
+///
+/// Before:
+///   %res = arith.uitofp %a : u64 to f16
+/// After:
+///   %f32 = arith.uitofp %a : u64 to f32
+///   %res = arith.truncf %f32 : f32 to f16
+struct LegalizeWideUIToNarrowFP : public OpRewritePattern<arith::UIToFPOp> {
+  using OpRewritePattern<arith::UIToFPOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(arith::UIToFPOp op,
+                                PatternRewriter &rewriter) const override {
+    auto resultType = op.getType();
+    if (!isa<Float16Type, BFloat16Type>(resultType)) {
+      return failure();
+    }
+
+    auto operandType = op.getOperand().getType();
+    auto intOperandType = dyn_cast<IntegerType>(operandType);
+    if (!intOperandType || intOperandType.getWidth() <= 32) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    auto f32Type = rewriter.getF32Type();
+
+    Value f32Val =
+        rewriter.create<arith::UIToFPOp>(loc, f32Type, op.getOperand());
+    Value truncVal =
+        rewriter.create<arith::TruncFOp>(loc, resultType, f32Val);
+
+    rewriter.replaceOp(op, truncVal);
+    return success();
+  }
+};
+
 void populateLegalizeScalarConversionPatterns(
     RewritePatternSet &patterns) {
   patterns.add<LegalizeScalarArithOps<arith::AddFOp>>(patterns.getContext());
@@ -269,6 +450,10 @@ void populateLegalizeScalarConversionPatterns(
   patterns.add<LegalizeScalarCastOps<arith::UIToFPOp>>(patterns.getContext());
   patterns.add<LegalizeScalarCastOps<arith::FPToUIOp>>(patterns.getContext());
   patterns.add<LegalizeSelectLikeUiToFp>(patterns.getContext());
+  patterns.add<LegalizeNarrowUIToBF16>(patterns.getContext());
+  patterns.add<LegalizeNarrowSIToBF16>(patterns.getContext());
+  patterns.add<LegalizeWideSIToNarrowFP>(patterns.getContext());
+  patterns.add<LegalizeWideUIToNarrowFP>(patterns.getContext());
 }
  
 namespace {

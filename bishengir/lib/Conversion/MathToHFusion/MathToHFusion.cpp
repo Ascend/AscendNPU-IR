@@ -190,6 +190,17 @@ struct MathToHFusionConversionPass
 
 void MathToHFusionConversionPass::runOnOperation() {
   auto *module = getOperation();
+
+  // Normalize scalar math ops to tensor form first, so they can be converted
+  // to HFusion/Linalg ops by subsequent patterns.
+    RewritePatternSet scalarPatterns(&getContext());
+    populateScalarMathPromotionPatterns(scalarPatterns);
+    if (failed(
+            applyPatternsGreedily(module, std::move(scalarPatterns)))) {
+      signalPassFailure();
+      return;
+    }
+
   ConversionTarget target(getContext());
   target.addLegalDialect<linalg::LinalgDialect, tensor::TensorDialect,
                          hfusion::HFusionDialect>();
