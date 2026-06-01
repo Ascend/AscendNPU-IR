@@ -1,4 +1,4 @@
-//===- NormalizeAtomic.cpp ----------------------------------*- C++ -*-===//
+//===- NormalizeAtomic.cpp -------------------------------------*- C++ -*-===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,15 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
-#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
-#include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/NormalizePatterns.h"
+#include "bishengir/Dialect/HIVM/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Transforms/Normalize/NormalizeAtomicTemplate.h"
 
-namespace mlir::hfusion {
+namespace mlir::hivm {
 namespace NormalizeAtomicOps {
-struct HFusionAtomicTraits : public NormalizeTraitsBase {
+struct HIVMAtomicTraits : public NormalizeTraitsBase {
   static bool isHardwareSupported(Type dtype) {
     Type elemType = getElementTypeOrSelf(dtype);
     if (isa<Float16Type, Float32Type, BFloat16Type>(elemType))
@@ -36,10 +37,17 @@ struct HFusionAtomicTraits : public NormalizeTraitsBase {
     return width == 8 || width == 16 || width == 32;
   }
 
+  static bool shouldDecomposeStore(hivm::StoreOp op) {
+    return getStoreDecompositionBinaryKind(op).has_value();
+  }
+
   static std::optional<BinaryKind>
-  getStoreDecompositionBinaryKind(hfusion::StoreOp op) {
-    Type elemType = getElementTypeOrSelf(op.getOutputs()[0].getType());
-    AtomicKind atomicKind = op.getAtomicKind();
+  getStoreDecompositionBinaryKind(hivm::StoreOp op) {
+    if (!op.isAtomic())
+      return std::nullopt;
+
+    Type elemType = getElementTypeOrSelf(op.getDstOperandType());
+    AtomicKind atomicKind = *op.getAtomicKind();
     if (auto kind =
             mapAlwaysSoftwareAtomicKindToBinary(atomicKind))
       return kind;
@@ -49,12 +57,8 @@ struct HFusionAtomicTraits : public NormalizeTraitsBase {
     return std::nullopt;
   }
 
-  static bool shouldDecomposeStore(hfusion::StoreOp op) {
-    return getStoreDecompositionBinaryKind(op).has_value();
-  }
-
   static FailureOr<Value> createStoreBinary(PatternRewriter &rewriter,
-                                            Location loc, hfusion::StoreOp op,
+                                            Location loc, hivm::StoreOp op,
                                             Value lhsTensor, Value rhsTensor,
                                             Value resultTensor) {
     auto maybeKind = getStoreDecompositionBinaryKind(op);
@@ -66,10 +70,10 @@ struct HFusionAtomicTraits : public NormalizeTraitsBase {
 };
 
 using Elemwise =
-    NormalizeAtomicStoreElemwise<hfusion::StoreOp, HFusionAtomicTraits>;
-using CAS = NormalizeAtomicCASTemplate<hfusion::AtomicCasOp, HFusionAtomicTraits>;
-using XCHG = NormalizeAtomicXCHGTemplate<hfusion::AtomicXchgOp,
-                                         HFusionAtomicTraits>;
+    NormalizeAtomicStoreElemwise<hivm::StoreOp, HIVMAtomicTraits>;
+using CAS = NormalizeAtomicCASTemplate<hivm::AtomicCasOp, HIVMAtomicTraits>;
+using XCHG = NormalizeAtomicXCHGTemplate<hivm::AtomicXchgOp, HIVMAtomicTraits>;
+
 } // namespace NormalizeAtomicOps
 
 void populateNormalizeAtomicPatterns(RewritePatternSet &patterns) {
@@ -80,4 +84,5 @@ void populateNormalizeAtomicPatterns(RewritePatternSet &patterns) {
     patterns.add<NormalizeAtomicOps::XCHG>(ctx);
   }
 }
-} // namespace mlir::hfusion
+
+} // namespace mlir::hivm

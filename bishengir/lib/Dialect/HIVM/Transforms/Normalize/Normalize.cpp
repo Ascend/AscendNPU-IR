@@ -66,6 +66,8 @@ struct NormalizeHIVMPass
                                                          archIsRegbased);
     populateNormalizeFinalArithmeticPatterns(patterns);
     populateNormalizeCmpVnePatterns(patterns);
+    populateNormalizeAtomicPatterns(patterns);
+    populateNormalizeSortPatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

@@ -47,6 +47,8 @@ void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
 void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
     RewritePatternSet &patterns, bool isRegbased);
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
+void populateNormalizeSortPatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hivm
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H

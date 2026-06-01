@@ -136,6 +136,36 @@ struct HIVMNormalizeScalarCastTraits : public hivm::NormalizeTraitsBase {
   }
 };
 
+struct HIVMNormalizeSortTraits : public hivm::NormalizeTraitsBase {
+  static bool isSupportedSortElementType(Type elemType) {
+    auto floatType = dyn_cast<FloatType>(elemType);
+    if (floatType && (floatType.isF16() || floatType.isF32()))
+      return true;
+
+    auto intType = dyn_cast<IntegerType>(elemType);
+    return intType && (intType.isInteger(32) || intType.isInteger(64));
+  }
+
+  static Value createCastOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Type targetElemType) {
+    return NormalizeTraitsBase::createCastOp(rewriter, loc, input,
+                                             targetElemType,
+                                             CastRoundKind::Round);
+  }
+
+  static Value createSortOp(PatternRewriter &rewriter, hivm::VSortOp op,
+                            Value input) {
+    Value dst = utils::createEmptyOpWithTargetElemType(
+        rewriter, op.getLoc(), input, getElementTypeOrSelf(input.getType()));
+    return rewriter
+        .create<hivm::VSortOp>(op.getLoc(), TypeRange{input.getType()}, input,
+                               ValueRange{dst}, op.getDescending(),
+                               op.getSortAxis())
+        .getResult()
+        .front();
+  }
+};
+
 using NormalizeBrcCast =
     NormalizeBrcCastTemplate<hivm::VCastOp, HIVMNormalizeBrcCastTraits>;
 using NormalizefillCastToTensorBrc =
@@ -154,6 +184,8 @@ using NormalizeCastLoweringOp =
 using NormalizeScalarCastOp =
     NormalizeScalarCastOpTemplate<hivm::VCastOp,
                                   HIVMNormalizeScalarCastTraits>;
+using NormalizeSortOp =
+    NormalizeSortOpTemplate<hivm::VSortOp, HIVMNormalizeSortTraits>;
 } // namespace mlir
 
 void mlir::hivm::populateNormalizeCastingPatterns(RewritePatternSet &patterns) {
@@ -165,4 +197,8 @@ void mlir::hivm::populateNormalizeCastingPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeScalarExtension<arith::ExtFOp>>(ctx);
   if (archIsRegbased)
     patterns.add<NormalizeScalarCastOp>(ctx);
+}
+
+void mlir::hivm::populateNormalizeSortPatterns(RewritePatternSet &patterns) {
+  patterns.add<NormalizeSortOp>(patterns.getContext());
 }

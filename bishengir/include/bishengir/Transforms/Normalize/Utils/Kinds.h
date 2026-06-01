@@ -35,6 +35,8 @@ enum class BinaryKind {
   Or,
   MinSigned,
   MaxSigned,
+  MinUnsigned,
+  MaxUnsigned,
   Powf
 };
 enum class ShiftKind { Left, RightSigned, RightUnsigned };

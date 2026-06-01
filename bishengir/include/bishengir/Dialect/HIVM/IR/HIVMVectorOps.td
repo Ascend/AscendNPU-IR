@@ -1926,7 +1926,8 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
 def VSortOp : HIVM_VectorOp<"vsort",
     [StaticMaxRankTrait<1>,
      AttrSizedOperandSegments,
-     OperElemTypeConstraints<[0, 1], [F16, F32, I32, I64]>,
+     // Expanded element types via hivm sort normalize pattern
+     OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>
     ]> {

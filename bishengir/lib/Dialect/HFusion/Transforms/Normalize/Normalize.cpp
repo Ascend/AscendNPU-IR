@@ -59,7 +59,8 @@ static void populateNormalizeHFusionPatterns(RewritePatternSet &patterns,
   populateNormalizeNonDenseScalarLikeBroadcastPatterns(patterns);
   populateNormalizeFinalArithmeticPatterns(patterns);
   populateNormalizeCmpVnePatterns(patterns);
-  populateNormalizeAtomicAndSortPatterns(patterns);
+  populateNormalizeAtomicPatterns(patterns);
+  populateNormalizeSortPatterns(patterns);
 }
 
 namespace {
