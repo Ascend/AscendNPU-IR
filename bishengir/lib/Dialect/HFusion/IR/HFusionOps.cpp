@@ -649,8 +649,7 @@ public:
                        Type toType, Value operand) {
     bool isUnsignedCast = false;
     if (operand.getType().isInteger(1) && toType.getIntOrFloatBitWidth() > 1) {
-      // TODO: general support for unsigned cast
-      isUnsignedCast = true;
+      isUnsignedCast = (cast == TypeFn::cast_unsigned);
     }
 
     if (cast == TypeFn::cast_unsigned) {
