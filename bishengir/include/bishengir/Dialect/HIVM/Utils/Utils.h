@@ -301,7 +301,7 @@ bool isLastDimTranspose(hivm::VTransposeOp op);
 
 // Create local workspace of current block
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
-                                SmallVector<int64_t> shape, Type elementType);
+                                ArrayRef<int64_t> shape, Type elementType);
 
 Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
                               ArrayRef<int64_t> targetShapes, Type elementType);
