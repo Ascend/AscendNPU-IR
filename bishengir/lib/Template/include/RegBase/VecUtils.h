@@ -207,6 +207,11 @@ __aiv__ __attribute__((always_inline)) void
 vector_dma_unalign_offset_vv_1d_vf(memref_t<__ubuf__ T, 1> *src,
                                    memref_t<__ubuf__ T, 1> *dst);
 
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ T, 2> *src,
+                             memref_t<__ubuf__ T, 2> *dst);
+
 template <typename T, size_t dim>
 __aiv__ __attribute__((always_inline)) void
 vdiv_int(memref_t<__ubuf__ T, dim> *src0,
@@ -637,6 +642,17 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 #define REGISTE_BINARY_DMA_UNALIGN_OFFSET(T)                                   \
   DECLARE_BINARY_DMA_UNALIGN_OFFSET(T) {                                       \
     vector_dma_unalign_offset_vv_1d_vf<T>(src, dst);                           \
+  }
+
+// copy ub to ub 2d when src/dst is not align block.
+#define DECLARE_BINARY_DMA_UNALIGN_2D(T)                                       \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  vector_dma_unalign_vv_2d_vf_##T(memref_t<__ubuf__ T, 2> *src,               \
+                                   memref_t<__ubuf__ T, 2> *dst)
+
+#define REGISTE_BINARY_DMA_UNALIGN_2D(T)                                       \
+  DECLARE_BINARY_DMA_UNALIGN_2D(T) {                                           \
+    vector_dma_unalign_vv_2d_vf<T>(src, dst);                                  \
   }
 
 #define DECLARE_EMBEDDINGGATHER(dim, embty, idxty, ...)                        \

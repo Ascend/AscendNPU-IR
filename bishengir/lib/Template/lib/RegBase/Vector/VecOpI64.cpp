@@ -389,6 +389,113 @@ vector_dma_unalign_offset_vv_1d_vf(memref_t<__ubuf__ uint64_t, 1> *src,
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
+vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ T, 2> *src,
+                             memref_t<__ubuf__ T, 2> *dst) {
+  __ubuf__ T *src_base = src->aligned + src->offset;
+  __ubuf__ T *dst_base = dst->aligned + dst->offset;
+  const int64_t size0 = src->sizes[0];
+  const int64_t size1 = src->sizes[1];
+  const int64_t src_stride0 = src->strides[0];
+  const int64_t dst_stride0 = dst->strides[0];
+  __VEC_SCOPE__ {
+    constexpr int num_per_register = REG_REGISTER_SIZE / sizeof(T);
+    constexpr uint16_t UNROLL = 2;
+    uint16_t row_count = (uint16_t)size0;
+    uint16_t col_count = (uint16_t)size1;
+    uint16_t repeatTimes = col_count / num_per_register;
+    uint16_t tailsize = col_count - num_per_register * repeatTimes;
+    uint16_t unroll_row_count = row_count / UNROLL * UNROLL;
+    VectorReg<T> srcReg0, srcReg1, srcReg2, srcReg3;
+    vector_align ureg_src0, ureg_src1, ureg_dst0, ureg_dst1;
+    for (uint16_t i = 0; i < unroll_row_count; i += UNROLL) {
+      __ubuf__ T *row_src0 = src_base + (int64_t)i * src_stride0;
+      __ubuf__ T *row_dst0 = dst_base + (int64_t)i * dst_stride0;
+      __ubuf__ T *row_src1 = src_base + (int64_t)(i + 1) * src_stride0;
+      __ubuf__ T *row_dst1 = dst_base + (int64_t)(i + 1) * dst_stride0;
+      vldas(ureg_src0, row_src0);
+      vldas(ureg_src1, row_src1);
+      uint16_t j_unroll = repeatTimes / 2;
+      uint16_t j_tail = repeatTimes % 2;
+      for (uint16_t j = 0; j < j_unroll; ++j) {
+        vldus(srcReg0, ureg_src0, row_src0, num_per_register, POST_UPDATE);
+        vldus(srcReg1, ureg_src1, row_src1, num_per_register, POST_UPDATE);
+        vldus(srcReg2, ureg_src0, row_src0, num_per_register, POST_UPDATE);
+        vldus(srcReg3, ureg_src1, row_src1, num_per_register, POST_UPDATE);
+        vstus(ureg_dst0, num_per_register, srcReg0, row_dst0, POST_UPDATE);
+        vstus(ureg_dst1, num_per_register, srcReg1, row_dst1, POST_UPDATE);
+        vstus(ureg_dst0, num_per_register, srcReg2, row_dst0, POST_UPDATE);
+        vstus(ureg_dst1, num_per_register, srcReg3, row_dst1, POST_UPDATE);
+      }
+      if (j_tail > 0) {
+        vldus(srcReg0, ureg_src0, row_src0, num_per_register, POST_UPDATE);
+        vldus(srcReg1, ureg_src1, row_src1, num_per_register, POST_UPDATE);
+        vstus(ureg_dst0, num_per_register, srcReg0, row_dst0, POST_UPDATE);
+        vstus(ureg_dst1, num_per_register, srcReg1, row_dst1, POST_UPDATE);
+      }
+      if (tailsize > 0) {
+        vldus(srcReg0, ureg_src0, row_src0, tailsize, POST_UPDATE);
+        vldus(srcReg1, ureg_src1, row_src1, tailsize, POST_UPDATE);
+        vstus(ureg_dst0, tailsize, srcReg0, row_dst0, POST_UPDATE);
+        vstus(ureg_dst1, tailsize, srcReg1, row_dst1, POST_UPDATE);
+      }
+      vstas(ureg_dst0, row_dst0, 0);
+      vstas(ureg_dst1, row_dst1, 0);
+    }
+    for (uint16_t i = unroll_row_count; i < row_count; ++i) {
+      __ubuf__ T *row_src = src_base + (int64_t)i * src_stride0;
+      __ubuf__ T *row_dst = dst_base + (int64_t)i * dst_stride0;
+      vldas(ureg_src0, row_src);
+      for (uint16_t j = 0; j < repeatTimes; ++j) {
+        vldus(srcReg0, ureg_src0, row_src, num_per_register, POST_UPDATE);
+        vstus(ureg_dst0, num_per_register, srcReg0, row_dst, POST_UPDATE);
+      }
+      if (tailsize > 0) {
+        vldus(srcReg0, ureg_src0, row_src, tailsize, POST_UPDATE);
+        vstus(ureg_dst0, tailsize, srcReg0, row_dst, POST_UPDATE);
+      }
+      vstas(ureg_dst0, row_dst, 0);
+    }
+  }
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ bool, 2> *src,
+                             memref_t<__ubuf__ bool, 2> *dst) {
+  memref_t<__ubuf__ int8_t, 2> src_as_int8;
+  memref_t<__ubuf__ int8_t, 2> dst_as_int8;
+  view_as<bool, int8_t, 2>(src, &src_as_int8);
+  view_as<bool, int8_t, 2>(dst, &dst_as_int8);
+
+  vector_dma_unalign_vv_2d_vf<int8_t>(&src_as_int8, &dst_as_int8);
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ int64_t, 2> *src,
+                             memref_t<__ubuf__ int64_t, 2> *dst) {
+  memref_t<__ubuf__ int32_t, 2> src_as_int32;
+  memref_t<__ubuf__ int32_t, 2> dst_as_int32;
+  view_as<int64_t, int32_t, 2>(src, &src_as_int32);
+  view_as<int64_t, int32_t, 2>(dst, &dst_as_int32);
+
+  vector_dma_unalign_vv_2d_vf<int32_t>(&src_as_int32, &dst_as_int32);
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ uint64_t, 2> *src,
+                             memref_t<__ubuf__ uint64_t, 2> *dst) {
+  memref_t<__ubuf__ int32_t, 2> src_as_int32;
+  memref_t<__ubuf__ int32_t, 2> dst_as_int32;
+  view_as<uint64_t, int32_t, 2>(src, &src_as_int32);
+  view_as<uint64_t, int32_t, 2>(dst, &dst_as_int32);
+
+  vector_dma_unalign_vv_2d_vf<int32_t>(&src_as_int32, &dst_as_int32);
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
 vector_dma_unalign_size_vv_1d_vf(memref_t<__ubuf__ T, 1> *src,
                                  memref_t<__ubuf__ T, 1> *dst) {
   bool useVMax =
@@ -643,6 +750,18 @@ REGISTE_BINARY_DMA_UNALIGN_OFFSET(int16_t);
 REGISTE_BINARY_DMA_UNALIGN_OFFSET(uint16_t);
 REGISTE_BINARY_DMA_UNALIGN_OFFSET(int32_t);
 REGISTE_BINARY_DMA_UNALIGN_OFFSET(uint32_t);
+
+REGISTE_BINARY_DMA_UNALIGN_2D(float);
+REGISTE_BINARY_DMA_UNALIGN_2D(half);
+REGISTE_BINARY_DMA_UNALIGN_2D(bfloat16_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(float8_e4m3_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(float8_e5m2_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(int8_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(uint8_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(int16_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(uint16_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(int32_t);
+REGISTE_BINARY_DMA_UNALIGN_2D(uint32_t);
 
 
 REGISTE_SHIFT_VV(vshr);
