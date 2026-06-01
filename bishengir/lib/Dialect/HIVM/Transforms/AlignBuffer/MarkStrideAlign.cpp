@@ -123,6 +123,25 @@ bool isAnyOfLocalBuffer(const SmallVectorImpl<MemRefType> &memrefTypes) {
   return anyOfLocalBuffer;
 }
 
+static bool noNeedAlign(Operation *op) {
+  // Check if at least one operand is non-GM memscope
+  bool hasNonGMMemref = false;
+  for (Value operand : op->getOperands()) {
+    if (auto memrefType = dyn_cast<MemRefType>(operand.getType())) {
+      auto memSpace = memrefType.getMemorySpace();
+      assert(memSpace && "memSpace must not be null");
+      if (auto spaceAttr = dyn_cast<AddressSpaceAttr>(memSpace)) {
+        if (spaceAttr.getAddressSpace() != hivm::AddressSpace::GM) {
+          hasNonGMMemref = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return !hasNonGMMemref;
+}
+
 void MarkStrideAlignPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto funcOp = getOperation();
@@ -131,7 +150,7 @@ void MarkStrideAlignPass::runOnOperation() {
 
   WalkResult result = funcOp->walk([&builder](Operation *op) {
     LDBG("Walk operation : " << *op);
-    if (!isa<HIVMStructuredOp>(op)) {
+    if (!isa<HIVMStructuredOp>(op) || noNeedAlign(op)) {
       return WalkResult::advance();
     }
 

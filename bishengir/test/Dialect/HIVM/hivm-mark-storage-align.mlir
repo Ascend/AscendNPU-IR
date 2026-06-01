@@ -786,3 +786,26 @@ func.func @triton_part_min_2d_dim01_1(%arg0: memref<3x1835xf32, #hivm.address_sp
   "some_use"(%alloc_4) : (memref<1xi32, #hivm.address_space<ub>>) -> ()
   return
 }
+
+// -----
+// Test custom op without operands - should NOT mark alignment
+
+// CHECK-LABEL: @test_dist_align_dim
+func.func @test_dist_align_dim() {
+  // CHECK-NOT: annotation.mark
+  %2 = hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_OR_VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "aclshmem_n_pes"} "dist.aclshmem_n_pes" -> i32
+  return
+}
+
+// -----
+// Test custom op without ub operands - should NOT mark alignment
+
+// CHECK-LABEL: @test_dist_all_gm
+func.func @test_dist_all_gm(
+    %arg0: memref<64x64xi64, #hivm.address_space<gm>>) {
+  %c1_i64 = arith.constant 1 : i64
+  %c0_i32 = arith.constant 0 : i32
+  // CHECK-NOT: annotation.mark
+  hivm.hir.custom {commScope = 2 : i32, hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, sigOp = 1 : i32, symbol = "aclshmem_int64_p"} "dist.aclshmem_int64_p" ins(%arg0, %c1_i64, %c0_i32 : memref<64x64xi64, #hivm.address_space<gm>>, i64, i32)
+  return
+}

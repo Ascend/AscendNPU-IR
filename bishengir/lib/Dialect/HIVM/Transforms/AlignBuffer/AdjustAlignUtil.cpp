@@ -92,7 +92,7 @@ bool isNoNeedAlign(Value operand, std::optional<int32_t> alignDim) {
     return true;
   }
   auto memSpace = memRefType.getMemorySpace();
-  auto hivmAddressSpace = dyn_cast<AddressSpaceAttr>(memSpace);
+  auto hivmAddressSpace = dyn_cast_if_present<AddressSpaceAttr>(memSpace);
   if (!hivmAddressSpace ||
       hivmAddressSpace.getAddressSpace() == hivm::AddressSpace::GM) {
     LDBG("no need to storage align for gm\n");
