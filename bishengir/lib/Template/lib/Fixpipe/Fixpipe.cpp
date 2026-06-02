@@ -147,7 +147,7 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
             quant_mode, pre_relu, channel_split,
             nz2nd_en FIXPIPE_ARGS_XT2_VALUES(nz2dn_xt2)});
 
-    uint32_t offset_elements = (m_size_half1 * n_size) / sizeof(SRC_TYPE);
+    uint32_t offset_elements = (m_size_half1 * 16);
     copy_matrix_cc_to_ubuf_intrin(
         copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
             ubuf_ptr, l0c_ptr + offset_elements,
@@ -172,7 +172,7 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
             quant_mode, pre_relu, channel_split,
             nz2nd_en FIXPIPE_ARGS_XT2_VALUES(nz2dn_xt2)});
 
-    uint32_t offset_elements = (n_size_half1) / sizeof(SRC_TYPE);
+    uint32_t offset_elements = (n_size_half1) * m_size;
     copy_matrix_cc_to_ubuf_intrin(
         copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
             ubuf_ptr, l0c_ptr + offset_elements,
