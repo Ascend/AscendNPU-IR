@@ -124,6 +124,7 @@ init_variables() {
   CMAKE_OPTIONS=""
   INSTALL_PREFIX=""
   BUILD_BISHENGIR_A5="OFF"
+  SHMEM_BUILD_TEMPLATE="OFF"
 
   # Thread count: 3/4 of CPU cores (fallback to 1 if detection fails)
   if [[ "$OS_TYPE" == "Darwin" ]]; then
@@ -155,6 +156,7 @@ usage() {
                 [--bishengir-publish VALUE]
                 [-o | --build PATH]
                 [-t | --build-bishengir-template]
+                [--build-shmem-template]
                 [--build-bishengir-doc]
                 [--build-test]
                 [--build-type BUILD_TYPE]
@@ -183,6 +185,7 @@ usage() {
                                            (Default: build)
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: disabled)
       -t, --build-bishengir-template       Whether to build BiShengIR template. (Default: disabled)
+      --build-shmem-template               Whether to build shmem template. (Default: disabled)
       -build-test                          Whether to build bishengir-test (Default: disabled)
       --build-type BUILD_TYPE              Specifies the build type. (Default: Release)
       --build-torch-mlir                   Whether to build torch-mlir. (Default: disabled)
@@ -268,6 +271,10 @@ parse_arguments() {
                 ;;
             --build-bishengir-template=*)
                 BISHENGIR_BUILD_TEMPLATE="${1#--build-bishengir-template=}"
+                shift
+                ;;
+            --build-shmem-template)
+                SHMEM_BUILD_TEMPLATE="ON"
                 shift
                 ;;
             --build-bishengir-doc)
@@ -602,6 +609,7 @@ cmake_generate() {
     -DBISHENGIR_PUBLISH="${BISHENGIR_PUBLISH}" \
     -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
     -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
+    -DSHMEM_BUILD_TEMPLATE="${SHMEM_BUILD_TEMPLATE}" \
     ${CMAKE_OPTIONS}
 }
 

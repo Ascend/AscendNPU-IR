@@ -74,6 +74,82 @@ ${CMAKE_CURRENT_BINARY_DIR}/${bc_name} exist or not!")
 
 endfunction()
 
+function(compile_shmem_to_bc cpp_with_path core_type platform_type)
+    # Get name of xx.bc
+    string(REGEX MATCHALL "[0-9A-Za-z_]*.cpp" cpp_name ${cpp_with_path})
+
+    set(bisheng_args "-O2")
+    list(APPEND bisheng_args -x cce)
+    list(APPEND bisheng_args ${cpp_with_path})
+    list(APPEND bisheng_args -emit-llvm -c)
+    list(APPEND bisheng_args --cce-auto-sync=off)
+    list(APPEND bisheng_args --cce-aicore-only)
+    list(APPEND bisheng_args --cce-generic-addrspace=off)
+    list(APPEND bisheng_args -mllvm -disable-llvm-optzns)
+    list(APPEND bisheng_args --cce-enable-print)
+    list(APPEND bisheng_args --cce-enable-sanitizer)
+
+    set(aicore_arch "dav-c220")
+
+    if ((${core_type} STREQUAL "mix_aic") OR (${core_type} STREQUAL "mix_aiv"))
+        list(APPEND bisheng_args -cce-enable-mix)
+        list(APPEND bisheng_args -mllvm -enable-mix=true)
+    endif ()
+
+    if ((${core_type} STREQUAL "aic") OR (${core_type} STREQUAL "mix_aic"))
+        list(APPEND bisheng_args "--cce-aicore-arch=${aicore_arch}-cube")
+        if (${core_type} STREQUAL "aic")
+            string(REGEX REPLACE "\\.cpp" ".aic.bc" bc_name ${cpp_name})
+        else ()
+            string(REGEX REPLACE "\\.cpp" ".mix.aic.bc" bc_name ${cpp_name})
+        endif ()
+    elseif ((${core_type} STREQUAL "aiv") OR (${core_type} STREQUAL "mix_aiv"))
+        list(APPEND bisheng_args "--cce-aicore-arch=${aicore_arch}-vec")
+        if (${core_type} STREQUAL "aiv")
+            string(REGEX REPLACE "\\.cpp" ".aiv.bc" bc_name ${cpp_name})
+        else ()
+            string(REGEX REPLACE "\\.cpp" ".mix.aiv.bc" bc_name ${cpp_name})
+        endif ()
+    else ()
+        message(FATAL_ERROR "Core type must be aic/mix_aic/aiv/mix_aiv or host.")
+    endif ()
+
+    if (NOT ${platform_type} STREQUAL "Ascend910B")
+        message(FATAL_ERROR "Unsupported platform! Currently support Ascend910B.")
+    endif ()
+
+    list(APPEND bisheng_args -std=c++17)
+    list(APPEND bisheng_args -I ${INCLUDE_PATH})
+    list(APPEND bisheng_args -I ${PROJECT_SOURCE_DIR}/third-party/shmem/include/)
+    list(APPEND bisheng_args -I ${PROJECT_SOURCE_DIR}/third-party/shmem/src/device/)
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/aarch64-linux/include/)
+    elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "x86")
+        list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/x86_64-linux/include/)
+    else ()
+        message(FATAL_ERROR "Unknown architecture")
+    endif ()
+    list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/)
+    list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl)
+    list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface)
+    list(APPEND bisheng_args -o ${bc_name})
+
+    string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
+    message("-- command of compile cpp to bc is ${compile_command}")
+
+    execute_process(
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+            COMMAND ${BISHENG_TOOL} ${bisheng_args}
+    )
+
+
+    if (NOT EXISTS "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
+        message(FATAL_ERROR "Compile ${cpp_with_path} failed, please check \
+${CMAKE_CURRENT_BINARY_DIR}/${bc_name} exist or not!")
+    endif ()
+
+endfunction()
+
 #[[Compile single xx.cpp to xx_debug.bc
  Core_type: "aic" "aiv" "host"
  Platform_type: "DEBUG"]]
