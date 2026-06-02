@@ -297,3 +297,18 @@ func.func @test_msize_b32_dn_y() attributes {hivm.func_core_type = #hivm.func_co
   return
 }
 }
+
+// -----//
+
+// Test 21: MSize - B32, DN_Y, N, shape 64x1, fp32, dma_mode nz2nd
+// AIC-LABEL: func.func @test_msize_b32_dn_y_64x1
+// AIC: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @test_msize_b32_dn_y_64x1() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+  %alloc = memref.alloc() : memref<64x1xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<64x1xf32, #hivm.address_space<ub>>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<64x1xf32, #hivm.address_space<cc>>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%alloc_0 : memref<64x1xf32, #hivm.address_space<cc>>) outs(%alloc : memref<64x1xf32, #hivm.address_space<ub>>)
+  return
+}
+}
