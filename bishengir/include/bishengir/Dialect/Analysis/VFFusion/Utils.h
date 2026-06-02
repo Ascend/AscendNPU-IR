@@ -12,10 +12,8 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/UnionFind.h"
-#include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Operation.h"
-#include <string>
 namespace mlir {
 namespace analysis {
 
@@ -25,13 +23,12 @@ struct VFFusionKindOption {
   VFFusionKindOption(const bool enableOutlineCF, const bool enableOutlineMemref,
                      const bool enableOutlineArith,
                      const bool enableOutlineCube, int64_t ubBudgetBytes = 0,
-                     int64_t ubAlignBytes = 0, const bool enableRA = false,
-                     const bool enableAR = false)
+                     int64_t ubAlignBytes = 0)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
         enableOutlineCube(enableOutlineCube), ubBudgetBytes(ubBudgetBytes),
-        ubAlignBytes(ubAlignBytes), enableRA(enableRA), enableAR(enableAR) {};
+        ubAlignBytes(ubAlignBytes) {};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -43,8 +40,6 @@ struct VFFusionKindOption {
   const bool enableOutlineCube;
   const int64_t ubBudgetBytes;
   const int64_t ubAlignBytes;
-  const bool enableRA;
-  const bool enableAR;
 };
 
 bool isReshapeOp(Operation *op);
@@ -64,8 +59,6 @@ bool isVsstbPatternTransposeOp(Operation *op);
 bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op);
 
 bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op);
-
-bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option);
 
 } // namespace analysis
 } // namespace mlir

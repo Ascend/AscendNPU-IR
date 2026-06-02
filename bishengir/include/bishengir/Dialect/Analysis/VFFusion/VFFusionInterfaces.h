@@ -63,15 +63,9 @@ public:
       }
 
       for (VFFusionBlock &candidateBlock : candidateFusionBlocks) {
-        // Skip if the candidate wraps the entire function body.
-        if (candidateBlock.getOps().size() == block.getOperations().size())
+        if (candidateBlock.getOps().size() <= 1 ||
+            candidateBlock.getOps().size() == block.getOperations().size())
           continue;
-
-        if (candidateBlock.getOps().size() <= 1) {
-          auto ops = candidateBlock.getOps();
-          if (ops.size() != 1 || !shouldSkipFusion(ops.front(), option))
-            continue;
-        }
 
         func::FuncOp funcOp =
             block.getParent()->getParentOfType<func::FuncOp>();

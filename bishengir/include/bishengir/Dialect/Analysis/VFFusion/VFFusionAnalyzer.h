@@ -145,9 +145,6 @@ protected:
     if (!areReshapesValidIfFused(xIndex, yIndex))
       return false;
 
-    if (shouldSkipFusion(x, option) || shouldSkipFusion(y, option))
-      return false;
-
     return static_cast<AnalyzerClass *>(this)->isFusibleImpl(xIndex, yIndex);
   }
 
