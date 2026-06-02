@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 
@@ -367,6 +368,75 @@ VDeinterleaveOp::decomposeOperation(mlir::OpBuilder &b) {
   return decomposeMemRefDeinterleave(*this, b);
 }
 
+/// Inserts a 1-D memref.view over a byte alloc; size comes only from the alloc
+/// byte length (not from dst's shape).
+static FailureOr<Value> insertViewFromByteAlloc(Value alloc, Type elemType,
+                                                Attribute memorySpace,
+                                                OpBuilder &b) {
+  auto allocMemRefType = dyn_cast<MemRefType>(alloc.getType());
+  if (!allocMemRefType)
+    return failure();
+  if (allocMemRefType.getRank() != 1 ||
+      !allocMemRefType.getElementType().isInteger(8))
+    return failure();
+
+  int64_t elemBitWidth = getElementTypeOrSelf(elemType).getIntOrFloatBitWidth();
+  Location loc = alloc.getLoc();
+  auto offset = b.create<arith::ConstantIndexOp>(loc, 0);
+
+  if (allocMemRefType.hasStaticShape()) {
+    int64_t allocDimSize = allocMemRefType.getDimSize(0);
+    if (ShapedType::isDynamic(allocDimSize))
+      return failure();
+    int64_t allocBitSize =
+        allocDimSize * static_cast<int64_t>(utils::kBitsToByte);
+    if (allocBitSize % elemBitWidth != 0)
+      return failure();
+    int64_t numElems = allocBitSize / elemBitWidth;
+    auto viewMemRefType =
+        MemRefType::get({numElems}, elemType, AffineMap{}, memorySpace);
+    auto viewOp = b.create<memref::ViewOp>(loc, viewMemRefType, alloc, offset,
+                                           ValueRange{});
+    return viewOp.getResult();
+  }
+
+  FailureOr<SmallVector<Value>> allocByteSize = getValueFromShape(alloc, b);
+  if (failed(allocByteSize) || allocByteSize->size() != 1)
+    return failure();
+  Value i8TypeConst = b.create<arith::ConstantIndexOp>(loc, 8);
+  Value elemBitWidthConst = b.create<arith::ConstantIndexOp>(loc, elemBitWidth);
+  Value numElems = b.create<arith::DivSIOp>(
+      loc, b.create<arith::MulIOp>(loc, (*allocByteSize)[0], i8TypeConst),
+      elemBitWidthConst);
+  auto viewMemRefType = MemRefType::get({ShapedType::kDynamic}, elemType,
+                                        AffineMap{}, memorySpace);
+  auto viewOp = b.create<memref::ViewOp>(loc, viewMemRefType, alloc, offset,
+                                         ValueRange{numElems});
+  return viewOp.getResult();
+}
+
+/// Returns the memref buffer to initialize via VBrc before load/nd2nz.
+/// Uses the underlying alloc when its element type matches dst; otherwise
+/// inserts a 1-D view on the byte alloc sized from the alloc only.
+static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
+  auto maybeAlloc = traceDefOp<memref::AllocOp>(dst);
+  if (!maybeAlloc.has_value())
+    return failure();
+  auto allocOp = cast<memref::AllocOp>(maybeAlloc.value());
+  Value alloc = allocOp.getResult();
+  auto dstMemRefType = dyn_cast<MemRefType>(dst.getType());
+  if (!dstMemRefType)
+    return failure();
+  auto allocMemRefType = dyn_cast<MemRefType>(allocOp.getType());
+  if (!allocMemRefType)
+    return failure();
+  if (allocMemRefType.getElementType() == dstMemRefType.getElementType())
+    return alloc;
+
+  return insertViewFromByteAlloc(alloc, dstMemRefType.getElementType(),
+                                 dstMemRefType.getMemorySpace(), b);
+}
+
 //===----------------------------------------------------------------------===//
 // LoadOp
 //===----------------------------------------------------------------------===//
@@ -382,9 +452,9 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
   if (toAddrSpace.getAddressSpace() != hivm::AddressSpace::UB)
     return failure();
 
-  auto maybeAlloc = traceDefOp<memref::AllocOp>(getDst());
-  assert(maybeAlloc.has_value());
-  auto padMemref = cast<memref::AllocOp>(maybeAlloc.value());
+  FailureOr<Value> padBuffer = getVBrcPadBuffer(getDst(), b);
+  if (failed(padBuffer))
+    return failure();
   auto loc = getLoc();
   if (getInitCondition()) {
     scf::IfOp ifOp =
@@ -392,10 +462,10 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
     ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
     OpBuilder::InsertionGuard insertionGuard(b);
     b.setInsertionPointToStart(&ifOp.getThenRegion().front());
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   } else {
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   }
   b.create<hivm::LoadOp>(loc, TypeRange{}, getSrc(), getDst(), getPadModeAttr(),
@@ -413,9 +483,9 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
     return failure();
   if (!getInitOutBuffer())
     return failure();
-  auto maybeAlloc = traceDefOp<memref::AllocOp>(getDst());
-  assert(maybeAlloc.has_value());
-  auto padMemref = cast<memref::AllocOp>(maybeAlloc.value());
+  FailureOr<Value> padBuffer = getVBrcPadBuffer(getDst(), b);
+  if (failed(padBuffer))
+    return failure();
   auto loc = getLoc();
   if (getInitCondition()) {
     scf::IfOp ifOp =
@@ -423,10 +493,10 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
     ifOp->setAttr(hivm::UnlikelyConditionAttr::name, b.getUnitAttr());
     OpBuilder::InsertionGuard insertionGuard(b);
     b.setInsertionPointToStart(&ifOp.getThenRegion().front());
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   } else {
-    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   }
   b.create<hivm::ND2NZOp>(loc, TypeRange{}, getSrc(), getDst(),
@@ -900,8 +970,8 @@ static Value getReshapedValue(OpBuilder &builder, Location loc, Value v,
 
   auto gmSpaceAttr =
       AddressSpaceAttr::get(builder.getContext(), hivm::AddressSpace::UB);
-  idxsType =
-      cast<MemRefType>(util::getBaseMemRefTypeWithNewScope(idxsType, gmSpaceAttr));
+  idxsType = cast<MemRefType>(
+      util::getBaseMemRefTypeWithNewScope(idxsType, gmSpaceAttr));
 
   auto memrefIdxs = builder.create<memref::AllocOp>(loc, idxsType);
   for (auto [idx, dim] : llvm::enumerate(newShape)) {
@@ -981,7 +1051,8 @@ decomposeUnalignTransposeOp(VTransposeOp op, OpBuilder &builder) {
   SmallVector<int64_t> transposeLoopDims;
   op.getTransposeLoopDims(transposeLoopDims);
 
-  auto lastAlign = alignList[0]->alignBytes[0] / static_cast<int>(elemTypeBytes);
+  auto lastAlign =
+      alignList[0]->alignBytes[0] / static_cast<int>(elemTypeBytes);
   auto lastDim = inputShape[transposeLoopDims[1]];
 
   // (K * lastAlign, lastDim) -> (K, lastAlign * lastDim) -> (lastAlign *
@@ -991,8 +1062,8 @@ decomposeUnalignTransposeOp(VTransposeOp op, OpBuilder &builder) {
 
   // (lastAlign * lastDim, K) -> (lastAlign, lastDim * K) -> (lastDim * K,
   // lastAlign)
-  auto secondStepResult = reshapeAndTranspose2DStep(builder, op.getLoc(),
-                                                    firstStepResult, lastDim);
+  auto secondStepResult =
+      reshapeAndTranspose2DStep(builder, op.getLoc(), firstStepResult, lastDim);
 
   // (lastDim * K, lastAlign) -> (lastDim, K * lastAlign)
   auto rank = inputShape.size();
@@ -1016,12 +1087,13 @@ FailureOr<SmallVector<Value>> VTransposeOp::decomposeOperation(OpBuilder &b) {
 
 // if src0 (m, stride[1]) op src1 (m, stride[n])
 // after liftLowestStride Pass will be 2d :
-// src0 (mx1, stride[1, 1])  src1 (mx1, stride[n, 1]) which vector instruction not support
-// src0 transforms by:
+// src0 (mx1, stride[1, 1])  src1 (mx1, stride[n, 1]) which vector instruction
+// not support src0 transforms by:
 // 1. src0 broadcast to a new buffer with mxn stride[n, 1]
 // 2. subview mxn -> mx1 stride[n, 1]
 // 3. new_src0 (mx1, stride[n, 1])  src1 (mx1, stride[n, 1])
-static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Value src1) {
+static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0,
+                                     Value src1) {
   auto type0 = dyn_cast<MemRefType>(src0.getType());
   auto type1 = dyn_cast<MemRefType>(src1.getType());
 
@@ -1033,7 +1105,8 @@ static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Val
   }
 
   // as for broadcast scenario, not to handle now.
-  if (type0.getDimSize(0) != type1.getDimSize(0) || type0.getDimSize(1) != type1.getDimSize(1)) {
+  if (type0.getDimSize(0) != type1.getDimSize(0) ||
+      type0.getDimSize(1) != type1.getDimSize(1)) {
     return src0;
   }
 
@@ -1057,7 +1130,7 @@ static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Val
 
     // only dim1 == 1 can be broadcast
     if (dim1 != 1) {
-        return src0;
+      return src0;
     }
 
     int n = strideR;
@@ -1068,28 +1141,35 @@ static Value alignElementwiseStrides(OpBuilder &b, Location loc, Value src0, Val
     // alloc buffer, size = dim0 x n
     SmallVector<int64_t, 2> expandedShape = {dim0, n};
     StridedLayoutAttr layout = {};
-    auto expandedType = MemRefType::get(expandedShape, elemType, layout, addrSpace);
+    auto expandedType =
+        MemRefType::get(expandedShape, elemType, layout, addrSpace);
     Value expandedBuffer = b.create<memref::AllocOp>(loc, expandedType);
 
     // dim0x1 broadcat to dim0xn broadDim=1
-    b.create<hivm::VBrcOp>(loc, TypeRange(), src0, expandedBuffer, b.getDenseI64ArrayAttr({1}));
+    b.create<hivm::VBrcOp>(loc, TypeRange(), src0, expandedBuffer,
+                           b.getDenseI64ArrayAttr({1}));
 
     // subview to get dim0x1 with stride[n, 1]
     auto subviewLayout = StridedLayoutAttr::get(ctx, 0, {n, 1});
-    auto subviewType = MemRefType::get({dim0, dim1}, elemType, subviewLayout, addrSpace);
+    auto subviewType =
+        MemRefType::get({dim0, dim1}, elemType, subviewLayout, addrSpace);
 
     SmallVector<OpFoldResult> offsets = {b.getIndexAttr(0), b.getIndexAttr(0)};
-    SmallVector<OpFoldResult> sizes = {b.getIndexAttr(dim0), b.getIndexAttr(dim1)};
+    SmallVector<OpFoldResult> sizes = {b.getIndexAttr(dim0),
+                                       b.getIndexAttr(dim1)};
     SmallVector<OpFoldResult> strides = {b.getIndexAttr(1), b.getIndexAttr(1)};
-    Value alignSrc = b.create<memref::SubViewOp>(
-      loc, subviewType, expandedBuffer, offsets, sizes, strides).getResult();
+    Value alignSrc =
+        b.create<memref::SubViewOp>(loc, subviewType, expandedBuffer, offsets,
+                                    sizes, strides)
+            .getResult();
     return alignSrc;
   }
   return src0;
 }
 
 template <typename OpType>
-static FailureOr<SmallVector<Value>> decomposeBinaryVecOpLayout(OpType op, OpBuilder &b) {
+static FailureOr<SmallVector<Value>> decomposeBinaryVecOpLayout(OpType op,
+                                                                OpBuilder &b) {
   if (op.hasPureTensorSemantics()) {
     return failure();
   }
@@ -1100,13 +1180,15 @@ static FailureOr<SmallVector<Value>> decomposeBinaryVecOpLayout(OpType op, OpBui
 
   Value alignedLhs = alignElementwiseStrides(b, loc, lhs, rhs);
   if (alignedLhs != lhs) {
-    b.create<OpType>(loc, TypeRange{}, ValueRange{alignedLhs, rhs}, op.getDst());
+    b.create<OpType>(loc, TypeRange{}, ValueRange{alignedLhs, rhs},
+                     op.getDst());
     return SmallVector<Value>{};
   }
 
   Value alignedRhs = alignElementwiseStrides(b, loc, rhs, lhs);
   if (alignedRhs != rhs) {
-    b.create<OpType>(loc, TypeRange{}, ValueRange{lhs, alignedRhs}, op.getDst());
+    b.create<OpType>(loc, TypeRange{}, ValueRange{lhs, alignedRhs},
+                     op.getDst());
     return SmallVector<Value>{};
   }
 
@@ -1114,9 +1196,9 @@ static FailureOr<SmallVector<Value>> decomposeBinaryVecOpLayout(OpType op, OpBui
 }
 
 // Binary VectorOp
-#define DECOMPOSE_BINARY_VEC_OP(opName)                                           \
-  FailureOr<SmallVector<Value>> opName::decomposeOperation(OpBuilder &b) {        \
-    return decomposeBinaryVecOpLayout(*this, b);                                  \
+#define DECOMPOSE_BINARY_VEC_OP(opName)                                        \
+  FailureOr<SmallVector<Value>> opName::decomposeOperation(OpBuilder &b) {     \
+    return decomposeBinaryVecOpLayout(*this, b);                               \
   }
 
 DECOMPOSE_BINARY_VEC_OP(VMulOp)
