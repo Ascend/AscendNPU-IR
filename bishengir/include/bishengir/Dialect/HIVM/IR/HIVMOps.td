@@ -950,7 +950,7 @@ def ScatterTOp : HIVM_Op<"scatterT",[
 class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
     : HIVM_StructuredOp<mnemonic,
                         !listconcat([AttrSizedOperandSegments,
-                                     MemoryEffects<[MemRead, MemWrite]>,
+                                     MemoryEffectsOpInterface,
                                      HIVMInferCoreTypeInterface,
                                      DeclareOpInterfaceMethods<
                                          ExtraBufferOpInterface>],
@@ -1009,7 +1009,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   }];
 
   dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
-      Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffer);
+      Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffer, UnitAttr:$no_side_effect);
   dag res = (outs Variadic<AnyType>:$results);
 
   code customOpBaseDecl = [{
@@ -1113,6 +1113,15 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       }
 
       bool isBuiltin() { return kBuiltins.contains(getName()); }
+
+      void getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+        if (!getNoSideEffect()) {
+          effects.emplace_back(MemoryEffects::Write::get(),
+                               SideEffects::DefaultResource::get());
+          effects.emplace_back(MemoryEffects::Read::get(),
+                               SideEffects::DefaultResource::get());
+        }
+      }
 
       // Builtins helpers
       template<typename CustomOpT>
