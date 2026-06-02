@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s --hfusion-pre-vectorization-fusion --hfusion-auto-vectorize-v2="enable-multiple-consumer-fusion=false" -split-input-file | FileCheck %s --check-prefix=CHECK-DEFAULT
+// RUN: bishengir-opt %s --hfusion-pre-vectorization-fusion --hfusion-auto-vectorize-v2 -split-input-file | FileCheck %s --check-prefix=CHECK-DEFAULT
 // RUN: bishengir-opt %s --hfusion-pre-vectorization-fusion --hfusion-auto-vectorize-v2="enable-multiple-consumer-fusion=true" -split-input-file | FileCheck %s --check-prefix=CHECK-ENABLE
 
 // CHECK-DEFAULT-LABEL: func.func @enable_multiple_comsumer_fusion
