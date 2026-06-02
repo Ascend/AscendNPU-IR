@@ -1051,13 +1051,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 // -----
 
 // CHECK-LABEL:  func.func @_attn_bwd_mix_aiv(
-// CHECK: %[[VAL_137:.*]] = hivm.hir.vreduce {tiled_op} <max> ins(%[[VAL_135:.*]] : tensor<2048xf32>) outs(%[[VAL_136:.*]] : tensor<1xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1xf32>
-// CHECK: %[[VAL_138:.*]] = memref_ext.alloc_workspace()
-// CHECK: %[[VAL_139:.*]] = memref.subview %[[VAL_138]]{{\[}}%[[VAL_38:.*]]] [1] [1] : memref<2xf32> to memref<1xf32, strided<[1], offset: ?>>
-// CHECK: hivm.hir.store ins(%[[VAL_137]] : tensor<1xf32>) outs(%[[VAL_139]] : memref<1xf32, strided<[1], offset: ?>>) {tiled_op}
-// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>] tvector_pipe = <PIPE_ALL>
-// CHECK: %[[VAL_142:.*]] = hivm.hir.vreduce {tiled_op} <max> ins(%[[VAL_141:.*]] : tensor<2xf32>) outs(%[[VAL_136]] : tensor<1xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1xf32>
-// CHECK-NOT: limit_sub_block_id0
+// CHECK: scf.if %[[VAL_33:.*]] {
+// CHECK:        hivm.hir.store ins(%[[VAL_30:.*]] : tensor<128x64xf32>) outs(%[[VAL_REINTERPRET_CAST:.*]] : memref<128x64xf32, strided<[64, 1], offset: ?>>)
+// CHECK:      } {limit_sub_block_id0}
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 64)>
 #map1 = affine_map<()[s0, s1] -> (s0 + s1)>
 #map2 = affine_map<(d0) -> (d0 * 4)>
@@ -1761,15 +1757,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 // chunk_dqkwg AIC: UB fixpipe for tightly_coupled_buffer<1>/<2> follows each mark.
 // chunk_dqkwg AIV: same buffer ids; UB uses memory_space_cast (no fixpipe on AIV).
 // CHECK-LABEL: func.func @chunk_bwd_kernel_dqkwg_mix_aic(
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>)
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<32x16xf32>) outs(%{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>)
 // CHECK-LABEL: func.func @chunk_bwd_kernel_dqkwg_mix_aiv(
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: memref.memory_space_cast %{{.*}} : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
-// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<16x16xf32, #hivm.address_space<ub>>
-// CHECK-NEXT: memref.memory_space_cast %{{.*}} : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: memref.memory_space_cast %{{.*}} : memref<32x16xf32, #hivm.address_space<ub>> to memref<32x16xf32>
+// CHECK: annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>{{.*}} : memref<32x16xf32, #hivm.address_space<ub>>
+// CHECK-NEXT: memref.memory_space_cast %{{.*}} : memref<32x16xf32, #hivm.address_space<ub>> to memref<32x16xf32>
 #map = affine_map<()[s0, s1] -> (s0 + s1 * 16)>
 #map1 = affine_map<()[s0, s1] -> (s0 - s1)>
 #map2 = affine_map<()[s0] -> (-s0 + 16)>
@@ -2203,12 +2199,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     %memspacecast_60 = memref.memory_space_cast %alloc_59 : memref<32x16xf32, #hivm.address_space<ub>> to memref<32x16xf32>
     %145 = bufferization.to_tensor %memspacecast_60 restrict writable : memref<32x16xf32>
     hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = 5
+    // expected-warning@+1 {{Extract slice is not fully bubbled up}}
     %146 = hivm.hir.vadd ins(%145, %127 : tensor<32x16xf32>, tensor<32x16xf32>) outs(%12 : tensor<32x16xf32>) -> tensor<32x16xf32>
     %147 = hivm.hir.vcast ins(%81 : tensor<32x16xbf16>) outs(%12 : tensor<32x16xf32>) -> tensor<32x16xf32>
     %148 = hivm.hir.vmul ins(%144, %147 : tensor<32x16xf32>, tensor<32x16xf32>) outs(%12 : tensor<32x16xf32>) -> tensor<32x16xf32>
+    // expected-warning@+1 {{Extract slice is not fully bubbled up}}
     %expanded_61 = tensor.expand_shape %14 [[0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
     %149 = hivm.hir.vreduce <sum> ins(%148 : tensor<32x16xf32>) outs(%expanded_61 : tensor<32x1xf32>) unsigned_src = false reduce_dims = [1] -> tensor<32x1xf32>
     %collapsed_62 = tensor.collapse_shape %149 [[0, 1]] : tensor<32x1xf32> into tensor<32xf32>
+    // expected-warning@+1 {{Extract slice is not fully bubbled up}}
     %150 = hivm.hir.vmul ins(%146, %128 : tensor<32x16xf32>, tensor<32x16xf32>) outs(%12 : tensor<32x16xf32>) -> tensor<32x16xf32>
     %151 = hivm.hir.vreduce <sum> ins(%150 : tensor<32x16xf32>) outs(%expanded_61 : tensor<32x1xf32>) unsigned_src = false reduce_dims = [1] -> tensor<32x1xf32>
     %collapsed_63 = tensor.collapse_shape %151 [[0, 1]] : tensor<32x1xf32> into tensor<32xf32>
@@ -2281,7 +2280,6 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // CHECK: hivm.hir.store
 // CHECK-NOT: limit_sub_block_id0
 module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
-  // expected-remark @+1{{Selected tiling dim might have broadcast two different axis. Automatically disables strict mode.}}
   func.func @brc_two_dim_with_reduction_dim(%arg0: tensor<16xf32>, %arg1: memref<?xf32>, %arg2: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
     %c1 = arith.constant 1 : index
     %c0 = arith.constant 0 : index
@@ -2293,14 +2291,12 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %4 = tensor.empty() : tensor<16x16xi32>
     %expanded = tensor.expand_shape %3 [[0, 1]] output_shape [16, 1] : tensor<16xi32> into tensor<16x1xi32>
     %5 = hivm.hir.vbrc ins(%expanded : tensor<16x1xi32>) outs(%4 : tensor<16x16xi32>) broadcast_dims = [1] -> tensor<16x16xi32>
-    // expected-warning @+1{{Extract slice is not fully bubbled up}}
     %expanded_0 = tensor.expand_shape %3 [[0, 1]] output_shape [1, 16] : tensor<16xi32> into tensor<1x16xi32>
     %6 = hivm.hir.vbrc ins(%expanded_0 : tensor<1x16xi32>) outs(%4 : tensor<16x16xi32>) broadcast_dims = [0] -> tensor<16x16xi32>
     %7 = tensor.empty() : tensor<16x16xi1>
     %8 = hivm.hir.vcmp ins(%5, %6 : tensor<16x16xi32>, tensor<16x16xi32>) outs(%7 : tensor<16x16xi1>) -> tensor<16x16xi1>
     %9 = hivm.hir.vcast ins(%8 : tensor<16x16xi1>) outs(%0 : tensor<16x16xf32>) cast = <cast_unsigned> -> tensor<16x16xf32>
     %expanded_1 = tensor.expand_shape %arg0 [[0, 1]] output_shape [1, 16] : tensor<16xf32> into tensor<1x16xf32>
-    // expected-warning @+1{{Detected dimensions are in the same group in one storeOp.}}
     %10 = hivm.hir.vreduce <sum> ins(%9 : tensor<16x16xf32>) outs(%expanded_1 : tensor<1x16xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1x16xf32>
     %collapsed = tensor.collapse_shape %10 [[0, 1]] : tensor<1x16xf32> into tensor<16xf32>
     %11 = hivm.hir.vadd ins(%collapsed, %cst : tensor<16xf32>, f32) outs(%1 : tensor<16xf32>) -> tensor<16xf32>
@@ -2311,7 +2307,6 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %14 = hivm.hir.vadd ins(%9, %13 : tensor<16x16xf32>, tensor<16x16xf32>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
     %inserted_slice = tensor.insert_slice %extracted_slice into %14[0, 0] [%arg2, 16] [1, 1] : tensor<?x16xf32> into tensor<16x16xf32>
     %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32>
-    // expected-warning @+1{{Detected dimensions are in the same group in one storeOp.}}
     hivm.hir.store ins(%inserted_slice : tensor<16x16xf32>) outs(%reinterpret_cast : memref<16x16xf32>)
     return
   }

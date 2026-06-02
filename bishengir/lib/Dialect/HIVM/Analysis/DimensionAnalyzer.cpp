@@ -7,9 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -36,47 +34,19 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
     if (tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel &&
         broadcastAxisCaseCandidate.find(solverCollapserIndex) !=
             broadcastAxisCaseCandidate.end()) {
+
       if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
           it != tilingDimKindMapForShape.end()) {
-        LDBG("Checking parallelDim for broadcast two dims case: "
-             << static_cast<int>(it->getSecond()));
-        return it->getSecond() == TilingDimensionKind::Parallel ||
-               it->getSecond() == TilingDimensionKind::Reduce;
+        LDBG("Checking parallelDim for broadcast two dims case: " << static_cast<int>(it->getSecond()));
+        return it->getSecond() == TilingDimensionKind::Parallel;
       }
       return true;
     }
-    return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel ||
-           tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce;
+    return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel;
   }
 
   // By default, assume it's parallel
   return true;
-}
-
-bool DimensionAnalyzer::isReduceDim(Dimension dim) {
-  auto args = getArgumentRefOrCreateDummy(dim.first);
-  auto solverCollapserIndex = solverCollapserElem_->find(args[dim.second]);
-  auto solverShapeIndex = solverShapeElem_->find(args[dim.second]);
-  LDBG("Checking reduceDim of " << solverCollapserIndex << "("
-                                << solverShapeIndex << ")");
-  auto tilingDimKindVal =
-      tilingDimKindMapForCollapser.find(solverCollapserIndex);
-  if (tilingDimKindVal != tilingDimKindMapForCollapser.end()) {
-    if (tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel &&
-        broadcastAxisCaseCandidate.find(solverCollapserIndex) !=
-            broadcastAxisCaseCandidate.end()) {
-      if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
-          it != tilingDimKindMapForShape.end()) {
-        LDBG("Checking parallelDim for broadcast two dims case: "
-             << static_cast<int>(it->getSecond()));
-        return it->getSecond() == TilingDimensionKind::Reduce;
-      }
-      return false;
-    }
-    return tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce;
-  }
-
-  return false;
 }
 
 /// Get the optimal tiling dimension for each value in the operation.
@@ -97,7 +67,6 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
-    computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
@@ -110,12 +79,11 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
       if (static_cast<int64_t>(candidate.size()) == numStoreOp) {
         int64_t higherDimCnt = 0;
         SmallVector<int64_t> candidateDims;
-        for (auto [store, origDim] : candidate) {
+        for (auto [store, cDim] : candidate) {
           auto storeRef = getArgumentRef(store);
           int64_t curDim = tilingDim_[store];
-          int64_t curOrigDim = curDim;
-          auto dim = origDim;
-          auto solverIndex = solverShapeElem_->find(storeRef[origDim]);
+          auto dim = cDim;
+          auto solverIndex = solverShapeElem_->find(storeRef[dim]);
           LDBG("Checking if " << solverIndex << " is transposed dim");
           if (transposedDimMap.contains(solverIndex)) {
             LDBG("Found transposed mapping("
@@ -124,27 +92,17 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
             dim = transposedDimMap.at(solverIndex);
           }
           if (curDim != -1) {
-            solverIndex = solverShapeElem_->find(storeRef[curOrigDim]);
+            solverIndex = solverShapeElem_->find(storeRef[curDim]);
             if (transposedDimMap.contains(solverIndex))
               curDim = transposedDimMap.at(solverIndex);
-            // Reduced dim should be selected with lowest priority
-            if (isReduceDim(Dimension(store, curOrigDim))) {
-              curDim += static_cast<int64_t>(storeRef.size());
-              LDBG("Reduced dim detected for curDim: lowering priority");
-            }
           }
           candidateDims.push_back(dim);
-          if (isReduceDim(Dimension(store, origDim))) {
-            dim += static_cast<int64_t>(storeRef.size());
-            LDBG("Reduced dim detected for dim: lowering priority");
-          }
           if (curDim == -1 || curDim > dim)
             higherDimCnt++;
         }
-        LDBG("Candidate of "
-             << parentIndex << " in group " << groupIndex << " is "
-             << utils::debugger::to_string(candidateDims) << " with "
-             << higherDimCnt << " priority dimensions");
+        LDBG("Candidate of " << parentIndex << " in group " << groupIndex
+                             << " is "
+                             << utils::debugger::to_string(candidateDims));
         // try to find majority of dimension is higher
         if (2 * higherDimCnt >= numStoreOp) {
           selectedTilingParIdxMap[groupIndex] = parentIndex;
@@ -180,8 +138,6 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
           it != transposedDimMap.end()) {
         candOrder = it->second;
       }
-      if (isReduceDim(Dimension(v, i)))
-        candOrder += static_cast<int>(rank);
       if (tilingDim == -1 || order > candOrder) {
         tilingDim = (int64_t)i;
         order = candOrder;
@@ -213,13 +169,7 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
 template <typename StoreOpTy>
 static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
   auto src = storeOp.getSrc();
-  Value dst;
-  if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>) {
-    dst = storeOp.getDstValue();
-  } else {
-    dst = storeOp.getDst();
-  }
-
+  auto dst = storeOp.getDst();
   int64_t srcOrigDim = ShapedType::kDynamic;
   int64_t dstOrigDim = ShapedType::kDynamic;
   if (auto extractSliceOp =
@@ -270,11 +220,11 @@ void DimensionAnalyzer::computeTilingDimImpl(
     // Each operation in a group is independent, horizontal, and totally
     // separated to other operations in a different group. In common kernels,
     // there will only be 1 group.
-    if (rank == 0)
-      return;
     auto groupIndex = solverGroup_->find(argumentsRefPointer_.at(src));
     numStoreOps[groupIndex]++;
     LDBG("Checking operation: " << op << " in group " << groupIndex);
+    if (rank == 0)
+      return;
     auto shape = utils::getShape(src.getType());
     DenseSet<int> usedParentIdx;
     for (size_t i = 0; i < rank; i++) {
@@ -294,18 +244,10 @@ void DimensionAnalyzer::computeTilingDimImpl(
           if (!checkTileableMaskedStore(op, i))
             continue;
         }
-        if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>) {
-          if (shape[i] == 2)
-            continue;
-        }
         LDBG("Dim " << i << " is selected in group " << groupIndex);
         auto parentIndex = solverCollapserElem_->find(args[i]);
         if (usedParentIdx.insert(parentIndex).second) {
           parallelDimMap[groupIndex][parentIndex].push_back(dim);
-        } else {
-          auto &otherDim = parallelDimMap[groupIndex][parentIndex].back();
-          if (isReduceDim(otherDim) && !isReduceDim(dim))
-            otherDim = dim;
         }
       }
     }
