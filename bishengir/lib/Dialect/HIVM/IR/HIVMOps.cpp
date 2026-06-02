@@ -819,3 +819,25 @@ std::string CustomOp::getSymbol() {
 }
 
 const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{};
+
+//===----------------------------------------------------------------------===//
+// DebugOp
+//===----------------------------------------------------------------------===//
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::TCoreTypeAttr tcoretype) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, tcoretype, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::AddressSpaceAttr memscope) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, memscope);
+}

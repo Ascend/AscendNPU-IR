@@ -646,11 +646,11 @@ public:
         /*pre_quant=*/nullptr,
         /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
     fixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
+    auto tcoretype = op.getTcoretypeAttr();
+    auto memscope = op.getMemscopeAttr();
     rewriter.replaceOpWithNewOp<DebugOp>(
         op, op.getDebugtype(), op.getPrefix(), op.getHex(),
-        fixpipeOp.getResultTensor(),
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR));
+        fixpipeOp.getResultTensor(), tcoretype, memscope);
     LDBG("InsertFixpipeForDevicePrint");
     return success();
   }

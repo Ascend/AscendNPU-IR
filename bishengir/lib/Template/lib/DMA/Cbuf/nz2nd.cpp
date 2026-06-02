@@ -27,6 +27,16 @@ check_inputs_of_copy_cbuf_to_gm_4d_to_2d_core(memref_t<__cbuf__ T, 4> *src,
 }
 
 template <typename T>
+__aicore__ __attribute__((always_inline)) void
+check_inputs_of_copy_cbuf_to_gm_5d_to_3d_core(memref_t<__cbuf__ T, 5> *src,
+                                              memref_t<__gm__ T, 3> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  const int64_t stride4_src = src->strides[4];
+  assert((stride4_src == 1) && "Last dimension of src must be contiguous.");
+#endif
+}
+
+template <typename T>
 __aicore__ __attribute__((always_inline)) __gm__ T *
 convert_cbuf_array_to_gm(__cbuf__ T *ptr, __gm__ T *tmp, size_t count) {
   __cbuf__ uint8_t *aligned_ptr = (__cbuf__ uint8_t *)((uint64_t)ptr & ~0xF);
@@ -94,6 +104,37 @@ copy_cbuf_to_gm_4d_to_2d_core(memref_t<__cbuf__ T, 4> *src,
   // undefined contents
 }
 
+template <typename T>
+__aicore__ __attribute__((always_inline)) void
+copy_cbuf_to_gm_5d_to_3d_core(memref_t<__cbuf__ T, 5> *src,
+                              memref_t<__gm__ T, 3> *dst) {
+  check_inputs_of_copy_cbuf_to_gm_5d_to_3d_core(src, dst);
+
+  int64_t size0 = src->sizes[0];
+  int64_t size1 = src->sizes[1];
+  int64_t size2 = src->sizes[2];
+  int64_t size3 = src->sizes[3];
+  int64_t size4 = src->sizes[4];
+  int64_t stride0 = src->strides[0];
+  int64_t stride1 = src->strides[1];
+  int64_t stride2 = src->strides[2];
+  int64_t stride3 = src->strides[3];
+  int64_t stride4 = src->strides[4];
+  for (int64_t i = 0; i < size0; i ++) {
+    memref_t<__cbuf__ T, 4> src_4d = {src->allocated,
+                                      src->aligned,
+                                      src->offset + i * stride0,
+                                      {size1, size2, size3, size4},
+                                      {stride1, stride2, stride3, stride4}};
+    memref_t<__gm__ T, 2> dst_2d = {dst->allocated,
+                                    dst->aligned,
+                                    dst->offset + i * dst->strides[0],
+                                    {dst->sizes[1], dst->sizes[2]},
+                                    {dst->strides[1], dst->strides[2]}};
+    copy_cbuf_to_gm_4d_to_2d_core(&src_4d, &dst_2d);
+  }
+}
+
 extern "C" {
 REGISTER_NZ2ND(float, 4, 2)
 REGISTER_NZ2ND(bfloat16_t, 4, 2)
@@ -106,4 +147,16 @@ REGISTER_NZ2ND(int32_t, 4, 2)
 REGISTER_NZ2ND(uint32_t, 4, 2)
 REGISTER_NZ2ND(int64_t, 4, 2)
 REGISTER_NZ2ND(uint64_t, 4, 2)
+
+REGISTER_NZ2ND(float, 5, 3)
+REGISTER_NZ2ND(bfloat16_t, 5, 3)
+REGISTER_NZ2ND(half, 5, 3)
+REGISTER_NZ2ND(int8_t, 5, 3)
+REGISTER_NZ2ND(uint8_t, 5, 3)
+REGISTER_NZ2ND(int16_t, 5, 3)
+REGISTER_NZ2ND(uint16_t, 5, 3)
+REGISTER_NZ2ND(int32_t, 5, 3)
+REGISTER_NZ2ND(uint32_t, 5, 3)
+REGISTER_NZ2ND(int64_t, 5, 3)
+REGISTER_NZ2ND(uint64_t, 5, 3)
 }
