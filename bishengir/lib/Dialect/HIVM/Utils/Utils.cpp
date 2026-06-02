@@ -825,7 +825,7 @@ bool isLastDimTranspose(hivm::VTransposeOp op) {
 }
 
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
-                                ArrayRef<int64_t> shape, Type elementType) {
+                                SmallVector<int64_t> shape, Type elementType) {
   assert(!ShapedType::isDynamicShape(shape) &&
          "AllocWorkspaceOp only supports static shape");
   Type allocWorkspaceType = MemRefType::get(shape, elementType);
@@ -850,7 +850,7 @@ Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
 
   // 1. Get AllocWorkspaceOp of current block
   Value localWorkSpace = createAllocLocalWorkSpace(
-      rewriter, loc, targetShapes, elementType);
+      rewriter, loc, SmallVector<int64_t>(targetShapes), elementType);
 
   // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(

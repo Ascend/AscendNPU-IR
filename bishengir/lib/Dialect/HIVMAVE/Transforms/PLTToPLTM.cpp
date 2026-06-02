@@ -98,13 +98,11 @@ public:
         op.getTrueShape().getDefiningOp());
     if (min && min.getNumOperands() >= 1) {
       scf::ForOp forOp = scf::getForInductionVarOwner(min->getOperand(0));
-      if (!forOp) {
-        return failure();
-      }
       auto forUB = getConstantUB(forOp);
-      if (isAffineMapComputingTailBlock(
-              min.getAffineMap(), forUB,
-              forOp.getConstantStep()->getSExtValue())) {
+
+      if (forOp && isAffineMapComputingTailBlock(
+                       min.getAffineMap(), forUB,
+                       forOp.getConstantStep()->getSExtValue())) {
         if (min->getNumOperands() == 2 &&
             min->getOperand(1) != forOp.getUpperBound())
           return failure();

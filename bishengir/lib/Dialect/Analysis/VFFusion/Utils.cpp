@@ -17,8 +17,6 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinAttributes.h"
 
 #define DEBUG_TYPE "vf-fusion"
@@ -148,98 +146,6 @@ bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op) {
   }
 
   return userCanFuseIntoVsstbPatternTransposeOp(op);
-}
-
-//===----------------------------------------------------------------------===//
-// Fusion skip-check registry.
-// Each function returns true if the op should NOT participate in fusion.
-// Add new skip categories here — no other sites need to change.
-//===----------------------------------------------------------------------===//
-
-using SkipEntry = std::pair<llvm::StringLiteral,
-                            bool (*)(Operation *, const VFFusionKindOption &)>;
-static int64_t getSumReductionDim(linalg::LinalgOp linalgOp) {
-  if (auto genericOp = dyn_cast<linalg::GenericOp>(linalgOp.getOperation())) {
-    int64_t reductionDim = -1;
-    auto iteratorTypes = genericOp.getIteratorTypesArray();
-    for (int64_t i = 0; i < static_cast<int64_t>(iteratorTypes.size()); ++i) {
-      if (iteratorTypes[i] == utils::IteratorType::reduction) {
-        if (reductionDim != -1)
-          return -1;
-        reductionDim = i;
-      }
-    }
-    if (reductionDim == -1)
-      return -1;
-    Block &body = genericOp.getRegion().front();
-    if (!isa<arith::AddFOp, arith::AddIOp>(body.front()))
-      return -1;
-    return reductionDim;
-  }
-  if (auto reduceOp = dyn_cast<linalg::ReduceOp>(linalgOp.getOperation())) {
-    SmallVector<unsigned> reductionDims;
-    reduceOp.getReductionDims(reductionDims);
-    if (reductionDims.size() != 1)
-      return -1;
-    Block &body = reduceOp.getRegion().front();
-    for (Operation &bodyOp : body) {
-      if (isa<arith::AddFOp, arith::AddIOp>(bodyOp))
-        return static_cast<int64_t>(reductionDims[0]);
-    }
-    return -1;
-  }
-  return -1;
-}
-
-static bool shouldSkipSumReduction(Operation *op,
-                                   const VFFusionKindOption &option) {
-  auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
-  if (!linalgOp)
-    return false;
-
-  int64_t dim = getSumReductionDim(linalgOp);
-  if (dim < 0)
-    return false;
-
-  auto inputType = dyn_cast<ShapedType>(linalgOp.getDpsInputs()[0].getType());
-  if (!inputType)
-    return false;
-  auto elemType = inputType.getElementType();
-  if (!(elemType.isF32() || elemType.isF16() || elemType.isBF16()))
-    return false;
-
-  LLVM_DEBUG(llvm::dbgs() << "[" DEBUG_TYPE
-                           << "] shouldSkipFusion: sum-reduce dim=" << dim
-                           << " enableRA=" << option.enableRA
-                           << " enableAR=" << option.enableAR);
-
-  if (dim == 0 && option.enableRA) {
-    LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (RA enabled)\n");
-    return true;
-  }
-  if (dim != 0 && option.enableAR) {
-    LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (AR enabled)\n");
-    return true;
-  }
-  LLVM_DEBUG(llvm::dbgs() << " -> allow fusion\n");
-  return false;
-}
-
-// Op-name → check-function dispatch table.
-// IMPORTANT: must be alphabetically sorted by op name for binary search.
-static constexpr SkipEntry skipTable[] = {
-    {"linalg.generic", shouldSkipSumReduction},
-    {"linalg.reduce", shouldSkipSumReduction},
-};
-
-bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option) {
-  auto it = llvm::lower_bound(skipTable, op->getName().getStringRef(),
-                              [](const SkipEntry &e, llvm::StringRef name) {
-                                return e.first < name;
-                              });
-  if (it == std::end(skipTable) || it->first != op->getName().getStringRef())
-    return false;
-  return it->second(op, option);
 }
 
 

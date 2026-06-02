@@ -34,7 +34,6 @@ public:
   //===--------------------------------------------------------------------===//
 
   bool isParallelDim(Dimension dim);
-  bool isReduceDim(Dimension dim);
 
   /// @description: Analyze the tiling dimension for the current operation.
   ///
@@ -116,7 +115,6 @@ protected:
   void processForOp(scf::ForOp op);
   void processConditionOp(scf::ConditionOp op);
   void processExpandShapeOpLeftmostNonUnit(tensor::ExpandShapeOp op);
-  void processCollapseShapeOpLeftmostNonUnit(tensor::CollapseShapeOp op);
   template <typename T, typename = std::enable_if_t<
                             std::is_same_v<T, tensor::ExpandShapeOp> ||
                             std::is_same_v<T, tensor::CollapseShapeOp>>>

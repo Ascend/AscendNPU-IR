@@ -232,9 +232,8 @@ bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
   config.setPureSimt(true);
   bool result = true;
   for (auto module : modules) {
-    // Stop SIMT lowering after earlier pipeline fails.
-    result = result && runPipeline(module, buildSIMTPipeline, config,
-                                   "BiShengSIMT").succeeded();
+    result &= runPipeline(module, buildSIMTPipeline, config, "BiShengSIMT")
+                  .succeeded();
   }
   return result;
 }
@@ -265,7 +264,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   bool hasUboverflow = false;
   bool hasCcOverflow = false;
   bool hasCbufOverflow = false;
-  bool hasuUnexpectedOutsideVectorOp = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -294,10 +292,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       if (msg.find("cbuf overflow") != std::string::npos) {
         hasCbufOverflow = true;
       }
-      if (msg.find("unexpected vector operation outside vector function") !=
-          std::string::npos) {
-        hasuUnexpectedOutsideVectorOp = true;
-      }
     }
     collectedDiagnostics.emplace_back(std::move(diag));
   });
@@ -319,9 +313,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   if (config.getEnableTuningMode()) {
     tryTimes = 1;
   }
-  if (config.getHfusionEnableMultipleConsumerFusion()) {
-    tryTimes++;
-  }
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
@@ -331,38 +322,28 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     hasUboverflow = false;
     hasCcOverflow = false;
     hasCbufOverflow = false;
-    hasuUnexpectedOutsideVectorOp = false;
     if (config.getEnableSimdSimtMixCompile()) {
-      // Do not use `success &= ...` here: `&=` evaluates the RHS.
-      success = success && succeeded(runPipeline(
-                               hirCompileMode, buildBiShengHIRPipeline, config,
-                               "BiShengHIR"));
+      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
+                                       config, "BiShengHIR"));
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
       for (auto simtMod : simtMods) {
-        // Stop TTIR lowering after earlier pipeline fails.
-        success = success && succeeded(runPipeline(
-                                 simtMod, buildBiShengTTIRPipeline, config,
-                                 "BiShengTTIR"));
+        success &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
+                                         config, "BiShengTTIR"));
       }
-      success = success && succeeded(runPipeline(
-                               hirCompileMode, buildBiShengHIRFinishPipeline,
-                               config, "BishengHIR"));
-      // Stop final HIVM lowering after earlier pipeline fails.
-      success = success && succeeded(runPipeline(
-                               mainMod, buildFinalHIVMPipelines, config,
-                               "buildFinalHIVMPipelines"));
+      success &= succeeded(runPipeline(
+          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BishengHIR"));
+      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines, config,
+                                       "buildFinalHIVMPipelines"));
     } else if (config.getEnableTritonIRCompile()) {
       success = succeeded(runPipeline(hirCompileMode, buildBiShengTTIRPipeline,
                                       config, "BiShengTTIR"));
     } else {
       success = succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
                                       config, "BiShengHIR"));
-      // Stop final HIVM lowering after earlier pipeline fails.
-      success = success &&
-                succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
-                                      config, "buildFinalHIVMPipelines"));
+      success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
+                                       config, "buildFinalHIVMPipelines"));
       bool hasMemoryOverflow =
           hasUboverflow || hasCcOverflow || hasCbufOverflow;
       if (!success && hasMemoryOverflow) {
@@ -439,26 +420,10 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
           collectedDiagnostics.clear();
           config.setDisableTightCoupledBuffer(true);
         }
-        continue;
-      }
-      if (!success && hasuUnexpectedOutsideVectorOp) {
-        if (config.getHfusionEnableMultipleConsumerFusion()) {
-          LDBG("unexpected vector operation outside vector function detected "
-               << "at attempt " << (i + 1) << "/" << tryTimes
-               << ", fallback with disable hfusion multiple consumer fusion");
-          collectedDiagnostics.clear();
-          config.setHfusionEnableMultipleConsumerFusion(false);
-        }
-        continue;
       }
     }
 
-    if (!success) {
-      // Stop hivmc pipeline when upstream pipeline fails
-      continue;
-    }
-
-    // hivmc pipeline
+    // hivmc pipepine
     if (config.getEnableSimdSimtMixCompile()) {
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // SIMT modules run triton lowering pipeline
@@ -471,11 +436,9 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         //                                  config, "BiShengFinishLLVM"));
       }
     } else if (config.getPureSimt()) {
-      // Stop SIMT lowering after earlier pipeline fails.
-      success = success && runSIMTToLLVMCompile(hirCompileMode, config);
+      success &= runSIMTToLLVMCompile(hirCompileMode, config);
     } else {
-      // Stop SIMD lowering after earlier pipeline fails.
-      success = success && runSIMDToLLVMCompile(hirCompileMode, config);
+      success &= runSIMDToLLVMCompile(hirCompileMode, config);
     }
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {

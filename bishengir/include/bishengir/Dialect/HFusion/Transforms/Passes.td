@@ -122,7 +122,7 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
     Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
     Option<"maxFusedOps", "max-fused-ops", "unsigned", "15",
            "Maximum number of ops allowed in one fused node.">,
-    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "true",
+    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
            "Enable multiple consumer fusion in AutoVectorizeV2.">,
   ];
 }
@@ -141,12 +141,6 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
  	   let dependentDialects = ["linalg::LinalgDialect",
  	   "arith::ArithDialect",
  	   "vector::VectorDialect"];
- 	   let options = [
- 	     Option<"enableRA", "enable-ra", "bool", "true",
- 	            "Enable RA (reduction along dim 0) in TreeReduceV2.">,
- 	     Option<"enableAR", "enable-ar", "bool", "false",
- 	            "Enable AR (reduction along dim 1) in TreeReduceV2.">,
- 	   ];
  	 }
 
 def OutlineVectorFunction : Pass<"outline-vector-function", "ModuleOp"> {
