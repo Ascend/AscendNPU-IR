@@ -908,6 +908,95 @@ def test_where_lt_case1(param_list):
 
 - 由于Triton前端会将i1转换为i8，如果对其他类型如i16/i32等进行bitwise_mask操作反而会带来性能损耗，因此此功能只支持i8类型的mask
 
+### 使用手动对齐提升尾轴不对齐场景的编译器优化效率
+
+#### 问题描述
+
+在Triton算子开发中，当张量的尾轴维度较小（如4）且未对齐到硬件建议的32字节（对应8个float32元素）时，编译器后端在处理此类非对齐形状时，往往难以生成最优的连续访存和向量化指令，导致性能无法充分发挥。为获得更好的编译器优化效果，推荐开发者在前端kernel中通过手动填充（padding）或mask加载的方式，将数据尾轴维度显式对齐到合适的宽度，从而为编译器提供对齐友好的数据布局。这样能够简化后端的优化决策，显著提升执行效率。
+
+#### 算子示例
+
+以下展示了尾轴为4的两种kernel实现：版本1直接使用4作为尾轴维度，未做对齐处理，性能较差；版本2通过mask加载将尾轴维度对齐至8，是推荐的优化写法。
+
+**版本1：尾轴未对齐（存在优化瓶颈）**
+
+```python
+@triton.jit
+def kernel(in_ptr, out_ptr, batch_size,
+              D: tl.constexpr, iters: tl.constexpr,
+              eps: tl.constexpr, group: tl.constexpr):
+    lin = tl.arange(0, D * D)
+    pid0 = tl.program_id(0) * group
+    pids = pid0 + tl.arange(0, group)
+    mask = pids < batch_size
+    off = pids[:, None] * (D * D)
+
+    # 直接加载 D×D 矩阵，无对齐填充
+    mat = tl.load(in_ptr + off + lin[None, :], mask=mask[:, None])
+    mat = mat.reshape(group, D, D)
+
+    row_max = tl.max(mat, axis=2)
+    mat = tl.exp(mat - row_max[:, :, None])
+    for _ in range(iters):
+        row_sum = tl.sum(mat, axis=2)
+        mat = mat / (row_sum[:, :, None] + eps)
+        col_sum = tl.sum(mat, axis=1)
+        mat = mat / (col_sum[:, None, :] + eps)
+
+    mat_flat = tl.reshape(mat, (group, D * D))
+    tl.store(out_ptr + off + lin[None, :], mat_flat, mask=mask[:, None])
+```
+
+**版本2：手动对齐（推荐）**
+
+```python
+@triton.jit
+def kernel_opt(in_ptr, out_ptr, batch_size,
+                  D: tl.constexpr, iters: tl.constexpr,
+                  eps: tl.constexpr, group: tl.constexpr,
+                  ALIGN: tl.constexpr = 8):
+    pid0 = tl.program_id(0) * group
+    pids = pid0 + tl.arange(0, group)
+    p_mask = pids < batch_size
+
+    # 基于原始 D×D 形状，每次加载 ALIGN 个元素
+    off_base = pids[:, None, None] * (D * D)
+    row_idx = tl.arange(0, D)[:, None]
+    col_idx = tl.arange(0, ALIGN)[None, :]
+    offs = row_idx * D + col_idx
+    valid_cols = col_idx < D
+
+    # 通过掩码将无效列填充为 -inf，实现手动对齐
+    # 形状 (group, D, ALIGN)
+    mat = tl.load(
+        in_ptr + off_base + offs[None, :, :],
+        mask=p_mask[:, None, None] & valid_cols[None, :, :],
+        other=float('-inf')
+    )
+
+    # 归一化计算（无效列在 exp 后变为 0，不影响结果）
+    row_max = tl.max(mat, axis=2)
+    mat = tl.exp(mat - row_max[:, :, None])
+    for _ in range(iters):
+        row_sum = tl.sum(mat, axis=2)
+        mat = mat / (row_sum[:, :, None] + eps)
+        col_sum = tl.sum(mat, axis=1)
+        mat = mat / (col_sum[:, None, :] + eps)
+
+    # 按 ALIGN 对齐宽度写回
+    out_flat = tl.reshape(mat, (group, D * ALIGN))
+    tl.store(out_ptr + pids[:, None] * (D * ALIGN)
+             + tl.arange(0, D * ALIGN)[None, :],
+             out_flat, mask=p_mask[:, None])
+```
+
+版本2通过手动将尾轴维度对齐到8，编译器可以直接利用连续、对齐的访存模式生成高效指令，避免了因尾轴不对齐可能引入的额外处理开销，从而提升整体性能。
+
+#### 限制
+
+- 手动对齐要求 `ALIGN` 为编译期常量，且应等于硬件建议的对齐宽度。
+- 填充值（如 `-inf`）需与后续计算兼容，确保不影响最终结果（例如 `exp(-inf) = 0`）。
+
 ## CV类
 
 ### 使用hivm.tile_mix_cube_num规避L1越界

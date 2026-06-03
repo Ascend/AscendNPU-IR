@@ -858,6 +858,95 @@ def test_where_lt_case1(param_list):
 
 Only i8 mask is supported. Using bitwise_mask on other types (e.g. i16/i32) can hurt performance, so this feature is limited to i8.
 
+### Improving Compiler Optimization Efficiency in Misaligned Tail-Dimension Scenarios via Manual Alignment
+
+#### Problem Description
+
+In Triton kernel development, when the tail dimension of a tensor is small (e.g., 4) and not aligned to the hardware‑recommended 32‑byte boundary (corresponding to 8 float32 elements), the compiler backend often struggles to generate optimal contiguous memory access and vectorized instructions for such unaligned shapes, leading to suboptimal performance. To achieve better compiler optimization, developers are advised to explicitly align the data's tail dimension to a suitable width in the front‑end kernel by using manual padding or masked loads. This provides the compiler with an alignment‑friendly data layout, simplifies backend optimization decisions, and significantly improves execution efficiency.
+
+#### Kernel Examples
+
+Two kernel implementations with a tail dimension of 4 are shown below. Version 1 directly uses 4 as the tail dimension without any alignment treatment and suffers from poor performance. Version 2 aligns the tail dimension to 8 via masked loads, which is the recommended optimized approach.
+
+**Version 1: Unaligned Tail Dimension (optimization bottleneck)**
+
+```python
+@triton.jit
+def kernel(in_ptr, out_ptr, batch_size,
+              D: tl.constexpr, iters: tl.constexpr,
+              eps: tl.constexpr, group: tl.constexpr):
+    lin = tl.arange(0, D * D)
+    pid0 = tl.program_id(0) * group
+    pids = pid0 + tl.arange(0, group)
+    mask = pids < batch_size
+    off = pids[:, None] * (D * D)
+
+    # Load the D×D matrix directly without alignment padding
+    mat = tl.load(in_ptr + off + lin[None, :], mask=mask[:, None])
+    mat = mat.reshape(group, D, D)
+
+    row_max = tl.max(mat, axis=2)
+    mat = tl.exp(mat - row_max[:, :, None])
+    for _ in range(iters):
+        row_sum = tl.sum(mat, axis=2)
+        mat = mat / (row_sum[:, :, None] + eps)
+        col_sum = tl.sum(mat, axis=1)
+        mat = mat / (col_sum[:, None, :] + eps)
+
+    mat_flat = tl.reshape(mat, (group, D * D))
+    tl.store(out_ptr + off + lin[None, :], mat_flat, mask=mask[:, None])
+```
+
+**Version 2: Manual Alignment (recommended)**
+
+```python
+@triton.jit
+def kernel_opt(in_ptr, out_ptr, batch_size,
+                  D: tl.constexpr, iters: tl.constexpr,
+                  eps: tl.constexpr, group: tl.constexpr,
+                  ALIGN: tl.constexpr = 8):
+    pid0 = tl.program_id(0) * group
+    pids = pid0 + tl.arange(0, group)
+    p_mask = pids < batch_size
+
+    # Based on the original D×D shape, load ALIGN elements at a time
+    off_base = pids[:, None, None] * (D * D)
+    row_idx = tl.arange(0, D)[:, None]
+    col_idx = tl.arange(0, ALIGN)[None, :]
+    offs = row_idx * D + col_idx
+    valid_cols = col_idx < D
+
+    # Use a mask to fill invalid columns with -inf, achieving manual alignment
+    # Shape (group, D, ALIGN)
+    mat = tl.load(
+        in_ptr + off_base + offs[None, :, :],
+        mask=p_mask[:, None, None] & valid_cols[None, :, :],
+        other=float('-inf')
+    )
+
+    # Normalization (invalid columns become 0 after exp, not affecting the result)
+    row_max = tl.max(mat, axis=2)
+    mat = tl.exp(mat - row_max[:, :, None])
+    for _ in range(iters):
+        row_sum = tl.sum(mat, axis=2)
+        mat = mat / (row_sum[:, :, None] + eps)
+        col_sum = tl.sum(mat, axis=1)
+        mat = mat / (col_sum[:, None, :] + eps)
+
+    # Write back using the ALIGN‑width layout
+    out_flat = tl.reshape(mat, (group, D * ALIGN))
+    tl.store(out_ptr + pids[:, None] * (D * ALIGN)
+             + tl.arange(0, D * ALIGN)[None, :],
+             out_flat, mask=p_mask[:, None])
+```
+
+By manually aligning the tail dimension to 8, Version 2 enables the compiler to directly generate efficient instructions using contiguous, aligned memory access patterns, avoiding the extra overhead that could arise from a misaligned tail dimension and thereby improving overall performance.
+
+#### Limitations
+
+- Manual alignment requires `ALIGN` to be a compile‑time constant that matches the hardware‑recommended alignment width.
+- The padding value (e.g., `-inf`) must be compatible with the subsequent computation and must not affect the final result (e.g., `exp(-inf) = 0`).
+
 ## Cube–Vector (CV)
 
 ### Use hivm.tile_mix_cube_num to avoid L1 overflow
