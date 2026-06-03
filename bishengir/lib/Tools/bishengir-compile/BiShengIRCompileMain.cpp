@@ -252,18 +252,11 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     return failure();
   }
 
-  // Per-address-space overflow flags. We track each space independently so
-  // the first-tier fallback can disable multi-buffer only on the space that
-  // actually overflowed instead of killing it everywhere:
-  //   ub overflow   -> Vector / UB  -> setDisableMultiBufferOnUB
-  //   cc overflow   -> L0C          -> setDisableMultiBufferOnL0C
-  //   cbuf overflow -> L1 / cbuf    -> setDisableMultiBufferOnL1
-  // Note that the VFFusion / VF-reachable-check / tight-coupled-buffer tiers
-  // are vector-side and only meaningful when the offender is UB, so they are
-  // gated on hasUboverflow as before.
+  // VF fusion may cause ub overflow. When that happens we fall back through
+  // the vector-side tiers (VFFusion / VF-reachable-check / tight-coupled
+  // buffer), all of which are only meaningful when the offender is UB, so
+  // they are gated on hasUboverflow.
   bool hasUboverflow = false;
-  bool hasCcOverflow = false;
-  bool hasCbufOverflow = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -281,17 +274,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       if (msg.find("ub overflow") != std::string::npos) {
         hasUboverflow = true;
       }
-      // PlanMemory emits "<addr-space> overflow, requires X bits ..." where
-      // the address-space string comes from stringifyEnum(AddressSpace);
-      // see HIVMAttrs.td (L0C => "cc", L1 => "cbuf"). Extend here if more
-      // cube-side spaces (e.g. "ca"/"cb" for L0A/L0B) need their own
-      // dedicated fine-grained fallback.
-      if (msg.find("cc overflow") != std::string::npos) {
-        hasCcOverflow = true;
-      }
-      if (msg.find("cbuf overflow") != std::string::npos) {
-        hasCbufOverflow = true;
-      }
     }
     collectedDiagnostics.emplace_back(std::move(diag));
   });
@@ -305,9 +287,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // so each fallback policy is composable and explicit. Planned policies:
   //   - OpFusion retry policy: bump tiling-max-counter each attempt, up to 5
   //     retries (the current default branch).
-  //   - AutoBlockify retry policy: progressively disable hoisting and then
-  //     multi-buffer.
-  //   - MultiBuffer retry policy: disable auto-multi-buffer.
+  //   - AutoBlockify retry policy: progressively disable hoisting.
   // Once the retryPassManager exists, the tryTimes / nested-if logic below
   // should be replaced by composing those policies.
   if (config.getEnableTuningMode()) {
@@ -320,8 +300,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     // simt-simd mixed pipeline
     bool success = true;
     hasUboverflow = false;
-    hasCcOverflow = false;
-    hasCbufOverflow = false;
     if (config.getEnableSimdSimtMixCompile()) {
       success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
                                        config, "BiShengHIR"));
@@ -344,76 +322,22 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                                       config, "BiShengHIR"));
       success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
                                        config, "buildFinalHIVMPipelines"));
-      bool hasMemoryOverflow =
-          hasUboverflow || hasCcOverflow || hasCbufOverflow;
-      if (!success && hasMemoryOverflow) {
-        // First-tier fallback: try to disable the multi-buffer only on the
-        // address space that actually overflowed. Each overflow signal is
-        // mapped to the buffer kind that backs it:
-        //   ub overflow   -> UB  (Vector Load/Store)
-        //   cc overflow   -> L0C (Cube accumulator, Fixpipe)
-        //   cbuf overflow -> L1  (cbuf, ND2NZ)
-        // Multiple spaces may overflow in the same attempt; we flip every
-        // applicable knob in one go so the next attempt sees the cumulative
-        // mitigation rather than peeling them off one retry at a time.
-        bool flippedAnyMultiBufferKnob = false;
-        if (config.getEnableAutoMultiBuffer()) {
-          if (hasUboverflow && !config.getDisableMultiBufferOnUB()) {
-            LDBG("ub overflow detected at attempt "
-                 << (i + 1) << "/" << tryTimes
-                 << ", fallback with disabled UB (Vector) multi buffer");
-            config.setDisableMultiBufferOnUB(true);
-            flippedAnyMultiBufferKnob = true;
-          }
-          if (hasCcOverflow && !config.getDisableMultiBufferOnL0C()) {
-            LDBG("cc overflow detected at attempt "
-                 << (i + 1) << "/" << tryTimes
-                 << ", fallback with disabled L0C multi buffer");
-            config.setDisableMultiBufferOnL0C(true);
-            flippedAnyMultiBufferKnob = true;
-          }
-          if (hasCbufOverflow && !config.getDisableMultiBufferOnL1()) {
-            LDBG("cbuf overflow detected at attempt "
-                 << (i + 1) << "/" << tryTimes
-                 << ", fallback with disabled L1 (cbuf) multi buffer");
-            config.setDisableMultiBufferOnL1(true);
-            flippedAnyMultiBufferKnob = true;
-          }
-        }
-        if (flippedAnyMultiBufferKnob) {
-          collectedDiagnostics.clear();
-        } else if (config.getEnableAutoMultiBuffer()) {
-          // The offending buffer's per-space switch is already off but
-          // overflow still surfaced (e.g. mixed cc + cbuf overflow that
-          // disabling L0C alone didn't fix on the previous retry, or an
-          // overflow on a space we don't yet have a dedicated knob for).
-          // Fall back to the global switch as a coarser mitigation that
-          // affects all three address spaces uniformly.
-          LDBG("memory overflow (ub/cc/cbuf) detected at attempt "
-               << (i + 1) << "/" << tryTimes
-               << ", per-buffer knobs exhausted, "
-                  "fallback with disabled auto multi buffer");
-          collectedDiagnostics.clear();
-          config.setEnableAutoMultiBuffer(false);
-        } else if (hasUboverflow && config.getEnableVFFusion()) {
-          // Subsequent tiers (VFFusion / VF reachable check / tight-
-          // coupled buffer) are vector-side and do NOT help with the
-          // Cube-side cc/cbuf overflow, so they are gated on
-          // hasUboverflow. If only Cube memory overflowed and multi-
-          // buffer is already off, the loop falls through with no
-          // remaining knobs to flip.
+      if (!success && hasUboverflow) {
+        // Vector-side fallback tiers for UB overflow. These do not touch
+        // multi-buffer and are tried in order until one is applicable.
+        if (config.getEnableVFFusion()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled vffusion");
           collectedDiagnostics.clear();
           config.setEnableVFFusion(false);
-        } else if (hasUboverflow && !config.getDisableVFReachableCheck()) {
+        } else if (!config.getDisableVFReachableCheck()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled VF reachable check");
           collectedDiagnostics.clear();
           config.setDisableVFReachableCheck(true);
-        } else if (hasUboverflow && !config.getDisableTightCoupledBuffer()) {
+        } else if (!config.getDisableTightCoupledBuffer()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with MixCV GM path");
