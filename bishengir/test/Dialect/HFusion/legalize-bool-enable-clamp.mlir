@@ -11,27 +11,25 @@ func.func @triton_pw_rdc5d(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memr
   %alloc_1 = memref.alloc() : memref<9x3x2x4x17xi8>
   memref.copy %reinterpret_cast_0, %alloc_1 {was_bool_to_int8 = true} : memref<9x3x2x4x17xi8, strided<[408, 136, 68, 17, 1]>> to memref<9x3x2x4x17xi8>
   %1 = bufferization.to_tensor %alloc_1 restrict writable {was_bool_to_int8 = true} : memref<9x3x2x4x17xi8>
-  
-  // CHECK: %[[C0_I32:.*]] = arith.constant 0 : i32
-  // CHECK: %[[C0_I8:.*]] = arith.constant 0 : i8
+
   // CHECK: %[[TENSOR_0:.*]] = bufferization.to_tensor
   // CHECK: %[[TENSOR_1:.*]] = bufferization.to_tensor
-  
-  // CHECK: %[[ADD:.*]] = arith.addi %[[TENSOR_0]], %[[TENSOR_1]] {is_clamped = true} : tensor<9x3x2x4x17xi8>
+
+  // Both operands are canonical pseudo-bools, so "add + clamp-to-nonzero"
+  // collapses into a vor followed by a "& 1" canonicalization -- no extsi /
+  // i32 fill / arith.cmpi.
+  // CHECK: %[[OR:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>, is_clamped = true} ins(%[[TENSOR_0]], %[[TENSOR_1]] : tensor<9x3x2x4x17xi8>, tensor<9x3x2x4x17xi8>)
+  // CHECK: %[[ONES:.*]] = linalg.fill ins(%c1_i8 : i8) outs(%{{.*}} : tensor<9x3x2x4x17xi8>) -> tensor<9x3x2x4x17xi8>
+  // CHECK: %[[CLAMPED:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>, was_bool_to_int8 = true} ins(%[[OR]], %[[ONES]] : tensor<9x3x2x4x17xi8>, tensor<9x3x2x4x17xi8>)
+  // CHECK-NOT: arith.extsi
+  // CHECK-NOT: arith.cmpi
   %2 = arith.addi %0, %1 : tensor<9x3x2x4x17xi8>
-  
-  // CHECK: %[[EXTSI:.*]] = arith.extsi %[[ADD]] : tensor<9x3x2x4x17xi8> to tensor<9x3x2x4x17xi32>
-  // CHECK: %[[EMPTY_I32:.*]] = tensor.empty() : tensor<9x3x2x4x17xi32>
-  // CHECK: %[[FILL_I32:.*]] = linalg.fill ins(%[[C0_I32]] : i32) outs(%[[EMPTY_I32]] : tensor<9x3x2x4x17xi32>) -> tensor<9x3x2x4x17xi32>
-  // CHECK: %[[CMPI:.*]] = arith.cmpi ne, %[[EXTSI]], %[[FILL_I32]] : tensor<9x3x2x4x17xi32>
-  
-  // CHECK: %[[EXTUI:.*]] = arith.extui %[[CMPI]] {was_bool_to_int8 = true} : tensor<9x3x2x4x17xi1> to tensor<9x3x2x4x17xi8>
-  
+
   %3 = tensor.empty() : tensor<9x3x2x4xi8>
   %4 = linalg.fill ins(%c0_i8 : i8) outs(%3 : tensor<9x3x2x4xi8>) -> tensor<9x3x2x4xi8>
-  
-  // CHECK: %[[REDUCED:.*]] = linalg.reduce ins(%[[EXTUI]] : tensor<9x3x2x4x17xi8>)
-  %reduced = linalg.reduce ins(%2 : tensor<9x3x2x4x17xi8>) outs(%4 : tensor<9x3x2x4xi8>) dimensions = [4] 
+
+  // CHECK: %[[REDUCED:.*]] = linalg.reduce ins(%[[CLAMPED]] : tensor<9x3x2x4x17xi8>)
+  %reduced = linalg.reduce ins(%2 : tensor<9x3x2x4x17xi8>) outs(%4 : tensor<9x3x2x4xi8>) dimensions = [4]
     (%in: i8, %init: i8) {
       %5 = arith.xori %in, %init : i8
       linalg.yield %5 : i8
