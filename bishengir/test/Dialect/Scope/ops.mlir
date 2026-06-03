@@ -56,3 +56,18 @@ func.func @test_scope_with_yields() {
   }
   return
 }
+
+// -----
+
+// CHECK-LABEL: @scope_multi_result
+// CHECK-DAG:   %[[C1:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK-DAG:   %[[C2:.*]] = arith.constant 2.000000e+00 : f32
+// CHECK:       return %[[C1]], %[[C2]] : f32, f32
+func.func @scope_multi_result() -> (f32, f32) {
+  %c1 = arith.constant 1.000000e+00 : f32
+  %c2 = arith.constant 2.000000e+00 : f32
+  %0:2 = scope.scope : () -> (f32, f32) {
+    scope.return %c1, %c2 : f32, f32
+  }
+  return %0#0, %0#1 : f32, f32
+}

@@ -1202,6 +1202,14 @@ LogicalResult handleBufferizationToTensor(tensor::ExpandShapeOp expandOp,
   auto reassociation = expandOp.getReassociationIndices();
   auto memrefSrc = toTensorOp.getMemref();
 
+  // Refuse to cross the bufferization boundary when the underlying memref has
+  // a non-identity (strided) layout. 
+  auto memrefTy = cast<MemRefType>(memrefSrc.getType());
+  if (!memrefTy.getLayout().isIdentity())
+    return rewriter.notifyMatchFailure(
+        toTensorOp,
+        "non-identity memref layout; refusing to cross bufferization boundary");
+
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(toTensorOp);
   auto expandOutputShape = getMixedValues(expandOp.getStaticOutputShape(),

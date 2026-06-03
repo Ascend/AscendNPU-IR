@@ -106,6 +106,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
         triton::TritonDialect, triton::gpu::TritonGPUDialect,
         arith::ArithDialect, math::MathDialect, mlir::BuiltinDialect>();
     stage2Target.addLegalOp<tensor::EmptyOp>();
+    stage2Target.addLegalOp<tensor::ExtractSliceOp>();
     stage2Target.addIllegalOp<func::FuncOp>();
     stage2Target.addLegalOp<UnrealizedConversionCastOp>();
     populateFuncToTritonPatterns(stage2Patterns);
