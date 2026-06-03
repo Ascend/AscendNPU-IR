@@ -141,6 +141,12 @@ def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
  	   let dependentDialects = ["linalg::LinalgDialect",
  	   "arith::ArithDialect",
  	   "vector::VectorDialect"];
+ 	   let options = [
+ 	     Option<"enableRA", "enable-ra", "bool", "true",
+ 	            "Enable RA (reduction along dim 0) in TreeReduceV2.">,
+ 	     Option<"enableAR", "enable-ar", "bool", "false",
+ 	            "Enable AR (reduction along dim 1) in TreeReduceV2.">,
+ 	   ];
  	 }
 
 def OutlineVectorFunction : Pass<"outline-vector-function", "ModuleOp"> {

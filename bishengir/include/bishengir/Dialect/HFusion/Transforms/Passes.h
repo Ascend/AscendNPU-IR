@@ -166,7 +166,7 @@ std::unique_ptr<Pass> createSimplifyOpsPass();
 std::unique_ptr<Pass> createUpliftWhileToForPass();
 
 /// Register Tree Reduce v2 pass
-std::unique_ptr<Pass> createTreeReduceV2Pass();
+std::unique_ptr<Pass> createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
 
 /// Create a pass to normalize operations.
 std::unique_ptr<Pass>
