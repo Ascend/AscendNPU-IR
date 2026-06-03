@@ -904,6 +904,24 @@ def EnableTreeReduceV2 : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableTreeReduceV2RA : FeatureControlOptions<
+  "Enable RA (row-reduction, dim=0) processing in TreeReduceV2 pass. "
+  "Also skip fusing reduce-sum RA ops in VFFusion pass to avoid conflicts.",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableTreeReduceV2AR : FeatureControlOptions<
+  "Enable AR (column-reduction, dim=1) processing in TreeReduceV2 pass. "
+  "Also skip fusing reduce-sum AR ops in VFFusion pass to avoid conflicts.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",

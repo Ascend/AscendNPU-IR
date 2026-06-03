@@ -362,17 +362,23 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
   pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
+  // prepare tree reduce v2 options for RA / AR control
+  TreeReduceV2Options treeReduceV2Options;
+  treeReduceV2Options.enableRA = hfusionOptions.enableTreeReduceV2RA;
+  treeReduceV2Options.enableAR = hfusionOptions.enableTreeReduceV2AR;
   if (enableSIMDVFFusion(hfusionOptions)) {
     VFFusionOptions vfFusionOptions;
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
+    vfFusionOptions.enableRA = treeReduceV2Options.enableRA;
+    vfFusionOptions.enableAR = treeReduceV2Options.enableAR;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
   pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
-  PreVectorizationFusionOptions options;
-  options.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
-  options.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;
-  pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(options));
+  PreVectorizationFusionOptions preVecOptions;
+  preVecOptions.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
+  preVecOptions.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;
+  pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(preVecOptions));
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
@@ -394,10 +400,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
   pm.addPass(createAutoVectorizeVerifierPass());
-  
-  if (hfusionOptions.enableTreeReduceV2) {
- 	     pm.addPass(createTreeReduceV2Pass());
-  }
+  pm.addPass(createTreeReduceV2Pass(treeReduceV2Options));
   pm.addPass(mlir::createHFusionToVectorConversionPass());
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());
