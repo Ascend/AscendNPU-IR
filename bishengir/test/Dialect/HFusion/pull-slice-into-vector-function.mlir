@@ -283,3 +283,116 @@ module {
     return
   }
 }
+
+// -----
+
+// Test: Swap extract_slice + collapse_shape when the collapsed slice is not
+// contiguous but is a regular strided line. This mirrors taking one dynamic
+// column from tensor<32x4xf32>, collapsing tensor<32x1xf32> to tensor<32xf32>,
+// and passing it to a VF.
+module {
+  // CHECK-LABEL: func @vf_collapse_strided_line(
+  // CHECK-SAME: tensor<128xf32>
+  // CHECK-SAME: index
+  // CHECK-SAME: tensor<32xf32>
+  // CHECK: tensor.extract_slice %{{.*}}[%{{.*}}] [32] [4] : tensor<128xf32> to tensor<32xf32>
+  func.func @vf_collapse_strided_line(%arg0: tensor<32xf32>,
+                                      %arg1: tensor<32xf32>) -> tensor<32xf32>
+      attributes {hivm.vector_function} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %cst_0 = arith.constant dense<1.000000e+00> : vector<32xf32>
+    %0 = vector.transfer_read %arg0[%c0], %cst
+        {in_bounds = [true]} : tensor<32xf32>, vector<32xf32>
+    %1 = arith.addf %0, %cst_0 : vector<32xf32>
+    %2 = vector.transfer_write %1, %arg1[%c0]
+        {in_bounds = [true]} : vector<32xf32>, tensor<32xf32>
+    return %2 : tensor<32xf32>
+  }
+
+  // CHECK-LABEL: func @test_swap_collapse_dynamic_offset_strided_line(
+  // CHECK-SAME: %[[ARG0:.*]]: tensor<32x4xf32>
+  // CHECK-SAME: %[[COL:.*]]: index
+  // CHECK-SAME: %[[OUT:.*]]: tensor<32xf32>
+  // CHECK: %[[FULL:.*]] = tensor.collapse_shape %[[ARG0]] {{\[\[}}0, 1]] : tensor<32x4xf32> into tensor<128xf32>
+  // CHECK-NOT: tensor.extract_slice
+  // CHECK-NOT: tensor.collapse_shape{{.*}}tensor<32x1xf32> into tensor<32xf32>
+  // CHECK: %[[CALL:.*]] = call @vf_collapse_strided_line(%[[FULL]], %[[COL]], %[[OUT]])
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: (tensor<128xf32>, index, tensor<32xf32>) -> tensor<32xf32>
+  // CHECK: return %[[CALL]]
+  func.func @test_swap_collapse_dynamic_offset_strided_line(%arg0: tensor<32x4xf32>,
+                                                            %col: index,
+                                                            %out: tensor<32xf32>)
+      -> tensor<32xf32> {
+    %slice = tensor.extract_slice %arg0[0, %col] [32, 1] [1, 1]
+        : tensor<32x4xf32> to tensor<32x1xf32>
+    %collapsed = tensor.collapse_shape %slice [[0, 1]]
+        : tensor<32x1xf32> into tensor<32xf32>
+    %0 = func.call @vf_collapse_strided_line(%collapsed, %out) {hivm.vector_function}
+        : (tensor<32xf32>, tensor<32xf32>) -> tensor<32xf32>
+    return %0 : tensor<32xf32>
+  }
+}
+
+// -----
+
+// Test: VF operand is built by inserting one extracted slice into another
+// extracted slice. Both slices and the insert_slice should be pulled into the
+// VF body, so the caller passes the two full source tensors instead of the
+// materialized 1-D tensor.
+module {
+  // CHECK-LABEL: func @vf_recursive_slice_operand(
+  // CHECK-SAME: tensor<2x32xf32>
+  // CHECK-SAME: tensor<2x32xf32>
+  // CHECK: %[[PATCH:.*]] = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [1, %{{.*}}] [1, 1] : tensor<2x32xf32> to tensor<?xf32>
+  // CHECK: %[[BASE:.*]] = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [1, 32] [1, 1] : tensor<2x32xf32> to tensor<32xf32>
+  // CHECK: %[[MERGED:.*]] = tensor.insert_slice %[[PATCH]] into %[[BASE]][0] [%{{.*}}] [1] : tensor<?xf32> into tensor<32xf32>
+  // CHECK: vector.transfer_read %[[MERGED]]
+  func.func @vf_recursive_slice_operand(%arg0: tensor<32xf32>,
+                                        %arg1: tensor<2x32x64xf32>,
+                                        %arg2: index,
+                                        %arg3: index,
+                                        %arg4: index,
+                                        %arg5: index,
+                                        %arg6: index,
+                                        %arg7: tensor<32x64xf32>)
+      -> tensor<32x64xf32> attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %arg0[%c0], %cst {in_bounds = [true]}
+        : tensor<32xf32>, vector<32xf32>
+    %1 = vector.transfer_write %0, %arg7[%c0, %c0] {in_bounds = [true]}
+        : vector<32xf32>, tensor<32x64xf32>
+    return %1 : tensor<32x64xf32>
+  }
+
+  // CHECK-LABEL: func @test_pull_recursive_slice_operand(
+  // CHECK-NOT: tensor.extract_slice
+  // CHECK-NOT: tensor.insert_slice
+  // CHECK: call @vf_recursive_slice_operand(%arg0
+  // CHECK-SAME: %arg1
+  // CHECK-SAME: {hivm.vector_function, no_inline}
+  func.func @test_pull_recursive_slice_operand(%arg0: tensor<2x32xf32>,
+                                              %arg1: tensor<2x32xf32>,
+                                              %arg2: tensor<2x32x64xf32>,
+                                              %arg3: index,
+                                              %arg4: index,
+                                              %arg5: tensor<32x64xf32>)
+      -> tensor<32x64xf32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %extracted_slice = tensor.extract_slice %arg1[%arg3, 0] [1, %arg4] [1, 1]
+        : tensor<2x32xf32> to tensor<?xf32>
+    %extracted_slice_0 = tensor.extract_slice %arg0[%arg3, 0] [1, 32] [1, 1]
+        : tensor<2x32xf32> to tensor<32xf32>
+    %inserted_slice = tensor.insert_slice %extracted_slice into %extracted_slice_0[0] [%arg4] [1]
+        : tensor<?xf32> into tensor<32xf32>
+    %0 = func.call @vf_recursive_slice_operand(%inserted_slice, %arg2, %arg3, %c0, %c64, %c32, %c1, %arg5)
+        {hivm.vector_function, no_inline}
+        : (tensor<32xf32>, tensor<2x32x64xf32>, index, index, index, index, index, tensor<32x64xf32>) -> tensor<32x64xf32>
+    return %0 : tensor<32x64xf32>
+  }
+}

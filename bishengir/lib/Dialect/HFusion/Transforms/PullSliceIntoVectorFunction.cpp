@@ -16,10 +16,12 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
@@ -350,6 +352,206 @@ private:
   }
 };
 
+//===----------------------------------------------------------------------===//
+// PullInsertedSliceOperandIntoVectorFunction
+//===----------------------------------------------------------------------===//
+//
+// Pull a call operand built as:
+//
+//   %patch = tensor.extract_slice %patch_src[...]
+//   %base  = tensor.extract_slice %base_src[...]
+//   %arg   = tensor.insert_slice %patch into %base[...]
+//   call @vf(%arg, ...)
+//
+// into the VF callee.  The caller passes %base_src, %patch_src and all dynamic
+// slice operands; the callee reconstructs %arg at function entry.
+struct PullInsertedSliceOperandIntoVectorFunction
+    : public OpRewritePattern<func::CallOp> {
+  using OpRewritePattern<func::CallOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(func::CallOp call,
+                                PatternRewriter &rewriter) const override {
+    if (!call->hasAttr(mlir::hivm::VectorFunctionAttr::name))
+      return failure();
+
+    auto callee =
+        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(call);
+    if (!callee)
+      return failure();
+
+    for (auto [argIdx, operand] : llvm::enumerate(call.getOperands())) {
+      auto insertSlice = operand.getDefiningOp<tensor::InsertSliceOp>();
+      if (!insertSlice)
+        continue;
+
+      auto patchSlice =
+          insertSlice.getSource().getDefiningOp<tensor::ExtractSliceOp>();
+      auto baseSlice =
+          insertSlice.getDest().getDefiningOp<tensor::ExtractSliceOp>();
+      if (!patchSlice || !baseSlice)
+        continue;
+
+      if (!isa<RankedTensorType>(patchSlice.getSource().getType()) ||
+          !isa<RankedTensorType>(baseSlice.getSource().getType()) ||
+          !isa<RankedTensorType>(patchSlice.getType()) ||
+          !isa<RankedTensorType>(baseSlice.getType()))
+        continue;
+
+      modifyCallee(callee, argIdx, baseSlice, patchSlice, insertSlice,
+                   rewriter);
+      replaceCall(call, callee, argIdx, baseSlice, patchSlice, insertSlice,
+                  rewriter);
+      return success();
+    }
+
+    return failure();
+  }
+
+private:
+  static void appendDynamicTypes(SmallVectorImpl<Type> &types, unsigned &pos,
+                                 ValueRange values) {
+    for (Value value : values)
+      types.insert(types.begin() + pos++, value.getType());
+  }
+
+  static void appendDynamicSliceTypes(SmallVectorImpl<Type> &types,
+                                      unsigned &pos,
+                                      OffsetSizeAndStrideOpInterface op) {
+    appendDynamicTypes(types, pos, op.getOffsets());
+    appendDynamicTypes(types, pos, op.getSizes());
+    appendDynamicTypes(types, pos, op.getStrides());
+  }
+
+  static SmallVector<Value> appendDynamicBlockArgs(Block &block, unsigned &pos,
+                                                   ValueRange values) {
+    SmallVector<Value> args;
+    for (Value value : values)
+      args.push_back(block.insertArgument(pos++, value.getType(),
+                                          value.getLoc()));
+    return args;
+  }
+
+  static void appendDynamicOperands(SmallVectorImpl<Value> &operands,
+                                    unsigned &pos, ValueRange values) {
+    operands.insert(operands.begin() + pos, values.begin(), values.end());
+    pos += values.size();
+  }
+
+  static void appendDynamicSliceOperands(SmallVectorImpl<Value> &operands,
+                                         unsigned &pos,
+                                         OffsetSizeAndStrideOpInterface op) {
+    appendDynamicOperands(operands, pos, op.getOffsets());
+    appendDynamicOperands(operands, pos, op.getSizes());
+    appendDynamicOperands(operands, pos, op.getStrides());
+  }
+
+  static void eraseIfUnused(Operation *op, PatternRewriter &rewriter) {
+    if (op->use_empty())
+      rewriter.eraseOp(op);
+  }
+
+  void modifyCallee(func::FuncOp callee, unsigned argIdx,
+                    tensor::ExtractSliceOp baseSlice,
+                    tensor::ExtractSliceOp patchSlice,
+                    tensor::InsertSliceOp insertSlice,
+                    PatternRewriter &rewriter) const {
+    auto &block = callee.getBody().front();
+    auto oldArg = block.getArgument(argIdx);
+    auto oldFuncType = callee.getFunctionType();
+
+    SmallVector<Type> newInputTypes(oldFuncType.getInputs().begin(),
+                                    oldFuncType.getInputs().end());
+    newInputTypes[argIdx] = baseSlice.getSource().getType();
+
+    unsigned typePos = argIdx + 1;
+    newInputTypes.insert(newInputTypes.begin() + typePos++,
+                         patchSlice.getSource().getType());
+    appendDynamicSliceTypes(newInputTypes, typePos, baseSlice);
+    appendDynamicSliceTypes(newInputTypes, typePos, patchSlice);
+    appendDynamicSliceTypes(newInputTypes, typePos, insertSlice);
+
+    SmallVector<Type> newResultTypes(oldFuncType.getResults().begin(),
+                                     oldFuncType.getResults().end());
+
+    rewriter.modifyOpInPlace(callee, [&]() {
+      callee.setFunctionType(
+          rewriter.getFunctionType(newInputTypes, newResultTypes));
+
+      unsigned insertPos = argIdx;
+      auto baseSourceArg = block.insertArgument(
+          insertPos++, baseSlice.getSource().getType(), oldArg.getLoc());
+      auto patchSourceArg = block.insertArgument(
+          insertPos++, patchSlice.getSource().getType(), oldArg.getLoc());
+
+      SmallVector<Value> baseOffsets =
+          appendDynamicBlockArgs(block, insertPos, baseSlice.getOffsets());
+      SmallVector<Value> baseSizes =
+          appendDynamicBlockArgs(block, insertPos, baseSlice.getSizes());
+      SmallVector<Value> baseStrides =
+          appendDynamicBlockArgs(block, insertPos, baseSlice.getStrides());
+      SmallVector<Value> patchOffsets =
+          appendDynamicBlockArgs(block, insertPos, patchSlice.getOffsets());
+      SmallVector<Value> patchSizes =
+          appendDynamicBlockArgs(block, insertPos, patchSlice.getSizes());
+      SmallVector<Value> patchStrides =
+          appendDynamicBlockArgs(block, insertPos, patchSlice.getStrides());
+      SmallVector<Value> insertOffsets =
+          appendDynamicBlockArgs(block, insertPos, insertSlice.getOffsets());
+      SmallVector<Value> insertSizes =
+          appendDynamicBlockArgs(block, insertPos, insertSlice.getSizes());
+      SmallVector<Value> insertStrides =
+          appendDynamicBlockArgs(block, insertPos, insertSlice.getStrides());
+
+      PatternRewriter::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&block);
+
+      auto newPatchSlice = rewriter.create<tensor::ExtractSliceOp>(
+          oldArg.getLoc(), patchSlice.getType(), patchSourceArg, patchOffsets,
+          patchSizes, patchStrides, patchSlice.getStaticOffsets(),
+          patchSlice.getStaticSizes(), patchSlice.getStaticStrides());
+      auto newBaseSlice = rewriter.create<tensor::ExtractSliceOp>(
+          oldArg.getLoc(), baseSlice.getType(), baseSourceArg, baseOffsets,
+          baseSizes, baseStrides, baseSlice.getStaticOffsets(),
+          baseSlice.getStaticSizes(), baseSlice.getStaticStrides());
+      auto merged = rewriter.create<tensor::InsertSliceOp>(
+          oldArg.getLoc(), cast<RankedTensorType>(oldArg.getType()),
+          newPatchSlice, newBaseSlice, insertOffsets, insertSizes,
+          insertStrides, insertSlice.getStaticOffsets(),
+          insertSlice.getStaticSizes(), insertSlice.getStaticStrides());
+
+      rewriter.replaceAllUsesWith(oldArg, merged);
+      block.eraseArgument(oldArg.getArgNumber());
+    });
+  }
+
+  void replaceCall(func::CallOp call, func::FuncOp callee, unsigned argIdx,
+                   tensor::ExtractSliceOp baseSlice,
+                   tensor::ExtractSliceOp patchSlice,
+                   tensor::InsertSliceOp insertSlice,
+                   PatternRewriter &rewriter) const {
+    SmallVector<Value> newOperands(call.getOperands().begin(),
+                                   call.getOperands().end());
+    newOperands[argIdx] = baseSlice.getSource();
+
+    unsigned operandPos = argIdx + 1;
+    newOperands.insert(newOperands.begin() + operandPos++,
+                       patchSlice.getSource());
+    appendDynamicSliceOperands(newOperands, operandPos, baseSlice);
+    appendDynamicSliceOperands(newOperands, operandPos, patchSlice);
+    appendDynamicSliceOperands(newOperands, operandPos, insertSlice);
+
+    rewriter.setInsertionPoint(call);
+    auto newCall =
+        rewriter.create<func::CallOp>(call.getLoc(), callee, newOperands);
+    newCall->setAttrs(call->getAttrs());
+    rewriter.replaceOp(call, newCall.getResults());
+
+    eraseIfUnused(insertSlice, rewriter);
+    eraseIfUnused(baseSlice, rewriter);
+    eraseIfUnused(patchSlice, rewriter);
+  }
+};
+
 /// Swap a rank-preserving extract_slice followed by a unit-dim expand_shape
 /// into expand_shape + extract_slice.  Only handles expand_shape that inserts
 /// unit dims (size 1).
@@ -508,10 +710,8 @@ struct FoldRankReducingSliceExpandShape
 /// Swap a rank-preserving extract_slice followed by a collapse_shape into
 /// collapse_shape + extract_slice.  The collapse may reduce rank by grouping
 /// several source dims.  The extract_slice on the original tensor must satisfy:
-/// within every collapse group, after the first dim with sliceSize > 1, all
-/// subsequent dims must be fully sliced (sliceSize == srcSize).  This ensures
-/// the slice elements are contiguous in the collapsed view and can be expressed
-/// as a single extract_slice with unit strides.
+/// within every collapse group, the slice must be expressible as a single
+/// strided extract_slice on the collapsed view.
 ///
 ///   %s = extract_slice %src[0, o1, 0, 0] [1, 1, 4, 16] [1, 1, 1, 1]
 ///       : tensor<1x16x4x16xf16> to tensor<1x1x4x16xf16>
@@ -535,85 +735,141 @@ struct SwapCollapseShapeOfExtractSlice
                                 PatternRewriter &rewriter) const override {
     auto extractOp =
         collapseOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
-    if (!extractOp)
+    if (!extractOp) {
       return failure();
-
-    auto srcType = cast<RankedTensorType>(extractOp.getSource().getType());
-    auto sliceType = extractOp.getType();
-    auto collapsedType = collapseOp.getResultType();
-
-    if (!srcType.hasStaticShape() || !sliceType.hasStaticShape())
-      return failure();
-
-    // Require rank-preserving extract_slice
-    if (srcType.getRank() != sliceType.getRank())
-      return failure();
-
-    // Require static offsets and unit strides.
-    auto staticOffsets = extractOp.getStaticOffsets();
-    if (llvm::any_of(staticOffsets, ShapedType::isDynamic))
-      return failure();
-    if (!llvm::all_of(extractOp.getStaticStrides(),
-                      [](int64_t s) { return s == 1; }))
-      return failure();
-
-    auto srcShape = srcType.getShape();
-    auto sliceShape = sliceType.getShape();
-    auto reassoc = collapseOp.getReassociationIndices();
-
-    SmallVector<int64_t> newCollapsedShape;
-    SmallVector<OpFoldResult> newOffsets, newSizes, newStrides;
-
-    for (auto &group : reassoc) {
-      // Scan the group left-to-right, find the first dim with sliceSize > 1
-      // Every subsequent dim must be fully sliced (sliceSize == srcSize). 
-      // Otherwise the slice would not be contiguous in the collapsed view.
-      bool foundActive = false;
-      for (int64_t i : group) {
-        int64_t s = sliceShape[i];
-        int64_t n = srcShape[i];
-        if (foundActive) {
-          if (s != n)
-            return failure();
-        } else if (s > 1) {
-          foundActive = true;
-        }
-      }
-
-      // New collapsed dim: product of source dims in the group.
-      // New slice size:    product of slice sizes in the group.
-      int64_t groupSrcSize = 1;
-      int64_t groupSliceSize = 1;
-      for (int64_t i : group) {
-        groupSrcSize *= srcShape[i];
-        groupSliceSize *= sliceShape[i];
-      }
-      newCollapsedShape.push_back(groupSrcSize);
-      newSizes.push_back(rewriter.getIndexAttr(groupSliceSize));
-      newStrides.push_back(rewriter.getIndexAttr(1));
-
-      // Row-major linearization of the group's offsets:
-      //   newOffset = sum_k offsets[group[k]] * (prod of srcShape[group[j]]
-      //                                          for j > k).
-      int64_t newOffset = 0;
-      int64_t innerProduct = 1;
-      for (int64_t k = (int64_t)group.size() - 1; k >= 0; --k) {
-        newOffset += staticOffsets[group[k]] * innerProduct;
-        innerProduct *= srcShape[group[k]];
-      }
-      newOffsets.push_back(rewriter.getIndexAttr(newOffset));
     }
 
-    auto collapsedSrcType =
-        RankedTensorType::get(newCollapsedShape, srcType.getElementType());
+    auto collapsedType = collapseOp.getResultType();
+    auto reassoc = collapseOp.getReassociationIndices();
+
+    FailureOr<CollapsedSliceParams> params = computeCollapsedSliceParams(
+        rewriter, collapseOp.getLoc(), extractOp, reassoc);
+    if (failed(params)) {
+      return failure();
+    }
 
     auto newCollapse = rewriter.create<tensor::CollapseShapeOp>(
-        collapseOp.getLoc(), collapsedSrcType, extractOp.getSource(), reassoc);
+        collapseOp.getLoc(), params->collapsedSourceType,
+        extractOp.getSource(), reassoc);
 
     rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
-        collapseOp, collapsedType, newCollapse, newOffsets, newSizes,
-        newStrides);
+        collapseOp, collapsedType, newCollapse, params->offsets, params->sizes,
+        params->strides);
     return success();
+  }
+
+private:
+  struct CollapsedSliceParams {
+    RankedTensorType collapsedSourceType;
+    SmallVector<OpFoldResult> offsets;
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides;
+  };
+
+  static int64_t product(ArrayRef<int64_t> shape,
+                         ArrayRef<int64_t> dims) {
+    int64_t result = 1;
+    for (int64_t dim : dims) {
+      result *= shape[dim];
+    }
+    return result;
+  }
+
+  // A group is representable after collapse when its active slice range maps to
+  // one strided interval in the collapsed dimension.
+  static FailureOr<int64_t>
+  getCollapsedSliceStride(ArrayRef<int64_t> sourceShape,
+                          ArrayRef<int64_t> sliceShape,
+                          ArrayRef<int64_t> group) {
+    std::optional<unsigned> firstActivePos;
+    std::optional<unsigned> lastActivePos;
+    for (auto [pos, dim] : llvm::enumerate(group)) {
+      if (sliceShape[dim] <= 1) {
+        continue;
+      }
+      firstActivePos = firstActivePos.value_or(pos);
+      lastActivePos = pos;
+    }
+
+    if (!firstActivePos) {
+      return int64_t{1};
+    }
+
+    for (unsigned pos = *firstActivePos + 1; pos <= *lastActivePos; ++pos) {
+      int64_t dim = group[pos];
+      if (sliceShape[dim] != sourceShape[dim]) {
+        return failure();
+      }
+    }
+
+    return product(sourceShape,
+                   group.slice(*lastActivePos + 1,
+                               group.size() - *lastActivePos - 1));
+  }
+
+  static OpFoldResult linearizeOffsets(OpBuilder &builder, Location loc,
+                                       ArrayRef<int64_t> sourceShape,
+                                       ArrayRef<int64_t> group,
+                                       ArrayRef<OpFoldResult> offsets) {
+    SmallVector<OpFoldResult> indices;
+    SmallVector<OpFoldResult> basis;
+    for (int64_t dim : group) {
+      indices.push_back(offsets[dim]);
+      basis.push_back(builder.getIndexAttr(sourceShape[dim]));
+    }
+
+    // Reuse upstream affine linearization for row-major offset computation.
+    ImplicitLocOpBuilder locBuilder(loc, builder);
+    return affine::linearizeIndex(indices, basis, locBuilder);
+  }
+
+  static FailureOr<CollapsedSliceParams>
+  computeCollapsedSliceParams(OpBuilder &builder, Location loc,
+                              tensor::ExtractSliceOp extractOp,
+                              ArrayRef<ReassociationIndices> reassociation) {
+    auto sourceType =
+        dyn_cast<RankedTensorType>(extractOp.getSource().getType());
+    auto sliceType = dyn_cast<RankedTensorType>(extractOp.getType());
+    if (!sourceType || !sliceType) {
+      return failure();
+    }
+
+    if (!sourceType.hasStaticShape() || !sliceType.hasStaticShape()) {
+      return failure();
+    }
+
+    if (sourceType.getRank() != sliceType.getRank()) {
+      return failure();
+    }
+
+    if (!llvm::all_of(extractOp.getStaticStrides(),
+                      [](int64_t stride) { return stride == 1; })) {
+      return failure();
+    }
+
+    ArrayRef<int64_t> sourceShape = sourceType.getShape();
+    ArrayRef<int64_t> sliceShape = sliceType.getShape();
+    SmallVector<OpFoldResult> originalOffsets = extractOp.getMixedOffsets();
+
+    CollapsedSliceParams params;
+    SmallVector<int64_t> collapsedSourceShape;
+    for (ArrayRef<int64_t> group : reassociation) {
+      FailureOr<int64_t> collapsedStride =
+          getCollapsedSliceStride(sourceShape, sliceShape, group);
+      if (failed(collapsedStride)) {
+        return failure();
+      }
+
+      collapsedSourceShape.push_back(product(sourceShape, group));
+      params.offsets.push_back(
+          linearizeOffsets(builder, loc, sourceShape, group, originalOffsets));
+      params.sizes.push_back(builder.getIndexAttr(product(sliceShape, group)));
+      params.strides.push_back(builder.getIndexAttr(*collapsedStride));
+    }
+
+    params.collapsedSourceType =
+        RankedTensorType::get(collapsedSourceShape, sourceType.getElementType());
+    return params;
   }
 };
 
@@ -641,7 +897,8 @@ struct PullSliceIntoVectorFunction
     preProcessShapeChangeAfterExtractSlice(&getContext(), getOperation());
 
     RewritePatternSet patterns(&getContext());
-    patterns.add<PullExtractInsertSliceIntoVectorFunction>(
+    patterns.add<PullExtractInsertSliceIntoVectorFunction,
+                 PullInsertedSliceOperandIntoVectorFunction>(
         patterns.getContext());
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
