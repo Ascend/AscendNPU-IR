@@ -81,3 +81,34 @@ func.func @test_collapse_down_memref_strided(%arg0: i64 {hacc.arg_type = #hacc.a
   }
   return
 }
+
+// -----
+
+// CHECK: Valid
+// CHECK-LABEL: @expand_after_to_tensor_strided
+// CHECK:       %[[T:.*]] = bufferization.to_tensor {{.*}} : memref<32x64xf32, strided<[128, 1]>>
+// CHECK:       tensor.expand_shape %[[T]]
+// CHECK-NOT:   memref.expand_shape
+func.func @expand_after_to_tensor_strided(%arg0: memref<32x128xf32>) -> tensor<4x8x64xf32> {
+  %m = memref.reinterpret_cast %arg0 to offset: [0], sizes: [32, 64], strides: [128, 1] : memref<32x128xf32> to memref<32x64xf32, strided<[128, 1]>>
+  %t = bufferization.to_tensor %m restrict : memref<32x64xf32, strided<[128, 1]>>
+  %e = tensor.expand_shape %t [[0, 1], [2]] output_shape [4, 8, 64] : tensor<32x64xf32> into tensor<4x8x64xf32>
+  %init = tensor.empty() : tensor<4x8x64xf32>
+  %add = hivm.hir.vadd ins(%e, %e : tensor<4x8x64xf32>, tensor<4x8x64xf32>) outs(%init : tensor<4x8x64xf32>) -> tensor<4x8x64xf32>
+  return %add : tensor<4x8x64xf32>
+}
+
+// -----
+
+// CHECK: Valid
+// CHECK-LABEL: @expand_after_to_tensor_identity
+// CHECK:       memref.expand_shape
+// CHECK:       bufferization.to_tensor
+// CHECK-NOT:   tensor.expand_shape %{{.*}} {{\[}}[0, 1]
+func.func @expand_after_to_tensor_identity(%arg0: memref<32x64xf32>) -> tensor<4x8x64xf32> {
+  %t = bufferization.to_tensor %arg0 restrict : memref<32x64xf32>
+  %e = tensor.expand_shape %t [[0, 1], [2]] output_shape [4, 8, 64] : tensor<32x64xf32> into tensor<4x8x64xf32>
+  %init = tensor.empty() : tensor<4x8x64xf32>
+  %add = hivm.hir.vadd ins(%e, %e : tensor<4x8x64xf32>, tensor<4x8x64xf32>) outs(%init : tensor<4x8x64xf32>) -> tensor<4x8x64xf32>
+  return %add : tensor<4x8x64xf32>
+}

@@ -261,3 +261,57 @@ func.func @insert_bad_unaligned_offset(%src: tensor<2x16xbf16>, %dst: tensor<8x1
   %0 = tensor.insert_slice %src into %dst[3, 0] [2, 16] [1, 1] : tensor<2x16xbf16> into tensor<8x16xbf16>
   return %0 : tensor<8x16xbf16>
 }
+
+// -----
+
+// 1-D dynamic offset.
+// CHECK-LABEL: @rank1_dyn_offset
+// CHECK-SAME:  (%[[SRC:.*]]: tensor<8xf32>, %[[OFF:.*]]: index)
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
+// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
+// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<2xi32>
+// CHECK-NEXT:  %[[IDX:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<2xi32>
+// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[IDX]]] {axis = 0 : i32} : (tensor<8xf32>, tensor<2xi32>) -> tensor<2xf32>
+// CHECK-NEXT:  return %[[G]]
+func.func @rank1_dyn_offset(%src: tensor<8xf32>, %off: index) -> tensor<2xf32> {
+  %0 = tensor.extract_slice %src[%off] [2] [1] : tensor<8xf32> to tensor<2xf32>
+  return %0 : tensor<2xf32>
+}
+
+// -----
+
+// 2-D, axis 0 dynamic.  Index tensor is reshaped to <2x1> and broadcast to
+// <2x16>; the non-sliced axis passes through (full size, zero offset).
+// CHECK-LABEL: @rank2_axis0_dyn_offset
+// CHECK-SAME:  (%[[SRC:.*]]: tensor<8x16xf32>, %[[OFF:.*]]: index)
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
+// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
+// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<2xi32>
+// CHECK-NEXT:  %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<2xi32>
+// CHECK-NEXT:  %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<2xi32> -> tensor<2x1xi32>
+// CHECK-NEXT:  %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<2x1xi32> -> tensor<2x16xi32>
+// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 0 : i32} : (tensor<8x16xf32>, tensor<2x16xi32>) -> tensor<2x16xf32>
+// CHECK-NEXT:  return %[[G]]
+func.func @rank2_axis0_dyn_offset(%src: tensor<8x16xf32>, %off: index) -> tensor<2x16xf32> {
+  %0 = tensor.extract_slice %src[%off, 0] [2, 16] [1, 1] : tensor<8x16xf32> to tensor<2x16xf32>
+  return %0 : tensor<2x16xf32>
+}
+
+// -----
+
+// 2-D, axis 1 (innermost) dynamic.  Reshape to <1x4>, broadcast to <8x4>.
+// CHECK-LABEL: @rank2_axis1_dyn_offset
+// CHECK-SAME:  (%[[SRC:.*]]: tensor<8x16xf32>, %[[OFF:.*]]: index)
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
+// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
+// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<4xi32>
+// CHECK-NEXT:  %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<4xi32>
+// CHECK-NEXT:  %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<4xi32> -> tensor<1x4xi32>
+// CHECK-NEXT:  %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<1x4xi32> -> tensor<8x4xi32>
+// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 1 : i32} : (tensor<8x16xf32>, tensor<8x4xi32>) -> tensor<8x4xf32>
+// CHECK-NEXT:  return %[[G]]
+func.func @rank2_axis1_dyn_offset(%src: tensor<8x16xf32>, %off: index) -> tensor<8x4xf32> {
+  %0 = tensor.extract_slice %src[0, %off] [8, 4] [1, 1] : tensor<8x16xf32> to tensor<8x4xf32>
+  return %0 : tensor<8x4xf32>
+}
+
