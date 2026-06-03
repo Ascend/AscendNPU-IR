@@ -39,6 +39,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
+#include "bishengir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/MeshShardingInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
@@ -104,6 +105,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::scf_ext::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerShardingInterfaceExternalModels(registry);
+  mlir::tensor_ext::registerBufferizableOpInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);
   bishengir::tensor::registerMeshShardingInterfaceExternalModels(registry);
   bishengir::bufferization::registerTilingInterfaceExternalModels(registry);

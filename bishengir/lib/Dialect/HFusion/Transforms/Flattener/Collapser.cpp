@@ -524,14 +524,16 @@ void Flattener::adjustGatherLoadOp(hfusion::GatherLoadOp gatherLoadOp,
   Value mask =
       gatherLoadOp.getMask() ? collapseTensorOperand(gatherLoadOp.getMask())
                              : Value();
+  Value other = gatherLoadOp.getOther()
+                    ? collapseTensorOperand(gatherLoadOp.getOther())
+                    : Value();
   Value dst = collapseTensorOperand(gatherLoadOp.getDst());
 
   builder.setInsertionPointAfter(gatherLoadOp);
   auto newGatherLoadOp = builder.create<hfusion::GatherLoadOp>(
       gatherLoadOp.getLoc(), gatherLoadOp.getBase(), indices,
-      gatherLoadOp.getBurstLen(), mask, gatherLoadOp.getOther(), dst,
-      gatherLoadOp.getCacheAttr(), gatherLoadOp.getEvictAttr(),
-      gatherLoadOp.getIsVolatileAttr());
+      gatherLoadOp.getBurstLen(), mask, other, dst, gatherLoadOp.getCacheAttr(),
+      gatherLoadOp.getEvictAttr(), gatherLoadOp.getIsVolatileAttr());
   if (gatherLoadOp.getResult()) {
     auto oldRes = gatherLoadOp.getResult();
     auto newRes = newGatherLoadOp.getResult();

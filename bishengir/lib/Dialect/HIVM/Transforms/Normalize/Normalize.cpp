@@ -20,10 +20,12 @@
 #include "bishengir/Dialect/HIVM/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
-#define GEN_PASS_DEF_NORMALIZE
+#define GEN_PASS_DEF_HIVMNORMALIZE
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
 
@@ -35,8 +37,8 @@ thread_local bool archisAscend310B{false};
 thread_local bool archisMembased{false};
 
 struct NormalizeHIVMPass
-    : public impl::NormalizeBase<NormalizeHIVMPass> {
-  using impl::NormalizeBase<NormalizeHIVMPass>::NormalizeBase;
+    : public impl::HIVMNormalizeBase<NormalizeHIVMPass> {
+  using impl::HIVMNormalizeBase<NormalizeHIVMPass>::HIVMNormalizeBase;
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
     archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
@@ -45,7 +47,7 @@ struct NormalizeHIVMPass
     archisMembased = hacc::utils::isMemBasedArch(moduleOp);
     auto *context = &getContext();
     RewritePatternSet patterns(context);
-    populateNormalizeTrigPatterns(patterns);
+    populateNormalizeTrigPatterns(patterns, enableHighPrecision);
     populateNormalizeModPatterns(patterns);
     populateNormalizeI8I32CmpPatterns(patterns);
     populateNormalizeArithmeticPatterns(patterns);
@@ -64,6 +66,8 @@ struct NormalizeHIVMPass
                                                          archIsRegbased);
     populateNormalizeFinalArithmeticPatterns(patterns);
     populateNormalizeCmpVnePatterns(patterns);
+    populateNormalizeAtomicPatterns(patterns);
+    populateNormalizeSortPatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

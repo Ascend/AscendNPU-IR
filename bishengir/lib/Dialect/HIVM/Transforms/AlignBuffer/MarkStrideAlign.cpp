@@ -641,11 +641,6 @@ getLastMUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
   int foundCount = 0;
   int lastFoundIndex = -1;
   for (auto index : llvm::reverse(reassociations)) {
-    if (llvm::all_of(memRefTypes, [&](MemRefType memRefType) {
-          return memRefType.getShape()[index] == 1;
-        })) {
-      continue;
-    }
     foundCount++;
     lastFoundIndex = index;
     if (foundCount == 2) {
@@ -655,6 +650,15 @@ getLastMUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
   // If only one non-unit dim found, return it
   if (foundCount == 1) {
     return lastFoundIndex;
+  }
+  return std::nullopt;
+}
+
+std::optional<int>
+getLastNUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
+                  ReassociationIndices reassociations) {
+  for (auto index : llvm::reverse(reassociations)) {
+    return index;
   }
   return std::nullopt;
 }
@@ -748,7 +752,7 @@ std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
   if (nSizeStride != -1 && nz2dn != NZ2DN::DN_Y && ddm != DualDstMode::SplitM) {
     alignBytes = nSizeStride * dataWidth / 8;
     std::optional<int> alignDim =
-        getLastNotUnitDim(memRefTypes, continuousReassociations);
+        getLastNUnitDim(memRefTypes, continuousReassociations);
     return alignDim;
   }
   int64_t mSizeStride = getMsizeAlignmentRequirement(dtype, nz2dn, ddm);

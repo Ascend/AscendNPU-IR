@@ -18,7 +18,7 @@ func.func @custom_test(%arg0 : memref<?xf32>,
   %empty = tensor.empty() : tensor<3x3xf32>
   // CHECK: call void @custom_todo
   %0 = hivm.hir.custom
-       { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD> }
+       { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "custom_todo" }
        "my_custom_op"
        ins(%arg0, %arg1, %c4_i64, %c0_i32, %c2_i64, %c1_i64, %c2_i32, %c2_i32, %c0_i32, %c0_i32
            : memref<?xf32>, tensor<3x3xi64>, i64, i32, i64, i64, i32, i32, i32, i32)
@@ -58,7 +58,7 @@ func.func @macro_custom_test(%arg0 : memref<?xf32>,
   // CHECK: call void @custom_todo
   %0 = hivm.hir.custom_macro
        { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>,
-         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V> }
+         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>, symbol = "custom_todo" }
        "my_custom_op"
        ins(%arg0, %arg1, %c4_i64, %c0_i32, %c2_i64, %c1_i64, %c2_i32, %c2_i32, %c0_i32, %c0_i32
            : memref<?xf32>, tensor<3x3xi64>, i64, i32, i64, i64, i32, i32, i32, i32)
@@ -160,5 +160,96 @@ func.func @indirect_atomic_no_mask_test(%dst: memref<?xf32, #hivm.address_space<
             memref<16xi32, #hivm.address_space<ub>>,
             memref<16xf32, #hivm.address_space<ub>>)
       outs(%out : memref<16xf32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_or_test
+func.func @indirect_atomic_or_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                   %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                   %value: memref<16xi32, #hivm.address_space<ub>>,
+                                   %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                   %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_soft_or_int32_t_int32_t
+  hivm.hir.custom
+      {extra_attr = "operate=or"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_soft_xor_no_mask_test
+func.func @indirect_atomic_soft_xor_no_mask_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                                 %offsets: memref<16xi64, #hivm.address_space<ub>>,
+                                                 %value: memref<16xi32, #hivm.address_space<ub>>,
+                                                 %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_soft_xor_no_mask_int32_t_int64_t
+  hivm.hir.custom
+      {extra_attr = "operate=xor"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi64, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_block_or_test
+func.func @indirect_atomic_block_or_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                       %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                       %value: memref<16xi32, #hivm.address_space<ub>>,
+                                       %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                       %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_block_or_int32_t_int32_t
+  hivm.hir.custom
+      {extra_attr = "scope=cta, operate=or"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_block_and_no_mask_test
+func.func @indirect_atomic_block_and_no_mask_test(%dst: memref<?xi64, #hivm.address_space<gm>>,
+                                                %offsets: memref<16xi32, #hivm.address_space<ub>>,
+                                                %value: memref<16xi64, #hivm.address_space<ub>>,
+                                                %out: memref<16xi64, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_block_and_no_mask_int64_t_int32_t
+  hivm.hir.custom
+      {extra_attr = "scope=cta, operate=and"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value
+          : memref<?xi64, #hivm.address_space<gm>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi64, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi64, #hivm.address_space<ub>>)
+  return
+}
+
+// CHECK-LABEL: indirect_atomic_block_xor_test
+func.func @indirect_atomic_block_xor_test(%dst: memref<?xi32, #hivm.address_space<gm>>,
+                                        %offsets: memref<16xi64, #hivm.address_space<ub>>,
+                                        %value: memref<16xi32, #hivm.address_space<ub>>,
+                                        %mask: memref<16xi8, #hivm.address_space<ub>>,
+                                        %out: memref<16xi32, #hivm.address_space<ub>>) {
+  // CHECK: call void @indirect_atomic_block_xor_int32_t_int64_t
+  hivm.hir.custom
+      {extra_attr = "scope=cta, operate=xor"}
+      "__builtin_indirect_atomic"
+      ins(%dst, %offsets, %value, %mask
+          : memref<?xi32, #hivm.address_space<gm>>,
+            memref<16xi64, #hivm.address_space<ub>>,
+            memref<16xi32, #hivm.address_space<ub>>,
+            memref<16xi8, #hivm.address_space<ub>>)
+      outs(%out : memref<16xi32, #hivm.address_space<ub>>)
   return
 }

@@ -29,14 +29,18 @@ enum class BinaryKind {
   Mod,
   ModUnsigned,
   And,
+  Xor,
   Min,
   Max,
   Or,
   MinSigned,
   MaxSigned,
+  MinUnsigned,
+  MaxUnsigned,
   Powf
 };
 enum class ShiftKind { Left, RightSigned, RightUnsigned };
+enum class TernaryKind { Select };
 enum class CompareKind { EQ, NE, LT, GT, GE, LE };
 enum class CastRoundKind {
   Default,
@@ -68,6 +72,8 @@ enum class OverflowCastKind {
   I32ToI8,
   I16ToI8,
 };
+
+enum class TaylerMode { SIN, ATAN };
 
 } // namespace mlir
 

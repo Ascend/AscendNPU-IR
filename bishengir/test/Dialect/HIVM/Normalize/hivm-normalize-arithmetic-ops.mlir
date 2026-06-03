@@ -192,7 +192,9 @@ func.func @test_NormalizeDivVSToRec_hivm_div_dynshape_to_hivm_rec(
 // CHECK-LABEL: func.func @test_NormalizeVPowi_hivm_vpow_i16
 // CHECK: hivm.hir.vcast ins(%arg0 : tensor<4x2x32xi16>) outs({{.*}} : tensor<4x2x32xf32>) round_mode = <trunc> -> tensor<4x2x32xf32>
 // CHECK: hivm.hir.vcast ins(%arg1 : tensor<4x2x32xi16>) outs({{.*}} : tensor<4x2x32xf32>) round_mode = <trunc> -> tensor<4x2x32xf32>
-// CHECK: hivm.hir.vpow ins({{.*}}, {{.*}} : tensor<4x2x32xf32>, tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK-NOT: hivm.hir.vpow
+  //        ^ VPowi widens to f32 and produces vpow(f32), which is then
+  //          further decomposed by NormalizeVPowfOp into exp + log + select.
 // CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xi32>) round_mode = <trunc> -> tensor<4x2x32xi32>
 // CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xi32>) outs({{.*}} : tensor<4x2x32xi16>) round_mode = <truncwithoverflow> -> tensor<4x2x32xi16>
 // CHECK: return
@@ -226,7 +228,9 @@ func.func @test_NormalizeSubVSToVMulAndVAdd_hivm(%arg0: tensor<16xf32>, %arg1: f
 // CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf16>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
 // CHECK: hivm.hir.vcast ins(%arg1 : tensor<4x2x32xi8>) outs({{.*}} : tensor<4x2x32xf16>) -> tensor<4x2x32xf16>
 // CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf16>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
-// CHECK: hivm.hir.vpow ins({{.*}}, {{.*}} : tensor<4x2x32xf32>, tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xf32>) -> tensor<4x2x32xf32>
+// CHECK-NOT: hivm.hir.vpow
+  //        ^ VPowi widens to f32 and produces vpow(f32), which is then
+  //          further decomposed by NormalizeVPowfOp into exp + log + select.
 // CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xf32>) outs({{.*}} : tensor<4x2x32xi32>) round_mode = <trunc> -> tensor<4x2x32xi32>
 // CHECK: hivm.hir.vcast ins({{.*}} : tensor<4x2x32xi32>) outs({{.*}} : tensor<4x2x32xi8>) round_mode = <truncwithoverflow> -> tensor<4x2x32xi8>
 // CHECK: return
@@ -267,7 +271,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<4x2xi64>
 // CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[CAST0]], %[[CAST1]] : tensor<4x2xi64>, tensor<4x2xi64>) outs(%[[EMPTY2]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<4x2xi64>
-// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) round : false -> tensor<4x2xi64>
+// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<4x2xi32>
 // CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[SHR]] : tensor<4x2xi64>) outs(%[[EMPTY4]] : tensor<4x2xi32>) round_mode = <truncwithoverflow> -> tensor<4x2xi32>
 // CHECK: return %[[RES]]
@@ -312,7 +316,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<4x2xi64>
 // CHECK: %[[SHL:.*]] = hivm.hir.vshl ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<4x2xi64>
-// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[SHL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY4]] : tensor<4x2xi64>) round : false -> tensor<4x2xi64>
+// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[SHL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY4]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY5:.*]] = tensor.empty() : tensor<4x2xi32>
 // CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[SHR]] : tensor<4x2xi64>) outs(%[[EMPTY5]] : tensor<4x2xi32>) round_mode = <truncwithoverflow> -> tensor<4x2xi32>
 // CHECK: return %[[RES]]

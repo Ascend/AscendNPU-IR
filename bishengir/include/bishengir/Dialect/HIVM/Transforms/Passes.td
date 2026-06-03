@@ -41,7 +41,7 @@ def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   ];
 }
 
-def Normalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
+def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize HIVM";
   let constructor = "mlir::hivm::createHIVMNormalizeOpsPass()";
   let dependentDialects = [
@@ -49,6 +49,14 @@ def Normalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
     "arith::ArithDialect",
     "hivm::HIVMDialect",
     "tensor::TensorDialect",
+    "bufferization::BufferizationDialect",
+    "memref::MemRefDialect",
+  ];
+  let options = [
+    Option<
+      "enableHighPrecision", "enable-high-precision", "bool",
+      /*default=*/"true",
+      "Enable high precision calculation for sin/cos in HIVM.">
   ];
 }
 
@@ -628,11 +636,6 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
-  let options = [
-    Option<"enableV2SliceSwapOpt", "enable-v2-slice-swap-opt", "bool",
-           /*default=*/"false",
-           "Enable fixpipe/extract_slice and fixpipe/insert_slice swap optimization.">
-  ];
 }
 
 def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
@@ -645,13 +648,6 @@ def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
            /*default=*/"false",
            "Infer fixpipe dma_mode from source/destination shape compatibility.">
   ];
-}
-
-def InlineFixpipeV2 : Pass<"hivm-inline-fixpipe-v2"> {
-  let summary = "Convert ops to HIVM Fixpipe op";
-  let constructor = "mlir::hivm::createInlineFixpipeV2Pass()";
-  let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
 }
 
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
@@ -1017,5 +1013,18 @@ def InsertAllocBasePlaceholder : Pass<"insert-alloc-base-placeholder", "ModuleOp
 def WriteBackShared : Pass<"write-back-shared", "ModuleOp"> {
   let summary = "Set the actual size of memref.alloc which represent used shared memory in simt vf";
   let constructor = "mlir::hivm::createWriteBackSharedPass()";
+}
+
+def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"> {
+  let summary = "Fuse linalg.transpose into hivm.hir.load by leveraging DMA on-the-fly transpose";
+  let constructor = "mlir::hivm::createFuseTransposeIntoLoadPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "hivm::HIVMDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect",
+  ];
 }
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

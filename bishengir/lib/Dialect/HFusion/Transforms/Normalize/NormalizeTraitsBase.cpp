@@ -31,6 +31,9 @@
 using namespace mlir;
 namespace mlir::hfusion {
 
+using TernaryOpFn =
+    Value (*)(PatternRewriter &, Location, Value, Value, Value, Value);
+
 bool mlir::hfusion::NormalizeTraitsBase::archIsRegbased() {
   return hfusion::archIsRegbased;
 }
@@ -118,6 +121,8 @@ mapBinaryKindToLinalgBinaryFn(BinaryKind kind) {
       {BinaryKind::Div, linalg::BinaryFn::div},
       {BinaryKind::MinSigned, linalg::BinaryFn::min_signed},
       {BinaryKind::MaxSigned, linalg::BinaryFn::max_signed},
+      {BinaryKind::MinUnsigned, linalg::BinaryFn::min_unsigned},
+      {BinaryKind::MaxUnsigned, linalg::BinaryFn::max_unsigned},
       {BinaryKind::Sub, linalg::BinaryFn::sub},
   };
 
@@ -132,6 +137,7 @@ mapBinaryKindToHFusionBinaryFn(BinaryKind kind) {
       {BinaryKind::Max, hfusion::BinaryFn::maxf},
       {BinaryKind::ModUnsigned, hfusion::BinaryFn::modui},
       {BinaryKind::And, hfusion::BinaryFn::vand},
+      {BinaryKind::Xor, hfusion::BinaryFn::vxor},
       {BinaryKind::Or, hfusion::BinaryFn::vor},
       {BinaryKind::Powf, hfusion::BinaryFn::powf},
   };
@@ -147,6 +153,22 @@ mapShiftKindToBinaryFn(ShiftKind kind) {
       {ShiftKind::RightUnsigned, hfusion::BinaryFn::shrui},
   };
 
+  return lookupMappedFn(kindToFn, kind);
+}
+
+static Value createHFusionSelectOp(PatternRewriter &rewriter, Location loc,
+                                   Value lhs, Value mid, Value rhs,
+                                   Value dst) {
+  return rewriter
+      .create<hfusion::SelectOp>(loc, TypeRange{dst.getType()},
+                                 ValueRange{lhs, mid, rhs}, ValueRange{dst})
+      .getResult(0);
+}
+
+static std::optional<TernaryOpFn> mapTernaryKindToCreator(TernaryKind kind) {
+  static const llvm::DenseMap<TernaryKind, TernaryOpFn> kindToFn = {
+      {TernaryKind::Select, createHFusionSelectOp},
+  };
   return lookupMappedFn(kindToFn, kind);
 }
 
@@ -278,6 +300,11 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(
   llvm_unreachable("unsupported unary kind");
 }
 
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createFloorOp(
+    PatternRewriter &rewriter, Location loc, Value input, Value dst) {
+  return createUnaryOp(rewriter, loc, input, dst, UnaryKind::Floor);
+}
+
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
     PatternRewriter &rewriter, Location loc, Value lhs, Value rhs, Value dst,
     BinaryKind kind) {
@@ -317,13 +344,21 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createShiftOp(
     binaryFn = mapShiftKindToBinaryFn(kind);
   if (!binaryFn)
     llvm_unreachable("unsupported shift kind");
-
   auto *op =
       hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
                               hfusion::BinaryFnAttr>(
           rewriter, loc, *binaryFn, mlir::ValueRange{lhs, rhs},
           mlir::ValueRange{dst});
   return op->getResult(0);
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createTernaryOp(
+    PatternRewriter &rewriter, Location loc, Value lhs, Value mid, Value rhs,
+    Value dst, TernaryKind kind) {
+  auto fn = mapTernaryKindToCreator(kind);
+  if (!fn)
+    llvm_unreachable("unsupported ternary kind");
+  return (*fn)(rewriter, loc, lhs, mid, rhs, dst);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createFillOp(
@@ -378,6 +413,16 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createSelectOp(
                                  mlir::ValueRange{cond, a, b},
                                  mlir::ValueRange{dst})
       .getResults()[0];
+}
+
+mlir::Value mlir::hfusion::NormalizeTraitsBase::createGather1DOp(
+    PatternRewriter &rewriter, Location loc, Value source, Value indices) {
+  Type sourceElemType = getElementTypeOrSelf(source.getType());
+  Value init = utils::createEmptyOpWithTargetElemType(rewriter, loc, indices,
+                                                      sourceElemType);
+  return rewriter.create<hfusion::GatherOp>(loc, source, indices, init,
+                                            /*axis=*/0)
+      ->getResult(0);
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createIsInfOp(

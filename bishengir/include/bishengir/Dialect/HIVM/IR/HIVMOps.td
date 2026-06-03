@@ -398,9 +398,7 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
     SameVariadicOperandSize,
     AllElementTypesMatch<["base", "dst"]>,
     AllRanksMatch<["indices", "dst"]>,
-    AllShapesMatch<["indices", "dst"]>,
-    OptionalTypesMatchWith<"base and other have same element type",
-                           "base", "other", "getElementTypeOrSelf($_self)">
+    AllShapesMatch<["indices", "dst"]>
 ]> {
   let summary = [{
     Perform sparse memory loading with optional mask and other
@@ -433,7 +431,7 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
                        RankedTensorOf<[I32, I64]>:$indices,
                        AnyTypeOf<[I32, I64]>:$burst_len,
                        Optional<RankedTensorOf<[I1]>>:$mask,
-                       Optional<AnyTypeOf<[AnyInteger, AnyFloat]>>:$other,
+                       Optional<AnyRankedTensor>:$other,
                        TensorOrMemref:$dst,
                        OptionalAttr<HIVM_CacheModifierAttr>:$cache,
                        OptionalAttr<HIVM_EvictionPolicyAttr>:$evict,
@@ -952,8 +950,10 @@ def ScatterTOp : HIVM_Op<"scatterT",[
 class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
     : HIVM_StructuredOp<mnemonic,
                         !listconcat([AttrSizedOperandSegments,
-                                     MemoryEffects<[MemRead, MemWrite]>,
-                                     HIVMInferCoreTypeInterface],
+                                     MemoryEffectsOpInterface,
+                                     HIVMInferCoreTypeInterface,
+                                     DeclareOpInterfaceMethods<
+                                         ExtraBufferOpInterface>],
                                     traits)> {
   string customOpSummary = [{
     Custom operation is a generic op interface for users to write their own custom implementation.
@@ -982,6 +982,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
                   of the operation or the init locations to which the results of the op will be written.
+      - temp_buffer : temporary buffers used by the custom implementation.
   }];
 
   string customOpAttrsDescription = [{
@@ -1008,13 +1009,17 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   }];
 
   dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
-      Variadic<AnyType>:$outputs);
+      Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffer, UnitAttr:$no_side_effect);
   dag res = (outs Variadic<AnyType>:$results);
 
   code customOpBaseDecl = [{
       static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
+      
+      static constexpr StringLiteral kExtraAttrName = "extra_attr";
+      static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
+      static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
 
       // TODO: Enable user provided customization
       static int getOpLibraryMaxRankImpl() { return 5; }
@@ -1094,7 +1099,29 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
             DenseI32ArrayAttr::get(getContext(), i32Indices));
       }
 
+      static constexpr StringLiteral kSymbolAttrName = "symbol";
+      std::optional<std::string> getSymbol() {
+        auto op = getOperation();
+        if (auto symbol = op->template getAttrOfType<StringAttr>(kSymbolAttrName)) {
+          return symbol.getValue().str();
+        }
+        return std::nullopt;
+      }
+
+      StringAttr getExtraAttr() {
+        return getOperation()->template getAttrOfType<StringAttr>(kExtraAttrName);
+      }
+
       bool isBuiltin() { return kBuiltins.contains(getName()); }
+
+      void getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+        if (!getNoSideEffect()) {
+          effects.emplace_back(MemoryEffects::Write::get(),
+                               SideEffects::DefaultResource::get());
+          effects.emplace_back(MemoryEffects::Read::get(),
+                               SideEffects::DefaultResource::get());
+        }
+      }
 
       // Builtins helpers
       template<typename CustomOpT>
@@ -1146,6 +1173,8 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
 
     // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE, getOpLibraryCallName}
     static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
+
+    SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo();
   }];
 
   let hasVerifier = 1;

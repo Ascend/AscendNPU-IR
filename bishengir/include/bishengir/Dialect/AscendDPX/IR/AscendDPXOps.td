@@ -328,6 +328,7 @@ def Ull2FloatRdOp : AscendDPX_UnaryMathOp<"ull2float_rd">;
 def Ull2FloatRuOp : AscendDPX_UnaryMathOp<"ull2float_ru">;
 def Y0Op : AscendDPX_UnaryMathOp<"y0">;
 def Y1Op : AscendDPX_UnaryMathOp<"y1">;
+def ReciprocalOp : AscendDPX_UnaryMathOp<"reciprocal">;
 
 class AscendDPX_BinaryMathOp<string mnemonic>
     : AscendDPX_Op<mnemonic> {

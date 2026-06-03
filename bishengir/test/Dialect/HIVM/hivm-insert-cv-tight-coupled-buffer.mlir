@@ -707,7 +707,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
              ins(%src : tensor<16x16xf32>)
              outs(%fix_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
     %custom = hivm.hir.custom
-        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>}
+        {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "custom_todo"}
         "my_custom_op"
         ins(%fix : tensor<16x16xf16>)
         outs(%custom_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
@@ -750,7 +750,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
              outs(%fix_dst : tensor<16x16xf16>) -> tensor<16x16xf16>
     %custom = hivm.hir.custom_macro
         {hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>,
-         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>}
+         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>, symbol = "custom_todo"}
         "my_custom_op"
         ins(%fix : tensor<16x16xf16>)
         outs(%custom_dst : tensor<16x16xf16>) -> tensor<16x16xf16>

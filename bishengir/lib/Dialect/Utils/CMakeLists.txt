@@ -1,5 +1,6 @@
 add_bishengir_library(BiShengIRDialectUtils
   BytecodeDialectExtensions.cpp
+  IndexBoundAnalyzer.cpp
   OpInterfaceUtils.cpp
   ReachabilityAnalyzer.cpp
   UnionFind.cpp

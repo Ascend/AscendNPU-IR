@@ -7,11 +7,23 @@
 // Excluded source HFusion testcases from
 // `bishengir/test/Dialect/HFusion/Normalize/hfusion-normalize-math-ops.mlir`:
 // - `test_NormalizeExp2_hfusion_elemwise_unary_exp2`
-//   Excluded because `exp2` currently depends on the brand-new HIVM normalize-
-//   source op `hivm.hir.vexp2`, and this branch does not keep the
-//   `convert-hfusion-to-hivm` mapping from HFusion `exp2` to `vexp2`.
+//   Excluded because `convert-hfusion-to-hivm` does not
+//   materialize `hivm.hir.vexp2`.
 // - `test_NormalizeExp2_hfusion_elemwise_unary_exp2_f16`
 //   Same reason as above.
+// - `test_NormalizeLdexp_hfusion_frexp`
+// - `test_NormalizeLdexp_hfusion_elemwise_binary_ldexp_f32`
+// - `test_NormalizePowf_hfusion_powf_f32`
+// - `test_NormalizePowf_hfusion_powf_f16`
+// - `test_NormalizePowf_hfusion_powf_half`
+// - `test_NormalizePowf_hfusion_powf_const_dense`
+// - `test_NormalizePowf_hfusion_powf_cast_fill`
+// - `test_NormalizePowf_hfusion_powf_5`
+// - `test_NormalizePowf_hfusion_powf_0`
+// - `test_NormalizePowf_hfusion_powf_2`
+//   Excluded because the current `convert-hfusion-to-hivm` path still does not
+//   materialize `hivm.hir.vldexp` or `hivm.hir.vpow`. Pure-HIVM coverage for
+//   both migrated normalize rules lives in `hivm-normalize-math-ops.mlir`.
 // CHECK-LABEL: func.func @test_NormalizeErf_hfusion_elemwise_erf
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<1024xf32>)
 // CHECK-DAG: %[[UPPER:.*]] = arith.constant 3.920000

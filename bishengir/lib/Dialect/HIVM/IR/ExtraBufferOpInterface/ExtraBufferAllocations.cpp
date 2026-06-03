@@ -22,6 +22,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include <algorithm>
@@ -431,5 +432,81 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
   Value extraBuf = allocExtraBuffer(this->getOperation(), extraBufSizes,
                                     srcVecType.getElementType());
   this->getTempBufferMutable().assign(extraBuf);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+static LogicalResult allocCustomAttrExtraBuffers(CustomOp op) {
+  SmallVector<Value> extraBuffers;
+  for (const auto &[type, size] : op.getExtraBuffersInfo()) {
+    Value extraBuffer = allocExtraBuffer(op.getOperation(), {size}, type);
+    extraBuffers.push_back(extraBuffer);
+  }
+  if (!extraBuffers.empty())
+    op.getTempBufferMutable().assign(extraBuffers);
+  return success();
+}
+
+static LogicalResult allocIndirectAtomicExtraBuffer(CustomOp op) {
+  auto extraAttr = op.getExtraAttr();
+  if (!extraAttr)
+    return success();
+
+  bool needsTempBuffer = false;
+  SmallVector<StringRef> entries;
+  extraAttr.getValue().split(entries, ',');
+  for (StringRef entry : entries) {
+    StringRef key;
+    StringRef value;
+    std::tie(key, value) = entry.split('=');
+    key = key.trim();
+    value = value.trim();
+    if (key == "operate")
+      needsTempBuffer = value == "or" || value == "and" || value == "xor";
+  }
+
+  if (!needsTempBuffer)
+    return success();
+
+  ValueRange inputs = op.getInputs();
+  if (inputs.size() < 3)
+    return op.emitError("indirect atomic requires src, offset and value "
+                        "operands to allocate extra temp buffer");
+
+  auto offsetType = dyn_cast<ShapedType>(inputs[1].getType());
+  if (!offsetType || !offsetType.hasStaticShape())
+    return op.emitError("indirect atomic requires static offset shape to "
+                        "allocate extra temp buffer");
+
+  Type elementType = getElementTypeOrSelf(inputs[2]);
+  Value extraBuf = allocExtraBuffer(op.getOperation(),
+                                    {offsetType.getNumElements()}, elementType);
+  op.getTempBufferMutable().assign(extraBuf);
+  return success();
+}
+
+static const DenseMap<StringRef, LogicalResult (*)(CustomOp)>
+    kCustomExtraBufferAllocators{
+        {CustomOp::kBuiltinIndirectAtomicName, allocIndirectAtomicExtraBuffer}
+    };
+
+LogicalResult CustomOp::allocExtraBuffersIfPossible() {
+  if (!getTempBuffer().empty())
+    return success();
+
+  if (!getExtraBuffersInfo().empty())
+    return allocCustomAttrExtraBuffers(*this);
+
+  auto it = kCustomExtraBufferAllocators.find(getName());
+  if (it == kCustomExtraBufferAllocators.end())
+    return success();
+
+  return it->second(*this);
+}
+
+LogicalResult CustomMacroOp::allocExtraBuffersIfPossible() {
   return success();
 }

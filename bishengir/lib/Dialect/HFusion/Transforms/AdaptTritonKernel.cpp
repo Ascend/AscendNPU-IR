@@ -84,6 +84,10 @@ struct TritonPrintToHFusionPrintPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(printFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -112,7 +116,6 @@ struct TritonPrintToHFusionPrintPattern
                                         operand);
     }
     rewriter.eraseOp(callOp);
-    rewriter.eraseOp(funcOp);
 
     return success();
   }
@@ -131,6 +134,10 @@ struct TritonAssertToHFusionAssertPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(assertFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -165,7 +172,6 @@ struct TritonAssertToHFusionAssertPattern
       rewriter.create<hfusion::AssertOp>(callOp.getLoc(), msgAttr, originArg);
     }
     rewriter.eraseOp(callOp);
-    rewriter.eraseOp(funcOp);
 
     return success();
   }
@@ -184,6 +190,10 @@ struct TritonGatherToHFusionGatherPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -209,7 +219,6 @@ struct TritonGatherToHFusionGatherPattern
     auto gatherOp =
         rewriter.create<hfusion::GatherOp>(loc, src, index, init, *axis);
     rewriter.replaceOp(callOp, gatherOp);
-    rewriter.eraseOp(funcOp);
 
     return success();
   }
@@ -227,6 +236,10 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     mlir::hfusion::CumOpType cumOpType = mlir::hfusion::CumOpType::UNDEFINED;
     if (funcName.starts_with(cumsumFuncName)) {
@@ -267,7 +280,6 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
     } else {
       llvm_unreachable("unsupport cumulative function");
     }
-    rewriter.eraseOp(funcOp);
     return success();
   }
 };
@@ -286,6 +298,10 @@ struct TritonIndirectLoadToHFusionIndirectLoadPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -377,7 +393,6 @@ struct TritonIndirectLoadToHFusionIndirectLoadPattern
         rewriter.create<hfusion::IndirectLoadOp>(loc, resultType, src, offsets,
                                                  init, mask, other);
     rewriter.replaceOp(callOp, indirectLoadOp);
-    rewriter.eraseOp(funcOp);
     return success();
   }
 };
@@ -396,6 +411,10 @@ struct TritonGatherTToHFusionGatherTPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -479,7 +498,6 @@ struct TritonGatherTToHFusionGatherTPattern
         loc, resultType, src, index, tensorResult, bound, dim, src_stride,
         index_shape, offsets);
     rewriter.replaceOp(callOp, gatherOp);
-    rewriter.eraseOp(funcOp);
 
     return success();
   }
@@ -499,6 +517,10 @@ struct TritonIndexPutToHFusionIndexPutPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -556,7 +578,6 @@ struct TritonIndexPutToHFusionIndexPutPattern
         loc, dst, index, value, scatter_dim, bound, end_offset, start_offset,
         dst_stride);
     rewriter.replaceOp(callOp, indexPutOp);
-    rewriter.eraseOp(funcOp);
 
     return success();
   }
@@ -591,7 +612,6 @@ struct TritonFlipToHFusionFlipPattern : public OpRewritePattern<func::CallOp> {
     auto srcTy = cast<RankedTensorType>(src.getType());
     auto flipOp = rewriter.create<hfusion::FlipOp>(loc, srcTy, src, *flipAxis);
     rewriter.replaceOp(callOp, flipOp);
-    rewriter.eraseOp(funcOp);
     return success();
   }
 };
@@ -605,6 +625,10 @@ struct TritonSortToHFusionSortPattern : public OpRewritePattern<func::CallOp> {
 
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(sortFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -633,7 +657,6 @@ struct TritonSortToHFusionSortPattern : public OpRewritePattern<func::CallOp> {
     auto sortOp = rewriter.create<hfusion::SortOp>(loc, srcTy, src, *descending,
                                                    *sortAxis);
     rewriter.replaceOp(callOp, sortOp);
-    rewriter.eraseOp(funcOp);
     return llvm::success();
   }
 };
@@ -649,6 +672,10 @@ struct TritonScatterTOpToHFusionScatterTOpPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -707,7 +734,6 @@ struct TritonScatterTOpToHFusionScatterTOpPattern
         loc, dst, value, index_tile, index_boundary, dim, dst_stride,
         index_shape, offsets);
     rewriter.replaceOp(callOp, scatterTOp);
-    rewriter.eraseOp(funcOp);
     return success();
   }
 };
@@ -752,6 +778,10 @@ struct TritonEmbeddingGatherToHFusionEmbeddingGatherPattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -790,8 +820,8 @@ struct TritonEmbeddingGatherToHFusionEmbeddingGatherPattern
     auto srcArgIdx = utils::getArgumentIndex(src);
     argIndices.push_back(srcArgIdx);
     SmallVector<Attribute> attrList;
-    for (auto idx : argIndices) {
-      attrList.push_back(IntegerAttr::get(rewriter.getI64Type(), idx));
+    for (auto _idx : argIndices) {
+      attrList.push_back(IntegerAttr::get(rewriter.getI64Type(), _idx));
     }
     parFuncOp->setAttr(directlyUsedGMArgListName,
                        ArrayAttr::get(rewriter.getContext(), attrList));
@@ -806,7 +836,6 @@ struct TritonEmbeddingGatherToHFusionEmbeddingGatherPattern
     auto gatherOp = rewriter.create<hfusion::EmbeddingGatherOp>(
         loc, retTy, src, idx, init, bound, offsets, numels);
     rewriter.replaceOp(callOp, gatherOp);
-    rewriter.eraseOp(funcOp);
 
     return success();
   }
@@ -825,6 +854,10 @@ struct TritonIndirectStoreToHFusionIndirectStorePattern
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
         mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(
+          callOp, "Called funcOp is null");
+    }
     auto funcName = funcOp.getSymName();
     if (!funcName.starts_with(gatherFuncName)) {
       return rewriter.notifyMatchFailure(
@@ -884,7 +917,6 @@ struct TritonIndirectStoreToHFusionIndirectStorePattern
     hfusion::IndirectStoreOp indirectStoreOp =
         rewriter.create<hfusion::IndirectStoreOp>(loc, dst, offsets, src, mask);
     rewriter.replaceOp(callOp, indirectStoreOp);
-    rewriter.eraseOp(funcOp);
     return success();
   }
 };

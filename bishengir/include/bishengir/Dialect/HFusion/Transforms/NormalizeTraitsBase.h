@@ -48,8 +48,15 @@ public:
   static Value createUnaryOp(PatternRewriter &rewriter, Location loc,
                              Value input, Value dst, UnaryKind kind);
 
+  static Value createFloorOp(PatternRewriter &rewriter, Location loc,
+                             Value input, Value dst);
+
   static Value createBinaryOp(PatternRewriter &rewriter, Location loc,
                               Value lhs, Value rhs, Value dst, BinaryKind kind);
+
+  static Value createTernaryOp(PatternRewriter &rewriter, Location loc,
+                               Value lhs, Value mid, Value rhs, Value dst,
+                               TernaryKind kind);
 
   /// Create a dialect cast preserving the source dialect round mode when one is
   /// already available. If no round mode is provided, the dialect default is
@@ -88,6 +95,9 @@ public:
 
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
+
+  static Value createGather1DOp(PatternRewriter &rewriter, Location loc,
+                                Value source, Value indices);
 
   static bool matchCastRoundMode(CastOp op, CastRoundKind kind);
 

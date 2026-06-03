@@ -440,6 +440,37 @@ public:
   }
 };
 
+/// Rewrites sort for element types unsupported by the target sort op:
+///   result = cast<T>(sort(cast<f32>(input)))
+template <typename SortOpTy, typename Traits>
+struct NormalizeSortOpTemplate : public OpRewritePattern<SortOpTy> {
+  using OpRewritePattern<SortOpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SortOpTy op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getSrc();
+    auto inputType = dyn_cast<TensorType>(input.getType());
+    if (!inputType)
+      return failure();
+
+    Type elemType = inputType.getElementType();
+    if (Traits::isSupportedSortElementType(elemType))
+      return failure();
+
+    Type f32Type = rewriter.getF32Type();
+    Value castToF32 =
+        Traits::createCastOp(rewriter, op.getLoc(), input, f32Type);
+    Value sortResult = Traits::createSortOp(rewriter, op, castToF32);
+    if (!sortResult)
+      return failure();
+    Value castBack =
+        Traits::createCastOp(rewriter, op.getLoc(), sortResult, elemType);
+
+    rewriter.replaceOp(op, castBack);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZECASTINGTEMPLATE_H

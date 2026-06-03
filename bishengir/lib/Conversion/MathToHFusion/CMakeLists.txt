@@ -8,6 +8,7 @@ add_bishengir_conversion_library(BiShengIRMathToHFusion
   IS_OPEN_SOURCE
 
   MathToHFusion.cpp
+  ScalarMathPromotion.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Conversion/MathToHFusion

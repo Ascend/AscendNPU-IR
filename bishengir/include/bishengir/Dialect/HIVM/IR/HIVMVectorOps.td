@@ -1109,9 +1109,9 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
 
 def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
     [SameOperandsElementType, StaticMaxRankTrait<1>,
-     // I8/I16/F32 VPowOp depends on hivm-normalize-pass; only I32 is
+     // I8/I16/F16/F32 VPowOp depends on hivm-normalize-pass; only I32 is
      // expected to remain valid without that normalization.
-     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F32]>,
+     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>
     ]> {
@@ -1137,6 +1137,21 @@ def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
     OpBuilder<(ins "TypeRange":$result,"ValueRange":$src,"ValueRange":$dst)>
   ];
   let hasCanonicalizer = 1;
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VLdexpOp : HIVM_ElementwiseNaryOp<"vldexp",
+    [ElementwiseNaryOpTrait<2>, SameOperandsElementType,
+     OperElemTypeConstraints<[0, 1], [F16, F32]>,
+     VectorOnlyTrait<0>, VectorOnlyTrait<1>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Binary Vector ldexp Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. This op is a normalize-only source form and should be lowered by
+         HIVM normalize before code generation.
+  }];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
@@ -1911,7 +1926,8 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
 def VSortOp : HIVM_VectorOp<"vsort",
     [StaticMaxRankTrait<1>,
      AttrSizedOperandSegments,
-     OperElemTypeConstraints<[0, 1], [F16, F32, I32, I64]>,
+     // Expanded element types via hivm sort normalize pattern
+     OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>
     ]> {

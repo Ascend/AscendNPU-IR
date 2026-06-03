@@ -96,16 +96,36 @@ bool isVsstbPatternTransposeOp(Operation *op) {
   return lastDim * static_cast<int64_t>(elemByteWidth) == 32;
 }
 
-bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op) {
-  if (llvm::any_of(op->getUsers(), [](Operation *user) {
-        return isVsstbPatternTransposeOp(user);
-      })) {
+static bool hasSyncBlockOpBetween(Operation *op, Operation *user) {
+  if (op->getBlock() != user->getBlock())
     return true;
+
+  // SyncBlockWaitOp/SyncBlockSetOp are ordering boundaries inserted before
+  // binary conversion. Check the concrete producer-user edge instead of a
+  // use-list boundary, since users may appear in a different block order.
+  for (auto *curOp = op->getNextNode(); curOp; curOp = curOp->getNextNode()) {
+    if (curOp == user)
+      return false;
+    if (isa<hivm::SyncBlockWaitOp, hivm::SyncBlockSetOp>(curOp))
+      return true;
   }
+  return true;
+}
+
+bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op) {
+  if (op->getUsers().empty())
+    return false;
+
+  for (Operation *user : op->getUsers()) {
+    if (isVsstbPatternTransposeOp(user) && !hasSyncBlockOpBetween(op, user))
+      return true;
+  }
+
   for (Operation *user : op->getUsers()) {
     if (!isa<linalg::GenericOp>(user))
       continue;
-    if (userCanFuseIntoVsstbPatternTransposeOp(user))
+    if (!hasSyncBlockOpBetween(op, user) &&
+        userCanFuseIntoVsstbPatternTransposeOp(user))
       return true;
   }
   return false;

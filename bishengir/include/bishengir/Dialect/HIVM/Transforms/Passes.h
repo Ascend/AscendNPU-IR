@@ -186,14 +186,11 @@ std::unique_ptr<Pass> createInitEntryKernelPass();
 
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass>
-createInlineFixpipePass(const InlineFixpipeOptions &options = {});
+createInlineFixpipePass();
 
 // Create a pass to insert fixpipe
 std::unique_ptr<Pass>
 createInsertFixpipePass(const InsertFixpipeOptions &options = {});
-
-// Create a pass to convert ops to fixpipe
-std::unique_ptr<Pass> createInlineFixpipeV2Pass();
 
 // Create a pass to tile batch matmul into loop
 std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
@@ -321,6 +318,10 @@ std::unique_ptr<Pass> createAutoScopePass();
 
 std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
 std::unique_ptr<Pass> createWriteBackSharedPass();
+
+/// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
+/// on-the-fly transpose.
+std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

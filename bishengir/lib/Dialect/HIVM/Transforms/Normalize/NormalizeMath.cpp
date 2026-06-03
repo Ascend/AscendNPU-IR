@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/NormalizeMathTemplate.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 
 namespace mlir::hivm {
 namespace {
@@ -110,6 +111,83 @@ struct HIVMNormalizeIlogbTraits : public NormalizeTraitsBase {
   }
 };
 
+/// normalize vldexp(x, y) to vmul(x, y)
+/// eg.
+///  y = hivm.hir.vldexp(x, y)
+///   is normalized to
+///   y = hivm.hir.vmul(x, y)
+struct HIVMNormalizeLdexpTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeLdexp(hivm::VLdexpOp op) {
+    return shouldNormalizeNonBroadcastOp(op);
+  }
+};
+
+/// normalize vpow(x, y) to constant-exponent shortcuts or exp + log with
+/// boundary-case selects
+/// eg.
+///  y = hivm.hir.vpow(x, y)
+///   is normalized to (constant exponent)
+///   y = sqrt(x)  (when y = 0.5), or
+///   y = x * x    (when y = 2)
+///  or (dynamic exponent)
+///   y = select(boundary cases, boundary values,
+///              exp(exponent * ln(x)))
+struct HIVMNormalizePowfTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizePowf(hivm::VPowOp op) {
+    return shouldNormalizeNonBroadcastOp(op);
+  }
+
+  /// Recovers and returns a scalar `arith::ConstantOp` for the exponent from
+  /// the wrapper forms that are common on the HIVM path.
+  /// Example:
+  ///   1. `hivm.hir.vbrc(0.5)` feeding `vpow`
+  ///   2. a shaped `arith.constant dense<0.5>`
+  static arith::ConstantOp getPowfExponentScalarConstant(
+      Value exponent, PatternRewriter &rewriter) {
+    if (auto brcOp = exponent.getDefiningOp<hivm::VBrcOp>()) {
+      return dyn_cast_or_null<arith::ConstantOp>(brcOp.getSrc().getDefiningOp());
+    }
+
+    if (auto constOp = dyn_cast_or_null<arith::ConstantOp>(
+            exponent.getDefiningOp())) {
+      if (!isa<ShapedType>(constOp.getType()))
+        return constOp;
+      std::optional<Value> scalar =
+          utils::extractScalarValue(rewriter, exponent.getLoc(), exponent);
+      if (scalar.has_value())
+        return dyn_cast_or_null<arith::ConstantOp>(
+            scalar->getDefiningOp());
+    }
+
+    return nullptr;
+  }
+
+  /// Computes the parity coefficient `(-2 * mod) + 1`.
+  /// On Ascend950 with f32, emits `math.fma` for the fused mul+add.
+  static Value computeParityCoefficient(PatternRewriter &rewriter,
+                                        Location loc, Value mod,
+                                        Value negativeTwo,
+                                        Value positiveOne) {
+    Type elemType = getElementTypeOrSelf(mod.getType());
+    if (archisAscend950 && elemType.isF32()) {
+      // math.fma requires all operands to have the same type, so broadcast the
+      // scalar constants to match the tensor shape of `mod`.
+      auto likeMod = utils::createEmptyOp(rewriter, loc, mod);
+      Value negTwoTensor =
+          createFillOp(rewriter, loc, negativeTwo, likeMod);
+      Value posOneTensor =
+          createFillOp(rewriter, loc, positiveOne, likeMod);
+      return rewriter.create<math::FmaOp>(loc, mod, negTwoTensor, posOneTensor);
+    }
+    Value mul = createBinaryOp(rewriter, loc, mod, negativeTwo,
+                               utils::createEmptyOp(rewriter, loc, mod),
+                               BinaryKind::Mul);
+    return createBinaryOp(rewriter, loc, mul, positiveOne,
+                          utils::createEmptyOp(rewriter, loc, mod),
+                          BinaryKind::Add);
+  }
+};
+
 using NormalizeVIlogbOp =
     mlir::NormalizeIlogbOpTemplate<hivm::VIlogbOp,
                                    HIVMNormalizeIlogbTraits>;
@@ -122,6 +200,10 @@ using NormalizeVLog10Op =
         hivm::VLog10Op, HIVMNormalizeLogLikeTraits<hivm::VLog10Op, 10>>;
 using NormalizeVLog1pOp =
     mlir::NormalizeLog1pOpTemplate<hivm::VLog1pOp, HIVMNormalizeLog1pTraits>;
+using NormalizeVLdexpOp =
+    mlir::NormalizeLdexpOpTemplate<hivm::VLdexpOp, HIVMNormalizeLdexpTraits>;
+using NormalizeVPowfOp =
+    mlir::NormalizePowfOpTemplate<hivm::VPowOp, HIVMNormalizePowfTraits>;
 
 template <typename OpTy, CastSignKind SignKind, BinaryKind ModKind,
           bool SupportsFloat>
@@ -182,13 +264,14 @@ using NormalizeVModUIOp =
 } // namespace
 
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
-  patterns.add<NormalizeExp2Op, NormalizeErfOp, NormalizeVLog2Op,
-               NormalizeVLog10Op, NormalizeVLog1pOp,
-               NormalizeVExpM1Op>(patterns.getContext());
+  patterns.add<NormalizeVLog2Op, NormalizeVLog10Op, NormalizeVLog1pOp,
+               NormalizeExp2Op, NormalizeVExpM1Op,
+               NormalizeErfOp>(patterns.getContext());
 }
 
 void populateNormalizeLateMathPatterns(RewritePatternSet &patterns) {
-  patterns.add<NormalizeVIlogbOp>(patterns.getContext());
+  patterns.add<NormalizeVIlogbOp, NormalizeVLdexpOp,
+               NormalizeVPowfOp>(patterns.getContext());
 }
 
 void populateNormalizeModPatterns(RewritePatternSet &patterns) {
