@@ -19,6 +19,7 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -368,7 +369,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                   hivmave::VFExpdifOp, hivmave::VFVMULLOp, hivmave::VFMulaOp,
                   hivmave::VMaxUIOp, hivmave::VMinUIOp, hivmave::VFLRelusOp,
                   hivmave::VMaxsSIOp, hivmave::VMinsSIOp, hivmave::VMaxsUIOp,
-                  hivmave::VMinsUIOp, hivmave::VFCmpS>(
+                  hivmave::VMinsUIOp, hivmave::VFCmpS, hivmave::VFVtrcOp>(
                 [&](auto op) { return solveMaskProblem(op); })
             .Case<hivmave::VFCmpOp>([&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFStoreWithStrideOp>(
@@ -904,12 +905,61 @@ struct AnalyzeVectorLayoutPass
   using AnalyzeVectorLayoutBase<
       AnalyzeVectorLayoutPass>::AnalyzeVectorLayoutBase;
 
+  Operation *failedOp = nullptr;
+  TreeSolves failedSolves;
+
 public:
   void runOnOperation() override {
     auto solves = solveIt();
     if (solves.empty()) {
       signalPassFailure();
-      llvm::errs() << "No Solve\n";
+      auto &os = llvm::errs();
+      os << "No Solve\n";
+      if (failedOp) {
+        os << "========== Vector Layout Analysis Failure ==========\n";
+        os << "Location: ";
+        failedOp->getLoc().print(os);
+        os << "\n";
+        os << "Operation: " << *failedOp << "\n";
+        os << "Opcode: " << failedOp->getName() << "\n";
+        os << "Operand types:\n";
+        for (auto operand : failedOp->getOperands()) {
+          os << "  " << operand.getType() << "\n";
+        }
+        os << "Result types:\n";
+        for (auto res : failedOp->getResults()) {
+          os << "  " << res.getType() << "\n";
+        }
+        os << "Candidates in the solution space: " << failedSolves.size()
+            << "\n";
+        if (!failedSolves.empty()) {
+          os << "Input states from last valid candidates:\n";
+          DenseSet<Value> visited;
+          for (auto &solve : failedSolves) {
+            for (auto &[val, state] : solve->inputs) {
+              if (visited.insert(val).second) {
+                os << "  Value: " << val << "  State: " << state << "\n";
+              }
+            }
+          }
+        }
+        os << "\nPossible causes and solutions:\n";
+        os << "  1. The operation type may not be handled in solveProblem "
+               "TypeSwitch.\n";
+        os << "     -> Add a new Case for " << failedOp->getName()
+            << " in solveProblem().\n";
+        os << "  2. The specific VecMemType combination is not supported by "
+               "this op.\n";
+        os << "     -> Check COMB_CASE branches in the corresponding "
+               "solveProblem function.\n";
+        os << "  3. Conflicting layout requirements from multiple consumers.\n";
+        os << "     -> Check if the operands/results have incompatible layout "
+               "constraints.\n";
+        os << "  4. Unsupported element bitwidth (only 1/8/16/32 are "
+               "supported).\n";
+        os << "     -> Verify all vector types have supported bitwidths.\n";
+        os << "======================================================\n";
+      }
       return;
     }
     if (failed(applySolve(solves[0]))) {
@@ -1042,6 +1092,8 @@ public:
     DBG(llvm::dbgs() << "solve num from " << solves.size() << " To "
                      << newSolves.size() << "\n";);
     if (newSolves.empty()) {
+      failedOp = op;
+      failedSolves = solves;
       DBG(llvm::dbgs() << "Failed to solve problem";);
     } else {
       DBG(llvm::dbgs() << "Solve problem succeed.";);
