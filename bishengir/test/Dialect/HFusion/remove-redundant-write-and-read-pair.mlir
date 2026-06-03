@@ -1,6 +1,7 @@
 // RUN: bishengir-opt %s -remove-redundant-write-and-read-pair -o %t.mlir
 // RUN: cat %t.mlir | FileCheck %s
 
+// Test 1: Same shape — transfer_read is replaced directly by write's vector
 func.func @remove_redundant_write_and_read_pair(%arg0: tensor<2x80xf16>, %arg1: tensor<2x80xf16>, %arg2: tensor<2x80xf16>, %arg3: tensor<2x80xf16>) -> tensor<2x80xf16> attributes {hivm.vector_function} {
   %cst_0 = arith.constant 0.000000e+00 : f16
   %c1 = arith.constant 1 : index
@@ -36,3 +37,35 @@ func.func @remove_redundant_write_and_read_pair(%arg0: tensor<2x80xf16>, %arg1: 
 // CHECK-LABEL:   func.func @remove_redundant_write_and_read_pair
 // CHECK: %[[ADD:.*]] = arith.addf
 // CHECK: %[[SUB:.*]] = arith.subf %[[ADD]], %{{.*}}
+
+// Test 2: Different shape (same element count) — shape_cast is inserted
+// transfer_write outputs vector<1x64xf16>, but transfer_read expects vector<64xf16>
+func.func @shape_cast_different_vector_shape(%arg0: tensor<2x64xf16>, %arg1: tensor<2x64xf16>, %arg2: tensor<2x64xf16>) -> tensor<2x64xf16> attributes {hivm.vector_function} {
+  %cst_0 = arith.constant 0.000000e+00 : f16
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  %c0 = arith.constant 0 : index
+  %0 = scf.for %arg3 = %c0 to %c2 step %c1 iter_args(%arg4 = %arg2) -> tensor<2x64xf16> {
+    %1 = tensor.extract_slice %arg0[%arg3, %c0] [1, %c64] [1, 1] : tensor<2x64xf16> to tensor<1x?xf16>
+    %2 = tensor.extract_slice %arg1[%arg3, %c0] [1, %c64] [1, 1] : tensor<2x64xf16> to tensor<1x?xf16>
+    %3 = tensor.extract_slice %arg4[%arg3, %c0] [1, %c64] [1, 1] : tensor<2x64xf16> to tensor<1x?xf16>
+    %4 = vector.transfer_read %1[%c0, %c0], %cst_0 {in_bounds = [true, true]} : tensor<1x?xf16>, vector<1x64xf16>
+    %5 = vector.transfer_read %2[%c0, %c0], %cst_0 {in_bounds = [true, true]} : tensor<1x?xf16>, vector<1x64xf16>
+    %6 = arith.addf %4, %5 : vector<1x64xf16>
+    %7 = vector.transfer_write %6, %3[%c0, %c0] {in_bounds = [true, true]} : vector<1x64xf16>, tensor<1x?xf16>
+    %inserted = tensor.insert_slice %7 into %3[0, 0] [1, %c64] [1, 1] : tensor<1x?xf16> into tensor<1x?xf16>
+    %8 = vector.transfer_read %inserted[%c0, %c0], %cst_0 {in_bounds = [true]} : tensor<1x?xf16>, vector<64xf16>
+    %9 = arith.mulf %8, %8 : vector<64xf16>
+    %10 = vector.transfer_write %9, %3[%c0, %c0] {in_bounds = [true]} : vector<64xf16>, tensor<1x?xf16>
+    %inserted2 = tensor.insert_slice %10 into %arg4[%arg3, %c0] [1, %c64] [1, 1] : tensor<1x?xf16> into tensor<2x64xf16>
+    scf.yield %inserted2 : tensor<2x64xf16>
+  }
+  return %0 : tensor<2x64xf16>
+}
+
+// CHECK-LABEL:   func.func @shape_cast_different_vector_shape
+// CHECK: %[[ADD:.*]] = arith.addf
+// CHECK-NOT: vector.transfer_read
+// CHECK: %[[CAST:.*]] = vector.shape_cast %[[ADD]] : vector<1x64xf16> to vector<64xf16>
+// CHECK: arith.mulf %[[CAST]], %[[CAST]]
