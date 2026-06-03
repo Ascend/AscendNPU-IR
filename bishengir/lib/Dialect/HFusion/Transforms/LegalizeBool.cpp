@@ -165,42 +165,46 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
 
     Location location = op.getLoc();
 
-    // Clone operation to preserve original metadata
-    OpTy newMathOp = cast<OpTy>(rewriter.clone(*op.getOperation()));
-    newMathOp->setAttr("is_clamped", rewriter.getBoolAttr(true));
+    Type i8Type = tensorType.getElementType();
+    auto shape = tensorType.getShape();
 
-    Value unClampedResult = newMathOp->getResult(0);
+    // When both operands are canonical pseudo-bools, "integer arith +
+    // clamp-to-nonzero" is exactly a bitwise logical op, so the whole
+    // sign-extend / fill / compare / extend sequence collapses to:
+    //   clamp(a + b) == a | b   (0+0=0, 0+1=1, 1+1=2 all map to OR over {0,1})
+    //   clamp(a - b) == a ^ b   ((a - b) != 0  <=>  a != b)
+    // This matches the existing bool-add -> vor / bool-mul -> vand convention
+    // (see BoolBinaryFnToLogicOp above).
+    hfusion::BinaryFn logicFn = std::is_same_v<OpTy, arith::AddIOp>
+                                    ? hfusion::BinaryFn::vor
+                                    : hfusion::BinaryFn::vxor;
+    Value logicInit = rewriter.create<tensor::EmptyOp>(location, shape, i8Type);
+    Operation *newOp = createBinaryOp<hfusion::ElemwiseBinaryOp,
+                                      hfusion::BinaryFn, hfusion::BinaryFnAttr>(
+        rewriter, location, logicFn,
+        ValueRange{op->getOperand(0), op->getOperand(1)},
+        ValueRange{logicInit});
+    Value logicResult = newOp->getResult(0);
+    newOp->setAttr("is_clamped", rewriter.getBoolAttr(true));
 
-    // Prepare i32 tensor type for intermediate calculation
-    Type i32Type = rewriter.getI32Type();
-    auto tensorTypeI32 = RankedTensorType::get(tensorType.getShape(), i32Type);
-
-    // Sign extend addition result to i32
-    Value extendedResult = rewriter.create<arith::ExtSIOp>(
-      location, tensorTypeI32, unClampedResult);
-
-    // Construct i32 zero tensor
-    Value zeroScalarI32 = rewriter.create<arith::ConstantOp>(
-      location, rewriter.getI32IntegerAttr(0));
-    Value emptyTensorI32 = rewriter.create<tensor::EmptyOp>(
-      location, tensorTypeI32.getShape(), i32Type);
-    Value zeroTensorI32 = rewriter.create<linalg::FillOp>(
-      location, zeroScalarI32, emptyTensorI32).getResult(0);
-
-    // Compare in i32 precision
-    Value cmpTensor = rewriter.create<arith::CmpIOp>(
-      location, arith::CmpIPredicate::ne, extendedResult, zeroTensorI32);
-
-    // Zero extend boolean result back to i8
-    Value clampedResult = rewriter.create<arith::ExtUIOp>(
-      location, tensorType, cmpTensor);
-
-    // Propagate semantic marker
-    if (auto extOp = clampedResult.getDefiningOp()) {
-      extOp->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
-    }
-
-    rewriter.replaceOp(op, clampedResult);
+    // Canonicalize the result to {0, 1} with a bitwise AND against 1. This is a
+    // no-op when the inputs are already {0, 1} (the normal case), but it keeps
+    // the {0, 1} output guarantee of the original compare path even if a "true"
+    // ever arrives as all-ones (0xFF / -1).
+    Value oneScalar = rewriter.create<arith::ConstantOp>(
+        location, rewriter.getIntegerAttr(i8Type, 1));
+    Value oneInit = rewriter.create<tensor::EmptyOp>(location, shape, i8Type);
+    Value oneTensor =
+        rewriter.create<linalg::FillOp>(location, oneScalar, oneInit)
+            .getResult(0);
+    Value andInit = rewriter.create<tensor::EmptyOp>(location, shape, i8Type);
+    Operation *clampedOp =
+        createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                       hfusion::BinaryFnAttr>(
+            rewriter, location, hfusion::BinaryFn::vand,
+            ValueRange{logicResult, oneTensor}, ValueRange{andInit});
+    clampedOp->setAttr("was_bool_to_int8", rewriter.getBoolAttr(true));
+    rewriter.replaceOp(op, clampedOp->getResult(0));
     return success();
   }
 };
