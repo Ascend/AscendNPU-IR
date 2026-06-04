@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="enable-auto-balance" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining -allow-unregistered-dialect %s | FileCheck %s
 
 // CHECK: scf.for
 // CHECK: scf.for

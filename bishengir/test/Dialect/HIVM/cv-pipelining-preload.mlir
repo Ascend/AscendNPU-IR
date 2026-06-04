@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="enable-auto-preload" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="enable-skew-mode" -allow-unregistered-dialect %s | FileCheck %s
 
 // CHECK-LABEL: func.func @_attn_fwd
 // CHECK: scf.for %{{.*}} = %{{.*}} to %c160_i32 step %{{.*}}

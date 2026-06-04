@@ -774,14 +774,17 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let constructor = "mlir::hivm::createCVPipeliningPass()";
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect", "mlir::scope::ScopeDialect"];
   let options = [
-      Option<
-      "enableAutoBalance", "enable-auto-balance", "bool",
-      /*default=*/"true",
-      "Enable balancing of vector subtasks during pipelining.">,
-      Option<
-      "enableAutoPreload", "enable-auto-preload", "bool",
-      /*default=*/"false",
-      "Enable preload optimization.">];
+      Option<"enableSkewMode", "enable-skew-mode", "bool",
+            /*default=*/"false",
+            "Enable skew-mode cv-pipelining instead of the "
+            "default unroll-mode.">,
+      Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
+            /*default=*/"-1",
+            "Specify pipeline depth for cv-pipelining.">,
+      Option<"enableLazyLoading", "enable-lazy-loading", "bool",
+            /*default=*/"false",
+            "Allow load ops to be cloned into multiple work items "
+            "to reduce intermediate buffer expansion">];
 }
 
 def AutoBlockifyParallelLoop
