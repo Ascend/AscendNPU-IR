@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -ave-i1op-soft-impl %s -o %t.mlir
+// RUN: bishengir-opt -ave-i1op-soft-impl %s -o %t.mlir -mlir-print-vector-layout-attr
 // RUN: cat %t.mlir | FileCheck %s
 
 // CHECK-LABEL: func.func @test_1
@@ -120,6 +120,42 @@ func.func @test_3(%arg0: memref<168xi1, #hivm.address_space<ub>>, %arg1: memref<
       %subview_4 = memref.subview %subview_1[0, 0, 0] [1, 1, 4] [1, 1, 1] : memref<1x1x4xi8, strided<[64, 32, 1], offset: ?>, #hivm.address_space<ub>> to memref<4xi8, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
       ave.hir.masked_store <NORM_B8> %subview_4[%c0], %5, %18 : memref<4xi8, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi8>
     }
+  }
+  return
+}
+
+// CHECK-LABEL: @test_constraint_layout
+func.func @test_constraint_layout(%arg0: memref<64xi1, strided<[256]>, #hivm.address_space<ub>>, %arg1: memref<64x64xf16, #hivm.address_space<ub>>, %arg2: memref<64x64xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %cst = arith.constant 0.000000e+00 : f16
+  %0 = ave.hir.pge <ALL> : vector<128xi1>
+  %1 = ave.hir.broadcast %cst, %0 : f16, vector<128xi1> -> vector<128xf16>
+  %2 = ave.hir.pge <ALLF> : vector<128xi1>
+  %cst_0 = arith.constant 0.000000e+00 : f16
+  %false = arith.constant false
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg3 = %c0 to %c64 step %c1 {
+    %subview = memref.subview %arg0[%arg3] [1] [1] : memref<64xi1, strided<[256]>, #hivm.address_space<ub>> to memref<1xi1, strided<[256], offset: ?>, #hivm.address_space<ub>>
+    %subview_1 = memref.subview %arg2[%arg3, 0] [1, 64] [1, 1] : memref<64x64xf16, #hivm.address_space<ub>> to memref<1x64xf16, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_2 = memref.subview %arg1[%arg3, 0] [1, 64] [1, 1] : memref<64x64xf16, #hivm.address_space<ub>> to memref<1x64xf16, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>
+    %res = ave.hir.vload <NORM> %subview[%c0] : memref<1xi1, strided<[256], offset: ?>, #hivm.address_space<ub>> into vector<128xi1>
+    %3 = builtin.unrealized_conversion_cast %res : vector<128xi1> to vector<1x128xi1>
+    %4 = ave.hir.pge <VL64> {mask_op_idx = 0 : i32} : vector<128xi1>
+    annotation.mark %4 {mask_op_idx = 0 : i32} : vector<128xi1>
+    %subview_3 = memref.subview %subview_2[0, 0] [1, 64] [1, 1] : memref<1x64xf16, strided<[64, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf16, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    %res_4 = ave.hir.vload <NORM> %subview_3[%c0] : memref<64xf16, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<128xf16>
+    annotation.mark %res_4 {reached_mask_ops_idx = 0 : i32} : vector<128xf16>
+    %5 = builtin.unrealized_conversion_cast %3 : vector<1x128xi1> to vector<128xi1>
+    annotation.mark %5 {reached_mask_ops_idx = 0 : i32} : vector<128xi1>
+    %6 = ave.hir.vcmp <NE> %5, %2, %4 : vector<128xi1>, vector<128xi1> -> vector<128xi1>
+    // CHECK: %[[VAL_2:.*]] = ave.hir.vector.layout_cast %[[VAL_1:.*]] : vector<256xi1> -> vector<256xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
+    // CHECK-NEXT: %[[VAL_3:.*]] = ave.hir.vector.layout_cast %[[VAL_2:.*]] : vector<256xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>> -> vector<256xi1>
+    annotation.mark %6 {reached_mask_ops_idx = 0 : i32} : vector<128xi1>
+    %7 = ave.hir.vsel %6, %res_4, %1 : vector<128xi1>, vector<128xf16>
+    annotation.mark %7 {reached_mask_ops_idx = 0 : i32} : vector<128xf16>
+    %subview_5 = memref.subview %subview_1[0, 0] [1, 64] [1, 1] : memref<1x64xf16, strided<[64, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf16, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    ave.hir.masked_store <NORM_B16> %subview_5[%c0], %4, %7 : memref<64xf16, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xf16>
   }
   return
 }

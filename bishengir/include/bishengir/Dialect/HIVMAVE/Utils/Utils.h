@@ -83,6 +83,17 @@ Value denseByDIntlv(Value src, RewriterBase &rewriter, const Location &loc,
 /// Get preg bit width from FunctionDistTypeAttr
 int getBitWidthFromAttr(Operation *Op);
 
+/// Force the VectorLayout solver to converge by constraining a None-layout
+/// vector value to a specific target layout, then stripping it back to None.
+///
+/// Inserts a pair of VectorLayoutCastOp:
+///   None -> targetLayout -> None
+///
+/// The input Value must be of VectorType with no layout attribute.
+/// Returns the new Value after both casts (VectorType, no layout).
+Value constrainVectorLayout(Value src, VecMemType targetLayout,
+                            OpBuilder &builder);
+
 /// Checks if a Vector Store/Write operation accesses memory continuously.
 /// Logic: LoopStep * MemRefStride == VectorLength
 template <typename SourceOp>

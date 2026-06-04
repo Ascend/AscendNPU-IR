@@ -149,7 +149,9 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
                                                       constZeroI8);
     Value newPreg = rewriter.create<hivmave::VFCmpOp>(
         loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZeroI8, allI8Mask);
-
+    // Constrain the layout of newPreg to B8 for VectorLayout analysis.
+    newPreg = hivmave::constrainVectorLayout(newPreg, hivmave::VecMemType::B8,
+                                              rewriter);
     if (vecSize != util::VL)
       newPreg =
           rewriter.create<UnrealizedConversionCastOp>(loc, orgVectorTy, newPreg)
