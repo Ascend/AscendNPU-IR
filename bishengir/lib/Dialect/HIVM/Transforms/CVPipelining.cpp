@@ -112,6 +112,22 @@ private:
   /// no-op for this loop.
   LogicalResult absorbMergerOpsIntoWorkItems();
 
+  /// Reject loops whose work-item partition has a cross-core data dependency
+  /// that migrateOps cannot honor. migrateOps clones each work-item's ops into
+  /// its own per-core loop, remapping operands through that work item's
+  /// IRMapping. A value defined elsewhere in the loop body is only resolvable
+  /// in a work item if either (a) its top-level producer is assigned to the
+  /// same work item (so it is cloned alongside) or (b) it is tracked as a
+  /// cross-work-item output (local/yielded) and therefore forwarded through the
+  /// new loops' iter_args/results. A value that is neither -- e.g. a small
+  /// reduction result feeding a scalar scale chain that is replicated onto both
+  /// cores while the reduction itself stays on one core -- would be cloned with
+  /// a dangling reference to the original op; erasing the pipeline loop then
+  /// aborts with "operation destroyed but still has uses". Detect that here,
+  /// before any IR mutation, so `run()` can bail and leave the loop
+  /// un-pipelined instead of crashing.
+  LogicalResult checkWorkItemDependencies();
+
   LogicalResult expandOutputInits(WorkItem *item);
   LogicalResult expandOutputInitsForPreload(WorkItem *item);
 
@@ -972,8 +988,54 @@ LogicalResult CVPipelineImpl::markOutputs() {
   return success();
 }
 
-Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc, Value src) {
+LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
+  // Values migrateOps forwards across work items via the new loops'
+  // iter_args / results: every work item's local and yielded outputs.
+  DenseSet<Value> trackedOutputs;
+  for (const auto &item : worklist) {
+    for (auto &out : item->localOutputs)
+      trackedOutputs.insert(out.first);
+    for (auto &out : item->yieldedOutputs)
+      trackedOutputs.insert(out.first);
+  }
 
+  // migrateOps clones each work item's ops into its own per-core loop. An
+  // operand is resolvable in that clone only if it is produced inside the same
+  // work item (cloned alongside) or forwarded as a tracked output. Anything
+  // else leaves the clone referencing the original op, which crashes once the
+  // pipeline loop is erased.
+  for (const auto &item : worklist) {
+    auto isResolvable = [this, &trackedOutputs, &item](Value v,
+                                                       Operation *clonedRoot) {
+      Operation *def = v.getDefiningOp();
+      if (!def || !pipelineLoop->isAncestor(def))
+        return true; // block arg, or defined outside the loop
+      if (clonedRoot->isAncestor(def))
+        return true; // nested in the op subtree cloned with it
+      if (trackedOutputs.contains(v))
+        return true; // forwarded through new loop iter_args/results
+      return item->ops.contains(getContainedParent(pipelineLoop, def));
+    };
+
+    for (Operation *top : item->ops) {
+      WalkResult res = top->walk([&isResolvable, top](Operation *op) {
+        for (Value operand : op->getOperands())
+          if (!isResolvable(operand, top))
+            return WalkResult::interrupt();
+        return WalkResult::advance();
+      });
+      if (res.wasInterrupted())
+        return pipelineLoop->emitWarning(
+            "[cv-pipelining] cannot pipeline loop: a value crosses work items "
+            "without being a tracked output (e.g. a reduction feeding a scalar "
+            "scale replicated onto both cores); skipping pipelining");
+    }
+  }
+  return success();
+}
+
+Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
+                                     Value src) {
   auto memref = dyn_cast<MemRefType>(src.getType());
   if (!memref) {
     pipelineLoop->emitWarning("[cv-pipelining] expected MemRefType source");
@@ -1911,8 +1973,12 @@ LogicalResult CVPipelineImpl::run() {
     }
   });
 
-  expandWorkspace(builder);
+  // No IR has been mutated yet; reject partitions migrateOps can't realize so
+  // we bail cleanly instead of crashing in pipelineLoop->erase() later.
+  if (failed(checkWorkItemDependencies()))
+    return failure();
 
+  // Preload pipeline reuse workitems with cvpipeline.
   if (pipelineMode == CVPipelineMode::Skew) {
     return markScopesForPreload();
   }
