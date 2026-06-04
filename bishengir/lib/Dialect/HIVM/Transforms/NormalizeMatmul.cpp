@@ -587,6 +587,7 @@ struct CCFInfo {
   Operation *insertPointOp = nullptr;
   bool isFailure = false;
   bool mayNotExec = false;
+  bool mayNotExecWithIf = false;
 
   static CCFInfo getFailure(CCFInfo &info) {
     info.isFailure = true;
@@ -684,6 +685,7 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
 
     if (!matchPattern(ifOp.getCondition(), m_One())) {
       info.mayNotExec = true;
+      info.mayNotExecWithIf = true;
     }
 
     info.outVal = ifOp->getResult(resultIdx);
@@ -699,9 +701,6 @@ CCFInfo getResFromSingleUseChain(Operation *op) {
   initInfo.inVal = cast<T>(op).getC();
   initInfo.outVal = op->getResult(0);
   initInfo.insertPointOp = op;
-  initInfo.isFailure = false;
-  initInfo.mayNotExec = false;
-
   return getOutermostCCFInfo(op, initInfo);
 }
 
@@ -779,6 +778,55 @@ hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type,
   return addOp;
 }
 
+// Set kNormalizedInL0C attribute with proper index for scf::ForOp, scf::IfOp,
+// or UnitAttr for other operations. If the attribute already exists, append
+// the new index to the existing list instead of overwriting.
+void setNormalizedInL0CWithIndex(PatternRewriter &rewriter, Operation &insertPointOp,
+                                  Value outerOutVal) {
+  // skip the case that insertPointOp is mmad
+  if (!isa<scf::ForOp, scf::IfOp>(insertPointOp))
+    return;
+  unsigned resultIdx = 0;
+  for (Value result : insertPointOp.getResults()) {
+    if (result == outerOutVal) {
+      break;
+    }
+    resultIdx++;
+  }
+
+  // Check if attribute already exists
+  SmallVector<Attribute> indices;
+  if (auto existingAttr = insertPointOp.getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
+    // Append existing indices
+    for (Attribute attr : existingAttr) {
+      indices.push_back(attr);
+    }
+  }
+
+  // Add the new index (avoid duplicates)
+  auto newIdxAttr = rewriter.getI32IntegerAttr(resultIdx);
+  bool isDuplicate = false;
+  for (Attribute attr : indices) {
+    if (auto idxAttr = attr.dyn_cast<IntegerAttr>()) {
+      if (idxAttr.getInt() == static_cast<int64_t>(resultIdx)) {
+        isDuplicate = true;
+        break;
+      }
+    }
+  }
+  if (!isDuplicate) {
+    indices.push_back(newIdxAttr);
+  }
+
+  insertPointOp.setAttr(kNormalizedInL0C, rewriter.getArrayAttr(indices));
+}
+
+void setRemainInL0CAttr(PatternRewriter &rewriter, Value outerInVal) {
+  if (Operation *defOp = outerInVal.getDefiningOp()) {
+    defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+  }
+}
+
 template <typename T>
 void addTailFallback(PatternRewriter &rewriter, Operation &op, T mmad,
                      Value counterBuf, Value outerInVal, Value outerOutVal,
@@ -841,9 +889,32 @@ bool couldReuse(Value outerInVal) {
 
   // check the user of previous L0C is output from mmadL1 in CCF
   if (Operation *defOp = outerInVal.getDefiningOp()) {
-    if ((isa<scf::ForOp>(defOp)) && defOp->hasAttr(kNormalizedInL0C) &&
-        !defOp->hasAttr(kMayNotExec)) {
-      return true;
+    if(defOp->hasAttr(kMayNotExec) || !isa<scf::ForOp>(defOp))
+      return false;
+    // For scf::ForOp with multiple results, use ArrayAttr to specify indices
+    // Find the corresponding result index
+    unsigned resultIdx = 0;
+    for (Value result : defOp->getResults()) {
+      if (result == outerInVal) {
+        break;
+      }
+      resultIdx++;
+    }
+
+    // Check if this specific result has the L0C normalized attribute
+    if (auto normalizedAttr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
+      if (normalizedAttr.empty()) {
+        return false;
+      }
+
+      for (Attribute idxAttr : normalizedAttr) {
+        if (auto idxInt = idxAttr.dyn_cast<IntegerAttr>()) {
+          if (idxInt.getInt() == static_cast<int64_t>(resultIdx)
+              ) {
+            return true;
+          }
+        }
+      }
     }
   }
 
@@ -860,7 +931,7 @@ struct BrcBiasInfo {
 // PerChannelAdd: Vbrc(x, [0])
 // ZeroInitNoAccumulation: Vbrc(0)
 // ReuseL0C: prev_val (mmadL1) is confrimly executed and current mayNotExec is
-//          false; TODO: mayNotExec criteria should be removed
+//          false; TODO: mayNotExecWithIf criteria should be removed
 // NoBias: empty ElementwiseAdd: x[n, m]
 template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
   // refer to getMatmulLikeBiasMode
@@ -876,7 +947,7 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
       return info;
     }
-  } else if (couldReuse(outerInVal) && (!ccfinfo.mayNotExec)) {
+  } else if (couldReuse(outerInVal) && (!ccfinfo.mayNotExecWithIf)) {
     info.brcBiasMode = MatmulBiasMode::ReuseL0C;
     return info;
   } else if (outerInVal.hasOneUse()) {
@@ -976,9 +1047,7 @@ public:
         LDBG("ReuseL0C in for-loop or if: no need to decompose matmul");
 
         // Set reuse tag for the defining op of outerInVal
-        if (Operation *defOp = outerInVal.getDefiningOp()) {
-          defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
-        }
+        setRemainInL0CAttr(rewriter, outerInVal);
 
         return success();
       }
@@ -989,9 +1058,7 @@ public:
       op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
 
       // Set reuse tag for the defining op of outerInVal
-      if (Operation *defOp = outerInVal.getDefiningOp()) {
-        defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
-      }
+      setRemainInL0CAttr(rewriter, outerInVal);
 
       return success();
     } else {
@@ -1032,7 +1099,8 @@ public:
       tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
     }
     tmpNewMmad->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
-    insertPointOp->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
+    setNormalizedInL0CWithIndex(rewriter, *insertPointOp, outerOutVal);
+
     if (mayNotExec)
       insertPointOp->setAttr(kMayNotExec, rewriter.getUnitAttr());
 
