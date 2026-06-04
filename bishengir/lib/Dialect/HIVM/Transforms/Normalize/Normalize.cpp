@@ -56,6 +56,8 @@ struct NormalizeHIVMPass
     populateNormalizeComparisonCleanupPatterns(patterns);
     populateNormalizeBitwiseComparisonPatterns(patterns);
     populateNormalizeShiftI8ToI16(patterns);
+    populateNormalizeReductionPatterns(patterns);
+    populateNormalizeFinalReductionPatterns(patterns);
     populateNormalizeLateMathPatterns(patterns);
     populateNormalizeScalarLikeHIVMPatterns(patterns);
     // "NonDense" means the broadcast source is a scalar-like shaped value,

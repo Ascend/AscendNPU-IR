@@ -96,6 +96,16 @@ public:
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
 
+  static Operation *createReduceWithIndexOp(PatternRewriter &rewriter,
+                                            Location loc,
+                                            ReduceWithIndexOp op,
+                                            ArrayRef<Value> newInputs,
+                                            ArrayRef<Value> newInits);
+
+  static Value castReduceIndexTensor(PatternRewriter &rewriter, Location loc,
+                                     Value value, IntegerType targetElemType,
+                                     Value shapeLike);
+
   static Value createGather1DOp(PatternRewriter &rewriter, Location loc,
                                 Value source, Value indices);
 
