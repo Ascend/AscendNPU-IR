@@ -914,6 +914,38 @@ module {
 }
 
 // -----
+  // CHECK-LABEL:   func.func @dot_reuse_for_l0c
+module {
+  func.func @dot_reuse_for_l0c() -> tensor<64x32xf32> {
+    %c0_i32 = arith.constant 0 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c8_i32 = arith.constant 8 : i32
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<64x32xf32>
+    %alloc_b = memref.alloc() : memref<32x32xf32>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<64x32xf32>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<32x32xf32>
+    %cst = arith.constant 0.000000e+00 : f32
+    %empty_c = tensor.empty() : tensor<64x32xf32>
+    %a_c = hivm.hir.vbrc ins(%cst : f32) outs(%empty_c : tensor<64x32xf32>) -> tensor<64x32xf32>
+    %alloc_d = memref.alloc() : memref<32x32xf32>
+    %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
+    // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C:.*]])
+    %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %a_c) -> (tensor<64x32xf32>) : i32 {
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
+      scf.yield %mmadL1 : tensor<64x32xf32>
+    }
+    // CHECK: %[[c:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+    %c = hivm.hir.mmadL1 ins(%a, %b, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%0 : tensor<64x32xf32>) -> tensor<64x32xf32>
+    // CHECK-NOT: hivm.hir.vadd
+    return %c : tensor<64x32xf32>
+  }
+}
+
+// -----
 // CHECK-LABEL:   func.func @simplicial_bwd_kv1_kernel
 // CHECK-NOT: hivm.hir.vadd
 module {
