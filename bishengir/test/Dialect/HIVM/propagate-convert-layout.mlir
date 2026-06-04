@@ -284,3 +284,59 @@ func.func @propagate_down_from_multi_for_results(
   return %r#0, %a_nd, %b_nd
     : tensor<1xf16>, tensor<16x16xf16>, tensor<16x16xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_down_from_if_yields_mmad_dependency(
+// CHECK:      %[[INIT:.*]] = hivm.hir.mmadL1
+// CHECK:      %[[IFR:.*]] = scf.if %{{.*}} -> (tensor<4x4x16x16xf32>)
+// CHECK:        %[[THEN:.*]] = hivm.hir.mmadL1
+// CHECK:        scf.yield %[[THEN]] : tensor<4x4x16x16xf32>
+// CHECK:      } else {
+// CHECK:        scf.yield %[[INIT]] : tensor<4x4x16x16xf32>
+// CHECK:      }
+// CHECK:      %[[DOWN:.*]] = hivm.hir.convert_layout %[[IFR]] output_shape [64, 64]
+// CHECK:      return %[[DOWN]] : tensor<64x64xf32>
+func.func @propagate_down_from_if_yields_mmad_dependency(
+    %lhs0: tensor<2x4x16x16xbf16>,
+    %rhs0: tensor<4x2x16x16xbf16>,
+    %lhs1: tensor<4x4x16x16xbf16>,
+    %rhs1: tensor<4x4x16x16xbf16>,
+    %acc: tensor<4x4x16x16xf32>,
+    %iv: i32) -> tensor<64x64xf32> {
+  %c64 = arith.constant 64 : index
+  %c32 = arith.constant 32 : index
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %true = arith.constant true
+  %false = arith.constant false
+
+  %init_fr = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true, normalized_in_L0C}
+      ins(%lhs0, %rhs0, %true, %c64, %c32, %c64 : tensor<2x4x16x16xbf16>, tensor<4x2x16x16xbf16>, i1, index, index, index)
+      outs(%acc : tensor<4x4x16x16xf32>) -> tensor<4x4x16x16xf32>
+  %init_nd = hivm.hir.convert_layout %init_fr output_shape [64, 64]
+      {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+      : (tensor<4x4x16x16xf32>) -> tensor<64x64xf32>
+  %init_fr2 = hivm.hir.convert_layout %init_nd output_shape [4, 4, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>}
+      : (tensor<64x64xf32>) -> tensor<4x4x16x16xf32>
+
+  %cond = arith.cmpi eq, %iv, %c0_i32 : i32
+  %alloca = memref.alloca() : memref<i32>
+  memref.store %c0_i32, %alloca[] : memref<i32>
+  %r = scf.if %cond -> (tensor<64x64xf32>) {
+    %loaded = memref.load %alloca[] : memref<i32>
+    %then_fr = hivm.hir.mmadL1 {a_transpose, already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs1, %rhs1, %false, %c64, %c64, %c64 : tensor<4x4x16x16xbf16>, tensor<4x4x16x16xbf16>, i1, index, index, index)
+        outs(%init_fr2 : tensor<4x4x16x16xf32>) -> tensor<4x4x16x16xf32>
+    %then_nd = hivm.hir.convert_layout %then_fr output_shape [64, 64]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<4x4x16x16xf32>) -> tensor<64x64xf32>
+    %inc = arith.addi %loaded, %c1_i32 : i32
+    memref.store %inc, %alloca[] : memref<i32>
+    scf.yield %then_nd : tensor<64x64xf32>
+  } else {
+    scf.yield %init_nd : tensor<64x64xf32>
+  }
+  return %r : tensor<64x64xf32>
+}

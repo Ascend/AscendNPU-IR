@@ -51,10 +51,6 @@ struct EliminateRedundantConversionPattern : public OpRewritePattern<
       return rewriter.notifyMatchFailure(
           op, "layouts are not inverse conversions");
 
-    if (!sourceOp.getResult().hasOneUse())
-      return rewriter.notifyMatchFailure(
-          op, "source conversion has multiple uses");
-
     rewriter.replaceOp(op, sourceOp.getSource());
     return success();
   }
