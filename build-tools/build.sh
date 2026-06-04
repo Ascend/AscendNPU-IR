@@ -125,6 +125,7 @@ init_variables() {
   INSTALL_PREFIX=""
   BUILD_BISHENGIR_A5="OFF"
   SHMEM_BUILD_TEMPLATE="OFF"
+  COLLECT_BINARY="OFF"
 
   # Thread count: 3/4 of CPU cores (fallback to 1 if detection fails)
   if [[ "$OS_TYPE" == "Darwin" ]]; then
@@ -175,6 +176,7 @@ usage() {
                 [--skip-rpath]
                 [--enable-cpu-runner]
                 [--build-bishengir-a5]
+                [--collect-binary OUTPUT_DIR]
 
     Options:
       --add-cmake-options CMAKE_OPTIONS    Add options to CMake; use quotes for multiple, e.g. --add-cmake-options '-DFOO=ON -DBAR=1'. (Default: null)
@@ -206,6 +208,10 @@ usage() {
       --torch-mlir-source-dir DIR          Torch-MLIR project's root directory. (Default: 'third-party/torch-mlir')
       --enable-cpu-runner                  Enable the compilation of CPU runner targets
       --build-bishengir-a5                 Whether to build bishengir-a5. (Default: disabled)
+      --collect-binary [OUTPUT_DIR]      Collect built binaries and bc files to OUTPUT_DIR. Automatically
+                                           detects A5 build artifacts in bishengir-a5-src/build-a5/install/.
+                                           This is a standalone mode that skips the build process.
+                                           (Default: bishengir-output)
       "
 }
 
@@ -415,6 +421,22 @@ parse_arguments() {
                 ;;
             --build-bishengir-a5)
                 BUILD_BISHENGIR_A5="ON"
+                shift
+                ;;
+            --collect-binary)
+                if [[ -n "$2" && "$2" != -* ]]; then
+                    COLLECT_BINARY="$2"
+                    shift 2
+                else
+                    COLLECT_BINARY="bishengir-output"
+                    shift
+                fi
+                ;;
+            --collect-binary=*)
+                COLLECT_BINARY="${1#--collect-binary=}"
+                if [[ -z "${COLLECT_BINARY}" ]]; then
+                    COLLECT_BINARY="bishengir-output"
+                fi
                 shift
                 ;;
             --)
@@ -636,11 +658,95 @@ cmake_install() {
   )
 }
 
+collect_binary() {
+  local output_dir="$1"
+  local a3_install_dir="${BUILD_DIR}/install"
+  local a5_build_dir="${GIT_ROOT}/bishengir-a5-src/build-a5"
+
+  echo "Collecting binaries to ${output_dir}..."
+
+  if [[ ! -d "${a3_install_dir}" ]]; then
+    echo "Error: A3 install directory not found at ${a3_install_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${output_dir}/bin" || { echo "Failed to create ${output_dir}/bin"; exit 1; }
+  mkdir -p "${output_dir}/lib" || { echo "Failed to create ${output_dir}/lib"; exit 1; }
+
+  echo "Collecting A3 binaries..."
+  if [[ -d "${a3_install_dir}/bin" ]]; then
+    cp "${a3_install_dir}/bin/bishengir-compile" "${output_dir}/bin/" || { echo "Failed to copy bishengir-compile"; exit 1; }
+    cp "${a3_install_dir}/bin/bishengir-opt" "${output_dir}/bin/" || { echo "Failed to copy bishengir-opt"; exit 1; }
+    echo "  Copied bishengir-compile, bishengir-opt"
+  else
+    echo "Warning: A3 bin directory not found at ${a3_install_dir}/bin"
+  fi
+
+  echo "Collecting A3 bc files..."
+  if [[ -d "${a3_install_dir}/lib" ]]; then
+    local bc_count=0
+    for f in "${a3_install_dir}/lib/"*.bc; do
+      if [[ -f "$f" ]]; then
+        cp "$f" "${output_dir}/lib/"
+        bc_count=$((bc_count + 1))
+      fi
+    done
+    echo "  Copied ${bc_count} bc files"
+  else
+    echo "Warning: A3 lib directory not found at ${a3_install_dir}/lib"
+  fi
+
+  if [[ -d "${a5_build_dir}" ]]; then
+    echo "Detected A5 build artifacts at ${a5_build_dir}"
+    echo "Collecting A5 binaries..."
+    if [[ -d "${a5_build_dir}/bin" ]]; then
+      if [[ -f "${a5_build_dir}/bin/bishengir-compile" ]]; then
+        cp "${a5_build_dir}/bin/bishengir-compile" "${output_dir}/bin/bishengir-compile-a5" || { echo "Failed to copy bishengir-compile-a5"; exit 1; }
+        echo "  Copied bishengir-compile-a5"
+      fi
+      if [[ -f "${a5_build_dir}/bin/bishengir-opt" ]]; then
+        cp "${a5_build_dir}/bin/bishengir-opt" "${output_dir}/bin/bishengir-opt-a5" || { echo "Failed to copy bishengir-opt-a5"; exit 1; }
+        echo "  Copied bishengir-opt-a5"
+      fi
+    else
+      echo "Warning: A5 bin directory not found at ${a5_build_dir}/bin"
+    fi
+
+    echo "Collecting A5 bc files..."
+    if [[ -d "${a5_build_dir}/lib" ]]; then
+      local a5_bc_count=0
+      for f in "${a5_build_dir}/lib/"*.bc; do
+        if [[ -f "$f" ]]; then
+          cp "$f" "${output_dir}/lib/"
+          a5_bc_count=$((a5_bc_count + 1))
+        fi
+      done
+      echo "  Copied ${a5_bc_count} A5 bc files"
+    else
+      echo "Warning: A5 lib directory not found at ${a5_build_dir}/lib"
+    fi
+  else
+    echo "No A5 build artifacts detected, skipping A5 collection"
+  fi
+
+  echo "Binary collection complete. Output directory: ${output_dir}"
+  echo "Contents:"
+  echo "  bin/:"
+  ls -lh "${output_dir}/bin/" 2>/dev/null || echo "    (empty)"
+  echo "  lib/:"
+  ls -lh "${output_dir}/lib/" 2>/dev/null || echo "    (empty)"
+}
+
 main() {
   echo "Starting BiShengIR build process..."
   echo "OS: $OS_TYPE"
   echo "Build directory: $BUILD_DIR"
   echo "C compiler: $C_COMPILER | CXX compiler: $CXX_COMPILER"
+
+  if [[ "${COLLECT_BINARY}" != "OFF" ]]; then
+    collect_binary "${COLLECT_BINARY}"
+    exit 0
+  fi
 
   check_dependencies
 
@@ -678,57 +784,46 @@ main() {
 
   echo "Build Done!!!"
 
-  # Build bishengir-a5 if enabled
-  if [[ ${BUILD_BISHENGIR_A5} = "ON" ]]; then
-    # Check if bishengir-a5 has already been built
-    if [[ -f "bishengir-a5-src/build-a5/bin/bishengir-compile" ]]; then
+  if [[ "${BUILD_BISHENGIR_A5}" = "ON" ]]; then
+    local a5_src_dir="${GIT_ROOT}/bishengir-a5-src"
+    if [[ -f "${a5_src_dir}/build-a5/bin/bishengir-compile" ]]; then
       echo "bishengir-a5 has already been built. Skipping build process."
     else
       echo "Cloning AscendNPU-IR-Dev repository..."
-      if [ ! -d "bishengir-a5-src" ]; then
-        git clone https://gitcode.com/Ascend/AscendNPU-IR-Dev.git --depth 1 bishengir-a5-src || { echo "Failed to clone repository"; exit 1; }
+      if [[ ! -d "${a5_src_dir}" ]]; then
+        git clone https://gitcode.com/Ascend/AscendNPU-IR-Dev.git --depth 1 "${a5_src_dir}" || { echo "Failed to clone repository"; exit 1; }
       else
-        echo "Repository already exists, skipping clone"
+        echo "Repository already exists, updating..."
+        cd "${a5_src_dir}" && git pull || { echo "Failed to update repository"; exit 1; }
       fi
-      
-      cd bishengir-a5-src || { echo "Failed to enter bishengir-a5-src"; exit 1; }
+
+      cd "${a5_src_dir}" || { echo "Failed to enter ${a5_src_dir}"; exit 1; }
       echo "Updating submodules..."
       git submodule update --init --recursive --depth 1 --progress || { echo "Failed to update submodules"; exit 1; }
-      
-      # Clean build directory to ensure fresh build
+
       rm -rf build-a5 || { echo "Failed to clean build-a5 directory"; exit 1; }
       mkdir -p build-a5 || { echo "Failed to create build-a5 directory"; exit 1; }
       echo "Building bishengir-a5..."
       ./build-tools/build.sh \
-        --c-compiler clang \
-        --cxx-compiler clang++ \
-        "--add-cmake-options=-DLLVM_ENABLE_LLD=ON" \
-        --build-type Release \
-        --enable-assertion \
+        --add-cmake-options="-DCMAKE_LINKER=LLD" \
+        --add-cmake-options="-DLLVM_ENABLE_LLD=ON" \
+        -t \
+        --bisheng-compiler="${BISHENG_COMPILER}" \
         --disable-werror \
-        --disable-mlir-werror \
         --disable-bishengir-werror \
+        --build=./build-a5 \
+        --enable-assertion \
         --build-triton \
-        --build ./build-a5 \
-        --apply-patches \
-        --bishengir-publish || { echo "Failed to build bishengir-a5"; exit 1; }
-      
-      cd .. || exit 1
+        --fast-build \
+        --safety-options \
+        --safety-ld-options \
+        --skip-rpath \
+        --bishengir-publish \
+        --apply-patches || { echo "Failed to build bishengir-a5"; exit 1; }
+
+      cd "${GIT_ROOT}" || exit 1
     fi
-    
-    mkdir -p bishengir-output || { echo "Failed to create bishengir-output directory"; exit 1; }
-    mkdir -p bishengir-output/bin || { echo "Failed to create bishengir-output/bin directory"; exit 1; }
-    mkdir -p bishengir-output/lib || { echo "Failed to create bishengir-output/lib directory"; exit 1; }
-
-    cp bishengir-a5-src/build-a5/bin/bishengir-compile bishengir-output/bin/bishengir-compile-a5 || { echo "Failed to copy a5 bishengir compile binary"; exit 1; }
-    cp bishengir-a5-src/build-a5/bin/bishengir-opt bishengir-output/bin/bishengir-opt-a5 || { echo "Failed to copy a5 bishengir opt binary"; exit 1; }
-    cp ${BUILD_DIR}/bin/bishengir-compile bishengir-output/bin/bishengir-compile || { echo "Failed to copy a3 bishengir compile binary"; exit 1; }
-    cp ${BUILD_DIR}/bin/bishengir-opt bishengir-output/bin/bishengir-opt || { echo "Failed to copy a3 bishengir opt binary"; exit 1; }
-    cp ${BUILD_DIR}/lib/*.bc bishengir-output/lib || { echo "Failed to copy a3 bishengir bc files"; exit 1; }
-    
-    echo "Successfully copied binaries to bishengir-output directory."
   fi
-
 }
 
 main "$@"

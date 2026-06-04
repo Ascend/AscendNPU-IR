@@ -6,6 +6,7 @@ on:
       - '*'
 
 jobs:
+  # Job 1: 构建二进制文件
   build_binaries:
     runs-on: [self-hosted, Linux, ARM64]
     container:
@@ -48,14 +49,14 @@ jobs:
           git submodule update --init --depth 1 third-party/llvm-project
           git submodule update --init --depth 1 third-party/torch-mlir
 
-      - name: Cache LLVM build directory
-        uses: actions/cache@v4
+      - name: Restore LLVM build directory cache
+        uses: actions/cache/restore@v4
         with:
           path: build/
           key: llvm-build-aarch64-${{ hashFiles('.gitmodules') }}-${{ hashFiles('build-tools/patches/**/*.patch') }}
 
-      - name: Cache ccache
-        uses: actions/cache@v4
+      - name: Restore ccache
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ccache-aarch64-${{ hashFiles('.gitmodules') }}
@@ -77,22 +78,111 @@ jobs:
             --skip-rpath \
             --apply-patches
 
-      - name: Prepare artifacts for upload
+      - name: Save LLVM build directory cache
+        uses: actions/cache/save@v4
+        with:
+          path: build/
+          key: llvm-build-aarch64-${{ hashFiles('.gitmodules') }}-${{ hashFiles('build-tools/patches/**/*.patch') }}
+
+      - name: Save ccache
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-aarch64-${{ hashFiles('.gitmodules') }}
+
+      - name: Prepare A3 artifacts for upload
         run: |
           mkdir -p bishengir-output/bin
           cp build/install/bin/bishengir-compile bishengir-output/bin/
           cp build/install/bin/bishengir-opt bishengir-output/bin/
+          # 如果有 lib 文件也复制
           if [ -d build/install/lib ]; then
             mkdir -p bishengir-output/lib
             cp -r build/install/lib/* bishengir-output/lib/ 2>/dev/null || true
           fi
 
-      - name: Upload binaries artifact
+      - name: Upload A3 binaries artifact
         uses: actions/upload-artifact@v4
         with:
           name: binaries-aarch64
           path: bishengir-output/
 
+      - name: Clone A5 repository
+        run: |
+          if [[ -d bishengir-a5-src ]]; then
+            echo "A5 repository already exists, updating..."
+            cd bishengir-a5-src
+            git remote set-url origin https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_PASSWORD }}@gitcode.com/Ascend/AscendNPU-IR-Dev.git
+            git pull
+          else
+            git clone https://${{ secrets.GITCODE_USERNAME }}:${{ secrets.GITCODE_PASSWORD }}@gitcode.com/Ascend/AscendNPU-IR-Dev.git --depth 1 bishengir-a5-src
+          fi
+
+      - name: Initialize A5 submodules
+        run: |
+          cd bishengir-a5-src
+          git submodule update --init --recursive --depth 1 --progress
+
+      - name: Restore A5 LLVM build directory cache
+        uses: actions/cache/restore@v4
+        with:
+          path: bishengir-a5-src/build-a5/
+          key: llvm-build-a5-aarch64-${{ hashFiles('bishengir-a5-src/.gitmodules') }}-${{ hashFiles('bishengir-a5-src/build-tools/patches/**/*.patch') }}
+
+      - name: Restore A5 ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache-a5
+          key: ccache-a5-aarch64-${{ hashFiles('bishengir-a5-src/.gitmodules') }}
+          restore-keys: |
+            ccache-a5-aarch64-
+
+      - name: Build A5 binaries
+        run: |
+          export CCACHE_DIR=$GITHUB_WORKSPACE/.ccache-a5
+          cd bishengir-a5-src
+          chmod +x build-tools/build.sh
+          ./build-tools/build.sh \
+            --add-cmake-options="-DCMAKE_LINKER=LLD" \
+            --add-cmake-options="-DLLVM_ENABLE_LLD=ON" \
+            -t \
+            --bisheng-compiler=$GITHUB_WORKSPACE/bisheng_toolkit/bisheng_compiler/bin \
+            --disable-werror \
+            --disable-bishengir-werror \
+            --build=./build-a5 \
+            --enable-assertion \
+            --build-triton \
+            --fast-build \
+            --safety-options \
+            --safety-ld-options \
+            --skip-rpath \
+            --bishengir-publish \
+            --apply-patches
+
+      - name: Save A5 LLVM build directory cache
+        uses: actions/cache/save@v4
+        with:
+          path: bishengir-a5-src/build-a5/
+          key: llvm-build-a5-aarch64-${{ hashFiles('bishengir-a5-src/.gitmodules') }}-${{ hashFiles('bishengir-a5-src/build-tools/patches/**/*.patch') }}
+
+      - name: Save A5 ccache
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache-a5
+          key: ccache-a5-aarch64-${{ hashFiles('bishengir-a5-src/.gitmodules') }}
+
+      - name: Prepare unified artifacts for upload
+        run: |
+          chmod +x build-tools/build.sh
+          build-tools/build.sh --collect-binary bishengir-output-unified
+
+      - name: Upload unified binaries artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-aarch64-unified
+          path: bishengir-output-unified/
+
+  # Job 2: 构建 A3 和 A3+A5 归一 wheel 包
   build_wheels:
     runs-on: [self-hosted, Linux, ARM64]
     needs: build_binaries
@@ -106,11 +196,17 @@ jobs:
       - name: Configure git safe directory
         run: git config --global --add safe.directory '*'
 
-      - name: Download binaries artifact
+      - name: Download A3 binaries artifact
         uses: actions/download-artifact@v4
         with:
           name: binaries-aarch64
           path: bishengir-output/
+
+      - name: Download unified binaries artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-aarch64-unified
+          path: bishengir-output-unified/
 
       - name: Determine version from git tag
         id: get_version
@@ -119,16 +215,17 @@ jobs:
           TAG=${TAG#v}
           echo "version=$TAG" >> $GITHUB_OUTPUT
 
-      - name: Build wheels for all Python versions
+      - name: Build A3 wheels for all Python versions
         run: |
           VERSION=${{ steps.get_version.outputs.version }}
           sed -i "s/version = \".*\"/version = \"${VERSION}\"/" bishengir/python/wheel/pyproject.toml
 
+          _ORIG_PATH="$PATH"
           for PY_VERSION in "3.9" "3.10" "3.11" "3.12"; do
             PYBIN_VERSION=${PY_VERSION//./}
             PYBIN=/opt/python/cp${PYBIN_VERSION}-cp${PYBIN_VERSION}
             echo "=== Building wheel for Python ${PY_VERSION} ==="
-            export PATH="$PYBIN/bin:$PATH"
+            export PATH="$PYBIN/bin:${_ORIG_PATH}"
             python -m pip install setuptools wheel build auditwheel
             chmod +x build-tools/build_wheel.sh
             build-tools/build_wheel.sh \
@@ -142,11 +239,44 @@ jobs:
             cp ${d}*.whl dist/ 2>/dev/null || true
           done
           cp dist-cp39/*.tar.gz dist/ 2>/dev/null || true
-          echo "=== All wheels ==="
+          echo "=== All A3 wheels ==="
           ls -lh dist/
 
-      - name: Upload wheels artifact
+      - name: Build unified wheels for all Python versions
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          sed -i "s/version = \".*\"/version = \"${VERSION}\"/" bishengir/python/wheel/pyproject.toml
+
+          _ORIG_PATH="$PATH"
+          for PY_VERSION in "3.9" "3.10" "3.11" "3.12"; do
+            PYBIN_VERSION=${PY_VERSION//./}
+            PYBIN=/opt/python/cp${PYBIN_VERSION}-cp${PYBIN_VERSION}
+            echo "=== Building unified wheel for Python ${PY_VERSION} ==="
+            export PATH="$PYBIN/bin:${_ORIG_PATH}"
+            python -m pip install setuptools wheel build auditwheel
+            chmod +x build-tools/build_wheel.sh
+            build-tools/build_wheel.sh \
+              --build-dir bishengir-output-unified \
+              --output-dir "dist-unified-cp${PYBIN_VERSION}" \
+              --clean
+          done
+
+          mkdir -p dist-unified
+          for d in dist-unified-cp*/; do
+            cp ${d}*.whl dist-unified/ 2>/dev/null || true
+          done
+          cp dist-unified-cp39/*.tar.gz dist-unified/ 2>/dev/null || true
+          echo "=== All unified wheels ==="
+          ls -lh dist-unified/
+
+      - name: Upload A3 wheels artifact
         uses: actions/upload-artifact@v4
         with:
           name: wheels-aarch64
           path: dist/
+
+      - name: Upload unified wheels artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-aarch64-unified
+          path: dist-unified/
