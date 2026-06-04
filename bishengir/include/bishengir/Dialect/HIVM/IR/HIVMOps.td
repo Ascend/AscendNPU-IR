@@ -603,6 +603,9 @@ def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
       - mask: boolean mask controlling which elements to load
       - other: fallback values used when mask is false
       - dst: destination tensor specifying output shape and type
+      - isVolatile: defaults to true. TODO: set it to false only when analysis
+        proves the indirect load's GM address cannot be written by any possible
+        op.
 
     This operation is useful for sparse data access patterns and
     gather operations with conditional loading semantics.
@@ -612,7 +615,8 @@ def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
                        TensorOrMemref:$offsets,
                        TensorOrMemref:$dst,
                        Optional<TensorOrMemref>:$mask,
-                       Optional<TensorOrMemref>:$other
+                       Optional<TensorOrMemref>:$other,
+                       DefaultValuedAttr<BoolAttr, "true">:$isVolatile
   );
   let results = (outs Optional<TensorOrMemref>:$result);
 
