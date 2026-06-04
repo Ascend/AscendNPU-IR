@@ -59,3 +59,18 @@ func.func @triton_conv1d_3d_fp16_aligned_groups_mix_aic(%arg0: i64 {hacc.arg_typ
   hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 0
   return
 }
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp16_aligned_mix_aic
+// CHECK:           annotation.mark %{{.*}} : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>
+// CHECK:           annotation.mark %{{.*}} : memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>
+func.func @triton_conv3d_5d_fp16_aligned_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>, %arg1: memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>, %arg2: memref<2x6x12x7x9xf16, #hivm.address_space<gm>>) {
+  %true = arith.constant true
+  annotation.mark %arg0 {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>
+  annotation.mark %arg1 {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>
+  hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32}
+      ins(%arg0, %arg1, %true : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>, memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>, i1)
+      outs(%arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>)
+  annotation.mark %arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>
+  return
+}

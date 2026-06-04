@@ -595,6 +595,12 @@ void InferHIVMMemScopePass::runOnOperation() {
         signalPassFailure();
     });
 
+    // Set the memory scope of values related to `hivm::Conv3DL1Op` to L1 or L0C.
+    func->walk([&](mlir::hivm::Conv3DL1Op op) {
+      if (failed(inferAndPropagateMemScopeForConvOp(op)))
+        signalPassFailure();
+    });
+
     // Set device function arguments' memory scope to GM.
     if (failed(hivm::inferAndPropagateMemScopeForFunc(func)))
       signalPassFailure();

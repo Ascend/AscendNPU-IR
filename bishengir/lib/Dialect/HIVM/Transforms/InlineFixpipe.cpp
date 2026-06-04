@@ -155,6 +155,9 @@ bool isAccumulation(Operation *op) {
   if (auto conv2d = dyn_cast<hivm::Conv2DL1Op>(op))
     return isAccumulationImpl(op, conv2d.getInit());
 
+  if (auto conv3d = dyn_cast<hivm::Conv3DL1Op>(op))
+    return isAccumulationImpl(op, conv3d.getInit());
+
   return false;
 }
 
@@ -670,6 +673,7 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
+  patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
 }
 
