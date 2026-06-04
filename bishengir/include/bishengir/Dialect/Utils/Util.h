@@ -534,6 +534,8 @@ bool isAlignedInUB(Type type);
 
 bool isUnstructuredMemAccLoop(Operation *op);
 
+ModuleOp getTopLevelModuleOp(Operation *op);
+
 } // namespace utils
 
 namespace reshape_utils {
