@@ -278,10 +278,44 @@ bool Solver::checkMemInfoConflict(
   return false;
 }
 
-// High-level wrapper computing pipe pairs that represent memory conflicts
-// between two RW ops.
-llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>
-Solver::checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
+bool Solver::checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  auto [it, isInserted] = checkMemoryConflictsMem.insert({{rwOp1, rwOp2}, {}});
+  if (!isInserted) {
+    return !it->second.empty();
+  }
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                           rwOp2->writeMemInfo) ||
+      checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->readMemInfo) ||
+      checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->writeMemInfo)) {
+    return true;
+  }
+  return false;
+}
+
+llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
+Solver::getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                           const llvm::SmallVector<MemInfo> &memInfoList1,
+                           const llvm::SmallVector<MemInfo> &memInfoList2,
+                           std::optional<int64_t> lcmLen,
+                           std::optional<int64_t> eventIdNum) {
+  llvm::SetVector<std::pair<const MemInfo *, const MemInfo *>>
+      collectedConflicts;
+  for (const auto &memInfo1 : memInfoList1) {
+    for (const auto &memInfo2 : memInfoList2) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2, lcmLen,
+                               eventIdNum)) {
+        collectedConflicts.insert({&memInfo1, &memInfo2});
+      }
+    }
+  }
+  return collectedConflicts.takeVector();
+}
+
+llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
+Solver::getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
   auto [it, isInserted] = checkMemoryConflictsMem.insert({{rwOp1, rwOp2}, {}});
   if (!isInserted) {
@@ -299,23 +333,32 @@ Solver::checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
     assert(coreDst == hivm::TCoreType::VECTOR ||
            coreDst == hivm::TCoreType::CUBE);
   }
-  llvm::SetVector<std::tuple<CorePipeInfo, CorePipeInfo>> collectedConflictsSet;
-  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
-                           rwOp2->writeMemInfo)) {
-    collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeRead),
-                                  CorePipeInfo(coreDst, rwOp2->pipeWrite)});
+  llvm::SetVector<std::pair<CorePipeInfo, CorePipeInfo>> collectedConflictsSet;
+  auto choosePipe = [](const MemInfo *memInfo, PIPE pipe) {
+    return memInfo->pipe ? memInfo->pipe.value() : pipe;
+  };
+  for (auto [memInfo1, memInfo2] : getMemInfoConflict(
+           rwOp1, rwOp2, rwOp1->readMemInfo, rwOp2->writeMemInfo)) {
+    auto pipeSrc = choosePipe(memInfo1, rwOp1->pipeRead);
+    auto pipeDst = choosePipe(memInfo2, rwOp2->pipeWrite);
+    collectedConflictsSet.insert(
+        {CorePipeInfo(coreSrc, pipeSrc), CorePipeInfo(coreDst, pipeDst)});
   }
-  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
-                           rwOp2->readMemInfo)) {
-    collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeWrite),
-                                  CorePipeInfo(coreDst, rwOp2->pipeRead)});
+  for (auto [memInfo1, memInfo2] : getMemInfoConflict(
+           rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->readMemInfo)) {
+    auto pipeSrc = choosePipe(memInfo1, rwOp1->pipeWrite);
+    auto pipeDst = choosePipe(memInfo2, rwOp2->pipeRead);
+    collectedConflictsSet.insert(
+        {CorePipeInfo(coreSrc, pipeSrc), CorePipeInfo(coreDst, pipeDst)});
   }
-  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
-                           rwOp2->writeMemInfo)) {
-    collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeWrite),
-                                  CorePipeInfo(coreDst, rwOp2->pipeWrite)});
+  for (auto [memInfo1, memInfo2] : getMemInfoConflict(
+           rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->writeMemInfo)) {
+    auto pipeSrc = choosePipe(memInfo1, rwOp1->pipeWrite);
+    auto pipeDst = choosePipe(memInfo2, rwOp2->pipeWrite);
+    collectedConflictsSet.insert(
+        {CorePipeInfo(coreSrc, pipeSrc), CorePipeInfo(coreDst, pipeDst)});
   }
-  llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>> collectedConflicts(
+  llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>> collectedConflicts(
       collectedConflictsSet.begin(), collectedConflictsSet.end());
   return it->second = collectedConflicts;
 }
@@ -332,10 +375,8 @@ bool Solver::checkMemoryConflictBetweenOccExclusive(
       if (!filter(otherOp)) {
         continue;
       }
-      if (!checkMemoryConflicts(rwOp1, otherOp).empty()) {
-        return true;
-      }
-      if (!checkMemoryConflicts(rwOp2, otherOp).empty()) {
+      if (checkMemoryConflicts(rwOp1, otherOp) ||
+          checkMemoryConflicts(rwOp2, otherOp)) {
         return true;
       }
     }
@@ -2472,7 +2513,7 @@ SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
 void Solver::processConflict(Occurrence *occ1, Occurrence *occ2,
                              RWOperation *rwOp1, RWOperation *rwOp2,
                              bool isUseless) {
-  for (auto [corePipeSrc, corePipeDst] : checkMemoryConflicts(rwOp1, rwOp2)) {
+  for (auto [corePipeSrc, corePipeDst] : getMemoryConflicts(rwOp1, rwOp2)) {
     if (options.alwaysUsePipeSAsWaitingPipe) {
       corePipeDst.pipe = hivm::PIPE::PIPE_S;
     }
