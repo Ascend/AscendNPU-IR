@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Value.h"
@@ -54,6 +55,17 @@ void BindWorkSpaceArgPass::runOnOperation() {
 
   std::optional<BlockArgument> workspaceArg =
       hacc::utils::getBlockArgument(funcOp, hacc::KernelArgType::kWorkspace);
+  if (workspaceArg.has_value() && enableSubWorkspace) {
+    auto arg = workspaceArg.value();
+    auto argNum = arg.getArgNumber();
+    auto dictAttr = DictionaryAttr::get(
+        &getContext(),
+        hacc::createHACCKernelArgAttr(funcOp.getContext(),
+                                      hacc::KernelArgType::kSubWorkspace));
+    funcOp.insertArgument(argNum + 1, arg.getType(), dictAttr, arg.getLoc());
+    workspaceArg = hacc::utils::getBlockArgument(
+        funcOp, hacc::KernelArgType::kSubWorkspace);
+  }
 
   auto bindResult =
       funcOp.walk([&](bishengir::memref_ext::AllocWorkspaceOp op) {
@@ -71,6 +83,7 @@ void BindWorkSpaceArgPass::runOnOperation() {
     return signalPassFailure();
 }
 
-std::unique_ptr<Pass> mlir::hivm::createBindWorkSpaceArgPass() {
-  return std::make_unique<BindWorkSpaceArgPass>();
+std::unique_ptr<Pass>
+mlir::hivm::createBindWorkSpaceArgPass(const BindWorkSpaceArgOptions &options) {
+  return std::make_unique<BindWorkSpaceArgPass>(options);
 }

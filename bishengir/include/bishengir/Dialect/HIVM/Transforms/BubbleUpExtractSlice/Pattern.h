@@ -237,5 +237,13 @@ public:
                                 PatternRewriter &rewriter) const override;
 };
 
+class IndirectLoadBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
 } // namespace mlir::hivm::detail
 #endif

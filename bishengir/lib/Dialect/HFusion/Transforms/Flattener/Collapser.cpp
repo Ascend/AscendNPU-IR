@@ -35,7 +35,7 @@ using CollapseGroup = SmallVector<ReassociationIndices>;
 // Collapse Group Utils
 
 bool Flattener::hasCollapseGroup(Value res) const {
-  return argumentsRefPointer_.count(res);
+  return valueToDimIndicesIndex_.count(res);
 }
 
 // given a value, if the collapse mapping exist
@@ -47,7 +47,7 @@ bool Flattener::hasCollapseGroup(Value res) const {
 // will be [[0, 1], [2]]
 CollapseGroup Flattener::getCollapseGroup(Value res) const {
   assert(hasCollapseGroup(res) && "collapse group doesn't exist");
-  const auto args = getArgumentRef(res);
+  const auto args = getValueDimIndices(res);
   if (args.empty())
     return {};
 
@@ -78,19 +78,19 @@ CollapseGroup Flattener::getCollapseGroup(Value res) const {
 }
 
 // This function receive a value and return the expanded shape mixed size
-// output shape conclusion from the solverShapeElem_
+// output shape conclusion from the equivalentDsu_
 SmallVector<OpFoldResult> Flattener::getFlattenMixedSizes(Value res) const {
   OpBuilder builder(op_);
-  if (!argumentsRefPointer_.count(res))
+  if (!valueToDimIndicesIndex_.count(res))
     return {};
-  const auto args = getArgumentRef(res);
+  const auto args = getValueDimIndices(res);
   if (args.empty())
     return {};
   SmallVector<OpFoldResult> outputShape;
 
   LDBG("[Mixed size] " << res);
   for (const auto &[idx, elem] : llvm::enumerate(args)) {
-    auto [minParent, shape] = solverShapeElem_->getMinParentAndShapePair(elem);
+    auto [minParent, shape] = equivalentDsu_->getMinParentAndShapePair(elem);
     LLVM_DEBUG(llvm::dbgs() << minParent.first << " " << minParent.second << " "
                             << shape << "\n";);
     if (shape != ShapedType::kDynamic) {
@@ -410,7 +410,7 @@ void Flattener::adjustExtractOpIndices(tensor::ExtractOp extractOp,
 void Flattener::adjustPadOp(tensor::PadOp padOp, OpBuilder &builder) {
   auto src = padOp.getSource();
   auto collapseGroups = getCollapseGroup(src);
-  auto &refPtr = argumentsRef_[argumentsRefPointer_[src]];
+  auto &refPtr = dimIndices_[valueToDimIndicesIndex_[src]];
   auto paddedDim = padOp.getPaddedDims();
   auto staticLowPad = padOp.getStaticLow();
   auto staticHighPad = padOp.getStaticHigh();
@@ -668,7 +668,7 @@ void Flattener::adjustDeinterleaveOp(hfusion::DeinterleaveOp deinterleaveOp) {
 LogicalResult Flattener::VerifyCollapsedOperand(Operation *op) const {
   for (Value operand : op->getOperands()) {
     if (isa<TensorType>(operand.getType()) &&
-        !argumentsRefPointer_.contains(operand)) {
+        !valueToDimIndicesIndex_.contains(operand)) {
       if (utils::getShapeRank(operand).value_or(0) == 0) {
         continue;
       }
@@ -982,7 +982,7 @@ void Flattener::computeNewSlicingOperands(
   } else {
     src = slicingOp.getSource();
   }
-  auto refPtr = getArgumentRef(src);
+  auto refPtr = getValueDimIndices(src);
   auto collapseGroups = getCollapseGroup(src);
   auto loc = slicingOp.getLoc();
   auto mixedOffsets = slicingOp.getMixedOffsets();
@@ -1619,7 +1619,7 @@ void Flattener::adjustReturnOp(Operation *op, OpBuilder &builder) const {
 
   for (const auto &[idx, operand] : llvm::enumerate(op->getOperands())) {
     bool skipExpand = isValueFromHead(operand);
-    skipExpand |= !argumentsRefPointer_.contains(operand);
+    skipExpand |= !valueToDimIndicesIndex_.contains(operand);
     if (skipExpand) {
       LLVM_DEBUG(llvm::dbgs() << "Operand can be skipped " << operand << "\n";);
       newOperands.push_back(operand);
@@ -1798,7 +1798,7 @@ void Flattener::eraseOp(mlir::Operation *op) {
     flattenerWorkList.erase(pos);
   }
   for (auto res : op->getResults()) {
-    argumentsRefPointer_.erase(res);
+    valueToDimIndicesIndex_.erase(res);
     previousType_.erase(res);
   }
   markToDelete.insert(op);
