@@ -108,6 +108,17 @@ __aiv__ __attribute__((always_inline)) bool is32ByteAligned(int64_t value) {
 }
 
 template <typename T, int Dim>
+__aiv__ __attribute__((always_inline))
+bool is_memref_single_element(memref_t<__ubuf__ T, Dim> *buf) {
+  for (int i = 0; i < Dim; i++) {
+    if (buf->sizes[i] != 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename T, int Dim>
 __aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ T, Dim> *buf) {
   // Check if buf pointer is null
   if (buf == nullptr) {
@@ -121,6 +132,11 @@ __aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ 
   // Check if offset is aligned to the alignment factor
   if ((buf->offset % align_factor) != 0) {
     return false;
+  }
+
+  // If the offset is aligned and the memref has only one element, take the vector path.
+  if (is_memref_single_element<T, Dim>(buf)) {
+    return true;
   }
 
   // Check if last dimension is contiguous in memory (stride must be 1)
