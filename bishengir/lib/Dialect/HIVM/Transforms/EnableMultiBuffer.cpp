@@ -47,7 +47,38 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
   return std::nullopt;
 }
 
-LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
+/// Returns true if `val` is genuinely consumed at `loop`'s own body level --
+/// i.e. it has at least one non-terminator, non-annotation use whose nearest
+/// parent loop is `loop`. Uses nested in deeper loops belong to those inner
+/// loops and must not make the enclosing loop the multi-buffer anchor.
+static bool isConsumedInLoop(Value val, LoopLikeOpInterface loop) {
+  Operation *loopOp = loop.getOperation();
+  for (Operation *user : val.getUsers()) {
+    if (user->hasTrait<OpTrait::IsTerminator>())
+      continue;
+    if (isa<annotation::MarkOp>(user))
+      continue;
+    bool nestedInDeeperLoop = false;
+    for (Operation *ancestor = user; ancestor;
+         ancestor = ancestor->getParentOp()) {
+      if (ancestor == loopOp)
+        return true;
+      if (isa<scf::ForOp, scf::WhileOp>(ancestor)) {
+        nestedInDeeperLoop = true;
+        break;
+      }
+    }
+    if (nestedInDeeperLoop)
+      continue;
+  }
+  return false;
+}
+
+/// Follow loop/if yielded values outward and keep the outermost loop that
+/// actually consumes the tracked value. Pure loop-carried values do not update
+/// `consumerLoop`; they only bridge the search to an enclosing loop result.
+static LoopLikeOpInterface getParentLoop(Value val,
+                                         LoopLikeOpInterface consumerLoop) {
   auto *valDefOp = val.getDefiningOp();
   if (!valDefOp)
     llvm::report_fatal_error("val should have defining op.");
@@ -56,25 +87,30 @@ LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
   LoopLikeOpInterface parentLoop =
       valDefOp->getParentOfType<LoopLikeOpInterface>();
   if (!parentLoop) {
-    return nullptr;
+    return consumerLoop;
   }
+
+  if (isConsumedInLoop(val, parentLoop))
+    consumerLoop = parentLoop;
 
   // Need to determine whether val is yielded by the loop.
   auto yieldedValues = parentLoop.getYieldedValues();
   if (yieldedValues.empty())
-    return parentLoop;
+    return consumerLoop ? consumerLoop : parentLoop;
 
   auto idxLoopRes = getYieldValueIdx(val, yieldedValues);
   if (idxLoopRes.has_value()) {
-    // The val is yielded by loop, so need to find parent of parent loop.
+    // Continue tracking the loop result. If an enclosing loop consumes that
+    // result, it becomes the new anchor. If the enclosing loops only forward
+    // the value via yields, keep the innermost consumer found so far.
     auto res = parentLoop.getLoopResults().value()[*idxLoopRes];
-    return getParentLoop(res);
+    return getParentLoop(res, consumerLoop);
   }
 
   // Need to determine whether val is yielded by if/else.
   auto parentIf = valDefOp->getParentOfType<scf::IfOp>();
   if (!parentIf || parentIf.getResults().empty())
-    return parentLoop;
+    return consumerLoop ? consumerLoop : parentLoop;
 
   auto thenYieldOp = parentIf.thenYield();
   auto thenYieldOpers = thenYieldOp.getOperands();
@@ -83,7 +119,7 @@ LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
   if (idxThenYielded.has_value()) {
     // The val is yielded by ifOp, need to find parent loop of ifOp's result
     auto res = parentIf.getResults()[*idxThenYielded];
-    return getParentLoop(res);
+    return getParentLoop(res, consumerLoop);
   }
 
   auto elseYieldOp = parentIf.elseYield();
@@ -91,10 +127,14 @@ LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
   auto idxElseYielded = getYieldValueIdx(val, elseYieldOpers);
   if (idxElseYielded.has_value()) {
     auto res = parentIf.getResults()[*idxElseYielded];
-    return getParentLoop(res);
+    return getParentLoop(res, consumerLoop);
   }
 
-  return parentLoop;
+  return consumerLoop ? consumerLoop : parentLoop;
+}
+
+LoopLikeOpInterface mlir::hivm::getParentLoop(Value val) {
+  return ::getParentLoop(val, nullptr);
 }
 
 Value mlir::hivm::createNestedIndexModular(OpBuilder &builder, Operation *op,
