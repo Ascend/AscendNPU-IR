@@ -420,7 +420,8 @@ void Flattener::adjustPadOp(tensor::PadOp padOp, OpBuilder &builder) {
   SmallVector<OpFoldResult> newMixLowPad;
   SmallVector<OpFoldResult> newMixHighPad;
   // get which one to collapse together
-  LLVM_DEBUG(llvm::dbgs() << (padOp->getParentOp() ? *(padOp->getParentOp()) : *padOp););
+  LLVM_DEBUG(llvm::dbgs() << (padOp->getParentOp() ? *(padOp->getParentOp())
+                                                   : *padOp););
   DenseMap<uint64_t, uint64_t> padBodyMapping;
   for (unsigned i = 0; i < collapseGroups.size(); i++) {
     int dimPushed = 0;
@@ -455,7 +456,9 @@ void Flattener::adjustPadOp(tensor::PadOp padOp, OpBuilder &builder) {
 
   eraseOp(padOp);
   LLVM_DEBUG(llvm::dbgs() << "newPadOp parent: "
-                          << (newPadOp->getParentOp() ? *(newPadOp->getParentOp()) : *newPadOp)
+                          << (newPadOp->getParentOp()
+                                  ? *(newPadOp->getParentOp())
+                                  : *newPadOp)
                           << "\n";);
 }
 
@@ -506,8 +509,7 @@ void Flattener::adjustGatherLoadOp(hfusion::GatherLoadOp gatherLoadOp,
   auto collapseTensorOperand = [&](Value operand) -> Value {
     auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
     if (!tensorType || collapseGroup.empty() ||
-        collapseGroup.size() ==
-            static_cast<size_t>(tensorType.getRank())) {
+        collapseGroup.size() == static_cast<size_t>(tensorType.getRank())) {
       return operand;
     }
     auto collapsedType =
@@ -521,9 +523,9 @@ void Flattener::adjustGatherLoadOp(hfusion::GatherLoadOp gatherLoadOp,
 
   builder.setInsertionPoint(gatherLoadOp);
   Value indices = collapseTensorOperand(gatherLoadOp.getIndices());
-  Value mask =
-      gatherLoadOp.getMask() ? collapseTensorOperand(gatherLoadOp.getMask())
-                             : Value();
+  Value mask = gatherLoadOp.getMask()
+                   ? collapseTensorOperand(gatherLoadOp.getMask())
+                   : Value();
   Value other = gatherLoadOp.getOther()
                     ? collapseTensorOperand(gatherLoadOp.getOther())
                     : Value();
@@ -575,12 +577,11 @@ void Flattener::adjustScatterStoreOp(hfusion::ScatterStoreOp scatterStoreOp,
     dstCollapseGroup = getCollapseGroup(dstRef);
   }
 
-  auto collapseTensorOperand = [&](Value operand,
-                                   const CollapseGroup &collapseGroup) -> Value {
+  auto collapseTensorOperand =
+      [&](Value operand, const CollapseGroup &collapseGroup) -> Value {
     auto tensorType = dyn_cast<RankedTensorType>(operand.getType());
     if (!tensorType || collapseGroup.empty() ||
-        collapseGroup.size() ==
-            static_cast<size_t>(tensorType.getRank())) {
+        collapseGroup.size() == static_cast<size_t>(tensorType.getRank())) {
       return operand;
     }
     auto collapsedType =
@@ -611,8 +612,8 @@ void Flattener::adjustScatterStoreOp(hfusion::ScatterStoreOp scatterStoreOp,
   }
   auto newScatterStoreOp = builder.create<hfusion::ScatterStoreOp>(
       scatterStoreOp.getLoc(), resultTypes, indices, data,
-      scatterStoreOp.getBurstLen(), mask, base,
-      scatterStoreOp.getCacheAttr(), scatterStoreOp.getEvictAttr());
+      scatterStoreOp.getBurstLen(), mask, base, scatterStoreOp.getCacheAttr(),
+      scatterStoreOp.getEvictAttr());
   if (scatterStoreOp.getResult()) {
     auto oldRes = scatterStoreOp.getResult();
     auto newRes = newScatterStoreOp.getResult();
@@ -895,8 +896,8 @@ void Flattener::calculateSubviewStrides(
     // the full srcStride, because after collapsing, the stride of the
     // collapsed dim only covers dims inside this group.
     if (i != lastGroupIdx && !isContinuous) {
-      newMixedStrides.push_back(builder.getI64IntegerAttr(
-          strideInt.value() * cumSize[i]));
+      newMixedStrides.push_back(
+          builder.getI64IntegerAttr(strideInt.value() * cumSize[i]));
       return;
     }
 
@@ -911,10 +912,8 @@ void Flattener::calculateSubviewStrides(
 
 template <class T, typename>
 void Flattener::calculateSliceStrides(
-    T sliceOp,
-    ReassociationIndices &collapseGroup,
-    SmallVector<OpFoldResult> &newMixedStrides,
-    OpBuilder &builder) {
+    T sliceOp, ReassociationIndices &collapseGroup,
+    SmallVector<OpFoldResult> &newMixedStrides, OpBuilder &builder) {
   // We could not combine sliceOp with subviewOp currently,
   // please read this before trying combining.
   // FlattenOps process subviewOp & sliceOp differently,
@@ -925,7 +924,7 @@ void Flattener::calculateSliceStrides(
 
   Value src = sliceOp.getSource();
   if (std::is_same_v<T, tensor::InsertSliceOp>)
-      src = sliceOp.getResult();
+    src = sliceOp.getResult();
   auto previousTy = dyn_cast<RankedTensorType>(previousType_[src]);
   assert(previousTy &&
          "extract_slice source must have previous ranked tensor type");
@@ -1007,12 +1006,12 @@ void Flattener::computeNewSlicingOperands(
                                 builder);
       } else if (auto extractSliceOp =
                      dyn_cast<tensor::ExtractSliceOp>(*slicingOp)) {
-        calculateSliceStrides(extractSliceOp, collapseGroup,
-                              newMixedStrides, builder);
+        calculateSliceStrides(extractSliceOp, collapseGroup, newMixedStrides,
+                              builder);
       } else if (auto insertSliceOp =
                      dyn_cast<tensor::InsertSliceOp>(*slicingOp)) {
-        calculateSliceStrides(insertSliceOp, collapseGroup,
-                              newMixedStrides, builder);
+        calculateSliceStrides(insertSliceOp, collapseGroup, newMixedStrides,
+                              builder);
       } else {
         auto realStridedValue =
             getConstantIntValue(mixedStrides[collapseGroup.back()]);
@@ -1230,11 +1229,10 @@ void Flattener::adjustCastOp(memref::CastOp castOp, mlir::OpBuilder &builder) {
   MemRefType newResType;
   if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
       succeeded(getStridesAndOffset(oldResType, oldResStrides, oldResOffset))) {
-    auto newLayout = StridedLayoutAttr::get(
-        castOp->getContext(), oldResOffset, srcStrides);
-    newResType =
-        MemRefType::get(srcType.getShape(), srcType.getElementType(),
-                        newLayout, srcType.getMemorySpace());
+    auto newLayout =
+        StridedLayoutAttr::get(castOp->getContext(), oldResOffset, srcStrides);
+    newResType = MemRefType::get(srcType.getShape(), srcType.getElementType(),
+                                 newLayout, srcType.getMemorySpace());
   } else {
     newResType = srcType;
   }
@@ -1276,6 +1274,8 @@ void Flattener::adjustIfOp(scf::IfOp ifOp, OpBuilder &builder) {
   if (!ifOp.elseBlock()) {
     for (auto [yieldOpr, resultOpr] :
          llvm::zip_equal(ifOp.elseYield()->getOperands(), ifOp->getResults())) {
+      if (!hasCollapseGroup(yieldOpr))
+        continue;
       updatePreviousType(resultOpr);
       collapsePropagateOrVerify(resultOpr, yieldOpr);
     }
@@ -1283,6 +1283,8 @@ void Flattener::adjustIfOp(scf::IfOp ifOp, OpBuilder &builder) {
 
   for (auto [yieldOpr, resultOpr] :
        llvm::zip_equal(ifOp.thenYield()->getOperands(), ifOp->getResults())) {
+    if (!hasCollapseGroup(yieldOpr))
+      continue;
     updatePreviousType(resultOpr);
     collapsePropagateOrVerify(resultOpr, yieldOpr);
     resultOpr.setType(yieldOpr.getType());
@@ -1567,9 +1569,8 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
 
   // Walk back through replacement chain:
   // new collapsed value -> old pre-flatten value
-  for (auto it = valueReplacement.find(current);
-      it != valueReplacement.end();
-      it = valueReplacement.find(current)) {
+  for (auto it = valueReplacement.find(current); it != valueReplacement.end();
+       it = valueReplacement.find(current)) {
     Value prev = it->second;
     if (!visited.insert(prev).second) {
       break;
@@ -1589,14 +1590,15 @@ Flattener::tryGetOriginalSliceMixedSizes(Value value) const {
     llvm::append_range(sizes, extractSliceOp.getMixedSizes());
     return sizes;
   }
- 
+
   return std::nullopt;
 }
 
 SmallVector<OpFoldResult>
 Flattener::getMixedSizesForTailExpand(Value collapsedVal,
                                       Type expandedType) const {
-  int64_t expectedRank = static_cast<int64_t>(utils::getShapeRank(expandedType).value_or(0));
+  int64_t expectedRank =
+      static_cast<int64_t>(utils::getShapeRank(expandedType).value_or(0));
 
   // For flatten-out, prefer the original slicing provenance.
   // This preserves runtime tail sizes like [%29, %30, 1].
@@ -1632,7 +1634,8 @@ void Flattener::adjustReturnOp(Operation *op, OpBuilder &builder) const {
       auto expandedType = cast<RankedTensorType>(funcResults[idx]);
       auto mixedSize = getMixedSizesForTailExpand(operand, expandedType);
       if (mixedSize.empty()) {
-        LLVM_DEBUG(llvm::dbgs() << "Failed to recover mixed sizes for tail expand\n";);
+        LLVM_DEBUG(llvm::dbgs()
+                       << "Failed to recover mixed sizes for tail expand\n";);
         return;
       }
       auto expandOp = builder.create<tensor::ExpandShapeOp>(
@@ -1670,7 +1673,8 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
 
   auto mixedSize = getMixedSizesForTailExpand(collapsedVal, expandedType);
   if (mixedSize.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "Failed to recover mixed sizes for tail expand\n";);
+    LLVM_DEBUG(llvm::dbgs()
+                   << "Failed to recover mixed sizes for tail expand\n";);
     return failure();
   }
 
@@ -1721,8 +1725,7 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     }
     auto reinterpreted = builder.create<memref::ReinterpretCastOp>(
         tensorOutOp.getLoc(), cast<MemRefType>(expandedType),
-        expandOp.getResult(), offsetFold, targetSizes,
-        targetMixedStrides);
+        expandOp.getResult(), offsetFold, targetSizes, targetMixedStrides);
     return reinterpreted.getOperation();
   }
   return expandOp.getOperation();
