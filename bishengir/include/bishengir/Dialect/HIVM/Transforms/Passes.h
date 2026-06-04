@@ -186,7 +186,7 @@ std::unique_ptr<Pass> createInitEntryKernelPass();
 
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass>
-createInlineFixpipePass();
+createInlineFixpipePass(const InlineFixpipeOptions &options = {});
 
 // Create a pass to insert fixpipe
 std::unique_ptr<Pass>

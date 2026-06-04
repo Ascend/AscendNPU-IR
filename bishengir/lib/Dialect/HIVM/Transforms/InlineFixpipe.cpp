@@ -464,7 +464,8 @@ int64_t getSiftedUsersNum(Value v) {
 // Potential optimization is to fuse condition 1&2&3 into fixpipe.
 struct InlineFixpipeOpPattern : public OpRewritePattern<FixpipeOp> {
 public:
-  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+  InlineFixpipeOpPattern(MLIRContext *ctx, InlineFixpipePatternOptions options)
+      : OpRewritePattern<FixpipeOp>(ctx), options(options) {}
 
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
@@ -527,13 +528,15 @@ private:
         inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
                                  op.getDpsInputOperand(0)->get());
       }
-    } else if (isUserQuantScaleInlinable(op, curOp)) {
+    } else if (options.inlineQuantScale &&
+               isUserQuantScaleInlinable(op, curOp)) {
       auto vMulOp = cast<hivm::VMulOp>(curOp);
       matched = true;
       inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
     } else if (isa<tensor::ExtractSliceOp>(curOp) &&
-               hasCompatibleShape(op.getSource(),
-                                  cast<tensor::ExtractSliceOp>(curOp).getSource())) {
+               hasCompatibleShape(
+                   op.getSource(),
+                   cast<tensor::ExtractSliceOp>(curOp).getSource())) {
       auto extractSliceOp = cast<tensor::ExtractSliceOp>(curOp);
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
       if (op->getBlock() == extractSliceOp->getBlock()) {
@@ -544,8 +547,9 @@ private:
         swapFixpipeAndExtractSliceOp(rewriter, loc, op, extractSliceOp);
       }
     } else if (isa<tensor::InsertSliceOp>(curOp) &&
-               hasCompatibleShape(op.getSource(),
-                                  cast<tensor::InsertSliceOp>(curOp).getSource())) {
+               hasCompatibleShape(
+                   op.getSource(),
+                   cast<tensor::InsertSliceOp>(curOp).getSource())) {
       auto insertSliceOp = cast<tensor::InsertSliceOp>(curOp);
       // change to fixpipe op + insert_slice + store op to insert_slice +
       // fixpipe op + store op, and besides store op, there is no anther user
@@ -801,6 +805,8 @@ private:
     }
     LDBG("moveFixpipeOutOfScfFor");
   }
+
+  InlineFixpipePatternOptions options;
 };
 
 void mlir::hivm::populateInsertFixpipePatterns(RewritePatternSet &patterns,
@@ -811,9 +817,10 @@ void mlir::hivm::populateInsertFixpipePatterns(RewritePatternSet &patterns,
   patterns.add<InsertFixpipeOpPattern<hivm::MmadMxL1Op>>(ctx, options);
 }
 
-void mlir::hivm::populateInlineFixpipePatterns(RewritePatternSet &patterns) {
+void mlir::hivm::populateInlineFixpipePatterns(
+    RewritePatternSet &patterns, InlineFixpipePatternOptions options) {
   MLIRContext *ctx = patterns.getContext();
-  patterns.add<InlineFixpipeOpPattern>(ctx);
+  patterns.add<InlineFixpipeOpPattern>(ctx, options);
 }
 
 struct InsertFixpipeForDevicePrint : public OpRewritePattern<DebugOp> {
@@ -877,7 +884,9 @@ void InsertFixpipe::runOnOperation() {
 
 void InlineFixpipe::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  mlir::hivm::populateInlineFixpipePatterns(patterns);
+  InlineFixpipePatternOptions options;
+  options.inlineQuantScale = inlineQuantScale;
+  mlir::hivm::populateInlineFixpipePatterns(patterns, options);
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }
@@ -888,6 +897,7 @@ std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass(
   return std::make_unique<InsertFixpipe>(options);
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass() {
-  return std::make_unique<InlineFixpipe>();
+std::unique_ptr<Pass>
+mlir::hivm::createInlineFixpipePass(const InlineFixpipeOptions &options) {
+  return std::make_unique<InlineFixpipe>(options);
 }

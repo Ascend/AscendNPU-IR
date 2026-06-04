@@ -1095,6 +1095,14 @@ def MaxReductionSplit : HIVMOptimizationControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def InlineQuantScaleInFixpipe : HIVMOptimizationControlOptions<
+  "Inline scalar quant scale from vmul into fixpipe op during inline-fixpipe pass.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 //===----------------------------------------------------------------------===//
 // SIMT / Proton / Other Options
 //===----------------------------------------------------------------------===//
