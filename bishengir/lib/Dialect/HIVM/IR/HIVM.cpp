@@ -914,8 +914,8 @@ IndirectLoadOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
   std::string offsetTypeStr = hivm::detail::getTypeName(
       this->getLoc(), getElementTypeOrSelf(offsetType));
 
-  return this->getOpName().str() + "_" + libCallDim + "_" + srcTypeStr + "_" +
-         offsetTypeStr;
+  return this->getOpName().str() + (getIsVolatile() ? "" : "_nonvolatile") +
+         "_" + libCallDim + "_" + srcTypeStr + "_" + offsetTypeStr;
 }
 
 void IndirectLoadOp::getEffects(

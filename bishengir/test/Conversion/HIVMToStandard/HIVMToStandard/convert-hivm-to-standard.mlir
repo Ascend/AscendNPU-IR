@@ -2699,6 +2699,8 @@ module {
     hivm.hir.indirect_load ins(%arg0_i : memref<?xi32>, %arg1_i32 : memref<4x32xi32>, %arg2 : memref<4x32xi1>, %mask_i : memref<4x32xi32>) outs(%dst_i : memref<4x32xi32>)
     // CHECK: call @indirect_load_2d_int32_t_int64_t
     hivm.hir.indirect_load ins(%arg0_i : memref<?xi32>, %arg1_i64 : memref<4x32xi64>, %arg2 : memref<4x32xi1>, %mask_i : memref<4x32xi32>) outs(%dst_i : memref<4x32xi32>)
+    // CHECK: call @indirect_load_nonvolatile_2d_float_int32_t
+    hivm.hir.indirect_load ins(%arg0_f : memref<?xf32>, %arg1_i32 : memref<4x32xi32>, %arg2 : memref<4x32xi1>, %mask_f : memref<4x32xf32>) outs(%dst : memref<4x32xf32>) {isVolatile = false}
     return
   }
 }

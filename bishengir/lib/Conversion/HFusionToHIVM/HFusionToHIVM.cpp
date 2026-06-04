@@ -1238,6 +1238,8 @@ struct HFusionToHIVMIndirectLoadOp
 
     auto indirectLoadOp = rewriter.create<hivm::IndirectLoadOp>(
         loc, retTy, src, offset, dst, mask, other);
+    indirectLoadOp->setAttr("isVolatile",
+                            rewriter.getBoolAttr(op.getIsVolatile()));
 
     indirectLoadOp->setAttr(VFModeAttr::name,
                             VFModeAttr::get(op->getContext(), VFMode::SIMT));

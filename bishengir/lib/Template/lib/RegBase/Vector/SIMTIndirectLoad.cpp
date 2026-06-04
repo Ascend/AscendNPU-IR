@@ -22,11 +22,20 @@ constexpr unsigned int MAX_THREAD_NUM = 1024;
 constexpr unsigned int MAX_THREAD_NUM3D = 512;
 constexpr unsigned int MAX_THREAD_NUM4_5D = 256;
 
+template<typename DTYPE, bool IsVolatile>
+struct IndirectLoadSrcPtr {
+    using type = __gm__ DTYPE *;
+};
 
-template<typename DTYPE, typename ITYPE>
+template<typename DTYPE>
+struct IndirectLoadSrcPtr<DTYPE, true> {
+    using type = volatile __gm__ DTYPE *;
+};
+
+template<typename DTYPE, typename ITYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
 __aiv__ __attribute__((always_inline)) static void simtIndirectLoad1D(
-    volatile __gm__ DTYPE *src,
+    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
     __ubuf__ ITYPE *indices,
     __ubuf__ DTYPE *dst,
     __ubuf__ bool *mask,
@@ -53,10 +62,10 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad1D(
     }
 }
 
-template<typename DTYPE, typename ITYPE>
+template<typename DTYPE, typename ITYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
 __aiv__ __attribute__((always_inline)) static void simtIndirectLoad1DWithOutMask(
-    volatile __gm__ DTYPE *src,
+    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
     __ubuf__ ITYPE *indices,
     __ubuf__ DTYPE *dst,
     const uint32_t indice_size0,
@@ -73,10 +82,10 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad1DWithOutMask
     }
 }
 
-template<typename DTYPE, typename ITYPE>
+template<typename DTYPE, typename ITYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM)
 __aiv__ __attribute__((always_inline)) static void simtIndirectLoad2D(
-    volatile __gm__ DTYPE *src,
+    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
     __ubuf__ ITYPE *indices,
     __ubuf__ DTYPE *dst,
     __ubuf__ bool *mask,
@@ -110,10 +119,10 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad2D(
 }
 
 
-template<typename DTYPE, typename ITYPE>
+template<typename DTYPE, typename ITYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM3D)
 __aiv__ __attribute__((always_inline)) static void simtIndirectLoad3D(
-    volatile __gm__ DTYPE *src,
+    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
     __ubuf__ ITYPE *indices,
     __ubuf__ DTYPE *dst,
     __ubuf__ bool *mask,
@@ -155,10 +164,10 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad3D(
     }
 }
 
-template<typename DTYPE, typename ITYPE >
+template<typename DTYPE, typename ITYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM4_5D)
 __aiv__ __attribute__((always_inline)) static void simtIndirectLoad4D(
-    volatile __gm__ DTYPE *src,
+    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
     __ubuf__ ITYPE  *indices,
     __ubuf__ DTYPE  *dst,
     __ubuf__ bool *mask,
@@ -206,10 +215,10 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad4D(
     }
 }
 
-template<typename DTYPE, typename ITYPE>
+template<typename DTYPE, typename ITYPE, bool IsVolatile>
 __simt_vf__ LAUNCH_BOUND(MAX_THREAD_NUM4_5D)
 __aiv__ __attribute__((always_inline)) static void simtIndirectLoad5D(
-    volatile __gm__ DTYPE *src,
+    typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type src,
     __ubuf__ ITYPE *indices,
     __ubuf__ DTYPE *dst,
     __ubuf__ bool *mask,
@@ -263,7 +272,7 @@ __aiv__ __attribute__((always_inline)) static void simtIndirectLoad5D(
     }
 }
 
-template<int DIM, typename DTYPE, typename ITYPE>
+template<int DIM, typename DTYPE, typename ITYPE, bool IsVolatile>
 __aiv__ __attribute__((always_inline)) void indirect_load(
     memref_t<__gm__ DTYPE, 1> *src,
     memref_t<__ubuf__ ITYPE, DIM> *indices,
@@ -302,8 +311,8 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
     unsigned int block_dim_z = 1;
     
     if constexpr (DIM == 1) {
-        cce::async_invoke<simtIndirectLoad1D<DTYPE, ITYPE>>(cce::dim3{MAX_THREAD_NUM},
-            reinterpret_cast<volatile __gm__ DTYPE*> (src->aligned),
+        cce::async_invoke<simtIndirectLoad1D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM},
+            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
             reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
             reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
@@ -329,8 +338,8 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
             block_dim_y = size0;
         }
         
-        cce::async_invoke<simtIndirectLoad2D<DTYPE, ITYPE>>(cce::dim3{block_dim_x, block_dim_y},
-            reinterpret_cast<volatile __gm__ DTYPE*> (src->aligned),
+        cce::async_invoke<simtIndirectLoad2D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{block_dim_x, block_dim_y},
+            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
             reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
             reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
@@ -349,8 +358,8 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
         const uint32_t stride1 = indices->strides[1];
         const uint32_t stride2 = indices->strides[2];
 
-        cce::async_invoke<simtIndirectLoad3D<DTYPE, ITYPE>>(cce::dim3{MAX_THREAD_NUM3D},
-            reinterpret_cast<volatile __gm__ DTYPE*> (src->aligned),
+        cce::async_invoke<simtIndirectLoad3D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM3D},
+            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
             reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
             reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
@@ -371,8 +380,8 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
         const uint32_t stride2 = indices->strides[2];
         const uint32_t stride3 = indices->strides[3];
         
-        cce::async_invoke<simtIndirectLoad4D<DTYPE, ITYPE>>(cce::dim3{MAX_THREAD_NUM4_5D},
-            reinterpret_cast<volatile __gm__ DTYPE*> (src->aligned),
+        cce::async_invoke<simtIndirectLoad4D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM4_5D},
+            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
             reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
             reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),
@@ -395,8 +404,8 @@ __aiv__ __attribute__((always_inline)) void indirect_load(
         const uint32_t size3 = indices->sizes[3];
         const uint32_t size4 = indices->sizes[4];
 
-        cce::async_invoke<simtIndirectLoad5D<DTYPE, ITYPE>>(cce::dim3{MAX_THREAD_NUM4_5D},
-            reinterpret_cast<volatile __gm__ DTYPE*> (src->aligned),
+        cce::async_invoke<simtIndirectLoad5D<DTYPE, ITYPE, IsVolatile>>(cce::dim3{MAX_THREAD_NUM4_5D},
+            reinterpret_cast<typename IndirectLoadSrcPtr<DTYPE, IsVolatile>::type> (src->aligned),
             reinterpret_cast<__ubuf__ ITYPE*> (indices->aligned + indices->offset),
             reinterpret_cast<__ubuf__ DTYPE*> (dst->aligned + dst->offset),
             reinterpret_cast<__ubuf__ bool*> (mask->aligned + mask->offset),

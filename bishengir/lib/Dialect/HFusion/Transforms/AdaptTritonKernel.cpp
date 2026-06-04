@@ -392,6 +392,11 @@ struct TritonIndirectLoadToHFusionIndirectLoadPattern
     hfusion::IndirectLoadOp indirectLoadOp =
         rewriter.create<hfusion::IndirectLoadOp>(loc, resultType, src, offsets,
                                                  init, mask, other);
+    bool isVolatile = true;
+    if (auto attr = callOp->getAttrOfType<BoolAttr>("isVolatile")) {
+      isVolatile = attr.getValue();
+    }
+    indirectLoadOp->setAttr("isVolatile", rewriter.getBoolAttr(isVolatile));
     rewriter.replaceOp(callOp, indirectLoadOp);
     return success();
   }
