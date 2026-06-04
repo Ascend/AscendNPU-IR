@@ -186,9 +186,11 @@ bool isNonVectorizableOp(Operation *op) {
       tensor::InsertSliceOp, tensor::ExtractSliceOp, tensor::CastOp,
       tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ConcatOp,
       hivm::CopyOp, hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp,
-      hivm::StoreOp, hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockSetOp,
-      hivm::SyncBlockWaitOp, scf::WhileOp, scf::ForOp, scf::IfOp, func::CallOp,
-      memref::CopyOp, bufferization::MaterializeInDestinationOp>(op);
+      hivm::StoreOp, hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockOp,
+      hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
+      hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::WhileOp, scf::ForOp,
+      scf::IfOp, func::CallOp, memref::CopyOp,
+      bufferization::MaterializeInDestinationOp>(op);
 }
 
 static bool isMemrefLinalgOp(Operation *op) {
@@ -524,7 +526,7 @@ static void computeConflictLists(
     func::FuncOp func,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
   func.walk([&](Block *block) {
-    if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp>(
+    if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
             block->getParentOp())) {
       block->walk([&](Operation *op) {
         if (isOpInBlock(op, block) && isNonVectorizableOp(op)) {
@@ -551,7 +553,9 @@ static void computeConflictLists(
             computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getSource());
           }
 
-          if (isa<hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, scf::ForOp,
+          if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                  hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
+                  hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::ForOp,
                   scf::WhileOp, scf::IfOp>(op)) {
             DenseSet<Operation *> previousOps;
             DenseSet<Operation *> followingOps;
