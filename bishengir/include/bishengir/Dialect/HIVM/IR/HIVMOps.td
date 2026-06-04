@@ -978,6 +978,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                  "__builtin_gather_load"
                  "__builtin_index_select"
                  "__builtin_indirect_atomic"
+                 "__builtin_histogram"
 
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
@@ -1020,6 +1021,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
       static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
       static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
+      static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
 
       // TODO: Enable user provided customization
       static int getOpLibraryMaxRankImpl() { return 5; }
