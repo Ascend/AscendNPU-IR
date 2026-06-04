@@ -32,10 +32,9 @@ func.func @test_1(%arg0: memref<16xi1, #hivm.address_space<ub>>, %arg1: memref<1
 // CHECK-LABEL: func.func @test_2
 // CHECK: ave.hir.vload
 // CHECK: ave.hir.vsel
-// CHECK: ave.hir.plt
-// CHECK: ave.hir.plt
-// CHECK: ave.hir.preg.xor
-// CHECK: ave.hir.reduction <xori>
+// CHECK-NOT: ave.hir.plt
+// CHECK-NOT: ave.hir.preg.xor
+// CHECK-NOT: ave.hir.reduction <xori>
 // CHECK: ave.hir.vector_broadcast
 // CHECK: ave.hir.vcmp
 func.func @test_2(%arg0: memref<128xi32, #hivm.address_space<ub>>, %arg1: memref<1xi1, #hivm.address_space<ub>>, %arg2: memref<1xi32, #hivm.address_space<ub>>, %arg3: memref<128xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
@@ -125,6 +124,13 @@ func.func @test_3(%arg0: memref<168xi1, #hivm.address_space<ub>>, %arg1: memref<
 }
 
 // CHECK-LABEL: @test_constraint_layout
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.vsel
+// CHECK-NOT: ave.hir.plt
+// CHECK-NOT: ave.hir.preg.xor
+// CHECK-NOT: ave.hir.reduction <xori>
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
 func.func @test_constraint_layout(%arg0: memref<64xi1, strided<[256]>, #hivm.address_space<ub>>, %arg1: memref<64x64xf16, #hivm.address_space<ub>>, %arg2: memref<64x64xf16, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %cst = arith.constant 0.000000e+00 : f16
   %0 = ave.hir.pge <ALL> : vector<128xi1>
