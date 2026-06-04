@@ -315,6 +315,40 @@ struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
   }
 };
 
+/// Instead of materializing intlv/dintlv for VectorLayoutCastOp's functionType,
+/// move the functionType attribute to the defining op of srcVal.
+/// The actual intlv/dintlv lowering will be handled in ConvertHIVMAVEToAVEIntrin.
+struct AVEVectorLayoutCastPattern
+    : public OpRewritePattern<hivmave::VectorLayoutCastOp> {
+  explicit AVEVectorLayoutCastPattern(MLIRContext *context)
+      : OpRewritePattern<hivmave::VectorLayoutCastOp>(context) {}
+
+  LogicalResult matchAndRewrite(hivmave::VectorLayoutCastOp castOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcDistAttr =
+        castOp->getAttrOfType<FunctionDistTypeAttr>("functionType");
+    if (!funcDistAttr)
+      return failure();
+
+    Value srcVal = castOp.getSrc();
+    Operation *definingOp = srcVal.getDefiningOp();
+    if (!definingOp) {
+      // src is a block argument; cannot move attribute.
+      // Keep the cast as-is; RemoveVectorLayoutAttr will clean it up.
+      LDBG("AVEVectorLayoutCastPattern: src is a block argument, "
+           << "cannot move functionType from " << castOp);
+      return failure();
+    }
+
+    // Move functionType from castOp to its defining op.
+    LDBG("AVEVectorLayoutCastPattern: moving functionType from "
+         << castOp << " to " << *definingOp);
+    definingOp->setAttr("functionType", funcDistAttr);
+    castOp->removeAttr("functionType");
+    return success();
+  }
+};
+
 /// Hardware does not support fp16-->u16
 /// Use fp16-->s32 + s32-->u16 instead.
 struct AVEFpToUIntPattern : public OpRewritePattern<VFFpToUIntOp> {
@@ -558,6 +592,7 @@ public:
     patterns.add<AVEFpToUIntPattern>(ctx);
     patterns.add<AVEIntlvFuncDistPattern<VFInterleaveOp>>(ctx);
     patterns.add<AVEIntlvFuncDistPattern<VFDeInterleaveOp>>(ctx);
+    patterns.add<AVEVectorLayoutCastPattern>(ctx);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       signalPassFailure();

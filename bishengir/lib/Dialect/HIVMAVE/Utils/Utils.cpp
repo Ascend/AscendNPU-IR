@@ -613,3 +613,25 @@ int hivmave::getBitWidthFromAttr(Operation *Op) {
   }
   return elementAlignment;
 }
+
+Value hivmave::constrainVectorLayout(Value src, VecMemType targetLayout,
+                                     OpBuilder &builder) {
+  // Verify the input is a VectorType
+  auto vecType = dyn_cast<VectorType>(src.getType());
+  assert(vecType && "input value must be of VectorType");
+
+  // Create the target layout attribute
+  auto layoutAttr = VectorLayoutAttr::get(
+      builder.getContext(),
+      VecMemTypeAttr::get(builder.getContext(), targetLayout));
+
+  // First cast: None -> targetLayout
+  auto castToLayout = builder.create<VectorLayoutCastOp>(
+      src.getLoc(), vecType.cloneWith(layoutAttr), src);
+
+  // Second cast: targetLayout -> None
+  auto castToNone = builder.create<VectorLayoutCastOp>(
+      src.getLoc(), vecType.cloneWith({}), castToLayout.getResult());
+
+  return castToNone.getResult();
+}
