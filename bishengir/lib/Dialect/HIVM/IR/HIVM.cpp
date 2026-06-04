@@ -1538,6 +1538,23 @@ static std::string getIndirectAtomicLibraryCallName(CustomOpT op) {
 }
 
 template <typename CustomOpT>
+std::string getHistogramLibraryCallName(CustomOpT op) {
+  ShapedType srcTy = cast<ShapedType>(op.getInputs()[0].getType());
+  Type elemType = srcTy.getElementType();
+
+  std::stringstream ss;
+  ss << "histogram";
+  if (srcTy.getRank() == 1) {
+    ss << "_1d";
+  }
+  if (op.getInputs().size() > 2) {
+    ss << "_masked";
+  }
+  ss << "_" << hivm::detail::getTypeName(op->getLoc(), elemType);
+  return ss.str();
+}
+
+template <typename CustomOpT>
 static std::string getCustomOpsLibraryCallName(CustomOpT op) {
   if (op.isBuiltin())
     return CustomOpT::kBuiltins.at(op.getName()).getOpLibraryCallName(op);
@@ -1566,7 +1583,11 @@ const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
     {kBuiltinIndirectAtomicName,
      BuiltinInfo(TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT,
                  getIndirectAtomicLibraryCallName<CustomOp>,
-                 /* GM Addr Args Indices */ {0})}};
+                 /* GM Addr Args Indices */ {0})},
+    {kBuiltinHistogramName,
+      BuiltinInfo(TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT,
+                  getHistogramLibraryCallName<CustomOp>,
+                  /* GM Addr Args Indices */ {})}};
 
 const DenseMap<StringRef, CustomMacroOp::BuiltinInfo> CustomMacroOp::kBuiltins{
     {kBuiltinGatherLoadName,
