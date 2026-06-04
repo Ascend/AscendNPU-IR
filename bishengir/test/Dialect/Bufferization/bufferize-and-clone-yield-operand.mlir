@@ -767,3 +767,28 @@ func.func @test_copy_in_scf_whileOp(%arg0: tensor<16xf32>,
   }
   return %2 : tensor<16xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_not_clone_in_AIC
+// CHECK-NOT: memref.copy
+func.func @test_not_clone_in_AIC(%arg0: memref<64xf32>) {
+  %cst_0 = arith.constant 0.000000e+00 : f32
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %false = arith.constant false
+  %0 = tensor.empty() : tensor<64xf32>
+  %1 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
+  scf.for %arg4 = %c0 to %c4 step %c1  {
+    %2 = tensor.empty() : tensor<64xf32>
+    %3 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%2 : tensor<64xf32>) -> tensor<64xf32>
+    %4 = tensor.empty() : tensor<64xf32>
+    %5 = hivm.hir.vbrc ins(%cst_0 : f32) outs(%4 : tensor<64xf32>) -> tensor<64xf32>
+    %6 = hivm.hir.mmadL1 ins(%1, %3, %false, %c0, %c0, %c0 : tensor<64xf32>, tensor<64xf32>, i1, index, index, index) outs(%1 : tensor<64xf32>) -> tensor<64xf32>
+    %7 = hivm.hir.mmadL1 ins(%1, %3, %false, %c0, %c0, %c0 : tensor<64xf32>, tensor<64xf32>, i1, index, index, index) outs(%6 : tensor<64xf32>) -> tensor<64xf32>
+    hivm.hir.store ins(%6 : tensor<64xf32>) outs(%arg0 : memref<64xf32>)
+  }
+  return
+}

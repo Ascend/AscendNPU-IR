@@ -318,9 +318,15 @@ struct ExtractSliceToTritonPattern
     auto srcType = dyn_cast<RankedTensorType>(op.getSourceType());
     auto resType = dyn_cast<RankedTensorType>(op.getResult().getType());
     if (!srcType || !resType) {
-      op.emitError("expected ranked tensor source and result");
-      return failure();
+      return rewriter.notifyMatchFailure(
+          op, "expected ranked tensor source and result");
     }
+
+    // Skip the dynamic-offset case — handled by ExtractSliceDynamicOffsetToGather
+    if (!resType.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "dynamic result handled elsewhere");
+    if (llvm::any_of(op.getStaticOffsets(), ShapedType::isDynamic))
+      return rewriter.notifyMatchFailure(op, "dynamic offset handled elsewhere");
 
     auto planOrFail =
         planSliceRewrite(op, srcType, resType, op.getStaticSizes(),
@@ -384,6 +390,122 @@ struct InsertSliceToTritonPattern
   }
 };
 
+/// Lower an `extract_slice` with a *static* result shape and a *dynamic*
+/// offset on a single axis to `tt.gather`:
+///
+///   %r = tensor.extract_slice %src[%off] [N] [1]
+///         : tensor<MxT> to tensor<NxT>
+///   ==>
+///   %range   = tt.make_range {start=0, end=N} : tensor<Nxi32>
+///   %offI32  = arith.index_cast %off : index to i32
+///   %splat   = tt.splat %offI32 : i32 -> tensor<Nxi32>
+///   %indices = arith.addi %range, %splat : tensor<Nxi32>
+///   %r       = tt.gather %src[%indices] {axis = K : i32}
+///                : (tensor<MxT>, tensor<Nxi32>) -> tensor<NxT>
+///
+/// Generalises to higher-rank tensors where exactly one axis is sliced and
+/// all other axes are pass-through (offset 0, size matching source dim).
+/// The indices tensor is broadcast across the non-sliced dims to satisfy
+/// `tt.gather`'s shape requirements (rank == source rank, shape == result
+/// shape).
+///
+struct ExtractSliceDynamicOffsetToGather
+    : public OpRewritePattern<tensor::ExtractSliceOp> {
+  using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ExtractSliceOp op,
+                                PatternRewriter &rewriter) const final {
+    auto srcTy = dyn_cast<RankedTensorType>(op.getSourceType());
+    auto resTy = dyn_cast<RankedTensorType>(op.getResultType());
+    if (!srcTy || !resTy)
+      return failure();
+    if (!resTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "result has dynamic shape");
+    if (srcTy.getRank() != resTy.getRank())
+      return rewriter.notifyMatchFailure(
+          op, "rank-reducing extract_slice not supported");
+    if (!srcTy.hasStaticShape())
+      return rewriter.notifyMatchFailure(op, "source has dynamic shape");
+
+    SmallVector<OpFoldResult> offsets = op.getMixedOffsets();
+    SmallVector<OpFoldResult> sizes = op.getMixedSizes();
+    SmallVector<OpFoldResult> strides = op.getMixedStrides();
+
+    auto isUnitStride = [](OpFoldResult ofr) {
+      if (auto attr = ofr.dyn_cast<Attribute>())
+        return cast<IntegerAttr>(attr).getInt() == 1;
+      return false;
+    };
+    if (!llvm::all_of(strides, isUnitStride))
+      return rewriter.notifyMatchFailure(op,
+                                         "non-unit strides are unsupported");
+
+    // Identify the sliced axis. All other axes must pass through fully
+    // (size == src dim, offset == 0).
+    int64_t slicedAxis = -1;
+    for (int64_t i = 0, e = srcTy.getRank(); i < e; ++i) {
+      bool sizeMatchesSrc = false;
+      if (auto attr = sizes[i].dyn_cast<Attribute>())
+        sizeMatchesSrc =
+            cast<IntegerAttr>(attr).getInt() == srcTy.getDimSize(i);
+      bool offsetZero = false;
+      if (auto attr = offsets[i].dyn_cast<Attribute>())
+        offsetZero = cast<IntegerAttr>(attr).getInt() == 0;
+      if (sizeMatchesSrc && offsetZero)
+        continue;
+      if (slicedAxis != -1)
+        return rewriter.notifyMatchFailure(
+            op, "more than one sliced axis is unsupported");
+      slicedAxis = i;
+    }
+    if (slicedAxis == -1) {
+      // The slice is the identity — forward the source.
+      rewriter.replaceOp(op, op.getSource());
+      return success();
+    }
+
+    // The static-offset / static-size case is handled by the existing
+    // tt.split/tt.join path. Skip if the offset is a static constant so we
+    // don't fight that pattern.
+    if (offsets[slicedAxis].is<Attribute>())
+      return rewriter.notifyMatchFailure(
+          op, "static offset handled by tt.split/join path");
+
+    Location loc = op.getLoc();
+    int64_t axisLen = resTy.getDimSize(slicedAxis);
+    auto axisI32Ty = RankedTensorType::get({axisLen}, rewriter.getI32Type());
+
+    // make_range(0, N) + splat(offset_i32).
+    Value range = rewriter.create<MakeRangeOp>(
+        loc, axisI32Ty, /*start=*/0, /*end=*/static_cast<int32_t>(axisLen));
+    Value off = offsets[slicedAxis].get<Value>();
+    Value offI32 =
+        rewriter.create<arith::IndexCastOp>(loc, rewriter.getI32Type(), off);
+    Value splat = rewriter.create<SplatOp>(loc, axisI32Ty, offI32);
+    Value axisIndices = rewriter.create<arith::AddIOp>(loc, range, splat);
+
+    // For >1-D tensors, reshape the 1-D index tensor to size 1 on every dim
+    // except the sliced one, then broadcast to the full result shape.
+    Value indices = axisIndices;
+    if (srcTy.getRank() != 1) {
+      SmallVector<int64_t, 4> expandedShape(srcTy.getRank(), 1);
+      expandedShape[slicedAxis] = axisLen;
+      auto expandedTy =
+          RankedTensorType::get(expandedShape, rewriter.getI32Type());
+      Value expanded = rewriter.create<ReshapeOp>(loc, expandedTy, axisIndices,
+                                                  /*allowReorder=*/false);
+      auto fullIdxTy =
+          RankedTensorType::get(resTy.getShape(), rewriter.getI32Type());
+      indices = rewriter.create<BroadcastOp>(loc, fullIdxTy, expanded);
+    }
+
+    rewriter.replaceOpWithNewOp<GatherOp>(
+        op, resTy, op.getSource(), indices,
+        /*axis=*/static_cast<uint32_t>(slicedAxis));
+    return success();
+  }
+};
+
 class RewriteSliceOpToTritonPass
     : public impl::RewriteSliceOpToTritonBase<RewriteSliceOpToTritonPass> {
 public:
@@ -394,7 +516,8 @@ public:
     auto *ctx = &getContext();
 
     RewritePatternSet patterns(ctx);
-    patterns.add<ExtractSliceToTritonPattern, InsertSliceToTritonPattern>(ctx);
+    patterns.add<ExtractSliceToTritonPattern, InsertSliceToTritonPattern,
+                 ExtractSliceDynamicOffsetToGather>(ctx);
 
     if (failed(applyPatternsGreedily(mod, std::move(patterns)))) {
       mod.emitError("Unsupported tensor slicing operations found in the "

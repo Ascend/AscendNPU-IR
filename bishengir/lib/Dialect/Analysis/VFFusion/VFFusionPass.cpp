@@ -70,7 +70,7 @@ LogicalResult VFFusionPass::preProcess() {
 VFFusionKindOption VFFusionPass::getFusionOption() const {
   return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
                             enableOutlineArith, enableOutlineCube,
-                            ubBudgetBytes_, ubAlignBytes_);
+                            ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR);
 }
 
 template <typename FusionKind>

@@ -54,7 +54,15 @@ struct FoldTransferReadAfterWriteAndInsertSlice
         readOp.getVectorType().getNumElements() !=
             defWrite.getVectorType().getNumElements())
       return failure();
-    rewriter.replaceOp(readOp, defWrite.getVector());
+    // add shape cast, if the read shape different with write shape
+    if (readOp.getVectorType() != defWrite.getVectorType()) {
+      Location loc = readOp->getLoc();
+      vector::ShapeCastOp shapeCast = rewriter.create<vector::ShapeCastOp>(
+          loc, readOp.getVectorType(), defWrite.getVector());
+      rewriter.replaceOp(readOp, shapeCast);
+    } else {
+      rewriter.replaceOp(readOp, defWrite.getVector());
+    }
     return success();
   }
 };

@@ -63,9 +63,24 @@ public:
       }
 
       for (VFFusionBlock &candidateBlock : candidateFusionBlocks) {
-        if (candidateBlock.getOps().size() <= 1 ||
-            candidateBlock.getOps().size() == block.getOperations().size())
+        // Skip if the candidate wraps the entire function body.
+        if (candidateBlock.getOps().size() == block.getOperations().size())
           continue;
+
+        // When a fusion block contains at most one op, the normal fusion
+        // path is bypassed (continue).  However, certain ops that are known
+        // to be processed by a dedicated downstream pass (e.g. reduce-sum
+        // ops handled by TreeReduceV2) must still be *outlined* into a
+        // standalone vector function so that the downstream pass can
+        // recognise and transform them.  shouldSkipFusion() gates this:
+        //   - returns true  → outline this single-op block (skip fusion,
+        //                     but keep the op isolated for later handling)
+        //   - returns false → skip entirely (no outline, no fusion)
+        if (candidateBlock.getOps().size() <= 1) {
+          auto ops = candidateBlock.getOps();
+          if (ops.empty() || !shouldSkipFusion(ops.front(), option))
+            continue;
+        }
 
         func::FuncOp funcOp =
             block.getParent()->getParentOfType<func::FuncOp>();

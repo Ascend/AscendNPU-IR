@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel" --split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --hacc-append-device-spec="target=Ascend910_9579" --vf-fusion="fusion-mode=max-parallel enable-ra=false enable-ar=false" --split-input-file %s | FileCheck %s
 // CHECK-LABEL: func.func private @triton_unk_fused__softmax_0_fused_0(
 // CHECK: arith.constant
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}

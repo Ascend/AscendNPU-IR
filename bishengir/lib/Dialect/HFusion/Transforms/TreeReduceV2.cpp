@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -26,6 +27,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 
 namespace mlir {
@@ -397,11 +399,58 @@ Value traceBackToOriginalTensor(Value val) {
       maskOp.walk([&](vector::TransferReadOp op) { innerRead = op; });
       if (innerRead) { currentVal = innerRead.getSource(); continue; }
     }
-    if (auto readOp = dyn_cast<vector::TransferReadOp>(defOp)) { currentVal = readOp.getSource(); continue; }
-    if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp)) { currentVal = extractOp.getSource(); continue; }
-    if (auto extfOp = dyn_cast<arith::ExtFOp>(defOp)) { currentVal = extfOp.getIn(); continue; }
-    if (auto truncfOp = dyn_cast<arith::TruncFOp>(defOp)) { currentVal = truncfOp.getIn(); continue; }
-    if (auto extiOp = dyn_cast<arith::ExtSIOp>(defOp)) { currentVal = extiOp.getIn(); continue; }
+    if (auto readOp = dyn_cast<vector::TransferReadOp>(defOp)) {
+      currentVal = readOp.getSource(); continue;
+    }
+    if (auto writeOp = dyn_cast<vector::TransferWriteOp>(defOp)) {
+      currentVal = writeOp.getSource(); continue;
+    }
+    if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp)) {
+      currentVal = extractOp.getSource(); continue;
+    }
+    if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(defOp)) {
+      currentVal = insertOp.getDest(); continue;
+    }
+    if (auto shapeCastOp = dyn_cast<vector::ShapeCastOp>(defOp)) {
+      currentVal = shapeCastOp.getSource(); continue;
+    }
+    if (auto extfOp = dyn_cast<arith::ExtFOp>(defOp)) {
+      currentVal = extfOp.getIn(); continue;
+    }
+    if (auto truncfOp = dyn_cast<arith::TruncFOp>(defOp)) {
+      currentVal = truncfOp.getIn(); continue;
+    }
+    if (auto extiOp = dyn_cast<arith::ExtSIOp>(defOp)) {
+      currentVal = extiOp.getIn(); continue;
+    }
+    if (auto trunciOp = dyn_cast<arith::TruncIOp>(defOp)) {
+      currentVal = trunciOp.getIn(); continue;
+    }
+    if (auto fptosiOp = dyn_cast<arith::FPToSIOp>(defOp)) {
+      currentVal = fptosiOp.getIn(); continue;
+    }
+    if (auto sitofpOp = dyn_cast<arith::SIToFPOp>(defOp)) {
+      currentVal = sitofpOp.getIn(); continue;
+    }
+
+    if (auto addfOp = dyn_cast<arith::AddFOp>(defOp)) {
+      currentVal = addfOp.getLhs(); continue;
+    }
+    if (auto forOp = dyn_cast<scf::ForOp>(defOp)) {
+      if (forOp->hasAttr("reductionLoop")) {
+        (void)forOp.walk([&](tensor::ExtractSliceOp sliceOp) {
+          Value source = sliceOp.getSource();
+          if (!llvm::is_contained(forOp.getRegionIterArgs(), source)) {
+            currentVal = source;
+            return WalkResult::interrupt();
+          }
+          return WalkResult::advance();
+        });
+        break;
+      }
+      break;
+    }
+    LDBG("traceBackToOriginalTensor: stopping at unrecognized op: " << defOp->getName());
     break;
   }
   return currentVal;
@@ -415,22 +464,23 @@ public:
   VectorType vec1DInTy, vec2DInTy, vec1DAccTy, vec1DComputeTy;
   Value c0, c1, c16, c64, dimAVal, inputCstZero, accCstZero, computeCstZero;
   int64_t dimA;
+  int64_t vectorLength;
 
-  TreeReductionBuilder(IRRewriter &rewriter, Location loc, Type inTy, Type accTy, int64_t dimA)
-      : rewriter(rewriter), loc(loc), inElemTy(inTy), accElemTy(accTy), dimA(dimA) {
+  TreeReductionBuilder(IRRewriter &rewriter, Location loc, Type inTy, Type accTy, int64_t dimA, int64_t vLen)
+      : rewriter(rewriter), loc(loc), inElemTy(inTy), accElemTy(accTy), dimA(dimA), vectorLength(vLen) {
     c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
     c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
     c16 = rewriter.create<arith::ConstantIndexOp>(loc, 16);
-    c64 = rewriter.create<arith::ConstantIndexOp>(loc, 64);
+    c64 = rewriter.create<arith::ConstantIndexOp>(loc, vectorLength);
     dimAVal = rewriter.create<arith::ConstantIndexOp>(loc, dimA);
     
     computeElemTy = inElemTy;
     if (isa<FloatType>(inElemTy) && inElemTy.getIntOrFloatBitWidth() < 32) computeElemTy = rewriter.getF32Type();
 
-    vec1DInTy = VectorType::get({64}, inElemTy);
-    vec2DInTy = VectorType::get({1, 64}, inElemTy);
-    vec1DAccTy = VectorType::get({64}, accElemTy);
-    vec1DComputeTy = VectorType::get({64}, computeElemTy);
+    vec1DInTy = VectorType::get({vectorLength}, inElemTy);
+    vec2DInTy = VectorType::get({1, vectorLength}, inElemTy);
+    vec1DAccTy = VectorType::get({vectorLength}, accElemTy);
+    vec1DComputeTy = VectorType::get({vectorLength}, computeElemTy);
     
     inputCstZero = rewriter.create<arith::ConstantOp>(loc, inElemTy, rewriter.getZeroAttr(inElemTy));
     accCstZero = rewriter.create<arith::ConstantOp>(loc, accElemTy, rewriter.getZeroAttr(accElemTy));
@@ -438,9 +488,17 @@ public:
   }
 
   Value castToComputeTy(Value vec) {
-    if (inElemTy == computeElemTy) return vec;
-    if (isa<FloatType>(inElemTy)) return rewriter.create<arith::ExtFOp>(loc, vec1DComputeTy, vec);
-    return rewriter.create<arith::ExtSIOp>(loc, vec1DComputeTy, vec);
+    auto vecTy = dyn_cast<VectorType>(vec.getType());
+    if (!vecTy) return vec; 
+    Type vecElemTy = vecTy.getElementType();
+    if (vecElemTy == computeElemTy) {
+        return vec; 
+    }
+    auto targetVecTy = VectorType::get(vecTy.getShape(), computeElemTy);
+    if (isa<FloatType>(vecElemTy)) {
+        return rewriter.create<arith::ExtFOp>(loc, targetVecTy, vec);
+    }
+    return rewriter.create<arith::ExtSIOp>(loc, targetVecTy, vec);
   }
 
   Value createAdd(Value lhs, Value rhs) {
@@ -464,12 +522,14 @@ public:
   }
 
   Value createLoopMask1D(Value minBoundary) {
-    return rewriter.create<vector::CreateMaskOp>(loc, VectorType::get({64}, rewriter.getI1Type()), ValueRange{minBoundary});
+    return rewriter.create<vector::CreateMaskOp>(loc,
+        VectorType::get({vectorLength}, rewriter.getI1Type()),
+        ValueRange{minBoundary});
   }
 
   Value readSliceMaskedRA(Value tensor, Value rIdx, Value aIdx, Value mask1D, VectorType vecTy, Value cstZero) {
     auto maskOp = rewriter.create<vector::MaskOp>(
-        loc, TypeRange{vecTy}, mask1D, (Operation *)nullptr, [&](OpBuilder &b, Operation *) {
+        loc, TypeRange{vecTy}, mask1D, static_cast<Operation*>(nullptr), [this, vecTy, tensor, rIdx, aIdx, cstZero](OpBuilder &b, Operation *) {
           Value readOp = b.create<vector::TransferReadOp>(
               loc, vecTy, tensor, ValueRange{rIdx, aIdx}, cstZero, ArrayRef<bool>{false}).getResult();
           b.create<vector::YieldOp>(loc, readOp);
@@ -479,7 +539,7 @@ public:
   
   Value read1DAccMasked(Value tensor, Value idx, Value mask1D, VectorType vecTy, Value cstZero) {
     auto maskOp = rewriter.create<vector::MaskOp>(
-        loc, TypeRange{vecTy}, mask1D, (Operation *)nullptr, [&](OpBuilder &b, Operation *) {
+        loc, TypeRange{vecTy}, mask1D, static_cast<Operation*>(nullptr), [this, vecTy, tensor, idx, cstZero](OpBuilder &b, Operation *) {
           Value readOp = b.create<vector::TransferReadOp>(
               loc, vecTy, tensor, ValueRange{idx}, cstZero, ArrayRef<bool>{false}).getResult();
           b.create<vector::YieldOp>(loc, readOp);
@@ -490,7 +550,7 @@ public:
   Value readSliceMaskedAR(Value tensor, Value aIdx, Value rIdx, Value mask1D, VectorType vecTy, Value cstZero) {
     if (mask1D) {
       auto maskOp = rewriter.create<vector::MaskOp>(
-          loc, TypeRange{vecTy}, mask1D, (Operation *)nullptr, [&](OpBuilder &b, Operation *) {
+          loc, TypeRange{vecTy}, mask1D, static_cast<Operation*>(nullptr), [this, vecTy, tensor, aIdx, rIdx, cstZero](OpBuilder &b, Operation *) {
             Value readOp = b.create<vector::TransferReadOp>(
                 loc, vecTy, tensor, ValueRange{aIdx, rIdx}, cstZero, ArrayRef<bool>{false}).getResult();
             b.create<vector::YieldOp>(loc, readOp);
@@ -511,7 +571,7 @@ public:
     Value slice = rewriter.create<tensor::ExtractSliceOp>(loc, sliceTy, tensor, offsets, sizes, strides);
     
     auto maskOp = rewriter.create<vector::MaskOp>(
-        loc, TypeRange{sliceTy}, mask1D, (Operation *)nullptr, [&](OpBuilder &b, Operation *) {
+        loc, TypeRange{sliceTy}, mask1D, static_cast<Operation*>(nullptr), [this, vec1D, slice](OpBuilder &b, Operation *) {
           Value writeOp = b.create<vector::TransferWriteOp>(loc, vec1D, slice, ValueRange{c0}, ArrayRef<bool>{false}).getResult();
           b.create<vector::YieldOp>(loc, writeOp);
         });
@@ -520,6 +580,7 @@ public:
 
   Value promoteToComputeType(Value inputTensor, int64_t dimR, AffineMap minMap) {
     if (inElemTy == computeElemTy) return inputTensor;
+    LDBG("Promoting to compute type: " << inElemTy << " -> " << computeElemTy);
     auto emptyTy = RankedTensorType::get({dimR, dimA}, computeElemTy);
     Value emptyTensor = rewriter.create<tensor::EmptyOp>(loc, emptyTy.getShape(), computeElemTy);
     Value dimRVal = rewriter.create<arith::ConstantIndexOp>(loc, dimR);
@@ -575,25 +636,92 @@ private:
     }
     return dimR > 0 && dimA > 0;
   }
+  int64_t getVectorLength(Type elemTy) const {
+    int64_t bytesPerElement = elemTy.getIntOrFloatBitWidth() / 8;
+    if (bytesPerElement == 0) bytesPerElement = 1;
+    return vectorBytes / bytesPerElement;
+  }
+  int64_t getBlockDataLen(Type elemTy) const {
+    int64_t bytesPerElement = elemTy.getIntOrFloatBitWidth() / 8;
+    if (bytesPerElement == 0) bytesPerElement = 1;
+    return blockBytes / bytesPerElement;
+  }
+  static constexpr int64_t vectorBytes = 256;
+  static constexpr int64_t blockBytes = 32;
 
-  void buildRA(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType);
-  void buildAR(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType);
+  enum class ReduceType { 
+      IS_REDUCE_SUM, 
+      IS_REDUCE_MAX, 
+      IS_REDUCE_MIN, 
+      OTHERS 
+  };
+
+  void buildAscendCopyOut(IRRewriter &rewriter, Location loc, 
+                            TreeReductionBuilder &builder, scf::ForOp targetForOp, 
+                            Value inputTensor, int64_t dimR, int64_t dimA) const;
+
+  void buildAscendGroupReduce(IRRewriter &rewriter, Location loc, 
+                              TreeReductionBuilder &builder, scf::ForOp targetForOp, 
+                              Value inputTensor, int64_t dimR, int64_t dimA, 
+                              bool needFoldR) const;
+
+  void buildAscendShortReduceAR(IRRewriter &rewriter, Location loc, 
+                                TreeReductionBuilder &builder, scf::ForOp targetForOp, 
+                                Value inputTensor, int64_t dimR, int64_t dimA) const;
+
+  void buildRA(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType) const;
+  void buildAR(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType) const;
 };
 
-void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType) {
+void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType) const {
+  LDBG("buildRA: dimR=" << dimR << " dimA=" << dimA);
   auto wrapperLoop = rewriter.create<scf::ForOp>(loc, builder.c0, builder.c1, builder.c1, ValueRange{targetForOp.getInitArgs()[0]});
   rewriter.setInsertionPointToStart(wrapperLoop.getBody());
   Value initAcc = wrapperLoop.getRegionIterArg(0); 
 
-  AffineMap minMap = AffineMap::get(1, 1, {rewriter.getAffineConstantExpr(64), rewriter.getAffineSymbolExpr(0) - rewriter.getAffineDimExpr(0)}, rewriter.getContext());
+  AffineMap minMap = AffineMap::get(1, 1, {rewriter.getAffineConstantExpr(builder.vectorLength), rewriter.getAffineSymbolExpr(0) - rewriter.getAffineDimExpr(0)}, rewriter.getContext());
   Value workingTensor = builder.promoteToComputeType(inputTensor, dimR, minMap);
 
   int64_t mainR = 1;
-  while (mainR * 2 <= dimR) mainR *= 2;
+  while (mainR > 0 && mainR * 2 <= dimR) mainR *= 2;
+  if (mainR == 0) mainR = 1;
   int64_t tailR = dimR - mainR;
   int64_t folds = llvm::Log2_64(mainR);
   int64_t mainTimes = folds / 4;
   int64_t tailFolds = folds % 4;
+  LDBG("mainR=" << mainR << " tailR=" << tailR << " folds=" << folds
+                << " mainTimes=" << mainTimes << " tailFolds=" << tailFolds);
+
+  auto read2D = [&rewriter, loc, &builder](Value tensor, Value rIdx, Value cIdx, Value minA, Value mask) -> Value {
+      auto sliceTy = RankedTensorType::get({1, ShapedType::kDynamic}, builder.computeElemTy);
+      SmallVector<OpFoldResult> offsets = {rIdx, cIdx};
+      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(1), minA};
+      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+      Value slice = rewriter.create<tensor::ExtractSliceOp>(loc, sliceTy, tensor, offsets, sizes, strides);
+      
+      auto vec2DTy = VectorType::get({1, builder.vectorLength}, builder.computeElemTy);
+      auto maskOp = rewriter.create<vector::MaskOp>(loc, TypeRange{vec2DTy}, mask, nullptr, [loc, vec2DTy, slice, &builder](OpBuilder &b, Operation *) {
+          Value readOp = b.create<vector::TransferReadOp>(
+              loc, vec2DTy, slice, ValueRange{builder.c0, builder.c0}, builder.computeCstZero, ArrayRef<bool>{true, true}).getResult();
+          b.create<vector::YieldOp>(loc, readOp);
+      });
+      return maskOp.getResult(0);
+  };
+
+  auto write2D = [&rewriter, loc, &builder](Value vec2D, Value tensor, Value rIdx, Value cIdx, Value minA, Value mask) -> Value {
+      auto sliceTy = RankedTensorType::get({1, ShapedType::kDynamic}, builder.computeElemTy);
+      SmallVector<OpFoldResult> offsets = {rIdx, cIdx};
+      SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(1), minA};
+      SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+      Value slice = rewriter.create<tensor::ExtractSliceOp>(loc, sliceTy, tensor, offsets, sizes, strides);
+      
+      auto maskWriteOp = rewriter.create<vector::MaskOp>(loc, TypeRange{sliceTy}, mask, nullptr, [&builder, loc, vec2D, slice](OpBuilder &b, Operation *) {
+          Value writeOp = b.create<vector::TransferWriteOp>(
+              loc, vec2D, slice, ValueRange{builder.c0, builder.c0}, ArrayRef<bool>{true, true}).getResult();
+          b.create<vector::YieldOp>(loc, writeOp);
+      });
+      return rewriter.create<tensor::InsertSliceOp>(loc, maskWriteOp.getResult(0), tensor, offsets, sizes, strides).getResult();
+  };
 
   if (tailR > 0) {
     Value tailRVal = rewriter.create<arith::ConstantIndexOp>(loc, tailR);
@@ -602,17 +730,19 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
     rewriter.setInsertionPointToStart(loopA.getBody());
     Value loopAAcc = loopA.getRegionIterArg(0), ivA = loopA.getInductionVar();
     Value minA = rewriter.create<affine::AffineMinOp>(loc, minMap, ValueRange{ivA, builder.dimAVal});
-    Value currentMask = builder.createLoopMask1D(minA);
+    
+    auto mask2DTy = VectorType::get({1, builder.vectorLength}, rewriter.getI1Type());
+    Value currentMask = rewriter.create<vector::CreateMaskOp>(loc, mask2DTy, ValueRange{builder.c1, minA});
     
     auto loopR = rewriter.create<scf::ForOp>(loc, builder.c0, tailRVal, builder.c1, ValueRange{loopAAcc});
     rewriter.setInsertionPointToStart(loopR.getBody());
     Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
     Value tailIdx = rewriter.create<arith::AddIOp>(loc, ivR, mainRVal); 
     
-    Value vecMain = builder.readSliceMaskedRA(loopRAcc, ivR, ivA, currentMask, builder.vec1DComputeTy, builder.computeCstZero);
-    Value vecTail = builder.readSliceMaskedRA(loopRAcc, tailIdx, ivA, currentMask, builder.vec1DComputeTy, builder.computeCstZero);
+    Value vecMain = read2D(loopRAcc, ivR, ivA, minA, currentMask);
+    Value vecTail = read2D(loopRAcc, tailIdx, ivA, minA, currentMask);
     Value reducedVec = builder.createAdd(vecMain, vecTail);
-    Value insertSliceOp = builder.write1DToSlice(reducedVec, loopRAcc, ivR, ivA, minA, currentMask);
+    Value insertSliceOp = write2D(reducedVec, loopRAcc, ivR, ivA, minA, currentMask);
     
     rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
     rewriter.setInsertionPointAfter(loopR);
@@ -634,7 +764,10 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
     
     Value loopAAcc = loopA.getRegionIterArg(0), ivA = loopA.getInductionVar();
     Value minA = rewriter.create<affine::AffineMinOp>(loc, minMap, ValueRange{ivA, builder.dimAVal});
-    Value currentMask = builder.createLoopMask1D(minA);
+    
+    auto mask2DTy = VectorType::get({1, builder.vectorLength}, rewriter.getI1Type());
+    Value currentMask = rewriter.create<vector::CreateMaskOp>(loc, mask2DTy, ValueRange{builder.c1, minA});
+
     auto loopR = rewriter.create<scf::ForOp>(loc, builder.c0, nextRNumVal, builder.c1, ValueRange{loopAAcc});
     rewriter.setInsertionPointToStart(loopR.getBody());
     Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
@@ -645,11 +778,11 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
       Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i);
       Value offsetR = rewriter.create<arith::MulIOp>(loc, iVal, nextRNumVal);
       Value rIdx = rewriter.create<arith::AddIOp>(loc, ivR, offsetR);
-      vRegs.push_back(builder.readSliceMaskedRA(loopRAcc, rIdx, ivA, currentMask, builder.vec1DComputeTy, builder.computeCstZero));
+      vRegs.push_back(read2D(loopRAcc, rIdx, ivA, minA, currentMask));
     }
     
     Value finalVecAdd = builder.buildTreeReduction(vRegs);
-    Value insertSliceOp = builder.write1DToSlice(finalVecAdd, loopRAcc, ivR, ivA, minA, currentMask);
+    Value insertSliceOp = write2D(finalVecAdd, loopRAcc, ivR, ivA, minA, currentMask);
     
     rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
     rewriter.setInsertionPointAfter(loopR);
@@ -660,24 +793,30 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
     workingTensor = loopMain.getResult(0);
   }
 
-  int numLeaves = 1 << tailFolds; 
+  int64_t numLeaves = (tailFolds < 63) ? (1LL << tailFolds) : INT64_MAX;
+  LDBG("numLeaves=" << numLeaves);
   auto loopATail = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c64, ValueRange{initAcc});
   rewriter.setInsertionPointToStart(loopATail.getBody());
   Value finalLoopAAcc = loopATail.getRegionIterArg(0), ivA = loopATail.getInductionVar();
   Value minA = rewriter.create<affine::AffineMinOp>(loc, minMap, ValueRange{ivA, builder.dimAVal});
-  Value currentMask = builder.createLoopMask1D(minA);
+  
+  auto mask2DTy = VectorType::get({1, builder.vectorLength}, rewriter.getI1Type());
+  Value currentMask = rewriter.create<vector::CreateMaskOp>(loc, mask2DTy, ValueRange{builder.c1, minA});
   
   SmallVector<Value> tailRegs;
-  tailRegs.reserve(numLeaves);
-  for (int i = 0; i < numLeaves; ++i) {
+  tailRegs.reserve(std::min<int64_t>(numLeaves, 64));
+  for (int64_t i = 0; i < numLeaves && i < 64; ++i) {
     Value offsetR = rewriter.create<arith::ConstantIndexOp>(loc, i);
-    tailRegs.push_back(builder.readSliceMaskedRA(workingTensor, offsetR, ivA, currentMask, builder.vec1DComputeTy, builder.computeCstZero));
+    tailRegs.push_back(read2D(workingTensor, offsetR, ivA, minA, currentMask));
   }
   Value finalOutputVec = builder.buildTreeReduction(tailRegs); 
 
+  auto vec1DTy = VectorType::get({builder.vectorLength}, builder.computeElemTy);
+  Value finalOutputVec1D = rewriter.create<vector::ShapeCastOp>(loc, vec1DTy, finalOutputVec);
+
   if (accTensorType.getRank() == 0) {
     VectorType vec0DType = VectorType::get({}, builder.accElemTy);
-    Value finalScalar = rewriter.create<vector::ExtractElementOp>(loc, finalOutputVec, builder.c0);
+    Value finalScalar = rewriter.create<vector::ExtractElementOp>(loc, finalOutputVec1D, builder.c0);
     
     Value oldScalar = rewriter.create<tensor::ExtractOp>(loc, finalLoopAAcc, ValueRange{});
     Value oldScalarCompute = oldScalar;
@@ -697,11 +836,23 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
     Value writeOp = rewriter.create<vector::TransferWriteOp>(loc, broadcastOp, finalLoopAAcc, ValueRange{}).getResult();
     rewriter.create<scf::YieldOp>(loc, ValueRange{writeOp});
   } else {
-    auto accSlice = rewriter.create<tensor::ExtractSliceOp>(loc, finalLoopAAcc, SmallVector<OpFoldResult>{ivA}, SmallVector<OpFoldResult>{minA}, SmallVector<OpFoldResult>{rewriter.getIndexAttr(1)});
+    auto accSliceTy = RankedTensorType::get({ShapedType::kDynamic}, builder.accElemTy);
+    SmallVector<OpFoldResult> accOffsets = {ivA};
+    SmallVector<OpFoldResult> accSizes = {minA};
+    SmallVector<OpFoldResult> accStrides = {rewriter.getIndexAttr(1)};
+    Value accSlice = rewriter.create<tensor::ExtractSliceOp>(loc, accSliceTy, finalLoopAAcc, accOffsets, accSizes, accStrides).getResult();
     
-    Value oldAccVec = builder.read1DAccMasked(finalLoopAAcc, ivA, currentMask, builder.vec1DAccTy, builder.accCstZero);
+    Value currentMask1D = builder.createLoopMask1D(minA);
+
+    auto maskReadOp = rewriter.create<vector::MaskOp>(
+        loc, TypeRange{builder.vec1DAccTy}, currentMask1D, static_cast<Operation*>(nullptr), [&builder, loc, accSlice](OpBuilder &b, Operation *) {
+          Value readOp = b.create<vector::TransferReadOp>(loc, builder.vec1DAccTy, accSlice, ValueRange{builder.c0}, builder.accCstZero, ArrayRef<bool>{true}).getResult();
+          b.create<vector::YieldOp>(loc, readOp);
+        });
+    Value oldAccVec = maskReadOp.getResult(0);
+
     Value oldAccCompute = builder.castToComputeTy(oldAccVec);
-    Value totalSumCompute = builder.createAdd(finalOutputVec, oldAccCompute);
+    Value totalSumCompute = builder.createAdd(finalOutputVec1D, oldAccCompute);
     
     Value toWriteAcc = totalSumCompute;
     if (builder.accElemTy != builder.computeElemTy) {
@@ -710,11 +861,11 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
     }
     
     auto writeMaskOp = rewriter.create<vector::MaskOp>(
-        loc, TypeRange{accSlice.getType()}, currentMask, (Operation *)nullptr, [&](OpBuilder &b, Operation *) {
-          Value writeOp = b.create<vector::TransferWriteOp>(loc, toWriteAcc, accSlice, ValueRange{builder.c0}, ArrayRef<bool>{false}).getResult();
+        loc, TypeRange{accSliceTy}, currentMask1D, static_cast<Operation*>(nullptr), [&builder, loc, toWriteAcc, accSlice](OpBuilder &b, Operation *) {
+          Value writeOp = b.create<vector::TransferWriteOp>(loc, toWriteAcc, accSlice, ValueRange{builder.c0}, ArrayRef<bool>{true}).getResult();
           b.create<vector::YieldOp>(loc, writeOp);
         });
-    Value insertSliceOp = rewriter.create<tensor::InsertSliceOp>(loc, writeMaskOp.getResult(0), finalLoopAAcc, SmallVector<OpFoldResult>{ivA}, SmallVector<OpFoldResult>{minA}, SmallVector<OpFoldResult>{rewriter.getIndexAttr(1)});
+    Value insertSliceOp = rewriter.create<tensor::InsertSliceOp>(loc, writeMaskOp.getResult(0), finalLoopAAcc, accOffsets, accSizes, accStrides);
     rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
   }
 
@@ -724,129 +875,518 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc, TreeReduction
   rewriter.replaceOp(targetForOp, wrapperLoop.getResult(0));
 }
 
-void TreeReduceV2Pass::buildAR(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, RankedTensorType accTensorType) {
-  auto loopA = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1, ValueRange{targetForOp.getInitArgs()[0]});
-  rewriter.setInsertionPointToStart(loopA.getBody());
-  Value loopAAcc = loopA.getRegionIterArg(0);
-  Value ivA = loopA.getInductionVar();
+void TreeReduceV2Pass::buildAscendCopyOut(IRRewriter &rewriter, Location loc, 
+                                          TreeReductionBuilder &builder, scf::ForOp targetForOp, 
+                                          Value inputTensor, int64_t dimR, int64_t dimA) const {
+    LDBG("buildAscendCopyOut: dimR=" << dimR << " dimA=" << dimA);
 
-  int64_t mainR = (dimR / 64) * 64;
-  int64_t tailR = dimR % 64;
-  int64_t folds = mainR / 64;
-  int64_t mainTimes = folds / 16;
-  int64_t tailFolds = folds % 16;
-
-  Value accVec = rewriter.create<vector::BroadcastOp>(loc, builder.vec1DComputeTy, builder.computeCstZero);
-
-  if (mainTimes > 0) {
-    Value mainTimesVal = rewriter.create<arith::ConstantIndexOp>(loc, mainTimes);
-    auto loopMain = rewriter.create<scf::ForOp>(loc, builder.c0, mainTimesVal, builder.c1, ValueRange{accVec});
-    rewriter.setInsertionPointToStart(loopMain.getBody());
-    Value iterAccVec = loopMain.getRegionIterArg(0);
-    Value ivMain = loopMain.getInductionVar();
+    auto loopA = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1, 
+                                            ValueRange{targetForOp.getInitArgs()[0]});
+    rewriter.setInsertionPointToStart(loopA.getBody());
     
-    SmallVector<Value> vRegs;
-    vRegs.reserve(16);
-    for (int i = 0; i < 16; ++i) {
-      Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i * 64);
-      Value blockOffset = rewriter.create<arith::MulIOp>(loc, ivMain, rewriter.create<arith::ConstantIndexOp>(loc, 1024));
-      Value rIdx = rewriter.create<arith::AddIOp>(loc, blockOffset, iVal);
-      Value readRaw = builder.readSliceMaskedAR(inputTensor, ivA, rIdx, nullptr, builder.vec1DInTy, builder.inputCstZero);
-      vRegs.push_back(builder.castToComputeTy(readRaw));
+    Value loopAAcc = loopA.getRegionIterArg(0);
+    Value ivA = loopA.getInductionVar();
+
+    Value extractedVal = rewriter.create<tensor::ExtractOp>(
+        loc, inputTensor, ValueRange{ivA, builder.c0});
+
+    Value toWriteAcc = extractedVal;
+    if (builder.inElemTy != builder.accElemTy) {
+        toWriteAcc = isa<FloatType>(builder.accElemTy) ? 
+            rewriter.create<arith::ExtFOp>(loc, builder.accElemTy, extractedVal).getResult() : 
+            rewriter.create<arith::ExtSIOp>(loc, builder.accElemTy, extractedVal).getResult();
     }
-    Value reducedVec = builder.buildTreeReduction(vRegs);
-    Value nextAccVec = builder.createAdd(iterAccVec, reducedVec);
-    rewriter.create<scf::YieldOp>(loc, ValueRange{nextAccVec});
-    rewriter.setInsertionPointAfter(loopMain);
-    accVec = loopMain.getResult(0);
-  }
 
-  if (tailFolds > 0) {
-    SmallVector<Value> vRegs;
-    vRegs.reserve(tailFolds);
-    Value baseOffset = rewriter.create<arith::ConstantIndexOp>(loc, mainTimes * 1024);
-    for (int i = 0; i < tailFolds; ++i) {
-      Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i * 64);
-      Value rIdx = rewriter.create<arith::AddIOp>(loc, baseOffset, iVal);
-      Value readRaw = builder.readSliceMaskedAR(inputTensor, ivA, rIdx, nullptr, builder.vec1DInTy, builder.inputCstZero);
-      vRegs.push_back(builder.castToComputeTy(readRaw));
+    Value nextAcc = rewriter.create<tensor::InsertOp>(
+        loc, toWriteAcc, loopAAcc, ValueRange{ivA});
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{nextAcc});
+    rewriter.setInsertionPointAfter(loopA);
+    rewriter.replaceOp(targetForOp, loopA.getResult(0));
+}
+
+void TreeReduceV2Pass::buildAscendShortReduceAR(IRRewriter &rewriter, Location loc, 
+                                                TreeReductionBuilder &builder, scf::ForOp targetForOp, 
+                                                Value inputTensor, int64_t dimR, int64_t dimA) const {
+    LDBG("buildAscendShortReduceAR: dimR=" << dimR << " dimA=" << dimA);
+    int64_t vlElems = builder.vectorLength;
+    
+    auto loopA = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1, 
+                                              ValueRange{targetForOp.getInitArgs()[0]});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0);
+    Value ivA = loopA.getInductionVar();
+
+    Value dimRVal = rewriter.create<arith::ConstantIndexOp>(loc, dimR);
+    
+    auto mask2DTy = VectorType::get({1, vlElems}, rewriter.getI1Type());
+    Value c1Val = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value mask2D = rewriter.create<vector::CreateMaskOp>(loc, mask2DTy, ValueRange{c1Val, dimRVal});
+
+    auto sliceTy = RankedTensorType::get({1, ShapedType::kDynamic}, builder.inElemTy);
+    SmallVector<OpFoldResult> inOffsets = {ivA, builder.c0};
+    SmallVector<OpFoldResult> inSizes = {rewriter.getIndexAttr(1), dimRVal};
+    SmallVector<OpFoldResult> inStrides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+    Value slice = rewriter.create<tensor::ExtractSliceOp>(loc, sliceTy, inputTensor, inOffsets, inSizes, inStrides);
+
+    auto vec2DTy = VectorType::get({1, vlElems}, builder.inElemTy);
+    auto maskOp = rewriter.create<vector::MaskOp>(
+        loc, TypeRange{vec2DTy}, mask2D, static_cast<Operation*>(nullptr), [&builder, loc, vec2DTy, slice](OpBuilder &b, Operation *) {
+            Value readOp = b.create<vector::TransferReadOp>(
+                loc, vec2DTy, slice, ValueRange{builder.c0, builder.c0},
+                builder.inputCstZero, llvm::ArrayRef<bool>{true, false}
+            ).getResult();
+            b.create<vector::YieldOp>(loc, readOp);
+        });
+        
+    Value computeRead = builder.castToComputeTy(maskOp.getResult(0));
+
+    auto computeVec2DTy = VectorType::get({1, vlElems}, builder.computeElemTy);
+    Value zeroVec = rewriter.create<vector::BroadcastOp>(loc, computeVec2DTy, builder.computeCstZero);
+    Value cleanRead = rewriter.create<arith::SelectOp>(loc, mask2D, computeRead, zeroVec);
+
+    SmallVector<OpFoldResult> accOffsets = {ivA};
+    SmallVector<OpFoldResult> accSizes = {rewriter.getIndexAttr(1)};
+    SmallVector<OpFoldResult> accStrides = {rewriter.getIndexAttr(1)};
+    auto accSliceTy = RankedTensorType::get({1}, builder.accElemTy);
+    
+    Value extractedSlice = rewriter.create<tensor::ExtractSliceOp>(
+        loc, accSliceTy, loopAAcc, accOffsets, accSizes, accStrides);
+
+    auto accVecTy = VectorType::get({1}, builder.accElemTy);
+    Value accRead = rewriter.create<vector::TransferReadOp>(
+        loc, accVecTy, extractedSlice, ValueRange{builder.c0}, builder.accCstZero, llvm::ArrayRef<bool>{true});
+
+    Value accReadCompute = accRead;
+    auto accVecComputeTy = VectorType::get({1}, builder.computeElemTy);
+    if (builder.accElemTy != builder.computeElemTy) {
+        accReadCompute = isa<FloatType>(builder.accElemTy) ? 
+            rewriter.create<arith::ExtFOp>(loc, accVecComputeTy, accRead).getResult() : 
+            rewriter.create<arith::ExtSIOp>(loc, accVecComputeTy, accRead).getResult();
     }
-    Value reducedVec = builder.buildTreeReduction(vRegs);
-    accVec = builder.createAdd(accVec, reducedVec);
-  }
 
-  if (tailR > 0) {
-    Value rIdx = rewriter.create<arith::ConstantIndexOp>(loc, mainR);
-    Value tailRVal = rewriter.create<arith::ConstantIndexOp>(loc, tailR);
-    Value mask = builder.createLoopMask1D(tailRVal);
-    Value readRaw = builder.readSliceMaskedAR(inputTensor, ivA, rIdx, mask, builder.vec1DInTy, builder.inputCstZero);
-    accVec = builder.createAdd(accVec, builder.castToComputeTy(readRaw));
-  }
+    SmallVector<int64_t> reduceDims = {1}; 
+    auto multiReduceOp = rewriter.create<vector::MultiDimReductionOp>(
+        loc, vector::CombiningKind::ADD, cleanRead, accReadCompute, rewriter.getI64ArrayAttr(reduceDims));
+    multiReduceOp->setAttr("withoutInitMergeOp", rewriter.getUnitAttr());
+    Value toWriteAcc = multiReduceOp.getResult();
 
-  Value scalar = rewriter.create<vector::ReductionOp>(loc, vector::CombiningKind::ADD, accVec);
+    if (builder.accElemTy != builder.computeElemTy) {
+        toWriteAcc = isa<FloatType>(builder.accElemTy) ? 
+            rewriter.create<arith::TruncFOp>(loc, accVecTy, toWriteAcc).getResult() : 
+            rewriter.create<arith::TruncIOp>(loc, accVecTy, toWriteAcc).getResult();
+    }
 
-  if (builder.accElemTy != builder.computeElemTy) {
-    scalar = isa<FloatType>(builder.accElemTy) ? rewriter.create<arith::TruncFOp>(loc, builder.accElemTy, scalar).getResult()
-                                               : rewriter.create<arith::TruncIOp>(loc, builder.accElemTy, scalar).getResult();
-  }
+    Value writtenSlice = rewriter.create<vector::TransferWriteOp>(
+        loc, toWriteAcc, extractedSlice, ValueRange{builder.c0}, llvm::ArrayRef<bool>{true}).getResult();
 
-  Value currentVal;
-  if (accTensorType.getRank() == 0) {
-    currentVal = rewriter.create<tensor::ExtractOp>(loc, loopAAcc, ValueRange{});
-  } else {
-    currentVal = rewriter.create<tensor::ExtractOp>(loc, loopAAcc, ValueRange{ivA});
-  }
-  
-  Value finalScalar = builder.createAdd(currentVal, scalar);
-  
-  Value nextAcc;
-  if (accTensorType.getRank() == 0) {
-    nextAcc = rewriter.create<tensor::InsertOp>(loc, finalScalar, loopAAcc, ValueRange{});
-  } else {
-    nextAcc = rewriter.create<tensor::InsertOp>(loc, finalScalar, loopAAcc, ValueRange{ivA});
-  }
+    Value nextAcc = rewriter.create<tensor::InsertSliceOp>(
+        loc, writtenSlice, loopAAcc, accOffsets, accSizes, accStrides);
 
-  rewriter.create<scf::YieldOp>(loc, ValueRange{nextAcc});
-  rewriter.setInsertionPointAfter(loopA);
-  rewriter.replaceOp(targetForOp, loopA.getResult(0));
+    rewriter.create<scf::YieldOp>(loc, ValueRange{nextAcc});
+    rewriter.setInsertionPointAfter(loopA);
+    rewriter.replaceOp(targetForOp, loopA.getResult(0));
+}
+
+void TreeReduceV2Pass::buildAscendGroupReduce(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, 
+                                              scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, 
+                                              bool needFoldR) const {
+    LDBG("buildAscendGroupReduce: dimR=" << dimR << " dimA=" << dimA << " needFoldR=" << needFoldR);
+    int64_t blockDataLen = getBlockDataLen(builder.inElemTy);
+    if (blockDataLen <= 0) {
+      LDBG("buildAscendGroupReduce: skipping - invalid blockDataLen=" << blockDataLen);
+      return;
+    }
+
+    auto loopA = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1, 
+                                              ValueRange{targetForOp.getInitArgs()[0]});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0);
+    Value ivA = loopA.getInductionVar();
+
+    auto safeRead2D = [&rewriter, loc, blockDataLen, &builder, ivA, inputTensor](Value rIdxVal, Value remainRVal) -> Value {
+        auto mask2DTy = VectorType::get({1, blockDataLen}, rewriter.getI1Type());
+        Value c1Val = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+        Value mask2D = rewriter.create<vector::CreateMaskOp>(loc, mask2DTy, ValueRange{c1Val, remainRVal});
+
+        auto sliceTy = RankedTensorType::get({1, ShapedType::kDynamic}, builder.inElemTy);
+        SmallVector<OpFoldResult> inOffsets = {ivA, rIdxVal};
+        SmallVector<OpFoldResult> inSizes = {rewriter.getIndexAttr(1), remainRVal};
+        SmallVector<OpFoldResult> inStrides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+        Value slice = rewriter.create<tensor::ExtractSliceOp>(loc, sliceTy, inputTensor, inOffsets, inSizes, inStrides);
+
+        auto vec2DTy = VectorType::get({1, blockDataLen}, builder.inElemTy);
+        auto maskOp = rewriter.create<vector::MaskOp>(
+            loc, TypeRange{vec2DTy}, mask2D, static_cast<Operation*>(nullptr), [&builder, loc, vec2DTy, slice](OpBuilder &b, Operation *) {
+                Value readOp = b.create<vector::TransferReadOp>(
+                    loc, vec2DTy, slice, ValueRange{builder.c0, builder.c0},
+                    builder.inputCstZero, llvm::ArrayRef<bool>{true, false}
+                ).getResult();
+                b.create<vector::YieldOp>(loc, readOp);
+            });
+            
+        Value computeRead = builder.castToComputeTy(maskOp.getResult(0));
+
+        auto computeVec2DTy = VectorType::get({1, blockDataLen}, builder.computeElemTy);
+        Value zeroVec = rewriter.create<vector::BroadcastOp>(loc, computeVec2DTy, builder.computeCstZero);
+        Value cleanRead = rewriter.create<arith::SelectOp>(loc, mask2D, computeRead, zeroVec);
+
+        return cleanRead; 
+    };
+
+    SmallVector<OpFoldResult> accOffsets = {ivA};
+    SmallVector<OpFoldResult> accSizes = {rewriter.getIndexAttr(1)};
+    SmallVector<OpFoldResult> accStrides = {rewriter.getIndexAttr(1)};
+    auto accSliceTy = RankedTensorType::get({1}, builder.accElemTy);
+    
+    Value extractedSlice = rewriter.create<tensor::ExtractSliceOp>(
+        loc, accSliceTy, loopAAcc, accOffsets, accSizes, accStrides);
+
+    auto accVecTy = VectorType::get({1}, builder.accElemTy);
+    Value accRead = rewriter.create<vector::TransferReadOp>(
+        loc, accVecTy, extractedSlice, ValueRange{builder.c0}, builder.accCstZero, llvm::ArrayRef<bool>{true});
+
+    Value accReadCompute = accRead;
+    auto accVecComputeTy = VectorType::get({1}, builder.computeElemTy);
+    if (builder.accElemTy != builder.computeElemTy) {
+        accReadCompute = isa<FloatType>(builder.accElemTy) ? 
+            rewriter.create<arith::ExtFOp>(loc, accVecComputeTy, accRead).getResult() : 
+            rewriter.create<arith::ExtSIOp>(loc, accVecComputeTy, accRead).getResult();
+    }
+
+    Value finalBlockVec2D;
+
+    if (needFoldR) {
+        int64_t innerFoldNum = (dimR + blockDataLen - 1) / blockDataLen;
+        
+        Value dimRVal0 = rewriter.create<arith::ConstantIndexOp>(loc, std::min(dimR, blockDataLen));
+        Value foldedVec = safeRead2D(builder.c0, dimRVal0);
+
+        for (int64_t loopR = 1; loopR < innerFoldNum; ++loopR) {
+            Value offsetR = rewriter.create<arith::ConstantIndexOp>(loc, loopR * blockDataLen);
+            int64_t remainR = dimR - loopR * blockDataLen;
+            Value remainRVal = rewriter.create<arith::ConstantIndexOp>(loc, std::min(remainR, blockDataLen));
+            
+            Value vreg1Compute = safeRead2D(offsetR, remainRVal);
+            foldedVec = rewriter.create<arith::AddFOp>(loc, foldedVec, vreg1Compute);
+        }
+        finalBlockVec2D = foldedVec;
+    } else {
+        Value dimRVal = rewriter.create<arith::ConstantIndexOp>(loc, dimR);
+        finalBlockVec2D = safeRead2D(builder.c0, dimRVal);
+    }
+
+    SmallVector<int64_t> reduceDims = {1}; 
+    auto multiReduceOp = rewriter.create<vector::MultiDimReductionOp>(
+        loc, vector::CombiningKind::ADD, finalBlockVec2D, accReadCompute, rewriter.getI64ArrayAttr(reduceDims));
+    multiReduceOp->setAttr("withoutInitMergeOp", rewriter.getUnitAttr());
+    Value toWriteAcc = multiReduceOp.getResult();
+
+    if (builder.accElemTy != builder.computeElemTy) {
+        toWriteAcc = isa<FloatType>(builder.accElemTy) ? 
+            rewriter.create<arith::TruncFOp>(loc, accVecTy, toWriteAcc).getResult() : 
+            rewriter.create<arith::TruncIOp>(loc, accVecTy, toWriteAcc).getResult();
+    }
+
+    Value writtenSlice = rewriter.create<vector::TransferWriteOp>(
+        loc, toWriteAcc, extractedSlice, ValueRange{builder.c0}, llvm::ArrayRef<bool>{true}).getResult();
+
+    Value nextAcc = rewriter.create<tensor::InsertSliceOp>(
+        loc, writtenSlice, loopAAcc, accOffsets, accSizes, accStrides);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{nextAcc});
+    rewriter.setInsertionPointAfter(loopA);
+    rewriter.replaceOp(targetForOp, loopA.getResult(0));
+}
+
+void TreeReduceV2Pass::buildAR(IRRewriter &rewriter, Location loc, TreeReductionBuilder &builder, 
+                                scf::ForOp targetForOp, Value inputTensor, int64_t dimR, int64_t dimA, 
+                                RankedTensorType accTensorType) const {
+
+    LDBG("buildAR: dimR=" << dimR << " dimA=" << dimA);
+    int64_t blockDataLen = getBlockDataLen(builder.inElemTy);
+    int64_t vlElems = builder.vectorLength;
+
+    ReduceType groupReduceType = ReduceType::IS_REDUCE_SUM; 
+
+    if (dimR == 1) {
+        buildAscendCopyOut(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA);
+        return;
+    } else if (dimR <= vlElems) {
+        if (groupReduceType != ReduceType::OTHERS) {
+            if (dimR == blockDataLen) {
+                buildAscendGroupReduce(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA, false);
+            } else if (dimR < vlElems / 2) {
+                buildAscendGroupReduce(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA, true);
+            } else {
+                buildAscendShortReduceAR(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA);
+            }
+        } else {
+            buildAscendShortReduceAR(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA);
+        }
+        return;
+    }
+
+    auto loopA = rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal, builder.c1, ValueRange{targetForOp.getInitArgs()[0]});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0);
+    Value ivA = loopA.getInductionVar();
+
+    int64_t mainR = (dimR / vlElems) * vlElems;
+    int64_t tailR = dimR % vlElems;
+    int64_t folds = (vlElems > 0) ? mainR / vlElems : 0;
+    static constexpr int64_t numVectorRegs = 16;
+    int64_t mainTimes = folds / numVectorRegs;
+    int64_t tailFolds = folds % numVectorRegs;
+    LDBG("mainR=" << mainR << " tailR=" << tailR << " folds=" << folds
+                  << " mainTimes=" << mainTimes << " tailFolds=" << tailFolds);
+
+    Value accVec = rewriter.create<vector::BroadcastOp>(loc, builder.vec1DComputeTy, builder.computeCstZero);
+
+    if (mainTimes > 0) {
+        Value mainTimesVal = rewriter.create<arith::ConstantIndexOp>(loc, mainTimes);
+        auto loopMain = rewriter.create<scf::ForOp>(loc, builder.c0, mainTimesVal, builder.c1, ValueRange{accVec});
+        rewriter.setInsertionPointToStart(loopMain.getBody());
+        Value iterAccVec = loopMain.getRegionIterArg(0);
+        Value ivMain = loopMain.getInductionVar();
+        
+        SmallVector<Value> vRegs;
+        vRegs.reserve(numVectorRegs);
+        for (int i = 0; i < numVectorRegs; ++i) {
+            Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i * vlElems);
+            Value blockOffset = rewriter.create<arith::MulIOp>(loc, ivMain, rewriter.create<arith::ConstantIndexOp>(loc, numVectorRegs * vlElems));
+            Value rIdx = rewriter.create<arith::AddIOp>(loc, blockOffset, iVal);
+            Value readRaw = builder.readSliceMaskedAR(inputTensor, ivA, rIdx, nullptr, builder.vec1DInTy, builder.inputCstZero);
+            vRegs.push_back(builder.castToComputeTy(readRaw));
+        }
+        Value reducedVec = builder.buildTreeReduction(vRegs);
+        Value nextAccVec = builder.createAdd(iterAccVec, reducedVec);
+        rewriter.create<scf::YieldOp>(loc, ValueRange{nextAccVec});
+        rewriter.setInsertionPointAfter(loopMain);
+        accVec = loopMain.getResult(0);
+    }
+
+    if (tailFolds > 0) {
+        SmallVector<Value> vRegs;
+        vRegs.reserve(tailFolds);
+        Value baseOffset = rewriter.create<arith::ConstantIndexOp>(loc, mainTimes * numVectorRegs * vlElems);
+        for (int i = 0; i < tailFolds; ++i) {
+            Value iVal = rewriter.create<arith::ConstantIndexOp>(loc, i * vlElems);
+            Value rIdx = rewriter.create<arith::AddIOp>(loc, baseOffset, iVal);
+            Value readRaw = builder.readSliceMaskedAR(inputTensor, ivA, rIdx, nullptr, builder.vec1DInTy, builder.inputCstZero);
+            vRegs.push_back(builder.castToComputeTy(readRaw));
+        }
+        Value reducedVec = builder.buildTreeReduction(vRegs);
+        accVec = builder.createAdd(accVec, reducedVec);
+    }
+
+    if (tailR > 0) {
+        Value rIdx = rewriter.create<arith::ConstantIndexOp>(loc, mainR);
+        Value tailRVal = rewriter.create<arith::ConstantIndexOp>(loc, tailR);
+
+        auto mask2DTy = VectorType::get({1, vlElems}, rewriter.getI1Type());
+        Value mask2D = rewriter.create<vector::CreateMaskOp>(loc, mask2DTy, ValueRange{builder.c1, tailRVal});
+
+        auto sliceTy = RankedTensorType::get({1, ShapedType::kDynamic}, builder.inElemTy);
+        SmallVector<OpFoldResult> inOffsets = {ivA, rIdx};
+        SmallVector<OpFoldResult> inSizes = {rewriter.getIndexAttr(1), tailRVal};
+        SmallVector<OpFoldResult> inStrides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+        Value slice = rewriter.create<tensor::ExtractSliceOp>(loc, sliceTy, inputTensor, inOffsets, inSizes, inStrides);
+        auto vec2DTy = VectorType::get({1, vlElems}, builder.inElemTy);
+        auto maskOp = rewriter.create<vector::MaskOp>(
+            loc, TypeRange{vec2DTy}, mask2D, static_cast<Operation*>(nullptr), [loc, vec2DTy, slice, &builder](OpBuilder &b, Operation *) {
+                Value readOp = b.create<vector::TransferReadOp>(
+                    loc, vec2DTy, slice, ValueRange{builder.c0, builder.c0},
+                    builder.inputCstZero, llvm::ArrayRef<bool>{true, false}
+                ).getResult();
+                b.create<vector::YieldOp>(loc, readOp);
+            });
+            
+        auto vec1DTy = VectorType::get({vlElems}, builder.inElemTy);
+        Value raw1D = rewriter.create<vector::ShapeCastOp>(loc, vec1DTy, maskOp.getResult(0));
+        
+        auto mask1DTy = VectorType::get({vlElems}, rewriter.getI1Type());
+        Value mask1D = rewriter.create<vector::CreateMaskOp>(loc, mask1DTy, ValueRange{tailRVal});
+        Value computeRead = builder.castToComputeTy(raw1D);
+        Value zeroVec = rewriter.create<vector::BroadcastOp>(loc, builder.vec1DComputeTy, builder.computeCstZero);
+        Value cleanRead = rewriter.create<arith::SelectOp>(loc, mask1D, computeRead, zeroVec);
+
+        accVec = builder.createAdd(accVec, cleanRead);
+    }
+    Type elemTy = builder.computeElemTy;
+    auto vec2DTy = VectorType::get({1, vlElems}, elemTy);
+    Value accVec2D = rewriter.create<vector::ShapeCastOp>(loc, vec2DTy, accVec);
+
+    auto vec1xAccTy = VectorType::get({1}, builder.accElemTy);
+    auto vec1xComputeTy = VectorType::get({1}, elemTy);
+
+    SmallVector<OpFoldResult> offsets = {ivA};
+    SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(1)};
+    SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1)};
+    auto sliceTy = RankedTensorType::get({1}, builder.accElemTy);
+    
+    Value extractedSlice = rewriter.create<tensor::ExtractSliceOp>(
+        loc, sliceTy, loopAAcc, offsets, sizes, strides);
+
+    Value accRead = rewriter.create<vector::TransferReadOp>(
+        loc, vec1xAccTy, extractedSlice, ValueRange{builder.c0}, builder.accCstZero);
+
+    Value accReadCompute = accRead;
+    if (builder.accElemTy != elemTy) {
+        accReadCompute = isa<FloatType>(builder.accElemTy)
+            ? rewriter.create<arith::ExtFOp>(loc, vec1xComputeTy, accRead).getResult()
+            : rewriter.create<arith::ExtSIOp>(loc, vec1xComputeTy, accRead).getResult();
+    }
+    SmallVector<int64_t> reduceDims = {1};
+    ArrayAttr reduceDimsAttr = rewriter.getI64ArrayAttr(reduceDims);
+    auto multiReduceOp = rewriter.create<vector::MultiDimReductionOp>(
+        loc, vector::CombiningKind::ADD, accVec2D, accReadCompute, reduceDimsAttr);
+    multiReduceOp->setAttr("withoutInitMergeOp", rewriter.getUnitAttr());
+    Value toWriteAcc = multiReduceOp.getResult();
+    if (builder.accElemTy != elemTy) {
+        toWriteAcc = isa<FloatType>(builder.accElemTy)
+            ? rewriter.create<arith::TruncFOp>(loc, vec1xAccTy, toWriteAcc).getResult()
+            : rewriter.create<arith::TruncIOp>(loc, vec1xAccTy, toWriteAcc).getResult();
+    }
+    Value writtenSlice = rewriter.create<vector::TransferWriteOp>(
+        loc, toWriteAcc, extractedSlice, ValueRange{builder.c0}).getResult();
+
+    Value nextAcc = rewriter.create<tensor::InsertSliceOp>(
+        loc, writtenSlice, loopAAcc, offsets, sizes, strides);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{nextAcc});
+    rewriter.setInsertionPointAfter(loopA);
+    rewriter.replaceOp(targetForOp, loopA.getResult(0));
+}
+
+static bool isCVCases(ModuleOp moduleOp) {
+  auto result = moduleOp.walk([](Operation *op) {
+    if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
+      if (funcOp->hasAttr(hivm::TPartOfMixAttr::name))
+        return WalkResult::interrupt();
+    }
+    if (isa<scope::ScopeOp>(op)) {
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  return result.wasInterrupted();
 }
 
 void TreeReduceV2Pass::runOnOperation() {
-  auto funcOp = getOperation();
-  vector::MultiDimReductionOp targetReduceOp = nullptr;
-  funcOp.walk([&](vector::MultiDimReductionOp reduceOp) {
-    targetReduceOp = reduceOp;
-    return WalkResult::interrupt();
-  });
-  if (!targetReduceOp) return;
+  auto moduleOp = getOperation();
+  LDBG("=== Processing func: " << moduleOp.getSymName()
+                             << " enableRA=" << enableRA
+                             << " enableAR=" << enableAR << " ===");
 
-  Value inputTensor = traceBackToOriginalTensor(targetReduceOp.getSource());
-  int64_t dimR = -1, dimA = -1;
-  bool isAR = false;
-  if (!isValid2DReduction(targetReduceOp, inputTensor, dimR, dimA, isAR)) return;
-  
-  scf::ForOp targetForOp = targetReduceOp->getParentOfType<scf::ForOp>();
-  if (!targetForOp) return;
-  while (auto parentFor = targetForOp->getParentOfType<scf::ForOp>()) targetForOp = parentFor;
-  if (targetForOp.getInitArgs().empty()) return;
-
-  IRRewriter rewriter(targetForOp.getContext());
-  Location loc = targetForOp.getLoc();
-  rewriter.setInsertionPoint(targetForOp);
-
-  auto inputTensorType = cast<RankedTensorType>(inputTensor.getType());
-  auto accTensorType = cast<RankedTensorType>(targetForOp.getInitArgs()[0].getType());
-  TreeReductionBuilder builder(rewriter, loc, inputTensorType.getElementType(), accTensorType.getElementType(), dimA);
-
-  if (isAR) {
-    buildAR(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA, accTensorType);
-  } else {
-    buildRA(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA, accTensorType);
+  // VF fusion is fully bypassed on part_of_mix kernels,
+  // so TreeReduceV2 should also skip them.
+  if (isCVCases(moduleOp)) {
+    LDBG("=== Skipping CV case ===");
+    return;
   }
+
+  llvm::SmallVector<vector::MultiDimReductionOp> reduceOps;
+  moduleOp.walk([&](vector::MultiDimReductionOp reduceOp) {
+    reduceOps.push_back(reduceOp);
+  });
+  LDBG("Found " << reduceOps.size() << " MultiDimReductionOps");
+
+  for (auto targetReduceOp : reduceOps) {
+    LDBG("--- Processing MultiDimReductionOp: " << *targetReduceOp);
+
+    // TreeReduceV2 only handles ADD reductions.
+    if (targetReduceOp.getKind() != vector::CombiningKind::ADD) {
+      LDBG("Skipping - not an ADD reduction (kind="
+           << vector::stringifyCombiningKind(targetReduceOp.getKind()) << ")");
+      continue;
+    }
+
+    Value inputTensor = traceBackToOriginalTensor(targetReduceOp.getSource());
+    int64_t dimR = -1, dimA = -1;
+    bool isAR = false;
+    if (!isValid2DReduction(targetReduceOp, inputTensor, dimR, dimA, isAR)) {
+      LDBG("Skipping - not a valid 2D reduction (input rank != 2)");
+      continue;
+    }
+    LDBG("Valid 2D reduction: dimR=" << dimR << " dimA=" << dimA
+                                     << " isAR=" << isAR);
+
+    auto inputTensorType = cast<RankedTensorType>(inputTensor.getType());
+    Type inElemTy = inputTensorType.getElementType();
+    if (!inElemTy.isF32() && !inElemTy.isF16() && !inElemTy.isBF16()) {
+      LDBG("Skipping - unsupported element type: " << inElemTy);
+      continue;
+    }
+
+    // Early exit if the corresponding direction is disabled.
+    if (isAR && !enableAR) {
+      LDBG("Skipping - AR disabled (enableAR=false)");
+      continue;
+    }
+    if (!isAR && !enableRA) {
+      LDBG("Skipping - RA disabled (enableRA=false)");
+      continue;
+    }
+
+    scf::ForOp targetForOp = targetReduceOp->getParentOfType<scf::ForOp>();
+    if (!targetForOp) {
+      LDBG("Skipping - no parent scf::ForOp");
+      continue;
+    }
+    while (auto parentFor = targetForOp->getParentOfType<scf::ForOp>())
+      targetForOp = parentFor;
+    if (targetForOp.getInitArgs().empty()) {
+      LDBG("Skipping - ForOp has no init args");
+      continue;
+    }
+    if (targetForOp->getNumResults() != 1) {
+      LDBG("Skipping - ForOp has multiple results, not supported");
+      continue;
+    }
+
+    IRRewriter rewriter(targetForOp.getContext());
+    Location loc = targetForOp.getLoc();
+    rewriter.setInsertionPoint(targetForOp);
+
+    auto accTensorType =
+        cast<RankedTensorType>(targetForOp.getInitArgs()[0].getType());
+    Type computeElemTy = inElemTy;
+    if (isa<FloatType>(inElemTy) && inElemTy.getIntOrFloatBitWidth() < 32)
+      computeElemTy = rewriter.getF32Type();
+    int64_t vectorLength = getVectorLength(computeElemTy);
+    int64_t blockDataLen = getBlockDataLen(inElemTy);
+
+    if (vectorLength <= 0 || blockDataLen <= 0) {
+      LDBG("Skipping - invalid vectorLength=" << vectorLength
+                                              << " blockDataLen=" << blockDataLen);
+      continue;
+    }
+    LDBG("elemTy=" << inElemTy << " computeElemTy=" << computeElemTy
+                   << " vectorLength=" << vectorLength
+                   << " blockDataLen=" << blockDataLen);
+
+    TreeReductionBuilder builder(rewriter, loc, inElemTy,
+                                 accTensorType.getElementType(), dimA,
+                                 vectorLength);
+    LDBG("Building " << (isAR ? "AR" : "RA") << " reduction: dimR=" << dimR
+                     << " dimA=" << dimA << " accType=" << accTensorType);
+
+    if (isAR)
+      buildAR(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA,
+              accTensorType);
+    else
+      buildRA(rewriter, loc, builder, targetForOp, inputTensor, dimR, dimA,
+              accTensorType);
+
+    LDBG("--- Done processing MultiDimReductionOp");
+  }
+  LDBG("=== Done processing func: " << moduleOp.getSymName() << " ===");
 }
 
 } // namespace
 
-std::unique_ptr<Pass> hfusion::createTreeReduceV2Pass() {
-  return std::make_unique<TreeReduceV2Pass>();
+std::unique_ptr<Pass> hfusion::createTreeReduceV2Pass(const TreeReduceV2Options &options) {
+  return std::make_unique<TreeReduceV2Pass>(options);
 }

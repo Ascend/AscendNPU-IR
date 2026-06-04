@@ -84,6 +84,12 @@ static LogicalResult bufferizeDestinationStyleOpInterface(
 struct MmadL1OpInterface
     : public DstBufferizableOpInterfaceExternalModel<MmadL1OpInterface,
                                                      hivm::MmadL1Op> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
