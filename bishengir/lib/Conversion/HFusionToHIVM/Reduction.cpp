@@ -150,6 +150,10 @@ struct LinalgToHIVMReduceLikeOp : public OpRewritePattern<ReduceOpTy> {
         getReduceUnsignedSourceAttr(reduceOp),
         getReduceTieBreakLeftAttr(reduceOp), reduceOp.getDimensionsAttr());
 
+    if (reduceOp->hasAttr("already_initialize_init"))
+      hivmOp->setDiscardableAttr("already_initialize_init",
+                                 UnitAttr::get(rewriter.getContext()));
+
     Value firstCollapseSrc =
         hasPureTensor ? hivmOp.getResult()[0] : hivmOp.getDstValue();
     int64_t outRank = cast<ShapedType>(reduceOpInits[0].getType()).getRank();

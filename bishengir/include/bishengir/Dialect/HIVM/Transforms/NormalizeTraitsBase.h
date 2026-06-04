@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Transforms/Normalize/Utils/Kinds.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
@@ -95,6 +96,19 @@ public:
 
   static Value createBitcastOp(PatternRewriter &rewriter, Location loc,
                                Type resultType, Value source);
+
+  static Operation *createReduceOp(PatternRewriter &rewriter, Location loc,
+                                   VReduceOp op, Value src, ValueRange dsts,
+                                   DenseI64ArrayAttr reduceDimsAttr);
+
+  static Operation *createReduceWithIndexOp(PatternRewriter &rewriter,
+                                            Location loc, VReduceOp op,
+                                            ArrayRef<Value> newInputs,
+                                            ArrayRef<Value> newInits);
+
+  static Value castReduceIndexTensor(PatternRewriter &rewriter, Location loc,
+                                     Value value, IntegerType targetElemType,
+                                     Value shapeLike);
 
   static Value createGather1DOp(PatternRewriter &rewriter, Location loc,
                                 Value source, Value indices);

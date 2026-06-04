@@ -405,6 +405,26 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBitcastOp(
       .getResult(0);
 }
 
+Operation *mlir::hfusion::NormalizeTraitsBase::createReduceWithIndexOp(
+    PatternRewriter &rewriter, Location loc, ReduceWithIndexOp op,
+    ArrayRef<Value> newInputs, ArrayRef<Value> newInits) {
+  SmallVector<Type> resultTypes;
+  resultTypes.reserve(newInits.size());
+  for (Value init : newInits)
+    resultTypes.push_back(init.getType());
+
+  return rewriter.create<hfusion::ReduceWithIndexOp>(
+      loc, resultTypes, newInputs, newInits, op.getReduceKindAttr(),
+      op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+      op.getDimensionsAttr());
+}
+
+Value mlir::hfusion::NormalizeTraitsBase::castReduceIndexTensor(
+    PatternRewriter &rewriter, Location, Value value, IntegerType targetElemType,
+    Value) {
+  return hfusion::castTo(rewriter, value, targetElemType);
+}
+
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createSelectOp(
     PatternRewriter &rewriter, Location loc, Value cond, Value a, Value b,
     Value dst) {
