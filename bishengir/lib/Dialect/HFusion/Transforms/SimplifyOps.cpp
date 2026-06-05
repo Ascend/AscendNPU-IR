@@ -286,6 +286,14 @@ public:
     if (castOp->getResultTypes() != lastCast.getInputs().getTypes())
       return failure();
 
+    // Check that the exit cast's result is only used by the yield op inside
+    // the loop. If there are other uses (e.g., tensor.extract_slice), moving
+    // it after the loop would violate dominance.
+    for (auto &use : lastCast->getResult(0).getUses()) {
+      if (use.getOwner() != yieldOp)
+        return failure();
+    }
+
     // do moving
 
     // move current cast before the for loop, using init value of iter_arg as

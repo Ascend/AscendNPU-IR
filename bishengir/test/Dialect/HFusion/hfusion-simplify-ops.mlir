@@ -383,3 +383,27 @@ func.func @still_eliminate_cast(%arg0: tensor<f32>) -> tensor<f32> {
     %1 = hfusion.cast ins(%0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
     return %1 : tensor<f32>
 }
+
+// -----
+
+// CHECK-LABEL: func @castInLoopWithInnerUse
+// CHECK: scf.for
+// CHECK: hfusion.cast
+// CHECK: tensor.extract_slice
+// CHECK: scf.yield
+func.func @castInLoopWithInnerUse(%arg0: tensor<16x32xf16>, %arg1: tensor<16x32xf16>) -> (tensor<16x32xf16>, tensor<1x32xf16>) {
+  %c1_i32 = arith.constant 1 : i32
+  %c4_i32 = arith.constant 4 : i32
+  %empty_f32 = tensor.empty() : tensor<16x32xf32>
+  %empty_f16 = tensor.empty() : tensor<16x32xf16>
+  %init_slice = tensor.empty() : tensor<1x32xf16>
+  %0 = hfusion.cast ins(%arg0 : tensor<16x32xf16>) outs(%empty_f32 : tensor<16x32xf32>) -> tensor<16x32xf32>
+  %1:2 = scf.for %i = %c1_i32 to %c4_i32 step %c1_i32 iter_args(%arg = %arg1, %arg_slice = %init_slice) -> (tensor<16x32xf16>, tensor<1x32xf16>) : i32 {
+    %2 = hfusion.cast ins(%arg : tensor<16x32xf16>) outs(%empty_f32 : tensor<16x32xf32>) -> tensor<16x32xf32>
+    %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%2, %0 : tensor<16x32xf32>, tensor<16x32xf32>) outs(%empty_f32 : tensor<16x32xf32>) -> tensor<16x32xf32>
+    %4 = hfusion.cast ins(%3 : tensor<16x32xf32>) outs(%empty_f16 : tensor<16x32xf16>) -> tensor<16x32xf16>
+    %extracted_slice = tensor.extract_slice %4[0, 0] [1, 32] [1, 1] : tensor<16x32xf16> to tensor<1x32xf16>
+    scf.yield %4, %extracted_slice : tensor<16x32xf16>, tensor<1x32xf16>
+  }
+  return %1#0, %1#1 : tensor<16x32xf16>, tensor<1x32xf16>
+}
