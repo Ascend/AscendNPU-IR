@@ -89,4 +89,48 @@ module attributes {
     tt.store %out, %0 : !tt.ptr<i32>
     tt.return
   }
+
+  // ---- Partially-replicated layout: slot must be per-canonical-tid -----------
+  //
+  // 32 lanes cover 32 unique elements (lane axis NOT replicated); 4 warps share
+  // each element (warp axis IS replicated).  For every element there is one
+  // leader (warp 0) and three followers (warps 1-3).  Two properties must hold:
+  //
+  // 1. The cond_br that guards the atomic on the SIMT redundancy predicate
+  //    binds the undef-placeholder ONLY to the exit block (which has one
+  //    bb-arg); the atomic destination must have no operand list.  The buggy
+  //    4-arg overload bound the placeholder into both successors and tripped
+  //    `type mismatch for bb argument` deeper in the pipeline.
+  //
+  // 2. The smem broadcast slot is derived from a canonical thread id (the
+  //    thread id with the replicated warp bits cleared), not a constant.  A
+  //    constant or otherwise-non-canonical slot would race all four leader-
+  //    equivalent warps onto the same byte and collapse the broadcast.
+  //
+  // CHECK-LABEL: @tensor_atomic_add_i32_partial_replicate
+  // CHECK:       llvm.cond_br %{{.*}}, ^{{[a-z0-9]+}}, ^{{[a-z0-9]+}}(%{{.*}} : i32)
+  // CHECK:       ascend_dpx.atomic_add
+  // CHECK:       %[[TID:[0-9a-zA-Z_]+]] = ascend_dpx.thread_id_x
+  // CHECK:       %[[LANE:[0-9a-zA-Z_]+]] = llvm.urem %[[TID]],
+  // CHECK:       %[[WARP:[0-9a-zA-Z_]+]] = llvm.udiv %[[TID]],
+  // CHECK:       %[[CLANE:[0-9a-zA-Z_]+]] = llvm.and %[[LANE]],
+  // CHECK:       %[[CWARP:[0-9a-zA-Z_]+]] = llvm.and %[[WARP]],
+  // CHECK:       %[[CWSH:[0-9a-zA-Z_]+]] = llvm.shl %[[CWARP]],
+  // CHECK:       %[[SLOT:[0-9a-zA-Z_]+]] = llvm.or %[[CLANE]], %[[CWSH]]
+  // CHECK:       %[[GEP:[0-9a-zA-Z_]+]] = llvm.getelementptr %{{.*}}[%[[SLOT]]]
+  // CHECK:       ascend_dpx.store %[[GEP]], {{.*}} : <3>, vector<1xi32>
+  // CHECK-NEXT:  ascend_dpx.sync_threads
+  // CHECK:       ascend_dpx.load %[[GEP]] : (!llvm.ptr<3>) -> i32
+  tt.func @tensor_atomic_add_i32_partial_replicate(
+      %ptr: tensor<32x!tt.ptr<i32>, #blocked>,
+      %val: tensor<32xi32, #blocked>,
+      %mask: tensor<32xi1, #blocked>,
+      %out: tensor<32x!tt.ptr<i32>, #blocked>) {
+    %0 = tt.atomic_rmw add, acq_rel, gpu, %ptr, %val, %mask
+        {allocation.offset = 0 : i32}
+        : (tensor<32x!tt.ptr<i32>, #blocked>, tensor<32xi32, #blocked>,
+           tensor<32xi1, #blocked>) -> tensor<32xi32, #blocked>
+    tt.store %out, %0 : tensor<32x!tt.ptr<i32>, #blocked>
+    tt.return
+  }
 }

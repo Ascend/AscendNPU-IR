@@ -9,8 +9,6 @@
 #include "bishengir/Config/bishengir-config.h"
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
-#include "NVGPUToLLVM/NVGPUToLLVMPass.h"
-#include "NVGPUToLLVM/Passes.h"
 #include "TritonNVIDIAGPUToLLVM/Passes.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
@@ -170,7 +168,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       mlir::triton::createConvertTritonGPUToLLVMPass(70, 73);
   pm.addPass(std::unique_ptr<mlir::Pass>(
       dyn_cast<mlir::Pass>(convertTritonGPUToLLVMPass.release())));
-  pm.addPass(mlir::triton::createConvertNVGPUToLLVM());
+  pm.addPass(createCanonicalizerPass());
   pm.addPass(createGetTritonMetadataPass({options.tritonMetadataOutput}));
   pm.addPass(createArithToLLVMConversionPass());
 }
