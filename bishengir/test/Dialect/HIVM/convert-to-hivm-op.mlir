@@ -271,3 +271,25 @@ func.func @check_dominance_legal(%arg0: memref<32xbf16>, %arg1: memref<32xbf16>,
   return
 }
 }
+
+// -----
+// CHECK-LABEL: @triton_V_C_kernel_backup
+func.func @triton_V_C_kernel_backup(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xf32>, %arg4: memref<?xf32>, %arg5: memref<?xf32>, %arg6: i32, %arg7: i32, %arg8: i32) {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<1x3xf32>
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<1x3xf32>
+  %3 = tensor.empty() : tensor<1xf32>
+  // CHECK: hivm.hir.vbrc ins({{.*}} : f32) outs({{.*}} : tensor<1xf32>) -> tensor<1xf32>
+  %4 = hivm.hir.vbrc ins(%cst : f32) outs(%3 : tensor<1xf32>) -> tensor<1xf32>
+  %expanded = tensor.expand_shape %4 [[0, 1]] output_shape [1, 1] : tensor<1xf32> into tensor<1x1xf32>
+  %5 = hivm.hir.vreduce <sum> ins(%2 : tensor<1x3xf32>) outs(%expanded : tensor<1x1xf32>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xf32>
+  %collapsed = tensor.collapse_shape %5 [[0, 1]] : tensor<1x1xf32> into tensor<1xf32>
+  %6 = tensor.empty() : tensor<1x3xf32>
+  %extracted = tensor.extract %collapsed[%c0] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xf32>
+  // CHECK hivm.hir.vbrc ins({{.*}} : f32) outs({{.*}} : tensor<1x3xf32>) -> tensor<1x3xf32>
+  %7 = hivm.hir.vbrc ins(%extracted : f32) outs(%6 : tensor<1x3xf32>) -> tensor<1x3xf32>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [1, 3], strides: [3, 1] : memref<?xf32> to memref<1x3xf32, strided<[3, 1]>>
+  hivm.hir.store ins(%7 : tensor<1x3xf32>) outs(%reinterpret_cast_0 : memref<1x3xf32, strided<[3, 1]>>)
+  return
+}
