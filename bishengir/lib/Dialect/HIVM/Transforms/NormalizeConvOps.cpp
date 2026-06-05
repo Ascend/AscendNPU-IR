@@ -48,12 +48,12 @@ using namespace mlir::hivm;
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace {
-/// This pass normalizes Conv1D/Conv2D operations by adapting user-facing
-/// tensors to the hardware-required layout and precision, and then
-/// restoring results back to the user-visible form.
+/// This pass normalizes Conv1D/Conv2D/Conv3D operations by adapting
+/// user-facing tensors to the hardware-required layout and precision, and
+/// then restoring results back to the user-visible form.
 ///
-/// The transformation is organized into multiple stages, each handling
-/// a specific responsibility:
+/// The transformation is organized into multiple stages, each handling a
+/// specific responsibility:
 ///
 ///   1. Input / weight normalization
 ///        - Convert tensors from user layout to hardware layout
@@ -121,6 +121,11 @@ namespace {
 ///     from user-visible tensor types
 ///   - Bias placement depends on numerical and hardware considerations
 ///
+/// Note:
+///   Conv1D/Conv2D/Conv3D share the same output normalization template.
+///   Conv3D is mapped to an "effective batch" (B*D) and only keeps a small
+///   D-axis restore branch at the end.
+///
 struct NormalizeConvOpsPass
     : public impl::NormalizeConvOpsBase<NormalizeConvOpsPass> {
   using Base::Base;
@@ -140,14 +145,82 @@ template <> struct ConvBaseDims<hivm::Conv2DL1Op> {
   static constexpr int64_t dim = 3;
 };
 
+template <> struct ConvBaseDims<hivm::Conv3DL1Op> {
+  // the base dimension for Conv3DL1Op is 4 (CDHW)
+  static constexpr int64_t dim = 4;
+};
+
 static constexpr llvm::StringLiteral outputAlreadyNormalized =
     "outputAlreadyNormalized";
+static constexpr llvm::StringLiteral conv3dDepthPadded =
+    "conv3dDepthPadded";
+// outputAlreadyNormalized:
+//   Generic idempotence guard for output normalization rewrite. Once set, the
+//   op will be skipped by NormalizeConvOutputPattern to avoid repeated
+//   reshape/transpose cycles.
+//
+// conv3dDepthPadded:
+//   Explicit contract between normalize and decompose for Conv3d. When padding
+//   > 0, normalize materializes depth padding and tags the op, while decompose
+//   relies on this tag and keeps H/W padding on Conv2d attributes.
 
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
                                   Type dstType) {
   return hivm::RoundModeAttr::get(
       b.getContext(),
       mlir::utils::selectRoundMode<hivm::RoundMode>(srcType, dstType));
+}
+
+// Expand a 1-D channel bias and add it to a channel-major tensor, e.g.
+// [C, HW] + [C, 1] or [N, C, HW] + [1, C, 1].
+FailureOr<Value> createChannelBiasAdd(PatternRewriter &rewriter, Location loc,
+                                      Value input, Value bias,
+                                      ArrayRef<int64_t> resultShape,
+                                      int64_t channelDim, Type elemType) {
+  auto biasType = dyn_cast<RankedTensorType>(bias.getType());
+  if (!biasType || biasType.getRank() != 1 ||
+      biasType.getElementType() != elemType) {
+    return failure();
+  }
+  int64_t rank = static_cast<int64_t>(resultShape.size());
+  if (channelDim < 0 || channelDim >= rank) {
+    return failure();
+  }
+
+  int64_t channelSize = resultShape[channelDim];
+  if (biasType.getDimSize(0) != ShapedType::kDynamic &&
+      channelSize != ShapedType::kDynamic &&
+      biasType.getDimSize(0) != channelSize) {
+    return failure();
+  }
+
+  SmallVector<int64_t> biasShape(rank, 1);
+  biasShape[channelDim] = channelSize;
+  SmallVector<int64_t, 2> biasReassocIndices;
+  for (int64_t i = 0; i < rank; ++i) {
+    biasReassocIndices.push_back(i);
+  }
+  SmallVector<SmallVector<int64_t, 2>> biasReassoc = {biasReassocIndices};
+  auto expandedBiasType = RankedTensorType::get(biasShape, elemType);
+  Value expandedBias = rewriter.create<tensor::ExpandShapeOp>(
+      loc, expandedBiasType, bias, biasReassoc);
+
+  SmallVector<int64_t> broadcastDims;
+  for (int64_t i = 0; i < rank; ++i) {
+    if (i != channelDim) {
+      broadcastDims.push_back(i);
+    }
+  }
+
+  auto vaddType = RankedTensorType::get(resultShape, elemType);
+  Value vaddInit =
+      rewriter.create<tensor::EmptyOp>(loc, vaddType.getShape(), elemType);
+  return rewriter
+      .create<hivm::VAddOp>(
+          loc, TypeRange{vaddType}, ValueRange{input, expandedBias},
+          ValueRange{vaddInit}, Value(), nullptr,
+          rewriter.getDenseI64ArrayAttr(broadcastDims))
+      ->getResult(0);
 }
 
 LogicalResult getElementsFor32ByteAlignment(Type elementType, int64_t &C0) {
@@ -202,6 +275,76 @@ LogicalResult expandToBatch(ConvOpType op, PatternRewriter &rewriter) {
 
   op->replaceUsesOfWith(input, expandShapeOp->getResults()[0]);
 
+  return success();
+}
+
+LogicalResult padDepthForConv3dInput(hivm::Conv3DL1Op op,
+                                     PatternRewriter &rewriter,
+                                     int64_t depthPadding) {
+  // Depth padding is handled explicitly here (instead of in decompose) so the
+  // rest of the conv3d->conv2d lowering can assume a clean sliding window over
+  // depth with no extra control-flow branches.
+  if (depthPadding <= 0) {
+    return success();
+  }
+
+  Value input = op.getInput();
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  if (!inputType || !inputType.hasStaticShape() || inputType.getRank() != 5) {
+    return failure();
+  }
+
+  int64_t batch = inputType.getDimSize(0);
+  int64_t channel = inputType.getDimSize(1);
+  int64_t depth = inputType.getDimSize(2);
+  int64_t height = inputType.getDimSize(3);
+  int64_t width = inputType.getDimSize(4);
+  Type elementType = inputType.getElementType();
+  Location loc = op.getLoc();
+
+  auto zero = rewriter.create<arith::ConstantOp>(loc,
+                                                 rewriter.getZeroAttr(elementType));
+  auto emptyAttr = rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{});
+
+  auto createZeroPad = [&](ArrayRef<int64_t> shape) -> Value {
+    Value empty = rewriter.create<tensor::EmptyOp>(loc, shape, elementType);
+    return rewriter
+        .create<hivm::VBrcOp>(loc, TypeRange{empty.getType()}, zero, empty,
+                              emptyAttr)
+        ->getResult(0);
+  };
+
+  Value frontPad = createZeroPad(
+      ArrayRef<int64_t>{batch, channel, depthPadding, height, width});
+  Value backPad = createZeroPad(
+      ArrayRef<int64_t>{batch, channel, depthPadding, height, width});
+
+  Value concatFrontInit = rewriter.create<tensor::EmptyOp>(
+      loc, ArrayRef<int64_t>{batch, channel, depth + depthPadding, height, width},
+      elementType);
+  Value inputWithFront =
+      rewriter
+          .create<hivm::VConcatOp>(
+              loc, TypeRange{concatFrontInit.getType()},
+              rewriter.getI64IntegerAttr(2), ValueRange{frontPad, input},
+              concatFrontInit)
+          ->getResult(0);
+
+  Value concatFullInit = rewriter.create<tensor::EmptyOp>(
+      loc,
+      ArrayRef<int64_t>{batch, channel, depth + 2 * depthPadding, height, width},
+      elementType);
+  Value depthPaddedInput =
+      rewriter
+          .create<hivm::VConcatOp>(
+              loc, TypeRange{concatFullInit.getType()},
+              rewriter.getI64IntegerAttr(2), ValueRange{inputWithFront, backPad},
+              concatFullInit)
+          ->getResult(0);
+
+  op->replaceUsesOfWith(input, depthPaddedInput);
+  // Persist the "depth already materialized" fact for downstream decompose.
+  op->setAttr(conv3dDepthPadded, rewriter.getUnitAttr());
   return success();
 }
 
@@ -325,16 +468,23 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
 
   input = op.getInput();
 
-  // Step 2: For 2D, collapse spatial dimensions [N, C, iH, iW] -> [N, C, iHW]
+  // Step 2: Collapse spatial dimensions to reduce transpose cost.
+  // 2D: [N, C, iH, iW] -> [N, C, iHW]
+  // 3D: [N, C, iD, iH, iW] -> [N, C, iDHW]
   Value currentInput = input;
   int64_t iHW = 1;
-  if (baseDims == 3) {
+  if (baseDims == 3 || baseDims == 4) {
     for (auto size : spatialSizes) {
       iHW *= size;
     }
 
     SmallVector<int64_t> collapsedShape{batch, C, iHW};
-    SmallVector<SmallVector<int64_t, 2>> collapseReassoc = {{0}, {1}, {2, 3}};
+    SmallVector<ReassociationIndices> collapseReassoc;
+    if (baseDims == 3) {
+      collapseReassoc = {{0}, {1}, {2, 3}};
+    } else {
+      collapseReassoc = {{0}, {1}, {2, 3, 4}};
+    }
 
     auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
         op->getLoc(), RankedTensorType::get(collapsedShape, elementType),
@@ -374,14 +524,48 @@ insertPadExpandTransToFormatInput(ConvOpType op, PatternRewriter &rewriter,
     finalShape.insert(finalShape.end(), spatialSizes.begin(),
                       spatialSizes.end());
     finalShape.push_back(C0);
+  } else if (baseDims == 4) {
+    // For 3D: [N, C1, iDHW, C0] -> [N, C1, iD, iH, iW, C0]
+    finalShape.push_back(batch);
+    finalShape.push_back(C1);
+    finalShape.insert(finalShape.end(), spatialSizes.begin(),
+                      spatialSizes.end());
+    finalShape.push_back(C0);
   }
-  SmallVector<SmallVector<int64_t, 2>> finalReassoc = {{0}, {1}, {2, 3}, {4}};
+  SmallVector<ReassociationIndices> finalReassoc;
+  if (baseDims == 4) {
+    finalReassoc = {{0}, {1}, {2, 3, 4}, {5}};
+  } else {
+    finalReassoc = {{0}, {1}, {2, 3}, {4}};
+  }
   auto expandShapeOp1 = rewriter.create<tensor::ExpandShapeOp>(
       op->getLoc(), RankedTensorType::get(finalShape, elementType),
       vtransposeOp->getResults()[0], finalReassoc);
 
-  // Step 6: insert store + load
+  // Keep downstream contracts unchanged: Conv3d decompose currently expects
+  // packed input as [N, D, C1, H, W, C0].
   Value finalVal = expandShapeOp1->getResult(0);
+  if (baseDims == 4) {
+    // Generic packed flow naturally produces [N, C1, D, H, W, C0] for 3D.
+    // Swap to [N, D, C1, H, W, C0] to align with decompose slicing semantics
+    // (depth is the loop-driving axis).
+    auto finalValType = dyn_cast<RankedTensorType>(finalVal.getType());
+    if (!finalValType || !finalValType.hasStaticShape()) {
+      return failure();
+    }
+    auto shape = finalValType.getShape();
+    SmallVector<int64_t> outputShape{shape[0], shape[2], shape[1],
+                                     shape[3], shape[4], shape[5]};
+    SmallVector<int64_t> permutation{0, 2, 1, 3, 4, 5};
+    auto dst = rewriter.create<tensor::EmptyOp>(op->getLoc(), outputShape,
+                                                finalValType.getElementType());
+    auto vtranspose = rewriter.create<hivm::VTransposeOp>(
+        op->getLoc(), TypeRange{dst.getType()}, finalVal, dst.getResult(),
+        rewriter.getDenseI64ArrayAttr(permutation));
+    finalVal = vtranspose.getResult()[0];
+  }
+
+  // Step 6: insert store + load
   Type type = finalVal.getType();
   Type elemType = getElementTypeOrSelf(type);
 
@@ -490,17 +674,23 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
 
   weight = op.getWeight();
 
-  // Step 2: For 2D, collapse spatial dimensions [oC, C/groups, wH, wW] -> [oC,
-  // C/groups, wHW]
+  // Step 2: Collapse kernel spatial dimensions to reduce transpose cost.
+  // 2D: [oC, C/groups, wH, wW] -> [oC, C/groups, wHW]
+  // 3D: [oC, C/groups, wD, wH, wW] -> [oC, C/groups, wDHW]
   Value currentWeight = weight;
   int64_t wHW = 1;
-  if (baseDims == 3) {
+  if (baseDims == 3 || baseDims == 4) {
     for (auto size : kernelSizes) {
       wHW *= size;
     }
 
     SmallVector<int64_t> collapsedShape{oC, C / groups, wHW};
-    SmallVector<SmallVector<int64_t, 2>> collapseReassoc = {{0}, {1}, {2, 3}};
+    SmallVector<ReassociationIndices> collapseReassoc;
+    if (baseDims == 3) {
+      collapseReassoc = {{0}, {1}, {2, 3}};
+    } else {
+      collapseReassoc = {{0}, {1}, {2, 3, 4}};
+    }
 
     auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
         op->getLoc(), RankedTensorType::get(collapsedShape, elementType),
@@ -559,14 +749,47 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
     finalShape.insert(finalShape.end(), kernelSizes.begin(), kernelSizes.end());
     finalShape.push_back(oC);
     finalShape.push_back(C0);
+  } else if (baseDims == 4) {
+    // For 3D: [C1/groups, wDHW, oC, C0] -> [C1/groups, wD, wH, wW, oC, C0]
+    finalShape.push_back(newChannelsPerGroup);
+    finalShape.insert(finalShape.end(), kernelSizes.begin(), kernelSizes.end());
+    finalShape.push_back(oC);
+    finalShape.push_back(C0);
   }
-  SmallVector<SmallVector<int64_t, 2>> finalReassoc = {{0}, {1, 2}, {3}, {4}};
+  SmallVector<ReassociationIndices> finalReassoc;
+  if (baseDims == 4) {
+    finalReassoc = {{0}, {1, 2, 3}, {4}, {5}};
+  } else {
+    finalReassoc = {{0}, {1, 2}, {3}, {4}};
+  }
   auto expandShapeOp1 = rewriter.create<tensor::ExpandShapeOp>(
       op->getLoc(), RankedTensorType::get(finalShape, elementType),
       vtransposeOp2.getResult()[0], finalReassoc);
-  
-  // Step 8: insert store + load & mark with layout
+
+  // Keep downstream contracts unchanged: Conv3d decompose currently expects
+  // packed weight as [wD, C1/groups, wH, wW, oC, C0].
   Value finalVal = expandShapeOp1->getResult(0);
+  if (baseDims == 4) {
+    // Generic packed flow yields [C1/groups, wD, wH, wW, oC, C0] for 3D.
+    // Swap to [wD, C1/groups, wH, wW, oC, C0] so each kd iteration can take a
+    // simple contiguous slice on axis 0.
+    auto finalValType = dyn_cast<RankedTensorType>(finalVal.getType());
+    if (!finalValType || !finalValType.hasStaticShape()) {
+      return failure();
+    }
+    auto shape = finalValType.getShape();
+    SmallVector<int64_t> outputShape{shape[1], shape[0], shape[2],
+                                     shape[3], shape[4], shape[5]};
+    SmallVector<int64_t> permutation{1, 0, 2, 3, 4, 5};
+    auto dst = rewriter.create<tensor::EmptyOp>(op->getLoc(), outputShape,
+                                                finalValType.getElementType());
+    auto vtranspose = rewriter.create<hivm::VTransposeOp>(
+        op->getLoc(), TypeRange{dst.getType()}, finalVal, dst.getResult(),
+        rewriter.getDenseI64ArrayAttr(permutation));
+    finalVal = vtranspose.getResult()[0];
+  }
+
+  // Step 8: insert store + load & mark with layout
   Type type = finalVal.getType();
   Type elemType = getElementTypeOrSelf(type);
 
@@ -597,6 +820,11 @@ insertPadExpandTransToFormatWeight(ConvOpType op, PatternRewriter &rewriter,
 /// This pattern normalizes the input and weight layout of Conv1D/Conv2D
 /// operations by transforming them into a fractal format for efficient
 /// hardware execution.
+///
+/// Note:
+///   Conv3D input/weight normalization is also handled by this template
+///   (baseDims==4 branch), using collapse(DHW) -> transpose -> expand(DHW)
+///   to reduce transpose count while preserving downstream packed contracts.
 ///
 /// Original logical layouts:
 ///   Conv1D:
@@ -646,6 +874,7 @@ public:
   using OpRewritePattern<ConvOpType>::OpRewritePattern;
   LogicalResult matchAndRewrite(ConvOpType op,
                                 PatternRewriter &rewriter) const override {
+    static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
 
     if (!op.hasPureTensorSemantics()) {
       return failure();
@@ -671,12 +900,15 @@ public:
     }
 
     auto inputType = cast<ShapedType>(input.getType());
-    if (!inputType.hasStaticShape() || inputType.getRank() == 5) {
+    if (!inputType.hasStaticShape() ||
+        (inputType.getRank() != baseDims &&
+         inputType.getRank() != baseDims + 1)) {
       return failure();
     }
 
     auto weightType = cast<ShapedType>(weight.getType());
-    if (!weightType.hasStaticShape() || weightType.getRank() == 5) {
+    if (!weightType.hasStaticShape() ||
+        weightType.getRank() != baseDims + 1) {
       return failure();
     }
 
@@ -693,7 +925,7 @@ public:
     }
 
     if (!op->hasAttr("groups")) {
-      return op.emitError("Expected Attr named groups for Conv1D op");
+      return op.emitError("Expected Attr named groups for Conv op");
     }
 
     if (!isa<IntegerAttr>(op->getAttr("groups"))) {
@@ -706,11 +938,27 @@ public:
       rewriter.setInsertionPoint(outDefOp);
     }
 
-    static constexpr int64_t baseDims = ConvBaseDims<ConvOpType>::dim;
-
     if (inputType.getRank() == baseDims) {
       if (failed(expandToBatch<ConvOpType>(op, rewriter))) {
         return rewriter.notifyMatchFailure(op, "Failed to expand to batch");
+      }
+    }
+
+    if constexpr (baseDims == 4) {
+      // Conv3d currently shares a single scalar padding attribute across D/H/W.
+      // Normalize consumes the depth part here and marks the op, while H/W
+      // logical padding remains in Conv2d attrs after decompose.
+      int64_t padding = op.getPadding();
+      if (padding < 0) {
+        return rewriter.notifyMatchFailure(op, "Conv3d padding must be >= 0");
+      }
+      if (!op->hasAttr(conv3dDepthPadded) && padding > 0) {
+        if (failed(
+                padDepthForConv3dInput(cast<hivm::Conv3DL1Op>(op), rewriter,
+                                       padding))) {
+          return rewriter.notifyMatchFailure(op,
+                                             "Failed to pre-pad Conv3d depth");
+        }
       }
     }
 
@@ -721,7 +969,7 @@ public:
     int64_t C = CEIL_DIV(iC, C0 * groups) * (C0 * groups);
 
     LLVM_DEBUG(llvm::dbgs()
-               << "start insert [pad expand trans] op for conv1D op"
+               << "start insert [pad expand trans] op for conv op"
                << "\n");
     if (failed(insertPadExpandTransToFormatInput<ConvOpType>(op, rewriter, C0,
                                                              C, groups))) {
@@ -734,7 +982,7 @@ public:
           op, "Failed to insert pad/expand/trans for weight");
     }
 
-    LLVM_DEBUG(llvm::dbgs() << "insert op for conv1D op successfully!"
+    LLVM_DEBUG(llvm::dbgs() << "insert op for conv op successfully!"
                             << "\n");
     return success();
   }
@@ -878,10 +1126,19 @@ public:
     int64_t rank = resultType.getRank();
     // For 1D conv: rank should be 2 (CW) or 3 (NCW)
     // For 2D conv: rank should be 3 (CHW) or 4 (NCHW)
+    // For 3D conv: rank should be 4 (CDHW) or 5 (NCDHW)
     int64_t expectedMinRank = baseDims;
     int64_t expectedMaxRank = baseDims + 1;
     if (rank != expectedMinRank && rank != expectedMaxRank) {
       return failure();
+    }
+
+    if constexpr (baseDims == 4) {
+      if (resultType.hasStaticShape()) {
+        // Static Conv3D output normalization restores the fused result to the
+        // same rank-3 channel-bias layout used by Conv2D, so handle it there.
+        return failure();
+      }
     }
 
     Location loc = op.getLoc();
@@ -916,14 +1173,14 @@ public:
     SmallVector<int64_t> vaddShape(shape.begin(), shape.end());
     Value vaddInput = convResult;
 
-    if constexpr (baseDims == 3) {
-      auto getCollapsedDim = [](int64_t lhs, int64_t rhs) {
-        if (lhs == ShapedType::kDynamic || rhs == ShapedType::kDynamic) {
-          return ShapedType::kDynamic;
-        }
-        return lhs * rhs;
-      };
+    auto getCollapsedDim = [](int64_t lhs, int64_t rhs) {
+      if (lhs == ShapedType::kDynamic || rhs == ShapedType::kDynamic) {
+        return ShapedType::kDynamic;
+      }
+      return lhs * rhs;
+    };
 
+    if constexpr (baseDims == 3) {
       if (hasBatch) {
         // [N, oC, oH, oW] -> [N, oC, oHW]
         vaddShape = {shape[0], shape[1], getCollapsedDim(shape[2], shape[3])};
@@ -939,53 +1196,24 @@ public:
         vaddInput = rewriter.create<tensor::CollapseShapeOp>(
             loc, collapsedType, convResult, reassoc);
       }
+    } else if constexpr (baseDims == 4) {
+      if (hasBatch) {
+        // [N, oC, oD, oH, oW] -> [N, oC, oD, oHW]
+        vaddShape = {shape[0], shape[1], shape[2],
+                     getCollapsedDim(shape[3], shape[4])};
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1}, {2}, {3, 4}};
+        auto collapsedType = RankedTensorType::get(vaddShape, elemType);
+        vaddInput = rewriter.create<tensor::CollapseShapeOp>(
+            loc, collapsedType, convResult, reassoc);
+      } else {
+        // [oC, oD, oH, oW] -> [oC, oD, oHW]
+        vaddShape = {shape[0], shape[1], getCollapsedDim(shape[2], shape[3])};
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1}, {2, 3}};
+        auto collapsedType = RankedTensorType::get(vaddShape, elemType);
+        vaddInput = rewriter.create<tensor::CollapseShapeOp>(
+            loc, collapsedType, convResult, reassoc);
+      }
     }
-    int64_t vaddRank = static_cast<int64_t>(vaddShape.size());
-
-    // Output channel dimension position depends on rank
-    // For rank = baseDims: format is oCxSpatial (no batch)
-    // For rank = baseDims + 1: format is NxoCxSpatial (with batch)
-    int64_t outputChannelDim = (rank == baseDims) ? 0 : 1;
-    int64_t oC = resultType.getDimSize(outputChannelDim);
-
-    SmallVector<int64_t> expandedShape;
-    SmallVector<SmallVector<int64_t, 2>> reassoc;
-
-    if (!hasBatch) {
-      // No batch dimension: [oC, spatial_dims...].
-      // For 1D: expandedShape = {oC, 1}, reassoc = {{0, 1}}.
-      // For 2D, spatial dims have already been fused to oHW before the bias
-      // add: expandedShape = {oC, 1}, reassoc = {{0, 1}}.
-      expandedShape.push_back(oC);
-      for (int64_t i = 0; i < vaddRank - 1; i++) {
-        expandedShape.push_back(1);
-      }
-      SmallVector<int64_t, 2> reassocIndices;
-      for (int64_t i = 0; i < vaddRank; i++) {
-        reassocIndices.push_back(i);
-      }
-      reassoc.push_back(reassocIndices);
-    } else {
-      // With batch dimension: [N, oC, spatial_dims...].
-      // For 1D: expandedShape = {1, oC, 1}, reassoc = {{0, 1, 2}}.
-      // For 2D, spatial dims have already been fused to oHW before the bias
-      // add: expandedShape = {1, oC, 1}, reassoc = {{0, 1, 2}}.
-      expandedShape.push_back(1);
-      expandedShape.push_back(oC);
-      for (int64_t i = 0; i < vaddRank - 2; i++) {
-        expandedShape.push_back(1);
-      }
-      SmallVector<int64_t, 2> reassocIndices;
-      for (int64_t i = 0; i < vaddRank; i++) {
-        reassocIndices.push_back(i);
-      }
-      reassoc.push_back(reassocIndices);
-    }
-
-    auto expandedType = RankedTensorType::get(expandedShape, biasElemType);
-    auto expandedBias = rewriter.create<tensor::ExpandShapeOp>(
-        loc, expandedType, bias, reassoc);
-
     auto convResultElemType =
         dyn_cast<RankedTensorType>(convResult.getType()).getElementType();
 
@@ -994,36 +1222,14 @@ public:
           op, "bias type mismatch with convResult type");
     }
 
-    SmallVector<int64_t> broadcastDims;
-    if (!hasBatch) {
-      // No batch dimension: [oC, spatial_dims...].
-      // For 1D: broadcastDims = {1}.
-      // For 2D, spatial dims have already been fused to oHW before the bias
-      // add: broadcastDims = {1}.
-      for (int64_t i = 1; i < vaddRank; i++) {
-        broadcastDims.push_back(i); // spatial dimensions
-      }
-    } else {
-      // With batch dimension: [N, oC, spatial_dims...].
-      // For 1D: broadcastDims = {0, 2}.
-      // For 2D, spatial dims have already been fused to oHW before the bias
-      // add: broadcastDims = {0, 2}.
-      broadcastDims.push_back(0); // batch dimension
-      for (int64_t i = 2; i < vaddRank; i++) {
-        broadcastDims.push_back(i); // spatial dimensions
-      }
+    int64_t channelDim = hasBatch ? 1 : 0;
+    auto biasAdd = createChannelBiasAdd(rewriter, loc, vaddInput, bias,
+                                        vaddShape, channelDim,
+                                        convResultElemType);
+    if (failed(biasAdd)) {
+      return failure();
     }
-
-    auto broadcastAttr = rewriter.getDenseI64ArrayAttr(broadcastDims);
-
-    auto vaddInit =
-        rewriter.create<tensor::EmptyOp>(loc, vaddShape, convResultElemType);
-
-    auto vadd = rewriter.create<hivm::VAddOp>(
-        loc, TypeRange{vaddInit.getType()}, ValueRange{vaddInput, expandedBias},
-        ValueRange{vaddInit}, Value(), nullptr, broadcastAttr);
-
-    Value result = vadd->getResult(0);
+    Value result = *biasAdd;
     if constexpr (baseDims == 3) {
       auto expandedResultType =
           RankedTensorType::get(shape, convResultElemType);
@@ -1036,6 +1242,18 @@ public:
         result = rewriter.create<tensor::ExpandShapeOp>(loc, expandedResultType,
                                                         result, reassoc);
       }
+    } else if constexpr (baseDims == 4) {
+      auto expandedResultType =
+          RankedTensorType::get(shape, convResultElemType);
+      if (hasBatch) {
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1}, {2}, {3, 4}};
+        result = rewriter.create<tensor::ExpandShapeOp>(loc, expandedResultType,
+                                                        result, reassoc);
+      } else {
+        SmallVector<ReassociationIndices> reassoc = {{0}, {1}, {2, 3}};
+        result = rewriter.create<tensor::ExpandShapeOp>(loc, expandedResultType,
+                                                        result, reassoc);
+      }
     }
 
     rewriter.replaceOp(op, result);
@@ -1043,9 +1261,14 @@ public:
   }
 };
 
-/// This pattern normalizes the output layout of hivm::Conv1DL1Op by fusing
-/// batch and group dimensions and aligning width and per-group channels,
-/// then restoring the result back to the user-visible layout.
+/// This pattern normalizes the output layout of Conv1D/Conv2D by fusing
+/// batch and group dimensions and aligning width/per-group channels, then
+/// restoring the result back to user-visible layout.
+///
+/// Note:
+///   Conv3D reuses the same fused/aligned flow by mapping to an effective
+///   batch (B*D), then restores the final axis order with a small D-axis
+///   transpose branch.
 ///
 /// Motivation:
 ///   The original Conv1DL1 produces output in logical layout:
@@ -1074,7 +1297,7 @@ public:
 ///      - For grouped and unaligned channels, remove per-group padding by
 ///        per-group slice + insert.
 ///
-///   3. Restore user-visible layout if batch exists or 2D convolution:
+///   3. Restore user-visible layout if batch exists:
 ///        1D (fusedOC = oC, oHW = oW)): [fusedOC, oHW] -> [oC, oW]
 ///        1D + batch (oHW = oW)): [fusedOC, oHW] -> [B, oC, oW]
 ///        2D (fusedOC = oC): [fusedOC, oW] -> [oC, oH, oW]
@@ -1103,6 +1326,8 @@ public:
     }
 
     if (op->getAttr(outputAlreadyNormalized)) {
+      // Idempotence guard: previous normalize output rewrite already produced
+      // internalized layout + restored visible layout.
       return failure();
     }
 
@@ -1137,6 +1362,7 @@ public:
     bool hasBatch = resultType.getRank() == expectedMaxRank;
 
     int64_t batch = 1;
+    int64_t oD = 1;
     int64_t oH = 1;
     int64_t oC, oW;
 
@@ -1166,12 +1392,30 @@ public:
         oH = resultType.getDimSize(2);
         oW = resultType.getDimSize(3);
       }
+    } else if (baseDims == 4) {
+      // 3D convolution
+      if (!hasBatch) {
+        // [oC, oD, oH, oW]
+        oC = resultType.getDimSize(0);
+        oD = resultType.getDimSize(1);
+        oH = resultType.getDimSize(2);
+        oW = resultType.getDimSize(3);
+      } else {
+        // [B, oC, oD, oH, oW]
+        batch = resultType.getDimSize(0);
+        oC = resultType.getDimSize(1);
+        oD = resultType.getDimSize(2);
+        oH = resultType.getDimSize(3);
+        oW = resultType.getDimSize(4);
+      }
     } else {
-      // 3D convolution or other
       return failure();
     }
 
     int64_t oHW = oH * oW;
+    // Conv3D uses an effective batch of B*oD so it can share the same
+    // fused/aligned/crop flow as Conv1D/Conv2D.
+    int64_t effectiveBatch = batch * oD;
 
     int64_t oCPerGroup = oC / groupsVal;
     int64_t oCPerGroupCeil = CEIL_FACTOR(oCPerGroup, utils::FRACTAL_BLOCK_NUM);
@@ -1179,67 +1423,108 @@ public:
 
     bool isOCPerGroupAligned = (oCPerGroup % utils::FRACTAL_BLOCK_NUM == 0);
     int64_t oHWCeil = CEIL_FACTOR(oHW, utils::FRACTAL_BLOCK_NUM);
-    int64_t fusedOC = batch * oC;
-    int64_t fusedOCCeil = batch * oCCeil;
-    int64_t fusedGroupsVal = batch * groupsVal;
+    int64_t fusedOC = effectiveBatch * oC;
+    int64_t fusedOCCeil = effectiveBatch * oCCeil;
+    int64_t fusedGroupsVal = effectiveBatch * groupsVal;
 
     auto elementType = resultType.getElementType();
     Location loc = op.getLoc();
 
-    SmallVector<int64_t> newShape{oHWCeil, fusedOCCeil};
+    bool useFusedConv3DBiasAdd = false;
+    if constexpr (baseDims == 4) {
+      if (bias) {
+        auto biasType = dyn_cast<RankedTensorType>(bias.getType());
+        if (!biasType || biasType.getRank() != 1 ||
+            !resultType.hasStaticShape()) {
+          return failure();
+        }
+        if (biasType.getDimSize(0) != ShapedType::kDynamic &&
+            biasType.getDimSize(0) != oC) {
+          return failure();
+        }
+        useFusedConv3DBiasAdd = true;
+      }
+    }
+
+    hivm::VCastOp castOp = nullptr;
+    if (convResult.hasOneUse()) {
+      castOp = dyn_cast<hivm::VCastOp>(*convResult.user_begin());
+    }
+
+    bool delayCastUntilAfterFusedBias = false;
+    if (useFusedConv3DBiasAdd) {
+      auto biasType = cast<RankedTensorType>(bias.getType());
+      Type biasAddType = elementType;
+      if (castOp) {
+        auto castResultType =
+            mlir::cast<RankedTensorType>(castOp->getResult(0).getType());
+        delayCastUntilAfterFusedBias =
+            biasType.getElementType() == elementType;
+        if (!delayCastUntilAfterFusedBias) {
+          biasAddType = castResultType.getElementType();
+        }
+      }
+      if (biasType.getElementType() != biasAddType) {
+        return failure();
+      }
+    }
+
+    SmallVector<int64_t> newShape = {oHWCeil, fusedOCCeil};
     auto newResultType = RankedTensorType::get(newShape, elementType);
     Value newEmpty =
         rewriter.create<tensor::EmptyOp>(loc, newShape, elementType);
 
     // === create new ConvOp with result of new shape ===
+    Value convBias = useFusedConv3DBiasAdd ? Value() : bias;
     auto newConvOp = rewriter.create<ConvOpType>(
         loc,           // location
         newResultType, // result type: [oHWCeil, fusedOCCeil]
         input,         // input
         weight,        // weight
-        bias,          // bias
+        convBias,      // bias
         newEmpty,      // init: [oHWCeil, fusedOCCeil]
         initCondition, // init condition
         ValueRange{},  // sync_related_args
         padding,       // padding attribute
         groups         // groups attribute
     );
+    if (op->hasAttr(conv3dDepthPadded)) {
+      // Preserve depth-padding contract across op replacement.
+      newConvOp->setAttr(conv3dDepthPadded, rewriter.getUnitAttr());
+    }
 
     Value newResult = newConvOp.getResultTensors()[0];
 
     // === rewrite vcast and update target if exist ===
     Value target = convResult;
     Value newTarget = newResult;
-    hivm::VCastOp castOp = nullptr;
-
-    if (convResult.hasOneUse()) {
-      castOp = dyn_cast<hivm::VCastOp>(*convResult.user_begin());
-    }
 
     if (castOp) {
-      auto castResultType =
-          mlir::cast<RankedTensorType>(castOp->getResult(0).getType());
-      auto newCastResultType =
-          RankedTensorType::get(newShape, castResultType.getElementType());
-      auto newCastInit = rewriter.create<tensor::EmptyOp>(
-          loc, newShape, castResultType.getElementType());
-
-      auto newCastOp = rewriter.create<hivm::VCastOp>(
-          loc, TypeRange{newCastResultType}, ValueRange{newResult},
-          ValueRange{newCastInit.getResult()}, /*temp_buffer=*/Value(),
-          castOp.getRoundModeAttr(), hivm::TypeFnAttr{});
-
       target = castOp->getResult(0);
-      newTarget = newCastOp->getResult(0);
+      if (!delayCastUntilAfterFusedBias) {
+        auto castResultType =
+            mlir::cast<RankedTensorType>(castOp->getResult(0).getType());
+        auto newCastResultType =
+            RankedTensorType::get(newShape, castResultType.getElementType());
+        auto newCastInit = rewriter.create<tensor::EmptyOp>(
+            loc, newShape, castResultType.getElementType());
+
+        auto newCastOp = rewriter.create<hivm::VCastOp>(
+            loc, TypeRange{newCastResultType}, ValueRange{newResult},
+            ValueRange{newCastInit.getResult()}, /*temp_buffer=*/Value(),
+            castOp.getRoundModeAttr(), hivm::TypeFnAttr{});
+
+        newTarget = newCastOp->getResult(0);
+      }
     }
 
     auto newTargetType =
         mlir::cast<RankedTensorType>(newTarget.getType()).getElementType();
 
     // === post process to [fusedOC, oHW] ===
-    if (isOCPerGroupAligned || fusedGroupsVal == 1) {
-      // case: aligned or fusedGroupsVal == 1
-      // step 1: [oHWCeil, fusedOCCeil] -> [oHW, fusedOC]
+    bool useDirectSlicePath = isOCPerGroupAligned || fusedGroupsVal == 1;
+    if (useDirectSlicePath) {
+      // [oHWCeil, fusedOCCeil] -> [oHW, fusedOC] -> [fusedOC, oHW]
       SmallVector<OpFoldResult, 2> offsets{
           rewriter.getIndexAttr(0),
           rewriter.getIndexAttr(0),
@@ -1259,10 +1544,8 @@ public:
       auto slice = rewriter.create<tensor::ExtractSliceOp>(
           loc, sliceType, newTarget, offsets, sizes, strides);
 
-      // step 2: transpose [oHW, fusedOC] -> [fusedOC, oHW]
       SmallVector<int64_t> tShape{fusedOC, oHW};
-      Value tInit =
-          rewriter.create<tensor::EmptyOp>(loc, tShape, newTargetType);
+      Value tInit = rewriter.create<tensor::EmptyOp>(loc, tShape, newTargetType);
       SmallVector<int64_t, 2> perm{1, 0};
 
       newResult = rewriter
@@ -1367,7 +1650,11 @@ public:
     }
 
     // === batch reshape ===
-    if (hasBatch) {
+    // Conv1D/Conv2D reach this point as [B * oC, oHW]. Conv3D carries depth
+    // in the leading dimension as [B * oD * oC, oHW], so it must keep that
+    // shape for the dedicated D-axis restore below.
+    bool needsGenericBatchRestore = hasBatch && baseDims != 4;
+    if (needsGenericBatchRestore) {
       auto batchReshapedType =
           RankedTensorType::get({batch, oC, oHW}, newTargetType);
 
@@ -1405,9 +1692,102 @@ public:
         newResult = rewriter.create<tensor::ExpandShapeOp>(loc, finalType,
                                                            newResult, reassoc);
       }
+    } else if (baseDims == 4) {
+      // First restore to the same rank-3 channel layout used by batched Conv2D:
+      // [batchLike, oC, oHW], where batchLike is B*oD or just oD.
+      auto channelLayoutType =
+          RankedTensorType::get({effectiveBatch, oC, oHW}, newTargetType);
+      SmallVector<ReassociationIndices> channelLayoutReassoc = {{0, 1}, {2}};
+      newResult = rewriter.create<tensor::ExpandShapeOp>(
+          loc, channelLayoutType, newResult, channelLayoutReassoc);
+
+      if (useFusedConv3DBiasAdd) {
+        auto biasAdded = createChannelBiasAdd(
+            rewriter, loc, newResult, bias, channelLayoutType.getShape(),
+            /*channelDim=*/1, newTargetType);
+        if (failed(biasAdded)) {
+          return failure();
+        }
+        newResult = *biasAdded;
+      }
+
+      // Step 1: [effectiveBatch, oC, oHW] -> [effectiveBatch, oC, oH, oW]
+      auto internalizedType =
+          RankedTensorType::get({effectiveBatch, oC, oH, oW}, newTargetType);
+      SmallVector<ReassociationIndices> internalizedReassoc = {
+          {0},
+          {1},
+          {2, 3} // oH * oW
+      };
+      newResult = rewriter.create<tensor::ExpandShapeOp>(
+          loc, internalizedType, newResult, internalizedReassoc);
+
+      if (hasBatch) {
+        // Step 2a: [B*oD, oC, oH, oW] -> [B, oD, oC, oH, oW]
+        auto splitBatchType =
+            RankedTensorType::get({batch, oD, oC, oH, oW}, newTargetType);
+        SmallVector<ReassociationIndices> splitBatchReassoc = {
+            {0, 1}, // B * oD
+            {2},
+            {3},
+            {4},
+        };
+        newResult = rewriter.create<tensor::ExpandShapeOp>(
+            loc, splitBatchType, newResult, splitBatchReassoc);
+
+        // Step 2b: [B, oD, oC, oH, oW] -> [B, oC, oD, oH, oW]
+        auto newResultType = dyn_cast<RankedTensorType>(newResult.getType());
+        if (!newResultType || !newResultType.hasStaticShape()) {
+          return failure();
+        }
+        auto shape = newResultType.getShape();
+        SmallVector<int64_t> outputShape{shape[0], shape[2], shape[1],
+                                         shape[3], shape[4]};
+        SmallVector<int64_t> permutation{0, 2, 1, 3, 4};
+        auto dst = rewriter.create<tensor::EmptyOp>(loc, outputShape,
+                                                    newResultType.getElementType());
+        auto vtranspose = rewriter.create<hivm::VTransposeOp>(
+            loc, TypeRange{dst.getType()}, newResult, dst.getResult(),
+            rewriter.getDenseI64ArrayAttr(permutation));
+        newResult = vtranspose.getResult()[0];
+      } else {
+        // Step 2: [oD, oC, oH, oW] -> [oC, oD, oH, oW]
+        auto newResultType = dyn_cast<RankedTensorType>(newResult.getType());
+        if (!newResultType || !newResultType.hasStaticShape()) {
+          return failure();
+        }
+        auto shape = newResultType.getShape();
+        SmallVector<int64_t> outputShape{shape[1], shape[0], shape[2], shape[3]};
+        SmallVector<int64_t> permutation{1, 0, 2, 3};
+        auto dst = rewriter.create<tensor::EmptyOp>(loc, outputShape,
+                                                    newResultType.getElementType());
+        auto vtranspose = rewriter.create<hivm::VTransposeOp>(
+            loc, TypeRange{dst.getType()}, newResult, dst.getResult(),
+            rewriter.getDenseI64ArrayAttr(permutation));
+        newResult = vtranspose.getResult()[0];
+      }
+    } else if (baseDims == 2) {
+      // Conv1D already has its final [oC, oW] or [B, oC, oW] shape here.
+    } else {
+      return failure();
+    }
+
+    if (delayCastUntilAfterFusedBias) {
+      auto castResultType =
+          mlir::cast<RankedTensorType>(castOp->getResult(0).getType());
+      auto castInit = rewriter.create<tensor::EmptyOp>(
+          loc, castResultType.getShape(), castResultType.getElementType());
+      newResult =
+          rewriter
+              .create<hivm::VCastOp>(
+                  loc, TypeRange{castResultType}, ValueRange{newResult},
+                  ValueRange{castInit.getResult()}, /*temp_buffer=*/Value(),
+                  castOp.getRoundModeAttr(), hivm::TypeFnAttr{})
+              ->getResult(0);
     }
 
     rewriter.replaceOp(target.getDefiningOp(), newResult);
+    // Mark the newly-created conv op to prevent re-entering this pattern.
     newConvOp->setAttr(outputAlreadyNormalized, rewriter.getUnitAttr());
     return success();
   }
@@ -1418,9 +1798,13 @@ void populateNormalizeConvOpsPattern1(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<NormalizeConvResultTypePattern<BFloat16Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
+  patterns.add<NormalizeConvResultTypePattern<BFloat16Type, hivm::Conv3DL1Op>>(
+      patterns.getContext());
   patterns.add<DecomposeConvResultWithBiasPattern<Float16Type, hivm::Conv1DL1Op>>(
       patterns.getContext());
   patterns.add<DecomposeConvResultWithBiasPattern<Float16Type, hivm::Conv2DL1Op>>(
+      patterns.getContext());
+  patterns.add<DecomposeConvResultWithBiasPattern<Float16Type, hivm::Conv3DL1Op>>(
       patterns.getContext());
 }
 
@@ -1429,20 +1813,24 @@ void populateNormalizeConvOpsPattern2(RewritePatternSet &patterns) {
       patterns.getContext());
   patterns.add<NormalizeConvResultTypePattern<Float16Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
+  patterns.add<NormalizeConvResultTypePattern<Float16Type, hivm::Conv3DL1Op>>(
+      patterns.getContext());
   patterns.add<DecomposeConvResultWithBiasPattern<Float32Type, hivm::Conv1DL1Op>>(
       patterns.getContext());
   patterns.add<DecomposeConvResultWithBiasPattern<Float32Type, hivm::Conv2DL1Op>>(
       patterns.getContext());
+  patterns.add<DecomposeConvResultWithBiasPattern<Float32Type, hivm::Conv3DL1Op>>(
+      patterns.getContext());
 }
 
 void populateNormalizeConvOpsPattern3(RewritePatternSet &patterns) {
-  patterns.add<NormalizeConvInputAndWeightPattern<hivm::Conv1DL1Op>>(
+  patterns.add<NormalizeConvInputAndWeightPattern<hivm::Conv1DL1Op>,
+               NormalizeConvInputAndWeightPattern<hivm::Conv2DL1Op>,
+               NormalizeConvInputAndWeightPattern<hivm::Conv3DL1Op>>(
       patterns.getContext());
-  patterns.add<NormalizeConvInputAndWeightPattern<hivm::Conv2DL1Op>>(
-      patterns.getContext());
-  patterns.add<NormalizeConvOutputPattern<hivm::Conv1DL1Op>>(
-      patterns.getContext());
-  patterns.add<NormalizeConvOutputPattern<hivm::Conv2DL1Op>>(
+  patterns.add<NormalizeConvOutputPattern<hivm::Conv1DL1Op>,
+               NormalizeConvOutputPattern<hivm::Conv2DL1Op>,
+               NormalizeConvOutputPattern<hivm::Conv3DL1Op>>(
       patterns.getContext());
 }
 
