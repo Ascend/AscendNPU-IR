@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -873,6 +874,7 @@ LogicalResult InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp f
     mlir::scf::ForOp,
     hivm::IndirectLoadOp,
     mlir::hivm::GatherLoadOp,
+    mlir::scope::ScopeOp,
     tensor::CollapseShapeOp,
     bufferization::ToTensorOp,
     memref::AllocOp,
