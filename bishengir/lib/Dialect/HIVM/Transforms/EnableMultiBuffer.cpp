@@ -103,7 +103,18 @@ static LoopLikeOpInterface getParentLoop(Value val,
     // Continue tracking the loop result. If an enclosing loop consumes that
     // result, it becomes the new anchor. If the enclosing loops only forward
     // the value via yields, keep the innermost consumer found so far.
-    auto res = parentLoop.getLoopResults().value()[*idxLoopRes];
+    //
+    // Some loop ops (e.g. scf.while) do not expose their results through the
+    // LoopLikeOpInterface -- getLoopResults() returns std::nullopt. In that
+    // case we cannot follow the value outward through a loop result, so stop
+    // here and keep the anchor we already found. (For scf.while the yielded
+    // value maps to a before-region iter_arg rather than a loop result, so
+    // there is nothing to track further outward anyway.)
+    auto loopResults = parentLoop.getLoopResults();
+    if (!loopResults ||
+        *idxLoopRes >= static_cast<int>(loopResults->size()))
+      return consumerLoop ? consumerLoop : parentLoop;
+    auto res = (*loopResults)[*idxLoopRes];
     return getParentLoop(res, consumerLoop);
   }
 

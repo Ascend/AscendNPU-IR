@@ -86,7 +86,7 @@ PointerLikeInfo::tryGet(hivm::PointerCastOp pointerCastOp) {
     pointerLikeInfo.addressSpace = spaceAttr->getAddressSpace();
   }
   if (auto loopLikeParentOp =
-          pointerCastOp->getParentOfType<LoopLikeOpInterface>()) {
+          mlir::hivm::getParentLoop(pointerCastOp.getResult())) {
     pointerLikeInfo.parentLoop = loopLikeParentOp;
   }
   return pointerLikeInfo;
@@ -103,7 +103,7 @@ std::optional<PointerLikeInfo> PointerLikeInfo::tryGet(
   }
   pointerLikeInfo.addressSpace = hivm::AddressSpace::GM;
   if (auto loopLikeParentOp =
-          allocWorkspaceOp->getParentOfType<LoopLikeOpInterface>()) {
+          mlir::hivm::getParentLoop(allocWorkspaceOp.getResult())) {
     pointerLikeInfo.parentLoop = loopLikeParentOp;
   }
   pointerLikeInfo.isWorkSpace = true;
