@@ -393,6 +393,45 @@ func.func @insert_store_load_for_attr_parallel_loop(%arg0: memref<16x16xf16>, %a
 }
 
 // -----
+// CHECK-LABEL: @gather_load_base_should_stay_gm(
+// CHECK-SAME: %[[BASE:.*]]: memref<?xf16>, %{{.*}}: tensor<16x16xf16>, %{{.*}}: tensor<16x16xi64>) -> tensor<16x16xf32>
+// CHECK-NOT: hivm.hir.load ins(%[[BASE]] : memref<?xf16>)
+// CHECK: %[[GATHER:.*]] = hivm.hir.gather_load ins(%[[BASE]] : memref<?xf16>, %{{.*}} : tensor<16x16xi64>, %{{.*}} : i32, %{{.*}} : tensor<16x16xi1>, %{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {{.*}} -> tensor<16x16xf16>
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+// CHECK: hivm.hir.copy ins(%[[GATHER]] : tensor<16x16xf16>) outs(%[[CAST]] : memref<16x16xf16>) {"inserted-copy"}
+// CHECK: hivm.hir.mmadL1 ins(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @gather_load_base_should_stay_gm(%base: memref<?xf16>, %rhs: tensor<16x16xf16>, %indices: tensor<16x16xi64>) -> tensor<16x16xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c1_i32 = arith.constant 1 : i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0.000000e+00 : f16
+    %init = tensor.empty() : tensor<16x16xf16>
+    %other = hivm.hir.vbrc ins(%zero : f16) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %maskInit = tensor.empty() : tensor<16x16xi1>
+    %mask = hivm.hir.vcmp ins(%rhs, %zero : tensor<16x16xf16>, f16) outs(%maskInit : tensor<16x16xi1>) compare_mode = <ne> -> tensor<16x16xi1>
+    %g = hivm.hir.gather_load ins(%base : memref<?xf16>, %indices : tensor<16x16xi64>, %c1_i32 : i32, %mask : tensor<16x16xi1>, %other : tensor<16x16xf16>) outs(%init : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %out = tensor.empty() : tensor<16x16xf32>
+    %res = hivm.hir.mmadL1 ins(%g, %rhs, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %res : tensor<16x16xf32>
+  }
+}
+
+// -----
+// CHECK-LABEL: @scatter_store_base_should_stay_gm(
+// CHECK-SAME: %[[BASE:.*]]: memref<?xf32>, %{{.*}}: tensor<16x16xi64>, %{{.*}}: tensor<16x16xf32>)
+// CHECK-NOT: hivm.hir.load ins(%[[BASE]] : memref<?xf32>)
+// CHECK: hivm.hir.scatter_store ins(%{{.*}} : tensor<16x16xi64>, %{{.*}} : tensor<16x16xf32>, %{{.*}} : i32) outs(%[[BASE]] : memref<?xf32>)
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @scatter_store_base_should_stay_gm(%base: memref<?xf32>, %indices: tensor<16x16xi64>, %data: tensor<16x16xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c1_i32 = arith.constant 1 : i32
+    hivm.hir.scatter_store ins(%indices : tensor<16x16xi64>, %data : tensor<16x16xf32>, %c1_i32 : i32) outs(%base : memref<?xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>}
+    return
+  }
+}
+
+// -----
 // CHECK-LABEL: @insert_load_store_between_cross_loop_vector_and_cube(
 // CHECK-SAME: %[[ARG0:.*]]: tensor<128x64xf32>, %[[ARG1:.*]]: tensor<64x64xf32>) -> tensor<128x64xf32>
 module {
