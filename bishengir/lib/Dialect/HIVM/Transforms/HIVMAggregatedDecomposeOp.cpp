@@ -16,12 +16,15 @@
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
@@ -94,6 +97,65 @@ private:
   bishengir::DecomposePhase decomposePhase;
 };
 
+struct DecomposeUnalignedSubview : public OpRewritePattern<memref::SubViewOp> {
+  using OpRewritePattern<memref::SubViewOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::SubViewOp op,
+                                PatternRewriter &rewriter) const override {
+    auto srcType = op.getSourceType();
+    auto dstType = op.getType();
+    if (srcType.getElementType().getIntOrFloatBitWidth() != 1)
+      return failure();
+    auto srcLastDimSize = srcType.getShape().back();
+    auto dstLastDimSize = dstType.getShape().back();
+    if (srcType.getRank() == 1)
+      return failure();
+    if (srcLastDimSize == dstLastDimSize)
+      return failure();
+    if (op.getDroppedDims().back())
+      return failure();
+    if (dstLastDimSize % utils::kUBAlignSizeInBits == 0)
+      return failure();
+
+    auto layout = dyn_cast<StridedLayoutAttr>(dstType.getLayout());
+    if (!layout || layout.getStrides()[1] == srcLastDimSize)
+      return failure();
+
+    auto loc = op.getLoc();
+    auto i1Type = rewriter.getI1Type();
+    auto f16Type = rewriter.getF16Type();
+    auto srcRoundAttr = rewriter.getAttr<hivm::RoundModeAttr>(
+        utils::selectRoundMode<hivm::RoundMode>(i1Type, f16Type));
+
+    auto srcCast = castTo(rewriter, loc, op.getSource(), srcRoundAttr, f16Type);
+    auto newSubviewSrc = srcCast.getDst()[0];
+
+    auto newSubviewType = memref::SubViewOp::inferRankReducedResultType(
+        dstType.getShape(), cast<MemRefType>(newSubviewSrc.getType()),
+        op.getMixedOffsets(), op.getMixedSizes(), op.getMixedStrides());
+    auto newOp = rewriter.create<memref::SubViewOp>(
+        loc, cast<MemRefType>(newSubviewType), newSubviewSrc,
+        op.getMixedOffsets(), op.getMixedSizes(), op.getMixedStrides());
+    for (auto attr : op->getAttrs()) {
+      if (!newOp->hasAttr(attr.getName()))
+        newOp->setAttr(attr.getName(), attr.getValue());
+    }
+    auto dstBuffer =
+        utils::createTmpBufferOrTensorWithTargetType(rewriter, loc, newOp);
+    auto newValue =
+        rewriter.create<hivm::CopyOp>(loc, TypeRange{}, newOp, dstBuffer)
+            .getDst();
+    auto oneValue =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getF16FloatAttr(1));
+    dstBuffer = utils::createTmpBufferOrTensorWithTargetType(rewriter, loc, op);
+    auto dstCast = rewriter.create<hivm::VCmpOp>(
+        loc, TypeRange{}, ValueRange{newValue, oneValue}, ValueRange{dstBuffer},
+        hivm::CompareMode::EQ);
+    rewriter.replaceOp(op, dstCast.getDst()[0]);
+    return success();
+  }
+};
+
 } // namespace
 
 void HIVMAggregatedDecomposeOpPass::runOnOperation() {
@@ -102,6 +164,10 @@ void HIVMAggregatedDecomposeOpPass::runOnOperation() {
     return;
   RewritePatternSet patterns(&getContext());
   patterns.add<HIVMDecomposePattern>(&getContext(), decomposePhase);
+  if (decomposePhase == bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT) {
+    LLVM_DEBUG(llvm::dbgs() << "Applying decompose unaligned subview\n";);
+    patterns.add<DecomposeUnalignedSubview>(&getContext());
+  }
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
@@ -109,3 +175,5 @@ std::unique_ptr<Pass> mlir::hivm::createHIVMAggregatedDecomposeOpPass(
     const HIVMAggregatedDecomposeOpOptions &options) {
   return std::make_unique<HIVMAggregatedDecomposeOpPass>(options);
 }
+
+// memref<64x32xi1, <[64, 1], offset: ?>>
