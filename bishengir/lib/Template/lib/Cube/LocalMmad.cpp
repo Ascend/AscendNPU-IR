@@ -321,8 +321,24 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
          int64_t l1b_wait_mmad_l1_event, int64_t kloop_db_cond,
          int64_t back_pipe_m_pipe_mte1_db_event0,
          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag) {
+  if (m == 0 || k == 0 || n == 0) {
+    if (mmad_l1_wait_l1a_event != -1) {
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, mmad_l1_wait_l1a_event);
+    }
+    if (mmad_l1_wait_l1b_event != -1) {
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, mmad_l1_wait_l1b_event);
+    }
+    if (l1a_wait_mmad_l1_event != -1) {
+      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1a_wait_mmad_l1_event);
+    }
+    if (l1b_wait_mmad_l1_event != -1) {
+      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1b_wait_mmad_l1_event);
+    }
+    return;
+  }
+
   if constexpr (I4) {
-      static_assert(TA == 0 && "i4 mmad doesn't support transpose A");
+    static_assert(TA == 0 && "i4 mmad doesn't support transpose A");
   }
 
   __cc__ DST_TYPE *mc_ptr = mc->aligned + mc->offset;
@@ -367,7 +383,7 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
       max_align_value);
   }
 
-  if (k_part == 0 || k_actual == 0) {
+  if (k_part == 0) {
     trap();
   }
 

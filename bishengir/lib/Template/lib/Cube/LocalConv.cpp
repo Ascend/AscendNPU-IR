@@ -250,6 +250,22 @@ __aicore__ __attribute__((always_inline)) void conv2d_group(
   int64_t n = oC1_per_g * oC0;
   int64_t k = iC1_per_g * wH * wW * iC0;
 
+  if (m == 0 || k == 0 || n == 0) {
+    if (conv_l1_wait_l1a_event != -1) {
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, conv_l1_wait_l1a_event);
+    }
+    if (conv_l1_wait_l1b_event != -1) {
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, conv_l1_wait_l1b_event);
+    }
+    if (l1a_wait_conv_l1_event != -1) {
+      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1a_wait_conv_l1_event);
+    }
+    if (l1b_wait_conv_l1_event != -1) {
+      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1b_wait_conv_l1_event);
+    }
+    return;
+  }
+
   // k_actual should be equal to k_ceil under our case
   auto k_actual = k;
   auto k_ceil = CEIL_FACTOR(k, L1_ALIGN_BYTES / sizeof(SRC_TYPE));
@@ -276,7 +292,7 @@ __aicore__ __attribute__((always_inline)) void conv2d_group(
              align_block;
   }
 
-  if (k_part == 0 || k_actual == 0) {
+  if (k_part == 0) {
     trap();
   }
 
