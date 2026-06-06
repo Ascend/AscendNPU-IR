@@ -720,7 +720,7 @@ def InsertLoadStoreForScalar
 }
 
 def InsertInferWorkSpaceSizeFunc : Pass<"hivm-insert-infer-workspace-size-func",
-                                        "ModuleOp"> {
+                                        "func::FuncOp"> {
   let summary = "Insert infer-workspace callback func for host";
   let description =
                 "Calculate total static workspace size after plan-workspace "
@@ -748,11 +748,6 @@ def BindWorkSpaceArg : Pass<"hivm-bind-workspace-arg", "func::FuncOp"> {
   let dependentDialects = ["memref::MemRefDialect",
                            "hivm::HIVMDialect",
                            "bishengir::memref_ext::MemRefExtDialect"];
-
-  let options = [Option<
-      "enableSubWorkspace", "enable-sub-workspace", "bool",
-      /*default=*/"false",
-      "Insert sub workspace argument and bind to sub workspace">];
 }
 
 def BindSyncBlockLockArg : Pass<"hivm-bind-sync-block-lock-arg", "func::FuncOp"> {
@@ -840,11 +835,7 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createTileAndBindSubBlockPass()";
   let dependentDialects = [
-    "annotation::AnnotationDialect",
-    "func::FuncDialect",
-    "hivm::HIVMDialect",
-    "bufferization::BufferizationDialect",
-    "scope::ScopeDialect"
+    "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
   ];
   let options = [Option<
       "strictMode", "strict-mode", "bool",

@@ -200,75 +200,13 @@ void DimensionAnalyzerBase::processBFS() {
   );
   LLVM_DEBUG(
     llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-processBFS");
-    llvm::dbgs() << "equivalentDsu_:\n";
-    equivalentDsu_->dump();
-    llvm::dbgs() << "structuralDsu_:\n";
-    structuralDsu_->dump();
+    llvm::dbgs() << "solverSegments_:\n";
+    solverSegments_->dump();
     dumpArgumentsRefPointer();
     dumpArgumentsRef();
     dumpIsConnected();
     llvm::dbgs() << DEBUG_LINE_END("Flatten-After-processBFS");
   );
-}
-
-void DimensionAnalyzerBase::processPreOrderWalk() {
-  LLVM_DEBUG(llvm::dbgs() << DEBUG_LINE_BEG("Flatten-processPreOrderWalk");
-             llvm::dbgs() << "argumentList_: \n";);
-  for (const auto &arg : argumentList_) {
-    LLVM_DEBUG(llvm::dbgs() << arg << "\n");
-    updatePreviousType(arg);
-  }
-  combineInferable();
-
-  op_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    for (Value current : op->getOperands()) {
-      if (!isAllowedType(current.getType()))
-        continue;
-      if (options.registerBased)
-        separateMemref(current);
-      processOperation(op, current);
-    }
-
-    if (auto loopLikeOp = dyn_cast<LoopLikeOpInterface>(op)) {
-      for (Value iterArg : loopLikeOp.getRegionIterArgs()) {
-        if (!isAllowedType(iterArg.getType()))
-          continue;
-        updatePreviousType(iterArg);
-      }
-    }
-
-    if (auto terminatorOp = dyn_cast<RegionBranchTerminatorOpInterface>(op)) {
-      if (Operation *parentOp = terminatorOp->getParentOp()) {
-        for (Value current : op->getOperands()) {
-          if (!isAllowedType(current.getType()))
-            continue;
-          processOperation(parentOp, current);
-        }
-        for (Value result : parentOp->getResults()) {
-          if (!isAllowedType(result.getType()))
-            continue;
-          if (options.registerBased)
-            separateMemref(result);
-          updatePreviousType(result);
-        }
-      }
-    }
-
-    for (Value result : op->getResults()) {
-      if (!isAllowedType(result.getType()))
-        continue;
-      updatePreviousType(result);
-    }
-    return WalkResult::advance();
-  });
-
-  LLVM_DEBUG(llvm::dbgs() << DEBUG_LINE_END("Flatten-processPreOrderWalk"););
-  LLVM_DEBUG(
-      llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-processPreOrderWalk");
-      llvm::dbgs() << "equivalentDsu_:\n"; equivalentDsu_->dump();
-      llvm::dbgs() << "structuralDsu_:\n"; structuralDsu_->dump();
-      dumpArgumentsRefPointer(); dumpArgumentsRef(); dumpIsConnected();
-      llvm::dbgs() << DEBUG_LINE_END("Flatten-After-processPreOrderWalk"););
 }
 
 bool DimensionAnalyzerBase::processOperation(Operation *op, Value current) {
@@ -402,10 +340,10 @@ DimensionAnalyzerBase::processDecreasingDimensions(ArrayRef<int64_t> inputArgs,
   LLVM_DEBUG(llvm::dbgs() << "\n";);
 
   assert(outputArgs.size() == outputRank);
-  dimIndices_.push_back(std::move(outputArgs));
-  LLVM_DEBUG(llvm::dbgs() << "New dimIndices_ " << dimIndices_.size() - 1
+  argumentsRef_.push_back(std::move(outputArgs));
+  LLVM_DEBUG(llvm::dbgs() << "New argumentsRef_ " << argumentsRef_.size() - 1
                           << "\n";);
-  return dimIndices_.size() - 1;
+  return argumentsRef_.size() - 1;
 }
 
 size_t DimensionAnalyzerBase::processPermutation(ArrayRef<int64_t> inputArgs,
@@ -417,7 +355,7 @@ size_t DimensionAnalyzerBase::processPermutation(ArrayRef<int64_t> inputArgs,
   for (int i = 0; i < static_cast<int>(inputArgs.size()); ++i) {
     outputArgs[i] = inputArgs[perm[i]];
   }
-  dimIndices_.push_back(std::move(outputArgs));
+  argumentsRef_.push_back(std::move(outputArgs));
 
   std::vector<int> invPerm(perm.size());
   for (int i = 0; i < static_cast<int>(perm.size()); ++i) {
@@ -433,7 +371,7 @@ size_t DimensionAnalyzerBase::processPermutation(ArrayRef<int64_t> inputArgs,
       LDBG("Disconnected original neighbors: " << j << " and " << (j + 1));
     }
   }
-  return dimIndices_.size() - 1;
+  return argumentsRef_.size() - 1;
 }
 
 void DimensionAnalyzerBase::processMatmulOp(Operation *op, bool isTransposeA,
@@ -444,9 +382,8 @@ void DimensionAnalyzerBase::processMatmulOp(Operation *op, bool isTransposeA,
   assert(matmulOp.getDpsInits().size() == 1);
   Value output = matmulOp.getDpsInits()[0];
 
-  createDummyRefIfNotExist({inputs[0], inputs[1]});
-  auto arg0 = getValueDimIndices(inputs[0]);
-  auto arg1 = getValueDimIndices(inputs[1]);
+  auto arg0 = getArgumentRefOrCreateDummy(inputs[0]);
+  auto arg1 = getArgumentRefOrCreateDummy(inputs[1]);
 
   // When isTransposeA = false, isTransposeB = false:
   // A = [MxK], B = [KxN], C = [MxN]
@@ -457,10 +394,10 @@ void DimensionAnalyzerBase::processMatmulOp(Operation *op, bool isTransposeA,
   int mDimIdx = isTransposeA ? 1 : 0;
   int nDimIdx = isTransposeB ? 0 : 1;
 
-  dimIndices_.push_back({arg0[mDimIdx] /* this refers to the M */,
-                         arg1[nDimIdx] /* this refers to the N */});
+  argumentsRef_.push_back({arg0[mDimIdx] /* this refers to the M */,
+                           arg1[nDimIdx] /* this refers to the N */});
 
-  initCollapseOrVerify(output, static_cast<int64_t>(dimIndices_.size() - 1));
+  initCollapseOrVerify(output, static_cast<int64_t>(argumentsRef_.size() - 1));
   for (Value result : op->getResults()) {
     processValue(result, output);
   }
@@ -473,14 +410,13 @@ void DimensionAnalyzerBase::processBatchMatmulOp(
   Value output = batchMatmulOp.getDpsInits()[0];
 
   // A = [PxQxR], B = [PxRxS], C = [PxQxS]
-  createDummyRefIfNotExist({inputs[0], inputs[1]});
-  auto arg0 = getValueDimIndices(inputs[0]);
-  auto arg1 = getValueDimIndices(inputs[1]);
-  dimIndices_.push_back({arg0[0] /* this refers to the P */,
-                         arg0[1] /* this refers to the Q */,
-                         arg1[2] /* this refers to the S */});
+  auto arg0 = getArgumentRefOrCreateDummy(inputs[0]);
+  auto arg1 = getArgumentRefOrCreateDummy(inputs[1]);
+  argumentsRef_.push_back({arg0[0] /* this refers to the P */,
+                           arg0[1] /* this refers to the Q */,
+                           arg1[2] /* this refers to the S */});
 
-  initCollapseOrVerify(output, static_cast<int64_t>(dimIndices_.size() - 1));
+  initCollapseOrVerify(output, static_cast<int64_t>(argumentsRef_.size() - 1));
   for (Value result : batchMatmulOp->getResults())
     processValue(result, output);
 
@@ -495,10 +431,9 @@ void DimensionAnalyzerBase::processMatmulMxOp(Operation *op) {
   auto inputs = matmulOp.getDpsInputs();
   assert(inputs.size() == 4);
  
-  createDummyRefIfNotExist({inputs[2], inputs[3]});
-  auto arg2 = getValueDimIndices(inputs[2]);
-  auto arg3 = getValueDimIndices(inputs[3]);
-
+  auto arg2 = getArgumentRefOrCreateDummy(inputs[2]);
+  auto arg3 = getArgumentRefOrCreateDummy(inputs[3]);
+ 
   disconnect(arg2[0], arg2[1]);
   disconnect(arg3[0], arg3[1]);
 }
@@ -513,9 +448,8 @@ void DimensionAnalyzerBase::processConcatOp(tensor::ConcatOp concatOp) {
   for (auto opr : concatOp.getOperands()) {
     if (utils::getShapeRank(opr.getType()).value_or(0) != resultShape.size())
       continue;
-    createDummyRefIfNotExist({opr, res});
-    auto oprArgRef = getValueDimIndices(opr);
-    auto argConcat = getValueDimIndices(res);
+    auto oprArgRef = getArgumentRefOrCreateDummy(opr);
+    auto argConcat = getArgumentRefOrCreateDummy(res);
     LDBG(opr << ": " << utils::debugger::to_string(oprArgRef));
     for (unsigned i = 0; i < rank; ++i) {
       if (i != dim) {
@@ -540,9 +474,8 @@ void DimensionAnalyzerBase::processPadOp(tensor::PadOp padOp) {
   auto padLow = padOp.getStaticLow();
   auto padResult = padOp.getResult();
   auto rank = padOp.getType().getRank();
-  createDummyRefIfNotExist({padSrc, padResult});
-  auto argPadSrc = getValueDimIndices(padSrc);
-  auto argPadResult = getValueDimIndices(padResult);
+  auto argPadSrc = getArgumentRefOrCreateDummy(padSrc);
+  auto argPadResult = getArgumentRefOrCreateDummy(padResult);
   auto srcShape = utils::getShape(padSrc.getType());
   for (int i = 0; i < rank; i++) {
     if (padHigh[i] == 0 && padLow[i] == 0) {
@@ -588,10 +521,10 @@ void DimensionAnalyzerBase::processSlicingOp(T slicingOp) {
   auto subviewStride = slicingOp.getMixedStrides();
   // for reduce dim
   auto droppedDims = slicingOp.getDroppedDims();
-  auto argRef = getValueDimIndices(superview);
+  auto argRef = getArgumentRef(superview);
   auto rank = superviewShape.size();
-  auto superviewRef = getValueDimIndices(superview);
-  auto subviewRef = getValueDimIndices(subview);
+  auto superviewRef = getArgumentRef(superview);
+  auto subviewRef = getArgumentRef(subview);
 
   SmallVector<int64_t, 8> subviewShapeSize(superviewShape.size());
   SmallVector<int64_t, 8> subviewStrides(superviewShape.size());

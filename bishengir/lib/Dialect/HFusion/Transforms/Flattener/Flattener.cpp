@@ -58,9 +58,9 @@ Flattener::Flattener(Operation *op,
   // thus [0, 1] == [6, 7] will be a gang
   //
   // thus we're representing each shape element with a union find
-  // equivalentDsu_, equivalentDsu_.join(0, 6) later will be run
+  // solverShapeElem_, solverShapeElem_.join(0, 6) later will be run
   //
-  // equivalentDsu_ however represents the segments of joined segments
+  // solverShapeElem_ however represents the segments of joined segments
   // in this case, there are 4, op2 can inherit either from arg0 or op1
   // every reduce and broadcast will create new segments representation
   //
@@ -79,7 +79,7 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
-  for (const auto &ref : dimIndices_) {
+  for (const auto &ref : argumentsRef_) {
     markBroken(ref);
   }
   dumpIsConnected();
@@ -153,7 +153,7 @@ void Flattener::propagateBroken() {
   spreadConnection();
   // Attack all left and right
   for (int i = 0; i < argumentTotalLength_; ++i) {
-    int parent = structuralDsu_->find(i);
+    int parent = solverCollapserElem_->find(i);
     if (parent != i)
       continue;
     if (isConnected_[i].elementKind != ElementKind::HasMutation)
@@ -173,7 +173,7 @@ void Flattener::propagateBroken() {
 void Flattener::breakDynamicShapes() {
   BitVector computed(argumentTotalLength_);
   auto markComputed = [&computed, this](int pos) -> void {
-    computed[structuralDsu_->find(pos)] = true;
+    computed[solverCollapserElem_->find(pos)] = true;
   };
 
   int rightBoundary;
@@ -185,7 +185,7 @@ void Flattener::breakDynamicShapes() {
     SmallVector<int> dynamicPosition;
     auto getAndAddIfDynamic = [&dynamicPosition, this](int pos) -> void {
       auto currentParShapePair =
-          equivalentDsu_->getMinParentAndShapePair(pos);
+          solverShapeElem_->getMinParentAndShapePair(pos);
       if (ShapedType::isDynamic(currentParShapePair.second)) {
         dynamicPosition.push_back(pos);
       }

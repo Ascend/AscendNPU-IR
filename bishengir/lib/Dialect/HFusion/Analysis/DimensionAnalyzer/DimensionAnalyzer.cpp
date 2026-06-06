@@ -26,13 +26,13 @@ namespace detail {
 
 BitVector DimensionAnalyzer::getCommonAxis(Value v) {
   // Nothing to do if an anchor has not yet been computed.
-  if (anchor_.empty() || !valueToDimIndicesIndex_.contains(v))
+  if (anchor_.empty() || !argumentsRefPointer_.contains(v))
     return BitVector();
   LDBG("Computing common axis");
 #ifndef NDEBUG
   debugPrintAnchor();
 #endif
-  auto vRef = getValueDimIndices(v);
+  auto vRef = getArgumentRef(v);
   LDBG("v: " << v);
   LDBG("vRef: " << utils::debugger::to_string(vRef));
   IndexSet vIndexSet;
@@ -57,7 +57,7 @@ SmallVector<Value> DimensionAnalyzer::getAnchorCandidate() {
       if (!isCandidateAnchor)
         return;
       for (auto res : op->getResults()) {
-        if (valueToDimIndicesIndex_.contains(res)) {
+        if (argumentsRefPointer_.contains(res)) {
           analyzedTensors.push_back(res);
         }
       }
@@ -76,7 +76,7 @@ DimensionAnalyzer::getAnchorShape() {
     anchorDim.emplace_back(nullptr, maxStaticShape);
     for (auto dynamicShapeCurrentIndex : dynamicShapeIndices) {
       dynamicShapeCurrentIndex =
-          equivalentDsu_->find(dynamicShapeCurrentIndex);
+          solverShapeElem_->find(dynamicShapeCurrentIndex);
       auto [dynamicShapeValue, dynamicShapeIndex] =
           getDimension(dynamicShapeCurrentIndex);
       LDBG(anchorDim.size() << "th dynamicShapeValue is " << dynamicShapeValue);
@@ -102,7 +102,7 @@ void DimensionAnalyzer::computeIndexSet(IndexSet &indexSet,
                                         ArrayRef<int64_t> vRef) {
   DenseMap<int64_t, int64_t> indexCount;
   for (auto index : vRef) {
-    index = equivalentDsu_->minIndex[structuralDsu_->find(index)];
+    index = solverShapeElem_->minIndex[solverCollapserElem_->find(index)];
     indexSet.insert({index, indexCount[index]++});
   }
 }
@@ -110,20 +110,20 @@ void DimensionAnalyzer::computeIndexSet(IndexSet &indexSet,
 void DimensionAnalyzer::computeAnchorElement(
     DenseMap<int64_t, AnchorElement> &indexAncherElemMap,
     Value anchorCandidate) {
-  auto anchorRef = getValueDimIndices(anchorCandidate);
+  auto anchorRef = getArgumentRef(anchorCandidate);
   computeIndexSet(anchorIndexSet_, anchorRef);
   for (auto anchorAxis : anchorRef) {
     auto currentAxisMinIndex =
-        equivalentDsu_->minIndex[structuralDsu_->find(anchorAxis)];
+        solverShapeElem_->minIndex[solverCollapserElem_->find(anchorAxis)];
     auto anchorAxisShape =
-        equivalentDsu_->getMinParentAndShapePair(anchorAxis).second;
+        solverShapeElem_->getMinParentAndShapePair(anchorAxis).second;
 
     auto &[axisIndex, maxStaticShape, dynamicShapeIndices] =
         indexAncherElemMap[currentAxisMinIndex];
     axisIndex = currentAxisMinIndex;
     if (ShapedType::isDynamic(anchorAxisShape)) {
       dynamicShapeIndices.push_back(
-          equivalentDsu_->minIndex[equivalentDsu_->find(anchorAxis)]);
+          solverShapeElem_->minIndex[solverShapeElem_->find(anchorAxis)]);
     } else {
       maxStaticShape = std::max(maxStaticShape, anchorAxisShape);
     }
@@ -193,25 +193,25 @@ void DimensionAnalyzer::computeAnchor() {
 SmallVector<int64_t> DimensionAnalyzer::getInterchange(Value v) {
   SmallVector<int64_t> interchange(utils::getShapeRank(v.getType()).value_or(0),
                                    -1);
-  if (anchor_.empty() || !valueToDimIndicesIndex_.contains(v))
+  if (anchor_.empty() || !argumentsRefPointer_.contains(v))
     return interchange;
   DenseMap<int64_t, SmallVector<int64_t>> anchorPos;
   for (size_t i = 0; i < anchor_.size(); ++i) {
-    auto currentAxis = structuralDsu_->find(anchor_[i].axisIndex);
+    auto currentAxis = solverCollapserElem_->find(anchor_[i].axisIndex);
     if (anchorPos.contains(currentAxis)) {
       LDBG("Two same aligned collapse in solver anchor "
            << i << " " << anchorPos[currentAxis].front());
     }
     anchorPos[currentAxis].push_back(i);
   }
-  auto vRef = getValueDimIndices(v);
+  auto vRef = getArgumentRef(v);
   assert(anchor_.size() >= vRef.size() &&
          "Anchor should represent all possible values");
   for (auto &val : anchorPos) {
     std::reverse(val.second.begin(), val.second.end());
   }
   for (size_t i = 0; i < vRef.size(); ++i) {
-    auto currentAxis = structuralDsu_->find(vRef[i]);
+    auto currentAxis = solverCollapserElem_->find(vRef[i]);
     if (!anchorPos.contains(currentAxis))
       continue;
     interchange[i] = anchorPos[currentAxis].back();
