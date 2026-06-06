@@ -1594,6 +1594,25 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto sizes = sliceOp.getMixedSizes();
   auto strides = sliceOp.getMixedStrides();
 
+  // Build a subview that applies the bubbled extract_slice to a GM
+  // reinterpret_cast. The extract_slice may carry extra LEADING dimensions
+  // that exist only on the (multi-buffered) on-chip buffer -- e.g. the leading
+  // CV-pipeline multi-buffer dim added by CVPipelining -- and are absent from
+  // the GM cast it is being applied to. Project the offsets/sizes/strides onto
+  // the cast's rank by dropping those leading dims (the multi-buffer slot does
+  // not index GM data). This is a no-op when the ranks already match.
+  auto buildCastSubview = [&](Location loc, Value castVal) -> memref::SubViewOp {
+    int64_t castRank = cast<MemRefType>(castVal.getType()).getRank();
+    int64_t drop = static_cast<int64_t>(offsets.size()) - castRank;
+    if (drop < 0)
+      drop = 0;
+    SmallVector<OpFoldResult> castOffsets(offsets.begin() + drop, offsets.end());
+    SmallVector<OpFoldResult> castSizes(sizes.begin() + drop, sizes.end());
+    SmallVector<OpFoldResult> castStrides(strides.begin() + drop, strides.end());
+    return rewriter.create<memref::SubViewOp>(loc, castVal, castOffsets,
+                                              castSizes, castStrides);
+  };
+
   auto srcMemref = toTensorOp.getMemref();
 
   for (Operation *userOp : srcMemref.getUsers()) {
@@ -1609,8 +1628,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           loadOp.getOperand(0).getDefiningOp());
       if (castOp) {
         rewriter.setInsertionPoint(loadOp);
-        auto castSubviewOp = rewriter.create<memref::SubViewOp>(
-            castOp.getLoc(), castOp.getResult(), offsets, sizes, strides);
+        auto castSubviewOp = buildCastSubview(castOp.getLoc(), castOp.getResult());
 
         rewriter.modifyOpInPlace(
             loadOp,
@@ -1682,6 +1700,20 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       if (extractDims.size() != 1)
         continue;
       auto tilingDim = *extractDims.begin();
+      // tilingDim is an index into the (possibly multi-buffered) slice/UB-dst
+      // space. The GM source subview can be lower rank than the slice when a
+      // leading CV-pipeline slot dim is present on the UB side but absent from
+      // GM (gmRank < sliceRank); buildCastSubview() below projects the slot
+      // away on the GM cast. Defensive guard: tilingDim must be a valid index
+      // into both the UB-dst and GM-src offset spaces. If a future transform
+      // ever makes the tiled dim fall on (or past) a dropped leading slot dim,
+      // newOffsetsGM[tilingDim] would index out of bounds / the wrong GM dim
+      // and silently miscompile -- fail loudly here instead.
+      assert(tilingDim < newOffsets.size() &&
+             "bubble-up: tiling dim out of range for UB destination subview");
+      assert(tilingDim < newOffsetsGM.size() &&
+             "bubble-up: tiling dim out of range for GM source subview; the "
+             "tiled dim may have landed on a dropped multi-buffer slot dim");
       rewriter.setInsertionPoint(subViewOp);
       handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
                              offsets[tilingDim], sizes[tilingDim],
@@ -1692,8 +1724,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       handleExtractOfExtract(newOffsetsGM[tilingDim], newSizesGM[tilingDim],
                              offsets[tilingDim], sizes[tilingDim],
                              subViewOpGM.getLoc(), rewriter);
-      auto newCastValue = rewriter.create<memref::SubViewOp>(
-          castOp.getLoc(), castOp, offsets, sizes, strides);
+      auto newCastValue = buildCastSubview(castOp.getLoc(), castOp.getResult());
       auto newSubViewOpGM = rewriter.create<memref::SubViewOp>(
           subViewOpGM.getLoc(), newCastValue, newOffsetsGM, newSizesGM,
           subViewOpGM.getMixedStrides());
@@ -1716,9 +1747,36 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
             strides);
       }
       rewriter.setInsertionPoint(subViewOp);
-      auto newSubViewOp = rewriter.create<memref::SubViewOp>(
-          subViewOp.getLoc(), allocLikeOp->getResult(0), newOffsets, newSizes,
-          subViewOp.getMixedStrides());
+      // The destination is a single slot of the multi-buffered on-chip alloc,
+      // so the bubbled subview keeps the leading CV-pipeline multi-buffer dim
+      // as a size-1 dimension, leaving the dst one rank higher than the GM
+      // source. Rank-reduce those leading unit dims so the load's src and dst
+      // have matching dimensions (mirroring the pre-bubble rank-reduced slot
+      // subview). No-op when ranks already match (non-multi-buffered path).
+      int64_t dstSrcRank = cast<MemRefType>(newSubViewOpGM.getType()).getRank();
+      auto fullDstTy = cast<MemRefType>(
+          memref::SubViewOp::inferResultType(
+              cast<MemRefType>(allocLikeOp->getResult(0).getType()), newOffsets,
+              newSizes, subViewOp.getMixedStrides()));
+      memref::SubViewOp newSubViewOp;
+      if (fullDstTy.getRank() > dstSrcRank) {
+        ArrayRef<int64_t> fullShape = fullDstTy.getShape();
+        SmallVector<int64_t> reducedShape(
+            fullShape.begin() + (fullDstTy.getRank() - dstSrcRank),
+            fullShape.end());
+        auto reducedTy = cast<MemRefType>(
+            memref::SubViewOp::inferRankReducedResultType(
+                reducedShape,
+                cast<MemRefType>(allocLikeOp->getResult(0).getType()),
+                newOffsets, newSizes, subViewOp.getMixedStrides()));
+        newSubViewOp = rewriter.create<memref::SubViewOp>(
+            subViewOp.getLoc(), reducedTy, allocLikeOp->getResult(0), newOffsets,
+            newSizes, subViewOp.getMixedStrides());
+      } else {
+        newSubViewOp = rewriter.create<memref::SubViewOp>(
+            subViewOp.getLoc(), allocLikeOp->getResult(0), newOffsets, newSizes,
+            subViewOp.getMixedStrides());
+      }
 
       rewriter.modifyOpInPlace(loadOp, [&]() {
         loadOp.getSrcMutable().set(newSubViewOpGM);
