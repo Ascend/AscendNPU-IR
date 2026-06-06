@@ -22,7 +22,6 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
 
-#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <numeric>
@@ -108,7 +107,7 @@ std::string toStrHelper(const T &value, int indent, bool useEndl) {
   if constexpr (IsLLVMContainer<T>::value) {
     return to_string(value, indent + 2, useEndl);
   } else if constexpr (detail::is_pair<T>::value) {
-    return "(" + toStrHelper(value.first, indent, useEndl) + ", " + toStrHelper(value.second, indent, useEndl) + ")";
+    return "(" + to_string(value.first) + ", " + to_string(value.second) + ")";
   } else if constexpr (IsPrintable<T>::value) {
     std::string buffer;
     llvm::raw_string_ostream os(buffer);
@@ -116,7 +115,7 @@ std::string toStrHelper(const T &value, int indent, bool useEndl) {
     os.flush();
     return buffer;
   } else {
-    llvm_unreachable("Cannot print expression");
+    return std::to_string(value);
   }
 }
 template <typename T>
