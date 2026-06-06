@@ -1873,8 +1873,6 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
      UniformReassociationFlattenTrait,
      DeclareOpInterfaceMethods<FlattenInterface,
        ["getLimitedAxes", "adjustTargetDimensions"]>,
-     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
-       ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
     ]> {
   let summary = "Vector Cumsum Op";
@@ -1902,24 +1900,14 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
-                       Optional<AnyMemRef>:$temp_buffer,
                        ConfinedAttr<DenseI64ArrayAttr,
                        [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
                        BoolAttr:$reverse
   );
-  let builders = [
-    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
-                   "DenseI64ArrayAttr":$cum_dims,
-                   "bool":$reverse)>,
-    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
-                   "ArrayRef<int64_t>":$cum_dims,
-                   "bool":$reverse)>
-  ];
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
-    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
     `cum_dims` `=` $cum_dims
     `reverse` `=` $reverse
     (`->` type($result)^)?
