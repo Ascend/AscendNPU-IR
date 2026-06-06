@@ -63,8 +63,6 @@ struct DuplicateTensorExtractForCube
       "DuplicateTensorExtractForCube::newExtractLabel";
   constexpr static llvm::StringRef replacementLabel =
       "DuplicateTensorExtractForCube::replacementLabel";
-  constexpr static llvm::StringRef cubeErasureLabel =
-      "DuplicateTensorExtractForCube::cubeErasureLabel";
  
   void markCoreType(PatternRewriter &rewriter, Location location, Value value,
                     TCoreType tCoreType) const {
@@ -142,7 +140,6 @@ struct DuplicateTensorExtractForCube
     if (!findCubeUser(extractOp)) {
       return failure();
     }
- 
 
     TensorType tensorType = cast<TensorType>(originTensor.getType());
     bool originCoreTypeIsVector = traceVector<
@@ -150,38 +147,7 @@ struct DuplicateTensorExtractForCube
     #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(originTensor);
     if (!originCoreTypeIsVector) {
-      // handle the case of direct load
-      // TODO: (plan A) bubble up (plan B) infer load to vector type
-      auto presumedAllocOp = traceDefOp<memref::AllocOp>(originTensor);
-      if (presumedAllocOp.has_value()) {
-        auto allocOp = cast<memref::AllocOp>(presumedAllocOp.value());
-        Value memrefValue = allocOp.getMemref();
-        bool foundLoad = false;
-        bool foundBufferization = false;
-        SmallVector<Operation *, 2> tmpOps;
-        for (Operation *userOp : memrefValue.getUsers()) {
-          if (auto loadOp = dyn_cast<hivm::LoadOp>(userOp);
-              loadOp && loadOp.getDst() == memrefValue) {
-            foundLoad = true;
-            tmpOps.push_back(userOp);
-          } else if (auto toTensorOp =
-                         dyn_cast<bufferization::ToTensorOp>(userOp);
-                     toTensorOp && toTensorOp.getOperand() == memrefValue) {
-            foundBufferization = true;
-            tmpOps.push_back(userOp);
-          }
-        }
-        if (!(tmpOps.size() == 2 && foundLoad && foundBufferization)) {
-          return failure();
-        }
-        // the op need eraseLabel only if when the bufferization is from load
-        allocOp->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-        for (auto *op : tmpOps) {
-          op->setAttr(cubeErasureLabel, rewriter.getI32IntegerAttr(1));
-        }
-      } else {
-        return failure();
-      }
+      return failure();
     }
 
     // prepare for insertion
