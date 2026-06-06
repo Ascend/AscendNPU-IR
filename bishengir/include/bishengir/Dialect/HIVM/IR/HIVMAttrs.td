@@ -1189,4 +1189,12 @@ def HIVM_RemainInL0CAttr : HIVM_Attr<"RemainInL0C", "remain_in_l0c"> {
   }];
 }
 
+def HIVM_MatmulLimitedInCubeAttr
+    : HIVM_Attr<"MatmulLimitedInCube", "matmul_limited_in_cube"> {
+  let description =
+      [{Indicates that the matmul operation can be executed in the AIC alone
+            .It will bypass compiler analysis that might decompose matmul into
+                vector addition because of hardware constraints.}];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD

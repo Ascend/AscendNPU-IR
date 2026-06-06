@@ -1057,3 +1057,59 @@ module {
     return %mmad : tensor<16x16xf32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_matmul_with_scope_matmul_limited_in_cube
+func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16>) {
+
+  // CHECK-DAG: %[[C1_I32:.*]] = arith.constant 1 : i32
+  // CHECK-DAG: %[[C0_I32:.*]] = arith.constant 0 : i32
+  // CHECK-DAG: %[[C64:.*]] = arith.constant 64 : index
+
+  // CHECK: scope.scope : () -> () {
+  scope.scope : () -> () {
+    %false = arith.constant false
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %cst = arith.constant 0.0 : f32
+
+    %ma = tensor.empty() : tensor<64x64xf16>
+    %mb = tensor.empty() : tensor<64x64xf16>
+
+    %empty = tensor.empty() : tensor<64x64xf32>
+    %init_acc = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x64xf32>) -> tensor<64x64xf32>
+
+    %alloc_15 = memref.alloc() : memref<64x64xf32>
+
+    // CHECK: %[[ALLOCA:.*]] = memref.alloca() : memref<i32>
+    // CHECK: memref.store %[[C0_I32]], %[[ALLOCA]][] {hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>} : memref<i32>
+
+    %result = scf.for %iv = %c0 to %c4 step %c1 iter_args(%arg22 = %init_acc) -> tensor<64x64xf32> {
+
+      %187 = arith.constant 1 : i1
+
+      %189 = scf.if %187 -> tensor<64x64xf32> {
+        // CHECK: %[[LOADED:.*]] = memref.load %[[ALLOCA]][] : memref<i32>
+        // CHECK: %[[CMP:.*]] = arith.cmpi eq, %[[LOADED]], %[[C0_I32]] : i32
+        // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins({{.*}}, {{.*}}, %[[CMP]], %[[C64]], %[[C64]], %[[C64]]
+        // CHECK: %[[INCREMENTED:.*]] = arith.addi %[[LOADED]], %[[C1_I32]] : i32
+        // CHECK: memref.store %[[INCREMENTED]], %[[ALLOCA]][] : memref<i32>
+        %190 = hivm.hir.mmadL1 ins(%ma, %mb, %false, %c0, %c0, %c0 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%arg22 : tensor<64x64xf32>) -> tensor<64x64xf32>
+        scf.yield %190 : tensor<64x64xf32>
+      } else {
+        scf.yield %arg22 : tensor<64x64xf32>
+      } {hivm.matmul_limited_in_cube, ssbuffer.if = 6 : i32}
+
+      scf.yield %189 : tensor<64x64xf32>
+    // CHECK: } {normalized_in_L0C = [0 : i32]}
+    }
+
+    bufferization.materialize_in_destination %result in writable %alloc_15 : (tensor<64x64xf32>, memref<64x64xf32>) -> ()
+
+    scope.return
+  } {hivm.tcore_type = #hivm.tcore_type<CUBE>, hivm.matmul_limited_in_cube}
+
+  return
+}

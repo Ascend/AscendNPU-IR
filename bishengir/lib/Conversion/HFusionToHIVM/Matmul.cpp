@@ -191,7 +191,9 @@ void MmadL1InfoCollector<T, U>::extractInitCondition(
   if (moduleOp) {
     isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
   }
-  if (op_->template getParentOfType<scope::ScopeOp>() || isDisableHfusionVectorize) {
+  auto scopeOp = op_->template getParentOfType<scope::ScopeOp>();
+  if ((scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) ||
+      isDisableHfusionVectorize) {
     initInfo.currentCondition = rewriter.create<arith::ConstantIntOp>(
         op_->getLoc(), /*value*/ 1, /*width*/ 1);
     // Get defining op for init tensor and build up condition
