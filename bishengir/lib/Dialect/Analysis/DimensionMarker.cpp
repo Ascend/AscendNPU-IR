@@ -32,18 +32,19 @@ void DimensionAnalyzerBase::dumpModuleOP() const {
 
 void DimensionAnalyzerBase::dumpArgumentsRef() {
   LLVM_DEBUG(
-      int numVal = static_cast<int>(dimIndices_.size()); if (numVal == 0) {
-        llvm::dbgs() << "dimIndices_.back(): [] (empty)\n";
+      int numVal = static_cast<int>(argumentsRef_.size()); if (numVal == 0) {
+        llvm::dbgs() << "argumentsRef_.back(): [] (empty)\n";
         return;
-      } llvm::dbgs() << "[Flatten] dimIndices_ of size "
+      } llvm::dbgs() << "[Flatten] argumentsRef_ of size "
                      << numVal << " are:\n";
       for (int vi = 0; vi < numVal; ++vi) {
-        auto &shapeIdx = dimIndices_[vi];
+        auto &shapeIdx = argumentsRef_[vi];
         int rank = static_cast<int>(shapeIdx.size());
         if (rank == 0) {
           return;
         }
-        llvm::dbgs() << "dimIndices_[" << vi << "] of rank " << rank << " = [";
+        llvm::dbgs() << "argumentsRef_[" << vi << "] of rank " << rank
+                     << " = [";
         for (int si = 0; si < rank - 1; ++si) {
           llvm::dbgs() << shapeIdx[si] << ", ";
         }
@@ -67,10 +68,11 @@ void DimensionAnalyzerBase::dumpIsConnected() {
 }
 
 void DimensionAnalyzerBase::dumpArgumentsRefPointer() {
-  LLVM_DEBUG(auto &map = valueToDimIndicesIndex_;
-             llvm::dbgs() << "[Flatten] valueToDimIndicesIndex_(" << map.size()
+  LLVM_DEBUG(auto &map = argumentsRefPointer_;
+             llvm::dbgs() << "[Flatten] argumentsRefPointer_(" << map.size()
                           << " entries):\n";
-             for (const auto &entry : map) {
+             for (const auto &entry
+                  : map) {
                llvm::dbgs() << "[" << entry.second << "]: ";
                if (entry.first) {
                  entry.first.print(llvm::dbgs());
@@ -143,7 +145,7 @@ void DimensionAnalyzerBase::combineEmptyOp(Value arg) {
   }
 
   LDBG("Combining empty op " << emptyOp);
-  auto emptyRef = getValueDimIndices(emptyOp.getResult());
+  auto emptyRef = getArgumentRef(emptyOp.getResult());
   auto mixEmptyShape = emptyOp.getMixedSizes();
 
   for (auto [emptyIdx, el] : llvm::enumerate(mixEmptyShape)) {
@@ -175,8 +177,7 @@ void DimensionAnalyzerBase::linkDimToEmpty(tensor::DimOp dimOp,
     return;
   }
   auto tensorSource = dimOp.getSource();
-  createDummyRefIfNotExist({tensorSource});
-  auto tensorRef = getValueDimIndices(tensorSource);
+  auto tensorRef = getArgumentRefOrCreateDummy(tensorSource);
   joinShape(tensorRef[constantIndex.value()], emptyRefElement);
 }
 
@@ -184,25 +185,29 @@ void DimensionAnalyzerBase::linkDimToEmpty(tensor::DimOp dimOp,
 /// on-the-fly
 void DimensionAnalyzerBase::createDummyRefIfNotExist(ArrayRef<Value> values) {
   for (auto curVal : values) {
-    if (valueToDimIndicesIndex_.contains(curVal))
+    if (argumentsRefPointer_.contains(curVal))
       continue;
     LDBG("[Create] Creating dummy for value: " << curVal);
     // init elements
     auto [rank, shape] = utils::getValueShapeInfo(curVal).value_or(
         std::make_pair(0, DimensionShape{}));
     int startingIdx = allocateArguments(rank, shape);
-    dimIndices_.push_back(DimensionShape(shape));
-    std::iota(dimIndices_.back().begin(), dimIndices_.back().end(),
+    argumentsRef_.push_back(DimensionShape(shape));
+    std::iota(argumentsRef_.back().begin(), argumentsRef_.back().end(),
               startingIdx);
-    LLVM_DEBUG(auto arg = dimIndices_.back(); auto argSize = arg.size();
-               if (arg.size() != 0) {
-                 llvm::dbgs() << "dimIndices_.back(): [";
-                 for (size_t j = 0; j < argSize - 1; ++j) {
-                   llvm::dbgs() << arg[j] << ", ";
-                 }
-                 llvm::dbgs() << arg[argSize - 1] << "]\n";
-               });
-    initCollapseOrVerify(curVal, static_cast<int64_t>(dimIndices_.size() - 1));
+    LLVM_DEBUG(
+      auto arg = argumentsRef_.back();
+      auto argSize = arg.size();
+      if(arg.size() != 0) {
+        llvm::dbgs() << "argumentsRef_.back(): [";
+        for (size_t j = 0; j < argSize - 1; ++j) {
+          llvm::dbgs() << arg[j] << ", ";
+        }
+        llvm::dbgs() << arg[argSize-1] << "]\n";
+      }
+    );
+    initCollapseOrVerify(curVal,
+                         static_cast<int64_t>(argumentsRef_.size() - 1));
   }
 }
 
@@ -226,62 +231,68 @@ void DimensionAnalyzerBase::updatePreviousType(const Value &val,
 // Mark all value that is the result of collapse
 void DimensionAnalyzerBase::collapsePropagateOrVerify(Operation *op,
                                                       const Value &refVal) {
-  const auto tmpVal = valueToDimIndicesIndex_.at(refVal);
+  const auto tmpVal = argumentsRefPointer_.at(refVal);
   for (const Value newVal : op->getResults()) {
     LLVM_DEBUG(llvm::dbgs()
                    << "Propagating " << newVal << " " << tmpVal << "\n";);
-    if (valueToDimIndicesIndex_.contains(newVal)) {
-      mergeArgumentRefs(valueToDimIndicesIndex_.at(newVal), tmpVal);
+    if (argumentsRefPointer_.contains(newVal)) {
+      solverSegments_->join(argumentsRefPointer_.at(newVal), tmpVal);
       return;
     }
-    valueToDimIndicesIndex_[newVal] = tmpVal;
+    argumentsRefPointer_[newVal] = tmpVal;
   }
 }
 
 void DimensionAnalyzerBase::collapsePropagateOrVerify(const Value &newVal,
                                                       const Value &arg) {
-  const auto tmpVal = valueToDimIndicesIndex_.at(arg);
+  const auto tmpVal = argumentsRefPointer_.at(arg);
   LLVM_DEBUG(llvm::dbgs() << "Propagating Value [" << newVal << "] with "
-                          << "the dimIndexVecId = " << tmpVal << ", same as "
+                          << "the argIdx = " << tmpVal << ", same as "
                           << "Value [" << arg << "]\n";);
-  if (valueToDimIndicesIndex_.contains(newVal)) {
-    mergeArgumentRefs(valueToDimIndicesIndex_.at(newVal), tmpVal);
+  if (argumentsRefPointer_.contains(newVal)) {
+    solverSegments_->join(argumentsRefPointer_.at(newVal), tmpVal);
     return;
   }
-  valueToDimIndicesIndex_[newVal] = tmpVal;
+  argumentsRefPointer_[newVal] = tmpVal;
 }
 
 void DimensionAnalyzerBase::initCollapseOrVerify(const Value &val,
                                                  int64_t refPtr) {
   LLVM_DEBUG(llvm::dbgs() << "Assigning Value [" << val << "] with "
-                          << "the dimIndexVecId = " << refPtr << "\n";);
-  if (valueToDimIndicesIndex_.contains(val)) {
+                          << "the argIdx = " << refPtr << "\n";);
+  if (argumentsRefPointer_.contains(val)) {
     LLVM_DEBUG(llvm::dbgs() << "Init has been done previously\n";);
-    mergeArgumentRefs(valueToDimIndicesIndex_.at(val), refPtr);
+    solverSegments_->join(argumentsRefPointer_.at(val), refPtr);
     return;
   }
-  valueToDimIndicesIndex_[val] = refPtr;
+  argumentsRefPointer_[val] = refPtr;
 }
 
-void DimensionAnalyzerBase::mergeArgumentRefs(int64_t lhsRefPtr,
-                                              int64_t rhsRefPtr) {
-  if (lhsRefPtr == rhsRefPtr)
-    return;
-  assert(lhsRefPtr >= 0 &&
-         lhsRefPtr < static_cast<int64_t>(dimIndices_.size()));
-  assert(rhsRefPtr >= 0 &&
-         rhsRefPtr < static_cast<int64_t>(dimIndices_.size()));
-  const auto &lhsRef = dimIndices_[lhsRefPtr];
-  const auto &rhsRef = dimIndices_[rhsRefPtr];
-  LDBG("Merging dim-index vectors lhs(" << lhsRefPtr << "), rhs(" << rhsRefPtr
-                                        << ") with rank " << lhsRef.size());
-  assert(lhsRef.size() == rhsRef.size() &&
-         "Merged dim-index vectors must have the same rank");
-  for (const auto &[idx, lhsDim] : llvm::enumerate(lhsRef)) {
-    LLVM_DEBUG(llvm::dbgs() << "Unifying " << lhsDim << " with " << rhsRef[idx]
-                            << "\n");
-    joinShape(lhsDim, rhsRef[idx]);
+// Step 3: Unifying groups of segments
+void DimensionAnalyzerBase::unifyGroups() {
+  for (int ref = 0; ref < static_cast<int>(argumentsRef_.size()); ++ref) {
+    LLVM_DEBUG(llvm::dbgs() << "\nUnifying ---> " << ref << " \n";);
+    auto parIdx = solverSegments_->find(ref);
+    if (parIdx == ref)
+      continue;
+
+    const auto &par = argumentsRef_[parIdx];
+    LDBG("Parent index (" << parIdx << ") - child Index(" << ref << "): "
+                          << par.size() << " " << argumentsRef_[ref].size());
+    assert(par.size() == argumentsRef_[ref].size());
+    for (const auto &[idx, u] : llvm::enumerate(argumentsRef_[ref])) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << "Unifying " << u << " with " << par[idx] << "\n");
+      joinShape(u, par[idx]);
+    }
   }
+  LLVM_DEBUG(llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-unifyGroups");
+             llvm::dbgs() << "solverSegments_:\n"; solverSegments_->dump();
+             llvm::dbgs() << "solverShapeElem_:\n"; solverShapeElem_->dump();
+             llvm::dbgs() << "solverCollapserElem_:\n";
+             solverCollapserElem_->dump(); dumpArgumentsRefPointer();
+             dumpArgumentsRef(); dumpIsConnected();
+             llvm::dbgs() << DEBUG_LINE_END("Flatten-After-unifyGroups"););
 }
 
 void DimensionAnalyzerBase::propagateConnection(int parent, int child) {
@@ -319,7 +330,7 @@ void DimensionAnalyzerBase::propagateConnection(int parent, int child) {
 void DimensionAnalyzerBase::propagateConnection() {
   for (int i = 0; i < argumentTotalLength_; ++i) {
     // Use collapser because the relationship is stronger
-    int parent = structuralDsu_->find(i);
+    int parent = solverCollapserElem_->find(i);
     propagateConnection(parent, i);
   }
 }
@@ -331,12 +342,12 @@ void DimensionAnalyzerBase::spreadConnection() {
       llvm::dbgs()
       << "[ShapeIdx]: shape, parent, leftConnected, rightConnected\n";);
   for (int i = 0; i < argumentTotalLength_; ++i) {
-    isConnected_[i] = isConnected_[structuralDsu_->find(i)];
-    auto [_, shape] = equivalentDsu_->getMinParentAndShapePair(i);
+    isConnected_[i] = isConnected_[solverCollapserElem_->find(i)];
+    auto [_, shape] = solverShapeElem_->getMinParentAndShapePair(i);
     // check if this is available in the arguments
     LLVM_DEBUG(llvm::dbgs()
                    << "[" << i << "]: " << shape << ", "
-                   << structuralDsu_->find(i) << ", "
+                   << solverCollapserElem_->find(i) << ", "
                    << (isConnected_[i].leftConnected ? "true" : "false") << ","
                    << (isConnected_[i].rightConnected ? "true" : "false")
                    << "\n";);
@@ -351,25 +362,25 @@ bool DimensionAnalyzerBase::isConnected(int a, int b) {
 
 void DimensionAnalyzerBase::joinShape(int a, int b) {
   LDBG("Joining shape bind " << a << " " << b);
-  equivalentDsu_->join(a, b);
-  structuralDsu_->join(a, b);
+  solverShapeElem_->join(a, b);
+  solverCollapserElem_->join(a, b);
 }
 
 void DimensionAnalyzerBase::joinCollapser(int a, int b) {
   LDBG("Joining collapser bind " << a << " " << b);
-  structuralDsu_->join(a, b);
+  solverCollapserElem_->join(a, b);
 }
 
 void DimensionAnalyzerBase::disconnect(int a, int b) {
   LDBG("Disconnecting " << a << " " << b);
   if (0 <= a && a < static_cast<int>(isConnected_.size())) {
     isConnected_[a].rightConnected = false;
-    int parentOfA = structuralDsu_->find(a);
+    int parentOfA = solverCollapserElem_->find(a);
     isConnected_[parentOfA].rightConnected = false;
   }
   if (0 <= b && b < static_cast<int>(isConnected_.size())) {
     isConnected_[b].leftConnected = false;
-    int parentOfB = structuralDsu_->find(b);
+    int parentOfB = solverCollapserElem_->find(b);
     isConnected_[parentOfB].leftConnected = false;
   }
 }
@@ -382,7 +393,7 @@ void DimensionAnalyzerBase::separateGroup(Value val, BitVector contiguousMask,
     int leftIndex;
     int rightIndex;
   };
-  auto argRef = getValueDimIndices(val);
+  auto argRef = getArgumentRef(val);
   size_t rank = argRef.size();
 
   if (rank <= 1)

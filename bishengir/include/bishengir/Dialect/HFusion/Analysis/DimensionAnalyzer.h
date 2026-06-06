@@ -37,11 +37,11 @@ using ::mlir::detail::kUndefinedShaped;
 
 /// AnchorElement struct
 struct AnchorElement {
-  /// index of structuralDsu_ element of corresponding index
+  /// index of solverCollapserElem_ element of corresponding index
   int64_t axisIndex;
-  /// maximum static shape of related equivalentDsu_ element
+  /// maximum static shape of related solverShapeElem_ element
   int64_t maxStaticShape = 1;
-  /// all dynamic shape of related equivalentDsu_ element
+  /// all dynamic shape of related solverShapeElem_ element
   SmallVector<int64_t> dynamicShapeIndices;
 };
 
@@ -121,7 +121,7 @@ public:
                                 bool isStrict = false);
 
 protected:
-  /// Consists of (parent index of structuralDsu_, number of previous
+  /// Consists of (parent index of solverCollapserElem_, number of previous
   /// occurrence in one value) pairs to ensure two same indices are
   /// distinguished.
   /// For example: %arg0 = <AxBx30x20xf32>
@@ -198,7 +198,7 @@ protected:
 
   /// @description: Compute the anchor element for a given anchor candidate.
   ///
-  /// @param indexAncherElemMap Map of parent index of structuralDsu_ to
+  /// @param indexAncherElemMap Map of parent index of solverCollapserElem_ to
   /// anchor element.
   /// @param anchorCandidate Anchor candidate value.
   ///

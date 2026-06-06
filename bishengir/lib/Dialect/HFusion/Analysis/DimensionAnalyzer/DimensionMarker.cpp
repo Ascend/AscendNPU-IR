@@ -125,8 +125,8 @@ void DimensionAnalyzer::processBroadcastOp(linalg::BroadcastOp op) {
   Value output = op.getInit();
 
   createDummyRefIfNotExist({output});
-  assert(valueToDimIndicesIndex_.contains(output));
-  const auto &outputArgs = getValueDimIndices(output);
+  assert(argumentsRefPointer_.contains(output));
+  const auto &outputArgs = getArgumentRef(output);
   auto newValRef =
       processDecreasingDimensions(outputArgs, op.getDimensions(), input);
   initCollapseOrVerify(input, newValRef);
@@ -145,21 +145,20 @@ void DimensionAnalyzer::processReduceLikeOp(T reduceOp) {
   auto &pivotInput = inputs[0];
   auto &pivotOutput = outputs[0];
   createDummyRefIfNotExist({pivotInput});
-  assert(valueToDimIndicesIndex_.contains(pivotInput));
-  const auto refPtr = valueToDimIndicesIndex_.at(pivotInput);
+  assert(argumentsRefPointer_.contains(pivotInput));
+  const auto refPtr = argumentsRefPointer_.at(pivotInput);
   for (Value input : inputs) {
     initCollapseOrVerify(input, refPtr);
   }
 
   // Connect input and output
-  assert(valueToDimIndicesIndex_.contains(pivotInput));
-  createDummyRefIfNotExist({pivotInput});
-  auto inputArgs = getValueDimIndices(pivotInput);
+  assert(argumentsRefPointer_.contains(pivotInput));
+  auto inputArgs = getArgumentRefOrCreateDummy(pivotInput);
   auto newValRef =
       processDecreasingDimensions(inputArgs, reduceDims, pivotOutput);
   initCollapseOrVerify(pivotOutput, newValRef);
 
-  const auto refPtrOut = valueToDimIndicesIndex_.at(pivotOutput);
+  const auto refPtrOut = argumentsRefPointer_.at(pivotOutput);
   for (Value output : outputs) {
     initCollapseOrVerify(output, refPtrOut);
   }
@@ -169,7 +168,7 @@ void DimensionAnalyzer::processReduceLikeOp(T reduceOp) {
   reduceOp.walk([&](linalg::IndexOp indexOp) {
     const auto accessedIdx = indexOp.getDim();
     LDBG(accessedIdx);
-    const auto &inputArgs = getValueDimIndices(pivotInput);
+    const auto &inputArgs = getArgumentRef(pivotInput);
     LDBG(inputArgs.size());
     if (accessedIdx - 1 >= 0)
       disconnect(inputArgs[accessedIdx - 1], inputArgs[accessedIdx]);
@@ -184,8 +183,7 @@ void DimensionAnalyzer::processTransposeOp(linalg::TransposeOp op) {
   Value input = op.getInput();
   Value output = op.getInit();
   auto perm = op.getPermutation();
-  createDummyRefIfNotExist({input});
-  const auto &inputArgs = getValueDimIndices(input);
+  const auto &inputArgs = getArgumentRefOrCreateDummy(input);
   auto newValRef = processPermutation(inputArgs, perm, output);
   initCollapseOrVerify(output, newValRef);
   for (Value result : op->getResults()) {
@@ -196,10 +194,9 @@ void DimensionAnalyzer::processTransposeOp(linalg::TransposeOp op) {
 template <class T>
 void DimensionAnalyzer::processCumOp(T cumOp) {
   auto input = cumOp.getInput();
+  auto inputRef = getArgumentRefOrCreateDummy(input);
   auto res = cumOp.getResult();
-  createDummyRefIfNotExist({input, res});
-  auto inputRef = getValueDimIndices(input);
-  auto resRef = getValueDimIndices(res);
+  auto resRef = getArgumentRefOrCreateDummy(res);
   auto resultShape = utils::getShape(res.getType());
   auto rank = resultShape.size();
   BitVector cumMask(rank);
@@ -233,8 +230,8 @@ void DimensionAnalyzer::processGatherOp(hfusion::GatherOp gatherOp) {
     if (utils::getShapeRank(opr.getType()).value_or(0) != resultShape.size())
       continue;
     createDummyRefIfNotExist({opr, res});
-    auto oprArgRef = getValueDimIndices(opr);
-    auto gatherResRef = getValueDimIndices(res);
+    auto oprArgRef = getArgumentRef(opr);
+    auto gatherResRef = getArgumentRef(res);
     for (unsigned i = 0; i < rank; i++) {
       if (i != axis) {
         isConnected_[gatherResRef[i]].elementKind =
@@ -278,9 +275,8 @@ void DimensionAnalyzer::processInterleaveOp(
   for (auto opr : interleaveOp.getOperands()) {
     if (utils::getShapeRank(opr.getType()).value_or(0) != resultShape.size())
       continue;
-    createDummyRefIfNotExist({opr, res});
-    auto oprRef = getValueDimIndices(opr);
-    auto resRef = getValueDimIndices(res);
+    auto oprRef = getArgumentRefOrCreateDummy(opr);
+    auto resRef = getArgumentRefOrCreateDummy(res);
     for (int i = 0; i < rank - 1; ++i) {
       isConnected_[resRef[i]].elementKind =
           (resultShape[i] == 1 ? ElementKind::Unit : ElementKind::NoMutation);
@@ -289,7 +285,7 @@ void DimensionAnalyzer::processInterleaveOp(
       joinShape(resRef[i], oprRef[i]);
     }
     // Last element is a mutation kind
-    auto firstOperandRef = getValueDimIndices(firstOperand);
+    auto firstOperandRef = getArgumentRefOrCreateDummy(firstOperand);
     isConnected_[resRef[rank - 1]].elementKind = ElementKind::NoMutation;
     // Bind shape with each other
     joinShape(firstOperandRef[rank - 1], oprRef[rank - 1]);
@@ -306,10 +302,9 @@ void DimensionAnalyzer::processDeinterleaveOp(
   auto resultShape = utils::getShape(results[0].getType());
   const auto rank = static_cast<int>(resultShape.size());
   auto src = deinterleaveOp.getInput();
-  createDummyRefIfNotExist({src});
-  auto oprRef = getValueDimIndices(src);
+  auto oprRef = getArgumentRefOrCreateDummy(src);
   for (auto res : results) {
-    auto resRef = getValueDimIndices(res);
+    auto resRef = getArgumentRefOrCreateDummy(res);
     for (int i = 0; i < rank - 1; ++i) {
       isConnected_[resRef[i]].elementKind =
           (resultShape[i] == 1 ? ElementKind::Unit : ElementKind::NoMutation);
@@ -318,7 +313,7 @@ void DimensionAnalyzer::processDeinterleaveOp(
       joinShape(resRef[i], oprRef[i]);
     }
     // Last element is a mutation kind
-    auto firstResRef = getValueDimIndices(results[0]);
+    auto firstResRef = getArgumentRefOrCreateDummy(results[0]);
     isConnected_[resRef[rank - 1]].elementKind = ElementKind::NoMutation;
     // Bind shape with each other
     joinShape(firstResRef[rank - 1], resRef[rank - 1]);
@@ -404,9 +399,8 @@ void DimensionAnalyzer::processSubviewOp(memref::SubViewOp slicingOp) {
   auto resShape = slicingOp.getMixedSizes();
   auto droppedDims = slicingOp.getDroppedDims();
   auto rank = srcShape.size();
-  createDummyRefIfNotExist({src, res});
-  auto srcRefPtr = getValueDimIndices(src);
-  auto resRefPtr = getValueDimIndices(res);
+  auto srcRefPtr = getArgumentRefOrCreateDummy(src);
+  auto resRefPtr = getArgumentRefOrCreateDummy(res);
   int resPtr = 0;
   for (unsigned i = 0; i < rank; i++) {
     if (droppedDims[i]) {
@@ -432,7 +426,7 @@ void DimensionAnalyzer::processFlipOp(hfusion::FlipOp op) {
   for (Value v : op->getOperands()) {
     processValue(v, flipResult);
   }
-  auto argRef = getValueDimIndices(flipResult);
+  auto argRef = getArgumentRef(flipResult);
   auto rank = argRef.size();
   auto flipAxis = op.getFlipAxis();
   if (flipAxis >= 1) {
@@ -449,7 +443,7 @@ void DimensionAnalyzer::processSortOp(hfusion::SortOp op) {
   for (Value v : op->getOperands()) {
     processValue(v, sortResult);
   }
-  auto argRef = getValueDimIndices(sortResult);
+  auto argRef = getArgumentRef(sortResult);
   auto rank = argRef.size();
   auto sortAxis = op.getSortAxis();
   if (sortAxis >= 1) {
@@ -481,8 +475,8 @@ void DimensionAnalyzer::processEmbeddingGatherOp(
   // 2 or 3 (index_dims + embedding_dim)
   assert(indexRank + 1 == resultRank);
 
-  auto indexRefPtr = getValueDimIndices(indexTable);
-  auto resultRefPtr = getValueDimIndices(gatherResult);
+  auto indexRefPtr = getArgumentRef(indexTable);
+  auto resultRefPtr = getArgumentRef(gatherResult);
   processValue(opOut, gatherResult);
   // Bind index dimensions to corresponding result dimensions
   // index[b][i] -> result[b][i][d]
