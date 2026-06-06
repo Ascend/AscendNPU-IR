@@ -282,6 +282,24 @@ private:
         refineConstraint(c, coreTypeMaybe.value());
       }
 
+      // enhance the getCoreType of the debug op
+      if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
+        auto coreTypeMaybe = debugOp.inferCoreType();
+        if (!coreTypeMaybe) {
+          LLVM_DEBUG(llvm::dbgs()
+                     << "  -> Fail Reason: single op inference failure\n"
+                     << "  -> Failed Op: " << debugOp << "\n");
+
+          fail = true;
+          return WalkResult::interrupt();
+        }
+
+        LLVM_DEBUG(llvm::dbgs()
+                   << "  -- " << *op << ": " << coreTypeMaybe.value() << "\n");
+
+        refineConstraint(c, coreTypeMaybe.value());
+      }
+
       if (auto call = dyn_cast<mlir::CallOpInterface>(op)) {
         CallInterfaceCallable callee = call.getCallableForCallee();
         if (callee.is<mlir::Value>()) {

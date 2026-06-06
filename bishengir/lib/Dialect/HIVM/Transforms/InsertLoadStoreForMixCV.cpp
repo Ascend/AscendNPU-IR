@@ -933,11 +933,16 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
           if (upProp) {
             auto coreType = PropagatorUtil::getCoreType(upProp);
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            if (!addressSpaces.empty()) {
+              auto memScopeAttr = hivm::AddressSpaceAttr::get(
+                  op.getContext(), addressSpaces[0]);
+              op.setMemscopeAttr(memScopeAttr);
+            }
             if (coreType != TCoreType::CUBE_AND_VECTOR) {
               op.setTcoretypeAttr(
                   TCoreTypeAttr::get(op.getContext(), coreType));
             } else {
-              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
               auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
                                                         : addressSpaces[0];
               op.setTcoretypeAttr(TCoreTypeAttr::get(
