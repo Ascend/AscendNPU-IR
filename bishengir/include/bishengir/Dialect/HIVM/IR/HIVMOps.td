@@ -603,6 +603,9 @@ def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
       - mask: boolean mask controlling which elements to load
       - other: fallback values used when mask is false
       - dst: destination tensor specifying output shape and type
+      - isVolatile: defaults to true. TODO: set it to false only when analysis
+        proves the indirect load's GM address cannot be written by any possible
+        op.
 
     This operation is useful for sparse data access patterns and
     gather operations with conditional loading semantics.
@@ -612,7 +615,8 @@ def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
                        TensorOrMemref:$offsets,
                        TensorOrMemref:$dst,
                        Optional<TensorOrMemref>:$mask,
-                       Optional<TensorOrMemref>:$other
+                       Optional<TensorOrMemref>:$other,
+                       DefaultValuedAttr<BoolAttr, "true">:$isVolatile
   );
   let results = (outs Optional<TensorOrMemref>:$result);
 
@@ -978,6 +982,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                  "__builtin_gather_load"
                  "__builtin_index_select"
                  "__builtin_indirect_atomic"
+                 "__builtin_histogram"
 
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
@@ -1020,6 +1025,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
       static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
       static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
+      static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
 
       // TODO: Enable user provided customization
       static int getOpLibraryMaxRankImpl() { return 5; }

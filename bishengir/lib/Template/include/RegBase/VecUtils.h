@@ -918,9 +918,19 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
       memref_t<__ubuf__ dtype, dim> *dst, memref_t<__ubuf__ bool, dim> *mask,  \
       memref_t<__ubuf__ dtype, dim> *other)
 
+#define DECLARE_INDIRECT_LOAD_NONVOLATILE(dim, dtype, itype)                   \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_indirect_load_nonvolatile_##dim##d_##dtype##_##itype(           \
+      memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ itype, dim> *idx,      \
+      memref_t<__ubuf__ dtype, dim> *dst, memref_t<__ubuf__ bool, dim> *mask,  \
+      memref_t<__ubuf__ dtype, dim> *other)
+
 #define REGISTE_INDIRECT_LOAD(dim, dtype, itype)                               \
   DECLARE_INDIRECT_LOAD(dim, dtype, itype) {                                   \
-    indirect_load<dim, dtype, itype>(src, idx, dst, mask, other);              \
+    indirect_load<dim, dtype, itype, true>(src, idx, dst, mask, other);        \
+  }                                                                            \
+  DECLARE_INDIRECT_LOAD_NONVOLATILE(dim, dtype, itype) {                       \
+    indirect_load<dim, dtype, itype, false>(src, idx, dst, mask, other);       \
   }
 
 #define DECLARE_SHIFT_VV(op_name)                                              \

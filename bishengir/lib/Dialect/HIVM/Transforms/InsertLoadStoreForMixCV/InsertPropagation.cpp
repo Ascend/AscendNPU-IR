@@ -233,7 +233,7 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
     return failure();
 
   return TypeSwitch<Operation *, LogicalResult>(op)
-        .Case<func::CallOp>([&](auto callOp) {
+      .Case<func::CallOp>([&](auto callOp) {
         if (!isVFCall(callOp))
           return failure();
         PropagatorUtil::createPropagatorsUp(callOp, TCoreType::VECTOR,
@@ -249,6 +249,41 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
         PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
                                            rewriter);
         PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR, hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::GatherLoadOp>([&](auto op) {
+        PropagatorUtil::createPropagatorUp(&op.getBaseMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getIndicesMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        for (auto &mask : op.getMaskMutable())
+          PropagatorUtil::createPropagatorUp(&mask, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        for (auto &other : op.getOtherMutable())
+          PropagatorUtil::createPropagatorUp(&other, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::ScatterStoreOp>([&](auto op) {
+        PropagatorUtil::createPropagatorUp(&op.getIndicesMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDataMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        for (auto &mask : op.getMaskMutable())
+          PropagatorUtil::createPropagatorUp(&mask, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getBaseMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, hivm::AddressSpace::GM,
+                                              rewriter);
         return success();
       })
       .Case<hivm::IndirectLoadOp>([&](auto op) {

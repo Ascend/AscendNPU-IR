@@ -29,6 +29,8 @@ using namespace mlir;
 using namespace mlir::hivm;
 using namespace mlir::hivmave;
 
+static constexpr llvm::StringLiteral i1ProcessedAttr = "1xi1 processed";
+
 std::pair<Value, Value> getBaseMemrefAndOffset(PatternRewriter &rewriter,
                                                Location &loc, Value srcMem,
                                                Value currOffset) {
@@ -83,16 +85,55 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
   loadBroadcastPattern(MLIRContext *context)
       : OpRewritePattern<hivmave::VFLoadOp>(context, /*benefit=*/10) {}
 
-  LogicalResult matchAndRewrite(mlir::hivmave::VFLoadOp loadOp,
-                                PatternRewriter &rewriter) const override {
+  void rewriteLoadI1(mlir::hivmave::VFLoadOp loadOp,
+                     PatternRewriter &rewriter) const {
     VectorType orgVectorTy = loadOp.getVectorType();
     int64_t vecSize = orgVectorTy.getNumElements();
-    Type vecElemTy = orgVectorTy.getElementType();
-    MemRefType memRefTy = loadOp.getMemRefType();
-    if (!vecElemTy.isInteger(1) || !memRefTy.hasStaticShape() ||
-        memRefTy.getNumElements() != 1 || memRefTy.getRank() != 1)
-      return failure();
-    LDBG("Process operation : " << loadOp);
+
+    Location loc = loadOp.getLoc();
+    rewriter.setInsertionPointAfter(loadOp);
+    Value constZeroI8 = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getZeroAttr(rewriter.getI8Type()));
+    Value constOne = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getOneAttr(rewriter.getI8Type()));
+    VectorType i8VecTy = VectorType::get({util::VL}, rewriter.getI8Type());
+    VectorType i8MaskTy = VectorType::get({util::VL}, rewriter.getI1Type());
+    Value loadRes = loadOp.getRes();
+    SmallVector<Operation *> oldUsers(loadRes.getUsers());
+    if (vecSize != util::VL)
+      loadRes =
+          rewriter.create<UnrealizedConversionCastOp>(loc, i8MaskTy, loadRes)
+              .getResult(0);
+    VFBroadcastScalarOp brcZero = rewriter.create<hivmave::VFBroadcastScalarOp>(
+        loc, i8VecTy, constZeroI8);
+    VFBroadcastScalarOp brcOne =
+        rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, constOne);
+    VFSelectOp selI8 = rewriter.create<hivmave::VFSelectOp>(
+        loc, i8VecTy, loadRes, brcOne, brcZero);
+    Value allI8Mask = rewriter.create<hivmave::VFPgeOp>(
+        loc, i8MaskTy,
+        PgePatternAttr::get(rewriter.getContext(), PgePattern::ALL));
+    VFBroadcastVectorOp brcI8 = rewriter.create<hivmave::VFBroadcastVectorOp>(
+        loc, i8VecTy, selI8, allI8Mask, rewriter.getBoolAttr(true));
+    Value newPreg = rewriter.create<hivmave::VFCmpOp>(
+        loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZero, allI8Mask);
+    // Constrain the layout of newPreg to B8 for VectorLayout analysis.
+    newPreg = hivmave::constrainVectorLayout(newPreg, hivmave::VecMemType::B8,
+                                             rewriter);
+    if (vecSize != util::VL)
+      newPreg =
+          rewriter.create<UnrealizedConversionCastOp>(loc, orgVectorTy, newPreg)
+              .getResult(0);
+    for (Operation *user : oldUsers) {
+      user->replaceUsesOfWith(loadOp.getRes(), newPreg);
+    }
+    loadOp->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
+  }
+
+  void rewriteLoadI1Unaligned(mlir::hivmave::VFLoadOp loadOp,
+                              PatternRewriter &rewriter) const {
+    VectorType orgVectorTy = loadOp.getVectorType();
+    int64_t vecSize = orgVectorTy.getNumElements();
 
     Location loc = loadOp.getLoc();
     rewriter.setInsertionPointAfter(loadOp);
@@ -144,11 +185,11 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
     VFBroadcastVectorOp brcI8 = rewriter.create<hivmave::VFBroadcastVectorOp>(
         loc, i8VecTy, shiftI8, allI8Mask, rewriter.getBoolAttr(true));
     // get preg by cmp not-equal with zero vector
-    VFBroadcastScalarOp brcZeroI8 =
-        rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy,
-                                                      constZeroI8);
     Value newPreg = rewriter.create<hivmave::VFCmpOp>(
-        loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZeroI8, allI8Mask);
+        loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZero, allI8Mask);
+    // Constrain the layout of newPreg to B8 for VectorLayout analysis.
+    newPreg = hivmave::constrainVectorLayout(newPreg, hivmave::VecMemType::B8,
+                                             rewriter);
 
     if (vecSize != util::VL)
       newPreg =
@@ -157,6 +198,26 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
     // replace old load
     rewriter.replaceAllUsesWith(loadOp->getResults()[0], newPreg);
     rewriter.eraseOp(loadOp);
+    newLoad->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
+  }
+
+  LogicalResult matchAndRewrite(mlir::hivmave::VFLoadOp loadOp,
+                                PatternRewriter &rewriter) const override {
+    VectorType orgVectorTy = loadOp.getVectorType();
+    Type vecElemTy = orgVectorTy.getElementType();
+    MemRefType memRefTy = loadOp.getMemRefType();
+    if (loadOp->hasAttr(i1ProcessedAttr))
+      return failure();
+    if (!vecElemTy.isInteger(1) || !memRefTy.hasStaticShape() ||
+        memRefTy.getNumElements() != 1 || memRefTy.getRank() != 1)
+      return failure();
+    LDBG("Process operation : " << loadOp);
+
+    if (!loadOp->hasAttr(UnalignedAttr::name)) {
+      rewriteLoadI1(loadOp, rewriter);
+    } else {
+      rewriteLoadI1Unaligned(loadOp, rewriter);
+    }
     return success();
   }
 };

@@ -39,7 +39,7 @@ static LogicalResult verifyIfWithElseAndResults(scf::IfOp ifOp,
 
 static bool equivalentConvertMeta(ConvertLayoutOp a, ConvertLayoutOp b) {
   // Strict check: all attributes must match.
-  return a->getAttrs() == b->getAttrs();
+  return a.getDstLayout() == b.getDstLayout();
 }
 
 static SmallVector<Value> buildYieldOperands(scf::YieldOp oldYield,

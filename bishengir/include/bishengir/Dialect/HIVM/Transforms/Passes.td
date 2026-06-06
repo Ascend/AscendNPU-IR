@@ -636,6 +636,11 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let options = [
+    Option<"inlineQuantScale", "inline-quant-scale", "bool",
+           /*default=*/"false",
+           "Inline quant scale from vmul into fixpipe op.">
+  ];
 }
 
 def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {

@@ -1005,6 +1005,7 @@ module {
 module {
   // CHECK-LABEL: func.func @indirect_load_test
   // CHECK: hivm.hir.indirect_load
+  // CHECK: hivm.hir.indirect_load{{.*}}isVolatile = false
   func.func @indirect_load_test(%arg0: memref<?xf32>, %arg1: memref<4x32xi32>, %arg2: memref<4x32xi1>) {
     %cst = arith.constant dense<0.000000e+00> : tensor<4x32xf32>
     %cst_0 = arith.constant dense<true> : tensor<4x32xi1>
@@ -1024,6 +1025,8 @@ module {
     %11 = hfusion.indirect_load ins(%arg0 : memref<?xf32>, %4 : tensor<4x32xi32>, %5 : tensor<4x32xi1>, %1 : tensor<4x32xf32>) outs(%10 : tensor<4x32xf32>) -> tensor<4x32xf32>
     %12 = tensor.empty() : tensor<4x32xf32>
     %13 = hfusion.indirect_load ins(%arg0 : memref<?xf32>, %4 : tensor<4x32xi32>, %5 : tensor<4x32xi1>, %3 : tensor<4x32xf32>) outs(%12 : tensor<4x32xf32>) -> tensor<4x32xf32>
+    %14 = tensor.empty() : tensor<4x32xf32>
+    %15 = hfusion.indirect_load ins(%arg0 : memref<?xf32>, %4 : tensor<4x32xi32>, %5 : tensor<4x32xi1>, %3 : tensor<4x32xf32>) outs(%14 : tensor<4x32xf32>) {isVolatile = false} -> tensor<4x32xf32>
     return
   }
 }

@@ -274,7 +274,11 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
 
   pm.addPass(mlir::hivm::createInsertFixpipePass());
-  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  {
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+  }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
@@ -294,7 +298,11 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(createInsertNZ2NDForDebugPass());
   }
   pm.addPass(mlir::hivm::createInsertFixpipePass());
-  pm.addPass(mlir::hivm::createInlineFixpipePass());
+  {
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+  }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   pm.addPass(createInsertWorkSpaceForMixCVPass());
   // keep this for the debug feature (device print, etc.)

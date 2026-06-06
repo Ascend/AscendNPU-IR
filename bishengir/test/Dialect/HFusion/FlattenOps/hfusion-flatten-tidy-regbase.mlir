@@ -1442,3 +1442,48 @@ func.func @hivm_store(%arg0: tensor<4xf32>, %arg8: memref<?xf32> {tt.divisibilit
   hivm.hir.store ins(%broadcasted : tensor<4x8xf32>) outs(%reinterpret_cast_18 : memref<4x8xf32>) atomic = <add>
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @flatten_scf_if_scalar_result(
+// CHECK: scf.for
+// CHECK:   scf.if
+// CHECK:     scf.if {{.*}} -> (i32)
+// CHECK:       tensor.insert
+// CHECK:       bufferization.materialize_in_destination
+// CHECK:       scf.yield
+// CHECK:     } else {
+// CHECK:       scf.yield
+// CHECK:     }
+// CHECK:     scf.yield
+func.func @flatten_scf_if_scalar_result(%arg0: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg1: memref<?xi32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg2: i32, %arg3: i32, %arg4: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %c6_i32 = arith.constant 6 : i32
+  %c32_i32 = arith.constant 32 : i32
+  %0 = tensor.empty() : tensor<1xi32>
+  %1 = linalg.fill ins(%c0_i32 : i32) outs(%0 : tensor<1xi32>) -> tensor<1xi32>
+  scf.for %arg5 = %c0_i32 to %c32_i32 step %c1_i32 iter_args(%arg6 = %c0_i32) -> (i32)  : i32 {
+    %2 = arith.cmpi slt, %arg5, %arg2 : i32
+    %3 = scf.if %2 -> (i32) {
+      %4 = arith.cmpi slt, %arg6, %c6_i32 : i32
+      %5 = scf.if %4 -> (i32) {
+        %6 = arith.index_cast %arg6 : i32 to index
+        %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [%6], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1], offset: ?>>
+        %inserted = tensor.insert %arg5 into %0[%c0] : tensor<1xi32>
+        bufferization.materialize_in_destination %inserted in writable %reinterpret_cast : (tensor<1xi32>, memref<1xi32, strided<[1], offset: ?>>) -> ()
+        %7 = arith.addi %arg6, %c1_i32 : i32
+        scf.yield %7 : i32
+      } else {
+        scf.yield %arg6 : i32
+      }
+      scf.yield %5 : i32
+    } else {
+      scf.yield %arg6 : i32
+    }
+    scf.yield %3 : i32
+  }
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1], strides: [1] : memref<?xi32> to memref<1xi32, strided<[1]>>
+  bufferization.materialize_in_destination %1 in writable %reinterpret_cast_0 : (tensor<1xi32>, memref<1xi32, strided<[1]>>) -> ()
+  return
+}

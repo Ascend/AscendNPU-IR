@@ -245,7 +245,6 @@ struct VectorOpToArithBinary : public OpRewritePattern<HIVMVectorOp> {
     SmallVector<Value> hivmOperands = getHIVMVectorOperands(op);
     Value lhs = hivmOperands[0];
     Value rhs = hivmOperands[1];
-    Value dst_val = hivmOperands[2];
     Type resultType = op->getResult(0).getType();
     lhs = splatScalarOperand(rewriter, op.getLoc(), lhs, resultType);
     rhs = splatScalarOperand(rewriter, op.getLoc(), rhs, resultType);
@@ -255,7 +254,6 @@ struct VectorOpToArithBinary : public OpRewritePattern<HIVMVectorOp> {
 
     auto newOp = rewriter.create<ArithBinaryOp>(
       op.getLoc(), resultType, lhs, rhs);
-    dst_val.replaceAllUsesWith(newOp.getResult());
     rewriter.replaceOp(op, newOp);
     return success();
   }

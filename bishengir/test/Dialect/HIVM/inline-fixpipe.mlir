@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt -hivm-insert-fixpipe -hivm-inline-fixpipe='inline-quant-scale=true' %s -split-input-file | FileCheck %s --check-prefix=QUANT
 
 // CHECK: func.func @matmul
 func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {global_kernel = "local"} {
@@ -1243,11 +1244,18 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
 
 // -----
 
-// CHECK: func.func @only_inline_quant_scale_fixpipe_vmul_store(%[[SRC:.*]]: tensor<?x64xf32>, %[[_:.*]]: tensor<?x64xf32>, %[[QUANT_SCALE:.*]]: f32, %[[_:.*]], %[[STORE_DST:.*]]: memref<2x64xf32, strided<[256, 1], offset: ?>>)
-// CHECK: %[[EXTRACTED:.*]] = tensor.extract_slice %[[SRC]][0, 0] [2, 64] [1, 1] : tensor<?x64xf32> to tensor<2x64xf32>
-// CHECK: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}}
-// CHECK-SAME: ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
-// CHECK-NEXT: return
+// With inline-quant-scale=true: quant scale is folded into fixpipe.
+// QUANT: func.func @only_inline_quant_scale_fixpipe_vmul_store(%[[SRC:.*]]: tensor<?x64xf32>, %[[_:.*]]: tensor<?x64xf32>, %[[QUANT_SCALE:.*]]: f32, %[[_:.*]], %[[STORE_DST:.*]]: memref<2x64xf32, strided<[256, 1], offset: ?>>)
+// QUANT: %[[EXTRACTED:.*]] = tensor.extract_slice %[[SRC]][0, 0] [2, 64] [1, 1] : tensor<?x64xf32> to tensor<2x64xf32>
+// QUANT: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>}}
+// QUANT-SAME: ins(%[[EXTRACTED]] : tensor<2x64xf32>) outs(%[[STORE_DST]] : memref<2x64xf32, strided<[256, 1], offset: ?>>) quant_scale = %[[QUANT_SCALE]] : f32
+// QUANT-NEXT: return
+// Without inline-quant-scale (default): vmul is preserved.
+// CHECK: func.func @only_inline_quant_scale_fixpipe_vmul_store(
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: quant_scale
+// CHECK: hivm.hir.vmul
+// CHECK: return
 module {
   func.func @only_inline_quant_scale_fixpipe_vmul_store(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: tensor<?x64xf32>, %arg5: memref<2x64xf32, strided<[256, 1], offset: ?>>) {
     %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
@@ -1260,12 +1268,19 @@ module {
 
 // -----
 
+// Neither default nor inline-quant-scale=true should inline when there are two vmul users.
 // CHECK: func.func @dont_inline_quant_scale_fixpipe_with_vmul_vmul(
 // CHECK: hivm.hir.fixpipe
 // CHECK-NOT: quant_scale
 // CHECK: hivm.hir.vmul
 // CHECK: hivm.hir.vmul
 // CHECK: return
+// QUANT: func.func @dont_inline_quant_scale_fixpipe_with_vmul_vmul(
+// QUANT: hivm.hir.fixpipe
+// QUANT-NOT: quant_scale
+// QUANT: hivm.hir.vmul
+// QUANT: hivm.hir.vmul
+// QUANT: return
 module {
   func.func @dont_inline_quant_scale_fixpipe_with_vmul_vmul(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: f32, %arg5: tensor<?x64xf32>, %arg6: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
     %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
@@ -1278,11 +1293,17 @@ module {
 
 // -----
 
+// Non-scalar quant scale is never inlined regardless of the option.
 // CHECK: func.func @unsupported_inline_quant_scale_fixpipe_non_scalar(
 // CHECK: hivm.hir.fixpipe
 // CHECK-NOT: quant_scale
 // CHECK: hivm.hir.vmul
 // CHECK: return
+// QUANT: func.func @unsupported_inline_quant_scale_fixpipe_non_scalar(
+// QUANT: hivm.hir.fixpipe
+// QUANT-NOT: quant_scale
+// QUANT: hivm.hir.vmul
+// QUANT: return
 module {
   func.func @unsupported_inline_quant_scale_fixpipe_non_scalar(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: tensor<?x64xf32>, %arg3: tensor<?x64xf32>, %arg6: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
     %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
@@ -1368,5 +1389,47 @@ module {
     %5 = hivm.hir.mmadmxL1 ins(%0, %1, %2, %3, %true, %c0, %c0, %c0 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%4 : tensor<4x16xf8E5M2>) -> tensor<4x16xf8E5M2>
     // CHECK: hivm.hir.fixpipe
     return %5 : tensor<4x16xf8E5M2>
+  }
+}
+
+// -----
+
+// With inline-quant-scale=true: scalar vmul directly after fixpipe and before store is inlined.
+// QUANT: func.func @inline_quant_scale_fixpipe_vmul_direct_store(
+// QUANT: hivm.hir.fixpipe {{.*pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>.*quant_scale}}
+// QUANT-NOT: hivm.hir.vmul
+// QUANT: return
+// Without the option: vmul is preserved.
+// CHECK: func.func @inline_quant_scale_fixpipe_vmul_direct_store(
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: quant_scale
+// CHECK: hivm.hir.vmul
+// CHECK: return
+module {
+  func.func @inline_quant_scale_fixpipe_vmul_direct_store(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: tensor<?x64xf32>, %arg4: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %1 = hivm.hir.vmul ins(%0, %arg2 : tensor<?x64xf32>, f32) outs(%arg3 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    hivm.hir.store ins(%1 : tensor<?x64xf32>) outs(%arg4 : memref<?x64xf32, strided<[256, 1], offset: ?>>)
+    return
+  }
+}
+
+// -----
+
+// With inline-quant-scale=true: fixpipe already having a quant_scale is not modified.
+// QUANT: func.func @no_double_quant_scale_inline(
+// QUANT: hivm.hir.fixpipe {{.*quant_scale.*}}
+// QUANT: hivm.hir.vmul
+// QUANT: return
+// CHECK: func.func @no_double_quant_scale_inline(
+// CHECK: hivm.hir.fixpipe
+// CHECK: hivm.hir.vmul
+// CHECK: return
+module {
+  func.func @no_double_quant_scale_inline(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: f32, %arg4: tensor<?x64xf32>, %arg5: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) quant_scale = %arg2 : f32 -> tensor<?x64xf32>
+    %1 = hivm.hir.vmul ins(%0, %arg3 : tensor<?x64xf32>, f32) outs(%arg4 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    hivm.hir.store ins(%1 : tensor<?x64xf32>) outs(%arg5 : memref<?x64xf32, strided<[256, 1], offset: ?>>)
+    return
   }
 }

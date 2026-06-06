@@ -52,6 +52,17 @@ static Value getPrimaryCastValue(VCastOp op) {
   return op->getResults().empty() ? op.getSingleDst() : op->getResults()[0];
 }
 
+static hivm::RoundMode getIntegerCastRoundMode(Type sourceElemType,
+                                               Type targetElemType) {
+  auto sourceIntType = dyn_cast<IntegerType>(sourceElemType);
+  auto targetIntType = dyn_cast<IntegerType>(targetElemType);
+  if (!sourceIntType || !targetIntType)
+    return hivm::RoundMode::RINT;
+  if (targetIntType.getWidth() >= sourceIntType.getWidth())
+    return hivm::RoundMode::RINT;
+  return hivm::RoundMode::TRUNCWITHOVERFLOW;
+}
+
 static void annotateCast(PatternRewriter &rewriter, Location loc, VCastOp op,
                          ArrayRef<NamedAttribute> attrs) {
   auto markOp =
@@ -491,6 +502,52 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createBroadcastOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createBitcastOp(
     PatternRewriter &rewriter, Location loc, Type resultType, Value source) {
   return rewriter.create<BitcastOp>(loc, resultType, source).getResult();
+}
+
+static SmallVector<Type> getReductionResultTypes(VReduceOp op, ValueRange dsts) {
+  SmallVector<Type> resultTypes;
+  if (!op.hasPureTensorSemantics())
+    return resultTypes;
+
+  resultTypes.reserve(dsts.size());
+  for (Value dst : dsts)
+    resultTypes.push_back(dst.getType());
+  return resultTypes;
+}
+
+Operation *mlir::hivm::NormalizeTraitsBase::createReduceOp(
+    PatternRewriter &rewriter, Location loc, VReduceOp op, Value src,
+    ValueRange dsts, DenseI64ArrayAttr reduceDimsAttr) {
+  SmallVector<Type> resultTypes = getReductionResultTypes(op, dsts);
+  if (auto tieBreakLeft = op.getTieBreakLeftAttr()) {
+    return rewriter.create<hivm::VReduceOp>(
+        loc, resultTypes, src, dsts, op.getArithAttr(), op.getUnsignedSrcAttr(),
+        tieBreakLeft, reduceDimsAttr);
+  }
+  return rewriter.create<hivm::VReduceOp>(
+      loc, resultTypes, src, dsts, op.getArithAttr(), op.getUnsignedSrcAttr(),
+      reduceDimsAttr);
+}
+
+Operation *mlir::hivm::NormalizeTraitsBase::createReduceWithIndexOp(
+    PatternRewriter &rewriter, Location loc, VReduceOp op,
+    ArrayRef<Value> newInputs, ArrayRef<Value> newInits) {
+  if (newInputs.empty())
+    llvm::report_fatal_error("VReduceOp expects a source input");
+  return createReduceOp(rewriter, loc, op, newInputs.front(), newInits,
+                        op.getReduceDimsAttr());
+}
+
+Value mlir::hivm::NormalizeTraitsBase::castReduceIndexTensor(
+    PatternRewriter &rewriter, Location loc, Value value,
+    IntegerType targetElemType, Value) {
+  Type sourceElemType = getElementTypeOrSelf(value.getType());
+  auto castOp = hivm::castTo(
+      rewriter, loc, value,
+      rewriter.getAttr<hivm::RoundModeAttr>(
+          getIntegerCastRoundMode(sourceElemType, targetElemType)),
+      targetElemType);
+  return getPrimaryCastValue(castOp);
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createGather1DOp(

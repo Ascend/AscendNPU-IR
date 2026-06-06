@@ -16,156 +16,102 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Transforms/Normalize/NormalizeReductionTemplate.h"
 
-namespace mlir::hfusion {
+namespace mlir {
 
-// Normalize argmax and argmin
-// hfusion.reduce_with_index <max>(src)
-// is normalized to
-// src_nan_mask = hfusion.isnan(src)
-// new_src = hfusion.select(src_nan_mask, -inf, src)
-// hfusion.reduce_with_index <max> (new_src)
-struct NormalizeArgMinMaxOp
-    : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
-  using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
+/// HFusion hooks for the shared argmin/argmax normalization template.
+struct HFusionNormalizeArgMinMaxTraits : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeArgMinMax(hfusion::ReduceWithIndexOp op) {
+    if (!op.hasPureTensorSemantics() || isReductionInitAlreadyNormalized(*op))
+      return false;
+    auto inputs = op.getInputs();
+    return inputs.size() == 2 &&
+           !getElementTypeOrSelf(inputs[0].getType()).isInteger();
+  }
 
-  LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
+  static bool isMinReduction(hfusion::ReduceWithIndexOp op) {
+    return op.getReduceKind().getReduceWithIndexKind() ==
+           hfusion::ReduceWithIndexKind::MIN;
+  }
 
-    SmallVector<Value> inputs = op.getInputs();
-    assert(inputs.size() == 2);
-    Value src = inputs[0];
-    Value src1 = inputs[1];
-
-    static constexpr llvm::StringLiteral kAlreadyInitalizeInit =
-        "already_initialize_init";
-    if (op->hasAttr(kAlreadyInitalizeInit)) {
-      return failure();
-    }
-
-    Type elemType = getElementTypeOrSelf(src);
-    if (elemType.isInteger()) {
-      return failure();
-    }
-
-    rewriter.setInsertionPointAfter(op);
-    Location loc = op.getLoc();
-    auto kind = op.getReduceKind();
-    auto tieBreakLeft = op.getTieBreakLeftAttr();
-    auto dims = op.getDimensions();
-    auto unsignedSource = op.getUnsignedSrcAttr();
-    bool isMin = kind.getReduceWithIndexKind() == ReduceWithIndexKind::MIN;
-
-    auto infSign = isMin ? 1 : -1;
-    double signedInf = infSign * std::numeric_limits<double>::infinity();
-
-    auto infValue =
-        utils::createConstantOp<double>(rewriter, loc, elemType, signedInf);
-    utils::createConstantOp<double>(rewriter, loc, elemType, 0.);
-
-    auto srcMask = utils::createEmptyOpWithTargetElemType(rewriter, loc, src,
-                                                          rewriter.getI1Type());
-    auto srcNanMask =
-        rewriter.create<hfusion::IsNanOp>(loc, srcMask.getType(), src)
-            .getResult();
-
-    auto srcNanMasked = utils::createEmptyOp(rewriter, loc, src);
-    srcNanMasked =
-        rewriter
-            .create<hfusion::SelectOp>(loc, TypeRange(srcNanMasked),
-                                       ValueRange({srcNanMask, infValue, src}),
-                                       ValueRange(srcNanMasked))
-            .getResults()[0];
-
-    auto srcNanVals = utils::createEmptyOp(rewriter, loc, op.getResults()[0]);
-    auto srcNanIdxs = utils::createEmptyOp(rewriter, loc, op.getResults()[1]);
-    auto srcNanReduceOp = rewriter.create<hfusion::ReduceWithIndexOp>(
-        loc, TypeRange{srcNanVals.getType(), srcNanIdxs.getType()},
-        /*input*/ ValueRange{srcNanMasked, src1},
-        /*outputValue&Index*/
-        ValueRange{srcNanVals, srcNanIdxs}, kind, unsignedSource, tieBreakLeft,
-        dims);
-    rewriter.modifyOpInPlace(srcNanReduceOp, [&]() {
-      srcNanReduceOp->setAttr(kAlreadyInitalizeInit,
-                              UnitAttr::get(op->getContext()));
-    });
-    rewriter.replaceOp(op, srcNanReduceOp);
-    return success();
+  static Value createIsNanMask(PatternRewriter &rewriter, Location loc,
+                               Value src) {
+    Value srcMask = utils::createEmptyOpWithTargetElemType(rewriter, loc, src,
+                                                           rewriter.getI1Type());
+    return rewriter.create<hfusion::IsNanOp>(loc, srcMask.getType(), src)
+        .getResult();
   }
 };
 
-static void replaceF16ResultsWithF32(const SmallVector<Value> &oldResults,
-                                     const SmallVector<Value> &newResults,
-                                     PatternRewriter &rewriter) {
-  assert(oldResults.size() == newResults.size() &&
-         "result sizes mismatch when replace op results");
-  for (const auto [idx, oldResult] : llvm::enumerate(oldResults)) {
-    Value newResult = newResults[idx];
-    if (!isF16ElemType(oldResult.getType())) {
-      rewriter.replaceAllUsesWith(oldResult, newResult);
-      continue;
-    }
-
-    Value castResult = castTo(rewriter, newResult, rewriter.getF16Type());
-    rewriter.replaceAllUsesWith(oldResult, castResult);
-  }
-}
-
-/// normalize f16 reduce_sum as bellow for high precision
-/// eg.
-///    reduce_sum f16
-/// is normalized to
-///    cast f16 to f32
-///    reduce_sum f32
-///    cast f32 to f16
-struct NormalizeF16ReduceSum : public OpRewritePattern<linalg::ReduceOp> {
+/// HFusion hooks for promoting f16 reduce-sum to f32 accumulation.
+struct HFusionNormalizeF16ReduceSumTraits
+    : public hfusion::NormalizeTraitsBase {
 public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(linalg::ReduceOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
+  static bool shouldNormalizeF16ReduceSum(linalg::ReduceOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
 
     SmallVector<Value> inputs = op.getInputs();
     SmallVector<Value> inits = op.getInits();
+    if (!hfusion::hasF16ElemType(inputs) && !hfusion::hasF16ElemType(inits))
+      return false;
 
-    if (!hasF16ElemType(inputs) && !hasF16ElemType(inits)) {
-      return failure();
-    }
-
-    if (!shouldComputeF16ToF32(op)) {
-      return failure();
-    }
-
-    SmallVector<Value> newInputs =
-        normalizeSrcToTargetType<float, Float32Type>(rewriter, inputs);
-    SmallVector<Value> newInits =
-        normalizeSrcToTargetType<float, Float32Type>(rewriter, inits);
-    Operation *newOp =
-        createNewReduceOp(op, rewriter, rewriter.getF16Type(),
-                          rewriter.getF32Type(), newInputs, newInits);
-    replaceF16ResultsWithF32(op->getResults(), newOp->getResults(), rewriter);
-
-    return success();
+    Block *block = &op.getRegion().front();
+    return llvm::any_of(*block, [](Operation &bodyOp) {
+      return isa<arith::AddFOp>(bodyOp);
+    });
   }
 
-private:
-  bool shouldComputeF16ToF32(linalg::ReduceOp op) const {
-    Block *block = &op.getRegion().front();
-    for (Operation &bodyOp : *block) {
-      if (dyn_cast_or_null<arith::AddFOp>(bodyOp)) {
-        return true;
-      }
-    }
-    return false;
+  static Operation *createPromotedReduceOp(linalg::ReduceOp op,
+                                           PatternRewriter &rewriter,
+                                           SmallVector<Value> &newInputs,
+                                           SmallVector<Value> &newInits) {
+    return hfusion::createNewReduceOp(op, rewriter, rewriter.getF16Type(),
+                                      rewriter.getF32Type(), newInputs,
+                                      newInits);
   }
 };
 
+/// HFusion hooks for replacing reduce-with-index shape-only operands with
+/// `tensor.empty`.
+struct HFusionNormalizeReduceWithIndexInitsAndInputsTraits
+    : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeReduceWithIndexInitsAndInputs(
+      hfusion::ReduceWithIndexOp op) {
+    return true;
+  }
+};
+
+/// HFusion hooks for routing index tensors through an i32 reduction kernel.
+struct HFusionNormalizeReduceIndexToI32Traits
+    : public hfusion::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeReduceIndexToI32(hfusion::ReduceWithIndexOp op) {
+    return hasNonI32ReductionIndexResult(op);
+  }
+};
+
+using NormalizeArgMinMaxOp = NormalizeArgMinMaxOpTemplate<
+    hfusion::ReduceWithIndexOp, HFusionNormalizeArgMinMaxTraits>;
+using NormalizeF16ReduceSum =
+    NormalizeF16ReduceSumTemplate<linalg::ReduceOp,
+                                  HFusionNormalizeF16ReduceSumTraits>;
+using NormalizeReduceWithIndexInitsAndInputs =
+    NormalizeReduceWithIndexInitsAndInputsTemplate<
+        hfusion::ReduceWithIndexOp,
+        HFusionNormalizeReduceWithIndexInitsAndInputsTraits>;
+using NormalizeReduceIndexToI32 =
+    NormalizeReduceIndexToI32Template<hfusion::ReduceWithIndexOp,
+                                      HFusionNormalizeReduceIndexToI32Traits>;
+
+} // namespace mlir
+
+namespace mlir::hfusion {
 struct NormalizeI8Transpose : public OpRewritePattern<linalg::TransposeOp> {
 public:
   using OpRewritePattern<linalg::TransposeOp>::OpRewritePattern;
@@ -361,187 +307,6 @@ struct ReduceWithIndexRAHighPerformance
 
     rewriter.replaceOp(op, newReduceOp);
     return success();
-  }
-};
-
-/// remove linalg.fill Ops that are fed into reduce_with_index as inits
-/// becuase everything is handle in template functions for regbase, and
-/// every valid reduce_with_index gets lowered to template functions, unlike
-/// membase that some lowers to scalar loops
-/// For example:
-/// %0 = linalg.fill -> tensor<37x3xf32>
-/// %1 = linalg.fill -> tensor<37x3xi32>
-/// %idx = linalg.fill -> tensor<37x5x3xi32>
-/// %2:2 = hfusion.reduce_with_index <max> ins(%data,%idx)
-/// outs(%0, %1 :tensor<37x3xf32>, tensor<37x3xi32>) dimensions = [1]
-///
-/// becomes
-///
-/// %0 = tensor.empty() -> tensor<37x3xf32>
-/// %1 = tensor.empty() -> tensor<37x3xi32>
-/// %idx = tensor.empty() -> tensor<37x5x3xi32>
-/// %2:2 = hfusion.reduce_with_index <max> ins(%data,%idx)
-/// outs(%0, %1 :tensor<37x3xf32>, tensor<37x3xi32>) dimensions = [1]
-struct NormalizeReduceWithIndexInitsAndInputs
-    : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
-                                PatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    bool changed = false;
-
-    SmallVector<Value> newInits;
-    newInits.reserve(op.getNumDpsInits());
-    for (Value init : op.getInits()) {
-      if (init.getDefiningOp<tensor::EmptyOp>()) {
-        newInits.push_back(init);
-        continue;
-      }
-
-      auto initTy = dyn_cast<RankedTensorType>(init.getType());
-      if (!initTy || !initTy.hasStaticShape())
-        return failure();
-
-      // Replace with tensor.empty of the same static shape
-      Value empty = rewriter.create<tensor::EmptyOp>(loc, initTy.getShape(),
-                                                     initTy.getElementType());
-      newInits.push_back(empty);
-      changed = true;
-    }
-
-    SmallVector<Value> newInputs(op.getInputs().begin(), op.getInputs().end());
-    Value indexInput = newInputs[1];
-
-    if (!indexInput.getDefiningOp<tensor::EmptyOp>() &&
-        !isa<BlockArgument>(indexInput)) {
-      auto ty = dyn_cast<RankedTensorType>(indexInput.getType());
-      if (!ty || !ty.hasStaticShape())
-        return failure();
-
-      Value empty = rewriter.create<tensor::EmptyOp>(loc, ty.getShape(),
-                                                     ty.getElementType());
-      newInputs[1] = empty;
-      changed = true;
-    }
-
-    if (!changed)
-      return failure();
-
-    auto newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
-        loc, op->getResultTypes(), newInputs, newInits, op.getReduceKindAttr(),
-        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
-        op.getDimensionsAttr());
-
-    rewriter.replaceOp(op, newOp->getResults());
-    return success();
-  }
-};
-
-// helper function to cast i64 index to i32 which we support
-struct NormalizeReduceIndexToI32
-    : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
-                                PatternRewriter &rewriter) const override {
-    // Basic checks
-    if (op->getNumResults() < 2)
-      return rewriter.notifyMatchFailure(op, "expects at least two results");
-
-    Location loc = op->getLoc();
-    MLIRContext *ctx = op->getContext();
-    Value oldIndexVal = op->getResult(1);
-    auto oldIndexTT = mlir::dyn_cast<RankedTensorType>(oldIndexVal.getType());
-    if (!oldIndexTT)
-      return rewriter.notifyMatchFailure(
-          op, "index result is not RankedTensorType");
-    auto oldElemTy = mlir::dyn_cast<IntegerType>(oldIndexTT.getElementType());
-    if (!oldElemTy)
-      return rewriter.notifyMatchFailure(op, "index element is not integer");
-
-    // if already i32, nothing to do
-    if (oldElemTy.getWidth() == 32)
-      return rewriter.notifyMatchFailure(op, "index already i32");
-
-    // target i32 element type and new index RankedTensorType
-    IntegerType i32Ty = IntegerType::get(ctx, 32);
-    RankedTensorType newIndexTT =
-        RankedTensorType::get(oldIndexTT.getShape(), i32Ty);
-
-    // build new inputs with i32 type for index
-    SmallVector<Value, 8> newInputs;
-    newInputs.reserve(op.getInputs().size());
-    for (Value in : op.getInputs()) {
-      newInputs.push_back(makeI32ValueFor(rewriter, loc, in, oldElemTy, i32Ty));
-    }
-
-    // build new inputs with i32 type for index
-    SmallVector<Value, 4> newInits;
-    newInits.reserve(op.getInits().size());
-    for (Value init : op.getInits()) {
-      newInits.push_back(
-          makeI32ValueFor(rewriter, loc, init, oldElemTy, i32Ty));
-    }
-
-    // new result types: keep first (reduced value) unchanged, second becomes
-    // tensor<...xi32>
-    Type valueResultTy = op->getResult(0).getType();
-    SmallVector<Type, 2> newResultTypes = {valueResultTy, newIndexTT};
-
-    // create the new reduce_with_index op with i32 index results and i32
-    // inputs/inits
-    auto newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
-        loc, ArrayRef<Type>(newResultTypes), ArrayRef<Value>(newInputs),
-        ArrayRef<Value>(newInits), op.getReduceKindAttr(),
-        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
-        op.getDimensionsAttr());
-
-    Value newIndexVal = newOp->getResult(1);
-    Value replacedIndexVal;
-    if (oldElemTy.getWidth() != 32) {
-      // cast back to original index element type for consumers
-      replacedIndexVal = hfusion::castTo(rewriter, newIndexVal, oldElemTy);
-    } else {
-      replacedIndexVal = newIndexVal;
-    }
-
-    op->getResult(0).replaceAllUsesWith(newOp->getResult(0));
-    op->getResult(1).replaceAllUsesWith(replacedIndexVal);
-    rewriter.eraseOp(op);
-    return success();
-  }
-
-private:
-  // helper function to produce an i32-typed Value for a tensor Value that
-  // currently has oldElemTy. If the defining op is tensor.empty, synthesize a
-  // new tensor.empty with i32 element type preserving dynamic sizes. Otherwise,
-  // use hfusion::castTo to cast the tensor's element type.
-  static Value makeI32ValueFor(RewriterBase &rewriter, Location loc, Value val,
-                               Type oldElemTy, Type i32Ty) {
-    // If not a ranked tensor or element doesn't match oldElemTy, just return
-    // val
-    auto rt = mlir::dyn_cast<RankedTensorType>(val.getType());
-    if (!rt)
-      return val;
-    auto elem = mlir::dyn_cast<IntegerType>(rt.getElementType());
-    if (!elem || elem != oldElemTy)
-      return val;
-
-    // create a new tensor.empty with the same
-    // shape but i32 element type
-    if (Operation *def = val.getDefiningOp()) {
-      if (auto emptyOp = dyn_cast<tensor::EmptyOp>(def)) {
-        RankedTensorType newRT = RankedTensorType::get(rt.getShape(), i32Ty);
-        // collect dynamic sizes (works if emptyOp has them)
-        SmallVector<Value, 4> dynSizes;
-        for (Value ds : emptyOp.getDynamicSizes())
-          dynSizes.push_back(ds);
-        return rewriter.create<tensor::EmptyOp>(loc, newRT, dynSizes);
-      }
-    }
-
-    return hfusion::castTo(rewriter, val, i32Ty);
   }
 };
 

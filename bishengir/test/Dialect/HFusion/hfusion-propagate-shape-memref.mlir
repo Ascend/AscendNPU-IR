@@ -112,3 +112,25 @@ func.func @expand_after_to_tensor_identity(%arg0: memref<32x64xf32>) -> tensor<4
   %add = hivm.hir.vadd ins(%e, %e : tensor<4x8x64xf32>, tensor<4x8x64xf32>) outs(%init : tensor<4x8x64xf32>) -> tensor<4x8x64xf32>
   return %add : tensor<4x8x64xf32>
 }
+
+// -----
+
+// CHECK: Valid
+// CHECK-LABEL: @propagate_memref_expand_512_sink
+// CHECK: %[[C512:.*]] = arith.constant 512 : index
+// CHECK: memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [1, 32, 1, 16], strides: [1024, 32, 16, 1]
+// CHECK: memref.subview %reinterpret_cast[0, %arg2, 0, 0] [1, 16, 1, 16]
+// CHECK: memref.collapse_shape %subview {{\[\[}}0, 1], [2, 3]]
+// CHECK: memref.expand_shape %collapse_shape {{\[\[}}0, 1], [2, 3]] output_shape [1, 16, 1, 16] : memref<16x16xf16, strided<[32, 1], offset: ?>> into memref<1x16x1x16xf16, strided<[512, 32, 16, 1], offset: ?>>
+// CHECK: memref.reinterpret_cast %subview to offset: [%offset], sizes: [%c1, %c16, %c1, %c16], strides: [%[[C512]], %c32, %c16, %c1]
+// CHECK: memref.subview %reinterpret_cast_0[0, 0, 0, 0] [1, %arg3, 1, %arg4]
+// CHECK: memref.cast
+// CHECK-NOT: memref.expand_shape %subview_0
+func.func @propagate_memref_expand_512_sink(%arg0: memref<?xf16>, %arg1: index, %arg2: index, %arg3: index, %arg4: index, %arg5: tensor<1x16x1x16xf32>) -> memref<1x?x1x?xf16, strided<[?, 32, ?, 1], offset: ?>> {
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg1], sizes: [32, 16], strides: [32, 1] : memref<?xf16> to memref<32x16xf16, strided<[32, 1], offset: ?>>
+  %subview = memref.subview %reinterpret_cast[%arg2, 0] [16, 16] [1, 1] : memref<32x16xf16, strided<[32, 1], offset: ?>> to memref<16x16xf16, strided<[32, 1], offset: ?>>
+  %subview_0 = memref.subview %subview[0, 0] [%arg3, %arg4] [1, 1] : memref<16x16xf16, strided<[32, 1], offset: ?>> to memref<?x?xf16, strided<[32, 1], offset: ?>>
+
+  %expand_shape = memref.expand_shape %subview_0 [[0, 1], [2, 3]] output_shape [1, %arg3, 1, %arg4] : memref<?x?xf16, strided<[32, 1], offset: ?>> into memref<1x?x1x?xf16, strided<[?, 32, ?, 1], offset: ?>>
+  return %expand_shape : memref<1x?x1x?xf16, strided<[?, 32, ?, 1], offset: ?>>
+}

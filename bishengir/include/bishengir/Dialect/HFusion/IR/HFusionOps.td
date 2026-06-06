@@ -656,6 +656,9 @@ def IndirectLoadOp : HFusion_Op<"indirect_load", [
       - mask: boolean mask controlling which elements to load
       - other: fallback values used when mask is false
       - dst: destination tensor specifying output shape and type
+      - isVolatile: defaults to true. TODO: set it to false only when analysis
+        proves the indirect load's GM address cannot be written by any possible
+        op.
 
     This operation is useful for sparse data access patterns and
     gather operations with conditional loading semantics.
@@ -665,7 +668,8 @@ def IndirectLoadOp : HFusion_Op<"indirect_load", [
                        TensorOf<[I32, I64]>:$offsets,
                        AnyRankedTensor:$dst,
                        TensorOf<[I1, I8]>:$mask,
-                       TensorOf<[AnyInteger, AnyFloat]>:$other
+                       TensorOf<[AnyInteger, AnyFloat]>:$other,
+                       DefaultValuedAttr<BoolAttr, "true">:$isVolatile
   );
   let results = (outs Optional<AnyRankedTensor>:$result);
 

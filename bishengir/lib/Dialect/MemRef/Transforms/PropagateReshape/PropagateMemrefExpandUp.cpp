@@ -104,14 +104,14 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
 
   rewriter.replaceOp(expandOp, newReinterpret);
-  LDBG((definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp));
+  LDBG(
+      (definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp));
   rewriter.eraseOp(reinterpretCast);
   return success();
 }
 
 LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
-                                    PatternRewriter &rewriter,
-                                    Operation *definingOp) {
+                            PatternRewriter &rewriter, Operation *definingOp) {
   auto reassociation = expandOp.getReassociationIndices();
   auto subviewOp = dyn_cast<memref::SubViewOp>(definingOp);
   SmallVector<OpFoldResult> newMixedOffsets;
@@ -121,8 +121,8 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
   SmallVector<OpFoldResult> expandOutputShape;
   auto res = tensor::reshape_utils::getSubviewModifyingOp(
       rewriter, subviewOp, reassociation,
-      tensor::reshape_utils::getMixedSizesOrOutputShape(
-          rewriter, expandOp.getResult()),
+      tensor::reshape_utils::getMixedSizesOrOutputShape(rewriter,
+                                                        expandOp.getResult()),
       /* subview */ true, newMixedOffsets, newMixedSizes, newMixedStrides,
       expandOutputShape);
   if (res.failed())
@@ -131,8 +131,11 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
   auto loc = definingOp->getLoc();
   auto srcType = memref::ExpandShapeOp::computeExpandedType(
       subviewOp.getSourceType(), staticOutputShape.first, reassociation);
-  if (failed(srcType)) return failure();
-  auto expandedNewSrc = rewriter.create<memref::ExpandShapeOp>(loc, srcType.value(), subviewOp.getSource(), reassociation, expandOutputShape);
+  if (failed(srcType))
+    return failure();
+  auto expandedNewSrc = rewriter.create<memref::ExpandShapeOp>(
+      loc, srcType.value(), subviewOp.getSource(), reassociation,
+      expandOutputShape);
   auto newSubviewOp = rewriter.create<memref::SubViewOp>(
       loc, expandedNewSrc.getResult(), newMixedOffsets, newMixedSizes,
       newMixedStrides);
@@ -140,9 +143,34 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
       newSubviewOp.getLoc(), subviewOp.getResult().getType(),
       newSubviewOp.getResult(), reassociation);
   rewriter.replaceAllUsesExcept(subviewOp, newCollapse, expandOp);
-  rewriter.replaceOp(expandOp, newSubviewOp);
-  LDBG((definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp));
-  rewriter.eraseOp(subviewOp);
+  Value subviewOpReplacement = newSubviewOp.getResult();
+  auto targetType = cast<MemRefType>(expandOp.getResult().getType());
+  
+  rewriter.setInsertionPointAfterValue(expandOp);
+  if (newSubviewOp.getResult().getType() != targetType) {
+    if (memref::CastOp::areCastCompatible(
+            cast<MemRefType>(newSubviewOp.getResult().getType()), targetType)) {
+      subviewOpReplacement = rewriter.create<memref::CastOp>(
+          loc, targetType, newSubviewOp.getResult());
+      rewriter.replaceOp(expandOp, subviewOpReplacement);
+    } else {
+      auto stridedMetadata = rewriter.create<memref::ExtractStridedMetadataOp>(
+          loc, expandOp.getResult());
+      subviewOpReplacement =
+          rewriter
+              .create<memref::ReinterpretCastOp>(
+                  loc, targetType, newSubviewOp.getResult(),
+                  getAsOpFoldResult(stridedMetadata.getOffset()),
+                  getAsOpFoldResult(stridedMetadata.getSizes()),
+                  getAsOpFoldResult(stridedMetadata.getStrides()))
+              .getResult();
+      rewriter.replaceAllUsesExcept(expandOp, subviewOpReplacement, stridedMetadata);
+    }
+  } else {
+    rewriter.replaceOp(expandOp, newSubviewOp.getResult());
+  }
+  LDBG(
+      (definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp));
   return success();
 }
 
@@ -159,7 +187,10 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
     return failure();
   LLVM_DEBUG(llvm::dbgs() << "-- Found definingOp: " << *definingOp << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
-  LLVM_DEBUG(llvm::dbgs() << (definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp) << "\n";);
+  LLVM_DEBUG(llvm::dbgs() << (definingOp->getParentOp()
+                                  ? *(definingOp->getParentOp())
+                                  : *definingOp)
+                          << "\n";);
   if (isa<memref::AllocOp>(definingOp)) {
     LDBG("[AllocOp] Ok in here");
     return handleAllocOp(expandOp, rewriter, definingOp);

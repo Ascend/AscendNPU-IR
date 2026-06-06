@@ -46,6 +46,16 @@ public:
   using OpRewritePattern<SIMTOP>::OpRewritePattern;
   LogicalResult matchAndRewrite(SIMTOP simtOp,
                                 PatternRewriter &rewriter) const override {
+    auto indices = simtOp.getIndices();
+    auto indicesTy = dyn_cast<RankedTensorType>(indices.getType());
+    if (!indicesTy) {
+      return rewriter.notifyMatchFailure(simtOp, "indices must be ranked tensor type");
+    }
+    unsigned blockSize = indicesTy.getShape().front();
+    if (!(blockSize  && !(blockSize & (blockSize - 1)))) {
+      llvm::report_fatal_error("BLOCK size of simd_simt mode must be power of 2");
+    }
+    
     OrderedOps simtVFOps = gatherSimtOps(simtOp);
     auto loc = simtOp->getLoc();
     auto scopeOp = createScope(simtVFOps, rewriter, loc);

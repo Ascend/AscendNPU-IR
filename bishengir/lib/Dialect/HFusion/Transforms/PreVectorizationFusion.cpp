@@ -370,7 +370,9 @@ bool ElemwiseOpFuseControlFn(OpOperand *operand, int maxFusedElementwiseOps) {
     for (auto it = start->getNextNode(); it != end && it != nullptr; it = it->getNextNode()) {
       // If a synchronization barrier is found, prohibit fusion to avoid data
       // races.
-      if (isa<hivm::SyncBlockWaitOp, hivm::SyncBlockSetOp>(it)) {
+      if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+              hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
+              hivm::SyncBlockUnlockOp>(it)) {
         hasSyncBarrier = true;
         break;
       }

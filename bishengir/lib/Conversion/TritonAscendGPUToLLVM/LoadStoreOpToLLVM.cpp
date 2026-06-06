@@ -537,8 +537,17 @@ struct AtomicRMWOpConversion
         endBlock->addArgument({valueElemTy}, {loc});
 
         rewriter.setInsertionPointToEnd(curBlock);
-        rewriter.create<LLVM::CondBrOp>(loc, pred, atomicBlock, endBlock,
-                                        undefVal);
+        // Use the 5-arg overload with explicit per-successor operand lists.
+        // The 4-arg overload `(cond, trueDest, falseDest, branchOperands)`
+        // duplicates branchOperands into *both* destinations' bb-arg lists;
+        // since atomicBlock has 0 bb-args and endBlock has 1, that triggers
+        // `type mismatch for bb argument #1 of successor #0` in the SIMT
+        // pipeline for any shape that actually flows through this predicate.
+        rewriter.create<LLVM::CondBrOp>(loc, pred,
+                                        /*trueDest=*/atomicBlock,
+                                        /*trueOperands=*/ValueRange{},
+                                        /*falseDest=*/endBlock,
+                                        /*falseOperands=*/ValueRange{undefVal});
 
         rewriter.setInsertionPointToEnd(atomicBlock);
         auto atomOrFailure = emitAtomicOp(rewriter, loc, valueElemTy,
@@ -567,10 +576,36 @@ struct AtomicRMWOpConversion
       if (pred && op->hasAttr("allocation.offset")) {
         Value smemBase = LLVM::getSharedMemoryBase(loc, rewriter, targetInfo,
                                                    op.getOperation());
-        auto i32Ty = rewriter.getI32Type();
-        // Compute per-element offset within the shared memory scratch area.
-        Value smemPtr = b.gep(smemBase.getType(), i32Ty, smemBase,
-                              b.i32_val(i));
+        // Slot must be unique per element and identical for the leader and
+        // its replicated followers, so that all threads sharing one element
+        // address the same byte.  Use the canonical thread id (the thread id
+        // with all replication / "free variable" bits cleared) combined with
+        // the per-thread element index.  This matches the per-CTA element
+        // count assumed by the AtomicRMW allocator in Allocation.cpp.
+        auto [laneId, warpId] = getLaneAndWarpId(rewriter, loc);
+        auto kLane = str_attr("lane");
+        auto kWarp = str_attr("warp");
+        uint32_t laneFreeMask =
+            static_cast<uint32_t>(freeVarMasks.lookup(kLane));
+        uint32_t warpFreeMask =
+            static_cast<uint32_t>(freeVarMasks.lookup(kWarp));
+        Value canonicalLane =
+            b.and_(laneId, b.i32_val(static_cast<int32_t>(~laneFreeMask)));
+        Value canonicalWarp =
+            b.and_(warpId, b.i32_val(static_cast<int32_t>(~warpFreeMask)));
+        unsigned threadsPerWarp = static_cast<unsigned>(
+            ttg::TritonGPUDialect::getThreadsPerWarp(
+                op->getParentOfType<ModuleOp>()));
+        unsigned threadsPerWarpLog2 = llvm::Log2_32(threadsPerWarp);
+        Value canonicalTid = b.or_(
+            canonicalLane,
+            b.shl(canonicalWarp, b.i32_val(threadsPerWarpLog2)));
+        Value slot = canonicalTid;
+        if (elemsPerThread > 1) {
+          slot = b.add(b.mul(canonicalTid, b.i32_val(elemsPerThread)),
+                       b.i32_val(i));
+        }
+        Value smemPtr = b.gep(smemBase.getType(), valueElemTy, smemBase, slot);
         // Leader stores its result to shared memory.
         targetInfo.storeDShared(rewriter, loc, smemPtr, /*ctaId=*/std::nullopt,
                                 result, pred);

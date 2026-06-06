@@ -192,6 +192,67 @@ func.func @test_NormalizeF16ReduceSum_non_addf(%arg0: tensor<4x8xf16>, %arg1: te
 
 // -----
 
+// CHECK-LABEL: @test_NormalizeF16ReduceSum_addf_scalar_result
+// CHECK: %[[EMPTY_IN_F32:.*]] = tensor.empty() : tensor<8xf32>
+// CHECK: %[[CAST_IN:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<8xf16>) outs(%[[EMPTY_IN_F32]] : tensor<8xf32>) -> tensor<8xf32>
+// CHECK: %[[EMPTY_INIT_F32:.*]] = tensor.empty() : tensor<f32>
+// CHECK: %[[CAST_INIT:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<f16>) outs(%[[EMPTY_INIT_F32]] : tensor<f32>) -> tensor<f32>
+// CHECK: %[[REDUCE:.*]] = linalg.reduce { arith.addf } ins(%[[CAST_IN]] : tensor<8xf32>) outs(%[[CAST_INIT]] : tensor<f32>) dimensions = [0]
+// CHECK: %[[EMPTY_RES_F16:.*]] = tensor.empty() : tensor<f16>
+// CHECK: %[[CAST_RES:.*]] = hfusion.cast {{.*}} ins(%[[REDUCE]] : tensor<f32>) outs(%[[EMPTY_RES_F16]] : tensor<f16>) -> tensor<f16>
+func.func @test_NormalizeF16ReduceSum_addf_scalar_result(%arg0: tensor<8xf16>, %arg1: tensor<f16>) -> tensor<f16> {
+  %reduce = linalg.reduce { arith.addf } ins(%arg0 : tensor<8xf16>) outs(%arg1 : tensor<f16>) dimensions = [0]
+  return %reduce : tensor<f16>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeF16ReduceSum_addf_f32_noop
+// CHECK-NOT: hfusion.cast
+// CHECK: linalg.reduce { arith.addf } ins(%arg0 : tensor<4x8xf32>) outs(%arg1 : tensor<4xf32>) dimensions = [1]
+func.func @test_NormalizeF16ReduceSum_addf_f32_noop(%arg0: tensor<4x8xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> {
+  %reduce = linalg.reduce { arith.addf } ins(%arg0 : tensor<4x8xf32>) outs(%arg1 : tensor<4xf32>) dimensions = [1]
+  return %reduce : tensor<4xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeArgMinMax_already_initialized_noop
+// CHECK-NOT: hfusion.select
+// CHECK-NOT: hfusion.compare
+// CHECK: hfusion.reduce_with_index {already_initialize_init, tie_break_left = true, unsigned_src = false} <max> ins(%arg0, %arg1 : tensor<1x6x1xf32>, tensor<1x6x1xi32>) outs(%[[OUT0:.*]], %[[OUT1:.*]] : tensor<1x1xf32>, tensor<1x1xi32>) dimensions = [1]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2097152 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9589">, ttg.global_scratch_memory_alignment = 1 : i32, ttg.global_scratch_memory_size = 0 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.shared = 0 : i32, ttg.target = "cuda:89", ttg.tensor_memory_size = 0 : i32, "ttg.threads-per-warp" = 32 : i32, "ttg.total-num-warps" = 4 : i32} {
+  func.func @test_NormalizeArgMinMax_already_initialized_noop(%arg0: tensor<1x6x1xf32>, %arg1: tensor<1x6x1xi32>) -> tensor<1x1xf32> {
+    %0 = tensor.empty() : tensor<1x1xf32>
+    %1 = tensor.empty() : tensor<1x1xi32>
+    %reduced:2 = hfusion.reduce_with_index {already_initialize_init, tie_break_left = true, unsigned_src = false} <max>
+                  ins(%arg0, %arg1 : tensor<1x6x1xf32>, tensor<1x6x1xi32>)
+                  outs(%0, %1 : tensor<1x1xf32>, tensor<1x1xi32>)
+                  dimensions = [1] -> tensor<1x1xf32>, tensor<1x1xi32>
+    return %reduced#0 : tensor<1x1xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeArgMinMax_integer_src_noop
+// CHECK-NOT: hfusion.select
+// CHECK-NOT: hfusion.compare
+// CHECK: hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <min> ins(%arg0, %arg1 : tensor<1x6x1xi32>, tensor<1x6x1xi32>) outs(%[[OUT0:.*]], %[[OUT1:.*]] : tensor<1x1xi32>, tensor<1x1xi32>) dimensions = [1]
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2097152 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.target = #hacc.target<"Ascend950PR_9589">, ttg.global_scratch_memory_alignment = 1 : i32, ttg.global_scratch_memory_size = 0 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.shared = 0 : i32, ttg.target = "cuda:89", ttg.tensor_memory_size = 0 : i32, "ttg.threads-per-warp" = 32 : i32, "ttg.total-num-warps" = 4 : i32} {
+  func.func @test_NormalizeArgMinMax_integer_src_noop(%arg0: tensor<1x6x1xi32>, %arg1: tensor<1x6x1xi32>) -> tensor<1x1xi32> {
+    %0 = tensor.empty() : tensor<1x1xi32>
+    %1 = tensor.empty() : tensor<1x1xi32>
+    %reduced:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <min>
+                  ins(%arg0, %arg1 : tensor<1x6x1xi32>, tensor<1x6x1xi32>)
+                  outs(%0, %1 : tensor<1x1xi32>, tensor<1x1xi32>)
+                  dimensions = [1] -> tensor<1x1xi32>, tensor<1x1xi32>
+    return %reduced#0 : tensor<1x1xi32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeReduceMinMaxNumF_softmax_f32_8_8192
 // CHECK: %[[INFINITY:.*]] : f32
 // CHECK: %[[SRC_0_NAN_MASK:.*]] -> tensor<8x8192xi1>
