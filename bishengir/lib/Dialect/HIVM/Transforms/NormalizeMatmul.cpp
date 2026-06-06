@@ -595,6 +595,17 @@ struct CCFInfo {
   }
 };
 
+static Operation *getAncestorInBlock(Operation *inner, const Block *block) {
+  Operation *cur = inner;
+  while (cur) {
+    if (cur->getBlock() == block) {
+      return cur;
+    }
+    cur = cur->getParentOp();
+  }
+  return nullptr;
+}
+
 CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
   Operation *parentOp = op->getParentOp();
   if (!parentOp || !(isa<scf::ForOp>(parentOp) || isa<scf::IfOp>(parentOp)))
@@ -611,7 +622,8 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
     for (OpOperand &use : blockArg.getUses()) {
       Operation *user = use.getOwner();
       // Allowed: the op itself (mmad or inner for/if that chains to mmad).
-      if (user == op)
+      auto userInblock = getAncestorInBlock(user, op->getBlock());
+      if (userInblock == op)
         continue;
       // Allowed: scf.if else-yield that passes blockArg through unchanged.
       if (auto yieldOp = dyn_cast<scf::YieldOp>(user)) {
@@ -642,7 +654,6 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
     } else {
       info.mayNotExec = true;
     }
-
     info.blockArg = blockArg;
     info.inVal = forOp.getInitArgs()[argIdx];
     info.outVal = forOp->getResult(argIdx);
@@ -687,14 +698,12 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
       info.mayNotExec = true;
       info.mayNotExecWithIf = true;
     }
-
     info.outVal = ifOp->getResult(resultIdx);
     info.insertPointOp = ifOp;
   }
 
   return getOutermostCCFInfo(parentOp, info);
 }
-
 template <typename T>
 CCFInfo getResFromSingleUseChain(Operation *op) {
   CCFInfo initInfo;
@@ -988,7 +997,9 @@ public:
       isDisableHfusionVectorize =
           moduleOp->hasAttr("hfusion.disableHfusionVectorize");
     }
-    if (op->template getParentOfType<scope::ScopeOp>() ||
+
+    auto scopeOp = op->template getParentOfType<scope::ScopeOp>();
+    if ((scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) ||
         isDisableHfusionVectorize) {
       LDBG("Affinity pattern already applied");
       return rewriter.notifyMatchFailure(op,
@@ -1014,6 +1025,14 @@ public:
 
     // get Mmad Pattern: isSingleUseChain blockOp
     auto ccfInfo = getResFromSingleUseChain<T>(op);
+    // If upper user enssure matmul limited in cube, we need to set mayNotExec
+    // to false to avoid adding if condition.
+    if (auto parantop = op->getParentOp()) {
+      if (parantop->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) {
+        ccfInfo.mayNotExec = false;
+        ccfInfo.mayNotExecWithIf = false;
+      }
+    }
 
     Value outerInVal = ccfInfo.inVal;
     Value outerOutVal = ccfInfo.outVal;
