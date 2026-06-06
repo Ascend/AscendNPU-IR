@@ -15,8 +15,10 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/Support/Debug.h"
 
@@ -58,7 +60,8 @@ struct CastOpFold : public OpRewritePattern<hfusion::CastOp> {
     rewriter.setInsertionPointAfter(op);
     auto foldedCast = hfusion::castTo(
         rewriter, parentCastOp.getInputs().front(), op.getResultTypes().front(),
-        hfusion::RoundMode::RINT, op.getOutputs().front(), true, false, hfusion::TypeFn{});
+        hfusion::RoundMode::RINT, op.getOutputs().front(), true, false,
+        hfusion::TypeFn{});
     rewriter.replaceOp(op, foldedCast);
     return success();
   }
@@ -136,7 +139,8 @@ template <typename OpTy>
 struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
   using OpRewritePattern<OpTy>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(OpTy op, PatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter &rewriter) const override {
     bool hasPseudoBool = false;
     for (auto operand : op->getOperands()) {
       if (isPseudoBool(operand)) {
@@ -209,6 +213,77 @@ struct ClampPseudoBoolArithOp : public OpRewritePattern<OpTy> {
   }
 };
 
+// Convert hfusion.cast i1 → fXX to select(cond, 1.0, 0.0) to avoid the
+// unsupported uitofp i1→fXX path that AVE hardware cannot handle.
+struct CastI1ToSelectPattern : public OpRewritePattern<hfusion::CastOp> {
+  using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::CastOp op,
+                                PatternRewriter &rewriter) const override {
+    auto linalgOp = cast<linalg::LinalgOp>(op.getOperation());
+    auto inputType = mlir::dyn_cast<RankedTensorType>(
+        linalgOp.getDpsInputs().front().getType());
+    auto outputType = mlir::dyn_cast<RankedTensorType>(
+        linalgOp.getDpsInitOperand(0)->get().getType());
+    if (!inputType || !outputType)
+      return failure();
+
+    // Only apply on RegBasedArch (register-based architectures)
+    auto mod = op->getParentOfType<ModuleOp>();
+    if (!mod || !hacc::utils::isRegBasedArch(mod))
+      return failure();
+
+    if (!inputType.getElementType().isSignlessInteger(1))
+      return failure();
+    if (!mlir::isa<FloatType>(outputType.getElementType()))
+      return failure();
+
+    auto loc = op.getLoc();
+    auto elemType = outputType.getElementType();
+
+    // Reuse the original cast's init tensor — naturally supports dynamic shapes
+    Value init = linalgOp.getDpsInitOperand(0)->get();
+
+    // Get dynamic dimension sizes from the init tensor (if any)
+    SmallVector<Value> dynamicSizes;
+    for (int64_t i = 0; i < outputType.getRank(); ++i) {
+      if (outputType.isDynamicDim(i)) {
+        Value dimIdx =
+            rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(i));
+        dynamicSizes.push_back(
+            rewriter.create<tensor::DimOp>(loc, init, dimIdx));
+      }
+    }
+
+    // Create scalar constants 1.0 and 0.0
+    Value oneScalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, 1.0));
+    Value zeroScalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, 0.0));
+
+    // Create true-constant tensor: fill 1.0
+    Value trueInit = rewriter.create<tensor::EmptyOp>(
+        loc, outputType.getShape(), elemType, dynamicSizes);
+    Value trueVal =
+        rewriter.create<linalg::FillOp>(loc, oneScalar, trueInit).getResult(0);
+
+    // Create false-constant tensor: fill 0.0
+    Value falseInit = rewriter.create<tensor::EmptyOp>(
+        loc, outputType.getShape(), elemType, dynamicSizes);
+    Value falseVal = rewriter.create<linalg::FillOp>(loc, zeroScalar, falseInit)
+                         .getResult(0);
+
+    // Create hfusion.select(cond, true_val, false_val) outs(init)
+    Value cond = linalgOp.getDpsInputs().front();
+    auto selectOp = rewriter.create<hfusion::SelectOp>(
+        loc, TypeRange{init.getType()}, ValueRange{cond, trueVal, falseVal},
+        ValueRange{init});
+
+    rewriter.replaceOp(op, selectOp.getResult(0));
+    return success();
+  }
+};
+
 bool isIntegerElemType(Type type, unsigned width) {
   auto elemTy = getElementTypeOrSelf(type);
   return elemTy.isInteger(width);
@@ -272,10 +347,10 @@ void populateClampPseudoBoolPatterns(RewritePatternSet &patterns) {
 class LegalizeBoolPass : public impl::LegalizeBoolPassBase<LegalizeBoolPass> {
 public:
   LegalizeBoolPass() = default;
-  
+
   explicit LegalizeBoolPass(const LegalizeBoolPassOptions &options)
       : impl::LegalizeBoolPassBase<LegalizeBoolPass>(options) {}
-  
+
   void runOnOperation() override;
 
 private:
@@ -504,6 +579,13 @@ void LegalizeBoolPass::runOnOperation() {
 
   // Standard LegalizeBool logic executes when enableClamp is false
 
+  // Convert i1→fXX hfusion.cast to select(cond, 1.0, 0.0)
+  RewritePatternSet castI1Patterns(context);
+  castI1Patterns.add<CastI1ToSelectPattern>(context);
+  if (failed(applyPatternsGreedily(mod, std::move(castI1Patterns)))) {
+    LLVM_DEBUG(llvm::dbgs() << "Legalize Bool CastI1ToSelect Failed\n");
+  }
+
   // Convert bool MulI and AddI to AndI and OrI
   RewritePatternSet logicPatterns(context);
   logicPatterns.add<
@@ -553,6 +635,7 @@ std::unique_ptr<Pass> hfusion::createLegalizeBoolPass() {
   return std::make_unique<LegalizeBoolPass>();
 }
 
-std::unique_ptr<Pass> hfusion::createLegalizeBoolPass(const LegalizeBoolPassOptions &options) {
+std::unique_ptr<Pass>
+hfusion::createLegalizeBoolPass(const LegalizeBoolPassOptions &options) {
   return std::make_unique<LegalizeBoolPass>(options);
 }
