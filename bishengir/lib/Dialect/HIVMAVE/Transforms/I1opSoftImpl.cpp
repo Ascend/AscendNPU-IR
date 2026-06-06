@@ -14,7 +14,6 @@
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 
 #define DEBUG_TYPE "ave-i1op-soft-impl"
@@ -55,22 +54,9 @@ std::pair<Value, Value> getBaseMemrefAndOffset(PatternRewriter &rewriter,
 
     Value newOffset;
     if (auto v = dyn_cast<Value>(offsetOperands[0])) {
-      if (auto blockArg = dyn_cast<BlockArgument>(v)) {
-        if (scf::ForOp forOp =
-                dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp())) {
-          Value upperBound = forOp.getUpperBound();
-          std::optional<int64_t> constVal = getConstantIntValue(upperBound);
-          if (constVal.has_value() && constVal > util::VL)
-            llvm::report_fatal_error(
-                "The offset of the vector is larger than the length of preg");
-        }
-      }
       newOffset = rewriter.create<arith::AddIOp>(loc, v, currOffset);
     } else if (Attribute attr = dyn_cast<Attribute>(offsetOperands[0])) {
       int64_t offset = dyn_cast<IntegerAttr>(attr).getSInt();
-      if (offset > util::VL)
-        llvm::report_fatal_error(
-            "The offset of the vector is larger than the length of preg");
       Value cstVal = rewriter.create<arith::ConstantIndexOp>(loc, offset);
       newOffset = rewriter.create<arith::AddIOp>(loc, cstVal, currOffset);
     }
@@ -80,6 +66,107 @@ std::pair<Value, Value> getBaseMemrefAndOffset(PatternRewriter &rewriter,
   return {srcMem, currOffset};
 }
 
+// Decompose a memory offset into a VL-aligned base and an intra-VL offset.
+//
+// Given `currOffset`, computes:
+//   base = floor(currOffset / VL) * VL   // VL-aligned base address
+//   offsetInVL = currOffset - base           // remainder within [0, VL)
+//
+// This is used when loading i1 vectors: the hardware vector load must start
+// at a VL-aligned boundary, and the actual data position within the loaded
+// vector is tracked separately via `offsetInVL`.  For example, with VL=256
+// and offset=300:
+//   base = 256, offsetInVL = 44
+//
+// Returns {base, offsetInVL} both cast back to index type.
+std::pair<Value, Value> getBaseAndOffetInVL(PatternRewriter &rewriter,
+                                            Location &loc, Value currOffset) {
+  Value constVL = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI32IntegerAttr(util::VL));
+  Value constByteSize = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getI32IntegerAttr(util::BITS_PER_BYTE));
+  Value i32Offset = rewriter.create<arith::IndexCastOp>(
+      loc, rewriter.getI32Type(), currOffset);
+  Value numVL = rewriter.create<arith::DivSIOp>(loc, i32Offset, constVL);
+  Value newBase = rewriter.create<arith::MulIOp>(loc, numVL, constVL);
+  Value newOffset = rewriter.create<arith::SubIOp>(loc, i32Offset, newBase);
+  // Load indice will be convert to llvm.gep.
+  // The offset of the gep instruction is measured in bytes.
+  Value newBaseInByte =
+      rewriter.create<arith::DivSIOp>(loc, newBase, constByteSize);
+  Value indexBase = rewriter.create<arith::IndexCastOp>(
+      loc, rewriter.getIndexType(), newBaseInByte);
+  Value indexOffset = rewriter.create<arith::IndexCastOp>(
+      loc, rewriter.getIndexType(), newOffset);
+  return {indexBase, indexOffset};
+}
+
+/// Convert an i1 vector to a predicate register via i8 expansion:
+///   i1 mask → select(i8 0/1) → broadcast → cmp(NE, 0) → constrain(B8)
+/// If `offsetInVL` has value, inserts a PregXor + Reduction(XORI) before
+/// the broadcast to shift the active element to the lowest position
+/// (used for unaligned loads).
+static Value convertI1ToPreg(VectorType orgVectorTy, Value i1Val,
+                             Value offsetInVL, PatternRewriter &rewriter,
+                             Location loc) {
+  int64_t vecSize = orgVectorTy.getNumElements();
+  VectorType i8VecTy = VectorType::get({util::VL}, rewriter.getI8Type());
+  VectorType i8MaskTy = VectorType::get({util::VL}, rewriter.getI1Type());
+  if (vecSize != util::VL)
+    i1Val = rewriter.create<UnrealizedConversionCastOp>(loc, i8MaskTy, i1Val)
+                .getResult(0);
+  Value allI8Mask = rewriter.create<hivmave::VFPgeOp>(
+      loc, i8MaskTy,
+      PgePatternAttr::get(rewriter.getContext(), PgePattern::ALL));
+  Value constZeroI8 = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getZeroAttr(rewriter.getI8Type()));
+  Value constOneI8 = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getOneAttr(rewriter.getI8Type()));
+
+  // i1 → i8: select 1 for true lanes, 0 for false lanes.
+  VFBroadcastScalarOp brcZero =
+      rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, constZeroI8);
+  VFBroadcastScalarOp brcOne =
+      rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, constOneI8);
+  Value selI8 = rewriter.create<hivmave::VFSelectOp>(loc, i8VecTy, i1Val,
+                                                     brcOne, brcZero);
+
+  // For unaligned loads, shift the active element to position 0 via
+  // reduce-xori so that the broadcast propagates the correct value.
+  Value shiftResult = selI8;
+  if (offsetInVL) {
+    Value indexOne =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getIndexAttr(1));
+    auto postOffsetInVL =
+        rewriter.create<arith::AddIOp>(loc, offsetInVL, indexOne);
+    VFPltOp p1 = rewriter.create<hivmave::VFPltOp>(
+        loc, i8MaskTy, rewriter.getIndexType(), postOffsetInVL);
+    VFPltOp p2 = rewriter.create<hivmave::VFPltOp>(
+        loc, i8MaskTy, rewriter.getIndexType(), offsetInVL);
+    PregXorOp pXor = rewriter.create<hivmave::PregXorOp>(
+        loc, i8MaskTy, MaskWidthAttr::get(rewriter.getContext(), MaskWidth::B8),
+        p1.getResults()[0], p2.getResults()[0], allI8Mask);
+    shiftResult = rewriter.create<hivmave::ReductionOp>(
+        loc, i8VecTy, hivmave::CombiningKind::XORI, selI8, pXor);
+  }
+
+  // Broadcast the (possibly shifted) i8 value, then compare NE with zero
+  // to produce the final predicate register.
+  VFBroadcastVectorOp brcI8 = rewriter.create<hivmave::VFBroadcastVectorOp>(
+      loc, i8VecTy, shiftResult, allI8Mask, rewriter.getBoolAttr(true));
+  Value newPreg = rewriter.create<hivmave::VFCmpOp>(
+      loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZero, allI8Mask);
+
+  // Constrain the layout to B8 for VectorLayout analysis.
+  newPreg = hivmave::constrainVectorLayout(newPreg, hivmave::VecMemType::B8,
+                                           rewriter);
+  if (vecSize != util::VL)
+    newPreg =
+        rewriter.create<UnrealizedConversionCastOp>(loc, orgVectorTy, newPreg)
+            .getResult(0);
+  return newPreg;
+}
+
 // process load + brc i1
 struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
   loadBroadcastPattern(MLIRContext *context)
@@ -87,116 +174,36 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
 
   void rewriteLoadI1(mlir::hivmave::VFLoadOp loadOp,
                      PatternRewriter &rewriter) const {
-    VectorType orgVectorTy = loadOp.getVectorType();
-    int64_t vecSize = orgVectorTy.getNumElements();
-
     Location loc = loadOp.getLoc();
     rewriter.setInsertionPointAfter(loadOp);
-    Value constZeroI8 = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getZeroAttr(rewriter.getI8Type()));
-    Value constOne = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getOneAttr(rewriter.getI8Type()));
-    VectorType i8VecTy = VectorType::get({util::VL}, rewriter.getI8Type());
-    VectorType i8MaskTy = VectorType::get({util::VL}, rewriter.getI1Type());
-    Value loadRes = loadOp.getRes();
-    SmallVector<Operation *> oldUsers(loadRes.getUsers());
-    if (vecSize != util::VL)
-      loadRes =
-          rewriter.create<UnrealizedConversionCastOp>(loc, i8MaskTy, loadRes)
-              .getResult(0);
-    VFBroadcastScalarOp brcZero = rewriter.create<hivmave::VFBroadcastScalarOp>(
-        loc, i8VecTy, constZeroI8);
-    VFBroadcastScalarOp brcOne =
-        rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, constOne);
-    VFSelectOp selI8 = rewriter.create<hivmave::VFSelectOp>(
-        loc, i8VecTy, loadRes, brcOne, brcZero);
-    Value allI8Mask = rewriter.create<hivmave::VFPgeOp>(
-        loc, i8MaskTy,
-        PgePatternAttr::get(rewriter.getContext(), PgePattern::ALL));
-    VFBroadcastVectorOp brcI8 = rewriter.create<hivmave::VFBroadcastVectorOp>(
-        loc, i8VecTy, selI8, allI8Mask, rewriter.getBoolAttr(true));
-    Value newPreg = rewriter.create<hivmave::VFCmpOp>(
-        loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZero, allI8Mask);
-    // Constrain the layout of newPreg to B8 for VectorLayout analysis.
-    newPreg = hivmave::constrainVectorLayout(newPreg, hivmave::VecMemType::B8,
-                                             rewriter);
-    if (vecSize != util::VL)
-      newPreg =
-          rewriter.create<UnrealizedConversionCastOp>(loc, orgVectorTy, newPreg)
-              .getResult(0);
-    for (Operation *user : oldUsers) {
+    SmallVector<Operation *> oldUsers(loadOp.getRes().getUsers());
+    Value newPreg = convertI1ToPreg(loadOp.getVectorType(), loadOp.getRes(),
+                                    Value(), rewriter, loc);
+    for (Operation *user : oldUsers)
       user->replaceUsesOfWith(loadOp.getRes(), newPreg);
-    }
     loadOp->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
   }
 
   void rewriteLoadI1Unaligned(mlir::hivmave::VFLoadOp loadOp,
                               PatternRewriter &rewriter) const {
-    VectorType orgVectorTy = loadOp.getVectorType();
-    int64_t vecSize = orgVectorTy.getNumElements();
-
     Location loc = loadOp.getLoc();
     rewriter.setInsertionPointAfter(loadOp);
-    Value constZeroI8 = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getZeroAttr(rewriter.getI8Type()));
-    Value constZeroIndex = rewriter.create<arith::ConstantIndexOp>(loc, 0);
-    Value constOne = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getOneAttr(rewriter.getI8Type()));
-    VectorType i8VecTy = VectorType::get({util::VL}, rewriter.getI8Type());
-    VectorType i8MaskTy = VectorType::get({util::VL}, rewriter.getI1Type());
-    // find base address of i1 vector and load from base address
+    // Find base memref and accumulated offset through the SubViewOp chain.
     Value srcMemref = loadOp.getBase();
     Value srcOffset = loadOp.getIndices()[0];
     auto [baseMemref, baseOffset] =
         getBaseMemrefAndOffset(rewriter, loc, srcMemref, srcOffset);
+    // Decompose offset into a VL-aligned base and an intra-VL offset.
+    auto [baseIndices, offsetInVL] =
+        getBaseAndOffetInVL(rewriter, loc, baseOffset);
+    // Create a new aligned load from the computed base address.
+    VectorType orgVectorTy = loadOp.getVectorType();
     VFLoadOp newLoad = rewriter.create<hivmave::VFLoadOp>(
-        loc, orgVectorTy, baseMemref, constZeroIndex);
-    Value newLoadVal = newLoad.getResult(0);
-    if (vecSize != util::VL)
-      newLoadVal =
-          rewriter.create<UnrealizedConversionCastOp>(loc, i8MaskTy, newLoadVal)
-              .getResult(0);
-    // convert i1 to i8
-    VFBroadcastScalarOp brcZero = rewriter.create<hivmave::VFBroadcastScalarOp>(
-        loc, i8VecTy, constZeroI8);
-    VFBroadcastScalarOp brcOne =
-        rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, constOne);
-    VFSelectOp selI8 = rewriter.create<hivmave::VFSelectOp>(
-        loc, i8VecTy, newLoadVal, brcOne, brcZero);
-    // use reduce-xori to move the active element to the lowest position
-    Value allI8Mask = rewriter.create<hivmave::VFPgeOp>(
-        loc, i8MaskTy,
-        PgePatternAttr::get(rewriter.getContext(), PgePattern::ALL));
-    auto indexOne = rewriter.create<arith::IndexCastOp>(
-        loc, rewriter.getIndexType(), constOne);
-    auto postOffset = rewriter.create<arith::AddIOp>(loc, baseOffset, indexOne);
-    VFPltOp p1 = rewriter.create<hivmave::VFPltOp>(
-        loc, i8MaskTy, rewriter.getIndexType(), postOffset);
-    VFPltOp p2 = rewriter.create<hivmave::VFPltOp>(
-        loc, i8MaskTy, rewriter.getIndexType(), baseOffset);
-    PregXorOp pXor = rewriter.create<hivmave::PregXorOp>(
-        loc, i8MaskTy, MaskWidthAttr::get(rewriter.getContext(), MaskWidth::B8),
-        p1.getResults()[0], p2.getResults()[0], allI8Mask);
-    ReductionOp shiftI8 = rewriter.create<hivmave::ReductionOp>(
-        loc, i8VecTy, hivmave::CombiningKind::XORI, selI8, pXor);
-    // brc I8
-    // TODO: I1 is broadcast to all positions. Bit width optimization need be
-    // considered. #ISSUE#84
-    VFBroadcastVectorOp brcI8 = rewriter.create<hivmave::VFBroadcastVectorOp>(
-        loc, i8VecTy, shiftI8, allI8Mask, rewriter.getBoolAttr(true));
-    // get preg by cmp not-equal with zero vector
-    Value newPreg = rewriter.create<hivmave::VFCmpOp>(
-        loc, i8MaskTy, hivmave::CmpType::NE, brcI8, brcZero, allI8Mask);
-    // Constrain the layout of newPreg to B8 for VectorLayout analysis.
-    newPreg = hivmave::constrainVectorLayout(newPreg, hivmave::VecMemType::B8,
-                                             rewriter);
-
-    if (vecSize != util::VL)
-      newPreg =
-          rewriter.create<UnrealizedConversionCastOp>(loc, orgVectorTy, newPreg)
-              .getResult(0);
-    // replace old load
-    rewriter.replaceAllUsesWith(loadOp->getResults()[0], newPreg);
+        loc, orgVectorTy, baseMemref, baseIndices);
+    // Convert i1 → preg, with PregXor+Reduction shift for unalignment.
+    Value newPreg = convertI1ToPreg(orgVectorTy, newLoad.getResult(0),
+                                    offsetInVL, rewriter, loc);
+    rewriter.replaceAllUsesWith(loadOp.getResult(0), newPreg);
     rewriter.eraseOp(loadOp);
     newLoad->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
   }
