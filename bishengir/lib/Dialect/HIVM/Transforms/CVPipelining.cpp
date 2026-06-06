@@ -8,9 +8,11 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -57,7 +59,10 @@ struct CVPipelineImpl {
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
-                    loop.getYieldedValues().end()) {}
+                    loop.getYieldedValues().end()) {
+    builder.setInsertionPoint(loop);
+    checkpoint = builder.clone(*loop);
+  }
 
   LogicalResult run();
 
@@ -76,6 +81,14 @@ private:
   /// producer at all). In that case `run()` reverts and the pass becomes a
   /// no-op for this loop.
   LogicalResult absorbMergerOpsIntoWorkItems();
+
+  // For each `annotation.mark` with
+  // `DuplicateTensorExtractForCube::replacementLabel` inside `pipelineLoop`,
+  // clone the scalar/control op chain that derives from the marked original
+  // value and feeds into CUBE consumers, rewiring those consumers to read
+  // from the cloned chain rooted at the replacement value (which lives on a
+  // VECTOR side path produced by an `inserted-store`).
+  LogicalResult duplicateExtractScalarForCube();
 
   LogicalResult markOutputs();
 
@@ -178,6 +191,9 @@ private:
   DenseMap<Value, Value> localOuputsToRedurnRes;
 
   DenseSet<Operation *> toErase;
+
+  // Checkpoint for revert in case things go wrong
+  Operation *checkpoint;
 };
 
 struct CVPipeliningPass
@@ -226,6 +242,20 @@ static Value traceValueDef(Value v) {
 static memref::AllocOp traceAlloc(Value v) {
   Value maybeAlloc = traceValueDef(v);
   return dyn_cast_if_present<memref::AllocOp>(maybeAlloc.getDefiningOp());
+}
+
+// Trace `v` back through casts/views/iter_arg inits to either a
+// `memref::AllocOp` or a `memref_ext::AllocWorkspaceOp`. Returns nullptr if
+// the value does not resolve to one of those.
+static Operation *traceAllocLike(Value v) {
+  Value maybeAlloc = traceValueDef(v);
+  if (!maybeAlloc)
+    return nullptr;
+  Operation *defOp = maybeAlloc.getDefiningOp();
+  if (isa_and_present<memref::AllocOp, bishengir::memref_ext::AllocWorkspaceOp>(
+          defOp))
+    return defOp;
+  return nullptr;
 }
 
 // Trace a memref/tensor value through memref & tensor casts / views and
@@ -444,9 +474,9 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
     }
 
     if (producers.size() != 1)
-      return pipelineLoop->emitWarning(
-          "[cv-pipelining] cannot absorb merger chain into a single work "
-          "item: the yielded value depends on ")
+      return pipelineLoop->emitWarning("[cv-pipelining] cannot absorb merger "
+                                       "chain into a single work "
+                                       "item: the yielded value depends on ")
              << producers.size()
              << " work-item producer(s); refusing to pipeline this loop";
 
@@ -480,8 +510,8 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
         if (!cmpi)
           continue;
         for (Value cmpOperand : cmpi->getOperands()) {
-          auto load = dyn_cast_if_present<memref::LoadOp>(
-              cmpOperand.getDefiningOp());
+          auto load =
+              dyn_cast_if_present<memref::LoadOp>(cmpOperand.getDefiningOp());
           if (!load)
             continue;
           Value memref = load.getMemRef();
@@ -554,7 +584,10 @@ LogicalResult CVPipelineImpl::markOutputs() {
           if (!pipelineLoop->isAncestor(usr))
             continue;
           Operation *usrTop = getContainedParent(pipelineLoop, usr);
-          if (opToWorkItemMap.contains(usrTop) && !item->ops.contains(usrTop)) {
+          if (opToWorkItemMap.contains(usrTop) &&
+              llvm::any_of(opToWorkItemMap[usrTop], [op](WorkItem *usrWI) {
+                return !usrWI->ops.contains(op);
+              })) {
             item->localOutputs.push_back(std::make_pair(result, nullptr));
             break;
           } // End loop over result.users
@@ -703,7 +736,10 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
       if (!defining)
         return dps->emitWarning(
             "[cv-pipelining] expected dps init to be result of op");
-      if (isa<tensor::EmptyOp>(defining)) {
+      // All DMA ops should have the CopyOpInterface, and they can't be simply
+      // inserted into an empty tensor due to addrspace handling
+      if (isa<tensor::EmptyOp>(defining) ||
+          !isa<CopyOpInterface>(dps.getOperation())) {
         auto origTy = dyn_cast<TensorType>(init.getType());
         if (!origTy)
           return defining->emitWarning(
@@ -736,7 +772,7 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
             "[cv-pipelining] scf.for output index out of range");
       Value init = forOp.getInits()[resultIdx];
       Operation *initOp = init.getDefiningOp();
-      if (initOp && isa<tensor::EmptyOp>(initOp)) {
+      if (isa_and_nonnull<tensor::EmptyOp>(initOp)) {
         auto origTy = dyn_cast<TensorType>(init.getType());
         if (!origTy)
           return initOp->emitWarning(
@@ -748,35 +784,67 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
         continue;
       }
     }
-    toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
+    // Scalar workspace stores (`hivm.hir.store` writing back to an
+    // `alloc_workspace`-backed scalar tensor) surface the alloc_workspace's
+    // memref result as the cross-stage value rather than the writer's tensor
+    // result. Route through the to_tensor that wraps the alloc so the rest
+    // of the flow sees a tensor-typed output it can expand uniformly.
+    if (auto wsAlloc =
+            dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(defining)) {
+      for (Operation *u : wsAlloc->getUsers()) {
+        if (auto tt = dyn_cast<bufferization::ToTensorOp>(u)) {
+          toTensor = tt;
+          defining = tt;
+          break;
+        }
+      }
+    }
+    if (!toTensor)
+      toTensor = dyn_cast<bufferization::ToTensorOp>(defining);
     if (!toTensor)
       return defining->emitWarning(
           "[cv-pipelining] expected to_tensor for non-tensor-empty output");
-    // Find the alloc
-    auto alloc = traceAlloc(toTensor.getMemref());
-    if (!alloc)
+    // Find the alloc — either a plain `memref.alloc` or a workspace alloc
+    // (`memref_ext.alloc_workspace`). Workspace allocs carve a slice out of
+    // a function-arg workspace and are expanded the same way: we add a
+    // leading multibuffer dim and preserve the workspace arg / dynamic-size /
+    // offset operands so PlanMemory can re-place the enlarged region.
+    Operation *allocOp = traceAllocLike(toTensor.getMemref());
+    if (!allocOp)
       return toTensor->emitWarning(
           "[cv-pipelining] expected alloc from toTensor");
-    auto origTy = alloc.getMemref().getType();
+    auto origTy = cast<MemRefType>(allocOp->getResult(0).getType());
     if (!origTy.hasStaticShape())
-      return alloc->emitWarning(
+      return allocOp->emitWarning(
           "[cv-pipelining] expected temporary buffer to be static");
     newShape.append(origTy.getShape().begin(), origTy.getShape().end());
     auto memspace = origTy.getMemorySpace();
     auto newType = MemRefType::get(newShape, origTy.getElementType(),
                                    MemRefLayoutAttrInterface(), memspace);
-    auto expandedAlloc = builder.create<memref::AllocOp>(
-        loc, newType, ValueRange(), alloc.getAlignmentAttr());
+    Value expandedResult;
+    if (auto plainAlloc = dyn_cast<memref::AllocOp>(allocOp)) {
+      expandedResult =
+          builder
+              .create<memref::AllocOp>(loc, newType, ValueRange(),
+                                       plainAlloc.getAlignmentAttr())
+              .getResult();
+    } else {
+      auto wsAlloc = cast<bishengir::memref_ext::AllocWorkspaceOp>(allocOp);
+      expandedResult = builder
+                           .create<bishengir::memref_ext::AllocWorkspaceOp>(
+                               loc, newType, wsAlloc.getWorkspaceArg(),
+                               wsAlloc.getDynamicSize(), wsAlloc.getOffset())
+                           .getResult();
+    }
     // Mark the expanded alloc with an `annotation.mark` carrying
     // `hivm.cv_pipelined_multi_buffer` so downstream passes (notably
     // the ND2NZOp aggregated-decompose pad/vbrc path) know this
     // storage is sliced into per-stage slots — any pre-init must
     // target only the current slot, never the whole alloc.
-    auto markOp =
-        builder.create<annotation::MarkOp>(loc, expandedAlloc.getResult());
+    auto markOp = builder.create<annotation::MarkOp>(loc, expandedResult);
     markOp->setAttr(hivm::CVPipelinedMultiBufferAttr::name,
                     UnitAttr::get(builder.getContext()));
-    expanded = expandedAlloc;
+    expanded = expandedResult;
   }
   return success();
 }
@@ -950,8 +1018,7 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
                                                       Value expanded,
                                                       OpOperand &initOperand,
                                                       Value iv) const {
-  auto subview =
-      dyn_cast<memref::SubViewOp>(initOperand.get().getDefiningOp());
+  auto subview = dyn_cast<memref::SubViewOp>(initOperand.get().getDefiningOp());
   if (!subview)
     return Value(nullptr);
   if (!isa<memref::AllocOp>(subview.getSource().getDefiningOp())) {
@@ -1062,8 +1129,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         Value newResult = *resIt;
         Value extracted =
             createExtractSlice(builder, loc, *argIt, orig.getType(), iv);
-        OpOperand &initOperand =
-            clonedFor.getInitsMutable()[resultIdx];
+        OpOperand &initOperand = clonedFor.getInitsMutable()[resultIdx];
         initOperand.set(extracted);
         // Also retype the matching iter_arg so the body uses the slice type.
         clonedFor.getRegionIterArg(resultIdx).setType(extracted.getType());
@@ -1081,8 +1147,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         SmallVector<OpOperand *> toReplaceFor;
         for (OpOperand &use : orig.getUses()) {
           Operation *owner = use.getOwner();
-          if (pipelineLoop->isAncestor(owner) ||
-              item->forOp->isAncestor(owner))
+          if (pipelineLoop->isAncestor(owner) || item->forOp->isAncestor(owner))
             continue;
           toReplaceFor.push_back(&use);
         }
@@ -1091,8 +1156,8 @@ LogicalResult CVPipelineImpl::migrateOps() {
           Operation *ownerLoop = getContainedParent(newLoop, owner);
           Value userIV = cast<scf::ForOp>(ownerLoop).getInductionVar();
           builder.setInsertionPoint(owner);
-          Value perStage =
-              createExtractSlice(builder, loc, newResult, orig.getType(), userIV);
+          Value perStage = createExtractSlice(builder, loc, newResult,
+                                              orig.getType(), userIV);
           use->set(perStage);
         }
         continue;
@@ -1148,6 +1213,43 @@ LogicalResult CVPipelineImpl::migrateOps() {
           innerToTensor = dyn_cast_if_present<bufferization::ToTensorOp>(
               internalDef.getDefiningOp());
         }
+        // Workspace scalar store: `hivm.hir.store` writing through a
+        // `to_tensor` of an `alloc_workspace`. Rewire the cloned store to
+        // write directly into the per-slot memref subview of `expanded` and
+        // drop the intermediate `to_tensor` — the post-jam-loop `to_tensor`
+        // below is the only one any consumer should read from.
+        auto clonedStore = dyn_cast<hivm::StoreOp>(dps.getOperation());
+        Operation *backingAlloc =
+            innerToTensor ? traceAllocLike(innerToTensor.getMemref())
+                          : nullptr;
+        if (clonedStore && innerToTensor &&
+            isa_and_present<bishengir::memref_ext::AllocWorkspaceOp>(
+                backingAlloc)) {
+          builder.setInsertionPointToStart(item->forOp.getBody());
+          Value memrefSlot = createSubview(
+              builder, loc, expanded, innerToTensor.getMemref().getType(), iv);
+          if (!memrefSlot)
+            return failure();
+          builder.setInsertionPoint(clonedStore);
+          builder.create<hivm::StoreOp>(clonedStore.getLoc(), TypeRange{},
+                                        clonedStore.getSrc(), memrefSlot);
+          // The cloned store carries a result tensor used by a cloned
+          // `annotation.mark` (the VECTOR tcore_type marker inserted next to
+          // the store). Drop those marker users so the store can be erased.
+          SmallVector<Operation *> markUsers;
+          for (Operation *u : clonedStore->getUsers())
+            if (isa<annotation::MarkOp>(u))
+              markUsers.push_back(u);
+          for (Operation *u : markUsers)
+            u->erase();
+          clonedStore.erase();
+          if (innerToTensor.use_empty())
+            innerToTensor.erase();
+          builder.setInsertionPointAfter(item->forOp);
+          newResult = createToTensor(builder, loc, expanded);
+          if (!newResult)
+            return failure();
+        } else {
         // If there are masking subviews, update those first
         FailureOr<Value> updatedSubviewOr =
             updateMaskingSubview(builder, loc, expanded, *initOperand, iv);
@@ -1196,6 +1298,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         newResult = createToTensor(builder, loc, expanded);
         if (!newResult)
           return failure();
+        }
       } else
         return dps->emitWarning("[cv-pipelining] unexpected output type that "
                                 "is not tensor or memref");
@@ -1411,10 +1514,187 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
 void CVPipelineImpl::revert() {
   if (newLoop)
     newLoop->erase();
+  pipelineLoop->replaceAllUsesWith(checkpoint->getResults());
+  pipelineLoop->erase();
+}
+
+namespace {
+// Return the ancestor of `op` that lives directly inside `block`, or nullptr
+// if `op` is not nested within `block`.
+Operation *ancestorInBlock(Operation *op, Block *block) {
+  Operation *cur = op;
+  while (cur) {
+    if (cur->getBlock() == block)
+      return cur;
+    cur = cur->getParentOp();
+  }
+  return nullptr;
+}
+} // namespace
+
+LogicalResult CVPipelineImpl::duplicateExtractScalarForCube() {
+  static constexpr llvm::StringLiteral kReplacementLabel =
+      "DuplicateTensorExtractForCube::replacementLabel";
+
+  SmallVector<annotation::MarkOp> replacementMarks;
+  pipelineLoop.walk([&](annotation::MarkOp markOp) {
+    if (markOp->hasAttr(kReplacementLabel))
+      replacementMarks.push_back(markOp);
+  });
+
+  for (annotation::MarkOp markOp : replacementMarks) {
+    Value original = markOp.getSrc();
+    if (markOp.getValues().empty())
+      continue;
+    Value replacement = markOp.getValues()[0];
+
+    // Block defining `original` — the block we will clone into. Tainted ops
+    // outside this block are not handled here.
+    Block *defBlock = nullptr;
+    if (Operation *defOp = original.getDefiningOp())
+      defBlock = defOp->getBlock();
+    else if (auto blkArg = dyn_cast<BlockArgument>(original))
+      defBlock = blkArg.getOwner();
+    if (!defBlock)
+      continue;
+
+    // Forward closure: scalar/control ops in `defBlock` that transitively
+    // consume `original`. Cube/vector ops are recorded separately and are
+    // not descended into.
+    DenseSet<Operation *> tainted;
+    DenseSet<Operation *> cubeConsumers;
+    DenseSet<Value> visitedValues;
+    SmallVector<Value> wl;
+    wl.push_back(original);
+    while (!wl.empty()) {
+      Value v = wl.pop_back_val();
+      if (!visitedValues.insert(v).second)
+        continue;
+      for (OpOperand &use : v.getUses()) {
+        Operation *user = use.getOwner();
+        Operation *ancestor = ancestorInBlock(user, defBlock);
+        if (!ancestor)
+          continue;
+        if (ancestor == markOp.getOperation())
+          continue;
+        TCoreType ancCore =
+            getCoreType(ancestor).value_or(TCoreType::CUBE_OR_VECTOR);
+        if (ancCore == TCoreType::CUBE) {
+          cubeConsumers.insert(ancestor);
+          continue;
+        }
+        if (ancCore == TCoreType::VECTOR)
+          continue;
+        if (tainted.insert(ancestor).second) {
+          for (Value res : ancestor->getResults())
+            wl.push_back(res);
+        }
+      }
+    }
+
+    // Reverse reachability: keep only tainted ops on some path to a cube
+    // consumer. Seed with tainted ops whose results are directly consumed by
+    // an op in `cubeConsumers`, then walk operand chains backward (including
+    // inside nested regions, so e.g. an scf.if body's references to other
+    // tainted results are picked up).
+    DenseSet<Operation *> needed;
+    SmallVector<Operation *> seed;
+    for (Operation *op : tainted) {
+      bool reachesCube = false;
+      for (Value res : op->getResults()) {
+        for (Operation *u : res.getUsers()) {
+          Operation *ua = ancestorInBlock(u, defBlock);
+          if (ua && cubeConsumers.contains(ua)) {
+            reachesCube = true;
+            break;
+          }
+        }
+        if (reachesCube)
+          break;
+      }
+      if (reachesCube)
+        seed.push_back(op);
+    }
+    while (!seed.empty()) {
+      Operation *op = seed.pop_back_val();
+      if (!needed.insert(op).second)
+        continue;
+      op->walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands()) {
+          Operation *def = operand.getDefiningOp();
+          if (!def)
+            continue;
+          Operation *defAnc = ancestorInBlock(def, defBlock);
+          if (defAnc && tainted.contains(defAnc) && !needed.contains(defAnc))
+            seed.push_back(defAnc);
+        }
+      });
+    }
+
+    bool originalUsedDirectly = false;
+    for (Operation *consumer : cubeConsumers) {
+      consumer->walk([&](Operation *opIn) {
+        for (Value operand : opIn->getOperands()) {
+          if (operand == original) {
+            originalUsedDirectly = true;
+            return WalkResult::interrupt();
+          }
+        }
+        return WalkResult::advance();
+      });
+      if (originalUsedDirectly)
+        break;
+    }
+    if (needed.empty() && !originalUsedDirectly)
+      continue;
+
+    // Clone needed ops in IR order, mapping `original → replacement`.
+    // `builder.clone` updates the mapping with each cloned result, so
+    // subsequent clones and the consumer rewires below resolve their
+    // operands via `irMap`.
+    IRMapping irMap;
+    irMap.map(original, replacement);
+
+    builder.setInsertionPointAfter(markOp);
+    for (Operation &op : *defBlock) {
+      if (!needed.contains(&op))
+        continue;
+      Operation *cloned = builder.clone(op, irMap);
+      builder.setInsertionPointAfter(cloned);
+    }
+
+    // Rewire cube consumers to consume the cloned chain. Walk the entire
+    // consumer subtree so nested uses are rerouted as well.
+    for (Operation *consumer : cubeConsumers) {
+      consumer->walk([&](Operation *opIn) {
+        for (OpOperand &operand : opIn->getOpOperands()) {
+          Value v = operand.get();
+          if (v == original) {
+            operand.set(replacement);
+            continue;
+          }
+          if (Value mapped = irMap.lookupOrNull(v))
+            operand.set(mapped);
+        }
+      });
+    }
+
+    // Drop the replacement-label `annotation.mark`. It paired the original
+    // value with its cube replacement so the later split-mix-kernel pass
+    // could rewrite cube uses; we have already done that rewrite by cloning
+    // the chain above, so leaving the mark around just produces dangling
+    // cross-workitem operands once cv-pipelining clones the mark into
+    // every WI that mentions either side of the pair.
+    markOp->erase();
+  }
+
+  return success();
 }
 
 /// Main method of the pass
 LogicalResult CVPipelineImpl::run() {
+  if (failed(duplicateExtractScalarForCube()))
+    return failure();
   collectAtomicEffects();
   auto buildResult = wlBuilder.build();
   if (failed(buildResult)) {
@@ -1429,8 +1709,10 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
-  if (failed(markOutputs()))
+  if (failed(markOutputs())) {
+    revert();
     return failure();
+  }
   LLVM_DEBUG({
     for (auto item : worklist) {
       dbgs() << "WorkItem #" << item->id << ":\n";
@@ -1477,23 +1759,26 @@ LogicalResult CVPipelineImpl::run() {
     return failure();
   }
   pipelineLoop->erase();
+  checkpoint->erase();
   return success();
 }
 
 void CVPipeliningPass::runOnOperation() {
   // First find loop to operate on
   func::FuncOp func = getOperation();
-  DenseSet<scf::ForOp> pipelinedLoops;
+  SmallVector<scf::ForOp> pipelineCandidates;
 
   // Disabled via options
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
     return;
 
-  // Check if we should skip the entire pass due to autoblockify with NormalizeMatmul counter
+  // Check if we should skip the entire pass due to autoblockify with
+  // NormalizeMatmul counter
   bool hasAutoblockifyLoop = false;
   bool hasNormalizeMatmulCounter = false;
-  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr = "autoblockify.subloop";
-  
+  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr =
+      "autoblockify.subloop";
+
   // Check for autoblockify loop tag
   func->walk([&](scf::ForOp forOp) {
     if (forOp->hasAttr(kAutoBlockifySubloopAttr)) {
@@ -1504,34 +1789,45 @@ void CVPipeliningPass::runOnOperation() {
   // Check for NormalizeMatmul counter (attribute on storeOp)
   func->walk([&](memref::StoreOp storeOp) {
     if (storeOp->hasAttr(hivm::TCoreTypeAttr::name)) {
-      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
-      if (coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
+      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(
+          hivm::TCoreTypeAttr::name);
+      if (coreTypeAttr &&
+          coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
         hasNormalizeMatmulCounter = true;
       }
     }
   });
 
-  // Skip entire CV Pipelining pass if there's autoblockify loop with NormalizeMatmul counter
+  // Skip entire CV Pipelining pass if there's autoblockify loop with
+  // NormalizeMatmul counter
   if (hasAutoblockifyLoop && hasNormalizeMatmulCounter) {
-    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to autoblockify loop with NormalizeMatmul counter\n");
+    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to "
+                         "autoblockify loop with NormalizeMatmul counter\n");
     return;
   }
 
-  func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
+  // We want to work on the innermost loop first, so post order walk
+  func->walk<WalkOrder::PostOrder>([&pipelineCandidates](scf::ForOp loop) {
+    pipelineCandidates.push_back(loop);
+  });
+
+  DenseSet<scf::ForOp> pipelinedNest;
+  for (auto loop : pipelineCandidates) {
+    // Don't attempt pipeline if nested loop succeeded already
+    if (pipelinedNest.contains(loop))
+      continue;
+
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
-
-    // Check if this is a part of pipelined loop already
-    while (parentLoop) {
-      if (pipelinedLoops.contains(parentLoop))
-        return;
-      parentLoop = parentLoop->getParentOfType<scf::ForOp>();
-    }
-
     CVPipelineImpl impl(loop, this->pipelineDepth, this->enableSkewMode,
                         this->enableLazyLoading);
+
+    // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())
-      pipelinedLoops.insert(loop);
-  });
+      while (parentLoop) {
+        pipelinedNest.insert(parentLoop);
+        parentLoop = parentLoop->getParentOfType<scf::ForOp>();
+      }
+  }
 }
 
 std::unique_ptr<Pass>
