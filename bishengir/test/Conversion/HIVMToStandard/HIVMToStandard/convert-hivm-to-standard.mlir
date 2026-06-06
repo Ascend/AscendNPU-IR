@@ -2405,10 +2405,72 @@ module {
 
 // -----
 module {
-  // CHECK-LABEL: func @test_cumsum_op_i32_2d_dim1
-  // CHECK: call @cumsum_2d_int32_t_dim1
-  func.func @test_cumsum_op_i32_2d_dim1(%arg0: memref<5x16xi32>, %arg1: memref<5x16xi32>) attributes {hacc.entry} {
-    hivm.hir.vcumsum ins(%arg0 : memref<5x16xi32>) outs(%arg1 : memref<5x16xi32>) cum_dims = [1] reverse = false
+  // CHECK-LABEL: func @test_cumsum_op_ra_int32
+  // CHECK锛?%false = arith.constant false
+  // CHECK: call @cumsum_ra_int32_t(%[[ARG0:.*]], %[[ARG1:.*]], %false)
+  func.func @test_cumsum_op_ra_int32(%arg0: memref<5x16xi32>, %arg1: memref<5x16xi32>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%arg0 : memref<5x16xi32>) outs(%arg1 : memref<5x16xi32>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumsum_op_ra_int32_reverse
+  // CHECK锛?%true = arith.constant true
+  // CHECK: call @cumsum_ra_int32_t(%[[ARG0:.*]], %[[ARG1:.*]], %true)
+  func.func @test_cumsum_op_ra_int32_reverse(%arg0: memref<5x16xi32>, %arg1: memref<5x16xi32>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%arg0 : memref<5x16xi32>) outs(%arg1 : memref<5x16xi32>) cum_dims = [0] reverse = true
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumsum_op_ra_int8
+  // CHECK锛?%false = arith.constant false
+  // CHECK: @cumsum_ra_int8_t(%[[ARG0:.*]], %[[ARG1:.*]], %false)
+  func.func @test_cumsum_op_ra_int8(%arg0: memref<5x16xi8>, %arg1: memref<5x16xi8>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%arg0 : memref<5x16xi8>) outs(%arg1 : memref<5x16xi8>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumsum_op_ra_int8_reverse
+  // CHECK锛?%true = arith.constant true
+  // CHECK: @cumsum_ra_int8_t(%[[ARG0:.*]], %[[ARG1:.*]], %true)
+  func.func @test_cumsum_op_ra_int8_reverse(%arg0: memref<5x16xi8>, %arg1: memref<5x16xi8>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%arg0 : memref<5x16xi8>) outs(%arg1 : memref<5x16xi8>) cum_dims = [0] reverse = true
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumsum_op_ra_float16
+  // CHECK锛?%false = arith.constant false
+  // CHECK: scf.for
+  // CHECK: scf.for
+  // CHECK: scf.for
+  // CHECK: @cumsum_ra_half(%[[ARG0:.*]], %[[ARG1:.*]], %false)
+  func.func @test_cumsum_op_ra_float16(%arg0: memref<2x3x4x5x8xf16>, %arg1: memref<2x3x4x5x8xf16>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%arg0 : memref<2x3x4x5x8xf16>) outs(%arg1 : memref<2x3x4x5x8xf16>) cum_dims = [2] reverse = false
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumsum_op_ra_float16_reverse
+  // CHECK锛?%true = arith.constant true
+  // CHECK: scf.for
+  // CHECK: scf.for
+  // CHECK: scf.for
+  // CHECK: @cumsum_ra_half(%[[ARG0:.*]], %[[ARG1:.*]], %true)
+  func.func @test_cumsum_op_ra_float16_reverse(%arg0: memref<2x3x4x5x8xf16>, %arg1: memref<2x3x4x5x8xf16>) attributes {hacc.entry} {
+    hivm.hir.vcumsum ins(%arg0 : memref<2x3x4x5x8xf16>) outs(%arg1 : memref<2x3x4x5x8xf16>) cum_dims = [2] reverse = true
     return
   }
 }
