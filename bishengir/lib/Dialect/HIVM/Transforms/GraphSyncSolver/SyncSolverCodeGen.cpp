@@ -143,8 +143,9 @@ void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
                                   BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (barrierOp->pipe != PIPE::PIPE_ALL) {
-    llvm::report_fatal_error("barriers in cross-core sync are expected to be of type "
-                             "barrier-all only.");
+    llvm::report_fatal_error(
+        "barriers in cross-core sync are expected to be of type "
+        "barrier-all only.");
   }
 
   PatternRewriter::InsertionGuard guard(rewriter);
@@ -401,7 +402,7 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
   auto eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
   Value eventId = rewriter.create<arith::AddIOp>(loc, rewriter.getIndexType(),
                                                  counter, eventIdValue);
-  return getValueOrCreateCastToI64(rewriter, loc, eventId);
+  return it->second = getValueOrCreateCastToI64(rewriter, loc, eventId);
 }
 
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
@@ -543,7 +544,8 @@ Value CodeGenerator::getMultiBufferBlockSelectOp(IRRewriter &rewriter,
   if (auto selectOp = getCVMultiBufferSelectOp(rewriter, syncOp)) {
     return selectOp;
   }
-  llvm::report_fatal_error("unhandled cross-core sync case with multibuffer enabled.");
+  llvm::report_fatal_error(
+      "unhandled cross-core sync case with multibuffer enabled.");
 }
 
 // Get an event id Value for a given SetWaitOp (creates constant or uses

@@ -232,6 +232,9 @@ inline bool hasHIVMUser(Operation *op) {
 ///  some_user(%res)
 /// ```
 ///
+/// All optional operands (pad_value, left/right_padding_num, init_condition)
+/// and attributes from the original memref load are preserved.
+///
 /// Restriction:
 ///   - the memref load's dst operand must have one user that is a
 ///   `bufferization.to_tensor` op
@@ -278,10 +281,10 @@ public:
     rewriter.setInsertionPointAfter(toTensorUser);
     auto tensorType = RankedTensorType::get(
         maybeDstMemRefType.getShape(), maybeDstMemRefType.getElementType());
-    // Create a tensor load, using the tensorized source/dst values
     auto tensorLoadOp = rewriter.create<hivm::LoadOp>(
-        loc, SmallVector<Type>{tensorType},
-        SmallVector<Value>{src, toTensorUser.getResult()}, loadOp->getAttrs());
+        loc, TypeRange{tensorType}, loadOp->getOperands(), loadOp->getAttrs());
+    tensorLoadOp.getSrcMutable().set(src);
+    tensorLoadOp.getDstMutable().set(toTensorUser.getResult());
     // Replace the users of `bufferization.to_tensor` by the new load
     // Except it's use in the newly created load op
     rewriter.replaceAllUsesExcept(toTensorUser.getResult(),
@@ -753,9 +756,11 @@ public:
 private:
   /// Main entry to collect loop information.
   void collectLoopInfo(ModuleOp topLevelModule);
-  template <typename OpType> WalkResult processCandidateLoop(OpType candidateLoop);
+  template <typename OpType>
+  WalkResult processCandidateLoop(OpType candidateLoop);
   template <typename OpType> LogicalResult collectCubeLoopInfo(OpType cubeLoop);
-  template <typename OpType> LogicalResult collectVectorLoopInfo(OpType vectorLoop);
+  template <typename OpType>
+  LogicalResult collectVectorLoopInfo(OpType vectorLoop);
   std::optional<TilingParams> calculateFixpipeTiling(CubeLoopInfo &info) const;
 
   /// Main entry to apply transformation
@@ -900,19 +905,17 @@ void markOpTouchingMMAD(hivm::LoadOp load, CubeLoopInfo &info) {
 
   if (!maybeMmadL1Op)
     return;
-  
+
   auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(maybeMmadL1Op);
-  std::optional<Operation *> ADefOp =
-      traceDefOp<hivm::LoadOp>(mmadL1Op.getA());
-  std::optional<Operation *> BDefOp =
-      traceDefOp<hivm::LoadOp>(mmadL1Op.getB());
+  std::optional<Operation *> ADefOp = traceDefOp<hivm::LoadOp>(mmadL1Op.getA());
+  std::optional<Operation *> BDefOp = traceDefOp<hivm::LoadOp>(mmadL1Op.getB());
   std::optional<Operation *> maybeReinterpretCastOp =
       traceDefOp<memref::ReinterpretCastOp>(load.getSrc());
   bool isFromEntryBlock{false};
   // If the source of load op originates from entry block, we will not tile it
   if (maybeReinterpretCastOp.has_value()) {
-    if (auto reinterpretCastOp =
-        dyn_cast<memref::ReinterpretCastOp>(maybeReinterpretCastOp.value())) {
+    if (auto reinterpretCastOp = dyn_cast<memref::ReinterpretCastOp>(
+            maybeReinterpretCastOp.value())) {
       auto viewSrc = reinterpretCastOp.getViewSource();
       if (auto blockArg = dyn_cast<mlir::BlockArgument>(viewSrc)) {
         mlir::Block *ownerBlock = blockArg.getOwner();
@@ -924,14 +927,14 @@ void markOpTouchingMMAD(hivm::LoadOp load, CubeLoopInfo &info) {
   }
 
   auto tileDim = info.getTiledDim();
-  if (tileDim.has_value() && isFromEntryBlock && 
+  if (tileDim.has_value() && isFromEntryBlock &&
       maybeMmadL1Op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
     // if tiled dim is not from this load op, we will not tile it
     if (tileDim.value() == 1 && ADefOp.value() == load)
       return;
     if (tileDim.value() == 0 && BDefOp.value() == load)
       return;
-  }  
+  }
 
   // Also consider the loaded operands as potential producers
   trace.append(
@@ -989,7 +992,8 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   TilingParams result;
   assert(dstType.getRank() == 2 && "MmadL1 operand rank must be two");
   // Tile the larger dimension
-  int64_t singleTileDim = dstType.getDimSize(0) >= dstType.getDimSize(1) ? 0 : 1;
+  int64_t singleTileDim =
+      dstType.getDimSize(0) >= dstType.getDimSize(1) ? 0 : 1;
   info.setTiledDim(singleTileDim);
   result.tiledDims = {singleTileDim};
   result.tileSizes = SmallVector<int64_t>(dstType.getRank(), 0);
@@ -1000,8 +1004,9 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
 
 template <typename OpType>
 WalkResult TileCubeVectorLoopPass::processCandidateLoop(OpType candidateLoop) {
-  auto maybeLoopCoreType = candidateLoop->template getAttrOfType<hivm::TCoreTypeAttr>(
-      hivm::kPipelinedLoopCoreTypeAttrName);
+  auto maybeLoopCoreType =
+      candidateLoop->template getAttrOfType<hivm::TCoreTypeAttr>(
+          hivm::kPipelinedLoopCoreTypeAttrName);
 
   if (!maybeLoopCoreType)
     return WalkResult::advance();
@@ -1029,8 +1034,6 @@ void TileCubeVectorLoopPass::collectLoopInfo(ModuleOp topLevelModule) {
     return processCandidateLoop(candidateLoop);
   });
 }
-
-
 
 static bool
 areValuesAlignedAfterTiling(ValueRange valueRange,
@@ -1074,8 +1077,7 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
 /// Note that the yielded values may not be stored. So we have to tile
 /// both the store and the yielded values.
 template <typename OpType>
-LogicalResult
-TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
+LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
   VectorLoopInfo info(loopsToTile.size(),
                       static_cast<int64_t>(this->tiledMixVectorLoopNumber));
   if (info.getTripCount() == 1)
@@ -1100,8 +1102,8 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
           return WalkResult::advance();
         }
 
-	// TODO:: Use MarkStrideAlign to annotate the unaligned axis and
-	// rely on StrideAlign to make it aligned
+        // TODO:: Use MarkStrideAlign to annotate the unaligned axis and
+        // rely on StrideAlign to make it aligned
         if (!areValuesAlignedAfterTiling(op->getResults(), analyzer,
                                          info.getTripCount(), ubAlignSize) ||
             !areValuesAlignedAfterTiling(op->getOperands(), analyzer,
@@ -1124,12 +1126,12 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
   // Visit yield op next because it will generate dummy store op
   if (!isa<scf::ForOp>(vectorLoop) && !isa<scope::ScopeOp>(vectorLoop)) {
     return vectorLoop.emitOpError(
-            "Collect vector loop tiling info only support ForOp and ScopeOp.");
+        "Collect vector loop tiling info only support ForOp and ScopeOp.");
   } else {
     auto terminateOp = vectorLoop.getBody()->getTerminator();
     for (auto terminateOpVal : terminateOp->getOperands()) {
-      if (failed(tryCollectTilingInfoForTerminate(terminateOp, terminateOpVal, info,
-                                                  analyzer)))
+      if (failed(tryCollectTilingInfoForTerminate(terminateOp, terminateOpVal,
+                                                  info, analyzer)))
         return vectorLoop.emitOpError(
             "Failed to collect vector loop tiling info");
     }
@@ -1145,15 +1147,16 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
 }
 
 template <typename OpType>
-std::optional<int64_t> getMixCubeLoopNumber(OpType cubeLoop, CubeLoopInfo &info) {
+std::optional<int64_t> getMixCubeLoopNumber(OpType cubeLoop,
+                                            CubeLoopInfo &info) {
   std::optional<int64_t> tileCubeLoopNum;
   cubeLoop->walk([&tileCubeLoopNum](hivm::MmadL1Op op) {
     if (op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
-      IntegerAttr attr = op->getAttrOfType<IntegerAttr>(
-          hivm::TileMixCubeNumAttr::name);
+      IntegerAttr attr =
+          op->getAttrOfType<IntegerAttr>(hivm::TileMixCubeNumAttr::name);
       if (attr) {
-        op.emitWarning(
-            "cube loop trip count will depend on attr instead of compile option");
+        op.emitWarning("cube loop trip count will depend on attr instead of "
+                       "compile option");
         tileCubeLoopNum = attr.getInt();
       }
     }
@@ -1316,7 +1319,6 @@ void TileCubeVectorLoopPass::runOnOperation() {
   }
   topLevelModule->removeAttr(
       transform::TransformDialect::kWithNamedSequenceAttrName);
-
 
   // Post processing step: try to shrink alloc's size.
   // This is needed because for copy that is lifted to tensor, it possible that
