@@ -287,11 +287,20 @@ def DebugOp :
                  StrAttr:$prefix,
                  BoolAttr:$hex,
                  AnyTypeOf<[AnyInteger, AnyFloat, TensorOrMemref]>:$arg,
-                 OptionalAttr<HIVM_TCoreTypeAttr>:$tcoretype)> {
+                 OptionalAttr<HIVM_TCoreTypeAttr>:$tcoretype,
+                 OptionalAttr<HIVM_AddressSpaceAttr>:$memscope)> {
   let summary = "Device-side debugging";
   let assemblyFormat = [{
     attr-dict $arg `:` type($arg)
   }];
+  let builders = [
+    OpBuilder<(ins "StringRef":$debugtype, "StringRef":$prefix,
+                   "bool":$hex, "Value":$arg)>,
+    OpBuilder<(ins "StringRef":$debugtype, "StringRef":$prefix,
+                   "bool":$hex, "Value":$arg, "hivm::TCoreTypeAttr":$tcoretype)>,
+    OpBuilder<(ins "StringRef":$debugtype, "StringRef":$prefix,
+                   "bool":$hex, "Value":$arg, "hivm::AddressSpaceAttr":$memscope)>
+  ];
   let extraClassDeclaration = [{
     static StringRef getOpName() { return "debug"; }
   }];

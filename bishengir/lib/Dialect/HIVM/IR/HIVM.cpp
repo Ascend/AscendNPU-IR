@@ -540,6 +540,24 @@ std::string debugCallNameMangleSuffix(Operation *op) {
 // DebugOp
 //===----------------------------------------------------------------------===//
 
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::TCoreTypeAttr tcoretype) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, tcoretype, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::AddressSpaceAttr memscope) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, memscope);
+}
+
 std::string DebugOp::getOpLibraryCallName(
     [[maybe_unused]] std::optional<bool> isOpsAligned) {
   std::string callName = this->getDebugtype().str();

@@ -2138,7 +2138,7 @@ module {
     // CHECK: call @print_1d_float_gm(%[[GLOBAL]], %[[C2]], %[[CAST]], %[[C1_I8]])
     // CHECK: call @_mlir_ciface_finish_debug
     hivm.hir.init_debug
-    hivm.hir.debug {debugtype = "print", finishInserted = 0 : i32, hex = true, prefix = " VAL =: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %arg0 : memref<1024xf32, #hivm.address_space<gm>>
+    hivm.hir.debug {debugtype = "print", finishInserted = 0 : i32, hex = true, memscope = #hivm.address_space<gm>, prefix = " VAL =: ", tcoretype = #hivm.tcore_type<VECTOR>} %arg0 : memref<1024xf32, #hivm.address_space<gm>>
     hivm.hir.finish_debug
     return
   }

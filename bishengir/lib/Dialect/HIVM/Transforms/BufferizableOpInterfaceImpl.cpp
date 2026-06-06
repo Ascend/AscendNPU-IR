@@ -409,10 +409,11 @@ struct DebugOpInterface
       newArg = value;
     }
 
+    auto tcoretype = debugOp.getTcoretypeAttr();
+    auto memscope = debugOp.getMemscopeAttr();
     replaceOpWithNewBufferizedOp<hivm::DebugOp>(
         rewriter, op, debugtype, prefix, hex, newArg,
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR));
+        tcoretype, memscope);
 
     return success();
   }
