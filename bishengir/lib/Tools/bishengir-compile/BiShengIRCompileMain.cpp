@@ -232,8 +232,9 @@ bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
   config.setPureSimt(true);
   bool result = true;
   for (auto module : modules) {
-    result &= runPipeline(module, buildSIMTPipeline, config, "BiShengSIMT")
-                  .succeeded();
+    // Stop SIMT lowering after earlier pipeline fails.
+    result = result && runPipeline(module, buildSIMTPipeline, config,
+                                   "BiShengSIMT").succeeded();
   }
   return result;
 }
@@ -301,27 +302,36 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     bool success = true;
     hasUboverflow = false;
     if (config.getEnableSimdSimtMixCompile()) {
-      success &= succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
-                                       config, "BiShengHIR"));
+      // Do not use `success &= ...` here: `&=` evaluates the RHS.
+      success = success && succeeded(runPipeline(
+                               hirCompileMode, buildBiShengHIRPipeline, config,
+                               "BiShengHIR"));
       // extract main module and simt modules
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // run ttir pipeline on simt modules
       for (auto simtMod : simtMods) {
-        success &= succeeded(runPipeline(simtMod, buildBiShengTTIRPipeline,
-                                         config, "BiShengTTIR"));
+        // Stop TTIR lowering after earlier pipeline fails.
+        success = success && succeeded(runPipeline(
+                                 simtMod, buildBiShengTTIRPipeline, config,
+                                 "BiShengTTIR"));
       }
-      success &= succeeded(runPipeline(
-          hirCompileMode, buildBiShengHIRFinishPipeline, config, "BishengHIR"));
-      success &= succeeded(runPipeline(mainMod, buildFinalHIVMPipelines, config,
-                                       "buildFinalHIVMPipelines"));
+      success = success && succeeded(runPipeline(
+                               hirCompileMode, buildBiShengHIRFinishPipeline,
+                               config, "BishengHIR"));
+      // Stop final HIVM lowering after earlier pipeline fails.
+      success = success && succeeded(runPipeline(
+                               mainMod, buildFinalHIVMPipelines, config,
+                               "buildFinalHIVMPipelines"));
     } else if (config.getEnableTritonIRCompile()) {
       success = succeeded(runPipeline(hirCompileMode, buildBiShengTTIRPipeline,
                                       config, "BiShengTTIR"));
     } else {
       success = succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
                                       config, "BiShengHIR"));
-      success &= succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
-                                       config, "buildFinalHIVMPipelines"));
+      // Stop final HIVM lowering after earlier pipeline fails.
+      success = success &&
+                succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
+                                      config, "buildFinalHIVMPipelines"));
       if (!success && hasUboverflow) {
         // Vector-side fallback tiers for UB overflow. These do not touch
         // multi-buffer and are tried in order until one is applicable.
@@ -347,7 +357,12 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       }
     }
 
-    // hivmc pipepine
+    if (!success) {
+      // Stop hivmc pipeline when upstream pipeline fails
+      continue;
+    }
+
+    // hivmc pipeline
     if (config.getEnableSimdSimtMixCompile()) {
       auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
       // SIMT modules run triton lowering pipeline
@@ -360,9 +375,11 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         //                                  config, "BiShengFinishLLVM"));
       }
     } else if (config.getPureSimt()) {
-      success &= runSIMTToLLVMCompile(hirCompileMode, config);
+      // Stop SIMT lowering after earlier pipeline fails.
+      success = success && runSIMTToLLVMCompile(hirCompileMode, config);
     } else {
-      success &= runSIMDToLLVMCompile(hirCompileMode, config);
+      // Stop SIMD lowering after earlier pipeline fails.
+      success = success && runSIMDToLLVMCompile(hirCompileMode, config);
     }
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {
