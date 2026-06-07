@@ -2862,6 +2862,18 @@ LogicalResult GatherLoadOp::verify() {
                          "shape and rank as indices");
     }
   }
+  if (auto other = getOther()) {
+    auto otherType = cast<RankedTensorType>(other.getType());
+    if (otherType.getShape() != indicesType.getShape()) {
+      return emitOpError("other of hfusion::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+    auto otherElementType = otherType.getElementType();
+    if (otherElementType != getElementTypeOrSelf(getBase())) {
+      return emitOpError("other of hfusion::GatherLoadOp must have the same "
+                         "element type as base");
+    }
+  }
   return success();
 }
 

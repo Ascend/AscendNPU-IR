@@ -559,9 +559,7 @@ def GatherLoadOp : HFusion_Op<"gather_load", [
     SameVariadicOperandSize,
     AllElementTypesMatch<["base", "dst"]>,
     AllRanksMatch<["indices", "dst"]>,
-    AllShapesMatch<["indices", "dst"]>,
-    OptionalTypesMatchWith<"base and other have same element type",
-                           "base", "other", "getElementTypeOrSelf($_self)">
+    AllShapesMatch<["indices", "dst"]>
 ]> {
   let summary = [{
     Perform sparse memory loading with optional mask and other
@@ -594,7 +592,7 @@ def GatherLoadOp : HFusion_Op<"gather_load", [
                        RankedTensorOf<[I32, I64]>:$indices,
                        AnyTypeOf<[I32, I64]>:$burst_len,
                        Optional<RankedTensorOf<[I1]>>:$mask,
-                       Optional<AnyTypeOf<[AnyInteger, AnyFloat]>>:$other,
+                       Optional<AnyRankedTensor>:$other,
                        TensorOrMemref:$dst,
                        OptionalAttr<HFusion_CacheModifierAttr>:$cache,
                        OptionalAttr<HFusion_EvictionPolicyAttr>:$evict,

@@ -20,10 +20,10 @@ module {
 module {
   // CHECK-LABEL: func.func @gather_load_test
   // CHECK: hfusion.gather_load
-  func.func @gather_load_test(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: f32) {
+  func.func @gather_load_test(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: tensor<16x400xf32>) {
     %c1_i64 = arith.constant 1 : i64
     %init = tensor.empty() : tensor<16x400xf32>
-    %output = hfusion.gather_load  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: f32) outs(%init : tensor<16x400xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>, isVolatile = false} -> tensor<16x400xf32>
+    %output = hfusion.gather_load  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: tensor<16x400xf32>) outs(%init : tensor<16x400xf32>) {cache = #hfusion.cache_modifier<none>, evict = #hfusion.eviction_policy<EvictNormal>, isVolatile = false} -> tensor<16x400xf32>
     return
   }
 
@@ -38,11 +38,11 @@ module {
 
 // -----
 module {
-  func.func @gather_load_shape_mismatch(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: f32) {
+  func.func @gather_load_shape_mismatch(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: tensor<16x400xf32>) {
     %c1_i64 = arith.constant 1 : i64
     %init = tensor.empty() : tensor<8x800xf32>
     // expected-error @+1 {{'hfusion.gather_load' op failed to verify that all of {indices, dst} have same shape}}
-    %output = hfusion.gather_load ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: f32) outs(%init : tensor<8x800xf32>) -> tensor<8x800xf32>
+    %output = hfusion.gather_load ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: tensor<16x400xf32>) outs(%init : tensor<8x800xf32>) -> tensor<8x800xf32>
     return
   }
 }

@@ -317,10 +317,10 @@ func.func @test_convert_layout_tensor(%arg : tensor<128x128xf16>) -> tensor<8x8x
 module {
   // CHECK-LABEL: func.func @gather_load_test
   // CHECK: hivm.hir.gather_load
-  func.func @gather_load_test(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: f32) {
+  func.func @gather_load_test(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %mask: tensor<16x400xi1>, %other: tensor<16x400xf32>) {
     %c1_i64 = arith.constant 1 : i64
     %init = tensor.empty() : tensor<16x400xf32>
-    %output = hivm.hir.gather_load  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: f32) outs(%init : tensor<16x400xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<16x400xf32>
+    %output = hivm.hir.gather_load  ins(%base : memref<?xf32>, %indices: tensor<16x400xi32>, %c1_i64: i64, %mask: tensor<16x400xi1>, %other: tensor<16x400xf32>) outs(%init : tensor<16x400xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<16x400xf32>
     return
   }
 }
