@@ -458,7 +458,17 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   mixedFunc.walk<WalkOrder::PreOrder>([&](Operation *op) {
     LDBG("current op: " << *op);
     auto scopeOp = dyn_cast<scope::ScopeOp>(op);
-    if (!scopeOp || scopeOp->getNumResults() != 0) {
+    if (!scopeOp) {
+      return WalkResult::advance();
+    }
+    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+      if (vectorType.getValue() == "simt") {
+        scopeOp->setAttr(
+            hivm::TCoreTypeAttr::name,
+            hivm::TCoreTypeAttr::get(builder.getContext(), TCoreType::VECTOR));
+      }
+    }
+    if (scopeOp->getNumResults() != 0) {
       return WalkResult::advance();
     }
     auto attr =

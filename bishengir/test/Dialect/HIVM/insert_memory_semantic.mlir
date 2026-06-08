@@ -68,3 +68,28 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK: hivm.hir.local_store
+// CHECK-NEXT: hivm.hir.local_store
+// CHECK-NEXT: hivm.hir.local_store
+// CHECK-NEXT: scope.return
+module {
+  func.func @scope_with_multi_return(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {
+    %c1_i32 = arith.constant 1 : i32
+    hivm.hir.set_ctrl false at ctrl[60]
+    hivm.hir.set_ctrl true at ctrl[48]
+    %0 = arith.muli %arg5, %arg6 : i32
+    %alloc = memref.alloc() : memref<8xi64>
+    %2:3 = scope.scope : () -> (tensor<8xf32>, tensor<8xf32>, tensor<8xf32>) {
+      %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
+      hivm.hir.load ins(%reinterpret_cast_0 : memref<8xi64, strided<[1]>>) outs(%alloc : memref<8xi64>) eviction_policy = <EvictFirst>
+      %3 = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
+      %4 = tensor.empty() : tensor<8xf32>
+      %5 = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %3 : tensor<8xi64>, %c1_i32 : i32) outs(%4 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+      scope.return %5, %5, %5 : tensor<8xf32>, tensor<8xf32>, tensor<8xf32>
+    } {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>}
+    return
+  }
+}
