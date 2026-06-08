@@ -17,29 +17,20 @@
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Transforms/Normalize/NormalizeTypeConversionTemplate.h"
 
 namespace mlir::hfusion {
 
-template <typename srcType>
-static bool hasElemType(const SmallVector<Value> &values) {
-  if constexpr (std::is_same_v<bool, srcType>) {
-    return hasI1ElemType(values);
-  }
-  if constexpr (std::is_same_v<int8_t, srcType>) {
-    return hasI8ElemType(values);
-  }
-  if constexpr (std::is_same_v<int16_t, srcType>) {
-    return hasI16ElemType(values);
-  }
-  if constexpr (std::is_same_v<float, srcType>) {
-    return hasF16ElemType(values);
-  }
-  return false;
-}
+template <typename ElemType, typename OpType>
+struct HFusionNormalizeToTargetTypeTraits;
+
+template <typename ElemType, typename OpType>
+struct NormalizeToTargetType;
 
 template <typename FuncType, typename FuncAttrType, typename OpType>
-static NamedAttribute getOpFunAttr(OpType op, PatternRewriter &rewriter) {
+NamedAttribute getOpFunAttr(OpType op, PatternRewriter &rewriter) {
   FuncType func = op.getFunAttr().getValue();
   auto attr = rewriter.getAttr<FuncAttrType>(func);
   auto funAttr = rewriter.getNamedAttr("fun", attr);
@@ -52,9 +43,9 @@ template <typename OpType,
               std::is_same_v<OpType, linalg::ElemwiseUnaryOp> ||
               std::is_same_v<OpType, hfusion::ElemwiseBinaryOp> ||
               std::is_same_v<OpType, hfusion::ElemwiseUnaryOp> ||
-              std::is_same_v<OpType, hfusion::SelectOp>>>
-static SmallVector<NamedAttribute> getOpAttr(OpType op,
-                                             PatternRewriter &rewriter) {
+              std::is_same_v<OpType, hfusion::SelectOp> >>
+SmallVector<NamedAttribute> getOpAttr(OpType op,
+                                      PatternRewriter &rewriter) {
   if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
     return {getOpFunAttr<linalg::BinaryFn, linalg::BinaryFnAttr>(op, rewriter)};
   } else if constexpr (std::is_same_v<OpType, linalg::ElemwiseUnaryOp>) {
@@ -91,22 +82,6 @@ static void replaceI1ResultsWithTargetType(const SmallVector<Value> &oldResults,
   }
 }
 
-template <typename targetType,
-          typename = std::enable_if<(std::is_same_v<bool, targetType> ||
-                                     std::is_same_v<int8_t, targetType>)>>
-static void replaceResultsWithTargetType(const SmallVector<Value> &oldResults,
-                                         const SmallVector<Value> &newResults,
-                                         PatternRewriter &rewriter,
-                                         bool isUnsigned) {
-  if constexpr (std::is_same_v<bool, targetType>) {
-    replaceI1ResultsWithTargetType(oldResults, newResults, rewriter);
-  }
-  if constexpr (std::is_same_v<int8_t, targetType>) {
-    replaceI8ResultsWithTargetType(oldResults, newResults, rewriter, true,
-                                   isUnsigned);
-  }
-}
-
 SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
                                      const SmallVector<Value> &values) {
   SmallVector<Value> result;
@@ -121,173 +96,197 @@ SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
   return result;
 }
 
-bool analyzeUnsignedNeeds(Value value) {
-  // Since the `add` and `sub` operations in the Linalg dialect have the same
-  // representation for uint and int scenarios, it is not possible to directly
-  // determine the sign nature through the Linalg dialect itself. Instead, the
-  // sign nature needs to be analyzed through the use-chain of the Value.
-  // In cdiv, only a single layer of BFS on the use-chain is required.
-  // Other maybe need more levels?
-  for (Operation *user : value.getUsers()) {
-    // In cdiv, the op type that needs to be checked is hfusion::Cast.
-    if (auto castOp = dyn_cast<hfusion::CastOp>(user)) {
-      if (castOp.getCast() == hfusion::TypeFn::cast_unsigned) {
-        return true;
-      }
-    }
-  }
-  return false;
+template <typename... Patterns>
+void addTypeConversionPatterns(RewritePatternSet &patterns) {
+  patterns.add<Patterns...>(patterns.getContext());
 }
 
-template <typename ElemType>
-SmallVector<Value> normalizeToTargetType(PatternRewriter &rewriter,
-                                         const SmallVector<Value> &values,
-                                         Type targetType,
-                                         bool isInputUnsigned) {
-  SmallVector<Value> result;
-  for (Value v : values) {
-    if (!isElemType<ElemType>(v.getType())) {
-      result.push_back(v);
-      continue;
-    }
-    Value castResult =
-        isInputUnsigned ? castTo(rewriter, v, targetType, TypeFn::cast_unsigned)
-                        : castTo(rewriter, v, targetType);
-    result.push_back(castResult);
-  }
-  return result;
+template <typename ElemType, typename... Ops>
+void addNormalizeToTargetPatterns(RewritePatternSet &patterns) {
+  addTypeConversionPatterns<
+      mlir::NormalizeToTargetTemplate<
+          ElemType, Ops, HFusionNormalizeToTargetTypeTraits<ElemType, Ops>>...>(
+      patterns);
 }
 
 template <typename ElemType, typename OpType>
-struct NormalizeToTargetType : public OpRewritePattern<OpType> {
-public:
-  using OpRewritePattern<OpType>::OpRewritePattern;
+struct HFusionNormalizeToTargetTypeTraits : public NormalizeTraitsBase {
+  static bool shouldNormalize(OpType op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
 
-  LogicalResult matchAndRewrite(OpType op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
+    if constexpr (std::is_same_v<ElemType, int8_t>) {
+      if constexpr (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
+        // only part of hfusion elemwise binary op support both i8
+        auto binOp = cast<hfusion::ElemwiseBinaryOp>(op);
+        hfusion::BinaryFn func = binOp.getFun();
+        // bit operation can support b8 operand
+        static DenseSet<hfusion::BinaryFn> binarySet = {
+            hfusion::BinaryFn::vor, hfusion::BinaryFn::vand,
+            hfusion::BinaryFn::vxor};
+        if (binarySet.contains(func))
+          return false;
+      }
+
+      if constexpr (std::is_same_v<OpType, hfusion::ElemwiseUnaryOp>) {
+        // only part of hfusion elemwise unary op support i8
+        auto unaryOp = cast<hfusion::ElemwiseUnaryOp>(op);
+        hfusion::UnaryFn func = unaryOp.getFun();
+        static DenseSet<hfusion::UnaryFn> unarySet = {hfusion::UnaryFn::vnot};
+        if (unarySet.contains(func))
+          return false;
+      }
+
+      if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
+        // The following ops support i8 type in c310
+        // Could compute on i8 directly and no need cast to f16 nor f32
+        if (archisAscend950) {
+          auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
+          linalg::BinaryFn func = binOp.getFun();
+          static DenseSet<linalg::BinaryFn> binarySet950 = {
+              linalg::BinaryFn::add, linalg::BinaryFn::sub,
+              linalg::BinaryFn::max_signed, linalg::BinaryFn::min_signed,
+              linalg::BinaryFn::max_unsigned, linalg::BinaryFn::min_unsigned};
+          if (binarySet950.contains(func))
+            return false;
+        }
+      }
     }
 
-    if (!hasElemType<ElemType>(op.getInputs()) &&
-        !hasElemType<ElemType>(op.getOutputs())) {
-      return failure();
-    }
-
-    if (isSupportOperand<ElemType>(op)) {
-      return failure();
-    }
-
+    // no linalg elemwise unary/binary op support i8
     bool computeByF16 = shoudComputeByF16(op);
     bool computeByF32 = shoudComputeByF32(op);
-    if (!computeByF16 && !computeByF32) {
-      return failure();
-    }
+    if (!computeByF16 && !computeByF32)
+      return false;
 
-    Type targetType;
-    if (computeByF16) {
-      targetType = rewriter.getF16Type();
-    } else if (computeByF32) {
-      targetType = rewriter.getF32Type();
-    } else {
-      llvm_unreachable("Unsupported Op.");
-    }
-
-    bool isInputUnsigned = false;
-    bool UseChainUnsigned = false;
-    if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
-      auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
-      linalg::BinaryFn linalgFn = binOp.getFunAttr().getValue();
-      if (op->getNumResults() > 0) {
-        UseChainUnsigned = analyzeUnsignedNeeds(op->getResult(0));
-      }
-      isInputUnsigned = linalgFn == linalg::BinaryFn::max_unsigned ||
-                        linalgFn == linalg::BinaryFn::min_unsigned ||
-                        UseChainUnsigned;
-    }
-
-    SmallVector<Value> newInputs = normalizeToTargetType<ElemType>(
-        rewriter, op.getInputs(), targetType, isInputUnsigned);
-    SmallVector<Value> newOutputs = normalizeToTargetType<ElemType>(
-        rewriter, op.getOutputs(), targetType, isInputUnsigned);
-    Operation *newOp = createBodyOp(op, newInputs, newOutputs, rewriter);
-    if (std::is_same_v<OpType, hfusion::SelectOp>) {
-      replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                     rewriter, false);
-    } else {
-      // TODO: set argument enableOverflow = false inside for all non-arithmatic
-      // op type
-      replaceResultsWithTargetType<ElemType>(
-          op->getResults(), newOp->getResults(), rewriter, isInputUnsigned);
-    }
-    return success();
+    return true;
   }
 
-private:
-  template <typename OpElemType>
-  bool isSupportOperand(OpType op) const = delete;
-
-  template <> bool isSupportOperand<bool>(OpType op) const { return false; }
-
-  template <> bool isSupportOperand<int8_t>(OpType op) const {
-    if constexpr (std::is_same_v<OpType, linalg::FillOp> ||
-                  std::is_same_v<OpType, linalg::BroadcastOp> ||
-                  std::is_same_v<OpType, linalg::CopyOp> ||
-                  std::is_same_v<OpType, hfusion::CastOp>) {
-      return true;
+  static CastSignKind getCastSignKind(OpType op) {
+    if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
+      bool useChainUnsigned = false;
+      if (op->getNumResults() > 0)
+        useChainUnsigned = analyzeUnsignedNeeds(op->getResult(0));
+      auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
+      linalg::BinaryFn linalgFn = binOp.getFunAttr().getValue();
+bool isInputUnsigned = linalgFn == linalg::BinaryFn::max_unsigned ||
+                       linalgFn == linalg::BinaryFn::min_unsigned ||
+                       useChainUnsigned;
+      return isInputUnsigned ? CastSignKind::Unsigned : CastSignKind::Signed;
     }
+    return CastSignKind::Signed;
+  }
 
-    if constexpr (std::is_same_v<OpType, hfusion::SelectOp>) {
-      return false;
-    }
+  static SmallVector<Value> getInputs(OpType op) {
+    return SmallVector<Value>(op.getInputs().begin(), op.getInputs().end());
+  }
 
+  static SmallVector<Value> getOutputs(OpType op) {
+    return SmallVector<Value>(op.getOutputs().begin(), op.getOutputs().end());
+  }
+
+  static Type getTargetType(PatternRewriter &rewriter, OpType op) {
+    if (shoudComputeByF16(op))
+      return rewriter.getF16Type();
+    if (shoudComputeByF32(op))
+      return rewriter.getF32Type();
+    return nullptr;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc, OpType op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    SmallVector<NamedAttribute> attrs = getOpAttr(op, rewriter);
     if constexpr (std::is_same_v<OpType, linalg::ElemwiseUnaryOp> ||
-                  std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
-      // The following ops support i8 type in c310
-      // Could compute on i8 directly and no need cast to f16 nor f32
-      if (archisAscend950) {
-        if constexpr (std::is_same_v<OpType, linalg::AddOp> ||
-                      std::is_same_v<OpType, linalg::SubOp> ||
-                      std::is_same_v<OpType, linalg::MaxOp> ||
-                      std::is_same_v<OpType, linalg::MinOp> ||
-                      std::is_same_v<OpType, linalg::SelectOp>) {
-          return true;
-        }
-        if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>)
-          if (op.getFun() == linalg::BinaryFn::add ||
-              op.getFun() == linalg::BinaryFn::sub ||
-              op.getFun() == linalg::BinaryFn::max_signed ||
-              op.getFun() == linalg::BinaryFn::min_signed ||
-              op.getFun() == linalg::BinaryFn::max_unsigned ||
-              op.getFun() == linalg::BinaryFn::min_unsigned)
-            return true;
+                  std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
+      // no attr needs to be changed
+      return rewriter.create<OpType>(loc, ValueRange{newInputs},
+                                     ValueRange{newOutputs}, attrs);
+    }
+
+    if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
+      // convert linalg binary op to hfusion
+      static DenseMap<linalg::BinaryFn, hfusion::BinaryFn> binAttrMap = {
+          {linalg::BinaryFn::max_unsigned, hfusion::BinaryFn::maxf},
+          {linalg::BinaryFn::max_signed, hfusion::BinaryFn::maxf},
+          {linalg::BinaryFn::min_unsigned, hfusion::BinaryFn::minf},
+          {linalg::BinaryFn::min_signed, hfusion::BinaryFn::minf},
+      };
+      auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
+      linalg::BinaryFn linalgFn = binOp.getFunAttr().getValue();
+      if (binAttrMap.contains(linalgFn)) {
+        hfusion::BinaryFn hfusionFn = binAttrMap[linalgFn];
+        return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp,
+                                       hfusion::BinaryFn,
+                                       hfusion::BinaryFnAttr>(
+            rewriter, loc, hfusionFn, ValueRange{newInputs},
+            ValueRange{newOutputs});
       }
-      // no linalg elemwise unary/binary op support i8
-      return false;
+      // other linalg elemwise binary op can be created using origin attr
+      return rewriter.create<linalg::ElemwiseBinaryOp>(
+          loc, ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
     }
 
     if constexpr (std::is_same_v<OpType, hfusion::ElemwiseUnaryOp>) {
-      // only part of hfusion elemwise unary op support i8
       auto unaryOp = cast<hfusion::ElemwiseUnaryOp>(op);
-      hfusion::UnaryFn func = unaryOp.getFun();
-      static DenseSet<hfusion::UnaryFn> unarySet = {hfusion::UnaryFn::vnot};
-      return unarySet.contains(func);
+      hfusion::UnaryFn unaryFn = unaryOp.getFun();
+      if (unaryFn == hfusion::UnaryFn::absi) {
+        // convert hfusion absi to linalg abs op
+        return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                      linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{newInputs},
+            ValueRange(newOutputs));
+      }
+      // other hfusion elemwise unary op can be created using origin attr
+      return rewriter.create<hfusion::ElemwiseUnaryOp>(
+          loc, ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
     }
 
-    if constexpr (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
-      // only part of hfusion elemwise binary op support both i8
-      auto binOp = cast<hfusion::ElemwiseBinaryOp>(op);
-      hfusion::BinaryFn func = binOp.getFun();
-      // bit operation can support b8 operand
-      static DenseSet<hfusion::BinaryFn> binarySet = {hfusion::BinaryFn::vor,
-                                                      hfusion::BinaryFn::vand,
-                                                      hfusion::BinaryFn::vxor};
-      return binarySet.contains(func);
+    return rewriter.create<OpType>(loc, ValueRange{newInputs},
+                                   ValueRange{newOutputs}, attrs);
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, OpType op,
+                             ValueRange newResults, CastSignKind intKind) {
+    SmallVector<Value> copiedResults(newResults.begin(), newResults.end());
+    if constexpr (std::is_same_v<OpType, hfusion::SelectOp>) {
+      replaceI8ResultsWithTargetType(op->getResults(), copiedResults, rewriter,
+                                     false);
+      return;
+    }
+    if constexpr (std::is_same_v<ElemType, bool>) {
+      replaceI1ResultsWithTargetType(op->getResults(), copiedResults, rewriter);
+    }
+    // TODO: set argument enableOverflow = false inside for all non-arithmatic
+    // op type
+    if constexpr (std::is_same_v<ElemType, int8_t>) {
+      bool isUnsigned = intKind == CastSignKind::Unsigned;
+      replaceI8ResultsWithTargetType(op->getResults(), copiedResults, rewriter,
+                                     true, isUnsigned);
+    }
+  }
+
+private:
+  static bool analyzeUnsignedNeeds(Value value) {
+    // Since the `add` and `sub` operations in the Linalg dialect have the same
+    // representation for uint and int scenarios, it is not possible to directly
+    // determine the sign nature through the Linalg dialect itself. Instead, the
+    // sign nature needs to be analyzed through the use-chain of the Value.
+    // In cdiv, only a single layer of BFS on the use-chain is required.
+    // Other maybe need more levels?
+    for (Operation *user : value.getUsers()) {
+      // In cdiv, the op type that needs to be checked is hfusion::Cast.
+      if (auto castOp = dyn_cast<hfusion::CastOp>(user)) {
+        if (castOp.getCast() == hfusion::TypeFn::cast_unsigned) {
+          return true;
+        }
+      }
     }
     return false;
   }
 
-  bool shoudComputeByF16(OpType op) const {
+  static bool shoudComputeByF16(OpType op) {
     if constexpr (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
       auto binOp = cast<hfusion::ElemwiseBinaryOp>(op);
       hfusion::BinaryFn func = binOp.getFun();
@@ -327,7 +326,7 @@ private:
     return true;
   }
 
-  bool shoudComputeByF32(OpType op) const {
+  static bool shoudComputeByF32(OpType op) {
     if constexpr (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
       auto binOp = cast<hfusion::ElemwiseBinaryOp>(op);
       hfusion::BinaryFn func = binOp.getFun();
@@ -345,59 +344,6 @@ private:
       return binarySet.contains(func);
     }
     return false;
-  }
-
-  Operation *createBodyOp(OpType op, SmallVector<Value> &newInputs,
-                          SmallVector<Value> &newOutputs,
-                          PatternRewriter &rewriter) const {
-    Location loc = op.getLoc();
-    SmallVector<NamedAttribute> attrs = getOpAttr(op, rewriter);
-    if constexpr (std::is_same_v<OpType, hfusion::SelectOp> ||
-                  std::is_same_v<OpType, linalg::ElemwiseUnaryOp> ||
-                  std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
-      // no attr needs to be changed
-      return rewriter.create<OpType>(loc, ValueRange{newInputs},
-                                     ValueRange{newOutputs}, attrs);
-    }
-
-    if constexpr (std::is_same_v<OpType, linalg::ElemwiseBinaryOp>) {
-      static DenseMap<linalg::BinaryFn, hfusion::BinaryFn> binAttrMap = {
-          {linalg::BinaryFn::max_unsigned, hfusion::BinaryFn::maxf},
-          {linalg::BinaryFn::max_signed, hfusion::BinaryFn::maxf},
-          {linalg::BinaryFn::min_unsigned, hfusion::BinaryFn::minf},
-          {linalg::BinaryFn::min_signed, hfusion::BinaryFn::minf},
-      };
-      auto binOp = cast<linalg::ElemwiseBinaryOp>(op);
-      linalg::BinaryFn linalgFn = binOp.getFunAttr().getValue();
-      if (binAttrMap.contains(linalgFn)) {
-        // convert linalg binary op to hfusion
-        hfusion::BinaryFn hfusionFn = binAttrMap[linalgFn];
-        return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp,
-                                       hfusion::BinaryFn,
-                                       hfusion::BinaryFnAttr>(
-            rewriter, loc, hfusionFn, ValueRange{newInputs},
-            ValueRange{newOutputs});
-      }
-      // other linalg elemwise binary op can be created using origin attr
-      return rewriter.create<linalg::ElemwiseBinaryOp>(
-          loc, ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
-    }
-
-    if constexpr (std::is_same_v<OpType, hfusion::ElemwiseUnaryOp>) {
-      auto unaryOp = cast<hfusion::ElemwiseUnaryOp>(op);
-      hfusion::UnaryFn unaryFn = unaryOp.getFun();
-      if (unaryFn == hfusion::UnaryFn::absi) {
-        // convert hfusion absi to linalg abs op
-        return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
-                                      linalg::UnaryFnAttr>(
-            rewriter, loc, linalg::UnaryFn::abs, ValueRange{newInputs},
-            ValueRange(newOutputs));
-      }
-      // other hfusion elemwise binary op can be created using origin attr
-      return rewriter.create<hfusion::ElemwiseUnaryOp>(
-          loc, ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
-    }
-    llvm_unreachable("Unsupport OpType to create with F16 operand.");
   }
 };
 
@@ -543,7 +489,7 @@ private:
     PatternRewriter::InsertionGuard guard(rewriter);
     rewriter.setInsertionPointToStart(op->getBlock());
     auto targetOp = rewriter.create<targetType>(op->getLoc(), op->getOperand(0),
-                                                op->getOperand(1));
+                                                 op->getOperand(1));
     rewriter.modifyOpInPlace(op, [&]() { op->replaceAllUsesWith(targetOp); });
   }
 };
@@ -634,7 +580,7 @@ public:
     auto zeroScalarAttr =
         DenseElementsAttr::get(scalarI16Tensor, rewriter.getI16IntegerAttr(0));
     Value zeroScalar = rewriter.create<arith::ConstantOp>(loc, scalarI16Tensor,
-                                                          zeroScalarAttr);
+                                                           zeroScalarAttr);
 
     Value cst0 = rewriter.create<arith::ConstantOp>(
         loc, i16, rewriter.getI16IntegerAttr(0));
@@ -775,125 +721,172 @@ public:
 };
 
 template <>
-struct NormalizeToTargetType<bool, tensor::ConcatOp>
-    : public OpRewritePattern<tensor::ConcatOp> {
-public:
-  using OpRewritePattern<tensor::ConcatOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(tensor::ConcatOp op,
-                                PatternRewriter &rewriter) const override {
+struct HFusionNormalizeToTargetTypeTraits<bool, tensor::ConcatOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(tensor::ConcatOp op) {
     SmallVector<Value> inputs = op.getInputs();
-    SmallVector<Value> inits = op->getResults();
-    if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
-      return failure();
+    SmallVector<Value> results = op->getResults();
+    return hasI1ElemType(inputs) || hasI1ElemType(results);
+  }
 
-    auto newInputs =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inputs);
-    auto newOp = rewriter.create<tensor::ConcatOp>(op.getLoc(), op.getDim(),
-                                                   ValueRange(newInputs));
-    replaceI1ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+  static SmallVector<Value> getInputs(tensor::ConcatOp op) {
+    return op.getInputs();
+  }
+
+  static SmallVector<Value> getOutputs(tensor::ConcatOp) { return {}; }
+
+  static Type getTargetType(PatternRewriter &rewriter, tensor::ConcatOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(tensor::ConcatOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          tensor::ConcatOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &) {
+    return rewriter.create<tensor::ConcatOp>(loc, op.getDim(),
+                                             ValueRange(newInputs));
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, tensor::ConcatOp op,
+                             ValueRange newResults, CastSignKind) {
+    replaceI1ResultsWithTargetType(op->getResults(),
+                                   SmallVector<Value>(newResults.begin(),
+                                                      newResults.end()),
                                    rewriter,
-                                   /*enableOverflow*/ false);
-
-    return success();
+                                   false);
   }
 };
 
 template <>
-struct NormalizeToTargetType<bool, CompareOp>
-    : public OpRewritePattern<CompareOp> {
-public:
-  using OpRewritePattern<CompareOp>::OpRewritePattern;
+struct HFusionNormalizeToTargetTypeTraits<bool, CompareOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(CompareOp op) { return true; }
 
-  LogicalResult matchAndRewrite(CompareOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = op.getInputs();
-    if (!hasI1ElemType(inputs))
-      return failure();
+  static SmallVector<Value> getInputs(CompareOp op) {
+    return SmallVector<Value>(op.getInputs().begin(), op.getInputs().end());
+  }
 
-    auto newInputs =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inputs);
-    Value newLhs = newInputs[0];
-    Value newRhs = newInputs[1];
-    auto *newOp =
-        createCmpOp(rewriter, op->getLoc(), newLhs, newRhs, op.getCompareFn());
-    rewriter.replaceOp(op, newOp);
+  static SmallVector<Value> getOutputs(CompareOp op) { return {}; }
 
-    return success();
+  static Type getTargetType(PatternRewriter &rewriter, CompareOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(CompareOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc, CompareOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    return hfusion::createCmpOp(rewriter, loc, newInputs[0], newInputs[1],
+                                op.getCompareFn());
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, CompareOp op,
+                             ValueRange newResults, CastSignKind) {
+    rewriter.replaceOp(op, newResults);
   }
 };
 
 template <>
-struct NormalizeToTargetType<bool, linalg::TransposeOp>
-    : public OpRewritePattern<linalg::TransposeOp> {
-public:
-  using OpRewritePattern<linalg::TransposeOp>::OpRewritePattern;
+struct HFusionNormalizeToTargetTypeTraits<bool, linalg::TransposeOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::TransposeOp op) { return true; }
 
-  LogicalResult matchAndRewrite(linalg::TransposeOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = {op.getInput()};
-    SmallVector<Value> inits = op.getDpsInits();
-    if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
-      return failure();
+  static SmallVector<Value> getInputs(linalg::TransposeOp op) {
+    return {op.getInput()};
+  }
 
-    auto newInputs =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inputs);
-    auto newInits =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inits);
-    auto newOp = rewriter.create<linalg::TransposeOp>(
-        op.getLoc(), newInputs.front(), newInits.front(), op.getPermutation());
-    replaceI1ResultsWithTargetType(op.getResult(), newOp->getResults(),
-                                   rewriter,
-                                   /*enableOverflow*/ false);
+  static SmallVector<Value> getOutputs(linalg::TransposeOp op) {
+    return SmallVector<Value>(op.getDpsInits().begin(),
+                              op.getDpsInits().end());
+  }
 
-    return success();
+  static Type getTargetType(PatternRewriter &rewriter,
+                            linalg::TransposeOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(linalg::TransposeOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          linalg::TransposeOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    return rewriter.create<linalg::TransposeOp>(
+        loc, newInputs.front(), newOutputs.front(), op.getPermutation());
+  }
+
+  static void replaceResults(PatternRewriter &rewriter,
+                             linalg::TransposeOp op,
+                             ValueRange newResults, CastSignKind) {
+    SmallVector<Value> oldResults(op->getResults().begin(),
+                                  op->getResults().end());
+    SmallVector<Value> newResultsVec(newResults.begin(), newResults.end());
+    replaceI1ResultsWithTargetType(oldResults, newResultsVec, rewriter, false);
   }
 };
 
 template <>
-struct NormalizeToTargetType<int8_t, linalg::ReduceOp>
-    : public OpRewritePattern<linalg::ReduceOp> {
-public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+struct HFusionNormalizeToTargetTypeTraits<int8_t, linalg::ReduceOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::ReduceOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
+    if (!shouldComputeByFloat(op))
+      return false;
+    return true;
+  }
 
-  LogicalResult matchAndRewrite(linalg::ReduceOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    if (!shouldComputeByFloat(op)) {
-      return failure();
-    }
-    SmallVector<Value> inputs = op.getInputs();
-    SmallVector<Value> inits = op.getInits();
-    if (!hasI8ElemType(inputs) && !hasI8ElemType(inits)) {
-      return failure();
-    }
+  static SmallVector<Value> getInputs(linalg::ReduceOp op) {
+    return SmallVector<Value>(op.getInputs().begin(), op.getInputs().end());
+  }
 
-    FloatType targetType = nullptr;
-    SmallVector<Value> newInputs;
-    SmallVector<Value> newInits;
-    if (shoudComputeI8ByF32(op)) {
-      targetType = rewriter.getF32Type();
-      newInputs =
-          normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs);
-      newInits = normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inits);
-    } else {
-      targetType = rewriter.getF16Type();
-      newInputs =
-          normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs);
-      newInits = normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits);
-    }
+  static SmallVector<Value> getOutputs(linalg::ReduceOp op) {
+    return SmallVector<Value>(op.getInits().begin(), op.getInits().end());
+  }
 
-    Operation *newOp = createNewReduceOp(op, rewriter, rewriter.getI8Type(),
-                                         targetType, newInputs, newInits);
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter);
-    return success();
+  static Type getTargetType(PatternRewriter &rewriter, linalg::ReduceOp op) {
+    if (shoudComputeI8ByF32(op))
+      return rewriter.getF32Type();
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(linalg::ReduceOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          linalg::ReduceOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    Type srcType = rewriter.getI8Type();
+    Type targetType = getTargetType(rewriter, op);
+    return createNewReduceOp(op, rewriter, srcType, targetType, newInputs,
+                             newOutputs);
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, linalg::ReduceOp op,
+                             ValueRange newResults, CastSignKind) {
+    SmallVector<Value> oldResults(op->getResults().begin(),
+                                  op->getResults().end());
+    SmallVector<Value> newResultsVec(newResults.begin(), newResults.end());
+    replaceI8ResultsWithTargetType(oldResults, newResultsVec, rewriter);
   }
 
 private:
-  bool shouldComputeByFloat(linalg::ReduceOp reduceOp) const {
+  static bool shouldComputeByFloat(linalg::ReduceOp reduceOp) {
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     auto bodyOp = yieldOp.getValues()[0].getDefiningOp();
@@ -905,7 +898,7 @@ private:
     return true;
   }
 
-  bool shoudComputeI8ByF32(linalg::ReduceOp op) const {
+  static bool shoudComputeI8ByF32(linalg::ReduceOp op) {
     Block *block = &op.getRegion().front();
     for (Operation &bodyOp : *block) {
       if (dyn_cast_or_null<arith::AddIOp>(bodyOp)) {
@@ -1082,142 +1075,164 @@ private:
   }
 };
 
-template <typename OpType>
-Operation *createInterleaveLikeOp(OpType op, SmallVector<Value> &newInputs,
-                                  SmallVector<Value> &newOutputs,
-                                  PatternRewriter &rewriter) {
-  Location loc = op.getLoc();
+template <typename ElemType>
+struct HFusionInterleaveNormalizeToTargetTypeTraits
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::InterleaveOp op) { return true; }
 
-  if constexpr (std::is_same_v<OpType, hfusion::InterleaveOp>) {
-    return rewriter.create<hfusion::InterleaveOp>(loc, ValueRange(newOutputs),
+  static SmallVector<Value> getInputs(hfusion::InterleaveOp op) {
+    return op.getInput();
+  }
+
+  static SmallVector<Value> getOutputs(hfusion::InterleaveOp op) {
+    return op.getODSResults(0);
+  }
+
+  static Type getTargetType(PatternRewriter &rewriter, hfusion::InterleaveOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(hfusion::InterleaveOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          hfusion::InterleaveOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    return rewriter.create<hfusion::InterleaveOp>(loc,
+                                                  ValueRange(newOutputs),
                                                   ValueRange(newInputs));
   }
-  if constexpr (std::is_same_v<OpType, hfusion::DeinterleaveOp>) {
+
+  static void replaceResults(PatternRewriter &rewriter,
+                             hfusion::InterleaveOp op,
+                             ValueRange newResults, CastSignKind) {
+    SmallVector<Value> oldResults(op->getResults().begin(),
+                                  op->getResults().end());
+    SmallVector<Value> newResultsVec(newResults.begin(), newResults.end());
+    if constexpr (std::is_same_v<ElemType, bool>) {
+      replaceI1ResultsWithTargetType(oldResults, newResultsVec, rewriter, false);
+    }
+    if constexpr (std::is_same_v<ElemType, int8_t>) {
+      replaceI8ResultsWithTargetType(oldResults, newResultsVec, rewriter, false);
+    }
+  }
+};
+
+template <>
+struct HFusionNormalizeToTargetTypeTraits<bool, hfusion::InterleaveOp>
+    : public HFusionInterleaveNormalizeToTargetTypeTraits<bool> {};
+
+template <>
+struct HFusionNormalizeToTargetTypeTraits<int8_t, hfusion::InterleaveOp>
+    : public HFusionInterleaveNormalizeToTargetTypeTraits<int8_t> {};
+
+template <>
+struct HFusionNormalizeToTargetTypeTraits<int8_t, hfusion::DeinterleaveOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::DeinterleaveOp op) { return true; }
+
+  static SmallVector<Value> getInputs(hfusion::DeinterleaveOp op) {
+    return op.getODSOperands(0);
+  }
+
+  static SmallVector<Value> getOutputs(hfusion::DeinterleaveOp op) {
+    return op.getODSResults(0);
+  }
+
+  static Type getTargetType(PatternRewriter &rewriter,
+                            hfusion::DeinterleaveOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(hfusion::DeinterleaveOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          hfusion::DeinterleaveOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
     return rewriter.create<hfusion::DeinterleaveOp>(
         loc, TypeRange(newOutputs), newInputs[0],
         op.getDeInterLeaveChannelIdx());
   }
-  llvm_unreachable(
-      "Unsupport interleaveLike OpType to create with F16 Operand.");
-}
 
-template <>
-struct NormalizeToTargetType<int8_t, hfusion::InterleaveOp>
-    : public OpRewritePattern<hfusion::InterleaveOp> {
-public:
-  using OpRewritePattern<hfusion::InterleaveOp>::OpRewritePattern;
+  static void replaceResults(PatternRewriter &rewriter,
+                             hfusion::DeinterleaveOp op,
+                             ValueRange newResults, CastSignKind) {
+    SmallVector<Value> oldResults(op->getResults().begin(),
+                                  op->getResults().end());
+    SmallVector<Value> newResultsVec(newResults.begin(), newResults.end());
+    replaceI8ResultsWithTargetType(oldResults, newResultsVec, rewriter, false);
+  }
+};
 
-  LogicalResult matchAndRewrite(hfusion::InterleaveOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = op.getInput();
-    SmallVector<Value> inits = op.getODSResults(0);
-    if (!hasI8ElemType(inputs) && !hasI8ElemType(inits)) {
-      return failure();
+template <typename ElemType>
+struct HFusionReduceWithIndexNormalizeToTargetTypeTraits
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::ReduceWithIndexOp op) {
+    return op.hasPureTensorSemantics();
+  }
+
+  static SmallVector<Value> getInputs(hfusion::ReduceWithIndexOp op) {
+    return SmallVector<Value>(op.getInputs().begin(), op.getInputs().end());
+  }
+
+  static SmallVector<Value> getOutputs(hfusion::ReduceWithIndexOp op) {
+    return SmallVector<Value>(op.getInits().begin(), op.getInits().end());
+  }
+
+  static Type getTargetType(PatternRewriter &rewriter,
+                            hfusion::ReduceWithIndexOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(hfusion::ReduceWithIndexOp op) {
+    if constexpr (std::is_same_v<ElemType, int8_t>) {
+      return op.getUnsignedSrc() ? CastSignKind::Unsigned
+                                 : CastSignKind::Signed;
     }
+    return CastSignKind::Signed;
+  }
 
-    auto newInputs =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs);
-    auto newInits =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits);
-    Operation *newOp =
-        createInterleaveLikeOp(op, newInputs, newInits, rewriter);
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter, false);
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          hfusion::ReduceWithIndexOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    return rewriter.create<hfusion::ReduceWithIndexOp>(
+        loc, TypeRange{newOutputs[0].getType(), newOutputs[1].getType()},
+        newInputs, newOutputs, op.getReduceKindAttr(),
+        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+        op.getDimensionsAttr());
+  }
 
-    return success();
+  static void replaceResults(PatternRewriter &rewriter,
+                             hfusion::ReduceWithIndexOp op,
+                             ValueRange newResults, CastSignKind intKind) {
+    SmallVector<Value> oldResults(op->getResults().begin(),
+                                  op->getResults().end());
+    SmallVector<Value> newResultsVec(newResults.begin(), newResults.end());
+    if constexpr (std::is_same_v<ElemType, bool>) {
+      replaceI1ResultsWithTargetType(oldResults, newResultsVec, rewriter);
+    }
+    if constexpr (std::is_same_v<ElemType, int8_t>) {
+      replaceI8ResultsWithTargetType(oldResults, newResultsVec, rewriter);
+    }
   }
 };
 
 template <>
-struct NormalizeToTargetType<int8_t, hfusion::DeinterleaveOp>
-    : public OpRewritePattern<hfusion::DeinterleaveOp> {
-public:
-  using OpRewritePattern<hfusion::DeinterleaveOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::DeinterleaveOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = op.getODSOperands(0);
-    SmallVector<Value> inits = op.getODSResults(0);
-    if (!hasI8ElemType(inputs) && !hasI8ElemType(inits)) {
-      return failure();
-    }
-
-    auto newInputs =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inputs);
-    auto newInits =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits);
-    Operation *newOp =
-        createInterleaveLikeOp(op, newInputs, newInits, rewriter);
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter, false);
-    return success();
-  }
-};
+struct HFusionNormalizeToTargetTypeTraits<bool, hfusion::ReduceWithIndexOp>
+    : public HFusionReduceWithIndexNormalizeToTargetTypeTraits<bool> {};
 
 template <>
-struct NormalizeToTargetType<bool, hfusion::ReduceWithIndexOp>
-    : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
-public:
-  using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics())
-      return failure();
-
-    SmallVector<Value> inputs = op.getInputs();
-    SmallVector<Value> inits = op.getInits();
-    assert(inputs.size() == 2);
-    if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
-      return failure();
-
-    auto newInputs =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inputs);
-    auto newInits =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inits);
-    Operation *newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
-        op.getLoc(), TypeRange{newInits[0].getType(), newInits[1].getType()},
-        newInputs, newInits, op.getReduceKindAttr(), op.getUnsignedSrcAttr(),
-        op.getTieBreakLeftAttr(), op.getDimensionsAttr());
-    replaceI1ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter);
-
-    return success();
-  }
-};
-
-template <>
-struct NormalizeToTargetType<int8_t, hfusion::ReduceWithIndexOp>
-    : public OpRewritePattern<hfusion::ReduceWithIndexOp> {
-public:
-  using OpRewritePattern<hfusion::ReduceWithIndexOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::ReduceWithIndexOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    SmallVector<Value> inputs = op.getInputs();
-    SmallVector<Value> inits = op.getInits();
-    if (!hasI8ElemType(inputs) && !hasI8ElemType(inits)) {
-      return failure();
-    }
-
-    bool unsignedSrc = op.getUnsignedSrc();
-    auto newInputs = normalizeSrcToTargetType<int8_t, Float16Type>(
-        rewriter, inputs, unsignedSrc);
-    auto newInits = normalizeSrcToTargetType<int8_t, Float16Type>(
-        rewriter, inits, unsignedSrc);
-    Operation *newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
-        op.getLoc(), TypeRange{newInits[0].getType(), newInits[1].getType()},
-        newInputs, newInits, op.getReduceKindAttr(), op.getUnsignedSrcAttr(),
-        op.getTieBreakLeftAttr(), op.getDimensionsAttr());
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter);
-    return success();
-  }
-};
+struct HFusionNormalizeToTargetTypeTraits<int8_t, hfusion::ReduceWithIndexOp>
+    : public HFusionReduceWithIndexNormalizeToTargetTypeTraits<int8_t> {};
 
 template <typename CumOpType>
 struct NormalizeCumOpI8ToTargetType : public OpRewritePattern<CumOpType> {
@@ -1267,152 +1282,141 @@ public:
 };
 
 template <>
-struct NormalizeToTargetType<int8_t, hfusion::GatherOp>
-    : public OpRewritePattern<hfusion::GatherOp> {
-public:
-  using OpRewritePattern<hfusion::GatherOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::GatherOp op,
-                                PatternRewriter &rewriter) const override {
+struct HFusionNormalizeToTargetTypeTraits<int8_t, hfusion::GatherOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::GatherOp op) {
     SmallVector<Value> source = op.getODSOperands(0);
-    SmallVector<Value> indices = op.getODSOperands(1);
     SmallVector<Value> inits = op.getODSOperands(2);
-    if (!hasI8ElemType(source) && !hasI8ElemType(inits)) {
-      return failure();
-    }
+    return hasI8ElemType(source) || hasI8ElemType(inits);
+  }
 
-    auto newSource =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, source);
-    auto newInits =
-        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, inits);
-    Operation *newOp = rewriter.create<hfusion::GatherOp>(
-        op.getLoc(), newSource[0], indices[0], newInits[0], op.getAxis());
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter, /*enableOverflow*/ false);
+  static SmallVector<Value> getInputs(hfusion::GatherOp op) {
+    return {op.getODSOperands(0)[0], op.getODSOperands(1)[0]};
+  }
 
-    return success();
+  static SmallVector<Value> getOutputs(hfusion::GatherOp op) {
+    return {op.getODSOperands(2)[0]};
+  }
+
+  static Type getTargetType(PatternRewriter &rewriter, hfusion::GatherOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(hfusion::GatherOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          hfusion::GatherOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
+    return rewriter.create<hfusion::GatherOp>(loc, newInputs[0], newInputs[1],
+                                              newOutputs[0], op.getAxis());
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, hfusion::GatherOp op,
+                             ValueRange newResults, CastSignKind) {
+    replaceI8ResultsWithTargetType(op->getResults(),
+                                   SmallVector<Value>(newResults.begin(),
+                                                      newResults.end()),
+                                   rewriter,
+                                   false);
   }
 };
 
-template <>
-struct NormalizeToTargetType<int8_t, linalg::BroadcastOp>
-    : public OpRewritePattern<linalg::BroadcastOp> {
-public:
-  using OpRewritePattern<linalg::BroadcastOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::BroadcastOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
+template <typename ElemType>
+struct HFusionBroadcastNormalizeToTargetTypeTraits
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::BroadcastOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
+    if constexpr (std::is_same_v<ElemType, bool>) {
+      // @TODO: Need a more general solution for skip normalize in simt scope.
+      if (isInSimtScope(op))
+        return false;
     }
-
     Value input = op.getInput();
     Value init = op.getInit();
-    Location loc = op.getLoc();
+    if constexpr (std::is_same_v<ElemType, bool>)
+      return isI1ElemType(input.getType()) || isI1ElemType(init.getType());
+    else
+      return isI8ElemType(input.getType()) || isI8ElemType(init.getType());
+  }
 
-    if (!isI8ElemType(input.getType()) && !isI8ElemType(init.getType())) {
-      return failure();
-    }
+  static SmallVector<Value> getInputs(linalg::BroadcastOp op) {
+    return {op.getInput()};
+  }
 
-    Value newInput = hfusion::castTo(rewriter, input, rewriter.getF16Type(),
-                                     hfusion::RoundMode::TRUNC);
+  static SmallVector<Value> getOutputs(linalg::BroadcastOp op) {
+    return {};
+  }
+
+  static Type getTargetType(PatternRewriter &rewriter,
+                            linalg::BroadcastOp) {
+    return rewriter.getF16Type();
+  }
+
+  static CastSignKind getCastSignKind(linalg::BroadcastOp) {
+    return CastSignKind::Signed;
+  }
+
+  static Value createCastOp(PatternRewriter &rewriter, Location loc,
+                             Value input, Type targetElemType,
+                             CastRoundKind kind, Value output,
+                             CastSignKind intKind) {
+    return NormalizeTraitsBase::createCastOp(rewriter, loc, input,
+                                             targetElemType,
+                                             CastRoundKind::Trunc, output,
+                                             intKind);
+  }
+
+  static Operation *rebuildOpInTargetType(PatternRewriter &rewriter,
+                                          Location loc,
+                                          linalg::BroadcastOp op,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newOutputs) {
     Value newInit = utils::createEmptyOpWithTargetElemType(
-        rewriter, loc, init, rewriter.getF16Type());
-    Value newBrcOp = rewriter
-                         .create<linalg::BroadcastOp>(loc, newInput, newInit,
-                                                      op.getDimensionsAttr())
-                         ->getResult(0);
-    Value newResult = hfusion::castTo(rewriter, newBrcOp, rewriter.getI8Type(),
-                                      hfusion::RoundMode::TRUNC, init,
-                                      /* enableOverflow = */ false);
+        rewriter, loc, op.getInit(), rewriter.getF16Type());
+    return rewriter.create<linalg::BroadcastOp>(loc, newInputs[0],
+                                                newInit,
+                                                op.getDimensionsAttr());
+  }
 
+  static void replaceResults(PatternRewriter &rewriter,
+                             linalg::BroadcastOp op,
+                             ValueRange newResults, CastSignKind) {
+    Value init = op.getInit();
+    Type castBackType;
+    if constexpr (std::is_same_v<ElemType, bool>)
+      castBackType = rewriter.getI1Type();
+    else
+      castBackType = rewriter.getI8Type();
+    Value newResult = hfusion::castTo(rewriter, newResults[0], castBackType,
+                                      hfusion::RoundMode::TRUNC, init,
+                                      false);
     rewriter.replaceAllUsesWith(op->getResult(0), newResult);
     rewriter.eraseOp(op);
-
-    return success();
   }
-};
 
-template <>
-struct NormalizeToTargetType<bool, hfusion::InterleaveOp>
-    : public OpRewritePattern<hfusion::InterleaveOp> {
-public:
-  using OpRewritePattern<hfusion::InterleaveOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::InterleaveOp op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = op.getInput();
-    SmallVector<Value> inits = op.getODSResults(0);
-    if (!hasI1ElemType(inputs) && !hasI1ElemType(inits)) {
-      return failure();
-    }
-
-    auto newInputs =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inputs);
-    auto newInits =
-        normalizeSrcToTargetType<bool, Float16Type>(rewriter, inits);
-    Operation *newOp =
-        createInterleaveLikeOp(op, newInputs, newInits, rewriter);
-    replaceI1ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter, false);
-
-    return success();
-  }
-};
-
-static bool isInSimtScope(Operation *op) {
-  auto scopeOp = op->getParentOfType<scope::ScopeOp>();
-  if (!scopeOp) {
+private:
+  static bool isInSimtScope(Operation *op) {
+    auto scopeOp = op->getParentOfType<scope::ScopeOp>();
+    if (!scopeOp)
+      return false;
+    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type"))
+      return vectorType.getValue() == "simt";
     return false;
   }
-  if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
-    return vectorType.getValue() == "simt";
-  }
-  return false;
-}
+};
 
 template <>
-struct NormalizeToTargetType<bool, linalg::BroadcastOp>
-    : public OpRewritePattern<linalg::BroadcastOp> {
-public:
-  using OpRewritePattern<linalg::BroadcastOp>::OpRewritePattern;
+struct HFusionNormalizeToTargetTypeTraits<bool, linalg::BroadcastOp>
+    : public HFusionBroadcastNormalizeToTargetTypeTraits<bool> {};
 
-  LogicalResult matchAndRewrite(linalg::BroadcastOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    
-    // @TODO: Need a more general solution for skip normalize in simt scope.
-    if (isInSimtScope(op)) {
-      return failure();
-    }
-
-    Value input = op.getInput();
-    Value init = op.getInit();
-    Location loc = op.getLoc();
-
-    if (!isI1ElemType(input.getType()) && !isI1ElemType(init.getType())) {
-      return failure();
-    }
-
-    Value newInput = hfusion::castTo(rewriter, input, rewriter.getF16Type(),
-                                     hfusion::RoundMode::TRUNC);
-    Value newInit = utils::createEmptyOpWithTargetElemType(
-        rewriter, loc, init, rewriter.getF16Type());
-    Value newBrcOp = rewriter
-                         .create<linalg::BroadcastOp>(loc, newInput, newInit,
-                                                      op.getDimensionsAttr())
-                         ->getResult(0);
-    Value newResult = hfusion::castTo(rewriter, newBrcOp, rewriter.getI1Type(),
-                                      hfusion::RoundMode::TRUNC, init,
-                                      /* enableOverflow = */ false);
-
-    rewriter.replaceAllUsesWith(op->getResult(0), newResult);
-    rewriter.eraseOp(op);
-    return success();
-  }
-};
+template <>
+struct HFusionNormalizeToTargetTypeTraits<int8_t, linalg::BroadcastOp>
+    : public HFusionBroadcastNormalizeToTargetTypeTraits<int8_t> {};
 
 template <>
 struct NormalizeToTargetType<bool, hfusion::SelectOp>
@@ -1496,17 +1500,16 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   if (archisAscend950)
     patterns.add<ReduceI1AddToSelectMaxCompare>(ctx);
-  patterns.add<NormalizeToTargetType<bool, hfusion::InterleaveOp>>(ctx);
-  patterns.add<NormalizeToTargetType<bool, linalg::BroadcastOp>>(ctx);
+  addNormalizeToTargetPatterns<bool, hfusion::InterleaveOp,
+                               linalg::BroadcastOp>(patterns);
   patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);
   if (archIsRegbased) {
     patterns.add<NormalizeToTargetType<bool, hfusion::SelectOp>>(ctx);
     patterns.add<ReduceI1AndOrToI16>(ctx);
   }
-  patterns.add<NormalizeToTargetType<bool, CompareOp>>(ctx);
-  patterns.add<NormalizeToTargetType<bool, linalg::TransposeOp>>(ctx);
-  patterns.add<NormalizeToTargetType<bool, tensor::ConcatOp>>(ctx);
-  patterns.add<NormalizeToTargetType<bool, hfusion::ReduceWithIndexOp>>(ctx);
+  addNormalizeToTargetPatterns<bool, CompareOp, linalg::TransposeOp,
+                               tensor::ConcatOp,
+                               hfusion::ReduceWithIndexOp>(patterns);
 }
 
 void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
@@ -1514,24 +1517,22 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
   if (archIsRegbased)
     patterns.add<ReduceNormalize910_95>(ctx);
   if (!archIsRegbased) {
-    patterns.add<NormalizeToTargetType<int8_t, hfusion::ElemwiseBinaryOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, hfusion::ElemwiseUnaryOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, linalg::ElemwiseBinaryOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, linalg::ElemwiseUnaryOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, hfusion::SelectOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, linalg::ReduceOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, hfusion::InterleaveOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, hfusion::DeinterleaveOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, hfusion::GatherOp>>(ctx);
-    patterns.add<NormalizeToTargetType<int8_t, linalg::BroadcastOp>>(ctx);
+    addNormalizeToTargetPatterns<int8_t, hfusion::ElemwiseBinaryOp,
+                                 hfusion::ElemwiseUnaryOp,
+                                 linalg::ElemwiseBinaryOp,
+                                 linalg::ElemwiseUnaryOp,
+                                 hfusion::SelectOp, linalg::ReduceOp,
+                                 hfusion::InterleaveOp,
+                                 hfusion::DeinterleaveOp, hfusion::GatherOp,
+                                 linalg::BroadcastOp>(patterns);
     patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumsumOp>>(ctx);
     patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumprodOp>>(ctx);
   }
   if (archisAscend950) {
-    patterns.add<NormalizeToTargetType<int8_t, linalg::ElemwiseBinaryOp>>(ctx);
+    addNormalizeToTargetPatterns<int8_t, linalg::ElemwiseBinaryOp>(patterns);
   }
   // TODO: support regbase i8 template function implementation
-  patterns.add<NormalizeToTargetType<int8_t, hfusion::ReduceWithIndexOp>>(ctx);
+  addNormalizeToTargetPatterns<int8_t, hfusion::ReduceWithIndexOp>(patterns);
 }
 
 void populateNormalizeGatherIndexPatterns(RewritePatternSet &patterns) {

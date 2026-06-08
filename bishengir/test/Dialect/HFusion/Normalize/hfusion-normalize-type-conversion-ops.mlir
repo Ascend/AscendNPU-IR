@@ -616,3 +616,193 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %reduced : tensor<i1>
   }
 }
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_select_i1
+// CHECK: hfusion.select ins(%arg0, %arg1, %arg2 : tensor<16xi1>, tensor<16xi1>, tensor<16xi1>) outs(%{{.*}} : tensor<16xi1>) -> tensor<16xi1>
+func.func @test_NormalizeToTargetType_select_i1(%arg0: tensor<16xi1>, %arg1: tensor<16xi1>, %arg2: tensor<16xi1>) -> tensor<16xi1> {
+  %dst = tensor.empty() : tensor<16xi1>
+  %res = hfusion.select
+    ins(%arg0, %arg1, %arg2 : tensor<16xi1>, tensor<16xi1>, tensor<16xi1>)
+    outs(%dst : tensor<16xi1>) -> tensor<16xi1>
+  return %res : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_select_i8
+// CHECK-DAG: %[[CAST_TRUE:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST_FALSE:.*]] = hfusion.cast {{.*}} ins(%arg2 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[SELECT_F16:.*]] = hfusion.select ins(%arg0, %[[CAST_TRUE]], %[[CAST_FALSE]] : tensor<16xi1>, tensor<16xf16>, tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.cast {{.*}} ins(%[[SELECT_F16]] : tensor<16xf16>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+func.func @test_NormalizeToTargetType_select_i8(%arg0: tensor<16xi1>, %arg1: tensor<16xi8>, %arg2: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = hfusion.select
+    ins(%arg0, %arg1, %arg2 : tensor<16xi1>, tensor<16xi8>, tensor<16xi8>)
+    outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_unary_absi
+// CHECK: %[[CAST_IN:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[ABS:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[CAST_IN]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.bitcast ins(%{{.*}} : tensor<16xf16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+func.func @test_NormalizeToTargetType_i8_elemwise_unary_absi(%arg0: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = hfusion.elemwise_unary {fun = #hfusion.unary_fn<absi>}
+          ins(%arg0 : tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_binary_mod
+// CHECK-DAG: %[[CAST0:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST1:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: hfusion.cast {{.*}} ins(%[[CAST0]] : tensor<16xf16>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK-DAG: hfusion.cast {{.*}} ins(%[[CAST1]] : tensor<16xf16>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%{{.*}}, %{{.*}} : tensor<16xi16>, tensor<16xi16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: hfusion.cast {{.*}}round_mode = #hfusion.round_mode<truncwithoverflow>{{.*}} ins(%{{.*}} : tensor<16xi16>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+func.func @test_NormalizeToTargetType_i8_elemwise_binary_mod(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>}
+          ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_binary_modui
+// CHECK-DAG: %[[CAST0:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST1:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: hfusion.cast {{.*}} ins(%[[CAST0]] : tensor<16xf16>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK-DAG: hfusion.cast {{.*}} ins(%[[CAST1]] : tensor<16xf16>) outs({{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>} ins(%{{.*}}, %{{.*}} : tensor<16xi16>, tensor<16xi16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}}round_mode = #hfusion.round_mode<truncwithoverflow>{{.*}} ins(%{{.*}} : tensor<16xi16>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+func.func @test_NormalizeToTargetType_i8_elemwise_binary_modui(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = hfusion.elemwise_binary {fun = #hfusion.binary_fn<modui>}
+          ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_binary_max_unsigned
+// CHECK-DAG: %[[CAST0:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST1:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<maxf>} ins(%[[CAST0]], %[[CAST1]] : tensor<16xf16>, tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+func.func @test_NormalizeToTargetType_i8_elemwise_binary_max_unsigned(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>}
+        ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+        outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  %out = tensor.empty() : tensor<16xf32>
+  %marker = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>}
+            ins(%res : tensor<16xi8>) outs(%out : tensor<16xf32>) -> tensor<16xf32>
+  %use = tensor.empty() : tensor<16xf32>
+  %ret = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+         ins(%marker, %marker : tensor<16xf32>, tensor<16xf32>)
+         outs(%use : tensor<16xf32>) -> tensor<16xf32>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_binary_min_unsigned
+// CHECK-DAG: %[[CAST0:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST1:.*]] = hfusion.cast {{.*}}cast = #hfusion.type_fn<cast_unsigned>{{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>} ins(%[[CAST0]], %[[CAST1]] : tensor<16xf16>, tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+func.func @test_NormalizeToTargetType_i8_elemwise_binary_min_unsigned(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = linalg.elemwise_binary {fun = #linalg.binary_fn<min_unsigned>}
+        ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+        outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  %out = tensor.empty() : tensor<16xf32>
+  %marker = hfusion.cast {cast = #hfusion.type_fn<cast_unsigned>, round_mode = #hfusion.round_mode<rint>}
+            ins(%res : tensor<16xi8>) outs(%out : tensor<16xf32>) -> tensor<16xf32>
+  %use = tensor.empty() : tensor<16xf32>
+  %ret = linalg.elemwise_binary {fun = #linalg.binary_fn<add>}
+         ins(%marker, %marker : tensor<16xf32>, tensor<16xf32>)
+         outs(%use : tensor<16xf32>) -> tensor<16xf32>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_DoNotNormalizeToTargetType_i8_elemwise_unary_vnot
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+func.func @test_DoNotNormalizeToTargetType_i8_elemwise_unary_vnot(%arg0: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
+          ins(%arg0 : tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_DoNotNormalizeToTargetType_i8_elemwise_binary_vor
+// CHECK-NOT: hfusion.cast
+// CHECK: hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
+func.func @test_DoNotNormalizeToTargetType_i8_elemwise_binary_vor(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>}
+          ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_binary_sub
+// CHECK-DAG: %[[CAST0:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST1:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[CAST0]], %[[CAST1]] : tensor<16xf16>, tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<16xf16>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+func.func @test_NormalizeToTargetType_i8_elemwise_binary_sub(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+        ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+        outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_elemwise_binary_mul
+// CHECK-DAG: %[[CAST0:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST1:.*]] = hfusion.cast {{.*}} ins(%[[CAST0]] : tensor<16xf16>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK-DAG: %[[CAST2:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK-DAG: %[[CAST3:.*]] = hfusion.cast {{.*}} ins(%[[CAST2]] : tensor<16xf16>) outs({{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[CAST1]], %[[CAST3]] : tensor<16xf32>, tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: hfusion.cast {{.*}} ins(%{{.*}} : tensor<16xf32>) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
+// CHECK: hfusion.cast {{.*}}round_mode = #hfusion.round_mode<truncwithoverflow>{{.*}} ins(%{{.*}} : tensor<16xi32>) outs({{.*}} : tensor<16xi8>) -> tensor<16xi8>
+func.func @test_NormalizeToTargetType_i8_elemwise_binary_mul(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+        ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
+        outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_i8_linalg_elemwise_unary_abs
+// CHECK: %[[CAST_IN:.*]] = hfusion.cast {{.*}} ins(%arg0 : tensor<16xi8>) outs({{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[ABS:.*]] = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%[[CAST_IN]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: hfusion.bitcast ins(%{{.*}} : tensor<16xf16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+func.func @test_NormalizeToTargetType_i8_linalg_elemwise_unary_abs(%arg0: tensor<16xi8>) -> tensor<16xi8> {
+  %dst = tensor.empty() : tensor<16xi8>
+  %res = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>}
+          ins(%arg0 : tensor<16xi8>)
+          outs(%dst : tensor<16xi8>) -> tensor<16xi8>
+  return %res : tensor<16xi8>
+}
