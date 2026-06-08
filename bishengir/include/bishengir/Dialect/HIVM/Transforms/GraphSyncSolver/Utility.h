@@ -140,6 +140,10 @@ struct SyncSolverOptions {
   // Reuse existing sync pairs to save event ids.
   bool reuseSyncPairToSaveEventIds{false};
 
+  // In EventIdSolver, prefer allocating brand-new event ids (above the current
+  // global maximum) before falling back to reusing smaller unused ids.
+  bool preferNewEventIds{false};
+
   // Use different flag-ids for multibuffer backward sync pairs.
   bool useDifferentMultiBufferFlagIds{false};
 
@@ -166,6 +170,7 @@ struct SyncSolverOptions {
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
     reuseSyncPairToSaveEventIds = isIntraCoreMode();
     useDifferentMultiBufferFlagIds = !isCrossCoreMode();
+    preferNewEventIds = isCrossCoreMode();
   }
 
   bool isCrossCoreMode() const {
