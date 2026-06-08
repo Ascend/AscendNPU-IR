@@ -580,6 +580,44 @@ protected:
   }
 };
 
+class CumsumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<VCumsumOp> {
+public:
+  explicit CumsumOpToLibraryCallPattern(MLIRContext *context,
+                                     PatternBenefit benefit = 1,
+                                     ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<VCumsumOp>(context, benefit,
+                                              generatedNames) {}
+  
+  LogicalResult matchAndRewrite(VCumsumOp op,
+                                PatternRewriter &rewriter) const final {
+    assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
+
+    auto src = op.getSrc();
+    auto dst = op.getDst();
+    ModuleOp mod = op->template getParentOfType<ModuleOp>();
+    SmallVector<Value> operands = {src, dst};
+
+    auto tempBuffer = op.getTempBuffer();
+    if (tempBuffer) {
+      operands.push_back(tempBuffer);
+    } else {
+      operands.push_back(dst);
+    }
+    
+    rewriter.setInsertionPoint(op);
+
+    bool isReverse = op.getReverse();
+    Value isReverseValue = rewriter.create<mlir::arith::ConstantOp>(
+        op->getLoc(), rewriter.getBoolAttr(isReverse));
+    operands.push_back(isReverseValue);
+
+    auto libCallName = op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    createLibCall(rewriter, op, mod, libCallName, operands, {});
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 template <typename CumOp>
 class CumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<CumOp> {
 public:
@@ -1908,7 +1946,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                VArangeOpToLibraryCallPattern,
                VCastOpToLibraryCallPattern,
                ReduceOpToLibraryCallPattern,
-               CumOpToLibraryCallPattern<hivm::VCumsumOp>,
+               CumsumOpToLibraryCallPattern,
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,

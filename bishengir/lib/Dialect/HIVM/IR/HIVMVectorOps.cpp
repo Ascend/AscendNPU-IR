@@ -1326,10 +1326,35 @@ LogicalResult VCumprodOp::verify() { return verifyCumOp(*this); }
 
 std::string VCumsumOp::getOpLibraryCallName(
     [[maybe_unused]] std::optional<bool> isOpsAligned) {
-  return getCumOpLibraryCallName(*this);
+  StringRef baseName = this->getOpName();
+  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
+  Type elemType = srcVecType.getElementType();
+  int rank = srcVecType.getRank();
+  llvm::ArrayRef<int64_t> cumsumDims = this->getCumDims();
+  int64_t cumsumDim = cumsumDims[0];
+  std::stringstream ss;
+  ss << baseName.data() << "_" << rank << "d_"
+     << hivm::detail::getTypeName(this->getLoc(), elemType) << "_dim" << cumsumDim;
+  return ss.str();
 }
 
 LogicalResult VCumsumOp::verify() { return verifyCumOp(*this); }
+
+void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                       TypeRange result, Value src, Value dst,
+                       DenseI64ArrayAttr cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse));
+}
+
+void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                       TypeRange result, Value src, Value dst,
+                       ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims),
+        reverse);
+}
 
 //===----------------------------------------------------------------------===//
 // VDivOp

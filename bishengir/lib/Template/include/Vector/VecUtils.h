@@ -527,6 +527,19 @@ __aiv__ __attribute__((always_inline)) constexpr int Log2(int64_t size) {
   return i;
 }
 
+/// Calculate the smallest n that 2^n >= value.
+///
+/// constraints:
+/// 1. max value <= ((int64_t)1 << 31) - 1.
+__aiv__ __attribute__((always_inline)) constexpr int CeilLog2(int64_t size) {
+  int64_t sum = 1;
+  int64_t i = 0;
+  for (i = 0; sum < size; ++i) {
+    sum = sum << 1;
+  }
+  return i;
+}
+
 /// Calculate n^m.
 ///
 /// constraints:
