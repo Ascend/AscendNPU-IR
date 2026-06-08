@@ -1505,6 +1505,9 @@ bool Solver::reuseConflictPair(ConflictPair *conflictPair,
   reusableConflictPair->setOp = conflictPair->setOp;
   reusableConflictPair->setOcc = conflictPair->setOcc;
   reusableConflictPair->startIndex = conflictPair->startIndex;
+  // The reused pair takes over this conflict pair's set op, which is no longer
+  // the foldable MmadL1 L0 load the last-iteration optimization assumes.
+  reusableConflictPair->setOnLastIterOnly = false;
 
   if (!conflictPair->isUseless) {
     memorizeReusedSyncedPair(conflictPair, reusableConflictPair);
