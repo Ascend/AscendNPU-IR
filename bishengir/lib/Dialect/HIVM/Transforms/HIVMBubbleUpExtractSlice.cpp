@@ -64,6 +64,14 @@ public:
   LogicalResult
   verifyMarkedExtractSlicesAreBubbledUp(func::FuncOp funcOp) const {
     auto walkResult = funcOp->walk([this](Operation *op) {
+      if (isa<tensor::InsertSliceOp>(op)) {
+        auto insertSliceOp = cast<tensor::InsertSliceOp>(op);
+        // All marked insertslice is expected to be cancelled out
+        // No matter strict mode or not.
+        if (isMarkedInsertSliceOp(insertSliceOp))
+          return WalkResult::interrupt();
+      }
+
       if (!isa<tensor::ExtractSliceOp>(op)) {
         return WalkResult::advance();
       }
