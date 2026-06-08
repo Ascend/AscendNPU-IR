@@ -1539,7 +1539,8 @@ Solver::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
   if (!eventIdSolver.contains(key)) {
     int64_t eventIdNumMax =
         getHWAvailableEventIdNum(options.syncMode, pipeSrc, pipeDst);
-    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax);
+    eventIdSolver[key] = std::make_unique<EventIdSolver>(
+        eventIdNumMax, options.preferNewEventIds);
   }
   return eventIdSolver[key];
 }

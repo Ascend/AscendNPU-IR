@@ -161,6 +161,7 @@ class EventIdSolver {
 private:
   int64_t eventIdsNumMax{-1};
   bool needRecalculateEventIds{false};
+  bool preferNewEventIds{false};
   llvm::SmallVector<std::unique_ptr<EventIdNode>> nodes;
   llvm::DenseMap<EventIdNode *, llvm::DenseMap<EventIdNode *, int64_t>> adjList;
   llvm::DenseMap<EventIdNode *, int64_t> sumAdjListSizes;
@@ -168,7 +169,8 @@ private:
   std::stack<std::unique_ptr<Action>> actionsStack;
 
 public:
-  EventIdSolver(int64_t eventIdNumMax) : eventIdsNumMax(eventIdNumMax) {}
+  EventIdSolver(int64_t eventIdNumMax, bool preferNewEventIds = false)
+      : eventIdsNumMax(eventIdNumMax), preferNewEventIds(preferNewEventIds) {}
   ~EventIdSolver() = default;
 
   bool isColorable();
