@@ -21,10 +21,59 @@
 #include "bishengir/Dialect/HIVM/Transforms/NormalizeTraitsBase.h"
 #include "bishengir/Transforms/Normalize/NormalizeReductionTemplate.h"
 
+#include <numeric>
+
 namespace mlir {
 
 static bool isReduceWithIndexOp(hivm::VReduceOp op) {
   return utils::isReduceWithIndex(op.getArith().getReduceOp());
+}
+
+static Value createHIVMTransposeByAdjacentSwaps(PatternRewriter &rewriter,
+                                                Location loc, Value input,
+                                                Value finalInit,
+                                                ArrayRef<int64_t> finalPerm) {
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  if (!inputType || !inputType.hasStaticShape() || finalPerm.empty())
+    return Value();
+
+  SmallVector<int64_t> currentOrder(inputType.getRank());
+  std::iota(currentOrder.begin(), currentOrder.end(), int64_t{0});
+
+  Value current = input;
+  for (int64_t targetPos = 0, rank = inputType.getRank(); targetPos < rank;
+       ++targetPos) {
+    auto it = llvm::find(currentOrder, finalPerm[targetPos]);
+    if (it == currentOrder.end())
+      return Value();
+
+    int64_t pos = static_cast<int64_t>(std::distance(currentOrder.begin(), it));
+    while (pos > targetPos) {
+      SmallVector<int64_t> swapPerm(rank);
+      std::iota(swapPerm.begin(), swapPerm.end(), int64_t{0});
+      std::swap(swapPerm[pos - 1], swapPerm[pos]);
+
+      SmallVector<int64_t> nextOrder = currentOrder;
+      std::swap(nextOrder[pos - 1], nextOrder[pos]);
+      bool isFinalSwap = llvm::equal(nextOrder, finalPerm);
+      Value stepInit =
+          isFinalSwap ? finalInit
+                      : createReductionTransposeInit(rewriter, loc, current,
+                                                     swapPerm);
+      if (!stepInit)
+        return Value();
+
+      current = rewriter
+                    .create<hivm::VTransposeOp>(
+                        loc, TypeRange{stepInit.getType()}, current, stepInit,
+                        rewriter.getDenseI64ArrayAttr(swapPerm))
+                    .getResult()
+                    .front();
+      std::swap(currentOrder[pos - 1], currentOrder[pos]);
+      --pos;
+    }
+  }
+  return current;
 }
 
 /// HIVM hooks for the shared argmin/argmax normalization template.
@@ -86,6 +135,45 @@ private:
   }
 };
 
+/// HIVM-specific hooks for the transpose-based RA high-performance rewrite.
+struct HIVMReduceWithIndexRAHighPerformanceTraits
+    : public hivm::NormalizeTraitsBase {
+public:
+  static bool shouldNormalizeRAHighPerformance(hivm::VReduceOp op) {
+    return op.hasPureTensorSemantics() && isReduceWithIndexOp(op);
+  }
+
+  static ArrayRef<int64_t> getRAHighPerformanceReduceDims(hivm::VReduceOp op) {
+    return op.getReduceDims();
+  }
+
+  static Value createRAHighPerformanceTransposeOp(PatternRewriter &rewriter,
+                                                  Location loc, Value input,
+                                                  Value init,
+                                                  ArrayRef<int64_t> perm) {
+    return createHIVMTransposeByAdjacentSwaps(rewriter, loc, input, init, perm);
+  }
+
+  static Operation *
+  createRAHighPerformanceReduceOp(PatternRewriter &rewriter, Location loc,
+                                  hivm::VReduceOp op, ArrayRef<Value> newInputs,
+                                  ArrayRef<Value> newInits,
+                                  ArrayRef<int64_t> newReduceDims,
+                                  ArrayRef<int64_t> transposePerm) {
+    SmallVector<Value> transposedInits =
+        transposeReductionValueRange<HIVMReduceWithIndexRAHighPerformanceTraits>(
+            rewriter, loc, newInits, transposePerm);
+    if (transposedInits.size() != newInits.size())
+      return nullptr;
+
+    return NormalizeTraitsBase::createReduceOp(rewriter, loc, op,
+                                               newInputs.front(), transposedInits,
+                                               rewriter.getDenseI64ArrayAttr(
+                                                   newReduceDims));
+  }
+
+};
+
 struct HIVMNormalizeReduceWithIndexInitsAndInputsTraits
     : public hivm::NormalizeTraitsBase {
 public:
@@ -113,6 +201,9 @@ using NormalizeArgMinMaxOp =
 using NormalizeF16ReduceSum =
     NormalizeF16ReduceSumTemplate<hivm::VReduceOp,
                                   HIVMNormalizeF16ReduceSumTraits>;
+using ReduceWithIndexRAHighPerformance =
+    ReduceWithIndexRAHighPerformanceTemplate<
+        hivm::VReduceOp, HIVMReduceWithIndexRAHighPerformanceTraits>;
 using NormalizeReduceWithIndexInitsAndInputs =
     NormalizeReduceWithIndexInitsAndInputsTemplate<
         hivm::VReduceOp, HIVMNormalizeReduceWithIndexInitsAndInputsTraits>;
@@ -121,6 +212,12 @@ using NormalizeReduceIndexToI32 =
                                       HIVMNormalizeReduceIndexToI32Traits>;
 
 } // namespace mlir
+
+void mlir::hivm::populateNormalizePreReductionPatterns(
+    RewritePatternSet &patterns) {
+  auto *ctx = patterns.getContext();
+  patterns.add<ReduceWithIndexRAHighPerformance>(ctx);
+}
 
 void mlir::hivm::populateNormalizeReductionPatterns(RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();

@@ -47,6 +47,7 @@ void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
 void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
     RewritePatternSet &patterns, bool isRegbased);
+void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
