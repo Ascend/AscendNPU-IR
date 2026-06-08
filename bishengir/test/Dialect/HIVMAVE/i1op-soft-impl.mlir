@@ -165,3 +165,38 @@ func.func @test_constraint_layout(%arg0: memref<64xi1, strided<[256]>, #hivm.add
   }
   return
 }
+
+// CHECK-LABEL: func.func @test_offset_beyond_vl
+// CHECK: arith.addi
+// CHECK: arith.index_cast
+// CHECK: arith.divsi
+// CHECK: arith.muli
+// CHECK: arith.subi
+// CHECK: arith.divsi
+// CHECK: arith.index_cast
+// CHECK: arith.index_cast
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.vsel
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.reduction <xori>
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
+func.func @test_offset_beyond_vl(%arg0: memref<512xi1, #hivm.address_space<ub>>, %arg1: memref<512x4xi32, strided<[32, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c512 = arith.constant 512 : index
+  %0 = ave.hir.pge <VL4> {mask_op_idx = 0 : i32} : vector<256xi1>
+  annotation.mark %0 {mask_op_idx = 0 : i32} : vector<256xi1>
+  scf.for %arg2 = %c0 to %c512 step %c1 {
+    %subview = memref.subview %arg0[%arg2] [1] [1] : memref<512xi1, #hivm.address_space<ub>> to memref<1xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2, 0] [1, 4] [1, 1] : memref<512x4xi32, strided<[32, 1]>, #hivm.address_space<ub>> to memref<1x4xi32, strided<[32, 1], offset: ?>, #hivm.address_space<ub>>
+    %res = ave.hir.vload <NORM> %subview[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<256xi1>
+    %1 = ave.hir.pge <ALL> : vector<256xi1>
+    %2 = ave.hir.vcmp <NE> %res, %1, %0 : vector<256xi1>, vector<256xi1> -> vector<256xi1>
+    %subview_1 = memref.subview %subview_0[0, 0] [1, 4] [1, 1] : memref<1x4xi32, strided<[32, 1], offset: ?>, #hivm.address_space<ub>> to memref<4xi32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    ave.hir.masked_store <NORM_B32> %subview_1[%c0], %0, %2 {hivm.is_continuous} : memref<4xi32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xi1>
+  }
+  return
+}

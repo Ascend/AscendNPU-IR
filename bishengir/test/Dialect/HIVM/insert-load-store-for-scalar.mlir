@@ -47,3 +47,30 @@ func.func @extract_for_index_use(
   %value = memref.load %data[%idx] : memref<16xf32>
   return %value : f32
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_extract_cube_tcore
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1xf32>
+// CHECK: %[[TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<1x1xf32>
+// CHECK: hivm.hir.load ins(%[[_:.*]] : memref<1x1xf32, strided<[1, 1], offset: ?>>) outs(%[[ALLOC]] : memref<1x1xf32>) eviction_policy = <EvictFirst>
+// CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[TENSOR]]
+// CHECK: %[[EXTRACT:.*]] = tensor.extract %[[COLLAPSED]]
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%[[MMAD]] : tensor<128x128xf32>) outs(%[[_:.*]] : tensor<128x128xf32>) quant_scale = %[[EXTRACT]] : f32 -> tensor<128x128xf32>
+func.func @test_extract_cube_tcore(%arg0: memref<?xf32>, %arg1: tensor<128x128xf8E4M3FN>, %arg2: tensor<128x128xf8E4M3FN>) -> tensor<128x128xf32> {
+  %true = arith.constant true
+  %c128 = arith.constant 128 : index
+  %0 = tensor.empty() : tensor<128x128xf32>
+  %1 = hivm.hir.mmadL1 {already_set_real_mkn, b_transpose, fixpipe_already_inserted = true, normalized_in_L0C} ins(%arg1, %arg2, %true, %c128, %c128, %c128 : tensor<128x128xf8E4M3FN>, tensor<128x128xf8E4M3FN>, i1, index, index, index) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
+  
+  %alloc = memref.alloc() : memref<1x1xf32>
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1, 1], strides: [1, 1] : memref<?xf32> to memref<1x1xf32, strided<[1, 1], offset: ?>>
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<1x1xf32>
+  hivm.hir.load ins(%reinterpret_cast : memref<1x1xf32, strided<[1, 1], offset: ?>>) outs(%alloc : memref<1x1xf32>) eviction_policy = <EvictFirst>
+  %collapsed = tensor.collapse_shape %2 [] : tensor<1x1xf32> into tensor<f32>
+  %extracted = tensor.extract %collapsed[] : tensor<f32>
+  %3 = tensor.empty() : tensor<128x128xf32>
+  %4 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%1 : tensor<128x128xf32>) outs(%3 : tensor<128x128xf32>) quant_scale = %extracted : f32 -> tensor<128x128xf32>
+  return %4 : tensor<128x128xf32>
+}

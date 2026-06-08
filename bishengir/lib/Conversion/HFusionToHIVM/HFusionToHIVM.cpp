@@ -872,9 +872,7 @@ struct HFusionPrintOpToHIVMDebugOp : public OpRewritePattern<hfusion::PrintOp> {
     Value opArg = op.getArg();
 
     (void)(rewriter.replaceOpWithNewOp<hivm::DebugOp>(
-        op, HIVMDebugTypePrint, op.getPrefix(), op.getHex(), opArg,
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR)));
+        op, HIVMDebugTypePrint, op.getPrefix(), op.getHex(), opArg));
 
     return success();
   }
@@ -895,9 +893,7 @@ struct HFusionAssertOpToHIVMDebugOp
     rewriter.setInsertionPoint(op);
 
     (void)(rewriter.replaceOpWithNewOp<hivm::DebugOp>(
-        op, HIVMDebugTypeAssert, op.getMsg(), false /* hex */, op.getCond(),
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR)));
+        op, HIVMDebugTypeAssert, op.getMsg(), false /* hex */, op.getCond()));
 
     return success();
   }
