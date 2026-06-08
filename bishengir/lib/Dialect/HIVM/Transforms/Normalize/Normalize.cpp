@@ -55,6 +55,7 @@ struct NormalizeHIVMPass
     populateNormalizeCastingPatterns(patterns);
     populateNormalizeComparisonCleanupPatterns(patterns);
     populateNormalizeBitwiseComparisonPatterns(patterns);
+    populateNormalizePreReductionPatterns(patterns);
     populateNormalizeShiftI8ToI16(patterns);
     populateNormalizeReductionPatterns(patterns);
     populateNormalizeFinalReductionPatterns(patterns);
