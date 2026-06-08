@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Interfaces/ValueBoundsOpInterface.h"
@@ -24,6 +25,172 @@ namespace mlir {
 
 using namespace mlir;
 using namespace mlir::hivm;
+
+namespace {
+/// Result of resolving a dynamic dimension — either an exact constant or
+/// a conservative upper bound (worst-case size).
+struct ResolvedDim {
+  int64_t value;
+  bool isExact; ///< true if the value is the exact runtime constant
+};
+
+/// Walk the SSA chain of a dynamic dimension value and try to resolve it to a
+/// constant or at least an upper bound.  Handles arith.minsi (upper bound),
+/// arith.maxsi, affine.apply, arith.{constant,addi,subi,muli},
+/// arith.index_cast.  Returns the resolved bound or std::nullopt on failure.
+std::optional<ResolvedDim> resolveDynamicDimToBoundImpl(Value dim) {
+  if (!dim)
+    return std::nullopt;
+
+  auto *defOp = dim.getDefiningOp();
+  if (!defOp)
+    return std::nullopt;
+
+  // --- constants (exact) ---
+  if (auto constOp = dyn_cast<arith::ConstantIndexOp>(defOp))
+    return ResolvedDim{constOp.value(), /*isExact=*/true};
+  if (auto constOp = dyn_cast<arith::ConstantIntOp>(defOp))
+    return ResolvedDim{constOp.value(), /*isExact=*/true};
+
+  // --- minsi(a, b): max = min(max(a), max(b)) ---
+  if (auto minOp = dyn_cast<arith::MinSIOp>(defOp)) {
+    auto a = resolveDynamicDimToBoundImpl(minOp.getLhs());
+    auto b = resolveDynamicDimToBoundImpl(minOp.getRhs());
+    if (a.has_value() && b.has_value()) {
+      int64_t bound = std::min(a->value, b->value);
+      // result is exact if both operands are exact, OR if one exact operand
+      // is <= the other's bound (since then the min is forced to that exact
+      // value)
+      bool exact = (a->isExact && b->isExact) ||
+                   (a->isExact && a->value <= b->value) ||
+                   (b->isExact && b->value <= a->value);
+      return ResolvedDim{bound, exact};
+    }
+    if (a.has_value())
+      return ResolvedDim{a->value, /*isExact=*/false};
+    if (b.has_value())
+      return ResolvedDim{b->value, /*isExact=*/false};
+    return std::nullopt;
+  }
+
+  // --- maxsi(a, b): max = max(max(a), max(b)) ---
+  // Always returns an upper bound (conservative) even if only one operand has a
+  // bound. Exactness: true only if both operands are exact, OR the exact
+  // operand is larger.
+  if (auto maxOp = dyn_cast<arith::MaxSIOp>(defOp)) {
+    auto a = resolveDynamicDimToBoundImpl(maxOp.getLhs());
+    auto b = resolveDynamicDimToBoundImpl(maxOp.getRhs());
+    if (!a.has_value() && !b.has_value())
+      return std::nullopt;
+    int64_t bound = std::max(a.has_value() ? a->value : INT64_MIN,
+                             b.has_value() ? b->value : INT64_MIN);
+    bool exact = false;
+    if (a.has_value() && b.has_value()) {
+      if (a->isExact && b->isExact)
+        exact = true;
+      else if (a->isExact && a->value >= b->value)
+        exact = true;
+      else if (b->isExact && b->value >= a->value)
+        exact = true;
+    } else if (a.has_value() && a->isExact) {
+      // Only one operand known and it's exact → the max is that exact value
+      exact = true;
+    } else if (b.has_value() && b->isExact) {
+      exact = true;
+    }
+    return ResolvedDim{bound, exact};
+  }
+
+  // --- affine.apply: evaluate with max values of operands to get upper bound
+  // --- isExact is set to true only if all operands are exact (then constant
+  // fold yields exact value).
+  if (auto affineOp = dyn_cast<affine::AffineApplyOp>(defOp)) {
+    SmallVector<ResolvedDim> resolvedOps;
+    for (auto operand : affineOp.getOperands()) {
+      auto resolved = resolveDynamicDimToBoundImpl(operand);
+      if (!resolved.has_value())
+        return std::nullopt;
+      resolvedOps.push_back(*resolved);
+    }
+    auto map = affineOp.getAffineMap();
+
+    // Upper bound: substitute max values for each operand
+    SmallVector<Attribute> maxAttrs;
+    for (auto &r : resolvedOps) {
+      maxAttrs.push_back(
+          IntegerAttr::get(IndexType::get(defOp->getContext()), r.value));
+    }
+    SmallVector<Attribute> maxResults;
+    if (failed(map.constantFold(maxAttrs, maxResults)) || maxResults.empty())
+      return std::nullopt;
+    auto maxAttr = dyn_cast<IntegerAttr>(maxResults[0]);
+    if (!maxAttr)
+      return std::nullopt;
+    int64_t maxVal = maxAttr.getValue().getSExtValue();
+
+    // Exact only if every operand is exact (then min == max and constant fold
+    // yields same)
+    bool isExact = llvm::all_of(resolvedOps,
+                                [](const ResolvedDim &r) { return r.isExact; });
+    return ResolvedDim{maxVal, isExact};
+  }
+
+  // --- addi(a, b): max = max(a) + max(b) (non-negative assumed) ---
+  if (auto addOp = dyn_cast<arith::AddIOp>(defOp)) {
+    auto a = resolveDynamicDimToBoundImpl(addOp.getLhs());
+    auto b = resolveDynamicDimToBoundImpl(addOp.getRhs());
+    if (a.has_value() && b.has_value())
+      return ResolvedDim{a->value + b->value, a->isExact && b->isExact};
+    return std::nullopt;
+  }
+
+  // --- subi(a, b): conservative upper bound = max(a) - min(b).
+  // Since min(b) is unknown, we only handle cases where b is known to be
+  // non-negative and exact (so min(b)=max(b)=value). Otherwise return nothing
+  // to avoid underestimating the bound.
+  if (auto subOp = dyn_cast<arith::SubIOp>(defOp)) {
+    auto a = resolveDynamicDimToBoundImpl(subOp.getLhs());
+    auto b = resolveDynamicDimToBoundImpl(subOp.getRhs());
+    if (!a.has_value())
+      return std::nullopt;
+    // If b is exact and non‑negative, then max(a-b) = max(a) - b
+    if (b.has_value() && b->isExact && b->value >= 0)
+      return ResolvedDim{a->value - b->value, a->isExact && b->isExact};
+    // If b is not known precisely or could be negative, we cannot give a safe
+    // UB.
+    return std::nullopt;
+  }
+
+  // --- muli(a, b): max = max(a) * max(b) (assumes non-negative operands) ---
+  if (auto mulOp = dyn_cast<arith::MulIOp>(defOp)) {
+    auto a = resolveDynamicDimToBoundImpl(mulOp.getLhs());
+    auto b = resolveDynamicDimToBoundImpl(mulOp.getRhs());
+    if (a.has_value() && b.has_value()) {
+      // Check for potential overflow in multiplication (just a safety clamp)
+      int64_t product;
+      if (__builtin_mul_overflow(a->value, b->value, &product))
+        return std::nullopt;
+      return ResolvedDim{product, a->isExact && b->isExact};
+    }
+    return std::nullopt;
+  }
+
+  // --- arith.index_cast: recurse to source ---
+  if (auto castOp = dyn_cast<arith::IndexCastOp>(defOp))
+    return resolveDynamicDimToBoundImpl(castOp.getIn());
+
+  return std::nullopt;
+}
+
+FailureOr<int64_t> resolveDynamicDimToBound(Value dim) {
+  auto res = resolveDynamicDimToBoundImpl(dim);
+  if (res.has_value()) {
+    return res->value;
+  } else {
+    return failure();
+  }
+}
+} // namespace
 
 namespace {
 struct ConstantizeBufferPass
@@ -59,6 +226,9 @@ public:
           ValueBoundsConstraintSet::computeConstantBound(
               presburger::BoundType::UB, dynSize,
               /*stopCondition=*/nullptr, /*closedUB=*/true);
+      if (failed(upperBound)) {
+        upperBound = resolveDynamicDimToBound(dynSize);
+      }
       // If failed to compute constant upper bound, do nothing.
       if (failed(upperBound)) {
         newStaticSizes.push_back(size);

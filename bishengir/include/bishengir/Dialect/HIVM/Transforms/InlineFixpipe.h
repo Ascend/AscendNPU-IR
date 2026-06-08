@@ -23,6 +23,13 @@ struct InlineFixpipePatternOptions {
   bool inlineQuantScale = false;
 };
 
+/// Populate pattern that insert `hivm.fixpipe` operation for MMAD result
+/// yielded from scf.for as iter_arg which is used as input argument of
+/// MMAD operation itself.
+void populateInsertFixpipeForIterArgMMADPattern(
+    RewritePatternSet &patterns,
+    InsertFixpipePatternOptions options = InsertFixpipePatternOptions{});
+
 /// Populate patterns that insert `hivm.fixpipe` ops.
 void populateInsertFixpipePatterns(
     RewritePatternSet &patterns,

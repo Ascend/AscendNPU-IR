@@ -6,8 +6,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/ConvertLayoutUtils.h"
+#include "bishengir/Conversion/Passes.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 
@@ -18,6 +18,9 @@
 using namespace mlir;
 using namespace mlir::hivm;
 
+constexpr llvm::StringLiteral convertLayoutNotToPropagateUp =
+    "not_to_propagate_up";
+
 namespace mlir::hivm {
 
 //===----------------------------------------------------------------------===//
@@ -25,19 +28,14 @@ namespace mlir::hivm {
 //===----------------------------------------------------------------------===//
 
 /// Compute batch index bias from rank
-int computeBatchIndexBias(size_t rank) {
-  return (rank == 3) ? 1 : 0;
-}
+int computeBatchIndexBias(size_t rank) { return (rank == 3) ? 1 : 0; }
 //===----------------------------------------------------------------------===//
 // Public API - Unified Target Shape Computation
 //===----------------------------------------------------------------------===//
 
 FailureOr<SmallVector<OpFoldResult>> computeMixedTargetLayoutShape(
-    ArrayRef<OpFoldResult> currentShape,
-    DataLayoutAttr srcLayout,
-    DataLayoutAttr dstLayout,
-    OpBuilder &builder,
-    Location loc) {
+    ArrayRef<OpFoldResult> currentShape, DataLayoutAttr srcLayout,
+    DataLayoutAttr dstLayout, OpBuilder &builder, Location loc) {
 
   LDBG("=== computeMixedTargetLayoutShape ===");
 
@@ -46,26 +44,29 @@ FailureOr<SmallVector<OpFoldResult>> computeMixedTargetLayoutShape(
 
   // ND -> Fractal conversion
   if (srcIsND && !dstIsND) {
-    return computeMixedNDToFractalShape(
-        currentShape, srcLayout, dstLayout, builder, loc);
+    return computeMixedNDToFractalShape(currentShape, srcLayout, dstLayout,
+                                        builder, loc);
   }
 
   // Fractal -> ND conversion
   if (!srcIsND && dstIsND) {
-    return computeMixedFractalToNDShape(
-        currentShape, srcLayout, dstLayout, builder, loc);
+    return computeMixedFractalToNDShape(currentShape, srcLayout, dstLayout,
+                                        builder, loc);
   }
 
   return failure();
 }
 
-bool isPropagatingUp(ConvertLayoutOp op) {
-  return op.getDstLayout().getDataLayout() == DataLayout::Fractal;
+void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op) {
+  op->setAttr(convertLayoutNotToPropagateUp, rewriter.getBoolAttr(true));
 }
 
-bool isPropagatingDown(ConvertLayoutOp op) {
-  return !isPropagatingUp(op);
+bool isPropagatingUp(ConvertLayoutOp op) {
+  return (op.getDstLayout().getDataLayout() == DataLayout::Fractal) &&
+         !(op->getAttr(convertLayoutNotToPropagateUp));
 }
+
+bool isPropagatingDown(ConvertLayoutOp op) { return !isPropagatingUp(op); }
 
 bool isLayoutAgnosticOp(Operation *op) {
   // TODO: When propagating is fixed, can remove this following line
@@ -79,35 +80,31 @@ bool isLayoutAgnosticOp(Operation *op) {
 }
 
 /// Check if operation is a fixpipe operation
-bool isFixpipeOp(Operation *op) {
-  return isa_and_present<hivm::FixpipeOp>(op);
-}
+bool isFixpipeOp(Operation *op) { return isa_and_present<hivm::FixpipeOp>(op); }
 
 /// Create a ConvertLayoutOp with the same direction attribute
 Value createConvertLayoutLike(PatternRewriter &rewriter,
-                              ConvertLayoutOp templateOp,
-                              Value input) {
+                              ConvertLayoutOp templateOp, Value input) {
   PatternRewriter::InsertionGuard insertionGuard(rewriter);
   auto converted = cast<ConvertLayoutOp>(rewriter.clone(*templateOp));
   converted->setLoc(input.getLoc());
   converted.getSourceMutable().assign(input);
-  auto newReplacedElementType = cast<
-    ShapedType>(converted.getResult().getType()).clone(
-      getElementTypeOrSelf(input));
+  auto newReplacedElementType =
+      cast<ShapedType>(converted.getResult().getType())
+          .clone(getElementTypeOrSelf(input));
   converted.getResult().setType(newReplacedElementType);
   return converted.getResult();
 }
 
 Value createInverseConvertLayout(PatternRewriter &rewriter,
-                                 ConvertLayoutOp templateOp,
-                                 Value input) {
+                                 ConvertLayoutOp templateOp, Value input) {
   PatternRewriter::InsertionGuard insertionGuard(rewriter);
-  auto newReplacedElementType = cast<ShapedType>(
-      templateOp.getSource().getType()).clone(getElementTypeOrSelf(input));
+  auto newReplacedElementType =
+      cast<ShapedType>(templateOp.getSource().getType())
+          .clone(getElementTypeOrSelf(input));
   auto converted = rewriter.create<ConvertLayoutOp>(
       input.getLoc(), newReplacedElementType, input,
-      templateOp.getDstLayoutAttr(),
-      templateOp.getSrcLayoutAttr());
+      templateOp.getDstLayoutAttr(), templateOp.getSrcLayoutAttr());
   return converted.getResult();
 }
-}
+} // namespace mlir::hivm

@@ -10,15 +10,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/DenseSet.h"
@@ -40,8 +41,14 @@ using namespace mlir::hivm;
 #define DEBUG_TYPE "hivm-inline-fixpipe"
 
 namespace {
-static constexpr llvm::StringLiteral fixpipeAlreadyInserted =
-    "fixpipe_already_inserted";
+constexpr llvm::StringLiteral mmadFixpipeForResultAlreadyInserted =
+    "fixpipe_for_result_already_inserted";
+
+constexpr llvm::StringLiteral fixpipeDoNotMoveOutOfScfFor =
+    "do_not_move_out_of_scffor";
+
+constexpr llvm::StringLiteral scfforFixpipeForMMADResultAlreadyInserted =
+    "fixpipe_for_mmad_result_already_inserted";
 } // namespace
 
 namespace {
@@ -75,7 +82,8 @@ bool hasSameSource(Value valA, Value valB) {
   auto maybeMmadB = traceDefOp<hivm::MmadL1Op>(valB);
 
   auto isMatchedEmptyOrAllocOp = [](Value valA, Value valB) {
-    LDBG("Begin to find matched dst for scf.if \n  -" << valA << "\n  -" << valB);
+    LDBG("Begin to find matched dst for scf.if \n  -" << valA << "\n  -"
+                                                      << valB);
     auto maybeTensorA = traceDefOp<tensor::EmptyOp>(valA);
     auto maybeTensorB = traceDefOp<tensor::EmptyOp>(valB);
     if (maybeTensorA.has_value() && maybeTensorB.has_value() &&
@@ -172,8 +180,8 @@ bool needYieldOut(Operation *user, Value val) {
 
 /// Infer a conservative fixpipe dma mode from src/dst shaped values.
 ///
-/// If src and dst are shape-compatible, fixpipe acts as a layout-preserving copy
-/// (e.g. NZ2NZ or ND2ND-like path), so use the normal dma mode. Otherwise,
+/// If src and dst are shape-compatible, fixpipe acts as a layout-preserving
+/// copy (e.g. NZ2NZ or ND2ND-like path), so use the normal dma mode. Otherwise,
 /// fallback to NZ2ND for layout-conversion cases.
 FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
                                          bool inferFixpipeDmaMode) {
@@ -186,7 +194,8 @@ FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
     return FixpipeDMAMode::NZ2ND;
 
   if (srcType.hasRank() && dstType.hasRank() &&
-      succeeded(verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
+      succeeded(
+          verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
     // For same-shape cases, use rank to distinguish ND-like tensors.
     // A 2D destination is treated as ND; otherwise keep normal mode.
     if (dstType.getRank() == 2)
@@ -197,7 +206,133 @@ FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
   return FixpipeDMAMode::NZ2ND;
 }
 
-/// Infer dma_mode after slice-swap rewrites. DMAMode in Fixpipe is unreliable x_x
+static FixpipeOp insertFixpipe(PatternRewriter &rewriter,
+                               InsertFixpipePatternOptions options,
+                               Operation *point, Value src) {
+
+  rewriter.setInsertionPointAfter(point);
+
+  auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
+  auto dmaMode =
+      getInsertedFixpipeDmaMode(src, dst, options.inferFixpipeDmaMode);
+  auto dmaModeAttr = FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode);
+
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
+      /*dual_dst_mode=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+
+  SmallPtrSet<Operation *, 4> exceptedOps;
+  exceptedOps.insert(fixpipe);
+  for (Operation *use : src.getUsers()) {
+    if (isa<DebugOp>(use) || isa<FixpipeOp>(use) ||
+        isa<annotation::MarkOp>(use)) {
+      exceptedOps.insert(use);
+    }
+  }
+  rewriter.replaceAllUsesExcept(src, fixpipe.getResultTensor(), exceptedOps);
+  return fixpipe;
+}
+
+/// Insert fixpipe after hivm::MmadL1Op inside scf.for when a loop-carried
+/// iter_arg used by the mmad is updated from a yield that depends on that mmad.
+/// Created fixpipes are tagged do_not_move_out_of_scffor so later patterns do
+/// not hoist them out of the loop.
+///
+/// Example (accumulator iter_arg is mmad outs; yield feeds the next iteration):
+///
+/// Before:
+///   %res = scf.for %i = %c0 to %N step %c1 iter_args(%acc = %init)
+///       -> (tensor<32x32xf32>) {
+///     %mmad = hivm.hir.mmadL1 ins(%a, %b, %true, %c32, %c32, %c32
+///         : tensor<32x32xf16>, tensor<32x32xf16>, i1, index, index, index)
+///         outs(%acc : tensor<32x32xf32>) -> tensor<32x32xf32>
+///     scf.yield %mmad : tensor<32x32xf32>
+///   }
+///
+/// After:
+///   %res = scf.for %i = %c0 to %N step %c1 iter_args(%acc = %init)
+///       -> (tensor<32x32xf32>) {
+///     %mmad = hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
+///         ins(%a, %b, %true, %c32, %c32, %c32 : ...)
+///         outs(%acc : tensor<32x32xf32>) -> tensor<32x32xf32>
+///     %dst = tensor.empty() : tensor<32x32xf32>
+///     %fix = hivm.hir.fixpipe {do_not_move_out_of_scffor = true, dma_mode =
+///     #hivm.dma_mode<nz2nd>}
+///         ins(%mmad : tensor<32x32xf32>) outs(%dst : tensor<32x32xf32>)
+///         -> tensor<32x32xf32>
+///     scf.yield %fix : tensor<32x32xf32>
+///   } {fixpipe_for_mmad_result_already_inserted = true}
+struct InsertFixpipeForIterArgMMAD : public OpRewritePattern<scf::ForOp> {
+public:
+  InsertFixpipeForIterArgMMAD(MLIRContext *context,
+                              InsertFixpipePatternOptions options)
+      : OpRewritePattern<scf::ForOp>(context), options(options) {}
+
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ForOp scffor,
+                                PatternRewriter &rewriter) const override {
+    if (scffor->getAttr(scfforFixpipeForMMADResultAlreadyInserted)) {
+      return failure();
+    }
+
+    // Collect hivm::MmadL1Op in the scffor's regions, but do not descend into
+    // nested scf::ForOp to keep this rewrite scoped to the current loop level.
+    auto mmads =
+        utils::collectScfForBodyOperations<hivm::MmadL1Op>(scffor, false);
+    if (mmads.empty()) {
+      return failure();
+    }
+
+    auto *forBlock = &(scffor.getRegion().getBlocks().front());
+
+    bool changed = false;
+
+    for (auto mmad : mmads) {
+      auto args =
+          utils::tracebackOperandsToBlockArguments(mmad.getA(), forBlock);
+      args.append(
+          utils::tracebackOperandsToBlockArguments(mmad.getB(), forBlock));
+
+      for (auto arg : args) {
+        auto idx = arg.getArgNumber();
+        if (idx == 0) {
+          // skip loop counter
+          continue;
+        }
+
+        auto yielded = scffor.getYieldedValues()[idx - 1];
+
+        auto stopOp =
+            utils::valueCalculatedUsingOperationInsideBlock<hivm::MmadL1Op>(
+                yielded, mmad, forBlock);
+        if (stopOp && *stopOp == mmad) {
+          LDBG("Inserting fix pipe for " << scffor);
+
+          auto fixpipe =
+              insertFixpipe(rewriter, options, mmad, mmad->getResults()[0]);
+          fixpipe->setAttr(fixpipeDoNotMoveOutOfScfFor,
+                           rewriter.getBoolAttr(true));
+          mmad->setAttr(mmadFixpipeForResultAlreadyInserted,
+                        rewriter.getBoolAttr(true));
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    scffor->setAttr(scfforFixpipeForMMADResultAlreadyInserted,
+                    rewriter.getBoolAttr(true));
+    return changed ? success() : failure();
+  }
+
+private:
+  InsertFixpipePatternOptions options;
+};
+
+/// Infer dma_mode after slice-swap rewrites. DMAMode in Fixpipe is unreliable
+/// x_x
 ///
 /// If the swapped source/destination keep compatible shapes, treat it as a
 /// layout-preserving path (NZ2NZ / ND2ND-like), otherwise keep original mode.
@@ -209,10 +344,10 @@ FixpipeDMAMode inferSwapFixpipeDmaMode(Value src, Value dst,
     return fallbackMode;
 
   if (srcType.hasRank() && dstType.hasRank() &&
-      succeeded(verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
-    // For same-shape cases, use rank to distinguish ND-like tensors.
-    // A 2D destination is treated as ND; otherwise keep normal mode.
+      succeeded(
+          verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
     if (dstType.getRank() == 2)
+      // 2d→2d may come from the old layout pipeline, so use nz2nd.
       return FixpipeDMAMode::NZ2ND;
     return FixpipeDMAMode::NZ2NZ;
   }
@@ -275,8 +410,7 @@ struct InsertFixpipeOpPattern : public OpRewritePattern<OpType> {
 public:
   InsertFixpipeOpPattern(MLIRContext *context,
                          InsertFixpipePatternOptions options)
-      : OpRewritePattern<OpType>(context),
-        options(options) {}
+      : OpRewritePattern<OpType>(context), options(options) {}
 
   LogicalResult matchAndRewrite(OpType op,
                                 PatternRewriter &rewriter) const override {
@@ -290,7 +424,7 @@ public:
     // the following check is needed because now there could be two fixpipe ops
     // from the same mmad; you cannot rely on traceSingleChainUser to avoid
     // duplicating fixpipes anymore
-    if (op->getAttr(fixpipeAlreadyInserted))
+    if (op->getAttr(mmadFixpipeForResultAlreadyInserted))
       return failure();
 
     auto isMatchedOp = [](Operation *op, Value v) {
@@ -313,32 +447,11 @@ public:
     auto insertAfterOp = getInsertPoint(op, resultIndx);
     rewriter.setInsertionPointAfter(insertAfterOp);
 
-    Value fixpipeInit =
-        utils::createEmptyOp(rewriter, insertAfterOp->getLoc(), mmadLikeOpRes);
     LDBG("Replacing fix pipe for " << op);
-    MLIRContext *ctx = rewriter.getContext();
-    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(
-        ctx,
-        getInsertedFixpipeDmaMode(insertAfterOp->getResult(resultIndx),
-                                  fixpipeInit,
-                                  options.inferFixpipeDmaMode));
-    auto res = rewriter.create<FixpipeOp>(
-        op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
-        /*src=*/insertAfterOp->getResult(resultIndx),
-        /*dst=*/fixpipeInit, dmaModeAttr, /*dual_dst_mode=*/nullptr,
-        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
-    op->setAttr(fixpipeAlreadyInserted, rewriter.getBoolAttr(true));
-
-    SmallPtrSet<Operation *, 4> exceptedOps;
-    exceptedOps.insert(res);
-    for (Operation *userOp : insertAfterOp->getResult(resultIndx).getUsers()) {
-      if (isa<DebugOp>(userOp) || isa<FixpipeOp>(userOp) ||
-          isa<annotation::MarkOp>(userOp)) {
-        exceptedOps.insert(userOp);
-      }
-    }
-    rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
-                                  res.getResultTensor(), exceptedOps);
+    insertFixpipe(rewriter, options, insertAfterOp,
+                  insertAfterOp->getResult(resultIndx));
+    op->setAttr(mmadFixpipeForResultAlreadyInserted,
+                rewriter.getBoolAttr(true));
     return success();
   }
 
@@ -347,17 +460,17 @@ private:
 };
 
 template <>
-struct InsertFixpipeOpPattern<hivm::MmadMxL1Op> : public OpRewritePattern<hivm::MmadMxL1Op> {
+struct InsertFixpipeOpPattern<hivm::MmadMxL1Op>
+    : public OpRewritePattern<hivm::MmadMxL1Op> {
 public:
   InsertFixpipeOpPattern(MLIRContext *context,
                          InsertFixpipePatternOptions options)
-      : OpRewritePattern<hivm::MmadMxL1Op>(context),
-        options(options) {}
+      : OpRewritePattern<hivm::MmadMxL1Op>(context), options(options) {}
 
   LogicalResult matchAndRewrite(hivm::MmadMxL1Op op,
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op->getResults()[0];
- 
+
     auto isMatchedOp = [](Operation *op, Value v) {
       LDBG("Matching this current op " << *op);
       if (isa<hivm::FixpipeOp>(op)) {
@@ -373,11 +486,11 @@ public:
     };
     if (traceSingleChainUser(mmadLikeOpRes, isMatchedOp))
       return failure();
- 
+
     int resultIndx = 0;
     auto insertAfterOp = getInsertPoint(op, resultIndx);
     rewriter.setInsertionPointAfter(insertAfterOp);
- 
+
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, insertAfterOp->getLoc(), mmadLikeOpRes);
     LDBG("Replacing fix pipe for " << op);
@@ -385,8 +498,7 @@ public:
     FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(
         ctx,
         getInsertedFixpipeDmaMode(insertAfterOp->getResult(resultIndx),
-                                  fixpipeInit,
-                                  options.inferFixpipeDmaMode));
+                                  fixpipeInit, options.inferFixpipeDmaMode));
     auto res = rewriter.create<FixpipeOp>(
         op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
         /*src=*/insertAfterOp->getResult(resultIndx),
@@ -559,7 +671,8 @@ private:
         swapFixpipeAndInsertSliceOp(rewriter, loc, op, insertSliceOp);
       }
     } else if (isa<scf::YieldOp>(curOp) &&
-               isa<scf::ForOp>(curOp->getParentOp())) {
+               isa<scf::ForOp>(curOp->getParentOp()) &&
+               !op->getAttr(fixpipeDoNotMoveOutOfScfFor)) {
       // move fixpipe out of scf.for
       matched = true;
       auto scfForOp = dyn_cast_if_present<scf::ForOp>(curOp->getParentOp());
@@ -809,8 +922,14 @@ private:
   InlineFixpipePatternOptions options;
 };
 
-void mlir::hivm::populateInsertFixpipePatterns(RewritePatternSet &patterns,
-                                               InsertFixpipePatternOptions options) {
+void mlir::hivm::populateInsertFixpipeForIterArgMMADPattern(
+    RewritePatternSet &patterns, InsertFixpipePatternOptions options) {
+  MLIRContext *ctx = patterns.getContext();
+  patterns.add<InsertFixpipeForIterArgMMAD>(ctx, options);
+}
+
+void mlir::hivm::populateInsertFixpipePatterns(
+    RewritePatternSet &patterns, InsertFixpipePatternOptions options) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx, options);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx, options);
@@ -863,9 +982,19 @@ void populateDevicePrintPatterns(RewritePatternSet &patterns) {
 }
 
 void InsertFixpipe::runOnOperation() {
-  RewritePatternSet patterns(&getContext());
   InsertFixpipePatternOptions options;
   options.inferFixpipeDmaMode = inferFixpipeDmaMode;
+
+  RewritePatternSet iterArgMMAPattern(&getContext());
+  mlir::hivm::populateInsertFixpipeForIterArgMMADPattern(iterArgMMAPattern,
+                                                         options);
+
+  if (failed(applyPatternsGreedily(getOperation(),
+                                   std::move(iterArgMMAPattern)))) {
+    signalPassFailure();
+  }
+
+  RewritePatternSet patterns(&getContext());
   mlir::hivm::populateInsertFixpipePatterns(patterns, options);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
@@ -877,7 +1006,7 @@ void InsertFixpipe::runOnOperation() {
   populateDevicePrintPatterns(devicePrintPatterns);
 
   if (failed(applyPatternsGreedily(getOperation(),
-                                          std::move(devicePrintPatterns)))) {
+                                   std::move(devicePrintPatterns)))) {
     signalPassFailure();
   }
 }
@@ -892,8 +1021,8 @@ void InlineFixpipe::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass(
-    const InsertFixpipeOptions &options) {
+std::unique_ptr<Pass>
+mlir::hivm::createInsertFixpipePass(const InsertFixpipeOptions &options) {
   return std::make_unique<InsertFixpipe>(options);
 }
 

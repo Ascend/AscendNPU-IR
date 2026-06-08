@@ -1231,7 +1231,7 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
   %M = arith.constant 256 : index
   %K = arith.constant 128 : index
   %N = arith.constant 256 : index
-  // CHECK: hivm.hir.mmadL1 {fixpipe_already_inserted = true}
+  // CHECK: hivm.hir.mmadL1 {fixpipe_for_result_already_inserted = true}
   %ret = hivm.hir.mmadL1 ins(%ma, %mb, %true, %M, %K, %N: tensor<256x128xi8>, tensor<128x256xi8>, i1, index, index, index)
                               outs(%mc: tensor<256x256xi32>) -> tensor<256x256xi32>
   %mc_cast = tensor.empty() : tensor<256x256xf32>
