@@ -261,10 +261,17 @@ func.func @test_NormalizeVIlogb_hivm_vilogb_f16(%arg0: tensor<16xf16>) -> tensor
 
 // CHECK-LABEL: func.func @test_NormalizeVModOp_i1_native
 // CHECK-SAME: (%arg0: tensor<256xi1>, %arg1: tensor<256xi1>)
-// CHECK: %false = arith.constant false
-// CHECK: %[[empty:.*]] = tensor.empty() : tensor<256xi1>
-// CHECK: %[[brc:.*]] = hivm.hir.vbrc ins(%false : i1) outs(%[[empty]] : tensor<256xi1>) -> tensor<256xi1>
-// CHECK: return %[[brc]]
+// CHECK: %[[CST_DENSE:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK: %[[EMPTY_I1:.*]] = tensor.empty() : tensor<256xi1>
+// CHECK: %[[EMPTY_F16_1:.*]] = tensor.empty() : tensor<1xf16>
+// CHECK: %[[CAST_DENSE:.*]] = hivm.hir.vcast ins(%[[CST_DENSE]] : tensor<1xi1>) outs(%[[EMPTY_F16_1]] : tensor<1xf16>)
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract %[[CAST_DENSE]]
+// CHECK: %[[EMPTY_F16_2:.*]] = tensor.empty() : tensor<256xf16>
+// CHECK: %[[CAST_I1:.*]] = hivm.hir.vcast ins(%[[EMPTY_I1]] : tensor<256xi1>) outs(%[[EMPTY_F16_2]] : tensor<256xf16>)
+// CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACTED]] : f16) outs(%[[CAST_I1]] : tensor<256xf16>)
+// CHECK: %[[CMP:.*]] = hivm.hir.vcmp
+// CHECK: %[[NOT:.*]] = hivm.hir.vnot ins(%[[CMP]] : tensor<256xi1>)
+// CHECK: return %[[NOT]]
 func.func @test_NormalizeVModOp_i1_native(%src0: tensor<256xi1>, %src1: tensor<256xi1>) -> tensor<256xi1> {
     %0 = tensor.empty() : tensor<256xi1>
     %1 = hivm.hir.vmod ins(%src0, %src1 : tensor<256xi1>, tensor<256xi1>) outs(%0 : tensor<256xi1>) -> tensor<256xi1>
@@ -361,10 +368,17 @@ func.func @test_NormalizeVModOp_i8(%src0: tensor<256xi8>, %src1: tensor<256xi8>)
 
 // CHECK-LABEL: func.func @test_NormalizeVModUIOp_i1_native
 // CHECK-SAME: (%arg0: tensor<256xi1>, %arg1: tensor<256xi1>)
-// CHECK: %false = arith.constant false
-// CHECK: %[[empty:.*]] = tensor.empty() : tensor<256xi1>
-// CHECK: %[[brc:.*]] = hivm.hir.vbrc ins(%false : i1) outs(%[[empty]] : tensor<256xi1>) -> tensor<256xi1>
-// CHECK: return %[[brc]]
+// CHECK: %[[CST_DENSE:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK: %[[EMPTY_I1:.*]] = tensor.empty() : tensor<256xi1>
+// CHECK: %[[EMPTY_F16_1:.*]] = tensor.empty() : tensor<1xf16>
+// CHECK: %[[CAST_DENSE:.*]] = hivm.hir.vcast ins(%[[CST_DENSE]] : tensor<1xi1>) outs(%[[EMPTY_F16_1]] : tensor<1xf16>)
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract %[[CAST_DENSE]]
+// CHECK: %[[EMPTY_F16_2:.*]] = tensor.empty() : tensor<256xf16>
+// CHECK: %[[CAST_I1:.*]] = hivm.hir.vcast ins(%[[EMPTY_I1]] : tensor<256xi1>) outs(%[[EMPTY_F16_2]] : tensor<256xf16>)
+// CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACTED]] : f16) outs(%[[CAST_I1]] : tensor<256xf16>)
+// CHECK: %[[CMP:.*]] = hivm.hir.vcmp
+// CHECK: %[[NOT:.*]] = hivm.hir.vnot ins(%[[CMP]] : tensor<256xi1>)
+// CHECK: return %[[NOT]]
 func.func @test_NormalizeVModUIOp_i1_native(%src0: tensor<256xi1>, %src1: tensor<256xi1>) -> tensor<256xi1> {
     %0 = tensor.empty() : tensor<256xi1>
     %1 = hivm.hir.vmodui ins(%src0, %src1 : tensor<256xi1>, tensor<256xi1>) outs(%0 : tensor<256xi1>) -> tensor<256xi1>
