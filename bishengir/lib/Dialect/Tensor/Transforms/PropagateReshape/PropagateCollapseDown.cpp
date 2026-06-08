@@ -1077,6 +1077,10 @@ LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
                                    Operation *userOp) {
   auto reassociation = collapseOp.getReassociationIndices();
   auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(userOp);
+
+  auto srcShape = utils::getShape(collapseOp.getSrc().getType());
+  if (llvm::any_of(srcShape, ShapedType::isDynamic))
+    return failure();
   SmallVector<OpFoldResult> newMixedOffsets;
   SmallVector<OpFoldResult> newMixedSizes;
   SmallVector<OpFoldResult> newMixedStrides;
@@ -1123,7 +1127,7 @@ LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
   auto dropDims = insertSliceOp.getDroppedDims();
   auto expandedShape =
       getMixedSizesOrOutputShape(rewriter, collapseOp.getSrc());
-  if (isUnitDimReshape(convertToConstantValues(expandedShape), reassociation)){
+  if (isUnitDimReshape(convertToConstantValues(expandedShape), reassociation)) {
     // skip collapseShape that only add unit dims
     return failure();
   }
