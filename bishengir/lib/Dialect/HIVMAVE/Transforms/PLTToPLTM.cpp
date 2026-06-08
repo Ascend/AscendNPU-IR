@@ -109,11 +109,6 @@ public:
             min->getOperand(1) != forOp.getUpperBound())
           return failure();
 
-        // UB > 256 will may cause mask overflow and undefined
-        // behaviour
-        if (forUB.has_value() && forUB.value() > 256)
-          return failure();
-
         // replace the PLT with PLTM
         hivmave::VFPltMOp pltm = rewriter.create<hivmave::VFPltMOp>(
             op->getLoc(), op.getRes().getType(), forOp.getInductionVar(),
