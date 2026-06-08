@@ -114,3 +114,16 @@ module {
     return
   }
 }
+
+// -----
+// CHECK: scope.return
+// CHECK-NEXT: hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMT>
+module {
+  func.func @explicit_scope_kernel(%arg0: tensor<8xi64>, %arg1 : memref<8xi64, strided<[1]>>) {
+    %0 = scope.scope : () -> tensor<8xi64> {
+      scope.return %arg0 : tensor<8xi64>
+    } {vector_type = "simt"}
+    hivm.hir.store ins(%0 : tensor<8xi64>) outs(%arg1 : memref<8xi64, strided<[1]>>)
+    return
+  }
+}

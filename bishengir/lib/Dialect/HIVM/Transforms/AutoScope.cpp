@@ -241,6 +241,22 @@ void AutoScopePass::runOnOperation() {
   GreedyRewriteConfig config;
   config.strictMode = GreedyRewriteStrictness::ExistingOps;
   (void)applyPatternsGreedily(mod, std::move(patterns), config);
+
+  IRRewriter rewriter(&getContext());
+  // Deal with existed scopeOps.
+  mod->walk([&](scope::ScopeOp scopeOp) {
+    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+      if (vectorType.getValue() == "simt") {
+        scopeOp->setAttr("outline", rewriter.getUnitAttr());
+        scopeOp->setAttr(
+            TFuncCoreTypeAttr::name,
+            TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
+        auto vfMode =
+            hivm::VFModeAttr::get(scopeOp->getContext(), hivm::VFMode::SIMT);
+        scopeOp->setAttr(hivm::VFModeAttr::name, vfMode);
+      }
+    }
+  });
 }
 
 std::unique_ptr<Pass> mlir::hivm::createAutoScopePass() {
