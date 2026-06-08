@@ -65,6 +65,7 @@ struct PointerLikeInfo {
   std::optional<hivm::AddressSpace> addressSpace;
   LoopLikeOpInterface parentLoop{nullptr};
   bool isWorkSpace{false};
+  bool isTightlyCoupledBuffer{false};
 
   PointerLikeInfo() = default;
   explicit PointerLikeInfo(Operation *op) : op(op) {}

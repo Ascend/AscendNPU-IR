@@ -264,7 +264,9 @@ protected:
                             std::optional<int64_t> lcmLen = {},
                             std::optional<int64_t> eventIdNum = {});
 
-  bool checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
+  bool checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
 
   llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
   getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
@@ -272,6 +274,13 @@ protected:
                      const llvm::SmallVector<MemInfo> &memInfoList2,
                      std::optional<int64_t> lcmLen = {},
                      std::optional<int64_t> eventIdNum = {});
+
+  llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
+  getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                     std::optional<int64_t> lcmLen = {},
+                     std::optional<int64_t> eventIdNum = {});
+
+  bool checkReusedTightlyCoupledBuffer(RWOperation *rwOp1, RWOperation *rwOp2);
 
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
   getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
@@ -328,10 +337,12 @@ protected:
   // Utilities to map an occurrence pair to their set/wait occurrences.
   std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
                                                              Occurrence *occ2);
-  std::pair<Occurrence *, Occurrence *> getSetWaitOcc(Occurrence *occ1,
-                                                      Occurrence *occ2);
-  std::pair<Occurrence *, Occurrence *> getFixedSetWaitOcc(Occurrence *occ1,
-                                                           Occurrence *occ2);
+  std::pair<Occurrence *, Occurrence *>
+  getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                std::optional<EventIdInfo> eventIdInfo = {});
+  std::pair<Occurrence *, Occurrence *>
+  getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                     std::optional<EventIdInfo> eventIdInfo = {});
 
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
 

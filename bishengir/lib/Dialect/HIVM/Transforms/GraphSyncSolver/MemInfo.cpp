@@ -88,6 +88,10 @@ PointerLikeInfo::tryGet(hivm::PointerCastOp pointerCastOp) {
   if (auto parentLoop = mlir::hivm::getParentLoop(pointerCastOp.getResult())) {
     pointerLikeInfo.parentLoop = parentLoop;
   }
+  if (utils::getAnnotateOpWithAttr(pointerCastOp.getResult(),
+                                   hivm::HIVMTightlyCoupledBufferAttr::name)) {
+    pointerLikeInfo.isTightlyCoupledBuffer = true;
+  }
   return pointerLikeInfo;
 }
 
