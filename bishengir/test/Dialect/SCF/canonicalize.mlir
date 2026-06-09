@@ -152,3 +152,27 @@ func.func @test_move_out(%arg0: index, %arg1: i1, %arg2: memref<64x128xf32>, %ar
 }
 return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @tracecast_induction_var
+// CHECK:           return
+// Regression test: traceCast in MoveOutLoopMemRefCast must not crash when
+// the outer loop's induction variable is passed as an inner loop iter_arg
+// init. getTiedLoopInit returns nullopt for the induction variable because
+// it is not an iter_arg. Previously, traceCast dereferenced nullopt
+// unconditionally, causing a segfault.
+func.func @tracecast_induction_var() -> memref<?xf32> {
+  %c0 = arith.constant 0 : index
+  %c10 = arith.constant 10 : index
+  %c1 = arith.constant 1 : index
+  %mem = memref.alloc() : memref<10xf32>
+  %casted = memref.cast %mem : memref<10xf32> to memref<?xf32>
+  %result = scf.for %iv = %c0 to %c10 step %c1 iter_args(%arg = %casted) -> (memref<?xf32>) {
+    %inner = scf.for %j = %c0 to %c10 step %c1 iter_args(%a = %iv) -> (index) {
+      scf.yield %a : index
+    }
+    scf.yield %arg : memref<?xf32>
+  }
+  return %result : memref<?xf32>
+}
