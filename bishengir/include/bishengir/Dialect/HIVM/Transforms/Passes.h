@@ -34,6 +34,12 @@ enum class SyncMode {
   BARRIERALL, // only for debug
 };
 
+enum class PipelineMode {
+  Unroll, // default unroll-mode pipelining
+  Skew,   // preload/skew-mode pipelining
+  SSBuf,  // reserved for future use (currently same as Skew)
+};
+
 } // namespace hivm
 } // namespace mlir
 

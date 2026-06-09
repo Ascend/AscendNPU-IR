@@ -326,6 +326,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
+  // must run CloneTensorEmpty to resotre merged&hoisted tensor.empty caused by
+  // CSE
+  pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   pm.addPass(createInsertWorkSpaceForMixCVPass());
   // keep this for the debug feature (device print, etc.)
   pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
@@ -365,6 +368,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     pipelineOptions.pipelineDepth =
         (int)hivmPipelineOptions.setWorkspaceMultibuffer;
     pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
+    pipelineOptions.pipelineMode = hivmPipelineOptions.enablePreload
+                                       ? PipelineMode::Skew
+                                       : PipelineMode::Unroll;
     pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
   }
 
