@@ -97,7 +97,7 @@ void InsertMemSemanticForSimtVFPass::dealWithReturnValue(
   if (returnOp->getNumOperands() == 0) {
     return;
   }
-  for (size_t i = 0; i < returnOp->getNumOperands(); i++) {
+  for (int i = returnOp->getNumOperands() - 1; i >= 0; i--) {
     auto val = returnOp->getOperand(i);
     auto tensorType = llvm::dyn_cast<RankedTensorType>(val.getType());
     assert(tensorType && "simt vf return value should be tensor");

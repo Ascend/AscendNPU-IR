@@ -653,8 +653,8 @@ def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
 
 def VMulOp : HIVM_ElementwiseBinaryOp<"vmul",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
-     OperElemTypeConstraints<[0, 1], [I16, I32, F16, F32, I64]>,
-     CommutativeOpTrait, VectorOnlyTrait<0>,
+OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
+      CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
@@ -1070,12 +1070,12 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
 
 def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     [StaticMaxRankTrait<1>,
-     OperElemTypeConstraints<[0, 1],
-       [F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32, 
-       I64, UI64, F8E4M3FN, F8E5M2]>,
-     OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
-     VectorOnlyTrait<0>,
-     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+OperElemTypeConstraints<[0, 1],
+        [I1, F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32,
+        I64, UI64, F8E4M3FN, F8E5M2]>,
+      OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
+      VectorOnlyTrait<0>,
+      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
     ]> {
   let summary = "Elementwise Binary Vector Comparison Op";
   let description = baseClassDescription # [{
@@ -1368,7 +1368,7 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
 //===----------------------------------------------------------------------===//
 
 def VTransposeOp : HIVM_VectorOp<"vtranspose",
-    [OperElemTypeConstraints<[0], [AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64, F8E4M3FN, F8E5M2]>,
+    [OperElemTypeConstraints<[0], [I1, AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64, F8E4M3FN, F8E5M2]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray", "setIteratorTypesArray"]>,
      InferMaxRankTrait, DeclareOpInterfaceMethods<LibraryFunctionOpInterface,
@@ -1873,6 +1873,8 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
      UniformReassociationFlattenTrait,
      DeclareOpInterfaceMethods<FlattenInterface,
        ["getLimitedAxes", "adjustTargetDimensions"]>,
+     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
+       ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
     ]> {
   let summary = "Vector Cumsum Op";
@@ -1900,14 +1902,24 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
+                       Optional<AnyMemRef>:$temp_buffer,
                        ConfinedAttr<DenseI64ArrayAttr,
                        [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
                        BoolAttr:$reverse
   );
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "DenseI64ArrayAttr":$cum_dims,
+                   "bool":$reverse)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "ArrayRef<int64_t>":$cum_dims,
+                   "bool":$reverse)>
+  ];
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
     `cum_dims` `=` $cum_dims
     `reverse` `=` $reverse
     (`->` type($result)^)?

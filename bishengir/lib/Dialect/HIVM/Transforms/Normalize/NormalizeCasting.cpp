@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HFusion/Transforms/NormalizeUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/NormalizePatterns.h"
@@ -76,8 +77,10 @@ struct HIVMNormalizeBrcCastTraits : public hivm::NormalizeTraitsBase {
            op.getTranspose().empty();
   }
 
-  static bool shouldSkipBrcCast(hivm::VCastOp, Operation *, Type, TensorType) {
-    return false;
+  static bool shouldSkipBrcCast(hivm::VCastOp, Operation *defOp, Type srcTy,
+                                TensorType dstTy) {
+    return isa<hivm::VBrcOp>(defOp) && hfusion::isF16ElemType(srcTy) &&
+           (hfusion::isI1ElemType(dstTy) || hfusion::isI8ElemType(dstTy));
   }
 };
 

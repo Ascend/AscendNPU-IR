@@ -81,8 +81,29 @@ ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShROp)
 #undef ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
 
 ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumprodOp)
-ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumsumOp)
 #undef ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
+
+//===----------------------------------------------------------------------===//
+// VCmpOp
+//===----------------------------------------------------------------------===//
+
+bool VCumsumOp::shouldLowerToScalarLoops() {
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+  auto cumDims = getCumDims();
+  if (cumDims.size() > 1) {
+    // only support to lower to scalar ops for cum op with unique cum dim
+    return false;
+  }
+
+  auto elemType = getElementTypeOrSelf(getDst());
+  if (elemType.isInteger(64)) {
+    return true;
+  }
+
+  return false;
+}
 
 //===----------------------------------------------------------------------===//
 // VCmpOp

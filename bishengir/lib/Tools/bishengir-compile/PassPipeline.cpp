@@ -269,6 +269,10 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
     return;
   }
 
+  HIVMAggregatedDecomposeOpOptions decomposeOption;
+  decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
+  pm.nest<func::FuncOp>().addPass(
+      mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   setupHFusionPipelineOptions(hfusionPipelineOptions, config);
   ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;

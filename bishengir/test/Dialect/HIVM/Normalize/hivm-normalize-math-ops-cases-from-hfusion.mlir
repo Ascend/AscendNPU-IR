@@ -67,10 +67,17 @@ func.func @test_NormalizeErf_hfusion_elemwise_erf_f16(%arg0: tensor<1024xf16>) -
 
 // CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_bool
 // CHECK-SAME: (%arg0: tensor<2048xi1>, %arg1: tensor<2048xi1>)
-// CHECK: %false = arith.constant false
-// CHECK: %[[empty:.*]] = tensor.empty() : tensor<2048xi1>
-// CHECK: %[[brc:.*]] = hivm.hir.vbrc ins(%false : i1) outs(%[[empty]] : tensor<2048xi1>) -> tensor<2048xi1>
-// CHECK: return %[[brc]] : tensor<2048xi1>
+// CHECK: %[[CST_DENSE:.*]] = arith.constant dense<false> : tensor<1xi1>
+// CHECK: %[[EMPTY_I1:.*]] = tensor.empty() : tensor<2048xi1>
+// CHECK: %[[EMPTY_F16_1:.*]] = tensor.empty() : tensor<1xf16>
+// CHECK: %[[CAST_DENSE:.*]] = hivm.hir.vcast ins(%[[CST_DENSE]] : tensor<1xi1>) outs(%[[EMPTY_F16_1]] : tensor<1xf16>)
+// CHECK: %[[EXTRACTED:.*]] = tensor.extract %[[CAST_DENSE]]
+// CHECK: %[[EMPTY_F16_2:.*]] = tensor.empty() : tensor<2048xf16>
+// CHECK: %[[CAST_I1:.*]] = hivm.hir.vcast ins(%[[EMPTY_I1]] : tensor<2048xi1>) outs(%[[EMPTY_F16_2]] : tensor<2048xf16>)
+// CHECK: %[[BRC:.*]] = hivm.hir.vbrc ins(%[[EXTRACTED]] : f16) outs(%[[CAST_I1]] : tensor<2048xf16>)
+// CHECK: %[[CMP:.*]] = hivm.hir.vcmp
+// CHECK: %[[NOT:.*]] = hivm.hir.vnot ins(%[[CMP]] : tensor<2048xi1>)
+// CHECK: return %[[NOT]] : tensor<2048xi1>
 func.func @test_NormalizeMod_hfusion_mod_bool(%src0: tensor<2048xi1>, %src1: tensor<2048xi1>) -> tensor<2048xi1> {
     %3 = tensor.empty() : tensor<2048xi1>
     %4 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%src0, %src1 : tensor<2048xi1>, tensor<2048xi1>) outs(%3 : tensor<2048xi1>) -> tensor<2048xi1>

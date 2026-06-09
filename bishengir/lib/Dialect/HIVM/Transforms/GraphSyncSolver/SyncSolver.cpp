@@ -1505,6 +1505,9 @@ bool Solver::reuseConflictPair(ConflictPair *conflictPair,
   reusableConflictPair->setOp = conflictPair->setOp;
   reusableConflictPair->setOcc = conflictPair->setOcc;
   reusableConflictPair->startIndex = conflictPair->startIndex;
+  // The reused pair takes over this conflict pair's set op, which is no longer
+  // the foldable MmadL1 L0 load the last-iteration optimization assumes.
+  reusableConflictPair->setOnLastIterOnly = false;
 
   if (!conflictPair->isUseless) {
     memorizeReusedSyncedPair(conflictPair, reusableConflictPair);
@@ -1539,7 +1542,8 @@ Solver::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
   if (!eventIdSolver.contains(key)) {
     int64_t eventIdNumMax =
         getHWAvailableEventIdNum(options.syncMode, pipeSrc, pipeDst);
-    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax);
+    eventIdSolver[key] = std::make_unique<EventIdSolver>(
+        eventIdNumMax, options.preferNewEventIds);
   }
   return eventIdSolver[key];
 }

@@ -204,6 +204,14 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
       insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
     }
     if (op->getNumRegions() > 0) {
+     // Skip anchor-insert in simt scope
+      if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+        if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+          if (vectorType.getValue() == "simt") {
+            continue;
+          }
+        }
+      }
       for (Region &region : op->getRegions()) {
         for (Block &nestedBlock : region) {
           int64_t block_start_id = nextAnchorId++;
@@ -261,7 +269,8 @@ func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp src) {
   std::string delayedCrossCoreGSSPassName =
       delayedCrossCoreGSSPass->getArgument().str();
   std::string allPassesNames =
-      insertAnchorsAndBackupPassName + "," + delayedCrossCoreGSSPassName;
+      insertAnchorsAndBackupPassName + "," + delayedCrossCoreGSSPassName
+      + ",split-simt-module";
 
   auto attr = mlir::annotation::FilterPassesAttr::get(
       ctx, StringAttr::get(ctx, allPassesNames));

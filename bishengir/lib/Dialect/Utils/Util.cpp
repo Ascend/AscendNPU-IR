@@ -491,6 +491,37 @@ void fillAncestorOfOperation(SmallPtrSet<Operation *, 3> &container,
   }
 }
 
+static void
+tracebackOperandsToBlockArgumentsImpl(Value value, DenseSet<Value> &visited,
+                                      SmallVectorImpl<BlockArgument> &result,
+                                      Block *block) {
+
+  if (!visited.insert(value).second) {
+    return;
+  }
+
+  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+    if (blockArg.getParentBlock() == block) {
+      result.push_back(blockArg);
+      return;
+    }
+  }
+
+  if (auto *defOp = value.getDefiningOp()) {
+    for (auto operand : defOp->getOperands()) {
+      tracebackOperandsToBlockArgumentsImpl(operand, visited, result, block);
+    }
+  }
+}
+
+SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value,
+                                                             Block *block) {
+  DenseSet<Value> visited;
+  SmallVector<BlockArgument> result;
+  tracebackOperandsToBlockArgumentsImpl(value, visited, result, block);
+  return result;
+}
+
 FailureOr<llvm::SmallVector<Value>>
 getTensorOrMemrefDynSizes(OpBuilder &builder, Location loc, Value source,
                           std::optional<ArrayRef<int64_t>> targetShape) {
@@ -1381,7 +1412,8 @@ std::optional<memref::AllocOp> utils::tracebackMemRefToAlloc(Value memrefVal) {
              : std::optional<memref::AllocOp>();
 }
 
-std::optional<Value> utils::tracebackMemRefToAllocOrBlockArgument(Value memrefVal) {
+std::optional<Value>
+utils::tracebackMemRefToAllocOrBlockArgument(Value memrefVal) {
   auto tracedValue = utils::tracebackMemRef(memrefVal);
   return utils::isAllocLikeOp(tracedValue) || isa<BlockArgument>(tracedValue)
              ? tracedValue

@@ -65,6 +65,147 @@ SmallVector<Value> promoteF16ReductionValuesToF32(PatternRewriter &rewriter,
   return promoted;
 }
 
+/// Applies `permutation` to the shape only.
+///
+/// Example:
+///   shape = [B, R, A], permutation = [0, 2, 1]
+///   result shape = [B, A, R]
+inline SmallVector<int64_t>
+computeReductionTransposeShape(Value value, ArrayRef<int64_t> permutation) {
+  auto valueType = dyn_cast<RankedTensorType>(value.getType());
+  if (!valueType || !valueType.hasStaticShape())
+    return {};
+
+  auto originalShape = valueType.getShape();
+  SmallVector<int64_t> transposedShape(permutation.size());
+  for (const auto &[idx, dim] : llvm::enumerate(permutation))
+    transposedShape[idx] = originalShape[dim];
+  return transposedShape;
+}
+
+/// Builds the inverse permutation used to restore the original layout.
+///
+/// Example:
+///   permutation = [0, 2, 1]
+///   inverse     = [0, 2, 1]
+inline SmallVector<int64_t>
+invertReductionPermutation(ArrayRef<int64_t> permutation) {
+  SmallVector<int64_t> inverse(permutation.size());
+  for (const auto &[idx, dim] : llvm::enumerate(permutation))
+    inverse[dim] = static_cast<int64_t>(idx);
+  return inverse;
+}
+
+/// Builds the `tensor.empty` destination for a synthesized transpose.
+/// The rewrite fails when the transposed shape is not statically known.
+inline Value createReductionTransposeInit(PatternRewriter &rewriter,
+                                          Location loc, Value value,
+                                          ArrayRef<int64_t> permutation) {
+  auto valueType = dyn_cast<RankedTensorType>(value.getType());
+  if (!valueType || !valueType.hasStaticShape())
+    return Value();
+
+  SmallVector<int64_t> transposedShape =
+      computeReductionTransposeShape(value, permutation);
+  if (transposedShape.empty() && valueType.getRank() != 0)
+    return Value();
+
+  return rewriter.create<tensor::EmptyOp>(loc, transposedShape,
+                                          valueType.getElementType());
+}
+
+/// Creates a transposed view of `value`.
+template <typename Traits>
+Value transposeReductionValue(PatternRewriter &rewriter, Location loc,
+                              Value value,
+                              ArrayRef<int64_t> permutation) {
+  Value transposeInit =
+      createReductionTransposeInit(rewriter, loc, value, permutation);
+  if (!transposeInit)
+    return Value();
+
+  return Traits::createRAHighPerformanceTransposeOp(rewriter, loc, value,
+                                                    transposeInit, permutation);
+}
+
+template <typename Traits>
+SmallVector<Value>
+transposeReductionValueRange(PatternRewriter &rewriter, Location loc,
+                             ValueRange values,
+                             ArrayRef<int64_t> permutation) {
+  SmallVector<Value> transposedValues;
+  transposedValues.reserve(values.size());
+  for (Value value : values) {
+    Value transposed =
+        transposeReductionValue<Traits>(rewriter, loc, value, permutation);
+    if (!transposed)
+      return {};
+    transposedValues.push_back(transposed);
+  }
+  return transposedValues;
+}
+
+inline SmallVector<Value> collectReductionResults(Operation &op) {
+  return SmallVector<Value>(op.getResults().begin(), op.getResults().end());
+}
+
+/// Returns true when the rebuilt reduction results no longer have the same
+/// public tensor types as the original op and therefore need a layout restore
+/// step before replacement.
+inline bool reductionResultsNeedLayoutRestore(Operation &originalOp,
+                                              Operation &rebuiltOp) {
+  ResultRange originalResults = originalOp.getResults();
+  ResultRange rebuiltResults = rebuiltOp.getResults();
+  if (originalResults.size() != rebuiltResults.size())
+    return true;
+
+  for (const auto &[originalResult, rebuiltResult] :
+       llvm::zip(originalResults, rebuiltResults)) {
+    if (originalResult.getType() != rebuiltResult.getType())
+      return true;
+  }
+
+  return false;
+}
+
+/// Checks whether moving the reduction axis to the innermost position is likely
+/// to map well to the target register/block layout.
+///
+/// Let
+///   R = srcShape[reduceDim]
+///   A = product(srcShape[reduceDim + 1 .. rank))
+/// where `R` is the size of the reduced axis and `A` is the flattened size of
+/// the trailing axes that become contiguous after transpose.
+///
+/// The transpose-based rewrite is enabled only when either
+///   R % elementsPerBlock == 0 and A % registerCount == 0
+/// or
+///   A % elementsPerBlock == 0 and R % registerCount == 0.
+/// This filters the transformation to layouts that can be packed efficiently by
+/// the backend vectorized kernel.
+inline bool isSizeCompatibleForTransposeForReduceOp(Value src,
+                                                    ArrayRef<int64_t> srcShape,
+                                                    int64_t reduceDim) {
+  auto floatElemType = dyn_cast<FloatType>(getElementTypeOrSelf(src.getType()));
+  if (!floatElemType)
+    return false;
+
+  const unsigned numPerBlock =
+      utils::INTR_BYTES_PER_BLOCK /
+      (floatElemType.getWidth() / utils::INTR_BITS_PER_BYTE);
+
+  int64_t totalRShape = srcShape[reduceDim];
+  int64_t totalAShape = 1;
+  for (size_t i = static_cast<size_t>(reduceDim) + 1; i < srcShape.size(); ++i)
+    totalAShape *= srcShape[i];
+
+  const int64_t registerCount = 16;
+  return (totalRShape % numPerBlock == 0 &&
+          totalAShape % registerCount == 0) ||
+         (totalAShape % numPerBlock == 0 &&
+          totalRShape % registerCount == 0);
+}
+
 inline Value createStaticReductionEmptyLike(PatternRewriter &rewriter,
                                             Location loc, Value value) {
   auto valueType = dyn_cast<RankedTensorType>(value.getType());

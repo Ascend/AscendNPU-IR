@@ -105,6 +105,94 @@ public:
   }
 };
 
+/// Moves a non-innermost reduce-with-index axis to the innermost position by
+/// inserting transpose(s) before rebuilding the reduction.
+///
+/// For a tensor
+///   [prefix, r, suffix]
+/// reduced along `r`, the rewrite builds
+///   transpose([prefix, r, suffix]) -> [prefix, suffix, r]
+/// and then reduces the last axis. In flattened form this changes
+///   [B, R, A] reduce R
+/// into
+///   [B, A, R] reduce R
+/// so the reduced dimension becomes contiguous.
+///
+/// Dialect traits decide whether the results are already in the desired layout
+/// or must be transposed back.
+template <typename ReduceWithIndexOpType, typename Traits>
+struct ReduceWithIndexRAHighPerformanceTemplate
+    : public OpRewritePattern<ReduceWithIndexOpType> {
+public:
+  using OpRewritePattern<ReduceWithIndexOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ReduceWithIndexOpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeRAHighPerformance(op))
+      return failure();
+
+    Value src = op.getDpsInputs().front();
+    auto srcType = dyn_cast<RankedTensorType>(src.getType());
+    if (!srcType || !srcType.hasStaticShape())
+      return failure();
+
+    ArrayRef<int64_t> reduceDims = Traits::getRAHighPerformanceReduceDims(op);
+    int64_t srcRank = srcType.getRank();
+    if (reduceDims.size() != 1)
+      return failure();
+
+    int64_t reduceDim = reduceDims.front();
+    if (reduceDim == srcRank - 1)
+      return failure();
+
+    if (!isSizeCompatibleForTransposeForReduceOp(src, srcType.getShape(),
+                                                 reduceDim))
+      return failure();
+
+    Location loc = op.getLoc();
+    SmallVector<int64_t> transposePerm;
+    transposePerm.reserve(srcRank);
+    for (int64_t dim = 0; dim < srcRank; ++dim) {
+      if (dim != reduceDim)
+        transposePerm.push_back(dim);
+    }
+    transposePerm.push_back(reduceDim);
+
+    SmallVector<Value> newInputs = transposeReductionValueRange<Traits>(
+        rewriter, loc, op.getDpsInputs(), transposePerm);
+    if (newInputs.size() != op.getDpsInputs().size())
+      return failure();
+
+    SmallVector<Value> newInits(op.getDpsInits());
+
+    // After `transposePerm = [prefix, suffix, reduceDim]`, the reduction is
+    // always rebuilt on the last axis:
+    //   src[B, R, A] -> transposed[B, A, R] -> reduce dim 2.
+    SmallVector<int64_t> newReduceDims{srcRank - 1};
+    Operation *newOp = Traits::createRAHighPerformanceReduceOp(
+        rewriter, loc, op, newInputs, newInits, newReduceDims, transposePerm);
+    if (!newOp)
+      return failure();
+
+    if (isReductionInitAlreadyNormalized(*op))
+      markReductionInitNormalized(*newOp);
+
+    SmallVector<Value> replacements;
+    if (reductionResultsNeedLayoutRestore(*op, *newOp)) {
+      SmallVector<int64_t> inversePerm =
+          invertReductionPermutation(transposePerm);
+      replacements = transposeReductionValueRange<Traits>(
+          rewriter, loc, newOp->getResults(), inversePerm);
+    } else {
+      replacements = collectReductionResults(*newOp);
+    }
+    if (replacements.size() != op->getNumResults())
+      return failure();
+    rewriter.replaceOp(op, replacements);
+    return success();
+  }
+};
+
 /// Replaces shape-only reduce-with-index init tensors with `tensor.empty` and
 /// lets dialect traits clean up any additional shape-only operands.
 template <typename ReduceWithIndexOpType, typename Traits>

@@ -47,10 +47,13 @@ void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
 void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
     RewritePatternSet &patterns, bool isRegbased);
+void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalReductionPatterns(RewritePatternSet &patterns);
 void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
 void populateNormalizeSortPatterns(RewritePatternSet &patterns);
+void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns);
+void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns);
 
 } // namespace mlir::hivm
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H

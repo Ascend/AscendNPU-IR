@@ -103,6 +103,9 @@ Value createConvertLayoutLike(PatternRewriter &rewriter,
 Value createInverseConvertLayout(PatternRewriter &rewriter,
                                  ConvertLayoutOp templateOp, Value input);
 
+/// Mark `op` with specific attribute preventing it to be propagated up.
+void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op);
+
 bool isPropagatingUp(ConvertLayoutOp op);
 
 bool isPropagatingDown(ConvertLayoutOp op);
@@ -143,8 +146,8 @@ computeTargetLayoutOffset(ArrayRef<OpFoldResult> currentOffset,
 void populateHoistConvertLayout(RewritePatternSet &patterns,
                                 MLIRContext *context);
 
-void populateCombineOptimizedConvertLayoutPatterns(
-    RewritePatternSet &patterns, MLIRContext *context);
+void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
+                                                   MLIRContext *context);
 } // namespace mlir::hivm
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_CONVERTLAYOUTUTILS_H
