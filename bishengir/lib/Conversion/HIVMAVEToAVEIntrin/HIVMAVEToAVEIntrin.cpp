@@ -74,29 +74,6 @@ static int getElementAlignmentBitWidth(Operation *op) {
   return getOpElementAlignmentBitWidth(op);
 }
 
-static bool isAlignByElementAlignment(Operation *op) {
-  if (op->getUsers().empty()) {
-    return false;
-  }
-  if (isa<func::CallOp>(*(op->getUsers().begin()))) {
-    // result is used by call op, assume it as aligned.
-    return true;
-  }
-  auto srcAlignment = getOpElementAlignmentBitWidth(op);
-  int dstAlignment = -1;
-
-  // All users should be the same alignmentbitwidth,
-  // excpet that in some case a user's alignmentbitwidth
-  // may not be infered(eg. func.call)
-  for (auto user : op->getUsers()) {
-    dstAlignment = getOpElementAlignmentBitWidth(user);
-    if (dstAlignment != -1) {
-      break;
-    }
-  }
-  return srcAlignment == dstAlignment && srcAlignment != -1;
-}
-
 template <typename TargetTy, typename... Args>
 inline Value createTargetTyIfValid(OpBuilder &builder, const Location &loc,
                                    bool condition, Args &&...args) {
@@ -672,61 +649,6 @@ template <typename... Args> struct BroadCastScalarRegistryImpl {
 using BroadCastScalarRegistry = BroadCastScalarRegistryImpl<
     BroadCastScalarRegEntry<VFBroadcastScalarMaskOp, VdupsZInstrOp>>;
 
-static Value interleaveDataLayoutForExtCast(ConversionPatternRewriter &rewriter,
-                                            Location loc, int unpackCoefficient,
-                                            bool isUI, Value src) {
-  Type srcElemType = cast<VectorType>(src.getType()).getElementType();
-  auto srcVLVectorTy = hivm_regbaseintrins::createVLVectorType(srcElemType);
-
-  unsigned bitWidth = srcElemType.getIntOrFloatBitWidth();
-  bool shouldUnpack = (bitWidth == 8 && unpackCoefficient == 4);
-
-  auto intlvType = LLVM::LLVMStructType::getLiteral(
-      rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
-
-  auto createIntlv = [&rewriter, loc, srcVLVectorTy, intlvType, src,
-                      srcElemType, shouldUnpack](auto vbrOpType,
-                                                 auto vintlvOpType) -> Value {
-    using VbrOp = typename decltype(vbrOpType)::type;
-    using VintlvOp = typename decltype(vintlvOpType)::type;
-    Value vbr;
-    if (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()) {
-      // Workaround: CCEC VbrOp does not support FP8 scalar literal.
-      // Broadcast an i8 zero and bitcast the result to FP8 vector.
-
-      Value cstZeroI8 = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(rewriter.getI8Type()));
-      auto i8VLVectorTy =
-          hivm_regbaseintrins::createVLVectorType(rewriter.getI8Type());
-      Value vbrI8 = rewriter.create<VbrInstrOp>(loc, i8VLVectorTy, cstZeroI8);
-      vbr = rewriter.create<LLVM::BitcastOp>(loc, srcVLVectorTy, vbrI8);
-    } else {
-      Value cstZero = rewriter.create<LLVM::ConstantOp>(
-          loc, rewriter.getZeroAttr(srcElemType));
-      vbr = rewriter.create<VbrOp>(loc, srcVLVectorTy, cstZero);
-    }
-
-    Value result = rewriter.create<VintlvOp>(loc, intlvType, src, vbr);
-
-    if (shouldUnpack) {
-      Value extracted = rewriter.create<LLVM::ExtractValueOp>(loc, result, 0);
-      result = rewriter.create<VintlvOp>(loc, intlvType, extracted, vbr);
-    }
-    return result;
-  };
-  if (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2() ||
-      srcElemType.isBF16() || srcElemType.isF16() || srcElemType.isF32() ||
-      srcElemType.isSignedInteger(8) || srcElemType.isSignlessInteger(8) ||
-      srcElemType.isUnsignedInteger(8) || srcElemType.isSignedInteger(16) ||
-      srcElemType.isSignlessInteger(16) || srcElemType.isUnsignedInteger(16) ||
-      srcElemType.isSignedInteger(32) || srcElemType.isSignlessInteger(32) ||
-      srcElemType.isUnsignedInteger(32)) {
-    Value intlv = createIntlv(OpTag<VbrInstrOp>{}, OpTag<VintlvInstrOp>{});
-    return rewriter.create<LLVM::ExtractValueOp>(loc, intlv, 0);
-  }
-  llvm_unreachable("Unexpected element type in interleaveDataLayoutForExtCast");
-}
-
 static bool isBRCDist(Value dist) {
   // check load dist is brc
   auto constantOp = dyn_cast<LLVM::ConstantOp>(dist.getDefiningOp());
@@ -1108,9 +1030,6 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
                                                rewriter.getI32IntegerAttr(0));
       auto pLoadOp = rewriter.create<PLoadB8InstOp>(loc, vtype, dataPtr, offset,
                                                     dist, mode);
-      // loading is compacted by default,
-      // if the use case is sparse,
-      // it needs to be converted to sparse using pintlv.
       Value pLoadRes = pLoadOp->getResult(0);
       auto origLoadTy = load->getResult(0).getType();
       bool shouldSparsifyLayout =
@@ -1477,14 +1396,10 @@ struct HIVMGatherOpLowering : public ConvertOpToLLVMPattern<VFGatherOp> {
     } else if (elementType.isF16()) {
       Value result = rewriter.create<VGatherV128F16InstrOp>(loc, vtype, dataPtr,
                                                             indexVec, mask);
-      if (!isAlignByElementAlignment(gather))
-        result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
       rewriter.replaceOp(gather, result);
     } else if (elementType.isBF16()) {
       Value result = rewriter.create<VGatherV128BF16InstrOp>(
           loc, vtype, dataPtr, indexVec, mask);
-      if (!isAlignByElementAlignment(gather))
-        result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
       rewriter.replaceOp(gather, result);
     } else {
       return failure();
@@ -1693,7 +1608,6 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
       unaligned = oldMskDefOp->hasAttr(UnalignedAttr::name);
     }
     if (parAlign == -1 && !unaligned && oldMskDefOp) {
-      // no global elem align bit width
       int align = getElementAlignmentBitWidth(select);
       int oldMskAlign = getElementAlignmentBitWidth(oldMskDefOp);
       if (oldMskAlign != -1 && oldMskAlign < align) {
@@ -2880,35 +2794,7 @@ struct HIVMDeInterleaveOpLowering
 
     Value agg = deintrinOp->getResult(0);
     auto [res0, res1] = extractResults(rewriter, loc, llvmVecVLType, agg);
-    // TODO: Temporary fix, remove it after the official solution is launched
-    // TODO: Unable to handle scenarios with multiple usages have different
-    // bitwidth
-    if (!isAlignByElementAlignment(op)) {
-      int elemBitWidth = elemType.getIntOrFloatBitWidth();
-      int unpackCoefficient = -1;
-      int srcAlignment = getOpElementAlignmentBitWidth(op);
-      llvm::SmallVector<Operation *> workList(op->getUsers());
-      while (!workList.empty()) {
-        Operation *curOp = workList.back();
-        if (isa<UnrealizedConversionCastOp>(curOp)) {
-          workList.pop_back();
-          workList.append(curOp->getUsers().begin(), curOp->getUsers().end());
-          continue;
-        }
-        int dstAlignment = getOpElementAlignmentBitWidth(curOp);
-        if (dstAlignment > srcAlignment) {
-          unpackCoefficient = dstAlignment / elemBitWidth;
-          break;
-        }
-        workList.pop_back();
-      }
-      if (unpackCoefficient == 2 || unpackCoefficient == 4) {
-        res0 = interleaveDataLayoutForExtCast(rewriter, loc, unpackCoefficient,
-                                              true, res0);
-        res1 = interleaveDataLayoutForExtCast(rewriter, loc, unpackCoefficient,
-                                              true, res1);
-      }
-    }
+
     UnrealizedConversionCastOp res0Casted =
         rewriter.create<UnrealizedConversionCastOp>(loc, llvmVecType, res0);
     UnrealizedConversionCastOp res1Casted =
@@ -3329,7 +3215,6 @@ struct HIVMPredicateBinaryLogicOpLowering
     Value rhs = getVLRegValueOrSelf(adaptRhs, rewriter);
     auto parAlign = getParentOpElementAlignmentBitWidth(op);
     if (parAlign == -1) {
-      // no global elem align bit width
       int align = getOpElementAlignmentBitWidth(op);
       auto *oldLhsDefOp = oldLhs.getDefiningOp();
       int oldLhsAlign = getOpElementAlignmentBitWidth(oldLhsDefOp);
@@ -3410,7 +3295,6 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
                                                    increaseDirectionI32);
 
     Value result;
-    auto elementAlignmentBitwidth = getOpElementAlignmentBitWidth(op);
     if (elemType.isInteger(32) && resType.getNumElements() <= 64) {
       auto targetType = VectorType::get(64, rewriter.getI32Type());
       result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
@@ -3428,10 +3312,6 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
       result = rewriter.create<VciInstrOp>(loc, resType, src1, src2);
     } else {
       return rewriter.notifyMatchFailure(op, "Unsupported vector type");
-    }
-    if (elemType.getIntOrFloatBitWidth() == 16 && elementAlignmentBitwidth == 32) {
-      // FIXME: patch for vci elem bitwidth is 16 but alignment is 32
-      result = interleaveDataLayoutForExtCast(rewriter, loc, 2, true, result);
     }
     rewriter.replaceOp(op, result);
     return success();

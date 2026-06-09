@@ -266,8 +266,10 @@ struct AVEStoreWithStridePattern
   }
 };
 
-/// Handle func_dist_type (INTLV2/INTLV4) on interleave/deinterleave ops by
-/// inserting intlv ops after the op to sparsify the data layout.
+/// Handle func_dist_type (INTLV2/INTLV4) on ops by inserting intlv ops
+/// after the op to sparsify the data layout.
+/// Supports single-result ops (VFGatherOp, VFVCIOp) via getRes()
+/// and two-result ops (VFInterleaveOp, VFDeInterleaveOp) via getRes1()/getRes2().
 template <typename IntlvOp>
 struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
   AVEIntlvFuncDistPattern(MLIRContext *context)
@@ -296,20 +298,27 @@ struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
     auto bitWidthAttr =
         intlvOp->getAttr(utils::elementAlignmentBitWidth);
 
-    // Both res1 and res2 share the same layout state; sparse each of them.
     rewriter.setInsertionPointAfter(intlvOp);
-    for (Value res : {intlvOp.getRes1(), intlvOp.getRes2()}) {
+
+    auto processResult = [&](Value res) {
       SmallVector<Operation *> oldUsers(res.getUsers());
       if (oldUsers.empty())
-        continue;
-
+        return;
       Value result = res;
       for (int i = 0; i < numIntlv; ++i)
         result = sparseByIntlv(result, rewriter, loc, bitWidthAttr);
-
       for (Operation *user : oldUsers)
         user->replaceUsesOfWith(res, result);
+    };
+
+    if constexpr (std::is_same_v<IntlvOp, VFInterleaveOp> ||
+                  std::is_same_v<IntlvOp, VFDeInterleaveOp>) {
+      processResult(intlvOp.getRes1());
+      processResult(intlvOp.getRes2());
+    } else {
+      processResult(intlvOp.getRes());
     }
+
     intlvOp->removeAttr("functionType");
     return success();
   }
@@ -593,6 +602,8 @@ public:
     patterns.add<AVEIntlvFuncDistPattern<VFInterleaveOp>>(ctx);
     patterns.add<AVEIntlvFuncDistPattern<VFDeInterleaveOp>>(ctx);
     patterns.add<AVEVectorLayoutCastPattern>(ctx);
+    patterns.add<AVEIntlvFuncDistPattern<VFGatherOp>>(ctx);
+    patterns.add<AVEIntlvFuncDistPattern<VFVCIOp>>(ctx);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       signalPassFailure();
