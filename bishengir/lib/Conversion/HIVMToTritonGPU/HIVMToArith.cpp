@@ -646,20 +646,19 @@ static arith::CmpFPredicate selectFPredicate(hivm::VCmpOp op) {
 }
 
 static arith::CmpIPredicate selectIPredicate(hivm::VCmpOp op) {
-    bool isSigned = op.getIsSigned();
     switch (op.getCompareMode()) {
         case hivm::CompareMode::EQ:
             return arith::CmpIPredicate::eq;
         case hivm::CompareMode::NE:
             return arith::CmpIPredicate::ne;
         case hivm::CompareMode::LT:
-            return isSigned ? arith::CmpIPredicate::slt : arith::CmpIPredicate::ult;
+            return arith::CmpIPredicate::slt;
         case hivm::CompareMode::GT:
-            return isSigned ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::ugt;
+            return arith::CmpIPredicate::sgt;
         case hivm::CompareMode::LE:
-            return isSigned ? arith::CmpIPredicate::sle : arith::CmpIPredicate::ule;
+            return arith::CmpIPredicate::sle;
         case hivm::CompareMode::GE:
-            return isSigned ? arith::CmpIPredicate::sge : arith::CmpIPredicate::uge;
+            return arith::CmpIPredicate::sge;
     }
 }
 
@@ -694,7 +693,8 @@ static arith::CmpIPredicate selectPredicate(hivm::VCmpOp op) {
 
 /*
 * vcmp -> arith.cmpf
-* hivm.hir.vcmp uses isSigned to distinguish between signed and unsigned integer comparisons.
+* hivm.hir.vcmp cannot distinguish between signed and unsigned integer comparisons.
+* Currently, all are uniformly converted to signed comparisons, which may lead to precision issues.
 * vcmp -> arith.cmpi
 * Ordered and unordered comparisons cannot be distinguished in the current conversion of
 * floating-point comparison ops.

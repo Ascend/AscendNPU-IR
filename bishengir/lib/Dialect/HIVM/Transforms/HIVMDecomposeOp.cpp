@@ -95,10 +95,11 @@ static LogicalResult castSrcToTargetTypeAndCmpiToDst(hivm::VCastOp &op,
   Value srcFZero = op.hasPureTensorSemantics() ? tmpVBrcOp->getResult(0)
                                                : tmpVBrcOp.getDst();
   llvm::SmallVector<Value> inputs{srctargetElemType, srcFZero};
+  auto compareAttr =
+      rewriter.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::NE);
   hivm::VCmpOp cmpToDstOp = rewriter.create<hivm::VCmpOp>(
-      op.getLoc(), dstTypeRange, ValueRange(inputs), op.getDst(),
-      /*is_signed=*/true, hivm::CompareMode::NE, op.getTransposeAttr(),
-      op.getBroadcastAttr());
+      op.getLoc(), dstTypeRange, ValueRange(inputs), op.getDst(), compareAttr,
+      op.getTransposeAttr(), op.getBroadcastAttr());
   rewriter.replaceOp(op, cmpToDstOp);
   return success();
 }
@@ -1361,10 +1362,12 @@ class AtomicCasOpLowering : public OpRewritePattern<hivm::AtomicCasOp> {
     // create condition alloc
     auto condUB = createMemrefAllocOpWithBufferSizeWithTargetElemType(
         rewriter, loc, src0, rewriter.getI1Type());
+    auto compareAttr =
+        rewriter.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::EQ);
+        
     rewriter.create<hivm::VCmpOp>(op.getLoc(), TypeRange(),
                                   ValueRange({tmpUB, src0}), Value(condUB),
-                                  /*is_signed=*/true,
-                                  hivm::CompareMode::EQ);
+                                  compareAttr);
 
     auto resUB = createMemrefAllocOpWithBufferSize(rewriter, loc, src0);
     auto src1 = op.getSrc()[1];

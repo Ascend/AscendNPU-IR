@@ -535,12 +535,6 @@ func.func @test_hfusion_comparei_ops(
   hfusion.compare {compare_fn  = #hfusion.compare_fn<vne>}
     ins(%src1, %src2 : memref<6x6xi32>, memref<6x6xi32>)
     outs(%dst : memref<6x6xi1>)
-  //     CHECK: hivm.hir.vcmp
-  //     CHECK-SAME: compare_mode = <lt>
-  //     CHECK-SAME: is_signed = false
-  hfusion.compare {compare_fn  = #hfusion.compare_fn<vult>}
-    ins(%src1, %src2 : memref<6x6xi32>, memref<6x6xi32>)
-    outs(%dst : memref<6x6xi1>)
   return
 }
 

@@ -148,18 +148,6 @@ hivm::CompareMode mapCompareModeHFusionToHiVM(hfusion::CompareFn hsCmpMode) {
   }
 }
 
-bool isSignedCompareMode(hfusion::CompareFn hsCmpMode) {
-  switch (hsCmpMode) {
-  case hfusion::CompareFn::vule:
-  case hfusion::CompareFn::vuge:
-  case hfusion::CompareFn::vugt:
-  case hfusion::CompareFn::vult:
-    return false;
-  default:
-    return true;
-  }
-}
-
 template <>
 Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
   auto dpsOp = cast<DestinationStyleOpInterface>(op);
@@ -168,7 +156,7 @@ Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
 
   return b.create<hivm::VCmpOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
                                 dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                isSignedCompareMode(hsCmpMode), hvCmpMode);
+                                hvCmpMode);
 }
 
 static hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
