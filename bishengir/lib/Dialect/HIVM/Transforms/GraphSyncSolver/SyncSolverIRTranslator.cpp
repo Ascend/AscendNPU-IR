@@ -281,6 +281,29 @@ IRTranslator::getLoadStoreOp(OP loadStoreOp, OperationBase *parentOp) {
   return rwOp;
 }
 
+std::unique_ptr<OperationBase>
+IRTranslator::getDebugOp(DebugOp debugOp, OperationBase *parentOp) {
+  auto op = debugOp.getOperation();
+  auto pipe = hivm::PIPE::PIPE_S;
+  auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;
+  if (options.isCrossCoreMode()) {
+    auto coreType = hivm::getCoreType(op);
+    assert(llvm::succeeded(coreType));
+    assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
+    coreTypeVal = coreType.value();
+  }
+  llvm::SmallVector<Value> readMemVals;
+  llvm::SmallVector<Value> writeMemVals;
+
+  Value val = debugOp.getArg();
+  if (isa<ShapedType>(val.getType())) {
+    readMemVals = getMemoryOps({val});
+  }
+  auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipe,
+                                            pipe, readMemVals, writeMemVals);
+  return rwOp;
+}
+
 // Decompose specific MmadL1 ops into a small inline sequence in the IR for
 // easier sync handling.
 std::unique_ptr<OperationBase>
@@ -462,6 +485,9 @@ IRTranslator::translateRWLikeOp(Operation *op, OperationBase *parentOp) {
     if (auto rwOp = getDestinationStyleInterfaceOp(dstStyleOp, parentOp)) {
       return rwOp;
     }
+  }
+  if (auto debugOp = dyn_cast<DebugOp>(op)) {
+    return getDebugOp(debugOp, parentOp);
   }
   if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return getLoadStoreOp(storeOp, parentOp);
