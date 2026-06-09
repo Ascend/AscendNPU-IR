@@ -24,6 +24,11 @@ namespace hfusion {
 static thread_local bool archIsRegbased{false};
 static thread_local bool archisAscend950{false};
 
+static bool shouldKeepI64SliceOnRegBase(Operation *op, ShapedType type) {
+  return type.getElementType().isInteger(64) &&
+         hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>());
+}
+
 /// Compute the dropped dimensions of a rank-reducing tensor.extract_slice op or
 /// rank-extending tensor.insert_slice op.
 static llvm::SmallBitVector
@@ -86,6 +91,11 @@ public:
   using OpRewritePattern<tensor::ExtractSliceOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(tensor::ExtractSliceOp sliceOp,
                                 PatternRewriter &rewriter) const override {
+    if (shouldKeepI64SliceOnRegBase(sliceOp, sliceOp.getSourceType()))
+      return rewriter.notifyMatchFailure(
+          sliceOp,
+          "i64 deinterleave lowers to an unsupported RegBase intrinsic");
+
     // for rank reduce slice like `<Ax2> -> <A>`, refine the slice output type
     // to `<Ax1>`, to fit in the deinterleave pattern
     llvm::SmallBitVector reducedRankRecord = getDroppedDimsForInterleave(
@@ -412,6 +422,12 @@ struct NormalizeInsertSliceOpToInterleaveOp
     if (!insertSliceOp.hasPureTensorSemantics()) {
       return failure();
     }
+    if (shouldKeepI64SliceOnRegBase(insertSliceOp,
+                                    insertSliceOp.getSourceType()))
+      return rewriter.notifyMatchFailure(
+          insertSliceOp,
+          "i64 interleave lowers to an unsupported RegBase intrinsic");
+
     // TODO: find interLeaveChannelNums greedily.
     const int64_t interLeaveChannelNums =
         hfusion::InterleaveOp::getInterLeaveChannelNums();

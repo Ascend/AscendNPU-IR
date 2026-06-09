@@ -67,6 +67,40 @@ func.func @test_not_interleave() -> tensor<4x32x64xf16> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_interleave_i64_non_regbase
+// CHECK: hfusion.interleave
+// CHECK-NOT-NORMALIZE-SLICE: tensor.insert_slice
+func.func @test_interleave_i64_non_regbase() -> tensor<4x2xi64> {
+  %0 = tensor.empty() : tensor<4xi64>
+  %1 = tensor.empty() : tensor<4xi64>
+  %2 = tensor.empty() : tensor<4x2xi64>
+  %3 = tensor.insert_slice %0 into %2[0, 0] [4, 1] [1, 2] : tensor<4xi64> into tensor<4x2xi64>
+  %4 = tensor.insert_slice %1 into %3[0, 1] [4, 1] [1, 2] : tensor<4xi64> into tensor<4x2xi64>
+  return %4 : tensor<4x2xi64>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_not_interleave_i64_regbase
+// CHECK-NOT: hfusion.interleave
+// CHECK: tensor.insert_slice
+// CHECK-NOT: hfusion.interleave
+// CHECK: tensor.insert_slice
+// CHECK-NOT: hfusion.interleave
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
+  func.func @test_not_interleave_i64_regbase() -> tensor<4x2xi64> {
+    %0 = tensor.empty() : tensor<4xi64>
+    %1 = tensor.empty() : tensor<4xi64>
+    %2 = tensor.empty() : tensor<4x2xi64>
+    %3 = tensor.insert_slice %0 into %2[0, 0] [4, 1] [1, 2] : tensor<4xi64> into tensor<4x2xi64>
+    %4 = tensor.insert_slice %1 into %3[0, 1] [4, 1] [1, 2] : tensor<4xi64> into tensor<4x2xi64>
+    return %4 : tensor<4x2xi64>
+  }
+}
+
+// -----
+
 // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<4x2x128xf16>
 // CHECK: %[[VAL_1:.*]] = hfusion.deinterleave %[[VAL_0]] channel<0> : tensor<4x2x128xf16> -> tensor<4x2x64xf16>
 // CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
@@ -140,6 +174,30 @@ func.func @test_deinterleave_with_reduce_rank(%arg0: tensor<1x32x2xbf16>) -> ten
 func.func @test_not_deinterleave_with_dynamic_last_dim_offset(%arg0: tensor<1x32x2xbf16>, %offset: index) -> tensor<1x32x1xbf16> {
   %0 = tensor.extract_slice %arg0[0, 0, %offset] [1, 32, 1] [1, 1, 1] : tensor<1x32x2xbf16> to tensor<1x32x1xbf16>
   return %0 : tensor<1x32x1xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_deinterleave_i64_non_regbase
+// CHECK: hfusion.deinterleave
+// CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
+func.func @test_deinterleave_i64_non_regbase(%arg0: tensor<4x2xi64>) -> tensor<4xi64> {
+  %0 = tensor.extract_slice %arg0[0, 1] [4, 1] [1, 2] : tensor<4x2xi64> to tensor<4xi64>
+  return %0 : tensor<4xi64>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_not_deinterleave_i64_regbase
+// CHECK-NOT: hfusion.deinterleave
+// CHECK: tensor.extract_slice
+// CHECK-NOT: hfusion.deinterleave
+// CHECK: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
+  func.func @test_not_deinterleave_i64_regbase(%arg0: tensor<4x2xi64>) -> tensor<4xi64> {
+    %0 = tensor.extract_slice %arg0[0, 1] [4, 1] [1, 2] : tensor<4x2xi64> to tensor<4xi64>
+    return %0 : tensor<4xi64>
+  }
 }
 
 // -----
