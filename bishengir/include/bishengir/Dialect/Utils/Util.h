@@ -17,8 +17,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
 
@@ -94,10 +94,12 @@ template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
     : public std::true_type {};
 
-template <typename T, typename = void> struct IsPrintable : public std::false_type {};
+template <typename T, typename = void>
+struct IsPrintable : public std::false_type {};
 
 template <typename T>
-struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>() << std::declval<T>())>>
+struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>()
+                                           << std::declval<T>())>>
     : public std::true_type {};
 
 template <typename T>
@@ -172,8 +174,7 @@ std::string getPrettyOpName(Operation *op);
 // (4-TRUNC) int -> float
 // (5-RINT ) int -> int
 // (6-RINT ) others
-template <typename T>
-T selectRoundMode(Type inType, Type outType) {
+template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
     if (outType.isF16() || outType.isBF16() || outType.isF32() ||
         outType.isFloat8E4M3FN() || outType.isFloat8E5M2()) {
@@ -317,8 +318,7 @@ bool isAnnotationWithAttr(Operation *op, StringRef name);
 bool isTransferWriteSuitForStoreWithStride(Operation *op);
 
 /// Whether a value as specified type user
-template <typename T>
-bool hasTypedUses(Value val) {
+template <typename T> bool hasTypedUses(Value val) {
   for (auto &user : val.getUses()) {
     if (isa<T>(user.getOwner())) {
       return true;
@@ -411,14 +411,12 @@ bool areShapesAligned(ArrayRef<int64_t> staticShapes, int64_t alignment);
 std::optional<bool>
 checkUsersAllWithCondition(Value v, Operation *rootOp,
                            const std::function<bool(Operation *op)> &condFn,
-                           const std::function<bool(Operation *op)> &skipFn,
-                           DenseSet<Value> &visited);
+                           const std::function<bool(Operation *op)> &skipFn);
 /// Check if any of op's users satisfies the condition function.
-bool
-checkUsersAnyWithCondition(Value v, Operation *rootOp,
-                           const std::function<bool(Operation *op)> &condFn,
-                           const std::function<bool(Operation *op)> &skipFn,
-                           DenseSet<Value> &record);
+bool checkUsersAnyWithCondition(
+    Value v, Operation *rootOp,
+    const std::function<bool(Operation *op)> &condFn,
+    const std::function<bool(Operation *op)> &skipFn, DenseSet<Value> &record);
 
 int checkDefsAllWithCondition(Value v,
                               const std::function<int(Operation *op)> &condFn);
@@ -454,8 +452,8 @@ tracebackMemRefVecByTargetFn(Value memrefVal,
 void fillAncestorOfOperation(SmallPtrSet<Operation *, 3> &container,
                              Operation *op);
 
-/// Returns all operations of specified type from \p scffor. If \p withNested is false
-/// nested scf::ForOp regions are ignored.
+/// Returns all operations of specified type from \p scffor. If \p withNested is
+/// false nested scf::ForOp regions are ignored.
 template <typename T>
 SmallVector<T> collectScfForBodyOperations(scf::ForOp scffor, bool withNested) {
   SmallVector<T> ops;
@@ -473,11 +471,12 @@ SmallVector<T> collectScfForBodyOperations(scf::ForOp scffor, bool withNested) {
 }
 
 /// Trace back \p value operand dependencies to \p block arguments.
-SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value, Block* block);
+SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value,
+                                                             Block *block);
 
 template <typename... StopOpTys>
-std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
-  Value value, DenseSet<Value> &visited, Operation *op, Block *block) {
+std::optional<Operation *> valueCalculatedUsingOperationInsideBlockImpl(
+    Value value, DenseSet<Value> &visited, Operation *op, Block *block) {
 
   if (!visited.insert(value).second) {
     return std::nullopt;
@@ -495,7 +494,9 @@ std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
     }
 
     for (auto operand : defOp->getOperands()) {
-      if (auto foundOp = valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(operand, visited, op, block)) {
+      if (auto foundOp =
+              valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(
+                  operand, visited, op, block)) {
         return foundOp;
       }
     }
@@ -508,12 +509,15 @@ std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
 /// Block arguments in \p block are not expanded (loop-carried iter_args are
 /// treated as dependency boundaries).
 template <typename... StopOpTys>
-std::optional<Operation*> valueCalculatedUsingOperationInsideBlock(Value value, Operation *op, Block *block) {
+std::optional<Operation *>
+valueCalculatedUsingOperationInsideBlock(Value value, Operation *op,
+                                         Block *block) {
   if (value.getDefiningOp() == op) {
     return op;
   } else {
     DenseSet<Value> visited;
-    return valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(value, visited, op, block);
+    return valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(
+        value, visited, op, block);
   }
 }
 
@@ -528,8 +532,7 @@ llvm::SmallVector<Value> getTensorOrMemrefShapeDims(PatternRewriter &rewriter,
                                                     Location loc, Value source);
 
 /// Extract the arith value of the arith.constant.
-template <typename T>
-FailureOr<T> getArithConstantOpValue(Value value) {
+template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   auto constOp = dyn_cast<arith::ConstantOp>(value.getDefiningOp());
   if (constOp == nullptr) {
     return failure();
@@ -607,8 +610,7 @@ collectAlignUnits(ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
   return alignUnits;
 }
 
-template <typename IRType, typename CType>
-bool isConst(TypedAttr v, CType t) {
+template <typename IRType, typename CType> bool isConst(TypedAttr v, CType t) {
   if constexpr (std::is_same_v<IRType, FloatAttr>) {
     auto srcTypeAttr = dyn_cast_or_null<FloatAttr>(v);
     return srcTypeAttr == FloatAttr::get(v.getType(), static_cast<double>(t));

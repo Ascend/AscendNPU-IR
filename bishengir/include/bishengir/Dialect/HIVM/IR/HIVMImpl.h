@@ -18,6 +18,7 @@
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
 
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -25,7 +26,8 @@
 namespace mlir {
 namespace hivm {
 
-static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+static constexpr llvm::StringLiteral ExtractLoadStoreAttr =
+    "ExtractedLoadOrStore";
 static constexpr llvm::StringLiteral VgatherDecomposeAttr = "VgatherDecompose";
 
 mlir::func::FuncOp getParentFuncOp(mlir::Value value);
@@ -129,8 +131,11 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
   } else if (auto memSpaceCastOp =
                  v.getDefiningOp<memref::MemorySpaceCastOp>()) {
     return traceDefOp<OpType>(memSpaceCastOp.getSource(), isSingleChain);
-  } else if (auto unrealizedConversionCastOp = v.getDefiningOp<UnrealizedConversionCastOp>())
-    return traceDefOp<OpType>(unrealizedConversionCastOp.getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
+  } else if (auto unrealizedConversionCastOp =
+                 v.getDefiningOp<UnrealizedConversionCastOp>())
+    return traceDefOp<OpType>(
+        unrealizedConversionCastOp
+            .getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
   return std::nullopt;
 }
 
@@ -160,12 +165,10 @@ inline bool usesTraceRootValue(Operation *op, Value traceRoot) {
 }
 
 template <typename OpType>
-void traceDefOpsImpl(Value v,
-                     bool isSingleChain,
-                     TraceResultMode traceMode,
+void traceDefOpsImpl(Value v, bool isSingleChain, TraceResultMode traceMode,
                      SmallVectorImpl<Operation *> &results,
                      SmallVectorImpl<Value> &recursionStack,
-                     TraceDefState &traceDefState,
+                     DenseSet<Value> &visited, TraceDefState &traceDefState,
                      Value traceRoot) {
   if (!v) {
     traceDefState = TraceDefState::NoMatch;
@@ -177,6 +180,14 @@ void traceDefOpsImpl(Value v,
 
   if (traceDefState == TraceDefState::Failed)
     return;
+
+  // Already visited from another branch — skip redundant exploration.
+  // Within a single top-level traceDefOps call, the set of reachable ops
+  // from a Value is deterministic, so re-visiting adds no new information.
+  if (!visited.insert(v).second) {
+    traceDefState = TraceDefState::InstOnly;
+    return;
+  }
 
   if (isSingleChain && getUsersNum(v) != 1) {
     traceDefState = TraceDefState::Failed;
@@ -190,14 +201,14 @@ void traceDefOpsImpl(Value v,
   if (defOp && traceMode == TraceResultMode::TypeMatch) {
     auto core = queryCoreTypeHelper(defOp).value_or(TCoreType::CUBE_OR_VECTOR);
     if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
-         std::is_same_v<OpType, hivm::BatchMmadL1Op>) && (core ==
-        TCoreType::VECTOR)) {
-          traceDefState = TraceDefState::Failed;
-          return;  
+         std::is_same_v<OpType, hivm::BatchMmadL1Op>) &&
+        (core == TCoreType::VECTOR)) {
+      traceDefState = TraceDefState::Failed;
+      return;
     }
   }
 
-  // Avoid infinite recursion without a visited set
+  // Avoid infinite recursion (cycle detection in the same linear path)
   for (Value stacked : recursionStack) {
     if (stacked == v) {
       traceDefState = TraceDefState::InstOnly;
@@ -211,29 +222,29 @@ void traceDefOpsImpl(Value v,
     ~RecursionStackGuard() { recursionStack.pop_back(); }
   } guard{recursionStack};
 
-  auto traceSource = [isSingleChain, traceMode, &results,
-                      &recursionStack, &traceDefState,
-                      traceRoot](Value source) {
+  auto traceSource = [isSingleChain, traceMode, &results, &recursionStack,
+                      &visited, &traceDefState, traceRoot](Value source) {
     traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
-                            recursionStack, traceDefState, traceRoot);
+                            recursionStack, visited, traceDefState, traceRoot);
   };
 
-  auto traceSources = [isSingleChain, traceMode, &results,
-                       &recursionStack, &traceDefState,
+  auto traceSources = [isSingleChain, traceMode, &results, &recursionStack,
+                       &visited, &traceDefState,
                        traceRoot](ArrayRef<Value> sources) {
     TraceDefState sourceTraceDefState = traceDefState;
     for (auto source : sources) {
       TraceDefState targetTraceDefState = TraceDefState::NoMatch;
       traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
-                              recursionStack, targetTraceDefState, traceRoot);
+                              recursionStack, visited, targetTraceDefState,
+                              traceRoot);
       sourceTraceDefState =
           mergeTraceDefState(sourceTraceDefState, targetTraceDefState);
     }
     traceDefState = sourceTraceDefState;
   };
 
-  auto traceSameTraceResultSources = [isSingleChain, traceMode,
-                                      &results, &recursionStack, &traceDefState,
+  auto traceSameTraceResultSources = [isSingleChain, traceMode, &results,
+                                      &recursionStack, &visited, &traceDefState,
                                       traceRoot](ArrayRef<Value> sources) {
     if (sources.empty()) {
       traceDefState = TraceDefState::NoMatch;
@@ -250,8 +261,8 @@ void traceDefOpsImpl(Value v,
       TraceDefState targetTraceDefState = TraceDefState::NoMatch;
       traceDefOpsImpl<OpType>(source,
                               /*isSingleChain=*/isSingleChain,
-                              /*traceMode=*/traceMode,
-                              branchResults, branchRecursionStack,
+                              /*traceMode=*/traceMode, branchResults,
+                              branchRecursionStack, visited,
                               targetTraceDefState, traceRoot);
 
       if (targetTraceDefState == TraceDefState::Failed) {
@@ -299,9 +310,11 @@ void traceDefOpsImpl(Value v,
     return;
   } else if (auto reshapeOp = v.getDefiningOp<tensor::ReshapeOp>()) {
     traceSource(reshapeOp.getSource());
-  } else if (auto memrefCollapseShape = v.getDefiningOp<memref::CollapseShapeOp>()) {
+  } else if (auto memrefCollapseShape =
+                 v.getDefiningOp<memref::CollapseShapeOp>()) {
     traceSource(memrefCollapseShape.getViewSource());
-  } else if (auto tensorCollapseShape = v.getDefiningOp<tensor::CollapseShapeOp>()) {
+  } else if (auto tensorCollapseShape =
+                 v.getDefiningOp<tensor::CollapseShapeOp>()) {
     traceSource(tensorCollapseShape.getSrc());
   } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
     traceSource(subViewOp.getViewSource());
@@ -315,13 +328,16 @@ void traceDefOpsImpl(Value v,
     traceSource(reshapeOp.getViewSource());
   } else if (auto expandShapeOp = v.getDefiningOp<memref::ExpandShapeOp>()) {
     traceSource(expandShapeOp.getViewSource());
-  } else if (auto tensorExpandShapeOp = v.getDefiningOp<tensor::ExpandShapeOp>()) {
+  } else if (auto tensorExpandShapeOp =
+                 v.getDefiningOp<tensor::ExpandShapeOp>()) {
     traceSource(tensorExpandShapeOp->getOperand(0));
-  } else if (auto extractStridedMetadataOp = v.getDefiningOp<memref::ExtractStridedMetadataOp>()) {
+  } else if (auto extractStridedMetadataOp =
+                 v.getDefiningOp<memref::ExtractStridedMetadataOp>()) {
     traceSource(extractStridedMetadataOp.getViewSource());
   } else if (auto castOp = v.getDefiningOp<memref::CastOp>()) {
     traceSource(castOp.getViewSource());
-  } else if (auto reinterpretCastOp = v.getDefiningOp<memref::ReinterpretCastOp>()) {
+  } else if (auto reinterpretCastOp =
+                 v.getDefiningOp<memref::ReinterpretCastOp>()) {
     traceSource(reinterpretCastOp.getViewSource());
   } else if (auto blockArg = dyn_cast_if_present<BlockArgument>(v)) {
     if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
@@ -390,8 +406,10 @@ void traceDefOpsImpl(Value v,
   } else if (auto memSpaceCastOp =
                  v.getDefiningOp<memref::MemorySpaceCastOp>()) {
     traceSource(memSpaceCastOp.getSource());
-  } else if (auto unrealizedConversionCastOp = v.getDefiningOp<UnrealizedConversionCastOp>()) {
-    traceSource(unrealizedConversionCastOp.getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
+  } else if (auto unrealizedConversionCastOp =
+                 v.getDefiningOp<UnrealizedConversionCastOp>()) {
+    traceSource(unrealizedConversionCastOp
+                    .getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
   } else if (traceMode == TraceResultMode::StrictSame) {
     if (Operation *defOp = v.getDefiningOp()) {
       if (usesTraceRootValue(defOp, traceRoot)) {
@@ -425,15 +443,17 @@ traceDefOps(Value v, bool isSingleChain = false,
             TraceResultMode traceMode = TraceResultMode::Default) {
   SmallVector<Operation *> results;
   SmallVector<Value> recursionStack;
+  DenseSet<Value> visited;
   TraceDefState traceDefState = TraceDefState::NoMatch;
-  traceDefOpsImpl<OpType>(v, isSingleChain, traceMode, results,
-                          recursionStack, traceDefState, v);
+  traceDefOpsImpl<OpType>(v, isSingleChain, traceMode, results, recursionStack,
+                          visited, traceDefState, v);
   if (traceDefState == TraceDefState::Failed)
     results.clear();
   return results;
 }
 
-/// Returns whether the mmadlike operand traces back to the same mmad-like op set through a single chain.
+/// Returns whether the mmadlike operand traces back to the same mmad-like op
+/// set through a single chain.
 template <typename MmadLikeOpType>
 typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
                             std::is_same_v<MmadLikeOpType, hivm::MmadMxL1Op> ||

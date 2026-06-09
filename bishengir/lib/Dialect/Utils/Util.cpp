@@ -1,15 +1,19 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
-// CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
 
-// Please refer to the License for details. You may not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
-// See LICENSE in the root of the software repository for the full text of the License.
+// Please refer to the License for details. You may not use this file except in
+// compliance with the License. THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS,
+// WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT
+// LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR
+// PURPOSE. See LICENSE in the root of the software repository for the full text
+// of the License.
 
 //===------------- Util.cpp -----------------------------------------------===//
 //
@@ -34,6 +38,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/FormatVariadic.h"
 
@@ -297,16 +302,15 @@ func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp) {
   return returnOp;
 }
 
-std::optional<bool>
-checkUsersAllWithCondition(Value v, Operation *rootOp,
-                           const std::function<bool(Operation *op)> &condFn,
-                           const std::function<bool(Operation *op)> &skipFn,
-                           DenseSet<Value> &visited) {
-  if (visited.contains(v))
+static std::optional<bool>
+checkUsersAllWithConditionImpl(Value v, Operation *rootOp,
+                               const std::function<bool(Operation *op)> &condFn,
+                               const std::function<bool(Operation *op)> &skipFn,
+                               DenseSet<Value> &visited) {
+  // Already visited this value from another path — skip redundant exploration
+  if (!visited.insert(v).second)
     return std::nullopt;
-  visited.insert(v);
 
-  LLVM_DEBUG(llvm::dbgs() << "[VISITING] " << v << "\n";);
   // Flag initialization is nullopt which means we can't infer flag now
   std::optional<bool> flag = std::nullopt;
 
@@ -329,8 +333,8 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
 
     // For all skipped ops, just continue searching its result
     for (auto opRes : op->getResults()) {
-      auto resCheck =
-          checkUsersAllWithCondition(opRes, rootOp, condFn, skipFn, visited);
+      auto resCheck = checkUsersAllWithConditionImpl(opRes, rootOp, condFn,
+                                                     skipFn, visited);
       if (!resCheck.has_value())
         continue;
 
@@ -346,8 +350,8 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
         continue;
       }
       auto resCheck =
-          checkUsersAllWithCondition(op->getParentOp()->getResult(resNum),
-                                     rootOp, condFn, skipFn, visited);
+          checkUsersAllWithConditionImpl(op->getParentOp()->getResult(resNum),
+                                         rootOp, condFn, skipFn, visited);
       if (!resCheck.has_value())
         continue;
 
@@ -359,6 +363,18 @@ checkUsersAllWithCondition(Value v, Operation *rootOp,
   }
 
   return flag;
+}
+
+std::optional<bool>
+checkUsersAllWithCondition(Value v, Operation *rootOp,
+                           const std::function<bool(Operation *op)> &condFn,
+                           const std::function<bool(Operation *op)> &skipFn) {
+  // Visited set prevents exponential blowup when the same Value is reachable
+  // through multiple paths (e.g. shared scf.if results). The set is shared by
+  // reference across all recursive checkUsersAllWithConditionImpl calls within
+  // this single top-level invocation.
+  DenseSet<Value> visited;
+  return checkUsersAllWithConditionImpl(v, rootOp, condFn, skipFn, visited);
 }
 
 int checkDefsAllWithCondition(Value v,
