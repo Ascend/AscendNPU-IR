@@ -1196,7 +1196,8 @@ struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
                                 PatternRewriter &rewriter) const final {
     Location loc = op.getLoc();
     hivm::CompareMode hivmMode = op.getCompareMode();
-    hfusion::CompareFn hsMode = mapCompareModeHiVMToHFusion(hivmMode);
+    hfusion::CompareFn hsMode =
+        mapCompareModeHiVMToHFusion(hivmMode, op.getIsSigned());
     auto *ctx = op.getContext();
     auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hsMode);
     auto dpsOp = dyn_cast<mlir::DestinationStyleOpInterface>(op.getOperation());
@@ -1212,20 +1213,21 @@ struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
 
 private:
   hfusion::CompareFn
-  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode) const {
+  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode,
+                              bool isSigned) const {
     switch (hivmCmpMode) {
     case hivm::CompareMode::EQ:
       return hfusion::CompareFn::veq;
     case hivm::CompareMode::NE:
       return hfusion::CompareFn::vne;
     case hivm::CompareMode::LE:
-      return hfusion::CompareFn::vle;
+      return isSigned ? hfusion::CompareFn::vle : hfusion::CompareFn::vule;
     case hivm::CompareMode::LT:
-      return hfusion::CompareFn::vlt;
+      return isSigned ? hfusion::CompareFn::vlt : hfusion::CompareFn::vult;
     case hivm::CompareMode::GE:
-      return hfusion::CompareFn::vge;
+      return isSigned ? hfusion::CompareFn::vge : hfusion::CompareFn::vuge;
     case hivm::CompareMode::GT:
-      return hfusion::CompareFn::vgt;
+      return isSigned ? hfusion::CompareFn::vgt : hfusion::CompareFn::vugt;
     }
     llvm_unreachable("Unknown hivm::CompareMode in HiVM -> HFusion mapping");
   }

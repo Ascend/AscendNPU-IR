@@ -1065,6 +1065,24 @@ func.func @test_vcast_op() {
 
 // -----
 
+func.func @test_vcmp_op_with_is_signed_attr() {
+  %src0 = memref.alloc() : memref<2x16xi32>
+  %src1 = memref.alloc() : memref<2x16xi32>
+  %dst = memref.alloc() : memref<2x16xi1>
+
+  hivm.hir.vcmp ins(%src0, %src1 : memref<2x16xi32>, memref<2x16xi32>)
+                outs(%dst : memref<2x16xi1>)
+                compare_mode = #hivm.compare_mode<lt>
+                is_signed = true
+  hivm.hir.vcmp ins(%src0, %src1 : memref<2x16xi32>, memref<2x16xi32>)
+                outs(%dst : memref<2x16xi1>)
+                compare_mode = #hivm.compare_mode<lt>
+                is_signed = false
+  return
+}
+
+// -----
+
 func.func @test_vcmp_op_memref() {
   %a_f16 = memref.alloc() : memref<2x16xf16>
   %b_f16 = memref.alloc() : memref<2x16xf16>
