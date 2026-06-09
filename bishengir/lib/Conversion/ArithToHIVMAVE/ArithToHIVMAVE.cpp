@@ -967,17 +967,17 @@ struct ConstantOpToHivmVCIVCPLowering
       auto extractFunc = APTypeHelper<APInt>::extract;
       if (denseAttr.getElementType().isSignlessInteger())
         extractFunc = APTypeHelper<APInt>::extractZ;
-      long addValue = extractFunc(values[0]);
-      long mulValue = extractFunc(values[1]) - addValue;
+      ElementType addValue = extractFunc(values[0]);
+      ElementType mulValue = extractFunc(values[1]) - addValue;
 
       if (mulValue == 0)
         return std::make_tuple(false, 0, 0, quotients);
 
       for (unsigned i = 0; i < valueCheckRange; ++i) {
         APInt newValue;
-        long remainder = 0;
+        ElementType remainder = 0;
 
-        long scoreDiff = extractFunc(values[i]) - addValue;
+        ElementType scoreDiff = extractFunc(values[i]) - addValue;
         divrem(scoreDiff, mulValue, newValue, remainder);
 
         if (remainder != 0 || newValue.slt(0))
