@@ -152,6 +152,8 @@ protected:
   template <typename OP>
   std::unique_ptr<OperationBase> getLoadStoreOp(OP op, OperationBase *parentOp);
 
+  std::unique_ptr<OperationBase> getDebugOp(DebugOp debugOp, OperationBase *parentOp);
+
   std::unique_ptr<OperationBase>
   getDestinationStyleInterfaceOp(Operation *op, OperationBase *parentOp);
 
