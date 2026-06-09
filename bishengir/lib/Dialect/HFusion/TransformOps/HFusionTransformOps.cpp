@@ -17,6 +17,7 @@
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Linalg/TransformOps/Syntax.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 #include "mlir/Transforms/RegionUtils.h"
 
@@ -874,11 +875,12 @@ inline void getResultsUsedBelow(const SmallVector<Operation *> &ops,
 
 static Operation *buildCopyOpForValue(Location loc, Value from,
                                       transform::TransformRewriter &rewriter) {
-  auto ty = dyn_cast<RankedTensorType>(from.getType());
-  if (!ty || !ty.hasStaticShape())
+  auto rankedTy = dyn_cast<RankedTensorType>(from.getType());
+  if (!rankedTy)
     return nullptr;
-  Value empty = rewriter.create<tensor::EmptyOp>(loc, ty.getShape(),
-                                                 ty.getElementType());
+  SmallVector<OpFoldResult> sizes = tensor::getMixedSizes(rewriter, loc, from);
+  Value empty = rewriter.create<tensor::EmptyOp>(loc, sizes,
+                                                 rankedTy.getElementType());
   return rewriter.create<linalg::CopyOp>(loc, from, empty);
 }
 
