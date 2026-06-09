@@ -140,14 +140,14 @@ std::optional<TCoreType> DebugOp::inferCoreType() {
     return maybeTCoreTypeAttr.value().getTcoretype();
   } else {
     mlir::Value arg = this->getArg();
-    // TODO: After insert load/store refactoring, revert this change and prioritize
-    // getting core type from debug op's info. After refactoring, debug op's core type
-    // will be derived directly from memscope.
-    // first try the definingOp
+    // TODO: After insert load/store refactoring, revert this change and
+    // prioritize getting core type from debug op's info. After refactoring,
+    // debug op's core type will be derived directly from memscope. first try
+    // the definingOp
     Operation *definingOp = arg.getDefiningOp();
     FailureOr<hivm::TCoreType> res;
     if (definingOp) {
-res = getCoreType(definingOp);
+      res = getCoreType(definingOp);
       if (succeeded(res) && (res.value() != hivm::TCoreType::CUBE_OR_VECTOR)) {
         this->setTcoretypeAttr(
             hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
@@ -262,10 +262,10 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
       dstMemRefTy ? utils::tracebackMemRef(getDst()) : getResult(0);
   if (auto dstAllocAddrSpace =
           getOptionalHIVMAddressSpace(dstAllocVal.getType())) {
-    return dstAllocAddrSpace.value() == hivm::AddressSpace::UB ? TCoreType::VECTOR
-                                                              : TCoreType::CUBE;
+    return dstAllocAddrSpace.value() == hivm::AddressSpace::UB
+               ? TCoreType::VECTOR
+               : TCoreType::CUBE;
   }
-  DenseSet<Value> visitedCube;
   auto userAllCube = utils::checkUsersAllWithCondition(
       dstAllocVal, getOperation(),
       [](Operation *op) {
@@ -277,12 +277,10 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
           return true;
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
-      },
-      visitedCube);
+      });
   if (userAllCube.has_value() && userAllCube.value()) {
     return TCoreType::CUBE;
   }
-  DenseSet<Value> visitedVec;
   auto userAllVec = utils::checkUsersAllWithCondition(
       dstAllocVal, getOperation(),
       [](Operation *op) {
@@ -294,8 +292,7 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
           return true;
         auto coreType = hivm::detail::queryCoreTypeHelper(op);
         return !coreType;
-      },
-      visitedVec);
+      });
   if (userAllVec.has_value() && userAllVec.value()) {
     return TCoreType::VECTOR;
   }
