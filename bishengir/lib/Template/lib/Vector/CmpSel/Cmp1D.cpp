@@ -20,7 +20,8 @@
 
 // Compile-time dispatched scalar comparison. Only the branch matching OP is
 // instantiated, so there is zero runtime overhead from unused branches.
-// Supports both vector-vs-vector (VCMP_*) and vector-vs-scalar (VCMPS_*) op codes.
+// Supports both vector-vs-vector (VCMP_*) and vector-vs-scalar (VCMPS_*) op
+// codes.
 template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) bool scalar_compare_op_native(T a, T b) {
   constexpr bool is_valid_op =
@@ -34,15 +35,20 @@ __aiv__ __attribute__((always_inline)) bool scalar_compare_op_native(T a, T b) {
 
   if constexpr (OP == VectorOpTy::VCMP_EQ || OP == VectorOpTy::VCMPS_EQ) {
     return a == b;
-  } else if constexpr (OP == VectorOpTy::VCMP_NE || OP == VectorOpTy::VCMPS_NE) {
+  } else if constexpr (OP == VectorOpTy::VCMP_NE ||
+                       OP == VectorOpTy::VCMPS_NE) {
     return a != b;
-  } else if constexpr (OP == VectorOpTy::VCMP_LT || OP == VectorOpTy::VCMPS_LT) {
+  } else if constexpr (OP == VectorOpTy::VCMP_LT ||
+                       OP == VectorOpTy::VCMPS_LT) {
     return a < b;
-  } else if constexpr (OP == VectorOpTy::VCMP_GT || OP == VectorOpTy::VCMPS_GT) {
+  } else if constexpr (OP == VectorOpTy::VCMP_GT ||
+                       OP == VectorOpTy::VCMPS_GT) {
     return a > b;
-  } else if constexpr (OP == VectorOpTy::VCMP_GE || OP == VectorOpTy::VCMPS_GE) {
+  } else if constexpr (OP == VectorOpTy::VCMP_GE ||
+                       OP == VectorOpTy::VCMPS_GE) {
     return a >= b;
-  } else if constexpr (OP == VectorOpTy::VCMP_LE || OP == VectorOpTy::VCMPS_LE) {
+  } else if constexpr (OP == VectorOpTy::VCMP_LE ||
+                       OP == VectorOpTy::VCMPS_LE) {
     return a <= b;
   }
   return false;
@@ -57,7 +63,8 @@ __aiv__ __attribute__((always_inline)) bool scalar_compare_op_native(T a, T b) {
 //   reassemble into a 32-bit float pattern. The float value is obtained via
 //   reinterpret_cast to avoid any floating-point arithmetic.
 //
-//   IEEE 754 half-precision (16 bits):        IEEE 754 single-precision (32 bits):
+//   IEEE 754 half-precision (16 bits):        IEEE 754 single-precision (32
+//   bits):
 //   +-------+----------+----------+           +-------+----------+----------+
 //   | Sign  | Exponent | Mantissa |           | Sign  | Exponent | Mantissa |
 //   | 1 bit |  5 bits  | 10 bits  |           | 1 bit |  8 bits  | 23 bits  |
@@ -73,13 +80,13 @@ __aiv__ __attribute__((always_inline)) float half_bits_to_float(uint16_t h) {
   uint32_t f_bits;
 
   if (exponent == 0) {
-    // Case 1: exponent all zeros -> zero (mantissa == 0) or subnormal (mantissa != 0).
-    // Subnormal value = (-1)^sign * 2^(-14) * 0.mantissa (no implicit leading 1).
-    // To convert, normalize by shifting mantissa left until the implicit leading 1
-    // appears at bit 10, then adjust exponent accordingly.
+    // Case 1: exponent all zeros -> zero (mantissa == 0) or subnormal (mantissa
+    // != 0). Subnormal value = (-1)^sign * 2^(-14) * 0.mantissa (no implicit
+    // leading 1). To convert, normalize by shifting mantissa left until the
+    // implicit leading 1 appears at bit 10, then adjust exponent accordingly.
     if (mantissa != 0) {
-      // Shift left until bit 10 (0x0400) is set, decrementing exponent per shift
-      // to preserve the numerical value.
+      // Shift left until bit 10 (0x0400) is set, decrementing exponent per
+      // shift to preserve the numerical value.
       while ((mantissa & 0x0400u) == 0) {
         mantissa <<= 1;
         exponent--;
@@ -89,7 +96,8 @@ __aiv__ __attribute__((always_inline)) float half_bits_to_float(uint16_t h) {
       mantissa &= 0x03FFu;
     }
     // Zero: sign | 0 | 0 = correctly signed zero in float.
-    // Subnormal after normalization: adjusted exponent + 112 maps to float range.
+    // Subnormal after normalization: adjusted exponent + 112 maps to float
+    // range.
     f_bits = sign | ((exponent + 112u) << 23) | (mantissa << 13);
   } else if (exponent == 31) {
     // Case 2: exponent all ones (0x1F).
@@ -106,11 +114,13 @@ __aiv__ __attribute__((always_inline)) float half_bits_to_float(uint16_t h) {
   return *reinterpret_cast<float *>(&f_bits);
 }
 
-// Compare two half-precision (fp16) values by converting both to float (fp32) first.
-// Converting to float delegates to native float comparison, which correctly handles
-// all IEEE 754 semantics including signed zero (0.0 == -0.0) and NaN.
+// Compare two half-precision (fp16) values by converting both to float (fp32)
+// first. Converting to float delegates to native float comparison, which
+// correctly handles all IEEE 754 semantics including signed zero (0.0 == -0.0)
+// and NaN.
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) bool compare_half(uint16_t val0, uint16_t val1) {
+__aiv__ __attribute__((always_inline)) bool compare_half(uint16_t val0,
+                                                         uint16_t val1) {
   float fa = half_bits_to_float(val0);
   float fb = half_bits_to_float(val1);
   return scalar_compare_op_native<OP, float>(fa, fb);
@@ -123,7 +133,8 @@ __aiv__ __attribute__((always_inline)) bool compare_half(uint16_t val0, uint16_t
 // Bit indexing: bit 0 = LSB of byte 0, bit 7 = MSB of byte 0,
 //               bit 8 = LSB of byte 1, etc.
 __aiv__ __attribute__((always_inline)) void
-set_result_bit(__ubuf__ uint8_t *dst_byte_ptr, int64_t abs_bit_pos, bool result) {
+set_result_bit(__ubuf__ uint8_t *dst_byte_ptr, int64_t abs_bit_pos,
+               bool result) {
   int64_t byte_pos = abs_bit_pos / BITS_PER_BYTE;
   int64_t bit_in_byte = abs_bit_pos % BITS_PER_BYTE;
   if (result) {
@@ -133,8 +144,9 @@ set_result_bit(__ubuf__ uint8_t *dst_byte_ptr, int64_t abs_bit_pos, bool result)
   }
 }
 
-// Scalar fallback for element-wise comparison of two 1D memrefs (src0[i] OP src1[i]).
-// Used when input memory is not aligned for vectorized vcmpv instructions.
+// Scalar fallback for element-wise comparison of two 1D memrefs (src0[i] OP
+// src1[i]). Used when input memory is not aligned for vectorized vcmpv
+// instructions.
 template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 scalar_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
@@ -152,11 +164,12 @@ scalar_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
     int64_t abs_bit_pos = dst->offset + i * dst->strides[0];
     bool result;
     if constexpr (std::is_same<T, half>::value) {
-      // Half precision: reinterpret as uint16_t and convert to float for comparison
+      // Half precision: reinterpret as uint16_t and convert to float for
+      // comparison
       __ubuf__ uint16_t *src0_u16 =
-        reinterpret_cast<__ubuf__ uint16_t *>(src0->aligned + src0->offset);
+          reinterpret_cast<__ubuf__ uint16_t *>(src0->aligned + src0->offset);
       __ubuf__ uint16_t *src1_u16 =
-        reinterpret_cast<__ubuf__ uint16_t *>(src1->aligned + src1->offset);
+          reinterpret_cast<__ubuf__ uint16_t *>(src1->aligned + src1->offset);
       uint16_t val0 = src0_u16[i * src0->strides[0]];
       uint16_t val1 = src1_u16[i * src1->strides[0]];
       result = compare_half<OP, T>(val0, val1);
@@ -196,9 +209,10 @@ scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
     int64_t abs_bit_pos = dst->offset + i * dst->strides[0];
     bool result;
     if constexpr (std::is_same<T, half>::value) {
-      // Half precision: reinterpret as uint16_t and convert to float for comparison
+      // Half precision: reinterpret as uint16_t and convert to float for
+      // comparison
       __ubuf__ uint16_t *src0_u16 =
-        reinterpret_cast<__ubuf__ uint16_t *>(src0->aligned + src0->offset);
+          reinterpret_cast<__ubuf__ uint16_t *>(src0->aligned + src0->offset);
       uint16_t val0 = src0_u16[i * src0->strides[0]];
       result = compare_half<OP, T>(val0, uscalar);
     } else {
@@ -214,14 +228,14 @@ scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
 
-// Check alignment for vector-vector compare: src0, src1, and dst must be aligned.
+// Check alignment for vector-vector compare: src0, src1, and dst must be
+// aligned.
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
 is_memref_aligned_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
                                 memref_t<__ubuf__ T, 1> *src1,
                                 memref_t<__ubuf__ bool, 1> *dst) {
-  return (is_memref_aligned<T, 1>(src0) &&
-          is_memref_aligned<T, 1>(src1) &&
+  return (is_memref_aligned<T, 1>(src0) && is_memref_aligned<T, 1>(src1) &&
           is_memref_aligned<bool, 1>(dst));
 }
 
@@ -230,8 +244,25 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) bool
 is_memref_aligned_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0,
                                 memref_t<__ubuf__ bool, 1> *dst) {
-  return (is_memref_aligned<T, 1>(src0) &&
-          is_memref_aligned<bool, 1>(dst));
+  return (is_memref_aligned<T, 1>(src0) && is_memref_aligned<bool, 1>(dst));
+}
+
+// Check ub size remained for vector-vector compare: src0, src1 vector access
+// span (repeat-aligned) must not exceed UB limit.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_ub_repeat_space_enough_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                                        memref_t<__ubuf__ T, 1> *src1) {
+  return (is_ub_repeat_space_enough<T, 1>(src0) &&
+          is_ub_repeat_space_enough<T, 1>(src1));
+}
+
+// Check ub size remained for vector-scalar compare: src0 vector access span
+// (repeat-aligned) must not exceed UB limit.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_ub_repeat_space_enough_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0) {
+  return (is_ub_repeat_space_enough<T, 1>(src0));
 }
 
 template <VectorOpTy OP, typename T>
@@ -295,6 +326,41 @@ vector_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
 
 template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
+vector_scalar_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                            memref_t<__ubuf__ T, 1> *src1,
+                            memref_t<__ubuf__ bool, 1> *dst) {
+  const int64_t src_total_size = src0->sizes[0];
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  int64_t main_elements = FLOOR_FACTOR(src_total_size, num_per_repeat);
+
+  if (main_elements > 0) {
+    memref_t<__ubuf__ T, 1> main_src0 = *src0;
+    memref_t<__ubuf__ T, 1> main_src1 = *src1;
+    memref_t<__ubuf__ bool, 1> main_dst = *dst;
+    main_src0.sizes[0] = main_elements;
+    main_src1.sizes[0] = main_elements;
+    main_dst.sizes[0] = main_elements;
+    vector_compare_vv_1d<OP, T>(&main_src0, &main_src1, &main_dst);
+    INTRINSIC(pipe_barrier, PIPE_V);
+  }
+
+  int64_t tail_elements = src_total_size - main_elements;
+  if (tail_elements > 0) {
+    memref_t<__ubuf__ T, 1> tail_src0 = *src0;
+    memref_t<__ubuf__ T, 1> tail_src1 = *src1;
+    memref_t<__ubuf__ bool, 1> tail_dst = *dst;
+    tail_src0.offset = src0->offset + main_elements;
+    tail_src1.offset = src1->offset + main_elements;
+    tail_dst.offset = dst->offset + main_elements;
+    tail_src0.sizes[0] = tail_elements;
+    tail_src1.sizes[0] = tail_elements;
+    tail_dst.sizes[0] = tail_elements;
+    scalar_compare_vv_1d<OP, T>(&tail_src0, &tail_src1, &tail_dst);
+  }
+}
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
 vector_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
                      memref_t<__ubuf__ bool, 1> *dst) {
   check_inputs_of_vector_eltwise_v_1d<T, bool>(src0, dst);
@@ -346,6 +412,35 @@ vector_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
                                    {1}, // src_block_stride
                                    0,   // dst_repeat_stride
                                    {src_repeat_stride}});
+  }
+}
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
+                            memref_t<__ubuf__ bool, 1> *dst) {
+  const int64_t src_total_size = src0->sizes[0];
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  int64_t main_elements = FLOOR_FACTOR(src_total_size, num_per_repeat);
+
+  if (main_elements > 0) {
+    memref_t<__ubuf__ T, 1> main_src0 = *src0;
+    memref_t<__ubuf__ bool, 1> main_dst = *dst;
+    main_src0.sizes[0] = main_elements;
+    main_dst.sizes[0] = main_elements;
+    vector_compare_vs_1d<OP, T>(&main_src0, scalar, &main_dst);
+    INTRINSIC(pipe_barrier, PIPE_V);
+  }
+
+  int64_t tail_elements = src_total_size - main_elements;
+  if (tail_elements > 0) {
+    memref_t<__ubuf__ T, 1> tail_src0 = *src0;
+    memref_t<__ubuf__ bool, 1> tail_dst = *dst;
+    tail_src0.offset = src0->offset + main_elements;
+    tail_dst.offset = dst->offset + main_elements;
+    tail_src0.sizes[0] = tail_elements;
+    tail_dst.sizes[0] = tail_elements;
+    scalar_compare_vs_1d<OP, T>(&tail_src0, scalar, &tail_dst);
   }
 }
 
