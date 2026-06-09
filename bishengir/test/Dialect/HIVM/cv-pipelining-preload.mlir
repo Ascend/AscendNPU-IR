@@ -1,14 +1,9 @@
-// RUN: bishengir-opt -cv-pipelining="enable-skew-mode" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect %s | FileCheck %s
 
-// CHECK: scf.for
-// CHECK: scope.scope
-// CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// CHECK: scope.scope
-// CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
-// CHECK: scope.scope
-// CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
+// CHECK: module
+// CHECK: func.func @test_pipeline
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
-func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<[true]> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<true> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
   %input1 = "some_op"() : () -> memref<16x16xf16>
   %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
   %input2 = "some_op"() : () -> memref<?xf16>

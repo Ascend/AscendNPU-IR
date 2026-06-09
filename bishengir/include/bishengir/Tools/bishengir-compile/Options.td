@@ -530,11 +530,11 @@ def EnableLazyLoading : HIVMOptimizationControlOptions<
 >;
 
 def EnablePreload : BiShengIRCompileOpt<
-  "Enable preload.",
+  "Enable preload (skew mode) for CV-pipelining.",
   "bool",
   "false"
 > {
-  let optionScope = ["A3_ONLY"];
+  let passGroup = ["HIVM"];
   let compileOptionCategories = ["hivmOptCategory"];
 }
 

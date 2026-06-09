@@ -872,7 +872,7 @@ def HIVMVectorizeOps : Pass<"hivm-vectorize-ops", "func::FuncOp"> {
   let summary = "vectorize hivm ops";
   let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
   let dependentDialects = [
-    "func::FuncDialect", "hivm::HIVMDialect", "arith::ArithDialect", 
+    "func::FuncDialect", "hivm::HIVMDialect", "arith::ArithDialect",
     "vector::VectorDialect"
   ];
 }
@@ -920,10 +920,16 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                  Option<"pipelineDepth", "pipeline-depth", "int",
                         /*default=*/"-1",
                         "Specify pipeline depth for cv-pipelining.">,
-                 Option<"enableSkewMode", "enable-skew-mode", "bool",
-                        /*default=*/"false",
-                        "Enable skew-mode cv-pipelining instead of the "
-                        "default unroll-mode.">,
+                 Option<"pipelineMode", "pipeline-mode", "hivm::PipelineMode",
+                        "hivm::PipelineMode::Unroll",
+                        "Pipeline mode for CV-pipelining.",
+                        [{::llvm::cl::values(
+               clEnumValN(hivm::PipelineMode::Unroll, "unroll",
+                          "Default unroll-mode pipelining"),
+               clEnumValN(hivm::PipelineMode::Skew, "skew",
+                          "Preload/skew-mode pipelining"),
+               clEnumValN(hivm::PipelineMode::SSBuf, "ssbuf",
+                          "Reserved for future use (currently same as skew)"))}]>,
                  Option<"enableLazyLoading", "enable-lazy-loading", "bool",
                         /*default=*/"false",
                         "Allow load ops to be cloned into multiple work items "
