@@ -272,7 +272,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
         // CHECK: %[[C8:.*]] = llvm.mlir.constant(8 : index) : i64
         // CHECK: %[[BYTE_OFFSET:.*]] = llvm.udiv %[[BIT_OFFSET]], %[[C8]] : i64
         %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%18], sizes: [32], strides: [1] : memref<i1, #hivm.address_space<ub>> to memref<32xi1, #map4, #hivm.address_space<ub>>
-        ave.hir.masked_store <NORM_B8> %reinterpret_cast[%c0], %17, %16 : memref<32xi1, #map4, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
+        ave.hir.masked_store <NORM_B8> %reinterpret_cast[%c0], %17, %16 {functionType = #ave.func_dist_type<pb32>}: memref<32xi1, #map4, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
       }
     }
     return
