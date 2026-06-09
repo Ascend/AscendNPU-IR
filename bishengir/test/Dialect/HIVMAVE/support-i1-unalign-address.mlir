@@ -1,6 +1,5 @@
 // RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 \
-// RUN: -analyze-vector-layout -analyze-alignment-bitwidth \
-// RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin %s | FileCheck %s
+// RUN: -convert-hivmave-to-ave-intrin %s | FileCheck %s
  func.func @triton_unk_fused__npu_dtype_cast_eq_ge_masked__0_outlined_vf_3(%arg0: memref<128xi1, #hivm.address_space<ub>>, %arg1: memref<128xi64, #hivm.address_space<ub>>, %arg2: memref<128xi64, #hivm.address_space<ub>>, %arg3: memref<128xi64, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
     %0 = llvm.mlir.constant(1 : i64) : i64
     %c0_i64 = arith.constant 0 : i64
@@ -13,7 +12,7 @@
       // CHECK: "hivm_regbaseintrins.intr.hivm.vldas"({{.*}}) : (!llvm.ptr<6>) -> vector<32xi8>
       // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.s32"({{.*}}, {{.*}}, {{.*}}) : (!llvm.ptr<6>, vector<32xi8>, i32) -> !llvm.struct<(vector<64xi32>, vector<32xi8>, ptr<6>)>
       // CHECK: "hivm_regbaseintrins.intr.hivm.movvp"({{.*}}, {{.*}}) : (vector<64xi32>, i32) -> vector<256xi1>
-      %1 = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
+      %1 = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
       %2 = llvm.alloca %0 x !llvm.struct<"vector_2xvl_s64", (array<2 x vector<64xi32>>)> : (i64) -> !llvm.ptr
       %5 = builtin.unrealized_conversion_cast %1 : vector<64xi1> to vector<256xi1>
       func.call @_mlir_ciface_vsel_int64_t(%2, %5, %2, %2) : (!llvm.ptr, vector<256xi1>, !llvm.ptr, !llvm.ptr) -> ()
@@ -41,11 +40,11 @@ func.func @test_load_b8(%arg0: memref<128xi32, #hivm.address_space<ub>>, %arg1: 
     %reinterpret_cast_9 = memref.reinterpret_cast %base_buffer_5 to offset: [%arg4], sizes: [64], strides: [1] : memref<i32, #hivm.address_space<ub>> to memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>>
     %base_buffer_10, %offset_11, %sizes_12, %strides_13 = memref.extract_strided_metadata %arg3 : memref<128xi32, #hivm.address_space<ub>> -> memref<i32, #hivm.address_space<ub>>, index, index, index
     %reinterpret_cast_14 = memref.reinterpret_cast %base_buffer_10 to offset: [%arg4], sizes: [64], strides: [1] : memref<i32, #hivm.address_space<ub>> to memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>>
-    %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {element_alignment_bit_width = 32 : i32} : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi32>
+    %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi32>
     // CHECK: "hivm_regbaseintrins.intr.hivm.vldas"({{.*}}) : (!llvm.ptr<6>) -> vector<32xi8>
     // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.s32"({{.*}}, {{.*}}, {{.*}}) : (!llvm.ptr<6>, vector<32xi8>, i32) -> !llvm.struct<(vector<64xi32>, vector<32xi8>, ptr<6>)>
     // CHECK: "hivm_regbaseintrins.intr.hivm.movvp"({{.*}}, {{.*}}) : (vector<64xi32>, i32) -> vector<256xi1>
-    %res_15 = ave.hir.vload <NORM> %reinterpret_cast_4[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
+    %res_15 = ave.hir.vload <NORM> %reinterpret_cast_4[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
     %res_16 = ave.hir.vload <NORM> %reinterpret_cast_9[%c0] : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi32>
     %4 = ave.hir.pge <ALL> : vector<64xi1>
     %5 = ave.hir.preg.not <b8> %res_15, %4 : vector<64xi1>
@@ -95,9 +94,8 @@ func.func @test_load_b8(%arg0: memref<128xi32, #hivm.address_space<ub>>, %arg1: 
           %19 = affine.apply #map4()[%arg6, %arg7]
           %20 = affine.apply #map5()[%19, %arg8]
           %reinterpret_cast_33 = memref.reinterpret_cast %base_buffer_29 to offset: [%20], sizes: [%14], strides: [1] : memref<i1, #hivm.address_space<ub>> to memref<?xi1, #map2, #hivm.address_space<ub>>
-          // CHECK: "hivm_regbaseintrins.intr.hivm.pintlv.b8"({{.*}}, {{.*}}) : (vector<256xi1>, vector<256xi1>) -> !llvm.struct<(vector<256xi1>, vector<256xi1>)>
           // CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"({{.*}}, {{.*}}, {{.*}}) : (vector<256xi1>, !llvm.ptr<6>, vector<32xi8>) -> !llvm.struct<(vector<32xi8>, ptr<6>)>
-          ave.hir.masked_store <NORM_B8> %reinterpret_cast_33[%c0], %res_28, %18 {ave.unaligned_ub_access = #ave.unaligned_ub_access, hivm.is_continuous} : memref<?xi1, #map2, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
+          ave.hir.masked_store <NORM_B8> %reinterpret_cast_33[%c0], %res_28, %18 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>, hivm.is_continuous} : memref<?xi1, #map2, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
         }
       }
     }
@@ -126,7 +124,7 @@ scf.for %arg5 = %c0 to %c16 step %c1 {
     // CHECK: "hivm_regbaseintrins.intr.hivm.vldas"({{.*}}) : (!llvm.ptr<6>) -> vector<32xi8>
     // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.s32"({{.*}}, {{.*}}, {{.*}}) : (!llvm.ptr<6>, vector<32xi8>, i32) -> !llvm.struct<(vector<64xi32>, vector<32xi8>, ptr<6>)>
     // CHECK: "hivm_regbaseintrins.intr.hivm.movvp"({{.*}}, {{.*}}) : (vector<64xi32>, i32) -> vector<256xi1>
-    %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 8 : i32} : memref<?xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
+    %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 8 : i32, functionType = #ave.func_dist_type<pb32>} : memref<?xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
     %res_6 = ave.hir.vload <BRC_B32> %arg2[%c0] {element_alignment_bit_width = 32 : i32} : memref<1xf32, #hivm.address_space<ub>> into vector<64xf32>
     %8 = ave.hir.vmul %res_6, %res_6, %6 {element_alignment_bit_width = 32 : i32} : vector<64xf32>, vector<64xi1>
     %9 = ave.hir.preg.xor <b8> %res, %4, %6 {element_alignment_bit_width = 32 : i32} : vector<64xi1>
@@ -151,7 +149,7 @@ func.func @test_element_alignment_bit_width(%arg0: memref<64xi1, #hivm.address_s
   %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32} : vector<64xi1>
   
   // CHECK: "hivm_regbaseintrins.intr.hivm.movvp"({{.*}}, {{.*}}) : (vector<64xi32>, i32) -> vector<256xi1>
-  %res = ave.hir.vload <NORM> %arg0[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 32 : i32} : memref<64xi1, #hivm.address_space<ub>> into vector<64xi1>
+  %res = ave.hir.vload <NORM> %arg0[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, #hivm.address_space<ub>> into vector<64xi1>
   
   // Store result to verify the element_alignment_bit_width is correctly propagated
   %1 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32} : vector<64xi1>

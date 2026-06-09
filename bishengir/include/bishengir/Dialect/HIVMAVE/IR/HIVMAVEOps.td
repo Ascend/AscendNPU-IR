@@ -406,9 +406,10 @@ def AVE_VFVCIOp : AVE_LibFnOp<"vci", [Pure,DeclareOpInterfaceMethods<AVELibraryF
 // TODO: Constraint the mask length should be the same between src and res.
 def AVE_VFPregTypeCastOp : AVE_Op<"preg.cast", [Pure]> {
   let summary = "Preg type casting operation.";
-  let arguments = (ins AveMaskType:$src);
+  let arguments = (ins AveMaskType:$src,
+                       AVE_PregCastModeAttr:$preg_cast_mode);
   let results = (outs AveMaskType:$res);
-  let assemblyFormat = "$src attr-dict `:` type($src) `->` type($res)";
+  let assemblyFormat = "$src $preg_cast_mode attr-dict `:` type($src) `->` type($res)";
   let hasCanonicalizer = 1;
 }
 

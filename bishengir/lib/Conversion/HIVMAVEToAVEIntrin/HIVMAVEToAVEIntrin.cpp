@@ -332,6 +332,54 @@ struct HIVMVunpackOpLowering
   }
 };
 
+struct HIVMPregCastOpLowering
+    : public ConvertOpToLLVMPattern<hivmave::VFPregTypeCastOp> {
+  using ConvertOpToLLVMPattern<
+      hivmave::VFPregTypeCastOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(hivmave::VFPregTypeCastOp op,
+                  VFPregTypeCastOp::Adaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto castMode = op.getPregCastMode();
+
+    Value part = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI32IntegerAttr(0));
+    auto srcVLVectorTy = createVLVectorType(rewriter.getI1Type());
+    UnrealizedConversionCastOp castOp =
+        rewriter.create<UnrealizedConversionCastOp>(loc, srcVLVectorTy, op.getSrc());
+    if (castMode == hivmave::PregCastMode::PK4_B32) {
+      Operation *ppackOp = buildPpackOp(
+          loc, part, castOp->getResult(0), rewriter);
+      ppackOp = buildPpackOp(
+          loc, part, ppackOp->getResult(0), rewriter);
+      rewriter.replaceOp(op, ppackOp->getResult(0));
+      return success();
+    } else if (castMode == hivmave::PregCastMode::PK_B32 ||
+               castMode == hivmave::PregCastMode::PK_B16) {
+      Operation *ppackOp = buildPpackOp(
+          loc, part, castOp->getResult(0), rewriter);
+      rewriter.replaceOp(op, ppackOp->getResult(0));
+      return success();
+    } else if (castMode == hivmave::PregCastMode::UNPK4_B8) {
+      Operation *punpackOp = buildPunpackOp(
+          loc, part, castOp->getResult(0), rewriter);
+      punpackOp = buildPunpackOp(
+          loc, part, punpackOp->getResult(0), rewriter);
+      rewriter.replaceOp(op, punpackOp->getResult(0));
+      return success();
+    } else if (castMode == hivmave::PregCastMode::UNPK_B16 ||
+               castMode == hivmave::PregCastMode::UNPK_B8) {
+      Operation *punpackOp = buildPunpackOp(
+          loc, part, castOp->getResult(0), rewriter);
+      rewriter.replaceOp(op, punpackOp->getResult(0));
+      return success();
+    }
+    return failure();
+  }
+};
+
 /// An entry associating the "main" BinaryOp with its instantiations for
 /// vectors.
 template <typename OpTy, typename IntrV128F16OpTy, typename IntrV128S16OpTy,
@@ -718,100 +766,25 @@ static Operation *createPstuOp(Value data, Value dataPtr,
   return asResult;
 }
 
-// Use pintlv + pintlv + pstu(b32)  to support b8 i1 unalign for vector<64xi1>
-// Use pintlv + pstu(b16)  to support b8 i1 unalign for vector<128xi1>
-static Operation *createStoreOpFori1Type(ConversionPatternRewriter &rewriter,
-                                         Location loc, Value src, Value dataPtr,
-                                         uint64_t vecSize) {
-  Value pge = createMaskByPGE(rewriter, loc);
-  auto srcVLVectorTy =
-      hivm_regbaseintrins::createVLVectorType(rewriter.getI1Type());
-  auto intlvType = LLVM::LLVMStructType::getLiteral(
-      rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
-  if (vecSize == 128) {
-    Operation *pintlv =
-        rewriter.create<PintlvB8InstrOp>(loc, intlvType, src, pge);
-    Value res =
-        rewriter.create<LLVM::ExtractValueOp>(loc, pintlv->getResult(0), 0);
-    Operation *pstuOp = createPstuOp(res, dataPtr, rewriter, 16);
-    return pstuOp;
-  } else if (vecSize == 64) {
-    Operation *pintlv =
-        rewriter.create<PintlvB8InstrOp>(loc, intlvType, src, pge);
-    Value res =
-        rewriter.create<LLVM::ExtractValueOp>(loc, pintlv->getResult(0), 0);
-    pintlv = rewriter.create<PintlvB8InstrOp>(loc, intlvType, res, pge);
-    Value lowData =
-        rewriter.create<LLVM::ExtractValueOp>(loc, pintlv->getResult(0), 0);
-    Operation *pstuOp = createPstuOp(lowData, dataPtr, rewriter, 32);
-    return pstuOp;
-  } else {
-    llvm_unreachable("unsupported vecSize!");
-  }
-}
-
 static Operation *createLoadOpFori1Type(Value dataPtr,
                                         PatternRewriter &rewriter,
-                                        int elementAlignment,
-                                        uint64_t vecSize) {
+                                        int elementAlignment) {
   auto loc = dataPtr.getLoc();
   VectorType dstType = VectorType::get(256, rewriter.getI1Type());
   auto asResult = hivm_regbaseintrins::buildVldasOp(dataPtr, rewriter);
   Value USTD = asResult->getResults()[0];
   Value cstZero =
       rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
-  if (elementAlignment == 8) {
-    // Use vldu + movvp + pdintlv to support typei32 i1 unalign
-    if (vecSize == 64) {
-      Operation *usResult = buildVldusPostOp(dataPtr, USTD, cstZero,
-                                             rewriter.getI32Type(), rewriter);
-      Value extractOp =
-          rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
-      Operation *result = buildMovvpOp(loc, dstType, extractOp, rewriter, 32);
-      auto srcVLVectorTy =
-          hivm_regbaseintrins::createVLVectorType(rewriter.getI1Type());
-      auto intlvType = LLVM::LLVMStructType::getLiteral(
-          rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
-      Operation *pdintlv = rewriter.create<PDintlvB8InstrOp>(
-          loc, intlvType, result->getResult(0), result->getResult(0));
-      Value res =
-          rewriter.create<LLVM::ExtractValueOp>(loc, pdintlv->getResult(0), 0);
-      pdintlv = rewriter.create<PDintlvB8InstrOp>(loc, intlvType, res,
-                                                  result->getResult(0));
-      Operation *finalRes =
-          rewriter.create<LLVM::ExtractValueOp>(loc, pdintlv->getResult(0), 0);
-      return finalRes;
-    } else if (vecSize == 128) {
-      // Use vldu + movvp(fp16) + pdintlv to support typei16 i1 unalign
-      Operation *usResult =
-          buildVldusPostOp(dataPtr, USTD, cstZero, rewriter.getI16Type(), rewriter);
-      Value extractOp =
-          rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
-      Operation *result = buildMovvpOp(loc, dstType, extractOp, rewriter, 16);
-      auto srcVLVectorTy =
-          hivm_regbaseintrins::createVLVectorType(rewriter.getI1Type());
-      auto intlvType = LLVM::LLVMStructType::getLiteral(
-          rewriter.getContext(), {srcVLVectorTy, srcVLVectorTy});
-      Operation *pdintlv = rewriter.create<PDintlvB8InstrOp>(
-          loc, intlvType, result->getResult(0), result->getResult(0));
-      Operation *res =
-          rewriter.create<LLVM::ExtractValueOp>(loc, pdintlv->getResult(0), 0);
-      return res;
-    }
-
-  } else if (elementAlignment == 16 || elementAlignment == 32) {
-    // Use vldu + movvp to support b16/b32 i1 unalign
-    Type elementType =
-        elementAlignment == 16 ? rewriter.getI16Type() : rewriter.getI32Type();
-    Operation *usResult =
-        buildVldusPostOp(dataPtr, USTD, cstZero, elementType, rewriter);
-    Value extractOp =
-        rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
-    Operation *result =
-        buildMovvpOp(loc, dstType, extractOp, rewriter, elementAlignment);
-    return result;
-  }
-  return nullptr;
+  // Use vldu + movvp to support b16/b32 i1 unalign
+  Type elementType =
+      elementAlignment == 16 ? rewriter.getI16Type() : rewriter.getI32Type();
+  Operation *usResult =
+      buildVldusPostOp(dataPtr, USTD, cstZero, elementType, rewriter);
+  Value extractOp =
+      rewriter.create<LLVM::ExtractValueOp>(loc, usResult->getResult(0), 0);
+  Operation *result =
+      buildMovvpOp(loc, dstType, extractOp, rewriter, elementAlignment);
+  return result;
 }
 
 struct HIVM2VLLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
@@ -847,33 +820,6 @@ struct HIVM2VLLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
     return success();
   }
 };
-
-unsigned getMaxDataTypeWidths(Operation *op, int elementAlignment) {
-  unsigned elementWidth = 0;
-  assert(op != nullptr);
-  int opElementWidth = getParentOpElementAlignmentBitWidth(op);
-  if (opElementWidth != -1 && opElementWidth != 1) {
-    return static_cast<unsigned>(opElementWidth);
-  }
-  opElementWidth = getOpElementAlignmentBitWidth(op);	 
-  if (opElementWidth != -1 && opElementWidth != 1) { 
-    return static_cast<unsigned>(opElementWidth); 
-  }
-  for (size_t i = 0; i < op->getNumOperands(); ++i) {
-    Value operand = op->getOperand(i);
-    Type optype = operand.getType();
-    if (auto vectorType = mlir::dyn_cast<VectorType>(optype)) {
-      Type elementType = vectorType.getElementType();
-      elementWidth = elementWidth > elementType.getIntOrFloatBitWidth()
-                         ? elementWidth
-                         : elementType.getIntOrFloatBitWidth();
-    }
-  }
-  elementWidth = (elementWidth == 8 || elementWidth == 16 || elementWidth == 32)
-                     ? elementWidth
-                     : static_cast<unsigned>(elementAlignment);
-  return elementWidth;
-}
 
 static Value castToTypeIfNeeded(ConversionPatternRewriter &rewriter,
                                 Location loc, Value v, Type dstType) {
@@ -931,20 +877,8 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       Type elementType = memRefTy.getElementType();
       // use vldus + movvp to support i1 unaligned address
       if (elementType.isInteger(1)) {
-        unsigned elementWidth = 0;
-        for (auto *userOp : load->getUsers()) {
-          // Skip UnrealizedConversionCastOp and look for its users instead
-          while (isa<UnrealizedConversionCastOp>(userOp)) {
-            if (userOp->getUsers().empty()) {
-              break;
-            }
-            userOp = *userOp->getUsers().begin();
-          }
-          elementWidth = getMaxDataTypeWidths(userOp, elementAlignment);
-          break;
-        }
-        auto result =
-            createLoadOpFori1Type(dataPtr, rewriter, elementWidth, vecSize);
+        elementAlignment = getBitWidthFromAttr(load);
+        auto result = createLoadOpFori1Type(dataPtr, rewriter, elementAlignment);
         if (!result) {
           llvm_unreachable("unsupported elementAlignment!");
         }
@@ -1103,7 +1037,13 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     Value mask = getVLRegValueOrSelf(store.getMask(), rewriter);
 
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name) &&
-        !isONEPTDist(dist) && !dElemType.isInteger(1)) {
+        !isONEPTDist(dist)) {
+      if (dElemType.isInteger(1)) {        
+        int pbMode = getBitWidthFromAttr(store);
+        auto asResult = createPstuOp(data, dataPtr, rewriter, pbMode);
+        rewriter.replaceOp(store, asResult);
+        return success();
+      }
       // use vstus + vstas to access UB with unaligned address
       // VSTUS Vd, [Sn], Sm, USTd
       // vstus have no mask operand. vstus will only store the least significant
@@ -1205,13 +1145,9 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       rewriter.replaceOp(store, result);
     } else if (dElemType.isInteger(1)) {
       // if store data is sparse, need to convert compact
-      if (archIs910_95 && (elementAlignment == 16 || elementAlignment == 32)) {
+      if (archIs910_95 &&
+          (elementAlignment == 16 || elementAlignment == 32)) {
         auto asResult = createPstuOp(data, dataPtr, rewriter, elementAlignment);
-        rewriter.replaceOp(store, asResult);
-      } else if (archIs910_95 && elementAlignment == 8 &&
-                 store->hasAttr(UnalignedAttr::name)) {
-        auto asResult =
-            createStoreOpFori1Type(rewriter, loc, data, dataPtr, vecSize);
         rewriter.replaceOp(store, asResult);
       } else {
         dist = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
@@ -3486,7 +3422,8 @@ void populateHIVMAVEToAVEIntrinPatterns(LLVMTypeConverter &converter,
                HIVMInterleaveOpLowering,HIVMDeInterleaveOpLowering,
                HIVMExpdifOpLowering, HIVMMemBarOpLowering,
                HIVMVmullOpLowering,
-               HIVMVpackOpLowering, HIVMVunpackOpLowering
+               HIVMVpackOpLowering, HIVMVunpackOpLowering,
+               HIVMPregCastOpLowering
   >(converter);
   BinaryRegistry::registerPatterns(converter, patterns);
   UnaryRegistry::registerPatterns(converter, patterns);
