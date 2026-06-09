@@ -335,25 +335,28 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
       if (!success && hasUboverflow) {
         // Vector-side fallback tiers for UB overflow. These do not touch
         // multi-buffer and are tried in order until one is applicable.
+        bool clear = false;
         if (config.getEnableVFFusion()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled vffusion");
-          collectedDiagnostics.clear();
+          clear = true;
           config.setEnableVFFusion(false);
         } else if (!config.getDisableVFReachableCheck()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with disabled VF reachable check");
-          collectedDiagnostics.clear();
+          clear = true;
           config.setDisableVFReachableCheck(true);
         } else if (!config.getDisableTightCoupledBuffer()) {
           LDBG("ub overflow detected at attempt "
                << (i + 1) << "/" << tryTimes
                << ", fallback with MixCV GM path");
-          collectedDiagnostics.clear();
+          clear = true;
           config.setDisableTightCoupledBuffer(true);
         }
+        if (clear && i != tryTimes)
+          collectedDiagnostics.clear();
       }
     }
 

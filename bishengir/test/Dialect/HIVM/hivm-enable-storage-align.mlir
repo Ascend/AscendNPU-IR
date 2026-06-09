@@ -372,10 +372,45 @@ func.func @copy_before_collapse() {
    %c = memref.collapse_shape %src [[0], [1, 2]]
      : memref<2x2x4xbf16, #hivm.address_space<ub>>
      into memref<2x8xbf16, #hivm.address_space<ub>>
- 
+
    %dst = memref.alloc() : memref<2x8xbf16, #hivm.address_space<ub>>
    memref.copy %c, %dst
      : memref<2x8xbf16, #hivm.address_space<ub>> to memref<2x8xbf16, #hivm.address_space<ub>>
    return
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func @test_scale_buffer_size_on_align
+  func.func @test_scale_buffer_size_on_align(%n: index) {
+    // CHECK: %[[ALLOC:.*]] = memref.alloc(%{{.*}}) : memref<?x5x3x16x1xi16, #hivm.address_space<ub>>
+    // CHECK: annotation.mark %[[ALLOC]] {buffer_size_in_byte = 1920 : i64}
+    // CHECK-NOT: buffer_size_in_byte = 480
+    %alloc = memref.alloc(%n) : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    annotation.mark %alloc {buffer_size_in_byte = 480 : i64} : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    %rhs = memref.alloc(%n) : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    %dst = memref.alloc(%n) : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    hivm.hir.vsub ins(%alloc, %rhs : memref<?x5x3x4xi16, #hivm.address_space<ub>>, memref<?x5x3x4xi16, #hivm.address_space<ub>>) outs(%dst : memref<?x5x3x4xi16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // CHECK-LABEL: func @test_scale_all_buffer_size_marks
+  func.func @test_scale_all_buffer_size_marks(%n: index) {
+    // CHECK: %[[ALLOC:.*]] = memref.alloc(%{{.*}}) : memref<?x5x3x16x1xi16, #hivm.address_space<ub>>
+    // CHECK: annotation.mark %[[ALLOC]] {buffer_size_in_byte = 1920 : i64}
+    // CHECK-NOT: buffer_size_in_byte = 480
+    %alloc = memref.alloc(%n) : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    annotation.mark %alloc {buffer_size_in_byte = 480 : i64} : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    %lhs = memref.alloc(%n) : memref<?x5x3x4xi16, #hivm.address_space<ub>>
+    hivm.hir.vsub ins(%lhs, %alloc : memref<?x5x3x4xi16, #hivm.address_space<ub>>, memref<?x5x3x4xi16, #hivm.address_space<ub>>) outs(%alloc : memref<?x5x3x4xi16, #hivm.address_space<ub>>)
+    return
+  }
 }
 
