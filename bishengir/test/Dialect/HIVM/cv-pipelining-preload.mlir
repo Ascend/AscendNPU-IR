@@ -1,30 +1,15 @@
-// RUN: bishengir-opt -cv-pipelining="enable-skew-mode" -allow-unregistered-dialect %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="pipeline-mode=skew" -allow-unregistered-dialect %s | FileCheck %s
 
-// CHECK-LABEL: func.func @_attn_fwd
-// CHECK: scf.for %{{.*}} = %{{.*}} to %c160_i32 step %{{.*}}
-// CHECK:   scope.scope : () -> i32 {
-// CHECK:     hivm.hir.mmadL1 {b_transpose, fixpipe_already_inserted = true}
-// CHECK:     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
-// CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 3 : i32, no_inline}
-// CHECK:   scope.scope : () -> (tensor<128xf32>, tensor<128xf32>, tensor<128xf32>) {
-// CHECK:     hivm.hir.vreduce <max>
-// CHECK:     hivm.hir.vreduce <sum>
-// CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 2 : i32, no_inline}
-// CHECK:   scope.scope : () -> i32 {
-// CHECK:     hivm.hir.mmadL1 {fixpipe_already_inserted = true, tile_cube_loop}
-// CHECK:     hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
-// CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 1 : i32, no_inline}
-// CHECK:   scope.scope : () -> tensor<128x128xf32> {
-// CHECK:     hivm.hir.vmul
-// CHECK:     hivm.hir.vadd
-// CHECK:     scope.return
-// CHECK:   } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
-
-func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg8: i32, %arg9: i32, %arg10: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, true, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix", parallel_mode = "simd"} {
-  %c512 = arith.constant 512 : index
+// CHECK: module
+// CHECK: func.func @test_pipeline
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @test_pipeline(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}) attributes {WorkspaceArgIdx = 0 : i16, func_dyn_memref_args = dense<true> : vector<1xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+  %input1 = "some_op"() : () -> memref<16x16xf16>
+  %tensor1 = bufferization.to_tensor %input1 : memref<16x16xf16>
+  %input2 = "some_op"() : () -> memref<?xf16>
+  %initin = memref.reinterpret_cast %input2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf16> to memref<16x16xf16>
+  %offset = "some_op"() : () -> index
+  %c0 = arith.constant 0 : i32
   %true = arith.constant true
   %c128 = arith.constant 128 : index
   %c80_i32 = arith.constant 80 : i32

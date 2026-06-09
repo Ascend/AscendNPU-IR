@@ -1984,8 +1984,11 @@ LogicalResult CVPipelineImpl::run() {
   expandWorkspace(builder);
 
   // Preload pipeline reuse workitems with cvpipeline.
-  if (pipelineMode == CVPipelineMode::Skew) {
-    return markScopesForPreload();
+  if (pipelineMode != CVPipelineMode::Unroll) {
+    auto result = markScopesForPreload();
+    if (succeeded(result))
+      pipelineLoop->erase();
+    return result;
   }
 
   if (failed(createNewLoops())) {
