@@ -396,3 +396,39 @@ module {
     return %0 : tensor<32x64xf32>
   }
 }
+
+// -----
+
+// Test: PullSliceIntoVectorFunction with call directly inside scf.execute_region.
+module {
+  // CHECK-LABEL: func @vf_call_inside_exec(
+  // CHECK-SAME: tensor<16x32xf32>
+  func.func @vf_call_inside_exec(%arg0: tensor<4x8xf32>) -> tensor<4x8xf32>
+      attributes {hivm.vector_function} {
+    %0 = tensor.empty() : tensor<4x8xf32>
+    %1 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
+        ins(%arg0 : tensor<4x8xf32>) outs(%0 : tensor<4x8xf32>) -> tensor<4x8xf32>
+    return %1 : tensor<4x8xf32>
+  }
+
+  // CHECK-LABEL: func @test_call_inside_execute_region(
+  // CHECK: scf.execute_region -> tensor<16x32xf32>
+  // CHECK: %[[CALL:.*]] = func.call @vf_call_inside_exec(%arg0
+  // CHECK: scf.yield %[[CALL]]
+  // CHECK-NOT: tensor.insert_slice
+  // CHECK: return %[[EXEC:.*]]
+  func.func @test_call_inside_execute_region(%arg0: tensor<16x32xf32>) -> tensor<16x32xf32> {
+    %slice = tensor.extract_slice %arg0[0, 0] [4, 8] [2, 1]
+        : tensor<16x32xf32> to tensor<4x8xf32>
+    %exec = scf.execute_region -> tensor<4x8xf32> {
+      // call is directly inside execute_region - this is what the pass handles
+      %b = func.call @vf_call_inside_exec(%slice) {hivm.vector_function}
+          : (tensor<4x8xf32>) -> tensor<4x8xf32>
+      scf.yield %b : tensor<4x8xf32>
+    }
+    %c = tensor.insert_slice %exec into %arg0[0, 0] [4, 8] [2, 1]
+        : tensor<4x8xf32> into tensor<16x32xf32>
+    return %c : tensor<16x32xf32>
+  }
+}
+

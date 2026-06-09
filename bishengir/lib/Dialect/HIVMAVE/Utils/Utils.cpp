@@ -156,11 +156,16 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
 
 bool hivmave::isLoadStoreIndexAligned(Value memrefVal,
                                       mlir::Operation::operand_range indices) {
-  auto srcMemRefType = mlir::cast<MemRefType>(memrefVal.getType());
+  auto srcMemRefType = mlir::dyn_cast<MemRefType>(memrefVal.getType());
+  if (!srcMemRefType)
+    return false;
+  Attribute memorySpace = srcMemRefType.getMemorySpace();
+  if (!memorySpace || !isa<hivm::AddressSpaceAttr>(memorySpace))
+    return false;
   int64_t elemBits = static_cast<int64_t>(
       getElementTypeOrSelf(srcMemRefType).getIntOrFloatBitWidth());
   int64_t hwAlignBits = static_cast<int64_t>(
-      hivm::getHWAlignBytes(srcMemRefType.getMemorySpace()) * 8);
+      hivm::getHWAlignBytes(memorySpace) * 8);
   if (!isMemrefAligned(memrefVal, hwAlignBits, elemBits)) {
     return false;
   }

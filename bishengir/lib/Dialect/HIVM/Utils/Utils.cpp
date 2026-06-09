@@ -62,7 +62,8 @@ namespace hivm {
 
 namespace {
 /// Find the root memerf alloc for the input block argument.
-FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
+FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg,
+                                                     bool emitError) {
   auto *bbOwner = bbArg.getOwner();
   if (!bbOwner) {
     llvm_unreachable("parentOp doesn't exist");
@@ -76,30 +77,34 @@ FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
     if (!operand) {
       return failure();
     }
-    return getMemRefAlloc(operand->get());
+    return getMemRefAlloc(operand->get(), emitError);
   }
+  if (!emitError)
+    return failure();
   return bbParentOp->emitError("Unsupported block op type");
 }
 
 /// Find the root memerf alloc for the OpResult.
-FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
+FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result,
+                                                bool emitError) {
   return TypeSwitch<Operation *, FailureOr<memref::AllocOp>>(
              result.getDefiningOp())
       .Case<memref::AllocOp>([&](memref::AllocOp op) { return op; })
       // We could pursue view_source of current traced op with
       // viewLikeOpInterface trait.
       .Case<mlir::ViewLikeOpInterface>([&](ViewLikeOpInterface viewLikeOp) {
-        return getMemRefAlloc(viewLikeOp.getViewSource());
+        return getMemRefAlloc(viewLikeOp.getViewSource(), emitError);
       })
       .Case<mlir::LoopLikeOpInterface>([&](LoopLikeOpInterface loopOp) {
-          Value initSource = loopOp.getInits()[result.getResultNumber()];
-        return getMemRefAlloc(initSource);
+        Value initSource = loopOp.getInits()[result.getResultNumber()];
+        return getMemRefAlloc(initSource, emitError);
       })
       .Case<bufferization::ToTensorOp>([&](bufferization::ToTensorOp op) {
-        return getMemRefAlloc(op.getMemref());
+        return getMemRefAlloc(op.getMemref(), emitError);
       })
       .Default([&](Operation *op) {
-        op->emitOpError("Unsupported op for finding the root alloc.");
+        if (emitError)
+          op->emitOpError("Unsupported op for finding the root alloc.");
         return failure();
       });
 }
@@ -148,13 +153,13 @@ LogicalResult inferAndPropagateMemScopeForAlloc(memref::AllocOp op,
   return success();
 }
 
-FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
+FailureOr<memref::AllocOp> getMemRefAlloc(Value operand, bool emitError) {
   if (auto bbArg = dyn_cast<BlockArgument>(operand)) {
-    return getMemRefForBlockArgument(bbArg);
+    return getMemRefForBlockArgument(bbArg, emitError);
   }
   auto result = dyn_cast<OpResult>(operand);
   assert(result != nullptr);
-  return getMemRefForOpResult(result);
+  return getMemRefForOpResult(result, emitError);
 }
 
 SmallVector<Value> getMemRefAllocs(Value operand) {

@@ -63,3 +63,31 @@ func.func @init_not_empty(%lb: index, %ub: index, %step: index) -> tensor<64xf32
   }
   return %res : tensor<64xf32>
 }
+
+// -----
+
+func.func @block_arg_offset_does_not_dominate_dps(%lb: index, %ub: index,
+                                                  %step: index)
+    -> tensor<64xf32> {
+  %init = "some_value"() : () -> (tensor<64xf32>)
+  %add_src0 = "some_value"() : () -> (tensor<16xf32>)
+  %add_src1 = "some_value"() : () -> (tensor<16xf32>)
+  %offset_init = "some_index"() : () -> index
+  %res:2 = scf.for %arg0 = %lb to %ub step %step
+      iter_args(%arg1 = %init, %arg2 = %offset_init)
+      -> (tensor<64xf32>, index) {
+    // CHECK-LABEL: func.func @block_arg_offset_does_not_dominate_dps
+    // CHECK: scf.for
+    // CHECK: linalg.add
+    // CHECK-NOT: tensor.extract_slice
+    // CHECK: tensor.insert_slice
+    %empty = tensor.empty() : tensor<16xf32>
+    %1 = linalg.add ins(%add_src0, %add_src1 : tensor<16xf32>, tensor<16xf32>)
+        outs(%empty : tensor<16xf32>) -> tensor<16xf32>
+    %inserted_slice = tensor.insert_slice %1 into %arg1[%arg2] [16] [1]
+        : tensor<16xf32> into tensor<64xf32>
+    %next_offset = "some_calculation"(%arg2) : (index) -> index
+    scf.yield %inserted_slice, %next_offset : tensor<64xf32>, index
+  }
+  return %res#0 : tensor<64xf32>
+}

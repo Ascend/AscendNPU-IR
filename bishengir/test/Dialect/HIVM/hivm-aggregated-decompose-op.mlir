@@ -20,8 +20,8 @@ func.func @test_static_concat_last_dim() -> memref<136x4096xf32> {
 // -----
 // AFTERALIGN-LABEL: func @test_static_concat_unlast_dim
 func.func @test_static_concat_unlast_dim() -> memref<256x2048xf32> {
-  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32> 
-  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32> 
+  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x2048xf32>
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<256x2048xf32>
   // CHECK:  %[[SUBVIEW:.*]] = memref.subview %alloc_1[0, 0] [128, 2048] [1, 1] : memref<256x2048xf32> to memref<128x2048xf32, strided<[2048, 1]>>
   // CHECK:  hivm.hir.copy ins(%[[alloc:.*]] : memref<128x2048xf32>) outs(%[[subview:.*]] : memref<128x2048xf32, strided<[2048, 1]>>)
@@ -34,8 +34,8 @@ func.func @test_static_concat_unlast_dim() -> memref<256x2048xf32> {
 // -----
 // AFTERALIGN-LABEL: func @test_static_concat_middle_dim
 func.func @test_static_concat_middle_dim() -> memref<128x768x2048xf32> {
-  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x128x2048xf32> 
-  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x256x2048xf32> 
+  %alloc = memref.alloc() {alignment = 64 : i64} : memref<128x128x2048xf32>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<128x256x2048xf32>
   %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<128x384x2048xf32>
   %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<128x768x2048xf32>
   // CHECK:  %[[SUBVIEW:.*]] = memref.subview %alloc_2[0, 0, 0] [128, 128, 2048] [1, 1, 1] : memref<128x768x2048xf32> to memref<128x128x2048xf32, strided<[1572864, 2048, 1]>>
@@ -51,8 +51,8 @@ func.func @test_static_concat_middle_dim() -> memref<128x768x2048xf32> {
 // -----
 // AFTERALIGN-LABEL: func @test_dyn_concat
 func.func @test_dyn_concat(%dim0 : index, %dim1: index) {
-  %alloc = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32> 
-  %alloc_0 = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32> 
+  %alloc = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32>
+  %alloc_0 = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32>
   %alloc_1 = memref.alloc(%dim1) {alignment = 64 : i64} : memref<?x2048xf32>
   %alloc_2 = memref.alloc(%dim0) {alignment = 64 : i64} : memref<?x2048xf32>
   // CHECK: %[[SUBVIEW:.*]] = memref.subview %alloc_2[0, 0] [%arg0, 2048] [1, 1] : memref<?x2048xf32> to memref<?x2048xf32, strided<[2048, 1]>>
@@ -62,7 +62,7 @@ func.func @test_dyn_concat(%dim0 : index, %dim1: index) {
   // CHECK: %[[SUBVIEW_4:.*]] = memref.subview %alloc_2[%0, 0] [%arg1, 2048] [1, 1] : memref<?x2048xf32> to memref<?x2048xf32, strided<[2048, 1], offset: ?>>
   // CHECK: hivm.hir.copy ins(%[[SUBVIEW_1:.*]] : memref<?x2048xf32>) outs(%[[SUBVIEW_4:.*]] : memref<?x2048xf32, strided<[2048, 1], offset: ?>>)
   hivm.hir.vconcat dim(0) ins(%alloc, %alloc_0, %alloc_1 : memref<?x2048xf32>, memref<?x2048xf32>, memref<?x2048xf32>) outs(%alloc_2 : memref<?x2048xf32>)
-  return 
+  return
 }
 
 // -----
@@ -147,7 +147,7 @@ func.func @test_load(%arg0: memref<256x128xf32, #hivm.address_space<gm>>) {
   // BEFOREALIGN: hivm.hir.vbrc
   // BEFOREALIGN: hivm.hir.load ins({{.*}} : memref<256x128xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32
   hivm.hir.load ins(%arg0: memref<256x128xf32, #hivm.address_space<gm>>) outs(%alloc: memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst_0 : f32 left_padding_num = %c0 : index init_out_buffer = true
-  return 
+  return
 }
 
 //===----------------------------------------------------------------------===//
@@ -668,6 +668,7 @@ func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
   %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
   return %0 : tensor<16x32xf16>
 }
+
 // -----
 // When the nd2nz dst is a subview of an alloc carrying an
 // `annotation.mark` with the `hivm.cv_pipelined_multi_buffer` attribute
@@ -804,8 +805,8 @@ func.func @nd2nz_unmarked_alloc_subview_targets_whole_alloc(%arg0: memref<?x?x?x
 
 // -----
 // When there is no slot-dim pattern (dst IS the alloc), the vbrc still
-// targets the alloc — legacy behavior, so we do not regress
-// non-pipelined nd2nz where the alloc itself is the single slot.
+// targets the alloc. This preserves legacy behavior for non-pipelined nd2nz
+// where the alloc itself is the single slot.
 //
 // AFTERLAYOUT-LABEL: func @nd2nz_no_slot_dim_targets_whole_alloc
 func.func @nd2nz_no_slot_dim_targets_whole_alloc(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %cond: i1) {

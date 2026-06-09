@@ -43,6 +43,18 @@ using namespace mlir;
 using namespace hivm;
 using namespace mlir::hivmave;
 
+static bool isSupportedCreateMaskOp(vector::CreateMaskOp op) {
+  auto maskType = op.getResult().getType();
+  if (op.getOperands().size() == 1)
+    return true;
+  for (auto [idx, operand] : llvm::enumerate(op.getOperands().drop_back())) {
+    auto constBound = getConstantIntValue(operand);
+    if (!constBound || *constBound != maskType.getDimSize(idx))
+      return false;
+  }
+  return true;
+}
+
 template <typename SourceOp, typename VFAlignedOp, typename... Args>
 static FailureOr<Value> buildHIVMVFLdOrSTOp(SourceOp op,
                                             PatternRewriter &rewriter,
@@ -219,7 +231,10 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
                                 PatternRewriter &rewriter) const override {
     auto loc = readOp.getLoc();
     auto source = readOp.getSource();
-    MemRefType srcType = cast<MemRefType>(source.getType());
+    auto srcType = dyn_cast<MemRefType>(source.getType());
+    if (!srcType)
+      return rewriter.notifyMatchFailure(
+          readOp, "only memref transfer_read is supported");
     Type elementType = srcType.getElementType();
     int64_t dataWidth = srcType.getElementTypeBitWidth();
     VectorType vecType = readOp.getVectorType();
@@ -272,6 +287,8 @@ struct TransferWriteOpPattern
       return false;
     }
     auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getSource().getType());
+    if (!memrefTy)
+      return false;
     auto [strides, offset] = getStridesAndOffset(memrefTy);
     auto loc = writeOp.getLoc();
     Value strideConst = rewriter.create<arith::ConstantOp>(
@@ -289,7 +306,10 @@ struct TransferWriteOpPattern
     auto loc = writeOp.getLoc();
     VectorType vecType = writeOp.getVectorType();
     Value source = writeOp.getSource();
-    MemRefType srcType = cast<MemRefType>(source.getType());
+    auto srcType = dyn_cast<MemRefType>(source.getType());
+    if (!srcType)
+      return rewriter.notifyMatchFailure(
+          writeOp, "only memref transfer_write is supported");
     Type elementType = vecType.getElementType();
     int64_t dataWidth = vecType.getElementTypeBitWidth();
     Value vector = writeOp.getVector();
@@ -843,15 +863,14 @@ struct CreateMaskOpConversionPattern
     auto maskDimSizes = op.getOperands();
     auto origMaskType = op.getResult().getType();
 
-    // assert the mask is a 1-D vector.
-    if (maskDimSizes.size() != 1) {
+    if (!isSupportedCreateMaskOp(op))
       return emitError(loc, "mask should be a 1-D vector.");
-    }
 
     auto resultMaskType = VectorType::get(
-        SmallVector<int64_t>{origMaskType.getShape()[0]}, rewriter.getI1Type());
+        SmallVector<int64_t>{origMaskType.getShape().back()},
+        rewriter.getI1Type());
     VFPltOp newOp = rewriter.create<hivmave::VFPltOp>(
-        loc, resultMaskType, rewriter.getIndexType(), maskDimSizes[0]);
+        loc, resultMaskType, rewriter.getIndexType(), maskDimSizes.back());
     if (utils::getAnnotateOpWithAttr(op.getResult(), utils::maskOpIdx)) {
       annotation::MarkOp mark = dyn_cast<annotation::MarkOp>(
           utils::getAnnotateOpWithAttr(op.getResult(), utils::maskOpIdx)
@@ -860,7 +879,13 @@ struct CreateMaskOpConversionPattern
           utils::maskOpIdx,
           mark->template getAttrOfType<IntegerAttr>(utils::maskOpIdx));
     }
-    rewriter.replaceOp(op, newOp.getResults()[0]);
+    if (maskDimSizes.size() == 1) {
+      rewriter.replaceOp(op, newOp.getResults()[0]);
+    } else {
+      auto shapeCast = rewriter.create<vector::ShapeCastOp>(
+          loc, origMaskType, newOp.getResults()[0]);
+      rewriter.replaceOp(op, shapeCast.getResult());
+    }
 
     return success();
   }
@@ -965,11 +990,20 @@ struct VectorToHIVMAVEPass
     target.addLegalDialect<hivmave::AVEDialect, arith::ArithDialect,
                            BuiltinDialect, annotation::AnnotationDialect>();
     target.addIllegalOp<vector::LoadOp, vector::StoreOp, vector::MaskedStoreOp,
-                        vector::MaskedLoadOp, vector::CreateMaskOp,
-                        vector::ConstantMaskOp, vector::BroadcastOp,
-                        vector::TransferReadOp, vector::TransferWriteOp,
-                        vector::GatherOp, vector::ScatterOp,
-                        vector::ShapeCastOp, vector::ReductionOp>();
+                        vector::MaskedLoadOp, vector::ConstantMaskOp,
+                        vector::BroadcastOp, vector::GatherOp,
+                        vector::ScatterOp, vector::ShapeCastOp,
+                        vector::ReductionOp>();
+    target.addDynamicallyLegalOp<vector::CreateMaskOp>(
+        [](vector::CreateMaskOp op) { return !isSupportedCreateMaskOp(op); });
+    target.addDynamicallyLegalOp<vector::TransferReadOp>(
+        [](vector::TransferReadOp op) {
+          return !isa<MemRefType>(op.getSource().getType());
+        });
+    target.addDynamicallyLegalOp<vector::TransferWriteOp>(
+        [](vector::TransferWriteOp op) {
+          return !isa<MemRefType>(op.getSource().getType());
+        });
     target.addLegalOp<arith::ConstantOp>();
 
     moduleOp->walk([&](func::FuncOp funcOp) {
@@ -983,6 +1017,16 @@ struct VectorToHIVMAVEPass
       }
       RewritePatternSet patterns(&getContext());
       hivmave::populateVectorToHIVMAVEConversionPatterns(patterns);
+      bool hasTensorTransfer = false;
+      funcOp.walk([&](Operation *op) {
+        if (auto readOp = dyn_cast<vector::TransferReadOp>(op)) {
+          hasTensorTransfer |= !isa<MemRefType>(readOp.getSource().getType());
+        } else if (auto writeOp = dyn_cast<vector::TransferWriteOp>(op)) {
+          hasTensorTransfer |= !isa<MemRefType>(writeOp.getSource().getType());
+        }
+      });
+      if (hasTensorTransfer)
+        return;
       if (failed(applyPartialConversion(funcOp, target, std::move(patterns)))) {
         signalPassFailure();
       }
