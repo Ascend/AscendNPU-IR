@@ -258,6 +258,28 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
 }
 
+static void
+hivmWorkspacePipeline(OpPassManager &pm,
+                      const HIVMPipelineOptions &hivmPipelineOptions) {
+  // keep this for the debug feature (device print, etc.)
+  BindWorkSpaceArgOptions options;
+  options.enableSubWorkspace = true;
+  pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass(options));
+  PlanMemoryOptions planMemoryOption;
+  planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
+  planMemoryOption.enableGlobalReuse =
+      hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
+  planMemoryOption.enablePrintMemoryAllocatedSize =
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
+  if (hivmPipelineOptions.enableTritonKernelCompile)
+    // Must place after plan-workspace-memory
+    pm.addPass(createInsertInferWorkSpaceSizeFuncPass());
+  pm.addPass(mlir::createMemrefExtLoweringPass());
+}
+
 static void hivmPreBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
@@ -374,6 +396,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   TileAndBindSubBlockOptions tileOptions;
   tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
   pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableCodeMotion) {

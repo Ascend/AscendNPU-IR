@@ -64,6 +64,7 @@ class DimensionAnalyzerOptions {
 public:
   DimensionAnalyzerOptions() = default;
   bool registerBased = false;
+  bool usePreOrderWalkTraversal = true;
 };
 
 /// The DimensionAnalyzer class implements the logic to analyze dimensions
@@ -112,6 +113,9 @@ public:
   ///                 structurally equivalent (e.g., before and after concat).
   bool areDimensionsEqual(Dimension lhs, Dimension rhs, bool isStrict = false);
 
+  /// Returns true if \p v already has a tracked argument-ref entry.
+  bool hasValueRef(Value v) const;
+
 protected:
   /// Helper to represent connected dimensions.
   using DimensionIndex = SmallVector<int64_t>;
@@ -127,9 +131,7 @@ protected:
 
   /// Processes the arguments using BFS traversal.
   virtual void processBFS();
-
-  /// Unifies groups of segments.
-  void unifyGroups();
+  virtual void processPreOrderWalk();
 
   void propagateConnection(int parent, int child);
   void propagateConnection();
@@ -138,7 +140,7 @@ protected:
   // Logging and debugging purposes
   void markAttributes();
   /// Utility functions.
-  int64_t allocateArguments(int rank, ArrayRef<int64_t> dimensionRef);
+  virtual int64_t allocateArguments(int rank, ArrayRef<int64_t> dimensionRef);
 
   /// Updates the previous type of a value.
   void updatePreviousType(const Value &val);
@@ -148,6 +150,7 @@ protected:
   void collapsePropagateOrVerify(Operation *op, const Value &refVal);
   void collapsePropagateOrVerify(const Value &newVal, const Value &arg);
   void initCollapseOrVerify(const Value &val, int64_t refPtr);
+  void mergeArgumentRefs(int64_t lhsRefPtr, int64_t rhsRefPtr);
 
   // Receive an argument value and adjust it
   void processArgument(Value arg);
@@ -155,7 +158,7 @@ protected:
   /// Creates dummy references if they don't exist.
   void createDummyRefIfNotExist(ArrayRef<Value> values);
 
-  /// Processes the arguments before running BFS.
+  /// Processes the arguments before running traversal.
   virtual void combineInferable();
 
   /// Shape element binding and materialization system.
@@ -209,7 +212,7 @@ protected:
   // Processors for operations
   //===--------------------------------------------------------------------===//
 
-  /// Processes an individual operation during BFS.
+  /// Processes an individual operation during traversal.
   virtual bool processOperation(Operation *op, Value current);
 
   /// Processes element-wise operations.
@@ -252,12 +255,24 @@ protected:
   void processInsertOp(tensor::InsertOp insertOp);
   void processInsertSliceOp(tensor::InsertSliceOp insertSliceOp);
 
+  /// Union two SSA values in the value-group DSU.
+  ///
+  /// This DSU is value-level (over \c valueToDimIndicesIndex_ ids) and is
+  /// intentionally separate from dimension-level DSUs (\c equivalentDsu_ and
+  /// \c structuralDsu_).
+  void joinValueGroup(Value a, Value b);
+
+  /// Get the value-group DSU representative index for \p v.
+  ///
+  /// Returns \c -1 if \p v is not an allowed shaped type for this analyzer.
+  int64_t getValueGroupIndex(Value v);
+
   //===--------------------------------------------------------------------===//
   // Union-find handler
   //===--------------------------------------------------------------------===//
 
-  void joinShape(int a, int b);
-  void joinCollapser(int a, int b);
+  virtual void joinShape(int a, int b);
+  virtual void joinCollapser(int a, int b);
   void disconnect(int a, int b);
   bool isConnected(int a, int b);
 
@@ -286,8 +301,9 @@ protected:
   /// not found
   std::optional<OpFoldResult> getElementShape(int elemIndex);
 
-  SmallVector<int64_t> getArgumentRef(Value v) const;
-  SmallVector<int64_t> getArgumentRefOrCreateDummy(Value v);
+  SmallVector<int64_t> getValueDimIndices(Value v) const;
+  /// Deprecated: use `createDummyRefIfNotExist` before `getValueDimIndices`.
+  [[deprecated]] SmallVector<int64_t> getValueDimIndicesOrCreateDummy(Value v);
 
 protected:
   Operation *op_;
@@ -298,44 +314,49 @@ protected:
   SmallVector<Operation *> outList_;
   int64_t argumentTotalLength_ = 0;
   SmallVector<ConnectedLeftRight, 4> isConnected_;
-  SmallVector<DimensionIndex> argumentsRef_;
-  DenseMap<Value, int> argumentsRefPointer_;
+  SmallVector<DimensionIndex> dimIndices_;
+  DenseMap<Value, int> valueToDimIndicesIndex_;
   DenseMap<Value, ShapedType> previousType_;
+  ArgumentIndex dimIdxToArgIdx_;
 
-  // +----------------------------------+  +----------------------------------+
-  // |%arg0 = <AxBxCxf32>               |  |%arg1 = <AxDxCxf32>               |
-  // |solverShapeElem =     [S0, S1, S2]|  |solverShapeElem =     [S0, S3, S2]|
-  // |solverCollapserElem = [S0, S1, S2]|  |solverCollapserElem = [S0, S1, S2]|
-  // +------------+---------------------+  +--------------------+-------------+
+  // +-------------------------------+  +----------------------------+
+  // |%arg0 = <AxBxCxf32>            |  |%arg1 = <AxDxCxf32>         |
+  // |equivalentDsu = [S0, S1, S2]|  |  |equivalentDsu = [S0, S3, S2]|
+  // |structuralDsu = [S0, S1, S2]|  |  |structuralDsu = [S0, S1, S2]|
+  // +------------+------------------+  +-----------------------+----+
   //              |                                             |
   //              |                                             |
   //              |                                             |
   //              |   +-------------------------------------+   |
   //              |   |%concat = %arg0 + %arg1 : <AxExCxf32>|   |
-  //              +-->|solverShapeElem =     [S0, S4, S2]   |<--+
-  //                  |solverCollapserElem = [S0, S1, S2]   |
+  //              +-->|equivalentDsu = [S0, S4, S2]         |<--+
+  //                  |structuralDsu = [S0, S1, S2]         |
   //                  +------------------+------------------+
   //                                     |
   //                                     |
-  //                    +----------------v-----------------+
-  //                    |%unary: %concat <AxExCxf32>       |
-  //                    |solverShapeElem =     [S0, S4, S2]|
-  //                    |solverCollapserElem = [S0, S1, S2]|
-  //                    +----------------------------------+
+  //                    +----------------v------------+
+  //                    |%unary: %concat <AxExCxf32>  |
+  //                    |equivalentDsu = [S0, S4, S2] |
+  //                    |structuralDsu = [S0, S1, S2] |
+  //                    +-----------------------------+
   //
-  // after analysis solverCollapserElem_ considers B, D and E as S1
-  // but the solverShapeElem_ distinguish the S1, S3, and S4
+  // after analysis structuralDsu_ considers B, D and E as S1
+  // but the equivalentDsu_ distinguish the S1, S3, and S4
   // thats how when we want to analyze the max dimension,
   // we do max across the S1's owner axis
   // thus, giving the max dynamic as max(S1, S3, S4)
   //
   // This has type inference, weak union find
-  std::unique_ptr<ExtendedUnionFind> solverShapeElem_;
+  std::unique_ptr<ExtendedUnionFind> equivalentDsu_;
 
   // This has no type inference, strong collapse union find
   // Related: concatOp, padOp, extractSliceOp
-  std::unique_ptr<SimpleUnionFind> solverCollapserElem_;
-  std::unique_ptr<SimpleUnionFind> solverSegments_;
+  std::unique_ptr<SimpleUnionFind> structuralDsu_;
+
+  // Value-level DSU over valueToDimIndicesIndex_ ids.
+  // Used by derived analyzers (e.g. HIVM) for grouping SSA values that should
+  // share downstream decisions (such as tiling group bucketing).
+  std::unique_ptr<SimpleUnionFind> valueGroupDSU_;
 
   DenseMap<int64_t, Value> reverseShapeElem_;
   bool bindUsingTensorDim = true;
