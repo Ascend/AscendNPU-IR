@@ -37,6 +37,7 @@ static constexpr llvm::StringLiteral toBeCancelOutInsertSlice = "to_be_canceled_
 inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
 inline constexpr llvm::StringLiteral tileAndSliceFailure =
     "tile_and_slice_failure";
+constexpr llvm::StringLiteral tiledOp = "tiled_op";
 static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 

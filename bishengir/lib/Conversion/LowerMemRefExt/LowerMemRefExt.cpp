@@ -153,6 +153,16 @@ std::optional<int64_t> getLocalWorkSpaceSize(ModuleOp moduleOp) {
 void MemrefExtLowering::runOnOperation() {
   ModuleOp moduleOp = cast<ModuleOp>(getOperation());
 
+  moduleOp->walk([&](func::FuncOp funcOp) {
+    auto subWorkspaceArg =
+      hacc::utils::getBlockArgument(funcOp, hacc::KernelArgType::kSubWorkspace);
+    if (subWorkspaceArg) {
+      if (!subWorkspaceArg->use_empty())
+        return signalPassFailure();
+      funcOp.eraseArgument(subWorkspaceArg->getArgNumber());
+    }
+  });
+
   auto localWorkSpaceSize = getLocalWorkSpaceSize(moduleOp);
   if (!localWorkSpaceSize.has_value())
     return;

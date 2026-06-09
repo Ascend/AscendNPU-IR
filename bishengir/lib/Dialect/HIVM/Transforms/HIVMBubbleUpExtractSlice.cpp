@@ -82,7 +82,8 @@ public:
         if (isa<BlockArgument>(extractSrc)) {
           return WalkResult::advance();
         }
-        if (failed(findContainingSubblockLoop(extractSrc.getDefiningOp()))) {
+        auto *srcDefOp = extractSrc.getDefiningOp();
+        if (failed(findContainingSubblockLoop(srcDefOp))) {
           return WalkResult::advance();
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
@@ -96,10 +97,12 @@ public:
           }
         }
         if (auto whileOp =
-                dyn_cast<scf::WhileOp>((extractSrc.getDefiningOp()))) {
+                dyn_cast<scf::WhileOp>((srcDefOp))) {
           return WalkResult::interrupt();
         }
-        if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
+        if (!isa<tensor::EmptyOp>(srcDefOp) &&
+            !(isa<scf::ForOp>(srcDefOp) && srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
+            !srcDefOp->hasAttr(tiledOp)) {
           if (strictMode) {
             return WalkResult::interrupt();
           }
@@ -181,6 +184,8 @@ private:
     strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
     strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
+    
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }
