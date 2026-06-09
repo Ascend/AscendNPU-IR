@@ -1061,6 +1061,10 @@ public:
     if (!isa<T>(insertPointOp)) {
       initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
       isUsingCounter = true;
+      if (!isa<scf::IfOp>(op->getParentOp())) {
+        tmpNewMmad->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+        op->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+      }
       if (biasInfo.brcBiasMode == MatmulBiasMode::ReuseL0C) {
         op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
         LDBG("ReuseL0C in for-loop or if: no need to decompose matmul");

@@ -904,7 +904,7 @@ module {
     // CHECK: %[[C:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
@@ -934,7 +934,7 @@ module {
     %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C:.*]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %a_c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
