@@ -53,7 +53,7 @@ using NormalizeCmpVneOp = mlir::NormalizeCmpVneOpTemplate<VCmpOp, HIVMCmpVneTrai
 ///   i32 -> i64, except `eq` / `ne`
 struct HIVMI8I32CmpTraits : public HIVMComparisonNormalizeTraitsBase {
   static bool shouldNormalize(VCmpOp op) {
-    return hasPureTensorNoTransformAttrs(op);
+    return op.getIsSigned() && hasPureTensorNoTransformAttrs(op);
   }
 
   static bool isEqOrNeCompare(VCmpOp op) {

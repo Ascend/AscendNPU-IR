@@ -362,6 +362,16 @@ func.func @vmp_lowering(
 }
 
 // -----
+
+// COMMON-LABEL: func.func @vcmp_unsigned_lowering(
+// COMMON: hfusion.compare {compare_fn = #hfusion.compare_fn<vult>}
+func.func @vcmp_unsigned_lowering(%a: tensor<4xi8>, %b: tensor<4xi8>) -> tensor<4xi1> {
+  %init = tensor.empty() : tensor<4xi1>
+  %0 = hivm.hir.vcmp ins(%a, %b : tensor<4xi8>, tensor<4xi8>) outs(%init : tensor<4xi1>) compare_mode = #hivm.compare_mode<lt> is_signed = false -> tensor<4xi1>
+  return %0 : tensor<4xi1>
+}
+
+// -----
 func.func @vsub_inline_OTF_broadcast(%arg0: tensor<64xf32>) -> tensor<64x64xf32> {
   %expanded = tensor.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : tensor<64xf32> into tensor<64x1xf32>
   %expanded_0 = tensor.expand_shape %arg0 [[0, 1]] output_shape [1, 64] : tensor<64xf32> into tensor<1x64xf32>
