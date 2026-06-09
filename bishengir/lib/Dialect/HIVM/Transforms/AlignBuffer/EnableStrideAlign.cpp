@@ -304,6 +304,43 @@ struct RemoveAlignMarkPattern : public OpRewritePattern<annotation::MarkOp> {
   }
 };
 
+// storage-align re-allocates a buffer with padded static dims, which enlarges
+// the buffer by the ratio of the aligned vs the unaligned static element count.
+// The `buffer_size_in_byte` annotations were computed on the unaligned type and
+// are not updated when the buffer is re-padded here, so they must be scaled by
+// the same ratio.
+static void scaleBufferSizeMarks(PatternRewriter &rewriter, Value bufferValue,
+                                 MemRefType unalignedTy, MemRefType alignedTy) {
+  auto staticVolume = [](MemRefType t) -> int64_t {
+    int64_t v = 1;
+    for (int64_t d : t.getShape())
+      if (!ShapedType::isDynamic(d))
+        v *= d;
+    return v;
+  };
+  int64_t unalignedVol = staticVolume(unalignedTy);
+  int64_t alignedVol = staticVolume(alignedTy);
+  if (unalignedVol <= 0 || alignedVol <= unalignedVol)
+    return;
+
+  // The dynamic dims are identical on both types (padding only grows static
+  // dims), so the byte size scales by the static-volume ratio.
+  auto sizeMarks = utils::getAllAnnotateOpsWithAttr(
+      bufferValue, hivm::kBufferSizeInByteAttr);
+  for (auto *markOp : sizeMarks) {
+    int64_t oldSize =
+        markOp->getAttrOfType<IntegerAttr>(hivm::kBufferSizeInByteAttr)
+            .getInt();
+    // ceil-divide so the buffer is never under-allocated.
+    assert(unalignedVol != 0);
+    int64_t newSize = (oldSize * alignedVol + unalignedVol - 1) / unalignedVol;
+    rewriter.modifyOpInPlace(markOp, [&]() {
+      markOp->setAttr(hivm::kBufferSizeInByteAttr,
+                      rewriter.getI64IntegerAttr(newSize));
+    });
+  }
+}
+
 template <typename AllocLikeOp>
 struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
   using OpRewritePattern<AllocLikeOp>::OpRewritePattern;
@@ -363,6 +400,11 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
                                  .setLayout(MemRefLayoutAttrInterface());
       auto alignedAlloc =
           rewriter.create<AllocLikeOp>(allocOp.getLoc(), alignedTy, dynSizes);
+
+      // The buffer just grew due to padding; keep its buffer_size_in_byte
+      // annotations in sync before they get re-pointed to the new allocation.
+      scaleBufferSizeMarks(rewriter, allocOp.getResult(), unalignedTy,
+                           alignedTy);
 
       SmallVector<OpFoldResult> offsets(alignedTy.getRank(),
                                         rewriter.getIndexAttr(0));
