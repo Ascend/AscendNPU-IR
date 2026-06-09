@@ -13,8 +13,8 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include <bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h>
@@ -32,6 +32,60 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace mlir::hivm {
+
+namespace {
+
+/// Tracks whether a producer value is only consumed by the fold candidate
+/// `convertLayoutOp` plus optional `annotation.mark` ops.
+struct ConvertLayoutProducerUseInfo {
+  SmallVector<annotation::MarkOp> annotationUsers;
+  bool canEraseProducerChain = true;
+};
+
+/// Walk users of `producer` and record annotation marks. Returns
+/// `canEraseProducerChain = true` when every user is either
+/// `convertLayoutOp` or an `annotation.mark` on `producer`.
+ConvertLayoutProducerUseInfo
+getConvertLayoutProducerUseInfo(Value producer,
+                                ConvertLayoutOp convertLayoutOp) {
+  ConvertLayoutProducerUseInfo info;
+  for (Operation *user : producer.getUsers()) {
+    if (user == convertLayoutOp.getOperation())
+      continue;
+    if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
+      info.annotationUsers.push_back(markOp);
+      continue;
+    }
+    info.canEraseProducerChain = false;
+    break;
+  }
+  return info;
+}
+
+/// Repoint `annotation.mark` ops from `oldValue` to `newValue`.
+void repointAnnotationMarks(PatternRewriter &rewriter,
+                            ArrayRef<annotation::MarkOp> annotationUsers,
+                            Value oldValue, Value newValue) {
+  for (annotation::MarkOp markOp : annotationUsers) {
+    rewriter.modifyOpInPlace(
+        markOp, [&]() { markOp->replaceUsesOfWith(oldValue, newValue); });
+  }
+}
+
+/// Create `hivm.hir.nd2nz` that fuses `loadOp`'s GM->L1 movement with ND to
+/// Fractal layout conversion. Pass an empty `resultTypes` for memref outs; pass
+/// the fractal tensor type when outs is a `tensor.empty`.
+ND2NZOp createND2NZFromLoad(PatternRewriter &rewriter, Location loc,
+                            LoadOp loadOp, Value src, Value dst,
+                            TypeRange resultTypes) {
+  bool hasInitOutBuffer = loadOp.getInitOutBuffer();
+  return rewriter.create<ND2NZOp>(
+      loc, resultTypes, src, dst, rewriter.getUnitAttr(), hasInitOutBuffer,
+      hasInitOutBuffer ? loadOp.getPadValue() : Value{},
+      loadOp.getInitCondition());
+}
+
+} // namespace
 
 //===----------------------------------------------------------------------===//
 // Pattern 1: Fold ToTensor + ConvertLayout into ND2NZ (Direct Load)
@@ -85,8 +139,7 @@ namespace mlir::hivm {
 struct FoldToTensorConvertLayoutPattern
     : public OpRewritePattern<ConvertLayoutOp> {
   FoldToTensorConvertLayoutPattern(MLIRContext *context)
-    : OpRewritePattern(context) {
-  }
+      : OpRewritePattern(context) {}
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
@@ -126,25 +179,14 @@ struct FoldToTensorConvertLayoutPattern
     auto srcLayout = op.getSrcLayout();
 
     if (srcLayout.getDataLayout() != DataLayout::ND)
-      return rewriter.notifyMatchFailure(
-          op, "source layout is not ND");
+      return rewriter.notifyMatchFailure(op, "source layout is not ND");
 
     // Multi-use to_tensor is allowed: fold only this convert_layout and keep
     // original ND path for other users.
     // Only erase original ND producer chain if no other users besides this
     // convert_layout and annotation.mark ops.
-    SmallVector<annotation::MarkOp> annotationUsers;
-    bool canEraseOriginalProducerChain = true;
-    for (Operation *user : toTensorOp.getResult().getUsers()) {
-      if (user == op.getOperation())
-        continue;
-      if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-        annotationUsers.push_back(markOp);
-        continue;
-      }
-      canEraseOriginalProducerChain = false;
-      break;
-    }
+    ConvertLayoutProducerUseInfo useInfo =
+        getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
 
     rewriter.setInsertionPointAfter(loadOp);
     // Get the result tensor type (fractal shape)
@@ -155,20 +197,11 @@ struct FoldToTensorConvertLayoutPattern
         rewriter.create<memref::AllocOp>(op.getLoc(), memrefDestType);
 
     // Create ND2NZ op: fuses load + layout conversion
-    // ins: source memref (reinterpret_cast, ND layout)
-    // outs: destination memref (fractal layout)
-    bool hasInitOutBuffer = loadOp.getInitOutBuffer();
-    auto padValue = hasInitOutBuffer ? loadOp.getPadValue() : nullptr;
-    auto initCondition = loadOp.getInitCondition();
-    rewriter.create<ND2NZOp>(op.getLoc(), TypeRange(),
-                             loadOp.getSource(),  // src (ins)
-                             allocOp.getResult(), // dst (outs)
-                             /*dst_continuous=*/rewriter.getUnitAttr(),
-                             hasInitOutBuffer, padValue, initCondition);
+    createND2NZFromLoad(rewriter, op.getLoc(), loadOp, loadOp.getSource(),
+                        allocOp.getResult(), TypeRange());
 
     auto newToTensorOp =
-        rewriter.create<bufferization::ToTensorOp>(
-        op.getLoc(), allocOp);
+        rewriter.create<bufferization::ToTensorOp>(op.getLoc(), allocOp);
     newToTensorOp->setAttrs(toTensorOp->getAttrs());
 
     // Replace only this convert_layout.
@@ -177,19 +210,16 @@ struct FoldToTensorConvertLayoutPattern
     // Single-use or annotation-only case: old ND chain is now dead, erase it.
     // Re-point any annotation.mark ops to the new fractal tensor first.
     // Multi-use case: keep load/to_tensor/memref alloc for other users.
-    if (canEraseOriginalProducerChain) {
-      for (auto markOp : annotationUsers)
-        rewriter.modifyOpInPlace(markOp, [&]() {
-          markOp->replaceUsesOfWith(toTensorOp.getResult(),
-                                    newToTensorOp.getResult());
-        });
+    if (useInfo.canEraseProducerChain) {
+      repointAnnotationMarks(rewriter, useInfo.annotationUsers,
+                             toTensorOp.getResult(), newToTensorOp.getResult());
       auto oldAllocOp = toTensorMemref.getDefiningOp<memref::AllocOp>();
       rewriter.eraseOp(loadOp);
       rewriter.eraseOp(toTensorOp);
       if (oldAllocOp && oldAllocOp->use_empty())
         rewriter.eraseOp(oldAllocOp);
     }
-    
+
     return success();
   }
 };
@@ -264,8 +294,7 @@ struct FoldToTensorConvertLayoutPattern
 struct FoldToTensorConvertLayoutSubviewPattern
     : public OpRewritePattern<ConvertLayoutOp> {
   FoldToTensorConvertLayoutSubviewPattern(MLIRContext *context)
-    : OpRewritePattern(context) {
-  }
+      : OpRewritePattern(context) {}
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
@@ -279,18 +308,8 @@ struct FoldToTensorConvertLayoutSubviewPattern
     // original ND path for other users.
     // Only erase original ND producer chain if no other users besides this
     // convert_layout and annotation.mark ops.
-    SmallVector<annotation::MarkOp> annotationUsers;
-    bool canEraseOriginalProducerChain = true;
-    for (Operation *user : toTensorOp.getResult().getUsers()) {
-      if (user == op.getOperation())
-        continue;
-      if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-        annotationUsers.push_back(markOp);
-        continue;
-      }
-      canEraseOriginalProducerChain = false;
-      break;
-    }
+    ConvertLayoutProducerUseInfo useInfo =
+        getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
 
     Value allocMemref = toTensorOp.getMemref();
     auto origAllocOp = allocMemref.getDefiningOp<memref::AllocOp>();
@@ -315,8 +334,7 @@ struct FoldToTensorConvertLayoutSubviewPattern
     }
 
     if (!subviewOut)
-      return rewriter.notifyMatchFailure(
-          op, "no subview user found on alloc");
+      return rewriter.notifyMatchFailure(op, "no subview user found on alloc");
 
     LoadOp loadOp = nullptr;
     for (auto user : subviewOut.getResult().getUsers()) {
@@ -339,8 +357,7 @@ struct FoldToTensorConvertLayoutSubviewPattern
     auto dstLayout = op.getDstLayout();
 
     if (srcLayout.getDataLayout() != DataLayout::ND)
-      return rewriter.notifyMatchFailure(
-          op, "source layout is not ND");
+      return rewriter.notifyMatchFailure(op, "source layout is not ND");
 
     auto blockSizesOrFailure = dstLayout.getFractalBlockSizes();
     if (failed(blockSizesOrFailure))
@@ -349,8 +366,8 @@ struct FoldToTensorConvertLayoutSubviewPattern
 
     // Derive from convert_layout result type (guaranteed to match).
     auto resultTensorType = cast<RankedTensorType>(op.getType());
-    auto fractalAllocType = MemRefType::get(
-        resultTensorType.getShape(), resultTensorType.getElementType());
+    auto fractalAllocType = MemRefType::get(resultTensorType.getShape(),
+                                            resultTensorType.getElementType());
 
     auto ndOffsets = subviewOut.getMixedOffsets();
     auto ndSizes = subviewOut.getMixedSizes();
@@ -362,16 +379,17 @@ struct FoldToTensorConvertLayoutSubviewPattern
       return rewriter.notifyMatchFailure(
           op, "failed to compute fractal subview sizes");
 
-    auto fractalOffsetsOrFailure = computeTargetLayoutOffset(ndOffsets, srcLayout, dstLayout, rewriter, op.getLoc());
+    auto fractalOffsetsOrFailure = computeTargetLayoutOffset(
+        ndOffsets, srcLayout, dstLayout, rewriter, op.getLoc());
     if (failed(fractalOffsetsOrFailure))
       return rewriter.notifyMatchFailure(
           op, "failed to compute fractal subview offsets");
 
-    SmallVector<OpFoldResult> fractalStrides(
-        resultTensorType.getRank(), rewriter.getIndexAttr(1));
+    SmallVector<OpFoldResult> fractalStrides(resultTensorType.getRank(),
+                                             rewriter.getIndexAttr(1));
 
-    auto newAllocOp = rewriter.create<memref::AllocOp>(
-        origAllocOp.getLoc(), fractalAllocType);
+    auto newAllocOp = rewriter.create<memref::AllocOp>(origAllocOp.getLoc(),
+                                                       fractalAllocType);
     auto newSubviewOut = rewriter.create<memref::SubViewOp>(
         subviewOut.getLoc(), newAllocOp.getResult(), *fractalOffsetsOrFailure,
         *fractalSizesOrFailure, fractalStrides);
@@ -379,15 +397,8 @@ struct FoldToTensorConvertLayoutSubviewPattern
     //     Source (ins) is subview_in — unchanged, still in ND layout.
     //     Dest (outs) is the new fractal subview of the fractal alloc.
     Value loadSrc = loadOp.getSource(); // subview_in (ND layout, unchanged)
-    bool hasInitOutBuffer = loadOp.getInitOutBuffer();
-    auto padValue = hasInitOutBuffer ? loadOp.getPadValue() : nullptr;
-    auto initCondition = loadOp.getInitCondition();
-    rewriter.create<ND2NZOp>(
-        op.getLoc(), TypeRange(),
-        loadSrc,                   // src (ins) — subview of reinterpret_cast
-        newSubviewOut.getResult(), // dst (outs) — fractal subview of alloc
-        /*dst_continuous=*/rewriter.getUnitAttr(), hasInitOutBuffer, padValue,
-        initCondition);
+    createND2NZFromLoad(rewriter, op.getLoc(), loadOp, loadSrc,
+                        newSubviewOut.getResult(), TypeRange());
 
     auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
         toTensorOp.getLoc(), newAllocOp);
@@ -399,17 +410,75 @@ struct FoldToTensorConvertLayoutSubviewPattern
     // Single-use or annotation-only case: old ND chain is dead and can be
     // erased. Re-point any annotation.mark ops to the new fractal tensor first.
     // Multi-use case: preserve old chain for remaining users.
-    if (canEraseOriginalProducerChain) {
-      for (auto markOp : annotationUsers)
-        rewriter.modifyOpInPlace(markOp, [&]() {
-          markOp->replaceUsesOfWith(toTensorOp.getResult(),
-                                    newToTensorOp.getResult());
-        });
-      rewriter.eraseOp(loadOp);      // user of subview_out
-      rewriter.eraseOp(subviewOut);  // user of origAllocOp
-      rewriter.eraseOp(toTensorOp);  // user of origAllocOp
+    if (useInfo.canEraseProducerChain) {
+      repointAnnotationMarks(rewriter, useInfo.annotationUsers,
+                             toTensorOp.getResult(), newToTensorOp.getResult());
+      rewriter.eraseOp(loadOp);     // user of subview_out
+      rewriter.eraseOp(subviewOut); // user of origAllocOp
+      rewriter.eraseOp(toTensorOp); // user of origAllocOp
       if (origAllocOp->use_empty())
         rewriter.eraseOp(origAllocOp);
+    }
+
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Fold Tensor Load + ConvertLayout into ND2NZ
+//
+// Fuses tensor loads, under the assumption that hivm.hir.load was loaded
+// manually from global memory. (hivm.hir.store)
+//
+// Matches:
+//   %load = hivm.hir.load ins(%src : tensor<MxN>) outs(%init : tensor<MxN>)
+//             -> tensor<MxN>
+//   %conv = hivm.hir.convert_layout %load {ND -> Fractal}
+//
+// Transforms to:
+//   %empty = tensor.empty() : tensor<fractal_shape>
+//   %result = hivm.hir.nd2nz {dst_continuous} ins(%src) outs(%empty)
+//             -> tensor<fractal_shape>
+//===----------------------------------------------------------------------===//
+
+struct FoldTensorLoadConvertLayoutPattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  FoldTensorLoadConvertLayoutPattern(MLIRContext *context)
+      : OpRewritePattern(context) {}
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loadOp = op.getSource().getDefiningOp<LoadOp>();
+    if (!loadOp)
+      return rewriter.notifyMatchFailure(op, "source is not a LoadOp");
+
+    if (!loadOp.hasPureTensorSemantics())
+      return rewriter.notifyMatchFailure(op, "load is not tensor-based");
+
+    if (op.getSrcLayout().getDataLayout() != DataLayout::ND)
+      return rewriter.notifyMatchFailure(op, "source layout is not ND");
+
+    if (op.getDstLayout().getDataLayout() != DataLayout::Fractal)
+      return rewriter.notifyMatchFailure(op,
+                                         "destination layout is not Fractal");
+
+    ConvertLayoutProducerUseInfo useInfo =
+        getConvertLayoutProducerUseInfo(loadOp.getResult(0), op);
+
+    auto resultTensorType = cast<RankedTensorType>(op.getType());
+    rewriter.setInsertionPointAfter(loadOp);
+    auto emptyOp =
+        rewriter.create<tensor::EmptyOp>(op.getLoc(), op.getMixedOutputShape(),
+                                         resultTensorType.getElementType());
+    ND2NZOp nd2nzOp =
+        createND2NZFromLoad(rewriter, op.getLoc(), loadOp, loadOp.getSrc(),
+                            emptyOp.getResult(), TypeRange(resultTensorType));
+
+    rewriter.replaceOp(op, nd2nzOp.getResult(0));
+    if (useInfo.canEraseProducerChain) {
+      repointAnnotationMarks(rewriter, useInfo.annotationUsers,
+                             loadOp.getResult(0), nd2nzOp.getResult(0));
+      rewriter.eraseOp(loadOp);
     }
 
     return success();
@@ -435,8 +504,7 @@ struct FoldToTensorConvertLayoutSubviewPattern
 struct FoldConvertLayoutFixpipePattern
     : public OpRewritePattern<ConvertLayoutOp> {
   FoldConvertLayoutFixpipePattern(MLIRContext *context)
-    : OpRewritePattern(context) {
-  }
+      : OpRewritePattern(context) {}
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
@@ -447,7 +515,8 @@ struct FoldConvertLayoutFixpipePattern
       return rewriter.notifyMatchFailure(op, "not a Fractal->ND conversion");
 
     if (!op.getResult().hasOneUse())
-      return rewriter.notifyMatchFailure(op, "convert_layout has multiple uses");
+      return rewriter.notifyMatchFailure(op,
+                                         "convert_layout has multiple uses");
 
     auto fixpipeOp = dyn_cast<FixpipeOp>(*op.getResult().user_begin());
     if (!fixpipeOp)
@@ -458,9 +527,8 @@ struct FoldConvertLayoutFixpipePattern
       return rewriter.notifyMatchFailure(
           fixpipeOp, "fixpipe dma_mode is not nz2nd or nz2dn");
 
-    rewriter.modifyOpInPlace(fixpipeOp, [&]() {
-      fixpipeOp.getSrcMutable().assign(op.getSource());
-    });
+    rewriter.modifyOpInPlace(
+        fixpipeOp, [&]() { fixpipeOp.getSrcMutable().assign(op.getSource()); });
 
     rewriter.eraseOp(op);
     return success();
@@ -488,8 +556,7 @@ struct FoldConvertLayoutFixpipePattern
 struct FoldConvertLayoutExtractSliceFixpipePattern
     : public OpRewritePattern<ConvertLayoutOp> {
   FoldConvertLayoutExtractSliceFixpipePattern(MLIRContext *context)
-    : OpRewritePattern(context) {
-  }
+      : OpRewritePattern(context) {}
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
@@ -506,8 +573,8 @@ struct FoldConvertLayoutExtractSliceFixpipePattern
     auto extractSliceOp =
         dyn_cast<tensor::ExtractSliceOp>(*op.getResult().user_begin());
     if (!extractSliceOp)
-      return rewriter.notifyMatchFailure(
-          op, "user is not a tensor.extract_slice");
+      return rewriter.notifyMatchFailure(op,
+                                         "user is not a tensor.extract_slice");
 
     if (!extractSliceOp.getResult().hasOneUse())
       return rewriter.notifyMatchFailure(
@@ -542,15 +609,15 @@ struct FoldConvertLayoutExtractSliceFixpipePattern
     // The extract_slice operates on the ND tensor (op's result).
     // We convert from ND (dstLayout) to Fractal (srcLayout).
     auto newSizes = computeMixedTargetLayoutShape(
-        extractSliceOp.getMixedSizes(), op.getDstLayout(),
-        op.getSrcLayout(), rewriter, loc);
+        extractSliceOp.getMixedSizes(), op.getDstLayout(), op.getSrcLayout(),
+        rewriter, loc);
     if (failed(newSizes))
       return rewriter.notifyMatchFailure(
           op, "failed to compute fractal slice sizes");
 
     auto newOffsets = computeTargetLayoutOffset(
-        extractSliceOp.getMixedOffsets(), op.getDstLayout(),
-        op.getSrcLayout(), rewriter, loc);
+        extractSliceOp.getMixedOffsets(), op.getDstLayout(), op.getSrcLayout(),
+        rewriter, loc);
     if (failed(newOffsets))
       return rewriter.notifyMatchFailure(
           op, "failed to compute fractal slice offsets");
@@ -579,18 +646,19 @@ struct FoldConvertLayoutExtractSliceFixpipePattern
 //
 // Matches:
 //   %fixpipe_result = hivm.hir.fixpipe ins(%src) outs(%dst) -> tensor<nZ>
-//   %result = hivm.hir.convert_layout %fixpipe_result {srcLayout = nZ, dstLayout = ND}
+//   %result = hivm.hir.convert_layout %fixpipe_result {srcLayout = nZ,
+//   dstLayout = ND}
 //
 // Transforms to:
 //   %empty = tensor.empty() : tensor<ND_shape>
-//   %result = hivm.hir.fixpipe ins(%src) outs(%empty) {dma_mode = NZ2ND} -> tensor<ND>
+//   %result = hivm.hir.fixpipe ins(%src) outs(%empty) {dma_mode = NZ2ND} ->
+//   tensor<ND>
 //===----------------------------------------------------------------------===//
 
 struct FoldFixpipeConvertLayoutPattern
     : public OpRewritePattern<ConvertLayoutOp> {
   FoldFixpipeConvertLayoutPattern(MLIRContext *context)
-    : OpRewritePattern(context) {
-  }
+      : OpRewritePattern(context) {}
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
@@ -621,8 +689,8 @@ struct FoldFixpipeConvertLayoutPattern
     } else if (dstLayout.getDataLayout() == DataLayout::DOTB_ND) {
       // DOTB typically needs transpose
       dmaMode = (dstLayout.getTranspose() && *dstLayout.getTransposeValue())
-                  ? FixpipeDMAMode::NZ2ND
-                  : FixpipeDMAMode::NZ2DN;
+                    ? FixpipeDMAMode::NZ2ND
+                    : FixpipeDMAMode::NZ2DN;
     } else {
       // DOTC is fine with NZ2ND
       dmaMode = FixpipeDMAMode::NZ2ND;
@@ -645,147 +713,30 @@ struct FoldFixpipeConvertLayoutPattern
     // Create new fixpipe with enhanced DMA mode
     auto newFixpipe = rewriter.create<FixpipeOp>(
         fixpipeOp.getLoc(),
-        resultTensorType, // Result type: ND shape
-        fixpipeOp.getSrc(), // Same source
+        resultTensorType,    // Result type: ND shape
+        fixpipeOp.getSrc(),  // Same source
         emptyOp.getResult(), // New dst with ND shape (must match result)
         FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode),
-        fixpipeOp.getDualDstModeAttr(),
-        fixpipeOp.getPreQuantAttr(),
-        fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr());
+        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getPreQuantAttr(),
+        fixpipeOp.getPreReluAttr(), fixpipeOp.getChannelSplitAttr());
 
     if (fixpipeOp.getUnitFlagMode())
       newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
     rewriter.replaceOp(op, newFixpipe.getResults());
     rewriter.eraseOp(fixpipeOp);
-
     return success();
   }
 };
 
-//===----------------------------------------------------------------------===//
-// Fold VCast + ConvertLayout into Fixpipe with PreQuant
-//
-// Matches:
-//   %cast = hivm.hir.vcast ins(%src : tensor<nZ_shape_f32>)
-//                          outs(%dst : tensor<nZ_shape_f16>) -> tensor<nZ_shape_f16>
-//   %result = hivm.hir.convert_layout %cast {srcLayout = nZ, dstLayout = ND}
-//
-// Transforms to:
-//   %empty = tensor.empty() : tensor<ND_shape_f16>
-//   %result = hivm.hir.fixpipe ins(%src) outs(%empty)
-//             {dma_mode = NZ2ND, pre_quant = F322F16} -> tensor<ND_f16>
-//===----------------------------------------------------------------------===//
-
-struct FoldVCastConvertLayoutPattern
-    : public OpRewritePattern<ConvertLayoutOp> {
-  FoldVCastConvertLayoutPattern(MLIRContext *context)
-      : OpRewritePattern(context) {}
-
-  /// Determine the fixpipe pre_quant mode from VCast input/output types
-  std::optional<FixpipePreQuantMode> getQuantModeFromVCast(VCastOp vcastOp) const {
-    auto inputType = getElementTypeOrSelf(vcastOp.getSrc()[0].getType());
-    auto outputType = getElementTypeOrSelf(vcastOp.getDst()[0].getType());
-
-    if (inputType.isF32() && outputType.isF16())
-      return FixpipePreQuantMode::F322F16;
-    if (inputType.isF32() && outputType.isBF16())
-      return FixpipePreQuantMode::F322BF16;
-    if (inputType.isInteger(32) && outputType.isInteger(8))
-      return FixpipePreQuantMode::S322I8;
-
-    return std::nullopt;
-  }
-
-  /// Determine DMA mode from destination layout
-  std::optional<FixpipeDMAMode> getDMAModeFromLayout(
-      DataLayoutAttr dstLayout) const {
-    auto layoutType = dstLayout.getDataLayout();
-
-    if (layoutType == DataLayout::ND || layoutType == DataLayout::DOTA_ND) {
-      if (dstLayout.getTranspose() && *dstLayout.getTransposeValue())
-        return FixpipeDMAMode::NZ2DN;
-      return FixpipeDMAMode::NZ2ND;
-    }
-
-    if (layoutType == DataLayout::DOTB_ND) {
-      if (dstLayout.getTranspose() && *dstLayout.getTransposeValue())
-        return FixpipeDMAMode::NZ2ND;
-      return FixpipeDMAMode::NZ2DN;
-    }
-
-    return std::nullopt;
-  }
-
-  LogicalResult matchAndRewrite(ConvertLayoutOp op,
-                                PatternRewriter &rewriter) const override {
-    // Check if source is from a VCastOp
-    auto vcastOp = op.getSource().getDefiningOp<VCastOp>();
-    if (!vcastOp)
-      return rewriter.notifyMatchFailure(op, "source is not a VCastOp");
-
-    // Verify single use of vcast result
-    if (!vcastOp.getResult()[0].hasOneUse())
-      return rewriter.notifyMatchFailure(op,
-                                         "vcast result has multiple uses");
-
-    // Verify source layout is nZ
-    auto srcLayout = op.getSrcLayout();
-    if (srcLayout.getDataLayout() != DataLayout::Fractal)
-      return rewriter.notifyMatchFailure(op, "source layout is not fractal");
-
-    // Get DMA mode from destination layout
-    auto dstLayout = op.getDstLayout();
-    auto dmaMode = getDMAModeFromLayout(dstLayout);
-    if (!dmaMode)
-      return rewriter.notifyMatchFailure(
-          op, "destination layout is not supported for folding into fixpipe");
-
-    // Get quantization mode from VCast types
-    auto quantMode = getQuantModeFromVCast(vcastOp);
-    if (!quantMode)
-      return rewriter.notifyMatchFailure(
-          op, "unsupported VCast type conversion for fixpipe pre_quant");
-
-    // Get the result tensor type (ND shape)
-    auto resultTensorType = cast<RankedTensorType>(op.getType());
-
-    // Create an empty tensor for the fixpipe output
-    auto emptyOp = rewriter.create<tensor::EmptyOp>(
-        op.getLoc(), resultTensorType.getShape(),
-        resultTensorType.getElementType());
-
-    // Create fixpipe with pre_quant and DMA mode
-    // Source is the input to vcast (e.g., f32 tensor)
-    auto fixpipeOp = rewriter.create<FixpipeOp>(
-        op.getLoc(),
-        resultTensorType,
-        vcastOp.getSrc()[0],  // Original source before vcast
-        emptyOp.getResult(),
-        FixpipeDMAModeAttr::get(rewriter.getContext(), *dmaMode),
-        /*dual_dst_mode=*/FixpipeDualDstModeAttr{},
-        FixpipePreQuantModeAttr::get(rewriter.getContext(), *quantMode),
-        /*pre_relu=*/nullptr,
-        /*channel_split=*/nullptr);
-
-    LDBG("Folding VCast + ConvertLayout into Fixpipe with pre_quant");
-
-    rewriter.replaceOp(op, fixpipeOp.getResults());
-    rewriter.eraseOp(vcastOp);
-
-    return success();
-  }
-};
-
-void populateCombineOptimizedConvertLayoutPatterns(
-    RewritePatternSet &patterns, MLIRContext *context) {
+void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
+                                                   MLIRContext *context) {
+  ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
   patterns.add<FoldToTensorConvertLayoutPattern>(context);
   patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
   patterns.add<FoldFixpipeConvertLayoutPattern>(context);
-  // patterns.add<FoldVCastConvertLayoutPattern>(context);
   patterns.add<FoldConvertLayoutFixpipePattern>(context);
   patterns.add<FoldConvertLayoutExtractSliceFixpipePattern>(context);
-  ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
+  patterns.add<FoldTensorLoadConvertLayoutPattern>(context);
 }
 
 //===----------------------------------------------------------------------===//
@@ -794,7 +745,7 @@ void populateCombineOptimizedConvertLayoutPatterns(
 
 struct CombineOptimizedConvertLayoutPass
     : public impl::CombineOptimizedConvertLayoutBase<
-      CombineOptimizedConvertLayoutPass> {
+          CombineOptimizedConvertLayoutPass> {
   void runOnOperation() override {
     auto module = getOperation();
     MLIRContext *context = &getContext();
