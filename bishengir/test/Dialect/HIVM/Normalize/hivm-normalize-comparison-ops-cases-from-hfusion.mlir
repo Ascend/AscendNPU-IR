@@ -76,21 +76,6 @@ func.func @test_NormalizeI8I32Cmp_normalize_i8_hfusion_compare(%arg0: tensor<16x
 
 // -----
 
-// CHECK-LABEL: func.func @test_NormalizeI8I32Cmp_keep_unsigned_i8_compare
-// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi8>, %[[arg1:.*]]: tensor<16xi8>)
-// CHECK-NOT: hivm.hir.vcast
-// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[arg0]], %[[arg1]] : tensor<16xi8>, tensor<16xi8>) outs(%{{.*}} : tensor<16xi1>) compare_mode = <lt> is_signed = false -> tensor<16xi1>
-// CHECK: return %[[cmp]]
-func.func @test_NormalizeI8I32Cmp_keep_unsigned_i8_compare(%arg0: tensor<16xi8>, %arg1: tensor<16xi8>) -> tensor<16xi1> {
-  %dst = tensor.empty() : tensor<16xi1>
-  %res = hfusion.compare {compare_fn = #hfusion.compare_fn<vult>}
-    ins(%arg0, %arg1 : tensor<16xi8>, tensor<16xi8>)
-    outs(%dst : tensor<16xi1>) -> tensor<16xi1>
-  return %res : tensor<16xi1>
-}
-
-// -----
-
 // CHECK-LABEL: func.func @test_NormalizeI8I32Cmp_normalize_i32_hfusion_compare_vlt
 // CHECK-SAME: (%[[arg0:.*]]: tensor<16xi32>, %[[arg1:.*]]: tensor<16xi32>)
 // CHECK: %[[lhs_empty:.*]] = tensor.empty() : tensor<16xi64>

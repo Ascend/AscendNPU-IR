@@ -271,10 +271,6 @@ std::string VCmpOp::getOpLibraryCallName(
     baseCallName = baseCallName + "s";
   baseCallName = baseCallName + "_" + modeName.str();
   Type elemType = getElementTypeOrSelf(getDpsInputs().front().getType());
-  if (!getIsSigned()) {
-    llvm_unreachable("not implemented");
-    return "UNKNOWN";
-  }
   std::string elemTypeName = hivm::detail::getTypeName(getLoc(), elemType);
   int rank = static_cast<int>(getNumLoops());
   return concatVectorOpLibraryCallName(baseCallName, getOpLibraryCallRank(rank),
