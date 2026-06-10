@@ -345,17 +345,79 @@ void CodeGenerator::insertWaitBlockFlagOp(IRRewriter &rewriter,
 // multi-buffer sync.
 Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
                                            LoopLikeOpInterface multibufferLoop,
-                                           int64_t modulo) {
-  auto key = std::make_pair(multibufferLoop, modulo);
-  auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+                                           int64_t eventIdNum,
+                                           int64_t preloadOffset) {
+  Value modularIndex;
+  PatternRewriter::InsertionGuard guard(rewriter);
+  {
+    auto key = std::make_tuple(multibufferLoop, eventIdNum, /*offset=*/0);
+    auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+    if (isInserted) {
+      it->second =
+          createNestedIndexModular(rewriter, multibufferLoop, eventIdNum);
+    }
+    modularIndex = it->second;
+  }
+  if (preloadOffset > 0) {
+    auto key = std::make_tuple(multibufferLoop, eventIdNum, preloadOffset);
+    auto [it, isInserted] = nestedIndexModularMem.insert({key, Value{}});
+    if (isInserted) {
+      auto loc = multibufferLoop->getLoc();
+      PatternRewriter::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointAfter(modularIndex.getDefiningOp());
+      Value eventIdNumVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIndexAttr(eventIdNum));
+      Value preloadOffsetVal = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIndexAttr(eventIdNum - preloadOffset % eventIdNum));
+      Value newIndex = rewriter.create<arith::AddIOp>(
+          multibufferLoop->getLoc(), modularIndex, preloadOffsetVal);
+      it->second = rewriter.create<arith::RemSIOp>(multibufferLoop->getLoc(),
+                                                   newIndex, eventIdNumVal);
+    }
+    modularIndex = it->second;
+  }
+  return modularIndex;
+}
+
+Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
+                                                       SetWaitOp *syncOp) {
+  assert(syncOp != nullptr);
+  auto multibufferLoopOp = syncOp->eventIdInfo.multibufferLoop;
+  if (!multibufferLoopOp) {
+    return nullptr;
+  }
+
+  for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
+    if (syncOp->eventIds[i - 1] + 1 != syncOp->eventIds[i]) {
+      return nullptr;
+    }
+  }
+
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
+  int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
+  int64_t preloadOffset = isa<SetFlagOp>(syncOp)
+                              ? syncOp->eventIdInfo.preloadOffset1
+                              : syncOp->eventIdInfo.preloadOffset2;
+
+  auto key = std::make_pair(multibufferLoop, preloadOffset);
+  auto [it, isInserted] =
+      bufferSelectedMem[key].insert({syncOp->eventIds, Value{}});
   if (!isInserted) {
     return it->second;
   }
 
+  Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
+                                        preloadOffset);
+
   PatternRewriter::InsertionGuard guard(rewriter);
-  Value modularIndex =
-      createNestedIndexModular(rewriter, multibufferLoop, modulo);
-  return it->second = modularIndex;
+  rewriter.setInsertionPointAfter(counter.getDefiningOp());
+  auto loc = counter.getLoc();
+  auto eventIdAttr =
+      rewriter.getIntegerAttr(rewriter.getIndexType(), syncOp->eventIds[0]);
+  auto eventIdValue = rewriter.create<arith::ConstantOp>(loc, eventIdAttr);
+  Value eventId = rewriter.create<arith::AddIOp>(loc, rewriter.getIndexType(),
+                                                 counter, eventIdValue);
+  return it->second = getValueOrCreateCastToI64(rewriter, loc, eventId);
 }
 
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
@@ -367,27 +429,25 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
     return nullptr;
   }
 
-  // scf.for path: legacy (iv-lb)/step in createNestedIndexModular.
-  // scf.while path: alloca-based counter via MultiBufferLoopAdapter (see
-  // MultiBufferLoopAdapter.h). All other LoopLike ops bail out.
-  // Extra parens around the template args so the assert macro doesn't see
-  // the comma as an argument separator.
   auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
-  assert((llvm::isa_and_present<scf::ForOp, scf::WhileOp>(multibufferLoop)) &&
-         "multi-buffer requires scf.for or scf.while parent");
+  int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
+  int64_t preloadOffset = isa<SetFlagOp>(syncOp)
+                              ? syncOp->eventIdInfo.preloadOffset1
+                              : syncOp->eventIdInfo.preloadOffset2;
+
+  auto key = std::make_pair(multibufferLoop, preloadOffset);
   auto [it, isInserted] =
-      bufferSelectedMem[multibufferLoop].insert({syncOp->eventIds, Value{}});
+      bufferSelectedMem[key].insert({syncOp->eventIds, Value{}});
   if (!isInserted) {
     return it->second;
   }
 
-  Value counter = getNestedIndexModular(rewriter, multibufferLoop,
-                                        /*modulo=*/syncOp->eventIds.size());
-  assert(counter.getDefiningOp() != nullptr);
+  Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
+                                        preloadOffset);
 
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
-  Location loc = counter.getDefiningOp()->getLoc();
+  auto loc = counter.getLoc();
 
   Value bufferSelected;
   if (syncOp->eventIds.size() == 2) {
@@ -493,6 +553,9 @@ Value CodeGenerator::getCVMultiBufferSelectOp(IRRewriter &rewriter,
 Value CodeGenerator::getMultiBufferBlockSelectOp(IRRewriter &rewriter,
                                                  SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
+  if (auto selectOp = getMultiBufferSelectOpConsecutive(rewriter, syncOp)) {
+    return selectOp;
+  }
   if (auto selectOp = getMultiBufferSelectOp(rewriter, syncOp)) {
     return selectOp;
   }

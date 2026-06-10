@@ -1156,6 +1156,20 @@ def HIVM_SimtMemScopeHintAttr
   }];
 }
 
+def HIVM_PreloadWorkspaceAttr
+    : HIVM_Attr<"PreloadWorkspace", "preload_workspace"> {
+  let description = [{
+    Specifies that related op is preload workspace.
+  }];
+}
+
+def HIVM_PreloadLocalBufferAttr
+    : HIVM_Attr<"PreloadLocalBuffer", "preload_local_buffer"> {
+  let description = [{
+    Specifies that related op is preload local buffer.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Memory Effect
 //===----------------------------------------------------------------------===//
