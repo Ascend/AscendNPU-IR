@@ -254,7 +254,8 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
       options.gridDimZ = static_cast<int>(tritonGridDim[2]);
     pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
     pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
-    pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
+    if (config.getEnableSIMTFastDiv())
+      pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
   }
   pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
   pm.addPass(bishengir::triton::createDecomposeFRemPass());
