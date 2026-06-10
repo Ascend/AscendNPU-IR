@@ -1668,7 +1668,8 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     // Pattern 2: This deals with the pattern: memref.alloc() ->
     // bufferization.to_tensor, with Subview Op + Load Op
     if (auto subViewOp = dyn_cast<memref::SubViewOp>(userOp)) {
-      if (!subViewOp->hasOneUse() || !subViewOp.hasUnitStride())
+      if (!subViewOp->hasOneUse() || !subViewOp.hasUnitStride() ||
+          subViewOp.getDroppedDims().any())
         continue;
       auto loadOp = dyn_cast<hivm::LoadOp>(*subViewOp->user_begin());
       if (!loadOp)
