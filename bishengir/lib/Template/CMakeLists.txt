@@ -1,6 +1,12 @@
 option(ENABLE_CPU_TRACE_INTRINSIC "If enable debug, use cpu compile." OFF)
 message("-- ENABLE_CPU_TRACE_INTRINSIC Value: ${ENABLE_CPU_TRACE_INTRINSIC}")
 
+if(CMAKE_SYSROOT)
+    message("-- Using custom sysroot: ${CMAKE_SYSROOT}")
+else()
+    message("-- No CMAKE_SYSROOT specified. Omitting sysroot flag.")
+endif()
+
 #[[Compile single xx.cpp to xx.bc
  Core_type: "aic" "aiv" "host"
  Platform_type: "Ascend910B"]]
@@ -57,6 +63,11 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -std=c++17)
     list(APPEND bisheng_args -I ${INCLUDE_PATH})
     list(APPEND bisheng_args -o ${bc_name})
+    
+    # Conditionally append sysroot if it exists
+    if(CMAKE_SYSROOT)
+        list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
+    endif()
 
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
@@ -133,6 +144,11 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/impl)
     list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/compiler/tikcpp/tikcfw/interface)
     list(APPEND bisheng_args -o ${bc_name})
+    
+    # Conditionally append sysroot if it exists
+    if(CMAKE_SYSROOT)
+        list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
+    endif()
 
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
