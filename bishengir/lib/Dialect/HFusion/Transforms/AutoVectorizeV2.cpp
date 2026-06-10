@@ -111,7 +111,7 @@ bool isNonVectorizableOp(Operation *op) {
 
   auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
   if (linalgOp && hfusion::isSingleElementLinalgOp(linalgOp) &&
-      !isa<linalg::GenericOp>(linalgOp)) {
+      !isa<linalg::GenericOp>(linalgOp) && !isa<linalg::MapOp>(linalgOp)) {
     return true;
   }
 
