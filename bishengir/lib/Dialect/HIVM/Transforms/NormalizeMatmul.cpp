@@ -44,7 +44,7 @@ using namespace mlir::hivm;
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
-                                 Operation *hookOp = nullptr);
+                                        Operation *hookOp = nullptr);
 namespace {
 
 constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
@@ -166,15 +166,11 @@ getRealShapeFromMemrefOrTensor(Value val, Location loc,
     return getShapeFromMixedSizes(tensor::getMixedSizes(rewriter, loc, val),
                                   loc, rewriter);
 
-  FailureOr<memref::AllocOp> status = getMemRefAlloc(val, /*emitError=*/false);
-  if (failed(status)) {
-    SmallVector<Value> tensorMixedSizes;
-    for (OpFoldResult size : tensor::getMixedSizes(rewriter, loc, val)) {
-      tensorMixedSizes.push_back(
-          mlir::getValueOrCreateConstantIndexOp(rewriter, loc, size));
-    }
-    return tensorMixedSizes;
-  }
+  FailureOr<memref::AllocOp> status = getMemRefAlloc(val);
+  if (failed(status))
+    return getShapeFromMixedSizes(tensor::getMixedSizes(rewriter, loc, val),
+                                  loc, rewriter);
+
   memref::AllocOp rootAlloc = *(status);
   SmallVector<Operation *> candidateSubViews;
   // Find all SubViewOps that uses the root AllocOp.
@@ -269,7 +265,8 @@ FailureOr<SmallVector<Value>> extractRealMKN(hivm::MmadMxL1Op op,
   return SmallVector<Value>{(*realMK)[0], (*realMK)[1], (*realKN)[1]};
 }
 
-template <typename T> struct SetRealMKNPattern : public OpRewritePattern<T> {
+template <typename T>
+struct SetRealMKNPattern : public OpRewritePattern<T> {
 public:
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T mmadLikeOp,
@@ -430,8 +427,8 @@ inline Value getBiasInputForPerChannelAdd(Value v) {
 /// %3 = hivm.hir.mmadL1 ins(*, bias = %1) outs(%2 : tensor<16x32xf32>) ->
 ///        tensor<16x32xf32>
 /// ```
-template <typename T,
-          typename = std::enable_if_t<!std::is_same_v<T, hivm::MmadMxL1Op>>>
+template <typename T, typename = std::enable_if_t<
+                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
 LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
                                                T op) {
   auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
@@ -477,11 +474,10 @@ LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
 /// }
 /// some_use(%1)
 /// ```
-template <typename T,
-          typename = std::enable_if_t<!std::is_same_v<T, hivm::MmadMxL1Op>>>
+template <typename T, typename = std::enable_if_t<
+                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
 LogicalResult
-decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter,
-                                                  T op) {
+decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T op) {
   auto matmulOutput = op.getC();
   auto blockArg = dyn_cast_if_present<BlockArgument>(matmulOutput);
   assert(blockArg && "blockArg is not nullptr for split k");
@@ -538,11 +534,10 @@ decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter,
 /// }
 /// some_use(%1)
 /// ```
-template <typename T,
-          typename = std::enable_if_t<!std::is_same_v<T, hivm::MmadMxL1Op>>>
+template <typename T, typename = std::enable_if_t<
+                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
 LogicalResult
-decomposeMatmulWithMMInitPerChannelAddWithSplitK(PatternRewriter &rewriter,
-                                                 T op) {
+decomposeMatmulWithMMInitPerChannelAddWithSplitK(PatternRewriter &rewriter, T op) {
   auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
   op.getPerChannelBiasMutable().assign(perChannelValue);
 
@@ -709,7 +704,8 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
 
   return getOutermostCCFInfo(parentOp, info);
 }
-template <typename T> CCFInfo getResFromSingleUseChain(Operation *op) {
+template <typename T>
+CCFInfo getResFromSingleUseChain(Operation *op) {
   CCFInfo initInfo;
   initInfo.inVal = cast<T>(op).getC();
   initInfo.outVal = op->getResult(0);
@@ -797,8 +793,8 @@ hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type,
 // Set kNormalizedInL0C attribute with proper index for scf::ForOp, scf::IfOp,
 // or UnitAttr for other operations. If the attribute already exists, append
 // the new index to the existing list instead of overwriting.
-void setNormalizedInL0CWithIndex(PatternRewriter &rewriter,
-                                 Operation &insertPointOp, Value outerOutVal) {
+void setNormalizedInL0CWithIndex(PatternRewriter &rewriter, Operation &insertPointOp,
+                                  Value outerOutVal) {
   // skip the case that insertPointOp is mmad
   if (!isa<scf::ForOp, scf::IfOp>(insertPointOp))
     return;
@@ -812,8 +808,7 @@ void setNormalizedInL0CWithIndex(PatternRewriter &rewriter,
 
   // Check if attribute already exists
   SmallVector<Attribute> indices;
-  if (auto existingAttr =
-          insertPointOp.getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
+  if (auto existingAttr = insertPointOp.getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
     // Append existing indices
     for (Attribute attr : existingAttr) {
       indices.push_back(attr);
@@ -906,7 +901,7 @@ bool couldReuse(Value outerInVal) {
 
   // check the user of previous L0C is output from mmadL1 in CCF
   if (Operation *defOp = outerInVal.getDefiningOp()) {
-    if (defOp->hasAttr(kMayNotExec) || !isa<scf::ForOp>(defOp))
+    if(defOp->hasAttr(kMayNotExec) || !isa<scf::ForOp>(defOp))
       return false;
     // For scf::ForOp with multiple results, use ArrayAttr to specify indices
     // Find the corresponding result index
@@ -919,15 +914,15 @@ bool couldReuse(Value outerInVal) {
     }
 
     // Check if this specific result has the L0C normalized attribute
-    if (auto normalizedAttr =
-            defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
+    if (auto normalizedAttr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
       if (normalizedAttr.empty()) {
         return false;
       }
 
       for (Attribute idxAttr : normalizedAttr) {
         if (auto idxInt = idxAttr.dyn_cast<IntegerAttr>()) {
-          if (idxInt.getInt() == static_cast<int64_t>(resultIdx)) {
+          if (idxInt.getInt() == static_cast<int64_t>(resultIdx)
+              ) {
             return true;
           }
         }
