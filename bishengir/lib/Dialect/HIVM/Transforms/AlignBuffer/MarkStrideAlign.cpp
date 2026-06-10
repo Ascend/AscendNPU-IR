@@ -664,10 +664,9 @@ getLastNUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
 }
 
 /// get last discontinuous dim
-std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
+std::vector<std::pair<std::optional<int>, int32_t>> getLastDiscontinuousDimRegBasedForFixcctoub(
     const SmallVectorImpl<MemRefType> &memRefTypes,
-    const ReassociationIndices &continuousReassociations, Operation *op,
-    int32_t &alignBytes) {
+    const ReassociationIndices &continuousReassociations, Operation *op) {
   Value input = op->getOperand(0);
   Value output = op->getOperand(1);
   MemRefType inputType = mlir::cast<MemRefType>(input.getType());
@@ -676,16 +675,16 @@ std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
   auto outputSpace = outputType.getMemorySpace();
   ArrayRef<int64_t> outputShape = outputType.getShape();
   if (outputShape.size() != 2) {
-    return std::nullopt;
+    return {};
   }
   auto hivminputSpace = mlir::cast<hivm::AddressSpaceAttr>(inputSpace);
   auto hivmoutputSpace = mlir::cast<hivm::AddressSpaceAttr>(outputSpace);
   if (!hivminputSpace || !hivmoutputSpace) {
-    return std::nullopt;
+    return {};
   }
   if (hivminputSpace.getAddressSpace() != hivm::AddressSpace::L0C ||
       hivmoutputSpace.getAddressSpace() != hivm::AddressSpace::UB) {
-    return std::nullopt;
+    return {};
   }
   auto fixpipeOp = dyn_cast<FixpipeOp>(op);
   auto dmaModeAttr = fixpipeOp.getDmaModeAttr();
@@ -747,29 +746,33 @@ std::optional<int> getLastDiscontinuousDimRegBasedForFixcctoub(
       ddm = DualDstMode::SplitN;
     }
   }
+  std::vector<std::pair<std::optional<int>, int32_t>> alignDimAlignBytes;
+  int32_t alignBytes = 32;
+  DualDstMode mDdm = ddm == DualDstMode::SplitN ? ddm : DualDstMode::N;
   int64_t nSizeStride =
-      getNsizeAlignmentRequirement(dtype, csn, nz2nd, le, ddm);
-  if (nSizeStride != -1 && nz2dn != NZ2DN::DN_Y && ddm != DualDstMode::SplitM) {
+      getNsizeAlignmentRequirement(dtype, csn, nz2nd, le, mDdm);
+  if (nSizeStride != -1) {
     alignBytes = nSizeStride * dataWidth / 8;
     std::optional<int> alignDim =
         getLastNUnitDim(memRefTypes, continuousReassociations);
-    return alignDim;
+    alignDimAlignBytes.emplace_back(alignDim, alignBytes);
   }
-  int64_t mSizeStride = getMsizeAlignmentRequirement(dtype, nz2dn, ddm);
+  DualDstMode nDdm = ddm == DualDstMode::SplitM ? ddm : DualDstMode::N;
+  int64_t mSizeStride = getMsizeAlignmentRequirement(dtype, nz2dn, nDdm);
   if (mSizeStride != -1) {
     alignBytes = mSizeStride * dataWidth / 8;
     std::optional<int> alignDim =
         getLastMUnitDim(memRefTypes, continuousReassociations);
-    return alignDim;
+    alignDimAlignBytes.emplace_back(alignDim, alignBytes);
   }
-  return std::nullopt;
+  return alignDimAlignBytes;
 }
 
 void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
   DenseMap<Value, int> allocInfoMap;
   struct StrideAlignInfo {
-    ArrayRef<int32_t> dims;
-    ArrayRef<int32_t> values;
+    SmallVector<int32_t> dims;
+    SmallVector<int32_t> values;
   };
 
   DenseMap<int, StrideAlignInfo> strideAlignMap;
@@ -795,24 +798,27 @@ void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
       if (!allocValue) {
         return WalkResult::advance();
       }
-      auto maybeMarkOpRaw = utils::getAnnotateOpWithAttr(
-          allocValue, hivm::StrideAlignDimsAttr::name.str());
-      if (!maybeMarkOpRaw)
-        return WalkResult::advance();
-      auto strideAlignMarkOp = dyn_cast<annotation::MarkOp>(*maybeMarkOpRaw);
-      if (!strideAlignMarkOp)
+      int id = tcbAttr.getId().value();
+      SmallVector<Operation *> strideAlignMarkOps =
+          utils::getAllAnnotateOpsWithAttr(
+              allocValue, hivm::StrideAlignDimsAttr::name.str());
+      if (strideAlignMarkOps.empty())
         return WalkResult::advance();
 
-      ArrayRef<int32_t> alignDims =
-          strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
-              hivm::StrideAlignDimsAttr::name);
-      ArrayRef<int32_t> alignBytes =
-          strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
-              hivm::StrideAlignValueInByteAttr::name);
-      StrideAlignInfo info;
-      info.dims = alignDims;
-      info.values = alignBytes;
-      strideAlignMap[tcbAttr.getId().value()] = info;
+      auto &info = strideAlignMap[id];
+      for (auto *strideAlignMarkOpRaw : strideAlignMarkOps) {
+        auto strideAlignMarkOp = dyn_cast<annotation::MarkOp>(strideAlignMarkOpRaw);
+        if (!strideAlignMarkOp)
+          continue;
+        ArrayRef<int32_t> alignDims =
+            strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
+                hivm::StrideAlignDimsAttr::name);
+        ArrayRef<int32_t> alignBytes =
+            strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
+                hivm::StrideAlignValueInByteAttr::name);
+        info.dims.append(alignDims.begin(), alignDims.end());
+        info.values.append(alignBytes.begin(), alignBytes.end());
+      }
       return WalkResult::advance();
     });
   }
@@ -852,14 +858,16 @@ void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
         return WalkResult::advance();
       auto it = strideAlignMap.find(id);
       const StrideAlignInfo &info = it->second;
-      auto newMarkOp = mlir::hivm::createAlignMarkOp(
-          builder, markOp.getLoc(), allocValue,
-          /*alignDims=*/info.dims,
-          /*alignBytes=*/info.values, hivm::StrideAlignDimsAttr::name.str(),
-          hivm::StrideAlignValueInByteAttr::name.str());
+      for (size_t i = 0; i < info.dims.size(); ++i) {
+        auto newMarkOp = mlir::hivm::createAlignMarkOp(
+            builder, markOp.getLoc(), allocValue,
+            /*alignDims=*/ArrayRef<int32_t>({info.dims[i]}),
+            /*alignBytes=*/ArrayRef<int32_t>({info.values[i]}), hivm::StrideAlignDimsAttr::name.str(),
+            hivm::StrideAlignValueInByteAttr::name.str());
 
-      if (newMarkOp) {
-        markOp->moveAfter(*newMarkOp);
+        if (newMarkOp) {
+          markOp->moveAfter(*newMarkOp);
+        }
       }
       return WalkResult::advance();
     });
@@ -938,20 +946,21 @@ void MarkStrideAlignPass::runOnOperation() {
                                                  identityReassoc, isUBDMAOp);
       if (isa<FixpipeOp>(op)) {
         auto fixpipeOp = dyn_cast<FixpipeOp>(op);
-        int32_t alignByte = 32;
-        std::optional<int> alignDimUpdate =
+        auto alignDimAlignBytes =
             getLastDiscontinuousDimRegBasedForFixcctoub(
-                filterMemrefTypes, identityReassoc, fixpipeOp, alignByte);
-        if (alignDimUpdate.has_value()) {
-          isMarkStrideForAiv = true;
-          for (const auto &oper : hivmOp.getTargetSpaceOperands(
-                   hivm::AddressSpace::UB, false /*includeTmpBuffer*/)) {
-            if (failed(markAlignedDimForFixcctoub(builder, op, oper,
-                                                  alignDimUpdate, alignByte)))
-              return WalkResult::interrupt();
+                filterMemrefTypes, identityReassoc, fixpipeOp);
+        for (const auto &[alignDimUpdate, alignByte] : alignDimAlignBytes) {
+          if (alignDimUpdate.has_value()) {
+            isMarkStrideForAiv = true;
+            for (const auto &oper : hivmOp.getTargetSpaceOperands(
+                     hivm::AddressSpace::UB, false /*includeTmpBuffer*/)) {
+              if (failed(markAlignedDimForFixcctoub(builder, op, oper,
+                                                    alignDimUpdate, alignByte)))
+                return WalkResult::interrupt();
+            }
           }
-          return WalkResult::advance();
         }
+        return WalkResult::advance();
       }
     } else {
       // For A2/3
