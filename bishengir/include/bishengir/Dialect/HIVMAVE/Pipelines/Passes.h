@@ -199,6 +199,12 @@ struct HIVMAVEPipelineOptions
       *this, "max-reduction-split",
       llvm::cl::desc("Max split times for reductionLoop. Default is 1"),
       llvm::cl::init(1)};
+
+  PassOptions::Option<unsigned> superBlockFactor{
+      *this, "super-block-factor",
+      llvm::cl::desc("The factor of super-blocking, Default is 0, i.e. "
+                     "super-blocking is disabled."),
+      llvm::cl::init(0)};
 };
 
 struct ConvertToHIVMAVEPipelineOptions

@@ -52,12 +52,21 @@ def SIMTAutoBlockify
     programs in batches.
   }];
   let constructor = "bishengir::triton::createSIMTAutoBlockifyPass()";
-  let dependentDialects = [
-    "arith::ArithDialect",
-    "gpu::GPUDialect",
-    "scf::SCFDialect",
-    "mlir::triton::TritonDialect",
+  let dependentDialects = ["mlir::ascend_dpx::AscendDPXDialect",
+                           "mlir::arith::ArithDialect", "mlir::gpu::GPUDialect",
+                           "mlir::scf::SCFDialect",
+                           "mlir::triton::TritonDialect",
   ];
+  let options = [Option<"superBlockFactor", "superblock-factor", "unsigned",
+                        /*default=*/"0",
+                        "Set the factor to form super blocks: "
+                        "0 = superblock factor is 1 (no superblocking), "
+                        "1 = superblock factor is 2, "
+                        "2 = superblock factor is 4, "
+                        "3 = superblock factor is 8, "
+                        "4 = superblock factor is 16, "
+                        "5 = superblock factor is 32, and "
+                        "6 = superblock factor is 64.">];
 }
 
 def EnableAscendDPXMMA
