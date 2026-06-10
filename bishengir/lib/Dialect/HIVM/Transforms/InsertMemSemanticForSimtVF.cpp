@@ -51,21 +51,28 @@ private:
 void InsertMemSemanticForSimtVFPass::dealWithReferenceOutOfScope(
     scope::ScopeOp scopeOp, OpBuilder &builder) {
   llvm::DenseMap<Value, llvm::SmallVector<Operation *>> valsNeedLoad;
-  for (auto &op : scopeOp.getBody()->getOperations()) {
-    for (auto operand : op.getOperands()) {
+  // Travel all ops including sub-region
+  scopeOp.getBody()->walk([&](Operation *op) {
+    for (auto operand : op->getOperands()) {
       auto defOp = operand.getDefiningOp();
-      if (defOp && defOp->getBlock() == scopeOp.getBody()) {
+      bool isDefinedInScope = false;
+      if (defOp) {
+        isDefinedInScope = scopeOp->isAncestor(defOp);
+      } else if (auto blockArg = operand.dyn_cast<BlockArgument>()) {
+        isDefinedInScope = scopeOp->isAncestor(blockArg.getOwner()->getParentOp());
+      }
+      if (isDefinedInScope) {
         continue;
       }
       if (llvm::isa<RankedTensorType>(operand.getType())) {
         if (valsNeedLoad.count(operand)) {
-          valsNeedLoad[operand].emplace_back(&op);
+          valsNeedLoad[operand].emplace_back(op);
         } else {
-          valsNeedLoad[operand] = {&op};
+          valsNeedLoad[operand] = {op};
         }
       }
     }
-  }
+  });
   auto insertLoadOp = [&scopeOp, &builder](Value val, Operation *op) {
     auto tensorType = llvm::cast<RankedTensorType>(val.getType());
     builder.setInsertionPoint(scopeOp);
