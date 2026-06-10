@@ -775,8 +775,6 @@ Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
   hivmave::VFInterleaveOp interOp = rewriter.create<hivmave::VFInterleaveOp>(
       loc, ArrayRef<Type>({src.getType(), src.getType()}),
       ValueRange{src, src});
-  if (attr)
-    interOp->setAttr(utils::elementAlignmentBitWidth, attr);
   return interOp.getResult(0);
 }
 
@@ -785,8 +783,6 @@ Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
   hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
       loc, ArrayRef<Type>({src.getType(), src.getType()}),
       ValueRange{src, src});
-  if (attr)
-    deionOp->setAttr(utils::elementAlignmentBitWidth, attr);
   return deionOp.getResult(0);
 }
 

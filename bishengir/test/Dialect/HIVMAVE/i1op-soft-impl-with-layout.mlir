@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth -ave-normalize-ops \
+// RUN: bishengir-opt -analyze-vector-layout -ave-normalize-ops \
 // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin %s | FileCheck %s
 
 // CHECK-LABEL: @test_layout_constraint
