@@ -298,7 +298,7 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
 def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
   "bool",
-  "true"
+  "false"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
@@ -453,7 +453,7 @@ def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
 def SetWorkspaceMultibuffer : HIVMOptimizationControlOptions<
   "Override number of multibuffers for workspace, defaults to 2.",
   "unsigned",
-  "2"
+  "4"
 >;
 
 def EnableHIVMGlobalWorkspaceReuse : HIVMOptimizationControlOptions<

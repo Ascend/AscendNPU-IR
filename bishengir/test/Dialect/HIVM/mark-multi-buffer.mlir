@@ -103,7 +103,7 @@ module {
       %3 = tensor.empty() : tensor<16x16xf32>
       %4 = hivm.hir.mmadL1 ins(%1, %2, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
       %5 = memref_ext.alloc_workspace() from %arg1 : from memref<?xi8> to memref<16x16xf32>
-      // CHECK: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+      // CHECK: annotation.mark %{{.*}} {hivm.multi_buffer = 4 : i32}
       %6 = bufferization.to_tensor %5 restrict writable : memref<16x16xf32>
       %7 = hivm.hir.fixpipe {enable_nz2nd} ins(%4 : tensor<16x16xf32>) outs(%6 : tensor<16x16xf32>) -> tensor<16x16xf32>
       %8 = tensor.empty() : tensor<16x16xf32>

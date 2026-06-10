@@ -128,7 +128,7 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
                clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
                           "Disable l0c for mix auto multi buffer"))}]>,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-           /*default=*/"2", "Override for multibuffer number for workspace">,
+           /*default=*/"4", "Override for multibuffer number for workspace">,
   ];
 }
 
