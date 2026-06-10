@@ -1,9 +1,14 @@
-// RUN: bishengir-opt %s --hivm-convert-layout-to-transpose --split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hivm-convert-layout-to-transpose="use-3d-transpose=true" --split-input-file | FileCheck %s --check-prefixes=CHECK,CHECK-3D
+// RUN: bishengir-opt %s --hivm-convert-layout-to-transpose="use-3d-transpose=false" --split-input-file | FileCheck %s --check-prefixes=CHECK,CHECK-4D
 
 // CHECK: func.func @nd_to_fractal_aligned_f16(%[[VAL_0:.*]]: tensor<128x144xf16>)
-// CHECK: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [8, 16, 9, 16] : tensor<128x144xf16> into tensor<8x16x9x16xf16>
-// CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<9x8x16x16xf16>
-// CHECK: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<8x16x9x16xf16>) outs(%[[VAL_2]] : tensor<9x8x16x16xf16>) permutation = [2, 0, 1, 3] -> tensor<9x8x16x16xf16>
+// CHECK-4D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [8, 16, 9, 16] : tensor<128x144xf16> into tensor<8x16x9x16xf16>
+// CHECK-4D: %[[VAL_2:.*]] = tensor.empty() : tensor<9x8x16x16xf16>
+// CHECK-4D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<8x16x9x16xf16>) outs(%[[VAL_2]] : tensor<9x8x16x16xf16>) permutation = [2, 0, 1, 3] -> tensor<9x8x16x16xf16>
+// CHECK-3D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0], [1, 2]] output_shape [128, 9, 16] : tensor<128x144xf16> into tensor<128x9x16xf16>
+// CHECK-3D: %[[VAL_2:.*]] = tensor.empty() : tensor<9x128x16xf16>
+// CHECK-3D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<128x9x16xf16>) outs(%[[VAL_2]] : tensor<9x128x16xf16>) permutation = [1, 0, 2] -> tensor<9x128x16xf16>
+// CHECK-3D: %[[VAL_4:.*]] = tensor.expand_shape %[[VAL_3]] {{\[\[}}0], [1, 2], [3]] output_shape [9, 8, 16, 16] : tensor<9x128x16xf16> into tensor<9x8x16x16xf16>
 func.func @nd_to_fractal_aligned_f16(%arg0: tensor<128x144xf16>) -> tensor<9x8x16x16xf16> {
   %0 = hivm.hir.convert_layout %arg0 output_shape [9, 8, 16, 16]
        {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
@@ -29,10 +34,15 @@ func.func @fractal_to_nd_aligned_f16(%arg0: tensor<9x8x16x16xf16>) -> tensor<128
 // -----
 
 // CHECK: func.func @nd_to_fractal_aligned_f32(%[[VAL_0:.*]]: tensor<32x256xf32>) -> tensor<16x2x16x16xf32> {
-// CHECK: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [2, 16, 16, 16] : tensor<32x256xf32> into tensor<2x16x16x16xf32>
-// CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<16x2x16x16xf32>
-// CHECK: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<2x16x16x16xf32>) outs(%[[VAL_2]] : tensor<16x2x16x16xf32>) permutation = [2, 0, 1, 3] -> tensor<16x2x16x16xf32>
-// CHECK: return %[[VAL_3]] : tensor<16x2x16x16xf32>
+// CHECK-4D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [2, 16, 16, 16] : tensor<32x256xf32> into tensor<2x16x16x16xf32>
+// CHECK-4D: %[[VAL_2:.*]] = tensor.empty() : tensor<16x2x16x16xf32>
+// CHECK-4D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<2x16x16x16xf32>) outs(%[[VAL_2]] : tensor<16x2x16x16xf32>) permutation = [2, 0, 1, 3] -> tensor<16x2x16x16xf32>
+// CHECK-4D: return %[[VAL_3]] : tensor<16x2x16x16xf32>
+// CHECK-3D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0], [1, 2]] output_shape [32, 16, 16] : tensor<32x256xf32> into tensor<32x16x16xf32>
+// CHECK-3D: %[[VAL_2:.*]] = tensor.empty() : tensor<16x32x16xf32>
+// CHECK-3D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<32x16x16xf32>) outs(%[[VAL_2]] : tensor<16x32x16xf32>) permutation = [1, 0, 2] -> tensor<16x32x16xf32>
+// CHECK-3D: %[[VAL_4:.*]] = tensor.expand_shape %[[VAL_3]] {{\[\[}}0], [1, 2], [3]] output_shape [16, 2, 16, 16] : tensor<16x32x16xf32> into tensor<16x2x16x16xf32>
+// CHECK-3D: return %[[VAL_4]] : tensor<16x2x16x16xf32>
 func.func @nd_to_fractal_aligned_f32(%arg0: tensor<32x256xf32>) -> tensor<16x2x16x16xf32> {
   %0 = hivm.hir.convert_layout %arg0 output_shape [16, 2, 16, 16]
        {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
@@ -60,10 +70,15 @@ func.func @fractal_to_nd_aligned_f32(%arg0: tensor<16x2x16x16xf16>) -> tensor<32
 
 // ND(128x144) -> Fractal[16,8] => [144/8, 128/16, 16, 8] = [18, 8, 16, 8]
 // CHECK: func.func @nd_to_fractal_aligned_16x8_f16(%[[VAL_0:.*]]: tensor<128x144xf16>) -> tensor<18x8x16x8xf16> {
-// CHECK: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [8, 16, 18, 8] : tensor<128x144xf16> into tensor<8x16x18x8xf16>
-// CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<18x8x16x8xf16>
-// CHECK: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<8x16x18x8xf16>) outs(%[[VAL_2]] : tensor<18x8x16x8xf16>) permutation = [2, 0, 1, 3] -> tensor<18x8x16x8xf16>
-// CHECK: return %[[VAL_3]] : tensor<18x8x16x8xf16>
+// CHECK-4D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [8, 16, 18, 8] : tensor<128x144xf16> into tensor<8x16x18x8xf16>
+// CHECK-4D: %[[VAL_2:.*]] = tensor.empty() : tensor<18x8x16x8xf16>
+// CHECK-4D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<8x16x18x8xf16>) outs(%[[VAL_2]] : tensor<18x8x16x8xf16>) permutation = [2, 0, 1, 3] -> tensor<18x8x16x8xf16>
+// CHECK-4D: return %[[VAL_3]] : tensor<18x8x16x8xf16>
+// CHECK-3D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0], [1, 2]] output_shape [128, 18, 8] : tensor<128x144xf16> into tensor<128x18x8xf16>
+// CHECK-3D: %[[VAL_2:.*]] = tensor.empty() : tensor<18x128x8xf16>
+// CHECK-3D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<128x18x8xf16>) outs(%[[VAL_2]] : tensor<18x128x8xf16>) permutation = [1, 0, 2] -> tensor<18x128x8xf16>
+// CHECK-3D: %[[VAL_4:.*]] = tensor.expand_shape %[[VAL_3]] {{\[\[}}0], [1, 2], [3]] output_shape [18, 8, 16, 8] : tensor<18x128x8xf16> into tensor<18x8x16x8xf16>
+// CHECK-3D: return %[[VAL_4]] : tensor<18x8x16x8xf16>
 func.func @nd_to_fractal_aligned_16x8_f16(%arg0: tensor<128x144xf16>) -> tensor<18x8x16x8xf16> {
   %0 = hivm.hir.convert_layout %arg0 output_shape [18, 8, 16, 8]
        {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
@@ -92,10 +107,15 @@ func.func @fractal_to_nd_aligned_16x8_f16(%arg0: tensor<18x8x16x8xf16>) -> tenso
 
 // ND(32x256) -> Fractal[16,8] => [256/8, 32/16, 16, 8] = [32, 2, 16, 8]
 // CHECK: func.func @nd_to_fractal_aligned_16x8_f32(%[[VAL_0:.*]]: tensor<32x256xf32>) -> tensor<32x2x16x8xf32> {
-// CHECK: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [2, 16, 32, 8] : tensor<32x256xf32> into tensor<2x16x32x8xf32>
-// CHECK: %[[VAL_2:.*]] = tensor.empty() : tensor<32x2x16x8xf32>
-// CHECK: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<2x16x32x8xf32>) outs(%[[VAL_2]] : tensor<32x2x16x8xf32>) permutation = [2, 0, 1, 3] -> tensor<32x2x16x8xf32>
-// CHECK: return %[[VAL_3]] : tensor<32x2x16x8xf32>
+// CHECK-4D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0, 1], [2, 3]] output_shape [2, 16, 32, 8] : tensor<32x256xf32> into tensor<2x16x32x8xf32>
+// CHECK-4D: %[[VAL_2:.*]] = tensor.empty() : tensor<32x2x16x8xf32>
+// CHECK-4D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<2x16x32x8xf32>) outs(%[[VAL_2]] : tensor<32x2x16x8xf32>) permutation = [2, 0, 1, 3] -> tensor<32x2x16x8xf32>
+// CHECK-4D: return %[[VAL_3]] : tensor<32x2x16x8xf32>
+// CHECK-3D: %[[VAL_1:.*]] = tensor.expand_shape %[[VAL_0]] {{\[\[}}0], [1, 2]] output_shape [32, 32, 8] : tensor<32x256xf32> into tensor<32x32x8xf32>
+// CHECK-3D: %[[VAL_2:.*]] = tensor.empty() : tensor<32x32x8xf32>
+// CHECK-3D: %[[VAL_3:.*]] = hivm.hir.vtranspose ins(%[[VAL_1]] : tensor<32x32x8xf32>) outs(%[[VAL_2]] : tensor<32x32x8xf32>) permutation = [1, 0, 2] -> tensor<32x32x8xf32>
+// CHECK-3D: %[[VAL_4:.*]] = tensor.expand_shape %[[VAL_3]] {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 16, 8] : tensor<32x32x8xf32> into tensor<32x2x16x8xf32>
+// CHECK-3D: return %[[VAL_4]] : tensor<32x2x16x8xf32>
 func.func @nd_to_fractal_aligned_16x8_f32(%arg0: tensor<32x256xf32>) -> tensor<32x2x16x8xf32> {
   %0 = hivm.hir.convert_layout %arg0 output_shape [32, 2, 16, 8]
        {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
@@ -126,8 +146,11 @@ func.func @fractal_to_nd_aligned_16x8_f32(%arg0: tensor<32x2x16x8xf32>) -> tenso
 // CHECK: tensor.empty() : tensor<144x160xf16>
 // CHECK: hivm.hir.vbrc
 // CHECK: tensor.insert_slice
-// CHECK: tensor.expand_shape
-// CHECK: hivm.hir.vtranspose
+// CHECK-3D: tensor.expand_shape {{.*}} output_shape [144, 10, 16] : tensor<144x160xf16> into tensor<144x10x16xf16>
+// CHECK-3D: hivm.hir.vtranspose {{.*}} permutation = [1, 0, 2] -> tensor<10x144x16xf16>
+// CHECK-3D: tensor.expand_shape {{.*}} output_shape [10, 9, 16, 16] : tensor<10x144x16xf16> into tensor<10x9x16x16xf16>
+// CHECK-4D: tensor.expand_shape {{.*}} output_shape [9, 16, 10, 16] : tensor<144x160xf16> into tensor<9x16x10x16xf16>
+// CHECK-4D: hivm.hir.vtranspose {{.*}} permutation = [2, 0, 1, 3] -> tensor<10x9x16x16xf16>
 func.func @nd_to_fractal_unaligned_130x145(%arg0: tensor<130x145xf16>) -> tensor<10x9x16x16xf16> {
   %0 = hivm.hir.convert_layout %arg0 output_shape [10, 9, 16, 16]
       {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
@@ -142,8 +165,11 @@ func.func @nd_to_fractal_unaligned_130x145(%arg0: tensor<130x145xf16>) -> tensor
 // CHECK: tensor.empty() : tensor<32x48xf16>
 // CHECK: hivm.hir.vbrc
 // CHECK: tensor.insert_slice
-// CHECK: tensor.expand_shape
-// CHECK: hivm.hir.vtranspose
+// CHECK-3D: tensor.expand_shape {{.*}} output_shape [32, 3, 16] : tensor<32x48xf16> into tensor<32x3x16xf16>
+// CHECK-3D: hivm.hir.vtranspose {{.*}} permutation = [1, 0, 2] -> tensor<3x32x16xf16>
+// CHECK-3D: tensor.expand_shape {{.*}} output_shape [3, 2, 16, 16] : tensor<3x32x16xf16> into tensor<3x2x16x16xf16>
+// CHECK-4D: tensor.expand_shape {{.*}} output_shape [2, 16, 3, 16] : tensor<32x48xf16> into tensor<2x16x3x16xf16>
+// CHECK-4D: hivm.hir.vtranspose {{.*}} permutation = [2, 0, 1, 3] -> tensor<3x2x16x16xf16>
 func.func @nd_to_fractal_unaligned_17x33(%arg0: tensor<17x33xf16>) -> tensor<3x2x16x16xf16> {
   %0 = hivm.hir.convert_layout %arg0 output_shape [3, 2, 16, 16]
       {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,

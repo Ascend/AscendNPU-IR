@@ -35,11 +35,18 @@ SmallVector<ReassociationIndices> buildReassociation() {
   return {{0, 1}, {2, 3}};
 }
 
+SmallVector<ReassociationIndices> buildExpandNReassociation() {
+  return {{0}, {1, 2}};
+}
+
+SmallVector<ReassociationIndices> buildExpandMReassociation() {
+  return {{0}, {1, 2}, {3}};
+}
+
 /// Apply a given permutation to a shape
-template <class T>
-SmallVector<T> applyPermutation(ArrayRef<T> shape,
-                                ArrayRef<int64_t> permutation) {
-  SmallVector<T> result;
+SmallVector<OpFoldResult> applyShapePermutation(ArrayRef<OpFoldResult> shape,
+                                                ArrayRef<int64_t> permutation) {
+  SmallVector<OpFoldResult> result;
   result.reserve(shape.size());
   for (int64_t idx : permutation) {
     result.push_back(shape[idx]);
@@ -84,6 +91,7 @@ LayoutConversionInfo extractConversionInfo(ConvertLayoutOp op) {
 }
 
 const SmallVector<int64_t> kFractalLayoutPermutation = {2, 0, 1, 3};
+const SmallVector<int64_t> kStaged3DPermutation = {1, 0, 2};
 
 /// Align `size` up to multiple of `tile`: ceilDiv(size, tile) * tile
 static OpFoldResult alignUpOFR(PatternRewriter &rewriter, Location loc,
@@ -110,6 +118,76 @@ static SmallVector<OpFoldResult> getUnitStrides(PatternRewriter &rewriter,
 
 struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
   using OpRewritePattern::OpRewritePattern;
+  // If more rewrite options are added, replace this bool with a dedicated
+  // options struct and thread it through pattern construction.
+  explicit CanonicalToFractalDecompose(MLIRContext *context,
+                                       bool use3dTranspose)
+      : OpRewritePattern<ConvertLayoutOp>(context),
+        use3dTranspose(use3dTranspose) {}
+
+  LogicalResult
+  rewriteWith4DTranspose(ConvertLayoutOp op, PatternRewriter &rewriter,
+                         Value source,
+                         ArrayRef<OpFoldResult> resultShape) const {
+    auto reassociation = buildReassociation();
+    auto inversedPermutation =
+        utils::inversePermutation(kFractalLayoutPermutation);
+    auto mixedExpandedShape =
+        applyShapePermutation(resultShape, inversedPermutation);
+
+    auto expandedType =
+        cast<ShapedType>(op.getResult().getType())
+            .clone(decomposeMixedValues(mixedExpandedShape).first);
+
+    auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
+        op.getLoc(), expandedType, source, reassociation);
+
+    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
+        op.getLoc(), resultShape, getElementTypeOrSelf(op.getResult()));
+
+    auto transposeOp = rewriter.create<hivm::VTransposeOp>(
+        op.getLoc(), TypeRange(emptyTensor.getType()), expandOp.getResult(),
+        emptyTensor, rewriter.getDenseI64ArrayAttr(kFractalLayoutPermutation));
+    rewriter.replaceOp(op, transposeOp.getResult());
+    return success();
+  }
+
+  LogicalResult
+  rewriteWith3DTranspose(ConvertLayoutOp op, PatternRewriter &rewriter,
+                         Value source,
+                         ArrayRef<OpFoldResult> resultShape) const {
+    auto resultTy = cast<RankedTensorType>(op.getResult().getType());
+    Type elemTy = resultTy.getElementType();
+    auto srcMixedShape = tensor::getMixedSizes(rewriter, op.getLoc(), source);
+    if (srcMixedShape.size() != 2) {
+      return rewriter.notifyMatchFailure(
+          op, "expected rank-2 source for staged decomposition");
+    }
+
+    // [M, N] -> [M, Nt, f1], then transpose [1,0,2], then [Nt, M] -> [Nt, Mt,
+    // f0, f1].
+    SmallVector<OpFoldResult> firstExpandedShape{
+        srcMixedShape[0], resultShape[0], resultShape[3]};
+    auto firstExpandedTy = RankedTensorType::get(
+        decomposeMixedValues(firstExpandedShape).first, elemTy);
+    auto firstExpand = rewriter.create<tensor::ExpandShapeOp>(
+        op.getLoc(), firstExpandedTy, source, buildExpandNReassociation());
+
+    SmallVector<OpFoldResult> transposedShape{resultShape[0], srcMixedShape[0],
+                                              resultShape[3]};
+    auto transposeEmpty =
+        rewriter.create<tensor::EmptyOp>(op.getLoc(), transposedShape, elemTy);
+    auto transpose3d = rewriter.create<hivm::VTransposeOp>(
+        op.getLoc(), TypeRange(transposeEmpty.getType()),
+        firstExpand.getResult(), transposeEmpty,
+        rewriter.getDenseI64ArrayAttr(kStaged3DPermutation));
+
+    auto secondExpand = rewriter.create<tensor::ExpandShapeOp>(
+        op.getLoc(), resultTy, transpose3d.getResult()[0],
+        buildExpandMReassociation());
+    rewriter.replaceOp(op, secondExpand.getResult());
+    return success();
+  }
 
   /// Create a zero-padded 2D base tensor for ND -> Fractal conversion.
   ///
@@ -199,31 +277,15 @@ struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
     if (failed(paddedSrc))
       return paddedSrc;
 
-    auto reassociation = buildReassociation();
     auto resultShape = op.getMixedOutputShape();
-
-    auto inversedPermutation =
-        utils::inversePermutation(kFractalLayoutPermutation);
-    auto mixedExpandedShape =
-        applyPermutation(resultShape, inversedPermutation);
-
-    auto expandedType =
-        cast<ShapedType>(op.getResult().getType())
-            .clone(decomposeMixedValues(mixedExpandedShape).first);
-
-    auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
-        info.loc, expandedType, paddedSrc.value(), reassociation);
-
-    auto emptyTensor = rewriter.create<tensor::EmptyOp>(
-        info.loc, resultShape, getElementTypeOrSelf(op.getResult()));
-
-    auto transposeOp = rewriter.create<hivm::VTransposeOp>(
-        info.loc, TypeRange(emptyTensor.getType()), expandOp.getResult(),
-        emptyTensor, rewriter.getDenseI64ArrayAttr(kFractalLayoutPermutation));
-
-    rewriter.replaceOp(op, transposeOp.getResult());
-    return success();
+    if (!use3dTranspose)
+      return rewriteWith4DTranspose(op, rewriter, paddedSrc.value(),
+                                    resultShape);
+    return rewriteWith3DTranspose(op, rewriter, paddedSrc.value(), resultShape);
   }
+
+private:
+  bool use3dTranspose = true;
 };
 
 struct FractalToCanonicalDecompose : public OpRewritePattern<ConvertLayoutOp> {
@@ -243,7 +305,8 @@ struct FractalToCanonicalDecompose : public OpRewritePattern<ConvertLayoutOp> {
     auto permutation = utils::inversePermutation(kFractalLayoutPermutation);
     auto emptyMixedShape =
         tensor::getMixedSizes(rewriter, info.loc, op.getSource());
-    auto mixedExpandedShape = applyPermutation(emptyMixedShape, permutation);
+    auto mixedExpandedShape =
+        applyShapePermutation(emptyMixedShape, permutation);
 
     auto emptyTensor = rewriter.create<tensor::EmptyOp>(
         info.loc, mixedExpandedShape, getElementTypeOrSelf(op.getResult()));
@@ -273,9 +336,10 @@ struct FractalToCanonicalDecompose : public OpRewritePattern<ConvertLayoutOp> {
 };
 
 void populateConvertLayoutToTranspose(RewritePatternSet &patterns,
-                                      MLIRContext *context) {
-  patterns.add<CanonicalToFractalDecompose, FractalToCanonicalDecompose>(
-      context);
+                                      MLIRContext *context,
+                                      bool use3dTranspose) {
+  patterns.add<CanonicalToFractalDecompose>(context, use3dTranspose);
+  patterns.add<FractalToCanonicalDecompose>(context);
 }
 } // namespace
 
@@ -286,7 +350,7 @@ struct ConvertLayoutToTransposePass
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
-    populateConvertLayoutToTranspose(patterns, context);
+    populateConvertLayoutToTranspose(patterns, context, this->use3dTranspose);
     ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;
