@@ -48,3 +48,19 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK: hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>
+module {
+  func.func @simt_vf(%arg0: memref<8xi64>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    return
+  }
+
+  func.func @simple_kernel_with_empty_inp(%arg0: tensor<8xi64>, %arg1: tensor<8xi64>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    %0 = tensor.empty() : tensor<8xi64>
+    %1 = bufferization.to_memref %0 : memref<8xi64>
+    call @simt_vf(%1) : (memref<8xi64>) -> ()
+    return
+  }
+}

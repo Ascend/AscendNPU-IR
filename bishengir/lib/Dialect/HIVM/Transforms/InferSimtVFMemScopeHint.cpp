@@ -94,6 +94,10 @@ std::optional<AddressSpaceAttr> inferMemScopeFromAnchor(Value root) {
     if (isa<hivm::HIVMDialect>(defOp->getDialect())) {
       return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
     }
+
+    if (isa<tensor::EmptyOp>(defOp)) {
+      return getAddressSpaceAttr(root.getContext(), hivm::AddressSpace::UB);
+    }
   }
   return std::nullopt;
 }
