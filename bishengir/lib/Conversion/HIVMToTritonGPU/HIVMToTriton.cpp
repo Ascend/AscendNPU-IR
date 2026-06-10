@@ -12,6 +12,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -737,6 +738,62 @@ buildMemRefTensorPointers(ConversionPatternRewriter &rewriter, Location loc,
     SmallVector<OpFoldResult> mixedStrides = castOp.getMixedStrides();
     return buildReinterpretCastTensorPointers(
         rewriter, loc, base, baseMemrefTy, mixedOffsets, mixedStrides, shape);
+  }
+
+  if (auto subviewOp = originalValue.getDefiningOp<memref::SubViewOp>()) {
+    // Require unit strides on the subview itself
+    for (auto svStride : subviewOp.getMixedStrides()) {
+      if (!isConstantIntValue(svStride, 1))
+        return failure();
+    }
+
+    // Per-dim strides come from the SubView source: prefer the strides of
+    // an upstream ReinterpretCast (so the base pointer is the raw memref);
+    // otherwise read the strided layout from the source memref type.
+    Value source = subviewOp.getSource();
+    SmallVector<OpFoldResult> mixedStrides;
+    if (auto srcCast = source.getDefiningOp<memref::ReinterpretCastOp>()) {
+      mixedStrides = srcCast.getMixedStrides();
+      source = srcCast.getSource();
+    } else {
+      auto sourceMemrefTy = dyn_cast<MemRefType>(source.getType());
+      if (!sourceMemrefTy)
+        return failure();
+      auto layout =
+          dyn_cast<StridedLayoutAttr>(sourceMemrefTy.getLayout());
+      if (!layout)
+        return failure();
+      for (int64_t s : layout.getStrides())
+        mixedStrides.push_back(rewriter.getIndexAttr(s));
+    }
+
+    auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
+    if (!baseMemrefTy)
+      return failure();
+
+    auto subviewOffsets = subviewOp.getMixedOffsets();
+    if (subviewOffsets.size() != mixedStrides.size())
+      return failure();
+
+    // linearOffset = sum_i (subviewOffsets[i] * strides[i])
+    auto *ctx = rewriter.getContext();
+    AffineExpr expr = getAffineConstantExpr(0, ctx);
+    SmallVector<OpFoldResult> exprOperands;
+    for (size_t i = 0; i < subviewOffsets.size(); ++i) {
+      auto strideOptInt = getConstantIntValue(mixedStrides[i]);
+      if (!strideOptInt)
+        return failure();
+      expr = expr + getAffineSymbolExpr(i, ctx) * (*strideOptInt);
+      exprOperands.push_back(subviewOffsets[i]);
+    }
+    OpFoldResult linearOffset =
+        affine::makeComposedFoldedAffineApply(rewriter, loc, expr,
+                                              exprOperands);
+
+    SmallVector<OpFoldResult> mixedOffsets{linearOffset};
+    return buildReinterpretCastTensorPointers(rewriter, loc, source,
+                                              baseMemrefTy, mixedOffsets,
+                                              mixedStrides, shape);
   }
 
   Value offsets =
