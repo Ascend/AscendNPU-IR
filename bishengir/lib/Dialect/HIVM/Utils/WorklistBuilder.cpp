@@ -914,6 +914,7 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
     // A counter load in a VECTOR item must drag its advance-clone along so the
     // counter is incremented per stage instead of read-only at 0. Pulling the
     // clone here lets traceDependentOps wire its inits/operands and migrateOps
+    // remap them, avoiding a dangling cube-path tensor when the loop is erased.
     if (item.core == TCoreType::VECTOR)
       if (auto load = dyn_cast<memref::LoadOp>(op)) {
         auto it = counterClones.find(load.getMemRef());
