@@ -133,6 +133,13 @@ def AutoVectorizeVerifier
   let constructor = "mlir::hfusion::createAutoVectorizeVerifierPass()";
   let dependentDialects = ["func::FuncDialect", "vector::VectorDialect",
                            "hivm::HIVMDialect"];
+  let options = [
+    Option<"verifyFreeVectorRegion", "verify-free-vector-region", "bool",
+           "false",
+           "Verify vector operations are nested in outlined vector regions.">,
+    Option<"verifyFreeVectorFunc", "verify-free-vector-func", "bool", "true",
+           "Verify vector operations are not left outside vector functions.">,
+  ];
 }
 
 def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {

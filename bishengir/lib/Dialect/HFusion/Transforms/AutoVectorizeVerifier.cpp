@@ -7,13 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
-#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/IR/BuiltinTypes.h"
-
-#include "llvm/ADT/STLExtras.h"
 
 #include <memory>
 
@@ -25,37 +22,17 @@ namespace mlir {
 using namespace mlir;
 
 namespace {
-    
-bool hasVectorOperandOrResult(Operation *op) {
-  auto isVectorType = [](Type type) { return isa<VectorType>(type); };
-  return llvm::any_of(op->getOperandTypes(), isVectorType) ||
-         llvm::any_of(op->getResultTypes(), isVectorType);
-}
 
-class AutoVectorizeVerifier
-    : public impl::AutoVectorizeVerifierBase<AutoVectorizeVerifier> {
+class AutoVectorizeVerifierPass
+    : public impl::AutoVectorizeVerifierBase<AutoVectorizeVerifierPass> {
 public:
   using AutoVectorizeVerifierBase::AutoVectorizeVerifierBase;
 
   void runOnOperation() override {
-    WalkResult result = getOperation()->walk<WalkOrder::PreOrder>(
-        [](Operation *op) {
-          if (auto func = dyn_cast<func::FuncOp>(op)) {
-            if (hivm::isVF(func)) {
-              return WalkResult::skip();
-            }
-            return WalkResult::advance();
-          }
-
-          if (!hasVectorOperandOrResult(op)) {
-            return WalkResult::advance();
-          }
-
-          op->emitError("unexpected vector operation outside vector function");
-          return WalkResult::interrupt();
-        });
-
-    if (result.wasInterrupted()) {
+    hfusion::AutoVectorizeVerifier verifier;
+    if (failed(verifier.verifyFreeVectorRegion(verifyFreeVectorRegion)
+                   .verifyFreeVectorFunc(verifyFreeVectorFunc)
+                   .check(getOperation()))) {
       signalPassFailure();
     }
   }
@@ -64,5 +41,5 @@ public:
 } // namespace
 
 std::unique_ptr<Pass> mlir::hfusion::createAutoVectorizeVerifierPass() {
-  return std::make_unique<AutoVectorizeVerifier>();
+  return std::make_unique<AutoVectorizeVerifierPass>();
 }
