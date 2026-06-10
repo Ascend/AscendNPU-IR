@@ -50,10 +50,10 @@ struct WorkspaceAllocParams {
 };
 
 struct CVPipelineImpl {
-  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer, bool skewMode,
-                 bool enableLazyLoading)
+  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
+                 PipelineMode pipelineMode, bool enableLazyLoading)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
-        numMultibuffer(multibuffer), enableSkewMode(skewMode),
+        numMultibuffer(multibuffer), pipelineMode(pipelineMode),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
@@ -132,8 +132,8 @@ private:
   // Number of multibuffer/pipeline stages/unroll iterations
   int numMultibuffer;
 
-  // Use skew-mode pipelining instead of the default unroll-mode
-  bool enableSkewMode;
+  // Pipeline mode for CV-pipelining.
+  PipelineMode pipelineMode;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -444,9 +444,9 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
     }
 
     if (producers.size() != 1)
-      return pipelineLoop->emitWarning(
-          "[cv-pipelining] cannot absorb merger chain into a single work "
-          "item: the yielded value depends on ")
+      return pipelineLoop->emitWarning("[cv-pipelining] cannot absorb merger "
+                                       "chain into a single work "
+                                       "item: the yielded value depends on ")
              << producers.size()
              << " work-item producer(s); refusing to pipeline this loop";
 
@@ -480,8 +480,8 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
         if (!cmpi)
           continue;
         for (Value cmpOperand : cmpi->getOperands()) {
-          auto load = dyn_cast_if_present<memref::LoadOp>(
-              cmpOperand.getDefiningOp());
+          auto load =
+              dyn_cast_if_present<memref::LoadOp>(cmpOperand.getDefiningOp());
           if (!load)
             continue;
           Value memref = load.getMemRef();
@@ -950,8 +950,7 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
                                                       Value expanded,
                                                       OpOperand &initOperand,
                                                       Value iv) const {
-  auto subview =
-      dyn_cast<memref::SubViewOp>(initOperand.get().getDefiningOp());
+  auto subview = dyn_cast<memref::SubViewOp>(initOperand.get().getDefiningOp());
   if (!subview)
     return Value(nullptr);
   if (!isa<memref::AllocOp>(subview.getSource().getDefiningOp())) {
@@ -1062,8 +1061,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         Value newResult = *resIt;
         Value extracted =
             createExtractSlice(builder, loc, *argIt, orig.getType(), iv);
-        OpOperand &initOperand =
-            clonedFor.getInitsMutable()[resultIdx];
+        OpOperand &initOperand = clonedFor.getInitsMutable()[resultIdx];
         initOperand.set(extracted);
         // Also retype the matching iter_arg so the body uses the slice type.
         clonedFor.getRegionIterArg(resultIdx).setType(extracted.getType());
@@ -1081,8 +1079,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         SmallVector<OpOperand *> toReplaceFor;
         for (OpOperand &use : orig.getUses()) {
           Operation *owner = use.getOwner();
-          if (pipelineLoop->isAncestor(owner) ||
-              item->forOp->isAncestor(owner))
+          if (pipelineLoop->isAncestor(owner) || item->forOp->isAncestor(owner))
             continue;
           toReplaceFor.push_back(&use);
         }
@@ -1091,8 +1088,8 @@ LogicalResult CVPipelineImpl::migrateOps() {
           Operation *ownerLoop = getContainedParent(newLoop, owner);
           Value userIV = cast<scf::ForOp>(ownerLoop).getInductionVar();
           builder.setInsertionPoint(owner);
-          Value perStage =
-              createExtractSlice(builder, loc, newResult, orig.getType(), userIV);
+          Value perStage = createExtractSlice(builder, loc, newResult,
+                                              orig.getType(), userIV);
           use->set(perStage);
         }
         continue;
@@ -1270,9 +1267,13 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     newScopeOp->setAttr(kPipelinedLoopCoreTypeAttrName,
                         TCoreTypeAttr::get(builder.getContext(), item->core));
     newScopeOp->setAttr(
-        "preload_num",
+        hivm::PreloadNumAttr::name,
         IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
                          preloadNum));
+    newScopeOp->setAttr(
+        hivm::MaxPreloadNumAttr::name,
+        IntegerAttr::get(IntegerType::get(newScopeOp->getContext(), 32),
+                         static_cast<int32_t>(worklist.size())));
 
     Region &region = newScopeOp.getRegion();
     Block *bodyBlock = builder.createBlock(&region);
@@ -1455,8 +1456,11 @@ LogicalResult CVPipelineImpl::run() {
     return failure();
 
   // Preload pipeline reuse workitems with cvpipeline.
-  if (enableSkewMode) {
-    return markScopesForPreload();
+  if (pipelineMode != PipelineMode::Unroll) {
+    auto result = markScopesForPreload();
+    if (succeeded(result))
+      pipelineLoop->erase();
+    return result;
   }
 
   if (failed(createNewLoops())) {
@@ -1489,11 +1493,13 @@ void CVPipeliningPass::runOnOperation() {
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
     return;
 
-  // Check if we should skip the entire pass due to autoblockify with NormalizeMatmul counter
+  // Check if we should skip the entire pass due to autoblockify with
+  // NormalizeMatmul counter
   bool hasAutoblockifyLoop = false;
   bool hasNormalizeMatmulCounter = false;
-  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr = "autoblockify.subloop";
-  
+  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr =
+      "autoblockify.subloop";
+
   // Check for autoblockify loop tag
   func->walk([&](scf::ForOp forOp) {
     if (forOp->hasAttr(kAutoBlockifySubloopAttr)) {
@@ -1504,16 +1510,20 @@ void CVPipeliningPass::runOnOperation() {
   // Check for NormalizeMatmul counter (attribute on storeOp)
   func->walk([&](memref::StoreOp storeOp) {
     if (storeOp->hasAttr(hivm::TCoreTypeAttr::name)) {
-      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
-      if (coreTypeAttr && coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
+      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(
+          hivm::TCoreTypeAttr::name);
+      if (coreTypeAttr &&
+          coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
         hasNormalizeMatmulCounter = true;
       }
     }
   });
 
-  // Skip entire CV Pipelining pass if there's autoblockify loop with NormalizeMatmul counter
+  // Skip entire CV Pipelining pass if there's autoblockify loop with
+  // NormalizeMatmul counter
   if (hasAutoblockifyLoop && hasNormalizeMatmulCounter) {
-    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to autoblockify loop with NormalizeMatmul counter\n");
+    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to "
+                         "autoblockify loop with NormalizeMatmul counter\n");
     return;
   }
 
@@ -1527,7 +1537,7 @@ void CVPipeliningPass::runOnOperation() {
       parentLoop = parentLoop->getParentOfType<scf::ForOp>();
     }
 
-    CVPipelineImpl impl(loop, this->pipelineDepth, this->enableSkewMode,
+    CVPipelineImpl impl(loop, this->pipelineDepth, this->pipelineMode,
                         this->enableLazyLoading);
     if (impl.run().succeeded())
       pipelinedLoops.insert(loop);

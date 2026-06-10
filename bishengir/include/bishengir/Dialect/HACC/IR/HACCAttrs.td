@@ -86,13 +86,14 @@ def HACC_kTilingStruct : I32EnumAttrCase<"kTilingStruct", 8, "tiling_struct">;
 def HACC_kMeshArg : I32EnumAttrCase<"kMeshArg", 9, "mesh_arg">;
 def HACC_kSanitizerAddr : I32EnumAttrCase<"kSanitizerAddr", 10, "sanitizer_addr">;
 def HACC_kGMAddr : I32EnumAttrCase<"kGMAddr", 11, "gm_addr">;
+def HACC_kSubWorkspace : I32EnumAttrCase<"kSubWorkspace", 12, "sub_workspace">;
 
 def HACC_KernelArgTypeEnum
     : HACC_I32Enum<"KernelArgType", "HACC Kernel Arg Category",
                    [HACC_kFFTSBaseAddr, HACC_kInput, HACC_kOutput,
                     HACC_kInputAndOutput, HACC_kWorkspace, HACC_kSyncBlockLock,
                     HACC_kTilingKey, HACC_kTilingData, HACC_kTilingStruct,
-                    HACC_kMeshArg, HACC_kSanitizerAddr, HACC_kGMAddr,
+                    HACC_kMeshArg, HACC_kSanitizerAddr, HACC_kGMAddr, HACC_kSubWorkspace,
 ]> {}
 
 def HACC_KernelArgTypeAttr : HACC_Attr<"KernelArgType", "arg_type"> {

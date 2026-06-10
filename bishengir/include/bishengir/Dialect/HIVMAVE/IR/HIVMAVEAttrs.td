@@ -395,5 +395,35 @@ def AVE_FunctionDistType : I32EnumAttr<"FunctionDistType",
 def AVE_FunctionDistAttr : EnumAttr<AVE_Dialect, AVE_FunctionDistType, "func_dist_type"> {
   let assemblyFormat = [{`<` $value `>`}];
 }
+//b8->b16
+def AVE_PregCast_UNPK_B8  : I32EnumAttrCase<"UNPK_B8",  0>;
+//b16->b32
+def AVE_PregCast_UNPK_B16 : I32EnumAttrCase<"UNPK_B16", 1>;
+//b8->b32
+def AVE_PregCast_UNPK4_B8 : I32EnumAttrCase<"UNPK4_B8", 2>;
+//b8->b16
+def AVE_PregCast_PK_B16   : I32EnumAttrCase<"PK_B16",   3>;
+//b16->b32
+def AVE_PregCast_PK_B32   : I32EnumAttrCase<"PK_B32",   4>;
+//b8->b32
+def AVE_PregCast_PK4_B32  : I32EnumAttrCase<"PK4_B32",  5>;
+
+def AVE_PregCastMode : I32EnumAttr<"PregCastMode",
+    "Cast mode for AVE Preg type casting operation",
+    [
+      AVE_PregCast_UNPK_B8,
+      AVE_PregCast_UNPK_B16,
+      AVE_PregCast_UNPK4_B8,
+      AVE_PregCast_PK_B16,
+      AVE_PregCast_PK_B32,
+      AVE_PregCast_PK4_B32
+    ]> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "mlir::hivmave";
+}
+
+def AVE_PregCastModeAttr : EnumAttr<AVE_Dialect, AVE_PregCastMode, "preg_cast_mode"> {
+  let assemblyFormat = [{`<` $value `>`}];
+}
 
 #endif // AVE_VFATTRS

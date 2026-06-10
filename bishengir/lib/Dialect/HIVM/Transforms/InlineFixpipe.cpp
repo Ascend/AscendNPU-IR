@@ -955,17 +955,15 @@ public:
     Operation *definingOp = maybeMmadRes.getDefiningOp();
     rewriter.setInsertionPointAfter(definingOp);
 
-    TensorType tensorType = cast<TensorType>(maybeMmadRes.getType());
-    Value workSpaceTensor = getLocalWorkSpaceTensor(
-        rewriter, definingOp->getLoc(), tensorType.getShape(),
-        getElementTypeOrSelf(tensorType));
+    Value emptyBuf =
+        utils::createEmptyOp(rewriter, definingOp->getLoc(), maybeMmadRes);
     MLIRContext *ctx = rewriter.getContext();
     FixpipeDMAModeAttr dmaModeAttr =
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
     auto fixpipeOp = rewriter.create<FixpipeOp>(
-        op.getLoc(), /*result_tensor=*/workSpaceTensor.getType(),
+        op.getLoc(), /*result_tensor=*/emptyBuf.getType(),
         /*src=*/maybeMmadRes,
-        /*dst=*/workSpaceTensor, dmaModeAttr, /*dual_dst_mode=*/nullptr,
+        /*dst=*/emptyBuf, dmaModeAttr, /*dual_dst_mode=*/nullptr,
         /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
     rewriter.modifyOpInPlace(op, [&]() {
       OpOperand &arg = op.getArgMutable();

@@ -1,5 +1,4 @@
-// RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth \
-// RUN: -remove-vector-layout-attr -convert-hivmave-to-std -expand-strided-metadata \
+// RUN: bishengir-opt -convert-hivmave-to-std -expand-strided-metadata \
 // RUN: -convert-hivmave-to-ave-intrin -cse %s | FileCheck %s
 // CHECK-LABEL: @test_template_mask_store_op_mask
 #map = affine_map<(d0)[s0] -> (d0 + s0)>
@@ -24,14 +23,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
   // CHECK: "hivm_regbaseintrins.intr.hivm.vldas"
   // CHECK: "hivm_regbaseintrins.intr.hivm.vldus.post.s32"
   // CHECK: "hivm_regbaseintrins.intr.hivm.movvp"
-  // CHECK: "hivm_regbaseintrins.intr.hivm.pdintlv.b8"
-  // CHECK: "hivm_regbaseintrins.intr.hivm.pdintlv.b8"
   // CHECK: "hivm_regbaseintrins.intr.hivm.pge.b8"
   // CHECK: "hivm_regbaseintrins.intr.hivm.pand.z"
   // CHECK: "hivm_regbaseintrins.intr.hivm.pge.b8"
-  // CHECK: "hivm_regbaseintrins.intr.hivm.pge.b8"
-  // CHECK: "hivm_regbaseintrins.intr.hivm.pintlv.b8"
-  // CHECK: "hivm_regbaseintrins.intr.hivm.pintlv.b8"
   // CHECK: "hivm_regbaseintrins.intr.hivm.init.vector.align.data"
   // CHECK: "hivm_regbaseintrins.intr.hivm.pstu.b32"
   func.func @test_pld_pand_pst(%arg0: memref<512xf32, #hivm.address_space<ub>>, %arg1: memref<512xi1, #hivm.address_space<ub>>, %arg2: memref<512xf32, #hivm.address_space<ub>>, %arg3: f32, %arg4: i32 {hivm.constant_value = 31 : i64}, %arg5: i32 {hivm.constant_value = -1 : i64}, %arg6: memref<512xi1, #hivm.address_space<ub>>, %arg7: memref<512xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
@@ -64,11 +58,11 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     scf.for %arg8 = %c0 to %c512 step %c64 {
       %subview = memref.subview %arg1[%arg8] [64] [1] : memref<512xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
       %subview_0 = memref.subview %arg6[%arg8] [64] [1] : memref<512xi1, #hivm.address_space<ub>> to memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>
-      %res = ave.hir.vload <NORM> %subview[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb8>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
+      %res = ave.hir.vload <NORM> %subview[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
       %6 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
       %7 = ave.hir.preg.and <b8> %5, %res, %6 : vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
       %8 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
-      ave.hir.masked_store <NORM_B8> %subview_0[%c0], %8, %7 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb8>, hivm.is_continuous} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
+      ave.hir.masked_store <NORM_B8> %subview_0[%c0], %8, %7 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<pb32>, hivm.is_continuous} : memref<64xi1, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b8>}>>
       %subview_1 = memref.subview %arg2[%arg8] [64] [1] : memref<512xf32, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
       %subview_2 = memref.subview %arg7[%arg8] [64] [1] : memref<512xf32, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
       %res_3 = ave.hir.vload <NORM> %subview_1[%c0] {functionType = #ave.func_dist_type<norm>} : memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xf32, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>

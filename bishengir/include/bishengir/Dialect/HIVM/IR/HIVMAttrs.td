@@ -1179,6 +1179,20 @@ def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
   }];
 }
 
+def HIVM_PreloadNumAttr
+    : HIVM_Attr<"PreloadNum", "preload_num"> {
+  let description = [{
+    Specifies the preload number of scope op.
+  }];
+}
+
+def HIVM_MaxPreloadNumAttr
+    : HIVM_Attr<"MaxPreloadNum", "max_preload_num"> {
+  let description = [{
+    Specifies the max preload number of scope op.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // RemainInL0CAttr
 //===----------------------------------------------------------------------===//

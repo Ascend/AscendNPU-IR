@@ -720,7 +720,7 @@ def InsertLoadStoreForScalar
 }
 
 def InsertInferWorkSpaceSizeFunc : Pass<"hivm-insert-infer-workspace-size-func",
-                                        "func::FuncOp"> {
+                                        "ModuleOp"> {
   let summary = "Insert infer-workspace callback func for host";
   let description =
                 "Calculate total static workspace size after plan-workspace "
@@ -748,6 +748,11 @@ def BindWorkSpaceArg : Pass<"hivm-bind-workspace-arg", "func::FuncOp"> {
   let dependentDialects = ["memref::MemRefDialect",
                            "hivm::HIVMDialect",
                            "bishengir::memref_ext::MemRefExtDialect"];
+
+  let options = [Option<
+      "enableSubWorkspace", "enable-sub-workspace", "bool",
+      /*default=*/"false",
+      "Insert sub workspace argument and bind to sub workspace">];
 }
 
 def BindSyncBlockLockArg : Pass<"hivm-bind-sync-block-lock-arg", "func::FuncOp"> {
@@ -835,7 +840,11 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createTileAndBindSubBlockPass()";
   let dependentDialects = [
-    "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
+    "annotation::AnnotationDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "bufferization::BufferizationDialect",
+    "scope::ScopeDialect"
   ];
   let options = [Option<
       "strictMode", "strict-mode", "bool",
@@ -863,7 +872,7 @@ def HIVMVectorizeOps : Pass<"hivm-vectorize-ops", "func::FuncOp"> {
   let summary = "vectorize hivm ops";
   let constructor = "mlir::hivm::createHIVMVectorizeOpsPass()";
   let dependentDialects = [
-    "func::FuncDialect", "hivm::HIVMDialect", "arith::ArithDialect", 
+    "func::FuncDialect", "hivm::HIVMDialect", "arith::ArithDialect",
     "vector::VectorDialect"
   ];
 }
@@ -911,10 +920,16 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                  Option<"pipelineDepth", "pipeline-depth", "int",
                         /*default=*/"-1",
                         "Specify pipeline depth for cv-pipelining.">,
-                 Option<"enableSkewMode", "enable-skew-mode", "bool",
-                        /*default=*/"false",
-                        "Enable skew-mode cv-pipelining instead of the "
-                        "default unroll-mode.">,
+                 Option<"pipelineMode", "pipeline-mode", "hivm::PipelineMode",
+                        "hivm::PipelineMode::Unroll",
+                        "Pipeline mode for CV-pipelining.",
+                        [{::llvm::cl::values(
+               clEnumValN(hivm::PipelineMode::Unroll, "unroll",
+                          "Default unroll-mode pipelining"),
+               clEnumValN(hivm::PipelineMode::Skew, "skew",
+                          "Preload/skew-mode pipelining"),
+               clEnumValN(hivm::PipelineMode::SSBuf, "ssbuf",
+                          "Reserved for future use (currently same as skew)"))}]>,
                  Option<"enableLazyLoading", "enable-lazy-loading", "bool",
                         /*default=*/"false",
                         "Allow load ops to be cloned into multiple work items "

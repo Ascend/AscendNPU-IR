@@ -1228,7 +1228,9 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
 
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (countFusedBodyOps(leafNodeGroup) + countFusedBodyOps(llvm::ArrayRef<Operation *>(leafNode)) > maxFusedOps ||
+      if (countFusedBodyOps(leafNodeGroup) +
+                  countFusedBodyOps(llvm::ArrayRef<Operation *>(leafNode)) >
+              maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the same shape and do not conflict
@@ -1345,7 +1347,9 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
   } else {
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (countFusedBodyOps(leafNodeGroup) + countFusedBodyOps(llvm::ArrayRef<Operation *>(producer)) > maxFusedOps ||
+      if (countFusedBodyOps(leafNodeGroup) +
+                  countFusedBodyOps(llvm::ArrayRef<Operation *>(producer)) >
+              maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the common axis and do not conflict

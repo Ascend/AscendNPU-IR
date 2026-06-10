@@ -117,8 +117,8 @@ struct CloneTensorEmptyOperationPattern : public OpRewritePattern<OpTy> {
         continue;
       // clone & modify the producer empty tensor operation
       auto clonedProducer = rewriter.clone(*definingOp);
-      copyAnnotationMark(definingOp->getResult(0),
-                         clonedProducer->getResult(0), rewriter);
+      copyAnnotationMark(definingOp->getResult(0), clonedProducer->getResult(0),
+                         rewriter);
       rewriter.modifyOpInPlace(
           operation, [&]() { operand.set(clonedProducer->getResult(0)); });
     }
@@ -175,15 +175,13 @@ public:
   void runOnOperation() override;
 };
 
-template <typename OpType>
-void registerOne(RewritePatternSet &patterns) {
+template <typename OpType> void registerOne(RewritePatternSet &patterns) {
   patterns.add<CloneTensorEmptyHIVMStructuredOpPattern<OpType>>(
       patterns.getContext());
 }
 
 /// Variadic helper function.
-template <typename... OpTypes>
-void registerAll(RewritePatternSet &patterns) {
+template <typename... OpTypes> void registerAll(RewritePatternSet &patterns) {
   (registerOne<OpTypes>(patterns), ...);
 }
 
@@ -193,6 +191,7 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::LoadOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::StoreOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::MmadL1Op>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::FixpipeOp>,
                CloneTensorEmptySCFForPattern>(patterns.getContext());
   // only 950 requires empty tensor of this two type of op sinking.
   if (isSupportExtra) {

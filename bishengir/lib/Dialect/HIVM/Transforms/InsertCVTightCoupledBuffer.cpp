@@ -52,7 +52,7 @@ static void registerAllVectorOp(mlir::RewritePatternSet &patterns) {
   registerAll<PatternT,
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-              ,mlir::hivm::GatherLoadOp>(patterns);
+              , mlir::hivm::GatherLoadOp>(patterns);
 }
 
 using namespace mlir;
@@ -60,7 +60,7 @@ using namespace mlir::hivm;
 
 namespace {
 constexpr static llvm::StringLiteral maybeUnCollapsibleReshape =
-       "maybeUnCollapsibleReshape";
+    "maybeUnCollapsibleReshape";
 struct InsertCVTightCoupledBufferPass
     : public impl::InsertCVTightCoupledBufferBase<
           InsertCVTightCoupledBufferPass> {
@@ -70,10 +70,10 @@ struct InsertCVTightCoupledBufferPass
 
 enum class InsertMode { MoveToUb = 0, MoveToL1 };
 
-template <InsertMode Mode, bool EnableND2NZ>
-struct InsertOpImpl {
-    static LogicalResult run(PatternRewriter &rewriter,
-                             const llvm::SmallVector<OpOperand *> &consumerOperands);
+template <InsertMode Mode, bool EnableND2NZ> struct InsertOpImpl {
+  static LogicalResult
+  run(PatternRewriter &rewriter,
+      const llvm::SmallVector<OpOperand *> &consumerOperands);
 };
 
 /// pattern1
@@ -220,10 +220,9 @@ static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
 
   MLIRContext *ctx = rewriter.getContext();
   auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-  auto newType = mlir::MemRefType::get(oldType.getShape(),
-                                       oldType.getElementType(),
-                                       oldType.getLayout(),
-                                       ubSpaceAttr);
+  auto newType =
+      mlir::MemRefType::get(oldType.getShape(), oldType.getElementType(),
+                            oldType.getLayout(), ubSpaceAttr);
 
   SmallVector<OpOperand *> originalUses;
   for (OpOperand &use : allocOp.getMemref().getUses())
@@ -284,32 +283,31 @@ struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
 
       // Skip nd2nz conversion for bias operand, just do simple copy
       if constexpr (!EnableND2NZ) {
-         auto l1SpaceAttr =	 
-             hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);	 
-         auto l1MemrefType = mlir::MemRefType::get(tensorType.getShape(),	 
-                                                   tensorType.getElementType(),	 
-                                                   nullptr, l1SpaceAttr);	 
-         auto plainMemrefType = mlir::MemRefType::get(	 
-             tensorType.getShape(), tensorType.getElementType());	 
-         Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);	 
-         Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(	 
-             loc, plainMemrefType, alloc);	 
-         auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(	 
-             loc, tensorType, memspacecast,	 
-             /*restrict=*/true,	 
-             /*writable=*/true);	 
- 
- 
-         rewriter.create<hivm::CopyOp>(loc,	 
-                                       /*resultType=*/TypeRange(),	 
-                                       /*src=*/origTensor,	 
-                                       /*dst=*/memspacecast);	 
-         rewriter.modifyOpInPlace(consumerOp, [&]() {	 
-           consumerOperand->set(emptyTensor.getResult());	 
-         });	 
-         changed = true;	 
-         continue;
-        }
+        auto l1SpaceAttr =
+            hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::L1);
+        auto l1MemrefType = mlir::MemRefType::get(tensorType.getShape(),
+                                                  tensorType.getElementType(),
+                                                  nullptr, l1SpaceAttr);
+        auto plainMemrefType = mlir::MemRefType::get(
+            tensorType.getShape(), tensorType.getElementType());
+        Value alloc = rewriter.create<memref::AllocOp>(loc, l1MemrefType);
+        Value memspacecast = rewriter.create<memref::MemorySpaceCastOp>(
+            loc, plainMemrefType, alloc);
+        auto emptyTensor = rewriter.create<bufferization::ToTensorOp>(
+            loc, tensorType, memspacecast,
+            /*restrict=*/true,
+            /*writable=*/true);
+
+        rewriter.create<hivm::CopyOp>(loc,
+                                      /*resultType=*/TypeRange(),
+                                      /*src=*/origTensor,
+                                      /*dst=*/memspacecast);
+        rewriter.modifyOpInPlace(consumerOp, [&]() {
+          consumerOperand->set(emptyTensor.getResult());
+        });
+        changed = true;
+        continue;
+      }
 
       // TODO: Consider encapsulating it as an nd2dz function
       int64_t M = tensorType.getDimSize(0);
@@ -318,24 +316,30 @@ struct InsertOpImpl<InsertMode::MoveToL1, EnableND2NZ> {
       static constexpr int32_t alignN = 32;
       auto elemType = tensorType.getElementType();
       uint64_t elemTypeSize = getElemBytesForAlign(elemType);
-      int64_t newN = static_cast<int64_t>(AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
-                              static_cast<uint64_t>(alignN)) / elemTypeSize);
+      int64_t newN =
+          static_cast<int64_t>(AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
+                                       static_cast<uint64_t>(alignN)) /
+                               elemTypeSize);
       if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
         int64_t newM = static_cast<int64_t>(
-          AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
+            AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
         auto paddedType = RankedTensorType::get({newM, newN}, elemType);
-        Value zeroConst = rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getZeroAttr(elemType));
+        Value zeroConst = rewriter.create<arith::ConstantOp>(
+            loc, elemType, rewriter.getZeroAttr(elemType));
 
         Value emptyForVbrc = rewriter.create<tensor::EmptyOp>(
-                loc, paddedType.getShape(), elemType);
-        auto vbrcOp = rewriter.create<hivm::VBrcOp>(
-                loc, paddedType, zeroConst, emptyForVbrc);
+            loc, paddedType.getShape(), elemType);
+        auto vbrcOp = rewriter.create<hivm::VBrcOp>(loc, paddedType, zeroConst,
+                                                    emptyForVbrc);
         Value initializedMatrix = vbrcOp->getResult(0);
-        SmallVector<OpFoldResult> offsets = {rewriter.getIndexAttr(0), rewriter.getIndexAttr(0)};
-        SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(M), rewriter.getIndexAttr(N)};
-        SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1), rewriter.getIndexAttr(1)};
+        SmallVector<OpFoldResult> offsets = {rewriter.getIndexAttr(0),
+                                             rewriter.getIndexAttr(0)};
+        SmallVector<OpFoldResult> sizes = {rewriter.getIndexAttr(M),
+                                           rewriter.getIndexAttr(N)};
+        SmallVector<OpFoldResult> strides = {rewriter.getIndexAttr(1),
+                                             rewriter.getIndexAttr(1)};
         origTensor = rewriter.create<tensor::InsertSliceOp>(
-                loc, origTensor, initializedMatrix, offsets, sizes, strides);
+            loc, origTensor, initializedMatrix, offsets, sizes, strides);
         tensorType = mlir::cast<RankedTensorType>(origTensor.getType());
         M = newM;
         N = newN;
@@ -404,8 +408,8 @@ InsertOpHelper(PatternRewriter &rewriter,
 /// Try to annotate a gather feeding directly into mmadL1 with the fractal
 /// layout the cube library expects in L1, so the explicit ND->NZ copy can
 /// be skipped. Returns true when the annotation is applied.
-static bool tryAnnotateGatherFractalLayoutForCubeOperand(
-    OpOperand &consumerOperand) {
+static bool
+tryAnnotateGatherFractalLayoutForCubeOperand(OpOperand &consumerOperand) {
   auto mmadOp = cast<hivm::MmadL1Op>(consumerOperand.getOwner());
   const unsigned operandNum = consumerOperand.getOperandNumber();
   if (operandNum != 0 && operandNum != 1)
@@ -428,9 +432,9 @@ static bool tryAnnotateGatherFractalLayoutForCubeOperand(
   const bool isOperandB = (operandNum == 1);
   const hivm::DataLayout layout =
       isOperandB ? hivm::DataLayout::nZ : hivm::DataLayout::zN;
-  gatherOp->setAttr(
-      "hivm.fractal_layout",
-      StringAttr::get(gatherOp->getContext(), hivm::stringifyDataLayout(layout)));
+  gatherOp->setAttr("hivm.fractal_layout",
+                    StringAttr::get(gatherOp->getContext(),
+                                    hivm::stringifyDataLayout(layout)));
   if (isOperandB)
     mmadOp.setBTranspose(true);
   return true;
@@ -463,8 +467,7 @@ struct InsertMoveUbBetweenFixpipeAndVector : public OpRewritePattern<OpType> {
     bool isVF = isVFCall(rawOp);
     bool isExtract = false;
     if (isa<tensor::ExtractOp>(rawOp)) {
-      if (rawOp->hasAttr(
-              "DuplicateTensorExtractForCube::newExtractLabel")) {
+      if (rawOp->hasAttr("DuplicateTensorExtractForCube::newExtractLabel")) {
         return failure();
       }
       isExtract = true;
@@ -480,12 +483,14 @@ struct InsertMoveUbBetweenFixpipeAndVector : public OpRewritePattern<OpType> {
 
       auto allocOps = traceDefOps<memref::AllocOp>(operand.get());
       llvm::SmallVector<OpOperand *> consumerOperands{&operand};
-      LogicalResult result = InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
+      LogicalResult result =
+          InsertOpHelper<InsertMode::MoveToUb>(rewriter, consumerOperands);
       if (failed(result))
         continue;
 
       for (Operation *allocOp : allocOps)
-        ensureAllocInUbAddressSpaceIfNeeded(rewriter, llvm::cast<memref::AllocOp>(allocOp));
+        ensureAllocInUbAddressSpaceIfNeeded(
+            rewriter, llvm::cast<memref::AllocOp>(allocOp));
       changed = true;
     }
     return changed ? success() : failure();
@@ -531,8 +536,10 @@ struct InsertMoveL1BetweenVectorAndCube
         }
         if constexpr (std::is_same_v<OpType, memref::AllocOp>) {
           auto allocOp = llvm::cast<memref::AllocOp>(producer);
-          auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
-          if (!maybeSpace.has_value() || maybeSpace.value() != hivm::AddressSpace::UB)
+          auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(
+              allocOp.getMemref().getType());
+          if (!maybeSpace.has_value() ||
+              maybeSpace.value() != hivm::AddressSpace::UB)
             continue;
         }
         if constexpr (std::is_same_v<OpType, bufferization::ToTensorOp>) {
@@ -545,7 +552,7 @@ struct InsertMoveL1BetweenVectorAndCube
           }
           if (!maybeAnnotateOp.has_value())
             continue;
- 	      }
+        }
         if constexpr (std::is_same_v<OpType, tensor::CollapseShapeOp>) {
           auto collapseShapeOp = llvm::cast<tensor::CollapseShapeOp>(producer);
           auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
@@ -570,24 +577,28 @@ struct InsertMoveL1BetweenVectorAndCube
       // After ND2NZ conversion the tensor becomes rank-4 (NZ format), so
       // transposition is not required.
       bool needTransposed = (tensorType.getRank() == 2);
-      LogicalResult result = (isBiasOperand || layoutConversionOnTheFly || !needTransposed)?
-          InsertOpHelper<InsertMode::MoveToL1, false>(rewriter, consumerOperands):
-          InsertOpHelper<InsertMode::MoveToL1, true>(rewriter, consumerOperands);
+      LogicalResult result =
+          (isBiasOperand || layoutConversionOnTheFly || !needTransposed)
+              ? InsertOpHelper<InsertMode::MoveToL1, false>(rewriter,
+                                                            consumerOperands)
+              : InsertOpHelper<InsertMode::MoveToL1, true>(rewriter,
+                                                           consumerOperands);
       if (failed(result))
         continue;
 
       // Handle case where multiple operands of `op` are same SSA value.
-      // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are the same vector.
-      // In this case, we only want to rewrite the operand once, and make sure that other operand
-      // is updated with the new value as well.
+      // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are
+      // the same vector. In this case, we only want to rewrite the operand
+      // once, and make sure that other operand is updated with the new value as
+      // well.
       Value converted = operand->get();
 
       // Tag the new L1 alloc with the fractal layout we put the data in, so
       // MmadL1Op::getOperand{A,B}Layout can suppress the layout-only
       // `*_transpose` flag and InferHIVMDataLayout won't dim-swap the shape.
       if (layoutConversionOnTheFly) {
-        auto layout = (operandNum == 1) ? hivm::DataLayout::nZ
-                                        : hivm::DataLayout::zN;
+        auto layout =
+            (operandNum == 1) ? hivm::DataLayout::nZ : hivm::DataLayout::zN;
         StringAttr layoutAttr =
             rewriter.getStringAttr(hivm::stringifyDataLayout(layout));
         Value cur = converted;
@@ -610,12 +621,12 @@ struct InsertMoveL1BetweenVectorAndCube
           break;
         }
       }
-      rewriter.modifyOpInPlace(op, [&]() {
-        op->replaceUsesOfWith(beforeValue, converted);
-      });
+      rewriter.modifyOpInPlace(
+          op, [&]() { op->replaceUsesOfWith(beforeValue, converted); });
 
       for (Operation *allocOp : allocOps)
-        ensureAllocInUbAddressSpaceIfNeeded(rewriter, llvm::cast<memref::AllocOp>(allocOp));
+        ensureAllocInUbAddressSpaceIfNeeded(
+            rewriter, llvm::cast<memref::AllocOp>(allocOp));
       changed = true;
     }
     return changed ? success() : failure();
@@ -643,9 +654,12 @@ struct InsertDataMovementFixpipeToL1 : public OpRewritePattern<hivm::MmadL1Op> {
       Value valueAfterUb = operand.get();
 
       bool isBiasOperand = (operand.get() == op.getPerChannelBias());
-      LogicalResult l1Result = isBiasOperand?
-          InsertOpHelper<InsertMode::MoveToL1, false>(rewriter, consumerOperands):
-          InsertOpHelper<InsertMode::MoveToL1, true>(rewriter, consumerOperands);
+      LogicalResult l1Result =
+          isBiasOperand
+              ? InsertOpHelper<InsertMode::MoveToL1, false>(rewriter,
+                                                            consumerOperands)
+              : InsertOpHelper<InsertMode::MoveToL1, true>(rewriter,
+                                                           consumerOperands);
       if (failed(l1Result))
         continue;
 
@@ -676,19 +690,49 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   registerOne<hivm::CustomMacroOp>(patterns);
 
   // Treat UB alloc as CV connection point for MoveToL1
-  patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(patterns.getContext());
-  patterns.add<InsertMoveL1BetweenVectorAndCube<bufferization::ToTensorOp>>(patterns.getContext());
-  patterns.add<InsertMoveL1BetweenVectorAndCube<tensor::CollapseShapeOp>>(patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<memref::AllocOp>>(
+      patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<bufferization::ToTensorOp>>(
+      patterns.getContext());
+  patterns.add<InsertMoveL1BetweenVectorAndCube<tensor::CollapseShapeOp>>(
+      patterns.getContext());
   patterns.add<InsertDataMovementFixpipeToL1>(patterns.getContext());
-  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(patterns.getContext());
-  patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(patterns.getContext());
-  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::IndirectStoreOp>>(patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StoreOp>>(
+      patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(
+      patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::IndirectStoreOp>>(
+      patterns.getContext());
 }
 
 void InsertCVTightCoupledBufferPass::runOnOperation() {
+  auto funcOp = getOperation();
+
+  // VectorFunction is on AIV core, none of cube ops exist.
+  // No need of inserting CV tightly-coupled buffer.
+  if (funcOp->hasAttr(hivm::VectorFunctionAttr::name))
+    return;
+
+  // In the device entry func, first check if cube ops (MmadL1Op /
+  // BatchMmadL1Op) exist. If none exists, this kernel is not cube-vector mixed
+  // kernel. Then no need of inserting CV tightly-coupled buffer. This pass runs
+  // before SplitMixKernel and InferFuncCoreType pass. Thus we simply check if
+  // mmad exists.
+  if (hacc::utils::isDeviceEntry(funcOp)) {
+    bool hasMmadOp = false;
+    funcOp.walk([&](Operation *op) {
+      if (isa<hivm::MmadL1Op, hivm::BatchMmadL1Op>(op)) {
+        hasMmadOp = true;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    });
+    if (!hasMmadOp)
+      return;
+  }
+
   OpBuilder builder(&getContext());
   auto context = &getContext();
-  auto funcOp = getOperation();
   RewritePatternSet patterns(context);
   populateInsertCVTightCoupledBufferPattern(patterns);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {

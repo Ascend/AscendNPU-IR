@@ -23,11 +23,11 @@ namespace detail {
 void DimensionAnalyzerBase::computeReverseElementMap() {
   LDBG("Computing Reverse Element Map");
   auto markShapes = [this](Value val) -> void {
-    if (!argumentsRefPointer_.contains(val))
+    if (!valueToDimIndicesIndex_.contains(val))
       return;
-    auto vRef = getArgumentRef(val);
+    auto vRef = getValueDimIndices(val);
     for (auto el : vRef) {
-      auto currentElIdx = solverShapeElem_->find(el);
+      auto currentElIdx = equivalentDsu_->find(el);
       if (!reverseShapeElem_.contains(currentElIdx)) {
         LDBG("Found new elem: " << currentElIdx << ' ' << val);
         reverseShapeElem_[currentElIdx] = val;
@@ -50,18 +50,18 @@ std::optional<OpFoldResult>
 DimensionAnalyzerBase::getElementShape(int elemIndex) {
   if (reverseShapeElem_.empty())
     computeReverseElementMap();
-  elemIndex = solverShapeElem_->find(elemIndex);
+  elemIndex = equivalentDsu_->find(elemIndex);
   if (!reverseShapeElem_.contains(elemIndex))
     return std::nullopt;
   Value val = reverseShapeElem_.at(elemIndex);
-  auto vRef = getArgumentRef(val);
+  auto vRef = getValueDimIndices(val);
   OpBuilder builder(val.getContext());
   builder.setInsertionPointAfterValue(val);
 
   // if the mixed size is found, construct a tensor.dim out of it
   // reify propagation will be done outside of this
   for (size_t i = 0; i < vRef.size(); ++i) {
-    auto currentElIdx = solverShapeElem_->find(vRef[i]);
+    auto currentElIdx = equivalentDsu_->find(vRef[i]);
     if (currentElIdx == elemIndex) {
       return tensor::getMixedSize(builder, val.getLoc(), val, i);
     }
@@ -71,31 +71,31 @@ DimensionAnalyzerBase::getElementShape(int elemIndex) {
 
 std::optional<SmallVector<int64_t>>
 DimensionAnalyzerBase::getParentShapeRef(Value v) {
-  if (!argumentsRefPointer_.contains(v))
+  if (!valueToDimIndicesIndex_.contains(v))
     return std::nullopt;
 
-  const auto &vRef = getArgumentRef(v);
+  const auto &vRef = getValueDimIndices(v);
   SmallVector<int64_t> ret(vRef.size());
   for (size_t i = 0; i < ret.size(); ++i) {
-    ret[i] = solverShapeElem_->find(vRef[i]);
+    ret[i] = equivalentDsu_->find(vRef[i]);
   }
   return ret;
 }
 
 SmallVector<int64_t> DimensionAnalyzerBase::getDimShape(Value v) {
-  assert(argumentsRefPointer_.count(v));
-  auto vRef = getArgumentRef(v);
+  assert(valueToDimIndicesIndex_.count(v));
+  auto vRef = getValueDimIndices(v);
   SmallVector<int64_t> ret(vRef.size());
   for (size_t i = 0; i < ret.size(); ++i) {
-    ret[i] = solverShapeElem_->getMinParentAndShapePair(vRef[i]).second;
+    ret[i] = equivalentDsu_->getMinParentAndShapePair(vRef[i]).second;
   }
   return ret;
 }
 
 DimensionAnalyzerBase::Dimension
 DimensionAnalyzerBase::getEarliestDimension(Dimension dim) {
-  auto firstParentIndex = solverShapeElem_->minIndex[solverShapeElem_->find(
-      getArgumentRef(dim.first)[dim.second])];
+  auto firstParentIndex = equivalentDsu_->minIndex[equivalentDsu_->find(
+      getValueDimIndices(dim.first)[dim.second])];
 
   return getDimension(firstParentIndex);
 }
@@ -104,11 +104,11 @@ DimensionAnalyzerBase::Dimension
 DimensionAnalyzerBase::getDimension(int64_t parentIndex) {
   if (reverseShapeElem_.empty())
     computeReverseElementMap();
-  parentIndex = solverShapeElem_->find(parentIndex);
+  parentIndex = equivalentDsu_->find(parentIndex);
   auto value = reverseShapeElem_.at(parentIndex);
-  auto vRef = getArgumentRef(value);
+  auto vRef = getValueDimIndices(value);
   for (size_t i = 0; i < vRef.size(); ++i) {
-    auto currentElIdx = solverShapeElem_->find(vRef[i]);
+    auto currentElIdx = equivalentDsu_->find(vRef[i]);
     if (currentElIdx == parentIndex) {
       LDBG(parentIndex << " is mapped to \n" << value << "\n" << i);
       return Dimension(value, i);
@@ -117,20 +117,20 @@ DimensionAnalyzerBase::getDimension(int64_t parentIndex) {
   llvm_unreachable("Element shape index cannot be inferred");
 }
 
-SmallVector<int64_t> DimensionAnalyzerBase::getArgumentRef(Value v) const {
-  auto it = argumentsRefPointer_.find(v);
-  if (it == argumentsRefPointer_.end()) {
-    LDBG("Warning: Argument Value not found in argumentsRefPointer_: " << v << "\n");
+SmallVector<int64_t> DimensionAnalyzerBase::getValueDimIndices(Value v) const {
+  auto it = valueToDimIndicesIndex_.find(v);
+  if (it == valueToDimIndicesIndex_.end()) {
+    LDBG("Warning: Value not found in valueToDimIndicesIndex_: " << v << "\n");
     LDBG("Address of v: " << &v << "\n");
     return SmallVector<int64_t>();
   }
-  return argumentsRef_[it->second];
+  return dimIndices_[it->second];
 }
 
 SmallVector<int64_t>
-DimensionAnalyzerBase::getArgumentRefOrCreateDummy(Value v) {
+DimensionAnalyzerBase::getValueDimIndicesOrCreateDummy(Value v) {
   createDummyRefIfNotExist({v});
-  return getArgumentRef(v);
+  return getValueDimIndices(v);
 }
 
 bool DimensionAnalyzerBase::areDimensionsEqual(Dimension lhs, Dimension rhs,
@@ -139,14 +139,36 @@ bool DimensionAnalyzerBase::areDimensionsEqual(Dimension lhs, Dimension rhs,
        << lhs.first << " axis " << lhs.second << "and " << rhs.first << " axis "
        << lhs.second << (isStrict ? " are strictly " : " are structurally ")
        << "equal");
-  auto lhsRef = getArgumentRefOrCreateDummy(lhs.first);
-  auto rhsRef = getArgumentRefOrCreateDummy(rhs.first);
+  createDummyRefIfNotExist({lhs.first, rhs.first});
+  auto lhsRef = getValueDimIndices(lhs.first);
+  auto rhsRef = getValueDimIndices(rhs.first);
   if (isStrict)
-    return solverShapeElem_->find(lhsRef[lhs.second]) ==
-           solverShapeElem_->find(rhsRef[rhs.second]);
+    return equivalentDsu_->find(lhsRef[lhs.second]) ==
+           equivalentDsu_->find(rhsRef[rhs.second]);
 
-  return solverCollapserElem_->find(lhsRef[lhs.second]) ==
-         solverCollapserElem_->find(rhsRef[rhs.second]);
+  return structuralDsu_->find(lhsRef[lhs.second]) ==
+         structuralDsu_->find(rhsRef[rhs.second]);
+}
+
+bool DimensionAnalyzerBase::hasValueRef(Value v) const {
+  return valueToDimIndicesIndex_.contains(v);
+}
+
+void DimensionAnalyzerBase::joinValueGroup(Value a, Value b) {
+  if (!isAllowedType(a.getType()) || !isAllowedType(b.getType()))
+    return;
+  createDummyRefIfNotExist({a, b});
+  assert(valueGroupDSU_ && "valueGroupDSU_ must be initialized");
+  valueGroupDSU_->join(valueToDimIndicesIndex_.at(a),
+                       valueToDimIndicesIndex_.at(b));
+}
+
+int64_t DimensionAnalyzerBase::getValueGroupIndex(Value v) {
+  if (!isAllowedType(v.getType()))
+    return -1;
+  createDummyRefIfNotExist({v});
+  assert(valueGroupDSU_ && "valueGroupDSU_ must be initialized");
+  return valueGroupDSU_->find(valueToDimIndicesIndex_.at(v));
 }
 
 } // namespace detail

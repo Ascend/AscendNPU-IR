@@ -122,6 +122,7 @@ void FlattenOpsPass::runOnOperation() {
   }
   mlir::detail::DimensionAnalyzerOptions options;
   options.registerBased = this->registerBased;
+  options.usePreOrderWalkTraversal = this->usePreOrderWalkTraversal;
   hfusion::detail::Flattener flattener(funcOp, options);
   if (failed(flattener.flatten(multiDynamicShape)))
     signalPassFailure();

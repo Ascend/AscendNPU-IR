@@ -379,6 +379,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFDeInterleaveOp, hivmave::VFInterleaveOp>(
                 [&](auto op) { return solveLayoutChangeProblem(op); })
+            .Case<hivmave::VFVCIOp>(
+                [&](auto op) { return solveProblem(op); })
             .Default([&](Operation *op) { return solveProblemDefault(op); });
     return normalizeTreeSolves(solves);
   }
@@ -790,20 +792,34 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16_2VL):
       return {
-          wrapThis(FunctionType::NONE,
+          wrapThis(FunctionType::INTLV2,
                    {{mask, State::B16}, {index, State::B16}}),
-          wrapThis(
-              FunctionType::NONE,
-              {{mask, State::B32},
-               {index,
-                State::B16_2VL}}) // This is better, for vci cannot fit layout
-      };
+          wrapThis(FunctionType::NONE,
+                   {{mask, State::B32},
+                    {index, State::B16_2VL}})};
     case COMB_CASE(32, State::B16_2VL):
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B32}, {index, State::B32}})};
     case COMB_CASE(32, State::B32):
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B32}, {index, State::B32}})};
+    default:
+      return {};
+    }
+  }
+
+  TreeSolves solveProblem(hivmave::VFVCIOp op) {
+    auto res = op.getRes();
+    switch (COMB_CASE(elemBitwidthOf(res), getState(res))) {
+    case COMB_CASE(8, State::B8):
+    case COMB_CASE(16, State::B16):
+    case COMB_CASE(32, State::B32):
+      return {wrapThis(FunctionType::NONE, {})};
+    case COMB_CASE(8, State::B8_2VL):
+    case COMB_CASE(16, State::B16_2VL):
+      return {wrapThis(FunctionType::INTLV2, {})};
+    case COMB_CASE(8, State::B8_4VL):
+      return {wrapThis(FunctionType::INTLV4, {})};
     default:
       return {};
     }

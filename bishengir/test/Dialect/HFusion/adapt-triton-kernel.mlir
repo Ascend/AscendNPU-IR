@@ -1,6 +1,7 @@
-// RUN: bishengir-opt %s --adapt-triton-kernel | FileCheck %s
+// RUN: bishengir-opt %s --adapt-triton-kernel --symbol-dce | FileCheck %s
 
-// CHECK-LABEL: @indirect_load_adapt
+// CHECK: module
+// CHECK-NOT: func.func private @triton_indirect_load
 // CHECK: %[[extui_1:.*]] = arith.extui %{{[0-9]+}} : tensor<16x32xi1> to tensor<16x32xi8>
 // CHECK: %[[dst_1:.*]] = tensor.empty() : tensor<16x32xf16>
 // CHECK: %[[iload_1:.*]] = hfusion.indirect_load ins(%arg3 : memref<?xf16>, %{{[0-9]+}} : tensor<16x32xi64>, %[[extui_1]] : tensor<16x32xi8>, %{{[0-9]+}} : tensor<16x32xf16>) outs(%[[dst_1]] : tensor<16x32xf16>) -> tensor<16x32xf16>

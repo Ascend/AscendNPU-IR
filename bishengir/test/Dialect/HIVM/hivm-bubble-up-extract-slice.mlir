@@ -441,3 +441,63 @@ func.func @bubble_up_insert_extract_different_dim(
       : tensor<16x16xf32> to tensor<16x8xf32>
   return %1 : tensor<16x8xf32>
 }
+
+// -----
+// CHECK-LABEL: @indirect_load_example(
+// CHECK: extract_slice
+// CHECK: extract_slice
+// CHECK: extract_slice
+// CHECK: hivm.hir.indirect_load
+// CHECK: return
+func.func @indirect_load_example(%arg0: memref<?xf32>, %arg1: tensor<32x64xi64>, %arg2: tensor<32x64xi8>, %arg3: tensor<32x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %0 = tensor.empty() : tensor<32x64xf32>
+  scf.for %arg4 = %c0 to %c2 step %c1 {
+    %1 = affine.apply affine_map<()[s0] -> (s0 * 16)>()[%arg4]
+    %2 = hivm.hir.indirect_load ins(%arg0 : memref<?xf32>, %arg1 : tensor<32x64xi64>, %arg2 : tensor<32x64xi8>, %arg3 : tensor<32x64xf32>) outs(%0 : tensor<32x64xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<32x64xf32>
+    %extracted_slice = tensor.extract_slice %2[%1, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<32x64xf32> to tensor<16x64xf32>
+    annotation.mark %extracted_slice : tensor<16x64xf32>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return
+}
+
+// -----
+
+// CHECK-LABEL:   func.func @bubble_up_parallel_dim(
+// CHECK:           %[[VAL_2:.*]] = arith.constant 32 : index
+// CHECK:           %[[VAL_3:.*]] = arith.constant 0 : index
+// CHECK:           %[[VAL_4:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_5:.*]] = arith.constant 2 : index
+// CHECK:           %[[VAL_6:.*]] = arith.constant 64 : index
+// CHECK:           scf.for %[[VAL_7:.*]] = %[[VAL_3]] to %[[VAL_5]] step %[[VAL_4]] {
+// CHECK:             %[[VAL_8:.*]] = affine.apply
+// CHECK:             %[[VAL_9:.*]] = memref.alloc() : memref<32x32xf32>
+// CHECK:             %[[VAL_10:.*]] = arith.addi %[[VAL_8]], %[[VAL_2]] : index
+// CHECK:             %[[VAL_11:.*]] = arith.minsi %[[VAL_10]], %[[VAL_6]] : index
+// CHECK:             scf.for %[[VAL_12:.*]] = %[[VAL_8]] to %[[VAL_11]] step %[[VAL_4]] {
+// CHECK:               hivm.hir.load ins(%[[VAL_13:.*]] : memref<1x32xf32, strided<[32, 1], offset: ?>>) outs(%[[VAL_20:.*]] : memref<?x32xf32, strided<[32, 1], offset: ?>>)
+// CHECK:             } {ExtractedLoadOrStore, hivm.parallel_loop}
+// CHECK:             %[[VAL_21:.*]] = bufferization.to_tensor %[[VAL_9]] restrict writable : memref<32x32xf32>
+// CHECK:             annotation.mark %[[VAL_21]] : tensor<32x32xf32>
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+func.func @bubble_up_parallel_dim(%arg0 : memref<?xf32>, %offset : index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  scf.for %arg1 = %c0 to %c2 step %c1 {
+    %0 = affine.apply affine_map<()[s0] -> (s0 * 32)>()[%arg1]
+    %alloc = memref.alloc() : memref<64x32xf32>
+    scf.for %arg3 = %c0 to %c64 step %c1 {
+      %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%offset], sizes: [1, 32], strides: [32, 1] : memref<?xf32> to memref<1x32xf32, strided<[32, 1], offset: ?>>
+      %subview = memref.subview %alloc[%arg3, 0] [1, 32] [1, 1] : memref<64x32xf32> to memref<1x32xf32, strided<[32, 1], offset: ?>>
+      hivm.hir.load ins(%reinterpret_cast : memref<1x32xf32, strided<[32, 1], offset: ?>>) outs(%subview : memref<1x32xf32, strided<[32, 1], offset: ?>>) left_padding_num = %c0 : index eviction_policy = <EvictFirst> core_type = <VECTOR>
+    } {ExtractedLoadOrStore, hivm.parallel_loop}
+    %1 = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
+    %extracted_slice = tensor.extract_slice %1[%0, 0] [32, 32] [1, 1] {to_be_bubbled_slice} : tensor<64x32xf32> to tensor<32x32xf32>
+    annotation.mark %extracted_slice : tensor<32x32xf32>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return 
+}

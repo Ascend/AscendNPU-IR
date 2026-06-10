@@ -904,7 +904,7 @@ module {
     // CHECK: %[[C:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
@@ -934,7 +934,7 @@ module {
     %d = bufferization.to_tensor %alloc_d restrict writable : memref<32x32xf32>
     // CHECK: %[[FOR:.*]] = scf.for {{.*}} iter_args(%[[ARG1:.*]] = %[[C:.*]])
     %0 = scf.for %arg0 = %c0_i32 to %c8_i32 step %c1_i32 iter_args(%arg1 = %a_c) -> (tensor<64x32xf32>) : i32 {
-      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+      // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
       %mmadL1 = hivm.hir.mmadL1 ins(%a, %d, %false, %c16, %c16, %c16 : tensor<64x32xf32>, tensor<32x32xf32>, i1, index, index, index) outs(%arg1 : tensor<64x32xf32>) -> tensor<64x32xf32>
       scf.yield %mmadL1 : tensor<64x32xf32>
     }
@@ -1112,4 +1112,28 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
   } {hivm.tcore_type = #hivm.tcore_type<CUBE>, hivm.matmul_limited_in_cube}
 
   return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @normalize_mmad_with_tensor_producer(
+// CHECK-DAG: %[[INIT:.*]] = arith.constant true
+// CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
+// CHECK: %[[A:.*]] = "test.tensor_producer"() : () -> tensor<16x16xf16>
+// CHECK: %[[B:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<16x16xf16>
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%[[A]], %[[B]], %[[INIT]], %[[C16]], %[[C16]], %[[C16]]
+module {
+  func.func @normalize_mmad_with_tensor_producer()
+      -> tensor<16x16xf32> {
+    %a = "test.tensor_producer"() : () -> tensor<16x16xf16>
+    %alloc_b = memref.alloc() : memref<16x16xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<16x16xf16>
+    %false = arith.constant false
+    %c0 = arith.constant 0 : index
+    %out = tensor.empty() : tensor<16x16xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0
+        : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %0 : tensor<16x16xf32>
+  }
 }

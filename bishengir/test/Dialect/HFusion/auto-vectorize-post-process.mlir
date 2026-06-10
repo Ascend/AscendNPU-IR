@@ -2,6 +2,7 @@
 
 module {
   // CHECK-LABEL: func @test_vectorization_post_process_outlined_vf_0(
+  // CHECK-SAME: tensor<256x256xf32>
   // CHECK:       tensor.extract_slice
   // CHECK:       tensor.insert_slice
   func.func @test_vectorization_post_process_outlined_vf_0(%arg0: tensor<?x?xf32>) -> tensor<?x?xf32> attributes {hivm.vector_function} {
@@ -20,7 +21,7 @@ module {
 
   // CHECK-LABEL: func @test_vectorization_post_process(
   // CHECK: func.call @test_vectorization_post_process_outlined_vf_0(
-  // CHECK: tensor.extract_slice
+  // CHECK-NOT: tensor.extract_slice
   func.func @test_vectorization_post_process(%arg0: tensor<256x256xf32>) {
     %c6 = arith.constant 6 : index
     %c5 = arith.constant 5 : index

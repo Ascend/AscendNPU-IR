@@ -1,4 +1,4 @@
- // RUN: bishengir-opt  -analyze-vector-layout -analyze-alignment-bitwidth \
+ // RUN: bishengir-opt  -analyze-vector-layout -analyze-alignment-bitwidth -ave-normalize-ops \
  // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse -split-input-file %s | FileCheck %s
  // CHECK-LABEL: @test_long_vector_len_case
 func.func @test_long_vector_len_case(%arg0: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg2: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg3: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg4: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg5: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg6: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
