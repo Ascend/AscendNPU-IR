@@ -17,11 +17,17 @@ func.func @test_NormalizeRSqrt_hivm_rsqrt_to_hivm_sqrt(%arg0: tensor<5x1xf32>) -
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hivm_rsqrt_f16
 // CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>)
-// CHECK: %[[VSQRT:.*]] = hivm.hir.vsqrt ins(%[[ARG0]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
-// CHECK: %[[CAST0:.*]] = hivm.hir.vcast ins(%[[VSQRT]] : tensor<16xf16>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
-// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[CAST0]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf32>) -> tensor<16xf32>
-// CHECK: %[[CAST1:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<16xf32>) outs(%{{.*}} : tensor<16xf16>) -> tensor<16xf16>
-// CHECK: return %[[CAST1]]
+// CHECK: %[[EMPTY_F16_0:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[EMPTY_F32_0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CAST_IN:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[EMPTY_F32_0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_F32_1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CAST_DST:.*]] = hivm.hir.vcast ins(%[[EMPTY_F16_0]] : tensor<16xf16>) outs(%[[EMPTY_F32_1]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_F32_2:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[SQRT:.*]] = hivm.hir.vsqrt ins(%[[CAST_IN]] : tensor<16xf32>) outs(%[[EMPTY_F32_2]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[SQRT]] : tensor<16xf32>) outs(%[[CAST_DST]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_F16_1:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[CAST_BACK:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<16xf32>) outs(%[[EMPTY_F16_1]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: return %[[CAST_BACK]]
 func.func @test_NormalizeRSqrt_hivm_rsqrt_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
   %0 = tensor.empty() : tensor<16xf16>
   %1 = hivm.hir.vrsqrt ins(%arg0 : tensor<16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>

@@ -144,6 +144,296 @@ static bool isReduceWithIndex(hivm::VReduceOp op) {
   return utils::isReduceWithIndex(op.getArith().getReduceOp());
 }
 
+struct HIVMNormalizeReduceBoolToLogicalTraits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(hivm::VReduceOp op) {
+    if (!op.hasPureTensorSemantics() || isReduceWithIndex(op))
+      return false;
+
+    auto srcType = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    auto dstType = dyn_cast<RankedTensorType>(op.getDstValue().getType());
+    if (!srcType || !dstType || !srcType.getElementType().isInteger(1) ||
+        !dstType.getElementType().isInteger(1))
+      return false;
+    return true;
+  }
+
+  static std::optional<mlir::ReduceBoolLogicalKind>
+  getLogicalReduceKind(hivm::VReduceOp op) {
+    switch (op.getArith().getReduceOp()) {
+    case hivm::ReduceOperation::sum:
+    case hivm::ReduceOperation::max:
+      return mlir::ReduceBoolLogicalKind::Or;
+    case hivm::ReduceOperation::prod:
+    case hivm::ReduceOperation::min:
+      return mlir::ReduceBoolLogicalKind::And;
+    default:
+      return std::nullopt;
+    }
+  }
+
+  static LogicalResult rewriteToLogicalReduce(PatternRewriter &rewriter,
+                                              hivm::VReduceOp op,
+                                              mlir::ReduceBoolLogicalKind kind) {
+    auto newOp = rewriter.create<hivm::VReduceOp>(
+        op.getLoc(), TypeRange(op->getResultTypes()), op.getSrc(),
+        ValueRange(op.getDpsInits()),
+        hivm::ReduceOpAttr::get(
+            rewriter.getContext(),
+            kind == mlir::ReduceBoolLogicalKind::Or
+                ? hivm::ReduceOperation::any
+                : hivm::ReduceOperation::all),
+        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+        op.getReduceDimsAttr());
+    rewriter.replaceOp(op, newOp->getResults());
+    return success();
+  }
+};
+
+struct HIVMReduceI1AddToSelectMaxCompareTraits
+    : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(hivm::VReduceOp op) {
+    if (!hacc::utils::isAscend950(op->getParentOfType<ModuleOp>()) ||
+        !op.hasPureTensorSemantics() || isReduceWithIndex(op))
+      return false;
+
+    auto srcType = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    auto dstType = dyn_cast<RankedTensorType>(op.getDstValue().getType());
+    if (!srcType || !dstType || !srcType.getElementType().isInteger(1) ||
+        !dstType.getElementType().isInteger(1))
+      return false;
+    if (op.getArith().getReduceOp() != hivm::ReduceOperation::sum)
+      return false;
+    auto reduceDims = op.getReduceDims();
+    if (reduceDims.size() != 1 || reduceDims[0] != 0)
+      return false;
+    if (srcType.getRank() != 1 || dstType.getRank() != 1 ||
+        dstType.getDimSize(0) != 1)
+      return false;
+    return true;
+  }
+
+  static Value getInput(hivm::VReduceOp op) { return op.getSrc(); }
+
+  static Value createPredicateTensor(PatternRewriter &rewriter, Location loc,
+                                     Value likeValue, Type elemType,
+                                     int64_t fillValue) {
+    Value empty = utils::createEmptyOpWithTargetElemType(rewriter, loc, likeValue,
+                                                         elemType);
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getIntegerAttr(elemType, fillValue));
+    return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
+  }
+
+  static Value createReduceInit(PatternRewriter &rewriter, Location loc,
+                                hivm::VReduceOp op, Type elemType) {
+    Value empty =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, op.getDstValue(),
+                                               elemType);
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getIntegerAttr(elemType, 0));
+    return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
+  }
+
+  static Value createMaxReduce(PatternRewriter &rewriter, Location loc,
+                               hivm::VReduceOp op, Value input, Value init) {
+    auto newOp = rewriter.create<hivm::VReduceOp>(
+        loc, TypeRange{init.getType()}, input, ValueRange{init},
+        hivm::ReduceOpAttr::get(rewriter.getContext(), hivm::ReduceOperation::max),
+        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+        op.getReduceDimsAttr());
+    return newOp.getResult().front();
+  }
+
+  static Value createCmpNeZero(PatternRewriter &rewriter, Location loc,
+                               hivm::VReduceOp, Value reduced, Type elemType) {
+    Value zero = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getIntegerAttr(elemType, 0));
+    return hivm::NormalizeTraitsBase::createCmpOp(rewriter, loc, reduced, zero,
+                                                  CompareKind::NE);
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, hivm::VReduceOp op,
+                             Value result) {
+    rewriter.replaceOp(op, result);
+  }
+};
+
+struct HIVMReduceI1AndOrToI16Traits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(hivm::VReduceOp op) {
+    if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) ||
+        !op.hasPureTensorSemantics() || isReduceWithIndex(op))
+      return false;
+
+    auto srcType = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    auto dstType = dyn_cast<RankedTensorType>(op.getDstValue().getType());
+    if (!srcType || !dstType || !srcType.getElementType().isInteger(1) ||
+        !dstType.getElementType().isInteger(1))
+      return false;
+    return op.getArith().getReduceOp() == hivm::ReduceOperation::all ||
+           op.getArith().getReduceOp() == hivm::ReduceOperation::any;
+  }
+
+  static Value getInput(hivm::VReduceOp op) { return op.getSrc(); }
+
+  static Value castInputToI16(PatternRewriter &rewriter, Location loc,
+                              Value input, Type elemType) {
+    return hivm::NormalizeTraitsBase::createCastOp(rewriter, loc, input, elemType,
+                                                   CastRoundKind::Default);
+  }
+
+  static bool isAndReduce(hivm::VReduceOp op) {
+    return op.getArith().getReduceOp() == hivm::ReduceOperation::all;
+  }
+
+  static Value createReduceInit(PatternRewriter &rewriter, Location loc,
+                                hivm::VReduceOp op, Type elemType,
+                                int64_t initValue) {
+    Value empty =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, op.getDstValue(),
+                                               elemType);
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getIntegerAttr(elemType, initValue));
+    return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
+  }
+
+  static Value createReducedOp(PatternRewriter &rewriter, Location loc,
+                               hivm::VReduceOp op, Value input, Value init,
+                               bool isAndReduce) {
+    auto newOp = rewriter.create<hivm::VReduceOp>(
+        loc, TypeRange{init.getType()}, input, ValueRange{init},
+        hivm::ReduceOpAttr::get(rewriter.getContext(),
+                                isAndReduce ? hivm::ReduceOperation::min
+                                            : hivm::ReduceOperation::max),
+        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+        op.getReduceDimsAttr());
+    return newOp.getResult().front();
+  }
+
+  static Value castResultToI1(PatternRewriter &rewriter, Location loc,
+                              Value result) {
+    return hivm::NormalizeTraitsBase::createCastOp(rewriter, loc, result,
+                                                   rewriter.getI1Type(),
+                                                   CastRoundKind::Default);
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, hivm::VReduceOp op,
+                             Value result) {
+    rewriter.replaceOp(op, result);
+  }
+};
+
+struct HIVMReduceNormalize910_95Traits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(hivm::VReduceOp op) {
+    if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) ||
+        !hacc::utils::isAscend950(op->getParentOfType<ModuleOp>()) ||
+        !op.hasPureTensorSemantics() || isReduceWithIndex(op))
+      return false;
+
+    auto srcType = dyn_cast<RankedTensorType>(op.getSrc().getType());
+    auto dstType = dyn_cast<RankedTensorType>(op.getDstValue().getType());
+    if (!srcType || !dstType || !srcType.getElementType().isInteger(8) ||
+        !dstType.getElementType().isInteger(8))
+      return false;
+    if (op.getArith().getReduceOp() == hivm::ReduceOperation::xori)
+      return false;
+    return true;
+  }
+
+  static CastSignKind getCastSignKind(hivm::VReduceOp op) {
+    return op.getUnsignedSrc() ? CastSignKind::Unsigned : CastSignKind::Signed;
+  }
+
+  static SmallVector<Value> getInputs(hivm::VReduceOp op) {
+    return {op.getSrc()};
+  }
+
+  static SmallVector<Value> getOutputs(hivm::VReduceOp op) {
+    return {op.getDstValue()};
+  }
+
+  static Value createI8ToI16Cast(PatternRewriter &rewriter, Location loc,
+                                 Value value, CastSignKind intKind) {
+    return hivm::NormalizeTraitsBase::createCastOp(
+        rewriter, loc, value, rewriter.getI16Type(), CastRoundKind::Default,
+        Value(), intKind);
+  }
+
+  static Operation *rebuildOpInI16(PatternRewriter &rewriter, Location loc,
+                                   hivm::VReduceOp op,
+                                   SmallVector<Value> &newInputs,
+                                   SmallVector<Value> &newOutputs) {
+    return rewriter.create<hivm::VReduceOp>(
+        loc, TypeRange{newOutputs[0].getType()}, newInputs[0],
+        ValueRange{newOutputs[0]}, op.getArithAttr(), op.getUnsignedSrcAttr(),
+        op.getTieBreakLeftAttr(), op.getReduceDimsAttr());
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, hivm::VReduceOp op,
+                             ValueRange newResults, CastSignKind intKind) {
+    Value castBack = hivm::NormalizeTraitsBase::createCastOp(
+        rewriter, op.getLoc(), newResults.front(),
+        getElementTypeOrSelf(op.getDstValue().getType()), CastRoundKind::Default,
+        Value(), intKind);
+    rewriter.replaceOp(op, castBack);
+  }
+};
+
+template <typename OpType>
+struct HIVMNormalizeF16ToF32Traits : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(OpType op) {
+    if (!op.hasPureTensorSemantics() || !op.getBroadcast().empty() ||
+        !op.getTranspose().empty()) {
+      return false;
+    }
+
+    if constexpr (std::is_same_v<OpType, hivm::VLnOp>) {
+      return true;
+    }
+    if constexpr (std::is_same_v<OpType, hivm::VPowOp>) {
+      return true;
+    }
+    if constexpr (std::is_same_v<OpType, hivm::VRsqrtOp>) {
+      return true;
+    }
+    return false;
+  }
+
+  static Value rebuildOpInF32(PatternRewriter &rewriter, Location loc, OpType op,
+                              ArrayRef<Value> newInputs,
+                              ArrayRef<Value> newInits) {
+    auto newOp = rewriter.create<OpType>(loc, TypeRange{newInits},
+                                         ValueRange{newInputs},
+                                         ValueRange{newInits});
+    return newOp->getResult(0);
+  }
+};
+
+template <>
+struct HIVMNormalizeToTargetTypeTraits<bool, hivm::VSelOp>
+    : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(hivm::VSelOp op) {
+    if (!op.hasPureTensorSemantics() || hasBlockedVectorLayout(op))
+      return false;
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    return llvm::all_of(dpsOp.getDpsInputs(), [](Value value) {
+             return getElementTypeOrSelf(value.getType()).isInteger(1);
+           }) ||
+           llvm::any_of(dpsOp.getDpsInits(), [](Value v) {
+             return getElementTypeOrSelf(v.getType()).isInteger(1);
+           });
+  }
+
+  static SmallVector<Value> getInputs(hivm::VSelOp op) {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    return collectValues(dpsOp.getDpsInputs());
+  }
+
+  static SmallVector<Value> getOutputs(hivm::VSelOp op) {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    return collectValues(dpsOp.getDpsInits());
+  }
+};
+
 template <typename OpType>
 struct HIVMNormalizeToTargetTypeTraits<bool, OpType>
     : public HIVMDpsNormalizeToTargetTypeTraitsBase<bool, OpType> {
@@ -416,6 +706,57 @@ struct HIVMNormalizeToTargetTypeTraits<int8_t, hivm::VSelOp>
   }
 };
 
+template <typename CumOpType>
+struct HIVMNormalizeCumOpTraitsBase : public hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(CumOpType op) {
+    return op.hasPureTensorSemantics() &&
+           (std::is_same_v<CumOpType, hivm::VCumsumOp> ||
+            std::is_same_v<CumOpType, hivm::VCumprodOp>);
+  }
+
+  static Value rebuildOpInF32(PatternRewriter &rewriter, Location loc,
+                              CumOpType op, Value newInput, Value newOutput) {
+    auto newOp = rewriter.create<CumOpType>(loc, TypeRange{newOutput}, newInput,
+                                            newOutput, op.getCumDims(),
+                                            op.getReverse());
+    return newOp->getResult(0);
+  }
+
+protected:
+  static Value getInput(CumOpType op) { return op.getSrc(); }
+
+  static Value getOutput(CumOpType op) { return op.getDst(); }
+};
+
+struct HIVMNormalizeGatherIndexToI32Traits : public mlir::hivm::NormalizeTraitsBase {
+  static bool shouldNormalize(mlir::hivm::VGatherOp) { return true; }
+
+  static mlir::Value getIndex(mlir::hivm::VGatherOp op) { return op.getIndices(); }
+
+  static mlir::Value castIndexToI32(mlir::PatternRewriter &rewriter,
+                                    mlir::Location loc, mlir::Value index) {
+    return mlir::hivm::NormalizeTraitsBase::createCastOp(
+        rewriter, loc, index, rewriter.getI32Type(),
+        mlir::CastRoundKind::Default);
+  }
+
+  static void rebuildOp(mlir::PatternRewriter &rewriter,
+                        mlir::hivm::VGatherOp op, mlir::Value newIndex) {
+    auto newOp = rewriter.create<mlir::hivm::VGatherOp>(
+        op.getLoc(), op.getResultTypes(), op.getSrc(), newIndex,
+        op.getDpsInits()[0]);
+    rewriter.replaceOp(op, newOp->getResults());
+  }
+};
+
+template <typename CumOpType>
+struct HIVMNormalizeCumOpF16ToF32Traits
+    : public HIVMNormalizeCumOpTraitsBase<CumOpType> {};
+
+template <typename CumOpType>
+struct HIVMNormalizeCumOpI8ToTargetTraits
+    : public HIVMNormalizeCumOpTraitsBase<CumOpType> {};
+
 template <typename... Patterns>
 void addTypeConversionPatterns(RewritePatternSet &patterns) {
   patterns.add<Patterns...>(patterns.getContext());
@@ -435,14 +776,42 @@ void addNormalizeToTargetPatterns(RewritePatternSet &patterns) {
 
 void mlir::hivm::populateNormalizeI1ToTargetPatterns(
     RewritePatternSet &patterns) {
+  if (archisAscend950)
+    addTypeConversionPatterns<mlir::ReduceI1AddToSelectMaxCompareTemplate<
+        hivm::VReduceOp, HIVMReduceI1AddToSelectMaxCompareTraits>>(patterns);
   addNormalizeToTargetPatterns<bool, hivm::VInterleaveOp,
                                hivm::VBrcOp>(patterns);
+  addTypeConversionPatterns<mlir::NormalizeReduceBoolToLogicalTemplate<
+      hivm::VReduceOp, HIVMNormalizeReduceBoolToLogicalTraits>>(patterns);
+  if (archIsRegbased) {
+    addTypeConversionPatterns<
+        mlir::NormalizeToTargetTypeI1SelectTemplate<
+            hivm::VSelOp, HIVMNormalizeToTargetTypeTraits<bool, hivm::VSelOp>>,
+        mlir::ReduceI1AndOrToI16Template<hivm::VReduceOp,
+                                         HIVMReduceI1AndOrToI16Traits>>(
+        patterns);
+  }
   addNormalizeToTargetPatterns<bool, hivm::VCmpOp, hivm::VTransposeOp,
                                hivm::VConcatOp, hivm::VReduceOp>(patterns);
 }
 
+void mlir::hivm::populateNormalizeF16ToF32Patterns(
+    RewritePatternSet &patterns) {
+  addTypeConversionPatterns<
+      mlir::NormalizeF16ToF32Type<hivm::VLnOp, HIVMNormalizeF16ToF32Traits<hivm::VLnOp>>,
+      mlir::NormalizeF16ToF32Type<hivm::VPowOp, HIVMNormalizeF16ToF32Traits<hivm::VPowOp>>,
+      mlir::NormalizeF16ToF32Type<hivm::VRsqrtOp, HIVMNormalizeF16ToF32Traits<hivm::VRsqrtOp>>>(patterns);
+  addTypeConversionPatterns<mlir::NormalizeCumOpF16ToF32Type<
+      hivm::VCumsumOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCumsumOp>>,
+      mlir::NormalizeCumOpF16ToF32Type<
+          hivm::VCumprodOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCumprodOp>>>(patterns);
+}
+
 void mlir::hivm::populateNormalizeI8ToTargetPatterns(
     RewritePatternSet &patterns) {
+  if (archIsRegbased)
+    addTypeConversionPatterns<mlir::ReduceNormalize910_95Template<
+        hivm::VReduceOp, HIVMReduceNormalize910_95Traits>>(patterns);
   if (!archIsRegbased) {
     addNormalizeToTargetPatterns<int8_t, hivm::VAddOp, hivm::VSubOp,
                                  hivm::VMulOp, hivm::VMaxOp, hivm::VMinOp,
@@ -451,10 +820,21 @@ void mlir::hivm::populateNormalizeI8ToTargetPatterns(
                                  hivm::VReduceOp, hivm::VInterleaveOp,
                                  hivm::VDeinterleaveOp, hivm::VGatherOp,
                                  hivm::VBrcOp>(patterns);
+    addTypeConversionPatterns<mlir::NormalizeCumOpI8ToTargetType<
+        hivm::VCumsumOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCumsumOp>>,
+        mlir::NormalizeCumOpI8ToTargetType<
+            hivm::VCumprodOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCumprodOp>>>(patterns);
   }
   if (archisAscend950) {
     addNormalizeToTargetPatterns<int8_t, hivm::VAddOp, hivm::VSubOp,
                                  hivm::VMulOp, hivm::VMaxOp, hivm::VMinOp>(patterns);
   }
   addNormalizeToTargetPatterns<int8_t, hivm::VReduceOp>(patterns);
+}
+
+void mlir::hivm::populateNormalizeGatherIndexPatterns(
+    RewritePatternSet &patterns) {
+  patterns.add<mlir::NormalizeGatherIndexToI32Template<
+      mlir::hivm::VGatherOp, HIVMNormalizeGatherIndexToI32Traits>>(
+      patterns.getContext());
 }
