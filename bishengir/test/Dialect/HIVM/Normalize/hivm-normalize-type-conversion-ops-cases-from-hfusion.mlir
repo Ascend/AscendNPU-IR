@@ -285,3 +285,236 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %res : tensor<16xi8>
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeF16ToF32Type_linalg_log_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[EMPTY_IN_F32:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CAST_IN:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[EMPTY_IN_F32]] : tensor<16xf32>)
+// CHECK: %[[EMPTY_OUT_F32:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CAST_OUT:.*]] = hivm.hir.vcast ins(%0 : tensor<16xf16>) outs(%[[EMPTY_OUT_F32]] : tensor<16xf32>)
+// CHECK: %[[VLN:.*]] = hivm.hir.vln ins(%[[CAST_IN]] : tensor<16xf32>) outs(%[[CAST_OUT]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_OUT_F16:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[VLN]] : tensor<16xf32>) outs(%[[EMPTY_OUT_F16]] : tensor<16xf16>)
+// CHECK: return %[[RES]]
+func.func @test_NormalizeF16ToF32Type_linalg_log_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = tensor.empty() : tensor<16xf16>
+  %1 = linalg.elemwise_unary {fun = #linalg.unary_fn<log>}
+    ins(%arg0 : tensor<16xf16>)
+    outs(%0 : tensor<16xf16>) -> tensor<16xf16>
+  return %1 : tensor<16xf16>
+}
+
+// vrsqrt is decomposed into vsqrt+vrec by HIVM PrimaryMath before the f16->f32
+// type conversion runs, matching the pure HIVM path behavior.
+// CHECK-LABEL: func.func @test_NormalizeF16ToF32Type_hfusion_rsqrt_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>) -> tensor<16xf16>
+// CHECK: %[[EMPTY_F16_0:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[EMPTY_F32_0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CAST_IN:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[EMPTY_F32_0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_F32_1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CAST_DST:.*]] = hivm.hir.vcast ins(%[[EMPTY_F16_0]] : tensor<16xf16>) outs(%[[EMPTY_F32_1]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_F32_2:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[SQRT:.*]] = hivm.hir.vsqrt ins(%[[CAST_IN]] : tensor<16xf32>) outs(%[[EMPTY_F32_2]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[REC:.*]] = hivm.hir.vrec ins(%[[SQRT]] : tensor<16xf32>) outs(%[[CAST_DST]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY_F16_1:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[CAST_BACK:.*]] = hivm.hir.vcast ins(%[[REC]] : tensor<16xf32>) outs(%[[EMPTY_F16_1]] : tensor<16xf16>) -> tensor<16xf16>
+// CHECK: return %[[CAST_BACK]]
+func.func @test_NormalizeF16ToF32Type_hfusion_rsqrt_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = tensor.empty() : tensor<16xf16>
+  %1 = hfusion.elemwise_unary {fun = #hfusion.unary_fn<rsqrt>}
+    ins(%arg0 : tensor<16xf16>)
+    outs(%0 : tensor<16xf16>) -> tensor<16xf16>
+  return %1 : tensor<16xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCumOpF16ToF32Type_cumsum_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x64xf16>) -> tensor<4x32xf16>
+// CHECK: %[[EMPTY_IN_F32:.*]] = tensor.empty() : tensor<4x64xf32>
+// CHECK: %[[CAST_IN:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x64xf16>) outs(%[[EMPTY_IN_F32]] : tensor<4x64xf32>)
+// CHECK: %[[EMPTY_OUT_F32:.*]] = tensor.empty() : tensor<4x32xf32>
+// CHECK: %[[CAST_OUT:.*]] = hivm.hir.vcast ins(%0 : tensor<4x32xf16>) outs(%[[EMPTY_OUT_F32]] : tensor<4x32xf32>)
+// CHECK: %[[CUMSUM:.*]] = hivm.hir.vcumsum ins(%[[CAST_IN]] : tensor<4x64xf32>) outs(%[[CAST_OUT]] : tensor<4x32xf32>) cum_dims = [0] reverse = true -> tensor<4x32xf32>
+// CHECK: %[[EMPTY_OUT_F16:.*]] = tensor.empty() : tensor<4x32xf16>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[CUMSUM]] : tensor<4x32xf32>) outs(%[[EMPTY_OUT_F16]] : tensor<4x32xf16>)
+// CHECK: return %[[RES]]
+func.func @test_NormalizeCumOpF16ToF32Type_cumsum_f16(%arg0: tensor<4x64xf16>) -> tensor<4x32xf16> {
+  %0 = tensor.empty() : tensor<4x32xf16>
+  %1 = hfusion.cumsum %arg0 : tensor<4x64xf16> cum_dims = [0] reverse = true -> tensor<4x32xf16>
+  return %1 : tensor<4x32xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCumOpF16ToF32Type_cumprod_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x64xf16>) -> tensor<4x32xf16>
+// CHECK: %[[EMPTY_IN_F32:.*]] = tensor.empty() : tensor<4x64xf32>
+// CHECK: %[[CAST_IN:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x64xf16>) outs(%[[EMPTY_IN_F32]] : tensor<4x64xf32>)
+// CHECK: %[[EMPTY_OUT_F32:.*]] = tensor.empty() : tensor<4x32xf32>
+// CHECK: %[[CAST_OUT:.*]] = hivm.hir.vcast ins(%0 : tensor<4x32xf16>) outs(%[[EMPTY_OUT_F32]] : tensor<4x32xf32>)
+// CHECK: %[[CUMPROD:.*]] = hivm.hir.vcumprod ins(%[[CAST_IN]] : tensor<4x64xf32>) outs(%[[CAST_OUT]] : tensor<4x32xf32>) cum_dims = [1] reverse = true -> tensor<4x32xf32>
+// CHECK: %[[EMPTY_OUT_F16:.*]] = tensor.empty() : tensor<4x32xf16>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[CUMPROD]] : tensor<4x32xf32>) outs(%[[EMPTY_OUT_F16]] : tensor<4x32xf16>)
+// CHECK: return %[[RES]]
+func.func @test_NormalizeCumOpF16ToF32Type_cumprod_f16(%arg0: tensor<4x64xf16>) -> tensor<4x32xf16> {
+  %0 = tensor.empty() : tensor<4x32xf16>
+  %1 = hfusion.cumprod %arg0 : tensor<4x64xf16> cum_dims = [1] reverse = true -> tensor<4x32xf16>
+  return %1 : tensor<4x32xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCumOpI8ToTargetType_cumsum_i8
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x64xi8>) -> tensor<4x32xi8>
+// CHECK: %[[EMPTY_IN_F16:.*]] = tensor.empty() : tensor<4x64xf16>
+// CHECK: %[[CAST_IN_F16:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x64xi8>) outs(%[[EMPTY_IN_F16]] : tensor<4x64xf16>)
+// CHECK: %[[EMPTY_IN_F32:.*]] = tensor.empty() : tensor<4x64xf32>
+// CHECK: %[[CAST_IN_F32:.*]] = hivm.hir.vcast ins(%[[CAST_IN_F16]] : tensor<4x64xf16>) outs(%[[EMPTY_IN_F32]] : tensor<4x64xf32>)
+// CHECK: %[[EMPTY_OUT_F16:.*]] = tensor.empty() : tensor<4x32xf16>
+// CHECK: %[[CAST_OUT_F16:.*]] = hivm.hir.vcast ins(%0 : tensor<4x32xi8>) outs(%[[EMPTY_OUT_F16]] : tensor<4x32xf16>)
+// CHECK: %[[EMPTY_OUT_F32:.*]] = tensor.empty() : tensor<4x32xf32>
+// CHECK: %[[CAST_OUT_F32:.*]] = hivm.hir.vcast ins(%[[CAST_OUT_F16]] : tensor<4x32xf16>) outs(%[[EMPTY_OUT_F32]] : tensor<4x32xf32>)
+// CHECK: %[[CUMSUM:.*]] = hivm.hir.vcumsum ins(%[[CAST_IN_F32]] : tensor<4x64xf32>) outs(%[[CAST_OUT_F32]] : tensor<4x32xf32>) cum_dims = [0] reverse = true -> tensor<4x32xf32>
+// CHECK: %[[EMPTY_I32:.*]] = tensor.empty() : tensor<4x32xi32>
+// CHECK: %[[CAST_I32:.*]] = hivm.hir.vcast ins(%[[CUMSUM]] : tensor<4x32xf32>) outs(%[[EMPTY_I32]] : tensor<4x32xi32>) round_mode = <trunc>
+// CHECK: annotation.mark %[[CAST_I32]] {overflow_mode = "trunc"} : tensor<4x32xi32>
+// CHECK: %[[EMPTY_I8:.*]] = tensor.empty() : tensor<4x32xi8>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[CAST_I32]] : tensor<4x32xi32>) outs(%[[EMPTY_I8]] : tensor<4x32xi8>) round_mode = <truncwithoverflow>
+// CHECK: return %[[RES]]
+func.func @test_NormalizeCumOpI8ToTargetType_cumsum_i8(%arg0: tensor<4x64xi8>) -> tensor<4x32xi8> {
+  %0 = tensor.empty() : tensor<4x32xi8>
+  %1 = hfusion.cumsum %arg0 : tensor<4x64xi8> cum_dims = [0] reverse = true -> tensor<4x32xi8>
+  return %1 : tensor<4x32xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCumOpI8ToTargetType_cumprod_i8
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<4x64xi8>) -> tensor<4x32xi8>
+// CHECK: %[[EMPTY_IN_F16:.*]] = tensor.empty() : tensor<4x64xf16>
+// CHECK: %[[CAST_IN_F16:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<4x64xi8>) outs(%[[EMPTY_IN_F16]] : tensor<4x64xf16>)
+// CHECK: %[[EMPTY_IN_F32:.*]] = tensor.empty() : tensor<4x64xf32>
+// CHECK: %[[CAST_IN_F32:.*]] = hivm.hir.vcast ins(%[[CAST_IN_F16]] : tensor<4x64xf16>) outs(%[[EMPTY_IN_F32]] : tensor<4x64xf32>)
+// CHECK: %[[EMPTY_OUT_F16:.*]] = tensor.empty() : tensor<4x32xf16>
+// CHECK: %[[CAST_OUT_F16:.*]] = hivm.hir.vcast ins(%0 : tensor<4x32xi8>) outs(%[[EMPTY_OUT_F16]] : tensor<4x32xf16>)
+// CHECK: %[[EMPTY_OUT_F32:.*]] = tensor.empty() : tensor<4x32xf32>
+// CHECK: %[[CAST_OUT_F32:.*]] = hivm.hir.vcast ins(%[[CAST_OUT_F16]] : tensor<4x32xf16>) outs(%[[EMPTY_OUT_F32]] : tensor<4x32xf32>)
+// CHECK: %[[CUMPROD:.*]] = hivm.hir.vcumprod ins(%[[CAST_IN_F32]] : tensor<4x64xf32>) outs(%[[CAST_OUT_F32]] : tensor<4x32xf32>) cum_dims = [1] reverse = true -> tensor<4x32xf32>
+// CHECK: %[[EMPTY_I32:.*]] = tensor.empty() : tensor<4x32xi32>
+// CHECK: %[[CAST_I32:.*]] = hivm.hir.vcast ins(%[[CUMPROD]] : tensor<4x32xf32>) outs(%[[EMPTY_I32]] : tensor<4x32xi32>) round_mode = <trunc>
+// CHECK: annotation.mark %[[CAST_I32]] {overflow_mode = "trunc"} : tensor<4x32xi32>
+// CHECK: %[[EMPTY_I8:.*]] = tensor.empty() : tensor<4x32xi8>
+// CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[CAST_I32]] : tensor<4x32xi32>) outs(%[[EMPTY_I8]] : tensor<4x32xi8>) round_mode = <truncwithoverflow>
+// CHECK: return %[[RES]]
+func.func @test_NormalizeCumOpI8ToTargetType_cumprod_i8(%arg0: tensor<4x64xi8>) -> tensor<4x32xi8> {
+  %0 = tensor.empty() : tensor<4x32xi8>
+  %1 = hfusion.cumprod %arg0 : tensor<4x64xi8> cum_dims = [1] reverse = true -> tensor<4x32xi8>
+  return %1 : tensor<4x32xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_ReduceI1AddToSelectMaxCompare_from_hfusion
+// CHECK: %[[ONES:.*]] = linalg.fill
+// CHECK: %[[ZEROS:.*]] = linalg.fill
+// CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%arg0, %[[ONES]], %[[ZEROS]] : tensor<8xi1>, tensor<8xi16>, tensor<8xi16>) outs(%{{.*}} : tensor<8xi16>) -> tensor<8xi16>
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <max> ins(%[[SEL]] : tensor<8xi16>) outs(%{{.*}} : tensor<1xi16>) unsigned_src = false reduce_dims = [0] -> tensor<1xi16>
+// CHECK: hivm.hir.vcmp ins(%[[RED]], {{.*}} : tensor<1xi16>, i16) outs(%{{.*}} : tensor<1xi1>) compare_mode = <ne> -> tensor<1xi1>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_ReduceI1AddToSelectMaxCompare_from_hfusion(%arg0: tensor<8xi1>) -> tensor<i1> {
+    %cst_0 = arith.constant false
+    %0 = bufferization.alloc_tensor() : tensor<i1>
+    %1 = linalg.fill ins(%cst_0 : i1) outs(%0 : tensor<i1>) -> tensor<i1>
+    %reduced = linalg.reduce ins(%arg0 : tensor<8xi1>) outs(%1 : tensor<i1>) dimensions = [0]
+        (%in: i1, %init: i1) {
+          %2 = arith.addi %in, %init : i1
+          linalg.yield %2 : i1
+        }
+    return %reduced : tensor<i1>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_ReduceI1AndOrToI16_from_hfusion_any
+// CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<1x1024xi1>) outs(%{{.*}} : tensor<1x1024xf16>) round_mode = <trunc> -> tensor<1x1024xf16>
+// CHECK: %[[SRC_I16:.*]] = hivm.hir.vcast ins(%[[SRC_F16]] : tensor<1x1024xf16>) outs(%{{.*}} : tensor<1x1024xi16>) round_mode = <trunc> -> tensor<1x1024xi16>
+// CHECK: %[[INIT_I16:.*]] = linalg.fill
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <max> ins(%[[SRC_I16]] : tensor<1x1024xi16>) outs(%[[INIT_I16]] : tensor<1x1xi16>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xi16>
+// CHECK: %[[RED_F16:.*]] = hivm.hir.vcast ins(%[[RED]] : tensor<1x1xi16>) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
+// CHECK: %[[ZERO_F16:.*]] = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
+// CHECK: hivm.hir.vcmp ins(%[[RED_F16]], %[[ZERO_F16]] : tensor<1x1xf16>, tensor<1x1xf16>) outs(%{{.*}} : tensor<1x1xi1>) compare_mode = <ne> -> tensor<1x1xi1>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_ReduceI1AndOrToI16_from_hfusion_any(%arg0: tensor<1x1024xi1>) -> tensor<1xi1> {
+    %dst = tensor.empty() : tensor<1xi1>
+    %reduced = linalg.reduce ins(%arg0 : tensor<1x1024xi1>) outs(%dst : tensor<1xi1>) dimensions = [1]
+      (%in: i1, %init: i1) {
+        %0 = arith.ori %in, %init : i1
+        linalg.yield %0 : i1
+      }
+    return %reduced : tensor<1xi1>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_ReduceI1AndOrToI16_from_hfusion_all
+// CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<1x1024xi1>) outs(%{{.*}} : tensor<1x1024xf16>) round_mode = <trunc> -> tensor<1x1024xf16>
+// CHECK: %[[SRC_I16:.*]] = hivm.hir.vcast ins(%[[SRC_F16]] : tensor<1x1024xf16>) outs(%{{.*}} : tensor<1x1024xi16>) round_mode = <trunc> -> tensor<1x1024xi16>
+// CHECK: %[[INIT_I16:.*]] = linalg.fill
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <min> ins(%[[SRC_I16]] : tensor<1x1024xi16>) outs(%[[INIT_I16]] : tensor<1x1xi16>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xi16>
+// CHECK: %[[RED_F16:.*]] = hivm.hir.vcast ins(%[[RED]] : tensor<1x1xi16>) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
+// CHECK: %[[ZERO_F16:.*]] = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
+// CHECK: hivm.hir.vcmp ins(%[[RED_F16]], %[[ZERO_F16]] : tensor<1x1xf16>, tensor<1x1xf16>) outs(%{{.*}} : tensor<1x1xi1>) compare_mode = <ne> -> tensor<1x1xi1>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_ReduceI1AndOrToI16_from_hfusion_all(%arg0: tensor<1x1024xi1>) -> tensor<1xi1> {
+    %dst = tensor.empty() : tensor<1xi1>
+    %reduced = linalg.reduce ins(%arg0 : tensor<1x1024xi1>) outs(%dst : tensor<1xi1>) dimensions = [1]
+      (%in: i1, %init: i1) {
+        %0 = arith.andi %in, %init : i1
+        linalg.yield %0 : i1
+      }
+    return %reduced : tensor<1xi1>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_ReduceNormalize910_95_from_hfusion_sum_i8
+// CHECK: %[[SRC_I16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<5x8x7xi8>) outs(%{{.*}} : tensor<5x8x7xi16>) -> tensor<5x8x7xi16>
+// CHECK: %[[DST_I16:.*]] = hivm.hir.vcast ins(%{{.*}} : tensor<1x8x1xi8>) outs(%{{.*}} : tensor<1x8x1xi16>) -> tensor<1x8x1xi16>
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <sum> ins(%[[SRC_I16]] : tensor<5x8x7xi16>) outs(%[[DST_I16]] : tensor<1x8x1xi16>) unsigned_src = false reduce_dims = [0, 2] -> tensor<1x8x1xi16>
+// CHECK: hivm.hir.vcast ins(%[[RED]] : tensor<1x8x1xi16>) outs(%{{.*}} : tensor<1x8x1xi8>) round_mode = <truncwithoverflow> -> tensor<1x8x1xi8>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_ReduceNormalize910_95_from_hfusion_sum_i8(%arg0: tensor<5x8x7xi8>) -> tensor<8xi8> {
+    %dst = tensor.empty() : tensor<8xi8>
+    %reduced = linalg.reduce ins(%arg0 : tensor<5x8x7xi8>) outs(%dst : tensor<8xi8>) dimensions = [0, 2]
+      (%in: i8, %init: i8) {
+        %0 = arith.addi %in, %init : i8
+        linalg.yield %0 : i8
+      }
+    return %reduced : tensor<8xi8>
+  }
+}
+
+// -----
+
+// The I1SelectTemplate is only registered on regbased architectures.
+// CHECK-LABEL: func.func @test_NormalizeToTargetType_select_i1
+// CHECK: %[[TRUE_I16:.*]] = hivm.hir.vsel ins(%arg1, %{{.*}}, %{{.*}} : tensor<16xi1>, tensor<16xi16>, tensor<16xi16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: %[[FALSE_I16:.*]] = hivm.hir.vsel ins(%arg2, %{{.*}}, %{{.*}} : tensor<16xi1>, tensor<16xi16>, tensor<16xi16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: %[[SEL_I16:.*]] = hivm.hir.vsel ins(%arg0, %[[TRUE_I16]], %[[FALSE_I16]] : tensor<16xi1>, tensor<16xi16>, tensor<16xi16>) outs(%{{.*}} : tensor<16xi16>) -> tensor<16xi16>
+// CHECK: %[[CMP:.*]] = hivm.hir.vcmp ins(%[[SEL_I16]], {{.*}} : tensor<16xi16>, tensor<16xi16>) outs(%{{.*}} : tensor<16xi1>) compare_mode = <ne> -> tensor<16xi1>
+// CHECK: return %[[CMP]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeToTargetType_select_i1(%arg0: tensor<16xi1>, %arg1: tensor<16xi1>, %arg2: tensor<16xi1>) -> tensor<16xi1> {
+    %dst = tensor.empty() : tensor<16xi1>
+    %res = hfusion.select
+      ins(%arg0, %arg1, %arg2 : tensor<16xi1>, tensor<16xi1>, tensor<16xi1>)
+      outs(%dst : tensor<16xi1>) -> tensor<16xi1>
+    return %res : tensor<16xi1>
+  }
+}
