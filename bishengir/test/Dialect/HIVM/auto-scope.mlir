@@ -30,6 +30,29 @@ module {
 
 // -----
 
+// Test: gather_load already in simt scope should NOT be wrapped again
+// CHECK-LABEL: func.func @gather_load_in_simt_scope
+// CHECK: hivm.hir.gather_load
+// CHECK-NEXT: tensor.empty()
+// CHECK-NEXT: hivm.hir.vadd
+// CHECK-NEXT: scope.return
+module {
+  func.func @gather_load_in_simt_scope(%arg0: memref<?xf32>, %arg1: tensor<8xi64>, %arg2: memref<?xf32>) {
+    %0 = scope.scope : () -> tensor<8xf32> {
+      %c1_i32 = arith.constant 1 : i32
+      %1 = tensor.empty() : tensor<8xf32>
+      %2 = hivm.hir.gather_load ins(%arg0 : memref<?xf32>, %arg1 : tensor<8xi64>, %c1_i32 : i32) outs(%1 : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+      %3 = tensor.empty() : tensor<8xf32>
+      %4 = hivm.hir.vadd ins(%2, %2 : tensor<8xf32>, tensor<8xf32>) outs(%3 : tensor<8xf32>) -> tensor<8xf32>
+      scope.return %4 : tensor<8xf32>
+    } {vector_type = "simt"}
+    hivm.hir.store ins(%0 : tensor<8xf32>) outs(%arg2 : memref<?xf32>)
+    return
+  }
+}
+
+// -----
+
 module {
   // CHECK: scope.scope
   // CHECK:   %[[BLOCKIDX:.*]] = hivm.hir.get_block_idx -> i64
