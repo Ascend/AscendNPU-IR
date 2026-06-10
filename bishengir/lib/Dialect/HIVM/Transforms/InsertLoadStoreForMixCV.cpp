@@ -446,6 +446,9 @@ LogicalResult InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp func
   GreedyRewriteConfig rewriteConfig;
   patterns.add<InsertPropagationPattern>(patterns.getContext());
   patterns.add<A5InsertionPattern>(patterns.getContext());
+  if (isEnabledTightCoupledBuffer()) {
+    patterns.add<TightCoupledBufferInsertionPattern>(patterns.getContext());
+  }
   // TODO: add case for InsertUBAfterFixpipePattern
   // case of InsertL1BeforeMmadPattern tested by compile-triton-hstu-attn-fwd.mlir
   rewriteConfig.fold = false;

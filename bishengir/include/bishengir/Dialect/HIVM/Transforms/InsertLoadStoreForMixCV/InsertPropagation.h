@@ -25,7 +25,8 @@ namespace hivm {
 
 enum InsertionPriority: uint8_t {
   DefaultInsertion = 1,
-  RegbaseInsertion = 2
+  RegbaseInsertion = 2,
+  TightCoupledBufferInsertion = 3
 };
 
 struct InsertPropagationPattern : public RewritePattern {
@@ -52,6 +53,18 @@ struct A5InsertionPattern : public RewritePattern {
 public:
   explicit A5InsertionPattern(MLIRContext *context)
       : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/RegbaseInsertion, context) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override;
+
+private:
+  bool isPropagatorInserted(Operation *op) const;
+};
+
+struct TightCoupledBufferInsertionPattern : public RewritePattern {
+public:
+  explicit TightCoupledBufferInsertionPattern(MLIRContext *context)
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/TightCoupledBufferInsertion, context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override;
