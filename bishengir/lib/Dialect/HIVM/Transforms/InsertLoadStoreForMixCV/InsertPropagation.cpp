@@ -242,15 +242,6 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
                                               hivm::AddressSpace::UB, rewriter);
         return success();
       })
-      .Case<hivm::FixpipeOp>([&](auto op) {
-        auto *dstOp = &op.getDstMutable();
-        if (op->use_empty())
-          return failure();
-        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
-                                           rewriter);
-        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR, hivm::AddressSpace::UB, rewriter);
-        return success();
-      })
       .Case<hivm::GatherLoadOp>([&](auto op) {
         PropagatorUtil::createPropagatorUp(&op.getBaseMutable(),
                                            hivm::AddressSpace::GM, rewriter);
@@ -326,6 +317,43 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
 }
 
 bool A5InsertionPattern::isPropagatorInserted(Operation *op) const {
+  bool downPropInserted =
+      !op->use_empty() && llvm::all_of(op->getUsers(), [](auto *user) {
+        return user->hasAttr(kPropagateDownAttr);
+      });
+  bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
+    auto *oprOp = opr.getDefiningOp();
+    if (!isa<ShapedType>(opr.getType()))
+      return true;
+    return oprOp && oprOp->hasAttr(kPropagateUpAttr);
+  });
+  return upPropInserted || downPropInserted;
+}
+
+//===----------------------------------------------------------------------===//
+// TightCoupledBufferInsertionPattern
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+TightCoupledBufferInsertionPattern::matchAndRewrite(Operation *op,
+                                          PatternRewriter &rewriter) const {
+  if (isPropagatorInserted(op))
+    return failure();
+
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::FixpipeOp>([&](auto op) {
+        auto *dstOp = &op.getDstMutable();
+        if (op->use_empty())
+          return failure();
+        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
+                                           rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR, hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Default([&](auto *op) { return failure(); });
+}
+
+bool TightCoupledBufferInsertionPattern::isPropagatorInserted(Operation *op) const {
   bool downPropInserted =
       !op->use_empty() && llvm::all_of(op->getUsers(), [](auto *user) {
         return user->hasAttr(kPropagateDownAttr);
