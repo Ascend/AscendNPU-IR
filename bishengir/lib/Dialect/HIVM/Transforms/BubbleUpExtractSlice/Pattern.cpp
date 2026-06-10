@@ -41,6 +41,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include <cstddef>
 #include <cstdint>
 #include <utility>
 
@@ -1868,7 +1869,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
           if (auto mark = dyn_cast<annotation::MarkOp>(userOp)) {
             rewriter.modifyOpInPlace(mark, [&]() {
               mark->setOperand(0, newUbAllocOp.getResult());
-              for (int64_t i = 0, e = (int64_t)staticShape.size(); i < e; ++i) {
+              for (size_t i = 0; i < staticShape.size(); ++i) {
                 if (staticShape[i] != oldShape[i]) {
                   auto tilingDimAttr =
                       mark->getAttrOfType<IntegerAttr>(AICAttrTilingDim);

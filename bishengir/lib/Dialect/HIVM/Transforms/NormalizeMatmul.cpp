@@ -718,37 +718,40 @@ template <typename T> CCFInfo getResFromSingleUseChain(Operation *op) {
 }
 
 Value initCounter(PatternRewriter &rewriter, Operation &op) {
-  rewriter.setInsertionPoint(&op);
-  // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
-  // every outer iteration, so the counter resets per outer step.
-  Location loc = op.getLoc();
-  Value counterBuf = rewriter.create<memref::AllocaOp>(
-      loc, MemRefType::get({}, rewriter.getI32Type()));
-  Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-  auto storeOp =
-      rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf, ValueRange{});
-  storeOp->setAttr(hivm::TCoreTypeAttr::name,
-                   hivm::TCoreTypeAttr::get(rewriter.getContext(),
-                                            hivm::TCoreType::CUBE_AND_VECTOR));
-  return counterBuf;
+    rewriter.setInsertionPoint(&op);
+    // Alloca + store 0 before the inner scf.for. Outer-loop body re-runs this
+    // every outer iteration, so the counter resets per outer step.
+    Location loc = op.getLoc();
+    Value counterBuf = rewriter.create<memref::AllocaOp>(loc, MemRefType::get({}, rewriter.getI32Type()));
+    // Mark the alloca so downstream passes can recognize it as the
+    // normalize-matmul iteration counter.
+    counterBuf.getDefiningOp()->setAttr(kNormalizeMatmulCounterAttr, rewriter.getUnitAttr());
+    Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    auto storeOp = rewriter.create<memref::StoreOp>(loc, zeroI32, counterBuf,
+                                                    ValueRange{});
+    storeOp->setAttr(
+        hivm::TCoreTypeAttr::name,
+        hivm::TCoreTypeAttr::get(rewriter.getContext(),
+                                 hivm::TCoreType::CUBE_AND_VECTOR));
+    return counterBuf;
 }
 
 template <typename T>
 Value updateInitCondition(PatternRewriter &rewriter, T op, Value counterBuf) {
   rewriter.setInsertionPoint(op);
   Location loc = op->getLoc();
-  auto loadOp = rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+  Value curCount =
+      rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
   Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
   auto firstIterCond = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, loadOp.getResult(), zeroI32);
+      loc, arith::CmpIPredicate::eq, curCount, zeroI32);
 
   // In the same then-branch, right after matmul: counter += 1; store back.
   // Counter only advances on iterations where the scf.if condition fired,
   // which is exactly what the fallback below relies on.
   rewriter.setInsertionPointAfter(op);
   Value oneI32 = rewriter.create<arith::ConstantIntOp>(loc, 1, 32);
-  Value nextCount =
-      rewriter.create<arith::AddIOp>(loc, loadOp.getResult(), oneI32);
+  Value nextCount = rewriter.create<arith::AddIOp>(loc, curCount, oneI32);
   rewriter.create<memref::StoreOp>(loc, nextCount, counterBuf, ValueRange{});
   return firstIterCond;
 }
@@ -1305,3 +1308,4 @@ void NormalizeMatmulPass::runOnOperation() {
 std::unique_ptr<Pass> mlir::hivm::createNormalizeMatmulPass() {
   return std::make_unique<NormalizeMatmulPass>();
 }
+
