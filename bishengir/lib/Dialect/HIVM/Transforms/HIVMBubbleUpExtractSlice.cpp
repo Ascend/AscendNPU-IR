@@ -16,6 +16,8 @@
 //============================================================================//
 
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BufferizationBubbleUp.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/CSEPattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
@@ -126,6 +128,7 @@ public:
     func::FuncOp funcOp = getOperation();
     GreedyRewriteConfig config;
     config.maxIterations = 50;
+    config.fold = false;
     // Apply bubble up patterns.
     // MarkEmptySliceBufferSize runs after BubbleUpPattern (which
     // may reject due to areOperandsUpperLevel) but before
@@ -140,14 +143,10 @@ public:
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       return signalPassFailure();
     }
-    PassManager pm(funcOp->getContext());
-    pm.addPass(createCanonicalizerPass());
-    pm.addPass(createCSEPass());
-    if (failed(pm.run(funcOp))) {
-      return signalPassFailure();
-    }
-    // Apply bubble up once more, because canonicalize might bring more
-    // opportunity.
+    cleanupResolvedBufferizationPropagators(funcOp);
+    // Apply bubble up once more; canonicalize/CSE are run by the outer
+    // pass pipeline (e.g. bind-sub-block) to avoid crashing on intermediate
+    // UCC propagators left in the IR.
     RewritePatternSet patterns2(funcOp.getContext());
     populateHoistAffinePattern(patterns2);
     populateBubbleUpExtractSliceOpPatterns(patterns2);
@@ -157,6 +156,7 @@ public:
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns2), config))) {
       return signalPassFailure();
     }
+    cleanupResolvedBufferizationPropagators(funcOp);
 
     if (failed(verifyMarkedExtractSlicesAreBubbledUp(funcOp))) {
       return signalPassFailure();
@@ -181,7 +181,6 @@ private:
     strategies.push_back(std::make_shared<ExtractSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<InsertSliceBubbleUpStrategy>());
     strategies.push_back(std::make_shared<BitcastBubbleUpStrategy>());
-    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VTransposeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IfBubbleUpStrategy>());
     strategies.push_back(std::make_shared<VarangeBubbleUpStrategy>());
@@ -192,9 +191,10 @@ private:
     strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<GatherLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<StrideLoadBubbleUpStrategy>());
-    
+    strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
+    patterns.add<BufferizationBubbleUpPattern>(context);
   }
 };
 
