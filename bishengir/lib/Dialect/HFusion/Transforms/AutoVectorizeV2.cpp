@@ -7,12 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -220,11 +220,6 @@ static void computeNumLoopsAndShapeAndMaxElemBitWidth(Operation *op,
   if (isa<linalg::TransposeOp>(op) && !isVsstbPatternTransposeOp(op)) {
     allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
     allTypes.append(op->getOperandTypes().begin(), op->getOperandTypes().end());
-  } else if (isa<hfusion::DeinterleaveOp>(op)) {
-    // For DeinterleaveOp, use result types first so that the shape reflects
-    // the output dimension, which aligns with downstream consumers.
-    allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
-    allTypes.append(op->getOperandTypes().begin(), op->getOperandTypes().end());
   } else {
     allTypes.append(op->getOperandTypes().begin(), op->getOperandTypes().end());
     allTypes.append(op->getResultTypes().begin(), op->getResultTypes().end());
@@ -279,15 +274,17 @@ static void computeNumLoopsAndShapeAndMaxElemBitWidth(Operation *op,
   opInfo.maxElemBitWidth = maxElemBitWidth;
 }
 
-static void estimateTileSizeForOpInFusedNode(
+static void
+estimateTileSizeForOpInFusedNode(
     Operation *fusedOp, std::shared_ptr<FusedNode> fusedNode,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
     int64_t vectorLength, SmallVectorImpl<int64_t> &tileSize,
     SmallVectorImpl<int64_t> *tileInterchange = nullptr) {
   unsigned maxElemBitWidthInFusedNode = 1;
   for (Operation *nodeOp : fusedNode->fusedOps) {
-    maxElemBitWidthInFusedNode = std::max(
-        maxElemBitWidthInFusedNode, fusableOpInfoMap[nodeOp].maxElemBitWidth);
+    maxElemBitWidthInFusedNode =
+        std::max(maxElemBitWidthInFusedNode,
+                 fusableOpInfoMap[nodeOp].maxElemBitWidth);
   }
 
   bool shouldMultiAxisVectorize = false;
@@ -308,9 +305,9 @@ static void estimateTileSizeForOpInFusedNode(
     for (int64_t i = opInfo.numLoops - 1; i >= 0; --i) {
       allocAxisNum++;
       if (maxElemByteWidthInFusedNode == 0) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "maxElemByteWidthInFusedNode is 0, "
-                   << "use default tile size " << opInfo.shape[i] << "\n");
+        LLVM_DEBUG(llvm::dbgs() << "maxElemByteWidthInFusedNode is 0, "
+                                << "use default tile size " << opInfo.shape[i]
+                                << "\n");
         tileSize[i] = opInfo.shape[i];
         continue;
       }
@@ -318,8 +315,8 @@ static void estimateTileSizeForOpInFusedNode(
         tileSize[i] = remainBytes / maxElemByteWidthInFusedNode;
         break;
       } else {
-        tileSize[i] = std::min(opInfo.shape[i],
-                               remainBytes / maxElemByteWidthInFusedNode);
+        tileSize[i] =
+            std::min(opInfo.shape[i], remainBytes / maxElemByteWidthInFusedNode);
         remainBytes /= tileSize[i];
       }
     }
@@ -339,8 +336,8 @@ static void estimateTileSizeForOpInFusedNode(
   tileSize[opInfo.numLoops - 1] =
       maxElemBitWidthInFusedNode == 1
           ? vectorLength
-          : vectorLength / (int64_t)(maxElemBitWidthInFusedNode /
-                                     utils::INTR_BITS_PER_BYTE);
+          : vectorLength /
+                (int64_t)(maxElemBitWidthInFusedNode / utils::INTR_BITS_PER_BYTE);
 }
 
 static void
@@ -472,8 +469,7 @@ findPreviousAndFollowingFusableOpOf(Operation *barrierOp, Block *block,
 
 static bool hasMemRefInOperands(Operation *op, Value memRef) {
   for (auto operand : op->getOperands()) {
-    auto optMemRef =
-        mlir::utils::tracebackMemRefToAllocOrBlockArgument(operand);
+    auto optMemRef = mlir::utils::tracebackMemRefToAllocOrBlockArgument(operand);
     if (optMemRef.has_value() && (memRef == optMemRef.value())) {
       return true;
     }
@@ -483,7 +479,8 @@ static bool hasMemRefInOperands(Operation *op, Value memRef) {
 
 static void computeConflictListsForCopyOpOperand(
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    DenseSet<Operation *> &previousOps, DenseSet<Operation *> &followingOps,
+    DenseSet<Operation *> &previousOps,
+    DenseSet<Operation *> &followingOps,
     Value operand) {
 
   auto optMemRef = mlir::utils::tracebackMemRefToAllocOrBlockArgument(operand);
@@ -551,14 +548,9 @@ static void computeConflictLists(
             auto copyOp = cast<CopyOpInterface>(op);
             DenseSet<Operation *> previousOps;
             DenseSet<Operation *> followingOps;
-            findPreviousAndFollowingFusableOpOf(op, block, previousOps,
-                                                followingOps);
-            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps,
-                                                 followingOps,
-                                                 copyOp.getTarget());
-            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps,
-                                                 followingOps,
-                                                 copyOp.getSource());
+            findPreviousAndFollowingFusableOpOf(op, block, previousOps, followingOps);
+            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getTarget());
+            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getSource());
           }
 
           if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
@@ -733,9 +725,8 @@ static bool hasManyUsers(Operation *op, unsigned threshold = 2) {
   return users.size() >= threshold;
 }
 
-/// Pre validation for fusion opportunity of Linalg's
-/// tileAndFuseFirstExtractUse.
-///
+/// Pre validation for fusion opportunity of Linalg's tileAndFuseFirstExtractUse.
+/// 
 /// Returns true if all consumers of the producer will fuse into a single loop.
 /// When consumers fuse into different loops (different fusedNode labels), the
 /// producer has no valid fusion opportunity and should remain a standalone op.
@@ -801,9 +792,8 @@ static bool becomesTileLocalInFusedNode(
   return false;
 }
 
-static bool
-canLegallySplitReductionConsumer(Operation *producer,
-                                 linalg::LinalgOp reductionConsumer) {
+static bool canLegallySplitReductionConsumer(
+    Operation *producer, linalg::LinalgOp reductionConsumer) {
   if (!producer || !reductionConsumer ||
       reductionConsumer.getNumReductionLoops() == 0)
     return false;
@@ -831,10 +821,9 @@ canLegallySplitReductionConsumer(Operation *producer,
   return indexingMap.isIdentity();
 }
 
-static bool
-reductionConsumerNeedsFullProducerDomain(Operation *producer,
-                                         std::shared_ptr<FusedNode> fusedNode,
-                                         ArrayRef<int64_t> estimatedTileSize) {
+static bool reductionConsumerNeedsFullProducerDomain(
+    Operation *producer, std::shared_ptr<FusedNode> fusedNode,
+    ArrayRef<int64_t> estimatedTileSize) {
   if (!producer || !fusedNode)
     return false;
   SmallVector<linalg::LinalgOp> reductionConsumers;
@@ -880,8 +869,7 @@ reductionConsumerNeedsFullProducerDomain(Operation *producer,
       if (producerDim >= estimatedTileSize.size())
         return true;
       if (estimatedTileSize[producerDim] <
-          cast<ShapedType>(producer->getResult(0).getType())
-              .getShape()[producerDim])
+          cast<ShapedType>(producer->getResult(0).getType()).getShape()[producerDim])
         return true;
     }
   }
@@ -936,8 +924,9 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     return nullptr;
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   SmallVector<int64_t> estimatedTileSize;
-  if (becomesTileLocalInFusedNode(producerInfo, bestFusedNode, fusableOpInfoMap,
-                                  vectorLength, estimatedTileSize) &&
+  if (becomesTileLocalInFusedNode(producerInfo, bestFusedNode,
+                                  fusableOpInfoMap, vectorLength,
+                                  estimatedTileSize) &&
       reductionConsumerNeedsFullProducerDomain(producer, bestFusedNode,
                                                estimatedTileSize))
     return nullptr;
@@ -1510,11 +1499,11 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
           innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
         });
     Value funcHandle = builder.create<transform::MatchOp>(
-        loc, seqOp.getBodyBlock()->getArguments().front(),
-        ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
-    builder.create<transform::ApplyRegisteredPassOp>(
-        loc, builder.getType<transform::AnyOpType>(), funcHandle,
-        builder.getStringAttr("eliminate-single-iteration-scf-for"));
+ 	      loc, seqOp.getBodyBlock()->getArguments().front(),
+ 	      ArrayRef<StringRef>({func::FuncOp::getOperationName()}));
+ 	  builder.create<transform::ApplyRegisteredPassOp>(
+ 	      loc, builder.getType<transform::AnyOpType>(), funcHandle,
+ 	      builder.getStringAttr("eliminate-single-iteration-scf-for"));
     applyCleanUp(builder, seqOp);
   }
 }
@@ -1651,8 +1640,9 @@ static constexpr int64_t kLargeTensorMinElements = 4096;
 
 // Inline private _fused_ calls whose return tensors are large enough to
 // overflow UB if left as cross-VF intermediate buffers.
-static DenseSet<func::FuncOp>
-inlineFusedCalls(func::FuncOp func, ModuleOp moduleOp, IRRewriter &rewriter) {
+static DenseSet<func::FuncOp> inlineFusedCalls(func::FuncOp func,
+                                               ModuleOp moduleOp,
+                                               IRRewriter &rewriter) {
   SmallVector<func::CallOp> callsToInline;
   func.walk([&](func::CallOp callOp) {
     auto callee = moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
