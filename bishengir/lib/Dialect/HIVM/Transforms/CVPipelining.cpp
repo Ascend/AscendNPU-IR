@@ -683,6 +683,8 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
 /// Expand the localOutputs of each work item by number of multibuffer/pipeline
 /// stages.
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
+  OpBuilder::InsertionGuard g(builder);
+  builder.setInsertionPointToStart(newLoop.getBody());
   for (auto &[output, expanded] : item.localOutputs) {
     Operation *defining = output.getDefiningOp();
     if (!defining)
@@ -884,6 +886,7 @@ LogicalResult CVPipelineImpl::createNewLoops() {
 
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
+    OpBuilder::InsertionGuard g(builder);
     if (failed(expandOutputInits(*item.get())))
       return failure();
 
@@ -933,8 +936,6 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       item->irMap.map(pipelineLoop.getRegionIterArg(opNumber),
                       item->forOp.getRegionIterArg(yieldArg++));
     }
-
-    builder.setInsertionPointAfter(item->forOp);
 
     // If inits are empty, the default builder creates a yield by default, we
     // don't want that right now so we remove it
