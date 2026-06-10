@@ -7,9 +7,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -22,6 +24,21 @@ bool hasVectorOperandOrResult(Operation *op) {
   auto isVectorType = [](Type type) { return isa<VectorType>(type); };
   return llvm::any_of(op->getOperandTypes(), isVectorType) ||
          llvm::any_of(op->getResultTypes(), isVectorType);
+}
+
+bool hasAutoVectorizeTargetAttr(Operation *op) {
+  for (NamedAttribute attr : op->getAttrs()) {
+    if (attr.getName().strref().starts_with("hfusion-auto-vectorize-target-"))
+      return true;
+  }
+  return false;
+}
+
+bool isAutoVectorizeTargetOp(Operation *op) {
+  Dialect *dialect = op->getDialect();
+  return hasAutoVectorizeTargetAttr(op) &&
+         (isa<linalg::LinalgOp>(op) ||
+          (dialect && isa<hfusion::HFusionDialect>(dialect)));
 }
 
 bool hasOutlinedLoopTargetAttr(Operation *op) {
@@ -49,14 +66,21 @@ WalkResult emitVerifierError(Operation *op, StringRef message,
 
 LogicalResult runFreeVectorRegionCheck(Operation *root, bool emitDiagnostics) {
   WalkResult result = root->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (!hasVectorOperandOrResult(op))
+    bool isVectorOp = hasVectorOperandOrResult(op);
+    bool isTargetOp = isAutoVectorizeTargetOp(op);
+    if (!isVectorOp && !isTargetOp)
       return WalkResult::advance();
 
     if (isNestedInOutlinedLoopTarget(op))
       return WalkResult::advance();
 
+    if (isVectorOp) {
+      return emitVerifierError(
+          op, "unexpected vector operation outside outlined vector region",
+          emitDiagnostics);
+    }
     return emitVerifierError(
-        op, "unexpected vector operation outside outlined vector region",
+        op, "unexpected hfusion/linalg operation outside outlined vector region",
         emitDiagnostics);
   });
 
