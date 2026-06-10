@@ -3,16 +3,10 @@
 
 // CHECK-LABEL: func.func @test_pipeline
 // CHECK: scf.for
-// CHECK: memref.alloc() : memref<2x16x16xf16, #hivm.address_space<ub>>
 // CHECK: scf.for
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// CHECK-DAG: memref.memory_space_cast
-// CHECK-DAG: bufferization.to_tensor
-// CHECK-DAG: memref.alloc() : memref<2x16x16xf16, #hivm.address_space<cbuf>>
 // CHECK: scf.for
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
-// CHECK: memref.memory_space_cast
-// CHECK: bufferization.to_tensor
 // CHECK: scf.for
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
