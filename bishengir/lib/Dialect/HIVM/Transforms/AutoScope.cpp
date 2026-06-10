@@ -40,12 +40,34 @@ struct AutoScopePass : public impl::AutoScopeBase<AutoScopePass> {
   void runOnOperation() override;
 };
 
+// Check if the op is in simt scope
+bool inSimtScope(Operation *op) {
+  auto parentOp = op->getParentOp();
+  while (parentOp) {
+    if (auto scopeOp = llvm::dyn_cast<scope::ScopeOp>(parentOp)) {
+      if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+        if (vectorType.getValue() == "simt") {
+          return true;
+        }
+      }
+    }
+    parentOp = parentOp->getParentOp();
+  }
+  return false;
+}
+
 template <typename SIMTOP>
 struct AutoScopePattern : public OpRewritePattern<SIMTOP> {
 public:
   using OpRewritePattern<SIMTOP>::OpRewritePattern;
   LogicalResult matchAndRewrite(SIMTOP simtOp,
                                 PatternRewriter &rewriter) const override {
+    
+    // Filter out the simtOp that is already in simt scope
+    if (inSimtScope(simtOp)) {
+      return failure();
+    }
+    
     auto indices = simtOp.getIndices();
     auto indicesTy = dyn_cast<RankedTensorType>(indices.getType());
     if (!indicesTy) {
