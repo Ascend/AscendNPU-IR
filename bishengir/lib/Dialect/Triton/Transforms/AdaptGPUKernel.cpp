@@ -147,12 +147,17 @@ struct AdaptGPUKernelPass
       if (auto intAttr = dyn_cast<IntegerAttr>(numThreadAttr))
         numThreadPerWarp = intAttr.getInt();
 
+    unsigned superBlockFactor = 1;
+    if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
+            triton::gpu::AttrSuperBlockFactor))
+      superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+
     if (numWarp <= 0 || numThreadPerWarp <= 0)
       llvm::report_fatal_error(
           "Cannot determine num-warps or threads-per-warp! num-warps: " +
           Twine(numWarp) + ", threads-per-warp: " + Twine(numThreadPerWarp));
 
-    int64_t vfLaunchBound = numWarp * numThreadPerWarp;
+    int64_t vfLaunchBound = numWarp * numThreadPerWarp * superBlockFactor;
     constexpr int64_t VF_LAUNCH_BOUND_THRESHOLD = 2048;
     if (vfLaunchBound > VF_LAUNCH_BOUND_THRESHOLD)
       llvm::report_fatal_error(

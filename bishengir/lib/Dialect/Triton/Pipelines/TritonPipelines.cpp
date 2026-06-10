@@ -101,7 +101,8 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       bishengir::triton::createAdaptTritonIRKernelPass());
   if (options.enableSIMTAutoBlockify)
     pm.addNestedPass<mlir::triton::FuncOp>(
-        bishengir::triton::createSIMTAutoBlockifyPass());
+        bishengir::triton::createSIMTAutoBlockifyPass(
+            options.superBlockFactor));
   pm.addPass(bishengir::triton::createOptimizeLoadsPass());
   pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
   pm.addNestedPass<mlir::triton::FuncOp>(
@@ -126,6 +127,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
 #if BSPUB_DAVINCI_BISHENGIR
   // max size of shared memory available for simt vf.
   convertTritonToTritonGPUOpt.shared = options.sharedDynamicSize;
+  convertTritonToTritonGPUOpt.superBlockFactor = options.superBlockFactor;
 #endif
   pm.addPass(mlir::triton::createConvertTritonToTritonGPU(
       convertTritonToTritonGPUOpt));

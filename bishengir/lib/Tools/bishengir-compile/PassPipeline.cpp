@@ -331,6 +331,7 @@ void setupLowerTritonPipelineOptions(
   options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
+  options.superBlockFactor = config.getSuperBlockFactor();
 #if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedMemDynamicSize() < 122880 ||
       config.getSharedMemDynamicSize() > 221184)

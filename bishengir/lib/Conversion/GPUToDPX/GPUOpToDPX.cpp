@@ -149,14 +149,66 @@ struct BarrierOPConversion : public OpConversionPattern<gpu::BarrierOp> {
   }
 };
 
+struct SuperBlockThreadIdXConversion final
+    : public OpConversionPattern<gpu::ThreadIdOp> {
+public:
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::ThreadIdOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const final {
+    assert(op.getDimension() == gpu::Dimension::x &&
+           "Unexpected thread id on y or z dims!");
+
+    auto mod = op->getParentOfType<ModuleOp>();
+    auto superBlockFactor = mod->getAttrOfType<IntegerAttr>(
+        mlir::triton::gpu::AttrSuperBlockFactor);
+    unsigned factor = superBlockFactor ? (1 << superBlockFactor.getUInt()) : 1;
+
+    auto context = rewriter.getContext();
+    const LLVMTypeConverter *converter =
+        static_cast<const LLVMTypeConverter *>(getTypeConverter());
+
+    auto loc = op.getLoc();
+    auto i32 = rewriter.getI32Type();
+    Value tid =
+        rewriter.create<ascend_dpx::ThreadIdXOp>(loc, rewriter.getI32Type());
+
+    // Adjust following super blocking.
+    if (factor > 1) {
+      auto factorValue = rewriter.create<LLVM::ConstantOp>(loc, i32, factor);
+      // FIXME: Retrieve threads-perf-warp insteadof hard-coded one.
+      auto warpSize = rewriter.create<LLVM::ConstantOp>(loc, i32, 32);
+      auto laneId = rewriter.create<LLVM::URemOp>(loc, i32, tid, warpSize);
+      auto warpId = rewriter.create<LLVM::UDivOp>(
+          loc, i32, rewriter.create<LLVM::UDivOp>(loc, i32, tid, warpSize),
+          factorValue);
+      tid = rewriter.create<LLVM::AddOp>(
+          loc, rewriter.create<LLVM::MulOp>(loc, i32, warpId, warpSize),
+          laneId);
+    }
+
+    // Finally, cast to `index`.
+    auto indexBitwidth = converter->getIndexTypeBitwidth();
+    if (indexBitwidth > 32) {
+      tid = rewriter.create<LLVM::SExtOp>(
+          loc, IntegerType::get(context, indexBitwidth), tid);
+    } else if (indexBitwidth < 32) {
+      tid = rewriter.create<LLVM::TruncOp>(
+          loc, IntegerType::get(context, indexBitwidth), tid);
+    }
+
+    rewriter.replaceOp(op, tid);
+    return success();
+  }
+};
+
 namespace mlir::triton::ascend {
 void populateGPUOpToDPXPatterns(LLVMTypeConverter &converter,
                                 RewritePatternSet &patterns,
                                 PatternBenefit benefit) {
+  patterns.add<SuperBlockThreadIdXConversion>(converter, patterns.getContext());
   patterns.add<mlir::gpu::index_lowering::OpLowering<
-                   mlir::gpu::ThreadIdOp, ascend_dpx::ThreadIdXOp,
-                   ascend_dpx::ThreadIdYOp, ascend_dpx::ThreadIdZOp>,
-               mlir::gpu::index_lowering::OpLowering<
                    mlir::gpu::BlockDimOp, ascend_dpx::BlockDimXOp,
                    ascend_dpx::BlockDimYOp, ascend_dpx::BlockDimZOp>,
                mlir::gpu::index_lowering::OpLowering<

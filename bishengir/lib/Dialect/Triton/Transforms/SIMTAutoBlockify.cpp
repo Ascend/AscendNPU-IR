@@ -26,6 +26,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
@@ -36,10 +37,14 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "llvm/Support/ErrorHandling.h"
 
-namespace mlir {
+#define DEBUG_TYPE "simt-auto-blockify"
+
+namespace bishengir {
+namespace triton {
 #define GEN_PASS_DEF_SIMTAUTOBLOCKIFY
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
-} // namespace mlir
+} // namespace triton
+} // namespace bishengir
 
 using namespace mlir;
 
@@ -103,6 +108,8 @@ static LogicalProgramIds buildLogicalProgramIds(OpBuilder &builder,
 
 struct SIMTAutoBlockifyPass
     : public impl::SIMTAutoBlockifyBase<SIMTAutoBlockifyPass> {
+  explicit SIMTAutoBlockifyPass(unsigned factor) { superBlockFactor = factor; }
+
   void runOnOperation() override {
     mlir::triton::FuncOp ttFunc = getOperation();
     // FIXME: Canonicalize the checking on entry functions.
@@ -123,10 +130,33 @@ struct SIMTAutoBlockifyPass
     // Collect the underlying hardware capability.
     auto maybePhysicalBlockNum = getPhysicalBlockNum(ttFunc);
     if (failed(maybePhysicalBlockNum)) {
-      ttFunc.emitError(
-          "failed to infer physical vector core count for SIMT auto blockify");
+      ttFunc.emitError("failed to infer physical vector core count for SIMT "
+                       "auto blockify");
       return signalPassFailure();
     }
+
+    // CALL gpu.thread_id x to calcullate warpid
+
+    // The principle of super-blocking is that few blocks (SBF) are grouped
+    // together as a super-block. The kernel is dispatched in the unit of
+    // super-blocks instead of the original blocks. After that,
+    // - `gpu.linearBlockId` is the super-block id;
+    // - the super-block has SBF * num-warps warps.
+    // To recover the original block id and original warp id, need to
+    // - real block id is `gpu.linearBlockId` * SBF + (warpId % SBF)
+    // - real warp i is (warpId / SBF)
+    // In other world, low SBF bits of the warp id are taken out as the low
+    // bits of the block id.
+    // However, warp Id has no dedicated register and needs to be calculated as
+    // (tid.x / WARP) supposing the block is 1-D only.
+    //
+    // In summary,
+    //
+    // warpId = tid.x / WARP;
+    // blockId = gpu.linearBlockId;
+    // newBlockId = blockId * SBF + (warp % SBF);
+    // newWarpId = warpId / SBF;
+    // tid.x = newWarpId * WARP + laneId;
 
     // Collect grid dims.
     auto gridX = getGridArg(ttFunc, gpu::MappingId::DimX);
@@ -146,6 +176,9 @@ struct SIMTAutoBlockifyPass
     //   populated, and
     // - 'bodyBlock' is the beginning of the original function body.
     auto *bodyBlock = entryBlock->splitBlock(entryBlock->begin());
+
+    // Get the super-blocking factor.
+    unsigned factor = 1 << superBlockFactor;
 
     // Generate the prologue to prepare the loop over blocks.
     Location loc = ttFunc.getLoc();
@@ -173,6 +206,7 @@ struct SIMTAutoBlockifyPass
     // Create the final `tt.return` following that loop.
     builder.create<mlir::triton::ReturnOp>(loc);
 
+    // Transfer the function body as the loop body.
     if (originalFuncHasOneBlock) {
       assert(std::next(Region::iterator(bodyBlock)) == ttFunc.getBody().end() &&
              "If there's only one block, the original block must be the last "
@@ -183,8 +217,8 @@ struct SIMTAutoBlockifyPass
                                            bodyBlock->getOperations());
       bodyBlock->erase();
     } else {
-      // Create 'scf.execute_region' op to hold the function body with multiple
-      // blocks.
+      // Create 'scf.execute_region' op to hold the function body with
+      // multiple blocks.
       OpBuilder b(forOp.getBody(), forOp.getBody()->begin());
       auto execRegionOp =
           b.create<scf::ExecuteRegionOp>(forOp.getLoc(), TypeRange{});
@@ -198,11 +232,52 @@ struct SIMTAutoBlockifyPass
 
     // Start the replacement of `tt.program_id` and `tt.return` in that loop
     // body.
-
-    builder.setInsertionPointToStart(forOp.getBody());
     Value linearProgramId = forOp.getInductionVar();
-
     builder.setInsertionPointAfterValue(linearProgramId);
+
+    // Check if the super-blocking is enabled.
+    if (factor > 1) {
+      Value iv = forOp.getInductionVar();
+
+      // Prepare constants.
+      builder.setInsertionPoint(forOp);
+      Value factorValue =
+          builder.create<arith::ConstantIntOp>(loc, iv.getType(), factor);
+      // FIXME: Need to check `threads-per-warp` instead of hard-coded one.
+      Value warpSize = builder.create<arith::ConstantIntOp>(loc, iv.getType(),
+                                                            /*WARPSIZE*/ 32);
+
+      // After enabling super-blocking, more blocks are launched per loop
+      // iteration.
+      auto *loopBody = forOp.getBody();
+      OpBuilder b(loopBody, loopBody->begin());
+
+      // Adjust loop step.
+      forOp.setStep(factorValue);
+
+      // Recalculate the linear program id from the IV and the warpId.
+      // + warpId = gpu.thread_id x / 32;
+      // + id = iv + (warpId % factor);
+      Value tid = b.create<ascend_dpx::ThreadIdXOp>(loc, iv.getType());
+      Value warpId = b.create<arith::DivUIOp>(loc, tid, warpSize);
+      linearProgramId = b.create<arith::AddIOp>(
+          loc, iv, b.create<arith::RemUIOp>(loc, warpId, factorValue));
+
+      // Check the loop upper bound as the id may be out of that range.
+      Value cond =
+          b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                  linearProgramId, forOp.getUpperBound());
+      auto ifOp = b.create<scf::IfOp>(loc, cond);
+      // Transfer the loop body.
+      auto *thenBlock = ifOp.thenBlock();
+      thenBlock->getOperations().splice(
+          thenBlock->begin(), loopBody->getOperations(),
+          std::next(Block::iterator(ifOp)), std::prev(loopBody->end()));
+
+      // Now, the linear program is safe to be used in that `thenBlock`.
+      builder.setInsertionPointToStart(thenBlock);
+    }
+
     LogicalProgramIds logicalPids =
         buildLogicalProgramIds(builder, loc, linearProgramId, grid);
 
@@ -231,8 +306,8 @@ struct SIMTAutoBlockifyPass
       if (auto retOp = dyn_cast<mlir::triton::ReturnOp>(op))
         retOps.push_back(retOp);
     });
-    // Erase all 'tt.return's and replace them with `scf.yield` if the function
-    // body has multiple blocks.
+    // Erase all 'tt.return's and replace them with `scf.yield` if the
+    // function body has multiple blocks.
     for (auto retOp : retOps) {
       if (!originalFuncHasOneBlock) {
         OpBuilder b(retOp);
@@ -245,8 +320,8 @@ struct SIMTAutoBlockifyPass
 
 } // namespace
 
-std::unique_ptr<mlir::Pass> createSIMTAutoBlockifyPass() {
-  return std::make_unique<SIMTAutoBlockifyPass>();
+std::unique_ptr<mlir::Pass> createSIMTAutoBlockifyPass(unsigned factor) {
+  return std::make_unique<SIMTAutoBlockifyPass>(factor);
 }
 
 } // namespace triton

@@ -1,4 +1,6 @@
 // RUN: bishengir-opt %s -simt-auto-blockify | FileCheck %s
+// RUN: bishengir-opt %s -simt-auto-blockify="superblock-factor=0" | FileCheck %s
+// RUN: bishengir-opt %s -simt-auto-blockify="superblock-factor=2" | FileCheck %s --check-prefix=SUPERBLOCK
 
 // CHECK-LABEL: tt.func public @blockify_with_existing_loop(
 // CHECK-SAME: %[[GRID_X:arg[0-9]+]]: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}
@@ -25,6 +27,37 @@
 // CHECK-NEXT:   %[[C1:.*]] = arith.constant 1 : i32
 // CHECK-NEXT:   %[[C8:.*]] = arith.constant 8 : i32
 // CHECK-NEXT:   scf.for %[[INNER_IV:.*]] = %[[C0]] to %[[C8]] step %[[C1]] : i32 {
+
+// SUPERBLOCK-LABEL: tt.func public @blockify_with_existing_loop(
+// SUPERBLOCK-SAME: %[[GRID_X:arg[0-9]+]]: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}
+// SUPERBLOCK-SAME: %[[GRID_Y:arg[0-9]+]]: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}
+// SUPERBLOCK-SAME: %[[GRID_Z:arg[0-9]+]]: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}
+
+// SUPERBLOCK: %[[UPPER:.*]] = arith.minui
+// SUPERBLOCK: %[[SBF:.*]] = arith.constant 4 : i32
+// SUPERBLOCK: %[[WARP:.*]] = arith.constant 32 : i32
+// SUPERBLOCK: scf.for %[[IV:.*]] = {{.*}} to %[[UPPER]] step %[[SBF]] : i32 {
+// SUPERBLOCK-NEXT:   %[[TID:.*]] = ascend_dpx.thread_id_x
+// SUPERBLOCK-NEXT:   %[[WID:.*]] = arith.divui %[[TID]], %[[WARP]] : i32
+// SUPERBLOCK-NEXT:   %[[REM:.*]] = arith.remui %[[WID]], %[[SBF]] : i32
+// SUPERBLOCK-NEXT:   %[[LINEAR:.*]] = arith.addi %[[IV]], %[[REM]] : i32
+// SUPERBLOCK-NEXT:   %[[COND:.*]] = arith.cmpi slt, %[[LINEAR]], %[[UPPER]] : i32
+// SUPERBLOCK-NEXT:   scf.if %[[COND]] {
+// SUPERBLOCK-NEXT:     %[[DIV_X:.*]] = arith.divui %[[LINEAR]], %[[GRID_X]] : i32
+// SUPERBLOCK-NEXT:     %[[PID_X:.*]] = arith.remui %[[LINEAR]], %[[GRID_X]] : i32
+// SUPERBLOCK-NEXT:     %[[PID_Y:.*]] = arith.remui %[[DIV_X]], %[[GRID_Y]] : i32
+// SUPERBLOCK-NEXT:     %[[PID_Z:.*]] = arith.divui %[[DIV_X]], %[[GRID_Y]] : i32
+// SUPERBLOCK-NEXT:     {{.*}} = arith.addi %[[PID_X]], %[[PID_Y]]
+// SUPERBLOCK-NEXT:     {{.*}} = arith.constant 0
+// SUPERBLOCK-NEXT:     {{.*}} = arith.constant 1
+// SUPERBLOCK-NEXT:     {{.*}} = arith.constant 8
+// SUPERBLOCK-NEXT:     scf.for
+// SUPERBLOCK:          }
+// SUPERBLOCK:        }
+// SUPERBLOCK:      }
+// SUPERBLOCK:    }
+// SUPERBLOCK-NEXT: tt.return
+// SUPERBLOCK-NOT: tt.get_program_id
 
 module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>>>, hacc.target = #hacc.target<"Ascend910_9589">} {
   tt.func public @blockify_with_existing_loop(
