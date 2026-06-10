@@ -74,6 +74,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
                        func::FuncDialect>();
   stage1Target.addIllegalDialect<hivm::HIVMDialect>();
   stage1Target.addIllegalOp<memref::ReinterpretCastOp>();
+  stage1Target.addIllegalOp<memref::SubViewOp>();
   // The TTIR path only accepts Triton ops plus tensor types
   stage1Target.addLegalOp<tensor::EmptyOp>();
   stage1Target.addIllegalOp<tensor::ExpandShapeOp, tensor::CollapseShapeOp>();
