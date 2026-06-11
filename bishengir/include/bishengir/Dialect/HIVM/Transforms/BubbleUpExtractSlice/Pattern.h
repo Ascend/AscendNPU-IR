@@ -225,6 +225,14 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
+class GatherLoadBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
 /// Pattern to add buffer_size_in_byte mark on ExtractSliceOp whose
 /// tensor::ExtractSliceOp whose source is tensor::EmptyOp. This  handles cases
 /// that were rejected by BubbleUpPattern::areOperandsUpperLevel (e.g. operands

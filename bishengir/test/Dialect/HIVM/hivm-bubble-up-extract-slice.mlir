@@ -501,3 +501,21 @@ func.func @bubble_up_parallel_dim(%arg0 : memref<?xf32>, %offset : index) {
   } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
   return 
 }
+
+// -----
+
+// CHECK-LABEL:   func.func @bubble_up_gather_load(
+// CHECK:           %[[NEWGATHER:.*]] = hivm.hir.gather_load
+// CHECK-SAME:        outs({{.*}} : tensor<32x16xf16>)
+// CHECK-SAME:        -> tensor<32x16xf16>
+// CHECK:           return %[[NEWGATHER]] : tensor<32x16xf16>
+func.func @bubble_up_gather_load(
+    %base: memref<?xf16>, %idx: tensor<64x16xi64>, %dst_init: tensor<64x16xf16>) -> tensor<32x16xf16> {
+  %c1_i32 = arith.constant 1 : i32
+  %0 = hivm.hir.gather_load ins(%base : memref<?xf16>, %idx : tensor<64x16xi64>, %c1_i32 : i32)
+                            outs(%dst_init : tensor<64x16xf16>)
+                            -> tensor<64x16xf16>
+  %1 = tensor.extract_slice %0[0, 0] [32, 16] [1, 1] {to_be_bubbled_slice}
+      : tensor<64x16xf16> to tensor<32x16xf16>
+  return %1 : tensor<32x16xf16>
+}

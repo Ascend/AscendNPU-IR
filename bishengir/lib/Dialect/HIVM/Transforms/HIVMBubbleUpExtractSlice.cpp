@@ -185,7 +185,7 @@ private:
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
     strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
-    
+    strategies.push_back(std::make_shared<GatherLoadBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }
