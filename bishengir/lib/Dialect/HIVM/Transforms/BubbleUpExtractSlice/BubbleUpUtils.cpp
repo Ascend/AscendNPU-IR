@@ -11,21 +11,35 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/IRMapping.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 
 namespace mlir::hivm::detail {
 
 const llvm::StringLiteral kBubbleUpPropagateUp = "bubble_up_propagate_up";
 const llvm::StringLiteral kBubbleUpPropagateDown = "bubble_up_propagate_down";
-
+const llvm::StringLiteral kTilingDimInfo = "tiling_dim_info";
 
 static UnrealizedConversionCastOp
 createBubblePropagationCast(Value input, Type outputType,
-                            StringRef directionAttrName,
+                            StringRef directionAttrName, OpFoldResult offset,
+                            OpFoldResult size, int64_t tilingDim,
                             PatternRewriter &rewriter) {
+  SmallVector<int64_t> tilingDimInfo{tilingDim};
+  SmallVector<Value> inputs{input};
+  dispatchIndexOpFoldResult(offset, inputs, tilingDimInfo);
+  dispatchIndexOpFoldResult(size, inputs, tilingDimInfo);
   auto castOp = rewriter.create<UnrealizedConversionCastOp>(input.getLoc(),
-                                                            outputType, input);
+                                                            outputType, inputs);
   castOp->setAttr(directionAttrName, rewriter.getUnitAttr());
+  auto tilingDimAttrs =
+      llvm::map_to_vector(tilingDimInfo, [&](auto v) -> Attribute {
+        return rewriter.getIndexAttr(v);
+      });
+  castOp->setAttr(kTilingDimInfo, rewriter.getArrayAttr(tilingDimAttrs));
   return castOp;
 }
 
@@ -34,47 +48,27 @@ createBubblePropagationCast(Value input, Type outputType,
 /// source).
 UnrealizedConversionCastOp
 createBubblePropagatorUpLink(Value oldValue, Type slicedType,
-                             PatternRewriter &rewriter) {
+                             OpFoldResult offset, OpFoldResult size,
+                             int64_t tilingDim, PatternRewriter &rewriter) {
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfterValue(oldValue);
-  auto propagateOp = createBubblePropagationCast(
-      oldValue, slicedType, kBubbleUpPropagateUp, rewriter);
+  auto propagateOp =
+      createBubblePropagationCast(oldValue, slicedType, kBubbleUpPropagateUp,
+                                  offset, size, tilingDim, rewriter);
   return propagateOp;
 }
 
-
-std::optional<UnrealizedConversionCastOp>
-createBubblePropagatorDown(Value oldValue, Value newValue,
-                           ArrayRef<Operation *> excludedUsers,
+UnrealizedConversionCastOp
+createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
+                           OpFoldResult size, int64_t tilingDim,
                            PatternRewriter &rewriter) {
-  SmallVector<OpOperand *> uses;
-  for (auto &use : oldValue.getUses()) {
-    Operation *owner = use.getOwner();
-    if (llvm::is_contained(excludedUsers, owner))
-      continue;
-    if (owner->hasAttr(kBubbleUpPropagateUp) ||
-        owner->hasAttr(kBubbleUpPropagateDown))
-      continue;
-    uses.push_back(&use);
-  }
-  if (uses.empty())
-    return std::nullopt;
-
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfterValue(newValue);
-  auto propagateOp = createBubblePropagationCast(
-      newValue, oldValue.getType(), kBubbleUpPropagateDown, rewriter);
-  for (OpOperand *use : uses)
-    use->set(propagateOp.getResult(0));
+  auto propagateOp = createBubblePropagationCast(newValue, oldValue.getType(),
+                                                 kBubbleUpPropagateDown, offset,
+                                                 size, tilingDim, rewriter);
   return propagateOp;
 }
-
-std::optional<UnrealizedConversionCastOp>
-createBubblePropagatorDown(Value value, ArrayRef<Operation *> excludedUsers,
-                           PatternRewriter &rewriter) {
-  return createBubblePropagatorDown(value, value, excludedUsers, rewriter);
-}
-
 
 static void resolveUpPropagator(UnrealizedConversionCastOp upPropagator,
                                 Value newValue, PatternRewriter &rewriter) {
@@ -82,7 +76,6 @@ static void resolveUpPropagator(UnrealizedConversionCastOp upPropagator,
     return;
   rewriter.replaceAllUsesWith(upPropagator.getResult(0), newValue);
 }
-
 
 /// Collect path from to_tensor memref toward alloc (bottom-first order).
 static LogicalResult
@@ -142,8 +135,9 @@ void resolveUpLinksForOldValue(Value oldValue, Value newValue,
   }
 }
 
-static void cleanupResolvedBufferizationPropagatorsImpl(
-    func::FuncOp funcOp, RewriterBase &rewriter) {
+static void
+cleanupResolvedBufferizationPropagatorsImpl(func::FuncOp funcOp,
+                                            RewriterBase &rewriter) {
   bool progress = true;
   while (progress) {
     progress = false;
@@ -192,6 +186,17 @@ MemRefType getSlicedMemRefType(MemRefType oldType,
                          oldType.getMemorySpace());
 }
 
+MemRefType getSlicedMemRefType(MemRefType oldType, int64_t tilingDim) {
+  auto shape = llvm::to_vector(oldType.getShape());
+  auto strides = cast<StridedLayoutAttr>(oldType.getLayout()).getStrides();
+  if (!ShapedType::isDynamic(shape[tilingDim]))
+    shape[tilingDim] /= 2;
+  auto stridedLayout = StridedLayoutAttr::get(oldType.getContext(),
+                                              ShapedType::kDynamic, strides);
+  return MemRefType::get(shape, oldType.getElementType(), stridedLayout,
+                         oldType.getMemorySpace());
+}
+
 void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
                                           Value memrefValue) {
   auto maybeAlloc = mlir::utils::tracebackMemRefToAlloc(memrefValue);
@@ -222,10 +227,9 @@ checkBufferizationBubbleUpPath(bufferization::ToTensorOp toTensorOp) {
   return collectBufferizationPath(toTensorOp, pathOps, allocOp);
 }
 
-
-FailureOr<memref::AllocOp>
-createSlicedAllocLike(MemRefType slicedMemRefType, memref::AllocOp oldAllocOp,
-                      PatternRewriter &rewriter) {
+FailureOr<memref::AllocOp> createSlicedAllocLike(MemRefType slicedMemRefType,
+                                                 memref::AllocOp oldAllocOp,
+                                                 PatternRewriter &rewriter) {
   auto originalType = dyn_cast<MemRefType>(oldAllocOp.getResult().getType());
   if (!originalType)
     return failure();
@@ -287,6 +291,29 @@ void cleanupBufferizationPropagators(func::FuncOp funcOp,
     if (op->getBlock() && op->use_empty())
       rewriter.eraseOp(op);
   }
+}
+
+TilingDimInfo getTilingDimInfo(UnrealizedConversionCastOp propagateOp) {
+  auto inputIter = ++propagateOp.getInputs().begin();
+  auto tilingDimInfoAttr =
+      propagateOp->getAttrOfType<ArrayAttr>(kTilingDimInfo);
+  if (!tilingDimInfoAttr)
+    return TilingDimInfo{};
+  if (tilingDimInfoAttr.size() != 3)
+    return TilingDimInfo{};
+  TilingDimInfo tilingDimInfo;
+  tilingDimInfo.tilingDim = cast<IntegerAttr>(tilingDimInfoAttr[0]).getInt();
+  tilingDimInfo.offset = tilingDimInfoAttr[1];
+  if (ShapedType::isDynamic(cast<IntegerAttr>(tilingDimInfoAttr[1]).getInt())) {
+    tilingDimInfo.offset = *inputIter;
+    ++inputIter;
+  }
+  tilingDimInfo.size = tilingDimInfoAttr[2];
+  if (ShapedType::isDynamic(cast<IntegerAttr>(tilingDimInfoAttr[2]).getInt())) {
+    tilingDimInfo.size = *inputIter;
+    ++inputIter;
+  }
+  return tilingDimInfo;
 }
 
 } // namespace mlir::hivm::detail

@@ -194,7 +194,8 @@ private:
     strategies.push_back(std::make_shared<BufferizationBubbleUpStrategy>());
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
-    patterns.add<BufferizationBubbleUpPattern>(context);
+    patterns.add<BufferizationPropagateUpPattern>(context);
+    patterns.add<BufferizationPropagateDownPattern>(context);
   }
 };
 

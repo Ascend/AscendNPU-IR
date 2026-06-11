@@ -15,11 +15,11 @@
 //
 //============================================================================//
 
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -1556,9 +1556,14 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   auto slicedMemrefAtToTensor =
       getSlicedMemRefType(oldMemrefType, slicedTensorType);
 
-  BufferizationPropagationState state;
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return failure();
+  auto tilingDim = *extractDims.begin();
   UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLink(
-      oldMemrefAtToTensor, slicedMemrefAtToTensor, rewriter);
+      oldMemrefAtToTensor, slicedMemrefAtToTensor,
+      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
+      tilingDim, rewriter);
 
   rewriter.setInsertionPoint(sliceOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
