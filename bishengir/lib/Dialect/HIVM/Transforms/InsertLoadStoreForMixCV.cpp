@@ -766,20 +766,13 @@ struct AddConvertLayoutUBToL1
 
     auto allocOps = traceDefOps<memref::AllocOp>(beforeValue);
     llvm::SmallVector<OpOperand *> consumerOperands{operand};
-    bool layoutConversionOnTheFly = false;
-    if (auto gatherOp = dyn_cast_or_null<hivm::GatherLoadOp>(beforeValue.getDefiningOp())) {
-        layoutConversionOnTheFly = true;
-        StringRef layout ="zN";
-        // StringRef layout = operandIdx == 0 ? "zN" : "nZ";
-        gatherOp->setAttr("hivm.fractal_layout", StringAttr::get(op.getContext(), layout));
-    }
     bool isBiasOperand = (beforeValue == op.getPerChannelBias());
     auto tensorType = mlir::dyn_cast<RankedTensorType>(beforeValue.getType());
     // Only rank-2 tensors (original ND format) need to be transposed.
     // After ND2NZ conversion the tensor becomes rank-4 (NZ format), so
     // transposition is not required.
     bool needTransposed = (tensorType.getRank() == 2);
-    if (isBiasOperand || layoutConversionOnTheFly || !needTransposed)
+    if (isBiasOperand || !needTransposed)
       continue;
     LogicalResult result = insertConvertLayout(rewriter, consumerOperands);
     if (failed(result))
