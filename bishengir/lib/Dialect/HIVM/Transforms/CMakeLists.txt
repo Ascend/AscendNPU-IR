@@ -52,6 +52,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayoutScfFor.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfIf.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfWhile.cpp
+  CreatePreload.cpp
   CVPipelining.cpp
   EnableMultiBuffer.cpp
   Fixpipe/FixpipeExtractSlice.cpp
