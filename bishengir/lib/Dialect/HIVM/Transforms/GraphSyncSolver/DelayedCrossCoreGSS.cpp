@@ -260,44 +260,70 @@ getAllRWOperationsBetweenAnchors(AnchorInfo anchorInfo,
 static std::unique_ptr<RWOperation>
 createMergedRWOperation(OperationBase *parentOp, hivm::TCoreType coreType,
                         const llvm::SmallVector<RWOperation *> &rwOps) {
-  std::optional<hivm::PIPE> pipeRead;
-  std::optional<hivm::PIPE> pipeWrite;
-  llvm::SetVector<Value> readMemVals;
-  llvm::SetVector<Value> writeMemVals;
+  llvm::DenseSet<Value> readMemInfoSet;
+  llvm::DenseSet<Value> writeMemInfoSet;
+  llvm::SmallVector<MemInfo> readMemInfo;
+  llvm::SmallVector<MemInfo> writeMemInfo;
   for (auto *rwOp : rwOps) {
     assert(rwOp != nullptr);
-    if (!pipeRead.has_value()) {
-      pipeRead = rwOp->pipeRead;
-    }
-    if (!pipeWrite.has_value()) {
-      pipeWrite = rwOp->pipeWrite;
-    }
-    assert(pipeRead.has_value() && pipeWrite.has_value());
-    LLVM_DEBUG({
-      if (pipeRead.value() != rwOp->pipeRead ||
-          pipeWrite.value() != rwOp->pipeWrite) {
-        llvm::dbgs() << "createMergedRWOperation: unexpected rw ops with "
-                        "different read/write pipes, check sync-block-ops with "
-                        "src/dst pipe_s.\n";
+    for (auto memInfo : rwOp->readMemInfo) {
+      if (!memInfo.pipe.has_value()) {
+        memInfo.pipe = rwOp->pipeRead;
       }
-    });
-    if (pipeRead.value() != rwOp->pipeRead) {
-      pipeRead = hivm::PIPE::PIPE_S;
+      if (readMemInfoSet.insert(memInfo.value).second) {
+        readMemInfo.push_back(memInfo);
+      }
     }
-    if (pipeWrite.value() != rwOp->pipeWrite) {
-      pipeWrite = hivm::PIPE::PIPE_S;
-    }
-    for (auto value : rwOp->readMemVals) {
-      readMemVals.insert(value);
-    }
-    for (auto value : rwOp->writeMemVals) {
-      writeMemVals.insert(value);
+    for (auto memInfo : rwOp->writeMemInfo) {
+      if (!memInfo.pipe.has_value()) {
+        memInfo.pipe = rwOp->pipeWrite;
+      }
+      if (writeMemInfoSet.insert(memInfo.value).second) {
+        writeMemInfo.push_back(memInfo);
+      }
     }
   }
-  assert(pipeRead.has_value() && pipeWrite.has_value());
-  return std::make_unique<RWOperation>(
-      nullptr, parentOp, coreType, pipeRead.value(), pipeWrite.value(),
-      readMemVals.takeVector(), writeMemVals.takeVector());
+
+  std::optional<hivm::PIPE> pipeRead;
+  std::optional<hivm::PIPE> pipeWrite;
+  if (!readMemInfo.empty()) {
+    assert(readMemInfo.front().pipe.has_value());
+    pipeRead = readMemInfo.front().pipe.value();
+    for (auto memInfo : readMemInfo) {
+      assert(memInfo.pipe.has_value());
+      if (memInfo.pipe != pipeRead) {
+        pipeRead = hivm::PIPE::PIPE_UNASSIGNED;
+        break;
+      }
+    }
+  }
+  if (!writeMemInfo.empty()) {
+    assert(writeMemInfo.front().pipe.has_value());
+    pipeWrite = writeMemInfo.front().pipe.value();
+    for (auto memInfo : writeMemInfo) {
+      assert(memInfo.pipe.has_value());
+      if (memInfo.pipe != pipeWrite) {
+        pipeWrite = hivm::PIPE::PIPE_UNASSIGNED;
+        break;
+      }
+    }
+  }
+  if (!pipeRead.has_value() && pipeWrite.has_value()) {
+    pipeRead = pipeWrite;
+  }
+  if (!pipeWrite.has_value() && pipeRead.has_value()) {
+    pipeWrite = pipeRead;
+  }
+  if (!pipeRead.has_value()) {
+    pipeRead = hivm::PIPE::PIPE_UNASSIGNED;
+  }
+  if (!pipeWrite.has_value()) {
+    pipeWrite = hivm::PIPE::PIPE_UNASSIGNED;
+  }
+
+  return std::make_unique<RWOperation>(nullptr, parentOp, coreType,
+                                       pipeRead.value(), pipeWrite.value(),
+                                       readMemInfo, writeMemInfo);
 }
 
 void DelayedCrossCoreIRTranslator::initIRTranslators() {
@@ -793,8 +819,14 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     auto vectorAnchorBefore = op->vectorAnchorInfo->anchorBefore;
     assert(cubeAnchorBefore != nullptr);
     assert(vectorAnchorBefore != nullptr);
-    auto &cubeBeforeAnchorSyncOpsMap = cubeBeforeMap[cubeAnchorBefore];
-    auto &vectorBeforeAnchorSyncOpsMap = vectorBeforeMap[vectorAnchorBefore];
+    auto *cubeBeforeAnchorSyncOpsMap = &cubeBeforeMap[cubeAnchorBefore];
+    auto *vectorBeforeAnchorSyncOpsMap = &vectorBeforeMap[vectorAnchorBefore];
+    if (isa<Anchor>(cubeAnchorBefore)) {
+      cubeBeforeAnchorSyncOpsMap = &cubeAfterMap[cubeAnchorBefore];
+    }
+    if (isa<Anchor>(vectorAnchorBefore)) {
+      vectorBeforeAnchorSyncOpsMap = &vectorAfterMap[vectorAnchorBefore];
+    }
     for (auto &syncOp : syncOps) {
       assert(syncOp != nullptr);
       if (auto barrierOp = dyn_cast<BarrierOp>(syncOp.get())) {
@@ -804,7 +836,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSyncOp != nullptr);
           dyn_cast<BarrierOp>(clonedSyncOp.get())->coreType =
               hivm::TCoreType::CUBE;
-          cubeBeforeAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          cubeBeforeAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
         {
           std::unique_ptr<SyncOp> clonedSyncOp = barrierOp->clone(
@@ -812,7 +844,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSyncOp != nullptr);
           dyn_cast<BarrierOp>(clonedSyncOp.get())->coreType =
               hivm::TCoreType::VECTOR;
-          vectorBeforeAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          vectorBeforeAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
       } else {
         auto setWaitOp = dyn_cast<SetWaitOp>(syncOp.get());
@@ -825,7 +857,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSetWaitOp != nullptr);
           fixEventIdInfoMultiBufferLoops(clonedSetWaitOp,
                                          hivm::TCoreType::CUBE);
-          cubeBeforeAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          cubeBeforeAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
         if (setWaitOp->coreType == hivm::TCoreType::VECTOR) {
           std::unique_ptr<SyncOp> clonedSyncOp = setWaitOp->clone(
@@ -835,7 +867,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSetWaitOp != nullptr);
           fixEventIdInfoMultiBufferLoops(clonedSetWaitOp,
                                          hivm::TCoreType::VECTOR);
-          vectorBeforeAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          vectorBeforeAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
       }
     }
@@ -851,8 +883,14 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     assert(op->vectorAnchorInfo.has_value());
     auto cubeAnchorAfter = op->cubeAnchorInfo->anchorAfter;
     auto vectorAnchorAfter = op->vectorAnchorInfo->anchorAfter;
-    auto &cubeAfterAnchorSyncOpsMap = cubeAfterMap[cubeAnchorAfter];
-    auto &vectorAfterAnchorSyncOpsMap = vectorAfterMap[vectorAnchorAfter];
+    auto *cubeAfterAnchorSyncOpsMap = &cubeAfterMap[cubeAnchorAfter];
+    auto *vectorAfterAnchorSyncOpsMap = &vectorAfterMap[vectorAnchorAfter];
+    if (isa<Anchor>(cubeAnchorAfter)) {
+      cubeAfterAnchorSyncOpsMap = &cubeBeforeMap[cubeAnchorAfter];
+    }
+    if (isa<Anchor>(vectorAnchorAfter)) {
+      vectorAfterAnchorSyncOpsMap = &vectorBeforeMap[vectorAnchorAfter];
+    }
     for (auto &syncOp : syncOps) {
       assert(syncOp != nullptr);
       if (auto barrierOp = dyn_cast<BarrierOp>(syncOp.get())) {
@@ -862,7 +900,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSyncOp != nullptr);
           dyn_cast<BarrierOp>(clonedSyncOp.get())->coreType =
               hivm::TCoreType::CUBE;
-          cubeAfterAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          cubeAfterAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
         {
           std::unique_ptr<SyncOp> clonedSyncOp = barrierOp->clone(
@@ -870,7 +908,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSyncOp != nullptr);
           dyn_cast<BarrierOp>(clonedSyncOp.get())->coreType =
               hivm::TCoreType::VECTOR;
-          vectorAfterAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          vectorAfterAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
       } else {
         auto setWaitOp = dyn_cast<SetWaitOp>(syncOp.get());
@@ -883,7 +921,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSetWaitOp != nullptr);
           fixEventIdInfoMultiBufferLoops(clonedSetWaitOp,
                                          hivm::TCoreType::CUBE);
-          cubeAfterAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          cubeAfterAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
         if (setWaitOp->coreType == hivm::TCoreType::VECTOR) {
           std::unique_ptr<SyncOp> clonedSyncOp = setWaitOp->clone(
@@ -893,7 +931,7 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
           assert(clonedSetWaitOp != nullptr);
           fixEventIdInfoMultiBufferLoops(clonedSetWaitOp,
                                          hivm::TCoreType::VECTOR);
-          vectorAfterAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+          vectorAfterAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
         }
       }
     }
@@ -915,13 +953,16 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     }
     assert(op->mixAnchorInfo.has_value());
     auto mixAnchorBefore = op->mixAnchorInfo->anchorBefore;
-    auto &newMixBeforeAnchorSyncOpsMap = newMixBeforeMap[mixAnchorBefore];
+    auto *newMixBeforeAnchorSyncOpsMap = &newMixBeforeMap[mixAnchorBefore];
+    if (isa<Anchor>(mixAnchorBefore)) {
+      newMixBeforeAnchorSyncOpsMap = &newMixAfterMap[mixAnchorBefore];
+    }
     for (auto &syncOp : syncOps) {
       assert(syncOp != nullptr);
       std::unique_ptr<SyncOp> clonedSyncOp =
           syncOp->clone(mixAnchorBefore->op, mixAnchorBefore->parentOp);
       assert(clonedSyncOp != nullptr);
-      newMixBeforeAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+      newMixBeforeAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
     }
   }
   for (auto &[op, syncOps] : mixSyncAfterMap) {
@@ -934,13 +975,16 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
     }
     assert(op->mixAnchorInfo.has_value());
     auto mixAnchorAfter = op->mixAnchorInfo->anchorAfter;
-    auto &newMixAfterAnchorSyncOpsMap = newMixAfterMap[mixAnchorAfter];
+    auto *newMixAfterAnchorSyncOpsMap = &newMixAfterMap[mixAnchorAfter];
+    if (isa<Anchor>(mixAnchorAfter)) {
+      newMixAfterAnchorSyncOpsMap = &newMixBeforeMap[mixAnchorAfter];
+    }
     for (auto &syncOp : syncOps) {
       assert(syncOp != nullptr);
       std::unique_ptr<SyncOp> clonedSyncOp =
           syncOp->clone(mixAnchorAfter->op, mixAnchorAfter->parentOp);
       assert(clonedSyncOp != nullptr);
-      newMixAfterAnchorSyncOpsMap.push_back(std::move(clonedSyncOp));
+      newMixAfterAnchorSyncOpsMap->push_back(std::move(clonedSyncOp));
     }
   }
 

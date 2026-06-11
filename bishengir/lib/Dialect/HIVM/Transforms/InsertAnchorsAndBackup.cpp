@@ -29,12 +29,14 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/LogicalResult.h"
 
 #define DEBUG_TYPE "hivm-insert-anchors-and-backup"
 
@@ -77,9 +79,6 @@ private:
   void insertAnchor(Operation *op, OpBuilder &builder, int64_t &nextAnchorId,
                     bool insertBefore = false);
 
-  void insertAnchorBlockOp(Operation *op, Block &block, OpBuilder &builder,
-                           int64_t id_start, int64_t id_end);
-
   void insertAnchorsInBlock(Block &block, OpBuilder &builder,
                             int64_t &nextAnchorId);
 
@@ -99,57 +98,47 @@ private:
 
   void eraseBackupFuncOps(ModuleOp mod);
 
-  // Decide whether `op` should get a leading anchor.
-  //
-  // The default ("relevant ops only") case anchors before ops that can take
-  // part in cross-core memory hazards or that act as structural boundaries:
-  // memory/tensor accesses, custom ops, loop-likes/ifs/scopes, terminators,
-  // ops that infer a core type, and any op declaring non-empty memory effects.
-  // Sync ops are explicitly skipped because they are inserted/erased by the
-  // GSS flow itself; anchoring them would couple anchor ids to sync placement.
-  //
-  // `insertAnchorOpsBeforeAll` flips the filter back to "every op" for
-  // debugging and for parity with the original proposal.
-  bool isOpTypeToBeAnchored(Operation *op) const {
-    if (this->insertAnchorOpsBeforeAll) {
-      return true;
-    }
-    if (isa<hivm::PipeBarrierOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
-            hivm::SyncBlockOp, hivm::SetFlagOp, hivm::WaitFlagOp>(op)) {
-      return false;
-    }
-    if (isa<hivm::BitcastOp>(op)) {
-      return true;
-    }
-    if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
-            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
-            tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
-      return true;
-    }
-    if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
-      return true;
-    }
-    if (isa<LoopLikeOpInterface, scf::IfOp, scope::ScopeOp, func::CallOp>(op)) {
+  bool ignoreOp(Operation *op) const {
+    return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+               hivm::SetFlagOp, hivm::WaitFlagOp, hivm::PipeBarrierOp>(op);
+  }
+
+  bool isBlockFrontOp(Operation *op) const {
+    return op == &(op->getBlock()->front());
+  }
+
+  bool isBlockBackOp(Operation *op) const {
+    return op == &(op->getBlock()->back());
+  }
+
+  bool isCodeStructureOp(Operation *op) const {
+    if (op->getNumRegions() > 0) {
       return true;
     }
     if (op->hasTrait<OpTrait::IsTerminator>()) {
       return true;
     }
-    if (isa<hivm::InferCoreTypeInterface, DestinationStyleOpInterface>(op)) {
+    return false;
+  }
+
+  bool isOpOfCoreType(Operation *op, TCoreType coreType) const {
+    auto tryGetCoreType = getCoreType(op);
+    return (succeeded(tryGetCoreType) && tryGetCoreType.value() == coreType);
+  }
+
+  bool mightHaveCrossCoreMemoryEffect(Operation *op) const {
+    auto tryGetCoreType = getCoreType(op);
+    if (succeeded(tryGetCoreType) &&
+        (tryGetCoreType.value() != TCoreType::CUBE_OR_VECTOR)) {
       return true;
     }
-    if (op->hasTrait<OpTrait::CoreTypeTrait<TCoreType::CUBE>::Impl>()) {
+    if (isa<DestinationStyleOpInterface>(op)) {
       return true;
     }
-    if (op->hasTrait<OpTrait::CoreTypeTrait<TCoreType::VECTOR>::Impl>()) {
-      return true;
-    }
-    if (op->hasTrait<
-            OpTrait::CoreTypeTrait<TCoreType::CUBE_OR_VECTOR>::Impl>()) {
-      return true;
-    }
-    if (op->hasTrait<
-            OpTrait::CoreTypeTrait<TCoreType::CUBE_AND_VECTOR>::Impl>()) {
+    if (isa<func::CallOp, hivm::BitcastOp, memref::LoadOp, memref::StoreOp,
+            affine::AffineLoadOp, affine::AffineStoreOp, tensor::ExtractOp,
+            tensor::InsertOp, tensor::InsertSliceOp, tensor::ExtractSliceOp,
+            hivm::CustomOp, hivm::CustomMacroOp>(op)) {
       return true;
     }
     if (auto mei = dyn_cast<MemoryEffectOpInterface>(op)) {
@@ -160,6 +149,134 @@ private:
       }
     }
     return false;
+  }
+
+  bool isOpToBeAnchored(Operation *op, bool isBefore) const {
+    if (ignoreOp(op)) {
+      return false;
+    }
+    if (this->insertAnchorOpsBeforeAll) {
+      return isBefore;
+    }
+    if (this->insertAnchorOpsBeforeMemEffectOps) {
+      if (isBefore) {
+        if (mightHaveCrossCoreMemoryEffect(op)) {
+          return true;
+        }
+      }
+    }
+    if (this->insertAnchorOnlyBeforeCubeOps) {
+      return isOpOfCoreType(op, TCoreType::CUBE) ||
+             isOpOfCoreType(op, TCoreType::CUBE_AND_VECTOR);
+    }
+    if (this->insertAnchorOnlyBeforeVectorOps) {
+      return isOpOfCoreType(op, TCoreType::VECTOR) ||
+             isOpOfCoreType(op, TCoreType::CUBE_AND_VECTOR);
+    }
+    if (this->insertAnchorBeforeCubeAndVectorOps) {
+      return isOpOfCoreType(op, TCoreType::CUBE) ||
+             isOpOfCoreType(op, TCoreType::VECTOR) ||
+             isOpOfCoreType(op, TCoreType::CUBE_AND_VECTOR);
+    }
+    return false;
+  }
+
+  bool needAnyAnchor(Operation *op) const {
+    if (isOpToBeAnchored(op, /*isBefore=*/true)) {
+      return true;
+    }
+    if (isOpToBeAnchored(op, /*isBefore=*/false)) {
+      return true;
+    }
+    for (Region &region : op->getRegions()) {
+      for (Block &nestedBlock : region) {
+        for (Operation &childOp : nestedBlock) {
+          if (needAnyAnchor(&childOp)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  bool isCVPipeliningLoop(Operation *op) const {
+    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+      return forOp->hasAttr(kCVUnrolledLoopName) ||
+             forOp->hasAttr(kMultibufferUnrollAttrName);
+    }
+    return false;
+  }
+
+  bool isSIMTScope(Operation *op) const {
+    // Skip anchor-insert in simt scope
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+        if (vectorType.getValue() == "simt") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  bool isRegionsToBeAnchored(Operation *op) const {
+    if (isCVPipeliningLoop(op)) {
+      return true;
+    }
+    if (isSIMTScope(op)) {
+      return false;
+    }
+    if (isOpToBeAnchored(op, /*insertBefore=*/true)) {
+      return false;
+    }
+    for (Region &region : op->getRegions()) {
+      for (Block &nestedBlock : region) {
+        for (Operation &childOp : nestedBlock) {
+          if (needAnyAnchor(&childOp)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  bool isBlockToBeAnchored(Operation *op, Block &block) const {
+    if (isCVPipeliningLoop(op)) {
+      return true;
+    }
+    if (isSIMTScope(op)) {
+      return false;
+    }
+    if (isOpToBeAnchored(op, /*insertBefore=*/true)) {
+      return false;
+    }
+    for (Operation &childOp : block) {
+      if (needAnyAnchor(&childOp)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool isOpToNeverBeAnchored(Operation *op) const {
+    if (ignoreOp(op)) {
+      return true;
+    }
+    if (this->insertAnchorOpsBeforeAll) {
+      return false;
+    }
+    if (isBlockFrontOp(op) || isBlockBackOp(op)) {
+      return false;
+    }
+    if (isCodeStructureOp(op)) {
+      return false;
+    }
+    if (mightHaveCrossCoreMemoryEffect(op)) {
+      return false;
+    }
+    return true;
   }
 };
 
@@ -173,17 +290,7 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
     builder.setInsertionPointAfter(op);
   }
   builder.create<AnchorOp>(op->getLoc(),
-                           builder.getI64IntegerAttr(nextAnchorId++));
-}
-
-void InsertAnchorsAndBackupPass::insertAnchorBlockOp(Operation *op,
-                                                     Block &block,
-                                                     OpBuilder &builder,
-                                                     int64_t id_start,
-                                                     int64_t id_end) {
-  OpBuilder::InsertionGuard guard(builder);
-  builder.setInsertionPointToStart(&block);
-  builder.create<AnchorBlockOp>(op->getLoc(), id_start, id_end);
+                           builder.getI64IntegerAttr(nextAnchorId++), nullptr);
 }
 
 void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
@@ -195,32 +302,33 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
   for (Operation &op : block) {
     blockOps.push_back(&op);
   }
+  bool anchorWasInsertedBeforeLastOp = false;
   for (Operation *op : blockOps) {
-    // Lead the block with one anchor and add a leading anchor before each
-    // anchorable op. Combined with the trailing anchor emitted for
-    // region-bearing ops below, this produces the N+1 anchor model from the
-    // proposal at every nesting level.
-    if (op == blockOps.front() || isOpTypeToBeAnchored(op)) {
-      insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
+    if (isOpToNeverBeAnchored(op)) {
+      continue;
     }
-    if (op->getNumRegions() > 0) {
-     // Skip anchor-insert in simt scope
-      if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
-        if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
-          if (vectorType.getValue() == "simt") {
-            continue;
-          }
-        }
+
+    if (!anchorWasInsertedBeforeLastOp) {
+      if (isBlockFrontOp(op) || isBlockBackOp(op) ||
+          isOpToBeAnchored(op, /*isBefore=*/true) ||
+          isRegionsToBeAnchored(op)) {
+        insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
       }
-      for (Region &region : op->getRegions()) {
-        for (Block &nestedBlock : region) {
-          int64_t block_start_id = nextAnchorId++;
+    }
+
+    for (Region &region : op->getRegions()) {
+      for (Block &nestedBlock : region) {
+        if (isBlockToBeAnchored(op, nestedBlock)) {
           insertAnchorsInBlock(nestedBlock, builder, nextAnchorId);
-          int64_t block_end_id = nextAnchorId++;
-          insertAnchorBlockOp(op, nestedBlock, builder, block_start_id,
-                              block_end_id);
         }
       }
+    }
+
+    if (!isBlockBackOp(op) && isOpToBeAnchored(op, /*isBefore=*/false)) {
+      insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/false);
+      anchorWasInsertedBeforeLastOp = true;
+    } else {
+      anchorWasInsertedBeforeLastOp = false;
     }
   }
 }
@@ -228,7 +336,7 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
 void InsertAnchorsAndBackupPass::eraseAllAnchors(func::FuncOp funcOp) {
   SmallVector<Operation *> toBeErased;
   funcOp.walk([&](Operation *op) {
-    if (isa<hivm::AnchorOp, hivm::AnchorBlockOp>(op)) {
+    if (isa<hivm::AnchorOp>(op)) {
       toBeErased.push_back(op);
     }
   });
@@ -268,9 +376,12 @@ func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp src) {
   auto delayedCrossCoreGSSPass = createDelayedCrossCoreGSSPass();
   std::string delayedCrossCoreGSSPassName =
       delayedCrossCoreGSSPass->getArgument().str();
-  std::string allPassesNames =
-      insertAnchorsAndBackupPassName + "," + delayedCrossCoreGSSPassName
-      + ",split-simt-module";
+  auto splitSimtModulePass = createSplitSimtModulePass();
+  std::string splitSimtModulePassName =
+      splitSimtModulePass->getArgument().str();
+  std::string allPassesNames = insertAnchorsAndBackupPassName + "," +
+                               delayedCrossCoreGSSPassName + "," +
+                               splitSimtModulePassName;
 
   auto attr = mlir::annotation::FilterPassesAttr::get(
       ctx, StringAttr::get(ctx, allPassesNames));

@@ -359,6 +359,18 @@ def InsertAnchorsAndBackup
               "bool", /*default=*/"false",
               "Insert Anchor Ops before all operations, if not enabled, will "
               "only insert them before ops that could have cross-core memory">,
+       Option<"insertAnchorOpsBeforeMemEffectOps", "insert-anchor-ops-before-mem-effect-ops",
+              "bool", /*default=*/"false",
+              "Insert Anchor Ops before operations that have memory effect">,
+       Option<"insertAnchorOnlyBeforeCubeOps", "insert-anchor-only-before-cube-ops",
+              "bool", /*default=*/"true",
+              "Insert Anchor Ops before cube ops only">,
+       Option<"insertAnchorOnlyBeforeVectorOps", "insert-anchor-only-before-vector-ops",
+              "bool", /*default=*/"false",
+              "Insert Anchor Ops before vector ops only">,
+       Option<"insertAnchorBeforeCubeAndVectorOps", "insert-anchor-before-cube-and-vector-ops",
+              "bool", /*default=*/"false",
+              "Insert Anchor Ops before cube and vector ops only">,
   ];
 }
 
