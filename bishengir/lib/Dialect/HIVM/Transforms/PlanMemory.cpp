@@ -8,6 +8,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/PlanMemory.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
@@ -152,6 +153,8 @@ void MemLivenessAnalysis::build() {
   Liveness live(func_);
   // Recursively obtaining IR information.
   RecursionIR(&funcRegion, live);
+  // Extend preload buffer lifetime from scope to parent for.
+  UpdatePreloadBuffersGenKillMap();
   // the lifetime of the buffer.
   GenerateBufferLife();
   InitializeInplacePairList();
@@ -250,6 +253,9 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
       OpKillHandle(curOpInfo, live, op->getBlock());
+    } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      RecursiveScopeOp(scopeOp, live);
+      return WalkResult::skip();
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
       return WalkResult::interrupt();
     }
@@ -476,6 +482,116 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
   return allocBeforeLoopBuffers;
 }
 
+//===----------------------------------------------------------------------===//
+// Scope and Preload Buffer Support
+//===----------------------------------------------------------------------===//
+
+void MemLivenessAnalysis::RecursiveScopeOp(scope::ScopeOp scopeOp,
+                                           Liveness live) {
+  (void)UpdateLinearOperation(scopeOp.getOperation());
+  auto &scopeRegion = scopeOp.getRegion();
+  RecursionIR(&scopeRegion, live);
+  auto returnOp = cast<scope::ReturnOp>(scopeRegion.front().getTerminator());
+  UpdateScopeOpBufferAlias(scopeOp, returnOp);
+  auto scopeEndSeq = UpdateLinearOperation(scopeOp.getOperation());
+  OpKillHandle(scopeEndSeq, live, scopeOp->getBlock());
+}
+
+void MemLivenessAnalysis::UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
+                                                   scope::ReturnOp returnOp) {
+  if (scopeOp.getResults().empty()) {
+    return;
+  }
+  for (auto [res, arg] :
+       llvm::zip_equal(scopeOp->getResults(), returnOp->getOperands())) {
+    UpdateBufferAlias(res, arg);
+  }
+}
+
+void MemLivenessAnalysis::UpdatePreloadBuffers(annotation::MarkOp markOp,
+                                               memref::AllocOp allocOp) {
+  auto attr = markOp->getAttr(hivm::PreloadLocalBufferAttr::name);
+  if (!attr) {
+    return;
+  }
+  auto allocBuffer = allocOp.getResult();
+  preloadBuffers.push_back(allocBuffer);
+}
+
+bool MemLivenessAnalysis::IsPreloadBuffer(Value operand) {
+  auto aliasBuffers = GetAliasBuffers(operand);
+  aliasBuffers.insert(operand);
+  for (auto buffer : aliasBuffers) {
+    auto *iter =
+        std::find(preloadBuffers.begin(), preloadBuffers.end(), buffer);
+    if (iter != preloadBuffers.end()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void MemLivenessAnalysis::UpdatePreloadBuffersGenInfo(OpInfo *opInfo) {
+  for (auto &preloadBuffer : preloadBuffers) {
+    auto aliasBuffers = GetAliasBuffers(preloadBuffer);
+    aliasBuffers.insert(preloadBuffer);
+    for (auto buffer : aliasBuffers) {
+      auto iterBuffer = buffer2status.find(buffer);
+      if (iterBuffer == buffer2status.end())
+        continue;
+      if (iterBuffer->second == BufferStatus::DEFFINED) {
+        genKillMap[opInfo].gen.push_back(buffer);
+        buffer2status[iterBuffer->first] = BufferStatus::GENED;
+      }
+    }
+  }
+}
+
+void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(OpInfo *opInfo) {
+  for (auto &preloadBuffer : preloadBuffers) {
+    auto aliasBuffers = GetAliasBuffers(preloadBuffer);
+    aliasBuffers.insert(preloadBuffer);
+    for (auto buffer : aliasBuffers) {
+      auto iterBuffer = buffer2status.find(buffer);
+      if (iterBuffer == buffer2status.end())
+        continue;
+      if (iterBuffer->second == BufferStatus::GENED) {
+        genKillMap[opInfo].kill.push_back(buffer);
+        buffer2status[iterBuffer->first] = BufferStatus::KILLED;
+      }
+    }
+  }
+}
+
+void MemLivenessAnalysis::UpdatePreloadBuffersGenKillMap() {
+  // Find `scope` op and its parent `for` op.
+  Operation *parentForOp = nullptr;
+  for (size_t i = 0; i < linearOperation.size(); ++i) {
+    auto *opInfo = linearOperation[i].get();
+    assert(opInfo && "linearOperation should not be null.");
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(opInfo->operation)) {
+      parentForOp = scopeOp->getParentOp();
+      break;
+    }
+  }
+  if (!parentForOp) {
+    return;
+  }
+  // Update genKillMap from origin op in scope to `for` op of scope's parent.
+  size_t count = 0;
+  for (size_t i = 0; i < linearOperation.size(); ++i) {
+    auto *opInfo = linearOperation[i].get();
+    assert(opInfo && "linearOperation should not be null.");
+    if ((parentForOp == opInfo->operation) && (count == 0)) {
+      UpdatePreloadBuffersGenInfo(opInfo);
+      count++;
+    } else if ((parentForOp == opInfo->operation) && (count == 1)) {
+      UpdatePreloadBuffersKillInfo(opInfo);
+      break;
+    }
+  }
+}
+
 void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
                                         Liveness live, OpInfo *curOpInfo) {
   // get allocOp
@@ -487,6 +603,7 @@ void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
     return;
   }
   UpdateMultiBufferInfo(markOp, maybeAlloc.value());
+  UpdatePreloadBuffers(markOp, maybeAlloc.value());
   OpKillHandle(curOpInfo, live, markOp->getBlock());
   if (!isLocalMemPlan()) {
     return;
@@ -583,7 +700,8 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
 
 bool MemLivenessAnalysis::isSkippableOp(Operation *op) const {
   // TODO: Can Func CallOp be skipped?
-  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp>(op);
+  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp,
+             scope::ReturnOp>(op);
 }
 
 LogicalResult
@@ -760,6 +878,9 @@ void MemLivenessAnalysis::UpdateOperandGenInfo(OpInfo *opInfo, Value operand) {
   if (iter_buffer == buffer2status.end())
     return;
   if (iter_buffer->second == BufferStatus::DEFFINED) {
+    if (IsPreloadBuffer(operand)) {
+      return; // skip gen for multi scope used buffer
+    }
     genKillMap[opInfo].gen.push_back(operand);
     buffer2status[iter_buffer->first] = BufferStatus::GENED;
   } else if (iter_buffer->second == BufferStatus::KILLED) {
