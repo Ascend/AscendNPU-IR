@@ -27,11 +27,13 @@ __aiv__ __attribute__((always_inline)) static void
 simt_histogram_1d(__ubuf__ T *inputs, __ubuf__ int32_t *bins,
                   int64_t input_size, int64_t input_stride,
                   int64_t bins_stride, int64_t num_bins) {
+  using U = typename std::make_unsigned<T>::type;
   for (int64_t i = threadIdx.x; i < input_size; i += blockDim.x) {
-    if (inputs[i * input_stride] >= num_bins) {
+    uint64_t value = static_cast<uint64_t>(static_cast<U>(inputs[i * input_stride]));
+    if (value >= num_bins) {
       continue;
     }
-    atomicAdd(bins + inputs[i * input_stride] * bins_stride, static_cast<int32_t>(1));
+    atomicAdd(bins + value * bins_stride, static_cast<int32_t>(1));
   }
 }
 
@@ -43,14 +45,16 @@ simt_histogram_1d_masked(__ubuf__ T *inputs, __ubuf__ int32_t *bins, __ubuf__ bo
                          int64_t bins_stride,
                          int64_t mask_stride,
                          int64_t num_bins) {
+  using U = typename std::make_unsigned<T>::type;
   for (uint32_t i = threadIdx.x; i < input_size; i += blockDim.x) {
     if (!mask[i * mask_stride]) {
       continue;
     }
-    if (inputs[i * input_stride] >= num_bins) {
+    uint64_t value = static_cast<uint64_t>(static_cast<U>(inputs[i * input_stride]));
+    if (value >= num_bins) {
       continue;
     }
-    atomicAdd(bins + inputs[i * input_stride] * bins_stride, static_cast<int32_t>(1));
+    atomicAdd(bins + value * bins_stride, static_cast<int32_t>(1));
   }
 }
 

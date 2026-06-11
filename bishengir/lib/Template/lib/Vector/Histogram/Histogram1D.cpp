@@ -30,11 +30,13 @@ histogram_1d(memref_t<__ubuf__ T, 1> *src,
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
 
+  using U = typename std::make_unsigned<T>::type;
   for (int64_t i = 0; i < src_size; ++i) {
-    if (src_ptr[i * src_stride] >= num_bins) {
+    uint64_t value = static_cast<uint64_t>(static_cast<U>(src_ptr[i * src_stride]));
+    if (value >= num_bins) {
         continue;
     }
-    *(bins_ptr + src_ptr[i * src_stride] * bins_stride) += static_cast<int32_t>(1);
+    *(bins_ptr + value * bins_stride) += static_cast<int32_t>(1);
   }
 
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
@@ -58,14 +60,16 @@ histogram_1d_masked(memref_t<__ubuf__ T, 1> *src,
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
 
+  using U = typename std::make_unsigned<T>::type;
   for (int64_t i = 0; i < src_size; ++i) {
     if (!mask_ptr[i * mask_stride]) {
       continue;
     }
-    if (src_ptr[i * src_stride] >= num_bins) {
+    uint64_t value = static_cast<uint64_t>(static_cast<U>(src_ptr[i * src_stride]));
+    if (value >= num_bins) {
       continue;
     }
-    *(bins_ptr + src_ptr[i * src_stride] * bins_stride) += static_cast<int32_t>(1);
+    *(bins_ptr + value * bins_stride) += static_cast<int32_t>(1);
   }
 
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
