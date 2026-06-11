@@ -817,6 +817,21 @@ static bool reductionConsumerNeedsFullProducerDomain(
   return false;
 }
 
+static bool hasRankReducingIndexingMap(Operation *op) {
+  auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
+  if (!linalgOp)
+    return false;
+  auto numLoops = linalgOp.getNumLoops();
+  if (numLoops <= 2)
+    return false;
+  auto check = [numLoops](const auto &map) {
+    return map.getNumResults() != numLoops;
+  };
+  auto indexing = linalgOp.getIndexingMapsArray();
+  auto outsCnt = linalgOp.getNumDpsInits();
+  return llvm::any_of(llvm::drop_end(indexing, outsCnt), check);
+}
+
 // Normally, we should fuse the producer into the closest fusedNode which
 // contains its consumers. But in some context, we should give up fusing and
 // return nullptr:
@@ -875,6 +890,11 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (llvm::any_of(bestFusedNode->fusedOps, [&](Operation *fusedOp) {
         return producerInfo.conflictList.contains(fusedOp);
       }))
+    return nullptr;
+
+  // Don't fuse producer with rank-reducing indexing_map into a vsstb group.
+  if (llvm::any_of(bestFusedNode->fusedLeafNodes, isVsstbPatternTransposeOp) &&
+      hasRankReducingIndexingMap(producer))
     return nullptr;
 
   int numUsersInBestFusedNode = 0;
@@ -1180,6 +1200,10 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
+      // Don't fuse leaf with rank-reducing indexing_map into a vsstb group.
+      if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
+          hasRankReducingIndexingMap(leafNode))
+        continue;
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
       auto leafNodeInfo = fusableOpInfoMap[leafNode];
@@ -1297,6 +1321,10 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
       if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
+        continue;
+      // Don't fuse producer with rank-reducing indexing_map into a vsstb group.
+      if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
+          hasRankReducingIndexingMap(producer))
         continue;
       // All leafNodes within a group have the common axis and do not conflict
       // with each other.
