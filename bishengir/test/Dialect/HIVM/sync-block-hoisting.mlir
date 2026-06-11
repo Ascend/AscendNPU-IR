@@ -1,6 +1,7 @@
 // RUN: bishengir-opt %s -hivm-sync-block-hoisting -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @hoist_sync_in_for_loop(
+// CHECK: hivm.hir.create_sync_block_lock
 // CHECK: hivm.hir.sync_block_lock
 // CHECK: scf.for
 // CHECK: scf.for
@@ -25,6 +26,7 @@ func.func @hoist_sync_in_for_loop(%arg0: memref<16xi32>, %arg1: memref<16xi32>) 
 // -----
 
 // CHECK-LABEL: func.func @hoist_sync_in_while_loop(
+// CHECK: hivm.hir.create_sync_block_lock
 // CHECK: hivm.hir.sync_block_lock
 // CHECK: scf.while
 // CHECK: scf.while
@@ -58,9 +60,11 @@ func.func @hoist_sync_in_while_loop(%arg0: memref<16xi32>, %arg1: memref<16xi32>
 
 // -----
 // CHECK-LABEL: func.func @hoist_sync_in_if_cond(
-// CHECK: hivm.hir.sync_block_lock
+// CHECK-DAG: hivm.hir.create_sync_block_lock
 // CHECK: scf.if
-// CHECK: else
+// CHECK: hivm.hir.sync_block_lock
+// CHECK: } else {
+// CHECK: hivm.hir.sync_block_lock
 // CHECK: hivm.hir.sync_block_unlock
 func.func @hoist_sync_in_if_cond(%arg0: memref<16xi32>, %arg1: memref<16xi32>, %arg2: i1) {
   scf.if %arg2 {

@@ -77,6 +77,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   InlineOTFBroadcast.cpp
   InsertCVDataMovement.cpp
   InsertCVTightCoupledBuffer.cpp
+  InsertFreeLockVarBeforeReturn.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
   InsertInferVFModeFunc.cpp
   InsertInferWorkSpaceSizeFunc.cpp
@@ -93,6 +94,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   LiftZeroRank.cpp
   LowerCreateSyncBlockLock.cpp
   MarkDisableLoad.cpp
+  MarkSyncBlockLockWithSubblock.cpp
   MarkMultiBuffer.cpp
   MarkRealCoreType.cpp
   NormalizeMatmul.cpp
