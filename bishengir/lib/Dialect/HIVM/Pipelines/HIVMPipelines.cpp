@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
@@ -428,6 +429,24 @@ alignStoragePipeline(OpPassManager &pm,
   pm.addPass(createEnableStrideAlignPass());
 }
 
+static void syncBlockLockPipeline(OpPassManager &pm,
+                                  SyncBlockLockPipelinePhase phase) {
+  if (phase == SyncBlockLockPipelinePhase::Prepare) {
+    pm.nest<func::FuncOp>().addPass(createSyncBlockHoistingPass());
+    pm.nest<func::FuncOp>().addPass(createBindSyncBlockLockArgPass());
+    pm.nest<func::FuncOp>().addPass(
+        createInsertInferSyncBlockLockNumAndInitFuncPass());
+    pm.nest<func::FuncOp>().addPass(createSyncBlockLockLoweringPass());
+  } else if (phase == SyncBlockLockPipelinePhase::Finalize) {
+    pm.addPass(createMarkSyncBlockLockWithSubblockPass());
+    pm.addPass(createInsertFreeLockVarBeforeReturnPass());
+  }
+}
+
+void addSyncBlockLockFinalizePasses(OpPassManager &pm) {
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
+}
+
 static void hivmPostBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.nest<func::FuncOp>().addPass(createLiftZeroRankPass());
@@ -435,11 +454,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMMapForallToBlocksPass());
   // Op decompose, need mark buffer size for newly allocated buffer.
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
-  pm.nest<func::FuncOp>().addPass(createSyncBlockHoistingPass());
-  pm.nest<func::FuncOp>().addPass(createBindSyncBlockLockArgPass());
-  pm.nest<func::FuncOp>().addPass(
-      createInsertInferSyncBlockLockNumAndInitFuncPass());
-  pm.nest<func::FuncOp>().addPass(createSyncBlockLockLoweringPass());
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Prepare);
   if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
     // make sure no alloc within vf and no value returned by vf,
     // so InferHIVMMemScope can work correctly
