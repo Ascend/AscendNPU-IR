@@ -2462,4 +2462,69 @@ IndirectLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
+bool GatherLoadBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto *sourceOp = sliceOp.getSource().getDefiningOp();
+  return isa_and_nonnull<hivm::GatherLoadOp>(sourceOp) &&
+         !isDynamicSlice(sliceOp);
+}
+
+LogicalResult
+GatherLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                    PatternRewriter &rewriter) const {
+  auto gatherOp =
+      dyn_cast<hivm::GatherLoadOp>(sliceOp.getSource().getDefiningOp());
+  if (!gatherOp)
+    return failure();
+
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+
+  auto sliceShaped = sliceOp.getSource().getDefiningOp() == nullptr
+                         ? nullptr
+                         : dyn_cast<RankedTensorType>(sliceOp.getType());
+  if (!sliceShaped)
+    return failure();
+
+  Location loc = gatherOp.getLoc();
+  rewriter.setInsertionPoint(gatherOp);
+
+  auto sliceOperand = [&](Value v) -> Value {
+    auto newSlice = rewriter.create<tensor::ExtractSliceOp>(loc, v, offsets,
+                                                            sizes, strides);
+    markCreatedExtractSliceOp(rewriter, newSlice);
+    return newSlice.getResult();
+  };
+
+  Value newIndices = sliceOperand(gatherOp.getIndices());
+  Value newDst = sliceOperand(gatherOp.getDst());
+  Value newMask =
+      gatherOp.getMask() ? sliceOperand(gatherOp.getMask()) : Value();
+  Value newOther =
+      gatherOp.getOther() ? sliceOperand(gatherOp.getOther()) : Value();
+
+  rewriter.setInsertionPoint(gatherOp);
+  auto newGather = rewriter.create<hivm::GatherLoadOp>(
+      loc, /*result=*/sliceOp.getType(),
+      /*base=*/gatherOp.getBase(),
+      /*indices=*/newIndices,
+      /*burst_len=*/gatherOp.getBurstLen(),
+      /*mask=*/newMask,
+      /*other=*/newOther,
+      /*dst=*/newDst,
+      /*cache=*/gatherOp.getCacheAttr(),
+      /*evict=*/gatherOp.getEvictAttr(),
+      /*isVolatile=*/gatherOp.getIsVolatileAttr());
+
+  // Forward discardable attributes 
+  for (NamedAttribute attr : gatherOp->getDiscardableAttrs())
+    newGather->setAttr(attr.getName(), attr.getValue());
+
+  rewriter.replaceOp(sliceOp, newGather.getResult());
+  if (gatherOp->use_empty())
+    rewriter.eraseOp(gatherOp);
+  return success();
+}
+
 } // namespace mlir::hivm::detail
