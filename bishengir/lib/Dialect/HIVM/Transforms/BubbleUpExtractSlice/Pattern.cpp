@@ -1113,6 +1113,11 @@ InsertSliceBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     return failure();
   }
 
+  if (parentInsertOp->hasAttr(toBeCancelOutInsertSlice)) {
+    rewriter.replaceOp(sliceOp, parentInsertOp.getSource());
+    return success();
+  }
+
   // Handle ranked-reduce case.
   if ((parentInsertOp.getResultType().getRank() -
            parentInsertOp.getSource().getType().getRank() >
