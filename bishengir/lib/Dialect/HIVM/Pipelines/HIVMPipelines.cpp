@@ -162,10 +162,10 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     // longer depends on the presence of sync ops to preserve those boundaries.
     pm.addPass(createMarkRealCoreTypePass());
     pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    pm.addPass(createInsertAnchorsAndBackupPass());
     MarkRealCoreTypeOptions markRealCoreTypeOptions;
     markRealCoreTypeOptions.removeCoreTypeAttrs = true;
     pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
-    pm.addPass(createInsertAnchorsAndBackupPass());
   } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
     canonicalizationHIVMPipeline(pm);
     pm.addPass(createMarkRealCoreTypePass());

@@ -711,6 +711,16 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
     blockBeginPlaceHolderOp->block = &block;
     parScope->body.push_back(std::move(blockBeginPlaceHolderOp));
     for (auto &op : block.getOperations()) {
+      if (options.ignoreNonAnchorOps) {
+        bool hasAnchorOp = false;
+        op.walk<WalkOrder::PreOrder>([&](AnchorOp anchorOp) {
+          hasAnchorOp = true;
+          return WalkResult::interrupt();
+        });
+        if (!hasAnchorOp) {
+          continue;
+        }
+      }
       if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
         auto trueScope =
             funcIrBuilder(ifOp.getThenRegion(), nullptr, skipEmptyScopes);
@@ -759,7 +769,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));
         }
-        scopeOp->body.push_back(std::move(curScopeOp));
+        parScope->body.push_back(std::move(curScopeOp));
         continue;
       }
       if (auto branchOp = dyn_cast<cf::BranchOp>(op)) {
@@ -779,20 +789,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         parScope->body.push_back(std::move(anchor));
         continue;
       }
-      if (auto anchorBlockOp = dyn_cast<hivm::AnchorBlockOp>(op)) {
-        int64_t idStart = anchorBlockOp.getIdStart();
-        int64_t idEnd = anchorBlockOp.getIdEnd();
-        auto anchor =
-            std::make_unique<AnchorBlock>(&op, parScope, idStart, idEnd);
-        parScope->body.push_back(std::move(anchor));
-        anchorOpMap[idStart] = parScope;
-        anchorOpMap[idEnd] = parScope;
-        continue;
-      }
-      if (!options.ignoreNonAnchorOps) {
-        if (auto rwOp = translateRWLikeOp(&op, parScope)) {
-          parScope->body.push_back(std::move(rwOp));
-        }
+      if (auto rwOp = translateRWLikeOp(&op, parScope)) {
+        parScope->body.push_back(std::move(rwOp));
       }
     }
 
