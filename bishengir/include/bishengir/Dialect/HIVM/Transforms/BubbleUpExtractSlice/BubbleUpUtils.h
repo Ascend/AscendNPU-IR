@@ -50,38 +50,40 @@ struct BufferizationPropagationState {
   llvm::SmallDenseMap<Value, Value, 4> oldToNew;
 };
 
+struct TilingDimInfo {
+  int64_t tilingDim = -1;
+  OpFoldResult offset = nullptr;
+  OpFoldResult size = nullptr;
+};
+
 LogicalResult
 checkBufferizationBubbleUpPath(bufferization::ToTensorOp toTensorOp);
 
 MemRefType getSlicedMemRefType(MemRefType oldType,
                                RankedTensorType slicedTensorType);
 
+MemRefType getSlicedMemRefType(MemRefType oldType, int64_t tilingDim);
+
 void resolveUpLinksForOldValue(Value oldValue, Value newValue,
                                PatternRewriter &rewriter);
 
 void clearBubblePropagatorAttrs(Operation *op, PatternRewriter &rewriter);
 
-void cleanupResolvedBufferizationPropagators(func::FuncOp funcOp,
-                                             PatternRewriter &rewriter);
-
 void cleanupResolvedBufferizationPropagators(func::FuncOp funcOp);
 
-std::optional<UnrealizedConversionCastOp>
-createBubblePropagatorDown(Value oldValue, Value newValue,
-                           ArrayRef<Operation *> excludedUsers,
-                           PatternRewriter &rewriter);
-
-std::optional<UnrealizedConversionCastOp>
-createBubblePropagatorDown(Value value, ArrayRef<Operation *> excludedUsers,
+UnrealizedConversionCastOp
+createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
+                           OpFoldResult size, int64_t tilingDim,
                            PatternRewriter &rewriter);
 
 UnrealizedConversionCastOp
 createBubblePropagatorUpLink(Value oldValue, Type slicedType,
-                             PatternRewriter &rewriter);
+                             OpFoldResult offset, OpFoldResult size,
+                             int64_t tilingDim, PatternRewriter &rewriter);
 
-FailureOr<memref::AllocOp>
-createSlicedAllocLike(MemRefType slicedMemRefType, memref::AllocOp allocOp,
-                      PatternRewriter &rewriter);
+FailureOr<memref::AllocOp> createSlicedAllocLike(MemRefType slicedMemRefType,
+                                                 memref::AllocOp allocOp,
+                                                 PatternRewriter &rewriter);
 
 void cleanupDeadBufferizationPropagators(func::FuncOp funcOp,
                                          PatternRewriter &rewriter);
@@ -93,6 +95,8 @@ void cleanupBufferizationPropagators(func::FuncOp funcOp,
 
 void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
                                           Value memrefValue);
+
+TilingDimInfo getTilingDimInfo(UnrealizedConversionCastOp propagateOp);
 
 } // namespace mlir::hivm::detail
 
