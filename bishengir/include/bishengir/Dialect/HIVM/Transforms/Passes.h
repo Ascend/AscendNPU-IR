@@ -291,6 +291,9 @@ std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();
 std::unique_ptr<Pass>
 createCVPipeliningPass(const CVPipeliningOptions &options = {});
 
+/// Create a pass to create preload for CV pipelining.
+std::unique_ptr<Pass> createCreatePreloadPass();
+
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 
