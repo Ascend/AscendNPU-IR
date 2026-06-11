@@ -630,7 +630,12 @@ def Decompose : Pass<"hfusion-decompose", "func::FuncOp">{
 def SimplifyVFArgs : Pass<"hfusion-simplify-vf-arg", "ModuleOp"> {
   let summary = "simplify vf function arguments";
   let constructor = "mlir::hfusion::createSimplifyVFArgsPass()";
-  let dependentDialects = ["func::FuncDialect"];
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "func::FuncDialect",
+    "memref::MemRefDialect",
+    "vector::VectorDialect"
+  ];
 }
 
 def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {

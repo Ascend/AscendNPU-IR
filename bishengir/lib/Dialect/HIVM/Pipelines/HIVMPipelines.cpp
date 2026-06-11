@@ -575,6 +575,7 @@ static void hivmPostBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         vector::createNormalizeVectorPass(normalizeVectorOptions));
     pm.nest<func::FuncOp>().addPass(createCSEPass());
+    pm.addPass(hfusion::createSimplifyVFArgsPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }
 }

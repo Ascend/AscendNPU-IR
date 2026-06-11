@@ -79,3 +79,31 @@ module {
     return %3 : tensor<1024xf32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @vf_i1_expanded_arg(
+// CHECK-SAME: %[[ARG0:.*]]: memref<64xi1, #hivm.address_space<ub>>
+// CHECK: %[[SUBVIEW:.*]] = memref.subview %[[ARG0]][%{{.*}}] [1] [1]
+// CHECK: %[[READ:.*]] = vector.transfer_read %[[SUBVIEW]][%{{.*}}], %{{.*}}, %{{.*}} {in_bounds = [true]}
+// CHECK-SAME: memref<1xi1
+// CHECK-SAME: vector<64xi1>
+// CHECK: return %[[READ]] : vector<64xi1>
+func.func @vf_i1_expanded_arg(%arg0: memref<64x1xi1, #hivm.address_space<ub>>, %arg1: index) -> vector<64xi1> attributes {hivm.vector_function} {
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %mask = vector.constant_mask [1] : vector<64xi1>
+  %mask_cast = vector.shape_cast %mask : vector<64xi1> to vector<1x64xi1>
+  %subview = memref.subview %arg0[%arg1, 0] [1, 1] [1, 1] : memref<64x1xi1, #hivm.address_space<ub>> to memref<1x1xi1, strided<[1, 1], offset: ?>, #hivm.address_space<ub>>
+  %read = vector.transfer_read %subview[%c0, %c0], %false, %mask_cast {in_bounds = [true, true]} : memref<1x1xi1, strided<[1, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x64xi1>
+  %flat = vector.shape_cast %read : vector<1x64xi1> to vector<64xi1>
+  return %flat : vector<64xi1>
+}
+
+// CHECK-LABEL: func.func @caller_i1_expanded_vf_arg(
+// CHECK: %[[RES:.*]] = call @vf_i1_expanded_arg(%arg0, %arg1) {hivm.vector_function} : (memref<64xi1, #hivm.address_space<ub>>, index) -> vector<64xi1>
+func.func @caller_i1_expanded_vf_arg(%arg0: memref<64xi1, #hivm.address_space<ub>>, %arg1: index) -> vector<64xi1> {
+  %expanded = memref.expand_shape %arg0 [[0, 1]] output_shape [64, 1] : memref<64xi1, #hivm.address_space<ub>> into memref<64x1xi1, #hivm.address_space<ub>>
+  %res = func.call @vf_i1_expanded_arg(%expanded, %arg1) {hivm.vector_function} : (memref<64x1xi1, #hivm.address_space<ub>>, index) -> vector<64xi1>
+  return %res : vector<64xi1>
+}
