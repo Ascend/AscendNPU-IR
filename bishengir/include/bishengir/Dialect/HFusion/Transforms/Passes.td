@@ -647,6 +647,13 @@ def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
   ];
 }
 
+def PrepareI1Nx1ForVectorization
+    : Pass<"hfusion-prepare-i1-nx1-for-vectorization", "func::FuncOp"> {
+  let summary = "Collapse Nx1 linalg.generic with expanded i1 input before vectorization";
+  let constructor = "mlir::hfusion::createPrepareI1Nx1ForVectorizationPass()";
+  let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect"];
+}
+
 def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::FuncOp"> {
   let summary = "Perform elemwise op fusion and generalization before vectorization";
   let constructor = "::mlir::hfusion::createPreVectorizationFusionPass()";

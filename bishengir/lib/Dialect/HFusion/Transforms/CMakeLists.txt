@@ -58,6 +58,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   OutlineSingleOp.cpp
   OutlineVectorFunction.cpp
   PackTilingData.cpp
+  PrepareI1Nx1ForVectorization.cpp
   PreVectorizationFusion.cpp
   PullSliceIntoVectorFunction.cpp
   ReCacheIO.cpp
