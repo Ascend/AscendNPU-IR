@@ -54,13 +54,19 @@ static bool checkPropagate(PropagationStep step,
 }
 
 // %19 = scf.if %7 -> (tensor<32xf32>) {
-//   %30 = builtin.unrealized_conversion_cast %29 : tensor<32xf32> to tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
-//   scf.yield %30 : tensor<32xf32>
+//   %30 = builtin.unrealized_conversion_cast %29 : tensor<32xf32> to
+//   tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>],
+//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} scf.yield %30 :
+//   tensor<32xf32>
 // } else {
-//   %31 = builtin.unrealized_conversion_cast %30 : tensor<32xf32> to tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
-//   scf.yield %31 : tensor<32xf32>
+//   %31 = builtin.unrealized_conversion_cast %30 : tensor<32xf32> to
+//   tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>],
+//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} scf.yield %31 :
+//   tensor<32xf32>
 // }
-// %20 = builtin.unrealized_conversion_cast %19 : tensor<32xf32> to tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
+// %20 = builtin.unrealized_conversion_cast %19 : tensor<32xf32> to
+// tensor<32xf32> {hivm.address_space = [#hivm.address_space<ub>],
+// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
 static LogicalResult propagateIfOp(scf::IfOp op, OpResult res,
                                    UnrealizedConversionCastOp propagateOp,
                                    PatternRewriter &rewriter) {
@@ -87,14 +93,22 @@ propagateIndexSwitchOp(scf::IndexSwitchOp op, OpResult res,
   return success();
 }
 
-// %229 = builtin.unrealized_conversion_cast %228 : tensor<32x64xbf16> to tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
-// %230 = scf.for ... iter_args(%arg31 = %229) -> (tensor<32x64xbf16>) {
-//   %280 = builtin.unrealized_conversion_cast %arg31 : tensor<32x64xbf16> to tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
+// %229 = builtin.unrealized_conversion_cast %228 : tensor<32x64xbf16> to
+// tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
+// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} %230 = scf.for ...
+// iter_args(%arg31 = %229) -> (tensor<32x64xbf16>) {
+//   %280 = builtin.unrealized_conversion_cast %arg31 : tensor<32x64xbf16> to
+//   tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
+//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
 //   ...
-//   %284 = builtin.unrealized_conversion_cast %283 : tensor<32x64xbf16> to tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
-//   scf.yield %284 : tensor<32x64xbf16>
+//   %284 = builtin.unrealized_conversion_cast %283 : tensor<32x64xbf16> to
+//   tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
+//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up} scf.yield %284 :
+//   tensor<32x64xbf16>
 // }
-// %231 = builtin.unrealized_conversion_cast %230 : tensor<32x64xbf16> to tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down
+// %231 = builtin.unrealized_conversion_cast %230 : tensor<32x64xbf16> to
+// tensor<32x64xbf16> {hivm.address_space = [#hivm.address_space<ub>],
+// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down
 static LogicalResult propagateForOp(scf::ForOp op, OpOperand &operand,
                                     UnrealizedConversionCastOp propagateOp,
                                     PatternRewriter &rewriter) {
@@ -113,20 +127,33 @@ static LogicalResult propagateForOp(scf::ForOp op, OpOperand &operand,
   return success();
 }
 
-// %16 = builtin.unrealized_conversion_cast %15 : tensor<128xf32> to tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>], hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_up}
-// %17:2 = scf.while (%arg8 = %16, %arg9 = %c0_i32) : (tensor<128xf32>, i32) -> (tensor<128xf32>, i32) {
-//   %18 = builtin.unrealized_conversion_cast %arg8 : tensor<128xf32> to tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>], hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_down}
+// %16 = builtin.unrealized_conversion_cast %15 : tensor<128xf32> to
+// tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>],
+// hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_up} %17:2 = scf.while
+// (%arg8 = %16, %arg9 = %c0_i32) : (tensor<128xf32>, i32) -> (tensor<128xf32>,
+// i32) {
+//   %18 = builtin.unrealized_conversion_cast %arg8 : tensor<128xf32> to
+//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>],
+//   hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_down}
 //   ...
-//   %20 = builtin.unrealized_conversion_cast %18 : tensor<128xf32> to tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
+//   %20 = builtin.unrealized_conversion_cast %18 : tensor<128xf32> to
+//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>],
+//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_up}
 //   scf.condition(%19) %20, %arg9 : tensor<128xf32>, i32
 // } do {
 // ^bb0(%arg8: tensor<128xf32>, %arg9: i32):
-//   %18 = builtin.unrealized_conversion_cast %arg8 : tensor<128xf32> to tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
+//   %18 = builtin.unrealized_conversion_cast %arg8 : tensor<128xf32> to
+//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>],
+//   hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
 //   ...
-//   %40 = builtin.unrealized_conversion_cast %39 : tensor<128xf32> to tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>], hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_up}
-//   scf.yield %40, %38 : tensor<128xf32>, i32
+//   %40 = builtin.unrealized_conversion_cast %39 : tensor<128xf32> to
+//   tensor<128xf32> {hivm.address_space = [#hivm.address_space<cbuf>],
+//   hivm.tcore_type = #hivm.tcore_type<CUBE>, propagate_up} scf.yield %40, %38
+//   : tensor<128xf32>, i32
 // }
-// %18 = builtin.unrealized_conversion_cast %17#0 : tensor<128xf32> to tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>], hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
+// %18 = builtin.unrealized_conversion_cast %17#0 : tensor<128xf32> to
+// tensor<128xf32> {hivm.address_space = [#hivm.address_space<ub>],
+// hivm.tcore_type = #hivm.tcore_type<VECTOR>, propagate_down}
 static LogicalResult
 propagateWhileOpOperand(scf::WhileOp op, size_t operandNumber,
                         UnrealizedConversionCastOp propagateOp,
@@ -363,12 +390,14 @@ PropagateDownPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
               return propagateDownForOp(op, *use, propagateOp, rewriter);
             })
             .Case([&](scf::WhileOp op) {
-              if (step == PropagationStep::LOCAL)
+              if (step == PropagationStep::LOCAL || step == PropagationStep::GM)
                 return failure();
               return propagateDownWhileOp(op, *use, propagateOp, rewriter);
             })
             .Case([&](scf::YieldOp op) {
-              if (step == PropagationStep::LOCAL)
+              if (step == PropagationStep::LOCAL ||
+                  (step == PropagationStep::GM &&
+                   isa<scf::WhileOp>(op->getParentOp())))
                 return failure();
               return propagateDownYieldOp(op, *use, propagateOp, rewriter);
             })

@@ -1017,8 +1017,8 @@ static LogicalResult insertPropagationOp(func::FuncOp funcOp) {
 
 static LogicalResult propagateAndResolve(func::FuncOp funcOp) {
   SmallVector<PropagationStep> propagations = {
-      PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
-      PropagationStep::ALL};
+      PropagationStep::LOCAL, PropagationStep::GM, PropagationStep::UB,
+      PropagationStep::L1, PropagationStep::ALL};
   for (auto step : propagations) {
     if (failed(runPropagateOpPatterns(funcOp, step))) {
       return failure();
@@ -1079,8 +1079,8 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
             auto coreType = PropagatorUtil::getCoreType(upProp);
             auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
             if (!addressSpaces.empty()) {
-              auto memScopeAttr = hivm::AddressSpaceAttr::get(
-                  op.getContext(), addressSpaces[0]);
+              auto memScopeAttr = hivm::AddressSpaceAttr::get(op.getContext(),
+                                                              addressSpaces[0]);
               op.setMemscopeAttr(memScopeAttr);
             }
             if (coreType != TCoreType::CUBE_AND_VECTOR) {
