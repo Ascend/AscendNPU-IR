@@ -40,10 +40,36 @@ public:
     return success();
   }
 };
+
+
+class SubViewOpReplacementPattern
+    : public OpConversionPattern<memref::SubViewOp> {
+
+public:
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(memref::SubViewOp op, OpAdaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (op->use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+
+    SmallVector<Value> inputs{op.getSource()};
+    llvm::append_range(inputs, op.getOffsets());
+    llvm::append_range(inputs, op.getSizes());
+    llvm::append_range(inputs, op.getStrides());
+    auto unrealizedCast = rewriter.create<UnrealizedConversionCastOp>(
+        op.getLoc(), op.getResult().getType(), inputs);
+    rewriter.replaceOp(op, unrealizedCast.getResult(0));
+    return success();
+  }
+};
 } // namespace
 
 void mlir::hivm::populateReinterpretCastToUnrealizedCastPatterns(
     RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();
   patterns.add<ReinterpretCastOpReplacementPattern>(ctx);
+  patterns.add<SubViewOpReplacementPattern>(ctx);
 }

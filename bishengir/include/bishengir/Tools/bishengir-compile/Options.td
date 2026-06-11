@@ -556,6 +556,12 @@ def EnableAutoBlockifyLoop : HIVMOptimizationControlOptions<
   "false"
 >;
 
+def SuperBlockFactor : HIVMOptimizationControlOptions<
+  "The factor of super-blocking.",
+  "unsigned",
+  "0"
+>;
+
 def TileMixVectorLoop : HIVMOptimizationControlOptions<
   "The trip count of the tiled vector loop for mix kernels.",
   "unsigned",

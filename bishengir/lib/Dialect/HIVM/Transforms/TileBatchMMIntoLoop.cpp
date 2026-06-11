@@ -321,7 +321,15 @@ SmallVector<Operation *> collectDownstreamOpsToMove(
       if (auto debugRootMemref =
               traceDefOp<memref::AllocOp>(debugOp.getArg())) {
         if (debugRootMemref.value()->getResult(0) == rootMemref) {
-          worklist.push_back(debugOp);
+          Operation *sameBlockOp = debugOp;
+          while (sameBlockOp &&
+                 sameBlockOp->getBlock() != lastChainOp->getBlock()) {
+            sameBlockOp = sameBlockOp->getParentOp();
+          }
+
+          if (sameBlockOp && !lastChainOp->isBeforeInBlock(sameBlockOp)) {
+            worklist.push_back(sameBlockOp);
+          }
         }
       }
     });

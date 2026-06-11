@@ -1,0 +1,65 @@
+From dc41fbf1c607b09f2de731644312279a45d99976 Mon Sep 17 00:00:00 2001
+From: Michael LIAO <michael.liao1@huawei.com>
+Date: Thu, 4 Jun 2026 15:30:04 -0400
+Subject: [PATCH] [triton] Add `super-block-factor` attribute
+
+---
+ include/triton/Conversion/TritonToTritonGPU/Passes.td      | 7 +++++--
+ include/triton/Dialect/TritonGPU/IR/Dialect.h              | 3 +++
+ lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp | 3 ++-
+ 3 files changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/include/triton/Conversion/TritonToTritonGPU/Passes.td b/include/triton/Conversion/TritonToTritonGPU/Passes.td
+index 5a183ef463..e8d9bd0bce 100644
+--- a/include/triton/Conversion/TritonToTritonGPU/Passes.td
++++ b/include/triton/Conversion/TritonToTritonGPU/Passes.td
+@@ -39,11 +39,14 @@ def ConvertTritonToTritonGPU: Pass<"convert-triton-to-tritongpu", "mlir::ModuleO
+              "bool", /*default*/"false",
+              "enable trivial source rematerialization">,
+        //  add some guards for our own simt optimization
+-       #ifdef BSPUB_DAVINCI_BISHENGIR
++#ifdef BSPUB_DAVINCI_BISHENGIR
+        Option<"shared", "shared-memory-size",
+              "int32_t", /*default*/"122880",
+              "shared memory size for simt">,
+-       #endif
++       Option<"superBlockFactor", "super-block-factor",
++              "uint32_t", /*default*/"0",
++              "super blocking factor">,
++#endif
+    ];
+ }
+ 
+diff --git a/include/triton/Dialect/TritonGPU/IR/Dialect.h b/include/triton/Dialect/TritonGPU/IR/Dialect.h
+index bd2bd5ccb7..88dbf01298 100644
+--- a/include/triton/Dialect/TritonGPU/IR/Dialect.h
++++ b/include/triton/Dialect/TritonGPU/IR/Dialect.h
+@@ -45,6 +45,9 @@ constexpr static char AttrNumWarpsName[] = "ttg.num-warps";
+ constexpr static char AttrNumCTAsName[] = "ttg.num-ctas";
+ constexpr static char AttrTargetName[] = "ttg.target";
+ constexpr static char AttrNumThreadsPerWarp[] = "ttg.threads-per-warp";
++#if defined(BSPUB_DAVINCI_BISHENGIR)
++constexpr static char AttrSuperBlockFactor[] = "ttg.super-block-factor";
++#endif
+ 
+ // Find the contextual number of warps on which this operation is executed.
+ int lookupNumWarps(Operation *op);
+diff --git a/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp b/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
+index 1e757609aa..3970a6b90a 100644
+--- a/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
++++ b/lib/Conversion/TritonToTritonGPU/TritonToTritonGPUPass.cpp
+@@ -855,9 +855,10 @@ public:
+     mod->setAttr(AttrNumThreadsPerWarp, b.getI32IntegerAttr(threadsPerWarp));
+     mod->setAttr(AttrNumCTAsName, b.getI32IntegerAttr(numCTAs));
+     mod->setAttr(AttrTargetName, b.getStringAttr(this->target.getValue()));
+-#if BSPUB_DAVINCI_BISHENGIR
++#if defined(BSPUB_DAVINCI_BISHENGIR)
+     constexpr static char AttrShared[] = "ttg.shared";
+     mod->setAttr(AttrShared, b.getI32IntegerAttr(shared));
++    mod->setAttr(AttrSuperBlockFactor, b.getUI32IntegerAttr(superBlockFactor));
+ #endif
+     if (failed(applyPartialConversion(mod, target, std::move(patterns))))
+       return signalPassFailure();
+-- 
+2.34.1
+

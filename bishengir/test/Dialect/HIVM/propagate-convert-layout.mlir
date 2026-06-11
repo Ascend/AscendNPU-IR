@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hivm-propagate-convert-layout="allow-agnostic-ops=true enable-elementwise-propagate=true" --canonicalize %s | FileCheck %s
+// RUN: bishengir-opt --hivm-propagate-convert-layout="allow-agnostic-ops=true enable-elementwise-propagate=true" --canonicalize -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL:   func.func @propagate_up_from_for_result(
 // CHECK-SAME:                                            %[[VAL_0:.*]]: tensor<16x16xf16>,
@@ -339,4 +339,61 @@ func.func @propagate_down_from_if_yields_mmad_dependency(
     scf.yield %init_nd : tensor<64x64xf32>
   }
   return %r : tensor<64x64xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @move_convert_layout_to_source_Of_ub_to_cbuf_copy(
+// CHECK:      %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ITER_ARG:.*]] = %{{.*}}) -> (tensor<16x16xf32>)  : i32 {
+// CHECK:      %[[ALLOC:.*]] = memref.alloc() : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+// CHECK:      %[[TO_TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable :  memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+// CHECK:      %[[CONVERT_LAYOUT:.*]] = hivm.hir.convert_layout %[[ITER_ARG]] output_shape [2, 1, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, not_to_propagate_up = true, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+// CHECK:      hivm.hir.copy ins(%[[CONVERT_LAYOUT]] : tensor<2x1x16x8xf32>) outs(%[[ALLOC]] : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>) {"inserted-copy"}
+// CHECK:      %{{.*}} = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%[[TO_TENSOR]],
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @move_convert_layout_to_source_Of_ub_to_cbuf_copy(
+      %arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>},
+      %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+      %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32},
+      %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32},
+      %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32},
+      %arg5: i32, %arg6: i32, %arg7: i32) {
+    %c0_i32 = arith.constant 0 : i32
+    %c16_i32 = arith.constant 16 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+
+    %0 = arith.muli %arg5, %arg6 : i32
+    %1 = arith.muli %0, %arg7 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    %alloc = memref.alloc() : memref<16x16xf32>
+    hivm.hir.load ins(%reinterpret_cast : memref<16x16xf32, strided<[16, 1]>>) outs(%alloc : memref<16x16xf32>) eviction_policy = <EvictFirst> core_type = <VECTOR>
+    %2 = bufferization.to_tensor %alloc restrict writable : memref<16x16xf32>
+    %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    %alloc_1 = memref.alloc() : memref<16x16xf32>
+    hivm.hir.load ins(%reinterpret_cast_0 : memref<16x16xf32, strided<[16, 1]>>) outs(%alloc_1 : memref<16x16xf32>) eviction_policy = <EvictFirst> core_type = <CUBE>
+    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<16x16xf32>
+    %4 = scf.for %arg8 = %c0_i32 to %c16_i32 step %c1_i32 iter_args(%arg9 = %2) -> (tensor<16x16xf32>)  : i32 {
+      %alloc_3 = memref.alloc() : memref<16x16xf32, #hivm.address_space<cbuf>>
+      %memspacecast = memref.memory_space_cast %alloc_3 : memref<16x16xf32, #hivm.address_space<cbuf>> to memref<16x16xf32>
+      %5 = bufferization.to_tensor %memspacecast restrict writable : memref<16x16xf32>
+      hivm.hir.copy ins(%arg9 : tensor<16x16xf32>) outs(%memspacecast : memref<16x16xf32>) {"inserted-copy"}
+      %6 = tensor.empty() : tensor<16x16xf32>
+      %7 = hivm.hir.convert_layout %5 output_shape [2, 1, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+      %8 = hivm.hir.convert_layout %3 output_shape [2, 1, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+      %9 = hivm.hir.convert_layout %6 output_shape [1, 1, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<1x1x16x16xf32>
+      %10 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%7, %8, %true, %c16, %c16, %c16 : tensor<2x1x16x8xf32>, tensor<2x1x16x8xf32>, i1, index, index, index) outs(%9 : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+      %11 = hivm.hir.convert_layout %10 output_shape [16, 16] {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>} : (tensor<1x1x16x16xf32>) -> tensor<16x16xf32>
+      %alloc_4 = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+      %memspacecast_5 = memref.memory_space_cast %alloc_4 : memref<16x16xf32, #hivm.address_space<ub>> to memref<16x16xf32>
+      %12 = bufferization.to_tensor %memspacecast_5 restrict writable : memref<16x16xf32>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, do_not_move_out_of_scffor = true} ins(%11 : tensor<16x16xf32>) outs(%alloc_4 : memref<16x16xf32, #hivm.address_space<ub>>)
+      scf.yield %12 :tensor<16x16xf32>
+    } {fixpipe_for_mmad_result_already_inserted = true}
+    %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16, 16], strides: [16, 1] : memref<?xf32> to memref<16x16xf32, strided<[16, 1]>>
+    return
+  }
 }

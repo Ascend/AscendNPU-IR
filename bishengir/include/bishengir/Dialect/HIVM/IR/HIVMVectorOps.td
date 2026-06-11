@@ -653,8 +653,8 @@ def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
 
 def VMulOp : HIVM_ElementwiseBinaryOp<"vmul",
     [SameOperandsElementType, StaticMaxRankTrait<3>,
-OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
-      CommutativeOpTrait, VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0, 1], [I8, I16, I32, F16, F32, I64]>,
+     CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
@@ -1070,12 +1070,12 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
 
 def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     [StaticMaxRankTrait<1>,
-OperElemTypeConstraints<[0, 1],
-        [I1, F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32,
-        I64, UI64, F8E4M3FN, F8E5M2]>,
-      OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
-      VectorOnlyTrait<0>,
-      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+     OperElemTypeConstraints<[0, 1],
+       [I1, F16, BF16, F32, I8, UI8, I16, UI16, I32, UI32, 
+       I64, UI64, F8E4M3FN, F8E5M2]>,
+     OperElemTypeConstraints<[/*dstIdx=*/2], [I1, I8]>,
+     VectorOnlyTrait<0>,
+     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
     ]> {
   let summary = "Elementwise Binary Vector Comparison Op";
   let description = baseClassDescription # [{
@@ -1759,7 +1759,7 @@ def VGatherOp : HIVM_VectorOp<"vgather",
     [HIVMOpSameOperandsAndResultRank,
      StaticMaxRankTrait<1>,
      OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32, F8E4M3FN, F8E5M2]>,
-     OperElemTypeConstraints<[1], [I32]>,
+     OperElemTypeConstraints<[1], [I16, I32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,

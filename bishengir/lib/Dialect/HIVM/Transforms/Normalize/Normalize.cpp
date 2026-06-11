@@ -47,12 +47,14 @@ struct NormalizeHIVMPass
     archisMembased = hacc::utils::isMemBasedArch(moduleOp);
     auto *context = &getContext();
     RewritePatternSet patterns(context);
+    populateNormalizeF16ToF32Patterns(patterns);
     populateNormalizeTrigPatterns(patterns, enableHighPrecision);
     populateNormalizeI8I32CmpPatterns(patterns);
     populateNormalizeModPatterns(patterns);
     populateNormalizeArithmeticPatterns(patterns);
     populateNormalizePrimaryMathPatterns(patterns);
     populateNormalizeCastingPatterns(patterns);
+    populateNormalizeGatherIndexPatterns(patterns);
     populateNormalizeComparisonCleanupPatterns(patterns);
     populateNormalizeBitwiseComparisonPatterns(patterns);
     populateNormalizePreReductionPatterns(patterns);

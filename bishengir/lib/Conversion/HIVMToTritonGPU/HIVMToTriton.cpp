@@ -12,6 +12,7 @@
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -739,6 +740,62 @@ buildMemRefTensorPointers(ConversionPatternRewriter &rewriter, Location loc,
         rewriter, loc, base, baseMemrefTy, mixedOffsets, mixedStrides, shape);
   }
 
+  if (auto subviewOp = originalValue.getDefiningOp<memref::SubViewOp>()) {
+    // Require unit strides on the subview itself
+    for (auto svStride : subviewOp.getMixedStrides()) {
+      if (!isConstantIntValue(svStride, 1))
+        return failure();
+    }
+
+    // Per-dim strides come from the SubView source: prefer the strides of
+    // an upstream ReinterpretCast (so the base pointer is the raw memref);
+    // otherwise read the strided layout from the source memref type.
+    Value source = subviewOp.getSource();
+    SmallVector<OpFoldResult> mixedStrides;
+    if (auto srcCast = source.getDefiningOp<memref::ReinterpretCastOp>()) {
+      mixedStrides = srcCast.getMixedStrides();
+      source = srcCast.getSource();
+    } else {
+      auto sourceMemrefTy = dyn_cast<MemRefType>(source.getType());
+      if (!sourceMemrefTy)
+        return failure();
+      auto layout =
+          dyn_cast<StridedLayoutAttr>(sourceMemrefTy.getLayout());
+      if (!layout)
+        return failure();
+      for (int64_t s : layout.getStrides())
+        mixedStrides.push_back(rewriter.getIndexAttr(s));
+    }
+
+    auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
+    if (!baseMemrefTy)
+      return failure();
+
+    auto subviewOffsets = subviewOp.getMixedOffsets();
+    if (subviewOffsets.size() != mixedStrides.size())
+      return failure();
+
+    // linearOffset = sum_i (subviewOffsets[i] * strides[i])
+    auto *ctx = rewriter.getContext();
+    AffineExpr expr = getAffineConstantExpr(0, ctx);
+    SmallVector<OpFoldResult> exprOperands;
+    for (size_t i = 0; i < subviewOffsets.size(); ++i) {
+      auto strideOptInt = getConstantIntValue(mixedStrides[i]);
+      if (!strideOptInt)
+        return failure();
+      expr = expr + getAffineSymbolExpr(i, ctx) * (*strideOptInt);
+      exprOperands.push_back(subviewOffsets[i]);
+    }
+    OpFoldResult linearOffset =
+        affine::makeComposedFoldedAffineApply(rewriter, loc, expr,
+                                              exprOperands);
+
+    SmallVector<OpFoldResult> mixedOffsets{linearOffset};
+    return buildReinterpretCastTensorPointers(rewriter, loc, source,
+                                              baseMemrefTy, mixedOffsets,
+                                              mixedStrides, shape);
+  }
+
   Value offsets =
       calcStridedOffsets(rewriter, loc, memrefTy, shape, getLinearOffsets());
   return buildTensorPointers(rewriter, loc, convertedValue, memrefTy, shape,
@@ -1111,6 +1168,140 @@ public:
     return success();
   }
 };
+
+// Convert hivm.hir.vreduce to tt.reduce
+// Before: %2 = hivm.hir.vreduce <sum> (%0： tensor<16x16xf32>) outs(%1: tensor<1x16xf32>) unsigned_src = false reduce_dims=[0] ->tensor<16xf32>
+// After: %2 = tt.reduce （%0）<{axis=0:i32}> ({
+//     ^bb0(%arg0:f32, %arg1:f32){
+//          %1 = arith.addf %arg0, %arg1
+//           tt.reduce.return %1} }) : (tensor<16x16xf32>) -> tensor<16xf32>
+//   %3 = tt.expand_dims ...
+struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
+    using OpRewritePattern<hivm::VReduceOp>::OpRewritePattern;
+    LogicalResult matchAndRewrite(hivm::VReduceOp op,
+                                PatternRewriter &rewriter) const final {
+        auto loc = op.getLoc();
+        Value src = op.getSrc();
+        
+        if (isa<MemRefType>(src.getType())) {
+            return op.emitOpError("memref source is not supported currently");
+        }
+        auto srcType = cast<RankedTensorType>(src.getType());
+        auto elemType = srcType.getElementType();
+        
+        auto reduceDims = op.getReduceDims();
+        if (reduceDims.empty()) {
+            return failure();
+        }
+        
+        auto arithAttr = op.getArithAttr();
+        auto reduceOp = arithAttr.getReduceOp();
+        auto dstType = cast<RankedTensorType>(op.getDstValue().getType());
+
+        Value finalResult = src;
+        SmallVector<int64_t> currentShape(srcType.getShape().begin(), srcType.getShape().end());
+        
+        // Currently, we reduce dims in order, and expand dims to match dstType, since triton::ReduceOp only supports reduction in single axis.
+        for (auto axis : reduceDims) {
+          SmallVector<int64_t> resultShape(currentShape.begin(), currentShape.end());
+          resultShape.erase(resultShape.begin() + axis);
+          RankedTensorType reduceResultType = RankedTensorType::get(resultShape, elemType);
+          
+          auto adjustedAxis = axis;
+          auto ttReduceOp = rewriter.create<triton::ReduceOp>(
+              loc,
+              reduceResultType,
+              finalResult,
+              adjustedAxis
+          );
+          
+          Region &combineRegion = ttReduceOp.getCombineOp();
+          rewriter.createBlock(&combineRegion);
+          Block &block = combineRegion.front();
+          block.addArgument(elemType, loc);
+          block.addArgument(elemType, loc);
+          
+          rewriter.setInsertionPointToEnd(&block);
+          Value arg0 = block.getArgument(0);
+          Value arg1 = block.getArgument(1);
+          Value result;
+          
+          switch (reduceOp) {
+          case hivm::ReduceOperation::sum:
+              if (isa<FloatType>(elemType)) {
+                  result = rewriter.create<arith::AddFOp>(loc, arg0, arg1);
+              } else {
+                  result = rewriter.create<arith::AddIOp>(loc, arg0, arg1);
+              }
+              break;
+          case hivm::ReduceOperation::prod:
+              if (isa<FloatType>(elemType)) {
+                  result = rewriter.create<arith::MulFOp>(loc, arg0, arg1);
+              } else {
+                  result = rewriter.create<arith::MulIOp>(loc, arg0, arg1);
+              }
+              break;
+          case hivm::ReduceOperation::max:
+              if (isa<FloatType>(elemType)) {
+                  result = rewriter.create<arith::MaximumFOp>(loc, arg0, arg1);
+              } else if (op.getUnsignedSrc()) {
+                  result = rewriter.create<arith::MaxUIOp>(loc, arg0, arg1);
+              } else {
+                  result = rewriter.create<arith::MaxSIOp>(loc, arg0, arg1);
+              }
+              break;
+          case hivm::ReduceOperation::min:
+              if (isa<FloatType>(elemType)) {
+                  result = rewriter.create<arith::MinimumFOp>(loc, arg0, arg1);
+              } else if (op.getUnsignedSrc()) {
+                  result = rewriter.create<arith::MinUIOp>(loc, arg0, arg1);
+              } else {
+                  result = rewriter.create<arith::MinSIOp>(loc, arg0, arg1);
+              }
+              break;
+          case hivm::ReduceOperation::andi:
+              result = rewriter.create<arith::AndIOp>(loc, arg0, arg1);
+              break;
+          case hivm::ReduceOperation::ori:
+              result = rewriter.create<arith::OrIOp>(loc, arg0, arg1);
+              break;
+          case hivm::ReduceOperation::xori:
+              result = rewriter.create<arith::XOrIOp>(loc, arg0, arg1);
+              break;
+          case hivm::ReduceOperation::any:
+              result = rewriter.create<arith::OrIOp>(loc, arg0, arg1);
+              break;
+          case hivm::ReduceOperation::all:
+              result = rewriter.create<arith::AndIOp>(loc, arg0, arg1);
+              break;
+          default:
+              return failure();
+          }
+          
+          rewriter.create<triton::ReduceReturnOp>(loc, result);
+          rewriter.setInsertionPointAfter(ttReduceOp);
+          
+          Value reduceResult = ttReduceOp->getResult(0);
+          finalResult = reduceResult;
+          currentShape = resultShape;
+          
+          // triton::ReduceOp removes the reduced dimension, but HIVM keeps it as size 1
+          auto currentResultType = cast<RankedTensorType>(reduceResult.getType());
+          if (currentResultType.getRank() != dstType.getRank()) {
+              // Insert dimension of size 1 at the reduced axis position
+              SmallVector<int64_t> expandShape(currentShape.begin(), currentShape.end());
+              expandShape.insert(expandShape.begin() + axis, 1);
+              RankedTensorType finalType = RankedTensorType::get(expandShape, elemType);
+              finalResult = rewriter.create<triton::ExpandDimsOp>(loc, finalType, reduceResult, axis);
+              currentShape = expandShape;
+          }
+        }
+        
+        rewriter.replaceOp(op, finalResult);
+        return success();
+    }
+};
+
 } // namespace
 
 void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
@@ -1118,5 +1309,6 @@ void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
   patterns
       .add<GetBlockIdxOpPattern, GatherLoadOpPattern, ScatterStoreOpPattern,
            HIVMLoadOpPattern, HIVMStoreOpPattern, HIVMLoalLoadOpPattern,
-           HIVMLoalStoreOpPattern, VArangeOpPattern, VBrcOpPattern>(context);
+           HIVMLoalStoreOpPattern, VArangeOpPattern, VBrcOpPattern,
+           HIVMToTTReduceOp>(context);
 }

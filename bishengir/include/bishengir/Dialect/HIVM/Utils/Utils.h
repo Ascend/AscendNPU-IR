@@ -118,8 +118,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
 /// Get the root MemRef AllocOp for the input operand, return failure if there
 /// is unsupported Ops on the search path or if the defining op is not a MemRef
 /// AllocOp.
-FailureOr<memref::AllocOp> getMemRefAlloc(Value operand,
-                                          bool emitError = true);
+FailureOr<memref::AllocOp> getMemRefAlloc(Value operand);
 
 /// Collect all root memref allocs for the input operand.
 /// Unlike getMemRefAlloc which returns failure for arith::SelectOp, this

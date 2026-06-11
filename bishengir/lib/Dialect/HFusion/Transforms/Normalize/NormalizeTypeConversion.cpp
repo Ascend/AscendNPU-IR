@@ -26,8 +26,27 @@ namespace mlir::hfusion {
 template <typename ElemType, typename OpType>
 struct HFusionNormalizeToTargetTypeTraits;
 
-template <typename ElemType, typename OpType>
-struct NormalizeToTargetType;
+template <typename OpType>
+struct HFusionNormalizeF16ToF32Traits;
+
+struct HFusionNormalizeReduceBoolToLogicalTraits;
+
+struct HFusionReduceI1AddToSelectMaxCompareTraits;
+
+struct HFusionReduceI1AndOrToI16Traits;
+
+struct HFusionReduceNormalize910_95Traits;
+
+template <typename CumOpType>
+struct HFusionNormalizeCumOpTraitsBase;
+
+template <typename CumOpType>
+struct HFusionNormalizeCumOpF16ToF32Traits;
+
+template <typename CumOpType>
+struct HFusionNormalizeCumOpI8ToTargetTraits;
+
+struct HFusionNormalizeGatherIndexToI32Traits;
 
 template <typename FuncType, typename FuncAttrType, typename OpType>
 NamedAttribute getOpFunAttr(OpType op, PatternRewriter &rewriter) {
@@ -348,149 +367,121 @@ private:
 };
 
 template <typename OpType>
-struct NormalizeF16ToF32Type : public OpRewritePattern<OpType> {
-public:
-  using OpRewritePattern<OpType>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(OpType op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    SmallVector<Value> inputs = op.getInputs();
-    if (!hasF16ElemType(inputs) || !shouldComputeByF32(op)) {
-      return failure();
-    }
-
-    normalizeOpF16ToF32(rewriter, op);
-    return success();
-  }
-
-private:
-  void normalizeOpF16ToF32(PatternRewriter &rewriter, OpType op) const {
-    SmallVector<Value> inputs = op.getInputs();
-    SmallVector<Value> outputs = op.getOutputs();
-
-    SmallVector<Value> newInputs = normalizeF16ToF32(rewriter, inputs);
-    SmallVector<Value> newOutputs = normalizeF16ToF32(rewriter, outputs);
-
-    SmallVector<NamedAttribute> attrs = getOpAttr(op, rewriter);
-    Operation *newOp = rewriter.create<OpType>(
-        op.getLoc(), ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
-    Value castResult =
-        castTo(rewriter, newOp->getResults()[0], rewriter.getF16Type());
-    rewriter.replaceAllUsesWith(op->getResults()[0], castResult);
-  }
-
-  bool shouldComputeByF32(OpType op) const {
-    // cast f32 to compute for high precision
-    // linalg unaryFn op set
-    if (std::is_same_v<OpType, linalg::ElemwiseUnaryOp>) {
+struct HFusionNormalizeF16ToF32Traits : public NormalizeTraitsBase {
+  static bool shouldNormalize(OpType op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
+    if constexpr (std::is_same_v<OpType, linalg::ElemwiseUnaryOp>) {
       static DenseSet<linalg::UnaryFn> linalgUnarySet = {linalg::UnaryFn::log};
-      if (auto unaryOp = cast<linalg::ElemwiseUnaryOp>(op)) {
-        linalg::UnaryFn unaryFn = unaryOp.getFun();
-        if (linalgUnarySet.contains(unaryFn)) {
-          return true;
-        }
-      }
+      linalg::UnaryFn unaryFn = op.getFun();
+      if (linalgUnarySet.contains(unaryFn))
+        return true;
     }
-
-    // hfusion binaryFn op set
-    if (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
+    if constexpr (std::is_same_v<OpType, hfusion::ElemwiseBinaryOp>) {
       static DenseSet<hfusion::BinaryFn> hfusionBinarySet = {
           hfusion::BinaryFn::powf};
-      if (auto binaryOp = cast<hfusion::ElemwiseBinaryOp>(op)) {
-        hfusion::BinaryFn binaryFn = binaryOp.getFun();
-        if (hfusionBinarySet.contains(binaryFn)) {
-          return true;
-        }
-      }
+      hfusion::BinaryFn binaryFn = op.getFun();
+      if (hfusionBinarySet.contains(binaryFn))
+        return true;
     }
-
-    // hfusion unaryFn op set
-    if (std::is_same_v<OpType, hfusion::ElemwiseUnaryOp>) {
+    if constexpr (std::is_same_v<OpType, hfusion::ElemwiseUnaryOp>) {
       static DenseSet<hfusion::UnaryFn> hfusionUnarySet = {
           hfusion::UnaryFn::rsqrt};
-      if (auto unaryOp = cast<hfusion::ElemwiseUnaryOp>(op)) {
-        hfusion::UnaryFn unaryFn = unaryOp.getFun();
-        if (hfusionUnarySet.contains(unaryFn)) {
-          return true;
-        }
-      }
+      hfusion::UnaryFn unaryFn = op.getFun();
+      if (hfusionUnarySet.contains(unaryFn))
+        return true;
     }
     return false;
+  }
+
+  static Value rebuildOpInF32(PatternRewriter &rewriter, Location loc, OpType op,
+                              ArrayRef<Value> newInputs,
+                              ArrayRef<Value> newInits) {
+    SmallVector<NamedAttribute> attrs = getOpAttr(op, rewriter);
+    auto newOp = rewriter.create<OpType>(loc, ValueRange{newInputs},
+                                         ValueRange{newInits}, attrs);
+    return newOp->getResult(0);
   }
 };
 
 template <typename CumOpType>
-struct NormalizeCumOpF16ToF32Type : public OpRewritePattern<CumOpType> {
-public:
-  using OpRewritePattern<CumOpType>::OpRewritePattern;
+struct HFusionNormalizeCumOpTraitsBase : public NormalizeTraitsBase {
+  static bool shouldNormalize(CumOpType op) {
+    return std::is_same_v<CumOpType, hfusion::CumsumOp> ||
+           std::is_same_v<CumOpType, hfusion::CumprodOp>;
+  }
 
-  LogicalResult matchAndRewrite(CumOpType op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = {op.getInput()};
-    SmallVector<Value> outputs = {op.getOutput()};
-    if ((!hasF16ElemType(inputs) && !hasF16ElemType(outputs)) ||
-        !(std::is_same_v<CumOpType, hfusion::CumsumOp> ||
-          std::is_same_v<CumOpType, hfusion::CumprodOp>)) {
-      return failure();
-    }
-    auto newInputs = normalizeF16ToF32(rewriter, inputs);
-    auto newOutputs = normalizeF16ToF32(rewriter, outputs);
-    Operation *newOp = rewriter.create<CumOpType>(
-        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
-        op.getReverse());
-    Value castResult =
-        castTo(rewriter, newOp->getResults()[0], rewriter.getF16Type());
-    rewriter.replaceAllUsesWith(op->getResults()[0], castResult);
-    return success();
+  static Value getInput(CumOpType op) { return op.getInput(); }
+  static Value getOutput(CumOpType op) { return op.getOutput(); }
+
+  static Value rebuildOpInF32(PatternRewriter &rewriter, Location loc,
+                              CumOpType op, Value newInput, Value newOutput) {
+    auto newOp = rewriter.create<CumOpType>(loc, TypeRange{newOutput},
+                                             newInput, op.getCumDims(),
+                                             op.getReverse());
+    return newOp->getResult(0);
   }
 };
 
-template <>
-struct NormalizeToTargetType<bool, linalg::ReduceOp>
-    : public OpRewritePattern<linalg::ReduceOp> {
-public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
+template <typename CumOpType>
+struct HFusionNormalizeCumOpF16ToF32Traits
+    : public HFusionNormalizeCumOpTraitsBase<CumOpType> {};
 
-  LogicalResult matchAndRewrite(linalg::ReduceOp op,
-                                PatternRewriter &rewriter) const override {
+template <typename CumOpType>
+struct HFusionNormalizeCumOpI8ToTargetTraits
+    : public HFusionNormalizeCumOpTraitsBase<CumOpType> {};
+
+struct HFusionNormalizeReduceBoolToLogicalTraits : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::ReduceOp op) {
     if (!op.hasPureTensorSemantics())
-      return failure();
-
+      return false;
     SmallVector<Value> inputs = op.getInputs();
     SmallVector<Value> inits = op.getInits();
     if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
-      return failure();
+      return false;
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp>(bodyOp)) {
-      // As it is a bool, `add` and `max` can be converted into `or`.
-      replaceBinary<arith::OrIOp>(bodyOp, rewriter);
-      return success();
-    }
-    if (isa<arith::MulIOp, arith::MinUIOp, arith::MinSIOp>(bodyOp)) {
-      // As it is a bool, `mul` and `min` can be converted into `and`.
-      replaceBinary<arith::AndIOp>(bodyOp, rewriter);
-      return success();
-    }
-    return failure();
+    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp,
+            arith::MulIOp, arith::MinUIOp, arith::MinSIOp>(bodyOp))
+      return true;
+    return false;
   }
 
-private:
-  template <typename targetType>
-  void replaceBinary(Operation *op, PatternRewriter &rewriter) const {
-    if (op == nullptr) {
-      return;
-    }
+  static std::optional<mlir::ReduceBoolLogicalKind>
+  getLogicalReduceKind(linalg::ReduceOp op) {
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (isa<arith::AddIOp, arith::MaxUIOp, arith::MaxSIOp>(bodyOp))
+      return mlir::ReduceBoolLogicalKind::Or;
+    if (isa<arith::MulIOp, arith::MinUIOp, arith::MinSIOp>(bodyOp))
+      return mlir::ReduceBoolLogicalKind::And;
+    return std::nullopt;
+  }
+
+  static LogicalResult rewriteToLogicalReduce(PatternRewriter &rewriter,
+                                              linalg::ReduceOp op,
+                                              mlir::ReduceBoolLogicalKind kind) {
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (bodyOp == nullptr)
+      return failure();
     PatternRewriter::InsertionGuard guard(rewriter);
-    rewriter.setInsertionPointToStart(op->getBlock());
-    auto targetOp = rewriter.create<targetType>(op->getLoc(), op->getOperand(0),
-                                                 op->getOperand(1));
-    rewriter.modifyOpInPlace(op, [&]() { op->replaceAllUsesWith(targetOp); });
+    rewriter.setInsertionPointToStart(bodyOp->getBlock());
+    if (kind == mlir::ReduceBoolLogicalKind::Or) {
+      auto newOp = rewriter.create<arith::OrIOp>(bodyOp->getLoc(),
+                                                  bodyOp->getOperand(0),
+                                                  bodyOp->getOperand(1));
+      rewriter.modifyOpInPlace(bodyOp, [&]() { bodyOp->replaceAllUsesWith(newOp); });
+    } else {
+      auto newOp = rewriter.create<arith::AndIOp>(bodyOp->getLoc(),
+                                                   bodyOp->getOperand(0),
+                                                   bodyOp->getOperand(1));
+      rewriter.modifyOpInPlace(bodyOp, [&]() { bodyOp->replaceAllUsesWith(newOp); });
+    }
+    return success();
   }
 };
 
@@ -523,87 +514,94 @@ private:
 ///        ins(%reduced, %c0_i16 : tensor<i16>, i16) outs(%31 : tensor<1xi1>) ->
 ///        tensor<1xi1>
 /// ```
-struct ReduceI1AddToSelectMaxCompare
-    : public OpRewritePattern<linalg::ReduceOp> {
-public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ReduceOp reduceOp,
-                                PatternRewriter &rewriter) const override {
+struct HFusionReduceI1AddToSelectMaxCompareTraits : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::ReduceOp reduceOp) {
     if (!reduceOp.hasPureTensorSemantics())
-      return failure();
-
+      return false;
+    if (!hacc::utils::isAscend950(reduceOp->getParentOfType<ModuleOp>()))
+      return false;
     SmallVector<Value> inputs = reduceOp.getInputs();
     SmallVector<Value> inits = reduceOp.getInits();
     if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
-      return failure();
+      return false;
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
     if (!isa<arith::AddIOp>(bodyOp))
-      return failure();
+      return false;
     auto dimensions = reduceOp.getDimensions();
     if (dimensions.size() != 1 || dimensions[0] != 0)
-      return failure();
-    Value input = reduceOp.getInputs()[0];
-    Value init = reduceOp.getInits()[0];
-
-    auto inputType = mlir::dyn_cast<RankedTensorType>(input.getType());
-    auto initType = mlir::dyn_cast<RankedTensorType>(init.getType());
+      return false;
+    auto inputType = dyn_cast<RankedTensorType>(inputs[0].getType());
+    auto initType = dyn_cast<RankedTensorType>(inits[0].getType());
     if (!inputType || !initType)
-      return failure();
+      return false;
     if (!inputType.getElementType().isInteger(1) ||
         !initType.getElementType().isInteger(1))
-      return failure();
-
+      return false;
     if (initType.getRank() != 0)
-      return failure();
-    Location loc = reduceOp.getLoc();
-    MLIRContext *ctx = rewriter.getContext();
+      return false;
+    return true;
+  }
 
-    auto shape = inputType.getShape();
-    Type i16 = rewriter.getI16Type();
-    auto tensorI16Type = RankedTensorType::get(shape, i16);
-    auto oneAttr =
-        DenseElementsAttr::get(tensorI16Type, rewriter.getI16IntegerAttr(1));
-    auto zeroAttr =
-        DenseElementsAttr::get(tensorI16Type, rewriter.getI16IntegerAttr(0));
-    Value cstOneTensor =
-        rewriter.create<arith::ConstantOp>(loc, tensorI16Type, oneAttr);
-    Value cstZeroTensor =
-        rewriter.create<arith::ConstantOp>(loc, tensorI16Type, zeroAttr);
-    Value selectOut = rewriter.create<tensor::EmptyOp>(loc, shape, i16);
+  static Value getInput(linalg::ReduceOp op) { return op.getInputs()[0]; }
+
+  static Value createPredicateTensor(PatternRewriter &rewriter, Location loc,
+                                     Value likeValue, Type elemType,
+                                     int64_t fillValue) {
+    auto shapedType = dyn_cast<RankedTensorType>(likeValue.getType());
+    auto targetType = RankedTensorType::get(shapedType.getShape(), elemType);
+    auto attr = DenseElementsAttr::get(targetType,
+                                       rewriter.getI16IntegerAttr(fillValue));
+    return rewriter.create<arith::ConstantOp>(loc, targetType, attr);
+  }
+
+  static Value createSelectOp(PatternRewriter &rewriter, Location loc,
+                              Value cond, Value trueVal, Value falseVal,
+                              Value output) {
     auto selectResult = rewriter.create<hfusion::SelectOp>(
-        loc, tensorI16Type, ValueRange{input, cstOneTensor, cstZeroTensor},
-        ValueRange{selectOut});
-    auto scalarI16Tensor = RankedTensorType::get({}, i16);
+        loc, output.getType(), ValueRange{cond, trueVal, falseVal},
+        ValueRange{output});
+    return selectResult.getResult(0);
+  }
+
+  static Value createReduceInit(PatternRewriter &rewriter, Location loc,
+                                linalg::ReduceOp op, Type elemType) {
+    Value cst0 = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getIntegerAttr(elemType, 0));
+    auto scalarTensorType = RankedTensorType::get({}, elemType);
+    auto allocOp = rewriter.create<bufferization::AllocTensorOp>(
+        loc, scalarTensorType, ValueRange{});
+    auto fillOp = rewriter.create<linalg::FillOp>(loc, cst0, allocOp.getResult());
+    return fillOp.getResult(0);
+  }
+
+  static Value createMaxReduce(PatternRewriter &rewriter, Location loc,
+                               linalg::ReduceOp op, Value input, Value init) {
+    auto dimensions = op.getDimensions();
+    auto newReduce = rewriter.create<linalg::ReduceOp>(
+        loc, ValueRange{input}, ValueRange{init}, dimensions,
+        [&](OpBuilder &builder, Location loc, ValueRange operands) {
+          Value max = builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
+          builder.create<linalg::YieldOp>(loc, ValueRange{max});
+        });
+    return newReduce.getResult(0);
+  }
+
+  static Value createCmpNeZero(PatternRewriter &rewriter, Location loc,
+                               linalg::ReduceOp, Value reduced, Type elemType) {
+    MLIRContext *ctx = rewriter.getContext();
+    auto scalarI16Tensor = RankedTensorType::get({}, elemType);
     auto zeroScalarAttr =
         DenseElementsAttr::get(scalarI16Tensor, rewriter.getI16IntegerAttr(0));
     Value zeroScalar = rewriter.create<arith::ConstantOp>(loc, scalarI16Tensor,
-                                                           zeroScalarAttr);
-
-    Value cst0 = rewriter.create<arith::ConstantOp>(
-        loc, i16, rewriter.getI16IntegerAttr(0));
-    auto allocOp = rewriter.create<bufferization::AllocTensorOp>(
-        loc, scalarI16Tensor, ValueRange{});
-    Value allocTensor = allocOp.getResult();
-    auto fillOp = rewriter.create<linalg::FillOp>(loc, cst0, allocTensor);
-    Value fillResult = fillOp.getResult(0);
-
-    auto newReduce = rewriter.create<linalg::ReduceOp>(
-        loc, ValueRange{selectResult.getResult(0)}, ValueRange{fillResult},
-        dimensions, [&](OpBuilder &builder, Location loc, ValueRange operands) {
-          Value max = {
-              builder.create<arith::MaxSIOp>(loc, operands[0], operands[1])};
-          builder.create<linalg::YieldOp>(loc, ValueRange{max});
-        });
-    Value reducedTensor = newReduce.getResult(0);
+                                                          zeroScalarAttr);
     Type scalarI1Tensor = RankedTensorType::get({1}, rewriter.getI1Type());
     Value compareOut = rewriter.create<tensor::EmptyOp>(
         loc, ArrayRef<int64_t>{1}, rewriter.getI1Type());
     auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hfusion::CompareFn::vne);
     auto compareResult = rewriter.create<hfusion::CompareOp>(
-        loc, scalarI1Tensor, ValueRange{reducedTensor, zeroScalar},
+        loc, scalarI1Tensor, ValueRange{reduced, zeroScalar},
         ValueRange{compareOut}, cmpFnAttr);
 
     Value zeroIdx = rewriter.create<arith::ConstantIndexOp>(loc, 0);
@@ -611,10 +609,13 @@ public:
         loc, compareResult.getResult(0), zeroIdx);
     Type extractedScalarI1Tensor =
         RankedTensorType::get({}, rewriter.getI1Type());
-    Value scalarResult = rewriter.create<tensor::FromElementsOp>(
+    return rewriter.create<tensor::FromElementsOp>(
         loc, extractedScalarI1Tensor, extracted);
-    rewriter.replaceOp(reduceOp, scalarResult);
-    return success();
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, linalg::ReduceOp op,
+                             Value result) {
+    rewriter.replaceOp(op, result);
   }
 };
 
@@ -653,70 +654,68 @@ static Value createScalarFillOp(PatternRewriter &rewriter, Location loc,
 /// Note: The i1<->i16 cast operations are not directly supported by hardware,
 /// but other normalize patterns will optimize them into hardware-compliant
 /// instructions (e.g., NormalizeCastLoweringOp pattern).
-struct ReduceI1AndOrToI16
-    : public OpRewritePattern<linalg::ReduceOp> {
-public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ReduceOp reduceOp,
-                                PatternRewriter &rewriter) const override {
+struct HFusionReduceI1AndOrToI16Traits : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::ReduceOp reduceOp) {
     if (!reduceOp.hasPureTensorSemantics())
-      return failure();
-
+      return false;
+    if (!hacc::utils::isRegBasedArch(reduceOp->getParentOfType<ModuleOp>()))
+      return false;
     SmallVector<Value> inputs = reduceOp.getInputs();
     SmallVector<Value> inits = reduceOp.getInits();
     if (!hasI1ElemType(inputs) && !hasI1ElemType(inits))
-      return failure();
-
+      return false;
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    return isa<arith::AndIOp>(bodyOp) || isa<arith::OrIOp>(bodyOp);
+  }
 
-    bool isAndOp = isa<arith::AndIOp>(bodyOp);
-    bool isOrOp = isa<arith::OrIOp>(bodyOp);
-    if (!isAndOp && !isOrOp)
-      return failure();
+  static Value getInput(linalg::ReduceOp op) { return op.getInputs()[0]; }
 
-    Value input = reduceOp.getInputs()[0];
-    Value init = reduceOp.getInits()[0];
+  static Value castInputToI16(PatternRewriter &rewriter, Location loc,
+                              Value input, Type elemType) {
+    return castTo(rewriter, input, elemType, hfusion::RoundMode::RINT);
+  }
 
-    auto inputType = mlir::dyn_cast<RankedTensorType>(input.getType());
-    auto initType = mlir::dyn_cast<RankedTensorType>(init.getType());
-    if (!inputType || !initType)
-      return failure();
-    if (!inputType.getElementType().isInteger(1) ||
-        !initType.getElementType().isInteger(1))
-      return failure();
+  static bool isAndReduce(linalg::ReduceOp reduceOp) {
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    return isa<arith::AndIOp>(bodyOp);
+  }
 
-    Location loc = reduceOp.getLoc();
-    Type i16Type = rewriter.getI16Type();
+  static Value createReduceInit(PatternRewriter &rewriter, Location loc,
+                                linalg::ReduceOp op, Type elemType,
+                                int64_t initValue) {
+    return createScalarFillOp(rewriter, loc, elemType, initValue);
+  }
 
-    Value inputI16 = castTo(rewriter, input, i16Type, hfusion::RoundMode::RINT);
-
-    int16_t initValue = isAndOp ? 1 : 0;
-    Value fillResult = createScalarFillOp(rewriter, loc, i16Type, initValue);
-
-    auto dimensions = reduceOp.getDimensions();
+  static Value createReducedOp(PatternRewriter &rewriter, Location loc,
+                               linalg::ReduceOp op, Value input, Value init,
+                               bool isAndReduce) {
+    auto dimensions = op.getDimensions();
     auto newReduce = rewriter.create<linalg::ReduceOp>(
-        loc, ValueRange{inputI16}, ValueRange{fillResult}, dimensions,
+        loc, ValueRange{input}, ValueRange{init}, dimensions,
         [&](OpBuilder &builder, Location loc, ValueRange operands) {
           Value result;
-          if (isAndOp) {
-            result =
-                builder.create<arith::MinSIOp>(loc, operands[0], operands[1]);
+          if (isAndReduce) {
+            result = builder.create<arith::MinSIOp>(loc, operands[0], operands[1]);
           } else {
-            result =
-                builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
+            result = builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
           }
           builder.create<linalg::YieldOp>(loc, ValueRange{result});
         });
+    return newReduce.getResult(0);
+  }
 
-    Value reducedI16 = newReduce.getResult(0);
-    Value resultI1 = castTo(rewriter, reducedI16, rewriter.getI1Type(),
-                            hfusion::RoundMode::RINT);
-    Value oldResult = reduceOp.getResult(0);
-    rewriter.replaceAllUsesWith(oldResult, resultI1);
-    return success();
+  static Value castResultToI1(PatternRewriter &rewriter, Location loc,
+                              Value result) {
+    return castTo(rewriter, result, rewriter.getI1Type(), hfusion::RoundMode::RINT);
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, linalg::ReduceOp op,
+                             Value result) {
+    rewriter.replaceAllUsesWith(op.getResult(0), result);
   }
 };
 
@@ -909,97 +908,79 @@ private:
   }
 };
 
-struct ReduceNormalize910_95 : public OpRewritePattern<linalg::ReduceOp> {
-public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(linalg::ReduceOp op,
-                                PatternRewriter &rewriter) const override {
-    auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
-    bool archIs950 = hacc::utils::isAscend950(moduleOp);
-    if (!archIs950) {
-      return failure();
-    }
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-    // do not cast xor example
+struct HFusionReduceNormalize910_95Traits : public NormalizeTraitsBase {
+  static bool shouldNormalize(linalg::ReduceOp op) {
+    if (!hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>()) ||
+        !hacc::utils::isAscend950(op->getParentOfType<ModuleOp>()))
+      return false;
+    if (!op.hasPureTensorSemantics())
+      return false;
     auto &region = op.getRegion();
     if (llvm::any_of(region.getOps(),
-                     [](Operation &op) { return isa<arith::XOrIOp>(&op); })) {
-      return failure();
-    }
-    // do not cast reduce_with_index
-    if (op->hasAttr("reduce_mode")) {
-      return failure();
-    }
+                     [](Operation &innerOp) { return isa<arith::XOrIOp>(&innerOp); }))
+      return false;
+    if (op->hasAttr("reduce_mode"))
+      return false;
     SmallVector<Value> inputs = op.getInputs();
     SmallVector<Value> inits = op.getInits();
-    if (!hasI8ElemType(inputs) && !hasI8ElemType(inits)) {
-      return failure();
-    }
-    MLIRContext *ctx = rewriter.getContext();
-    Type i16Type = IntegerType::get(ctx, 16);
+    if (!hasI8ElemType(inputs) && !hasI8ElemType(inits))
+      return false;
+    return true;
+  }
 
+  static CastSignKind getCastSignKind(linalg::ReduceOp op) {
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp))
+      return CastSignKind::Unsigned;
+    return CastSignKind::Signed;
+  }
 
-    bool isInputUnsigned = false;
-    if (isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp)) {
-      isInputUnsigned = true;
-    }
+  static SmallVector<Value> getInputs(linalg::ReduceOp op) {
+    return SmallVector<Value>(op.getInputs().begin(), op.getInputs().end());
+  }
 
-    SmallVector<Value> newInputs =
-        normalizeSrcToI16Type<int8_t>(rewriter, inputs, isInputUnsigned);
-    SmallVector<Value> newInits =
-        normalizeSrcToI16Type<int8_t>(rewriter, inits, isInputUnsigned);
-    Operation *newOp = createNewReduceI16Op(op, rewriter, rewriter.getI8Type(),
-                                            i16Type, newInputs, newInits);
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
+  static SmallVector<Value> getOutputs(linalg::ReduceOp op) {
+    return SmallVector<Value>(op.getInits().begin(), op.getInits().end());
+  }
+
+  static Value createI8ToI16Cast(PatternRewriter &rewriter, Location loc,
+                                 Value value, CastSignKind intKind) {
+    Type dstType = rewriter.getI16Type();
+    if (intKind == CastSignKind::Unsigned)
+      return castTo(rewriter, value, dstType, TypeFn::cast_unsigned);
+    return castTo(rewriter, value, dstType);
+  }
+
+  static Operation *rebuildOpInI16(PatternRewriter &rewriter, Location loc,
+                                   linalg::ReduceOp op,
+                                   SmallVector<Value> &newInputs,
+                                   SmallVector<Value> &newOutputs) {
+    return createNewReduceI16Op(op, rewriter, rewriter.getI8Type(),
+                                rewriter.getI16Type(), newInputs, newOutputs);
+  }
+
+  static void replaceResults(PatternRewriter &rewriter, linalg::ReduceOp op,
+                             ValueRange newResults, CastSignKind) {
+    replaceI8ResultsWithTargetType(op->getResults(),
+                                   SmallVector<Value>(newResults.begin(),
+                                                      newResults.end()),
                                    rewriter);
-
-    return success();
   }
 
 private:
-  template <typename srcType>
-  SmallVector<Value> normalizeSrcToI16Type(PatternRewriter &rewriter,
-                                           const SmallVector<Value> &values,
-                                           bool isInputUnsigned) const {
-    SmallVector<Value> result;
-    result.reserve(values.size());
-    for (Value v : values) {
-      if (!isElemType<srcType>(v.getType())) {
-        result.push_back(v);
-        continue;
-      }
-      Type dstType = rewriter.getI16Type();
-      Value castResult =
-          isInputUnsigned ? castTo(rewriter, v, dstType, TypeFn::cast_unsigned)
-                          : castTo(rewriter, v, dstType);
-      result.push_back(castResult);
-    }
-    return result;
-  }
-
   static Operation *mapReduceBodyOpToI16(PatternRewriter &rewriter,
                                          Location loc, Operation *bodyOp,
                                          Type srcType, IRMapping &mapper) {
-    if (isa<linalg::YieldOp>(bodyOp)) {
+    if (isa<linalg::YieldOp>(bodyOp))
       return rewriter.clone(*bodyOp, mapper);
-    }
     // only support binary arith ops here
-    assert(bodyOp->getNumOperands() == 2 && "only support binary arith op");
-    Value oldLhs = bodyOp->getOperand(0);
-    Value oldRhs = bodyOp->getOperand(1);
-    Value newLhs = mapper.lookupOrNull(oldLhs);
-    Value newRhs = mapper.lookupOrNull(oldRhs);
-
-    if (!newLhs || !newRhs) {
+      assert(bodyOp->getNumOperands() == 2 && "only support binary arith op");
+    Value newLhs = mapper.lookupOrNull(bodyOp->getOperand(0));
+    Value newRhs = mapper.lookupOrNull(bodyOp->getOperand(1));
+    if (!newLhs || !newRhs)
       return nullptr;
-    }
-
     Type lhsType = newLhs.getType();
     Type rhsType = newRhs.getType();
     if (isa<IntegerType>(lhsType) && isa<IntegerType>(rhsType) &&
@@ -1025,25 +1006,22 @@ private:
   }
   // create the new reduction op with i16 inputs
   static Operation *createNewReduceI16Op(linalg::ReduceOp op,
-                                         PatternRewriter &rewriter,
-                                         Type srcType, Type targetType,
-                                         SmallVector<Value> &newInputs,
-                                         SmallVector<Value> &newInits) {
+                                          PatternRewriter &rewriter,
+                                          Type srcType, Type targetType,
+                                          SmallVector<Value> &newInputs,
+                                          SmallVector<Value> &newInits) {
     IRMapping mapper;
-    for (const auto &[idx, operand] : llvm::enumerate(op.getInputs())) {
+    for (const auto &[idx, operand] : llvm::enumerate(op.getInputs()))
       mapper.map(operand, newInputs[idx]);
-    }
-    for (const auto &[idx, operand] : llvm::enumerate(op.getInits())) {
+    for (const auto &[idx, operand] : llvm::enumerate(op.getInits()))
       mapper.map(operand, newInits[idx]);
-    }
 
     Operation *newOp = rewriter.cloneWithoutRegions(*op, mapper);
     for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
       ShapedType shapedType = dyn_cast_or_null<ShapedType>(res.getType());
       bool isSrcType = shapedType && isI8ElemType(shapedType);
-      if (!shapedType || !isSrcType) {
+      if (!shapedType || !isSrcType)
         continue;
-      }
       auto newShapedType = shapedType.clone(targetType);
       newOp->getResult(idx).setType(newShapedType);
     }
@@ -1234,50 +1212,20 @@ template <>
 struct HFusionNormalizeToTargetTypeTraits<int8_t, hfusion::ReduceWithIndexOp>
     : public HFusionReduceWithIndexNormalizeToTargetTypeTraits<int8_t> {};
 
-template <typename CumOpType>
-struct NormalizeCumOpI8ToTargetType : public OpRewritePattern<CumOpType> {
-public:
-  using OpRewritePattern<CumOpType>::OpRewritePattern;
+struct HFusionNormalizeGatherIndexToI32Traits : public NormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::GatherOp) { return true; }
 
-  LogicalResult matchAndRewrite(CumOpType op,
-                                PatternRewriter &rewriter) const override {
-    SmallVector<Value> inputs = op.getODSOperands(0);
-    SmallVector<Value> outputs = op.getODSResults(0);
-    if (!hasI8ElemType(inputs) && !hasI8ElemType(outputs)) {
-      return failure();
-    }
+  static Value getIndex(hfusion::GatherOp op) { return op.getIndex(); }
 
-    auto newInputs =
-        normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, inputs);
-    auto newOutputs =
-        normalizeSrcToTargetType<int8_t, Float32Type>(rewriter, outputs);
-    Operation *newOp = rewriter.create<CumOpType>(
-        op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
-        op.getReverse());
-    replaceI8ResultsWithTargetType(op->getResults(), newOp->getResults(),
-                                   rewriter);
-    return success();
+  static Value castIndexToI32(PatternRewriter &rewriter, Location loc,
+                              Value index) {
+    return hfusion::castTo(rewriter, index, rewriter.getI32Type());
   }
-};
 
-struct NormalizeGatherIndexToI32 : public OpRewritePattern<hfusion::GatherOp> {
-public:
-  using OpRewritePattern<hfusion::GatherOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::GatherOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics())
-      return failure();
-
-    Value index = op.getIndex();
-    Type indexElemType = getElementTypeOrSelf(index.getType());
-    if (!indexElemType.isInteger() || indexElemType.isInteger(32))
-      return failure();
-
-    Value castedIndex = hfusion::castTo(rewriter, index, rewriter.getI32Type());
+  static void rebuildOp(PatternRewriter &rewriter, hfusion::GatherOp op,
+                        Value newIndex) {
     rewriter.replaceOpWithNewOp<hfusion::GatherOp>(
-        op, op.getSrc(), castedIndex, op.getInit(), op.getAxis());
-    return success();
+        op, op.getSrc(), newIndex, op.getInit(), op.getAxis());
   }
 };
 
@@ -1419,93 +1367,69 @@ struct HFusionNormalizeToTargetTypeTraits<int8_t, linalg::BroadcastOp>
     : public HFusionBroadcastNormalizeToTargetTypeTraits<int8_t> {};
 
 template <>
-struct NormalizeToTargetType<bool, hfusion::SelectOp>
-    : public OpRewritePattern<hfusion::SelectOp> {
-public:
-  using OpRewritePattern<hfusion::SelectOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hfusion::SelectOp op,
-                                PatternRewriter &rewriter) const override {
-
+struct HFusionNormalizeToTargetTypeTraits<bool, hfusion::SelectOp>
+    : public NormalizeTraitsBase {
+  static bool shouldNormalize(hfusion::SelectOp op) {
     if (!op.hasPureTensorSemantics())
-      return failure();
-
+      return false;
     SmallVector<Value> inputs = op.getInputs();
     SmallVector<Value> outputs = op.getOutputs();
-    assert(inputs.size() == 3);
+    return allI1ElemType(inputs) || hasI1ElemType(outputs);
+  }
 
-    if (!allI1ElemType(inputs) && !hasI1ElemType(outputs))
-      return failure();
+  static SmallVector<Value> getInputs(hfusion::SelectOp op) {
+    return SmallVector<Value>(op.getInputs().begin(), op.getInputs().end());
+  }
 
-    Location loc = op.getLoc();
+  static SmallVector<Value> getOutputs(hfusion::SelectOp op) {
+    return SmallVector<Value>(op.getOutputs().begin(), op.getOutputs().end());
+  }
 
-    Value cond = inputs[0];
-    Value trueVal = inputs[1];
-    Value falseVal = inputs[2];
+  static Value createSelectOp(PatternRewriter &rewriter, Location loc,
+                              Value cond, Value trueVal, Value falseVal,
+                              Value output) {
+    auto selectOp = rewriter.create<hfusion::SelectOp>(
+        loc, output.getType(), ValueRange{cond, trueVal, falseVal},
+        ValueRange{output});
+    return selectOp.getResult(0);
+  }
 
-    auto trueType = mlir::dyn_cast<RankedTensorType>(trueVal.getType());
-    auto shape = trueType.getShape();
-    Type i16 = rewriter.getI16Type();
-    auto newType = RankedTensorType::get(shape, i16);
-
-    auto oneAttr =
-        DenseElementsAttr::get(newType, rewriter.getI16IntegerAttr(1));
-    auto zeroAttr =
-        DenseElementsAttr::get(newType, rewriter.getI16IntegerAttr(0));
-
-    Value oneTensor = rewriter.create<arith::ConstantOp>(loc, newType, oneAttr);
-    Value zeroTensor =
-        rewriter.create<arith::ConstantOp>(loc, newType, zeroAttr);
-
-    Value empty = rewriter.create<tensor::EmptyOp>(loc, shape, i16);
-
-    auto convertI1TensorToI16 = [&trueType, &newType, &oneTensor, &zeroTensor,
-                                 &empty, &loc, &rewriter](Value v) -> Value {
-      if (!trueType || !trueType.getElementType().isInteger(1))
-        return v;
-
-      auto select = rewriter.create<hfusion::SelectOp>(
-          loc, newType, ValueRange{v, oneTensor, zeroTensor},
-          ValueRange{empty});
-
-      return select.getResult(0);
-    };
-
-    Value newTrue = convertI1TensorToI16(trueVal);
-    Value newFalse = convertI1TensorToI16(falseVal);
-    Operation *newOp = rewriter.create<hfusion::SelectOp>(
-        loc, empty.getType(), ValueRange{cond, newTrue, newFalse},
-        ValueRange{empty});
-
-    Value selectResult = newOp->getResult(0);
-
-    auto i1Type = RankedTensorType::get(shape, rewriter.getI1Type());
-    Value compareOut =
-        rewriter.create<tensor::EmptyOp>(loc, shape, rewriter.getI1Type());
-
-    auto cmpFnAttr = hfusion::CompareFnAttr::get(rewriter.getContext(),
-                                                 hfusion::CompareFn::vne);
-
+  static Value createCmpOp(PatternRewriter &rewriter, Location loc,
+                           Value lhs, Value rhs, CompareKind kind) {
+#ifndef NDEBUG
+    if (kind != CompareKind::NE)
+      llvm_unreachable("createCmpOp only supports CompareKind::NE");
+#endif
+    MLIRContext *ctx = rewriter.getContext();
+    auto resultType = RankedTensorType::get(
+        dyn_cast<RankedTensorType>(lhs.getType()).getShape(),
+        rewriter.getI1Type());
+    Value compareOut = rewriter.create<tensor::EmptyOp>(
+        loc, dyn_cast<RankedTensorType>(lhs.getType()).getShape(),
+        rewriter.getI1Type());
+    auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hfusion::CompareFn::vne);
     auto compareOp = rewriter.create<hfusion::CompareOp>(
-        loc, i1Type, ValueRange{selectResult, zeroTensor},
-        ValueRange{compareOut}, cmpFnAttr);
-
-    rewriter.replaceOp(op, compareOp.getResult(0));
-
-    return success();
+        loc, resultType, ValueRange{lhs, rhs}, ValueRange{compareOut},
+        cmpFnAttr);
+    return compareOp.getResult(0);
   }
 };
 
 void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
-  MLIRContext *ctx = patterns.getContext();
   if (archisAscend950)
-    patterns.add<ReduceI1AddToSelectMaxCompare>(ctx);
+    addTypeConversionPatterns<mlir::ReduceI1AddToSelectMaxCompareTemplate<
+        linalg::ReduceOp, HFusionReduceI1AddToSelectMaxCompareTraits>>(patterns);
   addNormalizeToTargetPatterns<bool, hfusion::InterleaveOp,
                                linalg::BroadcastOp>(patterns);
-  patterns.add<NormalizeToTargetType<bool, linalg::ReduceOp>>(ctx);
+  addTypeConversionPatterns<mlir::NormalizeReduceBoolToLogicalTemplate<
+      linalg::ReduceOp, HFusionNormalizeReduceBoolToLogicalTraits>>(patterns);
   if (archIsRegbased) {
-    patterns.add<NormalizeToTargetType<bool, hfusion::SelectOp>>(ctx);
-    patterns.add<ReduceI1AndOrToI16>(ctx);
+    addTypeConversionPatterns<
+        mlir::NormalizeToTargetTypeI1SelectTemplate<
+            hfusion::SelectOp, HFusionNormalizeToTargetTypeTraits<bool, hfusion::SelectOp>>,
+        mlir::ReduceI1AndOrToI16Template<linalg::ReduceOp,
+                                          HFusionReduceI1AndOrToI16Traits>>(
+        patterns);
   }
   addNormalizeToTargetPatterns<bool, CompareOp, linalg::TransposeOp,
                                tensor::ConcatOp,
@@ -1513,9 +1437,9 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
 }
 
 void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
-  MLIRContext *ctx = patterns.getContext();
   if (archIsRegbased)
-    patterns.add<ReduceNormalize910_95>(ctx);
+    addTypeConversionPatterns<mlir::ReduceNormalize910_95Template<
+        linalg::ReduceOp, HFusionReduceNormalize910_95Traits>>(patterns);
   if (!archIsRegbased) {
     addNormalizeToTargetPatterns<int8_t, hfusion::ElemwiseBinaryOp,
                                  hfusion::ElemwiseUnaryOp,
@@ -1525,8 +1449,10 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
                                  hfusion::InterleaveOp,
                                  hfusion::DeinterleaveOp, hfusion::GatherOp,
                                  linalg::BroadcastOp>(patterns);
-    patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumsumOp>>(ctx);
-    patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumprodOp>>(ctx);
+    addTypeConversionPatterns<mlir::NormalizeCumOpI8ToTargetType<
+        hfusion::CumsumOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CumsumOp>>,
+        mlir::NormalizeCumOpI8ToTargetType<
+            hfusion::CumprodOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CumprodOp>>>(patterns);
   }
   if (archisAscend950) {
     addNormalizeToTargetPatterns<int8_t, linalg::ElemwiseBinaryOp>(patterns);
@@ -1536,16 +1462,19 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
 }
 
 void populateNormalizeGatherIndexPatterns(RewritePatternSet &patterns) {
-  patterns.add<NormalizeGatherIndexToI32>(patterns.getContext());
+  addTypeConversionPatterns<mlir::NormalizeGatherIndexToI32Template<
+      hfusion::GatherOp, HFusionNormalizeGatherIndexToI32Traits>>(patterns);
 }
 
 void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {
-  MLIRContext *ctx = patterns.getContext();
-  patterns.add<NormalizeF16ToF32Type<linalg::ElemwiseUnaryOp>>(ctx);
-  patterns.add<NormalizeF16ToF32Type<hfusion::ElemwiseBinaryOp>>(ctx);
-  patterns.add<NormalizeF16ToF32Type<hfusion::ElemwiseUnaryOp>>(ctx);
-  patterns.add<NormalizeCumOpF16ToF32Type<hfusion::CumsumOp>>(ctx);
-  patterns.add<NormalizeCumOpF16ToF32Type<hfusion::CumprodOp>>(ctx);
+  addTypeConversionPatterns<
+      mlir::NormalizeF16ToF32Type<linalg::ElemwiseUnaryOp, HFusionNormalizeF16ToF32Traits<linalg::ElemwiseUnaryOp>>,
+      mlir::NormalizeF16ToF32Type<hfusion::ElemwiseBinaryOp, HFusionNormalizeF16ToF32Traits<hfusion::ElemwiseBinaryOp>>,
+      mlir::NormalizeF16ToF32Type<hfusion::ElemwiseUnaryOp, HFusionNormalizeF16ToF32Traits<hfusion::ElemwiseUnaryOp>>>(patterns);
+  addTypeConversionPatterns<mlir::NormalizeCumOpF16ToF32Type<
+      hfusion::CumsumOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CumsumOp>>,
+      mlir::NormalizeCumOpF16ToF32Type<
+          hfusion::CumprodOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CumprodOp>>>(patterns);
 }
 
 } // namespace mlir::hfusion

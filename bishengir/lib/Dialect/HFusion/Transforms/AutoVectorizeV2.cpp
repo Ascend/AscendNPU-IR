@@ -11,6 +11,8 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Context.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
@@ -45,6 +47,7 @@ namespace mlir {
 
 using namespace mlir;
 using namespace mlir::analysis;
+using mlir::hfusion::VectorizeContext;
 
 namespace {
 
@@ -53,68 +56,6 @@ struct FusedNode {
   DenseSet<Operation *> fusedOps;
   DenseSet<Operation *> fusedLeafNodes;
 };
-
-// When false countFusedBodyOps returns the linalg-op count (.size()).
-// SIMD functions use this to preserve the original fusion behaviour;
-// mix-mode functions use per-op body/tensor counting to guard against
-// VF stack overflow.
-static bool gCountBodyOps = true;
-
-static unsigned countFusedBodyOps(const DenseSet<Operation *> &ops) {
-  if (!gCountBodyOps) {
-    return ops.size();
-  }
-  unsigned total = 0;
-  for (auto *op : ops) {
-    if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
-      for (int64_t i = 0; i < genericOp.getNumDpsInputs(); ++i) {
-        if (isa<RankedTensorType>(
-                genericOp.getDpsInputOperand(i)->get().getType()))
-          ++total;
-      }
-      for (int64_t i = 0; i < genericOp.getNumDpsInits(); ++i) {
-        if (isa<RankedTensorType>(
-                genericOp.getDpsInitOperand(i)->get().getType()))
-          ++total;
-      }
-      for (auto &bodyOp : genericOp.getBody()->without_terminator()) {
-        if (!isa<linalg::YieldOp>(bodyOp))
-          ++total;
-      }
-    } else {
-      ++total;
-    }
-  }
-  return std::max(1u, total);
-}
-
-static unsigned countFusedBodyOps(ArrayRef<Operation *> ops) {
-  if (!gCountBodyOps) {
-    return ops.size();
-  }
-  unsigned total = 0;
-  for (auto *op : ops) {
-    if (auto genericOp = dyn_cast<linalg::GenericOp>(op)) {
-      for (int64_t i = 0; i < genericOp.getNumDpsInputs(); ++i) {
-        if (isa<RankedTensorType>(
-                genericOp.getDpsInputOperand(i)->get().getType()))
-          ++total;
-      }
-      for (int64_t i = 0; i < genericOp.getNumDpsInits(); ++i) {
-        if (isa<RankedTensorType>(
-                genericOp.getDpsInitOperand(i)->get().getType()))
-          ++total;
-      }
-      for (auto &bodyOp : genericOp.getBody()->without_terminator()) {
-        if (!isa<linalg::YieldOp>(bodyOp))
-          ++total;
-      }
-    } else {
-      ++total;
-    }
-  }
-  return std::max(1u, total);
-}
 
 // Every fusable op(including LinalgOp and interleave/deinterleave) corresponds
 // to a FusableOpInfo.
@@ -170,7 +111,7 @@ bool isNonVectorizableOp(Operation *op) {
 
   auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
   if (linalgOp && hfusion::isSingleElementLinalgOp(linalgOp) &&
-      !isa<linalg::GenericOp>(linalgOp)) {
+      !isa<linalg::GenericOp>(linalgOp) && !isa<linalg::MapOp>(linalgOp)) {
     return true;
   }
 
@@ -920,7 +861,7 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
 
   auto bestFusedNode = fusableOpInfoMap[closestUser].fusedNode;
   assert(bestFusedNode);
-  if (countFusedBodyOps(bestFusedNode->fusedOps) > maxFusedOps)
+  if (bestFusedNode->fusedOps.size() > maxFusedOps)
     return nullptr;
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   SmallVector<int64_t> estimatedTileSize;
@@ -1118,7 +1059,6 @@ public:
   void runOnOperation() override;
 
 private:
-  unsigned loopCount = 0;
   void initFusableOpInfo(
       func::FuncOp func, int64_t vectorLength,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap);
@@ -1126,7 +1066,8 @@ private:
       OpBuilder &builder, transform::SequenceOp seqOp, Block *block,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
-          &otherVectorizableOps);
+          &otherVectorizableOps,
+      VectorizeContext &context);
   void buildVectorizeTransformSequence(
       OpBuilder &builder, transform::SequenceOp seqOp,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
@@ -1137,18 +1078,21 @@ private:
   void planFuseSiblingForLeafNodes(
       Block *block, SmallVector<SmallVector<Operation *>> &leafNodeGroups,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-      SmallVector<std::shared_ptr<FusedNode>> &fusedNodes);
+      SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
+      VectorizeContext &context);
   void planFuseProducersIntoConsumers(
       Block *block, SmallVector<SmallVector<Operation *>> &leafNodeGroups,
       SmallVector<Operation *> &producersToBeFusedInto,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-      SmallVector<std::shared_ptr<FusedNode>> &fusedNodes);
+      SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
+      VectorizeContext &context);
   void planFuseProducerIntoFusedNode(
       Block *block, Operation *producer,
       SmallVector<SmallVector<Operation *>> &leafNodeGroups,
       SmallVector<Operation *> &producersToBeFusedInto,
       llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-      SmallVector<std::shared_ptr<FusedNode>> &fusedNodes);
+      SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
+      VectorizeContext &context);
   void tileAndFuseSiblingForLeafNodes(
       OpBuilder &builder, transform::SequenceOp seqOp,
       SmallVector<SmallVector<Operation *>> &leafNodeGroups,
@@ -1162,6 +1106,10 @@ private:
       SmallVector<std::pair<std::string, SmallVector<int64_t>>>
           &otherVectorizableOps);
   void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp);
+  void sortFunc(func::FuncOp func);
+  LogicalResult runAttempt(VectorizeContext &context, OpBuilder &builder,
+                           IRRewriter &rewriter);
+  LogicalResult vectorize(VectorizeContext &context, OpBuilder &builder);
 };
 
 void AutoVectorizeV2::initFusableOpInfo(
@@ -1205,7 +1153,8 @@ void AutoVectorizeV2::initFusableOpInfo(
 void AutoVectorizeV2::planFuseSiblingForLeafNodes(
     Block *block, SmallVector<SmallVector<Operation *>> &leafNodeGroups,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    SmallVector<std::shared_ptr<FusedNode>> &fusedNodes) {
+    SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
+    VectorizeContext &context) {
   // Collect leafNodes in the block
   SmallVector<Operation *> leafNodes;
   block->walk([&](Operation *op) {
@@ -1228,9 +1177,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
 
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (countFusedBodyOps(leafNodeGroup) +
-                  countFusedBodyOps(llvm::ArrayRef<Operation *>(leafNode)) >
-              maxFusedOps ||
+      if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the same shape and do not conflict
@@ -1254,8 +1201,7 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
   for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
     std::shared_ptr<FusedNode> fusedNode = std::make_shared<FusedNode>();
     fusedNodes.push_back(fusedNode);
-    fusedNode->loopLabel =
-        "outlined-loop-target-" + std::to_string(++loopCount);
+    fusedNode->loopLabel = context.nextLoopLabel();
     for (Operation *leafNode : leafNodeGroup) {
       fusedNode->fusedOps.insert(leafNode);
       fusedNode->fusedLeafNodes.insert(leafNode);
@@ -1270,7 +1216,8 @@ void AutoVectorizeV2::planFuseProducersIntoConsumers(
     Block *block, SmallVector<SmallVector<Operation *>> &leafNodeGroups,
     SmallVector<Operation *> &producersToBeFusedInto,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    SmallVector<std::shared_ptr<FusedNode>> &fusedNodes) {
+    SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
+    VectorizeContext &context) {
   std::queue<Operation *> queue;
   for (SmallVector<Operation *> leafNodeGroup : leafNodeGroups) {
     for (Operation *leafNode : leafNodeGroup) {
@@ -1298,7 +1245,7 @@ void AutoVectorizeV2::planFuseProducersIntoConsumers(
             })) {
           planFuseProducerIntoFusedNode(block, producer, leafNodeGroups,
                                         producersToBeFusedInto,
-                                        fusableOpInfoMap, fusedNodes);
+                                        fusableOpInfoMap, fusedNodes, context);
           queue.push(producer);
         }
       }
@@ -1311,11 +1258,12 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
     SmallVector<SmallVector<Operation *>> &leafNodeGroups,
     SmallVector<Operation *> &producersToBeFusedInto,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    SmallVector<std::shared_ptr<FusedNode>> &fusedNodes) {
+    SmallVector<std::shared_ptr<FusedNode>> &fusedNodes,
+    VectorizeContext &context) {
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   std::shared_ptr<FusedNode> bestFusedNode = findBestFusedNodeForProducer(
-      block, producer, fusableOpInfoMap, maxFusedOps, vectorLength,
-      enableMultipleConsumerFusion);
+      block, producer, fusableOpInfoMap, context.maxFusedOps, vectorLength,
+      context.enableMultipleConsumerFusion);
   if (bestFusedNode) {
     producersToBeFusedInto.push_back(producer);
     bestFusedNode->fusedOps.insert(producer);
@@ -1347,9 +1295,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
   } else {
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
-      if (countFusedBodyOps(leafNodeGroup) +
-                  countFusedBodyOps(llvm::ArrayRef<Operation *>(producer)) >
-              maxFusedOps ||
+      if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
       // All leafNodes within a group have the common axis and do not conflict
@@ -1375,8 +1321,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
       leafNodeGroups.push_back(SmallVector<Operation *>{producer});
       std::shared_ptr<FusedNode> fusedNode = std::make_shared<FusedNode>();
       fusedNodes.push_back(fusedNode);
-      fusedNode->loopLabel =
-          "outlined-loop-target-" + std::to_string(++loopCount);
+      fusedNode->loopLabel = context.nextLoopLabel();
       fusedNode->fusedOps.insert(producer);
       fusedNode->fusedLeafNodes.insert(producer);
       producerInfo.fusedNode = fusedNode;
@@ -1512,14 +1457,15 @@ void AutoVectorizeV2::buildTileAndFuseTransformSequenceForBlock(
     OpBuilder &builder, transform::SequenceOp seqOp, Block *block,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
     SmallVector<std::pair<std::string, SmallVector<int64_t>>>
-        &otherVectorizableOps) {
+        &otherVectorizableOps,
+    VectorizeContext &context) {
   SmallVector<std::shared_ptr<FusedNode>> fusedNodes;
   SmallVector<SmallVector<Operation *>> leafNodeGroups;
   planFuseSiblingForLeafNodes(block, leafNodeGroups, fusableOpInfoMap,
-                              fusedNodes);
+                              fusedNodes, context);
   SmallVector<Operation *> producersToBeFusedInto;
   planFuseProducersIntoConsumers(block, leafNodeGroups, producersToBeFusedInto,
-                                 fusableOpInfoMap, fusedNodes);
+                                 fusableOpInfoMap, fusedNodes, context);
   computeTileSize(fusableOpInfoMap, fusedNodes, vectorLength);
 #ifndef NDEBUG
   LLVM_DEBUG(llvm::dbgs() << "========Dumping LeafNodeGroups begin========\n");
@@ -1618,6 +1564,66 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
 }
 
+LogicalResult AutoVectorizeV2::vectorize(VectorizeContext &context,
+                                         OpBuilder &builder) {
+  func::FuncOp func = context.func;
+  context.resetLoopCount();
+  llvm::MapVector<Operation *, FusableOpInfo> fusableOpInfoMap;
+  initFusableOpInfo(func, vectorLength, fusableOpInfoMap);
+  SmallVector<std::pair<std::string, SmallVector<int64_t>>>
+      otherVectorizableOps;
+
+  transform::SequenceOp seqOp = buildTransformSequenceOp(builder, func);
+  func.walk([&](Block *block) {
+    if (scope::utils::isInCubeScope(block->getParentOp()) ||
+        isCubeScopeOp(block->getParentOp()))
+      return;
+
+    if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp,
+            scope::ScopeOp>(block->getParentOp()))
+      buildTileAndFuseTransformSequenceForBlock(
+          builder, seqOp, block, fusableOpInfoMap, otherVectorizableOps,
+          context);
+  });
+  buildVectorizeTransformSequence(builder, seqOp, fusableOpInfoMap,
+                                  otherVectorizableOps);
+
+  transform::TransformOptions transformOptions;
+  transformOptions.enableExpensiveChecks(false);
+  LogicalResult result = transform::applyTransformNamedSequence(
+      func, seqOp, func->getParentOfType<ModuleOp>(), transformOptions);
+  seqOp->erase();
+
+  hfusion::AutoVectorizeVerifier verifier;
+  return failure(failed(result) ||
+                 failed(verifier.verifyFreeVectorRegion(true)
+                            .emitDiagnostics(false)
+                            .check(func)));
+}
+
+void AutoVectorizeV2::sortFunc(func::FuncOp func) {
+  func.walk([&](Block *block) {
+    if (isa<func::FuncOp, scf::ForOp, scf::IfOp>(block->getParentOp()))
+      sortTopologically(block);
+  });
+}
+
+LogicalResult AutoVectorizeV2::runAttempt(VectorizeContext &context,
+                                          OpBuilder &builder,
+                                          IRRewriter &rewriter) {
+  func::FuncOp clonedFunc = context.cloneFunc(builder);
+
+  if (succeeded(vectorize(context, builder))) {
+    rewriter.eraseOp(clonedFunc);
+    sortFunc(context.func);
+    return success();
+  }
+
+  LLVM_DEBUG(llvm::dbgs() << "========Failed========\n");
+  context.restoreFunc(clonedFunc, rewriter);
+  return failure();
+}
+
 static bool isSIMDFunc(func::FuncOp func) {
   if (auto pmAttr = func->getAttrOfType<StringAttr>("parallel_mode"))
     return pmAttr.getValue() == "simd";
@@ -1699,11 +1705,13 @@ void AutoVectorizeV2::runOnOperation() {
   MLIRContext *context = op->getContext();
   IRRewriter rewriter(context);
   OpBuilder builder(context);
+  bool fallback = false;
 
   SmallVector<func::FuncOp> fusableFuncList;
   collectFusableFuncInModule(op, fusableFuncList);
 
   // Inline VFFusionPass _fused_ sub-functions with large return tensors.
+  // TODO: remove it after better solution.
   if (auto moduleOp = dyn_cast<ModuleOp>(op)) {
     DenseSet<func::FuncOp> allInlined;
     for (func::FuncOp func : fusableFuncList) {
@@ -1719,60 +1727,36 @@ void AutoVectorizeV2::runOnOperation() {
   }
 
   for (func::FuncOp func : fusableFuncList) {
-    bool savedCountBodyOps = gCountBodyOps;
-    gCountBodyOps = !isSIMDFunc(func);
-
-    // Clone original func before apply transform seqence
-    builder.setInsertionPointAfter(func);
-    func::FuncOp clonedFunc = dyn_cast<func::FuncOp>(builder.clone(*func));
-    auto funcName = clonedFunc.getSymName().str();
-    SymbolTable::setSymbolName(clonedFunc,
-                               StringAttr::get(context, "cloned_" + funcName));
-
-    llvm::MapVector<Operation *, FusableOpInfo> fusableOpInfoMap;
-    initFusableOpInfo(func, vectorLength, fusableOpInfoMap);
-    SmallVector<std::pair<std::string, SmallVector<int64_t>>>
-        otherVectorizableOps;
-    transform::SequenceOp seqOp = buildTransformSequenceOp(builder, func);
-    func.walk([&](Block *block) {
-      if (scope::utils::isInCubeScope(block->getParentOp()) ||
-          isCubeScopeOp(block->getParentOp()))
-        return;
-
-      if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp,
-              scope::ScopeOp>(block->getParentOp()))
-        buildTileAndFuseTransformSequenceForBlock(
-            builder, seqOp, block, fusableOpInfoMap, otherVectorizableOps);
-    });
-    buildVectorizeTransformSequence(builder, seqOp, fusableOpInfoMap,
-                                    otherVectorizableOps);
-    // Apply transform
-    transform::TransformOptions options;
-    options.enableExpensiveChecks(false);
-    LogicalResult result = transform::applyTransformNamedSequence(
-        func, seqOp, func->getParentOfType<ModuleOp>(), options);
-    seqOp->erase();
-    // If any error occurs during applying, use cloned func to run
-    // auto-vectorize pass.
-    if (failed(result)) {
-      LLVM_DEBUG(llvm::dbgs() << "========Failed========\n");
-      rewriter.eraseOp(func);
-      SymbolTable::setSymbolName(clonedFunc,
-                                 StringAttr::get(context, funcName));
-
-      PassManager pm(op->getContext());
-      pm.addPass(mlir::hfusion::createHFusionAutoVectorizePass());
-      std::ignore = pm.run(op);
-      return;
-    } else {
-      rewriter.eraseOp(clonedFunc);
-      func.walk([&](Block *block) {
-        if (isa<func::FuncOp, scf::ForOp, scf::IfOp>(block->getParentOp()))
-          sortTopologically(block);
-      });
+    VectorizeContext funcContext{func, maxFusedOps,
+                                 enableMultipleConsumerFusion};
+    LogicalResult result = runAttempt(funcContext, builder, rewriter);
+    func::FuncOp failedFunc = funcContext.func;
+    bool retried = false;
+    if (failed(result) && funcContext.enableMultipleConsumerFusion) {
+      failedFunc.emitWarning()
+          << "AutoVectorizeV2 failed; "
+             "retrying with enableMultipleConsumerFusion=false";
+      VectorizeContext retryContext = funcContext;
+      retryContext.enableMultipleConsumerFusion = false;
+      result = runAttempt(retryContext, builder, rewriter);
+      failedFunc = retryContext.func;
+      retried = true;
     }
 
-    gCountBodyOps = savedCountBodyOps;
+    if (failed(result)) {
+      failedFunc.emitWarning()
+          << (retried ? "AutoVectorizeV2 retry failed"
+                      : "AutoVectorizeV2 failed")
+          << "; falling back to legacy HFusionAutoVectorize pass";
+      fallback = true;
+      break;
+    }
+  }
+
+  if (fallback) {
+    PassManager pm(op->getContext());
+    pm.addPass(hfusion::createHFusionAutoVectorizePass());
+    std::ignore = pm.run(op);
   }
 }
 

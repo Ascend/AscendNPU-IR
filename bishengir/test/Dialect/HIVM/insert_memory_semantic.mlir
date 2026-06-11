@@ -93,3 +93,44 @@ module {
     return
   }
 }
+
+
+
+// -----
+
+// Test case for out-of-scope reference in nested region
+// CHECK: %[[TOMEMREF:.*]] = bufferization.to_memref %[[TENSOR:.*]] : memref<8xi64>
+// CHECK-NEXT: memref.alloc()
+// CHECK-NEXT: scope.scope
+// CHECK-NEXT: tensor.empty()
+// CHECK-NEXT: scf.for
+// CHECK:      %[[LOCALLOAD:.*]] = hivm.hir.local_load ins(%[[TOMEMREF]] : memref<8xi64>) -> tensor<8xi64>
+// CHECK-NEXT: %[[GATHERLOAD:.*]] = hivm.hir.gather_load ins(%{{.*}} : memref<?xf32>, %[[LOCALLOAD]] : tensor<8xi64>, %{{.*}} : i32)
+// CHECK:   hivm.hir.local_store
+// CHECK:   scope.return
+module {
+  func.func @scope_with_nested_region(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xf32>, %arg3: memref<?xi64>, %arg4: memref<?xf32>, %arg5: i32, %arg6: i32, %arg7: i32) {
+    %c1_i32 = arith.constant 1 : i32
+    %c1_index = arith.constant 1 : index
+    %c4_index = arith.constant 4 : index
+    hivm.hir.set_ctrl false at ctrl[60]
+    hivm.hir.set_ctrl true at ctrl[48]
+    %0 = arith.muli %arg5, %arg6 : i32
+    annotation.mark %0 {logical_block_num} : i32
+    // Create an i64 tensor outside the scope (for gather_load index)
+    %alloc = memref.alloc() : memref<8xi64>
+    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8], strides: [1] : memref<?xi64> to memref<8xi64, strided<[1]>>
+    hivm.hir.load ins(%reinterpret_cast : memref<8xi64, strided<[1]>>) outs(%alloc : memref<8xi64>) eviction_policy = <EvictFirst>
+    %tensor_outside = bufferization.to_tensor %alloc restrict writable : memref<8xi64>
+    // Use the out-of-scope tensor inside nested region (scf.for)
+    %1 = scope.scope : () -> tensor<8xf32> {
+      %empty = tensor.empty() : tensor<8xf32>
+      scf.for %i = %c1_index to %c4_index step %c1_index {
+        %idx = arith.index_cast %i : index to i32
+        %gather = hivm.hir.gather_load ins(%arg2 : memref<?xf32>, %tensor_outside : tensor<8xi64>, %idx : i32) outs(%empty : tensor<8xf32>) {cache = #hivm.cache_modifier<none>, evict = #hivm.eviction_policy<EvictLast>, isVolatile = false} -> tensor<8xf32>
+      }
+      scope.return %empty : tensor<8xf32>
+    } {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>}
+    return
+  }
+}

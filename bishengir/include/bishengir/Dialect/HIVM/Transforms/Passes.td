@@ -987,6 +987,11 @@ def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::F
   let summary = "Convert layout to transpose decomposition";
   let constructor = "mlir::hivm::createConvertLayoutToTransposePass()";
   let dependentDialects = ["hivm::HIVMDialect", ];
+  let options = [
+    Option<"use3dTranspose", "use-3d-transpose", "bool",
+           /*default=*/"true",
+           "Use staged 3D transpose decomposition for ND->Fractal conversions.">
+  ];
 }
 
 def InsertCVDataMovement : Pass<"hivm-insert-cv-data-movement", "func::FuncOp"> {

@@ -38,9 +38,15 @@ class RWOperation;
 class MmadL0Operation;
 using Body = std::vector<std::unique_ptr<OperationBase>>;
 
+// Currently gss-code-gen will handle offsetting induction variables for
+// multibuffer-enabled sync pairs, which can be done by create-preload.
+// TODO: move create-preload pass after gss in the hivm compilation pipeline and
+// let it handle preload-offset values.
 struct EventIdInfo {
   int64_t eventIdNum{0};
   int64_t eventIdRepeatNum{1};
+  int64_t preloadOffset1{0};
+  int64_t preloadOffset2{0};
   Loop *multibufferLoop{nullptr};
   Loop *multibufferUnrollLoop1{nullptr};
   Loop *multibufferUnrollLoop2{nullptr};
@@ -214,6 +220,8 @@ class Scope : public OperationBase {
 
 public:
   Body body;
+  std::optional<int64_t> preloadNum;
+  std::optional<int64_t> maxPreloadNum;
 
 public:
   Scope(const OpType &opType = OpType::SCOPE, Operation *op = nullptr,

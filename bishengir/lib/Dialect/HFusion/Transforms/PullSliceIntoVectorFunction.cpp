@@ -1,5 +1,4 @@
-//===- PullSliceIntoVectorFunction.cpp - Pull extract/insert_slice into VF
-//-===//
+//===- PullSliceIntoVectorFunction.cpp - Pull extract/insert_slice into VF -===//
 //
 // Part of the BiShengIR Project, under the Apache License v2.0 with LLVM
 // Exceptions. See https://llvm.org/LICENSE.txt for license information.
@@ -22,7 +21,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
-#include "mlir/IR/Dominance.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -62,25 +60,16 @@ namespace {
 //   entry, compute, insert_slice at return; call result is the full tensor
 //   (insert_slice removed).
 //
-// [Scenario 3: Result-only writeback]
-//   Caller: %b = call @vf(...); %c = insert_slice(%b, %full)
-//   This covers cases where earlier canonicalization replaced the output init
-//   slice with tensor.empty because the payload does not read it. After: call
-//   passes %full + slice params; VF inserts its slice result into %full at
-//   return; caller insert_slice is removed.
-//
 
 /// Match result for slice pull: describes which operand/result to rewrite and
 /// how.
 struct SlicePullMatch {
   /// The extract_slice op producing the slice passed as call operand.
-  /// Null in result-only writeback mode.
   tensor::ExtractSliceOp extractSlice;
 
   /// Index of the call operand that is the slice (will be replaced by
-  /// extractSlice.getSource() + offsets/sizes/strides). -1 in result-only
-  /// writeback mode, where the full tensor and slice params are appended.
-  int64_t argIdx;
+  /// extractSlice.getSource() + offsets/sizes/strides).
+  size_t argIdx;
 
   /// Index of the call result that should become full-tensor type.
   /// -1 if none. In scenario 1: the return flows from the arg; in scenario 2:
@@ -88,7 +77,7 @@ struct SlicePullMatch {
   int64_t fullTensorResultIdx;
 
   /// The insert_slice op that consumes the call result and writes back to the
-  /// source. Non-null in scenarios 2 and 3; in scenario 1, caller uses
+  /// source. Non-null only in scenario 2; in scenario 1, caller uses
   /// extract_slice on the full result instead.
   tensor::InsertSliceOp insertSlice;
 };
@@ -110,7 +99,7 @@ struct PullExtractInsertSliceIntoVectorFunction
     func::CallOp currentCall = op;
     rewriter.setInsertionPoint(currentCall);
 
-    while (auto match = tryMatchSlicePull(currentCall, funcOp)) {
+    while (auto match = tryMatchSliceOperand(currentCall, funcOp)) {
       modifyCalleeForSlicePull(funcOp, *match, rewriter);
       currentCall =
           replaceCallWithPulledSlice(currentCall, funcOp, *match, rewriter);
@@ -122,6 +111,7 @@ struct PullExtractInsertSliceIntoVectorFunction
   }
 
 private:
+
   bool isStandardStride(tensor::ExtractSliceOp op) const {
     auto src = op.getSource();
     auto srcShape = cast<RankedTensorType>(src.getType()).getShape();
@@ -148,6 +138,8 @@ private:
     return true;
   }
 
+
+
   bool sliceParamsMatch(tensor::ExtractSliceOp extractOp,
                         tensor::InsertSliceOp insertOp) const {
     return mlir::detail::sameOffsetsSizesAndStrides(
@@ -156,87 +148,11 @@ private:
         });
   }
 
-  bool sliceParamsMatch(tensor::ExtractSliceOp a,
-                        tensor::ExtractSliceOp b) const {
-    return mlir::detail::sameOffsetsSizesAndStrides(
-        a, b, [](OpFoldResult x, OpFoldResult y) {
-          return isEqualConstantIntOrValue(x, y);
-        });
-  }
-
-  bool isNonStandardSlice(tensor::InsertSliceOp op) const {
-    if (!llvm::all_of(op.getStaticStrides(),
-                      [](int64_t stride) { return stride == 1; }))
-      return true;
-    for (int64_t off : op.getStaticOffsets()) {
-      if (!ShapedType::isDynamic(off) && off != 0)
-        return true;
-    }
-    auto srcType = dyn_cast<RankedTensorType>(op.getSource().getType());
-    auto destType = dyn_cast<RankedTensorType>(op.getDest().getType());
-    if (!srcType || !destType)
-      return false;
-    return srcType.getShape() != destType.getShape();
-  }
-
-  bool isEnclosingExecuteRegionResult(func::CallOp call, Value value) const {
-    auto execRegion = call->getParentOfType<scf::ExecuteRegionOp>();
-    return execRegion && llvm::is_contained(execRegion.getResults(), value);
-  }
-
-  bool sliceParamsDominateExecuteRegionUsers(func::CallOp call,
-                                             tensor::InsertSliceOp insertSlice,
-                                             int64_t resultIdx) const {
-    auto execRegion = call->getParentOfType<scf::ExecuteRegionOp>();
-    if (!execRegion)
-      return true;
-    Value execResult = execRegion.getResult(resultIdx);
-    DominanceInfo domInfo(call->getParentOfType<func::FuncOp>());
-    SmallVector<Value> params;
-    llvm::append_range(params, insertSlice.getOffsets());
-    llvm::append_range(params, insertSlice.getSizes());
-    llvm::append_range(params, insertSlice.getStrides());
-    for (OpOperand &use : execResult.getUses()) {
-      if (use.getOwner() == &*insertSlice)
-        continue;
-      for (Value param : params) {
-        if (!domInfo.properlyDominates(param, use.getOwner()))
-          return false;
-      }
-    }
-    return true;
-  }
-
-  bool
-  insertSliceOperandsDominateCall(func::CallOp call,
-                                  tensor::InsertSliceOp insertSlice) const {
-    DominanceInfo domInfo(call->getParentOfType<func::FuncOp>());
-    SmallVector<Value> operands{insertSlice.getDest()};
-    llvm::append_range(operands, insertSlice.getOffsets());
-    llvm::append_range(operands, insertSlice.getSizes());
-    llvm::append_range(operands, insertSlice.getStrides());
-    for (Value operand : operands) {
-      if (!domInfo.properlyDominates(operand, call))
-        return false;
-    }
-    return true;
-  }
-
   void appendSliceOperands(SmallVectorImpl<Value> &operands, size_t pos,
                            tensor::ExtractSliceOp extractSlice) const {
     auto offsets = extractSlice.getOffsets();
     auto sizes = extractSlice.getSizes();
     auto strides = extractSlice.getStrides();
-    operands.insert(operands.begin() + pos, strides.begin(), strides.end());
-    operands.insert(operands.begin() + pos, sizes.begin(), sizes.end());
-    operands.insert(operands.begin() + pos, offsets.begin(), offsets.end());
-  }
-
-  void appendSliceOperands(SmallVectorImpl<Value> &operands, size_t pos,
-                           tensor::InsertSliceOp insertSlice) const {
-    auto offsets = insertSlice.getOffsets();
-    auto sizes = insertSlice.getSizes();
-    auto strides = insertSlice.getStrides();
     operands.insert(operands.begin() + pos, strides.begin(), strides.end());
     operands.insert(operands.begin() + pos, sizes.begin(), sizes.end());
     operands.insert(operands.begin() + pos, offsets.begin(), offsets.end());
@@ -252,16 +168,6 @@ private:
     types.insert(types.begin() + pos, offsets.begin(), offsets.end());
   }
 
-  void appendSliceTypes(SmallVectorImpl<Type> &types, size_t pos,
-                        tensor::InsertSliceOp insertSlice) const {
-    auto offsets = TypeRange(insertSlice.getOffsets());
-    auto sizes = TypeRange(insertSlice.getSizes());
-    auto strides = TypeRange(insertSlice.getStrides());
-    types.insert(types.begin() + pos, strides.begin(), strides.end());
-    types.insert(types.begin() + pos, sizes.begin(), sizes.end());
-    types.insert(types.begin() + pos, offsets.begin(), offsets.end());
-  }
-
   SmallVector<Value> appendSliceBlockArgs(ValueRange args, size_t pos,
                                           Block &block) const {
     auto res = llvm::map_to_vector(args, [&](Value v) -> Value {
@@ -269,13 +175,6 @@ private:
     });
     std::reverse(res.begin(), res.end());
     return res;
-  }
-
-  SmallVector<Value> appendSliceBlockArgsAtEnd(ValueRange args,
-                                               Block &block) const {
-    return llvm::map_to_vector(args, [&](Value v) -> Value {
-      return block.addArgument(v.getType(), v.getLoc());
-    });
   }
 
   // Traces value to originating func arg index; returns -1 if not from an arg.
@@ -289,90 +188,25 @@ private:
     return -1;
   }
 
-  // Returns insert_slice if callResult (possibly through scf.yield /
-  // scf.execute_region or extract_slice wrappers) feeds
+  // Returns insert_slice if callResult has exactly one user that is
   // insert_slice(dest=source) with same slice params as extractSlice; else
   // null.
   tensor::InsertSliceOp
   tryMatchInsertSliceUser(Value callResult, Value source,
                           tensor::ExtractSliceOp extractSlice) const {
-    SmallVector<Value> worklist;
-    worklist.push_back(callResult);
-    while (!worklist.empty()) {
-      Value current = worklist.pop_back_val();
-      for (Operation *userOp : current.getUsers()) {
-        // Penetrate scf.yield inside scf.execute_region
-        if (auto yieldOp = dyn_cast<scf::YieldOp>(userOp)) {
-          auto execRegion =
-              dyn_cast<scf::ExecuteRegionOp>(yieldOp->getParentOp());
-          if (!execRegion)
-            return nullptr;
-          unsigned resIdx = 0;
-          if (auto opResult = dyn_cast<OpResult>(current))
-            resIdx = opResult.getResultNumber();
-          else
-            return nullptr;
-          worklist.push_back(execRegion.getResult(resIdx));
-          continue;
-        }
-        // Penetrate tensor.extract_slice that reverses the insert
-        if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(userOp)) {
-          if (extractSlice.getSource().getType() !=
-              extractOp.getResult().getType())
-            continue;
-          if (!sliceParamsMatch(extractSlice, extractOp))
-            continue;
-          worklist.push_back(extractOp.getResult());
-          continue;
-        }
-        auto insOp = dyn_cast<tensor::InsertSliceOp>(userOp);
-        if (!insOp || insOp.getDest() != source)
-          continue;
-        if (!sliceParamsMatch(extractSlice, insOp))
-          continue;
-        return insOp;
-      }
-    }
-    return nullptr;
+    if (!callResult.hasOneUse())
+      return nullptr;
+    auto insOp =
+        dyn_cast<tensor::InsertSliceOp>(*callResult.getUsers().begin());
+    if (!insOp || insOp.getDest() != source)
+      return nullptr;
+    if (!sliceParamsMatch(extractSlice, insOp))
+      return nullptr;
+    return insOp;
   }
 
-  // Returns insert_slice if callResult (possibly through scf.yield /
-  // scf.execute_region) feeds an insert_slice. The insert_slice itself carries
-  // the full destination and slice params.
-  //
-  // Do not penetrate tensor.extract_slice here. Result-only writeback wraps the
-  // callee return value directly in insert_slice; if the caller first extracts
-  // from the call result, that extracted value is the insert source type, not
-  // the raw call result type.
-  tensor::InsertSliceOp tryMatchInsertSliceUser(Value callResult) const {
-    SmallVector<Value> worklist;
-    DenseSet<Value> visited;
-    worklist.push_back(callResult);
-    while (!worklist.empty()) {
-      Value current = worklist.pop_back_val();
-      if (!visited.insert(current).second)
-        continue;
-      for (Operation *userOp : current.getUsers()) {
-        if (auto yieldOp = dyn_cast<scf::YieldOp>(userOp)) {
-          auto execRegion =
-              dyn_cast<scf::ExecuteRegionOp>(yieldOp->getParentOp());
-          if (!execRegion)
-            continue;
-          auto opResult = dyn_cast<OpResult>(current);
-          if (!opResult)
-            continue;
-          worklist.push_back(execRegion.getResult(opResult.getResultNumber()));
-          continue;
-        }
-        if (auto insertOp = dyn_cast<tensor::InsertSliceOp>(userOp))
-          return insertOp;
-      }
-    }
-    return nullptr;
-  }
-
-  std::optional<SlicePullMatch> tryMatchSlicePull(func::CallOp call,
-                                                  func::FuncOp callee) const {
+  std::optional<SlicePullMatch>
+  tryMatchSliceOperand(func::CallOp call, func::FuncOp callee) const {
     auto operands = call.getOperands();
     for (auto [idx, operand] : llvm::enumerate(operands)) {
       auto defOp = operand.getDefiningOp<tensor::ExtractSliceOp>();
@@ -381,53 +215,36 @@ private:
 
       tensor::ExtractSliceOp extractSlice = defOp;
       Value src = extractSlice.getSource();
-      if (isEnclosingExecuteRegionResult(call, src))
-        continue;
 
       int64_t fullTensorResultIdx = -1;
       tensor::InsertSliceOp insertSlice = nullptr;
 
-      // [Scenario 2] Call result feeds insert_slice(dest=src) with same slice
-      // params.  Check this first because it is strictly better than Scenario 1
-      // (it eliminates both extract_slice and insert_slice in the caller).
-      for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
+      // [Scenario 1] Return value flows from this arg (e.g. block arg,
+      // scf.for).
+      auto returnOp =
+          cast<func::ReturnOp>(callee.getBody().front().getTerminator());
+      for (auto [resIdx, retVal] : llvm::enumerate(returnOp.getOperands())) {
+        if (traceValueToFuncArg(retVal) == static_cast<int64_t>(idx)) {
+          fullTensorResultIdx = static_cast<int64_t>(resIdx);
+          break;
+        }
+      }
+
+        // [Scenario 2] Call result feeds insert_slice(dest=src) with same slice
+        // params.
+      if (fullTensorResultIdx == -1) {
+        for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
         if (auto insOp =
                 tryMatchInsertSliceUser(callResult, src, extractSlice)) {
           fullTensorResultIdx = static_cast<int64_t>(resIdx);
           insertSlice = insOp;
           break;
         }
-      }
-
-      // [Scenario 1] Return value flows from this arg (e.g. block arg,
-      // scf.for).  Only used as fallback when Scenario 2 did not match.
-      if (fullTensorResultIdx == -1) {
-        auto returnOp =
-            cast<func::ReturnOp>(callee.getBody().front().getTerminator());
-        for (auto [resIdx, retVal] : llvm::enumerate(returnOp.getOperands())) {
-          if (traceValueToFuncArg(retVal) == static_cast<int64_t>(idx)) {
-            fullTensorResultIdx = static_cast<int64_t>(resIdx);
-            break;
-          }
         }
       }
 
-      return SlicePullMatch{extractSlice, static_cast<int64_t>(idx),
-                            fullTensorResultIdx, insertSlice};
-    }
-    for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
-      auto insertSlice = tryMatchInsertSliceUser(callResult);
-      if (!insertSlice || !isNonStandardSlice(insertSlice))
-        continue;
-      if (isEnclosingExecuteRegionResult(call, insertSlice.getDest()))
-        continue;
-      if (!insertSliceOperandsDominateCall(call, insertSlice))
-        continue;
-      if (!sliceParamsDominateExecuteRegionUsers(call, insertSlice,
-                                                 static_cast<int64_t>(resIdx)))
-        continue;
-      return SlicePullMatch{/*extractSlice=*/nullptr, /*argIdx=*/-1,
-                            static_cast<int64_t>(resIdx), insertSlice};
+      return SlicePullMatch{extractSlice, idx, fullTensorResultIdx,
+                            insertSlice};
     }
     return std::nullopt;
   }
@@ -436,17 +253,13 @@ private:
                                 const SlicePullMatch &match,
                                 PatternRewriter &rewriter) const {
     auto extractSlice = match.extractSlice;
-    auto insertSlice = match.insertSlice;
-    int64_t idx = match.argIdx;
+    size_t idx = match.argIdx;
     int64_t fullTensorResultIdx = match.fullTensorResultIdx;
 
-    Value src = extractSlice ? extractSlice.getSource() : insertSlice.getDest();
-    auto offsets =
-        extractSlice ? extractSlice.getOffsets() : insertSlice.getOffsets();
-    auto sizes =
-        extractSlice ? extractSlice.getSizes() : insertSlice.getSizes();
-    auto strides =
-        extractSlice ? extractSlice.getStrides() : insertSlice.getStrides();
+    Value src = extractSlice.getSource();
+    auto offsets = extractSlice.getOffsets();
+    auto sizes = extractSlice.getSizes();
+    auto strides = extractSlice.getStrides();
 
     auto &block = callee.getBody().front();
     auto oldFuncType = callee.getFunctionType();
@@ -455,15 +268,8 @@ private:
     SmallVector<Type> newResultTypes(oldFuncType.getResults().begin(),
                                      oldFuncType.getResults().end());
 
-    size_t fullTensorArgIdx =
-        idx == -1 ? newInputTypes.size() : static_cast<size_t>(idx);
-    if (idx == -1) {
-      newInputTypes.push_back(src.getType());
-      appendSliceTypes(newInputTypes, newInputTypes.size(), insertSlice);
-    } else {
-      newInputTypes[fullTensorArgIdx] = src.getType();
-      appendSliceTypes(newInputTypes, fullTensorArgIdx + 1, extractSlice);
-    }
+    newInputTypes[idx] = src.getType();
+    appendSliceTypes(newInputTypes, idx + 1, extractSlice);
     if (fullTensorResultIdx != -1)
       newResultTypes[fullTensorResultIdx] = src.getType();
 
@@ -473,30 +279,22 @@ private:
     rewriter.modifyOpInPlace(callee, [&]() {
       callee.setFunctionType(
           rewriter.getFunctionType(newInputTypes, newResultTypes));
-      if (idx == -1) {
-        newArg = block.addArgument(src.getType(), insertSlice.getLoc());
-        newOffsets = appendSliceBlockArgsAtEnd(offsets, block);
-        newSizes = appendSliceBlockArgsAtEnd(sizes, block);
-        newStrides = appendSliceBlockArgsAtEnd(strides, block);
-      } else {
-        auto oldArg = block.getArgument(fullTensorArgIdx);
+      auto oldArg = block.getArgument(idx);
 
-        newStrides = appendSliceBlockArgs(strides, fullTensorArgIdx, block);
-        newSizes = appendSliceBlockArgs(sizes, fullTensorArgIdx, block);
-        newOffsets = appendSliceBlockArgs(offsets, fullTensorArgIdx, block);
-        newArg = block.insertArgument(fullTensorArgIdx, src.getType(),
-                                      oldArg.getLoc());
+      newStrides = appendSliceBlockArgs(strides, idx, block);
+      newSizes = appendSliceBlockArgs(sizes, idx, block);
+      newOffsets = appendSliceBlockArgs(offsets, idx, block);
+      newArg = block.insertArgument(idx, src.getType(), oldArg.getLoc());
 
-        PatternRewriter::InsertionGuard guard(rewriter);
-        rewriter.setInsertionPointToStart(&block);
-        auto newExtract = rewriter.create<tensor::ExtractSliceOp>(
-            newArg.getLoc(), cast<RankedTensorType>(oldArg.getType()), newArg,
-            newOffsets, newSizes, newStrides, extractSlice.getStaticOffsets(),
-            extractSlice.getStaticSizes(), extractSlice.getStaticStrides());
-        rewriter.replaceAllUsesWith(oldArg, newExtract);
-        block.eraseArgument(fullTensorArgIdx + offsets.size() + sizes.size() +
-                            strides.size() + 1);
-      }
+      PatternRewriter::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(&block);
+      auto newExtract = rewriter.create<tensor::ExtractSliceOp>(
+          newArg.getLoc(), cast<RankedTensorType>(oldArg.getType()), newArg,
+          newOffsets, newSizes, newStrides, extractSlice.getStaticOffsets(),
+          extractSlice.getStaticSizes(), extractSlice.getStaticStrides());
+      rewriter.replaceAllUsesWith(oldArg, newExtract);
+      block.eraseArgument(idx + offsets.size() + sizes.size() + strides.size() +
+                          1);
     });
 
     // Wrap return value in insert_slice so VF returns full tensor (both
@@ -509,13 +307,8 @@ private:
         Value opr = returnOp.getOperands()[fullTensorResultIdx];
         auto newInsert = rewriter.create<tensor::InsertSliceOp>(
             opr.getLoc(), cast<RankedTensorType>(newArg.getType()), opr, newArg,
-            newOffsets, newSizes, newStrides,
-            extractSlice ? extractSlice.getStaticOffsets()
-                         : insertSlice.getStaticOffsets(),
-            extractSlice ? extractSlice.getStaticSizes()
-                         : insertSlice.getStaticSizes(),
-            extractSlice ? extractSlice.getStaticStrides()
-                         : insertSlice.getStaticStrides());
+            newOffsets, newSizes, newStrides, extractSlice.getStaticOffsets(),
+            extractSlice.getStaticSizes(), extractSlice.getStaticStrides());
         returnOp.getOperandsMutable()[fullTensorResultIdx].set(newInsert);
       });
     }
@@ -526,19 +319,10 @@ private:
                                           const SlicePullMatch &match,
                                           PatternRewriter &rewriter) const {
     auto extractSlice = match.extractSlice;
-    auto insertSlice = match.insertSlice;
     SmallVector<Value> newOperands(call.getOperands().begin(),
                                    call.getOperands().end());
-    if (extractSlice) {
-      newOperands[match.argIdx] = extractSlice.getSource();
-      appendSliceOperands(newOperands, match.argIdx + 1, extractSlice);
-    } else {
-      newOperands.push_back(insertSlice.getDest());
-      appendSliceOperands(newOperands, newOperands.size(), insertSlice);
-    }
-
-    scf::ExecuteRegionOp execRegion =
-        dyn_cast<scf::ExecuteRegionOp>(call->getParentOp());
+    newOperands[match.argIdx] = extractSlice.getSource();
+    appendSliceOperands(newOperands, match.argIdx + 1, extractSlice);
 
     auto newCall =
         rewriter.create<func::CallOp>(call.getLoc(), funcOp, newOperands);
@@ -546,77 +330,23 @@ private:
 
     SmallVector<Value> newResults(newCall->result_begin(),
                                   newCall->result_end());
-
-    if (match.fullTensorResultIdx != -1) {
-      auto originalResultType = cast<RankedTensorType>(
-          call.getResult(match.fullTensorResultIdx).getType());
-      Value fullTensorResult = newCall.getResult(match.fullTensorResultIdx);
-      auto createExtractForOriginalResult = [&](Value source) -> Value {
-        return rewriter.create<tensor::ExtractSliceOp>(
-            call.getLoc(), originalResultType, source,
-            extractSlice ? extractSlice.getMixedOffsets()
-                         : insertSlice.getMixedOffsets(),
-            extractSlice ? extractSlice.getMixedSizes()
-                         : insertSlice.getMixedSizes(),
-            extractSlice ? extractSlice.getMixedStrides()
-                         : insertSlice.getMixedStrides());
-      };
-
-      if (execRegion) {
-        // Collect uses of the execRegion result that expect the original
-        // slice type BEFORE we change the type.  These uses (e.g. another
-        // func.call) need an extract_slice to convert back.
-        SmallVector<OpOperand *> usesNeedingExtractSlice;
-        Value execResult = execRegion.getResult(match.fullTensorResultIdx);
-        for (OpOperand &use : execResult.getUses()) {
-          if (match.insertSlice && use.getOwner() == &*match.insertSlice)
-            continue;
-          usesNeedingExtractSlice.push_back(&use);
-        }
-
-        auto yieldOp =
-            cast<scf::YieldOp>(execRegion.getRegion().front().getTerminator());
-        rewriter.modifyOpInPlace(yieldOp, [&]() {
-          yieldOp.getResultsMutable()[match.fullTensorResultIdx].set(
-              fullTensorResult);
-        });
-        rewriter.modifyOpInPlace(execRegion, [&]() {
-          execRegion.getResult(match.fullTensorResultIdx)
-              .setType(fullTensorResult.getType());
-        });
-
-        // Insert extract_slice for uses that need the original slice type.
-        for (OpOperand *use : usesNeedingExtractSlice) {
-          PatternRewriter::InsertionGuard guard(rewriter);
-          rewriter.setInsertionPoint(use->getOwner());
-          Value extractForUse = createExtractForOriginalResult(execResult);
-          rewriter.modifyOpInPlace(use->getOwner(),
-                                   [&]() { use->set(extractForUse); });
-        }
-      } else if (match.insertSlice) {
-        newResults[match.fullTensorResultIdx] =
-            createExtractForOriginalResult(fullTensorResult);
-      }
-
-      if (match.insertSlice) {
-        tensor::InsertSliceOp insertOp = match.insertSlice;
-        Value replacement =
-            execRegion ? execRegion.getResult(match.fullTensorResultIdx)
-                       : fullTensorResult;
-        rewriter.replaceAllUsesWith(insertOp.getResult(), replacement);
-        rewriter.eraseOp(insertOp);
-      } else {
-        Value extractSrc = execRegion
-                               ? execRegion.getResult(match.fullTensorResultIdx)
-                               : fullTensorResult;
-        newResults[match.fullTensorResultIdx] =
-            rewriter.create<tensor::ExtractSliceOp>(
-                call.getLoc(), extractSlice.getType(), extractSrc,
-                extractSlice.getMixedOffsets(), extractSlice.getMixedSizes(),
-                extractSlice.getMixedStrides());
-      }
+    // [Scenario 2] Call returns full tensor; replace insert_slice uses with it.
+    if (match.insertSlice) {
+      tensor::InsertSliceOp insertOp = match.insertSlice;
+      rewriter.replaceAllUsesWith(insertOp.getResult(),
+                                  newCall.getResult(match.fullTensorResultIdx));
+      rewriter.eraseOp(insertOp);
     }
-
+    // [Scenario 1] Call returns full tensor; caller needs extract_slice on
+    // result. Use original slice type for rank-reduce (e.g. 2D->1D).
+    else if (match.fullTensorResultIdx != -1) {
+      newResults[match.fullTensorResultIdx] =
+          rewriter.create<tensor::ExtractSliceOp>(
+              call.getLoc(), extractSlice.getType(),
+              newResults[match.fullTensorResultIdx],
+              extractSlice.getMixedOffsets(), extractSlice.getMixedSizes(),
+              extractSlice.getMixedStrides());
+    }
     rewriter.replaceOp(call, newResults);
     return newCall;
   }
@@ -696,8 +426,8 @@ private:
                                                    ValueRange values) {
     SmallVector<Value> args;
     for (Value value : values)
-      args.push_back(
-          block.insertArgument(pos++, value.getType(), value.getLoc()));
+      args.push_back(block.insertArgument(pos++, value.getType(),
+                                          value.getLoc()));
     return args;
   }
 
@@ -846,11 +576,13 @@ struct SwapUnitDimExpandShapeOfExtractSlice
 
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override {
-    auto extractOp = expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    auto extractOp =
+        expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
     if (!extractOp)
       return failure();
 
-    auto srcType = cast<RankedTensorType>(extractOp.getSource().getType());
+    auto srcType =
+        cast<RankedTensorType>(extractOp.getSource().getType());
     auto sliceType = extractOp.getType();
     auto expandedType = expandOp.getResultType();
 
@@ -889,8 +621,8 @@ struct SwapUnitDimExpandShapeOfExtractSlice
       expandedSrcOutputShape.push_back(rewriter.getIndexAttr(dim));
 
     auto newExpand = rewriter.create<tensor::ExpandShapeOp>(
-        expandOp.getLoc(), expandedSrcType, extractOp.getSource(), reassoc,
-        expandedSrcOutputShape);
+        expandOp.getLoc(), expandedSrcType, extractOp.getSource(),
+        reassoc, expandedSrcOutputShape);
 
     SmallVector<OpFoldResult> newOffsets, newSizes, newStrides;
     auto oldOffsets = extractOp.getMixedOffsets();
@@ -942,11 +674,13 @@ struct FoldRankReducingSliceExpandShape
 
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override {
-    auto extractOp = expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
+    auto extractOp =
+        expandOp.getSrc().getDefiningOp<tensor::ExtractSliceOp>();
     if (!extractOp)
       return failure();
 
-    auto srcType = cast<RankedTensorType>(extractOp.getSource().getType());
+    auto srcType =
+        cast<RankedTensorType>(extractOp.getSource().getType());
     auto sliceType = extractOp.getType();
     auto resultType = expandOp.getResultType();
 
@@ -961,7 +695,8 @@ struct FoldRankReducingSliceExpandShape
     // The extract_slice sizes (in source rank) must match the expand result
     // shape exactly, so we can directly produce a non-rank-reducing
     // extract_slice with the expand result type.
-    if (ArrayRef<int64_t>(extractOp.getStaticSizes()) != resultType.getShape())
+    if (ArrayRef<int64_t>(extractOp.getStaticSizes()) !=
+        resultType.getShape())
       return failure();
 
     rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
@@ -1014,8 +749,8 @@ struct SwapCollapseShapeOfExtractSlice
     }
 
     auto newCollapse = rewriter.create<tensor::CollapseShapeOp>(
-        collapseOp.getLoc(), params->collapsedSourceType, extractOp.getSource(),
-        reassoc);
+        collapseOp.getLoc(), params->collapsedSourceType,
+        extractOp.getSource(), reassoc);
 
     rewriter.replaceOpWithNewOp<tensor::ExtractSliceOp>(
         collapseOp, collapsedType, newCollapse, params->offsets, params->sizes,
@@ -1031,7 +766,8 @@ private:
     SmallVector<OpFoldResult> strides;
   };
 
-  static int64_t product(ArrayRef<int64_t> shape, ArrayRef<int64_t> dims) {
+  static int64_t product(ArrayRef<int64_t> shape,
+                         ArrayRef<int64_t> dims) {
     int64_t result = 1;
     for (int64_t dim : dims) {
       result *= shape[dim];
@@ -1066,8 +802,9 @@ private:
       }
     }
 
-    return product(sourceShape, group.slice(*lastActivePos + 1,
-                                            group.size() - *lastActivePos - 1));
+    return product(sourceShape,
+                   group.slice(*lastActivePos + 1,
+                               group.size() - *lastActivePos - 1));
   }
 
   static OpFoldResult linearizeOffsets(OpBuilder &builder, Location loc,
@@ -1130,8 +867,8 @@ private:
       params.strides.push_back(builder.getIndexAttr(*collapsedStride));
     }
 
-    params.collapsedSourceType = RankedTensorType::get(
-        collapsedSourceShape, sourceType.getElementType());
+    params.collapsedSourceType =
+        RankedTensorType::get(collapsedSourceShape, sourceType.getElementType());
     return params;
   }
 };

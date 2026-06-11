@@ -254,7 +254,8 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
       options.gridDimZ = static_cast<int>(tritonGridDim[2]);
     pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
     pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
-    pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
+    if (config.getEnableSIMTFastDiv())
+      pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
   }
   pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
   pm.addPass(bishengir::triton::createDecomposeFRemPass());
@@ -330,6 +331,7 @@ void setupLowerTritonPipelineOptions(
   options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
+  options.superBlockFactor = config.getSuperBlockFactor();
 #if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedMemDynamicSize() < 122880 ||
       config.getSharedMemDynamicSize() > 221184)

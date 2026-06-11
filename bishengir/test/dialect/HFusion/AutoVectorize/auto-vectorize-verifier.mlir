@@ -40,3 +40,14 @@ module {
     return
   }
 }
+
+// -----
+
+module {
+  func.func @vector_function_allows_vector_ops() attributes {hivm.vector_function} {
+    %cst = arith.constant 0.0 : f32
+    %0 = vector.broadcast %cst : f32 to vector<4xf32>
+
+    return
+  }
+}

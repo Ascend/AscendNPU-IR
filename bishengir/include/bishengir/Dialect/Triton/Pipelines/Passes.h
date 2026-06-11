@@ -69,6 +69,9 @@ struct LowerTritonPipelineOptions
       *this, "enable-simt-auto-blockify",
       llvm::cl::desc("Enable auto blockify for SIMT kernel"),
       llvm::cl::init(false)};
+  PassOptions::Option<unsigned> superBlockFactor{
+      *this, "super-block-factor", llvm::cl::desc("Factor of super blocking"),
+      llvm::cl::init(0)};
   mlir::triton::proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
 };
 
