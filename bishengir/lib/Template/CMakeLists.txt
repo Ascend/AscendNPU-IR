@@ -105,6 +105,11 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -I ${INCLUDE_PATH})
     list(APPEND bisheng_args -o "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
 
+    # Conditionally append sysroot if it exists
+    if(CMAKE_SYSROOT)
+        list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
+    endif() 
+
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${bc_name}
         COMMAND ${BISHENG_TOOL} ${bisheng_args}
@@ -181,6 +186,11 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -I $ENV{ASCEND_HOME_PATH}/tools/mssanitizer/include/)
     list(APPEND bisheng_args -o ${bc_name})
 
+    # Conditionally append sysroot if it exists
+    if(CMAKE_SYSROOT)
+        list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
+    endif()
+
     string(REGEX REPLACE ";" " " compile_command "${BISHENG_TOOL} ${bisheng_args}")
     message("-- command of compile cpp to bc is ${compile_command}")
 
@@ -234,6 +244,11 @@ function(compile_single_cpp_to_bc_debug cpp_with_path core_type platform_type)
     list(APPEND bisheng_args -I ${INCLUDE_PATH})
     list(APPEND bisheng_args -DENABLE_CPU_TRACE_INTRINSIC)
     list(APPEND bisheng_args -o "${CMAKE_CURRENT_BINARY_DIR}/${bc_name}")
+
+    # Conditionally append sysroot if it exists
+    if(CMAKE_SYSROOT)
+        list(APPEND bisheng_args --sysroot=${CMAKE_SYSROOT})
+    endif() 
 
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${bc_name}
