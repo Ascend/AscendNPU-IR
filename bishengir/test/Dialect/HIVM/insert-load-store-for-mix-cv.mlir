@@ -396,11 +396,11 @@ func.func @insert_store_load_for_attr_parallel_loop(%arg0: memref<16x16xf16>, %a
 // CHECK-LABEL: @gather_load_base_should_stay_gm(
 // CHECK-SAME: %[[BASE:.*]]: memref<?xf16>, %{{.*}}: tensor<16x16xf16>, %{{.*}}: tensor<16x16xi64>) -> tensor<16x16xf32>
 // CHECK-NOT: hivm.hir.load ins(%[[BASE]] : memref<?xf16>)
-// CHECK: %[[GATHER:.*]] = hivm.hir.gather_load ins(%[[BASE]] : memref<?xf16>, %{{.*}} : tensor<16x16xi64>, %{{.*}} : i32, %{{.*}} : tensor<16x16xi1>, %{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {{.*}} -> tensor<16x16xf16>
-// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
-// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
-// CHECK: hivm.hir.copy ins(%[[GATHER]] : tensor<16x16xf16>) outs(%[[CAST]] : memref<16x16xf16>) {"inserted-copy"}
-// CHECK: hivm.hir.mmadL1 ins(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
+// CHECK: %[[GATHER:.*]] = hivm.hir.gather_load ins(%[[BASE]] : memref<?xf16>, %{{.*}} : tensor<16x16xi64>, %{{.*}} : i32, %{{.*}} : tensor<16x16xi1>, %{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
+// CHECK: hivm.hir.copy ins(%{{.*}} : tensor<1x1x16x16xf16>) outs(%[[CAST]] : memref<1x1x16x16xf16>) {"inserted-copy"}
+// CHECK: hivm.hir.mmadL1 ins(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<1x1x16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   func.func @gather_load_base_should_stay_gm(%base: memref<?xf16>, %rhs: tensor<16x16xf16>, %indices: tensor<16x16xi64>) -> tensor<16x16xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %c1_i32 = arith.constant 1 : i32
