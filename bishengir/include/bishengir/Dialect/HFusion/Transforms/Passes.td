@@ -630,12 +630,7 @@ def Decompose : Pass<"hfusion-decompose", "func::FuncOp">{
 def SimplifyVFArgs : Pass<"hfusion-simplify-vf-arg", "ModuleOp"> {
   let summary = "simplify vf function arguments";
   let constructor = "mlir::hfusion::createSimplifyVFArgsPass()";
-  let dependentDialects = [
-    "arith::ArithDialect",
-    "func::FuncDialect",
-    "memref::MemRefDialect",
-    "vector::VectorDialect"
-  ];
+  let dependentDialects = ["func::FuncDialect"];
 }
 
 def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
@@ -650,6 +645,13 @@ def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
       Option<"mergeVFNumLimit", "merge-vf-num-limit", "int", "4",
               "allowed maximum number of merged VFs">,
   ];
+}
+
+def PrepareI1Nx1ForVectorization
+    : Pass<"hfusion-prepare-i1-nx1-for-vectorization", "func::FuncOp"> {
+  let summary = "Collapse Nx1 linalg.generic with expanded i1 input before vectorization";
+  let constructor = "mlir::hfusion::createPrepareI1Nx1ForVectorizationPass()";
+  let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect"];
 }
 
 def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::FuncOp"> {
