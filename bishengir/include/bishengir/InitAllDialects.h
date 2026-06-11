@@ -38,6 +38,7 @@
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
 #include "bishengir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/MeshShardingInterfaceImpl.h"
@@ -97,6 +98,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   // Register all external models.
   mlir::hivm::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::annotation::registerBufferizableOpInterfaceExternalModels(registry);
+  mlir::scope::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hfusion::registerTilingInterfaceExternalModels(registry);
   mlir::hfusion::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::hfusion::registerShardingInterfaceExternalModels(registry);
