@@ -897,17 +897,6 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
     LLVM_DEBUG(dbgs() << "Inserting \t"; op->dump());
     mapOpToItem(*op, item);
     toBePipelined.erase(op);
-
-    // A counter load in a VECTOR item must drag its advance-clone along so the
-    // counter is incremented per stage instead of read-only at 0. Pulling the
-    // clone here lets traceDependentOps wire its inits/operands and migrateOps
-    // remap them, avoiding a dangling cube-path tensor when the loop is erased.
-    if (item.core == TCoreType::VECTOR)
-      if (auto load = dyn_cast<memref::LoadOp>(op)) {
-        auto it = counterClones.find(load.getMemRef());
-        if (it != counterClones.end() && !item.ops.contains(it->second))
-          workingStack.push_back(it->second);
-      }
     for (Operation *usr : op->getUsers())
       if (isa<annotation::MarkOp, DebugOp>(usr))
         mapOpToItem(*usr, item);

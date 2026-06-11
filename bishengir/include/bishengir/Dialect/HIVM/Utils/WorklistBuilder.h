@@ -65,13 +65,6 @@ public:
   /// Block mode: partition a block's operations for if-else splitting.
   explicit WorklistBuilder(Block *block);
 
-  /// Register counter-advance clones keyed by their counter alloca. When a
-  /// VECTOR work item pulls in a load of the alloca, the clone is pulled in
-  /// alongside so it migrates through the normal dependency flow.
-  void setCounterClones(const DenseMap<Value, Operation *> &clones) {
-    counterClones = clones;
-  }
-
   /// Analyze operations and produce a partitioned worklist. May modify the
   /// IR by attaching pipeline.cubeonly / pipeline.veconly attributes to
   /// uniform-core region ops as a side effect.
@@ -171,8 +164,6 @@ private:
 
   DenseSet<Operation *> toBePipelined;
   SmallVector<Operation *> separators;
-  // Counter alloca value -> vector-safe clone advancing it (set by CV pipeline).
-  DenseMap<Value, Operation *> counterClones;
   DenseMap<Operation *, DenseSet<Operation *>> dependenceMap;
   DenseMap<Operation *, DenseSet<Operation *>> loopCarriedDependenceMap;
   SetVector<Value> yieldedVals;
