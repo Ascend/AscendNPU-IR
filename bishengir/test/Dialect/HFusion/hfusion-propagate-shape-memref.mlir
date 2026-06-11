@@ -134,3 +134,24 @@ func.func @propagate_memref_expand_512_sink(%arg0: memref<?xf16>, %arg1: index, 
   %expand_shape = memref.expand_shape %subview_0 [[0, 1], [2, 3]] output_shape [1, %arg3, 1, %arg4] : memref<?x?xf16, strided<[32, 1], offset: ?>> into memref<1x?x1x?xf16, strided<[?, 32, ?, 1], offset: ?>>
   return %expand_shape : memref<1x?x1x?xf16, strided<[?, 32, ?, 1], offset: ?>>
 }
+
+// -----
+
+// CHECK: %[[value:.*]] = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1, 1, 1, 1], strides: [1, 1, 1, 1] : memref<?xi8> to memref<1x1x1x1xi8>
+// CHECK: %[[value1:.*]] = memref.collapse_shape %[[value]] {{\[\[}}0, 1, 2, 3{{\]\]}} : memref<1x1x1x1xi8> into memref<1xi8>
+func.func @triton_min_5d_dim4(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 2 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
+  %true = arith.constant true
+  %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [0], sizes: [1], strides: [1] : memref<?xi8> to memref<1xi8, strided<[1]>>
+  %alloc = memref.alloc() : memref<1xi8>
+  memref.copy %reinterpret_cast, %alloc : memref<1xi8, strided<[1]>> to memref<1xi8>
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<1xi8>
+  hfusion.assert "Expecting input to be integer type" %true : i1
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [1], strides: [1] : memref<?xi8> to memref<1xi8, strided<[1]>>
+  bufferization.materialize_in_destination %0 in writable %reinterpret_cast_0 : (tensor<1xi8>, memref<1xi8, strided<[1]>>) -> ()
+  %alloc_1 = memref.alloc() : memref<1xi8>
+  memref.copy %reinterpret_cast_0, %alloc_1 : memref<1xi8, strided<[1]>> to memref<1xi8>
+  %1 = bufferization.to_tensor %alloc_1 restrict writable : memref<1xi8>
+  %expanded = tensor.expand_shape %1 [[0, 1, 2, 3]] output_shape [1, 1, 1, 1] : tensor<1xi8> into tensor<1x1x1x1xi8>
+  hfusion.print " \0A: " {hex = false} %expanded : tensor<1x1x1x1xi8>
+  return
+}
