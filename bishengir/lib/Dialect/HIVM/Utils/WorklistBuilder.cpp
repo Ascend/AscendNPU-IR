@@ -136,13 +136,18 @@ static bool isCoreOp(Operation &op) {
 /// a `bufferization.to_tensor` reader that crosses CV-pipelining workitem
 /// boundaries — i.e. we need `traceMemrefSubnet` to register it in
 /// `outputMemrefMap` so `migrateOps` can find the writer for any
-/// cross-workitem `localOutput`.
+/// cross-workitem `localOutput`. Tensor-form DMA ops are ordinary value
+/// producers for CVPipelining and must not enter the memref subnet tracer.
 ///
-/// Includes plain `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core variant
-/// of `hivm.hir.copy`, and `hivm.hir.nd2nz` (the fused GM->L1 load with NZ
-/// layout conversion that `CombineOptimizedConvertLayout` emits in place of a
-/// LoadOp under `--enable-layout-optimization=true`).
+/// Includes memref-dst `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core
+/// variant of `hivm.hir.copy`, and memref-dst `hivm.hir.nd2nz` (the fused
+/// GM->L1 load with NZ layout conversion that `CombineOptimizedConvertLayout`
+/// emits in place of a LoadOp under `--enable-layout-optimization=true`).
 static bool isMemrefSubnetWriter(Operation *op) {
+  auto dps = dyn_cast<DestinationStyleOpInterface>(op);
+  if (!dps || dps.getNumDpsInits() != 1 ||
+      !isa<MemRefType>(dps.getDpsInitOperand(0)->get().getType()))
+    return isCrossCoreCopy(op);
   return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op);
 }
 
