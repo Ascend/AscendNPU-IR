@@ -216,6 +216,17 @@ struct AllocateAscendSharedMemory
     // path only.
     mlir::triton::gpu::attachAllocationSizeAndOffsetAttr(mod, allocation);
 
+    // Multiply memory allocated by superblock factor
+    // If superblocking is turned off (superblock factor is 1), does nothing
+    unsigned superBlockFactor = 1;
+    if (auto superBlockFactorAttr = mod->getAttrOfType<IntegerAttr>(
+            triton::gpu::AttrSuperBlockFactor))
+      superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+    mod->setAttr("ttg.shared",
+                 mlir::IntegerAttr::get(mlir::IntegerType::get(&getContext(), 32),
+                                        allocation.getSharedMemorySize() *
+                                            superBlockFactor));
+
     if (triton::util::getPassColumnDigit(mod, "convert-triton-gpu-to-llvm")) {
       ModuleMembarOrFenceAnalysis<MembarAnalysis> analyzer(&allocation);
       analyzer.run();

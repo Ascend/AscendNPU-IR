@@ -325,9 +325,83 @@ struct AdaptGPUKernelPass
       }
     });
 
+    Type i32Type = builder.getI32Type();
+    builder.setInsertionPoint(entryBlock, entryBlock->begin());
+
+    Value newSharedMemPtr = ub;
+
+    // Calculating new shared memory pointer as
+    // newPtr = oldPtr + relativeLogicalBlockIdx *
+    // sharedMemoryAllocationPerLogicalBlock relativeLogicalBlockIdx =
+    // (thread_id / warp_size) % superblock_factor
+
+    auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+    int64_t superBlockFactor = 1;
+    if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
+            triton::gpu::AttrSuperBlockFactor))
+      superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+
+    // superBlockFactor = 1 indicates superblocking is disabled
+    if (superBlockFactor > 1) {
+      // Getting the shared memory per logical block
+      // The module attribute specified for shared memory capacity size.
+      constexpr static char AttrShared[] = "ttg.shared";
+      int64_t sharedMemoryCapacity;
+
+      if (auto sharedMemAttr = moduleOp->getAttr(AttrShared)) {
+        if (auto intAttr = dyn_cast<mlir::IntegerAttr>(sharedMemAttr)) {
+          sharedMemoryCapacity = intAttr.getInt();
+        } else {
+          moduleOp->emitError()
+              << AttrShared
+              << " must be an IntegerAttr, but got: " << sharedMemAttr;
+          return;
+        }
+      } else {
+        moduleOp->emitError() << "ttg.shared attribute missing. Expected to "
+                                 "have allocated shared memory.";
+        return;
+      }
+      if (sharedMemoryCapacity % superBlockFactor != 0) {
+        moduleOp->emitError()
+            << "Unable to evenly divide allocated shared memory: "
+            << sharedMemoryCapacity
+            << " across number of logical blocks: " << superBlockFactor;
+            return;
+      }
+      int64_t logicalBlockMem = sharedMemoryCapacity / superBlockFactor;
+
+      int64_t numThreadPerWarp = -1;
+      if (auto numThreadAttr =
+              moduleOp->getAttr(triton::gpu::AttrNumThreadsPerWarp))
+        if (auto intAttr = dyn_cast<IntegerAttr>(numThreadAttr))
+          numThreadPerWarp = intAttr.getInt();
+      
+      if (numThreadPerWarp < 0) {
+        moduleOp->emitError()
+            << "Number of threads per warp missing";
+        return;
+      }
+
+      Value logicalBlockMemValue =
+          builder.create<LLVM::ConstantOp>(loc, i32Type, logicalBlockMem);
+      Value warpSize =
+          builder.create<LLVM::ConstantOp>(loc, i32Type, numThreadPerWarp);
+      Value SBF =
+          builder.create<LLVM::ConstantOp>(loc, i32Type, superBlockFactor);
+      Value tid = builder.create<ascend_dpx::ThreadIdXOp>(loc, i32Type);
+      Value warpId = builder.create<LLVM::UDivOp>(loc, tid, warpSize);
+      Value localBlockId = builder.create<LLVM::URemOp>(loc, warpId, SBF);
+
+      Value offset =
+          builder.create<LLVM::MulOp>(loc, localBlockId, logicalBlockMemValue);
+      newSharedMemPtr = builder.create<LLVM::GEPOp>(
+          loc, ub.getType(), builder.getI8Type(), ub, ValueRange{offset});
+    }
+
     funcOp.walk([&](LLVM::AddressOfOp addrOp) {
       if (addrOp.getGlobalName() == "global_smem") {
-        addrOp.getResult().replaceAllUsesWith(ub);
+        addrOp.getResult().replaceAllUsesWith(newSharedMemPtr);
       } else {
         for (auto &use :
              llvm::make_early_inc_range(addrOp.getResult().getUses())) {
