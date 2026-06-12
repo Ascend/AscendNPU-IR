@@ -12,6 +12,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     OptimizeLayouts.cpp
     OptimizeLayoutsAnalysis.cpp
     OptimizeLoads.cpp
+    RemoveAnnotationMark.cpp
     RewriteSliceOpToTriton.cpp
     SetBishengirSimtOptAttr.cpp
     PopulateSharedMemoryOffsetToDPX.cpp
@@ -35,6 +36,7 @@ add_bishengir_dialect_library(BiShengIRTritonTransforms
   MLIRLLVMPassIncGen
 
   LINK_LIBS PUBLIC
+  MLIRAnnotationDialect
   BiShengIRTritonExtension
   TritonGPUIR
   BiShengIRTritonExtIR
