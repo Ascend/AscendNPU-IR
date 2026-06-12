@@ -17,8 +17,6 @@
 // CHECK: intr.hivm.vintlv
 // CHECK: intr.hivm.vintlv
 //
-// CHECK: "hivm_regbaseintrins.intr.hivm.punpack"
-//
 // CHECK: intr.hivm.pge.b16{{.*}}mask_op_idx
 //
 // CHECK: intr.hivm.vldsx1.v128f16

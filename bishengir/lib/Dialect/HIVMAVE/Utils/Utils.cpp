@@ -771,7 +771,7 @@ Operation *hivmave::getBroadcastOp(Value scalar, VectorType tileType,
 }
 
 Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
-                             const Location &loc, Attribute attr) {
+                             const Location &loc) {
   hivmave::VFInterleaveOp interOp = rewriter.create<hivmave::VFInterleaveOp>(
       loc, ArrayRef<Type>({src.getType(), src.getType()}),
       ValueRange{src, src});
@@ -779,7 +779,7 @@ Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
 }
 
 Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
-                             const Location &loc, Attribute attr) {
+                             const Location &loc) {
   hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
       loc, ArrayRef<Type>({src.getType(), src.getType()}),
       ValueRange{src, src});

@@ -1585,47 +1585,6 @@ static Value cmpLowerToIntrin(VFCmpOp cmpOp,
   return result;
 }
 
-/// Densify the result of a VFCmpOp based on its functionType attribute.
-/// When the comparison result is an i1 vector and the op has functionType
-/// = DINTLV2/DINTLV4, insert punpack operations to de-interleave the mask.
-/// Returns the (possibly densified) value; if no densification is needed,
-/// returns cmpResult unchanged.
-static Value densifyCmpResult(VFCmpOp cmpOp, Value cmpResult,
-                               ConversionPatternRewriter &rewriter) {
-  auto resType = dyn_cast<VectorType>(cmpResult.getType());
-  if (!resType || !resType.getElementType().isSignlessInteger(1))
-    return cmpResult;
-
-  auto funcDistAttr =
-      cmpOp->getAttrOfType<FunctionDistTypeAttr>("functionType");
-  if (!funcDistAttr)
-    return cmpResult;
-
-  FunctionDistType funcType = funcDistAttr.getValue();
-  if (funcType != FunctionDistType::DINTLV2 &&
-      funcType != FunctionDistType::DINTLV4)
-    return cmpResult;
-
-  Location loc = cmpOp.getLoc();
-  Value part = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32IntegerAttr(0));
-  Value result = cmpResult;
-
-  if (funcType == FunctionDistType::DINTLV2) {
-    Operation *punpackOp =
-        hivm_regbaseintrins::buildPunpackOp(loc, part, result, rewriter);
-    result = punpackOp->getResult(0);
-  } else { // DINTLV4
-    Operation *punpackOp1 =
-        hivm_regbaseintrins::buildPunpackOp(loc, part, result, rewriter);
-    result = punpackOp1->getResult(0);
-    Operation *punpackOp2 =
-        hivm_regbaseintrins::buildPunpackOp(loc, part, result, rewriter);
-    result = punpackOp2->getResult(0);
-  }
-  return result;
-}
-
 struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
   explicit HIVMCmpOpLowering(LLVMTypeConverter &converter)
       : ConvertOpToLLVMPattern<VFCmpOp>(converter) {}
@@ -1667,7 +1626,7 @@ struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
       break;
     }
 
-    rewriter.replaceOp(cmpOp, densifyCmpResult(cmpOp, res, rewriter));
+    rewriter.replaceOp(cmpOp, res);
     return success();
   }
 };

@@ -153,8 +153,7 @@ static LogicalResult insertPregCastBeforeStore(VFMaskedStoreOp store,
 }
 
 static Value addDistForUnalignedLoad(Value srcVal, hivmave::LoadDist dist,
-                                     Location loc, IRRewriter &rewriter,
-                                     Attribute bitWidthAttr) {
+                                     Location loc, IRRewriter &rewriter) {
   // vldus have no dist operand
   // VLDS support BRC mode with 1Byte alignment.
   // So the BRC mode does not use unaligned instruction.
@@ -164,12 +163,12 @@ static Value addDistForUnalignedLoad(Value srcVal, hivmave::LoadDist dist,
   case hivmave::LoadDist::UNPK_B8:
   case hivmave::LoadDist::UNPK_B16:
   case hivmave::LoadDist::UNPK_B32: {
-    dst = sparseByIntlv(srcVal, rewriter, loc, bitWidthAttr);
+    dst = sparseByIntlv(srcVal, rewriter, loc);
     break;
   }
   case hivmave::LoadDist::UNPK4_B8: {
-    dst = sparseByIntlv(srcVal, rewriter, loc, bitWidthAttr);
-    dst = sparseByIntlv(dst, rewriter, loc, bitWidthAttr);
+    dst = sparseByIntlv(srcVal, rewriter, loc);
+    dst = sparseByIntlv(dst, rewriter, loc);
     break;
   }
   default:
@@ -179,8 +178,7 @@ static Value addDistForUnalignedLoad(Value srcVal, hivmave::LoadDist dist,
 }
 
 static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
-                                      Location loc, IRRewriter &rewriter,
-                                      Attribute bitWidthAttr) {
+                                      Location loc, IRRewriter &rewriter) {
   // vstus have no dist operand
   // Implement ONEPT_xxx by using vsel
   // Implement PK_xxx by using vdintlv
@@ -188,12 +186,12 @@ static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
   switch (dist) {
   case hivmave::StoreDist::PK_B16:
   case hivmave::StoreDist::PK_B32: {
-    dst = denseByDIntlv(srcVal, rewriter, loc, bitWidthAttr);
+    dst = denseByDIntlv(srcVal, rewriter, loc);
     break;
   }
   case hivmave::StoreDist::PK4_B32: {
-    dst = denseByDIntlv(srcVal, rewriter, loc, bitWidthAttr);
-    dst = denseByDIntlv(dst, rewriter, loc, bitWidthAttr);
+    dst = denseByDIntlv(srcVal, rewriter, loc);
+    dst = denseByDIntlv(dst, rewriter, loc);
     break;
   }
   default:
@@ -615,7 +613,7 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
     // Add additional op to adpat dist mode for unaligned load
     if (archIs910_95 && load->hasAttr(UnalignedAttr::name)) {
       Value result =
-          addDistForUnalignedLoad(dstVec, dist, loc, rewriter, {});
+          addDistForUnalignedLoad(dstVec, dist, loc, rewriter);
       if (result != dstVec) {
         LDBG("add intlv for unaligned load");
         for (Operation *u : oldUsers)
@@ -650,7 +648,7 @@ static void adaptBitWidthForStore(IRRewriter &rewriter,
     // Add additional op to adpat dist mode for unaligned store
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name)) {
       Value result =
-          addDistForUnalignedStore(srcVec, dist, loc, rewriter, {});
+          addDistForUnalignedStore(srcVec, dist, loc, rewriter);
       if (result != srcVec) {
         LDBG("add dintlv for unaligned store");
         // set new src vector of store
