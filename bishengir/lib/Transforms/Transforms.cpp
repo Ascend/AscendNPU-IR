@@ -15,10 +15,16 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/Dominance.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
+#include <numeric>
 
 #include "bishengir/Transforms/Transforms.h"
 
@@ -905,6 +911,212 @@ Operation *bishengir::cloneAndFuseFirstUse(RewriterBase &rewriter,
   return fusedOp;
 }
 
+//===----------------------------------------------------------------------===//
+// fuseNestedSiblingLoops helpers
+//===----------------------------------------------------------------------===//
+
+static bool isProducerConsumed(Operation *producer, Operation *consumer) {
+  SmallPtrSet<Operation *, 8> visited{producer};
+  SmallVector<Operation *> worklist{producer};
+  while (!worklist.empty()) {
+    for (auto *user : worklist.pop_back_val()->getUsers()) {
+      if (!visited.insert(user).second)
+        continue;
+      if (consumer->isAncestor(user))
+        return true;
+      worklist.push_back(user);
+    }
+  }
+  return false;
+}
+
+static SmallVector<SmallVector<scf::ForOp>>
+groupInnerSiblingLoops(SmallVector<scf::ForOp> &loops) {
+  SmallVector<SmallVector<scf::ForOp>> result;
+  for (auto &loop : loops) {
+    bool added = false;
+    for (auto &group : result) {
+      if (llvm::all_of(group, [&](scf::ForOp other) {
+            return !isProducerConsumed(loop, other) &&
+                   !isProducerConsumed(other, loop);
+          })) {
+        group.push_back(loop);
+        added = true;
+        break;
+      }
+    }
+    if (!added)
+      result.push_back({loop});
+  }
+  return result;
+}
+
+// Groups sibling loops by iteration count. Each group is paired with an
+// optional iters value that signals whether normalization is needed:
+// - iters.has_value() — loops have the same count but differing bounds (cnt %
+//   step == 0); caller normalizes to uniform bounds before fusing.
+// - iters == nullopt  — loops share identical (lb, ub, step), so bounds are
+//   already uniform; normalization is skipped to preserve the tail-block signal
+//   (cnt % step != 0) for downstream passes.
+static SmallVector<std::pair<SmallVector<scf::ForOp>, std::optional<int64_t>>>
+groupByIterCount(SmallVector<scf::ForOp> &loops) {
+  enum CmpK { Signed, Unsigned };
+  llvm::MapVector<std::pair<int64_t, CmpK>, SmallVector<scf::ForOp>>
+      alignedGroups;
+  using BoundsKey = std::tuple<int64_t, int64_t, int64_t, int64_t>;
+  llvm::MapVector<BoundsKey, SmallVector<scf::ForOp>> tailGroups;
+  for (auto &loop : loops) {
+    auto lb = getConstantIntValue(loop.getLowerBound());
+    auto ub = getConstantIntValue(loop.getUpperBound());
+    auto st = getConstantIntValue(loop.getStep());
+    CmpK ucmp = loop.getUnsignedCmp() ? Unsigned : Signed;
+    if (!lb || !ub || !st)
+      continue;
+    int64_t cnt = *ub - *lb;
+    if (cnt == 0 || *st == 0 || (cnt > 0) != (*st > 0))
+      continue;
+    if (cnt % *st == 0)
+      alignedGroups[{llvm::divideCeilSigned(cnt, *st), ucmp}].push_back(loop);
+    else
+      tailGroups[{*lb, *ub, *st, ucmp}].push_back(loop);
+  }
+  SmallVector<std::pair<SmallVector<scf::ForOp>, std::optional<int64_t>>>
+      result;
+  for (auto &[k, v] : alignedGroups)
+    result.push_back({std::move(v), k.first});
+  for (auto &v : llvm::make_second_range(tailGroups))
+    result.push_back({std::move(v), std::nullopt});
+  return result;
+}
+
+// Normalize all loops in the group to shared GCD bounds so they can be fused.
+// See normalizeGroupBounds in SCFTransformOps for the full algorithm comment.
+static void normalizeGroupBounds(RewriterBase &rewriter,
+                                 SmallVector<scf::ForOp> &group,
+                                 int64_t iters) {
+  int64_t gcdStep = 0;
+  for (auto &l : group)
+    gcdStep = std::gcd(gcdStep, getConstantIntValue(l.getStep()).value());
+
+  Location loc = group.front().getLoc();
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(group.front().getOperation());
+  Value newLb = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value newUb = rewriter.create<arith::ConstantIndexOp>(loc, iters * gcdStep);
+  Value newSt = rewriter.create<arith::ConstantIndexOp>(loc, gcdStep);
+
+  for (auto &loop : group) {
+    auto lb = getConstantIntValue(loop.getLowerBound()).value();
+    auto st = getConstantIntValue(loop.getStep()).value();
+    int64_t factor = st / gcdStep;
+
+    rewriter.modifyOpInPlace(loop, [&]() {
+      loop.setLowerBound(newLb);
+      loop.setUpperBound(newUb);
+      loop.setStep(newSt);
+    });
+
+    if (lb == 0 && factor == 1)
+      continue;
+
+    rewriter.setInsertionPointToStart(loop.getBody());
+
+    AffineExpr remap =
+        rewriter.getAffineConstantExpr(lb) +
+        rewriter.getAffineDimExpr(0) * rewriter.getAffineConstantExpr(factor);
+    auto map = AffineMap::get(1, 0, remap, rewriter.getContext());
+
+    Value inductionVar = loop.getInductionVar();
+    auto affineApplyOp = rewriter.create<affine::AffineApplyOp>(
+        loop.getLoc(), map, inductionVar);
+    rewriter.replaceUsesWithIf(
+        inductionVar, affineApplyOp,
+        [&](OpOperand &operand) { return operand.getOwner() != affineApplyOp; });
+  }
+}
+
+static void climbedForwardSlice(Operation *op,
+                                SetVector<Operation *> &forwardSlice,
+                                const DominanceInfo &domInfo,
+                                Operation *fusedLoop) {
+  while (op->getParentOp() != fusedLoop->getParentOp())
+    op = op->getParentOp();
+  if (forwardSlice.count(op) || domInfo.properlyDominates(fusedLoop, op))
+    return;
+  for (Operation *userOp : op->getUsers())
+    climbedForwardSlice(userOp, forwardSlice, domInfo, fusedLoop);
+  forwardSlice.insert(op);
+}
+
+static void adjustEarlierLoopUsers(Operation *source, Operation *target,
+                                   Operation *fusedLoop,
+                                   RewriterBase &rewriter) {
+  Operation *earlier = source->isBeforeInBlock(target) ? source : target;
+  DominanceInfo domInfo(fusedLoop);
+  SetVector<Operation *> forwardSlice;
+  climbedForwardSlice(earlier, forwardSlice, domInfo, fusedLoop);
+  for (auto *userOp : drop_end(forwardSlice))
+    rewriter.moveOpAfter(userOp, fusedLoop);
+}
+
+static scf::ForOp fuseSiblingForLoops(scf::ForOp target, scf::ForOp source,
+                                      RewriterBase &rewriter) {
+  unsigned numTargetOuts = target.getNumResults();
+  unsigned numSourceOuts = source.getNumResults();
+
+  SmallVector<Value> fusedInitArgs;
+  llvm::append_range(fusedInitArgs, target.getInitArgs());
+  llvm::append_range(fusedInitArgs, source.getInitArgs());
+
+  rewriter.setInsertionPointAfter(source->isBeforeInBlock(target) ? target
+                                                                  : source);
+
+  scf::ForOp fusedLoop = rewriter.create<scf::ForOp>(
+      source.getLoc(), source.getLowerBound(), source.getUpperBound(),
+      source.getStep(), fusedInitArgs, /*bodyBuilder=*/nullptr,
+      source.getUnsignedCmp());
+
+  IRMapping mapping;
+  mapping.map(target.getInductionVar(), fusedLoop.getInductionVar());
+  mapping.map(target.getRegionIterArgs(),
+              fusedLoop.getRegionIterArgs().take_front(numTargetOuts));
+  mapping.map(source.getInductionVar(), fusedLoop.getInductionVar());
+  mapping.map(source.getRegionIterArgs(),
+              fusedLoop.getRegionIterArgs().take_back(numSourceOuts));
+
+  rewriter.setInsertionPointToStart(fusedLoop.getBody());
+  for (Operation &op : target.getBody()->without_terminator())
+    rewriter.clone(op, mapping);
+  for (Operation &op : source.getBody()->without_terminator())
+    rewriter.clone(op, mapping);
+
+  SmallVector<Value> yieldResults;
+  for (Value operand : target.getBody()->getTerminator()->getOperands())
+    yieldResults.push_back(mapping.lookupOrDefault(operand));
+  for (Value operand : source.getBody()->getTerminator()->getOperands())
+    yieldResults.push_back(mapping.lookupOrDefault(operand));
+  if (!yieldResults.empty())
+    rewriter.create<scf::YieldOp>(source.getLoc(), yieldResults);
+
+  adjustEarlierLoopUsers(source, target, fusedLoop, rewriter);
+  fusedLoop->setAttrs(source->getAttrs());
+  for (auto &attr : target->getAttrs())
+    fusedLoop->setAttr(attr.getName(), attr.getValue());
+
+  rewriter.replaceOp(target, fusedLoop.getResults().take_front(numTargetOuts));
+  rewriter.replaceOp(source, fusedLoop.getResults().take_back(numSourceOuts));
+
+  return fusedLoop;
+}
+
+static scf::ForOp loopsFusion(SmallVector<scf::ForOp> &group, size_t lo,
+                              size_t hi, RewriterBase &rw) {
+  return lo + 1 < hi ? fuseSiblingForLoops(
+                           loopsFusion(group, lo, (lo + hi) / 2, rw),
+                           loopsFusion(group, (lo + hi) / 2, hi, rw), rw)
+                     : group[lo];
+}
+
 void bishengir::normalizeLoop(RewriterBase &rewriter, scf::ForOp op,
                               Value oldStep) {
   MLIRContext *ctx = rewriter.getContext();
@@ -930,4 +1142,29 @@ void bishengir::normalizeLoop(RewriterBase &rewriter, scf::ForOp op,
       loopLoc, newIVCalculation, ValueRange{op.getInductionVar(), oldStep});
   rewriter.replaceAllUsesExcept(op.getInductionVar(), newIV,
                                 newIV.getDefiningOp());
+}
+
+void bishengir::fuseNestedSiblingLoops(Operation *fusedOp,
+                                       RewriterBase &rewriter, bool recursive) {
+  auto outerForOp = dyn_cast<scf::ForOp>(fusedOp);
+  if (!outerForOp)
+    return;
+  auto innerForOps =
+      llvm::to_vector(outerForOp.getBody()->getOps<scf::ForOp>());
+  if (innerForOps.empty())
+    return;
+
+  for (auto &[sameItersGroup, iters] : groupByIterCount(innerForOps)) {
+    if (sameItersGroup.size() < 2)
+      continue;
+    for (auto &siblingGroup : groupInnerSiblingLoops(sameItersGroup)) {
+      if (siblingGroup.size() < 2)
+        continue;
+      if (iters)
+        normalizeGroupBounds(rewriter, siblingGroup, *iters);
+      auto fused = loopsFusion(siblingGroup, 0, siblingGroup.size(), rewriter);
+      if (recursive)
+        fuseNestedSiblingLoops(fused, rewriter, recursive);
+    }
+  }
 }

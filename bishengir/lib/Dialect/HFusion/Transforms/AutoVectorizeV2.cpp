@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -1391,8 +1392,14 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
           builder
               .create<transform::LoopFuseSiblingOp>(
                   loc, builder.getType<transform::AnyOpType>(),
-                  /*target=*/fusedLoopHandle, /*source=*/nextLoopHandle, true)
+                  /*target=*/fusedLoopHandle, /*source=*/nextLoopHandle)
               .getFusedLoop();
+      fusedLoopHandle =
+          builder
+              .create<transform::LoopFuseNestedSiblingsOp>(
+                  loc, builder.getType<transform::AnyOpType>(),
+                  fusedLoopHandle, /*recursive=*/true)
+              .getTransformed();
     }
     if (hasFillOp)
       builder.create<transform::AnnotateOp>(loc, fusedLoopHandle,
