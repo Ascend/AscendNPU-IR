@@ -592,6 +592,34 @@ void LoopNormalizeOp::getEffects(
 }
 
 //===----------------------------------------------------------------------===//
+// LoopFuseNestedSiblingsOp
+//===----------------------------------------------------------------------===//
+
+
+DiagnosedSilenceableFailure
+transform::LoopFuseNestedSiblingsOp::apply(TransformRewriter &rewriter,
+                                           TransformResults &transformResults,
+                                           TransformState &state) {
+  SetVector<Operation *> transformed;
+  for (Operation *target : state.getPayloadOps(getTarget())) {
+    if (!isa<scf::ForOp>(target))
+      return emitDefiniteFailure() << "expect only scf.for target!";
+    bishengir::fuseNestedSiblingLoops(target, rewriter, getRecursive());
+    transformed.insert(target);
+  }
+  transformResults.set(cast<OpResult>(getTransformed()),
+                       transformed.getArrayRef());
+  return DiagnosedSilenceableFailure::success();
+}
+
+void LoopFuseNestedSiblingsOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  consumesHandle(getTargetMutable(), effects);
+  producesHandle(getOperation()->getOpResults(), effects);
+  modifiesPayload(effects);
+}
+
+//===----------------------------------------------------------------------===//
 // Transform op registration
 //===----------------------------------------------------------------------===//
 
