@@ -291,13 +291,22 @@ using NormalizeDivSIandDivUIOp =
 
 } // namespace mlir
 
-void mlir::hivm::populateNormalizeArithmeticPatterns(
+void mlir::hivm::populateNormalizeMulRecPatterns(
     RewritePatternSet &patterns) {
   patterns.add<NormalizeMulRecOp>(patterns.getContext());
-  patterns.add<NormalizeDivVSToRec>(patterns.getContext());
-  patterns.add<NormalizeVPowiToPowf>(patterns.getContext());
-  patterns.add<NormalizeSubVSToVMulAndVAdd>(patterns.getContext());
-  patterns.add<NormalizeRSqrtOp>(patterns.getContext());
+}
+
+void mlir::hivm::populateNormalizeArithmeticPatterns(
+    RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
+  patterns.add<NormalizeDivVSToRec>(ctx);
+  patterns.add<NormalizeVPowiToPowf>(ctx);
+  patterns.add<NormalizeSubVSToVMulAndVAdd>(ctx);
+  patterns.add<NormalizeRSqrtOp>(ctx);
+}
+
+void mlir::hivm::populateNormalizePreFinalArithmeticPatterns(
+    RewritePatternSet &patterns) {
   patterns.add<NormalizeMulExtOp>(patterns.getContext());
 }
 

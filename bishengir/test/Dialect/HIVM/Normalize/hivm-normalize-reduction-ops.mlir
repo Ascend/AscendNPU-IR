@@ -2,11 +2,15 @@
 
 // CHECK-LABEL: func.func @test_ReduceWithIndexRAHighPerformance_reduce_dim_0(
 // CHECK-SAME: %[[SRC:.*]]: tensor<64x32xf32>, %[[DSTV:.*]]: tensor<32xf32>, %[[DSTI:.*]]: tensor<32xi32>) -> tensor<32xi32> {
+// CHECK: %[[DSTV_EXP:.*]] = tensor.expand_shape %[[DSTV]] {{\[\[0, 1\]\]}} output_shape [1, 32] : tensor<32xf32> into tensor<1x32xf32>
+// CHECK: %[[DSTI_EXP:.*]] = tensor.expand_shape %[[DSTI]] {{\[\[0, 1\]\]}} output_shape [1, 32] : tensor<32xi32> into tensor<1x32xi32>
 // CHECK: %[[SRC_EMPTY:.*]] = tensor.empty() : tensor<32x64xf32>
 // CHECK: %[[SRC_T:.*]] = hivm.hir.vtranspose ins(%[[SRC]] : tensor<64x32xf32>) outs(%[[SRC_EMPTY]] : tensor<32x64xf32>) permutation = [1, 0] -> tensor<32x64xf32>
-// CHECK: %[[DSTV_EMPTY:.*]] = tensor.empty() : tensor<32x1xf32>
-// CHECK: %[[DSTI_EMPTY:.*]] = tensor.empty() : tensor<32x1xi32>
-// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[SRC_T]] : tensor<32x64xf32>) outs(%[[DSTV_EMPTY]], %[[DSTI_EMPTY]] : tensor<32x1xf32>, tensor<32x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<32x1xf32>, tensor<32x1xi32>
+// CHECK: %[[DSTV_TEMPTY:.*]] = tensor.empty() : tensor<32x1xf32>
+// CHECK: %[[DSTV_T:.*]] = hivm.hir.vtranspose ins(%[[DSTV_EXP]] : tensor<1x32xf32>) outs(%[[DSTV_TEMPTY]] : tensor<32x1xf32>) permutation = [1, 0] -> tensor<32x1xf32>
+// CHECK: %[[DSTI_TEMPTY:.*]] = tensor.empty() : tensor<32x1xi32>
+// CHECK: %[[DSTI_T:.*]] = hivm.hir.vtranspose ins(%[[DSTI_EXP]] : tensor<1x32xi32>) outs(%[[DSTI_TEMPTY]] : tensor<32x1xi32>) permutation = [1, 0] -> tensor<32x1xi32>
+// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[SRC_T]] : tensor<32x64xf32>) outs(%[[DSTV_T]], %[[DSTI_T]] : tensor<32x1xf32>, tensor<32x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<32x1xf32>, tensor<32x1xi32>
 // CHECK: %[[OUTI_EMPTY:.*]] = tensor.empty() : tensor<1x32xi32>
 // CHECK: %[[OUTI:.*]] = hivm.hir.vtranspose ins(%[[REDUCE]]#1 : tensor<32x1xi32>) outs(%[[OUTI_EMPTY]] : tensor<1x32xi32>) permutation = [1, 0] -> tensor<1x32xi32>
 // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[OUTI]] {{\[\[0, 1\]\]}} : tensor<1x32xi32> into tensor<32xi32>
@@ -29,16 +33,15 @@ func.func @test_ReduceWithIndexRAHighPerformance_reduce_dim_0(
 
 // CHECK-LABEL: func.func @test_ReduceWithIndexRAHighPerformance_argmax_preserves_nan_mask(
 // CHECK-SAME: %[[SRC:.*]]: tensor<64x32xf32>, %[[DSTV:.*]]: tensor<32xf32>, %[[DSTI:.*]]: tensor<32xi32>) -> (tensor<32xf32>, tensor<32xi32>) {
-// CHECK: %[[NEG_INF:.*]] = arith.constant 0xFF800000 : f32
+// CHECK: %[[DSTV_EXP:.*]] = tensor.expand_shape %[[DSTV]] {{\[\[0, 1\]\]}} output_shape [1, 32] : tensor<32xf32> into tensor<1x32xf32>
+// CHECK: %[[DSTI_EXP:.*]] = tensor.expand_shape %[[DSTI]] {{\[\[0, 1\]\]}} output_shape [1, 32] : tensor<32xi32> into tensor<1x32xi32>
 // CHECK: %[[SRC_EMPTY:.*]] = tensor.empty() : tensor<32x64xf32>
 // CHECK: %[[SRC_T:.*]] = hivm.hir.vtranspose ins(%[[SRC]] : tensor<64x32xf32>) outs(%[[SRC_EMPTY]] : tensor<32x64xf32>) permutation = [1, 0] -> tensor<32x64xf32>
-// CHECK: %[[EMPTY_MASK:.*]] = tensor.empty() : tensor<32x64xi1>
-// CHECK: %[[MASK:.*]] = hivm.hir.vnot
-// CHECK: %[[EMPTY_SEL:.*]] = tensor.empty() : tensor<32x64xf32>
-// CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%[[MASK]], %[[NEG_INF]], %[[SRC_T]] : tensor<32x64xi1>, f32, tensor<32x64xf32>) outs(%[[EMPTY_SEL]] : tensor<32x64xf32>) -> tensor<32x64xf32>
-// CHECK: %[[DSTV_EMPTY:.*]] = tensor.empty() : tensor<32x1xf32>
-// CHECK: %[[DSTI_EMPTY:.*]] = tensor.empty() : tensor<32x1xi32>
-// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[SEL]] : tensor<32x64xf32>) outs(%[[DSTV_EMPTY]], %[[DSTI_EMPTY]] : tensor<32x1xf32>, tensor<32x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<32x1xf32>, tensor<32x1xi32>
+// CHECK: %[[DSTV_TEMPTY:.*]] = tensor.empty() : tensor<32x1xf32>
+// CHECK: %[[DSTV_T:.*]] = hivm.hir.vtranspose ins(%[[DSTV_EXP]] : tensor<1x32xf32>) outs(%[[DSTV_TEMPTY]] : tensor<32x1xf32>) permutation = [1, 0] -> tensor<32x1xf32>
+// CHECK: %[[DSTI_TEMPTY:.*]] = tensor.empty() : tensor<32x1xi32>
+// CHECK: %[[DSTI_T:.*]] = hivm.hir.vtranspose ins(%[[DSTI_EXP]] : tensor<1x32xi32>) outs(%[[DSTI_TEMPTY]] : tensor<32x1xi32>) permutation = [1, 0] -> tensor<32x1xi32>
+// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce <max_with_index> ins(%[[SRC_T]] : tensor<32x64xf32>) outs(%[[DSTV_T]], %[[DSTI_T]] : tensor<32x1xf32>, tensor<32x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<32x1xf32>, tensor<32x1xi32>
 // CHECK: %[[OUTV_EMPTY:.*]] = tensor.empty() : tensor<1x32xf32>
 // CHECK: %[[OUTV:.*]] = hivm.hir.vtranspose ins(%[[REDUCE]]#0 : tensor<32x1xf32>) outs(%[[OUTV_EMPTY]] : tensor<1x32xf32>) permutation = [1, 0] -> tensor<1x32xf32>
 // CHECK: %[[OUTI_EMPTY:.*]] = tensor.empty() : tensor<1x32xi32>
@@ -65,11 +68,15 @@ func.func @test_ReduceWithIndexRAHighPerformance_argmax_preserves_nan_mask(
 
 // CHECK-LABEL: func.func @test_ReduceWithIndexRAHighPerformance_reduce_dim_1_rank3(
 // CHECK-SAME: %[[SRC:.*]]: tensor<32x32x128xf32>, %[[DSTV:.*]]: tensor<32x128xf32>, %[[DSTI:.*]]: tensor<32x128xi32>) -> tensor<32x128xi32> {
+// CHECK: %[[DSTV_EXP:.*]] = tensor.expand_shape %[[DSTV]] {{\[\[0\], \[1, 2\]\]}} output_shape [32, 1, 128] : tensor<32x128xf32> into tensor<32x1x128xf32>
+// CHECK: %[[DSTI_EXP:.*]] = tensor.expand_shape %[[DSTI]] {{\[\[0\], \[1, 2\]\]}} output_shape [32, 1, 128] : tensor<32x128xi32> into tensor<32x1x128xi32>
 // CHECK: %[[SRC_EMPTY:.*]] = tensor.empty() : tensor<32x128x32xf32>
 // CHECK: %[[SRC_T:.*]] = hivm.hir.vtranspose ins(%[[SRC]] : tensor<32x32x128xf32>) outs(%[[SRC_EMPTY]] : tensor<32x128x32xf32>) permutation = [0, 2, 1] -> tensor<32x128x32xf32>
-// CHECK: %[[DSTV_EMPTY:.*]] = tensor.empty() : tensor<32x128x1xf32>
-// CHECK: %[[DSTI_EMPTY:.*]] = tensor.empty() : tensor<32x128x1xi32>
-// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <min_with_index> ins(%[[SRC_T]] : tensor<32x128x32xf32>) outs(%[[DSTV_EMPTY]], %[[DSTI_EMPTY]] : tensor<32x128x1xf32>, tensor<32x128x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [2] -> tensor<32x128x1xf32>, tensor<32x128x1xi32>
+// CHECK: %[[DSTV_TEMPTY:.*]] = tensor.empty() : tensor<32x128x1xf32>
+// CHECK: %[[DSTV_T:.*]] = hivm.hir.vtranspose ins(%[[DSTV_EXP]] : tensor<32x1x128xf32>) outs(%[[DSTV_TEMPTY]] : tensor<32x128x1xf32>) permutation = [0, 2, 1] -> tensor<32x128x1xf32>
+// CHECK: %[[DSTI_TEMPTY:.*]] = tensor.empty() : tensor<32x128x1xi32>
+// CHECK: %[[DSTI_T:.*]] = hivm.hir.vtranspose ins(%[[DSTI_EXP]] : tensor<32x1x128xi32>) outs(%[[DSTI_TEMPTY]] : tensor<32x128x1xi32>) permutation = [0, 2, 1] -> tensor<32x128x1xi32>
+// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <min_with_index> ins(%[[SRC_T]] : tensor<32x128x32xf32>) outs(%[[DSTV_T]], %[[DSTI_T]] : tensor<32x128x1xf32>, tensor<32x128x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [2] -> tensor<32x128x1xf32>, tensor<32x128x1xi32>
 // CHECK: %[[OUTI_EMPTY:.*]] = tensor.empty() : tensor<32x1x128xi32>
 // CHECK: %[[OUTI:.*]] = hivm.hir.vtranspose ins(%[[REDUCE]]#1 : tensor<32x128x1xi32>) outs(%[[OUTI_EMPTY]] : tensor<32x1x128xi32>) permutation = [0, 2, 1] -> tensor<32x1x128xi32>
 // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[OUTI]] {{\[\[0\], \[1, 2\]\]}} : tensor<32x1x128xi32> into tensor<32x128xi32>
@@ -123,13 +130,20 @@ func.func @test_ReduceWithIndexRAHighPerformance_incompatible_shape_no_transpose
 // -----
 
 // CHECK-LABEL: func.func @test_ReduceWithIndexRAHighPerformance_unsupported_permutation_no_transpose(
+// CHECK-SAME: %[[SRC:.*]]: tensor<16x8x32x64xf32>, %[[DSTV:.*]]: tensor<16x1x32x64xf32>, %[[DSTI:.*]]: tensor<16x1x32x64xi32>) -> tensor<16x1x32x64xi32> {
 // CHECK: %[[SRC_EMPTY1:.*]] = tensor.empty() : tensor<16x32x64x8xf32>
 // CHECK: %[[SRC_EMPTY0:.*]] = tensor.empty() : tensor<16x32x8x64xf32>
-// CHECK: %[[SRC_T0:.*]] = hivm.hir.vtranspose ins(%[[SRC:.*]] : tensor<16x8x32x64xf32>) outs(%[[SRC_EMPTY0]] : tensor<16x32x8x64xf32>) permutation = [0, 2, 1, 3] -> tensor<16x32x8x64xf32>
+// CHECK: %[[SRC_T0:.*]] = hivm.hir.vtranspose ins(%[[SRC]] : tensor<16x8x32x64xf32>) outs(%[[SRC_EMPTY0]] : tensor<16x32x8x64xf32>) permutation = [0, 2, 1, 3] -> tensor<16x32x8x64xf32>
 // CHECK: %[[SRC_T1:.*]] = hivm.hir.vtranspose ins(%[[SRC_T0]] : tensor<16x32x8x64xf32>) outs(%[[SRC_EMPTY1]] : tensor<16x32x64x8xf32>) permutation = [0, 1, 3, 2] -> tensor<16x32x64x8xf32>
-// CHECK: %[[DSTV_EMPTY:.*]] = tensor.empty() : tensor<16x32x64x1xf32>
-// CHECK: %[[DSTI_EMPTY:.*]] = tensor.empty() : tensor<16x32x64x1xi32>
-// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[SRC_T1]] : tensor<16x32x64x8xf32>) outs(%[[DSTV_EMPTY]], %[[DSTI_EMPTY]] : tensor<16x32x64x1xf32>, tensor<16x32x64x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [3] -> tensor<16x32x64x1xf32>, tensor<16x32x64x1xi32>
+// CHECK: %[[DSTV_EMPTY1:.*]] = tensor.empty() : tensor<16x32x64x1xf32>
+// CHECK: %[[DSTV_EMPTY0:.*]] = tensor.empty() : tensor<16x32x1x64xf32>
+// CHECK: %[[DSTV_T0:.*]] = hivm.hir.vtranspose ins(%[[DSTV]] : tensor<16x1x32x64xf32>) outs(%[[DSTV_EMPTY0]] : tensor<16x32x1x64xf32>) permutation = [0, 2, 1, 3] -> tensor<16x32x1x64xf32>
+// CHECK: %[[DSTV_T1:.*]] = hivm.hir.vtranspose ins(%[[DSTV_T0]] : tensor<16x32x1x64xf32>) outs(%[[DSTV_EMPTY1]] : tensor<16x32x64x1xf32>) permutation = [0, 1, 3, 2] -> tensor<16x32x64x1xf32>
+// CHECK: %[[DSTI_EMPTY1:.*]] = tensor.empty() : tensor<16x32x64x1xi32>
+// CHECK: %[[DSTI_EMPTY0:.*]] = tensor.empty() : tensor<16x32x1x64xi32>
+// CHECK: %[[DSTI_T0:.*]] = hivm.hir.vtranspose ins(%[[DSTI]] : tensor<16x1x32x64xi32>) outs(%[[DSTI_EMPTY0]] : tensor<16x32x1x64xi32>) permutation = [0, 2, 1, 3] -> tensor<16x32x1x64xi32>
+// CHECK: %[[DSTI_T1:.*]] = hivm.hir.vtranspose ins(%[[DSTI_T0]] : tensor<16x32x1x64xi32>) outs(%[[DSTI_EMPTY1]] : tensor<16x32x64x1xi32>) permutation = [0, 1, 3, 2] -> tensor<16x32x64x1xi32>
+// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[SRC_T1]] : tensor<16x32x64x8xf32>) outs(%[[DSTV_T1]], %[[DSTI_T1]] : tensor<16x32x64x1xf32>, tensor<16x32x64x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [3] -> tensor<16x32x64x1xf32>, tensor<16x32x64x1xi32>
 // CHECK: %[[OUTI_EMPTY1:.*]] = tensor.empty() : tensor<16x1x32x64xi32>
 // CHECK: %[[OUTI_EMPTY0:.*]] = tensor.empty() : tensor<16x32x1x64xi32>
 // CHECK: %[[OUTI_T0:.*]] = hivm.hir.vtranspose ins(%[[REDUCE]]#1 : tensor<16x32x64x1xi32>) outs(%[[OUTI_EMPTY0]] : tensor<16x32x1x64xi32>) permutation = [0, 1, 3, 2] -> tensor<16x32x1x64xi32>
@@ -150,14 +164,7 @@ func.func @test_ReduceWithIndexRAHighPerformance_unsupported_permutation_no_tran
 
 // CHECK-LABEL: func.func @test_NormalizeArgMax_hivm_vreduce_nan_mask(
 // CHECK-SAME: %[[SRC:.*]]: tensor<4x8xf32>, %[[INITV:.*]]: tensor<4x1xf32>, %[[INITI:.*]]: tensor<4x1xi32>) -> (tensor<4x1xf32>, tensor<4x1xi32>) {
-// CHECK: %[[INF:.*]] = arith.constant 0xFF800000 : f32
-// CHECK: %[[EMPTY_MASK:.*]] = tensor.empty() : tensor<4x8xi1>
-// CHECK: %[[MASK:.*]] = hivm.hir.vnot
-// CHECK: %[[EMPTY_SEL:.*]] = tensor.empty() : tensor<4x8xf32>
-// CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%[[MASK]], %[[INF]], %[[SRC]] : tensor<4x8xi1>, f32, tensor<4x8xf32>) outs(%[[EMPTY_SEL]] : tensor<4x8xf32>) -> tensor<4x8xf32>
-// CHECK: %[[EMPTY_INITV:.*]] = tensor.empty() : tensor<4x1xf32>
-// CHECK: %[[EMPTY_INITI:.*]] = tensor.empty() : tensor<4x1xi32>
-// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[SEL]] : tensor<4x8xf32>) outs(%[[EMPTY_INITV]], %[[EMPTY_INITI]] : tensor<4x1xf32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf32>, tensor<4x1xi32>
+// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce <max_with_index> ins(%[[SRC]] : tensor<4x8xf32>) outs(%[[INITV]], %[[INITI]] : tensor<4x1xf32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf32>, tensor<4x1xi32>
 // CHECK: return %[[REDUCE]]#0, %[[REDUCE]]#1 : tensor<4x1xf32>, tensor<4x1xi32>
 func.func @test_NormalizeArgMax_hivm_vreduce_nan_mask(
     %src : tensor<4x8xf32>, %initv : tensor<4x1xf32>,
@@ -174,14 +181,7 @@ func.func @test_NormalizeArgMax_hivm_vreduce_nan_mask(
 
 // CHECK-LABEL: func.func @test_NormalizeArgMin_hivm_vreduce_nan_mask(
 // CHECK-SAME: %[[SRC:.*]]: tensor<4x8xf32>, %[[INITV:.*]]: tensor<4x1xf32>, %[[INITI:.*]]: tensor<4x1xi32>) -> tensor<4x1xf32> {
-// CHECK: %[[INF:.*]] = arith.constant 0x7F800000 : f32
-// CHECK: %[[EMPTY_MASK:.*]] = tensor.empty() : tensor<4x8xi1>
-// CHECK: %[[MASK:.*]] = hivm.hir.vnot
-// CHECK: %[[EMPTY_SEL:.*]] = tensor.empty() : tensor<4x8xf32>
-// CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%[[MASK]], %[[INF]], %[[SRC]] : tensor<4x8xi1>, f32, tensor<4x8xf32>) outs(%[[EMPTY_SEL]] : tensor<4x8xf32>) -> tensor<4x8xf32>
-// CHECK: %[[EMPTY_INITV:.*]] = tensor.empty() : tensor<4x1xf32>
-// CHECK: %[[EMPTY_INITI:.*]] = tensor.empty() : tensor<4x1xi32>
-// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <min_with_index> ins(%[[SEL]] : tensor<4x8xf32>) outs(%[[EMPTY_INITV]], %[[EMPTY_INITI]] : tensor<4x1xf32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf32>, tensor<4x1xi32>
+// CHECK: %[[REDUCE:.*]]:2 = hivm.hir.vreduce <min_with_index> ins(%[[SRC]] : tensor<4x8xf32>) outs(%[[INITV]], %[[INITI]] : tensor<4x1xf32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf32>, tensor<4x1xi32>
 // CHECK: return %[[REDUCE]]#0 : tensor<4x1xf32>
 func.func @test_NormalizeArgMin_hivm_vreduce_nan_mask(
     %src : tensor<4x8xf32>, %initv : tensor<4x1xf32>,
@@ -199,9 +199,7 @@ func.func @test_NormalizeArgMin_hivm_vreduce_nan_mask(
 // CHECK-LABEL: func.func @test_NormalizeArgMinMax_already_initialized_noop(
 // CHECK-NOT: hivm.hir.vcmp
 // CHECK-NOT: hivm.hir.vsel
-// CHECK: %[[EMPTY_INITV:.*]] = tensor.empty() : tensor<4x1xf32>
-// CHECK: %[[EMPTY_INITI:.*]] = tensor.empty() : tensor<4x1xi32>
-// CHECK: hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%{{.*}} : tensor<4x8xf32>) outs(%[[EMPTY_INITV]], %[[EMPTY_INITI]] : tensor<4x1xf32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf32>, tensor<4x1xi32>
+// CHECK: hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%{{.*}} : tensor<4x8xf32>) outs(%{{.*}}, %{{.*}} : tensor<4x1xf32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf32>, tensor<4x1xi32>
 func.func @test_NormalizeArgMinMax_already_initialized_noop(
     %src : tensor<4x8xf32>, %initv : tensor<4x1xf32>,
     %initi : tensor<4x1xi32>) -> tensor<4x1xf32> {
@@ -302,9 +300,7 @@ func.func @test_NormalizeF16ReduceSum_hivm_f32_noop(
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeReduceWithIndexInitsAndInputs_hivm_to_empty(
-// CHECK: %[[OUTV:.*]] = tensor.empty() : tensor<4x1xi32>
-// CHECK: %[[OUTI:.*]] = tensor.empty() : tensor<4x1xi32>
-// CHECK: hivm.hir.vreduce <max_with_index> ins(%{{.*}} : tensor<4x8xi32>) outs(%[[OUTV]], %[[OUTI]] : tensor<4x1xi32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xi32>, tensor<4x1xi32>
+// CHECK: hivm.hir.vreduce <max_with_index> ins(%{{.*}} : tensor<4x8xi32>) outs(%{{.*}}, %{{.*}} : tensor<4x1xi32>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xi32>, tensor<4x1xi32>
 func.func @test_NormalizeReduceWithIndexInitsAndInputs_hivm_to_empty(
     %src : tensor<4x8xi32>, %initv : tensor<4x1xi32>,
     %initi : tensor<4x1xi32>) -> (tensor<4x1xi32>, tensor<4x1xi32>) {
