@@ -529,6 +529,21 @@ def EnableLazyLoading : HIVMOptimizationControlOptions<
   "false"
 >;
 
+def SetCVPipelineMode : HIVMOptimizationControlOptions<
+  "Cube-Vector pipelining mode.",
+  "CVPipelineMode",
+  "CVPipelineMode::Unroll"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVPipelineMode::Off, "off", "Disable Cube-Vector pipelining"),
+  clEnumValN(CVPipelineMode::Unroll, "unroll", "Standard unroll-mode pipelining"),
+  clEnumValN(CVPipelineMode::Skew, "skew", "Skew/preload-mode pipelining"),
+  clEnumValN(CVPipelineMode::Dynamic, "dynamic", "Dynamic-mode pipelining(developing)")
+)
+  }];
+}
+
 def EnablePreload : BiShengIRCompileOpt<
   "Enable preload (skew mode) for CV-pipelining.",
   "bool",

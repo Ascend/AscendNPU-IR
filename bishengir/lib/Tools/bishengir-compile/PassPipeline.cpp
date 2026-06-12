@@ -9,12 +9,12 @@
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 
 #include "bishengir/Config/bishengir-config.h"
-#include "bishengir/Conversion/Passes.h"
-#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
-#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
-#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
+#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
+#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
+#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Pipelines/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
@@ -25,10 +25,9 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
-#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
-#include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
@@ -47,6 +46,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/WithColor.h"
 
 #include <set>
 
@@ -100,6 +100,29 @@ void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
   // so the split is preserved through the HIVM pipeline.
   if (config.isUBAwareVfFusion() && hivmPipelineOptions.enableVfMergeLevel > 0)
     hivmPipelineOptions.enableVfMergeLevel = 0;
+
+  // Backward compatibility: --enable-preload=true overrides
+  // --enablecv-pipeline-mode to skew
+  if (options.enablePreload) {
+    if (options.setCVPipelineMode != CVPipelineMode::Skew) {
+      llvm::WithColor::warning(llvm::errs())
+          << "warning: --enable-preload=true overrides "
+             "--enablecv-pipeline-mode; forcing 'Skew'.\n";
+      options.setCVPipelineMode = CVPipelineMode::Skew;
+    }
+  }
+
+  // When cv-pipelining is off, disable workspace multibuffer entirely
+  // so downstream passes do not allocate extra buffer slots for CV software
+  // pipelining that will not be applied.
+  if (options.setCVPipelineMode == CVPipelineMode::Off &&
+      options.setWorkspaceMultibuffer != 0) {
+    llvm::WithColor::warning(llvm::errs())
+        << "warning: --enablecv-pipeline-mode=Off disables "
+           "workspace multibuffer; forcing "
+           "--set-workspace-multibuffer=0.\n";
+    options.setWorkspaceMultibuffer = 0;
+  }
 }
 
 void setupHIVMAVEPipelineOptions(
@@ -158,11 +181,11 @@ void setupHIVMAVEPipelineOptions(
       config.getEnableFusedMultiplyAdd();
   hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
       config.getEnablePrintMemoryAllocatedSize();
-  hivmAVEPipelineOptions.maxReductionSplitNum =
-      config.getMaxReductionSplit();
+  hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
 }
 
-void buildSIMTPipeline(OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
+void buildSIMTPipeline(OpPassManager &pm,
+                       const BiShengIRCompileMainConfig &config) {
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
   auto tritonGridDim = config.getSimtTritonGrid();
@@ -290,18 +313,19 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   setupHFusionPipelineOptions(hfusionPipelineOptions, hfusionConfig);
   ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
-  upstreamOptions.convertToNamedOp = 
+  upstreamOptions.convertToNamedOp =
       hacc::utils::isRegBasedArch(config.getTarget());
-  pm.addPass(mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
+  pm.addPass(
+      mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
   hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
   if (shouldInferFuncCoreType) {
     pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
   }
 
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
-  hfs2hivmOptions.mmMapMode =
-      config.getEnableTritonKernelCompile() ? hfusion::MmMapMode::MacroInstr
-                                            : hfusion::MmMapMode::CoreOp;
+  hfs2hivmOptions.mmMapMode = config.getEnableTritonKernelCompile()
+                                  ? hfusion::MmMapMode::MacroInstr
+                                  : hfusion::MmMapMode::CoreOp;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
 }
 
@@ -343,7 +367,8 @@ void setupLowerTritonPipelineOptions(
   // encode our own compile optimization
   options.enableBishengirSimtOptimization =
       config.getEnableBishengirSimtOptimization();
-  options.enableSimtReorderInstruction = config.getEnableSimtReorderInstruction();
+  options.enableSimtReorderInstruction =
+      config.getEnableSimtReorderInstruction();
 #endif
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   options.protonGPUCompileConfig = getProtonGPUCompileConfig();
@@ -355,7 +380,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
   if (config.getEnableSimdSimtMixCompile()) {
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
-    pm.addPass(hivm::createMaterializeSimtVFMemScopePass());    
+    pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
     pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 
