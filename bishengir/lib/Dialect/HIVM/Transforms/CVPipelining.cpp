@@ -2043,7 +2043,6 @@ LogicalResult CVPipelineImpl::run() {
 
   // Preload pipeline reuse workitems with cvpipeline.
   if (pipelineMode == CVPipelineMode::Skew) {
-    expandWorkspace(builder);
     return markScopesForPreload();
   }
 
