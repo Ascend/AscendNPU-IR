@@ -1,5 +1,296 @@
 // RUN: bishengir-opt -split-input-file -verify-diagnostics %s -rewrite-slice-op-to-triton | FileCheck %s
 
+// CHECK-LABEL: @insertSlice1D
+// CHECK-NOT: tensor.insert_slice
+// CHECK-NOT: arith.cmpi eq
+// CHECK: arith.addi
+// CHECK: tt.splat
+// CHECK: tt.splat
+// CHECK: arith.cmpi sge
+// CHECK: arith.cmpi slt
+// CHECK: arith.andi
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.reshape
+// CHECK: arith.select
+// CHECK: return
+func.func @insertSlice1D(%src: tensor<2xbf16>, %dst: tensor<8xbf16>, %offset: index) -> tensor<8xbf16> {
+  %0 = tensor.insert_slice %src into %dst[%offset] [2] [1] : tensor<2xbf16> into tensor<8xbf16>
+  return %0 : tensor<8xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: @axis0InsertSlice2D
+// CHECK-NOT: arith.andi
+// CHECK-NOT: tensor.insert_slice
+// CHECK: arith.cmpi eq
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.reshape
+// CHECK: arith.select
+// CHECK: return
+func.func @axis0InsertSlice2D(%src: tensor<1x16xf32>, %dst: tensor<8x16xf32>, %offset: index) -> tensor<8x16xf32> {
+  %0 = tensor.insert_slice %src into %dst[%offset, 0] [1, 16] [1, 1] : tensor<1x16xf32> into tensor<8x16xf32>
+  return %0 : tensor<8x16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @axis1InsertSlice2D
+// CHECK-NOT: tensor.insert_slice
+// CHECK-NOT: arith.cmpi eq
+// CHECK: arith.cmpi sge
+// CHECK: arith.cmpi slt
+// CHECK: arith.andi
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.reshape
+// CHECK: arith.select
+// CHECK: return
+func.func @axis1InsertSlice2D(%src: tensor<8x2xf32>, %dst: tensor<8x16xf32>, %offset: index) -> tensor<8x16xf32> {
+  %0 = tensor.insert_slice %src into %dst[0, %offset] [8, 2] [1, 1] : tensor<8x2xf32> into tensor<8x16xf32>
+  return %0 : tensor<8x16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @extract1Element
+// CHECK-NOT: tt.reshape
+// CHECK-NOT: tt.gather
+// CHECK: tt.unsplat
+// CHECK: return
+func.func @extract1Element(%src: tensor<1x1xf16>, %index: index) -> f16 {
+  %0 = tensor.extract %src[%index, %index] : tensor<1x1xf16>
+  return %0 : f16
+}
+
+// -----
+
+// CHECK-LABEL: @extract1D
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: tt.reduce
+// CHECK-NOT: arith.constant
+// CHECK: tt.splat
+// CHECK: tt.gather
+// CHECK: tt.unsplat
+// CHECK: return
+func.func @extract1D(%src: tensor<4xf32>, %idx: index) -> f32 {
+  %0 = tensor.extract %src[%idx] : tensor<4xf32>
+  return %0 : f32
+}
+
+// -----
+
+// CHECK-LABEL: @extract2D
+// CHECK-NOT: tensor.extract
+// CHECK: arith.constant 4
+// CHECK: tt.reshape
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: tt.splat
+// CHECK: tt.gather
+// CHECK: tt.unsplat
+// CHECK: return
+func.func @extract2D(%src: tensor<16x4xbf16>, %idx1: index, %idx2: index) -> bf16 {
+  %0 = tensor.extract %src[%idx1, %idx2] : tensor<16x4xbf16>
+  return %0 : bf16
+}
+
+// -----
+
+// CHECK-LABEL: @extract3DMixedIndices
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: arith.constant 4
+// CHECK: arith.constant 8
+// CHECK: arith.constant 16
+// CHECK: tt.reshape
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: arith.addi
+// CHECK: tt.splat
+// CHECK: tt.gather
+// CHECK: tt.unsplat
+// CHECK: return
+func.func @extract3DMixedIndices(%src: tensor<16x4x4xbf16>, %idx1: index, %idx3: index) -> bf16 {
+  %0 = arith.constant 2: index
+  %1 = tensor.extract %src[%idx1, %0, %idx3] : tensor<16x4x4xbf16>
+  return %1 : bf16
+}
+
+// -----
+
+// CHECK-LABEL: @extract3DConstIndices
+// CHECK-NOT: tensor.extract
+// CHECK-NOT: arith.muli
+// CHECK-NOT: arith.addi
+// CHECK-NOT: arith.constant
+// CHECK: arith.constant dense
+// CHECK-NOT: arith.constant
+// CHECK: tt.reshape
+// CHECK-NOT: tt.splat
+// CHECK: tt.gather
+// CHECK: tt.unsplat
+// CHECK: return
+func.func @extract3DConstIndices(%src: tensor<16x4x4xf32>) -> f32 {
+  %0 = arith.constant 4: index
+  %1 = arith.constant 7: index
+  %2 = arith.constant 3: index
+  %3 = tensor.extract %src[%0, %1, %2] : tensor<16x4x4xf32>
+  return %3 : f32
+}
+
+// -----
+
+// CHECK-LABEL: @insert1D
+// CHECK-NOT: tensor.insert
+// CHECK-NOT: tt.reshape
+// CHECK: tt.splat
+// CHECK: tt.splat
+// CHECK: tt.make_range
+// CHECK: arith.cmpi eq
+// CHECK: arith.select
+// CHECK: return
+func.func @insert1D(%src: tensor<4xf32>, %idx: index, %val: f32) -> tensor<4xf32> {
+  %0 = tensor.insert %val into %src[%idx] : tensor<4xf32>
+  return %0 : tensor<4xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @insert1Element
+// CHECK-NOT: tt.reshape
+// CHECK-NOT: arith.select
+// CHECK: tt.splat
+// CHECK-NEXT: return
+func.func @insert1Element(%src: tensor<1x1x1xf16>, %index: index, %val: f16) -> tensor<1x1x1xf16> {
+  %0 = tensor.insert %val into %src[%index, %index, %index] : tensor<1x1x1xf16>
+  return %0 : tensor<1x1x1xf16>
+}
+
+// -----
+
+// CHECK-LABEL: @insert2D
+// CHECK-NOT: tensor.insert
+// CHECK: arith.constant 16
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: tt.splat
+// CHECK: tt.splat
+// CHECK: tt.make_range
+// CHECK: arith.cmpi eq
+// CHECK: arith.select
+// CHECK: tt.reshape
+// CHECK: return
+func.func @insert2D(%src: tensor<8x16xf16>, %idx1: index, %idx2: index, %val: f16) -> tensor<8x16xf16> {
+  %0 = tensor.insert %val into %src[%idx1, %idx2] : tensor<8x16xf16>
+  return %0 : tensor<8x16xf16>
+}
+
+// -----
+
+// CHECK-LABEL: @insert3DMixedIndices
+// CHECK-NOT: tensor.insert
+// CHECK-NOT: arith.constant 2
+// CHECK: arith.constant 128
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: arith.addi
+// CHECK: tt.splat
+// CHECK: tt.splat
+// CHECK: tt.make_range
+// CHECK: arith.cmpi eq
+// CHECK: arith.select
+// CHECK: tt.reshape
+// CHECK: return
+func.func @insert3DMixedIndices(%src: tensor<8x16x4xf16>, %idx2: index, %idx3: index, %val: f16) -> tensor<8x16x4xf16> {
+  %0 = arith.constant 2: index
+  // CHECK-NOT: tensor.insert
+  %1 = tensor.insert %val into %src[%0, %idx2, %idx3] : tensor<8x16x4xf16>
+  return %1 : tensor<8x16x4xf16>
+}
+
+// -----
+
+// CHECK-LABEL: @insert3DConstIndices
+// CHECK-NOT: tensor.insert
+// CHECK-NOT: arith.muli
+// CHECK-NOT: arith.addi
+// CHECK: arith.constant dense
+// CHECK: tt.splat
+// CHECK: tt.make_range
+// CHECK: arith.cmpi eq
+// CHECK: arith.select
+// CHECK: tt.reshape
+// CHECK: return
+func.func @insert3DConstIndices(%src: tensor<8x1x4xbf16>, %val: bf16) -> tensor<8x1x4xbf16> {
+  %0 = arith.constant 2: index
+  %1 = arith.constant 0: index
+  %2 = arith.constant 3: index
+  // CHECK-NOT: tensor.insert
+  %3 = tensor.insert %val into %src[%0, %1, %2] : tensor<8x1x4xbf16>
+  return %3 : tensor<8x1x4xbf16>
+}
+
+// -----
+ 	 
+// 1-D dynamic offset.
+// CHECK-LABEL: @rank1_dyn_offset
+// CHECK-SAME:  (%[[SRC:.*]]: tensor<8xf32>, %[[OFF:.*]]: index)
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
+// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
+// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<2xi32>
+// CHECK-NEXT:  %[[IDX:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<2xi32>
+// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[IDX]]] {axis = 0 : i32} : (tensor<8xf32>, tensor<2xi32>) -> tensor<2xf32>
+// CHECK-NEXT:  return %[[G]]
+func.func @rank1_dyn_offset(%src: tensor<8xf32>, %off: index) -> tensor<2xf32> {
+  %0 = tensor.extract_slice %src[%off] [2] [1] : tensor<8xf32> to tensor<2xf32>
+  return %0 : tensor<2xf32>
+}
+
+// -----
+
+// 2-D, axis 0 dynamic.  Index tensor is reshaped to <2x1> and broadcast to
+// <2x16>; the non-sliced axis passes through (full size, zero offset).
+// CHECK-LABEL: @rank2_axis0_dyn_offset
+// CHECK-SAME:  (%[[SRC:.*]]: tensor<8x16xf32>, %[[OFF:.*]]: index)
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
+// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
+// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<2xi32>
+// CHECK-NEXT:  %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<2xi32>
+// CHECK-NEXT:  %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<2xi32> -> tensor<2x1xi32>
+// CHECK-NEXT:  %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<2x1xi32> -> tensor<2x16xi32>
+// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 0 : i32} : (tensor<8x16xf32>, tensor<2x16xi32>) -> tensor<2x16xf32>
+// CHECK-NEXT:  return %[[G]]
+func.func @rank2_axis0_dyn_offset(%src: tensor<8x16xf32>, %off: index) -> tensor<2x16xf32> {
+  %0 = tensor.extract_slice %src[%off, 0] [2, 16] [1, 1] : tensor<8x16xf32> to tensor<2x16xf32>
+  return %0 : tensor<2x16xf32>
+}
+
+// -----
+
+// 2-D, axis 1 (innermost) dynamic.  Reshape to <1x4>, broadcast to <8x4>.
+// CHECK-LABEL: @rank2_axis1_dyn_offset
+// CHECK-SAME:  (%[[SRC:.*]]: tensor<8x16xf32>, %[[OFF:.*]]: index)
+// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
+// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
+// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<4xi32>
+// CHECK-NEXT:  %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<4xi32>
+// CHECK-NEXT:  %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<4xi32> -> tensor<1x4xi32>
+// CHECK-NEXT:  %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<1x4xi32> -> tensor<8x4xi32>
+// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 1 : i32} : (tensor<8x16xf32>, tensor<8x4xi32>) -> tensor<8x4xf32>
+// CHECK-NEXT:  return %[[G]]
+func.func @rank2_axis1_dyn_offset(%src: tensor<8x16xf32>, %off: index) -> tensor<8x4xf32> {
+  %0 = tensor.extract_slice %src[0, %off] [8, 4] [1, 1] : tensor<8x16xf32> to tensor<8x4xf32>
+  return %0 : tensor<8x4xf32>
+}
+
+// -----
+
 // 2D, axis 0, S = 1, r = 0 -> m = 0 -> bit_0 = 0, bit_1 = 0  (LHS twice).
 // CHECK-LABEL: @axis0_s1_r0
 // CHECK-SAME: (%[[SRC:.*]]: tensor<4x64xbf16>)
@@ -261,57 +552,3 @@ func.func @insert_bad_unaligned_offset(%src: tensor<2x16xbf16>, %dst: tensor<8x1
   %0 = tensor.insert_slice %src into %dst[3, 0] [2, 16] [1, 1] : tensor<2x16xbf16> into tensor<8x16xbf16>
   return %0 : tensor<8x16xbf16>
 }
-
-// -----
-
-// 1-D dynamic offset.
-// CHECK-LABEL: @rank1_dyn_offset
-// CHECK-SAME:  (%[[SRC:.*]]: tensor<8xf32>, %[[OFF:.*]]: index)
-// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
-// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<2xi32>
-// CHECK-NEXT:  %[[IDX:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<2xi32>
-// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[IDX]]] {axis = 0 : i32} : (tensor<8xf32>, tensor<2xi32>) -> tensor<2xf32>
-// CHECK-NEXT:  return %[[G]]
-func.func @rank1_dyn_offset(%src: tensor<8xf32>, %off: index) -> tensor<2xf32> {
-  %0 = tensor.extract_slice %src[%off] [2] [1] : tensor<8xf32> to tensor<2xf32>
-  return %0 : tensor<2xf32>
-}
-
-// -----
-
-// 2-D, axis 0 dynamic.  Index tensor is reshaped to <2x1> and broadcast to
-// <2x16>; the non-sliced axis passes through (full size, zero offset).
-// CHECK-LABEL: @rank2_axis0_dyn_offset
-// CHECK-SAME:  (%[[SRC:.*]]: tensor<8x16xf32>, %[[OFF:.*]]: index)
-// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32} : tensor<2xi32>
-// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
-// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<2xi32>
-// CHECK-NEXT:  %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<2xi32>
-// CHECK-NEXT:  %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<2xi32> -> tensor<2x1xi32>
-// CHECK-NEXT:  %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<2x1xi32> -> tensor<2x16xi32>
-// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 0 : i32} : (tensor<8x16xf32>, tensor<2x16xi32>) -> tensor<2x16xf32>
-// CHECK-NEXT:  return %[[G]]
-func.func @rank2_axis0_dyn_offset(%src: tensor<8x16xf32>, %off: index) -> tensor<2x16xf32> {
-  %0 = tensor.extract_slice %src[%off, 0] [2, 16] [1, 1] : tensor<8x16xf32> to tensor<2x16xf32>
-  return %0 : tensor<2x16xf32>
-}
-
-// -----
-
-// 2-D, axis 1 (innermost) dynamic.  Reshape to <1x4>, broadcast to <8x4>.
-// CHECK-LABEL: @rank2_axis1_dyn_offset
-// CHECK-SAME:  (%[[SRC:.*]]: tensor<8x16xf32>, %[[OFF:.*]]: index)
-// CHECK:       %[[RANGE:.*]] = tt.make_range {end = 4 : i32, start = 0 : i32} : tensor<4xi32>
-// CHECK-NEXT:  %[[OFFI32:.*]] = arith.index_cast %[[OFF]] : index to i32
-// CHECK-NEXT:  %[[SPLAT:.*]] = tt.splat %[[OFFI32]] : i32 -> tensor<4xi32>
-// CHECK-NEXT:  %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[SPLAT]] : tensor<4xi32>
-// CHECK-NEXT:  %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<4xi32> -> tensor<1x4xi32>
-// CHECK-NEXT:  %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<1x4xi32> -> tensor<8x4xi32>
-// CHECK-NEXT:  %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 1 : i32} : (tensor<8x16xf32>, tensor<8x4xi32>) -> tensor<8x4xf32>
-// CHECK-NEXT:  return %[[G]]
-func.func @rank2_axis1_dyn_offset(%src: tensor<8x16xf32>, %off: index) -> tensor<8x4xf32> {
-  %0 = tensor.extract_slice %src[0, %off] [8, 4] [1, 1] : tensor<8x16xf32> to tensor<8x4xf32>
-  return %0 : tensor<8x4xf32>
-}
-
