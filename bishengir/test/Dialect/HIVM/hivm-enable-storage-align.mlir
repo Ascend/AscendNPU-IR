@@ -414,3 +414,55 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   }
 }
 
+// -----
+
+// Test: AddStrideAlignInfoForAiv - stride align info propagates from AIC to AIV via TCB
+// CHECK-LABEL: func.func @calc_cube_vector_mix_aic
+// CHECK: memref.alloc() : memref<3x64x24x1xf32, #hivm.address_space<ub>>
+// CHECK-LABEL: func.func @calc_cube_vector_mix_aiv
+// CHECK: memref.alloc() : memref<3x64x24x1xf32, #hivm.address_space<ub>>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @calc_cube_vector_mix_aic() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix} {
+  %alloc = memref.alloc() : memref<3x64x17xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  %alloc_cc = memref.alloc() {alignment = 64 : i64} : memref<64x17xf32, #hivm.address_space<cc>>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%alloc_cc : memref<64x17xf32, #hivm.address_space<cc>>) outs(%alloc : memref<3x64x17xf32, #hivm.address_space<ub>>)
+  return
+}
+
+func.func @calc_cube_vector_mix_aiv() attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+  %alloc = memref.alloc() : memref<3x64x17xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  %alloc_out = memref.alloc() {alignment = 64 : i64} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  bishengir_test.elementwise_unary ins(%alloc : memref<3x64x17xf32, #hivm.address_space<ub>>) outs(%alloc_out : memref<3x64x17xf32, #hivm.address_space<ub>>)
+  return
+}
+}
+
+// -----
+
+// Test: AddStrideAlignInfoForAiv - AIV with hivm.vector_function attribute should be skipped
+// CHECK-LABEL: func.func @calc_cube_vector_mix_aic_skip_vf
+// CHECK: memref.alloc() : memref<3x64x24x1xf32, #hivm.address_space<ub>>
+// CHECK-LABEL: func.func @calc_cube_vector_mix_aiv_outlined_vf
+// CHECK: memref.alloc() : memref<3x64x17xf32, #hivm.address_space<ub>>
+// CHECK-NOT: memref.subview
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @calc_cube_vector_mix_aic_skip_vf() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix} {
+  %alloc = memref.alloc() : memref<3x64x17xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  %alloc_cc = memref.alloc() {alignment = 64 : i64} : memref<64x17xf32, #hivm.address_space<cc>>
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%alloc_cc : memref<64x17xf32, #hivm.address_space<cc>>) outs(%alloc : memref<3x64x17xf32, #hivm.address_space<ub>>)
+  return
+}
+
+func.func @calc_cube_vector_mix_aiv_outlined_vf(%arg0: memref<3x64x17xf32, #hivm.address_space<ub>>, %arg1: memref<3x64x17xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %alloc = memref.alloc() : memref<3x64x17xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<3x64x17xf32, #hivm.address_space<ub>>
+  bishengir_test.elementwise_unary ins(%arg0 : memref<3x64x17xf32, #hivm.address_space<ub>>) outs(%alloc : memref<3x64x17xf32, #hivm.address_space<ub>>)
+  return
+}
+}
+
