@@ -56,6 +56,9 @@ std::unique_ptr<mlir::Pass> createFixFusedCatPass();
 /// ops: `tt.trans`, `tt.reshape`, `tt.split`, `tt.join`.
 std::unique_ptr<mlir::Pass> createRewriteSliceOpToTritonPass();
 
+/// Create a pass that erases all `annotation.mark` ops in the module.
+std::unique_ptr<mlir::Pass> createRemoveAnnotationMarkPass();
+
 /// Create a pass to decompose reduction.
 std::unique_ptr<mlir::Pass> createDecomposeReductionPass();
 
