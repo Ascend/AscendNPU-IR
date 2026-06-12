@@ -224,11 +224,16 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       auto inType = getElementTypeOrSelf(concreteOp.getIn().getType());
       auto outType = getElementTypeOrSelf(concreteOp.getOut().getType());
 
+      const bool isI1ToI16 = inType.isInteger(1) && outType.isInteger(16);
+      const bool isI1ToI32 = inType.isInteger(1) && outType.isInteger(32);
+      const bool isI1ToI64 = inType.isInteger(1) && outType.isInteger(64);
+      const bool isI1ToFloat = inType.isInteger(1) && isa<FloatType>(outType);
       const bool isI8ToI32 = inType.isInteger(8) && outType.isInteger(32);
       const bool isI8ToI16 = inType.isInteger(8) && outType.isInteger(16);
       const bool isI8ToI64 = inType.isInteger(8) && outType.isInteger(64);
       const bool isI16ToI32 = inType.isInteger(16) && outType.isInteger(32);
       const bool isI16ToI64 = inType.isInteger(16) && outType.isInteger(64);
+      const bool isInTypeI1 = isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
       const bool isInTypeI8  = isI8ToI16 || isI8ToI32 || isI8ToI64;
       const bool isInTypeI16 = isI16ToI32 || isI16ToI64;
       const bool isInTypeI32 = inType.isInteger(32) && outType.isInteger(64);
@@ -237,7 +242,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       // So now we just need to now that source is signed/unsigned
       // In future, we need to support both cast_from_sign, cast_to_sign
       // parameters
-      if (isInTypeI8 || isInTypeI16 || isInTypeI32) {
+      if (isInTypeI1 || isInTypeI8 || isInTypeI16 || isInTypeI32) {
         return hfusion::TypeFn::cast_unsigned;
       }
       return hfusion::TypeFn::cast_signed;
