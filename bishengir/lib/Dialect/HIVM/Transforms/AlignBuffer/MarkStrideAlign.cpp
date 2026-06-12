@@ -768,112 +768,6 @@ std::vector<std::pair<std::optional<int>, int32_t>> getLastDiscontinuousDimRegBa
   return alignDimAlignBytes;
 }
 
-void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
-  DenseMap<Value, int> allocInfoMap;
-  struct StrideAlignInfo {
-    SmallVector<int32_t> dims;
-    SmallVector<int32_t> values;
-  };
-
-  DenseMap<int, StrideAlignInfo> strideAlignMap;
-  // first: collect stride_align info
-  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (hacc::utils::isHost(funcOp))
-      continue;
-    funcOp->walk([&](annotation::MarkOp markOp) {
-      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-          hivm::TFuncCoreTypeAttr::name);
-      if (!tFuncCoreTypeAttr) {
-        return WalkResult::advance();
-      }
-      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIC) {
-        return WalkResult::advance();
-      }
-      auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
-          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
-      if (!tcbAttr) {
-        return WalkResult::advance();
-      }
-      Value allocValue = markOp.getOperand(0);
-      if (!allocValue) {
-        return WalkResult::advance();
-      }
-      int id = tcbAttr.getId().value();
-      SmallVector<Operation *> strideAlignMarkOps =
-          utils::getAllAnnotateOpsWithAttr(
-              allocValue, hivm::StrideAlignDimsAttr::name.str());
-      if (strideAlignMarkOps.empty())
-        return WalkResult::advance();
-
-      auto &info = strideAlignMap[id];
-      for (auto *strideAlignMarkOpRaw : strideAlignMarkOps) {
-        auto strideAlignMarkOp = dyn_cast<annotation::MarkOp>(strideAlignMarkOpRaw);
-        if (!strideAlignMarkOp)
-          continue;
-        ArrayRef<int32_t> alignDims =
-            strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
-                hivm::StrideAlignDimsAttr::name);
-        ArrayRef<int32_t> alignBytes =
-            strideAlignMarkOp->getAttrOfType<DenseI32ArrayAttr>(
-                hivm::StrideAlignValueInByteAttr::name);
-        info.dims.append(alignDims.begin(), alignDims.end());
-        info.values.append(alignBytes.begin(), alignBytes.end());
-      }
-      return WalkResult::advance();
-    });
-  }
-
-  // second: add stride align info in aiv
-  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
-    if (hacc::utils::isHost(funcOp))
-      continue;
-    funcOp->walk([&builder, strideAlignMap, funcOp](annotation::MarkOp markOp) {
-      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
-          hivm::TFuncCoreTypeAttr::name);
-      if (!tFuncCoreTypeAttr) {
-        return WalkResult::advance();
-      }
-      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIV) {
-        return WalkResult::advance();
-      }
-      if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
-        return WalkResult::advance();
-      }
-      auto attr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
-          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
-      if (!attr) {
-        return WalkResult::advance();
-      }
-      if (strideAlignMap.empty()) {
-        return WalkResult::advance();
-      }
-      int id = attr.getId().value();
-      if (strideAlignMap.find(id) == strideAlignMap.end()) {
-        return WalkResult::advance();
-      }
-      Value allocValue = markOp.getOperand(0);
-      auto maybeMarkOpRaw = utils::getAnnotateOpWithAttr(
-          allocValue, hivm::StrideAlignDimsAttr::name.str());
-      if (maybeMarkOpRaw)
-        return WalkResult::advance();
-      auto it = strideAlignMap.find(id);
-      const StrideAlignInfo &info = it->second;
-      for (size_t i = 0; i < info.dims.size(); ++i) {
-        auto newMarkOp = mlir::hivm::createAlignMarkOp(
-            builder, markOp.getLoc(), allocValue,
-            /*alignDims=*/ArrayRef<int32_t>({info.dims[i]}),
-            /*alignBytes=*/ArrayRef<int32_t>({info.values[i]}), hivm::StrideAlignDimsAttr::name.str(),
-            hivm::StrideAlignValueInByteAttr::name.str());
-
-        if (newMarkOp) {
-          markOp->moveAfter(*newMarkOp);
-        }
-      }
-      return WalkResult::advance();
-    });
-  }
-}
-
 void MarkStrideAlignPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto funcOp = getOperation();
@@ -883,9 +777,7 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  bool isMarkStrideForAiv = false;
-  WalkResult result = funcOp->walk([&builder, archIsRegbased, archIs950,
-                                    &isMarkStrideForAiv](Operation *op) {
+  WalkResult result = funcOp->walk([&builder, archIsRegbased, archIs950](Operation *op) {
     LDBG("Walk operation : " << *op);
     if (!isa<HIVMStructuredOp>(op)) {
       return WalkResult::advance();
@@ -951,7 +843,6 @@ void MarkStrideAlignPass::runOnOperation() {
                 filterMemrefTypes, identityReassoc, fixpipeOp);
         for (const auto &[alignDimUpdate, alignByte] : alignDimAlignBytes) {
           if (alignDimUpdate.has_value()) {
-            isMarkStrideForAiv = true;
             for (const auto &oper : hivmOp.getTargetSpaceOperands(
                      hivm::AddressSpace::UB, false /*includeTmpBuffer*/)) {
               if (failed(markAlignedDimForFixcctoub(builder, op, oper,
@@ -1071,9 +962,6 @@ void MarkStrideAlignPass::runOnOperation() {
     if (resultVF.wasInterrupted()) {
       return signalPassFailure();
     }
-  }
-  if (archIs950 && isMarkStrideForAiv) {
-    AddStrideAlignInfoForAiv(moduleOp, builder);
   }
   if (result.wasInterrupted()) {
     return signalPassFailure();
