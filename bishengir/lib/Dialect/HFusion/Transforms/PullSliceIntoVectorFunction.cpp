@@ -37,29 +37,73 @@ namespace {
 // PullExtractInsertSliceIntoVectorFunction: slice operand/result handling
 //===----------------------------------------------------------------------===//
 //
-// Pull tensor.extract_slice (and optionally tensor.insert_slice) into VF
-// callee to help one-shot-bufferize reduce copies. Applied when a CallOp
-// operand is produced by extract_slice with non-standard stride
-// (stride != 1 or shape change).
-//
 // Supported scenarios:
 //
-// [Scenario 1: Passthrough / identity-like return]
-//   Caller: %slice = extract_slice(%full); %x = call @vf(%slice)
-//   VF returns a value that flows from the slice arg (e.g. via block args or
-//   scf.for). Caller then does extract_slice on the full result to obtain the
-//   sliced view.
-//   After: call passes %full + slice params; VF does extract at entry, returns
-//   full tensor; caller does extract_slice on call result.
+// [Scenario 1: Read-modify-write]
 //
-// [Scenario 2: Read-modify-write]
-//   Caller: %slice = extract_slice(%full); %b = call @vf(%slice);
-//           %c = insert_slice(%b, %full)
-//   VF returns computed slice; caller writes it back into %full via
-//   insert_slice. After: call passes %full + slice params; VF does extract at
-//   entry, compute, insert_slice at return; call result is the full tensor
-//   (insert_slice removed).
+//   Caller before:
 //
+//     %slice = tensor.extract_slice %full[%i, 0, 0]
+//       [1, 32, 64] [1, 1, 1]
+//       : tensor<2x32x64xf32> to tensor<32x64xf32>
+//
+//     %new_slice = func.call @vf(%slice)
+//       : (tensor<32x64xf32>) -> tensor<32x64xf32>
+//
+//     %new_full = tensor.insert_slice %new_slice into %full[%i, 0, 0]
+//       [1, 32, 64] [1, 1, 1]
+//       : tensor<32x64xf32> into tensor<2x32x64xf32>
+//
+//   Caller after:
+//
+//     %new_full = func.call @vf(%full, %i, ...)
+//       : (tensor<2x32x64xf32>, index, ...)
+//         -> tensor<2x32x64xf32>
+//
+//   VF after:
+//
+//     %slice = tensor.extract_slice %full[%i, 0, 0]
+//       [1, 32, 64] [1, 1, 1]
+//       : tensor<2x32x64xf32> to tensor<32x64xf32>
+//
+//     %new_slice = ...
+//
+//     %new_full = tensor.insert_slice %new_slice into %full[%i, 0, 0]
+//       [1, 32, 64] [1, 1, 1]
+//       : tensor<32x64xf32> into tensor<2x32x64xf32>
+//
+//     return %new_full
+//
+// [Scenario 2: Passthrough / identity-like return]
+//
+//   Caller before:
+//
+//     %slice = tensor.extract_slice %full[%i, 0, 0]
+//       [1, 32, 64] [1, 1, 1]
+//       : tensor<2x32x64xf32> to tensor<32x64xf32>
+//
+//     %ret_slice = func.call @vf(%slice)
+//       : (tensor<32x64xf32>) -> tensor<32x64xf32>
+//
+//   The VF result is traced back to the slice argument, for example:
+//
+//     func.func @vf(%arg0: tensor<32x64xf32>) -> tensor<32x64xf32> {
+//       %0 = scf.for ... iter_args(%iter = %arg0) ...
+//       return %0 : tensor<32x64xf32>
+//     }
+//
+//   Caller after:
+//
+//     %ret_full = func.call @vf(%full, %i, ...)
+//       : (tensor<2x32x64xf32>, index, ...)
+//         -> tensor<2x32x64xf32>
+//
+//     %ret_slice = tensor.extract_slice %ret_full[%i, 0, 0]
+//       [1, 32, 64] [1, 1, 1]
+//       : tensor<2x32x64xf32> to tensor<32x64xf32>
+//
+//   VF after extracts the slice at entry and returns the corresponding full
+//   tensor result. The caller still needs extract_slice on the full result.
 
 /// Match result for slice pull: describes which operand/result to rewrite and
 /// how.
@@ -67,18 +111,28 @@ struct SlicePullMatch {
   /// The extract_slice op producing the slice passed as call operand.
   tensor::ExtractSliceOp extractSlice;
 
-  /// Index of the call operand that is the slice (will be replaced by
-  /// extractSlice.getSource() + offsets/sizes/strides).
+  /// Index of the call operand that is the slice. It will be replaced by
+  /// extractSlice.getSource() plus slice offsets/sizes/strides.
   size_t argIdx;
 
   /// Index of the call result that should become full-tensor type.
-  /// -1 if none. In scenario 1: the return flows from the arg; in scenario 2:
-  /// the result feeds insert_slice. Rewrite changes this result to full tensor.
+  ///
+  /// Scenario 1:
+  ///   The result feeds tensor.insert_slice back into extractSlice.getSource().
+  ///   The insert_slice result will be replaced directly by the full call
+  ///   result.
+  ///
+  /// Scenario 2:
+  ///   The return value is traced back to this slice argument. The caller still
+  ///   needs tensor.extract_slice on the full call result.
+  ///
+  /// Input-only slice:
+  ///   May be -1 when the slice operand is only consumed by the VF and no call
+  ///   result needs full-tensor rewriting.
   int64_t fullTensorResultIdx;
 
-  /// The insert_slice op that consumes the call result and writes back to the
-  /// source. Non-null only in scenario 2; in scenario 1, caller uses
-  /// extract_slice on the full result instead.
+  /// Non-null only for Scenario 1. It is the insert_slice op that consumes the
+  /// call result and writes it back to the original full tensor.
   tensor::InsertSliceOp insertSlice;
 };
 
@@ -208,6 +262,7 @@ private:
   std::optional<SlicePullMatch>
   tryMatchSliceOperand(func::CallOp call, func::FuncOp callee) const {
     auto operands = call.getOperands();
+
     for (auto [idx, operand] : llvm::enumerate(operands)) {
       auto defOp = operand.getDefiningOp<tensor::ExtractSliceOp>();
       if (!defOp || isStandardStride(defOp))
@@ -216,13 +271,61 @@ private:
       tensor::ExtractSliceOp extractSlice = defOp;
       Value src = extractSlice.getSource();
 
-      int64_t fullTensorResultIdx = -1;
-      tensor::InsertSliceOp insertSlice = nullptr;
+      // [Scenario 1: Read-modify-write]
+      //
+      // Prefer this scenario over passthrough. If the call result is inserted
+      // back into the same full tensor with the same slice parameters, then the
+      // pulled VF should return the updated full tensor directly.
+      //
+      // Caller before:
+      //
+      //   %slice = tensor.extract_slice %src[%i, ...]
+      //   %new_slice = func.call @vf(..., %slice, ...)
+      //   %new_src = tensor.insert_slice %new_slice into %src[%i, ...]
+      //
+      // Caller after:
+      //
+      //   %new_src = func.call @vf(..., %src, %i, ...)
+      //
+      // Do not handle this as Scenario 2 first. Otherwise the caller may be
+      // rewritten into:
+      //
+      //   %full = func.call @vf(..., %src, %i, ...)
+      //   %slice2 = tensor.extract_slice %full[%i, ...]
+      //   %new_src = tensor.insert_slice %slice2 into %src[%i, ...]
+      //
+      // That form is semantically redundant and may lead to extra copies during
+      // bufferization.
+      for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
+        if (auto insOp =
+                tryMatchInsertSliceUser(callResult, src, extractSlice)) {
+          return SlicePullMatch{extractSlice, idx,
+                                static_cast<int64_t>(resIdx), insOp};
+        }
+      }
 
-      // [Scenario 1] Return value flows from this arg (e.g. block arg,
-      // scf.for).
+      // [Scenario 2: Passthrough / identity-like return]
+      //
+      // Example:
+      //
+      //   %slice = tensor.extract_slice %src[%i, ...]
+      //   %ret_slice = func.call @vf(%slice)
+      //
+      // and inside VF:
+      //
+      //   func.func @vf(%arg0: tensor<32x64xf32>)
+      //       -> tensor<32x64xf32> {
+      //     %0 = scf.for ... iter_args(%iter = %arg0) ...
+      //     return %0 : tensor<32x64xf32>
+      //   }
+      //
+      // The result flows from the slice arg. After pulling, the call returns a
+      // full tensor and the caller extracts the corresponding slice from that
+      // full result.
       auto returnOp =
           cast<func::ReturnOp>(callee.getBody().front().getTerminator());
+
+      int64_t fullTensorResultIdx = -1;
       for (auto [resIdx, retVal] : llvm::enumerate(returnOp.getOperands())) {
         if (traceValueToFuncArg(retVal) == static_cast<int64_t>(idx)) {
           fullTensorResultIdx = static_cast<int64_t>(resIdx);
@@ -230,22 +333,17 @@ private:
         }
       }
 
-        // [Scenario 2] Call result feeds insert_slice(dest=src) with same slice
-        // params.
-      if (fullTensorResultIdx == -1) {
-        for (auto [resIdx, callResult] : llvm::enumerate(call.getResults())) {
-        if (auto insOp =
-                tryMatchInsertSliceUser(callResult, src, extractSlice)) {
-          fullTensorResultIdx = static_cast<int64_t>(resIdx);
-          insertSlice = insOp;
-          break;
-        }
-        }
+      if (fullTensorResultIdx != -1) {
+        return SlicePullMatch{extractSlice, idx, fullTensorResultIdx,
+                              nullptr};
       }
 
-      return SlicePullMatch{extractSlice, idx, fullTensorResultIdx,
-                            insertSlice};
+      // Input-only slice operand. There is no related call result to rewrite,
+      // but pulling the extract_slice into VF can still expose a better
+      // bufferization shape for the operand.
+      return SlicePullMatch{extractSlice, idx, -1, nullptr};
     }
+
     return std::nullopt;
   }
 
@@ -321,6 +419,7 @@ private:
     auto extractSlice = match.extractSlice;
     SmallVector<Value> newOperands(call.getOperands().begin(),
                                    call.getOperands().end());
+
     newOperands[match.argIdx] = extractSlice.getSource();
     appendSliceOperands(newOperands, match.argIdx + 1, extractSlice);
 
@@ -330,16 +429,45 @@ private:
 
     SmallVector<Value> newResults(newCall->result_begin(),
                                   newCall->result_end());
-    // [Scenario 2] Call returns full tensor; replace insert_slice uses with it.
-    if (match.insertSlice) {
+
+    // [Scenario 1: Read-modify-write]
+    //
+    // Matched caller pattern before pulling:
+    //
+    //   %slice = tensor.extract_slice %full[offsets...]
+    //   %new_slice = func.call @vf(..., %slice, ...)
+    //   %updated = tensor.insert_slice %new_slice into %full[offsets...]
+    //
+    // After pulling the slice into VF, the callee returns the updated full
+    // tensor directly:
+    //
+    //   %updated_full = func.call @vf(..., %full, offsets...)
+    //
+    // Therefore the original insert_slice result should be replaced by the
+    // full call result. Keeping an extra extract_slice from %updated_full and
+    // inserting it back into %full would recreate a partial tensor update in
+    // the caller, which may later be lowered to extra copies.
+    if (match.insertSlice && match.fullTensorResultIdx != -1) {
       tensor::InsertSliceOp insertOp = match.insertSlice;
-      rewriter.replaceAllUsesWith(insertOp.getResult(),
-                                  newCall.getResult(match.fullTensorResultIdx));
+      Value fullTensorResult = newCall.getResult(match.fullTensorResultIdx);
+      rewriter.replaceAllUsesWith(insertOp.getResult(), fullTensorResult);
       rewriter.eraseOp(insertOp);
-    }
-    // [Scenario 1] Call returns full tensor; caller needs extract_slice on
-    // result. Use original slice type for rank-reduce (e.g. 2D->1D).
-    else if (match.fullTensorResultIdx != -1) {
+    } else if (match.fullTensorResultIdx != -1) {
+      // [Scenario 2: Passthrough / identity-like return]
+      //
+      // Matched caller pattern before pulling:
+      //
+      //   %slice = tensor.extract_slice %full[offsets...]
+      //   %ret_slice = func.call @vf(..., %slice, ...)
+      //
+      // There is no insert_slice user in the caller. The VF result is traced
+      // back to the sliced argument, so after pulling the slice into VF the
+      // call returns a full tensor:
+      //
+      //   %ret_full = func.call @vf(..., %full, offsets...)
+      //
+      // The original users still expect the sliced result type, so extract the
+      // same slice from the full call result.
       newResults[match.fullTensorResultIdx] =
           rewriter.create<tensor::ExtractSliceOp>(
               call.getLoc(), extractSlice.getType(),
@@ -347,6 +475,7 @@ private:
               extractSlice.getMixedOffsets(), extractSlice.getMixedSizes(),
               extractSlice.getMixedStrides());
     }
+
     rewriter.replaceOp(call, newResults);
     return newCall;
   }

@@ -396,3 +396,44 @@ module {
     return %0 : tensor<32x64xf32>
   }
 }
+
+// -----
+
+// Test: read-modify-write matching must take priority over passthrough.
+//
+// The VF return value directly flows from the sliced argument, so the
+// passthrough / identity-like path can also match. However, because the call
+// result is inserted back into the same source tensor with the same slice
+// parameters, this is a read-modify-write update. The caller should use the
+// full tensor returned by the VF directly, without extracting from that result
+// and inserting it back into the old tensor.
+module {
+  func.func @vf_identity_slice(%arg0: tensor<32x64xf32>)
+      -> tensor<32x64xf32> attributes {hivm.vector_function} {
+    return %arg0 : tensor<32x64xf32>
+  }
+
+  // CHECK-LABEL: func @test_read_modify_write_priority_over_passthrough(
+  // CHECK: %[[CALL:.*]] = call @vf_identity_slice(%arg0
+  // CHECK-SAME: {hivm.vector_function}
+  // CHECK-SAME: tensor<2x32x64xf32>
+  // CHECK-NOT: tensor.extract_slice %[[CALL]]
+  // CHECK-NOT: tensor.insert_slice
+  // CHECK: return %[[CALL]]
+  func.func @test_read_modify_write_priority_over_passthrough(
+      %arg0: tensor<2x32x64xf32>, %iv: index)
+      -> tensor<2x32x64xf32> {
+    %slice = tensor.extract_slice %arg0[%iv, 0, 0]
+        [1, 32, 64] [1, 1, 1]
+        : tensor<2x32x64xf32> to tensor<32x64xf32>
+
+    %x = func.call @vf_identity_slice(%slice) {hivm.vector_function}
+        : (tensor<32x64xf32>) -> tensor<32x64xf32>
+
+    %updated = tensor.insert_slice %x into %arg0[%iv, 0, 0]
+        [1, 32, 64] [1, 1, 1]
+        : tensor<32x64xf32> into tensor<2x32x64xf32>
+
+    return %updated : tensor<2x32x64xf32>
+  }
+}
