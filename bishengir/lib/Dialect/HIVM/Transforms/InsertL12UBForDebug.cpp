@@ -66,14 +66,13 @@ void markUBAllocAlign(PatternRewriter &rewriter, Location loc, Value alloc,
 LogicalResult insertL12UBForOperand(PatternRewriter &rewriter,
                                     hivm::DebugOp debugOp) {
   Value operand = debugOp.getArg();
-  Operation *definingOp = operand.getDefiningOp();
   auto resultTensorType = mlir::dyn_cast<RankedTensorType>(operand.getType());
 
-  rewriter.setInsertionPointAfter(definingOp);
+  rewriter.setInsertionPoint(debugOp);
   auto elemType = resultTensorType.getElementType();
   auto shape = resultTensorType.getShape();
   MLIRContext *ctx = rewriter.getContext();
-  Location loc = definingOp->getLoc();
+  Location loc = debugOp.getLoc();
   for (int64_t dim : shape) {
     if (dim == ShapedType::kDynamic) {
       return emitError(operand.getLoc())
