@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -59,12 +60,21 @@ struct CVPipelineImpl {
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
-                    loop.getYieldedValues().end()) {}
+                    loop.getYieldedValues().end()) {
+    builder.setInsertionPoint(loop);
+    checkpoint = builder.clone(*loop);
+  }
 
   LogicalResult run();
 
 private:
   void collectAtomicEffects();
+
+  /// For each marked counter alloca whose value is incremented inside a
+  /// regioned op (e.g. the scf.if after a matmul), clone that op and erase all
+  /// CUBE ops inside the clone, so a vector-only stage can keep the counter
+  /// advancing. Returns alloca -> vector-safe clone.
+  LogicalResult preprocessCounterAllocas();
 
   /// Absorb non-core "merger" ops (e.g. `arith.select`, `arith.cmpi`) that
   /// sit between a work-item op's output and a `scf.yield` operand into the
@@ -188,6 +198,12 @@ private:
   DenseMap<Value, Value> localOuputsToRedurnRes;
 
   DenseSet<Operation *> toErase;
+
+  // Checkpoint for revert in case things go wrong
+  Operation *checkpoint;
+
+  // Marked counter alloca -> vector-safe clone of the op that increments it.
+  DenseMap<Value, Operation *> counterCloneMap;
 };
 
 struct CVPipeliningPass
@@ -544,52 +560,31 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
     }
   }
 
-  // Absorb counter-update ops (arith.addi + memref.store) that follow each
-  // mmadL1 using an init_cond loaded from an alloca. These ops are not
-  // reachable from scf.yield so the loop above misses them.
-  //
-  // Pattern: memref.load %alloca -> cmpi -> init_cond operand of mmadL1
-  //          mmadL1 result ... (other ops) ...
-  //          arith.addi %counter, %c1
-  //          memref.store %incremented, %alloca
-  //
-  // For each workitem, find alloca values read as init_cond, then absorb
-  // any memref.store to those allocas (and their arith.addi operands).
+  // Counter-advance absorption (normalize-matmul counter advanced directly in
+  // the loop body). The `memref.store %inc` back to a counter alloca and the
+  // `arith.addi` producing %inc have no SSA result and never reach scf.yield,
+  // so the yield-chain walk above misses them and migrateOps would drop them,
+  // leaving the post-loop load reading the initial 0. (The regioned-op case is
+  // handled separately by preprocessCounterAllocas's vector-safe clone.)
   for (const auto &item : worklist) {
-    // Collect alloca values whose load feeds an init_cond in this workitem.
-    SmallPtrSet<Value, 4> initCondAllocas;
-    for (Operation *op : item->ops) {
-      for (Value operand : op->getOperands()) {
-        // init_cond is an i1; trace cmpi -> load -> alloca
-        auto cmpi = dyn_cast_if_present<arith::CmpIOp>(operand.getDefiningOp());
-        if (!cmpi)
-          continue;
-        for (Value cmpOperand : cmpi->getOperands()) {
-          auto load =
-              dyn_cast_if_present<memref::LoadOp>(cmpOperand.getDefiningOp());
-          if (!load)
-            continue;
-          Value memref = load.getMemRef();
-          if (isa_and_nonnull<memref::AllocaOp>(memref.getDefiningOp()))
-            initCondAllocas.insert(memref);
-        }
-      }
-    }
+    SmallPtrSet<Value, 4> loadedCounters;
+    for (Operation *op : item->ops)
+      if (auto load = dyn_cast<memref::LoadOp>(op))
+        if (auto a = load.getMemRef().getDefiningOp<memref::AllocaOp>())
+          if (a->hasAttr(kNormalizeMatmulCounterAttr))
+            loadedCounters.insert(load.getMemRef());
 
-    // Absorb memref.store to those allocas and their addi operand.
     for (Operation &op : *body) {
-      auto store = dyn_cast<memref::StoreOp>(op);
-      if (!store || !initCondAllocas.contains(store.getMemRef()))
+      auto store = dyn_cast<memref::StoreOp>(&op);
+      if (!store || !loadedCounters.contains(store.getMemRef()) ||
+          opToWorkItemMap.contains(&op))
         continue;
-      if (opToWorkItemMap.contains(&op))
-        continue;
-      // Also absorb the defining arith.addi of the stored value.
-      if (Operation *addi = store.getValue().getDefiningOp()) {
-        if (isa<arith::AddIOp>(addi) && !opToWorkItemMap.contains(addi)) {
-          item->ops.insert(addi);
-          opToWorkItemMap[addi].push_back(item.get());
+      if (Operation *inc = store.getValue().getDefiningOp()) {
+        if (isa<arith::AddIOp>(inc) && !opToWorkItemMap.contains(inc)) {
+          item->ops.insert(inc);
+          opToWorkItemMap[inc].push_back(item.get());
           LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter addi: ";
-                     addi->print(dbgs()); dbgs() << '\n');
+                    inc->print(dbgs()); dbgs() << '\n');
         }
       }
       item->ops.insert(&op);
@@ -1644,11 +1639,80 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
 void CVPipelineImpl::revert() {
   if (newLoop)
     newLoop->erase();
+  pipelineLoop->replaceAllUsesWith(checkpoint->getResults());
+  pipelineLoop->erase();
+}
+
+LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
+  Block *body = pipelineLoop.getBody();
+  // (1) Collect marked counter allocas. They live directly in the loop body,
+  // so a plain iteration suffices. Any alloca here must be a known counter.
+  SmallVector<memref::AllocaOp> counters;
+  for (Operation &op : *body) {
+    auto alloca = dyn_cast<memref::AllocaOp>(&op);
+    if (!alloca)
+      continue;
+    if (!alloca->hasAttr(kNormalizeMatmulCounterAttr))
+      return alloca->emitWarning(
+          "[cv-pipelining] unexpected alloca without counter attribute");
+    counters.push_back(alloca);
+  }
+
+  for (memref::AllocaOp alloca : counters) {
+    // (2) Find the increment site: a store of (alloca + k) back to alloca,
+    // nested inside a regioned op rather than the loop body itself.
+    Operation *regioned = nullptr;
+    for (Operation *user : alloca->getUsers()) {
+      auto store = dyn_cast<memref::StoreOp>(user);
+      if (!store || store.getMemRef() != alloca.getResult())
+        continue;
+      if (!isa_and_nonnull<arith::AddIOp>(store.getValue().getDefiningOp()))
+        continue;
+      Operation *top = getContainedParent(pipelineLoop, store);
+      if (top && top != store && top->getNumRegions() > 0) {
+        regioned = top;
+        break;
+      }
+    }
+    if (!regioned)
+      continue;
+
+    // Clone the regioned op and strip every CUBE op from the clone, leaving a
+    // vector-safe skeleton that still advances the counter.
+    builder.setInsertionPointAfter(regioned);
+    Operation *clone = builder.clone(*regioned);
+    SmallVector<Operation *> cubeOps;
+    clone->walk([&](Operation *inner) {
+      if (queryCoreTypeHelper(inner).value_or(TCoreType::CUBE_OR_VECTOR) ==
+          TCoreType::CUBE)
+        cubeOps.push_back(inner);
+    });
+    for (Operation *cube : llvm::reverse(cubeOps)) {
+      // A surviving (vector) op may still read a cube result; feed it a fresh
+      // tensor.empty of the same type so the skeleton stays well-formed.
+      builder.setInsertionPoint(cube);
+      for (Value res : cube->getResults()) {
+        if (res.use_empty())
+          continue;
+        if (auto tensorTy = dyn_cast<RankedTensorType>(res.getType()))
+          res.replaceAllUsesWith(builder.create<tensor::EmptyOp>(
+              cube->getLoc(), tensorTy, ValueRange{}));
+      }
+      cube->erase();
+    }
+    counterCloneMap[alloca.getResult()] = clone;
+  }
+  return success();
 }
 
 /// Main method of the pass
 LogicalResult CVPipelineImpl::run() {
   collectAtomicEffects();
+  if (failed(preprocessCounterAllocas())) {
+    revert();
+    return failure();
+  }
+  wlBuilder.setCounterClones(counterCloneMap);
   auto buildResult = wlBuilder.build();
   if (failed(buildResult)) {
     revert();
@@ -1689,8 +1753,10 @@ LogicalResult CVPipelineImpl::run() {
 
   // No IR has been mutated yet; reject partitions migrateOps can't realize so
   // we bail cleanly instead of crashing in pipelineLoop->erase() later.
-  if (failed(checkWorkItemDependencies()))
+  if (failed(checkWorkItemDependencies())) {
+    revert();
     return failure();
+  }
 
   // Preload pipeline reuse workitems with cvpipeline.
   if (pipelineMode == PipelineMode::Skew) {
@@ -1716,67 +1782,41 @@ LogicalResult CVPipelineImpl::run() {
     return failure();
   }
   pipelineLoop->erase();
+  checkpoint->erase();
   return success();
 }
 
 void CVPipeliningPass::runOnOperation() {
   // First find loop to operate on
   func::FuncOp func = getOperation();
-  DenseSet<scf::ForOp> pipelinedLoops;
+  SmallVector<scf::ForOp> pipelineCandidates;
 
   // Disabled via options
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
     return;
 
-  // Check if we should skip the entire pass due to autoblockify with
-  // NormalizeMatmul counter
-  bool hasAutoblockifyLoop = false;
-  bool hasNormalizeMatmulCounter = false;
-  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr =
-      "autoblockify.subloop";
-
-  // Check for autoblockify loop tag
-  func->walk([&](scf::ForOp forOp) {
-    if (forOp->hasAttr(kAutoBlockifySubloopAttr)) {
-      hasAutoblockifyLoop = true;
-    }
+  // We want to work on the innermost loop first, so post order walk
+  func->walk<WalkOrder::PostOrder>([&pipelineCandidates](scf::ForOp loop) {
+    pipelineCandidates.push_back(loop);
   });
 
-  // Check for NormalizeMatmul counter (attribute on storeOp)
-  func->walk([&](memref::StoreOp storeOp) {
-    if (storeOp->hasAttr(hivm::TCoreTypeAttr::name)) {
-      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(
-          hivm::TCoreTypeAttr::name);
-      if (coreTypeAttr &&
-          coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
-        hasNormalizeMatmulCounter = true;
-      }
-    }
-  });
+  DenseSet<scf::ForOp> pipelinedNest;
+  for (auto loop : pipelineCandidates) {
+    // Don't attempt pipeline if nested loop succeeded already
+    if (pipelinedNest.contains(loop))
+      continue;
 
-  // Skip entire CV Pipelining pass if there's autoblockify loop with
-  // NormalizeMatmul counter
-  if (hasAutoblockifyLoop && hasNormalizeMatmulCounter) {
-    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to "
-                         "autoblockify loop with NormalizeMatmul counter\n");
-    return;
-  }
-
-  func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
-
-    // Check if this is a part of pipelined loop already
-    while (parentLoop) {
-      if (pipelinedLoops.contains(parentLoop))
-        return;
-      parentLoop = parentLoop->getParentOfType<scf::ForOp>();
-    }
-
     CVPipelineImpl impl(loop, this->pipelineDepth, this->pipelineMode,
                         this->enableLazyLoading);
+
+    // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())
-      pipelinedLoops.insert(loop);
-  });
+      while (parentLoop) {
+        pipelinedNest.insert(parentLoop);
+        parentLoop = parentLoop->getParentOfType<scf::ForOp>();
+      }
+  }
 }
 
 std::unique_ptr<Pass>
