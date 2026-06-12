@@ -195,9 +195,10 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
     }
   }
 
-  LogicalResult rewriteTruncAndStore(
-      PatternRewriter &rewriter, SmallVector<VFTruncFOp, 2> &vtruncfOps,
-      SmallVector<VFStoreWithStrideOp, 2> &oldStoreOps, bool useDIntlv) const {
+  LogicalResult
+  rewriteTruncAndStore(PatternRewriter &rewriter,
+                       SmallVector<VFTruncFOp, 2> &vtruncfOps,
+                       SmallVector<VFStoreWithStrideOp, 2> &oldStoreOps) const {
     Location loc = vtruncfOps[0].getLoc();
     VectorType vecType = cast<VectorType>(vtruncfOps[0].getType());
     Type elemType = vecType.getElementType();
@@ -208,27 +209,7 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
     int64_t vecSizeB16 = util::VL / 2;
     VectorType newMaskType =
         VectorType::get({vecSizeB16}, rewriter.getI1Type());
-    if (oldStoreOps.size() == 1 || !checkTwoVsstbCanCombine(oldStoreOps)) {
-      for (size_t i = 0; i < oldStoreOps.size(); i++) {
-        // If for body has only one vsstb.
-        // The src vector must dintlv with 0 vector before vsstb.
-        rewriter.setInsertionPointAfter(vtruncfOps[i]);
-        auto deInterleaveOp = rewriter.create<VFDeInterleaveOp>(
-            loc, vecType, vecType, vtruncfOps[i].getRes(),
-            vtruncfOps[i].getRes(), hivmave::Layout_Change::DENSE);
-        Value res1 = deInterleaveOp.getRes1();
-        // create new StoreWithStrideOp with new mask and vector
-        rewriter.setInsertionPointAfter(oldStoreOps[i]);
-        Value newMask =
-            getNewMask(oldStoreOps[i].getMask(), newMaskType, loc, rewriter);
-        rewriter.create<VFStoreWithStrideOp>(
-            loc, oldStoreOps[i].getBase(), oldStoreOps[i].getIndices(),
-            oldStoreOps[i].getStride(), newMask, res1);
-        // remove old store
-        rewriter.eraseOp(oldStoreOps[i]);
-      }
-      return success();
-    } else if (oldStoreOps.size() == 2) {
+    if (oldStoreOps.size() == 2 && checkTwoVsstbCanCombine(oldStoreOps)) {
       // If for body has two vsstb.
       // If the src two load ops can be conbined with DINTLV_B32,
       // then change truncOp with even/odd mode and use OrOp to combine the two
@@ -331,11 +312,11 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
     } else if (forOp->getAttr("unroll_for_vsstb")) {
       forOp->removeAttr("unroll_for_vsstb");
       return failure();
-    } else if (oldStoreOps.size() != 1 && oldStoreOps.size() != 2) {
+    } else if (oldStoreOps.size() != 2) {
       return failure();
     }
 
-    return rewriteTruncAndStore(rewriter, vtruncfOps, oldStoreOps, true);
+    return rewriteTruncAndStore(rewriter, vtruncfOps, oldStoreOps);
   }
 };
 
