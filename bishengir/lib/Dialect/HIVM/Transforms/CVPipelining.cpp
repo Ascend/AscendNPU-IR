@@ -74,7 +74,7 @@ struct WorkspaceAllocParams {
 };
 
 struct CVPipelineImpl {
-  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer, 
+  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
                  CVPipelineMode pipelineMode, bool enableLazyLoading)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
@@ -489,12 +489,12 @@ static tensor::ExtractSliceOp createExtractSlice(OpBuilder &builder,
 static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
   Operation *markedOp = markedVal.getDefiningOp();
   if (markedOp)
-    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name,
-                      builder.getUnitAttr());
+    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
 }
 
-static Value createWorkspaceSubview(OpBuilder &builder, Location loc, Value from,
-                                    Value iv, bool isPreload = false) {
+static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
+                                    Value from, Value iv,
+                                    bool isPreload = false) {
   auto const1 = builder.getIndexAttr(1);
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
@@ -859,7 +859,7 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
   SmallVector<AllocWorkspaceOp> incompleteAllocs;
   for (auto &[alloc, info] : workspaceAllocs_) {
     if (!info.marker || !info.toTensor) {
-      incompleteAllocs.push_back(alloc); 
+      incompleteAllocs.push_back(alloc);
       continue;
     }
     if (!info.toTensor.getResult().hasOneUse())

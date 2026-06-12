@@ -281,9 +281,14 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     // Software pipelining Cube and Vector operations
-    CVPipeliningOptions pipelineOptions;
-    pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
-    pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+    if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
+      CVPipeliningOptions pipelineOptions;
+      pipelineOptions.setDepthInUnrollMode =
+          hivmPipelineOptions.setWorkspaceMultibuffer;
+      pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
+      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+    }
   }
 
   if (hivmPipelineOptions.enableUbufSaving) {
