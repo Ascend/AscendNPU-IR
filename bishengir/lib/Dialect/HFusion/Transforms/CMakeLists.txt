@@ -29,6 +29,7 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   AutoVectorize.cpp
+  AutoVectorize/AutoVectorizeInterpreter.cpp
   AutoVectorize/Verify.cpp
   AutoVectorizeV2.cpp
   AutoVectorizeVerifier.cpp
