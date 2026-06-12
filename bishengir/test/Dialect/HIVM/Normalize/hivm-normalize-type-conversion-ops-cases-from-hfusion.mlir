@@ -113,11 +113,10 @@ func.func @test_NormalizeToTargetType_deinterleave_i8(%arg0: tensor<32xi8>) -> t
 
 // CHECK-LABEL: func.func @test_NormalizeToTargetType_reduce_with_index_i1
 // CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<32x32xi1>) outs(%{{.*}} : tensor<32x32xf16>) round_mode = <trunc> -> tensor<32x32xf16>
-// CHECK: %[[MASKED:.*]] = hivm.hir.vsel ins(%{{.*}}, %{{.*}}, %[[SRC_F16]] : tensor<32x32xi1>, f16, tensor<32x32xf16>) outs(%{{.*}} : tensor<32x32xf16>) -> tensor<32x32xf16>
-// CHECK: %[[RED:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <min_with_index> ins(%[[MASKED]] : tensor<32x32xf16>) outs(%{{.*}}, %{{.*}} : tensor<32x1xf16>, tensor<32x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<32x1xf16>, tensor<32x1xi32>
+// CHECK: %[[RED:.*]]:2 = hivm.hir.vreduce <min_with_index> ins(%[[SRC_F16]] : tensor<32x32xf16>) outs(%{{.*}}, %{{.*}} : tensor<32x1xf16>, tensor<32x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<32x1xf16>, tensor<32x1xi32>
 // CHECK: %[[ZERO_BRC:.*]] = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<32x1xf16>) -> tensor<32x1xf16>
 // CHECK: %[[CMP:.*]] = hivm.hir.vcmp ins(%[[RED]]#0, %[[ZERO_BRC]] : tensor<32x1xf16>, tensor<32x1xf16>) outs(%{{.*}} : tensor<32x1xi1>) -> tensor<32x1xi1>
-// CHECK: %[[NOT:.*]] = hivm.hir.vnot ins(%[[CMP]] : tensor<32x1xi1>) outs(%{{.*}} : tensor<32x1xi1>) -> tensor<32x1xi1
+// CHECK: %[[NOT:.*]] = hivm.hir.vnot ins(%[[CMP]] : tensor<32x1xi1>) outs(%{{.*}} : tensor<32x1xi1>) -> tensor<32x1xi1>
 // CHECK: %[[BOOL:.*]] = tensor.collapse_shape %[[NOT]]
 // CHECK-SAME: tensor<32x1xi1> into tensor<32xi1>
 // CHECK: %[[IDX:.*]] = tensor.collapse_shape %{{.*}}#1
@@ -136,8 +135,7 @@ func.func @test_NormalizeToTargetType_reduce_with_index_i1(%arg0: tensor<32x32xi
 
 // CHECK-LABEL: func.func @test_NormalizeToTargetType_reduce_with_index_i8
 // CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<4x64xi8>) outs(%{{.*}} : tensor<4x64xf16>) -> tensor<4x64xf16>
-// CHECK: %[[MASKED:.*]] = hivm.hir.vsel ins(%{{.*}}, %{{.*}}, %[[SRC_F16]] : tensor<4x64xi1>, f16, tensor<4x64xf16>) outs(%{{.*}} : tensor<4x64xf16>) -> tensor<4x64xf16>
-// CHECK: %[[RED:.*]]:2 = hivm.hir.vreduce {already_initialize_init} <max_with_index> ins(%[[MASKED]] : tensor<4x64xf16>) outs(%{{.*}}, %{{.*}} : tensor<4x1xf16>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf16>, tensor<4x1xi32>
+// CHECK: %[[RED:.*]]:2 = hivm.hir.vreduce <max_with_index> ins(%[[SRC_F16]] : tensor<4x64xf16>) outs(%{{.*}}, %{{.*}} : tensor<4x1xf16>, tensor<4x1xi32>) unsigned_src = false tie_break_left = true reduce_dims = [1] -> tensor<4x1xf16>, tensor<4x1xi32>
 // CHECK: hivm.hir.vcast ins(%{{.*}}#0 : tensor<4x1xf16>) outs(%{{.*}} : tensor<4x1xi8>) round_mode = <trunc> -> tensor<4x1xi8>
 func.func @test_NormalizeToTargetType_reduce_with_index_i8(%arg0: tensor<4x64xi8>, %arg1: tensor<4x64xi32>) -> (tensor<4xi8>, tensor<4xi32>) {
   %0 = tensor.empty() : tensor<4xi8>

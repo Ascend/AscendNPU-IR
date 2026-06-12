@@ -29,50 +29,28 @@ namespace mlir::hfusion {
 ///  y = hfusion.cmpi x, src0 {vne} ->  i1
 /// is normalized to
 ///  y = hfusion.cast x -> i1
-struct NormalizeCmpToCastOp : public OpRewritePattern<CompareOp> {
-public:
-  using OpRewritePattern<CompareOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(CompareOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    llvm::SmallVector<Value> inputs = op.getInputs();
-    auto isZeroFill = [&](Value src) {
-      if (auto fillOp = src.getDefiningOp<linalg::FillOp>()) {
-        if (auto cstOp =
-                fillOp.getInputs()[0].getDefiningOp<arith::ConstantIntOp>()) {
-          return op.getCompareFn() == CompareFn::vne && cstOp.value() == 0;
-        }
-      }
-      return false;
-    };
-    bool lhsIsZero = isZeroFill(inputs[0]);
-    bool rhsIsZero = isZeroFill(inputs[1]);
-    bool isValidPattern = lhsIsZero || rhsIsZero;
-    if (!isValidPattern) {
-      return failure();
-    }
-
-    Value inputToCast = lhsIsZero && !rhsIsZero ? inputs[1] : inputs[0];
-    hfusion::RoundMode rounding = hfusion::RoundMode::RINT;
-    auto roundingAttr = rewriter.getAttr<hfusion::RoundModeAttr>(rounding);
-    auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
-                                          roundingAttr);
-    auto castOp = rewriter.create<hfusion::CastOp>(
-        op->getLoc(), TypeRange(op.getResults()), ValueRange{inputToCast},
-        ValueRange{op.getOutputs()[0]}, ArrayRef{modeAttr});
-    rewriter.replaceOp(op, castOp);
-
-    return success();
+struct HFusionCmpToCastTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeCmpToCast(CompareOp op) {
+    return op.hasPureTensorSemantics() && op.getCompareFn() == CompareFn::vne;
   }
+
+  /// Returns true only for the original HFusion zero-tensor producer shape
+  /// accepted by this pattern: `linalg.fill(0) -> tensor<...>`.
+  static bool isZeroTensorProducer(Value value) {
+    auto fillOp = value.getDefiningOp<linalg::FillOp>();
+    if (!fillOp)
+      return false;
+    auto cstOp =
+        fillOp.getInputs()[0].getDefiningOp<arith::ConstantIntOp>();
+    return cstOp && cstOp.value() == 0;
+  }
+
+  static bool isSupportedCastToBool(Type) { return true; }
 };
 
-/// Normalizes `hfusion.compare(..., compare_fn = vne)` to:
-///   tmp = compare(lhs, rhs, veq)
-///   result = vnot(tmp)
+using NormalizeCmpToCastOp =
+    mlir::NormalizeCmpToCastOpTemplate<CompareOp, HFusionCmpToCastTraits>;
+
 struct HFusionCmpVneTraits : public NormalizeTraitsBase {
   static bool shouldNormalize(CompareOp op) {
     return op.hasPureTensorSemantics() && op.getCompareFn() == CompareFn::vne;
@@ -81,32 +59,17 @@ struct HFusionCmpVneTraits : public NormalizeTraitsBase {
 
 using NormalizeCmpVneOp = mlir::NormalizeCmpVneOpTemplate<CompareOp, HFusionCmpVneTraits>;
 
-struct NormalizeCmpOp : public OpRewritePattern<hfusion::CompareOp> {
-public:
-  using OpRewritePattern<CompareOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::CompareOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
+struct HFusionCmpTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeCmp(CompareOp op) {
     // hfusion::CompareOp is used in cast op when casting to bool(int1).
     // Overflowmode annotation mark is useless in this case,
     // and would cause redundant vf in PreVectorizationFusion Pass.
     // So here we pair and delete overflow mark on CompareOp.
-    auto overflowMode = getAnnotateOverflowMode(op);
-    if (overflowMode.has_value()) {
-      auto overflowModeAttr =
-          utils::getAnnotateOpWithAttr(op->getResult(0), "overflow_mode");
-      assert(overflowModeAttr.has_value());
-      annotation::MarkOp markOp =
-          dyn_cast<annotation::MarkOp>(overflowModeAttr.value());
-      rewriter.eraseOp(markOp);
-      return success();
-    }
-    return failure();
+    return op.hasPureTensorSemantics();
   }
 };
+
+using NormalizeCmpOp = mlir::NormalizeCmpOpTemplate<CompareOp, HFusionCmpTraits>;
 
 struct HFusionIsInfNanNormalizeTraitsBase : public NormalizeTraitsBase {
   static bool isSupportedElementType(Type elemType) {

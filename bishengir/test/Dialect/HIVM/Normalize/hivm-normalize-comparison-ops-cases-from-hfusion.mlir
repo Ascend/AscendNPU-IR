@@ -1,6 +1,131 @@
 // RUN: bishengir-opt --convert-hfusion-to-hivm --hivm-normalize-ops %s -split-input-file -verify-diagnostics | FileCheck %s
-// This test verifies the correctness of HIVM normalization transformations
-// applied to HFusion operators after conversion to HIVM dialect.
+// This file copies HFusion source cases for the comparison rewrites migrated to
+// HIVM. It contains both:
+// - positive copied cases: conversion to HIVM succeeds and the migrated HIVM
+//   normalize pattern should rewrite the converted input.
+// - negative copied cases: conversion to HIVM succeeds, but the converted input
+//   should stay unchanged for the migrated HIVM normalize pattern.
+//
+// Source HFusion cases intentionally omitted from this file:
+// - `test_NormalizeShiftI8ToI16_i8_shrui`
+//   HFusion `shrui` is logical right shift. `--convert-hfusion-to-hivm` maps it
+//   to `hivm.hir.vshr`, and the migrated HIVM normalize path for `vshr` is the
+//   arithmetic right shift path. The converted input is therefore not the same
+//   rewrite semantics as the HFusion source case.
+// - `test_NormalizeShiftI8ToI16_i8_shift`
+//   The HFusion source input is vector-vector `shli`. After conversion it becomes
+//   vector-vector `hivm.hir.vshl`. Current HIVM `vshl` only accepts scalar rhs,
+//   so the converted input is not a legal positive HIVM normalize input.
+// - `test_NormalizeI8I32Cmp_select_i1_to_i16_compare`
+//   The HFusion source testcase keeps this historical name, but the IR body is
+//   a `hfusion.select` testcase. It does not exercise the migrated HIVM
+//   comparison rewrites covered by this file.
+
+// CHECK-LABEL: func.func @test_NormalizeCmpOp_compare_i1
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16x32xi1>, %[[arg1:.*]]: tensor<16x32xi1>, %[[arg2:.*]]: tensor<16x32xi1>) -> tensor<16x32xi1>
+// CHECK: %[[empty0:.*]] = tensor.empty() : tensor<16x32xf16>
+// CHECK: %[[cast0:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16x32xi1>) outs(%[[empty0]] : tensor<16x32xf16>) round_mode = <trunc> -> tensor<16x32xf16>
+// CHECK: %[[empty1:.*]] = tensor.empty() : tensor<16x32xf16>
+// CHECK: %[[cast1:.*]] = hivm.hir.vcast ins(%[[arg1]] : tensor<16x32xi1>) outs(%[[empty1]] : tensor<16x32xf16>) round_mode = <trunc> -> tensor<16x32xf16>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast0]], %[[cast1]] : tensor<16x32xf16>, tensor<16x32xf16>) outs(%[[arg2]] : tensor<16x32xi1>) compare_mode = <lt> -> tensor<16x32xi1>
+// CHECK: return %[[cmp]] : tensor<16x32xi1>
+func.func @test_NormalizeCmpOp_compare_i1(%arg0: tensor<16x32xi1>,%arg1: tensor<16x32xi1>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vlt>}
+    ins(%arg0, %arg1 : tensor<16x32xi1>, tensor<16x32xi1>)
+    outs(%dst : tensor<16x32xi1>)
+    -> tensor<16x32xi1>
+  return %ret : tensor<16x32xi1>
+}
+
+// CHECK-LABEL: func.func @test_NormalizeCmpToCast_hfusion_compare_neq_ops
+// CHECK-SAME: (%[[arg0:.*]]: tensor<1024xi64>, %[[arg1:.*]]: tensor<1024xi1>)
+// CHECK: %[[cst:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[empty_f32:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[cast_src:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<1024xi64>) outs(%[[empty_f32]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[empty_f32_2:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[zero:.*]] = hivm.hir.vbrc ins(%[[cst]] : f32) outs(%[[empty_f32_2]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[empty_i1_a:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[empty_i1_b:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast_src]], %[[zero]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[empty_i1_b]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<1024xi1>) outs(%[[empty_i1_a]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeCmpToCast_hfusion_compare_neq_ops(
+  %src1 : tensor<1024xi64>,  %dst : tensor<1024xi1>) ->  tensor<1024xi1> {
+  %c0_i64 = arith.constant 0 : i64
+  %0 = tensor.empty() : tensor<1024xi64>
+  %1 = linalg.fill ins(%c0_i64 : i64) outs(%0 : tensor<1024xi64>) -> tensor<1024xi64>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vne>}
+    ins(%src1, %1 : tensor<1024xi64>, tensor<1024xi64>)
+    outs(%dst : tensor<1024xi1>)
+    -> tensor<1024xi1>
+  return %ret : tensor<1024xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpToCast_hfusion_compare_neq_ops_left_zero
+// CHECK-SAME: (%[[arg0:.*]]: tensor<1024xi64>, %[[arg1:.*]]: tensor<1024xi1>)
+// CHECK: %[[cst:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[empty_f32:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[cast_src:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<1024xi64>) outs(%[[empty_f32]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[empty_f32_2:.*]] = tensor.empty() : tensor<1024xf32>
+// CHECK: %[[zero:.*]] = hivm.hir.vbrc ins(%[[cst]] : f32) outs(%[[empty_f32_2]] : tensor<1024xf32>) -> tensor<1024xf32>
+// CHECK: %[[empty_i1_a:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[empty_i1_b:.*]] = tensor.empty() : tensor<1024xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast_src]], %[[zero]] : tensor<1024xf32>, tensor<1024xf32>) outs(%[[empty_i1_b]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<1024xi1>) outs(%[[empty_i1_a]] : tensor<1024xi1>) -> tensor<1024xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeCmpToCast_hfusion_compare_neq_ops_left_zero(
+  %src1 : tensor<1024xi64>,  %dst : tensor<1024xi1>) ->  tensor<1024xi1> {
+  %c0_i64 = arith.constant 0 : i64
+  %0 = tensor.empty() : tensor<1024xi64>
+  %1 = linalg.fill ins(%c0_i64 : i64) outs(%0 : tensor<1024xi64>) -> tensor<1024xi64>
+  %ret = hfusion.compare {compare_fn  = #hfusion.compare_fn<vne>}
+    ins(%1, %src1 : tensor<1024xi64>, tensor<1024xi64>)
+    outs(%dst : tensor<1024xi1>)
+    -> tensor<1024xi1>
+  return %ret : tensor<1024xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpVne_triton_where_hfusion_compare_select
+// CHECK: %[[cast_arg3:.*]] = hivm.hir.vcast ins(%{{.*}} : tensor<8x8x4xi8>) outs(%{{.*}} : tensor<8x8x4xf16>) -> tensor<8x8x4xf16>
+// CHECK: %[[zero_cast:.*]] = hivm.hir.vcast
+// CHECK: %[[extracted:.*]] = tensor.extract %[[zero_cast]]
+// CHECK: %[[zero_brc:.*]] = hivm.hir.vbrc ins(%[[extracted]]
+// CHECK: %[[empty1:.*]] = tensor.empty() : tensor<8x8x4xi1>
+// CHECK: %[[empty2:.*]] = tensor.empty() : tensor<8x8x4xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast_arg3]], %[[zero_brc]] : tensor<8x8x4xf16>, tensor<8x8x4xf16>) outs(%[[empty2]] : tensor<8x8x4xi1>) -> tensor<8x8x4xi1>
+// CHECK: %[[mask:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<8x8x4xi1>) outs(%[[empty1]] : tensor<8x8x4xi1>) -> tensor<8x8x4xi1>
+// CHECK: %[[sel:.*]] = hivm.hir.vsel ins(%[[mask]], %{{.*}}, %{{.*}} : tensor<8x8x4xi1>, tensor<8x8x4xf16>, tensor<8x8x4xf16>) outs(%{{.*}} : tensor<8x8x4xf16>) -> tensor<8x8x4xf16>
+// CHECK: bufferization.materialize_in_destination
+func.func @test_NormalizeCmpVne_triton_where_hfusion_compare_select(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi8>, %arg3: memref<?xi8>, %arg4: memref<?xi8>, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32, %arg10: i32) attributes {global_kernel = "local"} {
+  %c0_i8 = arith.constant 0 : i8
+  %0 = tensor.empty() : tensor<8x8x4xi8>
+  %1 = linalg.fill ins(%c0_i8 : i8) outs(%0 : tensor<8x8x4xi8>) -> tensor<8x8x4xi8>
+  %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [0], sizes: [8, 8, 4], strides: [32, 4, 1] : memref<?xi8> to memref<8x8x4xi8, strided<[32, 4, 1]>>
+  %alloc = memref.alloc() : memref<8x8x4xi8>
+  memref.copy %reinterpret_cast, %alloc : memref<8x8x4xi8, strided<[32, 4, 1]>> to memref<8x8x4xi8>
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<8x8x4xi8>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [8, 8, 4], strides: [32, 4, 1] : memref<?xi8> to memref<8x8x4xi8, strided<[32, 4, 1]>>
+  %alloc_1 = memref.alloc() : memref<8x8x4xi8>
+  memref.copy %reinterpret_cast_0, %alloc_1 : memref<8x8x4xi8, strided<[32, 4, 1]>> to memref<8x8x4xi8>
+  %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<8x8x4xi8>
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [8, 8, 4], strides: [32, 4, 1] : memref<?xi8> to memref<8x8x4xi8, strided<[32, 4, 1]>>
+  %alloc_3 = memref.alloc() : memref<8x8x4xi8>
+  memref.copy %reinterpret_cast_2, %alloc_3 : memref<8x8x4xi8, strided<[32, 4, 1]>> to memref<8x8x4xi8>
+  %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<8x8x4xi8>
+  %5 = tensor.empty() : tensor<8x8x4xi1>
+  %6 = hfusion.compare {compare_fn = #hfusion.compare_fn<vne>} ins(%4, %1 : tensor<8x8x4xi8>, tensor<8x8x4xi8>) outs(%5 : tensor<8x8x4xi1>) -> tensor<8x8x4xi1>
+  %7 = hfusion.select ins(%6, %2, %3 : tensor<8x8x4xi1>, tensor<8x8x4xi8>, tensor<8x8x4xi8>) outs(%0 : tensor<8x8x4xi8>) -> tensor<8x8x4xi8>
+  %reinterpret_cast_4 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8, 8, 4], strides: [32, 4, 1] : memref<?xi8> to memref<8x8x4xi8, strided<[32, 4, 1]>>
+  %cast = memref.cast %reinterpret_cast_4 : memref<8x8x4xi8, strided<[32, 4, 1]>> to memref<8x8x4xi8, strided<[?, ?, ?], offset: ?>>
+  bufferization.materialize_in_destination %7 in writable %cast : (tensor<8x8x4xi8>, memref<8x8x4xi8, strided<[?, ?, ?], offset: ?>>) -> ()
+  return
+}
+
+// -----
 
 // CHECK-LABEL: func.func @test_NormalizeCmpVne_normalize_compare_neq_to_Not_eq
 // CHECK-SAME: (%[[arg0:.*]]: tensor<1024xi64>, %[[arg1:.*]]: tensor<1024xi64>, %[[arg2:.*]]: tensor<1024xi1>)
@@ -142,6 +267,21 @@ func.func @test_NormalizeI8I32Cmp_normalize_i32_hfusion_compare_dynamic(%arg0: t
   %6 = tensor.empty(%dim, %dim_0) : tensor<?x?xi1>
   %7 = hfusion.compare {fun = #hfusion.compare_fn<veq>} ins(%arg0, %5 : tensor<?x?xi32>, tensor<?x?xi32>) outs(%6 : tensor<?x?xi1>) -> tensor<?x?xi1>
   return %5, %7 : tensor<?x?xi32>, tensor<?x?xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpOp_remove_overflow_annotation
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[arg0:.*]], %[[arg1:.*]] : tensor<8xf32>, tensor<8xf32>) outs(%[[arg2:.*]] : tensor<8xi1>) compare_mode = <lt> -> tensor<8xi1>
+// CHECK-NOT: annotation.mark
+// CHECK: return %[[cmp]] : tensor<8xi1>
+func.func @test_NormalizeCmpOp_remove_overflow_annotation(%arg0: tensor<8xf32>, %arg1: tensor<8xf32>, %dst: tensor<8xi1>) -> tensor<8xi1> {
+  %ret = hfusion.compare {compare_fn = #hfusion.compare_fn<vlt>}
+    ins(%arg0, %arg1 : tensor<8xf32>, tensor<8xf32>)
+    outs(%dst : tensor<8xi1>)
+    -> tensor<8xi1>
+  annotation.mark %ret {overflow_mode = "trunc"} : tensor<8xi1>
+  return %ret : tensor<8xi1>
 }
 
 // -----

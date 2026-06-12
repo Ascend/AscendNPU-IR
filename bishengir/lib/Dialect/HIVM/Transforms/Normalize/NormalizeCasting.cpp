@@ -197,6 +197,10 @@ void mlir::hivm::populateNormalizeCastingPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizefillCastToTensorBrc>(ctx);
   patterns.add<NormalizeAnyToF32UnaryRecOp>(ctx);
   patterns.add<NormalizeCastLoweringOp>(ctx);
+}
+
+void mlir::hivm::populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns) {
+  MLIRContext *ctx = patterns.getContext();
   patterns.add<NormalizeScalarExtension<arith::ExtFOp>>(ctx);
   if (archIsRegbased)
     patterns.add<NormalizeScalarCastOp>(ctx);

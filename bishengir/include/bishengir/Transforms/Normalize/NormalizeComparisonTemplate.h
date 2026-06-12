@@ -26,10 +26,11 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/Utils/Kinds.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
-#include "mlir/IR/TypeUtilities.h"
 
 namespace mlir {
 
@@ -79,6 +80,76 @@ public:
                                              UnaryKind::Not);
 
     rewriter.replaceOp(op, vnotResult);
+    return success();
+  }
+};
+
+/// Removes the redundant `overflow_mode` annotation attached to compare
+/// results.
+template <typename SourceOp, typename Traits>
+struct NormalizeCmpOpTemplate : public OpRewritePattern<SourceOp> {
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeCmp(op))
+      return failure();
+
+    auto overflowModeAttr =
+        utils::getAnnotateOpWithAttr(op->getResult(0), "overflow_mode");
+    if (!overflowModeAttr.has_value())
+      return failure();
+
+    rewriter.eraseOp(overflowModeAttr.value());
+    return success();
+  }
+};
+
+/// Normalizes the specific compare-to-zero pattern to a cast-to-bool op.
+///
+/// Example:
+///   scalar = const 0
+///   zero = fill(scalar, dst) -> tensor<...xi8>
+///   y = cmp x, zero {ne} -> tensor<...xi1>
+/// is normalized to:
+///   y = cast x -> tensor<...xi1>
+///
+/// This pattern accepts either `cmp(x, zero)` or `cmp(zero, x)`.
+template <typename SourceOp, typename Traits>
+struct NormalizeCmpToCastOpTemplate : public OpRewritePattern<SourceOp> {
+public:
+  using OpRewritePattern<SourceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SourceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeCmpToCast(op))
+      return failure();
+
+    auto dpsOp = llvm::dyn_cast<DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp) {
+      op->emitError("NormalizeCmpToCastOpTemplate: operation does not "
+                    "implement DestinationStyleOpInterface");
+      return failure();
+    }
+
+    auto inputs = dpsOp.getDpsInputs();
+    Value lhs = inputs[0];
+    Value rhs = inputs[1];
+    bool lhsIsZero = Traits::isZeroTensorProducer(lhs);
+    bool rhsIsZero = Traits::isZeroTensorProducer(rhs);
+    if (!lhsIsZero && !rhsIsZero)
+      return failure();
+
+    Value inputToCast = lhsIsZero && !rhsIsZero ? rhs : lhs;
+    Value output = dpsOp.getDpsInits()[0];
+    if (!Traits::isSupportedCastToBool(getElementTypeOrSelf(inputToCast)))
+      return failure();
+
+    Value cast = Traits::createCastOp(rewriter, op->getLoc(), inputToCast,
+                                      getElementTypeOrSelf(output.getType()),
+                                      CastRoundKind::RInt, output);
+    rewriter.replaceOp(op, cast);
     return success();
   }
 };

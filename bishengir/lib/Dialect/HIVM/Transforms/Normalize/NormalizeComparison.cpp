@@ -48,9 +48,49 @@ struct HIVMCmpVneTraits : public HIVMComparisonNormalizeTraitsBase {
 
 using NormalizeCmpVneOp = mlir::NormalizeCmpVneOpTemplate<VCmpOp, HIVMCmpVneTraits>;
 
-/// Normalizes `hivm.hir.vcmp` on `i8` / `i32` inputs to a wider compare type:
-///   i8  -> f16
-///   i32 -> i64, except `eq` / `ne`
+/// Removes the redundant `overflow_mode` annotation attached to the result of
+/// `hivm.hir.vcmp`.
+struct HIVMCmpTraits : public HIVMComparisonNormalizeTraitsBase {
+  static bool shouldNormalizeCmp(VCmpOp op) {
+    return hasPureTensorNoTransformAttrs(op);
+  }
+};
+
+using NormalizeCmpOp = mlir::NormalizeCmpOpTemplate<VCmpOp, HIVMCmpTraits>;
+
+/// Normalizes `hivm.hir.vcmp(ne, x, zero)` to `hivm.hir.vcast(x -> i1)`.
+struct HIVMCmpToCastTraits : public HIVMComparisonNormalizeTraitsBase {
+  static bool shouldNormalizeCmpToCast(VCmpOp op) {
+    return hasPureTensorNoTransformAttrs(op) &&
+           op.getCompareMode() == CompareMode::NE;
+  }
+
+  /// Matches the zero-tensor producer shape that this HIVM pattern accepts:
+  /// `hivm.hir.vbrc(0) -> tensor<...>`.
+  static bool isZeroTensorProducer(Value value) {
+    auto brcOp = value.getDefiningOp<VBrcOp>();
+    if (!brcOp)
+      return false;
+    Value input = brcOp.getDpsInputs()[0];
+    auto cstOp = input.getDefiningOp<arith::ConstantIntOp>();
+    return cstOp && cstOp.value() == 0;
+  }
+
+  static bool isSupportedCastToBool(Type elemType) {
+    // Only accept element types that NormalizeCastLowering's
+    // castSrcTypeToI1ByCmp can further lower to `vcmp(eq, 0) → vnot`. f8 types
+    // are not covered by that lowering path yet, so they must stay as `vcmp`
+    // and not be converted to `vcast(... → i1)` here.
+    return elemType.isInteger(8) || elemType.isInteger(16) ||
+           elemType.isInteger(32) || elemType.isInteger(64) ||
+           elemType.isF16() || elemType.isF32() || elemType.isBF16();
+  }
+};
+
+using NormalizeCmpToCastOp =
+    mlir::NormalizeCmpToCastOpTemplate<VCmpOp, HIVMCmpToCastTraits>;
+
+/// Normalizes i8 compare to f16 compare, and i32 non-eq/ne compare to i64.
 struct HIVMI8I32CmpTraits : public HIVMComparisonNormalizeTraitsBase {
   static bool shouldNormalize(VCmpOp op) {
     return hasPureTensorNoTransformAttrs(op);
@@ -165,8 +205,14 @@ void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns) {
     patterns.add<NormalizeI8I32CmpOp>(patterns.getContext());
 }
 
+void populateNormalizeCmpToCastPatterns(RewritePatternSet &patterns) {
+  if (!NormalizeTraitsBase::archIsRegbased())
+    patterns.add<NormalizeCmpToCastOp>(patterns.getContext());
+}
+
 void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
+  patterns.add<NormalizeCmpOp>(ctx);
   patterns.add<NormalizeIsInfOp>(ctx);
   patterns.add<NormalizeIsNanOp>(ctx);
 }

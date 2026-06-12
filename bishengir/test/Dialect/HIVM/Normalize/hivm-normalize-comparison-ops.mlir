@@ -76,6 +76,110 @@ func.func @test_NormalizeCmpVneOp_neq_2d(
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeCmpOp_remove_overflow_annotation
+// CHECK: %[[ret:.*]] = hivm.hir.vcmp ins(%[[arg0:.*]], %[[arg1:.*]] : tensor<8xi32>, tensor<8xi32>) outs(%[[arg2:.*]] : tensor<8xi1>) -> tensor<8xi1>
+// CHECK-NOT: annotation.mark
+// CHECK: return %[[ret]] : tensor<8xi1>
+func.func @test_NormalizeCmpOp_remove_overflow_annotation(
+  %src1 : tensor<8xi32>, %src2 : tensor<8xi32>, %dst : tensor<8xi1>) -> tensor<8xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<8xi32>, tensor<8xi32>)
+    outs(%dst : tensor<8xi1>)
+    compare_mode = #hivm.compare_mode<eq> -> tensor<8xi1>
+  annotation.mark %ret {overflow_mode = "trunc"} : tensor<8xi1>
+  return %ret : tensor<8xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpOp_without_overflow_annotation_unchanged
+// CHECK: %[[ret:.*]] = hivm.hir.vcmp ins(%[[arg0:.*]], %[[arg1:.*]] : tensor<8xf32>, tensor<8xf32>) outs(%[[arg2:.*]] : tensor<8xi1>) compare_mode = <lt> -> tensor<8xi1>
+// CHECK-NOT: annotation.mark
+// CHECK: return %[[ret]] : tensor<8xi1>
+func.func @test_NormalizeCmpOp_without_overflow_annotation_unchanged(
+  %src1 : tensor<8xf32>, %src2 : tensor<8xf32>, %dst : tensor<8xi1>) -> tensor<8xi1> {
+  %ret = hivm.hir.vcmp ins(%src1, %src2 : tensor<8xf32>, tensor<8xf32>)
+    outs(%dst : tensor<8xi1>)
+    compare_mode = #hivm.compare_mode<lt> -> tensor<8xi1>
+  return %ret : tensor<8xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpToCast_i32_zero_tensor
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi32>, %[[arg1:.*]]: tensor<16xi1>)
+// CHECK: %[[cst:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[empty_f32:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[cast_src:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16xi32>) outs(%[[empty_f32]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[empty_f32_2:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[zero:.*]] = hivm.hir.vbrc ins(%[[cst]] : f32) outs(%[[empty_f32_2]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[empty_i1_a:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[empty_i1_b:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast_src]], %[[zero]] : tensor<16xf32>, tensor<16xf32>) outs(%[[empty_i1_b]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<16xi1>) outs(%[[empty_i1_a]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeCmpToCast_i32_zero_tensor(
+  %src : tensor<16xi32>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %c0 = arith.constant 0 : i32
+  %empty = tensor.empty() : tensor<16xi32>
+  %zero = hivm.hir.vbrc ins(%c0 : i32) outs(%empty : tensor<16xi32>) -> tensor<16xi32>
+  %ret = hivm.hir.vcmp ins(%src, %zero : tensor<16xi32>, tensor<16xi32>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<ne> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpToCast_i64_zero_tensor
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi64>, %[[arg1:.*]]: tensor<16xi1>)
+// CHECK: %[[cst:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[empty_f32:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[cast_src:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16xi64>) outs(%[[empty_f32]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[empty_f32_2:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[zero:.*]] = hivm.hir.vbrc ins(%[[cst]] : f32) outs(%[[empty_f32_2]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[empty_i1_a:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[empty_i1_b:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast_src]], %[[zero]] : tensor<16xf32>, tensor<16xf32>) outs(%[[empty_i1_b]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<16xi1>) outs(%[[empty_i1_a]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeCmpToCast_i64_zero_tensor(
+  %src : tensor<16xi64>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %c0 = arith.constant 0 : i64
+  %empty = tensor.empty() : tensor<16xi64>
+  %zero = hivm.hir.vbrc ins(%c0 : i64) outs(%empty : tensor<16xi64>) -> tensor<16xi64>
+  %ret = hivm.hir.vcmp ins(%src, %zero : tensor<16xi64>, tensor<16xi64>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<ne> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeCmpToCast_i64_left_zero_tensor
+// CHECK-SAME: (%[[arg0:.*]]: tensor<16xi64>, %[[arg1:.*]]: tensor<16xi1>)
+// CHECK: %[[cst:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: %[[empty_f32:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[cast_src:.*]] = hivm.hir.vcast ins(%[[arg0]] : tensor<16xi64>) outs(%[[empty_f32]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[empty_f32_2:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[zero:.*]] = hivm.hir.vbrc ins(%[[cst]] : f32) outs(%[[empty_f32_2]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[empty_i1_a:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[empty_i1_b:.*]] = tensor.empty() : tensor<16xi1>
+// CHECK: %[[cmp:.*]] = hivm.hir.vcmp ins(%[[cast_src]], %[[zero]] : tensor<16xf32>, tensor<16xf32>) outs(%[[empty_i1_b]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: %[[not:.*]] = hivm.hir.vnot ins(%[[cmp]] : tensor<16xi1>) outs(%[[empty_i1_a]] : tensor<16xi1>) -> tensor<16xi1>
+// CHECK: return %[[not]]
+func.func @test_NormalizeCmpToCast_i64_left_zero_tensor(
+  %src : tensor<16xi64>, %dst : tensor<16xi1>) -> tensor<16xi1> {
+  %c0 = arith.constant 0 : i64
+  %empty = tensor.empty() : tensor<16xi64>
+  %zero = hivm.hir.vbrc ins(%c0 : i64) outs(%empty : tensor<16xi64>) -> tensor<16xi64>
+  %ret = hivm.hir.vcmp ins(%zero, %src : tensor<16xi64>, tensor<16xi64>)
+    outs(%dst : tensor<16xi1>)
+    compare_mode = #hivm.compare_mode<ne> -> tensor<16xi1>
+  return %ret : tensor<16xi1>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeI8Cmp_ne_to_f16
 // CHECK-SAME: (%[[arg0:.*]]: tensor<16xi8>, %[[arg1:.*]]: tensor<16xi8>, %[[arg2:.*]]: tensor<16xi1>)
 // CHECK: %[[lhs_empty:.*]] = tensor.empty() : tensor<16xf16>
