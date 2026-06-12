@@ -742,7 +742,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       }
       if (auto scopeScopeOp = dyn_cast<scope::ScopeOp>(op)) {
         auto curScopeOp =
-            std::make_unique<Scope>(OpType::SCOPE, scopeScopeOp, scopeOp.get());
+            std::make_unique<Scope>(OpType::SCOPE, scopeScopeOp, parScope);
         curScopeOp->preloadNum = getScopePreloadNum(curScopeOp.get());
         curScopeOp->maxPreloadNum = getScopeMaxPreloadNum(curScopeOp.get());
         for (auto &region : scopeScopeOp->getRegions()) {
