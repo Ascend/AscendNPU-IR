@@ -81,7 +81,7 @@ func.func @test_f32_element_scalar_opt(%arg0: memref<1x1xf32>,
   // CHECK-NOT: hivm.hir.vmax
   // CHECK: memref.load
   // CHECK-NEXT: memref.load
-  // CHECK-NEXT: arith.maxnumf
+  // CHECK-NEXT: arith.maximumf
   // CHECK-NEXT: memref.store
   hivm.hir.vmax ins(%arg0, %arg1 : memref<1x1xf32>, memref<1x1xf32>)
                 outs(%arg2 : memref<1x1xf32>)
@@ -89,7 +89,7 @@ func.func @test_f32_element_scalar_opt(%arg0: memref<1x1xf32>,
   // CHECK-NOT: hivm.hir.vmin
   // CHECK: memref.load
   // CHECK-NEXT: memref.load
-  // CHECK-NEXT: arith.minnumf
+  // CHECK-NEXT: arith.minimumf
   // CHECK-NEXT: memref.store
   hivm.hir.vmin ins(%arg0, %arg1 : memref<1x1xf32>, memref<1x1xf32>)
                 outs(%arg2 : memref<1x1xf32>)
