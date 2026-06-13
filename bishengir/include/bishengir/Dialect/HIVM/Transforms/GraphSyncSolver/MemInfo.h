@@ -43,6 +43,13 @@ struct FuncArgInfo {
     argNum = funcArg.getArgNumber();
   }
 
+  bool operator==(const FuncArgInfo &other) const {
+    return std::tie(funcOp, funcArg, argNum, isWorkSpace) ==
+           std::tie(other.funcOp, other.funcArg, other.argNum,
+                    other.isWorkSpace);
+  }
+  bool operator!=(const FuncArgInfo &other) const { return !(*this == other); }
+
   std::string str();
 
   static std::optional<FuncArgInfo> tryGet(Value value);
@@ -58,9 +65,20 @@ struct PointerLikeInfo {
   std::optional<hivm::AddressSpace> addressSpace;
   LoopLikeOpInterface parentLoop{nullptr};
   bool isWorkSpace{false};
+  bool isTightlyCoupledBuffer{false};
 
   PointerLikeInfo() = default;
   explicit PointerLikeInfo(Operation *op) : op(op) {}
+
+  bool operator==(const PointerLikeInfo &other) const {
+    return std::tie(op, addresses, allocateSize, addressSpace, parentLoop,
+                    isWorkSpace) ==
+           std::tie(other.op, other.addresses, other.allocateSize,
+                    other.addressSpace, other.parentLoop, other.isWorkSpace);
+  }
+  bool operator!=(const PointerLikeInfo &other) const {
+    return !(*this == other);
+  }
 
   std::string str();
 
@@ -79,19 +97,23 @@ struct PointerLikeInfo {
 };
 
 struct MemInfo {
-  Value value{nullptr};
+  Value value;
   std::optional<FuncArgInfo> funcArgInfo;
   std::optional<PointerLikeInfo> pointerLikeInfo;
+  std::optional<PIPE> pipe;
 
   MemInfo() = default;
 
-  explicit MemInfo(Value value) : value(value) {}
+  explicit MemInfo(Value value, std::optional<PIPE> pipe = {})
+      : value(value), pipe(pipe) {}
 
-  explicit MemInfo(Value value, FuncArgInfo funcArgInfo)
-      : value(value), funcArgInfo(funcArgInfo) {}
+  explicit MemInfo(Value value, FuncArgInfo funcArgInfo,
+                   std::optional<PIPE> pipe = {})
+      : value(value), funcArgInfo(funcArgInfo), pipe(pipe) {}
 
-  explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo)
-      : value(value), pointerLikeInfo(pointerLikeInfo) {}
+  explicit MemInfo(Value value, PointerLikeInfo pointerLikeInfo,
+                   std::optional<PIPE> pipe = {})
+      : value(value), pointerLikeInfo(pointerLikeInfo), pipe(pipe) {}
 
   int64_t getSz() const {
     if (pointerLikeInfo.has_value()) {
@@ -102,6 +124,13 @@ struct MemInfo {
     }
     return 0;
   }
+
+  bool operator==(const MemInfo &other) const {
+    return std::tie(value, funcArgInfo, pointerLikeInfo, pipe) ==
+           std::tie(other.value, other.funcArgInfo, other.pointerLikeInfo,
+                    other.pipe);
+  }
+  bool operator!=(const MemInfo &other) const { return !(*this == other); }
 
   std::string str();
 
@@ -117,7 +146,7 @@ PointerLikeInfo getPointerLikeInfo(hivm::PointerCastOp pointerCastOp);
 PointerLikeInfo
 getPointerLikeInfo(bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp);
 
-MemInfo getMemInfo(Value val);
+MemInfo getMemInfo(Value val, std::optional<PIPE> pipe = {});
 
 MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs);
 

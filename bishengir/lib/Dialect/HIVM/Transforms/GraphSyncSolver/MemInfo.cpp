@@ -89,6 +89,10 @@ PointerLikeInfo::tryGet(hivm::PointerCastOp pointerCastOp) {
           mlir::hivm::getParentLoop(pointerCastOp.getResult())) {
     pointerLikeInfo.parentLoop = loopLikeParentOp;
   }
+  if (utils::getAnnotateOpWithAttr(pointerCastOp.getResult(),
+                                   hivm::HIVMTightlyCoupledBufferAttr::name)) {
+    pointerLikeInfo.isTightlyCoupledBuffer = true;
+  }
   return pointerLikeInfo;
 }
 
@@ -123,14 +127,14 @@ std::optional<PointerLikeInfo> PointerLikeInfo::tryGet(Value value) {
   return {};
 }
 
-MemInfo getMemInfo(Value value) {
+MemInfo getMemInfo(Value value, std::optional<PIPE> pipe) {
   if (auto funcArgInfo = FuncArgInfo::tryGet(value)) {
-    return MemInfo(value, funcArgInfo.value());
+    return MemInfo(value, funcArgInfo.value(), pipe);
   }
   if (auto pointerLikeInfo = PointerLikeInfo::tryGet(value)) {
-    return MemInfo(value, pointerLikeInfo.value());
+    return MemInfo(value, pointerLikeInfo.value(), pipe);
   }
-  return MemInfo(value);
+  return MemInfo(value, pipe);
 }
 
 MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs) {

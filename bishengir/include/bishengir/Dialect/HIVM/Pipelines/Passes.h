@@ -65,6 +65,10 @@ void registerLowerHIVMPipelines();
 /// A canonicalization pipeline for HIVM pipeline.
 void canonicalizationHIVMPipeline(OpPassManager &pm);
 
+/// Adds sync-block-lock finalize passes (mark subblock + insert free_lock_var)
+/// before HIVM to Standard conversion.
+void addSyncBlockLockFinalizePasses(OpPassManager &pm);
+
 } // namespace hivm
 } // namespace mlir
 

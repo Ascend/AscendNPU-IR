@@ -9,6 +9,8 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Matchers.h"
@@ -29,8 +31,7 @@ public:
 };
 
 bool involvesLinalgMatmulImpl(
-    mlir::Value value,
-    llvm::SmallPtrSetImpl<mlir::Value> &seenValues,
+    mlir::Value value, llvm::SmallPtrSetImpl<mlir::Value> &seenValues,
     llvm::SmallPtrSetImpl<mlir::Operation *> &seenOps) {
   if (!seenValues.insert(value).second)
     return false;
@@ -49,16 +50,16 @@ bool involvesLinalgMatmulImpl(
     auto result = llvm::cast<mlir::OpResult>(value);
     unsigned resultNumber = result.getResultNumber();
 
-    auto yieldOp = llvm::cast<mlir::scf::YieldOp>(
-        forOp.getBody()->getTerminator());
+    auto yieldOp =
+        llvm::cast<mlir::scf::YieldOp>(forOp.getBody()->getTerminator());
 
-    if (involvesLinalgMatmulImpl(yieldOp.getOperand(resultNumber),
-                                 seenValues, seenOps))
+    if (involvesLinalgMatmulImpl(yieldOp.getOperand(resultNumber), seenValues,
+                                 seenOps))
       return true;
 
     if (resultNumber < forOp.getInitArgs().size() &&
-        involvesLinalgMatmulImpl(forOp.getInitArgs()[resultNumber],
-                                 seenValues, seenOps))
+        involvesLinalgMatmulImpl(forOp.getInitArgs()[resultNumber], seenValues,
+                                 seenOps))
       return true;
 
     return false;
@@ -511,7 +512,319 @@ public:
   }
 };
 
+/// Match two memref.copy ops from the same source with stride-2 access and
+/// consecutive offsets (offset, offset+1), and replace them with a single
+/// contiguous copy followed by two hfusion::DeinterleaveOp.
+///
+/// Before:
+///   %rc0 = memref.reinterpret_cast %src offset[X] sizes[N] strides[2]
+///   memref.copy (subview of %rc0) -> %alloc0
+///   %t0 = bufferization.to_tensor %alloc0
+///   %rc1 = memref.reinterpret_cast %src offset[X+1] sizes[N] strides[2]
+///   memref.copy (subview of %rc1) -> %alloc1
+///   %t1 = bufferization.to_tensor %alloc1
+///
+/// After:
+///   %rc = memref.reinterpret_cast %src offset[X] sizes[2*N] strides[1]
+///   memref.copy (subview of %rc) -> %merged_alloc
+///   %t = bufferization.to_tensor %merged_alloc
+///   %t0 = hfusion.deinterleave %t channel<0>
+///   %t1 = hfusion.deinterleave %t channel<1>
+struct MergeConsecutiveCopiesPattern : public OpRewritePattern<memref::CopyOp> {
+public:
+  using OpRewritePattern<memref::CopyOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::CopyOp copyOp,
+                                PatternRewriter &rewriter) const final {
+    // Match: source is subview of reinterpret_cast with stride 2
+    auto srcSubview = copyOp.getSource().getDefiningOp<memref::SubViewOp>();
+    if (!srcSubview)
+      return failure();
+    auto reintCast =
+        srcSubview.getSource().getDefiningOp<memref::ReinterpretCastOp>();
+    if (!reintCast)
+      return failure();
+
+    // Check stride is 2
+    auto strides = reintCast.getStaticStrides();
+    if (strides.size() != 1 || strides[0] != 2)
+      return failure();
+
+    // Get the source memref and offset
+    Value srcMemref = reintCast.getSource();
+    auto offsets = reintCast.getMixedOffsets();
+    if (offsets.size() != 1)
+      return failure();
+    Value offset0 = offsets[0].dyn_cast<Value>();
+    if (!offset0)
+      return failure();
+
+    // Get static sizes from reinterpret_cast
+    auto sizes = reintCast.getStaticSizes();
+    if (sizes.size() != 1 || ShapedType::isDynamic(sizes[0]))
+      return failure();
+    int64_t N = sizes[0];
+
+    // Dest must be an alloc
+    auto dstSubview = copyOp.getTarget().getDefiningOp<memref::SubViewOp>();
+    if (!dstSubview)
+      return failure();
+    auto alloc0 = dstSubview.getSource().getDefiningOp<memref::AllocOp>();
+    if (!alloc0)
+      return failure();
+
+    // Find the to_tensor user of alloc0
+    bufferization::ToTensorOp toTensor0 = nullptr;
+    for (auto *user : alloc0.getResult().getUsers()) {
+      if (auto tt = dyn_cast<bufferization::ToTensorOp>(user)) {
+        toTensor0 = tt;
+        break;
+      }
+    }
+    if (!toTensor0)
+      return failure();
+
+    // Now find the sibling copy with offset+1
+    // Look for another reinterpret_cast of the same source in the same block
+    Block *block = copyOp->getBlock();
+    memref::CopyOp siblingCopy = nullptr;
+    memref::ReinterpretCastOp siblingReintCast = nullptr;
+    memref::SubViewOp siblingSrcSubview = nullptr;
+    memref::SubViewOp siblingDstSubview = nullptr;
+    memref::AllocOp alloc1 = nullptr;
+    bufferization::ToTensorOp toTensor1 = nullptr;
+
+    for (auto &op : *block) {
+      auto candidate = dyn_cast<memref::CopyOp>(&op);
+      if (!candidate || candidate == copyOp)
+        continue;
+
+      auto candSrcSv = candidate.getSource().getDefiningOp<memref::SubViewOp>();
+      if (!candSrcSv)
+        continue;
+      auto candRC =
+          candSrcSv.getSource().getDefiningOp<memref::ReinterpretCastOp>();
+      if (!candRC || candRC.getSource() != srcMemref)
+        continue;
+
+      // Check stride is 2
+      auto candStrides = candRC.getStaticStrides();
+      if (candStrides.size() != 1 || candStrides[0] != 2)
+        continue;
+
+      // Check same sizes
+      auto candSizes = candRC.getStaticSizes();
+      if (candSizes.size() != 1 || candSizes[0] != N)
+        continue;
+
+      // Check offset is offset0 + 1
+      auto candOffsets = candRC.getMixedOffsets();
+      if (candOffsets.size() != 1)
+        continue;
+      Value candOffset = candOffsets[0].dyn_cast<Value>();
+      if (!candOffset)
+        continue;
+
+      // Check candOffset = offset0 + 1 (via arith.addi)
+      auto addiOp = candOffset.getDefiningOp<arith::AddIOp>();
+      if (!addiOp)
+        continue;
+      bool isOffsetPlusOne = false;
+      for (auto [lhs, rhs] : {std::pair(addiOp.getLhs(), addiOp.getRhs()),
+                              std::pair(addiOp.getRhs(), addiOp.getLhs())}) {
+        if (lhs != offset0)
+          continue;
+        APInt constVal;
+        if (matchPattern(rhs, m_ConstantInt(&constVal)) &&
+            constVal.getSExtValue() == 1) {
+          isOffsetPlusOne = true;
+          break;
+        }
+      }
+      if (!isOffsetPlusOne)
+        continue;
+
+      // Check dest is subview of alloc
+      auto candDstSv = candidate.getTarget().getDefiningOp<memref::SubViewOp>();
+      if (!candDstSv)
+        continue;
+      auto candAlloc = candDstSv.getSource().getDefiningOp<memref::AllocOp>();
+      if (!candAlloc)
+        continue;
+
+      // Find to_tensor of this alloc
+      bufferization::ToTensorOp candToTensor = nullptr;
+      for (auto *user : candAlloc.getResult().getUsers()) {
+        if (auto tt = dyn_cast<bufferization::ToTensorOp>(user)) {
+          candToTensor = tt;
+          break;
+        }
+      }
+      if (!candToTensor)
+        continue;
+
+      siblingCopy = candidate;
+      siblingReintCast = candRC;
+      siblingSrcSubview = candSrcSv;
+      siblingDstSubview = candDstSv;
+      alloc1 = candAlloc;
+      toTensor1 = candToTensor;
+      break;
+    }
+
+    if (!siblingCopy)
+      return failure();
+
+    // Now build the merged version
+    // Insert before the earlier of the two copy ops
+    Operation *firstOp = copyOp->isBeforeInBlock(siblingCopy)
+                             ? copyOp.getOperation()
+                             : siblingCopy.getOperation();
+    rewriter.setInsertionPoint(firstOp);
+    Location loc = copyOp.getLoc();
+    auto elemType = cast<MemRefType>(alloc0.getType()).getElementType();
+
+    // Create merged alloc with 2*N elements
+    int64_t mergedN = 2 * N;
+    auto mergedAllocType = MemRefType::get({mergedN}, elemType);
+    auto mergedAlloc = rewriter.create<memref::AllocOp>(loc, mergedAllocType);
+
+    // Create reinterpret_cast with stride 1 and size 2*N
+    auto mergedRCType =
+        MemRefType::get({mergedN}, elemType,
+                        StridedLayoutAttr::get(rewriter.getContext(),
+                                               ShapedType::kDynamic, {1}));
+    auto mergedRC = rewriter.create<memref::ReinterpretCastOp>(
+        loc, mergedRCType, srcMemref, OpFoldResult(offset0),
+        ArrayRef<OpFoldResult>{rewriter.getIndexAttr(mergedN)},
+        ArrayRef<OpFoldResult>{rewriter.getIndexAttr(1)});
+
+    // Get the dynamic copy size: 2 * %15 (the subview size)
+    // The subview sizes from the original: srcSubview has dynamic size
+    auto srcSvSizes = srcSubview.getMixedSizes();
+    if (srcSvSizes.size() != 1)
+      return failure();
+    Value dynSize = srcSvSizes[0].dyn_cast<Value>();
+    if (!dynSize)
+      return failure();
+
+    // Compute 2 * dynSize
+    Value two = rewriter.create<arith::ConstantIndexOp>(loc, 2);
+    Value mergedDynSize = rewriter.create<arith::MulIOp>(loc, dynSize, two);
+
+    // Handle the fill-zero logic: the original allocs may be filled inside
+    // a scf.if block. Find and replicate for the merged alloc.
+    for (auto *user : alloc0.getResult().getUsers()) {
+      auto fillOp = dyn_cast<linalg::FillOp>(user);
+      if (!fillOp)
+        continue;
+      auto *parentOp = fillOp->getParentOp();
+      if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
+        // Fill is inside a scf.if - create a new scf.if with same condition
+        auto newIf = rewriter.create<scf::IfOp>(loc, ifOp.getCondition(),
+                                                /*withElseRegion=*/false);
+        for (auto attr : ifOp->getAttrs())
+          newIf->setAttr(attr.getName(), attr.getValue());
+        rewriter.setInsertionPointToStart(&newIf.getThenRegion().front());
+        rewriter.create<linalg::FillOp>(loc, fillOp.getInputs(),
+                                        ValueRange{mergedAlloc});
+        rewriter.setInsertionPointAfter(newIf);
+      } else {
+        // Fill is directly in the block
+        rewriter.create<linalg::FillOp>(loc, fillOp.getInputs(),
+                                        ValueRange{mergedAlloc});
+      }
+      break;
+    }
+
+    // Create subviews for the merged copy
+    auto mergedSrcSvType =
+        MemRefType::get({ShapedType::kDynamic}, elemType,
+                        StridedLayoutAttr::get(rewriter.getContext(),
+                                               ShapedType::kDynamic, {1}));
+    SmallVector<OpFoldResult> svOffsets = {rewriter.getIndexAttr(0)};
+    SmallVector<OpFoldResult> svSizes = {OpFoldResult(mergedDynSize)};
+    SmallVector<OpFoldResult> svStrides = {rewriter.getIndexAttr(1)};
+    auto mergedSrcSubview = rewriter.create<memref::SubViewOp>(
+        loc, mergedSrcSvType, mergedRC, svOffsets, svSizes, svStrides);
+
+    auto mergedDstSvType =
+        MemRefType::get({ShapedType::kDynamic}, elemType,
+                        StridedLayoutAttr::get(rewriter.getContext(), 0, {1}));
+    auto mergedDstSubview = rewriter.create<memref::SubViewOp>(
+        loc, mergedDstSvType, mergedAlloc, svOffsets, svSizes, svStrides);
+
+    // Create the merged copy
+    rewriter.create<memref::CopyOp>(loc, mergedSrcSubview, mergedDstSubview);
+
+    // Create to_tensor on merged alloc
+    auto mergedTensorType = RankedTensorType::get({mergedN}, elemType);
+    auto mergedToTensor = rewriter.create<bufferization::ToTensorOp>(
+        loc, mergedTensorType, mergedAlloc, /*restrict=*/true,
+        /*writable=*/true);
+
+    // Create DeinterleaveOp for channel 0 (even elements -> replaces toTensor0)
+    auto outputTensorType = RankedTensorType::get({N}, elemType);
+    auto deinterleave0 = rewriter.create<hfusion::DeinterleaveOp>(
+        loc, TypeRange{outputTensorType}, mergedToTensor.getResult(),
+        rewriter.getI64IntegerAttr(0));
+
+    // Create DeinterleaveOp for channel 1 (odd elements -> replaces toTensor1)
+    auto deinterleave1 = rewriter.create<hfusion::DeinterleaveOp>(
+        loc, TypeRange{outputTensorType}, mergedToTensor.getResult(),
+        rewriter.getI64IntegerAttr(1));
+
+    // Replace uses
+    rewriter.replaceOp(toTensor0, deinterleave0.getOutput());
+    rewriter.replaceOp(toTensor1, deinterleave1.getOutput());
+
+    // Erase old copy ops (they have no results, safe to erase)
+    rewriter.eraseOp(siblingCopy);
+    rewriter.eraseOp(copyOp);
+
+    // Erase subviews that are now dead
+    if (siblingSrcSubview->use_empty())
+      rewriter.eraseOp(siblingSrcSubview);
+    if (srcSubview->use_empty())
+      rewriter.eraseOp(srcSubview);
+    if (siblingDstSubview->use_empty())
+      rewriter.eraseOp(siblingDstSubview);
+    if (dstSubview->use_empty())
+      rewriter.eraseOp(dstSubview);
+    if (siblingReintCast->use_empty())
+      rewriter.eraseOp(siblingReintCast);
+    if (reintCast->use_empty())
+      rewriter.eraseOp(reintCast);
+
+    // Erase old scf.if fills and allocs
+    auto eraseAllocAndFills = [&](memref::AllocOp alloc) {
+      SmallVector<Operation *> toErase;
+      for (auto *user : alloc.getResult().getUsers()) {
+        if (auto fillOp = dyn_cast<linalg::FillOp>(user))
+          toErase.push_back(fillOp);
+      }
+      for (auto *op : toErase) {
+        auto *parentOp = op->getParentOp();
+        rewriter.eraseOp(op);
+        // If the parent scf.if is now empty, erase it too
+        if (auto ifOp = dyn_cast_or_null<scf::IfOp>(parentOp)) {
+          if (ifOp.getThenRegion().front().without_terminator().empty() &&
+              ifOp.getResults().empty())
+            rewriter.eraseOp(ifOp);
+        }
+      }
+      if (alloc->use_empty())
+        rewriter.eraseOp(alloc);
+    };
+    eraseAllocAndFills(alloc0);
+    eraseAllocAndFills(alloc1);
+
+    return success();
+  }
+};
+
 void populateSimplifyOpsPattern(RewritePatternSet &patterns) {
+  patterns.add<MergeConsecutiveCopiesPattern>(patterns.getContext());
   patterns.add<LoopedCastOpPattern>(patterns.getContext());
   patterns.add<CastOpPattern>(patterns.getContext());
   patterns.add<TransposeOpPattern>(patterns.getContext());

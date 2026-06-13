@@ -359,6 +359,18 @@ def InsertAnchorsAndBackup
               "bool", /*default=*/"false",
               "Insert Anchor Ops before all operations, if not enabled, will "
               "only insert them before ops that could have cross-core memory">,
+       Option<"insertAnchorOpsBeforeMemEffectOps", "insert-anchor-ops-before-mem-effect-ops",
+              "bool", /*default=*/"false",
+              "Insert Anchor Ops before operations that have memory effect">,
+       Option<"insertAnchorOnlyBeforeCubeOps", "insert-anchor-only-before-cube-ops",
+              "bool", /*default=*/"false",
+              "Insert Anchor Ops before cube ops only">,
+       Option<"insertAnchorOnlyBeforeVectorOps", "insert-anchor-only-before-vector-ops",
+              "bool", /*default=*/"false",
+              "Insert Anchor Ops before vector ops only">,
+       Option<"insertAnchorBeforeCubeAndVectorOps", "insert-anchor-before-cube-and-vector-ops",
+              "bool", /*default=*/"true",
+              "Insert Anchor Ops before cube and vector ops only">,
   ];
 }
 
@@ -792,6 +804,20 @@ def LowerCreateSyncBlockLock : Pass<"hivm-lower-create-sync-block-lock", "func::
                            "hivm::HIVMDialect"];
 }
 
+def InsertFreeLockVarBeforeReturn : Pass<"hivm-insert-free-lock-var-before-return",
+                                        "ModuleOp"> {
+  let summary = "Insert FreeLockVarOp before return to prevent deadlock "
+                "when control flow skips sync_block_lock/unlock";
+  let description = [{
+    When SyncBlockLock/Unlock are in conditional branches (e.g. else block),
+    some blocks may not execute them, causing lock_var count mismatch and
+    deadlock. This pass inserts FreeLockVarOp before every return.
+    Each FreeLockVarOp lowers to one sync_block_lock / sync_block_unlock pair.
+  }];
+  let constructor = "mlir::hivm::createInsertFreeLockVarBeforeReturnPass()";
+  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def AutoInferBufferSize : Pass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
   let summary = "Auto infer buffer size";
   let description = "infer buffer size by inserting annotation.mark Op";
@@ -883,6 +909,22 @@ def MarkDisableLoad : Pass<"hivm-mark-disable-load", "ModuleOp"> {
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
+def MarkSyncBlockLockWithSubblock : Pass<"hivm-mark-sync-block-lock-with-subblock",
+                                         "ModuleOp"> {
+  let summary = "Mark sync_block_lock and sync_block_unlock ops with "
+                "sync_block_lock_with_subblock tag when they are not inside "
+                "limit_sub_block_id0 if op in mix module";
+  let description = [{
+    When the module is mix type, this pass marks sync_block_lock and
+    sync_block_unlock ops that are NOT inside an scf.if op with
+    limit_sub_block_id0 attribute. The marked ops get a sync_block_lock_with_subblock
+    attribute to indicate they should use subblockid-based block_idx calculation
+    (get_block_idx * get_subblocknum + get_subblockid).
+  }];
+  let constructor = "mlir::hivm::createMarkSyncBlockLockWithSubblockPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
+}
+
 def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> {
   let summary = "insert init and finish for debug";
   let constructor = "mlir::hivm::createInsertInitAndFinishForDebugPass()";
@@ -934,6 +976,19 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                         /*default=*/"false",
                         "Allow load ops to be cloned into multiple work items "
                         "to reduce intermediate buffer expansion">];
+}
+
+def CreatePreload : Pass<"create-preload", "func::FuncOp"> {
+  let summary = "Create preload for CV pipelining";
+  let constructor = "mlir::hivm::createCreatePreloadPass()";
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "hivm::HIVMDialect",
+    "mlir::scope::ScopeDialect",
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect"
+  ];
 }
 
 def AutoBlockifyParallelLoop

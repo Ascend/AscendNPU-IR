@@ -30,7 +30,6 @@ namespace mlir::hivm::syncsolver {
 
 class OperationBase;
 class Anchor;
-class AnchorBlock;
 class Scope;
 class Loop;
 class Condition;
@@ -58,7 +57,6 @@ enum struct OpType {
   OPERATION,
   PLACE_HOLDER,
   ANCHOR,
-  ANCHOR_BLOCK,
   SCOPE,
   FUNCTION,
   FUNCTION_BLOCK,
@@ -193,24 +191,6 @@ public:
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::ANCHOR;
-  }
-
-  std::string str(int indent, bool recursive) const override;
-};
-
-class AnchorBlock : public OperationBase {
-public:
-  const int64_t idStart;
-  const int64_t idEnd;
-
-public:
-  AnchorBlock(Operation *op, OperationBase *parentOp, int64_t idStart,
-              int64_t idEnd)
-      : OperationBase(OpType::ANCHOR_BLOCK, op, parentOp), idStart(idStart),
-        idEnd(idEnd) {}
-
-  static bool classof(const OperationBase *e) {
-    return e->opType == OpType::ANCHOR_BLOCK;
   }
 
   std::string str(int indent, bool recursive) const override;
@@ -351,6 +331,14 @@ public:
   const llvm::SmallVector<llvm::SmallVector<int64_t>> testWriteMemVals;
 
 public:
+  RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+              hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+              const llvm::SmallVector<MemInfo> &readMemInfo,
+              const llvm::SmallVector<MemInfo> &writeMemInfo,
+              OpType opType = OpType::RW_OPERATION)
+      : OperationBase(opType, op, parentOp), coreType(coreType),
+        pipeRead(pipeRead), pipeWrite(pipeWrite), readMemInfo(readMemInfo),
+        writeMemInfo(writeMemInfo){};
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
               const llvm::SmallVector<Value> &readMemVals,

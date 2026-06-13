@@ -97,11 +97,22 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
       reinterpretCast->getLoc(), expandResType, reinterpretCast.getSource(),
       offsetOfr, sizesOfr, newStridesOfr);
 
-  auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
-      reinterpretCast->getLoc(), reinterpretCast.getResult().getType(),
-      newReinterpret, reassociation);
+  auto origResultType = reinterpretCast.getResult().getType();
+  auto collapsedType = memref::CollapseShapeOp::computeCollapsedType(
+      cast<MemRefType>(newReinterpret.getType()), reassociation);
 
-  rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
+  auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
+      reinterpretCast->getLoc(), collapsedType, newReinterpret, reassociation);
+
+  if (collapsedType == origResultType) {
+    rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
+  } else {
+    auto oldSizes = reinterpretCast.getMixedSizes();
+    auto castOp = rewriter.create<memref::ReinterpretCastOp>(
+        reinterpretCast->getLoc(), origResultType, newCollapse.getResult(),
+        offsetOfr, oldSizes, oldStrides);
+    rewriter.replaceAllUsesExcept(reinterpretCast, castOp, expandOp);
+  }
 
   rewriter.replaceOp(expandOp, newReinterpret);
   LDBG(

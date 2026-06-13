@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -289,6 +290,9 @@ public:
   /// record inplace pair list.
   SmallVector<ValuePair> inplacePairList;
 
+  /// record marked buffer used in multi scope operations.
+  SmallVector<Value> preloadBuffers;
+
   /// Sorted positions (in scope-time units, mirroring
   /// GenerateBufferLife()'s scopeTime) of hivm sync ops in this func. Used
   /// to verify CV-CV lifetime gaps are separated by an actual sync.
@@ -406,6 +410,29 @@ private:
   /// need to run UpdateOpGenInfo manually.
   bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
                                         memref::AllocOp allocOp);
+
+  /// Recursive operation scope.
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+
+  /// Update scope op result buffer/return op alias info.
+  void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
+                                scope::ReturnOp returnOp);
+
+  /// Update preload buffer info from mark op.
+  void UpdatePreloadBuffers(annotation::MarkOp markOp,
+                            memref::AllocOp allocOp);
+
+  /// Check if a buffer is a preload buffer.
+  bool IsPreloadBuffer(Value buffer);
+
+  /// Update gen info of preload buffer to parent for op.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+
+  /// Update kill info of preload buffer to parent for op.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+
+  /// Extend preload buffer lifetime from scope to parent for.
+  void UpdatePreloadBuffersGenKillMap();
 
   /// Update bufferInfos for AllocOp which need to plan unique memory.
   void UpdateMemoryUniqueBufferInfo(annotation::MarkOp markOp,

@@ -258,6 +258,9 @@ std::unique_ptr<Pass> createSimplifyVFArgsPass();
 // Create a pass to Merge VF function
 std::unique_ptr<Pass> createMergeVecScopePass(const MergeVecScopeOptions &options = {});
 
+// Create a pass to prepare i1 Nx1 linalg.generic before vectorization.
+std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
+
 // Create a pass to perform elemwise op fusion before vectorization
 std::unique_ptr<Pass> createPreVectorizationFusionPass(
   const PreVectorizationFusionOptions &options = {});

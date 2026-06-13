@@ -216,29 +216,39 @@ static bool shouldSkipSumReduction(Operation *op,
   if (!llvm::isa<Float32Type, Float16Type, BFloat16Type>(elemType))
     return false;
 
-  LLVM_DEBUG(llvm::dbgs() << "[" DEBUG_TYPE
-                          << "] shouldSkipFusion: sum-reduce dim=" << dim
-                          << " enableRA=" << option.enableRA
-                          << " enableAR=" << option.enableAR << "\n");
+  LLVM_DEBUG(llvm::dbgs()
+             << "[" DEBUG_TYPE
+             << "] shouldSkipFusion: sum-reduce dim=" << dim
+             << " rank=" << inputType.getRank()
+             << " enableRA=" << option.enableRA
+             << " enableAR=" << option.enableAR << "\n");
 
-  if (dim == 0 && option.enableRA) {
-    LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (RA enabled)\n");
-    return true;
+  // 1D reduction is not handled by RA/AR.
+  if (inputType.getRank() == 1) {
+    LLVM_DEBUG(llvm::dbgs()
+               << " -> allow fusion (1D reduce)\n");
+    return false;
   }
 
-  if (option.enableAR) {
-    if (dim == 1) {
-      LLVM_DEBUG(llvm::dbgs() << " -> skip fusion (AR enabled)\n");
+  // Only handle 2D reductions for RA/AR.
+  if (inputType.getRank() == 2) {
+    // RA: reduce along dim 0.
+    if (dim == 0 && option.enableRA) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << " -> skip fusion (2D RA)\n");
       return true;
     }
-    if (dim > 1) {
-      LLVM_DEBUG(llvm::dbgs() 
-                 << " -> allow fusion (AR enabled, but only reduction on dim 0 and dim 1 is supported)\n");
-      return false;
+
+    // AR: reduce along dim 1.
+    if (dim == 1 && option.enableAR) {
+      LLVM_DEBUG(llvm::dbgs()
+                 << " -> skip fusion (2D AR)\n");
+      return true;
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs() << " -> allow fusion\n");
+  LLVM_DEBUG(llvm::dbgs()
+             << " -> allow fusion\n");
   return false;
 }
 

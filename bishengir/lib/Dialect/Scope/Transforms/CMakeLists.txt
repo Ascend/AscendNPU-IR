@@ -1,4 +1,5 @@
 add_bishengir_dialect_library(BiShengIRScopeTransforms
+  BufferizableOpInterfaceImpl.cpp
   OutlineScope.cpp
   InlineScope.cpp
 
@@ -11,8 +12,11 @@ add_bishengir_dialect_library(BiShengIRScopeTransforms
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
   BiShengIRScopeDialect
+  MLIRBufferizationDialect
   MLIRDialect
   MLIRFuncDialect
   MLIRIR
+  MLIRMemRefDialect
   MLIRPass
+  MLIRTensorDialect
 )
