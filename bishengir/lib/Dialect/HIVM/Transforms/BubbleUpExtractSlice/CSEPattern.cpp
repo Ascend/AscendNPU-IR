@@ -62,8 +62,8 @@ struct CSEExtractSlicePattern
     for (auto opr : pivotSliceOp->getOperands()) {
       if (pivot == opr)
         continue;
-      auto pivotDefOp = pivot.getDefiningOp();
-      auto oprDefOp = opr.getDefiningOp();
+      auto *pivotDefOp = pivot.getDefiningOp();
+      auto *oprDefOp = opr.getDefiningOp();
       if (pivotDefOp && oprDefOp) {
         if (domInfo.properlyDominates(pivotDefOp, oprDefOp))
           pivot = opr;
@@ -73,8 +73,12 @@ struct CSEExtractSlicePattern
       }
     }
 
+    for (auto siblingSlice : siblingSlices) {
+      if (!domInfo.properlyDominates(pivot, siblingSlice))
+        return failure();
+    }
     rewriter.setInsertionPointAfterValue(pivot);
-    auto newOp = rewriter.clone(*pivotSliceOp.getOperation());
+    auto *newOp = rewriter.clone(*pivotSliceOp.getOperation());
     for (auto siblingSlice : siblingSlices)
       rewriter.replaceOp(siblingSlice, newOp);
     return success();
