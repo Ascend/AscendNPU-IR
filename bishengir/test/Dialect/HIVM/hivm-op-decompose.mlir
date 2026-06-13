@@ -1068,6 +1068,40 @@ func.func @test_scalar_bf16_to_f32(%0: bf16, %1 :memref<1024xf32>) {
 }
 
 // -----
+// CHECK-LABEL: func @test_scalar_f32_to_ui64(
+// CHECK-SAME: %[[SRC0:.*]]: f32
+func.func @test_scalar_f32_to_ui64(%0: f32, %1 : memref<1xi64>) {
+  // CHECK-DAG: %[[THR:.*]] = arith.constant 9.22337203E+18 : f32
+  // CHECK-DAG: %[[MIN:.*]] = arith.constant -9223372036854775808 : i64
+  // CHECK: %[[GE:.*]] = arith.cmpf oge, %[[SRC0]], %[[THR]] : f32
+  // CHECK: %[[SUB:.*]] = arith.subf %[[SRC0]], %[[THR]] : f32
+  // CHECK: %[[ADJ:.*]] = arith.select %[[GE]], %[[SUB]], %[[SRC0]] : f32
+  // CHECK: %[[S:.*]] = arith.fptosi %[[ADJ]] : f32 to i64
+  // CHECK: %[[OR:.*]] = arith.ori %[[S]], %[[MIN]] : i64
+  // CHECK: %[[RES:.*]] = arith.select %[[GE]], %[[OR]], %[[S]] : i64
+  // CHECK: memref.store %[[RES]], %[[SRC1:.*]]
+  // CHECK-NOT: arith.fptoui
+  // CHECK-NOT: hivm.hir.vcast
+  %c0 = arith.constant 0 : index
+  %6 = arith.fptoui %0 : f32 to i64
+  memref.store %6, %1[%c0] : memref<1xi64>
+  return
+}
+
+// -----
+// Signed counterpart: the scalar unit natively supports f32->i64 fptosi, so it
+// is left untouched (neither expanded nor routed to the vector unit).
+// CHECK-LABEL: func @test_scalar_f32_to_si64(
+func.func @test_scalar_f32_to_si64(%0: f32, %1 : memref<1xi64>) {
+  // CHECK: arith.fptosi
+  // CHECK-NOT: hivm.hir.vcast
+  %c0 = arith.constant 0 : index
+  %6 = arith.fptosi %0 : f32 to i64
+  memref.store %6, %1[%c0] : memref<1xi64>
+  return
+}
+
+// -----
 module {
   // CHECK-LABEL: func @test_decompose_vbrc_mark_buffer_size(
   func.func @test_decompose_vbrc_mark_buffer_size(%2 : index, %3 : index) {
