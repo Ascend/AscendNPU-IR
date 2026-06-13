@@ -485,6 +485,10 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
             const auto elementType = operands[0].getType();
 
             SmallVector<Value> results;
+            const bool isUnsignedInt =
+                isa<IntegerType>(elementType) &&
+                (unsignedSource ||
+                 cast<IntegerType>(elementType).isUnsigned());
             switch (reduceOperation) {
             case hivm::ReduceOperation::sum:
               if (isa<FloatType>(elementType))
@@ -504,29 +508,27 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
               break;
             case hivm::ReduceOperation::any:
             case hivm::ReduceOperation::max:
+              // HIVM reduce min/max operations propagate NaN values, so use arith::MaximumFOp for float types
               if (isa<FloatType>(elementType))
-                // TODO: change arith::MaxNumFOp to arith::MaximumFOp, relate to issue:897
                 results = {builder.create<arith::MaximumFOp>(loc, operands[0],
                                                             operands[1])};
-              else if (const auto intType = dyn_cast<IntegerType>(elementType);
-                       intType && !intType.isUnsigned())
-                results = {builder.create<arith::MaxSIOp>(loc, operands[0],
+              else if (isUnsignedInt)
+                results = {builder.create<arith::MaxUIOp>(loc, operands[0],
                                                           operands[1])};
               else
-                results = {builder.create<arith::MaxUIOp>(loc, operands[0],
+                results = {builder.create<arith::MaxSIOp>(loc, operands[0],
                                                           operands[1])};
               break;
             case hivm::ReduceOperation::all:
             case hivm::ReduceOperation::min:
               if (isa<FloatType>(elementType))
-                results = {builder.create<arith::MinNumFOp>(loc, operands[0],
+                results = {builder.create<arith::MinimumFOp>(loc, operands[0],
                                                             operands[1])};
-              else if (const auto intType = dyn_cast<IntegerType>(elementType);
-                       intType && !intType.isUnsigned())
-                results = {builder.create<arith::MinSIOp>(loc, operands[0],
+              else if (isUnsignedInt)
+                results = {builder.create<arith::MinUIOp>(loc, operands[0],
                                                           operands[1])};
               else
-                results = {builder.create<arith::MinUIOp>(loc, operands[0],
+                results = {builder.create<arith::MinSIOp>(loc, operands[0],
                                                           operands[1])};
               break;
             case hivm::ReduceOperation::xori:

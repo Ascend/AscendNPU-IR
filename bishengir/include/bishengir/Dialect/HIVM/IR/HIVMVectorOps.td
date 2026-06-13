@@ -1304,6 +1304,7 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
       3. The reduction indices array can not be empty,
          nor can be larger than the ranks of the input vector.
       4. The reduced indices must be in `[0, RankOfDstVec)`.
+      5. reduce min/max operations propagate NaN values.
 
     Examples:
     ```mlir
