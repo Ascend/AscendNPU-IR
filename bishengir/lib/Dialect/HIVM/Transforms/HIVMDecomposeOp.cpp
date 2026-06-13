@@ -26,6 +26,8 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/RWMutex.h"
 
+#include <limits>
+
 namespace mlir {
 #define GEN_PASS_DEF_HIVMDECOMPOSEOP
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -1421,6 +1423,44 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
   }
 };
 
+/// The scalar unit can select fp_to_sint (arith.fptosi) for f32->i64 but has no
+/// instruction for the unsigned fp_to_uint
+///
+///   %thr = 2^63 : f32
+///   %ge  = arith.cmpf oge, %x, %thr
+///   %adj = arith.select %ge, %x - %thr, %x
+///   %s   = arith.fptosi %adj : f32 to i64          // in [0, 2^63)
+///   %res = arith.select %ge, %s | 0x8000...0, %s   // add 2^63 when x >= 2^63
+struct ExpandScalarFPToUIToI64 : public OpRewritePattern<arith::FPToUIOp> {
+  using OpRewritePattern<arith::FPToUIOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(arith::FPToUIOp op,
+                                PatternRewriter &rewriter) const override {
+    Value src = op.getOperand();
+    if (!src.getType().isF32() || !op.getType().isInteger(64)) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Type i64Ty = op.getType();
+    // 2^63, exactly representable in f32 (0x5F000000).
+    Value threshold = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(0x1p63f));
+    Value ge = rewriter.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGE,
+                                              src, threshold);
+    Value shifted = rewriter.create<arith::SubFOp>(loc, src, threshold);
+    Value adjusted = rewriter.create<arith::SelectOp>(loc, ge, shifted, src);
+    Value signedConv = rewriter.create<arith::FPToSIOp>(loc, i64Ty, adjusted);
+    // Re-apply the high bit (add 2^63) when the input was >= 2^63.
+    Value highBit = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64IntegerAttr(std::numeric_limits<int64_t>::min()));
+    Value withHighBit = rewriter.create<arith::OrIOp>(loc, signedConv, highBit);
+    Value res = rewriter.create<arith::SelectOp>(loc, ge, withHighBit,
+                                                 signedConv);
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+};
+
 struct HIVMDecomposeOpPass
     : public impl::HIVMDecomposeOpBase<HIVMDecomposeOpPass> {
   void runOnOperation() override;
@@ -1446,7 +1486,7 @@ void HIVMDecomposeOpPass::runOnOperation() {
            DecomposeCastScalarToVecOp<arith::TruncFOp>,
            DecomposeScalarOpToVecOp<math::LogOp, hivm::VLnOp>,
            DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
-           DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
+           DecomposeVSubScalarOp, DecomposeVDeinterleaveOp, ExpandScalarFPToUIToI64,
            AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering>(
           &getContext());
 
