@@ -16,16 +16,12 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
-
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
-#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Bufferization/IR/UnstructuredControlFlow.h"
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"
-#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
@@ -34,10 +30,7 @@ using namespace mlir;
 using namespace mlir::bufferization;
 using namespace mlir::scope;
 
-namespace mlir {
-namespace scope {
 namespace {
-
 static Value castBuffer(OpBuilder &b, Value buffer, Type type) {
   assert(isa<BaseMemRefType>(type) && "expected BaseMemRefType");
   assert(isa<BaseMemRefType>(buffer.getType()) && "expected BaseMemRefType");
@@ -47,13 +40,41 @@ static Value castBuffer(OpBuilder &b, Value buffer, Type type) {
   return b.create<memref::CastOp>(buffer.getLoc(), type, buffer).getResult();
 }
 
-/// Bufferization of scope.scope.
 struct ScopeOpInterface
     : public BufferizableOpInterface::ExternalModel<ScopeOpInterface,
                                                     scope::ScopeOp> {
-  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
-                                      const AnalysisState &state) const {
-    return {};
+  AliasingOpOperandList
+  getAliasingOpOperands(Operation *op, Value value,
+                        const AnalysisState &state) const {
+    auto scopeOp = cast<ScopeOp>(op);
+    auto returnOp = cast<ReturnOp>(scopeOp.getRegion().front().getTerminator());
+
+    OpResult opResult = cast<OpResult>(value);
+    int64_t resultNum = opResult.getResultNumber();
+
+    AliasingOpOperandList result;
+    result.addAlias(AliasingOpOperand(&returnOp->getOpOperand(resultNum),
+                                      BufferRelation::Equivalent,
+                                      /*isDefinite=*/true));
+    return result;
+  }
+
+  FailureOr<BaseMemRefType>
+  getBufferType(Operation *op, Value value, const BufferizationOptions &options,
+                SmallVector<Value> &invocationStack) const {
+    auto scopeOp = cast<ScopeOp>(op);
+    auto returnOp = cast<ReturnOp>(scopeOp.getRegion().front().getTerminator());
+
+    OpResult opResult = cast<OpResult>(value);
+    int64_t resultNum = opResult.getResultNumber();
+    Value returnedValue = returnOp.getOperand(resultNum);
+
+    if (isa<BaseMemRefType>(returnedValue.getType())) {
+      return cast<BaseMemRefType>(returnedValue.getType());
+    }
+
+    return bufferization::getBufferType(returnedValue, options,
+                                        invocationStack);
   }
 
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
@@ -113,13 +134,45 @@ struct ScopeOpInterface
     return success();
   }
 };
+
+struct ReturnOpInterface
+    : public BufferizableOpInterface::ExternalModel<ReturnOpInterface,
+                                                    ReturnOp> {
+
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return true;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return false;
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    auto returnOp = cast<ReturnOp>(op);
+    auto scopeOp = cast<ScopeOp>(returnOp->getParentOp());
+
+    AliasingValueList aliases;
+    OpResult opResult =
+        cast<OpResult>(scopeOp.getResult(opOperand.getOperandNumber()));
+    aliases.addAlias(AliasingValue(opResult, BufferRelation::Equivalent,
+                                   /*isDefinite=*/true));
+    return aliases;
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    return success();
+  }
+};
 } // namespace
-} // namespace scope
-} // namespace mlir
 
 void mlir::scope::registerBufferizableOpInterfaceExternalModels(
     DialectRegistry &registry) {
-  registry.addExtension(+[](MLIRContext *ctx, scope::ScopeDialect *dialect) {
+  registry.addExtension(+[](MLIRContext *ctx, ScopeDialect *dialect) {
     ScopeOp::attachInterface<ScopeOpInterface>(*ctx);
+    ReturnOp::attachInterface<ReturnOpInterface>(*ctx);
   });
 }
