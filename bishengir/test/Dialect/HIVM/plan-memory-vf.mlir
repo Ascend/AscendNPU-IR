@@ -669,3 +669,126 @@ func.func @plan_memory_vf_no_inplace_reuse_with_reshape_user(
   }
   return
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend950PR_950z">} {
+  func.func @vf_a(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %arg0[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+  
+  func.func @test_tightly_coupled_buffer_in_AIC(%arg0: memref<64xf32, #hivm.address_space<gm>>,
+                               %arg1: memref<16x16xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<64xf32, #hivm.address_space<cbuf>>
+    annotation.mark %alloc_2 {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<64xf32, #hivm.address_space<cbuf>>
+    hivm.hir.debug {debugtype = "print", hex = false, prefix = " %alloc_2: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_2 : memref<64xf32, #hivm.address_space<cbuf>>
+    return
+  }
+
+  func.func @test_tightly_coupled_buffer_in_AIV(%arg0: memref<64xf32, #hivm.address_space<gm>>,
+                               %arg1: memref<16x16xf32, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>}  {
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    scf.for %arg2 = %c0 to %c64 step %c64 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0:.*]]) : memref<64xf32, #hivm.address_space<ub>>
+      %alloc = memref.alloc() {alignment = 64 : i64} : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%arg0 : memref<64xf32, #hivm.address_space<gm>>) outs(%alloc : memref<64xf32, #hivm.address_space<ub>>)
+      %alloc_1 = memref.alloc() {alignment = 64 : i64} : memref<64xf32, #hivm.address_space<ub>>
+      func.call @vf_a(%alloc, %alloc_1) {hivm.vector_function, no_inline} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
+      // CHECK-NOT: hivm.hir.pointer_cast(%[[CONST0]]) : memref<64xf32, #hivm.address_space<ub>>
+      %alloc_2 = memref.alloc() {alignment = 64 : i64} : memref<64xf32, #hivm.address_space<cbuf>>
+      annotation.mark %alloc_2 {hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<64xf32, #hivm.address_space<cbuf>>
+      hivm.hir.copy ins(%alloc_1 : memref<64xf32, #hivm.address_space<ub>>) outs(%alloc_2 : memref<64xf32, #hivm.address_space<cbuf>>) {ub_to_l1}
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vf_a(%kill_1: memref<64xf32, #hivm.address_space<ub>>, %kill_2: memref<64xf32, #hivm.address_space<ub>>, %gen: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %kill_1[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    %1 = vector.transfer_read %kill_2[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    %2 = arith.mulf %0, %1 : vector<64xf32>
+    vector.transfer_write %2, %gen[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  func.func @vf_b(%kill: memref<64xf32, #hivm.address_space<ub>>, %gen: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %kill[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    vector.transfer_write %0, %gen[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  func.func @kernel(%gm: memref<64xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    %c256 = arith.constant 256 : index
+    scf.for %iv = %c0 to %c256 step %c64 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0:.*]])
+      %kill_1 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      // CHECK: hivm.hir.pointer_cast(%[[CONST1:.*]])
+      %kill_2 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%gm : memref<64xf32, #hivm.address_space<gm>>) outs(%kill_1 : memref<64xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst>
+      hivm.hir.load ins(%gm : memref<64xf32, #hivm.address_space<gm>>) outs(%kill_2 : memref<64xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst>
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      %gen = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      // CHECK @vf_a
+      func.call @vf_a(%kill_1, %kill_2, %gen) {hivm.vector_function, no_inline} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
+      // CHECK-NOT: hivm.hir.pointer_cast(%[[CONST0]])
+      %store = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      func.call @vf_b(%gen, %store) {hivm.vector_function, no_inline} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
+      hivm.hir.store ins(%store : memref<64xf32, #hivm.address_space<ub>>) outs(%gm : memref<64xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vf_a(%kill_1: memref<64xf32, #hivm.address_space<ub>>, %gen: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %kill_1[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    vector.transfer_write %0, %gen[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  func.func @vf_b(%kill: memref<64xf32, #hivm.address_space<ub>>, %gen: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %0 = vector.transfer_read %kill[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    vector.transfer_write %0, %gen[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  func.func @kernel(%gm: memref<64xf32, #hivm.address_space<gm>>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    %c256 = arith.constant 256 : index
+    scf.for %iv = %c0 to %c256 step %c64 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0:.*]])
+      %kill_1 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%gm : memref<64xf32, #hivm.address_space<gm>>) outs(%kill_1 : memref<64xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst>
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      %gen = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      // CHECK: @vf_a
+      func.call @vf_a(%kill_1, %gen) {hivm.vector_function, no_inline} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
+      // CHECK-NOT: hivm.hir.pointer_cast(%[[CONST0]])
+      %store = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      func.call @vf_b(%gen, %store) {hivm.vector_function, no_inline} : (memref<64xf32, #hivm.address_space<ub>>, memref<64xf32, #hivm.address_space<ub>>) -> ()
+      hivm.hir.store ins(%store : memref<64xf32, #hivm.address_space<ub>>) outs(%gm : memref<64xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
