@@ -84,6 +84,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   InsertLoadStoreForMixCV.cpp
   InsertLoadStoreForScalar.cpp
   InsertMemSemanticForSimtVF.cpp
+  InsertMemUniqueCopy.cpp
   InsertInitAndFinishForDebug.cpp
   InsertNZ2NDForDebug.cpp
   InsertL12UBForDebug.cpp
