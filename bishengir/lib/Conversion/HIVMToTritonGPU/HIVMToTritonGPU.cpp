@@ -99,9 +99,12 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   }
 
   // Remove redundant memref.alloc
-  module->walk([](memref::AllocOp alloc) {
+  module->walk([&](memref::AllocOp alloc) {
     if (alloc.use_empty()) {
       alloc.erase();
+    } else {
+      module->emitError("memref.alloc should have no use!");
+      signalPassFailure();
     }
   });
 
