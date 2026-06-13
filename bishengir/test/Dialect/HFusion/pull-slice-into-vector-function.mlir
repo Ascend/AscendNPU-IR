@@ -249,6 +249,26 @@ module {
   }
 }
 
+// -----
+module {
+  // CHECK-LABEL: func @test_slice_to_unit_keeps_src_dim(
+  // CHECK: %[[E:.*]] = tensor.expand_shape %arg0
+  // CHECK-SAME: output_shape [1, 1, 1, 1, 1, 1, 2]
+  // CHECK-SAME: tensor<2xi32> into tensor<1x1x1x1x1x1x2xi32>
+  // CHECK: tensor.extract_slice %[[E]]
+  // CHECK-SAME: tensor<1x1x1x1x1x1x2xi32> to tensor<1x1x1x1x1x1x1xi32>
+  // CHECK-NOT: tensor<2xi32> into tensor<1x1x1x1x1x1x1xi32>
+  func.func @test_slice_to_unit_keeps_src_dim(%arg0: tensor<2xi32>, %arg1: index)
+      -> tensor<1x1x1x1x1x1x1xi32> {
+    %slice = tensor.extract_slice %arg0[%arg1] [1] [1]
+        : tensor<2xi32> to tensor<1xi32>
+    %expanded = tensor.expand_shape %slice [[0, 1, 2, 3, 4, 5, 6]]
+        output_shape [1, 1, 1, 1, 1, 1, 1]
+        : tensor<1xi32> into tensor<1x1x1x1x1x1x1xi32>
+    return %expanded : tensor<1x1x1x1x1x1x1xi32>
+  }
+}
+
 
 // -----
 // Test: Swap rank-preserving extract_slice + rank-reducing collapse_shape
