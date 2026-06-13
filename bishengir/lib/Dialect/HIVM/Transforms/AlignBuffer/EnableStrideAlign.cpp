@@ -626,19 +626,136 @@ LogicalResult propagateAlignInfoToOperands(MLIRContext *context,
   return success();
 }
 
+static void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
+  DenseMap<Value, int> allocInfoMap;
+  struct StrideAlignInfo {
+    SmallVector<int32_t> dims;
+    SmallVector<int32_t> values;
+  };
+
+  DenseMap<int, StrideAlignInfo> strideAlignMap;
+  // first: collect stride_align info in aic
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    funcOp->walk([&](annotation::MarkOp markOp) {
+      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+      if (!tFuncCoreTypeAttr) {
+        return WalkResult::advance();
+      }
+      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIC) {
+        return WalkResult::advance();
+      }
+      auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+      if (!tcbAttr) {
+        return WalkResult::advance();
+      }
+      Value allocValue = markOp.getOperand(0);
+      if (!allocValue) {
+        return WalkResult::advance();
+      }
+      int id = tcbAttr.getId().value();
+      auto *defOp = allocValue.getDefiningOp();
+      if (!defOp)
+        return WalkResult::advance();
+
+      auto alignDimsAttr =
+          defOp->getAttrOfType<DenseI32ArrayAttr>(hivm::StrideAlignDimsAttr::name);
+      auto alignBytesAttr =
+          defOp->getAttrOfType<DenseI32ArrayAttr>(hivm::StrideAlignValueInByteAttr::name);
+      if (!alignDimsAttr || !alignBytesAttr)
+        return WalkResult::advance();
+
+      auto &info = strideAlignMap[id];
+      ArrayRef<int32_t> alignDims = alignDimsAttr.asArrayRef();
+      ArrayRef<int32_t> alignBytes = alignBytesAttr.asArrayRef();
+      info.dims.append(alignDims.begin(), alignDims.end());
+      info.values.append(alignBytes.begin(), alignBytes.end());
+      return WalkResult::advance();
+    });
+  }
+
+  // second: add stride align info in aiv
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    funcOp->walk([&builder, strideAlignMap, funcOp](annotation::MarkOp markOp) {
+      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+      if (!tFuncCoreTypeAttr) {
+        return WalkResult::advance();
+      }
+      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIV) {
+        return WalkResult::advance();
+      }
+      if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+        return WalkResult::advance();
+      }
+      auto attr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+      if (!attr) {
+        return WalkResult::advance();
+      }
+      if (strideAlignMap.empty()) {
+        return WalkResult::advance();
+      }
+      int id = attr.getId().value();
+      if (strideAlignMap.find(id) == strideAlignMap.end()) {
+        return WalkResult::advance();
+      }
+      Value allocValue = markOp.getOperand(0);
+      auto *defOp = allocValue.getDefiningOp();
+      if (defOp && defOp->hasAttr(hivm::StrideAlignDimsAttr::name))
+        return WalkResult::advance();
+      auto it = strideAlignMap.find(id);
+      const StrideAlignInfo &info = it->second;
+      for (size_t i = 0; i < info.dims.size(); ++i) {
+        auto newMarkOp = mlir::hivm::createAlignMarkOp(
+            builder, markOp.getLoc(), allocValue,
+            /*alignDims=*/ArrayRef<int32_t>({info.dims[i]}),
+            /*alignBytes=*/ArrayRef<int32_t>({info.values[i]}), hivm::StrideAlignDimsAttr::name.str(),
+            hivm::StrideAlignValueInByteAttr::name.str());
+
+        if (newMarkOp) {
+          markOp->moveAfter(*newMarkOp);
+        }
+      }
+      return WalkResult::advance();
+    });
+  }
+}
+
 void EnableStrideAlignPass::runOnOperation() {
   auto mod = getOperation();
   archIsRegbased = hacc::utils::isRegBasedArch(mod);
+  bool archIs950 = hacc::utils::isAscend950(mod);
+  bool isMarkStrideForAiv = false;
 
   mod->walk([&](func::FuncOp funcOp) {
     if (hacc::utils::isHost(funcOp))
       return;
+
+    if (!isMarkStrideForAiv) {
+      funcOp->walk([&](hivm::FixpipeOp op) {
+        isMarkStrideForAiv = true;
+        return WalkResult::interrupt();
+      });
+    }
 
     auto *context = &getContext();
     // Propagate align info up to alloc op
     if (failed(propagteAlignInfoUpToAlloc(context, funcOp,
                                           true /*enableNormalize*/))) {
       return signalPassFailure();
+    }
+    
+    //update aiv align info in fixpipe
+    auto moduleOp = funcOp->getParentOfType<ModuleOp>(); 
+    if (archIs950 && isMarkStrideForAiv) {
+      OpBuilder builder(&getContext());
+      AddStrideAlignInfoForAiv(moduleOp, builder);
     }
 
     // Propagate align info to all operands

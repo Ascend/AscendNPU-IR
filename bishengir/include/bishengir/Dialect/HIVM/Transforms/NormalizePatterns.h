@@ -31,7 +31,9 @@ extern thread_local bool archisAscend950;
 extern thread_local bool archisAscend310B;
 extern thread_local bool archisMembased;
 
+void populateNormalizeMulRecPatterns(RewritePatternSet &patterns);
 void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeTrigPatterns(RewritePatternSet &patterns,
                                    bool enableHighPrecision);
@@ -39,7 +41,9 @@ void populateNormalizeModPatterns(RewritePatternSet &patterns);
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeLateMathPatterns(RewritePatternSet &patterns);
 void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
+void populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns);
 void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns);
+void populateNormalizeCmpToCastPatterns(RewritePatternSet &patterns);
 void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);
 void populateNormalizeBitwiseComparisonPatterns(RewritePatternSet &patterns);
 void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns);

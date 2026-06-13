@@ -9,8 +9,10 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -34,6 +36,7 @@ using namespace hivm;
 #define GEN_PASS_DEF_CVPIPELINING
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
+using bishengir::memref_ext::AllocWorkspaceOp;
 using hivm::detail::queryCoreTypeHelper;
 
 namespace {
@@ -57,12 +60,21 @@ struct CVPipelineImpl {
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
-                    loop.getYieldedValues().end()) {}
+                    loop.getYieldedValues().end()) {
+    builder.setInsertionPoint(loop);
+    checkpoint = builder.clone(*loop);
+  }
 
   LogicalResult run();
 
 private:
   void collectAtomicEffects();
+
+  /// For each marked counter alloca whose value is incremented inside a
+  /// regioned op (e.g. the scf.if after a matmul), clone that op and erase all
+  /// CUBE ops inside the clone, so a vector-only stage can keep the counter
+  /// advancing. Returns alloca -> vector-safe clone.
+  LogicalResult preprocessCounterAllocas();
 
   /// Absorb non-core "merger" ops (e.g. `arith.select`, `arith.cmpi`) that
   /// sit between a work-item op's output and a `scf.yield` operand into the
@@ -78,6 +90,8 @@ private:
   LogicalResult absorbMergerOpsIntoWorkItems();
 
   LogicalResult markOutputs();
+
+  LogicalResult collectWorkspaceAllocsForPreload();
 
   /// Reject loops whose work-item partition has a cross-core data dependency
   /// that migrateOps cannot honor. migrateOps clones each work-item's ops into
@@ -102,6 +116,8 @@ private:
 
   LogicalResult migrateOps();
 
+  void expandWorkspace(OpBuilder &builder);
+  LogicalResult migrateOpsForPreload(OpBuilder &builder);
   LogicalResult createNewLoopsForPreloadWithScopes();
   LogicalResult markScopesForPreload();
 
@@ -167,6 +183,10 @@ private:
   // Mapping from each op under atomic effect to its atomic kind and data type
   DenseMap<Operation *, AtomicEffect> atomicEffectMap;
 
+  // Workspace allocations expanded for preload-mode CV pipelining.
+  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs_;
+  DenseMap<Value, Value> expandedWorkspaceMap_;
+
   // If the atomic effect is still active at the end of the loop body, this
   // holds that trailing state so it can be restored after the pipelined loops.
   std::optional<AtomicEffect> trailingAtomicEffect;
@@ -178,6 +198,12 @@ private:
   DenseMap<Value, Value> localOuputsToRedurnRes;
 
   DenseSet<Operation *> toErase;
+
+  // Checkpoint for revert in case things go wrong
+  Operation *checkpoint;
+
+  // Marked counter alloca -> vector-safe clone of the op that increments it.
+  DenseMap<Value, Operation *> counterCloneMap;
 };
 
 struct CVPipeliningPass
@@ -226,6 +252,36 @@ static Value traceValueDef(Value v) {
 static memref::AllocOp traceAlloc(Value v) {
   Value maybeAlloc = traceValueDef(v);
   return dyn_cast_if_present<memref::AllocOp>(maybeAlloc.getDefiningOp());
+}
+
+static AllocWorkspaceOp traceAllocWorkspace(Value v) {
+  Value maybeAlloc = traceValueDef(v);
+  return dyn_cast_if_present<AllocWorkspaceOp>(maybeAlloc.getDefiningOp());
+}
+
+static AllocWorkspaceOp getAllocWorkspace(Value v) {
+  Operation *defining = v.getDefiningOp();
+  if (!defining)
+    return nullptr;
+
+  if (auto alloc = dyn_cast<AllocWorkspaceOp>(defining))
+    return alloc;
+
+  if (isa<CastOpInterface, ViewLikeOpInterface, tensor::CollapseShapeOp,
+          tensor::ExpandShapeOp, tensor::ExtractSliceOp, tensor::ReshapeOp,
+          bufferization::ToTensorOp, bufferization::ToMemrefOp>(defining))
+    return getAllocWorkspace(defining->getOperand(0));
+
+  if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(defining)) {
+    auto result = dyn_cast<OpResult>(v);
+    if (!result)
+      return nullptr;
+    OpOperand *tiedOperand = dpsOp.getTiedOpOperand(result);
+    if (!tiedOperand)
+      return nullptr;
+    return getAllocWorkspace(tiedOperand->get());
+  }
+  return nullptr;
 }
 
 // Trace a memref/tensor value through memref & tensor casts / views and
@@ -320,6 +376,51 @@ static Value createExtractSlice(OpBuilder &builder, Location loc, Value from,
   auto finalTy = cast<RankedTensorType>(to);
   return builder.create<tensor::ExtractSliceOp>(loc, finalTy, from, offsets,
                                                 sizes, strides);
+}
+
+static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
+  Operation *markedOp = markedVal.getDefiningOp();
+  if (markedOp)
+    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name,
+                      builder.getUnitAttr());
+}
+
+static Value createWorkspaceSubview(OpBuilder &builder, Location loc, Value from,
+                                    Value iv, bool isPreload = false) {
+  auto const1 = builder.getIndexAttr(1);
+  auto const0 = builder.getIndexAttr(0);
+  SmallVector<OpFoldResult> offsets, sizes, strides;
+  auto newType = cast<MemRefType>(from.getType());
+
+  offsets.push_back(iv);
+  offsets.append(newType.getRank() - 1, const0);
+  sizes.push_back(const1);
+  for (int i = 1; i < newType.getRank(); ++i) {
+    if (newType.isDynamicDim(i))
+      sizes.push_back(builder.createOrFold<memref::DimOp>(loc, from, i));
+    else
+      sizes.push_back(builder.getIndexAttr(newType.getDimSize(i)));
+  }
+  strides.append(newType.getRank(), const1);
+
+  auto subview =
+      builder.create<memref::SubViewOp>(loc, from, offsets, sizes, strides);
+  if (isPreload)
+    createAttrForPreloadWS(builder, subview);
+
+  SmallVector<ReassociationIndices> reass{{0, 1}};
+  for (unsigned i = 2; i < subview.getType().getRank(); ++i)
+    reass.push_back({i});
+  return builder.create<memref::CollapseShapeOp>(loc, subview, reass);
+}
+
+static Operation *cloneStoreLikeToWorkspace(OpBuilder &builder, Operation *op,
+                                            Value newDst) {
+  OperationState state(op->getLoc(), op->getName().getStringRef());
+  state.addOperands(op->getOperands());
+  state.operands[1] = newDst;
+  state.addAttributes(op->getAttrs());
+  return builder.create(state);
 }
 
 Value CVPipelineImpl::createSubview(OpBuilder &builder, Location loc,
@@ -459,52 +560,31 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
     }
   }
 
-  // Absorb counter-update ops (arith.addi + memref.store) that follow each
-  // mmadL1 using an init_cond loaded from an alloca. These ops are not
-  // reachable from scf.yield so the loop above misses them.
-  //
-  // Pattern: memref.load %alloca -> cmpi -> init_cond operand of mmadL1
-  //          mmadL1 result ... (other ops) ...
-  //          arith.addi %counter, %c1
-  //          memref.store %incremented, %alloca
-  //
-  // For each workitem, find alloca values read as init_cond, then absorb
-  // any memref.store to those allocas (and their arith.addi operands).
+  // Counter-advance absorption (normalize-matmul counter advanced directly in
+  // the loop body). The `memref.store %inc` back to a counter alloca and the
+  // `arith.addi` producing %inc have no SSA result and never reach scf.yield,
+  // so the yield-chain walk above misses them and migrateOps would drop them,
+  // leaving the post-loop load reading the initial 0. (The regioned-op case is
+  // handled separately by preprocessCounterAllocas's vector-safe clone.)
   for (const auto &item : worklist) {
-    // Collect alloca values whose load feeds an init_cond in this workitem.
-    SmallPtrSet<Value, 4> initCondAllocas;
-    for (Operation *op : item->ops) {
-      for (Value operand : op->getOperands()) {
-        // init_cond is an i1; trace cmpi -> load -> alloca
-        auto cmpi = dyn_cast_if_present<arith::CmpIOp>(operand.getDefiningOp());
-        if (!cmpi)
-          continue;
-        for (Value cmpOperand : cmpi->getOperands()) {
-          auto load =
-              dyn_cast_if_present<memref::LoadOp>(cmpOperand.getDefiningOp());
-          if (!load)
-            continue;
-          Value memref = load.getMemRef();
-          if (isa_and_nonnull<memref::AllocaOp>(memref.getDefiningOp()))
-            initCondAllocas.insert(memref);
-        }
-      }
-    }
+    SmallPtrSet<Value, 4> loadedCounters;
+    for (Operation *op : item->ops)
+      if (auto load = dyn_cast<memref::LoadOp>(op))
+        if (auto a = load.getMemRef().getDefiningOp<memref::AllocaOp>())
+          if (a->hasAttr(kNormalizeMatmulCounterAttr))
+            loadedCounters.insert(load.getMemRef());
 
-    // Absorb memref.store to those allocas and their addi operand.
     for (Operation &op : *body) {
-      auto store = dyn_cast<memref::StoreOp>(op);
-      if (!store || !initCondAllocas.contains(store.getMemRef()))
+      auto store = dyn_cast<memref::StoreOp>(&op);
+      if (!store || !loadedCounters.contains(store.getMemRef()) ||
+          opToWorkItemMap.contains(&op))
         continue;
-      if (opToWorkItemMap.contains(&op))
-        continue;
-      // Also absorb the defining arith.addi of the stored value.
-      if (Operation *addi = store.getValue().getDefiningOp()) {
-        if (isa<arith::AddIOp>(addi) && !opToWorkItemMap.contains(addi)) {
-          item->ops.insert(addi);
-          opToWorkItemMap[addi].push_back(item.get());
+      if (Operation *inc = store.getValue().getDefiningOp()) {
+        if (isa<arith::AddIOp>(inc) && !opToWorkItemMap.contains(inc)) {
+          item->ops.insert(inc);
+          opToWorkItemMap[inc].push_back(item.get());
           LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter addi: ";
-                     addi->print(dbgs()); dbgs() << '\n');
+                    inc->print(dbgs()); dbgs() << '\n');
         }
       }
       item->ops.insert(&op);
@@ -517,10 +597,86 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
   return success();
 }
 
+LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
+  workspaceAllocs_.clear();
+  if (worklist.empty())
+    return success();
+
+  unsigned preloadSlots = static_cast<unsigned>(worklist.size());
+
+  for (Operation &op : pipelineLoop.getBody()->getOperations()) {
+    if (auto mark = dyn_cast<annotation::MarkOp>(&op)) {
+      if (auto alloc = traceAllocWorkspace(mark.getSrc())) {
+        auto &info = workspaceAllocs_[alloc];
+        info.multibuffer = preloadSlots;
+        info.marker = mark;
+      }
+      continue;
+    }
+
+    if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(&op)) {
+      auto alloc = traceAllocWorkspace(toTensor.getMemref());
+      if (!alloc)
+        continue;
+      auto &info = workspaceAllocs_[alloc];
+      info.multibuffer = preloadSlots;
+      info.toTensor = toTensor;
+    }
+  }
+
+  SmallVector<AllocWorkspaceOp> incompleteAllocs;
+  for (auto &[alloc, info] : workspaceAllocs_) {
+    if (!info.marker || !info.toTensor) {
+      incompleteAllocs.push_back(alloc); 
+      continue;
+    }
+    if (!info.toTensor.getResult().hasOneUse())
+      return info.toTensor->emitWarning(
+          "[cv-pipelining] expected preload workspace tensor to have one use");
+  }
+  for (AllocWorkspaceOp alloc : incompleteAllocs)
+    workspaceAllocs_.erase(alloc);
+  return success();
+}
+
+void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
+  OpBuilder::InsertionGuard g(builder);
+  builder.setInsertionPoint(pipelineLoop);
+  for (auto &[alloc, info] : workspaceAllocs_) {
+    Location loc = alloc.getLoc();
+    MemRefType origType = alloc.getType();
+    ArrayRef<int64_t> origShape = origType.getShape();
+
+    SmallVector<int64_t> newShape = {static_cast<int64_t>(info.multibuffer)};
+    newShape.append(origShape.begin(), origShape.end());
+    auto newType = MemRefType::get(newShape, origType.getElementType());
+    auto newAlloc = builder.create<AllocWorkspaceOp>(
+        loc, newType, alloc.getWorkspaceArg(), alloc.getDynamicSize(),
+        alloc.getOffset());
+
+    expandedWorkspaceMap_[alloc] = newAlloc;
+    info.marker.getSrcMutable().set(newAlloc);
+    info.marker->removeAttr(MultiBufferAttr::name);
+
+    toErase.insert(alloc);
+    toErase.insert(info.toTensor);
+  }
+}
+
 /// Split loop based on separator ops into individual work items
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
+      if (pipelineMode == PipelineMode::Skew) {
+        auto dps = dyn_cast<DestinationStyleOpInterface>(op);
+        if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
+          auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
+          if (alloc && workspaceAllocs_.contains(alloc)) {
+            item->workspaceOutputs.push_back(op);
+            continue;
+          }
+        }
+      }
       if (isa<tensor::EmptyOp>(op))
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
@@ -626,6 +782,9 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
       trackedOutputs.insert(out.first);
     for (auto &out : item->yieldedOutputs)
       trackedOutputs.insert(out.first);
+    for (Operation *workspaceOutput : item->workspaceOutputs)
+      for (Value result : workspaceOutput->getResults())
+        trackedOutputs.insert(result);
   }
 
   // migrateOps clones each work item's ops into its own per-core loop. An
@@ -1236,6 +1395,56 @@ LogicalResult CVPipelineImpl::migrateOps() {
   return success();
 }
 
+LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
+  for (auto &item : worklist) {
+    for (Operation *output : item->workspaceOutputs) {
+      auto dpsOp = cast<DestinationStyleOpInterface>(output);
+      Value wsAlloc = getAllocWorkspace(dpsOp.getDpsInitOperand(0)->get());
+      if (!wsAlloc)
+        continue;
+
+      auto expandedIt = expandedWorkspaceMap_.find(wsAlloc);
+      if (expandedIt == expandedWorkspaceMap_.end())
+        return output->emitWarning(
+            "[cv-pipelining] missing expanded preload workspace");
+
+      Operation *storeLikeOp = item->irMap.lookupOrDefault(output);
+      if (!storeLikeOp || storeLikeOp == output)
+        return output->emitWarning(
+            "[cv-pipelining] missing cloned preload workspace writer");
+
+      Location loc = output->getLoc();
+      builder.setInsertionPoint(storeLikeOp);
+      Value sliceIdx = builder.create<arith::ConstantIndexOp>(loc, 0);
+      Value newDst =
+          createWorkspaceSubview(builder, loc, expandedIt->second, sliceIdx,
+                                 /*isPreload=*/true);
+      cloneStoreLikeToWorkspace(builder, storeLikeOp, newDst);
+
+      builder.setInsertionPointAfter(item->scopeOp);
+      auto workspaceTensor = builder.create<bufferization::ToTensorOp>(
+          loc, expandedIt->second, /*restrict=*/true);
+
+      for (OpOperand &operand :
+           llvm::make_early_inc_range(storeLikeOp->getUses())) {
+        Operation *userOp = operand.getOwner();
+        if (!isa<LoadOp>(userOp))
+          continue;
+        builder.setInsertionPoint(userOp);
+        Value loadSliceIdx = builder.create<arith::ConstantIndexOp>(loc, 0);
+        Value sliceOp =
+            createExtractSlice(builder, loc, workspaceTensor,
+                               operand.get().getType(), loadSliceIdx);
+        createAttrForPreloadWS(builder, sliceOp);
+        operand.set(sliceOp);
+      }
+
+      storeLikeOp->erase();
+    }
+  }
+  return success();
+}
+
 LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
   int32_t preloadNum = static_cast<int32_t>(worklist.size()) - 1;
   for (auto &item : worklist) {
@@ -1255,8 +1464,10 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     for (auto &yieldedOutput : item->yieldedOutputs) {
       returnTensors.push_back(yieldedOutput.first);
     }
-    if (returnTensors.empty())
-      return success();
+    if (returnTensors.empty() && item->workspaceOutputs.empty()) {
+      preloadNum--;
+      continue;
+    }
 
     builder.setInsertionPoint(parentFor.getBody()->getTerminator());
     Location loc = pipelineLoop->getLoc();
@@ -1299,6 +1510,14 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
 
       builder.clone(op, scopeMap);
       toErase.insert(&op);
+    }
+    item->irMap = scopeMap;
+
+    for (Operation *workspaceOutput : item->workspaceOutputs) {
+      for (Value result : workspaceOutput->getResults()) {
+        if (scopeMap.contains(result))
+          globalIRMap.map(result, scopeMap.lookup(result));
+      }
     }
 
     builder.setInsertionPointToEnd(bodyBlock);
@@ -1344,11 +1563,17 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   if (failed(createNewLoopsForPreloadWithScopes()))
     return failure();
 
+  if (failed(migrateOpsForPreload(builder))) {
+    revert();
+    return failure();
+  }
+
   LLVM_DEBUG({
     for (auto item : worklist) {
       dbgs() << "after createNewLoopsForPreloadWithScopes WorkItem #"
              << item->id << ":---------------\n";
-      item->scopeOp->dump();
+      if (item->scopeOp)
+        item->scopeOp->dump();
       if (!item->localOutputs.empty())
         dbgs() << "\tLocal outputs:\n";
       for (auto p : item->localOutputs) {
@@ -1368,6 +1593,8 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   LLVM_DEBUG(dbgs() << "toErase.size() scope for work item all"
                     << toErase.size() << " results\n");
   // Clean up
+  if (toErase.empty())
+    return success();
   Operation *eraseOp = *toErase.begin();
   while (!toErase.empty()) {
     if (eraseOp == nullptr)
@@ -1412,11 +1639,80 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
 void CVPipelineImpl::revert() {
   if (newLoop)
     newLoop->erase();
+  pipelineLoop->replaceAllUsesWith(checkpoint->getResults());
+  pipelineLoop->erase();
+}
+
+LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
+  Block *body = pipelineLoop.getBody();
+  // (1) Collect marked counter allocas. They live directly in the loop body,
+  // so a plain iteration suffices. Any alloca here must be a known counter.
+  SmallVector<memref::AllocaOp> counters;
+  for (Operation &op : *body) {
+    auto alloca = dyn_cast<memref::AllocaOp>(&op);
+    if (!alloca)
+      continue;
+    if (!alloca->hasAttr(kNormalizeMatmulCounterAttr))
+      return alloca->emitWarning(
+          "[cv-pipelining] unexpected alloca without counter attribute");
+    counters.push_back(alloca);
+  }
+
+  for (memref::AllocaOp alloca : counters) {
+    // (2) Find the increment site: a store of (alloca + k) back to alloca,
+    // nested inside a regioned op rather than the loop body itself.
+    Operation *regioned = nullptr;
+    for (Operation *user : alloca->getUsers()) {
+      auto store = dyn_cast<memref::StoreOp>(user);
+      if (!store || store.getMemRef() != alloca.getResult())
+        continue;
+      if (!isa_and_nonnull<arith::AddIOp>(store.getValue().getDefiningOp()))
+        continue;
+      Operation *top = getContainedParent(pipelineLoop, store);
+      if (top && top != store && top->getNumRegions() > 0) {
+        regioned = top;
+        break;
+      }
+    }
+    if (!regioned)
+      continue;
+
+    // Clone the regioned op and strip every CUBE op from the clone, leaving a
+    // vector-safe skeleton that still advances the counter.
+    builder.setInsertionPointAfter(regioned);
+    Operation *clone = builder.clone(*regioned);
+    SmallVector<Operation *> cubeOps;
+    clone->walk([&](Operation *inner) {
+      if (queryCoreTypeHelper(inner).value_or(TCoreType::CUBE_OR_VECTOR) ==
+          TCoreType::CUBE)
+        cubeOps.push_back(inner);
+    });
+    for (Operation *cube : llvm::reverse(cubeOps)) {
+      // A surviving (vector) op may still read a cube result; feed it a fresh
+      // tensor.empty of the same type so the skeleton stays well-formed.
+      builder.setInsertionPoint(cube);
+      for (Value res : cube->getResults()) {
+        if (res.use_empty())
+          continue;
+        if (auto tensorTy = dyn_cast<RankedTensorType>(res.getType()))
+          res.replaceAllUsesWith(builder.create<tensor::EmptyOp>(
+              cube->getLoc(), tensorTy, ValueRange{}));
+      }
+      cube->erase();
+    }
+    counterCloneMap[alloca.getResult()] = clone;
+  }
+  return success();
 }
 
 /// Main method of the pass
 LogicalResult CVPipelineImpl::run() {
   collectAtomicEffects();
+  if (failed(preprocessCounterAllocas())) {
+    revert();
+    return failure();
+  }
+  wlBuilder.setCounterClones(counterCloneMap);
   auto buildResult = wlBuilder.build();
   if (failed(buildResult)) {
     revert();
@@ -1430,8 +1726,13 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
-  if (failed(markOutputs()))
+  if (pipelineMode == PipelineMode::Skew &&
+      failed(collectWorkspaceAllocsForPreload()))
     return failure();
+  if (failed(markOutputs())) {
+    revert();
+    return failure();
+  }
   LLVM_DEBUG({
     for (auto item : worklist) {
       dbgs() << "WorkItem #" << item->id << ":\n";
@@ -1452,15 +1753,15 @@ LogicalResult CVPipelineImpl::run() {
 
   // No IR has been mutated yet; reject partitions migrateOps can't realize so
   // we bail cleanly instead of crashing in pipelineLoop->erase() later.
-  if (failed(checkWorkItemDependencies()))
+  if (failed(checkWorkItemDependencies())) {
+    revert();
     return failure();
+  }
 
   // Preload pipeline reuse workitems with cvpipeline.
-  if (pipelineMode != PipelineMode::Unroll) {
-    auto result = markScopesForPreload();
-    if (succeeded(result))
-      pipelineLoop->erase();
-    return result;
+  if (pipelineMode == PipelineMode::Skew) {
+    expandWorkspace(builder);
+    return markScopesForPreload();
   }
 
   if (failed(createNewLoops())) {
@@ -1481,67 +1782,41 @@ LogicalResult CVPipelineImpl::run() {
     return failure();
   }
   pipelineLoop->erase();
+  checkpoint->erase();
   return success();
 }
 
 void CVPipeliningPass::runOnOperation() {
   // First find loop to operate on
   func::FuncOp func = getOperation();
-  DenseSet<scf::ForOp> pipelinedLoops;
+  SmallVector<scf::ForOp> pipelineCandidates;
 
   // Disabled via options
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
     return;
 
-  // Check if we should skip the entire pass due to autoblockify with
-  // NormalizeMatmul counter
-  bool hasAutoblockifyLoop = false;
-  bool hasNormalizeMatmulCounter = false;
-  static constexpr llvm::StringLiteral kAutoBlockifySubloopAttr =
-      "autoblockify.subloop";
-
-  // Check for autoblockify loop tag
-  func->walk([&](scf::ForOp forOp) {
-    if (forOp->hasAttr(kAutoBlockifySubloopAttr)) {
-      hasAutoblockifyLoop = true;
-    }
+  // We want to work on the innermost loop first, so post order walk
+  func->walk<WalkOrder::PostOrder>([&pipelineCandidates](scf::ForOp loop) {
+    pipelineCandidates.push_back(loop);
   });
 
-  // Check for NormalizeMatmul counter (attribute on storeOp)
-  func->walk([&](memref::StoreOp storeOp) {
-    if (storeOp->hasAttr(hivm::TCoreTypeAttr::name)) {
-      auto coreTypeAttr = storeOp->getAttrOfType<hivm::TCoreTypeAttr>(
-          hivm::TCoreTypeAttr::name);
-      if (coreTypeAttr &&
-          coreTypeAttr.getTcoretype() == hivm::TCoreType::CUBE_AND_VECTOR) {
-        hasNormalizeMatmulCounter = true;
-      }
-    }
-  });
+  DenseSet<scf::ForOp> pipelinedNest;
+  for (auto loop : pipelineCandidates) {
+    // Don't attempt pipeline if nested loop succeeded already
+    if (pipelinedNest.contains(loop))
+      continue;
 
-  // Skip entire CV Pipelining pass if there's autoblockify loop with
-  // NormalizeMatmul counter
-  if (hasAutoblockifyLoop && hasNormalizeMatmulCounter) {
-    LLVM_DEBUG(dbgs() << "[cv-pipelining] Skipping entire pass due to "
-                         "autoblockify loop with NormalizeMatmul counter\n");
-    return;
-  }
-
-  func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
     auto parentLoop = loop->getParentOfType<scf::ForOp>();
-
-    // Check if this is a part of pipelined loop already
-    while (parentLoop) {
-      if (pipelinedLoops.contains(parentLoop))
-        return;
-      parentLoop = parentLoop->getParentOfType<scf::ForOp>();
-    }
-
     CVPipelineImpl impl(loop, this->pipelineDepth, this->pipelineMode,
                         this->enableLazyLoading);
+
+    // Mark all parent loops to not attempt pipelining to save compile time
     if (impl.run().succeeded())
-      pipelinedLoops.insert(loop);
-  });
+      while (parentLoop) {
+        pipelinedNest.insert(parentLoop);
+        parentLoop = parentLoop->getParentOfType<scf::ForOp>();
+      }
+  }
 }
 
 std::unique_ptr<Pass>

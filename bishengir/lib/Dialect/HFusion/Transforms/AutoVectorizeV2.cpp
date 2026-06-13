@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Attrs.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Context.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoVectorize/Verify.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -18,6 +19,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -817,6 +819,21 @@ static bool reductionConsumerNeedsFullProducerDomain(
   return false;
 }
 
+static bool hasRankReducingIndexingMap(Operation *op) {
+  auto linalgOp = dyn_cast<linalg::LinalgOp>(op);
+  if (!linalgOp)
+    return false;
+  auto numLoops = linalgOp.getNumLoops();
+  if (numLoops <= 2)
+    return false;
+  auto check = [numLoops](const auto &map) {
+    return map.getNumResults() != numLoops;
+  };
+  auto indexing = linalgOp.getIndexingMapsArray();
+  auto outsCnt = linalgOp.getNumDpsInits();
+  return llvm::any_of(llvm::drop_end(indexing, outsCnt), check);
+}
+
 // Normally, we should fuse the producer into the closest fusedNode which
 // contains its consumers. But in some context, we should give up fusing and
 // return nullptr:
@@ -875,6 +892,11 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (llvm::any_of(bestFusedNode->fusedOps, [&](Operation *fusedOp) {
         return producerInfo.conflictList.contains(fusedOp);
       }))
+    return nullptr;
+
+  // Don't fuse producer with rank-reducing indexing_map into a vsstb group.
+  if (llvm::any_of(bestFusedNode->fusedLeafNodes, isVsstbPatternTransposeOp) &&
+      hasRankReducingIndexingMap(producer))
     return nullptr;
 
   int numUsersInBestFusedNode = 0;
@@ -1107,6 +1129,9 @@ private:
           &otherVectorizableOps);
   void applyCleanUp(OpBuilder &builder, transform::SequenceOp seqOp);
   void sortFunc(func::FuncOp func);
+  transform::SequenceOp buildTransformSequence(VectorizeContext &context,
+                                               OpBuilder &builder);
+  void emitTransformSequenceIR(VectorizeContext &context, OpBuilder &builder);
   LogicalResult runAttempt(VectorizeContext &context, OpBuilder &builder,
                            IRRewriter &rewriter);
   LogicalResult vectorize(VectorizeContext &context, OpBuilder &builder);
@@ -1179,6 +1204,10 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
       if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
+        continue;
+      // Don't fuse leaf with rank-reducing indexing_map into a vsstb group.
+      if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
+          hasRankReducingIndexingMap(leafNode))
         continue;
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
@@ -1298,6 +1327,10 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
       if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
+      // Don't fuse producer with rank-reducing indexing_map into a vsstb group.
+      if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
+          hasRankReducingIndexingMap(producer))
+        continue;
       // All leafNodes within a group have the common axis and do not conflict
       // with each other.
       if (hasCommonAxis(producer, leafNodeGroup[0], fusableOpInfoMap) &&
@@ -1387,8 +1420,14 @@ void AutoVectorizeV2::tileAndFuseSiblingForLeafNodes(
           builder
               .create<transform::LoopFuseSiblingOp>(
                   loc, builder.getType<transform::AnyOpType>(),
-                  /*target=*/fusedLoopHandle, /*source=*/nextLoopHandle, true)
+                  /*target=*/fusedLoopHandle, /*source=*/nextLoopHandle)
               .getFusedLoop();
+      fusedLoopHandle =
+          builder
+              .create<transform::LoopFuseNestedSiblingsOp>(
+                  loc, builder.getType<transform::AnyOpType>(),
+                  fusedLoopHandle, /*recursive=*/true)
+              .getTransformed();
     }
     if (hasFillOp)
       builder.create<transform::AnnotateOp>(loc, fusedLoopHandle,
@@ -1564,8 +1603,9 @@ void AutoVectorizeV2::applyCleanUp(OpBuilder &builder,
       SmallVector<Attribute>{builder.getStringAttr("SimplifyTrivialLoops")}));
 }
 
-LogicalResult AutoVectorizeV2::vectorize(VectorizeContext &context,
-                                         OpBuilder &builder) {
+transform::SequenceOp
+AutoVectorizeV2::buildTransformSequence(VectorizeContext &context,
+                                        OpBuilder &builder) {
   func::FuncOp func = context.func;
   context.resetLoopCount();
   llvm::MapVector<Operation *, FusableOpInfo> fusableOpInfoMap;
@@ -1579,14 +1619,37 @@ LogicalResult AutoVectorizeV2::vectorize(VectorizeContext &context,
         isCubeScopeOp(block->getParentOp()))
       return;
 
-    if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp,
-            scope::ScopeOp>(block->getParentOp()))
-      buildTileAndFuseTransformSequenceForBlock(
-          builder, seqOp, block, fusableOpInfoMap, otherVectorizableOps,
-          context);
+    if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
+            block->getParentOp()))
+      buildTileAndFuseTransformSequenceForBlock(builder, seqOp, block,
+                                                fusableOpInfoMap,
+                                                otherVectorizableOps, context);
   });
   buildVectorizeTransformSequence(builder, seqOp, fusableOpInfoMap,
                                   otherVectorizableOps);
+  return seqOp;
+}
+
+void AutoVectorizeV2::emitTransformSequenceIR(VectorizeContext &context,
+                                              OpBuilder &builder) {
+  func::FuncOp func = context.func;
+  // Emit mode materializes the payload tags and transform sequence for
+  // debugging/replay only. It intentionally does not call the transform
+  // interpreter, so the payload IR is left unvectorized.
+  transform::SequenceOp seqOp = buildTransformSequence(context, builder);
+  StringRef funcName = func.getSymName();
+  func->setAttr(transform::TransformDialect::kTargetTagAttrName,
+                builder.getStringAttr(
+                    hfusion::auto_vectorize::getPayloadRootTag(funcName)));
+  seqOp->setAttr(transform::TransformDialect::kTargetTagAttrName,
+                 builder.getStringAttr(
+                     hfusion::auto_vectorize::getTransformRootTag(funcName)));
+}
+
+LogicalResult AutoVectorizeV2::vectorize(VectorizeContext &context,
+                                         OpBuilder &builder) {
+  func::FuncOp func = context.func;
+  transform::SequenceOp seqOp = buildTransformSequence(context, builder);
 
   transform::TransformOptions transformOptions;
   transformOptions.enableExpensiveChecks(false);
@@ -1595,10 +1658,10 @@ LogicalResult AutoVectorizeV2::vectorize(VectorizeContext &context,
   seqOp->erase();
 
   hfusion::AutoVectorizeVerifier verifier;
-  return failure(failed(result) ||
-                 failed(verifier.verifyFreeVectorRegion(true)
-                            .emitDiagnostics(false)
-                            .check(func)));
+  return failure(
+      failed(result) ||
+      failed(verifier.verifyFreeVectorRegion(true).emitDiagnostics(false).check(
+          func)));
 }
 
 void AutoVectorizeV2::sortFunc(func::FuncOp func) {
@@ -1729,6 +1792,13 @@ void AutoVectorizeV2::runOnOperation() {
   for (func::FuncOp func : fusableFuncList) {
     VectorizeContext funcContext{func, maxFusedOps,
                                  enableMultipleConsumerFusion};
+    if (emitTransformSequence) {
+      // Emit payload IR with transform sequence.
+      emitTransformSequenceIR(funcContext, builder);
+      // Return early to avoid applying the transform sequence.
+      continue;
+    }
+
     LogicalResult result = runAttempt(funcContext, builder, rewriter);
     func::FuncOp failedFunc = funcContext.func;
     bool retried = false;

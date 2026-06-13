@@ -256,8 +256,19 @@ struct CastI1ToSelectPattern : public OpRewritePattern<hfusion::CastOp> {
     }
 
     // Create scalar constants 1.0 and 0.0
-    Value oneScalar = rewriter.create<arith::ConstantOp>(
-        loc, elemType, rewriter.getFloatAttr(elemType, 1.0));
+    ArrayRef<NamedAttribute> attrs = op->getAttrs();
+    TypeFn castVal = TypeFn::cast_unsigned;
+    auto castIter = llvm::find_if(attrs, [&](const NamedAttribute &attr) {
+                                  return attr.getName() == "cast"; });
+    if (castIter != attrs.end()) {
+      if (auto attr = llvm::dyn_cast<TypeFnAttr>(castIter->getValue())) {
+        castVal = attr.getValue();
+      }
+    }
+
+    Value oneScalar = (castVal == TypeFn::cast_unsigned) ?
+      rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getFloatAttr(elemType, 1.0)) :
+      rewriter.create<arith::ConstantOp>(loc, elemType, rewriter.getFloatAttr(elemType, -1.0));
     Value zeroScalar = rewriter.create<arith::ConstantOp>(
         loc, elemType, rewriter.getFloatAttr(elemType, 0.0));
 

@@ -290,6 +290,10 @@ isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
   for (OpOperand &use : allowedIterArg.getUses()) {
     Operation *user = use.getOwner();
     if (isa<scf::YieldOp>(user)) {
+      // The yield must belong to the outer loop body; a yield in a nested
+      // loop means allowedIterArg escapes into inner control flow — unsafe.
+      if (user->getBlock() != body)
+        return failure();
       // OK if yielded back at its own position; fail if used at another
       // position
       if (body->getArgument(use.getOperandNumber() + 1) == allowedIterArg)
@@ -309,7 +313,7 @@ isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
         Operation *user = use.getOwner();
         if (mustDelete.contains(user))
           continue;
-        if (isa<scf::YieldOp>(user) &&
+        if (isa<scf::YieldOp>(user) && user->getBlock() == body &&
             body->getArgument(use.getOperandNumber() + 1) == allowedIterArg)
           continue;
         // Result is used outside the delete set — can't safely delete this op

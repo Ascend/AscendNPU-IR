@@ -136,13 +136,18 @@ static bool isCoreOp(Operation &op) {
 /// a `bufferization.to_tensor` reader that crosses CV-pipelining workitem
 /// boundaries — i.e. we need `traceMemrefSubnet` to register it in
 /// `outputMemrefMap` so `migrateOps` can find the writer for any
-/// cross-workitem `localOutput`.
+/// cross-workitem `localOutput`. Tensor-form DMA ops are ordinary value
+/// producers for CVPipelining and must not enter the memref subnet tracer.
 ///
-/// Includes plain `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core variant
-/// of `hivm.hir.copy`, and `hivm.hir.nd2nz` (the fused GM->L1 load with NZ
-/// layout conversion that `CombineOptimizedConvertLayout` emits in place of a
-/// LoadOp under `--enable-layout-optimization=true`).
+/// Includes memref-dst `hivm.hir.load`, `hivm.hir.fixpipe`, the cross-core
+/// variant of `hivm.hir.copy`, and memref-dst `hivm.hir.nd2nz` (the fused
+/// GM->L1 load with NZ layout conversion that `CombineOptimizedConvertLayout`
+/// emits in place of a LoadOp under `--enable-layout-optimization=true`).
 static bool isMemrefSubnetWriter(Operation *op) {
+  auto dps = dyn_cast<DestinationStyleOpInterface>(op);
+  if (!dps || dps.getNumDpsInits() != 1 ||
+      !isa<MemRefType>(dps.getDpsInitOperand(0)->get().getType()))
+    return isCrossCoreCopy(op);
   return isa<LoadOp, FixpipeOp, ND2NZOp>(op) || isCrossCoreCopy(op);
 }
 
@@ -897,6 +902,17 @@ LogicalResult WorklistBuilder::traceDependentOps(WorkItem &item) {
     LLVM_DEBUG(dbgs() << "Inserting \t"; op->dump());
     mapOpToItem(*op, item);
     toBePipelined.erase(op);
+
+    // A counter load in a VECTOR item must drag its advance-clone along so the
+    // counter is incremented per stage instead of read-only at 0. Pulling the
+    // clone here lets traceDependentOps wire its inits/operands and migrateOps
+    // remap them, avoiding a dangling cube-path tensor when the loop is erased.
+    if (item.core == TCoreType::VECTOR)
+      if (auto load = dyn_cast<memref::LoadOp>(op)) {
+        auto it = counterClones.find(load.getMemRef());
+        if (it != counterClones.end() && !item.ops.contains(it->second))
+          workingStack.push_back(it->second);
+      }
     for (Operation *usr : op->getUsers())
       if (isa<annotation::MarkOp, DebugOp>(usr))
         mapOpToItem(*usr, item);

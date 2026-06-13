@@ -216,18 +216,23 @@ using NormalizeReduceIndexToI32 =
 void mlir::hivm::populateNormalizePreReductionPatterns(
     RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();
-  patterns.add<ReduceWithIndexRAHighPerformance>(ctx);
+  if (!NormalizeTraitsBase::archIsRegbased()) {
+    patterns.add<ReduceWithIndexRAHighPerformance>(ctx);
+  }
+  if (NormalizeTraitsBase::archIsRegbased()) {
+    patterns.add<NormalizeReduceWithIndexInitsAndInputs>(ctx);
+    patterns.add<NormalizeReduceIndexToI32>(ctx);
+  }
 }
 
 void mlir::hivm::populateNormalizeReductionPatterns(RewritePatternSet &patterns) {
   auto *ctx = patterns.getContext();
-  patterns.add<NormalizeArgMinMaxOp>(ctx);
   patterns.add<NormalizeF16ReduceSum>(ctx);
+  patterns.add<ReduceWithIndexRAHighPerformance>(ctx);
 }
 
 void mlir::hivm::populateNormalizeFinalReductionPatterns(
     RewritePatternSet &patterns) {
-  auto *ctx = patterns.getContext();
-  patterns.add<NormalizeReduceWithIndexInitsAndInputs>(ctx);
-  patterns.add<NormalizeReduceIndexToI32>(ctx);
+  if (NormalizeTraitsBase::archIsRegbased())
+    patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());
 }

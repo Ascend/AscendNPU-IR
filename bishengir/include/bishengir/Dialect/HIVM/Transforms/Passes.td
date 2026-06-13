@@ -956,6 +956,7 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let constructor = "mlir::hivm::createCVPipeliningPass()";
   let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
                            "mlir::scope::ScopeDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
                            "annotation::AnnotationDialect"];
   let options = [Option<"enableAutoBalance", "enable-auto-balance", "bool",
                         /*default=*/"false", "DEPRICATED">,
