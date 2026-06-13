@@ -11,7 +11,6 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
-#include "bishengir/Dialect/HIVM/Transforms/InsertMemUniqueCopy.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
@@ -2985,33 +2984,7 @@ void PlanMemoryPass::UpdateBuffer2OffsetsForFuncOp(
 std::optional<DenseMap<Value, SmallVector<uint64_t>>>
 PlanMemoryPass::PlanMemoryForFuncOp(
     func::FuncOp &funcOp, VFInplaceReuseAnalysis &vfInplaceReuseAnalysis) {
-  if (this->memMode == MemPlanMode::LOCAL_MEM_PLAN &&
-      queryFuncCoreType(funcOp) == TFuncCoreType::AIV) {
-    llvm::DenseSet<Value> uniqueBuffers;
-    funcOp.walk([&](annotation::MarkOp markOp) {
-      auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
-      if (!maybeAlloc.has_value()) {
-        return;
-      }
-      if (markOp->hasAttr(hivm::HIVMMemoryUniqueAttr::getMnemonic())) {
-        uniqueBuffers.insert(maybeAlloc.value().getResult());
-      }
-      if (markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name) &&
-          this->disableTightlyCoupledBufferReuse) {
-        uniqueBuffers.insert(maybeAlloc.value().getResult());
-      }
-    });
-    RewritePatternSet insertMemUniqueCopyPatterns(funcOp.getContext());
-    populateInsertMemUniqueCopyPattern(insertMemUniqueCopyPatterns,
-                                       uniqueBuffers);
-    if (failed(applyPatternsGreedily(funcOp,
-                                     std::move(insertMemUniqueCopyPatterns)))) {
-      funcOp->emitError() << "Failed to insert mem_unique copy for func: "
-                          << funcOp.getName();
-      return std::nullopt;
-    }
-  }
-  
+
   constexpr int kPlanRetryCount = 20;
   DenseMap<Value, SmallVector<uint64_t>> plannedBuffer2Offsets;
 
@@ -3039,8 +3012,6 @@ PlanMemoryPass::PlanMemoryForFuncOp(
                     this->restrictInplaceAsISA, this->simtVFDynamicSize,
                     this->disableVFReachableCheck);
     if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
-      funcOp->emitError() << "Failed to init mem specs from module for func: "
-                          << funcOp.getName();
       return std::nullopt;
     }
     memPlan.func_ = funcOp;
