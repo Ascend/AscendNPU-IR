@@ -195,6 +195,9 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
     if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
       RecursiveWhileOp(whileOp, live);
       return WalkResult::skip();
+    } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      RecursiveScopeOp(scopeOp, live);
+      return WalkResult::skip(); 
     }
 
     // process operation
@@ -254,9 +257,6 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
       OpKillHandle(curOpInfo, live, op->getBlock());
-    } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
-      RecursiveScopeOp(scopeOp, live);
-      return WalkResult::skip();
     } else if (failed(CheckIfUnknownOpTouchBuffer(op))) {
       return WalkResult::interrupt();
     }
@@ -1416,7 +1416,7 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
     std::optional<ValuePair> bestVFInplacePair;
     int64_t bestVFInplaceBits = -1;
     DenseMap<ValuePair, bool> vfReuseCache;
-    
+
     auto isVFInplacePair = [&](Value genBuffer, Value killBuffer) {
       if (!isVFCallReusable ||
           !vfInplaceReuseInfo->isInplaceReusable(op, genBuffer, killBuffer)) {
