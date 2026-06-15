@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/Annotation/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Arith/Transforms/MeshShardingInterfaceImpl.h"
+#include "bishengir/Dialect/Arith/Transforms/ValueBoundsOpInterfaceImpl.h"
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
 #include "bishengir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Bufferization/Transforms/TilingInterfaceImpl.h"
@@ -107,6 +108,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::scf_ext::registerBufferizableOpInterfaceExternalModels(registry);
   mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(registry);
   mlir::arith::registerShardingInterfaceExternalModels(registry);
+  mlir::arith::registerBiShengIRValueBoundsOpInterfaceExternalModels(registry);
   mlir::tensor_ext::registerBufferizableOpInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);
   bishengir::tensor::registerMeshShardingInterfaceExternalModels(registry);

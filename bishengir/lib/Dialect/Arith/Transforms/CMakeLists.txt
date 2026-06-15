@@ -3,6 +3,7 @@ add_mlir_library(BishengIRArithTransforms
   NormalizeArith.cpp
   LiftArithIndexCast.cpp
   MoveUpArith.cpp
+  ValueBoundsOpInterfaceImpl.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/Arith/Transforms
@@ -13,4 +14,5 @@ add_mlir_library(BishengIRArithTransforms
   LINK_LIBS PUBLIC
   MLIRArithDialect
   MLIRShardingInterface
+  MLIRValueBoundsOpInterface
 )

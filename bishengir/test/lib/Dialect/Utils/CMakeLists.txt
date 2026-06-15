@@ -6,6 +6,7 @@ add_bishengir_library(BishengIRTestDialectUtils
   TestIndexBoundAnalyzer.cpp
 
   LINK_LIBS PUBLIC
+  BishengIRArithTransforms
   BiShengIRDialectUtils
   MLIRAnalysis
   MLIRAnnotationDialect
