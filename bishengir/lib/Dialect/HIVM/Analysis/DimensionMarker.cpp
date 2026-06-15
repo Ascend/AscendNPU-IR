@@ -894,16 +894,18 @@ bool DimensionAnalyzer::finalizeTransaction() {
 }
 
 bool DimensionAnalyzer::isParallelOp(Operation *op) const {
-  return op && (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
-                utils::isAllocLikeOp(op) ||
-                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
+  return op &&
+         (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
+          utils::isAllocLikeOp(op) ||
+          isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-                    bufferization::ToMemrefOp
+              bufferization::ToMemrefOp
 #else
-                    bufferization::ToBufferOp
+              bufferization::ToBufferOp
 #endif
-                    ,
-                    arith::SelectOp>(op));
+              ,
+              arith::SelectOp, hivm::IndirectLoadOp, hivm::IndirectStoreOp>(
+              op));
 }
 
 void DimensionAnalyzer::combineInferable() {
