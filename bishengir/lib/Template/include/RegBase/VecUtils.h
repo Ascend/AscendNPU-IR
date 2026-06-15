@@ -207,7 +207,7 @@ __aiv__ __attribute__((always_inline)) void
 vector_dma_unalign_offset_vv_1d_vf(memref_t<__ubuf__ T, 1> *src,
                                    memref_t<__ubuf__ T, 1> *dst);
 
-template <typename T>
+template <typename T, bool HasTail = true, bool HasUnrollTail = true>
 __aiv__ __attribute__((always_inline)) void
 vector_dma_unalign_vv_2d_vf(memref_t<__ubuf__ T, 2> *src,
                              memref_t<__ubuf__ T, 2> *dst);
@@ -652,7 +652,10 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 
 #define REGISTE_BINARY_DMA_UNALIGN_2D(T)                                       \
   DECLARE_BINARY_DMA_UNALIGN_2D(T) {                                           \
-    vector_dma_unalign_vv_2d_vf<T>(src, dst);                                  \
+    vector_dma_unalign_vv_2d_vf<T, true, true>(src, dst);                      \
+    vector_dma_unalign_vv_2d_vf<T, true, false>(src, dst);                     \
+    vector_dma_unalign_vv_2d_vf<T, false, true>(src, dst);                     \
+    vector_dma_unalign_vv_2d_vf<T, false, false>(src, dst);                    \
   }
 
 #define DECLARE_EMBEDDINGGATHER(dim, embty, idxty, ...)                        \

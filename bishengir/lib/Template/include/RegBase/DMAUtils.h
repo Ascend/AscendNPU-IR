@@ -1485,12 +1485,33 @@ copy_ubuf_to_ubuf_2d_intrin_core(memref_t<__ubuf__ T, 2> *src,
 }
 
 /// Decompose the 2D src and dst into a single VF scope, invoking
-/// `vector_dma_unalign_vv_2d_vf` to process all rows in one VF block
+/// `vector_dma_unalign_vv_2d_vf` to process all rows in one VF block.
+/// Checks alignment of size[1] to select the template with/without tail
+/// handling, and checks repeatTimes parity to select with/without unroll
+/// tail handling, eliminating both `if (tailsize > 0)` and `if (j_tail > 0)`
+/// branches inside the VF loop.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
     memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
-  vector_dma_unalign_vv_2d_vf<T>(src, dst);
+  constexpr int num_per_register = REG_REGISTER_SIZE / sizeof(T);
+  const int64_t size1 = src->sizes[1];
+  const bool hasTail = (size1 % num_per_register != 0);
+  const uint16_t repeatTimes = (uint16_t)(size1 / num_per_register);
+  const bool hasUnrollTail = (repeatTimes % 2 != 0);
+  if (hasTail) {
+    if (hasUnrollTail) {
+      vector_dma_unalign_vv_2d_vf<T, true, true>(src, dst);
+    } else {
+      vector_dma_unalign_vv_2d_vf<T, true, false>(src, dst);
+    }
+  } else {
+    if (hasUnrollTail) {
+      vector_dma_unalign_vv_2d_vf<T, false, true>(src, dst);
+    } else {
+      vector_dma_unalign_vv_2d_vf<T, false, false>(src, dst);
+    }
+  }
 }
 
 #if defined(__DAV_C310__)
