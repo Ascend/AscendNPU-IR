@@ -1025,7 +1025,7 @@ def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
 def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
   let summary = "Propagate convert layout for matmul operations";
   let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
-  let dependentDialects = ["hivm::HIVMDialect", ];
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect", ];
 
   let options = [
     Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
