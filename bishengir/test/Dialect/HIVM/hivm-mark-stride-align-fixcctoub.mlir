@@ -327,3 +327,41 @@ func.func @test_nsize_b32_cs_n_nd_y_le_n_splitm() attributes {hivm.func_core_typ
   return
 }
 }
+
+// -----//
+
+// Test 23: Tiled fixpipe generated from 3d dot
+// AIC-LABEL: func.func @test_fixpipe_3d_tiled
+// AIC: annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @test_fixpipe_3d_tiled() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+
+  %alloc = memref.alloc() : memref<2x1x19xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {
+    effects = ["write", "read"],
+    hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>
+  } : memref<2x1x19xf32, #hivm.address_space<ub>>
+
+  %alloc_0 = memref.alloc() {alignment = 64 : i64}
+    : memref<1x19xf32, #hivm.address_space<cc>>
+
+  scf.for %i = %c0 to %c2 step %c1 {
+    %subview = memref.subview %alloc[%i, 0, 0] [1, 1, 19] [1, 1, 1]
+      : memref<2x1x19xf32, #hivm.address_space<ub>>
+        to memref<1x1x19xf32, strided<[19, 19, 1], offset: ?>, #hivm.address_space<ub>>
+
+    %collapsed = memref.collapse_shape %subview [[0, 1], [2]]
+      : memref<1x1x19xf32, strided<[19, 19, 1], offset: ?>, #hivm.address_space<ub>>
+        into memref<1x19xf32, strided<[19, 1], offset: ?>, #hivm.address_space<ub>>
+
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%alloc_0 : memref<1x19xf32, #hivm.address_space<cc>>)
+      outs(%collapsed : memref<1x19xf32, strided<[19, 1], offset: ?>, #hivm.address_space<ub>>)
+  }
+
+  return
+}
+}
