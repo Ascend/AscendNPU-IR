@@ -108,11 +108,13 @@ bool isI1ElemType(Type type);
 bool isI8ElemType(Type type);
 bool isI16ElemType(Type type);
 bool isF16ElemType(Type type);
+bool isF8ElemType(Type type);
 template <typename srcType> bool isElemType(Type valueType);
 bool hasI1ElemType(const SmallVector<Value> &values);
 bool hasI8ElemType(const SmallVector<Value> &values);
 bool hasI16ElemType(const SmallVector<Value> &values);
 bool hasF16ElemType(const SmallVector<Value> &values);
+bool hasF8ElemType(const SmallVector<Value> &values);
 bool allI1ElemType(const SmallVector<Value> &values);
 bool allI8ElemType(const SmallVector<Value> &values);
 bool allI16ElemType(const SmallVector<Value> &values);
@@ -131,6 +133,9 @@ void replaceI8ResultsWithTargetType(const SmallVector<Value> &oldResults,
                                     PatternRewriter &rewriter,
                                     bool enableOverflow = true,
                                     bool isUnsigned = false);
+void replaceF8ResultsWithTargetType(const SmallVector<Value> &oldResults,
+                                    const SmallVector<Value> &newResults,
+                                    PatternRewriter &rewriter);
 void replaceI16ResultsWithTargetType(const SmallVector<Value> &oldResults,
                                      const SmallVector<Value> &newResults,
                                      PatternRewriter &rewriter);

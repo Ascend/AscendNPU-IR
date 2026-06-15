@@ -43,6 +43,7 @@ static void populateNormalizeHFusionPatterns(RewritePatternSet &patterns,
   populateNormalizePrimaryMathPatterns(patterns);
   populateNormalizeCastingPatterns(patterns);
   populateNormalizeGatherIndexPatterns(patterns);
+  populateNormalizeF8ToF16Patterns(patterns);
   populateNormalizeComparisonCleanupPatterns(patterns);
   populateNormalizeBitwiseComparisonPatterns(patterns);
   populateNormalizePreReductionPatterns(patterns);

@@ -93,6 +93,7 @@ void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
     RewritePatternSet &patterns);
 void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns);
 void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns);
+void populateNormalizeF8ToF16Patterns(RewritePatternSet &patterns);
 void populateNormalizeGatherIndexPatterns(RewritePatternSet &patterns);
 void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns);
 void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
