@@ -38,6 +38,17 @@ bool mlir::hfusion::NormalizeTraitsBase::archIsRegbased() {
   return hfusion::archIsRegbased;
 }
 
+bool mlir::hfusion::NormalizeTraitsBase::archIsAscend950() {
+  return hfusion::archisAscend950;
+}
+
+Value mlir::hfusion::NormalizeTraitsBase::createIsNanOp(
+    PatternRewriter &rewriter, Location loc, Value src) {
+  auto isNanResultTensorType =
+      utils::getTensorTypeWithSameShape(src.getType(), rewriter.getI1Type());
+  return rewriter.create<IsNanOp>(loc, isNanResultTensorType, src)->getResult(0);
+}
+
 Value mlir::hfusion::NormalizeTraitsBase::createCastValueFromSourceOp(
     PatternRewriter &rewriter, Location loc, CastOp op, Value input,
     Type targetElemType, CastRoundKind executionKind, CastSignKind signKind,

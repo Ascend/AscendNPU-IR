@@ -123,6 +123,10 @@ public:
 
   static bool archIsRegbased();
 
+  static bool archIsAscend950();
+
+  static Value createIsNanOp(PatternRewriter &rewriter, Location loc, Value src);
+
   static Value createCastValueFromSourceOp(
       PatternRewriter &rewriter, Location loc, CastOp op, Value input,
       Type targetElemType, CastRoundKind executionKind = CastRoundKind::Default,

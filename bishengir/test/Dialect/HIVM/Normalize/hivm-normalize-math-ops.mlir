@@ -250,13 +250,144 @@ func.func @test_NormalizeVIlogb_hivm_vilogb(%arg0: tensor<16xf32>) -> tensor<16x
 // CHECK: %[[DIV:.*]] = hivm.hir.vdiv ins(%[[LN1]], %[[LN2]] : tensor<16xf32>, tensor<16xf32>) outs(%[[LOG_EMPTY1]] : tensor<16xf32>) -> tensor<16xf32>
 // CHECK: %[[CAST_EMPTY1:.*]] = tensor.empty() : tensor<16xf16>
 // CHECK: %[[CASTROUND:.*]] = hivm.hir.vcast ins(%[[DIV]] : tensor<16xf32>) outs(%[[CAST_EMPTY1]] : tensor<16xf16>) round_mode = <round> -> tensor<16xf16>
+// CHECK: %[[RINT_EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CASTRINT:.*]] = hivm.hir.vcast ins(%[[CASTROUND]] : tensor<16xf16>) outs(%[[RINT_EMPTY]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[FLOOR_F32_EMPTY:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CASTFLOOR_F32:.*]] = hivm.hir.vcast ins(%[[CASTRINT]] : tensor<16xf32>) outs(%[[FLOOR_F32_EMPTY]] : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
 // CHECK: %[[CAST_EMPTY2:.*]] = tensor.empty() : tensor<16xf16>
-// CHECK: %[[CASTFLOOR:.*]] = hivm.hir.vcast ins(%[[CASTROUND]] : tensor<16xf16>) outs(%[[CAST_EMPTY2]] : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
-// CHECK: return %[[CASTFLOOR]]
+// CHECK: %[[CASTFLOOR_F16:.*]] = hivm.hir.vcast ins(%[[CASTFLOOR_F32]] : tensor<16xf32>) outs(%[[CAST_EMPTY2]] : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
+// CHECK: return %[[CASTFLOOR_F16]]
 func.func @test_NormalizeVIlogb_hivm_vilogb_f16(%arg0: tensor<16xf16>) -> tensor<16xf16> {
   %0 = tensor.empty() : tensor<16xf16>
   %1 = hivm.hir.vilogb ins(%arg0 : tensor<16xf16>) outs(%0 : tensor<16xf16>) -> tensor<16xf16>
   return %1 : tensor<16xf16>
+}
+
+// -----
+// NormalizeCeilandFloorOp tests for HIVM dialect.
+
+// -----
+// Test: VCastOp with ceil round_mode on f16 same-type (non-950)
+// Pattern: f16->f32(rint), f32->f32(ceil), f32->f16(ceil)
+
+// CHECK-LABEL: func.func @test_NormalizeVCeilOp_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>, %[[ARG1:.*]]: tensor<16xf16>)
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[RINT:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CEIL_F32:.*]] = hivm.hir.vcast ins(%[[RINT]] : tensor<16xf32>) outs(%[[EMPTY1]] : tensor<16xf32>) round_mode = <ceil> -> tensor<16xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[CEIL_F16:.*]] = hivm.hir.vcast ins(%[[CEIL_F32]] : tensor<16xf32>) outs(%[[EMPTY2]] : tensor<16xf16>) round_mode = <ceil> -> tensor<16xf16>
+// CHECK: return %[[CEIL_F16]]
+func.func @test_NormalizeVCeilOp_f16(%src : tensor<16xf16>, %dst : tensor<16xf16>) -> tensor<16xf16> {
+  %ret = hivm.hir.vcast ins(%src : tensor<16xf16>) outs(%dst : tensor<16xf16>) round_mode = <ceil> -> tensor<16xf16>
+  return %ret : tensor<16xf16>
+}
+
+// -----
+// Test: VCastOp with floor round_mode on f16 same-type (non-950)
+// Pattern: f16->f32(rint), f32->f32(floor), f32->f16(floor)
+
+// CHECK-LABEL: func.func @test_NormalizeVFloorOp_f16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>, %[[ARG1:.*]]: tensor<16xf16>)
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[RINT:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[FLOOR_F32:.*]] = hivm.hir.vcast ins(%[[RINT]] : tensor<16xf32>) outs(%[[EMPTY1]] : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<16xf16>
+// CHECK: %[[FLOOR_F16:.*]] = hivm.hir.vcast ins(%[[FLOOR_F32]] : tensor<16xf32>) outs(%[[EMPTY2]] : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
+// CHECK: return %[[FLOOR_F16]]
+func.func @test_NormalizeVFloorOp_f16(%src : tensor<16xf16>, %dst : tensor<16xf16>) -> tensor<16xf16> {
+  %ret = hivm.hir.vcast ins(%src : tensor<16xf16>) outs(%dst : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
+  return %ret : tensor<16xf16>
+}
+
+// -----
+// Test: VCastOp with ceil round_mode on bf16 same-type (non-950)
+// Pattern: bf16->f32(rint), f32->f32(ceil), f32->bf16(ceil)
+
+// CHECK-LABEL: func.func @test_NormalizeVCeilOp_bf16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xbf16>, %[[ARG1:.*]]: tensor<16xbf16>)
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[RINT:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xbf16>) outs(%[[EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[CEIL_F32:.*]] = hivm.hir.vcast ins(%[[RINT]] : tensor<16xf32>) outs(%[[EMPTY1]] : tensor<16xf32>) round_mode = <ceil> -> tensor<16xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<16xbf16>
+// CHECK: %[[CEIL_BF16:.*]] = hivm.hir.vcast ins(%[[CEIL_F32]] : tensor<16xf32>) outs(%[[EMPTY2]] : tensor<16xbf16>) round_mode = <ceil> -> tensor<16xbf16>
+// CHECK: return %[[CEIL_BF16]]
+func.func @test_NormalizeVCeilOp_bf16(%src : tensor<16xbf16>, %dst : tensor<16xbf16>) -> tensor<16xbf16> {
+  %ret = hivm.hir.vcast ins(%src : tensor<16xbf16>) outs(%dst : tensor<16xbf16>) round_mode = <ceil> -> tensor<16xbf16>
+  return %ret : tensor<16xbf16>
+}
+
+// -----
+// Test: VCastOp with floor round_mode on bf16 same-type (non-950)
+// Pattern: bf16->f32(rint), f32->f32(floor), f32->bf16(floor)
+
+// CHECK-LABEL: func.func @test_NormalizeVFloorOp_bf16
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xbf16>, %[[ARG1:.*]]: tensor<16xbf16>)
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[RINT:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xbf16>) outs(%[[EMPTY0]] : tensor<16xf32>) -> tensor<16xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16xf32>
+// CHECK: %[[FLOOR_F32:.*]] = hivm.hir.vcast ins(%[[RINT]] : tensor<16xf32>) outs(%[[EMPTY1]] : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
+// CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<16xbf16>
+// CHECK: %[[FLOOR_BF16:.*]] = hivm.hir.vcast ins(%[[FLOOR_F32]] : tensor<16xf32>) outs(%[[EMPTY2]] : tensor<16xbf16>) round_mode = <floor> -> tensor<16xbf16>
+// CHECK: return %[[FLOOR_BF16]]
+func.func @test_NormalizeVFloorOp_bf16(%src : tensor<16xbf16>, %dst : tensor<16xbf16>) -> tensor<16xbf16> {
+  %ret = hivm.hir.vcast ins(%src : tensor<16xbf16>) outs(%dst : tensor<16xbf16>) round_mode = <floor> -> tensor<16xbf16>
+  return %ret : tensor<16xbf16>
+}
+
+// -----
+// Test: VCastOp with ceil round_mode on f32 same-type - no normalization needed
+
+// CHECK-LABEL: func.func @test_NoNormalizeVCeilOp_f32
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>, %[[ARG1:.*]]: tensor<16xf32>)
+// CHECK: %[[RET:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf32>) outs(%[[ARG1]] : tensor<16xf32>) round_mode = <ceil> -> tensor<16xf32>
+// CHECK: return %[[RET]]
+func.func @test_NoNormalizeVCeilOp_f32(%src : tensor<16xf32>, %dst : tensor<16xf32>) -> tensor<16xf32> {
+  %ret = hivm.hir.vcast ins(%src : tensor<16xf32>) outs(%dst : tensor<16xf32>) round_mode = <ceil> -> tensor<16xf32>
+  return %ret : tensor<16xf32>
+}
+
+// -----
+// Test: VCastOp with floor round_mode on f32 same-type - no normalization needed
+
+// CHECK-LABEL: func.func @test_NoNormalizeVFloorOp_f32
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf32>, %[[ARG1:.*]]: tensor<16xf32>)
+// CHECK: %[[RET:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf32>) outs(%[[ARG1]] : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
+// CHECK: return %[[RET]]
+func.func @test_NoNormalizeVFloorOp_f32(%src : tensor<16xf32>, %dst : tensor<16xf32>) -> tensor<16xf32> {
+  %ret = hivm.hir.vcast ins(%src : tensor<16xf32>) outs(%dst : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
+  return %ret : tensor<16xf32>
+}
+
+// -----
+// Test: VCastOp with ceil round_mode on f16 same-type on Ascend950 - no normalization
+
+// CHECK-LABEL: func.func @test_NoNormalizeVCeilOp_ascend950
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>, %[[ARG1:.*]]: tensor<16xf16>)
+// CHECK: %[[RET:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[ARG1]] : tensor<16xf16>) round_mode = <ceil> -> tensor<16xf16>
+// CHECK: return %[[RET]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NoNormalizeVCeilOp_ascend950(%src : tensor<16xf16>, %dst : tensor<16xf16>) -> tensor<16xf16> {
+    %ret = hivm.hir.vcast ins(%src : tensor<16xf16>) outs(%dst : tensor<16xf16>) round_mode = <ceil> -> tensor<16xf16>
+    return %ret : tensor<16xf16>
+  }
+}
+
+// -----
+// Test: VCastOp with floor round_mode on f16 same-type on Ascend950 - no normalization
+
+// CHECK-LABEL: func.func @test_NoNormalizeVFloorOp_ascend950
+// CHECK-SAME: (%[[ARG0:.*]]: tensor<16xf16>, %[[ARG1:.*]]: tensor<16xf16>)
+// CHECK: %[[RET:.*]] = hivm.hir.vcast ins(%[[ARG0]] : tensor<16xf16>) outs(%[[ARG1]] : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
+// CHECK: return %[[RET]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NoNormalizeVFloorOp_ascend950(%src : tensor<16xf16>, %dst : tensor<16xf16>) -> tensor<16xf16> {
+    %ret = hivm.hir.vcast ins(%src : tensor<16xf16>) outs(%dst : tensor<16xf16>) round_mode = <floor> -> tensor<16xf16>
+    return %ret : tensor<16xf16>
+  }
 }
 
 // -----
