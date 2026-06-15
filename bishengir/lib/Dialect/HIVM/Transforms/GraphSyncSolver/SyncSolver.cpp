@@ -1812,8 +1812,11 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   } else {
     bool reversedPriority = false;
     if (conflictPair->isInnerBackward) {
-      if (OperationBase::getParentloop(occ1->op) == normScopeOp->parentOp &&
-          OperationBase::getParentloop(occ2->op) == normScopeOp->parentOp) {
+      // Reverse the default ordering only when both occurrences are direct
+      // children of the LCA loop occurrence; this identifies an intra-loop
+      // backward relation at the same nesting level.
+      if (Occurrence::getParentloop(occ1) == parentLCALoopOcc &&
+          Occurrence::getParentloop(occ2) == parentLCALoopOcc) {
         reversedPriority = true;
       }
     }
