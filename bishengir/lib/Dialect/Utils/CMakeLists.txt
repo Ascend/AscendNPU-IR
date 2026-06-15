@@ -25,6 +25,7 @@ add_bishengir_library(BiShengIRDialectUtils
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRTensorDialect
+  MLIRValueBoundsOpInterface
   BiShengIRMemRefDialect
   BiShengIRTensorDialect
   BiShengIRLinalgDialectExt

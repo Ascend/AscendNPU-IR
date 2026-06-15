@@ -184,17 +184,8 @@ static LogicalResult verifyTileBounds(const TileView &permTile,
       return failure();
     }
 
-    OpFoldResult permSize = permTile.sizes[rootDim];
-    OpFoldResult loadSize = loadTile.sizes[rootDim];
-    auto permConstant = getConstantIntValue(permSize);
-    auto loadConstant = getConstantIntValue(loadSize);
-    if (permConstant && loadConstant && *loadConstant <= *permConstant) {
-      // TODO: improve by support constant int in IndexBoundAnalyzer.
-      continue;
-    }
-
-    if (permConstant && !loadConstant &&
-        boundAnalyzer.hasUpperBoundAtMost(loadSize, *permConstant)) {
+    if (boundAnalyzer.get(loadTile.sizes[rootDim]) <=
+        boundAnalyzer.get(permTile.sizes[rootDim])) {
       continue;
     }
 
