@@ -36,6 +36,7 @@ constexpr uint64_t MAX_UINT64 = ((uint64_t)1 << 63) - 1 + ((uint64_t)1 << 63);
 constexpr uint64_t HALF_BITS = 16;
 constexpr int64_t BITS_PER_BYTE = 8;
 constexpr int32_t MAX_VBRCB_REPEAT_TIMES = 254;
+constexpr int32_t UB_LIMIT_BYTES = 196608;
 
 //TODO: scalar warning print is enabled only when define ENABLE_CPU_TRACE_INTRINSIC. To be optimized.
 #define WARN_SCALAR_IMPL(x) \
