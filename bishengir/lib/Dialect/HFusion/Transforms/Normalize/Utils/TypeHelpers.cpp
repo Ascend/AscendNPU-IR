@@ -39,6 +39,11 @@ bool isF16ElemType(Type type) {
   return elemType.isF16();
 }
 
+bool isF8ElemType(Type type) {
+  Type elemType = getElementTypeOrSelf(type);
+  return elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2();
+}
+
 template <typename srcType>
 bool isElemType(Type valueType) {
   if constexpr (std::is_same_v<bool, srcType>) {
@@ -74,6 +79,11 @@ bool hasI8ElemType(const SmallVector<Value> &values) {
 bool hasF16ElemType(const SmallVector<Value> &values) {
   return llvm::any_of(values,
                       [&](Value v) { return isF16ElemType(v.getType()); });
+}
+
+bool hasF8ElemType(const SmallVector<Value> &values) {
+  return llvm::any_of(values,
+                      [&](Value v) { return isF8ElemType(v.getType()); });
 }
 
 [[maybe_unused]] bool allI1ElemType(const SmallVector<Value> &values) {
@@ -289,6 +299,25 @@ void replaceI8ResultsWithTargetType(const SmallVector<Value> &oldResults,
                hfusion::RoundMode::TRUNC, std::nullopt, enableOverflow, false,
                isUnsigned ? hfusion::TypeFn::cast_unsigned
                           : hfusion::TypeFn::cast_signed);
+    rewriter.replaceAllUsesWith(oldResult, castResult);
+  }
+}
+
+void replaceF8ResultsWithTargetType(const SmallVector<Value> &oldResults,
+                                    const SmallVector<Value> &newResults,
+                                    PatternRewriter &rewriter) {
+  assert(oldResults.size() == newResults.size() &&
+         "result sizes mismatch when replace op results");
+  for (const auto [idx, oldResult] : llvm::enumerate(oldResults)) {
+    Value newResult = newResults[idx];
+    if (!isF8ElemType(oldResult.getType())) {
+      rewriter.replaceAllUsesWith(oldResult, newResult);
+      continue;
+    }
+
+    Type dstElemType = getElementTypeOrSelf(oldResult.getType());
+    Value castResult =
+        castTo(rewriter, newResult, dstElemType, hfusion::RoundMode::RINT);
     rewriter.replaceAllUsesWith(oldResult, castResult);
   }
 }

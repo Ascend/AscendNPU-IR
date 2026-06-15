@@ -398,6 +398,26 @@ func.func @test_NormalizeToTargetType_gather_b8(%arg0: tensor<4x64xi8>, %arg1: t
 
 // -----
 
+// CHECK-LABEL: @test_NormalizeToTargetType_gather_f8e4m3fn
+// CHECK: hfusion.gather {operandSegmentSizes = array<i32: 2, 1>} ins(%[[INPUT0:.*]], %arg1 : tensor<4x64xf16>, tensor<4x32xi32>) outs(%[[OUTPUT0:.*]] : tensor<4x32xf16>) axis = 1 -> tensor<4x32xf16>
+func.func @test_NormalizeToTargetType_gather_f8e4m3fn(%arg0: tensor<4x64xf8E4M3FN>, %arg1: tensor<4x32xi32>) -> tensor<4x32xf8E4M3FN> {
+  %0 = tensor.empty() : tensor<4x32xf8E4M3FN>
+  %1 = hfusion.gather ins(%arg0, %arg1 : tensor<4x64xf8E4M3FN>, tensor<4x32xi32>) outs(%0 : tensor<4x32xf8E4M3FN>) axis = 1 -> tensor<4x32xf8E4M3FN>
+  return %1 : tensor<4x32xf8E4M3FN>
+}
+
+// -----
+
+// CHECK-LABEL: @test_NormalizeToTargetType_gather_f8e5m2
+// CHECK: hfusion.gather {operandSegmentSizes = array<i32: 2, 1>} ins(%[[INPUT0:.*]], %arg1 : tensor<4x64xf16>, tensor<4x32xi32>) outs(%[[OUTPUT0:.*]] : tensor<4x32xf16>) axis = 1 -> tensor<4x32xf16>
+func.func @test_NormalizeToTargetType_gather_f8e5m2(%arg0: tensor<4x64xf8E5M2>, %arg1: tensor<4x32xi32>) -> tensor<4x32xf8E5M2> {
+  %0 = tensor.empty() : tensor<4x32xf8E5M2>
+  %1 = hfusion.gather ins(%arg0, %arg1 : tensor<4x64xf8E5M2>, tensor<4x32xi32>) outs(%0 : tensor<4x32xf8E5M2>) axis = 1 -> tensor<4x32xf8E5M2>
+  return %1 : tensor<4x32xf8E5M2>
+}
+
+// -----
+
 // CHECK-LABEL: @test_NormalizeGatherIndexToI32
 // CHECK: %[[IDX32_EMPTY:.*]] = tensor.empty() : tensor<4x32xi32>
 // CHECK: %[[IDX32:.*]] = hfusion.cast {{.*}} ins(%arg1 : tensor<4x32xi16>) outs(%[[IDX32_EMPTY]] : tensor<4x32xi32>) -> tensor<4x32xi32>
