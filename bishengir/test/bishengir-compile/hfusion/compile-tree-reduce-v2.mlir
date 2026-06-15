@@ -1,5 +1,5 @@
 // REQUIRES: enable-lir-compile
-// RUN: bishengir-compile -enable-lir-compile=false --enable-tree-reduce-v2ra=true --enable-tree-reduce-v2ar=true -enable-hfusion-compile=true -enable-hivm-compile=true --enable-triton-kernel-compile=true --target=Ascend950PR_9589 %s
+// RUN: bishengir-compile -enable-lir-compile=false --enable-tree-reduce-mode=all -enable-hfusion-compile=true -enable-hivm-compile=true --enable-triton-kernel-compile=true --target=Ascend950PR_9589 %s
 
 // CHECK-LABEL: func.func @triton_sum_2D_dim0_fused_0_outlined_vf_0
 // CHECK-NOT: vector.multi_reduction <add>

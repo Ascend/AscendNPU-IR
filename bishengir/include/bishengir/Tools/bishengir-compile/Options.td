@@ -902,30 +902,25 @@ llvm::cl::values(
   }];
 }
 
-def EnableTreeReduceV2 : FeatureControlOptions<
-  "Enable tree reduce v2",
-  "bool",
-  "false"
+def EnableTreeReduceMode : FeatureControlOptions<
+  "TreeReduce processing mode. Also controls which reduce-sum ops are "
+  "skipped in VFFusion pass to avoid conflicts.",
+  "mlir::hfusion::TreeReduceMode",
+  "mlir::hfusion::TreeReduceMode::RA"
 > {
   let passGroup = ["HFUSION"];
-}
-
-def EnableTreeReduceV2RA : FeatureControlOptions<
-  "Enable RA (row-reduction, dim=0) processing in TreeReduceV2 pass. "
-  "Also skip fusing reduce-sum RA ops in VFFusion pass to avoid conflicts.",
-  "bool",
-  "true"
-> {
-  let passGroup = ["HFUSION"];
-}
-
-def EnableTreeReduceV2AR : FeatureControlOptions<
-  "Enable AR (column-reduction, dim=1) processing in TreeReduceV2 pass. "
-  "Also skip fusing reduce-sum AR ops in VFFusion pass to avoid conflicts.",
-  "bool",
-  "false"
-> {
-  let passGroup = ["HFUSION"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hfusion::TreeReduceMode::Off, "off",
+             "Disable TreeReduce RA/AR processing"),
+  clEnumValN(mlir::hfusion::TreeReduceMode::RA, "ra",
+             "Enable TreeReduce RA (row-reduction, dim=0) processing"),
+  clEnumValN(mlir::hfusion::TreeReduceMode::AR, "ar",
+             "Enable TreeReduce AR (column-reduction, dim=1) processing"),
+  clEnumValN(mlir::hfusion::TreeReduceMode::All, "all",
+             "Enable TreeReduce RA and AR processing")
+)
+  }];
 }
 
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<

@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Tools/BiShengIRConfigBase/Config.h"
 #include "llvm/ADT/StringRef.h"
