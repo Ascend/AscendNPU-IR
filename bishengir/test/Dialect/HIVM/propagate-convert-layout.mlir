@@ -397,3 +397,41 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @move_convert_layout_before_tensor_copy(
+// CHECK-SAME:      %[[ARG0:.*]]: tensor<16x16xf32>, %[[ARG1:.*]]: tensor<16x16xf32>
+// CHECK:           %[[CONVERT:.*]] = hivm.hir.convert_layout %[[ARG0]] output_shape [2, 1, 16, 8]
+// CHECK-SAME:      not_to_propagate_up = true
+// CHECK-SAME:      (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<2x1x16x8xf32>
+// CHECK:           %[[COPY:.*]] = hivm.hir.copy ins(%[[CONVERT]] : tensor<2x1x16x8xf32>) outs(%[[EMPTY]] : tensor<2x1x16x8xf32>) {"inserted-copy"} -> tensor<2x1x16x8xf32>
+// CHECK:           %[[RHS:.*]] = hivm.hir.convert_layout %[[ARG1]] output_shape [2, 1, 16, 8]
+// CHECK:           hivm.hir.mmadL1
+// CHECK-SAME:      ins(%[[COPY]], %[[RHS]]
+func.func @move_convert_layout_before_tensor_copy(
+    %arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>)
+    -> tensor<1x1x16x16xf32> {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %copy_dst = tensor.empty() : tensor<16x16xf32>
+  %copied = hivm.hir.copy ins(%arg0 : tensor<16x16xf32>)
+      outs(%copy_dst : tensor<16x16xf32>) {"inserted-copy"}
+      -> tensor<16x16xf32>
+  %lhs = hivm.hir.convert_layout %copied output_shape [2, 1, 16, 8]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+  %rhs = hivm.hir.convert_layout %arg1 output_shape [2, 1, 16, 8]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
+  %out = tensor.empty() : tensor<1x1x16x16xf32>
+  %res = hivm.hir.mmadL1
+      ins(%lhs, %rhs, %true, %c16, %c16, %c16
+          : tensor<2x1x16x8xf32>, tensor<2x1x16x8xf32>,
+            i1, index, index, index)
+      outs(%out : tensor<1x1x16x16xf32>) -> tensor<1x1x16x16xf32>
+  return %res : tensor<1x1x16x16xf32>
+}
