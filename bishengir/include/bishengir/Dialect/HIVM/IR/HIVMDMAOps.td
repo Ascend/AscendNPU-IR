@@ -318,6 +318,7 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensor)^)?
   }];
+  let hasFolder = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = DmaOpBaseDecl # [{
     int getFixpipeState();
