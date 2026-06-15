@@ -209,55 +209,30 @@ public:
   }
 };
 
-struct NormalizeCeilandFloorOp
-    : public OpRewritePattern<linalg::ElemwiseUnaryOp> {
-public:
-  using OpRewritePattern<linalg::ElemwiseUnaryOp>::OpRewritePattern;
+struct HFusionNormalizeCeilandFloorTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeCeilandFloor(linalg::ElemwiseUnaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           (op.getFun() == linalg::UnaryFn::ceil ||
+            op.getFun() == linalg::UnaryFn::floor);
+  }
 
-  LogicalResult matchAndRewrite(linalg::ElemwiseUnaryOp op,
-                                PatternRewriter &rewriter) const override {
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
+  static CastRoundKind getCeilOrFloorRoundKind(linalg::ElemwiseUnaryOp op) {
+    return op.getFun() == linalg::UnaryFn::ceil ? CastRoundKind::Ceil
+                                                 : CastRoundKind::Floor;
+  }
 
-    if (op.getFun() != linalg::UnaryFn::ceil &&
-        op.getFun() != linalg::UnaryFn::floor) {
-      return failure();
-    }
+  static Value getCeilandFloorInput(linalg::ElemwiseUnaryOp op) {
+    return op.getInputs()[0];
+  }
 
-    auto inType = getElementTypeOrSelf(op.getInputs()[0].getType());
-    auto outType = getElementTypeOrSelf(op.getOutputs()[0].getType());
-
-    assert(!inType.isInteger() && "Cast in floor/ceil mode doesn't support "
-                                  "integer type input");
-    OpBuilder builder(op);
-    Value src = op.getInputs()[0];
-    hfusion::RoundMode roundMode = op.getFun() == linalg::UnaryFn::ceil
-                                       ? hfusion::RoundMode::CEIL
-                                       : hfusion::RoundMode::FLOOR;
-    if (!archisAscend950) {
-      if ((inType.isF16() || inType.isBF16()) && inType == outType) {
-        // 910B only support fp32 ceil and floor, so change to fp16->fp32,
-        // fp32 ceil/floor and fp32->fp16
-        // TODO: add platform info to isHWSupportCeilFLoor(Type)
-
-        // Step1: cast to fp32 to do ceil or floor
-        auto intermediate = hfusion::castTo(builder, src, rewriter.getF32Type(),
-                                            hfusion::RoundMode::RINT);
-        // Step2: enable fp32 cast ability with ceil or floor mode
-        // Otherwise, cast fp32 to fp16 type in ceil or floor mode just changes
-        // precision loss part.
-        src = hfusion::castTo(builder, intermediate, rewriter.getF32Type(),
-                              roundMode);
-      }
-    }
-
-    auto castOp =
-        hfusion::castTo(builder, src, outType, roundMode, op.getOutputs()[0]);
-    rewriter.replaceOp(op, castOp);
-    return success();
+  static Value getCeilandFloorOutput(linalg::ElemwiseUnaryOp op) {
+    return op.getOutputs()[0];
   }
 };
+
+using NormalizeCeilandFloorOp =
+    mlir::NormalizeCeilandFloorOpTemplate<linalg::ElemwiseUnaryOp,
+                                          HFusionNormalizeCeilandFloorTraits>;
 
 /// normalize 2^x to exp{ln(2)*x}
 /// eg.
@@ -274,127 +249,72 @@ using NormalizeExp2Op =
     mlir::NormalizeExp2OpTemplate<hfusion::ElemwiseUnaryOp,
                                   HFusionNormalizeExp2Traits>;
 
-struct NormalizeMinMax {
-  /// Returns a new operand for BinaryFn::maxf (BinaryFn::minf)
-  /// that is used when normalizing maxnumf (minnumf) to maxf (minf).
-  Value createNewSrcForMinMaxNumFOp(PatternRewriter &rewriter, Location loc,
-                                    Value src, double paddingInfValue) const {
-    auto elementType = getElementTypeOrSelf(src.getType());
-    auto constInfinity = utils::createConstantOp<double>(
-        rewriter, loc, elementType, paddingInfValue);
-
-    auto isNanResultTensorType =
-        utils::getTensorTypeWithSameShape(src.getType(), rewriter.getI1Type());
-    auto isNanOp = rewriter.create<IsNanOp>(loc, isNanResultTensorType, src);
-
-    auto selectOpOut = utils::createEmptyOp(rewriter, loc, src);
-    auto selectOp = rewriter.create<SelectOp>(
-        loc, TypeRange(selectOpOut),
-        ValueRange({isNanOp->getResult(0), constInfinity, src}),
-        ValueRange(selectOpOut));
-
-    return selectOp->getResult(0);
+struct HFusionNormalizeMaxNumFTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeElemwiseMinMaxNumF(
+      hfusion::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::BinaryFn::maxnumf;
+  }
+  static bool isMaxNumF(hfusion::ElemwiseBinaryOp op) { return true; }
+  static Value getMinMaxNumFInput0(hfusion::ElemwiseBinaryOp op) {
+    return op.getInputs()[0];
+  }
+  static Value getMinMaxNumFInput1(hfusion::ElemwiseBinaryOp op) {
+    return op.getInputs()[1];
   }
 };
 
-/// Normalize maxnumf (minnumf) to maxf (minf).
-/// eg.
-/// dst = hfusion.elemwise_binary {maxnumf} (src0, src1)
-/// is normalized to
-/// src0_nan_mask = hfusion.isnan(src0)
-/// new_src0 = hfusion.select(src0_nan_mask, -inf, src0)
-/// src1_nan_mask = hfusion.isnan(src1)
-/// new_src1 = hfusion.select(src1_nan_mask, -inf, src1)
-/// dst = hfusion.elemwise_binary {maxf} (new_src0, new_src1)
-template <BinaryFn funFrom>
-struct NormalizeElemwiseMinMaxNumFOp
-    : public OpRewritePattern<hfusion::ElemwiseBinaryOp>,
-      public NormalizeMinMax {
-public:
-  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
-                                PatternRewriter &rewriter) const override {
-    static_assert(funFrom == BinaryFn::maxnumf || funFrom == BinaryFn::minnumf,
-                  "Argument mismatch. NormaliseMinMaxNumFOp expects "
-                  "hfusion::BinaryFn::maxnumf or hfusion::BinaryFn::minnumf");
-
-    if (!op.hasPureTensorSemantics()) {
-      return failure();
-    }
-
-    if (op.getFun() != funFrom) {
-      return failure();
-    }
-
-    constexpr auto funTo =
-        (funFrom == BinaryFn::maxnumf) ? BinaryFn::maxf : BinaryFn::minf;
-    constexpr auto paddingInfSign = (funFrom == BinaryFn::maxnumf) ? -1 : 1;
-
-    auto res = rewriteMinMaxNumFOp<funTo>(
-        op, rewriter, paddingInfSign * std::numeric_limits<double>::infinity());
-
-    rewriter.replaceOp(op, res);
-    return success();
+struct HFusionNormalizeMinNumFTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeElemwiseMinMaxNumF(
+      hfusion::ElemwiseBinaryOp op) {
+    return op.hasPureTensorSemantics() &&
+           op.getFun() == hfusion::BinaryFn::minnumf;
   }
-
-private:
-  /// Normalize maxnumf (minnumf) to maxf (minf)
-  /// Check comment before struct definition
-  template <hfusion::BinaryFn hfusionFn>
-  Value rewriteMinMaxNumFOp(hfusion::ElemwiseBinaryOp op,
-                            PatternRewriter &rewriter,
-                            double paddingInfValue) const {
-    static_assert(
-        hfusionFn == BinaryFn::maxf || hfusionFn == BinaryFn::minf,
-        "Normalization hfusion::BinaryFn::maxnumf (minnumf) allows "
-        "only hfusion::BinaryFn::maxf (minf) to be used for replacement");
-
-    Value src0 = op.getInputs()[0];
-    Value src1 = op.getInputs()[1];
-
-    auto newSrc0 = createNewSrcForMinMaxNumFOp(rewriter, op->getLoc(), src0,
-                                               paddingInfValue);
-    auto newSrc1 = createNewSrcForMinMaxNumFOp(rewriter, op->getLoc(), src1,
-                                               paddingInfValue);
-    auto minMaxFOpOut = utils::createEmptyOp(rewriter, op->getLoc(), src0);
-    auto minMaxFOp = createBinaryOp<ElemwiseBinaryOp, BinaryFn, BinaryFnAttr>(
-        rewriter, op->getLoc(), hfusionFn, ValueRange({newSrc0, newSrc1}),
-        ValueRange(minMaxFOpOut));
-
-    return minMaxFOp->getResult(0);
+  static bool isMaxNumF(hfusion::ElemwiseBinaryOp op) { return false; }
+  static Value getMinMaxNumFInput0(hfusion::ElemwiseBinaryOp op) {
+    return op.getInputs()[0];
+  }
+  static Value getMinMaxNumFInput1(hfusion::ElemwiseBinaryOp op) {
+    return op.getInputs()[1];
   }
 };
 
-// Normalize reduction op of maxnumf and minnumf
-// dst = linalg.reduce { arith.maxnumf } src
-// is normalized to
-// src_nan_mask = hfusion.isnan(src)
-// new_src = hfusion.select(src_nan_mask, -inf, src)
-// dst = linalg.reduce { arith.maximumf } src
-struct NormalizeReduceMinMaxNumFOp : public OpRewritePattern<linalg::ReduceOp>,
-                                     public NormalizeMinMax {
-public:
-  using OpRewritePattern<linalg::ReduceOp>::OpRewritePattern;
-  virtual ~NormalizeReduceMinMaxNumFOp() = default;
+using NormalizeElemwiseMaxNumFOp =
+    mlir::NormalizeElemwiseMinMaxNumFOpTemplate<
+        hfusion::ElemwiseBinaryOp, HFusionNormalizeMaxNumFTraits>;
+using NormalizeElemwiseMinNumFOp =
+    mlir::NormalizeElemwiseMinMaxNumFOpTemplate<
+        hfusion::ElemwiseBinaryOp, HFusionNormalizeMinNumFTraits>;
 
-  LogicalResult matchAndRewrite(linalg::ReduceOp op,
-                                PatternRewriter &rewriter) const override {
+struct HFusionNormalizeReduceMinMaxNumFTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeReduceMinMaxNumF(linalg::ReduceOp op) {
     Block &body = op.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
     auto *bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    if (!isa<arith::MaxNumFOp>(bodyOp) && !isa<arith::MinNumFOp>(bodyOp)) {
-      return failure();
-    }
-    auto paddingInfSign = (isa<arith::MaxNumFOp>(bodyOp)) ? -1 : 1;
-    Value src0 = op->getOperands()[0];
-    auto newSrc0 = createNewSrcForMinMaxNumFOp(
-        rewriter, op->getLoc(), src0,
-        paddingInfSign * std::numeric_limits<double>::infinity());
-    op->setOperand(0, newSrc0);
+    return isa<arith::MaxNumFOp>(bodyOp) || isa<arith::MinNumFOp>(bodyOp);
+  }
+
+  static bool isReduceMaxNumF(linalg::ReduceOp op) {
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    return isa<arith::MaxNumFOp>(yieldOp.getValues()[0].getDefiningOp());
+  }
+
+  static Value getReduceMinMaxNumFInput(linalg::ReduceOp op) {
+    return op->getOperands()[0];
+  }
+
+  static void updateReduceMinMaxNumFOp(linalg::ReduceOp op,
+                                       PatternRewriter &rewriter,
+                                       Value newSrc, bool isMax) {
+    op->setOperand(0, newSrc);
+    Block &body = op.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    auto *bodyOp = yieldOp.getValues()[0].getDefiningOp();
     OpBuilder::InsertionGuard guard(rewriter);
     rewriter.setInsertionPoint(bodyOp);
     Operation *newOp;
-    if (isa<arith::MaxNumFOp>(bodyOp)) {
+    if (isMax) {
       newOp = rewriter.create<arith::MaximumFOp>(
           bodyOp->getLoc(), bodyOp->getOperand(0), bodyOp->getOperand(1));
     } else {
@@ -403,9 +323,12 @@ public:
     }
     rewriter.replaceAllUsesWith(bodyOp->getResult(0), newOp->getResult(0));
     rewriter.eraseOp(bodyOp);
-    return success();
   }
 };
+
+using NormalizeReduceMinMaxNumFOp =
+    mlir::NormalizeReduceMinMaxNumFOpTemplate<
+        linalg::ReduceOp, HFusionNormalizeReduceMinMaxNumFTraits>;
 
 /// normalize expm1(x) to exp(x) - 1
 /// eg.
@@ -563,8 +486,8 @@ void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeLogLikeOp>(ctx);
   patterns.add<NormalizeLog1pOp>(ctx);
   patterns.add<NormalizeReduceMinMaxNumFOp>(ctx);
-  patterns.add<NormalizeElemwiseMinMaxNumFOp<BinaryFn::maxnumf>>(ctx);
-  patterns.add<NormalizeElemwiseMinMaxNumFOp<BinaryFn::minnumf>>(ctx);
+  patterns.add<NormalizeElemwiseMaxNumFOp>(ctx);
+  patterns.add<NormalizeElemwiseMinNumFOp>(ctx);
   patterns.add<NormalizeExp2Op>(ctx);
   patterns.add<NormalizeExpM1Op>(ctx);
   patterns.add<NormalizeErfOp>(ctx);

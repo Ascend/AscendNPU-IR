@@ -261,6 +261,41 @@ using NormalizeVModUIOp =
                                                BinaryKind::ModUnsigned,
                                                /*SupportsFloat=*/false>>;
 
+struct HIVMNormalizeCeilandFloorTraits : public NormalizeTraitsBase {
+  static bool shouldNormalizeCeilandFloor(VCastOp op) {
+    if (!op.hasPureTensorSemantics())
+      return false;
+    auto roundMode = op.getRoundMode();
+    if (roundMode != hivm::RoundMode::CEIL &&
+        roundMode != hivm::RoundMode::FLOOR)
+      return false;
+    Type inType = getElementTypeOrSelf(op.getSingleSrc().getType());
+    Type outType = getElementTypeOrSelf(op.getSingleDst().getType());
+    if (!((inType.isF16() || inType.isBF16()) && inType == outType))
+      return false;
+    if (archisAscend950)
+      return false;
+    return true;
+  }
+
+  static CastRoundKind getCeilOrFloorRoundKind(VCastOp op) {
+    return op.getRoundMode() == hivm::RoundMode::CEIL ? CastRoundKind::Ceil
+                                                       : CastRoundKind::Floor;
+  }
+
+  static Value getCeilandFloorInput(VCastOp op) {
+    return op.getSingleSrc();
+  }
+
+  static Value getCeilandFloorOutput(VCastOp op) {
+    return op.getSingleDst();
+  }
+};
+
+using NormalizeVCeilandFloorOp =
+    mlir::NormalizeCeilandFloorOpTemplate<VCastOp,
+                                          HIVMNormalizeCeilandFloorTraits>;
+
 } // namespace
 
 void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
@@ -271,7 +306,8 @@ void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns) {
 
 void populateNormalizeLateMathPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeVIlogbOp, NormalizeVLdexpOp,
-               NormalizeVPowfOp>(patterns.getContext());
+               NormalizeVPowfOp,
+               NormalizeVCeilandFloorOp>(patterns.getContext());
 }
 
 void populateNormalizeModPatterns(RewritePatternSet &patterns) {

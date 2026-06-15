@@ -74,6 +74,20 @@ bool mlir::hivm::NormalizeTraitsBase::archIsRegbased() {
   return hivm::archIsRegbased;
 }
 
+bool mlir::hivm::NormalizeTraitsBase::archIsAscend950() {
+  return hivm::archisAscend950;
+}
+
+Value mlir::hivm::NormalizeTraitsBase::createIsNanOp(
+    PatternRewriter &rewriter, Location loc, Value src) {
+  Value emptyDst = utils::createEmptyOpWithTargetElemType(rewriter, loc, src,
+                                                         rewriter.getI1Type());
+  return rewriter
+      .create<hivm::VIsNanOp>(loc, mlir::TypeRange{emptyDst.getType()},
+                               mlir::ValueRange{src}, mlir::ValueRange{emptyDst})
+      .getResults()[0];
+}
+
 Value mlir::hivm::NormalizeTraitsBase::createCastValueFromSourceOp(
     PatternRewriter &rewriter, Location loc, VCastOp op, Value input,
     Type targetElemType, CastRoundKind executionKind, CastSignKind signKind,
