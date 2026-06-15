@@ -173,7 +173,7 @@ func.func @test_scalar_u32_bf16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2:
 
 // CHECK-LABEL: func.func @test_scalar_bf16_u8(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xbf16>
-// CHECK: arith.fptosi {{.*}} : tensor<1xbf16> to tensor<1xi32>
+// CHECK: arith.fptoui {{.*}} : tensor<1xbf16> to tensor<1xi32>
 // CHECK: arith.trunci {{.*}} : tensor<1xi32> to tensor<1xi8>
 // CHECK: tensor.extract {{.*}} : tensor<1xi8>
 func.func @test_scalar_bf16_u8(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi8> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: bf16, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
@@ -189,7 +189,7 @@ func.func @test_scalar_bf16_u8(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: 
 
 // CHECK-LABEL: func.func @test_scalar_bf16_u16(
 // CHECK: tensor.from_elements {{.*}} : tensor<1xbf16>
-// CHECK: arith.fptosi {{.*}} : tensor<1xbf16> to tensor<1xi32>
+// CHECK: arith.fptoui {{.*}} : tensor<1xbf16> to tensor<1xi32>
 // CHECK: arith.trunci {{.*}} : tensor<1xi32> to tensor<1xi16>
 // CHECK: tensor.extract {{.*}} : tensor<1xi16>
 func.func @test_scalar_bf16_u16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<?xi16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: bf16, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
