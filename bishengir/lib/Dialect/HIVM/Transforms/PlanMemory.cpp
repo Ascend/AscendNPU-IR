@@ -594,24 +594,28 @@ void MemLivenessAnalysis::UpdatePreloadBuffersGenKillMap() {
 
 void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
                                         Liveness live, OpInfo *curOpInfo) {
-  // get allocOp
   if (!isa<MemRefType>(markOp.getSrc().getType())) {
     return;
   }
+  // global workspace plan
+  if (!isLocalMemPlan()) {
+    UpdateMultiBufferInfo(markOp, markOp.getSrc());
+    return;
+  }
+  // get allocOp
   auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
   if (!maybeAlloc.has_value()) {
     return;
   }
-  UpdateMultiBufferInfo(markOp, maybeAlloc.value());
+  UpdateMultiBufferInfo(markOp, maybeAlloc.value().getResult());
   UpdatePreloadBuffers(markOp, maybeAlloc.value());
-  OpKillHandle(curOpInfo, live, markOp->getBlock());
-  if (!isLocalMemPlan()) {
-    return;
-  }
   UpdateMemoryUniqueBufferInfo(markOp, maybeAlloc.value());
   if (ProcessMarkOpForTightlyCoupledCV(markOp, maybeAlloc.value())) {
     UpdateOpGenInfo(curOpInfo, maybeAlloc.value()->getResults());
   }
+  // TODO: Update buffer kill time when RecursionIR visits any user of the
+  // buffer, rather than only getting buffer kill time in last user
+  OpKillHandle(curOpInfo, live, markOp->getBlock());
 }
 
 bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
@@ -671,7 +675,7 @@ void MemLivenessAnalysis::UpdateMemoryUniqueBufferInfo(
 }
 
 void MemLivenessAnalysis::UpdateMultiBufferInfo(annotation::MarkOp markOp,
-                                                memref::AllocOp allocOp) {
+                                                Value memrefVal) {
   if (!markOp->hasAttr(hivm::MultiBufferAttr::name)) {
     return;
   }
@@ -683,7 +687,7 @@ void MemLivenessAnalysis::UpdateMultiBufferInfo(annotation::MarkOp markOp,
     // Num is 1, which is a singebuffer and does not require any processing.
     return;
   }
-  buffer2MultiNum[allocOp] = static_cast<uint64_t>(valAttr.getInt());
+  buffer2MultiNum[memrefVal] = static_cast<uint64_t>(valAttr.getInt());
 }
 
 LogicalResult
