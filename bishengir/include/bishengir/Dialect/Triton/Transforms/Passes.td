@@ -292,6 +292,19 @@ def TritonRemap : Pass<"triton-remap", "mlir::ModuleOp"> {
            "Whether the SIMT kernel is lowered from the SIMD-SIMT mixed pipeline">
   ];
 }
+
+def RemoveAnnotationMark
+    : Pass<"remove-annotation-mark", "mlir::ModuleOp"> {
+  let summary = "remove all annotation.mark ops in the module";
+  let constructor = "bishengir::triton::createRemoveAnnotationMarkPass()";
+  let description = [{
+    Erase every `annotation.mark` operation in the module.  `annotation.mark`
+    only carries non-semantic metadata about a value, so it can be dropped
+    once that metadata is no longer needed.  The op has no results, so each
+    one is simply erased.
+  }];
+  let dependentDialects = ["mlir::annotation::AnnotationDialect"];
+}
 #endif
 
 #endif // BISHENGIR_DIALECT_TRITON_TRANSFORMS_PASSES_TD

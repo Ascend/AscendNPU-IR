@@ -256,9 +256,10 @@ void HIVMOptSinglePointOpPass::runOnOperation() {
                           arith::DivUIOp>,
       SinglePointEltVecOp<hivm::VAbsOp, math::AbsFOp, math::AbsIOp, None>,
       SinglePointEltVecOp<hivm::VSqrtOp, math::SqrtOp, math::SqrtOp, None>,
-      SinglePointEltVecOp<hivm::VMaxOp, arith::MaxNumFOp, arith::MaxSIOp, None>,
-      SinglePointEltVecOp<hivm::VMinOp, arith::MinNumFOp, arith::MinSIOp,
-                          None>>(&getContext());
+      SinglePointEltVecOp<hivm::VMaxOp, arith::MaximumFOp, arith::MaxSIOp,
+                          arith::MaxUIOp>,
+      SinglePointEltVecOp<hivm::VMinOp, arith::MinimumFOp, arith::MinSIOp,
+                          arith::MinUIOp>>(&getContext());
 
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
     signalPassFailure();

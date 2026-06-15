@@ -502,3 +502,47 @@ func.func @vshl_lowering(%a: tensor<64xi32>, %c: i32, %d: tensor<64xi32>) -> ten
     %0 = hivm.hir.vshl ins(%a, %c : tensor<64xi32>, i32) outs(%d : tensor<64xi32>) -> tensor<64xi32>
     return %0 : tensor<64xi32>
 }
+
+// -----
+
+// COMMON-LABEL: @vreduce_min_f32
+func.func @vreduce_min_f32(%arg0: tensor<4x8xf32>) -> tensor<4x1xf32> {
+  %init = tensor.empty() : tensor<4x1xf32>
+  // COMMON: linalg.reduce
+  // COMMON: arith.minimumf
+  %0 = hivm.hir.vreduce <min> ins(%arg0 : tensor<4x8xf32>) outs(%init : tensor<4x1xf32>) unsigned_src = false reduce_dims = [1] -> tensor<4x1xf32>
+  return %0 : tensor<4x1xf32>
+}
+
+// -----
+
+// COMMON-LABEL: @vreduce_max_f32
+func.func @vreduce_max_f32(%arg0: tensor<4x8xf32>) -> tensor<4x1xf32> {
+  %init = tensor.empty() : tensor<4x1xf32>
+  // COMMON: linalg.reduce
+  // COMMON: arith.maximumf
+  %0 = hivm.hir.vreduce <max> ins(%arg0 : tensor<4x8xf32>) outs(%init : tensor<4x1xf32>) unsigned_src = false reduce_dims = [1] -> tensor<4x1xf32>
+  return %0 : tensor<4x1xf32>
+}
+
+// -----
+
+// COMMON-LABEL: @vreduce_min_si32
+func.func @vreduce_min_si32(%arg0: tensor<4x8xi32>) -> tensor<4x1xi32> {
+  %init = tensor.empty() : tensor<4x1xi32>
+  // COMMON: linalg.reduce
+  // COMMON: arith.minsi
+  %0 = hivm.hir.vreduce <min> ins(%arg0 : tensor<4x8xi32>) outs(%init : tensor<4x1xi32>) unsigned_src = false reduce_dims = [1] -> tensor<4x1xi32>
+  return %0 : tensor<4x1xi32>
+}
+
+// -----
+
+// COMMON-LABEL: @vreduce_min_ui32
+func.func @vreduce_min_ui32(%arg0: tensor<4x8xi32>) -> tensor<4x1xi32> {
+  %init = tensor.empty() : tensor<4x1xi32>
+  // COMMON: linalg.reduce
+  // COMMON: arith.minui
+  %0 = hivm.hir.vreduce <min> ins(%arg0 : tensor<4x8xi32>) outs(%init : tensor<4x1xi32>) unsigned_src = true reduce_dims = [1] -> tensor<4x1xi32>
+  return %0 : tensor<4x1xi32>
+}

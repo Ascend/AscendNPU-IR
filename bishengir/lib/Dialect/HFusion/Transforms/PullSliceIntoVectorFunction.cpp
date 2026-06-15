@@ -730,15 +730,22 @@ struct SwapUnitDimExpandShapeOfExtractSlice
     for (auto [groupIdx, group] : llvm::enumerate(reassoc)) {
       int64_t srcDim = srcType.getShape()[groupIdx];
       int64_t sliceDim = sliceType.getShape()[groupIdx];
+      // check when sliceDim = 1.
+      bool assignedMajor = false;
       for (int64_t resIdx : group) {
         int64_t resDim = expandedType.getShape()[resIdx];
         if (resDim == 1) {
           expandedSrcShape.push_back(1);
         } else if (resDim == sliceDim) {
           expandedSrcShape.push_back(srcDim);
+          assignedMajor = true;
         } else {
           return failure();
         }
+      }
+      if (!assignedMajor && srcDim != 1) {
+        assert(sliceDim == 1);
+        expandedSrcShape.back() = srcDim;
       }
     }
 
