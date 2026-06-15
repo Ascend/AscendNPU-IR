@@ -19,6 +19,14 @@
 namespace mlir {
 namespace hfusion {
 
+/// TreeReduce processing mode
+enum class TreeReduceMode {
+  Off, // disable TreeReduce RA/AR processing
+  RA,  // row-reduction, dim=0
+  AR,  // column-reduction, dim=1
+  All, // enable both RA and AR processing
+};
+
 struct HFusionPipelineOptions
     : public mlir::PassPipelineOptions<HFusionPipelineOptions> {
 #define GEN_HFUSION_OPTION_REGISTRATION

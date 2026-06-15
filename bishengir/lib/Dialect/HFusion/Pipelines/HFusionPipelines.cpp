@@ -58,6 +58,25 @@ enum DisableCanonicalizationPhase {
   AfterAutoSchedule = 2
 };
 
+struct TreeReduceEnableFlags {
+  bool enableRA;
+  bool enableAR;
+};
+
+static TreeReduceEnableFlags getTreeReduceEnableFlags(TreeReduceMode mode) {
+  switch (mode) {
+  case TreeReduceMode::Off:
+    return {false, false};
+  case TreeReduceMode::RA:
+    return {true, false};
+  case TreeReduceMode::AR:
+    return {false, true};
+  case TreeReduceMode::All:
+    return {true, true};
+  }
+  return {true, false};
+}
+
 static DenseMap<int, std::vector<std::string>> phaseToDisabledMap = {
     {NoRestriction, {}},
     {AfterFlattenBeforeAutoSchedule,
@@ -363,15 +382,17 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
   pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
-  // prepare tree reduce v2 options for RA / AR control
-  TreeReduceV2Options treeReduceV2Options;
-  treeReduceV2Options.enableRA = hfusionOptions.enableTreeReduceV2RA;
-  treeReduceV2Options.enableAR = hfusionOptions.enableTreeReduceV2AR;
+  // Prepare tree reduce options for RA / AR control.
+  TreeReduceEnableFlags treeReduceFlags =
+      getTreeReduceEnableFlags(hfusionOptions.enableTreeReduceMode);
+  TreeReduceV2Options treeReduceOptions;
+  treeReduceOptions.enableRA = treeReduceFlags.enableRA;
+  treeReduceOptions.enableAR = treeReduceFlags.enableAR;
   if (enableSIMDVFFusion(hfusionOptions)) {
     VFFusionOptions vfFusionOptions;
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
-    vfFusionOptions.enableRA = treeReduceV2Options.enableRA;
-    vfFusionOptions.enableAR = treeReduceV2Options.enableAR;
+    vfFusionOptions.enableRA = treeReduceFlags.enableRA;
+    vfFusionOptions.enableAR = treeReduceFlags.enableAR;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
@@ -402,7 +423,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
   pm.addPass(createAutoVectorizeVerifierPass());
-  pm.addPass(createTreeReduceV2Pass(treeReduceV2Options));
+  pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
   pm.addPass(mlir::createHFusionToVectorConversionPass());
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());
