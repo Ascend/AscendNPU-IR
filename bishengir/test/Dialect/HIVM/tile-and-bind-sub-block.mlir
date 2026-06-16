@@ -1010,10 +1010,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_cor
 // -----
 
 // CHECK-LABEL: func.func @check_split_nz2dn
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%{{.*}} : tensor<32x128xf32>) outs(%{{.*}} : memref<128x32xf32, #hivm.address_space<ub>>)
-// CHECK: scf.if
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%{{.*}} : tensor<32x128xf32>) outs(%{{.*}} : memref<64x32xf32, #hivm.address_space<ub>>) dual_dst_mode = <COLUMN_SPLIT>
 // CHECK: hivm.hir.store
-// CHECK: limit_sub_block_id0
+// CHECK: map_for_to_forall
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @check_split_nz2dn_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %alloc = memref.alloc() : memref<128x32xf32, #hivm.address_space<ub>>

@@ -42,6 +42,66 @@ namespace hivm {
 
 using namespace mlir;
 
+LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
+                                      Value allocVal,
+                                      FixpipeDualDstMode &splitMode,
+                                      SmallVectorImpl<int64_t> &splitShape,
+                                      bool &invalidTilingDim) {
+  invalidTilingDim = false;
+  auto allocTy = cast<MemRefType>(allocVal.getType());
+  int64_t rank = allocTy.getRank();
+  if (tilingDim != rank - 2 && tilingDim != rank - 1) {
+    op.emitWarning(
+        "The tilingDim in AIC does not match row_split or column split!");
+    invalidTilingDim = true;
+    return failure();
+  }
+
+  splitShape = llvm::to_vector(allocTy.getShape());
+
+  int64_t constraints = 0;
+
+  if (op.getDmaMode() == FixpipeDMAMode::NZ2DN) {
+    /// FIXME: please double checkout the constraint of nz2dn.
+    constexpr int64_t nz2dnRowSplitConstraint = 8;
+    constexpr int64_t nz2dnColSplitConstraint = 8;
+    if (tilingDim == rank - 2) {
+      splitMode = FixpipeDualDstMode::COLUMN_SPLIT;
+      constraints = nz2dnColSplitConstraint;
+    } else if (tilingDim == rank - 1) {
+      splitMode = FixpipeDualDstMode::ROW_SPLIT;
+      constraints = nz2dnRowSplitConstraint;
+    } else {
+      op.emitWarning("The tilingDim in AIC does not match row_split or "
+                     "column split for NZ2DN fixpipe!");
+      invalidTilingDim = true;
+      return failure();
+    }
+  } else {
+    /// FIXME: please double checkout the constraint of nz2nd.
+    constexpr int64_t nz2ndRowSplitConstraint = 2;
+    constexpr int64_t nz2ndColSplitConstraint = 32;
+    if (tilingDim == rank - 2) {
+      splitMode = FixpipeDualDstMode::ROW_SPLIT;
+      constraints = nz2ndRowSplitConstraint;
+    } else if (tilingDim == rank - 1) {
+      splitMode = FixpipeDualDstMode::COLUMN_SPLIT;
+      constraints = nz2ndColSplitConstraint;
+    } else {
+      op.emitWarning("The tilingDim in AIC does not match row_split or "
+                     "column split for NZ2ND fixpipe!");
+      invalidTilingDim = true;
+      return failure();
+    }
+  }
+
+  int64_t size = splitShape[tilingDim];
+  if (ShapedType::isDynamicShape(size) || (size % constraints) != 0)
+    return failure();
+  splitShape[tilingDim] = size / 2;
+  return success();
+}
+
 namespace {
 
 struct CanonicalizeAllocToTensor : public OpRewritePattern<memref::AllocOp> {
@@ -136,42 +196,21 @@ public:
       return failure();
     }
 
-    auto splitMode = tilingDim == rank - 2 ? FixpipeDualDstMode::ROW_SPLIT
-                                           : FixpipeDualDstMode::COLUMN_SPLIT;
-    auto oldTy = cast<MemRefType>(allocVal.getType());
-    auto shape = llvm::to_vector(oldTy.getShape());
-    auto splitShape = [](bool cvpipeFlag, FixpipeDualDstMode splitMode,
-                         SmallVector<int64_t> &shape) -> LogicalResult {
-      int64_t splitIdx = 0;
-      splitIdx += cvpipeFlag;
-      int64_t constraints;
-      if (splitMode == FixpipeDualDstMode::ROW_SPLIT)
-        constraints = 2;
-      else {
-        constraints = 32;
-        ++splitIdx;
-      }
-      auto size = shape[splitIdx];
-      if (ShapedType::isDynamicShape(size)) {
+    // compute the fixpipe split info
+    FixpipeDualDstMode splitMode;
+    SmallVector<int64_t> splitShape;
+    bool invalidTilingDim = false;
+    if (failed(computeFixpipeSplitInfo(op, tilingDim, allocVal, splitMode,
+                                       splitShape, invalidTilingDim))) {
+      if (invalidTilingDim)
         return failure();
-      }
-      if ((size % constraints) != 0) {
-        return failure();
-      }
-      shape[splitIdx] = size / 2;
-      return success();
-    };
-
-    if (op.getDmaMode() == FixpipeDMAMode::NZ2DN) {
       op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
       return failure();
     }
+
+    auto oldTy = cast<MemRefType>(allocVal.getType());
     if (!cvpipeFlag) {
-      if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
-        op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-        return failure();
-      }
-      auto newTy = MemRefType::get(shape, oldTy.getElementType(),
+      auto newTy = MemRefType::get(splitShape, oldTy.getElementType(),
                                    oldTy.getLayout(), oldTy.getMemorySpace());
       rewriter.setInsertionPoint(allocOp);
       auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
@@ -198,11 +237,7 @@ public:
       return success();
     }
 
-    if (llvm::failed(splitShape(cvpipeFlag, splitMode, shape))) {
-      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-      return failure();
-    }
-    auto newTy = MemRefType::get(shape, oldTy.getElementType(),
+    auto newTy = MemRefType::get(splitShape, oldTy.getElementType(),
                                  oldTy.getLayout(), oldTy.getMemorySpace());
 
     rewriter.setInsertionPoint(allocOp);
@@ -215,21 +250,16 @@ public:
                              [&] { newMark->setAttrs(markOp->getAttrs()); });
     rewriter.setInsertionPoint(subviewOp);
     SmallVector<OpFoldResult> sizes = subviewOp.getMixedSizes();
-    switch (splitMode) {
-    case FixpipeDualDstMode::ROW_SPLIT:
+    if (tilingDim == rank - 2) {
       if (sizes[1].is<Attribute>()) {
         int64_t oldSize = cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
         sizes[1] = rewriter.getIndexAttr(oldSize / 2);
       }
-      break;
-    case FixpipeDualDstMode::COLUMN_SPLIT:
+    } else {
       if (sizes[2].is<Attribute>()) {
         int64_t oldSize = cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
         sizes[2] = rewriter.getIndexAttr(oldSize / 2);
       }
-      break;
-    default:
-      break;
     }
 
     int64_t dim1 = sizes[1].is<Attribute>()
