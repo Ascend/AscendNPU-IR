@@ -11,6 +11,8 @@
 // RUN: -hivm-insert-load-store-for-mix-cv="disable-tight-coupled-buffer=true" \
 // RUN:   %s | FileCheck %s -check-prefix=MIXCV
 
+// The communication mode (tight-coupled or workspace) is controlled by the user via the 'enable-cv-tight-communication' flag.
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // TIGHT-LABEL: func.func @test_fixpipe_to_vector(
   // TIGHT: %[[ALLOC:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
