@@ -99,12 +99,25 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            [{::llvm::cl::values(
                clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
                           "no limit for local multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
+                          "only cube for local multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_VECTOR, "only-vector",
+                          "only vector for local multi buffer"),
                clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
                           "Disable l0c multi buffer"))}]>,
     Option<"limitMixAutoMultiBufferBuffer",
            "limit-mix-auto-multi-buffer-buffer", "MultiBufferStrategy",
            /*default=*/"MultiBufferStrategy::ONLY_CUBE",
-           "Disable multi-buffer-buffer on cube, vector Or no limit">,
+           "Disable multi-buffer-buffer on cube, vector Or no limit",
+           [{::llvm::cl::values(
+               clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
+                          "no limit for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
+                          "only cube for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_VECTOR, "only-vector",
+                          "only vector for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
+                          "Disable l0c for mix auto multi buffer"))}]>,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
            /*default=*/"2", "Override for multibuffer number for workspace">,
     Option<"disableMultiBufferOnUB",
@@ -1025,7 +1038,7 @@ def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
 def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
   let summary = "Propagate convert layout for matmul operations";
   let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
-  let dependentDialects = ["hivm::HIVMDialect", ];
+  let dependentDialects = ["hivm::HIVMDialect", "tensor::TensorDialect", ];
 
   let options = [
     Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",

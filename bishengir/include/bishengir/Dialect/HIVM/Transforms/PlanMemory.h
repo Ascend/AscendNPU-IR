@@ -439,8 +439,7 @@ private:
                                     memref::AllocOp allocOp);
 
   /// Update multi buffer information.
-  void UpdateMultiBufferInfo(annotation::MarkOp markOp,
-                             memref::AllocOp allocOp);
+  void UpdateMultiBufferInfo(annotation::MarkOp markOp, Value memrefVal);
 
   /// Update store op information.
   void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);

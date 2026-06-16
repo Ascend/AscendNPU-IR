@@ -212,7 +212,6 @@ runExternalHIVMC(ModuleOp &module,
                                      "hfusion-enable-multiple-consumer-fusion",
                                      "disable-tightly-coupled-buffer-reuse",
                                      "enable-hivm-cross-core-gss",
-                                     "enable-tree-reduce-v2",
                                      "vf-fusion-mode",
                                      "disable-vf-reachable-check",
                                      "enable-sink-dpx-load"};

@@ -838,9 +838,8 @@ void MarkStrideAlignPass::runOnOperation() {
                                                  identityReassoc, isUBDMAOp);
       if (isa<FixpipeOp>(op)) {
         auto fixpipeOp = dyn_cast<FixpipeOp>(op);
-        auto alignDimAlignBytes =
-            getLastDiscontinuousDimRegBasedForFixcctoub(
-                filterMemrefTypes, identityReassoc, fixpipeOp);
+        auto alignDimAlignBytes = getLastDiscontinuousDimRegBasedForFixcctoub(
+            filterMemrefTypes, identityReassoc, fixpipeOp);
         for (const auto &[alignDimUpdate, alignByte] : alignDimAlignBytes) {
           if (alignDimUpdate.has_value()) {
             for (const auto &oper : hivmOp.getTargetSpaceOperands(
@@ -851,6 +850,24 @@ void MarkStrideAlignPass::runOnOperation() {
             }
           }
         }
+
+        // For 3d dot we need align zero dimension because we tile over it
+        if (auto rootAlloc =
+                traceDefOp<memref::AllocOp>(hivmOp.getTargetSpaceOperands(
+                    hivm::AddressSpace::UB, false /*includeTmpBuffer*/)[0])) {
+          auto allocOp = cast<memref::AllocOp>(rootAlloc.value());
+          auto allocType = allocOp.getType();
+          auto allocShape = allocType.getShape();
+          auto allocVal = allocOp.getResult();
+
+          if (allocShape.size() == 3 && allocShape[0] > 1) {
+            if (failed(markAlignedDimForFixcctoub(
+                    builder, allocOp, allocVal, 1,
+                    getHWAlignBytes(allocType).value())))
+              return WalkResult::interrupt();
+          }
+        }
+
         return WalkResult::advance();
       }
     } else {

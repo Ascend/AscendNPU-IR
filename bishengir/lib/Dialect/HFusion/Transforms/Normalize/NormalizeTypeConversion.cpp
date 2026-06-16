@@ -115,6 +115,21 @@ SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
   return result;
 }
 
+static SmallVector<Value> normalizeF8ToF16(PatternRewriter &rewriter,
+                                           const SmallVector<Value> &values) {
+  SmallVector<Value> result;
+  result.reserve(values.size());
+  for (Value v : values) {
+    if (!isF8ElemType(v.getType())) {
+      result.push_back(v);
+      continue;
+    }
+    result.push_back(castTo(rewriter, v, rewriter.getF16Type(),
+                            hfusion::RoundMode::RINT));
+  }
+  return result;
+}
+
 template <typename... Patterns>
 void addTypeConversionPatterns(RewritePatternSet &patterns) {
   patterns.add<Patterns...>(patterns.getContext());
@@ -1229,6 +1244,29 @@ struct HFusionNormalizeGatherIndexToI32Traits : public NormalizeTraitsBase {
   }
 };
 
+struct NormalizeGatherF8ToF16 : public OpRewritePattern<hfusion::GatherOp> {
+public:
+  using OpRewritePattern<hfusion::GatherOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::GatherOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+
+    SmallVector<Value> inputs = {op.getSrc(), op.getIndex()};
+    SmallVector<Value> outputs = {op.getInit()};
+    if (!hasF8ElemType(inputs) && !hasF8ElemType(outputs))
+      return failure();
+
+    SmallVector<Value> newInputs = normalizeF8ToF16(rewriter, inputs);
+    SmallVector<Value> newOutputs = normalizeF8ToF16(rewriter, outputs);
+    Operation *newOp = rewriter.create<hfusion::GatherOp>(
+        op.getLoc(), newInputs[0], newInputs[1], newOutputs[0], op.getAxis());
+    replaceF8ResultsWithTargetType(op->getResults(), newOp->getResults(),
+                                   rewriter);
+    return success();
+  }
+};
 template <>
 struct HFusionNormalizeToTargetTypeTraits<int8_t, hfusion::GatherOp>
     : public NormalizeTraitsBase {
@@ -1464,6 +1502,10 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
 void populateNormalizeGatherIndexPatterns(RewritePatternSet &patterns) {
   addTypeConversionPatterns<mlir::NormalizeGatherIndexToI32Template<
       hfusion::GatherOp, HFusionNormalizeGatherIndexToI32Traits>>(patterns);
+}
+
+void populateNormalizeF8ToF16Patterns(RewritePatternSet &patterns) {
+  patterns.add<NormalizeGatherF8ToF16>(patterns.getContext());
 }
 
 void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {

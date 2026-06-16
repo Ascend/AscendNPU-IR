@@ -289,16 +289,16 @@ func.func @vcat_lowering() {
     %s64 = memref.alloc() : memref<2x16xi64>
     %bf16 = memref.alloc() : memref<2x16xbf16>
     %u8 = memref.alloc() : memref<2x16xui8>
-    // COMMON: hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+    // COMMON: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<rint>}
     hivm.hir.vcast ins(%bf16 : memref<2x16xbf16>) outs(%f32 : memref<2x16xf32>)
                    round_mode = #hivm.round_mode<rint>
-    // COMMON: hfusion.cast {round_mode = #hfusion.round_mode<round>}
+    // COMMON: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<round>}
     hivm.hir.vcast ins(%bf16 : memref<2x16xbf16>) outs(%s32 : memref<2x16xi32>)
                    round_mode = #hivm.round_mode<round>
-    // COMMON: hfusion.cast {round_mode = #hfusion.round_mode<ceil>}
+    // COMMON: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<ceil>}
     hivm.hir.vcast ins(%bf16 : memref<2x16xbf16>) outs(%s32 : memref<2x16xi32>)
                    round_mode = #hivm.round_mode<ceil>
-    // COMMON: hfusion.cast {round_mode = #hfusion.round_mode<floor>}
+    // COMMON: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<floor>}
     hivm.hir.vcast ins(%bf16 : memref<2x16xbf16>) outs(%s32 : memref<2x16xi32>)
                    round_mode = #hivm.round_mode<floor>
     return

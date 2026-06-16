@@ -238,7 +238,7 @@ public:
       const bool isBF16ToU8 = inType.isBF16() && outType.isInteger(8);
       const bool isBF16ToU16 = inType.isBF16() && outType.isInteger(16);
       if (isBF16ToU8 || isBF16ToU16) {
-        Value i32TensorOp = rewriter.create<arith::FPToSIOp>(
+        Value i32TensorOp = rewriter.create<arith::FPToUIOp>(
             loc, i32TensorTy, inTensor);
         tensorOp = rewriter.create<arith::TruncIOp>(
             loc, outTensorTy, i32TensorOp);

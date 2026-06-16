@@ -913,3 +913,10 @@ LogicalResult FixpipeOp::verify() {
 
   return success();
 }
+
+LogicalResult FixpipeOp::fold(hivm::FixpipeOp::FoldAdaptor adaptor,
+                           SmallVectorImpl<OpFoldResult> &results) {
+  Operation* fixpipeOp = *this;
+  return memref::foldMemRefCast(fixpipeOp);
+}
+

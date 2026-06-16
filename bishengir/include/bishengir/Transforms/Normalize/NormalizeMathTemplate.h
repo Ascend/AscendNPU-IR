@@ -20,6 +20,7 @@
 
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Normalize/Utils/Kinds.h"
+#include "bishengir/Transforms/Normalize/Utils/MathTemplateHelpers.h"
 #include "bishengir/Transforms/Normalize/Utils/ScalarTemplateHelpers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -989,6 +990,132 @@ private:
     return Traits::createCmpOp(rewriter, loc, exponent, zero, CompareKind::EQ);
   }
 };
+/// Normalizes ceil/floor ops to dialect-specific cast with ceil/floor round
+/// mode.
+/// On non-Ascend950 platforms, f16/bf16 same-type inputs require an intermediate
+/// f32 cast chain because the hardware only supports ceil/floor on f32:
+///   f16/bf16 -> f32(rint) -> f32(ceil/floor) -> outType(ceil/floor)
+///
+/// eg. (non-950, f16 same-type input)
+///   y = elemwise_unary {ceil} (x)   where x and dst are f16
+///    is normalized to
+///    tmp0 = cast(x, f32, rint)       // widen to f32
+///    tmp1 = cast(tmp0, f32, ceil)    // compute ceil in f32
+///    y   = cast(tmp1, f16, ceil)     // narrow back to dst type
+template <typename OpType, typename Traits>
+struct NormalizeCeilandFloorOpTemplate : public OpRewritePattern<OpType> {
+public:
+  using OpRewritePattern<OpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeCeilandFloor(op))
+      return failure();
+
+    CastRoundKind roundKind = Traits::getCeilOrFloorRoundKind(op);
+    Location loc = op->getLoc();
+    Value src = Traits::getCeilandFloorInput(op);
+    Value dst = Traits::getCeilandFloorOutput(op);
+    Type inType = getElementTypeOrSelf(src.getType());
+    Type outType = getElementTypeOrSelf(dst.getType());
+
+    if (inType.isInteger())
+      return failure();
+
+    if (!Traits::archIsAscend950()) {
+      if ((inType.isF16() || inType.isBF16()) && inType == outType) {
+        src = Traits::createCastOp(rewriter, loc, src, rewriter.getF32Type(),
+                                  CastRoundKind::RInt);
+        src = Traits::createCastOp(rewriter, loc, src, rewriter.getF32Type(),
+                                  roundKind);
+      }
+    }
+
+    Value result = Traits::createCastOp(rewriter, loc, src, outType, roundKind,
+                                        dst);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Normalizes maxnumf (minnumf) elemwise binary ops to maxf (minf) by masking
+/// NaN inputs with +/-inf so the hardware maxf/minf op gives maxnumf/minnumf
+/// semantics.
+/// NaN is masked via: select(isnan(x), padding_inf, x)
+///   maxnumf uses -inf as padding so NaN loses the comparison
+///   minnumf uses +inf as padding so NaN loses the comparison
+///
+/// eg.
+///   dst = elemwise_binary {maxnumf} (src0, src1)
+///    is normalized to
+///    new_src0 = select(isnan(src0), -inf, src0)
+///    new_src1 = select(isnan(src1), -inf, src1)
+///    dst = elemwise_binary {maxf} (new_src0, new_src1)
+template <typename OpType, typename Traits>
+struct NormalizeElemwiseMinMaxNumFOpTemplate : public OpRewritePattern<OpType> {
+public:
+  using OpRewritePattern<OpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeElemwiseMinMaxNumF(op))
+      return failure();
+
+    bool isMax = Traits::isMaxNumF(op);
+    double paddingInfValue =
+        isMax ? -std::numeric_limits<double>::infinity()
+              : std::numeric_limits<double>::infinity();
+    BinaryKind targetKind = isMax ? BinaryKind::Max : BinaryKind::Min;
+
+    Location loc = op->getLoc();
+    Value src0 = Traits::getMinMaxNumFInput0(op);
+    Value src1 = Traits::getMinMaxNumFInput1(op);
+
+    Value newSrc0 = maskNanWithInf<Traits>(rewriter, loc, src0, paddingInfValue);
+    Value newSrc1 = maskNanWithInf<Traits>(rewriter, loc, src1, paddingInfValue);
+
+    Value result = Traits::createBinaryOp(
+        rewriter, loc, newSrc0, newSrc1,
+        utils::createEmptyOp(rewriter, loc, src0), targetKind);
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+/// Normalizes reduction ops with maxnumf/minnumf body to maximumf/minimumf by
+/// masking NaN in the source operand and replacing the body combiner op.
+///
+/// eg.
+///   dst = reduce { maxnumf } src
+///    is normalized to
+///    new_src = select(isnan(src), -inf, src)
+///    dst = reduce { maximumf } new_src
+///
+/// For minnumf reductions, NaN is masked with +inf and the body uses minimumf.
+template <typename OpType, typename Traits>
+struct NormalizeReduceMinMaxNumFOpTemplate : public OpRewritePattern<OpType> {
+public:
+  using OpRewritePattern<OpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!Traits::shouldNormalizeReduceMinMaxNumF(op))
+      return failure();
+
+    bool isMax = Traits::isReduceMaxNumF(op);
+    double paddingInfValue =
+        isMax ? -std::numeric_limits<double>::infinity()
+              : std::numeric_limits<double>::infinity();
+
+    Location loc = op->getLoc();
+    Value src = Traits::getReduceMinMaxNumFInput(op);
+    Value newSrc = maskNanWithInf<Traits>(rewriter, loc, src, paddingInfValue);
+
+    Traits::updateReduceMinMaxNumFOp(op, rewriter, newSrc, isMax);
+    return success();
+  }
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZEMATHTEMPLATE_H
