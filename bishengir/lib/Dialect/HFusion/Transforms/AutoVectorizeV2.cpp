@@ -861,6 +861,16 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
 
+  // A standalone loop would not yield the tiled intermediate back to other
+  // consumers; they would still read the original untiled tensor, producing
+  // wrong slices. Keep it in-place so every consumer extract_slices from the
+  // full tensor directly.
+  if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(producer) &&
+      hasManyUsers(producer) &&
+      !hasFusionOpportunity(producer, fusableOpInfoMap)) {
+    return nullptr;
+  }
+
   if (!context.enableMultipleConsumerFusion && hasManyUsers(producer) &&
       !hasFusionOpportunity(producer, fusableOpInfoMap)) {
     return nullptr;
@@ -1326,6 +1336,11 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
       }
     }
   } else {
+    // expand_shape has no tile transform of its own — only vsstb-fused paths
+    // can tile it.
+    if (isExpandShapeOpCanFuseIntoVsstbPatternTranspose(producer))
+      return;
+
     bool isInserted = false;
     for (SmallVector<Operation *> &leafNodeGroup : leafNodeGroups) {
       if (leafNodeGroup.size() > context.maxFusedOps ||
