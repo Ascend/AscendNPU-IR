@@ -56,11 +56,6 @@ cd build-tools
 
 The wheel package will be created in the `bishengir/python/wheel/dist` directory.
 
-## Requirements
-
-- Python 3.9 or higher
-- bishengir-compile binary (built from source)
-
 ## License
 
 Apache License 2.0

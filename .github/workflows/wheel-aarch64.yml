@@ -221,7 +221,7 @@ jobs:
           sed -i "s/version = \".*\"/version = \"${VERSION}\"/" bishengir/python/wheel/pyproject.toml
 
           _ORIG_PATH="$PATH"
-          for PY_VERSION in "3.9" "3.10" "3.11" "3.12"; do
+          for PY_VERSION in "3.10" "3.11" "3.12" "3.13"; do
             PYBIN_VERSION=${PY_VERSION//./}
             PYBIN=/opt/python/cp${PYBIN_VERSION}-cp${PYBIN_VERSION}
             echo "=== Building wheel for Python ${PY_VERSION} ==="
@@ -238,7 +238,7 @@ jobs:
           for d in dist-cp*/; do
             cp ${d}*.whl dist/ 2>/dev/null || true
           done
-          cp dist-cp39/*.tar.gz dist/ 2>/dev/null || true
+          cp dist-cp313/*.tar.gz dist/ 2>/dev/null || true
           echo "=== All A3 wheels ==="
           ls -lh dist/
 
@@ -248,7 +248,7 @@ jobs:
           sed -i "s/version = \".*\"/version = \"${VERSION}\"/" bishengir/python/wheel/pyproject.toml
 
           _ORIG_PATH="$PATH"
-          for PY_VERSION in "3.9" "3.10" "3.11" "3.12"; do
+          for PY_VERSION in "3.10" "3.11" "3.12" "3.13"; do
             PYBIN_VERSION=${PY_VERSION//./}
             PYBIN=/opt/python/cp${PYBIN_VERSION}-cp${PYBIN_VERSION}
             echo "=== Building unified wheel for Python ${PY_VERSION} ==="
@@ -265,7 +265,7 @@ jobs:
           for d in dist-unified-cp*/; do
             cp ${d}*.whl dist-unified/ 2>/dev/null || true
           done
-          cp dist-unified-cp39/*.tar.gz dist-unified/ 2>/dev/null || true
+          cp dist-unified-cp313/*.tar.gz dist-unified/ 2>/dev/null || true
           echo "=== All unified wheels ==="
           ls -lh dist-unified/
 
