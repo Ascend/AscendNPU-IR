@@ -771,36 +771,3 @@ func.func @test_cumsum_f32_2d_dim0_no_extra_buffer(%src: memref<3x256xf32>,
   hivm.hir.vcumsum ins(%src : memref<3x256xf32>) outs(%dst : memref<3x256xf32>) cum_dims = [0] reverse = false
   return
 }
-
-// -----
-
-func.func @test_cumprod_i8_2d_dim1_extra_buffer(%src: memref<3x256xi8>,
-                                                %dst: memref<3x256xi8>) {
-  // CHECK-LABEL: func.func @test_cumprod_i8_2d_dim1_extra_buffer                                              
-  // CHECK: memref.alloc() : memref<256x32xi8>
-  // CHECK: hivm.hir.vcumprod{{.*}}temp_buffer({{.*}}memref<256x32xi8>)
-  hivm.hir.vcumprod ins(%src : memref<3x256xi8>) outs(%dst : memref<3x256xi8>) cum_dims = [1] reverse = false
-  return
-}
-
-// -----
-
-func.func @test_cumprod_i8_2d_dim0_no_extra_buffer(%src: memref<3x256xi8>,
-                                                   %dst: memref<3x256xi8>) {
-  // CHECK-LABEL: func.func @test_cumprod_i8_2d_dim0_no_extra_buffer   
-  // CHECK-NOT: memref.alloc
-  // CHECK: hivm.hir.vcumprod{{.*}}cum_dims = [0]
-  hivm.hir.vcumprod ins(%src : memref<3x256xi8>) outs(%dst : memref<3x256xi8>) cum_dims = [0] reverse = false
-  return
-}
-
-// -----
-
-func.func @test_cumprod_f32_2d_dim0_no_extra_buffer(%src: memref<3x256xf32>,
-                                                    %dst: memref<3x256xf32>) {
-  // CHECK-LABEL: func.func @test_cumprod_f32_2d_dim0_no_extra_buffer      
-  // CHECK-NOT: memref.alloc
-  // CHECK: hivm.hir.vcumprod{{.*}}cum_dims = [0]
-  hivm.hir.vcumprod ins(%src : memref<3x256xf32>) outs(%dst : memref<3x256xf32>) cum_dims = [0] reverse = false
-  return
-}

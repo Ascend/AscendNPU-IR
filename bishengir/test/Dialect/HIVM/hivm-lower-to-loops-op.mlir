@@ -1407,6 +1407,87 @@ module {
 // -----
 
 module {
+  // CHECK-LABEL: func @test_cumprod_1d_i16
+  // CHECK: %[[CST1:.*]] = arith.constant 1 : index
+  // CHECK: %[[CST16:.*]] = arith.constant 16 : index
+  // CHECK: %[[CST0:.*]] = arith.constant 0 : index
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi16>
+  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<16xi16>
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[CST0]]] : memref<16xi16>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[CST0]]] : memref<16xi16>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]]] : memref<16xi16>
+  // CHECK: %[[arg1:.*]] = arith.subi %[[arg0]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg1]]] : memref<16xi16>
+  // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i16
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<16xi16>
+  func.func @test_cumprod_1d_i16() {
+    %src = memref.alloc() : memref<16xi16>
+    %dst = memref.alloc() : memref<16xi16>
+    hivm.hir.vcumprod ins(%src : memref<16xi16>) outs(%dst : memref<16xi16>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func @test_cumprod_2d_i16
+  // CHECK: %[[CST16:.*]] = arith.constant 16 : index
+  // CHECK: %[[CST1:.*]] = arith.constant 1 : index
+  // CHECK: %[[CST0:.*]] = arith.constant 0 : index
+  // CHECK: %[[CST2:.*]] = arith.constant 2 : index
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2x16xi16>
+  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x16xi16>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST0]] to %[[CST2]] step %[[CST1]]
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[CST0]]] : memref<2x16xi16>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[arg0]], %[[CST0]]] : memref<2x16xi16>
+  // CHECK: scf.for %[[arg1:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[arg1]]] : memref<2x16xi16>
+  // CHECK: %[[pre:.*]] = arith.subi %[[arg1]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[pre]]] : memref<2x16xi16>
+  // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i16
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]]] : memref<2x16xi16>
+  func.func @test_cumprod_2d_i16() {
+    %src = memref.alloc() : memref<2x16xi16>
+    %dst = memref.alloc() : memref<2x16xi16>
+    hivm.hir.vcumprod ins(%src : memref<2x16xi16>) outs(%dst : memref<2x16xi16>) cum_dims = [1] reverse = false
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func @test_cumprod_3d_f16
+  // CHECK: %[[CST16:.*]] = arith.constant 16 : index
+  // CHECK: %[[CST24:.*]] = arith.constant 24 : index
+  // CHECK: %[[CST1:.*]] = arith.constant 1 : index
+  // CHECK: %[[CST0:.*]] = arith.constant 0 : index
+  // CHECK: %[[CST2:.*]] = arith.constant 2 : index
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2x24x16xf16>
+  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x24x16xf16>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST0]] to %[[CST2]] step %[[CST1]]
+  // CHECK: scf.for %[[arg1:.*]] = %[[CST0]] to %[[CST24]] step %[[CST1]]
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[arg1]], %[[CST0]]] : memref<2x24x16xf16>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[CST0]]] : memref<2x24x16xf16>
+  // CHECK: scf.for %[[arg2:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<2x24x16xf16>
+  // CHECK: %[[pre:.*]] = arith.subi %[[arg2]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[pre]]] : memref<2x24x16xf16>
+  // CHECK: %[[dst:.*]] = arith.mulf %[[input]], %[[cum]] : f16
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<2x24x16xf16>
+  func.func @test_cumprod_3d_f16() {
+    %src = memref.alloc() : memref<2x24x16xf16>
+    %dst = memref.alloc() : memref<2x24x16xf16>
+    hivm.hir.vcumprod ins(%src : memref<2x24x16xf16>) outs(%dst : memref<2x24x16xf16>) cum_dims = [2] reverse = false
+    return
+  }
+}
+
+// -----
+
+module {
   // CHECK-LABEL: func @test_cumprod_1d_i64
   // CHECK: %[[CST1:.*]] = arith.constant 1 : index
   // CHECK: %[[CST16:.*]] = arith.constant 16 : index
@@ -1486,6 +1567,26 @@ module {
 }
 
 // -----
+module {
+  // CHECK-LABEL: func @test_cumprod_1d_dynshape_lastdim
+  // CHECK: %[[CST1:.*]] = arith.constant 1 : index
+  // CHECK: %[[CST0:.*]] = arith.constant 0 : index
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC:.*]][%[[CST0]]] : memref<?xi32>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0:.*]][%[[CST0]]] : memref<?xi32>
+  // CHECK: %[[dyndim:.*]] = memref.dim %[[ALLOC_0]], %[[CST0]] : memref<?xi32>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST1]] to %[[dyndim]] step %[[CST1]]
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]]] : memref<?xi32>
+  // CHECK: %[[arg1:.*]] = arith.subi %[[arg0]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg1]]] : memref<?xi32>
+  // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i32
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<?xi32>
+  func.func @test_cumprod_1d_dynshape_lastdim(%src : memref<?xi32>, %dst : memref<?xi32>) {
+    hivm.hir.vcumprod ins(%src : memref<?xi32>) outs(%dst : memref<?xi32>) cum_dims = [0] reverse = false
+    return
+  }
+}
+
+// -----
 
 module {
   // CHECK-LABEL: func @test_cumprod_2d_dynshape_highdim
@@ -1530,6 +1631,32 @@ module {
   // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg2]], %[[arg1]]] : memref<?x?x?xi64>
   func.func @test_cumprod_3d_dynshape_i64_highdim(%src : memref<?x?x?xi64>, %dst : memref<?x?x?xi64>) {
     hivm.hir.vcumprod ins(%src : memref<?x?x?xi64>) outs(%dst : memref<?x?x?xi64>) cum_dims = [1] reverse = false
+    return
+  }
+}
+
+// -----
+
+module {
+  // CHECK-LABEL: func @test_cumprod_3d_synshape_f32_lastdim
+  // CHECK: %[[CST2:.*]] = arith.constant 2 : index
+  // CHECK: %[[CST1:.*]] = arith.constant 1 : index
+  // CHECK: %[[CST0:.*]] = arith.constant 0 : index
+  // CHECK: %[[dyndim0:.*]] = memref.dim %[[ALLOC_0:.*]], %[[CST0]] : memref<?x?x?xf32>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST0]] to %[[dyndim0]] step %[[CST1]]
+  // CHECK: %[[dyndim1:.*]] = memref.dim %[[ALLOC_0]], %[[CST1]] : memref<?x?x?xf32>
+  // CHECK: scf.for %[[arg1:.*]] = %[[CST0]] to %[[dyndim1]] step %[[CST1]]
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC:.*]][%[[arg0]], %[[arg1]], %[[CST0]]] : memref<?x?x?xf32>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[CST0]]] : memref<?x?x?xf32>
+  // CHECK: %[[dyndim2:.*]] = memref.dim %[[ALLOC_0]], %[[CST2]] : memref<?x?x?xf32>
+  // CHECK: scf.for %[[arg2:.*]] = %[[CST1]] to %[[dyndim2]] step %[[CST1]]
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<?x?x?xf32>
+  // CHECK: %[[pre:.*]] = arith.subi %[[arg2]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[pre]]] : memref<?x?x?xf32>
+  // CHECK: %[[dst:.*]] = arith.mulf %[[input]], %[[cum]] : f32
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[arg2]]] : memref<?x?x?xf32>
+  func.func @test_cumprod_3d_synshape_f32_lastdim(%src : memref<?x?x?xf32>, %dst : memref<?x?x?xf32>) {
+    hivm.hir.vcumprod ins(%src : memref<?x?x?xf32>) outs(%dst : memref<?x?x?xf32>) cum_dims = [2] reverse = false
     return
   }
 }
@@ -1623,6 +1750,89 @@ module {
 //===----------------------------------------------------------------------===//
 // Test VCumprod Reverse Decompose MemRef
 //===----------------------------------------------------------------------===//
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumprod_1d_i16_reverse
+  // CHECK: %[[CST1:.*]] = arith.constant 1
+  // CHECK: %[[CST16:.*]] = arith.constant 16
+  // CHECK: %[[CST15:.*]] = arith.constant 15
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi16>
+  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<16xi16>
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[CST15]]] : memref<16xi16>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[CST15]]] : memref<16xi16>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
+  // CHECK: %[[index:.*]] = arith.subi %[[CST15]], %[[arg0]] : index
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[index]]] : memref<16xi16>
+  // CHECK: %[[next:.*]] = arith.addi %[[index]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[next]]] : memref<16xi16>
+  // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i16
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[index]]] : memref<16xi16>
+  func.func @test_cumprod_1d_i16_reverse() {
+    %src = memref.alloc() : memref<16xi16>
+    %dst = memref.alloc() : memref<16xi16>
+    hivm.hir.vcumprod ins(%src : memref<16xi16>) outs(%dst : memref<16xi16>) cum_dims = [0] reverse = true
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumprod_2d_i16_reverse
+  // CHECK: %[[CST16:.*]] = arith.constant 16
+  // CHECK: %[[CST15:.*]] = arith.constant 15
+  // CHECK: %[[CST1:.*]] = arith.constant 1
+  // CHECK: %[[CST0:.*]] = arith.constant 0
+  // CHECK: %[[CST2:.*]] = arith.constant 2
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2x16xi16>
+  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x16xi16>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST0]] to %[[CST2]] step %[[CST1]]
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[CST15]]] : memref<2x16xi16>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[arg0]], %[[CST15]]] : memref<2x16xi16>
+  // CHECK: scf.for %[[arg1:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
+  // CHECK: %[[index:.*]] = arith.subi %[[CST15]], %[[arg1]] : index
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[index]]] : memref<2x16xi16>
+  // CHECK: %[[next:.*]] = arith.addi %[[index]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[next]]] : memref<2x16xi16>
+  // CHECK: %[[dst:.*]] = arith.muli %[[input]], %[[cum]] : i16
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[index]]] : memref<2x16xi16>
+  func.func @test_cumprod_2d_i16_reverse() {
+    %src = memref.alloc() : memref<2x16xi16>
+    %dst = memref.alloc() : memref<2x16xi16>
+    hivm.hir.vcumprod ins(%src : memref<2x16xi16>) outs(%dst : memref<2x16xi16>) cum_dims = [1] reverse = true
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func @test_cumprod_3d_f16_reverse
+  // CHECK: %[[CST16:.*]] = arith.constant 16
+  // CHECK: %[[CST15:.*]] = arith.constant 15
+  // CHECK: %[[CST24:.*]] = arith.constant 24
+  // CHECK: %[[CST1:.*]] = arith.constant 1
+  // CHECK: %[[CST0:.*]] = arith.constant 0
+  // CHECK: %[[CST2:.*]] = arith.constant 2
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<2x24x16xf16>
+  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x24x16xf16>
+  // CHECK: scf.for %[[arg0:.*]] = %[[CST0]] to %[[CST2]] step %[[CST1]]
+  // CHECK: scf.for %[[arg1:.*]] = %[[CST0]] to %[[CST24]] step %[[CST1]]
+  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[arg1]], %[[CST15]]] : memref<2x24x16xf16>
+  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[CST15]]] : memref<2x24x16xf16>
+  // CHECK: scf.for %[[arg2:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
+  // CHECK: %[[index:.*]] = arith.subi %[[CST15]], %[[arg2]] : index
+  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]], %[[arg1]], %[[index]]] : memref<2x24x16xf16>
+  // CHECK: %[[next:.*]] = arith.addi %[[index]], %[[CST1]] : index
+  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[next]]] : memref<2x24x16xf16>
+  // CHECK: %[[dst:.*]] = arith.mulf %[[input]], %[[cum]] : f16
+  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]], %[[arg1]], %[[index]]] : memref<2x24x16xf16>
+  func.func @test_cumprod_3d_f16_reverse() {
+    %src = memref.alloc() : memref<2x24x16xf16>
+    %dst = memref.alloc() : memref<2x24x16xf16>
+    hivm.hir.vcumprod ins(%src : memref<2x24x16xf16>) outs(%dst : memref<2x24x16xf16>) cum_dims = [2] reverse = true
+    return
+  }
+}
 
 // -----
 module {
@@ -1729,26 +1939,3 @@ module {
     return
   }
 }
-
-// -----
-module {
-  // CHECK-LABEL: func @test_cumprod_2d_i64_dim1_lowered_to_scalar
-  // CHECK: scf.for
-  // CHECK: scf.for
-  // CHECK: arith.muli {{.*}} : i64
-  func.func @test_cumprod_2d_i64_dim1_lowered_to_scalar(%src: memref<2x16xi64>, %dst: memref<2x16xi64>) attributes {hacc.entry} {
-    hivm.hir.vcumprod ins(%src : memref<2x16xi64>) outs(%dst : memref<2x16xi64>) cum_dims = [1] reverse = false
-    return
-  }
-}
-
-// -----
-module {
-  // CHECK-LABEL: func @test_cumprod_i32_not_lowered_to_scalar
-  // CHECK-NOT: scf.for
-  func.func @test_cumprod_i32_not_lowered_to_scalar(%src: memref<2x16xi32>, %dst: memref<2x16xi32>) attributes {hacc.entry} {
-    hivm.hir.vcumprod ins(%src : memref<2x16xi32>) outs(%dst : memref<2x16xi32>) cum_dims = [1] reverse = false
-    return
-  }
-}
-
