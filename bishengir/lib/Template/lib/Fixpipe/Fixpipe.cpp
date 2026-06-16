@@ -539,8 +539,11 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
   uint16_t m_tile_ceil = l0c->strides[0] / l0c->strides[2];
-  uint16_t n_size = ubuf->sizes[0];
-  uint16_t m_size = ubuf->sizes[1];
+  uint16_t n_size = (DualDst == DualDstMode::COLUMN_SPLIT)
+                        ? ubuf->sizes[0] * 2
+                        : ubuf->sizes[0];
+  uint16_t m_size = (DualDst == DualDstMode::ROW_SPLIT) ? ubuf->sizes[1] * 2
+                                                         : ubuf->sizes[1];
   uint32_t dst_D = ubuf->strides[0];
   
   set_nd_para(1,1,1);

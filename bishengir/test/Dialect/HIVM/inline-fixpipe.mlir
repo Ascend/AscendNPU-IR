@@ -1433,3 +1433,17 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @inline_nz2dn_fixpipe_vtranspose_return
+// CHECK-NOT: nz2nd
+// CHECK: %[[FixRes:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<64x128xf32>)
+// CHECK: return %[[FixRes]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_nz2dn_fixpipe_vtranspose_return(%arg0: tensor<128x64xf32>, %arg1: tensor<128x64xf32>, %arg2: tensor<64x128xf32>) -> tensor<64x128xf32> {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg0 : tensor<128x64xf32>) outs(%arg1 : tensor<128x64xf32>) -> tensor<128x64xf32>
+    %1 = hivm.hir.vtranspose ins(%0: tensor<128x64xf32>) outs(%arg2 : tensor<64x128xf32>) permutation = [1, 0] -> tensor<64x128xf32>
+    return %1 : tensor<64x128xf32>
+  }
+}

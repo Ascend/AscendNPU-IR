@@ -20,6 +20,8 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Value.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -78,6 +80,15 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
     const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);
+
+/// Resolve fixpipe dual-dst split mode and halved UB alloc shape from dma mode
+/// and AIV tiling dim. Sets invalidTilingDim when tilingDim cannot map to
+/// row/column split (warning emitted on op).
+LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
+                                      Value allocVal,
+                                      FixpipeDualDstMode &splitMode,
+                                      SmallVectorImpl<int64_t> &splitShape,
+                                      bool &invalidTilingDim);
 
 } // namespace hivm
 } // namespace mlir
