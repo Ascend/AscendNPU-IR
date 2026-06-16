@@ -512,41 +512,50 @@ LogicalResult CustomMacroOp::allocExtraBuffersIfPossible() {
 }
 
 //===----------------------------------------------------------------------===//
-// Cumsum
+// Cumsum/Cumprod
 //===----------------------------------------------------------------------===//
 
-// For cumsum with cumDim != 0, we need to transpose and that needs extra buffer.
-
-LogicalResult VCumsumOp::allocExtraBuffersIfPossible() {
-  if (this->getTempBuffer()) {
-    this->emitWarning("already has extra temp buffer");
+// For cum ops with cumDim != 0, we need to transpose and that needs extra
+// buffer.
+template <typename CumOpWithTemp>
+static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
+  if (op.getTempBuffer()) {
+    op.emitWarning("already has extra temp buffer");
     return success();
   }
-  llvm::ArrayRef<int64_t> cumsumDims = this->getCumDims();
-  int64_t cumsumDim = cumsumDims[0];
-  MemRefType srcVecType = cast<MemRefType>(this->getSrc().getType());
-  bool isCumAtMiddle = (cumsumDim == 1 ) && (srcVecType.getRank() == 3);
-  bool isCumAtTail = (cumsumDim == 1) && (srcVecType.getRank() == 2);
+  llvm::ArrayRef<int64_t> cumDims = op.getCumDims();
+  int64_t cumDim = cumDims[0];
+  MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
+  bool isCumAtMiddle = (cumDim == 1) && (srcVecType.getRank() == 3);
+  bool isCumAtTail = (cumDim == 1) && (srcVecType.getRank() == 2);
 
   if (isCumAtMiddle) {
-    auto srcType = getElementTypeOrSelf(this->getSrc());
+    auto srcType = getElementTypeOrSelf(op.getSrc());
     SmallVector<int64_t> extraBufSizes(srcVecType.getShape().begin(),
                                       srcVecType.getShape().end());
-    Value extraBuf =
-        allocExtraBuffer(this->getOperation(), extraBufSizes, srcType);
-    this->getTempBufferMutable().assign(extraBuf);
+    Value extraBuf = allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
+    op.getTempBufferMutable().assign(extraBuf);
+
     return success();
   } else if (isCumAtTail) {
-    auto srcType = getElementTypeOrSelf(this->getSrc());
+    auto srcType = getElementTypeOrSelf(op.getSrc());
     SmallVector<int64_t> extraBufSizes(srcVecType.getShape().rbegin(),
                                       srcVecType.getShape().rend());
     unsigned elemBitWidth = srcVecType.getElementTypeBitWidth();
     int64_t alignElements = 32 / (elemBitWidth / 8);
-    extraBufSizes[1] = (extraBufSizes[1] + alignElements - 1) / alignElements * alignElements;
-    Value extraBuf =
-        allocExtraBuffer(this->getOperation(), extraBufSizes, srcType);
-    this->getTempBufferMutable().assign(extraBuf);
+    extraBufSizes[1] =
+        (extraBufSizes[1] + alignElements - 1) / alignElements * alignElements;
+    Value extraBuf = allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
+    op.getTempBufferMutable().assign(extraBuf);
     return success();
   }
   return success();
+}
+
+LogicalResult VCumsumOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
+}
+
+LogicalResult VCumprodOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
 }
