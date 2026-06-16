@@ -1319,18 +1319,8 @@ std::string VGatherOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
 // VCumprodOp
 //===----------------------------------------------------------------------===//
 
-std::string VCumprodOp::getOpLibraryCallName(
-    [[maybe_unused]] std::optional<bool> isOpsAligned) {
-  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
-  Type elemType = srcVecType.getElementType();
-  int rank = srcVecType.getRank();
-  std::stringstream ss;
-  StringRef baseName = this->getOpName();
-  llvm::ArrayRef<int64_t> cumsumDims = this->getCumDims();
-  int64_t cumsumDim = cumsumDims[0];
-  ss << baseName.data() << "_" << rank << "d_"
-     << hivm::detail::getTypeName(this->getLoc(), elemType) << "_dim" << cumsumDim;
-  return ss.str();
+std::string VCumprodOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  return getCumOpLibraryCallName(*this);
 }
 
 LogicalResult VCumprodOp::verify() { return verifyCumOp(*this); }
@@ -1364,22 +1354,6 @@ void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 }
 
 void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                       TypeRange result, Value src, Value dst,
-                       ArrayRef<int64_t> cumDims, bool reverse) {
-  build(odsBuilder, odsState, result, src, dst,
-        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims),
-        reverse);
-}
-
-void VCumprodOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                       TypeRange result, Value src, Value dst,
-                       DenseI64ArrayAttr cumDims, bool reverse) {
-  build(odsBuilder, odsState, result, src, dst,
-        /*temp_buffer=*/nullptr, cumDims,
-        BoolAttr::get(odsBuilder.getContext(), reverse));
-}
-
-void VCumprodOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                        TypeRange result, Value src, Value dst,
                        ArrayRef<int64_t> cumDims, bool reverse) {
   build(odsBuilder, odsState, result, src, dst,

@@ -580,16 +580,15 @@ protected:
   }
 };
 
-template <typename CumOp>
-class CumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<CumOp> {
+class CumsumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<VCumsumOp> {
 public:
-  explicit CumOpToLibraryCallPattern(MLIRContext *context,
+  explicit CumsumOpToLibraryCallPattern(MLIRContext *context,
                                      PatternBenefit benefit = 1,
                                      ArrayRef<StringRef> generatedNames = {})
-      : MultiDimOpToLibraryCallPattern<CumOp>(context, benefit,
+      : MultiDimOpToLibraryCallPattern<VCumsumOp>(context, benefit,
                                               generatedNames) {}
   
-  LogicalResult matchAndRewrite(CumOp op,
+  LogicalResult matchAndRewrite(VCumsumOp op,
                                 PatternRewriter &rewriter) const final {
     assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
 
@@ -616,6 +615,71 @@ public:
     createLibCall(rewriter, op, mod, libCallName, operands, {});
     rewriter.eraseOp(op);
     return success();
+  }
+};
+
+template <typename CumOp>
+class CumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<CumOp> {
+public:
+  explicit CumOpToLibraryCallPattern(MLIRContext *context,
+                                     PatternBenefit benefit = 1,
+                                     ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<CumOp>(context, benefit,
+                                              generatedNames) {}
+
+  LogicalResult matchAndRewrite(CumOp op,
+                                PatternRewriter &rewriter) const final {
+    assert(op.hasPureBufferSemantics() &&
+           "Operating on tensor, please bufferize.");
+
+    auto src = op.getSrc();
+    auto dst = op.getDst();
+    ModuleOp mod = op->template getParentOfType<ModuleOp>();
+    MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
+    int rank = srcVecType.getRank();
+    llvm::ArrayRef<int64_t> cumsumDims = op.getCumDims();
+    assert(!cumsumDims.empty() && "cumDims shouldn't be empty.");
+    if (cumsumDims.size() > 1) {
+      return op.emitError("cum dimensions array is not decomposed yet");
+    }
+    int64_t cumsumDim = cumsumDims[0];
+    if (cumsumDim == rank - 1) {
+      return op.emitError("cum dimension with last dimension should be "
+                          "decomposed to scalar operation");
+    }
+
+    // For loop axes would be used to create forOp.
+    auto axes = getForLoopAxes(cumsumDim, rank);
+    SmallVector<Value> operands = reduceMemrefsToNestedForUsingAxes(
+        rewriter, op.getLoc(), {src, dst}, axes);
+
+    rewriter.setInsertionPointAfter(
+        operands[operands.size() - 1].getDefiningOp());
+
+    bool isReverse = op.getReverse();
+    Value isReverseValue = rewriter.create<mlir::arith::ConstantOp>(
+        op->getLoc(), rewriter.getBoolAttr(isReverse));
+    operands.push_back(isReverseValue);
+
+    auto libCallName = op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    createLibCall(rewriter, op, mod, libCallName, operands, {});
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  /// The for loop axes would be used to create forOp.
+  std::set<int> getForLoopAxes(int64_t cumsumDim, int maxRank) const {
+    std::set<int> res;
+    /// in ra condition, the rank of memref after convert to standard is 2, and
+    // the cumsum dim should be the first xis, and the 'a' dimension is the
+    // last axis
+    for (int idx = 0; idx < maxRank; ++idx) {
+      if (idx != cumsumDim && idx != maxRank - 1) {
+        res.insert(idx);
+      }
+    }
+    return res;
   }
 };
 
@@ -1884,7 +1948,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                VArangeOpToLibraryCallPattern,
                VCastOpToLibraryCallPattern,
                ReduceOpToLibraryCallPattern,
-               CumOpToLibraryCallPattern<hivm::VCumsumOp>,
+               CumsumOpToLibraryCallPattern,
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
