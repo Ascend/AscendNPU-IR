@@ -63,11 +63,6 @@ bool shouldCumOpLowerToScalarLoops(HIVMOP op) {
            elemType.isInteger(64);                                             \
   }
 
-#define ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(OP_NAME)               \
-  bool OP_NAME::shouldLowerToScalarLoops() {                                   \
-    return shouldCumOpLowerToScalarLoops(*this);                               \
-  }
-
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VInterleaveOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VDeinterleaveOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VMulOp)
@@ -80,11 +75,8 @@ ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShLOp)
 ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VShROp)
 #undef ENABLE_DEFAULT_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
 
-ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumprodOp)
-#undef ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL
-
 //===----------------------------------------------------------------------===//
-// VCmpOp
+// VCumsumOp
 //===----------------------------------------------------------------------===//
 
 bool VCumsumOp::shouldLowerToScalarLoops() {
@@ -102,6 +94,25 @@ bool VCumsumOp::shouldLowerToScalarLoops() {
     return true;
   }
 
+  return false;
+}
+
+//===----------------------------------------------------------------------===//
+// VCumprodOp
+//===----------------------------------------------------------------------===//
+
+bool VCumprodOp::shouldLowerToScalarLoops() {
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+  auto cumDims = getCumDims();
+  if (cumDims.size() > 1) {
+    return false;
+  }
+  auto elemType = getElementTypeOrSelf(getDst());
+  if (elemType.isInteger(64)) {
+    return true;
+  }
   return false;
 }
 
