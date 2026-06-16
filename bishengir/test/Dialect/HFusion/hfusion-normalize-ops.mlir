@@ -4216,6 +4216,7 @@ func.func @test_insert_slice_i8_stride_2(%arg0: tensor<32xi8>, %arg1: tensor<102
 // CHECK:         return %[[RES]] : tensor<16x32xi8>
 func.func @test_normalize_shift_left_i8(%arg0: tensor<16x32xi8>, %arg1: tensor<16x32xi8>, %dst : tensor<16x32xi8>) -> (tensor<16x32xi8>) {
   %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg0, %arg1 : tensor<16x32xi8>, tensor<16x32xi8>) outs(%dst : tensor<16x32xi8>) -> tensor<16x32xi8>
+  annotation.mark %ret {soft_simd_mode = true} : tensor<16x32xi8>
   return %ret : tensor<16x32xi8>
 }
 
@@ -4240,6 +4241,7 @@ func.func @test_normalize_shift_left_i8(%arg0: tensor<16x32xi8>, %arg1: tensor<1
 
 func.func @test_normalize_shift_left_i16(%arg0: tensor<16x32xi16>, %arg1: tensor<16x32xi16>, %dst : tensor<16x32xi16>) -> (tensor<16x32xi16>) {
   %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg0, %arg1 : tensor<16x32xi16>, tensor<16x32xi16>) outs(%dst : tensor<16x32xi16>) -> tensor<16x32xi16>
+  annotation.mark %ret {soft_simd_mode = true} : tensor<16x32xi16>
   return %ret : tensor<16x32xi16>
 }
 
@@ -4260,6 +4262,7 @@ func.func @test_normalize_shift_left_i16(%arg0: tensor<16x32xi16>, %arg1: tensor
 // CHECK:         return %[[RES]] : tensor<16x32xi32>
 func.func @test_normalize_shift_left_i32(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>, %dst : tensor<16x32xi32>) -> (tensor<16x32xi32>) {
   %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%arg0, %arg1 : tensor<16x32xi32>, tensor<16x32xi32>) outs(%dst : tensor<16x32xi32>) -> tensor<16x32xi32>
+  annotation.mark %ret {soft_simd_mode = true} : tensor<16x32xi32>
   return %ret : tensor<16x32xi32>
 }
 
@@ -4267,7 +4270,7 @@ func.func @test_normalize_shift_left_i32(%arg0: tensor<16x32xi32>, %arg1: tensor
 // CHECK-LABEL: func.func @test_normalize_shift_right_i8
 // CHECK-SAME:    (%[[VAL_0:.*]]: tensor<16x32xi8>, %[[VAL_1:.*]]: tensor<16x32xi8>, %[[VAL_2:.*]]: tensor<16x32xi8>) -> tensor<16x32xi8> {
 // CHECK-DAG:     %[[NEG1:.*]] = arith.constant -1 : i32
-// CHECK-DAG:     %[[BITS:.*]] = arith.constant 32 : i32
+// CHECK-DAG:     %[[BITS:.*]] = arith.constant 31 : i32
 // CHECK-DAG:     %[[BASE:.*]] = arith.constant 2 : i32
 // CHECK-DAG:     %[[ZERO:.*]] = arith.constant 0 : i32
 // CHECK:         %[[LHS:.*]] = hfusion.cast {{.*}} ins(%{{.*}} : tensor<16x32xf16>) {{.*}} -> tensor<16x32xi32>
@@ -4289,6 +4292,7 @@ func.func @test_normalize_shift_left_i32(%arg0: tensor<16x32xi32>, %arg1: tensor
 // CHECK:         return %[[RES]] : tensor<16x32xi8>
 func.func @test_normalize_shift_right_i8(%arg0: tensor<16x32xi8>, %arg1: tensor<16x32xi8>, %dst : tensor<16x32xi8>) -> (tensor<16x32xi8>) {
   %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%arg0, %arg1 : tensor<16x32xi8>, tensor<16x32xi8>) outs(%dst : tensor<16x32xi8>) -> tensor<16x32xi8>
+  annotation.mark %ret {soft_simd_mode = true} : tensor<16x32xi8>
   return %ret : tensor<16x32xi8>
 }
 
@@ -4296,7 +4300,7 @@ func.func @test_normalize_shift_right_i8(%arg0: tensor<16x32xi8>, %arg1: tensor<
 // CHECK-LABEL: func.func @test_normalize_shift_right_i16
 // CHECK-SAME:    (%[[VAL_0:.*]]: tensor<16x32xi16>, %[[VAL_1:.*]]: tensor<16x32xi16>, %[[VAL_2:.*]]: tensor<16x32xi16>) -> tensor<16x32xi16> {
 // CHECK-DAG:     %[[NEG1:.*]] = arith.constant -1 : i32
-// CHECK-DAG:     %[[BITS:.*]] = arith.constant 32 : i32
+// CHECK-DAG:     %[[BITS:.*]] = arith.constant 31 : i32
 // CHECK-DAG:     %[[BASE:.*]] = arith.constant 2 : i32
 // CHECK-DAG:     %[[ZERO:.*]] = arith.constant 0 : i32
 // CHECK:         %[[LHS:.*]] = hfusion.cast {{.*}} ins(%{{.*}} : tensor<16x32xf32>) {{.*}} -> tensor<16x32xi32>
@@ -4318,6 +4322,7 @@ func.func @test_normalize_shift_right_i8(%arg0: tensor<16x32xi8>, %arg1: tensor<
 // CHECK:         return %[[RES]] : tensor<16x32xi16>
 func.func @test_normalize_shift_right_i16(%arg0: tensor<16x32xi16>, %arg1: tensor<16x32xi16>, %dst : tensor<16x32xi16>) -> (tensor<16x32xi16>) {
   %ret = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>} ins(%arg0, %arg1 : tensor<16x32xi16>, tensor<16x32xi16>) outs(%dst : tensor<16x32xi16>) -> tensor<16x32xi16>
+  annotation.mark %ret {soft_simd_mode = true} : tensor<16x32xi16>
   return %ret : tensor<16x32xi16>
 }
 
