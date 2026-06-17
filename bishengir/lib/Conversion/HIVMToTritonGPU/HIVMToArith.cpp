@@ -646,19 +646,24 @@ static arith::CmpFPredicate selectFPredicate(hivm::VCmpOp op) {
 }
 
 static arith::CmpIPredicate selectIPredicate(hivm::VCmpOp op) {
+    bool isSigned = op.getIsSigned();
     switch (op.getCompareMode()) {
         case hivm::CompareMode::EQ:
             return arith::CmpIPredicate::eq;
         case hivm::CompareMode::NE:
             return arith::CmpIPredicate::ne;
         case hivm::CompareMode::LT:
-            return arith::CmpIPredicate::slt;
+            return isSigned ? arith::CmpIPredicate::slt
+                            : arith::CmpIPredicate::ult;
         case hivm::CompareMode::GT:
-            return arith::CmpIPredicate::sgt;
+            return isSigned ? arith::CmpIPredicate::sgt
+                            : arith::CmpIPredicate::ugt;
         case hivm::CompareMode::LE:
-            return arith::CmpIPredicate::sle;
+            return isSigned ? arith::CmpIPredicate::sle
+                            : arith::CmpIPredicate::ule;
         case hivm::CompareMode::GE:
-            return arith::CmpIPredicate::sge;
+            return isSigned ? arith::CmpIPredicate::sge
+                            : arith::CmpIPredicate::uge;
     }
 }
 
@@ -691,10 +696,34 @@ static arith::CmpIPredicate selectPredicate(hivm::VCmpOp op) {
     }
 }
 
+static Type getSignlessIntegerLikeType(Type type) {
+    auto elemType = getElementTypeOrSelf(type);
+    auto intType = dyn_cast<IntegerType>(elemType);
+    if (!intType || (!intType.isSigned() && !intType.isUnsigned())) {
+        return type;
+    }
+
+    Type signlessElemType =
+        IntegerType::get(type.getContext(), intType.getWidth());
+    if (auto shapedType = dyn_cast<ShapedType>(type)) {
+        return shapedType.clone(signlessElemType);
+    }
+    return signlessElemType;
+}
+
+static Value bitcastIntegerLikeToSignless(PatternRewriter &rewriter,
+                                          Location loc, Value value) {
+    Type signlessType = getSignlessIntegerLikeType(value.getType());
+    if (signlessType == value.getType()) {
+        return value;
+    }
+    return rewriter.create<arith::BitcastOp>(loc, signlessType, value);
+}
+
 /*
 * vcmp -> arith.cmpf
-* hivm.hir.vcmp cannot distinguish between signed and unsigned integer comparisons.
-* Currently, all are uniformly converted to signed comparisons, which may lead to precision issues.
+* hivm.hir.vcmp uses is_signed to distinguish between signed and unsigned
+* integer comparisons.
 * vcmp -> arith.cmpi
 * Ordered and unordered comparisons cannot be distinguished in the current conversion of
 * floating-point comparison ops.
@@ -740,9 +769,11 @@ struct HIVMToArithCmpOp: public OpRewritePattern<hivm::VCmpOp> {
             rewriter.replaceOp(op, result);
         } else {
             arith::CmpIPredicate pred = selectPredicate(op);
-            auto result = rewriter.create<arith::CmpIOp>(op.getLoc(), resType, pred, lhs, rhs);
+            lhs = bitcastIntegerLikeToSignless(rewriter, op.getLoc(), lhs);
+            rhs = bitcastIntegerLikeToSignless(rewriter, op.getLoc(), rhs);
+            auto result = rewriter.create<arith::CmpIOp>(
+                op.getLoc(), resType, pred, lhs, rhs);
             rewriter.replaceOp(op, result);
-            // todo: support for unsigned integer comparisons in hivm.cmp.
         }
         return success();
     }

@@ -1095,6 +1095,7 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
   }];
   let arguments = (ins Variadic<AnyType>:$src,
                        Variadic<AnyShaped>:$dst,
+                       DefaultValuedAttr<BoolAttr, "true">:$is_signed,
                        DefaultValuedAttr<HIVM_CmpModeAttr, "CompareMode::EQ">:$compare_mode,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
@@ -1103,6 +1104,7 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst  `:` type($dst) `)`
     (`compare_mode` `=` $compare_mode^)?
+    (`is_signed` `=` $is_signed^)?
     (`->` type($result)^)?
   }];
   let extraClassDeclaration = elemwiseOpBaseDecls;

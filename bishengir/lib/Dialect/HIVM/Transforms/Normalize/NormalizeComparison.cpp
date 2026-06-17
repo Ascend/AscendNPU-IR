@@ -93,7 +93,7 @@ using NormalizeCmpToCastOp =
 /// Normalizes i8 compare to f16 compare, and i32 non-eq/ne compare to i64.
 struct HIVMI8I32CmpTraits : public HIVMComparisonNormalizeTraitsBase {
   static bool shouldNormalize(VCmpOp op) {
-    return hasPureTensorNoTransformAttrs(op);
+    return op.getIsSigned() && hasPureTensorNoTransformAttrs(op);
   }
 
   static bool isEqOrNeCompare(VCmpOp op) {

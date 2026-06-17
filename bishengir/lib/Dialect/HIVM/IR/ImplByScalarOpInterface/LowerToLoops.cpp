@@ -30,6 +30,21 @@ Value getScalarResult(RewriterBase &rewriter, Location loc,
   return arithOp.getResult();
 }
 
+static Type getSignlessIntegerLikeType(Type type) {
+  auto intType = dyn_cast<IntegerType>(type);
+  if (!intType || (!intType.isSigned() && !intType.isUnsigned()))
+    return type;
+  return IntegerType::get(type.getContext(), intType.getWidth());
+}
+
+static Value bitcastIntegerLikeToSignless(RewriterBase &rewriter, Location loc,
+                                          Value value) {
+  Type signlessType = getSignlessIntegerLikeType(value.getType());
+  if (signlessType == value.getType())
+    return value;
+  return rewriter.create<arith::BitcastOp>(loc, signlessType, value);
+}
+
 template <typename HIVMOP>
 llvm::SmallVector<Value>
 createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
@@ -75,18 +90,23 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VCmpOp, HIVMOP>::value) {
     arith::CmpIPredicate predType;
+    bool isSigned = op.getIsSigned();
     switch (op.getCompareMode()) {
     case hivm::CompareMode::LT:
-      predType = arith::CmpIPredicate::slt;
+      predType =
+          isSigned ? arith::CmpIPredicate::slt : arith::CmpIPredicate::ult;
       break;
     case hivm::CompareMode::GT:
-      predType = arith::CmpIPredicate::sgt;
+      predType =
+          isSigned ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::ugt;
       break;
     case hivm::CompareMode::LE:
-      predType = arith::CmpIPredicate::sle;
+      predType =
+          isSigned ? arith::CmpIPredicate::sle : arith::CmpIPredicate::ule;
       break;
     case hivm::CompareMode::GE:
-      predType = arith::CmpIPredicate::sge;
+      predType =
+          isSigned ? arith::CmpIPredicate::sge : arith::CmpIPredicate::uge;
       break;
     case hivm::CompareMode::EQ:
       predType = arith::CmpIPredicate::eq;
@@ -97,7 +117,12 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
     }
     resTensor = rewriter
                     .create<arith::CmpIOp>(op.getLoc(), predType,
-                                           scalarInputs[0], scalarInputs[1])
+                                           bitcastIntegerLikeToSignless(
+                                               rewriter, op.getLoc(),
+                                               scalarInputs[0]),
+                                           bitcastIntegerLikeToSignless(
+                                               rewriter, op.getLoc(),
+                                               scalarInputs[1]))
                     .getResult();
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VShLOp, HIVMOP>::value) {
