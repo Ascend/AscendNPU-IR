@@ -327,9 +327,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
   Type boolType = rewriter.getIntegerType(1);
   auto emptyOp = utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
                                                         boolType);
-  auto cmpOp = rewriter.create<VCmpOp>(loc, TypeRange(emptyOp),
-                                       ValueRange({input, dst}),
-                                       ValueRange(emptyOp), cmpMode);
+  auto cmpOp = rewriter.create<VCmpOp>(
+      loc, TypeRange(emptyOp), ValueRange({input, dst}), ValueRange(emptyOp),
+      /*is_signed=*/true, cmpMode);
   return cmpOp.getResult()[0];
 }
 
@@ -339,9 +339,9 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCmpOp(
   Type boolType = rewriter.getIntegerType(1);
   auto emptyOp =
       utils::createEmptyOpWithTargetElemType(rewriter, loc, lhs, boolType);
-  auto cmpOp =
-      rewriter.create<VCmpOp>(loc, TypeRange(emptyOp), ValueRange{lhs, rhs},
-                              ValueRange(emptyOp), sourceOp.getCompareMode());
+  auto cmpOp = rewriter.create<VCmpOp>(
+      loc, TypeRange(emptyOp), ValueRange{lhs, rhs}, ValueRange(emptyOp),
+      sourceOp.getIsSigned(), sourceOp.getCompareMode());
   return cmpOp.getResult()[0];
 }
 

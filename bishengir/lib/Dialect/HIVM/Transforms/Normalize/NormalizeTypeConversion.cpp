@@ -658,7 +658,7 @@ struct HIVMNormalizeToTargetTypeTraits<bool, hivm::VCmpOp>
                                           SmallVector<Value> &) {
     return rewriter.create<hivm::VCmpOp>(
         loc, TypeRange(op->getResultTypes()), ValueRange(newInputs),
-        ValueRange(op.getDpsInits()), op.getCompareModeAttr(),
+        ValueRange(op.getDpsInits()), op.getIsSigned(), op.getCompareMode(),
         op.getTransposeAttr(), op.getBroadcastAttr());
   }
 
