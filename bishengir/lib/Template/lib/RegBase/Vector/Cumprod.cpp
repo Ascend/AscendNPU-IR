@@ -1,5 +1,5 @@
 /**
- * Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@
 #if defined(__DAV_C310__)
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 cumprod_3d_u8(memref_t<__ubuf__ T, 3> *src,
               memref_t<__ubuf__ T, 3> *dst, bool reverse) {
   auto dst_offset = dst->offset;
@@ -94,7 +94,7 @@ cumprod_3d_u8(memref_t<__ubuf__ T, 3> *src,
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 cumprod_3d_byte(memref_t<__ubuf__ T, 3> *src,
                 memref_t<__ubuf__ T, 3> *dst, bool reverse)
 {
@@ -111,7 +111,7 @@ cumprod_3d_byte(memref_t<__ubuf__ T, 3> *src,
 }
 
 template <typename T>
- __aiv__ __attribute__((always_inline)) void
+ __aiv__ __attribute__((always_inline)) static void
  oneway_cumprod(memref_t<__ubuf__ T, 3> *src,
                 memref_t<__ubuf__ T, 3> *dst, bool reverse) {
    int32_t rFactor = src->sizes[0];
@@ -176,7 +176,7 @@ template <typename T>
  * =========================================================================
  */
 template <typename T, int dim>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 compute_cumprod_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
                    bool reverse, memref_t<__ubuf__ T, 3> *temp = nullptr) {
   if constexpr (dim == 0) {
@@ -197,12 +197,12 @@ compute_cumprod_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
 }
 
 /* =========================================================================
- * 3. copy_lane_gather  -  helper used by 1-D scan
+ * 3. cumprod_copy_lane_gather  -  helper used by 1-D scan
  * =========================================================================
  */
 template <typename T, typename IdxT, typename uIdxT>
-__aiv__ __attribute__((always_inline)) void
-copy_lane_gather(__ubuf__ T *s, __ubuf__ T *d, int n) {
+__aiv__ __attribute__((always_inline)) static void
+cumprod_copy_lane_gather(__ubuf__ T *s, __ubuf__ T *d, int n) {
   uint32_t nn = static_cast<uint32_t>(n);
   __VEC_SCOPE__ {
     VectorReg<T>    a;
@@ -216,13 +216,13 @@ copy_lane_gather(__ubuf__ T *s, __ubuf__ T *d, int n) {
 }
 
 /* =========================================================================
- * 4. unified_scan_fwd_nocopy  -  forward Hillis-Steele product scan
+ * 4. comprod_unified_scan_fwd_nocopy  -  forward Hillis-Steele product scan
  *    All vadd -> vmul vs. the cumprod version.
  * =========================================================================
  */
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
-unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
+__aiv__ __attribute__((always_inline)) static void
+comprod_unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
                         int BpE) {
   using IdxT  = std::conditional_t<sizeof(T) == 2, int16_t,  int32_t>;
   using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
@@ -289,18 +289,18 @@ unified_scan_fwd_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
     }
 
     if (d == 1) {
-      copy_lane_gather<T, IdxT, uIdxT>(srcBase, dstBase, d);
+      cumprod_copy_lane_gather<T, IdxT, uIdxT>(srcBase, dstBase, d);
     }
   }
 }
 
 /* =========================================================================
- * 5. unified_scan_rev_nocopy  -  reverse (suffix) product scan
+ * 5. comprod_unified_scan_rev_nocopy  -  reverse (suffix) product scan
  * =========================================================================
  */
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
-unified_scan_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
+__aiv__ __attribute__((always_inline)) static void
+comprod_unified_scan_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
                         int BpE) {
   using IdxT  = std::conditional_t<sizeof(T) == 2, int16_t,  int32_t>;
   using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
@@ -365,23 +365,23 @@ unified_scan_rev_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
     }
 
     if (d == 1) {
-      copy_lane_gather<T, IdxT, uIdxT>(srcBase + (N - d), dstBase + (N - d), d);
+      cumprod_copy_lane_gather<T, IdxT, uIdxT>(srcBase + (N - d), dstBase + (N - d), d);
     }
   }
 }
 
 /* =========================================================================
- * 6. unified_scan_gather_nocopy  -  dispatcher
+ * 6. comprod_unified_scan_gather_nocopy  -  dispatcher
  * =========================================================================
  */
 template <typename T>
-__aiv__ __attribute__((always_inline)) void
-unified_scan_gather_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
+__aiv__ __attribute__((always_inline)) static void
+comprod_unified_scan_gather_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
                            int BpE, bool reverse) {
   if (reverse)
-    unified_scan_rev_nocopy<T>(srcBase, dstBase, N, BpE);
+    comprod_unified_scan_rev_nocopy<T>(srcBase, dstBase, N, BpE);
   else
-    unified_scan_fwd_nocopy<T>(srcBase, dstBase, N, BpE);
+    comprod_unified_scan_fwd_nocopy<T>(srcBase, dstBase, N, BpE);
 }
 
 /* =========================================================================
@@ -389,7 +389,7 @@ unified_scan_gather_nocopy(__ubuf__ T *srcBase, __ubuf__ T *dstBase, int N,
  * =========================================================================
  */
 template <typename T>
-__aiv__ __attribute__((always_inline)) T
+__aiv__ __attribute__((always_inline)) static T
 scalar_incl_prefix_prod_4way(__ubuf__ T *src, __ubuf__ T *dst, int32_t N,
                              T seed) {
   T acc     = seed;
@@ -411,7 +411,7 @@ scalar_incl_prefix_prod_4way(__ubuf__ T *src, __ubuf__ T *dst, int32_t N,
 }
 
 template <typename T>
-__aiv__ __attribute__((always_inline)) T
+__aiv__ __attribute__((always_inline)) static T
 scalar_incl_suffix_prod_4way(__ubuf__ T *src, __ubuf__ T *dst, int32_t N,
                              T seed) {
   T acc     = seed;
@@ -436,7 +436,7 @@ scalar_incl_suffix_prod_4way(__ubuf__ T *src, __ubuf__ T *dst, int32_t N,
  * =========================================================================
  */
 template <typename PromoteDataType>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 vector_cumprod_1d_twoway(memref_t<__ubuf__ PromoteDataType, 1> *src,
                          memref_t<__ubuf__ PromoteDataType, 1> *dst,
                          bool reverse) {
@@ -459,7 +459,7 @@ vector_cumprod_1d_twoway(memref_t<__ubuf__ PromoteDataType, 1> *src,
   }
 
   if constexpr (sizeof(PromoteDataType) >= 2) {
-    unified_scan_gather_nocopy<PromoteDataType>(
+    comprod_unified_scan_gather_nocopy<PromoteDataType>(
         src->aligned + src->offset, dst->aligned + dst->offset,
         static_cast<int>(N), BpE, reverse);
     INTRINSIC(pipe_barrier, PIPE_ALL);
@@ -471,7 +471,7 @@ vector_cumprod_1d_twoway(memref_t<__ubuf__ PromoteDataType, 1> *src,
  * =========================================================================
  */
 template <typename T, int cum_dim>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 vector_cumprod_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
                   memref_t<__ubuf__ T, 1> *temp, bool reverse) {
   static_assert(
@@ -486,7 +486,7 @@ vector_cumprod_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
 }
 
 template <typename T, int cum_dim>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 vector_cumprod_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
                   memref_t<__ubuf__ T, 2> *temp, bool reverse) {
   static_assert(
@@ -530,7 +530,7 @@ vector_cumprod_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
 }
 
 template <typename T, int cum_dim>
-__aiv__ __attribute__((always_inline)) void
+__aiv__ __attribute__((always_inline)) static void
 vector_cumprod_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst,
                   memref_t<__ubuf__ T, 3> *temp, bool reverse) {
   static_assert(

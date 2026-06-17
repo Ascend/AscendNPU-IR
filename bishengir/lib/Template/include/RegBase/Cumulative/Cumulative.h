@@ -28,11 +28,6 @@ __aiv__ __attribute__((always_inline)) void
 vector_cumsum_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
                  memref_t<__ubuf__ T, 1> *temp, bool reverse);
 
-template <typename T, int cum_dim>
-__aiv__ __attribute__((always_inline)) void
-vector_cumprod_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
-                  memref_t<__ubuf__ T, 1> *temp, bool reverse);
-
 extern "C" {
 #define DECLARE_CUMPROD(DIM, dtype, cum_dim)                                   \
   __aiv__ __attribute__((always_inline)) void                                  \
