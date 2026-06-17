@@ -755,8 +755,47 @@ bool Solver::checkSyncOpsConflicts(ConflictPair *conflictPair1,
       conflictPair1->endIndex >= conflictPair2->endIndex) {
     return true;
   }
+
+  auto setOcc1 = conflictPair1->setOcc;
+  auto waitOcc1 = conflictPair1->waitOcc;
+  auto setOcc2 = conflictPair2->setOcc;
+  auto waitOcc2 = conflictPair2->waitOcc;
+
+  bool checkSamePipeSetSet = false;
+  if (conflictPair1->setCorePipeInfo == conflictPair2->setCorePipeInfo) {
+    auto parentLoopOp1 = setOcc1->op->getParentOfType<Loop>();
+    auto parentLoopOp2 = setOcc2->op->getParentOfType<Loop>();
+    if (parentLoopOp1 && !parentLoopOp1->isProperAncestor(waitOcc1->op)) {
+      if (parentLoopOp1->isProperAncestor(setOcc2->op)) {
+        checkSamePipeSetSet = true;
+      }
+    }
+    if (parentLoopOp2 && !parentLoopOp2->isProperAncestor(waitOcc2->op)) {
+      if (parentLoopOp2->isProperAncestor(setOcc1->op)) {
+        checkSamePipeSetSet = true;
+      }
+    }
+  }
+
+  bool checkSamePipeWaitWait = false;
+  if (conflictPair1->waitCorePipeInfo == conflictPair2->waitCorePipeInfo) {
+    auto parentLoopOp1 = waitOcc1->op->getParentOfType<Loop>();
+    auto parentLoopOp2 = waitOcc2->op->getParentOfType<Loop>();
+    if (parentLoopOp1 && !parentLoopOp1->isProperAncestor(setOcc1->op)) {
+      if (parentLoopOp1->isProperAncestor(waitOcc2->op)) {
+        checkSamePipeWaitWait = true;
+      }
+    }
+    if (parentLoopOp2 && !parentLoopOp2->isProperAncestor(setOcc2->op)) {
+      if (parentLoopOp2->isProperAncestor(waitOcc1->op)) {
+        checkSamePipeWaitWait = true;
+      }
+    }
+  }
+
   bool result = false;
-  if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo) {
+  if (checkSamePipeSetSet ||
+      conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo) {
     auto corePipeSrc = conflictPair1->setCorePipeInfo;
     auto corePipeDst = conflictPair2->setCorePipeInfo;
     Occurrence *occ1 = conflictPair1->setOcc;
@@ -771,7 +810,8 @@ bool Solver::checkSyncOpsConflicts(ConflictPair *conflictPair1,
                                 endIndex, {conflictPair1}, {conflictPair2});
     conflictPair1->startIndex -= 1;
   }
-  if (conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
+  if (checkSamePipeWaitWait ||
+      conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
     auto corePipeSrc = conflictPair1->waitCorePipeInfo;
     auto corePipeDst = conflictPair2->waitCorePipeInfo;
     Occurrence *occ1 = conflictPair1->waitOcc;
@@ -1209,7 +1249,7 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
     }
   }
 
-  // - for the case of cv-preload:
+  // - for the case of cv-preloading:
   // scope(){
   //   op1
   // } {preload=x}
