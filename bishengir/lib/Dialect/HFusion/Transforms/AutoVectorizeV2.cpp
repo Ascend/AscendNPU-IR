@@ -844,8 +844,7 @@ static bool hasRankReducingIndexingMap(Operation *op) {
 static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
     Block *block, Operation *producer,
     llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
-    unsigned maxFusedOps, int64_t vectorLength,
-    bool enableMultipleConsumerFusion) {
+    int64_t vectorLength, VectorizeContext &context) {
   // here we do not fuse FillOp and put FillOp into a single VF, see issue:
   // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3687
   if (mlir::hfusion::isFillOp(producer))
@@ -861,7 +860,7 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
   if (isVsstbPatternTransposeOp(producer))
     return nullptr;
 
-  if (!enableMultipleConsumerFusion && hasManyUsers(producer) &&
+  if (!context.enableMultipleConsumerFusion && hasManyUsers(producer) &&
       !hasFusionOpportunity(producer, fusableOpInfoMap)) {
     return nullptr;
   }
@@ -878,13 +877,16 @@ static std::shared_ptr<FusedNode> findBestFusedNodeForProducer(
 
   auto bestFusedNode = fusableOpInfoMap[closestUser].fusedNode;
   assert(bestFusedNode);
-  if (bestFusedNode->fusedOps.size() > maxFusedOps)
+  if (bestFusedNode->fusedOps.size() > context.maxFusedOps)
+    return nullptr;
+  SmallVector<Operation *> fusedOps(bestFusedNode->fusedOps.begin(),
+                                    bestFusedNode->fusedOps.end());
+  if (!context.canFitStack(fusedOps, producer))
     return nullptr;
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   SmallVector<int64_t> estimatedTileSize;
-  if (becomesTileLocalInFusedNode(producerInfo, bestFusedNode,
-                                  fusableOpInfoMap, vectorLength,
-                                  estimatedTileSize) &&
+  if (becomesTileLocalInFusedNode(producerInfo, bestFusedNode, fusableOpInfoMap,
+                                  vectorLength, estimatedTileSize) &&
       reductionConsumerNeedsFullProducerDomain(producer, bestFusedNode,
                                                estimatedTileSize))
     return nullptr;
@@ -1205,6 +1207,8 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       if (leafNodeGroup.size() > context.maxFusedOps ||
           isMemrefLinalgOp(leafNodeGroup[0]))
         continue;
+      if (!context.canFitStack(leafNodeGroup, leafNode))
+        continue;
       // Don't fuse leaf with rank-reducing indexing_map into a vsstb group.
       if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
           hasRankReducingIndexingMap(leafNode))
@@ -1291,8 +1295,7 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
     VectorizeContext &context) {
   FusableOpInfo &producerInfo = fusableOpInfoMap[producer];
   std::shared_ptr<FusedNode> bestFusedNode = findBestFusedNodeForProducer(
-      block, producer, fusableOpInfoMap, context.maxFusedOps, vectorLength,
-      context.enableMultipleConsumerFusion);
+      block, producer, fusableOpInfoMap, vectorLength, context);
   if (bestFusedNode) {
     producersToBeFusedInto.push_back(producer);
     bestFusedNode->fusedOps.insert(producer);
@@ -1340,6 +1343,10 @@ void AutoVectorizeV2::planFuseProducerIntoFusedNode(
           })) {
         std::shared_ptr<FusedNode> fusedNode =
             fusableOpInfoMap[leafNodeGroup[0]].fusedNode;
+        SmallVector<Operation *> fusedOps(fusedNode->fusedOps.begin(),
+                                          fusedNode->fusedOps.end());
+        if (!context.canFitStack(fusedOps, producer))
+          continue;
         fusedNode->fusedOps.insert(producer);
         fusedNode->fusedLeafNodes.insert(producer);
         producerInfo.fusedNode = fusedNode;
@@ -1790,8 +1797,9 @@ void AutoVectorizeV2::runOnOperation() {
   }
 
   for (func::FuncOp func : fusableFuncList) {
-    VectorizeContext funcContext{func, maxFusedOps,
-                                 enableMultipleConsumerFusion};
+    VectorizeContext funcContext(func, maxFusedOps,
+                                 enableMultipleConsumerFusion,
+                                 enableVFStackLimit);
     if (emitTransformSequence) {
       // Emit payload IR with transform sequence.
       emitTransformSequenceIR(funcContext, builder);

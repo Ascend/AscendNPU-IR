@@ -26,12 +26,14 @@ struct VFFusionKindOption {
                      const bool enableOutlineArith,
                      const bool enableOutlineCube, int64_t ubBudgetBytes = 0,
                      int64_t ubAlignBytes = 0, const bool enableRA = false,
-                     const bool enableAR = false)
+                     const bool enableAR = false, int64_t maxVFParams = -1,
+                     const bool enableVFStackLimit = false)
       : enableOutlineCF(enableOutlineCF),
         enableOutlineMemref(enableOutlineMemref),
         enableOutlineArith(enableOutlineArith),
         enableOutlineCube(enableOutlineCube), ubBudgetBytes(ubBudgetBytes),
-        ubAlignBytes(ubAlignBytes), enableRA(enableRA), enableAR(enableAR) {};
+        ubAlignBytes(ubAlignBytes), enableRA(enableRA), enableAR(enableAR),
+        maxVFParams(maxVFParams), enableVFStackLimit(enableVFStackLimit) {};
 
   VFFusionKindOption(const VFFusionKindOption &option) = default;
 
@@ -45,6 +47,8 @@ struct VFFusionKindOption {
   const int64_t ubAlignBytes;
   const bool enableRA;
   const bool enableAR;
+  const int64_t maxVFParams;
+  const bool enableVFStackLimit;
 };
 
 bool isReshapeOp(Operation *op);

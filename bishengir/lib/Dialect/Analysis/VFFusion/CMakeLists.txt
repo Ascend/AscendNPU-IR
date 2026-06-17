@@ -12,6 +12,7 @@ add_bishengir_dialect_library(BiShengIRVFFusion
   VFFusionPass.cpp
   VFFusionOutliner.cpp
   VFUnionFind.cpp
+  VFStackInfo.cpp
   Utils.cpp
 
   LINK_LIBS PUBLIC

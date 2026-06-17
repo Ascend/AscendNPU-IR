@@ -79,6 +79,8 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
       Option<"maxVFParams", "max-vf-params", "int64_t", /*default=*/"58",
               "Maximum 16-bit function-parameter register budget for an outlined fused function; "
               "32-bit parameters consume 2 units, and -1 disables the limit">,
+      Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", /*default=*/"false",
+              "Enable conservative vector function stack slot limit">,
       Option<"enableRA", "enable-ra", "bool", /*default=*/"true",
              "Skip row-reduction (dim=0) sum ops in VF fusion">,
       Option<"enableAR", "enable-ar", "bool", /*default=*/"false",

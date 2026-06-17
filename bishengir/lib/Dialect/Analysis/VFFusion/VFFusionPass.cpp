@@ -70,7 +70,8 @@ LogicalResult VFFusionPass::preProcess() {
 VFFusionKindOption VFFusionPass::getFusionOption() const {
   return VFFusionKindOption(enableOutlineCF, enableOutlineMemref,
                             enableOutlineArith, enableOutlineCube,
-                            ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR);
+                            ubBudgetBytes_, ubAlignBytes_, enableRA, enableAR,
+                            maxVFParams, enableVFStackLimit);
 }
 
 template <typename FusionKind>
@@ -93,7 +94,7 @@ LogicalResult VFFusionPass::tryToFuse(Operation *op, OpBuilder &builder) const {
     for (auto &block : region.getBlocks()) {
       std::unique_ptr<FusionKindBase> fuser =
           std::make_unique<FusionKind>(getFusionOption());
-      if (failed(fuser->fuse(block, builder, maxVFParams)))
+      if (failed(fuser->fuse(block, builder)))
         return failure();
     }
   }

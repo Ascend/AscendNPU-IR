@@ -9,11 +9,14 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOVECTORIZE_CONTEXT_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOVECTORIZE_CONTEXT_H
 
+#include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 
 #include <string>
 
@@ -22,14 +25,32 @@ namespace hfusion {
 
 struct VectorizeContext {
   func::FuncOp func;
+  // TODO: do we still need maxFusedOps after we have the VF stack limit check
   unsigned maxFusedOps;
   bool enableMultipleConsumerFusion;
+  analysis::VFStackInfoBuilder vfStackInfoBuilder;
   unsigned loopCount = 0;
+
+  VectorizeContext(func::FuncOp func, unsigned maxFusedOps,
+                   bool enableMultipleConsumerFusion,
+                   bool enableVFStackLimit)
+      : func(func), maxFusedOps(maxFusedOps),
+        enableMultipleConsumerFusion(enableMultipleConsumerFusion),
+        vfStackInfoBuilder(enableVFStackLimit) {}
 
   void resetLoopCount() { loopCount = 0; }
 
   std::string nextLoopLabel() {
     return "outlined-loop-target-" + std::to_string(++loopCount);
+  }
+
+  bool canFitStack(ArrayRef<Operation *> existingOps,
+                   Operation *candidate) const {
+    // Keep AutoVectorize planning aligned with the VF stack-slot budget.
+    SmallVector<Operation *> ops(existingOps.begin(), existingOps.end());
+    if (!llvm::is_contained(ops, candidate))
+      ops.push_back(candidate);
+    return vfStackInfoBuilder.fitsStack(ops);
   }
 
   func::FuncOp cloneFunc(OpBuilder &builder) {

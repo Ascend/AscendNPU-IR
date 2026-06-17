@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionAnalyzer.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionBlock.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionOutliner.h"
+#include "bishengir/Dialect/Analysis/VFFusion/VFStackInfo.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Support/LogicalResult.h"
@@ -48,18 +49,17 @@ public:
   /// @return success() if all fusion blocks were successfully processed,
   ///         failure() if analysis failed or any outlining/invocation creation
   ///         failed
-  LogicalResult fuse(Block &block, OpBuilder &builder,
-                     int64_t maxVFParams = -1) {
+  LogicalResult fuse(Block &block, OpBuilder &builder) {
     FailureOr<VFFusionBlockList> maybeFusionBlocks = analyzeBlockImpl(block);
     if (failed(maybeFusionBlocks))
       return failure();
     VFFusionBlockList &fusionBlocks = maybeFusionBlocks.value();
     for (auto &fusionBlock : fusionBlocks) {
       SmallVector<VFFusionBlock> candidateFusionBlocks;
-      if (maxVFParams < 0) {
+      if (option.maxVFParams < 0 && !option.enableVFStackLimit) {
         candidateFusionBlocks.push_back(fusionBlock);
       } else {
-        candidateFusionBlocks = splitByMaxFuncParams(fusionBlock, maxVFParams);
+        candidateFusionBlocks = splitByMaxFuncParams(fusionBlock);
       }
 
       for (VFFusionBlock &candidateBlock : candidateFusionBlocks) {
@@ -103,6 +103,7 @@ public:
 
 protected:
   static int64_t getTotalParamRegisterCost(const SetVector<Value> &inputs) {
+    // TODO: Can be refactored with VFStackInfoBuilder.
     // Rule in bisheng: max 58 16-bit registers are allowed for the func params
     // if the func param is a pointer to 32-bit dtype, the registore slot
     // accounts for 2 16-bit registers.
@@ -112,8 +113,8 @@ protected:
     return totalCost;
   }
 
-  static SmallVector<VFFusionBlock>
-  splitByMaxFuncParams(VFFusionBlock &fusionBlock, int64_t maxVFParams) {
+  SmallVector<VFFusionBlock> splitByMaxFuncParams(VFFusionBlock &fusionBlock) {
+    VFStackInfoBuilder stackInfoBuilder(option.enableVFStackLimit);
     SmallVector<VFFusionBlock> splitBlocks;
     VFFusionBlock currentBlock;
     bool hasCurrentBlock = false;
@@ -122,8 +123,10 @@ protected:
       VFFusionBlock tentativeBlock = currentBlock;
       tentativeBlock.fuseOp(op);
 
-      if (getTotalParamRegisterCost(tentativeBlock.recomputeInputs()) <=
-          maxVFParams) {
+      SmallVector<Operation *> tentativeOps = tentativeBlock.getOps();
+      if ((getTotalParamRegisterCost(tentativeBlock.recomputeInputs()) <=
+           option.maxVFParams) &&
+          stackInfoBuilder.fitsStack(tentativeOps)) {
         currentBlock = std::move(tentativeBlock);
         hasCurrentBlock = true;
         continue;
@@ -134,8 +137,10 @@ protected:
 
       VFFusionBlock singletonBlock;
       singletonBlock.fuseOp(op);
-      if (getTotalParamRegisterCost(singletonBlock.recomputeInputs()) <=
-          maxVFParams) {
+      SmallVector<Operation *> singletonOps = singletonBlock.getOps();
+      if ((getTotalParamRegisterCost(singletonBlock.recomputeInputs()) <=
+           option.maxVFParams) &&
+          stackInfoBuilder.fitsStack(singletonOps)) {
         currentBlock = std::move(singletonBlock);
         hasCurrentBlock = true;
       } else {
@@ -151,6 +156,7 @@ protected:
   }
 
   static int64_t getParamRegisterCost(Value value) {
+    // TODO: Can be refactored with VFStackInfoBuilder.
     Type type = value.getType();
     if (auto shapedType = dyn_cast<ShapedType>(type))
       type = shapedType.getElementType();
