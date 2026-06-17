@@ -76,6 +76,8 @@ ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VRecOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(CustomOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(CustomMacroOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumsumOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCummaxOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumminOp)
 #undef ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION
 
 // Vector Binary Op
@@ -114,6 +116,8 @@ ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSortOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomMacroOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumsumOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCummaxOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumminOp)
 #undef ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC
 
 //===----------------------------------------------------------------------===//
@@ -407,3 +411,17 @@ std::optional<int64_t> VCumsumOp::getExtraBufferSize() {
  	       utils::traceToAllocMaxSize(this->getSrc());
  	   return srcAllocTotalSize;
  	 }
+
+//===----------------------------------------------------------------------===//
+// VCummaxOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCummaxOp::getExtraBufferSize() {
+  return utils::traceToAllocMaxSize(this->getSrc());
+}
+
+//===----------------------------------------------------------------------===//
+// VCumminOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumminOp::getExtraBufferSize() {
+  return utils::traceToAllocMaxSize(this->getSrc());
+}

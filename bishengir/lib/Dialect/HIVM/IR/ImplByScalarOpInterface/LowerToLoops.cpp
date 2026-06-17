@@ -191,6 +191,30 @@ createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
                           rewriter, op.getLoc(), scalarInputs)
                     : getScalarResult<hivm::VCumprodOp, arith::MulFOp>(
                           rewriter, op.getLoc(), scalarInputs);
+  } else if constexpr (std::is_same<hivm::VCummaxOp, HIVMOP>::value) {
+    // Float NaN semantics follow propagate_nan: MaximumFOp propagates NaN
+    // (torch), MaxNumFOp ignores it (ops-math). Integers have no NaN.
+    if (elemType.isInteger()) {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else if (op.getPropagateNan()) {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaxNumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    }
+  } else if constexpr (std::is_same<hivm::VCumminOp, HIVMOP>::value) {
+    if (elemType.isInteger()) {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else if (op.getPropagateNan()) {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinNumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    }
   } else {
     llvm_unreachable("Unsupport op type.");
   }
@@ -391,6 +415,8 @@ ENABLE_DEFAULT_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VShROp)
 
 ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCumprodOp)
 ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCumsumOp)
+ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCummaxOp)
+ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCumminOp)
 #undef ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//

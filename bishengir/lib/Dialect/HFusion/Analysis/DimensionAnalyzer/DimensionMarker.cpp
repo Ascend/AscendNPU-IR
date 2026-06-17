@@ -88,6 +88,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       .Case<hfusion::CumsumOp>([&](auto cumsumOp) { processCumOp(cumsumOp); })
       .Case<hfusion::CumprodOp>(
           [&](auto cumprodOp) { processCumOp(cumprodOp); })
+      .Case<hfusion::CummaxOp>([&](auto cummaxOp) { processCumOp(cummaxOp); })
+      .Case<hfusion::CumminOp>([&](auto cumminOp) { processCumOp(cumminOp); })
       .Case<hfusion::FlipOp>([&](auto flipOp) { processFlipOp(flipOp); })
       .Case<hfusion::SortOp>([&](auto sortOp) { processSortOp(sortOp); })
       .Case<hfusion::EmbeddingGatherOp>([&](auto embeddingGatherOp) {

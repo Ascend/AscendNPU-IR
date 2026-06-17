@@ -580,15 +580,20 @@ protected:
   }
 };
 
-class CumsumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<VCumsumOp> {
+// Library-call lowering shared by cum ops that carry an optional temp buffer
+// and lower to `<op>_<rank>d_<dtype>_dim<cumDim>` template functions
+// (vcumsum/vcummax/vcummin).
+template <typename CumOpWithTemp>
+class CumOpWithTempToLibraryCallPattern
+    : public MultiDimOpToLibraryCallPattern<CumOpWithTemp> {
 public:
-  explicit CumsumOpToLibraryCallPattern(MLIRContext *context,
-                                     PatternBenefit benefit = 1,
-                                     ArrayRef<StringRef> generatedNames = {})
-      : MultiDimOpToLibraryCallPattern<VCumsumOp>(context, benefit,
-                                              generatedNames) {}
-  
-  LogicalResult matchAndRewrite(VCumsumOp op,
+  explicit CumOpWithTempToLibraryCallPattern(
+      MLIRContext *context, PatternBenefit benefit = 1,
+      ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<CumOpWithTemp>(context, benefit,
+                                                      generatedNames) {}
+
+  LogicalResult matchAndRewrite(CumOpWithTemp op,
                                 PatternRewriter &rewriter) const final {
     assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
 
@@ -610,6 +615,15 @@ public:
     Value isReverseValue = rewriter.create<mlir::arith::ConstantOp>(
         op->getLoc(), rewriter.getBoolAttr(isReverse));
     operands.push_back(isReverseValue);
+
+    // cummax/cummin take a trailing propagateNan flag selecting the float NaN
+    // semantics (max/minimum vs max/minnum). cumsum has no such argument.
+    if constexpr (std::is_same_v<CumOpWithTemp, hivm::VCummaxOp> ||
+                  std::is_same_v<CumOpWithTemp, hivm::VCumminOp>) {
+      Value propagateNanValue = rewriter.create<mlir::arith::ConstantOp>(
+          op->getLoc(), rewriter.getBoolAttr(op.getPropagateNan()));
+      operands.push_back(propagateNanValue);
+    }
 
     auto libCallName = op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     createLibCall(rewriter, op, mod, libCallName, operands, {});
@@ -1948,7 +1962,9 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                VArangeOpToLibraryCallPattern,
                VCastOpToLibraryCallPattern,
                ReduceOpToLibraryCallPattern,
-               CumsumOpToLibraryCallPattern,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumsumOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCummaxOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumminOp>,
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
@@ -2027,6 +2043,8 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::VReduceOp,
                       hivm::VCumsumOp,
                       hivm::VCumprodOp,
+                      hivm::VCummaxOp,
+                      hivm::VCumminOp,
                       hivm::VTransposeOp,
                       hivm::VShLOp,
                       hivm::VShROp,

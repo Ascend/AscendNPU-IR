@@ -466,6 +466,16 @@ void VCumprodOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
   results.add<RedundantVCumOp<VCumprodOp>>(context);
 }
 
+void VCummaxOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<RedundantVCumOp<VCummaxOp>>(context);
+}
+
+void VCumminOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<RedundantVCumOp<VCumminOp>>(context);
+}
+
 void VTransposeOp::getCanonicalizationPatterns(
     ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
   results.add<RedudantVTransposeOpOp>(context);

@@ -323,6 +323,62 @@ def CumprodOp : HFusion_Op<"cumprod",
 }
 
 //===----------------------------------------------------------------------===//
+// CummaxOp
+//===----------------------------------------------------------------------===//
+
+def CummaxOp : HFusion_Op<"cummax",
+    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+  let summary = [{
+    Calculate cumulative maximum on a certain dim of the input tensor
+  }];
+  let description = [{
+    The cummax operation calculates cumulative maximum on a certain dim of
+    the input tensor.
+    Currently only support one cumulation dim.
+  }];
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+                       ConfinedAttr<DenseI64ArrayAttr,[DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan);
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// CumminOp
+//===----------------------------------------------------------------------===//
+
+def CumminOp : HFusion_Op<"cummin",
+    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+  let summary = [{
+    Calculate cumulative minimum on a certain dim of the input tensor
+  }];
+  let description = [{
+    The cummin operation calculates cumulative minimum on a certain dim of
+    the input tensor.
+    Currently only support one cumulation dim.
+  }];
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+                       ConfinedAttr<DenseI64ArrayAttr,[DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan);
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // AtomicCasOp
 //===----------------------------------------------------------------------===//
 

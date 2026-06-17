@@ -87,22 +87,33 @@ ENABLE_CUM_OP_SHOULD_LOWER_TO_SCALAR_LOOPS_IMPL(VCumprodOp)
 // VCmpOp
 //===----------------------------------------------------------------------===//
 
-bool VCumsumOp::shouldLowerToScalarLoops() {
-  if (!hasPureBufferSemantics()) {
+// Shared by cum ops lowered to rank/dim-specialized library calls
+// (vcumsum/vcummax/vcummin): only i64 falls back to scalar loops.
+template <typename HIVMOP>
+static bool shouldCumOpWithTempLowerToScalarLoops(HIVMOP op) {
+  if (!op.hasPureBufferSemantics()) {
     return false;
   }
-  auto cumDims = getCumDims();
+  auto cumDims = op.getCumDims();
   if (cumDims.size() > 1) {
     // only support to lower to scalar ops for cum op with unique cum dim
     return false;
   }
 
-  auto elemType = getElementTypeOrSelf(getDst());
-  if (elemType.isInteger(64)) {
-    return true;
-  }
+  auto elemType = getElementTypeOrSelf(op.getDst());
+  return elemType.isInteger(64);
+}
 
-  return false;
+bool VCumsumOp::shouldLowerToScalarLoops() {
+  return shouldCumOpWithTempLowerToScalarLoops(*this);
+}
+
+bool VCummaxOp::shouldLowerToScalarLoops() {
+  return shouldCumOpWithTempLowerToScalarLoops(*this);
+}
+
+bool VCumminOp::shouldLowerToScalarLoops() {
+  return shouldCumOpWithTempLowerToScalarLoops(*this);
 }
 
 //===----------------------------------------------------------------------===//

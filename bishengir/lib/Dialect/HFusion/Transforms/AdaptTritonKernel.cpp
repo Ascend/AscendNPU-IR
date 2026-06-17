@@ -232,6 +232,8 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
 
   static constexpr StringRef cumsumFuncName = "triton_cumsum";
   static constexpr StringRef cumprodFuncName = "triton_cumprod";
+  static constexpr StringRef cummaxFuncName = "triton_cummax";
+  static constexpr StringRef cumminFuncName = "triton_cummin";
   LogicalResult matchAndRewrite(func::CallOp callOp,
                                 PatternRewriter &rewriter) const override {
     auto funcOp =
@@ -246,6 +248,10 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
       cumOpType = mlir::hfusion::CumOpType::CUMSUM;
     } else if (funcName.starts_with(cumprodFuncName)) {
       cumOpType = mlir::hfusion::CumOpType::CUMPROD;
+    } else if (funcName.starts_with(cummaxFuncName)) {
+      cumOpType = mlir::hfusion::CumOpType::CUMMAX;
+    } else if (funcName.starts_with(cumminFuncName)) {
+      cumOpType = mlir::hfusion::CumOpType::CUMMIN;
     } else {
       return rewriter.notifyMatchFailure(
           callOp,
@@ -263,6 +269,18 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
         reverse = boolAttr.getValue();
       }
     }
+    // cummax/cummin carry an optional trailing propagateNan flag (operand 3),
+    // selecting torch-like NaN propagation (Maximum/Minimum) vs ignore-NaN
+    // (MaxNum/MinNum). Default to propagation when the operand is absent.
+    bool propagateNan{true};
+    if (callOp.getNumOperands() > 3) {
+      if (auto constOp =
+              dyn_cast<arith::ConstantOp>(callOp.getOperand(3).getDefiningOp())) {
+        if (auto boolAttr = dyn_cast<BoolAttr>(constOp.getValue())) {
+          propagateNan = boolAttr.getValue();
+        }
+      }
+    }
     auto cumDim = mlir::utils::getArithConstantOpValue<int64_t>(dimVals);
     if (failed(cumDim)) {
       return callOp->emitError("Failed to extract the value of arith.constant "
@@ -277,6 +295,16 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
     } else if (cumOpType == mlir::hfusion::CumOpType::CUMPROD) {
       rewriter.replaceOp(callOp, rewriter.create<hfusion::CumprodOp>(
                                      loc, srcTy, src, cumDims, reverse));
+    } else if (cumOpType == mlir::hfusion::CumOpType::CUMMAX) {
+      auto cumOp =
+          rewriter.create<hfusion::CummaxOp>(loc, srcTy, src, cumDims, reverse);
+      cumOp.setPropagateNan(propagateNan);
+      rewriter.replaceOp(callOp, cumOp);
+    } else if (cumOpType == mlir::hfusion::CumOpType::CUMMIN) {
+      auto cumOp =
+          rewriter.create<hfusion::CumminOp>(loc, srcTy, src, cumDims, reverse);
+      cumOp.setPropagateNan(propagateNan);
+      rewriter.replaceOp(callOp, cumOp);
     } else {
       llvm_unreachable("unsupport cumulative function");
     }

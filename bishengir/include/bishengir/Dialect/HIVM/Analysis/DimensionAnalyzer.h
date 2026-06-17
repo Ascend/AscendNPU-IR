@@ -112,7 +112,9 @@ protected:
   void processVPadOp(hivm::VPadOp op);
   template <typename T,
             typename = std::enable_if_t<std::is_same_v<T, hivm::VCumsumOp> ||
-                                        std::is_same_v<T, hivm::VCumprodOp>>>
+                                        std::is_same_v<T, hivm::VCumprodOp> ||
+                                        std::is_same_v<T, hivm::VCummaxOp> ||
+                                        std::is_same_v<T, hivm::VCumminOp>>>
   void processVCumOp(T op);
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);

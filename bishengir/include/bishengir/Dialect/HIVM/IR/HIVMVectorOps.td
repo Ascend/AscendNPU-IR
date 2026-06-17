@@ -1934,6 +1934,150 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
 }
 
 //===----------------------------------------------------------------------===//
+// HIVM Vector Cummax Op
+//===----------------------------------------------------------------------===//
+
+def VCummaxOp : HIVM_VectorOp<"vcummax",
+    [SameOperandsElementType,
+     StaticMaxRankTrait<2>,
+     OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
+     DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+       ["getIteratorTypesArray"]>,
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+       ["getLimitedAxes", "adjustTargetDimensions"]>,
+     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
+       ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+    ]> {
+  let summary = "Vector Cummax Op";
+  let description = [{
+    Calculate the cumulative maximum of each element along the specified axis
+    of `src`. Each element along the specified axis in the output of cummax
+    contains the maximum of all elements from the first element to the current
+    position in the original `src`.
+
+    Constraints:
+      1. The input vector and output vector must have the same rank
+         and the same element type.
+
+    Arguments:
+      * `src`: the tensor/memref from which to calculate the cumulative maximum
+      * `dst`: the tensor/memref to store elements
+      * `cum_dims`: specifies the dimension along which to calculate the
+                    cumulative maximum.
+
+    Examples:
+    ```mlir
+    hivm.hir.vcummax ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0]
+    %result = hivm.hir.vcummax ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] -> tensor<?xf32>
+    ```
+  }];
+  let arguments = (ins TensorOrMemref:$src,
+                       TensorOrMemref:$dst,
+                       Optional<AnyMemRef>:$temp_buffer,
+                       ConfinedAttr<DenseI64ArrayAttr,
+                       [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan
+  );
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "DenseI64ArrayAttr":$cum_dims,
+                   "bool":$reverse)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "ArrayRef<int64_t>":$cum_dims,
+                   "bool":$reverse)>
+  ];
+  let results = (outs Variadic<AnyRankedTensor>:$result);
+  let assemblyFormat = [{
+    attr-dict `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    (`->` type($result)^)?
+  }];
+  let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+  let extraClassDeclaration = vectorOpBaseDecls # [{
+    static StringRef getOpName() { return "cummax"; }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Vector Cummin Op
+//===----------------------------------------------------------------------===//
+
+def VCumminOp : HIVM_VectorOp<"vcummin",
+    [SameOperandsElementType,
+     StaticMaxRankTrait<2>,
+     OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
+     DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+       ["getIteratorTypesArray"]>,
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+       ["getLimitedAxes", "adjustTargetDimensions"]>,
+     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
+       ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+    ]> {
+  let summary = "Vector Cummin Op";
+  let description = [{
+    Calculate the cumulative minimum of each element along the specified axis
+    of `src`. Each element along the specified axis in the output of cummin
+    contains the minimum of all elements from the first element to the current
+    position in the original `src`.
+
+    Constraints:
+      1. The input vector and output vector must have the same rank
+         and the same element type.
+
+    Arguments:
+      * `src`: the tensor/memref from which to calculate the cumulative minimum
+      * `dst`: the tensor/memref to store elements
+      * `cum_dims`: specifies the dimension along which to calculate the
+                    cumulative minimum.
+
+    Examples:
+    ```mlir
+    hivm.hir.vcummin ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0]
+    %result = hivm.hir.vcummin ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] -> tensor<?xf32>
+    ```
+  }];
+  let arguments = (ins TensorOrMemref:$src,
+                       TensorOrMemref:$dst,
+                       Optional<AnyMemRef>:$temp_buffer,
+                       ConfinedAttr<DenseI64ArrayAttr,
+                       [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan
+  );
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "DenseI64ArrayAttr":$cum_dims,
+                   "bool":$reverse)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "ArrayRef<int64_t>":$cum_dims,
+                   "bool":$reverse)>
+  ];
+  let results = (outs Variadic<AnyRankedTensor>:$result);
+  let assemblyFormat = [{
+    attr-dict `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    (`->` type($result)^)?
+  }];
+  let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+  let extraClassDeclaration = vectorOpBaseDecls # [{
+    static StringRef getOpName() { return "cummin"; }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // HIVM Vector Sort Op
 //===----------------------------------------------------------------------===//
 
