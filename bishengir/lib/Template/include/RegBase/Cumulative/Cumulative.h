@@ -23,26 +23,40 @@
 #include "Vector/VecUtils.h"
 #if defined(__DAV_C310__)
 
-template <typename T>
-__aiv__ __attribute__((always_inline)) void
-vector_cumprod_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
-                  bool reverse);
-
 template <typename T, int cum_dim>
 __aiv__ __attribute__((always_inline)) void
 vector_cumsum_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
                  memref_t<__ubuf__ T, 1> *temp, bool reverse);
 
-extern "C" {
-#define DECLARE_CUMPROD(dtype)                                                 \
-  __aiv__ __attribute__((always_inline)) void _mlir_ciface_cumprod_ra_##dtype( \
-      memref_t<__ubuf__ dtype, 2> *src, memref_t<__ubuf__ dtype, 2> *dst,      \
-      bool reverse = false)
+template <typename T, int cum_dim>
+__aiv__ __attribute__((always_inline)) void
+vector_cumprod_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst,
+                  memref_t<__ubuf__ T, 1> *temp, bool reverse);
 
-#define REGISTER_CUMPROD(dtype)                                                \
-  __aiv__ __attribute__((always_inline)) void _mlir_ciface_cumprod_ra_##dtype( \
-      memref_t<__ubuf__ dtype, 2> *src, memref_t<__ubuf__ dtype, 2> *dst,      \
-      bool reverse)
+extern "C" {
+#define DECLARE_CUMPROD(DIM, dtype, cum_dim)                                   \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_cumprod_##DIM##d_##dtype##_dim##cum_dim(                    \
+          memref_t<__ubuf__ dtype, DIM> *src,                                  \
+          memref_t<__ubuf__ dtype, DIM> *dst,                                  \
+          memref_t<__ubuf__ dtype, DIM> *temp, bool reverse = false)
+
+#define DECLARE_CUMPROD_WITHOUT_DEFAULT_VALUE(DIM, dtype, cum_dim)             \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_cumprod_##DIM##d_##dtype##_dim##cum_dim(                    \
+          memref_t<__ubuf__ dtype, DIM> *src,                                  \
+          memref_t<__ubuf__ dtype, DIM> *dst,                                  \
+          memref_t<__ubuf__ dtype, DIM> *temp, bool reverse)
+
+#define REGISTER_CUMPROD(DIM, dtype, cum_dim)                                  \
+  DECLARE_CUMPROD_WITHOUT_DEFAULT_VALUE(DIM, dtype, cum_dim) {                 \
+    vector_cumprod_##DIM##d<dtype, cum_dim>(src, dst, nullptr, reverse);       \
+  }
+
+#define REGISTER_CUMPROD_WITH_TEMP(DIM, dtype, cum_dim)                        \
+  DECLARE_CUMPROD_WITHOUT_DEFAULT_VALUE(DIM, dtype, cum_dim) {                 \
+    vector_cumprod_##DIM##d<dtype, cum_dim>(src, dst, temp, reverse);          \
+  }
 }
 
 extern "C" {
@@ -100,18 +114,6 @@ template <typename SRC_T, typename DST_T = SRC_T> struct cumulative_args {
   int64_t src_size;
   bool reverse;
 };
-
-template <typename SRC_TYPE, typename DST_TYPE = SRC_TYPE>
-__aiv__ __attribute__((always_inline)) void
-cumprod_2d(cumulative_args<SRC_TYPE, DST_TYPE> args);
-
-template <>
-__aiv__ __attribute__((always_inline)) void
-cumprod_2d(cumulative_args<uint8_t, uint8_t> args);
-
-template <>
-__aiv__ __attribute__((always_inline)) void
-cumprod_2d(cumulative_args<int8_t, int8_t> args);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aiv__ __attribute__((always_inline)) void
@@ -276,18 +278,55 @@ struct sklansky_param_t {
 };
 
 extern "C" {
-//===-------------------------------------------------------------------===//
-// cumprod ra, 2 dim
-//===-------------------------------------------------------------------===//
-DECLARE_CUMPROD(int8_t);
-DECLARE_CUMPROD(uint8_t);
-DECLARE_CUMPROD(int16_t);
-DECLARE_CUMPROD(uint16_t);
-DECLARE_CUMPROD(int32_t);
-DECLARE_CUMPROD(uint32_t);
-DECLARE_CUMPROD(half);
-DECLARE_CUMPROD(float);
-DECLARE_CUMPROD(bfloat16_t);
+DECLARE_CUMPROD(1, int8_t, 0);
+DECLARE_CUMPROD(1, uint8_t, 0);
+DECLARE_CUMPROD(1, int16_t, 0);
+DECLARE_CUMPROD(1, uint16_t, 0);
+DECLARE_CUMPROD(1, int32_t, 0);
+DECLARE_CUMPROD(1, uint32_t, 0);
+DECLARE_CUMPROD(1, half, 0);
+DECLARE_CUMPROD(1, float, 0);
+DECLARE_CUMPROD(1, bfloat16_t, 0);
+
+DECLARE_CUMPROD(2, int8_t, 0);
+DECLARE_CUMPROD(2, uint8_t, 0);
+DECLARE_CUMPROD(2, int16_t, 0);
+DECLARE_CUMPROD(2, uint16_t, 0);
+DECLARE_CUMPROD(2, int32_t, 0);
+DECLARE_CUMPROD(2, uint32_t, 0);
+DECLARE_CUMPROD(2, half, 0);
+DECLARE_CUMPROD(2, float, 0);
+DECLARE_CUMPROD(2, bfloat16_t, 0);
+
+DECLARE_CUMPROD(2, int8_t, 1);
+DECLARE_CUMPROD(2, uint8_t, 1);
+DECLARE_CUMPROD(2, int16_t, 1);
+DECLARE_CUMPROD(2, uint16_t, 1);
+DECLARE_CUMPROD(2, int32_t, 1);
+DECLARE_CUMPROD(2, uint32_t, 1);
+DECLARE_CUMPROD(2, half, 1);
+DECLARE_CUMPROD(2, float, 1);
+DECLARE_CUMPROD(2, bfloat16_t, 1);
+
+DECLARE_CUMPROD(3, int8_t, 0);
+DECLARE_CUMPROD(3, uint8_t, 0);
+DECLARE_CUMPROD(3, int16_t, 0);
+DECLARE_CUMPROD(3, uint16_t, 0);
+DECLARE_CUMPROD(3, int32_t, 0);
+DECLARE_CUMPROD(3, uint32_t, 0);
+DECLARE_CUMPROD(3, half, 0);
+DECLARE_CUMPROD(3, float, 0);
+DECLARE_CUMPROD(3, bfloat16_t, 0);
+
+DECLARE_CUMPROD(3, int8_t, 1);
+DECLARE_CUMPROD(3, uint8_t, 1);
+DECLARE_CUMPROD(3, int16_t, 1);
+DECLARE_CUMPROD(3, uint16_t, 1);
+DECLARE_CUMPROD(3, int32_t, 1);
+DECLARE_CUMPROD(3, uint32_t, 1);
+DECLARE_CUMPROD(3, half, 1);
+DECLARE_CUMPROD(3, float, 1);
+DECLARE_CUMPROD(3, bfloat16_t, 1);
 
 DECLARE_CUMSUM(1, int8_t, 0);
 DECLARE_CUMSUM(1, uint8_t, 0);

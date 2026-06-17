@@ -533,6 +533,10 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
     auto srcType = getElementTypeOrSelf(op.getSrc());
     SmallVector<int64_t> extraBufSizes(srcVecType.getShape().begin(),
                                        srcVecType.getShape().end());
+    unsigned elemBitWidth = srcVecType.getElementTypeBitWidth();
+    int64_t alignElements = 32 / (elemBitWidth / 8);
+    extraBufSizes[2] =
+      (extraBufSizes[2] + alignElements - 1) / alignElements * alignElements;
     Value extraBuf = allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
     op.getTempBufferMutable().assign(extraBuf);
     return success();
@@ -560,5 +564,9 @@ LogicalResult VCummaxOp::allocExtraBuffersIfPossible() {
 }
 
 LogicalResult VCumminOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
+}
+
+LogicalResult VCumprodOp::allocExtraBuffersIfPossible() {
   return allocCumOpExtraBuffersIfPossible(*this);
 }
