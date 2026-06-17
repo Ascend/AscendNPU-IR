@@ -430,6 +430,140 @@ struct TritonIndirectLoadToHFusionIndirectLoadPattern
   }
 };
 
+/// triton stride_load op is converted to a triton_stride_load func call in
+/// triton adaptor, therefore this pattern matches func calls whose names start
+/// with "triton_stride_load".
+struct TritonStrideLoadToHFusionStrideLoadPattern
+    : public OpRewritePattern<func::CallOp> {
+  using OpRewritePattern<func::CallOp>::OpRewritePattern;
+
+  static constexpr StringRef strideLoadFuncName = "triton_stride_load";
+
+  LogicalResult matchAndRewrite(func::CallOp callOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcOp =
+        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(callOp, "Called funcOp is null");
+    }
+    auto funcName = funcOp.getSymName();
+    if (!funcName.starts_with(strideLoadFuncName)) {
+      return rewriter.notifyMatchFailure(
+          callOp, funcName + " does not starts with the prefix " +
+                      strideLoadFuncName);
+    }
+
+    if (callOp.getNumResults() != 1)
+      return failure();
+
+    auto loc = callOp.getLoc();
+    auto resultType = cast<RankedTensorType>(callOp.getResult(0).getType());
+    int64_t rank = resultType.getRank();
+    if (callOp.getNumOperands() != static_cast<unsigned>(3 + 2 * rank))
+      return failure();
+
+    Value src = callOp.getOperand(0);
+    Value offset = callOp.getOperand(1);
+    Value other = callOp.getOperand(2);
+    ValueRange strides = callOp.getOperands().slice(3, rank);
+    ValueRange numels = callOp.getOperands().slice(3 + rank, rank);
+
+    constexpr StringRef directlyUsedGMArgListName = "DirectlyUsedGMArgIdxList";
+    auto parFuncOp = callOp->getParentOfType<func::FuncOp>();
+    SmallVector<int64_t> argIndices;
+    if (auto existingAttr =
+            parFuncOp->getAttrOfType<ArrayAttr>(directlyUsedGMArgListName)) {
+      for (auto attr : existingAttr) {
+        if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+          argIndices.push_back(intAttr.getInt());
+        }
+      }
+    }
+    auto srcArgIdx = utils::getArgumentIndex(src);
+    argIndices.push_back(srcArgIdx);
+    SmallVector<Attribute> attrList;
+    for (auto idx : argIndices) {
+      attrList.push_back(IntegerAttr::get(rewriter.getI64Type(), idx));
+    }
+    parFuncOp->setAttr(directlyUsedGMArgListName,
+                       ArrayAttr::get(rewriter.getContext(), attrList));
+
+    auto init = rewriter.create<tensor::EmptyOp>(loc, resultType.getShape(),
+                                                 resultType.getElementType());
+    auto strideLoadOp = rewriter.create<hfusion::StrideLoadOp>(
+        loc, resultType, src, init, offset, other, strides, numels);
+    rewriter.replaceOp(callOp, strideLoadOp);
+    return success();
+  }
+};
+
+/// triton stride_store op is converted to a triton_stride_store func call in
+/// triton adaptor, therefore this pattern matches func calls whose names start
+/// with "triton_stride_store".
+struct TritonStrideStoreToHFusionStrideStorePattern
+    : public OpRewritePattern<func::CallOp> {
+  using OpRewritePattern<func::CallOp>::OpRewritePattern;
+
+  static constexpr StringRef strideStoreFuncName = "triton_stride_store";
+
+  LogicalResult matchAndRewrite(func::CallOp callOp,
+                                PatternRewriter &rewriter) const override {
+    auto funcOp =
+        mlir::utils::getCalledFunction<func::FuncOp, func::CallOp>(callOp);
+    if (!funcOp) {
+      return rewriter.notifyMatchFailure(callOp, "Called funcOp is null");
+    }
+    auto funcName = funcOp.getSymName();
+    if (!funcName.starts_with(strideStoreFuncName)) {
+      return rewriter.notifyMatchFailure(
+          callOp, funcName + " does not starts with the prefix " +
+                      strideStoreFuncName);
+    }
+
+    if (callOp.getNumResults() != 0)
+      return failure();
+    if (callOp.getNumOperands() < 5)
+      return failure();
+
+    auto loc = callOp.getLoc();
+    Value dst = callOp.getOperand(0);
+    Value src = callOp.getOperand(1);
+    auto srcType = cast<RankedTensorType>(src.getType());
+    int64_t rank = srcType.getRank();
+    if (callOp.getNumOperands() != static_cast<unsigned>(3 + 2 * rank))
+      return failure();
+
+    Value offset = callOp.getOperand(2);
+    ValueRange strides = callOp.getOperands().slice(3, rank);
+    ValueRange numels = callOp.getOperands().slice(3 + rank, rank);
+
+    constexpr StringRef directlyUsedGMArgListName = "DirectlyUsedGMArgIdxList";
+    auto parFuncOp = callOp->getParentOfType<func::FuncOp>();
+    SmallVector<int64_t> argIndices;
+    if (auto existingAttr =
+            parFuncOp->getAttrOfType<ArrayAttr>(directlyUsedGMArgListName)) {
+      for (auto attr : existingAttr) {
+        if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+          argIndices.push_back(intAttr.getInt());
+        }
+      }
+    }
+    auto dstArgIdx = utils::getArgumentIndex(dst);
+    argIndices.push_back(dstArgIdx);
+    SmallVector<Attribute> attrList;
+    for (auto idx : argIndices) {
+      attrList.push_back(IntegerAttr::get(rewriter.getI64Type(), idx));
+    }
+    parFuncOp->setAttr(directlyUsedGMArgListName,
+                       ArrayAttr::get(rewriter.getContext(), attrList));
+
+    rewriter.create<hfusion::StrideStoreOp>(loc, dst, src, offset, strides,
+                                            numels);
+    rewriter.eraseOp(callOp);
+    return success();
+  }
+};
+
 /// triton gather op is converted triton__gather_out_to_ub func call in triton
 /// adaptor, therefore this pattern match func call of which func name starts
 /// with "triton__gather_out_to_ub".
@@ -986,6 +1120,8 @@ void AdaptTritonKernelPass::runOnOperation() {
            TritonBindSubBlockAttrToHFusionPattern,
            TritonEmbeddingGatherToHFusionEmbeddingGatherPattern,
            TritonIndirectLoadToHFusionIndirectLoadPattern,
+           TritonStrideLoadToHFusionStrideLoadPattern,
+           TritonStrideStoreToHFusionStrideStorePattern,
            TritonIndirectStoreToHFusionIndirectStorePattern,
            TritonGatherTToHFusionGatherTPattern,
            TritonIndexPutToHFusionIndexPutPattern,

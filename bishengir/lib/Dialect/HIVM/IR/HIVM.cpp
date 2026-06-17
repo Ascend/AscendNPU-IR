@@ -960,6 +960,150 @@ void IndirectLoadOp::getEffects(
   }
 }
 
+LogicalResult StrideLoadOp::verify() {
+  auto srcMemrefType = dyn_cast<MemRefType>(getSrc().getType());
+  if (!srcMemrefType)
+    return emitOpError("src must be a memref type");
+
+  auto dstType = getDst().getType();
+  auto dstTensorType = dyn_cast<TensorType>(dstType);
+  auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+  if (!(dstTensorType || dstMemrefType))
+    return emitOpError("dst must be tensor or memref type");
+
+  auto dstRank = dstMemrefType ? dstMemrefType.getRank()
+                               : dstTensorType.getRank();
+  if (dstRank < 1 || dstRank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != dstRank ||
+      static_cast<int64_t>(getNumel().size()) != dstRank) {
+    return emitOpError(
+        "stride and numel operand counts must match dst rank");
+  }
+
+  auto getIndexType = [&](ValueRange values, StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+  
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  auto srcElementType = srcMemrefType.getElementType();
+  auto dstElementType = dstMemrefType ? dstMemrefType.getElementType()
+                                      : dstTensorType.getElementType();
+  if (dstElementType != srcElementType)
+    return emitOpError(
+        "dst of hivm::StrideLoadOp must have the same element type as src");
+  if (getOther().getType() != srcElementType)
+    return emitOpError("other must have the same element type as src");
+
+  if (getResult()) {
+    if (getResult().getType() != dstType)
+      return emitOpError("result must have the same type as dst");
+  }
+
+  return success();
+}
+
+std::string
+StrideLoadOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  auto dstType = cast<ShapedType>(getDst().getType());
+  int rank = dstType.getRank();
+  std::string libCallDim = std::to_string(rank) + "d";
+
+  Type srcType = getSrc().getType();
+  std::string srcTypeStr =
+      hivm::detail::getTypeName(getLoc(), getElementTypeOrSelf(srcType));
+  std::string indexTypeStr =
+      hivm::detail::getTypeName(getLoc(), getOffset().getType());
+  return getOpName().str() + "_" + libCallDim + "_" + srcTypeStr + "_" +
+         indexTypeStr;
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideStoreOp::verify() {
+  auto dstMemrefType = dyn_cast<MemRefType>(getDst().getType());
+  if (!dstMemrefType)
+    return emitOpError("dst must be a memref type");
+
+  auto srcType = getSrc().getType();
+  auto srcTensorType = dyn_cast<TensorType>(srcType);
+  auto srcMemrefType = dyn_cast<MemRefType>(srcType);
+  if (!(srcTensorType || srcMemrefType))
+    return emitOpError("src must be tensor or memref type");
+
+  auto srcRank = srcMemrefType ? srcMemrefType.getRank()
+                               : srcTensorType.getRank();
+  if (srcRank < 1 || srcRank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != srcRank ||
+      static_cast<int64_t>(getNumel().size()) != srcRank) {
+    return emitOpError(
+        "stride and numel operand counts must match src rank");
+  }
+
+  auto getIndexType = [&](ValueRange values, StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  auto dstElementType = dstMemrefType.getElementType();
+  auto srcElementType = srcMemrefType ? srcMemrefType.getElementType()
+                                      : srcTensorType.getElementType();
+  if (srcElementType != dstElementType)
+    return emitOpError(
+        "src of hivm::StrideStoreOp must have the same element type as dst");
+
+  return success();
+}
+
+std::string
+StrideStoreOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  auto srcType = cast<ShapedType>(getSrc().getType());
+  int rank = srcType.getRank();
+  std::string libCallDim = std::to_string(rank) + "d";
+
+  std::string srcTypeStr =
+      hivm::detail::getTypeName(getLoc(), srcType.getElementType());
+  std::string indexTypeStr =
+      hivm::detail::getTypeName(getLoc(), getOffset().getType());
+  return getOpName().str() + "_" + libCallDim + "_" + srcTypeStr + "_" +
+         indexTypeStr;
+}
+
 //===----------------------------------------------------------------------===//
 // IndirectStoreOp
 //===----------------------------------------------------------------------===//

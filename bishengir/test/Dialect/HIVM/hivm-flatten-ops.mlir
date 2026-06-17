@@ -1112,3 +1112,29 @@ func.func @hivm_transpose_mid_5(%arg1: memref<16x1x15x17xf16>) -> memref<15x17x1
   hivm.hir.vtranspose ins(%arg1 : memref<16x1x15x17xf16>) outs(%3 : memref<15x17x16x1xf16>) permutation = [2, 3, 0, 1]
   return %3 : memref<15x17x16x1xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @stride_load_not_flattened
+// CHECK-NOT: memref.collapse_shape
+// CHECK: hivm.hir.stride_load
+// CHECK-SAME: ins(%{{[^ ]+}} : memref<?xf32>)
+// CHECK-SAME: outs(%{{[^ ]+}} : memref<8xf32>)
+// CHECK-SAME: offset(%{{[^ ]+}} : i32)
+// CHECK-SAME: other(%{{[^ ]+}} : f32)
+// CHECK-SAME: strides([%{{[^ ]+}} : i32])
+// CHECK-SAME: numels([%{{[^ ]+}} : i32])
+func.func @stride_load_not_flattened(%src: memref<?xf32>, %dst: memref<8xf32>) {
+  %offset = arith.constant 0 : i32
+  %other = arith.constant 0.000000e+00 : f32
+  %stride = arith.constant 3 : i32
+  %numel = arith.constant 8 : i32
+  hivm.hir.stride_load
+    ins(%src : memref<?xf32>)
+    outs(%dst : memref<8xf32>)
+    offset(%offset : i32)
+    other(%other : f32)
+    strides([%stride : i32])
+    numels([%numel : i32])
+  return
+}

@@ -1826,11 +1826,11 @@ public:
 };
 } // namespace mlir::hivm
 
-class EmbeddingGatherOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::EmbeddingGatherOp> {
+template <typename OpTy>
+class SIMTOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
 public:
-  using OpRewritePattern<hivm::EmbeddingGatherOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(EmbeddingGatherOp op,
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
                        op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
@@ -1839,77 +1839,11 @@ public:
   }
 };
 
-class IndirectLoadOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndirectLoadOp> {
+template <typename CustomOpTy>
+class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpTy> {
 public:
-  using OpRewritePattern<hivm::IndirectLoadOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(IndirectLoadOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-class IndirectStoreOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndirectStoreOp> {
-public:
-  using OpRewritePattern<hivm::IndirectStoreOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(IndirectStoreOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-
-    return success();
-  }
-};
-
-class ScatterTOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::ScatterTOp> {
-public:
-  using OpRewritePattern<hivm::ScatterTOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(ScatterTOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-
-    return success();
-  }
-};
-
-template <typename CustomOpT>
-class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
-public:
-  using OpRewritePattern<CustomOpT>::OpRewritePattern;
-  LogicalResult matchAndRewrite(CustomOpT op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-class GatherTOpToLibraryCallPattern : public OpRewritePattern<hivm::GatherTOp> {
-public:
-  using OpRewritePattern<hivm::GatherTOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(GatherTOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-class IndexPutOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndexPutOp> {
-public:
-  using OpRewritePattern<hivm::IndexPutOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(IndexPutOp op,
+  using OpRewritePattern<CustomOpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(CustomOpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
                        op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
@@ -1974,16 +1908,18 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
-               EmbeddingGatherOpToLibraryCallPattern,
-               IndirectLoadOpToLibraryCallPattern,
-               IndirectStoreOpToLibraryCallPattern,
-               GatherTOpToLibraryCallPattern,
+               SIMTOpToLibraryCallPattern<hivm::EmbeddingGatherOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndirectLoadOp>,
+               SIMTOpToLibraryCallPattern<hivm::StrideLoadOp>,
+               SIMTOpToLibraryCallPattern<hivm::StrideStoreOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndirectStoreOp>,
+               SIMTOpToLibraryCallPattern<hivm::GatherTOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndexPutOp>,
+               SIMTOpToLibraryCallPattern<hivm::ScatterTOp>,
                CustomOpToLibraryCallPattern<hivm::CustomOp>,
                CustomOpToLibraryCallPattern<hivm::CustomMacroOp>,
-               IndexPutOpToLibraryCallPattern,
                FlipOpToLibraryCallPattern,
-               SortOpToLibraryCallPattern,
-               ScatterTOpToLibraryCallPattern
+               SortOpToLibraryCallPattern
                >
                (patterns.getContext());
   // clang-format on
@@ -2060,6 +1996,8 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::SyncBlockUnlockOp,
                       hivm::FreeLockVarOp,
                       hivm::IndirectLoadOp,
+                      hivm::StrideLoadOp,
+                      hivm::StrideStoreOp,
                       hivm::IndirectStoreOp,
                       hivm::GatherTOp,
                       hivm::ScatterTOp

@@ -1265,6 +1265,50 @@ struct HFusionToHIVMIndirectLoadOp
 };
 
 //===----------------------------------------------------------------------===//
+// HFusionToHIVMStrideLoadOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMStrideLoadOp
+    : public OpRewritePattern<hfusion::StrideLoadOp> {
+  using OpRewritePattern<hfusion::StrideLoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::StrideLoadOp op,
+                                PatternRewriter &rewriter) const override {
+    auto strideLoadOp = rewriter.create<hivm::StrideLoadOp>(
+        op.getLoc(), op.getResult().getType(), op.getSrc(), op.getDst(),
+        op.getOffset(), op.getOther(), op.getStride(), op.getNumel());
+
+    strideLoadOp->setAttr(VFModeAttr::name,
+                          VFModeAttr::get(op->getContext(), VFMode::SIMT));
+
+    rewriter.replaceOp(op, strideLoadOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// HFusionToHIVMStrideStoreOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMStrideStoreOp
+    : public OpRewritePattern<hfusion::StrideStoreOp> {
+  using OpRewritePattern<hfusion::StrideStoreOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::StrideStoreOp op,
+                                PatternRewriter &rewriter) const override {
+    auto strideStoreOp = rewriter.create<hivm::StrideStoreOp>(
+        op.getLoc(), op.getDst(), op.getSrc(), op.getOffset(), op.getStride(),
+        op.getNumel());
+
+    strideStoreOp->setAttr(VFModeAttr::name,
+                           VFModeAttr::get(op->getContext(), VFMode::SIMT));
+
+    rewriter.replaceOp(op, strideStoreOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // HFusionToHIVMIndirectStoreOp
 //===----------------------------------------------------------------------===//
 
@@ -1423,6 +1467,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMGatherLoadOp,
     HFusionToHIVMScatterStoreOp,
     HFusionToHIVMIndirectLoadOp,
+    HFusionToHIVMStrideLoadOp,
+    HFusionToHIVMStrideStoreOp,
     HFusionToHIVMIndirectStoreOp,
     HFusionToHIVMGatherTOp,
     HFusionToHIVMIndexPutOp,

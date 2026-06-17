@@ -296,6 +296,28 @@ A5InsertionPattern::matchAndRewrite(Operation *op,
             op, TCoreType::VECTOR, hivm::AddressSpace::UB, rewriter);
         return success();
       })
+      .Case<hivm::StrideLoadOp>([&](auto op) {
+        if (op->use_empty())
+          return failure();
+        PropagatorUtil::createPropagatorUp(&op.getSrcMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(
+            op, TCoreType::VECTOR, hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::StrideStoreOp>([&](auto op) {
+        PropagatorUtil::createPropagatorUp(&op.getSrcMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorsDown(
+            op, hivm::AddressSpace::GM, rewriter);
+        return success();
+      })
       .Case<hivm::IndirectStoreOp>([&](auto op) {
         auto *srcOp = &op.getSrcMutable();
         PropagatorUtil::createPropagatorUp(srcOp, TCoreType::VECTOR, hivm::AddressSpace::UB,

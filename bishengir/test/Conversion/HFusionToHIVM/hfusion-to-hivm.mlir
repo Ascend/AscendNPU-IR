@@ -1101,6 +1101,61 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @stride_load_test
+  // CHECK: hivm.hir.stride_load
+  // CHECK: hivm.hir.stride_load
+  func.func @stride_load_test(%arg0: memref<?xf32>) {
+    %offset = arith.constant 4 : i64
+    %stride = arith.constant 3 : i64
+    %numel = arith.constant 32 : i64
+    %other = arith.constant 0.000000e+00 : f32
+    %dst = tensor.empty() : tensor<32xf32>
+    %0 = hfusion.stride_load
+      ins(%arg0 : memref<?xf32>)
+      outs(%dst : tensor<32xf32>)
+      offset(%offset : i64)
+      other(%other : f32)
+      strides([%stride : i64])
+      numels([%numel : i64]) -> tensor<32xf32>
+    %dst2d = tensor.empty() : tensor<4x32xf32>
+    %1 = hfusion.stride_load
+      ins(%arg0 : memref<?xf32>)
+      outs(%dst2d : tensor<4x32xf32>)
+      offset(%offset : i64)
+      other(%other : f32)
+      strides([%stride, %stride : i64, i64])
+      numels([%numel, %numel : i64, i64]) -> tensor<4x32xf32>
+    return
+  }
+}
+
+// -----
+module {
+  // CHECK-LABEL: func.func @stride_store_test
+  // CHECK: hivm.hir.stride_store
+  // CHECK: hivm.hir.stride_store
+  func.func @stride_store_test(%arg0: memref<?xf32>, %arg1: tensor<32xf32>, %arg2: tensor<4x32xf32>) {
+    %offset = arith.constant 4 : i64
+    %stride = arith.constant 3 : i64
+    %numel = arith.constant 32 : i64
+    hfusion.stride_store
+      ins(%arg1 : tensor<32xf32>)
+      outs(%arg0 : memref<?xf32>)
+      offset(%offset : i64)
+      strides([%stride : i64])
+      numels([%numel : i64])
+    hfusion.stride_store
+      ins(%arg2 : tensor<4x32xf32>)
+      outs(%arg0 : memref<?xf32>)
+      offset(%offset : i64)
+      strides([%stride, %stride : i64, i64])
+      numels([%numel, %numel : i64, i64])
+    return
+  }
+}
+
+// -----
+module {
   // CHECK-LABEL: func.func @test_hivm_op_same_rank
   // CHECK: %0 = tensor.empty() : tensor<1xi1>
   // CHECK: %1 = tensor.empty() : tensor<1xi16>

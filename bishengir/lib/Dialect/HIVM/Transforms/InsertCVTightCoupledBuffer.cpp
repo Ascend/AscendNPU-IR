@@ -686,6 +686,7 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   registerOne<func::CallOp>(patterns);
   registerOne<mlir::scf::ForOp>(patterns);
   registerOne<hivm::IndirectLoadOp>(patterns);
+  registerOne<hivm::StrideLoadOp>(patterns);
   registerOne<hivm::CustomOp>(patterns);
   registerOne<hivm::CustomMacroOp>(patterns);
 
@@ -702,6 +703,8 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<tensor::ExtractOp>>(
       patterns.getContext());
   patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::IndirectStoreOp>>(
+      patterns.getContext());
+  patterns.add<InsertMoveUbBetweenFixpipeAndVector<hivm::StrideStoreOp>>(
       patterns.getContext());
 }
 

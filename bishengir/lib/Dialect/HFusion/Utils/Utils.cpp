@@ -336,7 +336,8 @@ bool hfusion::isMatmulOps(Operation *op) {
 
 bool hfusion::isSimtOps(Operation *op) {
   return isa<hfusion::IndirectLoadOp, hfusion::IndirectStoreOp,
-             hfusion::GatherTOp, hfusion::EmbeddingGatherOp,
+             hfusion::StrideLoadOp, hfusion::StrideStoreOp, hfusion::GatherTOp,
+             hfusion::EmbeddingGatherOp,
              hfusion::IndexPutOp, hfusion::ScatterTOp>(op);
 }
 
@@ -710,8 +711,29 @@ bool hasDynamicShapeOperand(Operation *op) {
 }
 
 bool hasComplexControlFlow(Operation *op) {
-  // blacklist for not flattening gatherTOp, indexPutTOp
+  // blacklist for not flattening ops whose semantics depend on their
+  // logical iteration rank.
   bool isComplex = false;
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::StrideLoadOp strideLoadOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::StrideStoreOp strideStoreOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
 
   op->walk<WalkOrder::PreOrder>(
       [&](hfusion::GatherTOp gatherTOp) -> WalkResult {
