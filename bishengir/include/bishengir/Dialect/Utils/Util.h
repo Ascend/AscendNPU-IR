@@ -859,6 +859,8 @@ inline const char AttrEnableBishengirSimtOptimizationName[] =
     "ttg.enable-bishengir-simt-optimization";
 
 namespace util {
+LLVM::LLVMFuncOp createLLVMFuncDecl(OpBuilder &b, Location loc, StringRef name,
+                                    LLVM::LLVMFunctionType fnTy);
 
 // return a int that controls the optimization given a passname
 int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName);

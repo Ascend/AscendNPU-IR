@@ -11,8 +11,8 @@
 //  - Two ttg.local_load (for memory ordering) before the division.
 //  - arith.divsi replaced by ascend_dpx.umulhi + arith.addi + arith.shrsi.
 
-// CHECK-DAG: llvm.func @_mlir_ciface_simt_div_magic_shift_uint32_t
-// CHECK-DAG: llvm.func @_mlir_ciface_simt_div_magic_mul_uint32_t
+// CHECK-DAG: llvm.func @_mlir_ciface_simt_div_magic_shift_uint32_t({{.*}}) -> i32 attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface, sym_visibility = "private"}
+// CHECK-DAG: llvm.func @_mlir_ciface_simt_div_magic_mul_uint32_t({{.*}}) -> i32 attributes {hacc.always_inline, hivm.func_core_type = #hivm.func_core_type<AIV>, llvm.emit_c_interface, sym_visibility = "private"}
 
 // CHECK-LABEL: @scalar_divsi
 // CHECK:       [[SHM_SHIFT:%[^ ]+]] = ttg.local_alloc
