@@ -897,6 +897,14 @@ def EnableVFFusion : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
+def EnableVFStackLimit : FeatureControlOptions<
+  "Enable conservative vector function stack slot limit",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def VfFusionMode : FeatureControlOptions<
   "VF fusion mode(max-parallel | all-op | n-most-op |). default is max-parallel",
   "mlir::analysis::FusionMode",
