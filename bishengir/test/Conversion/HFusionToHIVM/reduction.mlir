@@ -79,6 +79,19 @@ func.func @test_reduce_max_ops_3d_last_axis(%src : memref<6x4x3xi32>, %dst : mem
 
 // -----
 
+// CHECK-LABEL: func.func @test_reduce_maxui_ops_3d_last_axis
+func.func @test_reduce_maxui_ops_3d_last_axis(%src : memref<6x4x3xi16>, %dst : memref<6x4xi16>) {
+  // CHECK: %[[expanded:.*]] = memref.expand_shape %arg1 {{\[}}[0], [1, 2]] output_shape {{\[}}6, 4, 1] : memref<6x4xi16> into memref<6x4x1xi16>
+  // CHECK: hivm.hir.vreduce <max> ins(%arg0 : memref<6x4x3xi16>) outs(%[[expanded]] : memref<6x4x1xi16>) unsigned_src = true reduce_dims = [2]
+  linalg.reduce { arith.maxui }
+    ins(%src: memref<6x4x3xi16>)
+    outs(%dst: memref<6x4xi16>)
+    dimensions = [2]
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_reduce_min_ops_3d_last_axis
 func.func @test_reduce_min_ops_3d_last_axis(%src : memref<6x4x3xi32>, %dst : memref<6x4xi32>) {
   // CHECK: %[[expanded:.*]] = memref.expand_shape %arg1 {{\[}}[0], [1, 2]] output_shape {{\[}}6, 4, 1] : memref<6x4xi32> into memref<6x4x1xi32>
@@ -86,6 +99,19 @@ func.func @test_reduce_min_ops_3d_last_axis(%src : memref<6x4x3xi32>, %dst : mem
   linalg.reduce { arith.minsi }
     ins(%src: memref<6x4x3xi32>)
     outs(%dst: memref<6x4xi32>)
+    dimensions = [2]
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_reduce_minui_ops_3d_last_axis
+func.func @test_reduce_minui_ops_3d_last_axis(%src : memref<6x4x3xi16>, %dst : memref<6x4xi16>) {
+  // CHECK: %[[expanded:.*]] = memref.expand_shape %arg1 {{\[}}[0], [1, 2]] output_shape {{\[}}6, 4, 1] : memref<6x4xi16> into memref<6x4x1xi16>
+  // CHECK: hivm.hir.vreduce <min> ins(%arg0 : memref<6x4x3xi16>) outs(%[[expanded]] : memref<6x4x1xi16>) unsigned_src = true reduce_dims = [2]
+  linalg.reduce { arith.minui }
+    ins(%src: memref<6x4x3xi16>)
+    outs(%dst: memref<6x4xi16>)
     dimensions = [2]
   return
 }

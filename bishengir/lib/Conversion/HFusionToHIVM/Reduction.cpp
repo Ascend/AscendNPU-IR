@@ -33,6 +33,13 @@ static BoolAttr getReduceUnsignedSourceAttr(Operation *op) {
     // hfusion.reduce_with_index has to have 'unsigned_src' attr
     return reduceWithIndexOp.getUnsignedSrcAttr();
   }
+  if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    auto bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    return BoolAttr::get(op->getContext(),
+                         isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp));
+  }
   // set default value for backward complatibility
   return BoolAttr::get(op->getContext(), false);
 }
