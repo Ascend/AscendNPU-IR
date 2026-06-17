@@ -12,7 +12,6 @@ readonly ENABLE_PROJECTS="mlir;llvm"
 # Parse command options.
 readonly LONG_OPTS=(
   "add-cmake-options:"
-  "apply-patches"
   "bisheng-compiler:"
   "build-bishengir-template"
   "bishengir-publish"
@@ -119,7 +118,6 @@ SHARED_LIBS="OFF"
 BUILD_TORCH_MLIR="OFF"
 BUILD_TRITON="OFF"
 BUILD_SCRIPTS=(
-  "apply_patches.sh"
   "build.sh"
 )
 BUILD_BISHENGIR_DOC="OFF"
@@ -139,7 +137,7 @@ usage() {
 
     SYNOPSIS:
       ${SCRIPT_NAME}  [-h | --help] [-r | --rebuild] [-j | --jobs JOBS] [-o | --build PATH]
-                [-s | --build-bishengir-so] [-t | --build-template] [--disable-cann] [--apply-patches]
+                [-s | --build-bishengir-so] [-t | --build-template] [--disable-cann]
                 [--c-compiler C_COMPILER] [--cxx-compiler CXX_COMPILER] [--bisheng-compiler BISHENG_COMPILER]
                 [--build-type BUILD_TYPE] [--build-test] [--python-binding]
                 [--disable-werror] [--disable-mlir-werror] [--disable-bishengir-werror]
@@ -150,7 +148,6 @@ usage() {
 
     Options:
       -h, --help                           Print this help message
-      --apply-patches                      Apply patches to third-party submodules. (Default: disabled)
       -r, --rebuild                        Rebuild (Default: incremental compiler)
       -j, --jobs JOBS                      Set the threads when building
                                            (Default: use 3/4 of processing units)
@@ -201,10 +198,6 @@ while true; do
   -h | --help)
     usage
     exit 0
-    ;;
-  --apply-patches)
-    readonly APPLY_PATCHES=""
-    shift
     ;;
   -r | --rebuild)
     readonly REBUILD=""
@@ -378,8 +371,7 @@ cmake_generate() {
 
   local triton_options=""
   if [ "${BUILD_TRITON}" = "ON" ]; then
-    enable_external_projects="${enable_external_projects};triton"
-    triton_options="-DLLVM_EXTERNAL_TRITON_SOURCE_DIR=../third-party/triton"
+    triton_options="-DBISHENGIR_ENABLE_TRITON_COMPILE=ON"
   fi
 
   # set the default for CCACHE_BUILD to off if ccache is not installed
@@ -552,10 +544,6 @@ build_bishengir_so() {
 }
 
 main() {
-  if [[ -v APPLY_PATCHES ]]; then
-    source ${SCRIPT_ROOT}/apply_patches.sh
-  fi
-
   # Rebuild.
   if [[ -v REBUILD ]]; then
     clean_build_dir
