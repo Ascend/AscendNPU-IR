@@ -255,6 +255,8 @@ LogicalResult PropagateDownPattern::propagateDownReturnOp(
 LogicalResult PropagateDownPattern::propagateDownDmaOp(
     hivm::HIVMStructuredOp op, OpOperand &operand,
     UnrealizedConversionCastOp propagateOp, PatternRewriter &rewriter) const {
+  // Same boundary rule as propagateDownForCustomLikeOp; DMA updates all inits
+  // when any init operand is reached.
   LDBG("Propagating dma down: " << op << "\n" << propagateOp);
   for (auto *input : op.getDpsInputOperands()) {
     if (input->get() == operand.get()) {
@@ -357,6 +359,7 @@ LogicalResult
 PropagateUpPattern::propagateUpDmaOp(hivm::HIVMStructuredOp op, OpResult res,
                                      UnrealizedConversionCastOp propagateOp,
                                      PatternRewriter &rewriter) const {
+  // Same boundary rule as propagateUpForCustomLikeOp.
   LDBG("Propagating dma up: " << op << "\n" << propagateOp);
   PropagatorUtil::createPropagatorsDown(op, propagateOp, rewriter);
   for (auto &init : op.getDpsInitsMutable()) {
@@ -421,6 +424,10 @@ PropagateDownPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
               if (!dmaOp)
                 return failure();
               return propagateDownDmaOp(dmaOp, *use, propagateOp, rewriter);
+            })
+            .Case<hivm::CustomMacroOp, hivm::CustomOp>([&](Operation *op) {
+              return PropagatorUtil::propagateDownForCustomLikeOp(
+                  op, use, propagateOp, rewriter);
             })
             .Default([&](Operation *op) {
               PropagatorUtil::createPropagatorsUp(op, propagateOp, rewriter);
@@ -501,6 +508,12 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
           PropagatorUtil::createPropagatorsDown(op, propagateOp, rewriter);
         }
         return success();
+      })
+      .Case<hivm::CustomMacroOp, hivm::CustomOp>([&](Operation *op) {
+        if (step == PropagationStep::LOCAL)
+          return failure();
+        return PropagatorUtil::propagateUpForCustomLikeOp(op, propagateOp,
+                                                          rewriter);
       })
       .Default([&](Operation *op) {
         if (step == PropagationStep::LOCAL &&

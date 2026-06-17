@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
@@ -36,6 +37,139 @@
 namespace mlir::hivm {
 
 namespace PropagatorUtil {
+namespace {
+
+bool isCustomLikeTempBuffer(Operation *op, OpOperand *operand) {
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+    for (auto &tempBuffer : customOp.getTempBuffersMutable())
+      if (&tempBuffer == operand)
+        return true;
+  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
+    for (auto &tempBuffer : macroOp.getTempBuffersMutable())
+      if (&tempBuffer == operand)
+        return true;
+  }
+  return false;
+}
+
+void forEachCustomLikeTempBuffer(Operation *op,
+                                 llvm::function_ref<void(OpOperand &)> fn) {
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+    for (auto &tempBuffer : customOp.getTempBuffersMutable())
+      fn(tempBuffer);
+  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
+    for (auto &tempBuffer : macroOp.getTempBuffersMutable())
+      fn(tempBuffer);
+  }
+}
+
+} // namespace
+
+std::pair<TCoreType, hivm::AddressSpace>
+getPropagationInfoForPipe(hivm::PIPE pipe) {
+  switch (pipe) {
+  case hivm::PIPE::PIPE_V:
+  case hivm::PIPE::PIPE_MTE3:
+    return {TCoreType::VECTOR, hivm::AddressSpace::UB};
+  case hivm::PIPE::PIPE_M:
+  case hivm::PIPE::PIPE_MTE1:
+  case hivm::PIPE::PIPE_FIX:
+    return {TCoreType::CUBE, hivm::AddressSpace::L1};
+  case hivm::PIPE::PIPE_MTE2:
+    return {TCoreType::CUBE_OR_VECTOR, hivm::AddressSpace::GM};
+  default:
+    return {TCoreType::CUBE_OR_VECTOR, hivm::AddressSpace::GM};
+  }
+}
+
+CustomOpPipePropagationInfo
+getCustomOpPropagationInfo(llvm::ArrayRef<hivm::PIPE> pipes) {
+  assert(!pipes.empty() && "custom-like op requires at least one pipe");
+  auto inPipe = pipes.front();
+  auto outPipe = pipes.size() > 1 ? pipes[1] : pipes.front();
+  auto [inCoreType, inAddressSpace] = getPropagationInfoForPipe(inPipe);
+  auto [outCoreType, outAddressSpace] = getPropagationInfoForPipe(outPipe);
+  return {inCoreType, inAddressSpace, outCoreType, outAddressSpace};
+}
+
+void insertPropagatorsForCustomLikeOp(llvm::ArrayRef<hivm::PIPE> pipes,
+                                      Operation *op,
+                                      PatternRewriter &rewriter) {
+  auto info = getCustomOpPropagationInfo(pipes);
+  auto structuredOp = cast<hivm::HIVMStructuredOp>(op);
+  auto tagOperandUp = [&](OpOperand *operand, TCoreType coreType,
+                          hivm::AddressSpace addressSpace) {
+    if (isa<ShapedType>(operand->get().getType()))
+      createPropagatorUp(operand, coreType, addressSpace, rewriter);
+  };
+
+  // In-pipe scope: values consumed by the kernel.
+  for (auto *input : structuredOp.getDpsInputOperands())
+    tagOperandUp(input, info.inCoreType, info.inAddressSpace);
+  forEachCustomLikeTempBuffer(op, [&](OpOperand &tempBuffer) {
+    tagOperandUp(&tempBuffer, info.inCoreType, info.inAddressSpace);
+  });
+
+  // Out-pipe scope: values produced by the kernel.
+  for (auto &init : structuredOp.getDpsInitsMutable())
+    tagOperandUp(&init, info.outCoreType, info.outAddressSpace);
+  createPropagatorsDown(structuredOp, info.outCoreType, info.outAddressSpace,
+                        rewriter);
+}
+
+LogicalResult
+propagateDownForCustomLikeOp(Operation *op, OpOperand *use,
+                             UnrealizedConversionCastOp propagateOp,
+                             PatternRewriter &rewriter) {
+  auto structuredOp = dyn_cast<hivm::HIVMStructuredOp>(op);
+  if (!structuredOp)
+    return failure();
+
+  if (structuredOp.isDpsInit(use)) {
+    createPropagatorUp(use, propagateOp, rewriter);
+    createPropagatorsDown(structuredOp, propagateOp, rewriter);
+    return success();
+  }
+  if (structuredOp.isDpsInput(use) || isCustomLikeTempBuffer(op, use)) {
+    createPropagatorUp(use, propagateOp, rewriter);
+    return success();
+  }
+  return failure();
+}
+
+LogicalResult propagateUpForCustomLikeOp(Operation *op,
+                                         UnrealizedConversionCastOp propagateOp,
+                                         PatternRewriter &rewriter) {
+  auto structuredOp = dyn_cast<hivm::HIVMStructuredOp>(op);
+  if (!structuredOp)
+    return failure();
+
+  createPropagatorsDown(structuredOp, propagateOp, rewriter);
+  for (auto &init : structuredOp.getDpsInitsMutable())
+    createPropagatorUp(&init, propagateOp, rewriter);
+  return success();
+}
+
+static Value getLocalBufferTensor(PatternRewriter &rewriter, Location loc,
+                                  ArrayRef<int64_t> targetShape,
+                                  ArrayRef<Value> dynamicShape,
+                                  Type elementType,
+                                  hivm::AddressSpace addressSpace) {
+  if (addressSpace == hivm::AddressSpace::UB) {
+    auto memrefType = MemRefType::get(targetShape, elementType);
+    Value alloc =
+        rewriter.create<memref::AllocOp>(loc, memrefType, dynamicShape);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    return rewriter.create<bufferization::ToTensorOp>(loc, alloc, true, true);
+#else
+    auto tensorType = RankedTensorType::get(targetShape, elementType);
+    return rewriter.create<bufferization::ToTensorOp>(loc, tensorType, alloc,
+                                                      true, true);
+#endif
+  }
+  return getLocalWorkSpaceTensor(rewriter, loc, targetShape, dynamicShape,
+                                 elementType);
+}
 
 std::pair<TCoreType, SmallVector<hivm::AddressSpace, 2>>
 extractPropagatorInfo(UnrealizedConversionCastOp propagateOp) {
@@ -259,18 +393,19 @@ UnrealizedConversionCastOp getDownPropagator(OpResult res) {
   return nullptr;
 }
 
-hivm::StoreOp insertStore(Value value, Location loc,
-                          PatternRewriter &rewriter) {
+hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter,
+                          std::optional<hivm::AddressSpace> dstAddressSpace) {
   Type type = value.getType();
   auto tensorType = dyn_cast<TensorType>(type);
   if (!tensorType) {
     Value storeInit = utils::createEmptyOp(rewriter, loc, value);
     return rewriter.create<hivm::StoreOp>(loc, TypeRange(), value, storeInit);
   }
-  Value storeInit = getLocalWorkSpaceTensor(
+  auto addressSpace = dstAddressSpace.value_or(hivm::AddressSpace::GM);
+  Value storeInit = getLocalBufferTensor(
       rewriter, value.getLoc(), tensorType.getShape(),
       hivm::getTensorDynamicValues(rewriter, value.getLoc(), value),
-      tensorType.getElementType());
+      tensorType.getElementType(), addressSpace);
   auto storeOp =
       rewriter.create<hivm::StoreOp>(loc, TypeRange(type), value, storeInit);
   storeOp->setAttr("inserted-store", rewriter.getUnitAttr());
@@ -291,10 +426,11 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
 }
 
 std::pair<hivm::StoreOp, hivm::LoadOp>
-insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter) {
+insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter,
+                   std::optional<hivm::AddressSpace> dstAddressSpace) {
   Type type = value.getType();
   bool isBufferized = !isa<TensorType>(type);
-  auto storeOp = insertStore(value, loc, rewriter);
+  auto storeOp = insertStore(value, loc, rewriter, dstAddressSpace);
   auto loadOp = insertLoad(
       isBufferized ? storeOp.getDst() : storeOp.getResult(0), loc, rewriter);
   return std::make_pair(storeOp, loadOp);
