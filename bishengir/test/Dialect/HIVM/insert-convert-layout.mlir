@@ -47,6 +47,31 @@ func.func @insert_for_mmad_transpose_b(
 
 // -----
 
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+// CHECK-LABEL: func.func @insert_for_mmad_transpose_a(
+// For i8 type with a_transpose: A uses block size 32x32 (nZ layout)
+// CHECK: %[[A_FR:.*]] = hivm.hir.convert_layout %[[A:.+]] output_shape [2, 1, 32, 32]
+// CHECK-SAME: {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [32, 32]>, srcLayout = #hivm.data_layout<ND>}
+// CHECK: %[[B_FR:.*]] = hivm.hir.convert_layout %[[B:.+]] output_shape [1, 1, 32, 32]
+// CHECK-SAME: {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [32, 32]>, srcLayout = #hivm.data_layout<ND>}
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1 {a_transpose} ins(%[[A_FR]], %[[B_FR]], %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : tensor<2x1x32x32xi8>, tensor<1x1x32x32xi8>, i1, index, index, index) outs(%{{.*}} : tensor<2x4x16x16xi32>) -> tensor<2x4x16x16xi32>
+// CHECK: %[[RES_ND:.*]] = hivm.hir.convert_layout %[[MMAD]] output_shape [64, 32]
+// CHECK: return %[[RES_ND]] : tensor<64x32xi32>
+  func.func @insert_for_mmad_transpose_a(
+      %arg0: tensor<16x64xi8>, %arg1: tensor<16x32xi8>) -> tensor<64x32xi32> {
+    %true = arith.constant true
+    %c64 = arith.constant 64 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %out = tensor.empty() : tensor<64x32xi32>
+    %res = hivm.hir.mmadL1 {a_transpose} ins(%arg0, %arg1, %true, %c64, %c16, %c32 : tensor<16x64xi8>, tensor<16x32xi8>, i1, index, index, index)
+                                        outs(%out : tensor<64x32xi32>) -> tensor<64x32xi32>
+    return %res : tensor<64x32xi32>
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @insert_for_mmad_same_source_bf16(
 // CHECK-SAME: %[[SRC:.*]]: tensor<64x32xbf16>, %[[OUT:.*]]: tensor<64x64xf32>, %[[INIT:.*]]: i1)
 // CHECK: %[[A_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [2, 4, 16, 16]

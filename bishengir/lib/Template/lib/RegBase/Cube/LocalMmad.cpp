@@ -9,6 +9,10 @@
  * the software repository for the full text of the License.
  */
 
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510 || __NPU_ARCH__ == 5102)
+    #define CATLASS_ARCH_A5_ENABLED
+#endif
+
 #include "catlass/catlass.hpp"
 #include "catlass/detail/tag_to_layout.hpp"
 #include "catlass/gemm/tile/copy_l1_to_bt_a5.hpp"
@@ -25,10 +29,6 @@ template <typename T, size_t Dim> struct memref_t {
   int64_t sizes[Dim];
   int64_t strides[Dim];
 };
-
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-    #define CATLASS_ARCH_A5_ENABLED
-#endif
 
 namespace Catlass::Gemm {
 
@@ -259,8 +259,7 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]), // l1M
       TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3]), // l1K
       TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]), // l1N
-      TA ? (ma->sizes[0] * ma->sizes[3])
-         : (ma->sizes[1] * ma->sizes[2]), // actualM
+      m,                                  // actualM
       k,                                  // actualK
       n,                                  // actualN
       mmad_l1_wait_l1a_event,             // l1AMTE2MTE1EventId
@@ -293,8 +292,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
       TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]), // l1M
       TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3]), // l1K
       TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]), // l1N
-      TA ? (ma->sizes[0] * ma->sizes[3])
-         : (ma->sizes[1] * ma->sizes[2]), // actualM
+      m,                                  // actualM
       k,                                  // actualK
       n,                                  // actualN
       mmad_l1_wait_l1a_event,             // l1AMTE2MTE1EventId
