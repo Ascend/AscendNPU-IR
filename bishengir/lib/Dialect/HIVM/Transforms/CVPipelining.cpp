@@ -54,7 +54,7 @@ struct WorkspaceAllocParams {
 
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
-                 PipelineMode pipelineMode, bool enableLazyLoading)
+                 CVPipelineMode pipelineMode, bool enableLazyLoading)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
@@ -149,7 +149,7 @@ private:
   int numMultibuffer;
 
   // Pipeline mode for CV-pipelining.
-  PipelineMode pipelineMode;
+  CVPipelineMode pipelineMode;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -381,12 +381,12 @@ static Value createExtractSlice(OpBuilder &builder, Location loc, Value from,
 static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
   Operation *markedOp = markedVal.getDefiningOp();
   if (markedOp)
-    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name,
-                      builder.getUnitAttr());
+    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
 }
 
-static Value createWorkspaceSubview(OpBuilder &builder, Location loc, Value from,
-                                    Value iv, bool isPreload = false) {
+static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
+                                    Value from, Value iv,
+                                    bool isPreload = false) {
   auto const1 = builder.getIndexAttr(1);
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
@@ -627,7 +627,7 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
   SmallVector<AllocWorkspaceOp> incompleteAllocs;
   for (auto &[alloc, info] : workspaceAllocs_) {
     if (!info.marker || !info.toTensor) {
-      incompleteAllocs.push_back(alloc); 
+      incompleteAllocs.push_back(alloc);
       continue;
     }
     if (!info.toTensor.getResult().hasOneUse())
@@ -667,7 +667,7 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
-      if (pipelineMode == PipelineMode::Skew) {
+      if (pipelineMode == CVPipelineMode::Skew) {
         auto dps = dyn_cast<DestinationStyleOpInterface>(op);
         if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
           auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
@@ -1726,7 +1726,7 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
-  if (pipelineMode == PipelineMode::Skew &&
+  if (pipelineMode == CVPipelineMode::Skew &&
       failed(collectWorkspaceAllocsForPreload()))
     return failure();
   if (failed(markOutputs())) {
@@ -1759,7 +1759,7 @@ LogicalResult CVPipelineImpl::run() {
   }
 
   // Preload pipeline reuse workitems with cvpipeline.
-  if (pipelineMode == PipelineMode::Skew) {
+  if (pipelineMode == CVPipelineMode::Skew) {
     expandWorkspace(builder);
     return markScopesForPreload();
   }

@@ -25,6 +25,14 @@ enum class MultiBufferStrategy {
   CUBE_NO_L0C,
 };
 
+/// Cube-Vector pipelining mode
+enum class CVPipelineMode {
+  Off,     // disable CVPipelining
+  Unroll,  // standard unroll-mode pipelining
+  Skew,    // skew/preload-mode pipelining
+  Dynamic, // dynamic mode pipeling (developing)
+};
+
 namespace mlir {
 
 namespace hivm {
@@ -32,12 +40,6 @@ namespace hivm {
 enum class SyncMode {
   NORMAL,
   BARRIERALL, // only for debug
-};
-
-enum class PipelineMode {
-  Unroll, // default unroll-mode pipelining
-  Skew,   // preload/skew-mode pipelining
-  SSBuf,  // reserved for future use (currently same as Skew)
 };
 
 } // namespace hivm
