@@ -407,3 +407,30 @@ func.func @scatterT_test(%arg0: memref<4x32xf32>, %arg1: tensor<4x32xf32>,%arg2:
   call @triton_scatter_ub_to_out_0(%arg0, %arg1, %arg2, %c32_i32, %c1_i32, %c32_i32, %c1_i32, %c4_i32, %c32_i32, %c0_i32, %c0_i32) : (memref<4x32xf32>, tensor<4x32xf32>, tensor<4x32xi32>, i32, i32, i32, i32, i32, i32, i32, i32) -> ()
   return
 }
+
+// -----
+// CHECK-LABEL: @stride_load_test
+// CHECK: hfusion.stride_load
+func.func private @triton_stride_load_0(memref<?xf32>, i64, f32, i64, i64) -> tensor<32xf32>
+
+func.func @stride_load_test(%arg0: memref<?xf32>) attributes {global_kernel = "local"} {
+  %offset = arith.constant 4 : i64
+  %other = arith.constant 0.000000e+00 : f32
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  %0 = call @triton_stride_load_0(%arg0, %offset, %other, %stride, %numel) : (memref<?xf32>, i64, f32, i64, i64) -> tensor<32xf32>
+  return
+}
+
+// -----
+// CHECK-LABEL: @stride_store_test
+// CHECK: hfusion.stride_store
+func.func private @triton_stride_store_0(memref<?xf32>, tensor<32xf32>, i64, i64, i64)
+
+func.func @stride_store_test(%arg0: memref<?xf32>, %arg1: tensor<32xf32>) attributes {global_kernel = "local"} {
+  %offset = arith.constant 4 : i64
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  call @triton_stride_store_0(%arg0, %arg1, %offset, %stride, %numel) : (memref<?xf32>, tensor<32xf32>, i64, i64, i64) -> ()
+  return
+}

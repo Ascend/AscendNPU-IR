@@ -492,6 +492,7 @@ void InjectBlockSyncAnalysis::InjectAllBlockSync() {
     opBuilder.setInsertionPointAfter(op);
     if (isa<hivm::LoadOp, hivm::MmadL1Op, hivm::FixpipeOp, hivm::StoreOp,
             hivm::CopyOp, tensor::InsertSliceOp, hivm::IndirectLoadOp,
+            hivm::StrideLoadOp, hivm::StrideStoreOp,
             hivm::IndirectStoreOp>(op)) {
       insertBlockAll(op, /*insertBefore=*/true);
       insertBlockAll(op);

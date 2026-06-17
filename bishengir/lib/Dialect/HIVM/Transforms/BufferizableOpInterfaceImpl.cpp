@@ -662,6 +662,95 @@ struct IndirectLoadOpInterface
   }
 };
 
+struct StrideLoadOpInterface
+    : public BufferizableOpInterface::ExternalModel<StrideLoadOpInterface,
+                                                    hivm::StrideLoadOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0; // $src
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto strideLoadOp = cast<hivm::StrideLoadOp>(op);
+    return &opOperand == &strideLoadOp.getDstMutable(); // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    auto strideLoadOp = cast<StrideLoadOp>(op);
+    AliasingValueList result;
+    if (&opOperand == &strideLoadOp.getDstMutable()) { // $dst
+      result.addAlias({AliasingValue(strideLoadOp->getResult(0),
+                                     BufferRelation::Equivalent,
+                                     /*isMustAlias=*/true)});
+    }
+    return result;
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto strideLoadOp = cast<hivm::StrideLoadOp>(op);
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, strideLoadOp.getDst(), options);
+    if (failed(dstBuffer))
+      return failure();
+
+    rewriter.create<StrideLoadOp>(strideLoadOp.getLoc(),
+                                  /*resultType*/ TypeRange{},
+                                  strideLoadOp.getSrc(), *dstBuffer,
+                                  strideLoadOp.getOffset(),
+                                  strideLoadOp.getOther(),
+                                  strideLoadOp.getStride(),
+                                  strideLoadOp.getNumel());
+
+    if (strideLoadOp->getNumResults() > 0) {
+      replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
+    }
+
+    return success();
+  }
+};
+
+struct StrideStoreOpInterface
+    : public BufferizableOpInterface::ExternalModel<StrideStoreOpInterface,
+                                                    hivm::StrideStoreOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto strideStoreOp = cast<hivm::StrideStoreOp>(op);
+    return &opOperand == &strideStoreOp.getSrcMutable(); // $src
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto strideStoreOp = cast<hivm::StrideStoreOp>(op);
+
+    FailureOr<Value> srcBuffer =
+        getBuffer(rewriter, strideStoreOp.getSrc(), options);
+    if (failed(srcBuffer))
+      return failure();
+
+    rewriter.create<StrideStoreOp>(strideStoreOp.getLoc(), strideStoreOp.getDst(),
+                                   *srcBuffer, strideStoreOp.getOffset(),
+                                   strideStoreOp.getStride(),
+                                   strideStoreOp.getNumel());
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
+
 struct IndirectStoreOpInterface
     : public BufferizableOpInterface::ExternalModel<IndirectStoreOpInterface,
                                                     hivm::IndirectStoreOp> {
@@ -913,6 +1002,8 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     BitcastOp::attachInterface<BitcastOpInterface>(*ctx);
     EmbeddingGatherOp::attachInterface<EmbeddingGatherOpInterface>(*ctx);
     IndirectLoadOp::attachInterface<IndirectLoadOpInterface>(*ctx);
+    StrideLoadOp::attachInterface<StrideLoadOpInterface>(*ctx);
+    StrideStoreOp::attachInterface<StrideStoreOpInterface>(*ctx);
     IndirectStoreOp::attachInterface<IndirectStoreOpInterface>(*ctx);
     GatherTOp::attachInterface<GatherTOpInterface>(*ctx);
     IndexPutOp::attachInterface<IndexPutOpInterface>(*ctx);

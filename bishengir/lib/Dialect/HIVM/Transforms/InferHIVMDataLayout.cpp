@@ -815,7 +815,8 @@ void DataLayoutInferAndPropagateHelper::rewriteRegion(Region &region) {
         for (Region &R : newOp->getRegions())
           queue.push_back(&R);
       } else if (isa<memref::CopyOp, hivm::CopyOp, hivm::LoadOp, hivm::StoreOp,
-                     hivm::IndirectLoadOp, hivm::IndirectStoreOp>(&op)) {
+                     hivm::IndirectLoadOp, hivm::StrideLoadOp,
+                     hivm::StrideStoreOp, hivm::IndirectStoreOp>(&op)) {
         // Use whitelist instead of copy like interface because there maybe
         // unwanted ops
         LLVM_DEBUG(llvm::dbgs() << "  Remapping op: " << op << "\n";);

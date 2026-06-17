@@ -933,6 +933,79 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
     indirect_load<dim, dtype, itype, false>(src, idx, dst, mask, other);       \
   }
 
+#define DECLARE_STRIDE_LOAD(dim, dtype, itype, ...)                            \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_stride_load_##dim##d_##dtype##_##itype(                         \
+      memref_t<__gm__ dtype, 1> *src, memref_t<__ubuf__ dtype, dim> *dst,      \
+      __VA_ARGS__)
+
+#define DECLARE_STRIDE_LOAD_1D(dtype, itype)                                   \
+  DECLARE_STRIDE_LOAD(1, dtype, itype, itype offset, dtype other,              \
+                      itype stride, itype numel)
+
+#define DECLARE_STRIDE_LOAD_2D(dtype, itype)                                   \
+  DECLARE_STRIDE_LOAD(2, dtype, itype, itype offset, dtype other,              \
+                      itype stride0, itype stride1, itype numel0,              \
+                      itype numel1)
+
+#define DECLARE_STRIDE_LOAD_3D(dtype, itype)                                   \
+  DECLARE_STRIDE_LOAD(3, dtype, itype, itype offset, dtype other,              \
+                      itype stride0, itype stride1, itype stride2,             \
+                      itype numel0, itype numel1, itype numel2)
+
+#define REGISTE_STRIDE_LOAD_1D(dtype, itype)                                   \
+  DECLARE_STRIDE_LOAD_1D(dtype, itype) {                                       \
+    stride_load_1d<dtype, itype>(src, dst, offset, other, stride, numel);      \
+  }
+
+#define REGISTE_STRIDE_LOAD_2D(dtype, itype)                                   \
+  DECLARE_STRIDE_LOAD_2D(dtype, itype) {                                       \
+    stride_load_2d<dtype, itype>(src, dst, offset, other, stride0, stride1,    \
+                                 numel0, numel1);                             \
+  }
+
+#define REGISTE_STRIDE_LOAD_3D(dtype, itype)                                   \
+  DECLARE_STRIDE_LOAD_3D(dtype, itype) {                                       \
+    stride_load_3d<dtype, itype>(src, dst, offset, other, stride0, stride1,    \
+                                 stride2, numel0, numel1, numel2);            \
+  }
+
+#define DECLARE_STRIDE_STORE(dim, dtype, itype, ...)                           \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_stride_store_##dim##d_##dtype##_##itype(                        \
+      memref_t<__gm__ dtype, 1> *dst, memref_t<__ubuf__ dtype, dim> *src,      \
+      __VA_ARGS__)
+
+#define DECLARE_STRIDE_STORE_1D(dtype, itype)                                  \
+  DECLARE_STRIDE_STORE(1, dtype, itype, itype offset, itype stride,            \
+                       itype numel)
+
+#define DECLARE_STRIDE_STORE_2D(dtype, itype)                                  \
+  DECLARE_STRIDE_STORE(2, dtype, itype, itype offset, itype stride0,           \
+                       itype stride1, itype numel0, itype numel1)
+
+#define DECLARE_STRIDE_STORE_3D(dtype, itype)                                  \
+  DECLARE_STRIDE_STORE(3, dtype, itype, itype offset, itype stride0,           \
+                       itype stride1, itype stride2, itype numel0,             \
+                       itype numel1, itype numel2)
+
+#define REGISTE_STRIDE_STORE_1D(dtype, itype)                                  \
+  DECLARE_STRIDE_STORE_1D(dtype, itype) {                                      \
+    stride_store_1d<dtype, itype>(dst, src, offset, stride, numel);            \
+  }
+
+#define REGISTE_STRIDE_STORE_2D(dtype, itype)                                  \
+  DECLARE_STRIDE_STORE_2D(dtype, itype) {                                      \
+    stride_store_2d<dtype, itype>(dst, src, offset, stride0, stride1, numel0,  \
+                                  numel1);                                     \
+  }
+
+#define REGISTE_STRIDE_STORE_3D(dtype, itype)                                  \
+  DECLARE_STRIDE_STORE_3D(dtype, itype) {                                      \
+    stride_store_3d<dtype, itype>(dst, src, offset, stride0, stride1, stride2, \
+                                  numel0, numel1, numel2);                    \
+  }
+
 #define DECLARE_SHIFT_VV(op_name)                                              \
   __aiv__ __attribute__((always_inline)) void                                  \
   _mlir_ciface_##op_name##_int64_t(                                            \
@@ -1027,7 +1100,7 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 
 #define DECLARE_INDIRECT_ATOMIC_NO_MASK(op, dtype, itype)                      \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_indirect_atomic_no_mask_##op##_##dtype##_##itype(           \
+      _mlir_ciface_indirect_atomic_##op##_no_mask_##dtype##_##itype(           \
           memref_t<__gm__ dtype, 1> *src,                                      \
           memref_t<__ubuf__ itype, 1> *offsets,                                \
           memref_t<__ubuf__ dtype, 1> *value,                                  \
@@ -1035,7 +1108,7 @@ vdiv_int_scalar(memref_t<__ubuf__ T, dim> *src0,
 
 #define REGISTE_INDIRECT_ATOMIC_NO_MASK(op, dtype, itype)                      \
   DECLARE_INDIRECT_ATOMIC_NO_MASK(op, dtype, itype) {                          \
-    indirect_atomic_no_mask_##op<dtype, itype>(src, offsets, value, out);      \
+    indirect_atomic_##op##_no_mask<dtype, itype>(src, offsets, value, out);    \
   }
 
 #define DECLARE_SCATTER_UB_TO_OUT(DIM, dataty, idxty, ...)                     \
@@ -1368,6 +1441,75 @@ DECLARE_EMBEDDINGGATHER_1D(float, int64_t);
 DECLARE_EMBEDDINGGATHER_2D(float, int64_t);
 DECLARE_EMBEDDINGGATHER_1D(float, int32_t);
 DECLARE_EMBEDDINGGATHER_2D(float, int32_t);
+
+DECLARE_STRIDE_LOAD_1D(float, int32_t);
+DECLARE_STRIDE_LOAD_1D(half, int32_t);
+DECLARE_STRIDE_LOAD_1D(bfloat16_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(int8_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(int16_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(int32_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(int64_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(uint8_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(uint16_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(uint32_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(uint64_t, int32_t);
+DECLARE_STRIDE_LOAD_1D(float, int64_t);
+DECLARE_STRIDE_LOAD_1D(half, int64_t);
+DECLARE_STRIDE_LOAD_1D(bfloat16_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(int8_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(int16_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(int32_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(int64_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(uint8_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(uint16_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(uint32_t, int64_t);
+DECLARE_STRIDE_LOAD_1D(uint64_t, int64_t);
+
+DECLARE_STRIDE_LOAD_2D(float, int32_t);
+DECLARE_STRIDE_LOAD_2D(half, int32_t);
+DECLARE_STRIDE_LOAD_2D(bfloat16_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(int8_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(int16_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(int32_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(int64_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(uint8_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(uint16_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(uint32_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(uint64_t, int32_t);
+DECLARE_STRIDE_LOAD_2D(float, int64_t);
+DECLARE_STRIDE_LOAD_2D(half, int64_t);
+DECLARE_STRIDE_LOAD_2D(bfloat16_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(int8_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(int16_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(int32_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(int64_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(uint8_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(uint16_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(uint32_t, int64_t);
+DECLARE_STRIDE_LOAD_2D(uint64_t, int64_t);
+
+DECLARE_STRIDE_LOAD_3D(float, int32_t);
+DECLARE_STRIDE_LOAD_3D(half, int32_t);
+DECLARE_STRIDE_LOAD_3D(bfloat16_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(int8_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(int16_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(int32_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(int64_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(uint8_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(uint16_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(uint32_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(uint64_t, int32_t);
+DECLARE_STRIDE_LOAD_3D(float, int64_t);
+DECLARE_STRIDE_LOAD_3D(half, int64_t);
+DECLARE_STRIDE_LOAD_3D(bfloat16_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(int8_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(int16_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(int32_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(int64_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(uint8_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(uint16_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(uint32_t, int64_t);
+DECLARE_STRIDE_LOAD_3D(uint64_t, int64_t);
 
 DECLARE_INDEX_PUT_2D(float, int32_t);
 DECLARE_INDEX_PUT_2D(half, int32_t);

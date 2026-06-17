@@ -649,6 +649,116 @@ def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
 }
 
 //===----------------------------------------------------------------------===//
+// StrideLoadOp
+//===----------------------------------------------------------------------===//
+
+def StrideLoadOp : HIVM_StructuredOp<"stride_load",[
+                            StaticMaxRankTrait<3>,
+                            SinglePipeOpTrait,
+                            OpPipeTrait<"PIPE::PIPE_V">,
+                            VectorCoreTypeTrait,
+                            SameVariadicOperandSize
+                            ]> {
+  let summary = [{
+    Performs strided memory loading with scalar padding.
+  }];
+
+  let description = [{
+    This operation takes a source GM buffer, one linear base offset,
+    per-dimension physical strides, and logical valid element counts. It
+    produces the destination tensor/memref by loading:
+
+      dst[i, ...] = all(dim_index < numel[dim])
+          ? src[offset + sum(dim_index * stride[dim])]
+          : other
+
+    The operation is intended for SIMT Stride Load. The current
+    implementation supports 1D-3D.
+  }];
+
+  let arguments = (ins Arg<AnyMemRef, "source buffer", [MemRead]>:$src,
+                       Arg<TensorOrMemref, "destination tensor or memref", [MemWrite]>:$dst,
+                       AnyTypeOf<[I32, I64]>:$offset,
+                       AnyType:$other,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numel
+  );
+  let results = (outs Optional<TensorOrMemref>:$result);
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      `offset` `(` $offset `:` type($offset) `)`
+      `other` `(` $other `:` type($other) `)`
+      `strides` `(` `[` $stride `:` type($stride) `]` `)`
+      `numels` `(` `[` $numel `:` type($numel) `]` `)`
+      attr-dict
+      (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "stride_load"; }
+      ::mlir::MutableOperandRange getDpsInitsMutable() {
+          return getDstMutable();
+      }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+def StrideStoreOp : HIVM_StructuredOp<"stride_store",[
+                            StaticMaxRankTrait<3>,
+                            SinglePipeOpTrait,
+                            OpPipeTrait<"PIPE::PIPE_V">,
+                            VectorCoreTypeTrait,
+                            SameVariadicOperandSize
+                            ]> {
+  let summary = [{
+    Performs strided memory storing.
+  }];
+
+  let description = [{
+    This operation takes a destination GM buffer, a source tensor/memref,
+    one linear base offset, per-dimension physical strides, and logical valid
+    element counts. It stores source elements into:
+
+      dst[offset + sum(dim_index * stride[dim])] = src[i, ...]
+
+    for positions where all(dim_index < numel[dim]). The operation is intended
+    for SIMT Stride Store. The current implementation supports 1D-3D.
+  }];
+
+  let arguments = (ins Arg<AnyMemRef, "destination buffer", [MemWrite]>:$dst,
+                       Arg<TensorOrMemref, "source tensor or memref", [MemRead]>:$src,
+                       AnyTypeOf<[I32, I64]>:$offset,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numel
+  );
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      `offset` `(` $offset `:` type($offset) `)`
+      `strides` `(` `[` $stride `:` type($stride) `]` `)`
+      `numels` `(` `[` $numel `:` type($numel) `]` `)`
+      attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "stride_store"; }
+      ::mlir::MutableOperandRange getDpsInitsMutable() {
+          return getDstMutable();
+      }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // IndirectStoreOp
 //===----------------------------------------------------------------------===//
 

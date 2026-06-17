@@ -99,6 +99,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   if (isVectorOp) {
     computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
   } else {

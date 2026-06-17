@@ -2943,6 +2943,131 @@ void IndirectLoadOp::getEffects(
 }
 
 //===----------------------------------------------------------------------===//
+// StrideLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideLoadOp::verify() {
+  auto srcMemrefType = dyn_cast<MemRefType>(getSrc().getType());
+  auto dstTensorType = dyn_cast<TensorType>(getDst().getType());
+
+  if (!srcMemrefType)
+    return emitOpError("src must be a memref type");
+  if (!dstTensorType)
+    return emitOpError("dst must be a tensor type");
+
+  int64_t rank = dstTensorType.getRank();
+  if (rank < 1 || rank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != rank ||
+      static_cast<int64_t>(getNumel().size()) != rank) {
+    return emitOpError(
+        "stride and numel operand counts must match dst rank");
+  }
+
+  auto getIndexType = [&](ValueRange values, StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  if (dstTensorType.getElementType() != srcMemrefType.getElementType()) {
+    return emitOpError(
+        "dst of hfusion::StrideLoadOp must have the same element type as src");
+  }
+  if (getOther().getType() != srcMemrefType.getElementType())
+    return emitOpError("other must have the same element type as src");
+
+  if (getResult() && getResult().getType() != getDst().getType())
+    return emitOpError("result must have the same type as dst");
+
+  return success();
+}
+
+void StrideLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideStoreOp::verify() {
+  auto dstMemrefType = dyn_cast<MemRefType>(getDst().getType());
+  auto srcTensorType = dyn_cast<TensorType>(getSrc().getType());
+
+  if (!dstMemrefType)
+    return emitOpError("dst must be a memref type");
+  if (!srcTensorType)
+    return emitOpError("src must be a tensor type");
+
+  int64_t rank = srcTensorType.getRank();
+  if (rank < 1 || rank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != rank ||
+      static_cast<int64_t>(getNumel().size()) != rank) {
+    return emitOpError(
+        "stride and numel operand counts must match src rank");
+  }
+
+  auto getIndexType = [&](ValueRange values, StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  if (srcTensorType.getElementType() != dstMemrefType.getElementType()) {
+    return emitOpError(
+        "src of hfusion::StrideStoreOp must have the same element type as dst");
+  }
+
+  return success();
+}
+
+void StrideStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
 // IndirectStoreOp
 //===----------------------------------------------------------------------===//
 
