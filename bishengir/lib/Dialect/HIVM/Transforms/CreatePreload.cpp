@@ -279,12 +279,61 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
   }
 }
 
+static std::optional<unsigned> getYieldOperandNumber(Value value) {
+  for (Operation *user : value.getUsers()) {
+    auto yieldOp = dyn_cast<scf::YieldOp>(user);
+    if (!yieldOp)
+      continue;
+
+    for (OpOperand &operand : yieldOp->getOpOperands()) {
+      if (operand.get() == value)
+        return operand.getOperandNumber();
+    }
+  }
+
+  return std::nullopt;
+}
+
+static std::optional<unsigned>
+getLoopCarriedArgIndexForSkippedScopeResult(Value scopeResult) {
+  // Pattern 1:
+  //
+  //   %r = scope.scope ...
+  //   scf.yield %r
+  //
+  if (auto yieldIdx = getYieldOperandNumber(scopeResult))
+    return yieldIdx;
+
+  // Pattern 2:
+  //
+  //   %r = scope.scope ...
+  //   hivm.hir.copy ins(%r) outs(%dst)
+  //   scf.yield ..., %dst
+  //
+  // When the scope is skipped, %r should be replaced with the old loop-carried
+  // value corresponding to the yielded %dst.
+  for (Operation *user : scopeResult.getUsers()) {
+    auto copyOp = dyn_cast<hivm::CopyOp>(user);
+    if (!copyOp)
+      continue;
+
+    if (copyOp.getSrc() != scopeResult)
+      continue;
+
+    if (auto yieldIdx = getYieldOperandNumber(copyOp.getDst()))
+      return yieldIdx;
+  }
+
+  return std::nullopt;
+}
+
 static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
                                 PreloadInfo &info, ValueRange loopArgs,
                                 Location loc, OpBuilder &builder) {
   auto &scopeBody = scopeOp.getRegion().front();
   auto returnResults =
       cast<scope::ReturnOp>(scopeBody.getTerminator()).getResults();
+
   return builder.create<scf::IfOp>(
       loc, cond,
       [&](OpBuilder &b, Location loc) {
@@ -293,6 +342,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
           if (!getLocalBuffer(res))
             newScopeResultTypes.push_back(res.getType());
         }
+
         auto newOp =
             b.create<scope::ScopeOp>(scopeOp.getLoc(), newScopeResultTypes);
         newOp->setAttrs(scopeOp->getAttrs());
@@ -304,26 +354,42 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
         b.setInsertionPointToEnd(bodyBlock);
         rewriteBody(&scopeBody, info, b);
         rewriteScopeReturnOp(returnResults, info, loc, b);
+
         b.setInsertionPointAfter(newOp);
         b.create<scf::YieldOp>(loc, newOp->getResults());
       },
       [&](OpBuilder &b, Location loc) {
         SmallVector<Value> newYields;
+
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
-          if (!getLocalBuffer(retRes)) {
-            if (res.hasOneUse() && isa<scf::YieldOp>(*res.user_begin())) {
-              auto oprNum = res.use_begin()->getOperandNumber();
-              newYields.push_back(loopArgs[oprNum]);
-            } else if (auto pointerCastOp =
-                           retRes.getDefiningOp<hivm::PointerCastOp>()) {
-              auto newRes = b.clone(*pointerCastOp)->getResult(0);
-              newYields.push_back(newRes);
-            } else {
-              llvm::report_fatal_error("Unhandled scope result case");
+          if (getLocalBuffer(retRes))
+            continue;
+
+          if (auto argIdx = getLoopCarriedArgIndexForSkippedScopeResult(res)) {
+            if (*argIdx >= loopArgs.size()) {
+              llvm::report_fatal_error(
+                  "Loop carried argument index out of range when rewriting "
+                  "preload scope false branch");
             }
+
+            LDBG("Skip preload scope result and keep loop-carried arg #"
+                 << *argIdx << " for result: " << res);
+
+            newYields.push_back(loopArgs[*argIdx]);
+            continue;
           }
+
+          if (auto pointerCastOp =
+                  retRes.getDefiningOp<hivm::PointerCastOp>()) {
+            auto newRes = b.clone(*pointerCastOp)->getResult(0);
+            newYields.push_back(newRes);
+            continue;
+          }
+
+          llvm::report_fatal_error("Unhandled scope result case");
         }
+
         b.create<scf::YieldOp>(loc, newYields);
       });
 }

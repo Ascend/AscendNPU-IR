@@ -218,3 +218,52 @@ module {
   // CHECK: }
   // CHECK: return %[[RESULTS]]#0, %[[RESULTS]]#1 : i32, i32
 }
+
+// -----
+
+// Test skipped preload scope result used by hivm.hir.copy dst yielded by scf.for.
+//
+// Pattern before create-preload:
+//   %r = scope.scope ...
+//   hivm.hir.copy ins(%r) outs(%dst)
+//   scf.yield %dst
+//
+// When the preload scope is skipped, the false path should keep the old value
+// corresponding to the yielded copy dst. 
+
+// CHECK-LABEL: func.func @test_preload_false_branch_copy_dst_yield
+// CHECK-SAME: (%[[SRC:.*]]: memref<128x128xf32>, %[[INIT:.*]]: memref<128x128xf32>)
+func.func @test_preload_false_branch_copy_dst_yield(
+    %src: memref<128x128xf32>,
+    %init: memref<128x128xf32>) -> memref<128x128xf32> {
+  %c0 = arith.constant 0 : i32
+  %c4 = arith.constant 4 : i32
+  %c1 = arith.constant 1 : i32
+
+  %0 = scf.for %i = %c0 to %c4 step %c1
+      iter_args(%state = %init) -> memref<128x128xf32> : i32 {
+    %r = scope.scope : () -> memref<128x128xf32> {
+      scope.return %src : memref<128x128xf32>
+    } {
+      no_inline,
+      hivm.preload_num = 0 : i32,
+      hivm.max_preload_num = 1 : i32
+    }
+
+    hivm.hir.copy ins(%r : memref<128x128xf32>)
+                  outs(%state : memref<128x128xf32>)
+
+    scf.yield %state : memref<128x128xf32>
+  }
+
+  return %0 : memref<128x128xf32>
+}
+
+// CHECK: scf.for %[[IV:.*]] = {{.*}} to {{.*}} step {{.*}} : i32 {
+// CHECK:   %[[LOWER:.*]] = arith.cmpi sge, %[[IV]], {{.*}} : i32
+// CHECK:   %[[UPPER:.*]] = arith.cmpi slt, %[[IV]], {{.*}} : i32
+// CHECK:   %[[COND:.*]] = arith.andi %[[LOWER]], %[[UPPER]] : i1
+// CHECK:   %[[SELECT:.*]] = arith.select %[[COND]], %[[SRC]], %[[INIT]] : memref<128x128xf32>
+// CHECK:   hivm.hir.copy ins(%[[SELECT]] : memref<128x128xf32>) outs(%[[INIT]] : memref<128x128xf32>)
+// CHECK: }
+// CHECK: return %[[INIT]] : memref<128x128xf32>
