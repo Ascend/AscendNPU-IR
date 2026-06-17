@@ -1456,7 +1456,13 @@ void CVPipelineImpl::markOutputs() {
           continue;
 
         for (Operation *usr : result.getUsers()) {
-          if (opToWorkItemMap.contains(usr) && !item->ops.contains(usr)) {
+          // Nested consumers (e.g. load/store inside a per-row scf.for) are
+          // not in `opToWorkItemMap`; resolve to the top-level owner first.
+          // Otherwise cross-item tensors are missed and `migrateOps` leaves
+          // dangling uses on `pipelineLoop`.
+          Operation *owner = getContainedParent(pipelineLoop, usr);
+          if (owner && opToWorkItemMap.contains(owner) &&
+              !item->ops.contains(owner)) {
             item->localOutputs.push_back(std::make_pair(result, nullptr));
             break;
           }
