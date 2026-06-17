@@ -25,11 +25,13 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OpDefinition.h"
 
 #include "llvm/ADT/TypeSwitch.h"
 
@@ -39,26 +41,6 @@
 namespace mlir::hivm::detail {
 namespace {
 
-/// Find the tiling dimension by comparing propagate_up UCC input/output shapes.
-static FailureOr<int64_t>
-findTilingDimFromPropagatorShapes(MemRefType parentType,
-                                  MemRefType slicedType) {
-  int64_t tilingDim = -1;
-  for (int64_t dim = 0; dim < slicedType.getRank(); ++dim) {
-    int64_t parentDim = parentType.getDimSize(dim);
-    int64_t slicedDim = slicedType.getDimSize(dim);
-    if (!ShapedType::isDynamic(slicedDim) &&
-        !ShapedType::isDynamic(parentDim) && parentDim == slicedDim)
-      continue;
-    if (tilingDim != -1)
-      return failure();
-    tilingDim = dim;
-  }
-  if (tilingDim == -1)
-    return failure();
-  return tilingDim;
-}
-
 /// Derive subview offsets/sizes/strides from propagate_up UCC shapes: locate
 /// tilingDim from the UCC result type, then reuse sub-block tiling helpers.
 FailureOr<std::tuple<SmallVector<OpFoldResult, 4>, SmallVector<OpFoldResult, 4>,
@@ -66,44 +48,17 @@ FailureOr<std::tuple<SmallVector<OpFoldResult, 4>, SmallVector<OpFoldResult, 4>,
 getSubViewParamsFromPropagatorResult(UnrealizedConversionCastOp propagateOp,
                                      PatternRewriter &rewriter) {
   auto parentType = dyn_cast<MemRefType>(propagateOp.getInputs()[0].getType());
-  auto slicedType = dyn_cast<MemRefType>(propagateOp.getResult(0).getType());
-  if (!parentType || !slicedType)
+  auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
+  if (tilingDim == -1)
     return failure();
-  if (parentType.getRank() != slicedType.getRank())
-    return failure();
-
-  FailureOr<int64_t> maybeTilingDim =
-      findTilingDimFromPropagatorShapes(parentType, slicedType);
-  if (failed(maybeTilingDim))
-    return failure();
-  int64_t tilingDim = maybeTilingDim.value();
-
-  FailureOr<scf::ForOp> maybeLoop =
-      findContainingSubblockLoop(propagateOp.getOperation());
-  if (failed(maybeLoop))
-    return failure();
-  scf::ForOp containingLoop = maybeLoop.value();
-
-  Location loc = propagateOp.getLoc();
-  Value parentValue = propagateOp.getInputs()[0];
-
-  FailureOr<OpFoldResult> maybeTileSize =
-      getSingleTileSize(rewriter, loc, parentValue, tilingDim, containingLoop);
-  if (failed(maybeTileSize))
-    return failure();
-
-  PatternRewriter::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointToStart(containingLoop.getBody());
-  OpFoldResult offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, loc, containingLoop, parentValue, tilingDim);
 
   SmallVector<OpFoldResult, 4> strides;
   SmallVector<OpFoldResult, 4> offsets;
   SmallVector<OpFoldResult, 4> sizes;
   SmallVector<int64_t, 4> newShape;
   if (failed(findCorrespondingSizesOffsetsStrides(
-          rewriter, parentType, tilingDim, offsetAtTileDim,
-          maybeTileSize.value(), strides, offsets, sizes, newShape)))
+          rewriter, parentType, tilingDim, tiledOffset, tiledSize, strides,
+          offsets, sizes, newShape)))
     return failure();
 
   return std::make_tuple(std::move(offsets), std::move(sizes),
@@ -138,25 +93,13 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpMemorySpaceCast(
       castSource, slicedSourceType, tilingDimInfo.offset, tilingDimInfo.size,
       tilingDimInfo.tilingDim, rewriter);
   slicedSource = upOnSource.getResult(0);
-  // if (llvm::any_of(castSource.getUsers(), [](Operation *user) {
-  //       return user->hasAttr(kBubbleUpPropagateUp);
-  //     })) {
-  //   for (Operation *user : castSource.getUsers()) {
-  //     if (!user->hasAttr(kBubbleUpPropagateUp))
-  //       continue;
-  //     slicedSource = cast<UnrealizedConversionCastOp>(user).getResult(0);
-  //     break;
-  //   }
-  // }
 
   if (!slicedSource)
     return failure();
 
   rewriter.setInsertionPoint(castOp);
-  auto newCastOp = rewriter.create<memref::MemorySpaceCastOp>(
-      castOp.getLoc(), slicedCastResultType, slicedSource);
-  resolveUpLinksForOldValue(castOp.getResult(), newCastOp.getResult(),
-                            rewriter);
+  auto newCastOp = rewriter.replaceOpWithNewOp<memref::MemorySpaceCastOp>(
+      propagateOp, slicedCastResultType, slicedSource);
 
   LDBG("Propagated up through memory_space_cast, new cast op is:\n "
        << newCastOp);
@@ -172,28 +115,19 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpAlloc(
   if (!propagateResultType)
     return failure();
 
-  auto maybeNewAlloc =
-      createSlicedAllocLike(propagateResultType, allocOp, rewriter);
+  auto maybeNewAlloc = createSlicedAllocLike(propagateOp, allocOp, rewriter);
+
   if (failed(maybeNewAlloc)) {
     LDBG("propagateUpAlloc createSlicedAllocLike failed for " << allocOp);
     return failure();
   }
+  auto newAllocOp = maybeNewAlloc.value();
 
-  memref::AllocOp newAllocOp = maybeNewAlloc.value();
   markTiledTightlyCoupledAllocIfNeeded(rewriter, allocOp.getResult());
 
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
-  SmallVector<OpOperand *> uses;
-  for (auto &use : allocOp->getUses())
-    uses.push_back(&use);
-  for (auto *use : uses) {
-    auto *user = use->getOwner();
-    auto newPropagateOp =
-        createBubblePropagatorDown(use->get(), newAllocOp.getResult(),
-                                   tiledOffset, tiledSize, tilingDim, rewriter);
-    rewriter.modifyOpInPlace(user,
-                             [&]() { use->set(newPropagateOp->getResult(0)); });
-  }
+  insertDownPropagators(allocOp, newAllocOp, tiledOffset, tiledSize, tilingDim,
+                        rewriter);
   LDBG("Propagated up to alloc, the new alloc is:\n " << newAllocOp);
   return success();
 }
@@ -205,6 +139,13 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpSubView(
   if (tilingDim == -1)
     return failure();
 
+  auto srcRank = subViewOp.getSourceType().getRank();
+  auto droppedDims = subViewOp.getDroppedDims();
+  for (int64_t i = 0; i <= tilingDim && i < srcRank; i++) {
+    if (droppedDims[i])
+      tilingDim++;
+  }
+
   auto loc = subViewOp.getLoc();
   auto offsets = subViewOp.getMixedOffsets();
   auto sizes = subViewOp.getMixedSizes();
@@ -214,12 +155,31 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpSubView(
   handleExtractOfExtract(offsets[tilingDim], sizes[tilingDim], tiledOffset,
                          tiledSize, loc, rewriter);
 
-  auto slicedType = getSlicedMemRefType(subViewOp.getSourceType(), tilingDim);
+  auto maybeSlicedType =
+      getSlicedMemRefType(subViewOp.getSourceType(), tilingDim);
+  if (failed(maybeSlicedType))
+    return failure();
+  auto slicedType = maybeSlicedType.value();
   auto srcUp =
       createBubblePropagatorUpLink(subViewOp.getSource(), slicedType,
                                    tiledOffset, tiledSize, tilingDim, rewriter);
-  auto newOp = rewriter.create<memref::SubViewOp>(loc, srcUp->getResult(0),
-                                                  offsets, sizes, strides);
+
+  auto newSrc = srcUp->getResult(0);
+  auto newSrcType = cast<MemRefType>(newSrc.getType());
+  auto fullShape = cast<MemRefType>(memref::SubViewOp::inferResultType(
+                                        newSrcType, offsets, sizes, strides))
+                       .getShape();
+
+  SmallVector<int64_t> reducedShape;
+  for (size_t i = 0; i < fullShape.size(); i++) {
+    if (!droppedDims[i])
+      reducedShape.push_back(fullShape[i]);
+  }
+
+  auto newSubViewType = memref::SubViewOp::inferRankReducedResultType(
+      reducedShape, newSrcType, offsets, sizes, strides);
+  auto newOp = rewriter.create<memref::SubViewOp>(
+      loc, cast<MemRefType>(newSubViewType), newSrc, offsets, sizes, strides);
   rewriter.replaceOp(propagateOp, newOp);
   return success();
 }
@@ -235,10 +195,8 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpReinterpretCast(
   auto &[offsets, sizes, strides] = *maybeParams;
 
   rewriter.setInsertionPointAfter(castOp);
-  auto newSubViewOp = rewriter.create<memref::SubViewOp>(
-      castOp.getLoc(), castOp.getResult(), offsets, sizes, strides);
-  resolveUpLinksForOldValue(castOp.getResult(), newSubViewOp.getResult(),
-                            rewriter);
+  rewriter.replaceOpWithNewOp<memref::SubViewOp>(
+      propagateOp, castOp.getResult(), offsets, sizes, strides);
 
   LDBG("Propagated up through reinterpret_cast " << castOp);
   return success();
@@ -329,9 +287,36 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownLoadOp(
   rewriter.modifyOpInPlace(
       loadOp, [&]() { loadOp.getSrcMutable().set(srcUp.getResult(0)); });
 
-  if (propagateOp->use_empty())
-    clearBubblePropagatorAttrs(propagateOp, rewriter);
   LDBG("Propagated down through hivm.load " << loadOp);
+  return success();
+}
+
+static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
+                                        memref::SubViewOp subViewOp,
+                                        UnrealizedConversionCastOp propagateOp,
+                                        PatternRewriter &rewriter) {
+  auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
+  if (tilingDim == -1)
+    return failure();
+  rewriter.setInsertionPoint(parallelLoopOp);
+  auto &lb = parallelLoopOp.getLowerBoundMutable();
+  auto &ub = parallelLoopOp.getUpperBoundMutable();
+  auto offsetVal =
+      getValueOrCreateConstantIndexOp(rewriter, lb.get().getLoc(), tiledOffset);
+  auto sizeVal =
+      getValueOrCreateConstantIndexOp(rewriter, ub.get().getLoc(), tiledSize);
+  Value newUb =
+      rewriter.create<arith::AddIOp>(ub.get().getLoc(), offsetVal, sizeVal);
+  newUb = rewriter.create<arith::MinSIOp>(newUb.getLoc(), newUb, ub.get());
+  rewriter.modifyOpInPlace(parallelLoopOp, [&]() {
+    lb.set(offsetVal);
+    ub.set(newUb);
+  });
+  rewriter.setInsertionPoint(subViewOp);
+  rewriter.replaceOpWithNewOp<memref::SubViewOp>(
+      subViewOp, propagateOp.getInputs()[0], subViewOp.getMixedOffsets(),
+      subViewOp.getMixedSizes(), subViewOp.getMixedStrides());
+  rewriter.eraseOp(propagateOp);
   return success();
 }
 
@@ -351,11 +336,15 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
     return failure();
 
   auto resultType = dyn_cast<MemRefType>(subViewOp.getResult().getType());
-  if (!resultType || resultType.hasStaticShape())
+  if (!resultType)
     return failure();
 
+  if (auto parallelLoopOp = dyn_cast<scf::ForOp>(subViewOp->getParentOp());
+      parallelLoopOp && parallelLoopOp->hasAttr(hivm::ParallelLoopAttr::name)) {
+    return handleParallelLoop(parallelLoopOp, subViewOp, propagateOp, rewriter);
+  }
+
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
-  auto newTilingDim = tilingDim;
   if (tilingDim == -1)
     return failure();
   auto newOffsets = subViewOp.getMixedOffsets();
@@ -363,11 +352,6 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
   auto newStrides = subViewOp.getMixedStrides();
 
   auto droppedDims = subViewOp.getDroppedDims();
-
-  for (int64_t i = 0; i < tilingDim; i++) {
-    if (droppedDims[i])
-      newTilingDim--;
-  }
 
   rewriter.setInsertionPoint(subViewOp);
   mlir::hivm::handleExtractOfExtract(newOffsets[tilingDim], newSizes[tilingDim],
@@ -395,19 +379,29 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
     if (!newOp->hasAttr(attr.getName()))
       newOp->setAttr(attr.getName(), attr.getValue());
   }
-  SmallVector<OpOperand *> uses;
-  for (auto &use : subViewOp->getUses())
-    uses.push_back(&use);
-  for (auto *use : uses) {
-    auto *user = use->getOwner();
-    auto newPropagateOp = createBubblePropagatorDown(
-        use->get(), newOp, tiledOffset, tiledSize, newTilingDim, rewriter);
-    rewriter.modifyOpInPlace(user,
-                             [&]() { use->set(newPropagateOp->getResult(0)); });
-  }
+  insertDownPropagators(subViewOp, newOp, tiledOffset, tiledSize, tilingDim, rewriter);
   rewriter.eraseOp(subViewOp);
   rewriter.eraseOp(propagateOp);
   LDBG("Propagated down through dynamic subview " << newOp);
+  return success();
+}
+
+LogicalResult BufferizationPropagateDownPattern::propagateDownMemorySpaceCast(
+    memref::MemorySpaceCastOp castOp, UnrealizedConversionCastOp propagateOp,
+    PatternRewriter &rewriter) const {
+  auto oldResultType = dyn_cast<MemRefType>(castOp.getResult().getType());
+  auto newInput = propagateOp.getInputs()[0];
+  auto newSourceType = dyn_cast<MemRefType>(newInput.getType());
+  
+  if (!oldResultType || !newSourceType)
+    return failure();
+  auto newResultType = getSlicedMemRefType(oldResultType, newSourceType);
+  rewriter.setInsertionPoint(castOp);
+  auto newCastOp = rewriter.create<memref::MemorySpaceCastOp>(
+      castOp.getLoc(), newResultType, newInput);
+  auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
+  insertDownPropagators(castOp, newCastOp, tiledOffset, tiledSize, tilingDim,
+                        rewriter);
   return success();
 }
 
@@ -434,40 +428,33 @@ LogicalResult BufferizationPropagateDownPattern::matchAndRewrite(
         return propagateDownLoadOp(op, propagateOp, rewriter);
       })
       .Case([&](memref::SubViewOp op) {
+        if (op->hasAttr(toBeBubbleUpSlice)) {
+          rewriter.replaceOp(op, propagateOp.getInputs()[0]);
+          rewriter.eraseOp(propagateOp);
+          return success();
+        }
         return propagateDownSubView(op, propagateOp, rewriter);
       })
-      // .Case([&](memref::MemorySpaceCastOp castOp) {
-      //   if (mappedValue == castOp.getResult())
-      //     return failure();
-      //   auto oldResultType =
-      //   dyn_cast<MemRefType>(castOp.getResult().getType()); auto
-      //   newSourceType = dyn_cast<MemRefType>(mappedValue.getType()); if
-      //   (!oldResultType || !newSourceType)
-      //     return failure();
-      //   auto newResultType = MemRefType::get(
-      //       newSourceType.getShape(), newSourceType.getElementType(),
-      //       oldResultType.getLayout(), oldResultType.getMemorySpace());
-      //   rewriter.setInsertionPoint(castOp);
-      //   auto newCastOp = rewriter.create<memref::MemorySpaceCastOp>(
-      //       castOp.getLoc(), newResultType, mappedValue);
-      //   rewriter.replaceOpUsesWithIf(castOp, newCastOp.getResult(),
-      //                                [&](OpOperand &opr) {
-      //                                  return opr.getOwner() !=
-      //                                  newCastOp;
-      //                                });
-      //   if (castOp->use_empty())
-      //     rewriter.eraseOp(castOp);
-      //   return success();
-      // })
-      // .Case([&](bufferization::ToTensorOp otherToTensorOp) {
-      //   if (use->get() != propagateOp.getResult(0))
-      //     return failure();
-      //   rewriter.modifyOpInPlace(otherToTensorOp, [&]() {
-      //     otherToTensorOp.getMemrefMutable().set(mappedValue);
-      //   });
-      //   return success();
-      // })
+      .Case([&](memref::MemorySpaceCastOp op) {
+        return propagateDownMemorySpaceCast(op, propagateOp, rewriter);
+      })
       .Default([&](Operation *) { return failure(); });
+}
+
+LogicalResult BufferizationPropagatePostProcessPattern::matchAndRewrite(
+    UnrealizedConversionCastOp propagateOp, PatternRewriter &rewriter) const {
+  if (!propagateOp->hasAttr(kBubbleUpPropagateUp))
+    return failure();
+  auto maybeParams =
+      getSubViewParamsFromPropagatorResult(propagateOp, rewriter);
+  if (failed(maybeParams))
+    return failure();
+  auto &[offsets, sizes, strides] = *maybeParams;
+
+  auto input = propagateOp.getInputs()[0];
+  rewriter.replaceOpWithNewOp<memref::SubViewOp>(propagateOp, input, offsets,
+                                                 sizes, strides);
+  return success();
 }
 
 } // namespace mlir::hivm::detail

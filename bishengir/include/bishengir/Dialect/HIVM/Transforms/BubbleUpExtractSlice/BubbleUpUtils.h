@@ -26,6 +26,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/Support/LogicalResult.h"
 
 namespace mlir::hivm::detail {
 
@@ -56,20 +57,10 @@ struct TilingDimInfo {
   OpFoldResult size = nullptr;
 };
 
-LogicalResult
-checkBufferizationBubbleUpPath(bufferization::ToTensorOp toTensorOp);
+MemRefType getSlicedMemRefType(MemRefType oldType, ShapedType slicedType);
 
-MemRefType getSlicedMemRefType(MemRefType oldType,
-                               RankedTensorType slicedTensorType);
-
-MemRefType getSlicedMemRefType(MemRefType oldType, int64_t tilingDim);
-
-void resolveUpLinksForOldValue(Value oldValue, Value newValue,
-                               PatternRewriter &rewriter);
-
-void clearBubblePropagatorAttrs(Operation *op, PatternRewriter &rewriter);
-
-void cleanupResolvedBufferizationPropagators(func::FuncOp funcOp);
+FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
+                                          int64_t tilingDim);
 
 UnrealizedConversionCastOp
 createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
@@ -81,17 +72,13 @@ createBubblePropagatorUpLink(Value oldValue, Type slicedType,
                              OpFoldResult offset, OpFoldResult size,
                              int64_t tilingDim, PatternRewriter &rewriter);
 
-FailureOr<memref::AllocOp> createSlicedAllocLike(MemRefType slicedMemRefType,
-                                                 memref::AllocOp allocOp,
-                                                 PatternRewriter &rewriter);
+FailureOr<memref::AllocOp>
+createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
+                      memref::AllocOp allocOp, PatternRewriter &rewriter);
 
-void cleanupDeadBufferizationPropagators(func::FuncOp funcOp,
-                                         PatternRewriter &rewriter);
-
-void cleanupBufferizationPropagators(func::FuncOp funcOp,
-                                     bufferization::ToTensorOp toTensorOp,
-                                     BufferizationPropagationState &state,
-                                     PatternRewriter &rewriter);
+void insertDownPropagators(Operation *op, Operation *newOp, OpFoldResult offset,
+                           OpFoldResult size, int64_t tilingDim,
+                           PatternRewriter &rewriter);
 
 void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
                                           Value memrefValue);

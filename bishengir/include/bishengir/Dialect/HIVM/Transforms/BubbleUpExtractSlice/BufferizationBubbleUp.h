@@ -51,9 +51,10 @@ struct BufferizationPropagateUpPattern
                                 PatternRewriter &rewriter) const override;
 
 private:
-  LogicalResult propagateUpMemorySpaceCast(memref::MemorySpaceCastOp castOp,
-                                           UnrealizedConversionCastOp propagateOp,
-                                           PatternRewriter &rewriter) const;
+  LogicalResult
+  propagateUpMemorySpaceCast(memref::MemorySpaceCastOp castOp,
+                             UnrealizedConversionCastOp propagateOp,
+                             PatternRewriter &rewriter) const;
 
   LogicalResult propagateUpSubView(memref::SubViewOp subViewOp,
                                    UnrealizedConversionCastOp propagateOp,
@@ -63,10 +64,10 @@ private:
                                  UnrealizedConversionCastOp propagateOp,
                                  PatternRewriter &rewriter) const;
 
-  LogicalResult propagateUpReinterpretCast(memref::ReinterpretCastOp castOp,
-                                           UnrealizedConversionCastOp propagateOp,
-                                           PatternRewriter &rewriter) const;
-
+  LogicalResult
+  propagateUpReinterpretCast(memref::ReinterpretCastOp castOp,
+                             UnrealizedConversionCastOp propagateOp,
+                             PatternRewriter &rewriter) const;
 };
 
 /// Propagate sliced shape requirements down to memref users.
@@ -93,16 +94,21 @@ private:
   LogicalResult propagateDownSubView(memref::SubViewOp subViewOp,
                                      UnrealizedConversionCastOp propagateOp,
                                      PatternRewriter &rewriter) const;
+
+  LogicalResult
+  propagateDownMemorySpaceCast(memref::MemorySpaceCastOp castOp,
+                               UnrealizedConversionCastOp propagateOp,
+                               PatternRewriter &rewriter) const;
 };
 
-/// Resolve propagate_up UCCs inserted by BufferizationBubbleUpStrategy.
-struct BufferizationBubbleUpPattern
+struct BufferizationPropagatePostProcessPattern
     : public OpRewritePattern<UnrealizedConversionCastOp> {
-  explicit BufferizationBubbleUpPattern(MLIRContext *context)
-      : OpRewritePattern<UnrealizedConversionCastOp>(context,
-                                                     PatternBenefit(11)) {}
+  using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropagator,
+  explicit BufferizationPropagatePostProcessPattern(MLIRContext *ctx)
+      : OpRewritePattern(ctx, /*benefit=*/0) {}
+
+  LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
                                 PatternRewriter &rewriter) const override;
 };
 

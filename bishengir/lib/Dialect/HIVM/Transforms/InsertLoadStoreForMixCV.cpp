@@ -1039,7 +1039,7 @@ InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp funcOp,
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   patterns.add<PropagateUpPattern, PropagateDownPattern>(patterns.getContext(),
-                                                         step); // propagateDown pattern是从producer侧往user方向传播
+                                                         step);
   patterns.add<ResolvePropagationPattern, RemoveRedundantPropagationPattern>(
       patterns.getContext());
   rewriteConfig.fold = false;
@@ -1062,9 +1062,9 @@ LogicalResult
 InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp funcOp) {
   IRRewriter rewriter(funcOp.getContext());
   rewriter.setInsertionPointToStart(&funcOp.getBody().front());
-  for (auto arg : funcOp.getArguments()) {  //funcOp.getArgument的作用是func.func 签名里的 %arg0/%arg1/
+  for (auto arg : funcOp.getArguments()) {
     if (isa<ShapedType>(arg.getType())) {
-      Value newArg = PropagatorUtil::createPropagator( //给这个参数插入一个 propagate_down 标记，并标记地址空间为 GM
+      Value newArg = PropagatorUtil::createPropagator(
           arg, kPropagateDownAttr, hivm::AddressSpace::GM, rewriter);
       rewriter.replaceAllUsesExcept(arg, newArg, newArg.getDefiningOp());
     }

@@ -1628,13 +1628,6 @@ bool BufferizationBubbleUpStrategy::isSupportedOperation(
   auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(sourceOp);
   if (!toTensorOp)
     return false;
-  if (failed(checkBufferizationBubbleUpPath(toTensorOp)))
-    return false;
-  for (Operation *user : toTensorOp.getMemref().getUsers()) {
-    if (user->hasAttr(kBubbleUpPropagateUp) ||
-        user->hasAttr(kBubbleUpPropagateDown))
-      return false;
-  }
   return true;
 }
 

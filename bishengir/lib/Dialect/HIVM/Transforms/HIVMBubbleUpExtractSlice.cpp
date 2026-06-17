@@ -17,8 +17,8 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BufferizationBubbleUp.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BubbleUpUtils.h"
+#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BufferizationBubbleUp.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/CSEPattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/HoistAffine.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
@@ -36,6 +36,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/PassManager.h"
@@ -84,6 +85,9 @@ public:
         }
       }
 
+      if (isa<UnrealizedConversionCastOp>(op))
+        return WalkResult::interrupt();
+
       if (!isa<tensor::ExtractSliceOp>(op)) {
         return WalkResult::advance();
       }
@@ -106,12 +110,12 @@ public:
           }
           return WalkResult::advance();
         }
-        if (auto whileOp =
-                dyn_cast<scf::WhileOp>(srcDefOp)) {
+        if (auto whileOp = dyn_cast<scf::WhileOp>(srcDefOp)) {
           return WalkResult::interrupt();
         }
         if (!isa<tensor::EmptyOp>(srcDefOp) &&
-            !(isa<scf::ForOp>(srcDefOp) && srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
+            !(isa<scf::ForOp>(srcDefOp) &&
+              srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
             !srcDefOp->hasAttr(tiledOp)) {
           if (strictMode) {
             return WalkResult::interrupt();
@@ -131,7 +135,6 @@ public:
     func::FuncOp funcOp = getOperation();
     GreedyRewriteConfig config;
     config.maxIterations = 50;
-    config.fold = false;
     // Apply bubble up patterns.
     // MarkEmptySliceBufferSize runs after BubbleUpPattern (which
     // may reject due to areOperandsUpperLevel) but before
@@ -164,9 +167,6 @@ public:
     if (failed(pm.run(funcOp))) {
       return signalPassFailure();
     }
-    // Apply bubble up once more, because canonicalize might bring more
-    // opportunity.
-    cleanupResolvedBufferizationPropagators(funcOp);
     // Apply bubble up once more; canonicalize/CSE are run by the outer
     // pass pipeline (e.g. bind-sub-block) to avoid crashing on intermediate
     // UCC propagators left in the IR.
@@ -182,7 +182,16 @@ public:
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns2), config))) {
       return signalPassFailure();
     }
-    cleanupResolvedBufferizationPropagators(funcOp);
+
+    // Apply post process for removing remaining upward propagation from
+    // bufferization bubble up
+    RewritePatternSet patterns3(funcOp.getContext());
+    patterns3.add<BufferizationPropagatePostProcessPattern>(
+        funcOp.getContext());
+
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns3), config))) {
+      return signalPassFailure();
+    }
 
     if (failed(verifyMarkedExtractSlicesAreBubbledUp(funcOp))) {
       return signalPassFailure();
