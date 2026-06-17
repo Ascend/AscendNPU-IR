@@ -99,39 +99,50 @@ bool isVsstbPatternTransposeOp(Operation *op) {
   return lastDim * static_cast<int64_t>(elemByteWidth) == 32;
 }
 
-static bool hasSyncBlockOpBetween(Operation *op, Operation *user) {
-  if (op->getBlock() != user->getBlock())
-    return true;
-
-  // SyncBlockWaitOp/SyncBlockSetOp are ordering boundaries inserted before
-  // binary conversion. Check the concrete producer-user edge instead of a
-  // use-list boundary, since users may appear in a different block order.
-  for (auto *curOp = op->getNextNode(); curOp; curOp = curOp->getNextNode()) {
-    if (curOp == user)
-      return false;
-    if (isa<hivm::SyncBlockWaitOp, hivm::SyncBlockSetOp>(curOp))
-      return true;
-  }
-  return true;
+static bool isSyncBarrierOp(Operation *op) {
+  return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp,
+             hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
+             hivm::SyncBlockUnlockOp>(op);
 }
 
+static bool hasSyncBetween(Block::iterator from, Block::iterator to) {
+  auto callback = [](Operation *inner) {
+    return isSyncBarrierOp(inner) ? WalkResult::interrupt()
+                                  : WalkResult::advance();
+  };
+  auto check = [callback](Operation &o) {
+    return o.walk(callback).wasInterrupted();
+  };
+  return llvm::any_of(llvm::make_range(std::next(from), to), check);
+}
+
+// Returns true iff ALL users of op are ultimately in the vsstb transpose fusion
+// chain with no sync barrier on any hop, and at least one vsstb consumer
+// exists. "All users" is enforced universally and propagated recursively
+// through generic ops, so any non-participating user at any depth blocks the
+// entire chain.
 bool userCanFuseIntoVsstbPatternTransposeOp(Operation *op) {
-  if (op->getUsers().empty())
+  auto users = op->getUsers();
+  if (users.empty())
     return false;
 
-  for (Operation *user : op->getUsers()) {
-    if (isVsstbPatternTransposeOp(user) && !hasSyncBlockOpBetween(op, user))
-      return true;
+  // Single pass: verify same block and find the last user in program order.
+  Operation *lastUser = nullptr;
+  for (Operation *user : users) {
+    if (user->getBlock() != op->getBlock())
+      return false;
+    if (!lastUser || lastUser->isBeforeInBlock(user))
+      lastUser = user;
   }
 
-  for (Operation *user : op->getUsers()) {
-    if (!isa<linalg::GenericOp>(user))
-      continue;
-    if (!hasSyncBlockOpBetween(op, user) &&
-        userCanFuseIntoVsstbPatternTransposeOp(user))
-      return true;
-  }
-  return false;
+  if (hasSyncBetween(op->getIterator(), lastUser->getIterator()))
+    return false;
+
+  return llvm::all_of(users, [](Operation *user) {
+    return isVsstbPatternTransposeOp(user) ||
+           (isa<linalg::GenericOp>(user) &&
+            userCanFuseIntoVsstbPatternTransposeOp(user));
+  });
 }
 
 bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op) {
