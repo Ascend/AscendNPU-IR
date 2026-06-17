@@ -656,8 +656,10 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
         alloc.getOffset());
 
     expandedWorkspaceMap_[alloc] = newAlloc;
+
     info.marker.getSrcMutable().set(newAlloc);
     info.marker->removeAttr(MultiBufferAttr::name);
+    info.marker->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
 
     toErase.insert(alloc);
     toErase.insert(info.toTensor);

@@ -105,20 +105,73 @@ static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
   return newPointerCastOp;
 }
 
+static bool hasPreloadWorkspaceMark(Value value) {
+  if (!value)
+    return false;
+
+  if (utils::getAnnotateOpWithAttr(value, hivm::PreloadWorkspaceAttr::name)
+          .has_value()) {
+    return true;
+  }
+
+  if (Operation *defOp = value.getDefiningOp()) {
+    if (defOp->hasAttr(hivm::PreloadWorkspaceAttr::name))
+      return true;
+  }
+
+  return false;
+}
+
+static Value findPreloadWorkspaceMarkedValue(Value value) {
+  auto roots = utils::tracebackMemRefVecByTargetFn(
+      value, [](Value v) { return hasPreloadWorkspaceMark(v); });
+
+  if (roots.size() != 1)
+    return Value();
+
+  Value root = roots.front();
+  if (!hasPreloadWorkspaceMark(root))
+    return Value();
+
+  return root;
+}
+
+static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
+  if (subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name))
+    return true;
+
+  Value markedValue = findPreloadWorkspaceMarkedValue(subviewOp.getSource());
+  if (!markedValue)
+    return false;
+
+  auto markedType = dyn_cast<MemRefType>(markedValue.getType());
+  if (!markedType)
+    return false;
+
+  // Only rewrite subviews whose source still has the workspace root rank.
+  // If a collapse_shape has already removed the preload slot dimension,
+  // offset[0] is no longer the slot offset.
+  return subviewOp.getSourceType().getRank() == markedType.getRank();
+}
+
 static Value
 cloneWorkspaceSubview(memref::SubViewOp subviewOp, size_t preloadNum,
                       PreloadInfo &info, OpBuilder &b) {
   auto offsets = subviewOp.getMixedOffsets();
   auto loc = subviewOp.getLoc();
-  auto indVar = info.mappings[info.preloadNum].lookup(info.indVar);
+
+  auto indVar = info.mappings[preloadNum].lookup(info.indVar);
+
   Value offset = b.create<arith::DivSIOp>(indVar.getLoc(), indVar, info.step);
   offset = b.create<arith::RemSIOp>(offset.getLoc(), offset,
                                     info.maxPreloadValue);
   offset = b.create<arith::IndexCastOp>(offset.getLoc(), b.getIndexType(),
                                         offset);
   offsets[0] = offset;
+
   auto src = info.mappings[preloadNum].lookupOrDefault(subviewOp.getSource());
   Value newResult;
+
   if (subviewOp.getSourceType().getRank() == subviewOp.getType().getRank()) {
     newResult = b.create<memref::SubViewOp>(loc, src, offsets,
                                             subviewOp.getMixedSizes(),
@@ -131,11 +184,14 @@ cloneWorkspaceSubview(memref::SubViewOp subviewOp, size_t preloadNum,
         loc, cast<MemRefType>(newResType), src, offsets,
         subviewOp.getMixedSizes(), subviewOp.getMixedStrides());
   }
+
   auto adaptorOp =
       b.create<UnrealizedConversionCastOp>(loc, subviewOp.getType(), newResult);
+
   adaptorOp->setAttr("preload_adaptor", b.getUnitAttr());
   LDBG("Mapping " << subviewOp << '\n' << adaptorOp);
   info.mappings[preloadNum].map(subviewOp.getResult(), adaptorOp->getResult(0));
+
   return adaptorOp->getResult(0);
 }
 
@@ -191,8 +247,8 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
     if (auto pointerCastOp = dyn_cast<hivm::PointerCastOp>(&op);
         pointerCastOp && getLocalBuffer(pointerCastOp)) {
       cloneLocalBuffer(pointerCastOp, pointerCastOp, info.preloadNum, info, b);
-    } else if (op.hasAttr(hivm::PreloadWorkspaceAttr::name)) {
-      auto subviewOp = cast<memref::SubViewOp>(&op);
+    } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&op);
+              subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
       cloneWorkspaceSubview(subviewOp, info.preloadNum, info, b);
     } else if (auto forOp = dyn_cast<scf::ForOp>(&op)) {
       auto &mapping = info.mappings[info.preloadNum];
@@ -332,10 +388,10 @@ static void rewritePreloadLoop(scf::ForOp forOp,
                 }
                 continue;
               }
-            } else if (bodyOp.hasAttr(hivm::PreloadWorkspaceAttr::name)) {
-              auto subviewOp = cast<memref::SubViewOp>(&bodyOp);
+            } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&bodyOp);
+                      subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
               for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
-                   preloadNum--) {
+                  preloadNum--) {
                 cloneWorkspaceSubview(subviewOp, preloadNum, info, b);
               }
               continue;
@@ -456,6 +512,13 @@ struct PropagateAdaptor : public OpRewritePattern<UnrealizedConversionCastOp> {
   }
 };
 
+static void cleanupPreloadWorkspaceMarks(Operation &op) {
+  op.walk([&](annotation::MarkOp markOp) {
+    if (utils::isAnnotationWithAttr(markOp, hivm::PreloadWorkspaceAttr::name))
+      markOp->removeAttr(hivm::PreloadWorkspaceAttr::name);
+  });
+}
+
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
   DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
@@ -487,6 +550,8 @@ void CreatePreloadPass::runOnOperation() {
     scopes.resize(preloadNumSet.size(), nullptr);
     rewritePreloadLoop(forOp, scopes, preloadNumSet.size());
   }
+
+  cleanupPreloadWorkspaceMarks(*moduleOp);
 
   RewritePatternSet patterns(&getContext());
   patterns.add<PropagateAdaptor>(&getContext());
