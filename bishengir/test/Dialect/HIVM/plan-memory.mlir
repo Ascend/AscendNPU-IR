@@ -2729,3 +2729,43 @@ module {
     return
   }
 }
+
+// -----
+
+module {
+  // CHECK-LABEL: func.func @test_plan_memory_for_alias
+  func.func @test_plan_memory_for_alias(%arg0: memref<64xf32, #hivm.address_space<gm>>, %arg1: memref<64xf32, #hivm.address_space<gm>>, %arg2: memref<64xf32, #hivm.address_space<gm>>, %arg3: i1, %arg4: memref<1xf32, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: hivm.hir.pointer_cast
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %alloc = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<64xf32, #hivm.address_space<gm>>) outs(%alloc : memref<64xf32, #hivm.address_space<ub>>)
+    %0 = scf.for %arg5 = %c0 to %c64 step %c1 iter_args(%arg6 = %alloc) -> (memref<64xf32, #hivm.address_space<ub>>) {
+      %1 = scf.for %arg7 = %c0 to %c64 step %c1 iter_args(%arg8 = %arg6) -> (memref<64xf32, #hivm.address_space<ub>>) {
+        %alloc_0 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+        hivm.hir.copy ins(%arg8 : memref<64xf32, #hivm.address_space<ub>>) outs(%alloc_0 : memref<64xf32, #hivm.address_space<ub>>)
+        %alloc_1 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+        hivm.hir.copy ins(%alloc_0 : memref<64xf32, #hivm.address_space<ub>>) outs(%alloc_1 : memref<64xf32, #hivm.address_space<ub>>)
+        scf.yield %alloc_1 : memref<64xf32, #hivm.address_space<ub>>
+      }
+      %alloc_0 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.load ins(%arg1 : memref<64xf32, #hivm.address_space<gm>>) outs(%alloc_0 : memref<64xf32, #hivm.address_space<ub>>)
+      %alloc_1 = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+      hivm.hir.vadd ins(%1, %alloc_0 : memref<64xf32, #hivm.address_space<ub>>,
+                        memref<64xf32, #hivm.address_space<ub>>)
+                  outs(%alloc_1 : memref<64xf32, #hivm.address_space<ub>>)
+      scf.yield %alloc_1 : memref<64xf32, #hivm.address_space<ub>>
+    }
+    scf.for %arg9 = %c0 to %c64 step %c1 {
+      %2 = arith.index_cast %arg9 : index to i64
+      %3 = memref.load %0[%arg9] : memref<64xf32, #hivm.address_space<ub>>
+      %alloc_0 = memref.alloc() : memref<1xf32, #hivm.address_space<ub>>
+      memref.store %3, %alloc_0[%c0] : memref<1xf32, #hivm.address_space<ub>>
+      hivm.hir.store ins(%alloc_0 : memref<1xf32, #hivm.address_space<ub>>)
+                   outs(%arg4 : memref<1xf32, #hivm.address_space<gm>>)
+    }
+    return
+  }
+}
