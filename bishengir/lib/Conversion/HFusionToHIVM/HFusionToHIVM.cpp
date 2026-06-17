@@ -89,6 +89,13 @@ public:
         isSigned = false;
       }
     }
+
+    if (isa<hfusion::ElemwiseBinaryOp>(op)) {
+      hfusion::BinaryFn kind = cast<hfusion::ElemwiseBinaryOp>(op).getFun();
+      if (kind == hfusion::BinaryFn::shrui) {
+        isSigned = false;
+      }
+    }
     opType hivmOp;
 
     if constexpr (std::is_base_of_v<
@@ -98,7 +105,11 @@ public:
       if constexpr (std::is_same_v<opType, VDivOp>) {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value(), isSigned);
-      } else {
+      } else if constexpr (std::is_same_v<opType, VShROp>) {
+        hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
+			          /*temp_buffer=*/Value(), isSigned);
+      }
+      else {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value());
       }

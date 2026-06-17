@@ -253,10 +253,10 @@ void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 //===----------------------------------------------------------------------===//
 void VShROp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   BoolAttr round, DenseI64ArrayAttr transpose,
+                   BoolAttr is_signed, BoolAttr round, DenseI64ArrayAttr transpose,
                    DenseI64ArrayAttr broadcast) {
-  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, round,
-        transpose, broadcast);
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, is_signed,
+		  round, transpose, broadcast);
 }
 
 //===----------------------------------------------------------------------===//

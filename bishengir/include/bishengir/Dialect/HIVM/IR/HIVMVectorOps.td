@@ -1050,12 +1050,13 @@ def VShROp : HIVM_ElementwiseBinaryOp<"vshr",
   let arguments = (ins Variadic<AnyType>:$src,
                        Variadic<AnyShaped>:$dst,
                        Optional<AnyMemRef>:$temp_buffer,
+		       DefaultValuedAttr<BoolAttr, "true">:$is_signed,
                        DefaultValuedOptionalAttr<BoolAttr, "true">:$round,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
   );
   let builders = [OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
-      "ValueRange":$dst, "BoolAttr":$round,
+      "ValueRange":$dst, "BoolAttr":$shr_type, "BoolAttr":$round,
       CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
       CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>];
   let assemblyFormat = [{

@@ -213,6 +213,15 @@ func.func @test_hfusion_elemwise_binary_ops(
   hfusion.elemwise_binary {fun = #hfusion.binary_fn<minf>}
     ins(%src3, %src4 : memref<6x6xf16>, memref<6x6xf16>)
     outs(%dst1 : memref<6x6xf16>)
+  %cst = arith.constant 42 : i16
+  //     CHECK hivm.hir.vshr {is_signed = false}
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrui>}
+    ins(%src1, %cst : memref<6x6xi16>, i16)
+    outs(%dst : memref<6x6xi16>)
+  //     CHECK hivm.hir.vshr
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<shrsi>}
+    ins(%src1, %cst : memref<6x6xi16>, i16)
+    outs(%dst : memref<6x6xi16>)
   return
 }
 
