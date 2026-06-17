@@ -1113,3 +1113,27 @@ func.func @test_matmul_with_scope_matmul_limited_in_cube(%arg1: memref<16x16xf16
 
   return
 }
+
+// -----
+// Test: with dot_pad_only_k hint, real_m should use l1M (aligned size from C)
+// instead of actualM when actualM is not aligned.
+// A has shape 128x128 but actualM=29 (non-aligned), C has shape 128x128 (l1M=128).
+// CHECK-LABEL: func.func @test_dot_pad_only_k_l1M_for_real_m
+// CHECK: %[[C128:.*]] = arith.constant 128 : index
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn} ins({{.*}}, {{.*}}, {{.*}}, %[[C128]], {{.*}}, {{.*}}
+func.func @test_dot_pad_only_k_l1M_for_real_m() -> tensor<128x128xf32> {
+    %c128 = arith.constant 128 : index
+    %c29 = arith.constant 29 : index
+    %true = arith.constant true
+
+    %allocA = memref.alloc() : memref<128x128xf16>
+    %tensorA = bufferization.to_tensor %allocA restrict writable : memref<128x128xf16>
+    annotation.mark %tensorA {dot_pad_only_k} : tensor<128x128xf16>
+
+    %allocB = memref.alloc() : memref<128x128xf16>
+    %tensorB = bufferization.to_tensor %allocB restrict writable : memref<128x128xf16>
+
+    %empty = tensor.empty() : tensor<128x128xf32>
+    %result = hivm.hir.mmadL1 ins(%tensorA, %tensorB, %true, %c29, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
+    return %result : tensor<128x128xf32>
+}

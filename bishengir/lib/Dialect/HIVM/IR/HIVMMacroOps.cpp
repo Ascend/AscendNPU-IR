@@ -366,33 +366,35 @@ llvm::SmallVector<int64_t> getScaleBlockSizes(mlir::Value oper) {
   return kBlockSizes;
 }
 
-/// @brief Computes the block sizes for the B operand, with special handling
+/// @brief Computes the block sizes for the A/B operands, with special handling
 ///        for transpose and A5 configurations.
 ///
 /// Currently, the B8 implementation is aligned with CATLASS constraints.
 ///
-/// When `isA5` is true and the element size is 1 byte with `isBTranspose`
-/// set to false, the fractal block number is overridden to 32. Otherwise,
-/// the default `FRACTAL_BLOCK_NUM` is used.
+/// When `isA5` is true and the element size is 1 byte with `isTranspose`
+/// set to false, the fractal block number is overridden to 32 for B. Otherwise,
+/// the default `FRACTAL_BLOCK_NUM` is used. The scenario for A is opposite.
+/// A: 16 x 32  zN   A.T: 32 x 32  nZ
+/// B: 32 x 32  zN   B.T: 16 x 32  nZ
 ///
 /// @param oper         The MLIR value whose element type is used to compute
 /// block sizes.
-/// @param isBTranspose Whether the B operand is transposed.
+/// @param isTranspose Whether the A/B operand is transposed.
+/// @param isA         Whether the A operand is used. If false, B is used.
 /// @param isA5         Whether the A5-specific block size logic should be
 /// applied.
 /// @return A SmallVector containing two elements: [factalBlockNum, kBlockSize].
-llvm::SmallVector<int64_t> getBlockSizesB(mlir::Value oper, bool isBTranspose,
-                                          bool isA5) {
+llvm::SmallVector<int64_t> getBlockSizesTile(mlir::Value oper, bool isTranspose,
+                                          bool isA, bool isA5) {
   llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
   size_t elementSize =
       (elementType.getIntOrFloatBitWidth() / utils::kBitsToByte);
-  auto kBlockSize = utils::INTR_BYTES_PER_BLOCK /
-                    (elementType.getIntOrFloatBitWidth() / utils::kBitsToByte);
+  auto kBlockSize = utils::INTR_BYTES_PER_BLOCK / elementSize;
   auto factalBlockNum = utils::FRACTAL_BLOCK_NUM;
-  if (isA5) {
+  if (isA5 && (elementSize == 1)) {
     factalBlockNum =
-        ((elementSize == 1 && !isBTranspose) ? 32 : utils::FRACTAL_BLOCK_NUM);
+        (isA == isTranspose) ? 32 : utils::FRACTAL_BLOCK_NUM;
   }
   kBlockSizes.push_back(factalBlockNum);
   kBlockSizes.push_back(kBlockSize);
@@ -728,9 +730,9 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
 /// sizes based on operand type and transpose configuration:
 ///
 /// - **Operand A**: Layout is `nZ` if transposed, `zN` otherwise. Block sizes
-///   are derived from the element type via `getBlockSizes()`.
+///   are derived from the element type via `getBlockSizesTile()` with `isA=true`.
 /// - **Operand B**: Layout is `nZ` if transposed, `zN` otherwise. Block sizes
-///   are computed via `getBlockSizesB()`, which applies A5-specific logic.
+///   are computed via `getBlockSizesTile()` with `isA=false`.
 /// - **Operand C**: Always uses `zN` layout with a fixed
 ///   `FRACTAL_BLOCK_NUM × FRACTAL_BLOCK_NUM` block size.
 /// - **Per-channel bias** (optional): Uses `ND` layout with no block size
@@ -743,7 +745,9 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
 
   auto operA = getA();
   bool isATranspose = getATranspose().has_value();
-  auto aBlockSizes = getBlockSizes(operA);
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true, isA5);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
@@ -751,9 +755,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
 
   auto operB = getB();
   bool isBTranspose = getBTranspose().has_value();
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
-  auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false, isA5);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
@@ -779,16 +781,17 @@ FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
   FractalOperandLayouts layouts;
 
   auto operA = getA();
-  auto aBlockSizes = getBlockSizes(operA);
+  bool isATranspose = getATranspose().has_value();
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true, isA5);
   layouts.a = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
 
   auto operB = getB();
   bool isBTranspose = getBTranspose().has_value();
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
-  auto bBlockSizes = getBlockSizesB(operB, isBTranspose, isA5);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false, isA5);
   layouts.b = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
@@ -1168,7 +1171,7 @@ MmadMxL1Op::getOperandsTargetLayout() {
 
   auto operB = getB();
   bool isBTranspose = false;
-  auto bBlockSizes = getBlockSizesB(operB, false, true);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false, true);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
