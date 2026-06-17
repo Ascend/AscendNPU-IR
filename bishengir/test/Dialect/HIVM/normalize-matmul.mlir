@@ -3321,6 +3321,45 @@ func.func @test_zeroinit_for_var_i32_fallback(%a: tensor<16x16xf16>, %b: tensor<
 }
 
 // -----
+// vbrc(0) + vadd with perChannel bias: PostPerChannelAddWithSplitK (non-split-K)
+// The mmadL1 init is vbrc(0), and the mmadL1 result is added with a perChannel
+// vbrc bias via vadd. Bias alloc/load is before mmadL1 to ensure dominance.
+// After normalization, vbrc(0) and vadd should be fused into mmadL1 with perChannelBias.
+// CHECK-LABEL: func.func @test_vbrc_zero_vadd_postPerChannel
+// CHECK-NOT: hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.vadd
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C, normalized_init_or_bias}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+func.func @test_vbrc_zero_vadd_postPerChannel(%arg0: memref<1x16xf32>) -> tensor<16x16xf32> {
+    %cst_zero = arith.constant 0.000000e+00 : f32
+    %false = arith.constant false
+    %c16 = arith.constant 16 : index
+    %c0 = arith.constant 0 : index
+
+    %alloc_a = memref.alloc() : memref<16x16xf16>
+    %a_tensor = bufferization.to_tensor %alloc_a restrict writable : memref<16x16xf16>
+    %alloc_b = memref.alloc() : memref<16x16xf16>
+    %b_tensor = bufferization.to_tensor %alloc_b restrict writable : memref<16x16xf16>
+
+    %bias_alloc = memref.alloc() : memref<1x16xf32>
+    hivm.hir.load ins(%arg0 : memref<1x16xf32>) outs(%bias_alloc : memref<1x16xf32>)
+    %bias_tensor = bufferization.to_tensor %bias_alloc restrict writable : memref<1x16xf32>
+
+    %empty_init = tensor.empty() : tensor<16x16xf32>
+    %vbrc_zero = hivm.hir.vbrc ins(%cst_zero : f32) outs(%empty_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+
+    %4 = hivm.hir.mmadL1 ins(%a_tensor, %b_tensor, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%vbrc_zero : tensor<16x16xf32>) -> tensor<16x16xf32>
+
+    %empty_vbrc = tensor.empty() : tensor<16x16xf32>
+    %vbrc_bias = hivm.hir.vbrc ins(%bias_tensor : tensor<1x16xf32>) outs(%empty_vbrc : tensor<16x16xf32>) broadcast_dims = [0] -> tensor<16x16xf32>
+
+    %empty_add = tensor.empty() : tensor<16x16xf32>
+    %add_result = hivm.hir.vadd ins(%4, %vbrc_bias : tensor<16x16xf32>, tensor<16x16xf32>) outs(%empty_add : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %add_result : tensor<16x16xf32>
+}
+}
+
+// -----
 // vbrc(0) + vadd with perChannel bias whose defining op is AFTER mmadL1.
 // isSatisfiedBrcForPerChannel is given the mmadL1 as hookOp, so a bias not
 // defined before the mmad is rejected (mirroring isPostPerChannelSplitKPattern);
@@ -3367,7 +3406,7 @@ func.func @test_vbrc_zero_vadd_postPerChannel_bias_after_mmad(%arg0: memref<1x16
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn}
 // CHECK: hivm.hir.vbrc
 // CHECK: hivm.hir.vadd
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 func.func @test_vbrc_zero_vadd_postPerChannel_splitK(%arg0: memref<1x16xf32>, %arg1: memref<16x16xf16>) -> tensor<16x16xf16> {
     %cst_zero = arith.constant 0.000000e+00 : f32
     %c0 = arith.constant 0 : index
@@ -3407,7 +3446,6 @@ func.func @test_vbrc_zero_vadd_postPerChannel_splitK(%arg0: memref<1x16xf32>, %a
     return %cast_result : tensor<16x16xf16>
 }
 }
-
 // CHECK-LABEL: func.func @if_only_nobias
 // CHECK: memref.alloca() {normalize_matmul_counter
 // CHECK: scf.if

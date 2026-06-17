@@ -1519,46 +1519,46 @@ BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo) {
   // refer to getMatmulLikeBiasMode
   Value ccfInVal = ccfinfo.inVal;
   Value ccfOutVal = ccfinfo.outVal;
-  BrcBiasInfo info;
   if (auto brcOp = ccfInVal.getDefiningOp<hivm::VBrcOp>()) {
     if (isSatisfiedBrcForPerChannel(brcOp)) {
+      BrcBiasInfo info;
       info.perChannelValue = getBiasInputForPerChannelAdd(ccfInVal);
       info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
       return info;
     }
     if (isConstZero(brcOp.getSrc())) {
+      auto postPerChannel =
+          matchPostPerChannelAddWithSplitK(ccfOutVal, ccfinfo.insertPointOp);
+      if (postPerChannel)
+        return *postPerChannel;
+      BrcBiasInfo info;
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
       return info;
     }
-  } else if (couldReuse(ccfInVal) && (!ccfinfo.mayNotExecWithIf)) {
+  }
+
+  if (couldReuse(ccfInVal) && (!ccfinfo.mayNotExecWithIf)) {
+    BrcBiasInfo info;
     info.brcBiasMode = MatmulBiasMode::ReuseL0C;
     return info;
-  } else if (ccfInVal.hasOneUse()) {
-    if (auto addOp = dyn_cast<hivm::VAddOp>(*ccfInVal.getUsers().begin())) {
-      for (Value src : addOp.getSrc()) {
-        if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
-          if (isSatisfiedBrcForPerChannel(brcOp)) {
-            info.perChannelValue = getBiasInputForPerChannelAdd(src);
-            info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
-            return info;
-          }
-        }
-      }
-    }
   }
-  auto emptyOp = traceDefOp<tensor::EmptyOp>(ccfInVal);
-  // Mimic A5 TraceResultMode::StrictSame for loop-carried values: an empty
-  // ForOp init alone is not enough for NoBias, because the yield path also
-  // defines the value (typically another mmad).
-  if (auto blockArg = dyn_cast<BlockArgument>(ccfInVal)) {
-    if (isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp())) {
-      info.brcBiasMode = MatmulBiasMode::ElementwiseAdd;
-      return info;
-    }
-  }
-  info.brcBiasMode = emptyOp.has_value() ? MatmulBiasMode::NoBias
-                                         : MatmulBiasMode::ElementwiseAdd;
 
+  auto emptyOps =
+      traceDefOps<tensor::EmptyOp>(ccfInVal,
+                                   /*isSingleChain=*/false,
+                                   /*traceMode=*/TraceResultMode::StrictSame);
+  if (!emptyOps.empty()) {
+    auto postPerChannel =
+        matchPostPerChannelAddWithSplitK(ccfOutVal, ccfinfo.insertPointOp);
+    if (postPerChannel)
+      return *postPerChannel;
+    BrcBiasInfo info;
+    info.brcBiasMode = MatmulBiasMode::NoBias;
+    return info;
+  }
+
+  BrcBiasInfo info;
+  info.brcBiasMode = MatmulBiasMode::ElementwiseAdd;
   return info;
 }
 
