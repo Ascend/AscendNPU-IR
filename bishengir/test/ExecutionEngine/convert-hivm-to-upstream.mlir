@@ -190,6 +190,14 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
     // COMMON: linalg.map
     // COMMON-SAME:  arith.xori
     hivm.hir.vxor ins(%bB, %bB: memref<5x?x10xi32>, memref<5x?x10xi32>) outs(%bB: memref<5x?x10xi32>)
+
+    // COMMON: linalg.map
+    // COMMON-SAME:  arith.shrsi
+    hivm.hir.vshr {is_signed = true} ins(%bB, %bB: memref<5x?x10xi32>, memref<5x?x10xi32>) outs(%bB: memref<5x?x10xi32>)
+
+    // COMMON: linalg.map
+    // COMMON-SAME:  arith.shrui
+    hivm.hir.vshr {is_signed = false} ins(%bB, %bB: memref<5x?x10xi32>, memref<5x?x10xi32>) outs(%bB: memref<5x?x10xi32>)
  
     func.return %1: tensor<5x?x10xf32>
 }
