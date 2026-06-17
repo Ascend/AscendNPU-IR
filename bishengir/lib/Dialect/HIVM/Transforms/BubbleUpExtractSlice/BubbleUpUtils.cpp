@@ -12,10 +12,14 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/IRMapping.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/LogicalResult.h"
 
 namespace mlir::hivm::detail {
 
@@ -70,130 +74,29 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
   return propagateOp;
 }
 
-static void resolveUpPropagator(UnrealizedConversionCastOp upPropagator,
-                                Value newValue, PatternRewriter &rewriter) {
-  if (upPropagator->use_empty())
-    return;
-  rewriter.replaceAllUsesWith(upPropagator.getResult(0), newValue);
+MemRefType getSlicedMemRefType(MemRefType oldType, ShapedType slicedType) {
+  return MemRefType::get(slicedType.getShape(), slicedType.getElementType(),
+                         oldType.getLayout(), oldType.getMemorySpace());
 }
 
-/// Collect path from to_tensor memref toward alloc (bottom-first order).
-static LogicalResult
-collectBufferizationPath(bufferization::ToTensorOp toTensorOp,
-                         SmallVectorImpl<Operation *> &pathOps,
-                         memref::AllocOp &allocOp) {
-  Value memref = toTensorOp.getMemref();
-  llvm::SmallDenseSet<Value, 4> visited;
-  while (memref) {
-    if (!visited.insert(memref).second)
-      return failure();
-    if (auto foundAlloc = memref.getDefiningOp<memref::AllocOp>()) {
-      allocOp = foundAlloc;
-      return success();
-    }
-    if (auto castOp = memref.getDefiningOp<memref::MemorySpaceCastOp>()) {
-      if (utils::getAnnotateOpWithAttr(castOp.getResult(),
-                                       kMayImplicitTransposeWithLastAxis))
-        return failure();
-      pathOps.push_back(castOp.getOperation());
-      memref = castOp.getSource();
-      continue;
-    }
-    if (auto subViewOp = memref.getDefiningOp<memref::SubViewOp>()) {
-      pathOps.push_back(subViewOp.getOperation());
-      memref = subViewOp.getSource();
-      continue;
-    }
-    return failure();
-  }
-  return failure();
-}
-
-void clearBubblePropagatorAttrs(Operation *op, PatternRewriter &rewriter) {
-  rewriter.modifyOpInPlace(op, [&]() {
-    op->removeAttr(kBubbleUpPropagateUp);
-    op->removeAttr(kBubbleUpPropagateDown);
-  });
-}
-
-void resolveUpLinksForOldValue(Value oldValue, Value newValue,
-                               PatternRewriter &rewriter) {
-  SmallVector<UnrealizedConversionCastOp> upPropagators;
-  for (Operation *user : oldValue.getUsers()) {
-    auto upPropagator = dyn_cast<UnrealizedConversionCastOp>(user);
-    if (!upPropagator || !upPropagator->hasAttr(kBubbleUpPropagateUp))
-      continue;
-    if (upPropagator.getInputs()[0] != oldValue)
-      continue;
-    upPropagators.push_back(upPropagator);
-  }
-
-  for (UnrealizedConversionCastOp upPropagator : upPropagators) {
-    resolveUpPropagator(upPropagator, newValue, rewriter);
-    if (upPropagator->use_empty())
-      clearBubblePropagatorAttrs(upPropagator, rewriter);
-  }
-}
-
-static void
-cleanupResolvedBufferizationPropagatorsImpl(func::FuncOp funcOp,
-                                            RewriterBase &rewriter) {
-  bool progress = true;
-  while (progress) {
-    progress = false;
-    SmallVector<Operation *> toErase;
-    funcOp.walk([&](UnrealizedConversionCastOp ucc) {
-      if (ucc->hasAttr(kBubbleUpPropagateUp) ||
-          ucc->hasAttr(kBubbleUpPropagateDown))
-        return;
-      if (ucc->use_empty())
-        toErase.push_back(ucc.getOperation());
-    });
-    funcOp.walk([&](Operation *op) {
-      if (!op->use_empty())
-        return;
-      if (isa<memref::AllocOp, memref::MemorySpaceCastOp, memref::SubViewOp,
-              bufferization::ToTensorOp>(op))
-        toErase.push_back(op);
-    });
-    llvm::sort(toErase);
-    toErase.erase(std::unique(toErase.begin(), toErase.end()), toErase.end());
-    for (Operation *op : toErase) {
-      if (op->getBlock() && op->use_empty()) {
-        rewriter.eraseOp(op);
-        progress = true;
-      }
-    }
-  }
-}
-
-void cleanupResolvedBufferizationPropagators(func::FuncOp funcOp,
-                                             PatternRewriter &rewriter) {
-  cleanupResolvedBufferizationPropagatorsImpl(funcOp, rewriter);
-}
-
-void cleanupResolvedBufferizationPropagators(func::FuncOp funcOp) {
-  IRRewriter rewriter(funcOp.getContext());
-  if (!funcOp.getBody().empty())
-    rewriter.setInsertionPointToStart(&funcOp.getBody().front());
-  cleanupResolvedBufferizationPropagatorsImpl(funcOp, rewriter);
-}
-
-MemRefType getSlicedMemRefType(MemRefType oldType,
-                               RankedTensorType slicedTensorType) {
-  return MemRefType::get(slicedTensorType.getShape(),
-                         slicedTensorType.getElementType(), oldType.getLayout(),
-                         oldType.getMemorySpace());
-}
-
-MemRefType getSlicedMemRefType(MemRefType oldType, int64_t tilingDim) {
+FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
+                                          int64_t tilingDim) {
   auto shape = llvm::to_vector(oldType.getShape());
-  auto strides = cast<StridedLayoutAttr>(oldType.getLayout()).getStrides();
-  if (!ShapedType::isDynamic(shape[tilingDim]))
-    shape[tilingDim] /= 2;
-  auto stridedLayout = StridedLayoutAttr::get(oldType.getContext(),
-                                              ShapedType::kDynamic, strides);
-  return MemRefType::get(shape, oldType.getElementType(), stridedLayout,
+  int64_t offset;
+  SmallVector<int64_t> strides;
+  if (failed(getStridesAndOffset(oldType, strides, offset)))
+    return failure();
+
+  auto layout = StridedLayoutAttr::get(oldType.getContext(),
+                                       ShapedType::kDynamic, strides);
+  if (!ShapedType::isDynamic(shape[tilingDim])) {
+    if (shape[tilingDim] % 2 == 0)
+      shape[tilingDim] /= 2;
+    else
+      shape[tilingDim] = ShapedType::kDynamic;
+  }
+
+  return MemRefType::get(shape, oldType.getElementType(), layout,
                          oldType.getMemorySpace());
 }
 
@@ -220,76 +123,72 @@ void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
   });
 }
 
-LogicalResult
-checkBufferizationBubbleUpPath(bufferization::ToTensorOp toTensorOp) {
-  SmallVector<Operation *, 4> pathOps;
-  memref::AllocOp allocOp;
-  return collectBufferizationPath(toTensorOp, pathOps, allocOp);
+static LogicalResult
+markOddTilingBufferSizeIfNeeded(MemRefType slicedType, MemRefType sourceType,
+                                Value buffer, int64_t tilingDim,
+                                PatternRewriter &rewriter) {
+  auto bufferType = dyn_cast<ShapedType>(buffer.getType());
+  if (!bufferType || bufferType.hasStaticShape())
+    return success();
+
+  auto bufferSize =
+      calculateBufferSizeInBytes(slicedType, sourceType.getShape(), tilingDim);
+
+  auto newMarkOp = rewriter.create<annotation::MarkOp>(buffer.getLoc(), buffer);
+  newMarkOp->setAttr(kBufferSizeInByteAttr,
+                     rewriter.getI64IntegerAttr(bufferSize));
+  return success();
 }
 
-FailureOr<memref::AllocOp> createSlicedAllocLike(MemRefType slicedMemRefType,
-                                                 memref::AllocOp oldAllocOp,
-                                                 PatternRewriter &rewriter) {
+FailureOr<memref::AllocOp>
+createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
+                      memref::AllocOp oldAllocOp, PatternRewriter &rewriter) {
   auto originalType = dyn_cast<MemRefType>(oldAllocOp.getResult().getType());
   if (!originalType)
+    return failure();
+
+  auto slicedMemRefType =
+      dyn_cast<MemRefType>(propagateOp.getResult(0).getType());
+  if (!slicedMemRefType)
     return failure();
 
   auto memrefType = MemRefType::get(
       slicedMemRefType.getShape(), slicedMemRefType.getElementType(),
       originalType.getLayout(), originalType.getMemorySpace());
-  if (!memrefType.hasStaticShape())
-    return failure();
+
+  auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
+  SmallVector<Value> dynamicSizes;
+  if (ShapedType::isDynamic(
+          getConstantIntValue(tiledSize).value_or(ShapedType::kDynamic)))
+    dynamicSizes.push_back(cast<Value>(tiledSize));
 
   rewriter.setInsertionPoint(oldAllocOp);
-  return rewriter.create<memref::AllocOp>(oldAllocOp.getLoc(), memrefType);
+  auto newAllocOp = rewriter.create<memref::AllocOp>(oldAllocOp.getLoc(),
+                                                     memrefType, dynamicSizes);
+  if (!dynamicSizes.empty() &&
+      failed(markOddTilingBufferSizeIfNeeded(slicedMemRefType, originalType,
+                                             newAllocOp.getResult(), tilingDim,
+                                             rewriter)))
+    return failure();
+  return newAllocOp;
 }
 
-void cleanupBufferizationPropagators(func::FuncOp funcOp,
-                                     bufferization::ToTensorOp toTensorOp,
-                                     BufferizationPropagationState &state,
-                                     PatternRewriter &rewriter) {
-  SmallVector<Operation *> toErase;
-  auto scheduleErase = [&](Operation *op) {
-    if (op && op->getBlock())
-      toErase.push_back(op);
-  };
+void insertDownPropagators(Operation *op, Operation *newOp, OpFoldResult offset,
+                           OpFoldResult size, int64_t tilingDim,
+                           PatternRewriter &rewriter) {
 
-  if (state.newAllocOp) {
-    Value newAlloc = state.newAllocOp.getResult();
-    SmallVector<OpOperand *> allocUses;
-    for (auto &use : state.allocOp.getResult().getUses())
-      allocUses.push_back(&use);
-    for (OpOperand *use : allocUses) {
-      if (auto markOp = dyn_cast<annotation::MarkOp>(use->getOwner())) {
-        rewriter.modifyOpInPlace(markOp, [&]() { use->set(newAlloc); });
-        continue;
-      }
-      if (auto ucc = dyn_cast<UnrealizedConversionCastOp>(use->getOwner())) {
-        if (ucc->hasAttr(kBubbleUpPropagateUp) ||
-            ucc->hasAttr(kBubbleUpPropagateDown))
-          rewriter.replaceAllUsesWith(ucc.getResult(0), newAlloc);
-      }
+  for (auto [res, newRes] :
+       llvm::zip_equal(op->getResults(), newOp->getResults())) {
+    SmallVector<OpOperand *> uses;
+    for (auto &use : res.getUses())
+      uses.push_back(&use);
+    for (auto *use : uses) {
+      auto *user = use->getOwner();
+      auto newPropagateOp = createBubblePropagatorDown(
+          use->get(), newRes, offset, size, tilingDim, rewriter);
+      rewriter.modifyOpInPlace(
+          user, [&]() { use->set(newPropagateOp->getResult(0)); });
     }
-  }
-
-  scheduleErase(toTensorOp);
-  for (Operation *op : state.pathOps)
-    scheduleErase(op);
-  scheduleErase(state.allocOp);
-
-  funcOp.walk([&](UnrealizedConversionCastOp ucc) {
-    if (!ucc->hasAttr(kBubbleUpPropagateUp) &&
-        !ucc->hasAttr(kBubbleUpPropagateDown))
-      return;
-    if (ucc->use_empty())
-      scheduleErase(ucc);
-  });
-
-  llvm::sort(toErase);
-  toErase.erase(std::unique(toErase.begin(), toErase.end()), toErase.end());
-  for (Operation *op : toErase) {
-    if (op->getBlock() && op->use_empty())
-      rewriter.eraseOp(op);
   }
 }
 
