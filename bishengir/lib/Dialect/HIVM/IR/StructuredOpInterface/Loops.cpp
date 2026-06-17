@@ -115,6 +115,18 @@ SmallVector<hivm::IteratorType> VArangeOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
+ArrayAttr VArangeOp::getIndexingMaps() {
+  MLIRContext *context = getContext();
+  unsigned numLoops = getNumLoops();
+  AffineMap scalarMap = AffineMap::get(numLoops, 0, context);
+  AffineMap identityMap = AffineMap::getMultiDimIdentityMap(numLoops, context);
+  SmallVector<AffineMap> indexingMaps;
+  for (OpOperand &opOperand : getOperation()->getOpOperands()) {
+    indexingMaps.push_back(getRank(&opOperand) == 0 ? scalarMap : identityMap);
+  }
+  return Builder(context).getAffineMapArrayAttr(indexingMaps);
+}
+
 //===----------------------------------------------------------------------===//
 // VBrcOp
 //===----------------------------------------------------------------------===//

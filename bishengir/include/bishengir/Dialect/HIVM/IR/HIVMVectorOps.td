@@ -1243,7 +1243,8 @@ def VArangeOp
           "varange", [AttrSizedOperandSegments,
                       OperElemTypeConstraints<[0], [I16, I32, F16, F32, I64]>,
                       DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
-                                                ["getIteratorTypesArray"]>,
+                                                ["getIteratorTypesArray",
+                                                 "getIndexingMaps"]>,
                       // Will automatically use the default
                       // uniform reassociation impl
                       DeclareOpInterfaceMethods<FlattenInterface,
