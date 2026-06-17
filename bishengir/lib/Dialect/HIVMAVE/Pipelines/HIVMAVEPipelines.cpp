@@ -60,6 +60,7 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         hivmave::createOptimizeReductionLoopHIVMAVEPass(
             optimizeReductionLoopOptions));
+    pm.nest<func::FuncOp>().addPass(hivmave::createProcessWideVextfPass());
     pm.nest<func::FuncOp>().addPass(hivmave::createLegalizeOptHIVMAVEPass());
     pm.nest<func::FuncOp>().addPass(
         hivmave::createReplaceWithVectorScalarPass());
