@@ -56,12 +56,7 @@ else()
   set(BISHENGIR_ENABLE_TORCH_CONVERSIONS 0)
 endif()
 
-# Build Triton when "triton" project is enabled.
-if("triton" IN_LIST LLVM_EXTERNAL_PROJECTS)
-  set(BISHENGIR_ENABLE_TRITON_COMPILE 1)
-else()
-  set(BISHENGIR_ENABLE_TRITON_COMPILE 0)
-endif()
+option(BISHENGIR_ENABLE_TRITON_COMPILE "enable triton compile option" OFF)
 
 if(BISHENGIR_ENABLE_TORCH_CONVERSIONS AND BUILD_SHARED_LIBS)
   message(FATAL_ERROR "torch-mlir can't build with sharded libs.")
@@ -148,6 +143,7 @@ if(BISHENGIR_ENABLE_TORCH_CONVERSIONS)
 endif()
 
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
+  set(LLVM_EXTERNAL_TRITON_SOURCE_DIR "${BISHENGIR_SRC_DIR}/triton")
   cmake_path(ABSOLUTE_PATH LLVM_EXTERNAL_TRITON_SOURCE_DIR
              BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   set(TRITON_MAIN_SRC_DIR ${LLVM_EXTERNAL_TRITON_SOURCE_DIR})
@@ -164,6 +160,9 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
   include_directories(${TRITON_MAIN_SRC_DIR}/third_party/proton/Dialect/include)
   # for RegisterTritonDialects.h
   include_directories(${TRITON_MAIN_SRC_DIR}/bin)
+  # Build triton subdirectory so its targets (TritonGPUIR, TritonIR, etc.)
+  # are available for bishengir libraries that depend on them.
+  add_subdirectory(triton ${LLVM_BINARY_DIR}/tools/triton)
 endif()
 
 if(MLIR_ENABLE_BINDINGS_PYTHON)
