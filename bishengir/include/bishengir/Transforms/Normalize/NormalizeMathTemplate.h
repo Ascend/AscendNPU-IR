@@ -473,6 +473,12 @@ public:
       return success();
     }
 
+    if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+      rewriter.replaceOp(
+          op, rewriteModType(rewriter, op, x, y, elemType, rewriter.getF32Type()));
+      return success();
+    }
+
     bool needsCast = elemType.isBF16() || elemType.isF16();
     Value xForDiv = x;
     Value yForDiv = y;

@@ -660,6 +660,42 @@ func.func @test_NormalizeMod_hfusion_mod_f16(%src0: tensor<2048xf16>, %src1: ten
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_f8e5m2
+// CHECK-SAME: (%[[x:.*]]: tensor<2048xf8E5M2>, %[[y:.*]]: tensor<2048xf8E5M2>)
+// CHECK: %[[x_cast:.*]] = hfusion.cast {{.*}} ins(%[[x]] : tensor<2048xf8E5M2>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[y_cast:.*]] = hfusion.cast {{.*}} ins(%[[y]] : tensor<2048xf8E5M2>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[x_cast]], %[[y_cast]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div_trunc:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[div]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[mul:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[div_trunc]], %[[y_cast]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[rem:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[x_cast]], %[[mul]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[output:.*]] = hfusion.select ins({{.*}}, {{.*}}, %[[rem]] : tensor<2048xi1>, f32, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: hfusion.cast {{.*}} ins(%[[output]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf8E5M2>) -> tensor<2048xf8E5M2>
+func.func @test_NormalizeMod_hfusion_mod_f8e5m2(%src0: tensor<2048xf8E5M2>, %src1: tensor<2048xf8E5M2>) -> tensor<2048xf8E5M2> {
+    %3 = tensor.empty() : tensor<2048xf8E5M2>
+    %4 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%src0, %src1 : tensor<2048xf8E5M2>, tensor<2048xf8E5M2>) outs(%3 : tensor<2048xf8E5M2>) -> tensor<2048xf8E5M2>
+    return %4 : tensor<2048xf8E5M2>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_f8e4m3fn
+// CHECK-SAME: (%[[x:.*]]: tensor<2048xf8E4M3FN>, %[[y:.*]]: tensor<2048xf8E4M3FN>)
+// CHECK: %[[x_cast:.*]] = hfusion.cast {{.*}} ins(%[[x]] : tensor<2048xf8E4M3FN>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[y_cast:.*]] = hfusion.cast {{.*}} ins(%[[y]] : tensor<2048xf8E4M3FN>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>} ins(%[[x_cast]], %[[y_cast]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[div_trunc:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[div]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[mul:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%[[div_trunc]], %[[y_cast]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[rem:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%[[x_cast]], %[[mul]] : tensor<2048xf32>, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: %[[output:.*]] = hfusion.select ins({{.*}}, {{.*}}, %[[rem]] : tensor<2048xi1>, f32, tensor<2048xf32>) outs({{.*}} : tensor<2048xf32>) -> tensor<2048xf32>
+// CHECK: hfusion.cast {{.*}} ins(%[[output]] : tensor<2048xf32>) outs({{.*}} : tensor<2048xf8E4M3FN>) -> tensor<2048xf8E4M3FN>
+func.func @test_NormalizeMod_hfusion_mod_f8e4m3fn(%src0: tensor<2048xf8E4M3FN>, %src1: tensor<2048xf8E4M3FN>) -> tensor<2048xf8E4M3FN> {
+    %3 = tensor.empty() : tensor<2048xf8E4M3FN>
+    %4 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<mod>} ins(%src0, %src1 : tensor<2048xf8E4M3FN>, tensor<2048xf8E4M3FN>) outs(%3 : tensor<2048xf8E4M3FN>) -> tensor<2048xf8E4M3FN>
+    return %4 : tensor<2048xf8E4M3FN>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeMod_hfusion_mod_i8
 // CHECK-SAME: (%[[x:.*]]: tensor<2048xi8>, %[[y:.*]]: tensor<2048xi8>)
 // CHECK: %[[x_f16:.*]] = hfusion.cast {{.*}} ins(%[[x]] : tensor<2048xi8>) outs({{.*}} : tensor<2048xf16>) -> tensor<2048xf16>
