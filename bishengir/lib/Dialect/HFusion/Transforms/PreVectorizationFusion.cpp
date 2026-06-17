@@ -617,13 +617,14 @@ struct ExpandShapeToImplicitBrcInGenericPattern
 
   LogicalResult matchAndRewrite(linalg::GenericOp op,
                                 PatternRewriter &rewriter) const override {
-    SmallVector<Value> newInputs;
-    SmallVector<AffineMap> newMaps;
     bool changed = false;
 
     unsigned numLoops = op.getNumLoops();
     auto oldMaps = op.getIndexingMapsArray();
     auto ctx = rewriter.getContext();
+    SmallVector<Value> newInputs = llvm::to_vector(op.getDpsInputs());
+    SmallVector<AffineMap> newMaps(oldMaps.begin(),
+                                   oldMaps.begin() + op.getNumDpsInputs());
 
     for (auto it : llvm::enumerate(op.getDpsInputs())) {
       Value input = it.value();
@@ -632,27 +633,57 @@ struct ExpandShapeToImplicitBrcInGenericPattern
 
       auto expandShapeOp = input.getDefiningOp<tensor::ExpandShapeOp>();
       if (!expandShapeOp || isa_and_nonnull<tensor::CollapseShapeOp>(
-                                expandShapeOp.getSrc().getDefiningOp())) {
-        newInputs.push_back(input);
-        newMaps.push_back(oldMap);
+                                expandShapeOp.getSrc().getDefiningOp()))
         continue;
-      }
+      // To replace input with expand_shape src, the following conditions must
+      // be met:
+      //  - The expand_shape only inserts unit dims (an inserted unit dim that
+      //  is indexed by a constant-0). Each reassociation group of result dims
+      //  maps to exactly one source dim, and within a group at most one dim
+      //  carries the source extent while the rest are unit dims.
+      auto resShape = cast<RankedTensorType>(input.getType()).getShape();
+      auto reassoc = expandShapeOp.getReassociationIndices();
       bool hasInlineBrcAxes = false;
-      SmallVector<AffineExpr> newMapResults;
       for (auto [i, result] : llvm::enumerate(oldMap.getResults())) {
         auto constExpr = dyn_cast<AffineConstantExpr>(result);
-        if (!constExpr || constExpr.getValue() != 0) {
-          newMapResults.push_back(result);
-          continue;
+        // 0 needs to map shape 1
+        if (constExpr && constExpr.getValue() == 0 && resShape[i] == 1) {
+          hasInlineBrcAxes = true;
+          break;
         }
-        hasInlineBrcAxes = true;
       }
-      if (hasInlineBrcAxes) {
-        newInputs.push_back(expandShapeOp.getSrc());
-        newMaps.push_back(AffineMap::get(numLoops, 0, newMapResults, ctx));
-        changed = true;
+      if (!hasInlineBrcAxes)
         continue;
+
+      // Collapse each reassociation group into a single map result.
+      bool isPureUnitExpand = true;
+      SmallVector<AffineExpr> newMapResults;
+      newMapResults.reserve(reassoc.size());
+      for (const auto &group : reassoc) {
+        AffineExpr extentExpr = getAffineConstantExpr(0, ctx);
+        unsigned numExtentDims = 0;
+        for (int64_t d : group) {
+          if (resShape[d] != 1) {
+            extentExpr = oldMap.getResult(d);
+            ++numExtentDims;
+          }
+        }
+        // A group that splits one source dim into several non-unit dims is a
+        // genuine reshape, not a pure unit expansion; leave it for the standard
+        // reshape-fusion patterns and bail out for this operand. For example,
+        // 6xi32 -> 2x3xi32.
+        if (numExtentDims > 1) {
+          isPureUnitExpand = false;
+          break;
+        }
+        newMapResults.push_back(extentExpr);
       }
+      if (!isPureUnitExpand)
+        continue;
+
+      newInputs[it.index()] = expandShapeOp.getSrc();
+      newMaps[it.index()] = AffineMap::get(numLoops, 0, newMapResults, ctx);
+      changed = true;
     }
 
     if (!changed)
