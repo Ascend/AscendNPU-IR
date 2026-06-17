@@ -274,6 +274,14 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             processVCumOp(op);
             return true;
           })
+          .Case<hivm::VCummaxOp>([this](auto op) {
+            processVCumOp(op);
+            return true;
+          })
+          .Case<hivm::VCumminOp>([this](auto op) {
+            processVCumOp(op);
+            return true;
+          })
           .Case<scf::YieldOp>([this](auto op) {
             processYieldOp(op);
             return true;
@@ -493,11 +501,7 @@ void DimensionAnalyzer::processVPadOp(hivm::VPadOp op) {
 }
 
 template <typename T, typename> void DimensionAnalyzer::processVCumOp(T op) {
-  if constexpr (std::is_same_v<T, hivm::VCumsumOp>) {
-    LDBG("Processing VCumsumOp " << op);
-  } else {
-    LDBG("Processing VCumprodOp " << op);
-  }
+  LDBG("Processing " << op->getName().getStringRef() << " " << op);
   auto input = op.getSrc();
   auto output = op.getDst();
   auto reverse = op.getReverse();

@@ -253,6 +253,8 @@ def Hfusion_CumOpTypeEnum :
   I32EnumAttrCase<"UNDEFINED", 0, "undefined">,
   I32EnumAttrCase<"CUMSUM", 1, "cumsum">,
   I32EnumAttrCase<"CUMPROD", 2, "cumprod">,
+  I32EnumAttrCase<"CUMMAX", 3, "cummax">,
+  I32EnumAttrCase<"CUMMIN", 4, "cummin">,
 ]> {
   let genSpecializedAttr = 0;
   let cppNamespace = "::mlir::hfusion";

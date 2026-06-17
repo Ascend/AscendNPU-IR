@@ -1030,9 +1030,16 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
     if (failed(
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
-    rewriter.replaceOpWithNewOp<HIVMOP>(op, op->getResultTypes(), op.getInput(),
-                                        dsts[0], op.getCumDims(),
-                                        op.getReverse());
+    auto newOp = rewriter.create<HIVMOP>(op.getLoc(), op->getResultTypes(),
+                                         op.getInput(), dsts[0], op.getCumDims(),
+                                         op.getReverse());
+    // cummax/cummin carry a NaN-propagation flag (max/minimum vs max/minnum).
+    // Forward it; cumsum/cumprod have no such attribute.
+    if constexpr (std::is_same_v<HFUSIONOP, hfusion::CummaxOp> ||
+                  std::is_same_v<HFUSIONOP, hfusion::CumminOp>) {
+      newOp.setPropagateNan(op.getPropagateNan());
+    }
+    rewriter.replaceOp(op, newOp->getResults());
     return success();
   }
 };
@@ -1430,6 +1437,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMSortOp,
     HFusionToHIVMCumOp<hfusion::CumsumOp, hivm::VCumsumOp>,
     HFusionToHIVMCumOp<hfusion::CumprodOp, hivm::VCumprodOp>,
+    HFusionToHIVMCumOp<hfusion::CummaxOp, hivm::VCummaxOp>,
+    HFusionToHIVMCumOp<hfusion::CumminOp, hivm::VCumminOp>,
     HFusionToHIVMAtomicOp<hfusion::AtomicCasOp, hivm::AtomicCasOp>,
     HFusionToHIVMAtomicOp<hfusion::AtomicXchgOp, hivm::AtomicXchgOp>
   >(patterns.getContext());

@@ -1395,6 +1395,16 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
     return success();
   }
 
+  if (auto cummaxOp = dyn_cast<hfusion::CummaxOp>(op)) {
+    adjustCumOp(cummaxOp, builder);
+    return success();
+  }
+
+  if (auto cumminOp = dyn_cast<hfusion::CumminOp>(op)) {
+    adjustCumOp(cumminOp, builder);
+    return success();
+  }
+
   if (auto padOp = dyn_cast<tensor::PadOp>(op)) {
     adjustPadOp(padOp, builder);
     return success();

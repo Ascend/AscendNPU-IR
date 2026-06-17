@@ -140,6 +140,14 @@ SmallVector<hivm::IteratorType> VCumsumOp::getIteratorTypesArray() {
   return getCumOpIteratorTypesArray(*this);
 }
 
+SmallVector<hivm::IteratorType> VCummaxOp::getIteratorTypesArray() {
+  return getCumOpIteratorTypesArray(*this);
+}
+
+SmallVector<hivm::IteratorType> VCumminOp::getIteratorTypesArray() {
+  return getCumOpIteratorTypesArray(*this);
+}
+
 //===----------------------------------------------------------------------===//
 // VDeinterleaveOp
 //===----------------------------------------------------------------------===//

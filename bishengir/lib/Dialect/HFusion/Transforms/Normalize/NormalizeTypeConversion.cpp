@@ -423,7 +423,9 @@ template <typename CumOpType>
 struct HFusionNormalizeCumOpTraitsBase : public NormalizeTraitsBase {
   static bool shouldNormalize(CumOpType op) {
     return std::is_same_v<CumOpType, hfusion::CumsumOp> ||
-           std::is_same_v<CumOpType, hfusion::CumprodOp>;
+           std::is_same_v<CumOpType, hfusion::CumprodOp> ||
+           std::is_same_v<CumOpType, hfusion::CummaxOp> ||
+           std::is_same_v<CumOpType, hfusion::CumminOp>;
   }
 
   static Value getInput(CumOpType op) { return op.getInput(); }
@@ -434,6 +436,12 @@ struct HFusionNormalizeCumOpTraitsBase : public NormalizeTraitsBase {
     auto newOp = rewriter.create<CumOpType>(loc, TypeRange{newOutput},
                                              newInput, op.getCumDims(),
                                              op.getReverse());
+    // Preserve the NaN-propagation flag across normalization for cummax/cummin
+    // (cumsum/cumprod have no such attribute).
+    if constexpr (std::is_same_v<CumOpType, hfusion::CummaxOp> ||
+                  std::is_same_v<CumOpType, hfusion::CumminOp>) {
+      newOp.setPropagateNan(op.getPropagateNan());
+    }
     return newOp->getResult(0);
   }
 };
@@ -1490,7 +1498,11 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
     addTypeConversionPatterns<mlir::NormalizeCumOpI8ToTargetType<
         hfusion::CumsumOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CumsumOp>>,
         mlir::NormalizeCumOpI8ToTargetType<
-            hfusion::CumprodOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CumprodOp>>>(patterns);
+            hfusion::CumprodOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CumprodOp>>,
+        mlir::NormalizeCumOpI8ToTargetType<
+            hfusion::CummaxOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CummaxOp>>,
+        mlir::NormalizeCumOpI8ToTargetType<
+            hfusion::CumminOp, HFusionNormalizeCumOpI8ToTargetTraits<hfusion::CumminOp>>>(patterns);
   }
   if (archisAscend950) {
     addNormalizeToTargetPatterns<int8_t, linalg::ElemwiseBinaryOp>(patterns);
@@ -1516,7 +1528,11 @@ void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {
   addTypeConversionPatterns<mlir::NormalizeCumOpF16ToF32Type<
       hfusion::CumsumOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CumsumOp>>,
       mlir::NormalizeCumOpF16ToF32Type<
-          hfusion::CumprodOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CumprodOp>>>(patterns);
+          hfusion::CumprodOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CumprodOp>>,
+      mlir::NormalizeCumOpF16ToF32Type<
+          hfusion::CummaxOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CummaxOp>>,
+      mlir::NormalizeCumOpF16ToF32Type<
+          hfusion::CumminOp, HFusionNormalizeCumOpF16ToF32Traits<hfusion::CumminOp>>>(patterns);
 }
 
 } // namespace mlir::hfusion

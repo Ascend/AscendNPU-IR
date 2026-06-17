@@ -384,7 +384,9 @@ static void registerOne(RewritePatternSet &patterns) {
                   std::is_same_v<OpType, hivm::VConcatOp> ||
                   std::is_same_v<OpType, hivm::VGatherOp> ||
                   std::is_same_v<OpType, hivm::VCumsumOp> ||
-                  std::is_same_v<OpType, hivm::VCumprodOp>)) {
+                  std::is_same_v<OpType, hivm::VCumprodOp> ||
+                  std::is_same_v<OpType, hivm::VCummaxOp> ||
+                  std::is_same_v<OpType, hivm::VCumminOp>)) {
     patterns.add<ElemwiseOpLiftLowestStridePattern<OpType>>(
         patterns.getContext());
   }
@@ -421,6 +423,8 @@ void populateLiftLowestStridePatterns(RewritePatternSet &patterns) {
   >(patterns.getContext());
   (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumsumOp>>(patterns.getContext());
   (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumprodOp>>(patterns.getContext());
+  (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCummaxOp>>(patterns.getContext());
+  (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumminOp>>(patterns.getContext());
   registerVectorOps<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"

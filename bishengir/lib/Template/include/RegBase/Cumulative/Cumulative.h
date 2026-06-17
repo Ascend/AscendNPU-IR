@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef BISHENGIR_LIB_TEMPLATE_INCLUDE_CUMPROD_UTILS_H
-#define BISHENGIR_LIB_TEMPLATE_INCLUDE_CUMPROD_UTILS_H
+#ifndef BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H
+#define BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H
 
 #include "DMA/DMAUtils.h"
 #include "RegBase/VecUtils.h"
@@ -70,6 +70,27 @@ extern "C" {
     vector_cumsum_##DIM##d<dtype, cum_dim>(src, dst, temp, reverse);           \
   }
 }
+
+// `propagateNan` selects the NaN semantics at runtime (set by the compiler from
+// the matched arith op): true -> arith::Maximum/MinimumFOp (propagate NaN, like
+// torch); false -> arith::MaxNum/MinNumFOp (ignore NaN, like ops-math). It maps
+// to the CUM_MM_PROP_NAN bit of the template `kind`. Integer dtypes have no NaN,
+// so the flag is a no-op for them (both instantiations are identical).
+#define REGISTER_CUM_MINMAX(name, kindv, DIM, dtype, cum_dim)                  \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_##name##_##DIM##d_##dtype##_dim##cum_dim(                   \
+          memref_t<__ubuf__ dtype, DIM> *src,                                  \
+          memref_t<__ubuf__ dtype, DIM> *dst,                                  \
+          memref_t<__ubuf__ dtype, DIM> *temp, bool reverse,                   \
+          bool propagateNan) {                                                 \
+    if (propagateNan) {                                                        \
+      vector_cum_minmax_##DIM##d<dtype, cum_dim, (kindv) | CUM_MM_PROP_NAN>(   \
+          src, dst, temp, reverse);                                            \
+    } else {                                                                   \
+      vector_cum_minmax_##DIM##d<dtype, cum_dim, kindv>(src, dst, temp,        \
+                                                        reverse);              \
+    }                                                                          \
+  }
 
 template <typename SRC_T, typename DST_T = SRC_T> struct cumulative_args {
   memref_t<__ubuf__ DST_T, 1> *dst;
@@ -319,4 +340,4 @@ DECLARE_CUMSUM(3, float, 1);
 DECLARE_CUMSUM(3, bfloat16_t, 1);
 }
 #endif // defined(__DAV_C310__)
-#endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_CUMULATIVE_UTILS_H
+#endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H

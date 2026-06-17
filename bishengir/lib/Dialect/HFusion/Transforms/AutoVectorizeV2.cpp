@@ -124,7 +124,8 @@ bool isNonVectorizableOp(Operation *op) {
   return isa<
       hfusion::LoadOp, hfusion::StoreOp, hfusion::ReduceWithIndexOp,
       hfusion::GatherOp, hfusion::MulExtOp, hfusion::CumsumOp,
-      hfusion::CumprodOp, hfusion::PrintOp, hfusion::SortOp, hfusion::CastOp,
+      hfusion::CumprodOp, hfusion::CummaxOp, hfusion::CumminOp,
+      hfusion::PrintOp, hfusion::SortOp, hfusion::CastOp,
       hfusion::CompareOp, tensor::ExtractOp, tensor::DimOp, tensor::ReshapeOp,
       tensor::InsertSliceOp, tensor::ExtractSliceOp, tensor::CastOp,
       tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ConcatOp,
