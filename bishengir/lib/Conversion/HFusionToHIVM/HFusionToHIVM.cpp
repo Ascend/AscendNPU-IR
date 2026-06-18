@@ -1061,6 +1061,11 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
                   std::is_same_v<HFUSIONOP, hfusion::CumminOp>) {
       newOp.setPropagateNan(op.getPropagateNan());
     }
+    // The cancellation tag is set on the hfusion.cumsum by the detector walk in
+    // HFusionGeneralizePass; propagate it to the new VCumsumOp so the lowering
+    // (getOpLibraryCallName) routes to the compensated "_comp" symbol.
+    if (op->hasAttr("needs_compensation"))
+      newOp->setAttr("needs_compensation", rewriter.getUnitAttr());
     rewriter.replaceOp(op, newOp->getResults());
     return success();
   }

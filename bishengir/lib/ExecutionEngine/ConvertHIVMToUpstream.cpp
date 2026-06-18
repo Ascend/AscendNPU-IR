@@ -917,16 +917,23 @@ struct RewriteVCumOpToHFusion : public OpRewritePattern<FromOp> {
                   std::is_same_v<FromOp, hivm::VCumminOp>) {
       propagateNan = op.getPropagateNan();
     }
+    // Preserve only the cumsum cancellation marker "needs_compensation" across
+    // the HIVM->hfusion reverse lowering (other discardable attrs are HIVM
+    // specific and must not be carried onto the hfusion op). The new op
+    // otherwise only carries the structural operands/attrs below.
+    bool needsCompensation = op->hasAttr("needs_compensation");
     auto newOp = rewriter.replaceOpWithNewOp<ToOp>(
-        op, 
+        op,
         /*output=*/op.getDst().getType(),
-        /*input=*/op.getSrc(), 
+        /*input=*/op.getSrc(),
         /*cum_dims*/op.getCumDims(),
         /*reverse=*/op.getReverse());
     if constexpr (std::is_same_v<ToOp, hfusion::CummaxOp> ||
                   std::is_same_v<ToOp, hfusion::CumminOp>) {
       newOp.setPropagateNan(propagateNan);
     }
+    if (needsCompensation)
+      newOp->setAttr("needs_compensation", rewriter.getUnitAttr());
     return success();
   }
 };

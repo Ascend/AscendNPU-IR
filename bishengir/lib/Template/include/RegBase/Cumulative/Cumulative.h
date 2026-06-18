@@ -55,19 +55,28 @@ extern "C" {
 }
 
 extern "C" {
+#define DECLARE_CUMSUM_COMP(DIM, dtype, cum_dim)                               \
+  __aiv__ __attribute__((always_inline)) void                                  \
+  _mlir_ciface_cumsum_##DIM##d_##dtype##_dim##cum_dim##_comp(                  \
+      memref_t<__ubuf__ dtype, DIM> *src, memref_t<__ubuf__ dtype, DIM> *dst,  \
+      memref_t<__ubuf__ dtype, DIM> *temp, bool reverse)
+
+#define REGISTER_CUMSUM_COMP(DIM, dtype, cum_dim)                              \
+  DECLARE_CUMSUM_COMP(DIM, dtype, cum_dim) {                                   \
+    vector_cumsum_##DIM##d_comp<dtype, cum_dim>(src, dst, temp, reverse);      \
+  }
+
 #define DECLARE_CUMSUM(DIM, dtype, cum_dim)                                    \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_cumsum_##DIM##d_##dtype##_dim##cum_dim(                     \
-          memref_t<__ubuf__ dtype, DIM> *src,                                  \
-          memref_t<__ubuf__ dtype, DIM> *dst,                                  \
-          memref_t<__ubuf__ dtype, DIM> *temp, bool reverse = false)
+  _mlir_ciface_cumsum_##DIM##d_##dtype##_dim##cum_dim(                         \
+      memref_t<__ubuf__ dtype, DIM> *src, memref_t<__ubuf__ dtype, DIM> *dst,  \
+      memref_t<__ubuf__ dtype, DIM> *temp, bool reverse = false)
 
 #define DECLARE_CUMSUM_WITHOUT_DEFAULT_VALUE(DIM, dtype, cum_dim)              \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_cumsum_##DIM##d_##dtype##_dim##cum_dim(                     \
-          memref_t<__ubuf__ dtype, DIM> *src,                                  \
-          memref_t<__ubuf__ dtype, DIM> *dst,                                  \
-          memref_t<__ubuf__ dtype, DIM> *temp, bool reverse)
+  _mlir_ciface_cumsum_##DIM##d_##dtype##_dim##cum_dim(                         \
+      memref_t<__ubuf__ dtype, DIM> *src, memref_t<__ubuf__ dtype, DIM> *dst,  \
+      memref_t<__ubuf__ dtype, DIM> *temp, bool reverse)
 
 #define REGISTER_CUMSUM(DIM, dtype, cum_dim)                                   \
   DECLARE_CUMSUM_WITHOUT_DEFAULT_VALUE(DIM, dtype, cum_dim) {                  \
@@ -117,16 +126,19 @@ cumsum_2d(cumulative_args<SRC_TYPE, DST_TYPE> args);
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_for_cum_op(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
-
-    int64_t total_size = src->sizes[0] * src->strides[0];
-    memref_t<__ubuf__ T, 1> src_1d{
-        src->allocated, src->aligned, src->offset,
-        {total_size}, {1}};
-    memref_t<__ubuf__ T, 1> dst_1d{
-        dst->allocated, dst->aligned, dst->offset,
-        {total_size}, {1}};
-    copy_ubuf_to_ubuf_1d_core<T>(&src_1d, &dst_1d);
+  if (src->strides[0] != dst->strides[0] ||
+      src->strides[1] != dst->strides[1] ||
+      src->strides[2] != dst->strides[2]) {
+    copy_ubuf_to_ubuf_3d_core_with_contiguous_last_dim(src, dst);
     return;
+  }
+  int64_t total_size = src->sizes[0] * src->strides[0];
+  memref_t<__ubuf__ T, 1> src_1d{
+      src->allocated, src->aligned, src->offset, {total_size}, {1}};
+  memref_t<__ubuf__ T, 1> dst_1d{
+      dst->allocated, dst->aligned, dst->offset, {total_size}, {1}};
+  copy_ubuf_to_ubuf_1d_core<T>(&src_1d, &dst_1d);
+  return;
 }
 
 template <typename T>
@@ -227,7 +239,7 @@ transpose_ar2ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
   uint16_t mLoop = CEIL_DIV((uint16_t)M, (uint16_t)num_per_reg);
   using IdxT = std::conditional_t<sizeof(T) == 2, int16_t, int32_t>;
   using uIdxT = std::conditional_t<sizeof(T) == 2, uint16_t, uint32_t>;
-  __VEC_SCOPE__{
+  __VEC_SCOPE__ {
     VectorReg<T> dataReg;
     VectorReg<IdxT> idx_reg;
     vector_bool full_mask;
@@ -240,8 +252,10 @@ transpose_ar2ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
       CREATE_MASK_BY_SIZE(full_mask, T, mask_size);
       __ubuf__ T *src_block = src_ptr + (int32_t)m * num_per_reg * srcStride0;
       for (uint16_t n = 0; n < N; n++) {
-        vgather2(dataReg, src_block + n, (VectorReg<uIdxT> &)idx_reg, full_mask);
-        vsts(dataReg, dst_ptr, n * dstStride0 + m * num_per_reg, NORM_B32, full_mask);
+        vgather2(dataReg, src_block + n, (VectorReg<uIdxT> &)idx_reg,
+                 full_mask);
+        vsts(dataReg, dst_ptr, n * dstStride0 + m * num_per_reg, NORM_B32,
+             full_mask);
       }
     }
   }
@@ -342,6 +356,7 @@ DECLARE_CUMSUM(2, uint32_t, 0);
 DECLARE_CUMSUM(2, half, 0);
 DECLARE_CUMSUM(2, float, 0);
 DECLARE_CUMSUM(2, bfloat16_t, 0);
+DECLARE_CUMSUM_COMP(2, float, 0);
 
 DECLARE_CUMSUM(2, int8_t, 1);
 DECLARE_CUMSUM(2, uint8_t, 1);
@@ -352,6 +367,7 @@ DECLARE_CUMSUM(2, uint32_t, 1);
 DECLARE_CUMSUM(2, half, 1);
 DECLARE_CUMSUM(2, float, 1);
 DECLARE_CUMSUM(2, bfloat16_t, 1);
+DECLARE_CUMSUM_COMP(2, float, 1);
 
 DECLARE_CUMSUM(3, int8_t, 0);
 DECLARE_CUMSUM(3, uint8_t, 0);
@@ -362,6 +378,7 @@ DECLARE_CUMSUM(3, uint32_t, 0);
 DECLARE_CUMSUM(3, half, 0);
 DECLARE_CUMSUM(3, float, 0);
 DECLARE_CUMSUM(3, bfloat16_t, 0);
+DECLARE_CUMSUM_COMP(3, float, 0);
 
 DECLARE_CUMSUM(3, int8_t, 1);
 DECLARE_CUMSUM(3, uint8_t, 1);
@@ -372,6 +389,7 @@ DECLARE_CUMSUM(3, uint32_t, 1);
 DECLARE_CUMSUM(3, half, 1);
 DECLARE_CUMSUM(3, float, 1);
 DECLARE_CUMSUM(3, bfloat16_t, 1);
+DECLARE_CUMSUM_COMP(3, float, 1);
 }
 #endif // defined(__DAV_C310__)
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_REGBASE_CUMULATIVE_UTILS_H

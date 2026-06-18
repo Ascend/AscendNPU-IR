@@ -1424,7 +1424,25 @@ LogicalResult VCumprodOp::verify() { return verifyCumOp(*this); }
 
 std::string VCumsumOp::getOpLibraryCallName(
     [[maybe_unused]] std::optional<bool> isOpsAligned) {
-  return getCumOpRankDimLibraryCallName(*this);
+  StringRef baseName = this->getOpName();
+  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
+  Type elemType = srcVecType.getElementType();
+  int rank = srcVecType.getRank();
+  llvm::ArrayRef<int64_t> cumsumDims = this->getCumDims();
+  int64_t cumsumDim = cumsumDims[0];
+  std::stringstream ss;
+  ss << baseName.data() << "_" << rank << "d_"
+     << hivm::detail::getTypeName(this->getLoc(), elemType) << "_dim" << cumsumDim;
+  // Cancellation dispatch: a cumsum adjacent to a subtraction (input or result,
+  // e.g. dg = X - cumsum(X)) is tagged with "needs_compensation" by the detector
+  // in HFusionGeneralizePass; route it to the TwoSum-compensated template symbol.
+  // Gate on the shapes that actually have a "_comp" symbol (f32; 2D dim0,
+  // 3D dim0/dim1) so a stray tag on another shape can't emit an unresolvable call.
+  if ((*this)->hasAttr("needs_compensation") && elemType.isF32() &&
+      ((rank == 2 && cumsumDim == 0) ||
+       (rank == 3 && (cumsumDim == 0 || cumsumDim == 1))))
+    ss << "_comp";
+  return ss.str();
 }
 
 LogicalResult VCumsumOp::verify() { return verifyCumOp(*this); }
