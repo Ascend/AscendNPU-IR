@@ -27,6 +27,9 @@ const llvm::StringLiteral kBubbleUpPropagateUp = "bubble_up_propagate_up";
 const llvm::StringLiteral kBubbleUpPropagateDown = "bubble_up_propagate_down";
 const llvm::StringLiteral kTilingDimInfo = "tiling_dim_info";
 
+/// Creates an `unrealized_conversion_cast` tagged with `directionAttrName` and
+/// `kTilingDimInfo`. Static offset/size are embedded in the attribute; dynamic
+/// ones are appended to the cast's operand list after `input`.
 static UnrealizedConversionCastOp
 createBubblePropagationCast(Value input, Type outputType,
                             StringRef directionAttrName, OpFoldResult offset,
@@ -62,6 +65,8 @@ createBubblePropagatorUpLink(Value oldValue, Type slicedType,
   return propagateOp;
 }
 
+/// Creates a downward propagator: `newValue` (sliced) is cast to `oldValue`'s
+/// type so existing users can be rewired before memref ops are updated.
 UnrealizedConversionCastOp
 createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
                            OpFoldResult size, int64_t tilingDim,
@@ -74,11 +79,15 @@ createBubblePropagatorDown(Value oldValue, Value newValue, OpFoldResult offset,
   return propagateOp;
 }
 
+/// Builds a memref type with the sliced tensor shape while keeping the
+/// original layout and memory space (used when matching a `to_tensor` slice).
 MemRefType getSlicedMemRefType(MemRefType oldType, ShapedType slicedType) {
   return MemRefType::get(slicedType.getShape(), slicedType.getElementType(),
                          oldType.getLayout(), oldType.getMemorySpace());
 }
 
+/// Halves `tilingDim` in the memref shape (or marks it dynamic when the extent
+/// is odd). Preserves element type, memory space, and strided layout.
 FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
                                           int64_t tilingDim) {
   auto shape = llvm::to_vector(oldType.getShape());
@@ -100,6 +109,8 @@ FailureOr<MemRefType> getSlicedMemRefType(MemRefType oldType,
                          oldType.getMemorySpace());
 }
 
+/// If `memrefValue` traces back to a tightly-coupled alloc, tag that
+/// `annotation.mark` with `kTiledTightlyCoupledAlloc` after tiling.
 void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
                                           Value memrefValue) {
   auto maybeAlloc = mlir::utils::tracebackMemRefToAlloc(memrefValue);
@@ -123,6 +134,8 @@ void markTiledTightlyCoupledAllocIfNeeded(RewriterBase &rewriter,
   });
 }
 
+/// For dynamic sliced allocs, attach `kBufferSizeInByteAttr` so later passes
+/// know the byte size of the odd-sized tile relative to the original buffer.
 static LogicalResult
 markOddTilingBufferSizeIfNeeded(MemRefType slicedType, MemRefType sourceType,
                                 Value buffer, int64_t tilingDim,
@@ -140,6 +153,9 @@ markOddTilingBufferSizeIfNeeded(MemRefType slicedType, MemRefType sourceType,
   return success();
 }
 
+/// Replaces `oldAllocOp` with a smaller alloc whose shape comes from the
+/// upward propagator's result type. Dynamic tile sizes become alloc operands and
+/// may trigger an odd-buffer-size annotation.
 FailureOr<memref::AllocOp>
 createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
                       memref::AllocOp oldAllocOp, PatternRewriter &rewriter) {
@@ -173,6 +189,8 @@ createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
   return newAllocOp;
 }
 
+/// After creating `newOp` (e.g. a sliced alloc), insert a downward propagator
+/// on every use of `op`'s results and redirect those uses to the propagator.
 void insertDownPropagators(Operation *op, Operation *newOp, OpFoldResult offset,
                            OpFoldResult size, int64_t tilingDim,
                            PatternRewriter &rewriter) {
@@ -192,6 +210,8 @@ void insertDownPropagators(Operation *op, Operation *newOp, OpFoldResult offset,
   }
 }
 
+/// Decodes tiling metadata stored on a propagator cast by
+/// `createBubblePropagationCast`.
 TilingDimInfo getTilingDimInfo(UnrealizedConversionCastOp propagateOp) {
   auto inputIter = ++propagateOp.getInputs().begin();
   auto tilingDimInfoAttr =
