@@ -270,77 +270,6 @@ LogicalResult replaceResultWithInitOperand(Operation *op) {
   return success();
 }
 
- void annotateTightlyCoupledBuffer(func::FuncOp func) {
-  OpBuilder builder(func.getContext());
-
-  SmallVector<memref::AllocOp> candidateAllocs;
-  llvm::DenseSet<int64_t> usedIds;
-
-  func.walk([&](memref::AllocOp allocOp) {
-    auto maybeMemrefAddressSpace =
-        mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
-    if (maybeMemrefAddressSpace != AddressSpace::L1 &&
-        maybeMemrefAddressSpace != AddressSpace::UB) {
-      return;
-    }
-
-    candidateAllocs.push_back(allocOp);
-
-    auto maybeMarked = utils::getAnnotateOpWithAttr(
-        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
-    if (!maybeMarked.has_value()) {
-      return;
-    }
-
-    auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarked);
-    if (!markOp) {
-      return;
-    }
-
-    auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
-        markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
-    if (!tcbAttr || !tcbAttr.getId().has_value()) {
-      return;
-    }
-
-    usedIds.insert(tcbAttr.getId().value());
-  });
-
-  int64_t nextId = 0;
-  auto getNextAvailableId = [&]() -> int64_t {
-    while (usedIds.contains(nextId)) {
-      ++nextId;
-    }
-    int64_t assignedId = nextId;
-    usedIds.insert(assignedId);
-    ++nextId;
-    return assignedId;
-  };
-
-  for (memref::AllocOp allocOp : candidateAllocs) {
-    auto maybeMarked = utils::getAnnotateOpWithAttr(
-        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
-    if (maybeMarked.has_value()) {
-      continue;
-    }
-
-    int64_t newId = getNextAvailableId();
-
-    builder.setInsertionPointAfter(allocOp);
-    auto mark = builder.create<annotation::MarkOp>(
-        allocOp.getLoc(), allocOp.getMemref(),
-        builder.getStrArrayAttr(llvm::ArrayRef<StringRef>{
-            stringifyEffectMode(mlir::annotation::EffectMode::Write),
-            stringifyEffectMode(mlir::annotation::EffectMode::Read)}),
-        /*values=*/ValueRange{},
-        /*keys=*/nullptr);
-
-    mark->setAttr(hivm::HIVMTightlyCoupledBufferAttr::name,
-                  hivm::HIVMTightlyCoupledBufferAttr::get(
-                      allocOp->getContext(), static_cast<int32_t>(newId)));
-  }
-}
-
 struct SplitMixKernelPass
     : public impl::SplitMixKernelBase<SplitMixKernelPass> {
   void filterMixFunc(OpBuilder &builder, func::FuncOp mixedFunc,
@@ -573,13 +502,6 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
 
   // generate a Mix function declaration for host callers
   generateMixKernelDecl(func);
-
-  // mark dst of copy op and fixpipe op which transmits data between cube and
-  // vector core directly
-  auto module = func->getParentOfType<ModuleOp>();
-  // TODO: Use target features instead of directly using SOC version
-  if (hacc::utils::isAscend950(module))
-    annotateTightlyCoupledBuffer(func);
 
   // clone the function and add "_mix_aiv" and "_mix_aic" post-fix name
   OpBuilder builder(func);

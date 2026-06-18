@@ -400,6 +400,14 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
     pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
+  // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
+  // function, then hoist any tightly-coupled alloc that is yielded out of an
+  // inner region up to the region the yielded value escapes to. Both run
+  // before SplitMixKernel so the AIC/AIV clones share consistent buffer ids and
+  // identical alloc placement; this keeps the auto-multi-buffer slot-rotation
+  // anchor consistent across cores for CV tightly-coupled buffers.
+  pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+  pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
