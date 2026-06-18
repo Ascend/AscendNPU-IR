@@ -26,6 +26,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include <algorithm>
+#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -526,9 +527,29 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
   llvm::ArrayRef<int64_t> cumDims = op.getCumDims();
   int64_t cumDim = cumDims[0];
   MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
+
+  // SIMT 1D scan (CUMSUM only, cumDim==0, rank==1): allocate 2*ceil(N/32) scratch
+  // slots for the per-warp totals (the "double space" the SIMT kernel needs).
+  // Dynamic N -> leave temp unset and fall back to dst-aliased scratch.
+  // Guarded to VCumsumOp: cumprod 1D uses the non-SIMT twoway path and must NOT
+  // get this temp (it would change its library-call operands).
+  if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp>) {
+    bool is1DScan = (cumDim == 0) && (srcVecType.getRank() == 1);
+    if (is1DScan) {
+      int64_t n = srcVecType.getShape()[0];
+      if (ShapedType::isDynamic(n))
+        return success();
+      auto srcType = getElementTypeOrSelf(op.getSrc());
+      SmallVector<int64_t> extraBufSizes = {2 * ((n + 31) / 32)};
+      Value extraBuf =
+          allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
+      op.getTempBufferMutable().assign(extraBuf);
+      return success();
+    }
+  }
+
   bool isCumAtMiddle = (cumDim == 1) && (srcVecType.getRank() == 3);
   bool isCumAtTail = (cumDim == 1) && (srcVecType.getRank() == 2);
-
   if (isCumAtMiddle) {
     auto srcType = getElementTypeOrSelf(op.getSrc());
     SmallVector<int64_t> extraBufSizes(srcVecType.getShape().begin(),
