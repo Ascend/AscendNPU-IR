@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/SymbolTable.h"
@@ -91,6 +92,15 @@ void InferSimtVFMemEffectPass::inferFuncArgMemEffect(func::FuncOp funcOp) {
     if (auto loadOp = llvm::dyn_cast<hivm::LoadOp>(op)) {
       handleMemOp(
           loadOp, funcOp, [](hivm::LoadOp op) { return op.getSrc(); },
+          hivm::MemoryEffect::READ);
+    } else if (auto toTensorOp =
+                   llvm::dyn_cast<bufferization::ToTensorOp>(op)) {
+      // `bufferization.to_tensor` becomes a SIMT-side load sequence after
+      // HIVM-to-Triton lowering, so its backing memref must participate in
+      // read-side sync inference.
+      handleMemOp(
+          toTensorOp, funcOp,
+          [](bufferization::ToTensorOp op) { return op.getMemref(); },
           hivm::MemoryEffect::READ);
     } else if (auto gatherLoadOp = llvm::dyn_cast<hivm::GatherLoadOp>(op)) {
       handleMemOp(
