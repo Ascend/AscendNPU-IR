@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -29,6 +30,7 @@ static BoolAttr getReduceTieBreakLeftAttr(Operation *op) {
 }
 
 static BoolAttr getReduceUnsignedSourceAttr(Operation *op) {
+  auto *ctx = op->getContext();
   if (auto reduceWithIndexOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
     // hfusion.reduce_with_index has to have 'unsigned_src' attr
     return reduceWithIndexOp.getUnsignedSrcAttr();
@@ -36,12 +38,20 @@ static BoolAttr getReduceUnsignedSourceAttr(Operation *op) {
   if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
-    auto bodyOp = yieldOp.getValues()[0].getDefiningOp();
-    return BoolAttr::get(op->getContext(),
-                         isa<arith::MaxUIOp, arith::MinUIOp>(bodyOp));
+    if (!yieldOp || yieldOp.getValues().size() != 1)
+      return BoolAttr::get(ctx, false);
+
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (!bodyOp)
+      return BoolAttr::get(ctx, false);
+
+    Type elemType = getElementTypeOrSelf(reduceOp.getInputs()[0].getType());
+    if (elemType.isInteger() &&
+        (isa<arith::MaxUIOp>(bodyOp) || isa<arith::MinUIOp>(bodyOp)))
+      return BoolAttr::get(ctx, true);
   }
   // set default value for backward complatibility
-  return BoolAttr::get(op->getContext(), false);
+  return BoolAttr::get(ctx, false);
 }
 
 static hivm::ReduceOperation

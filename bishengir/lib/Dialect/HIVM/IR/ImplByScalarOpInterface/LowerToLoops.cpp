@@ -77,12 +77,28 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMinOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    Type elemType = getElementTypeOrSelf(op.getOperand(0));
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getIsSigned())
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMaxOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    Type elemType = getElementTypeOrSelf(op.getOperand(0));
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getIsSigned())
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VAbsOp, HIVMOP>::value) {
     resTensor = getScalarResult<hivm::VAbsOp, math::AbsIOp>(
@@ -736,12 +752,26 @@ createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
   auto elemType = getElementTypeOrSelf(op.getOperandTypes()[0]);
   switch (reduceOpAttr) {
   case hivm::ReduceOperation::min:
-    resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getUnsignedSrc())
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     break;
   case hivm::ReduceOperation::max:
-    resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getUnsignedSrc())
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     break;
   case hivm::ReduceOperation::sum:
     resTensor = getScalarResult<hivm::VAddOp, arith::AddIOp>(

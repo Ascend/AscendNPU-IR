@@ -63,6 +63,11 @@ static void copyAttrIfPresent(Operation* const &srcOp, Operation* const &dstOp,
   }
 }
 
+static bool isUnsignedLinalgMinMaxFn(linalg::BinaryFn kind) {
+  return kind == linalg::BinaryFn::max_unsigned ||
+         kind == linalg::BinaryFn::min_unsigned;
+}
+
 //===----------------------------------------------------------------------===//
 // HFusionToHIVMElemwiseOp
 //===----------------------------------------------------------------------===//
@@ -85,7 +90,8 @@ public:
     bool isSigned = true;
     if (isa<linalg::ElemwiseBinaryOp>(op)) {
       linalg::BinaryFn kind = cast<linalg::ElemwiseBinaryOp>(op).getFun();
-      if (kind == linalg::BinaryFn::div_unsigned) {
+      if (kind == linalg::BinaryFn::div_unsigned ||
+          isUnsignedLinalgMinMaxFn(kind)) {
         isSigned = false;
       }
     }
@@ -105,16 +111,20 @@ public:
       if constexpr (std::is_same_v<opType, VDivOp>) {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value(), isSigned);
+      } else if constexpr (std::is_same_v<opType, VMaxOp> ||
+                           std::is_same_v<opType, VMinOp>) {
+        hivmOp = b.create<opType>(loc, resultTypes, inputs, inits, isSigned);
       } else if constexpr (std::is_same_v<opType, VShROp>) {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
-			          /*temp_buffer=*/Value(), isSigned);
-      }
-      else {
+                                  /*temp_buffer=*/Value(), isSigned);
+      } else {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value());
       }
     } else {
-      if constexpr (std::is_same_v<opType, VDivOp>) {
+      if constexpr (std::is_same_v<opType, VDivOp> ||
+                    std::is_same_v<opType, VMaxOp> ||
+                    std::is_same_v<opType, VMinOp>) {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits, isSigned);
       } else {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits);
