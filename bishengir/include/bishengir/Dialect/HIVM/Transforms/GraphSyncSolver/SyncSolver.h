@@ -267,7 +267,7 @@ protected:
                      std::optional<int64_t> lcmLen = {},
                      std::optional<int64_t> eventIdNum = {});
 
-  bool checkReusedTightlyCoupledBuffer(RWOperation *rwOp1, RWOperation *rwOp2);
+  bool checkCVPipeliningMemConflict(RWOperation *rwOp1, RWOperation *rwOp2);
 
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
   getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
