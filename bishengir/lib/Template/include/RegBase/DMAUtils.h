@@ -1484,28 +1484,33 @@ copy_ubuf_to_ubuf_2d_intrin_core(memref_t<__ubuf__ T, 2> *src,
   }
 }
 
-/// Decompose the 2D src and dst into a for-loop, invoking
-/// `copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim` in each iteration
+/// Decompose the 2D src and dst into a single VF scope, invoking
+/// `vector_dma_unalign_vv_2d_vf` to process all rows in one VF block.
+/// Checks alignment of size[1] to select the template with/without tail
+/// handling, and checks repeatTimes parity to select with/without unroll
+/// tail handling, eliminating both `if (tailsize > 0)` and `if (j_tail > 0)`
+/// branches inside the VF loop.
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_2d_to_1d_core_with_contiguous_last_dim(
     memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
-  const int64_t size0 = src->sizes[0];
+  constexpr int num_per_register = REG_REGISTER_SIZE / sizeof(T);
   const int64_t size1 = src->sizes[1];
-  int64_t src_stride0 = src->strides[0];
-  int64_t dst_stride0 = dst->strides[0];
-  for (int64_t i = 0; i < size0; i++) {
-    memref_t<__ubuf__ T, 1> src_1d = {src->allocated,
-                                      src->aligned,
-                                      src->offset + src_stride0 * i,
-                                      {size1},
-                                      {1}};
-    memref_t<__ubuf__ T, 1> dst_1d = {dst->allocated,
-                                      dst->aligned,
-                                      dst->offset + dst_stride0 * i,
-                                      {size1},
-                                      {1}};
-    copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
+  const bool hasTail = (size1 % num_per_register != 0);
+  const uint16_t repeatTimes = (uint16_t)(size1 / num_per_register);
+  const bool hasUnrollTail = (repeatTimes % 2 != 0);
+  if (hasTail) {
+    if (hasUnrollTail) {
+      vector_dma_unalign_vv_2d_vf<T, true, true>(src, dst);
+    } else {
+      vector_dma_unalign_vv_2d_vf<T, true, false>(src, dst);
+    }
+  } else {
+    if (hasUnrollTail) {
+      vector_dma_unalign_vv_2d_vf<T, false, true>(src, dst);
+    } else {
+      vector_dma_unalign_vv_2d_vf<T, false, false>(src, dst);
+    }
   }
 }
 
