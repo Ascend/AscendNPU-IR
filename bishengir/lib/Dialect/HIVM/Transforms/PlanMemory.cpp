@@ -272,8 +272,6 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       OpKillHandle(curOpInfo, live, op->getBlock());
     } else if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
       ProcessMarkOp(markOp, curOpInfo, live);
-    } else if (auto conditionOp = dyn_cast<scf::ConditionOp>(op)) {
-      UpdateConditionOpBufferAlias(conditionOp);
     } else if (auto condBrOp = dyn_cast<cf::CondBranchOp>(op)) {
       UpdateBranchOpAlias(condBrOp.getTrueDest(),
                           condBrOp.getTrueDestOperands());
@@ -442,9 +440,10 @@ void MemLivenessAnalysis::RecursiveWhileOp(scf::WhileOp whileOp,
   auto *whileBeginSeq = UpdateLinearOperation(whileOp.getOperation());
   UpdateOpGenInfo(whileBeginSeq, GetLiveBuffersInLoop(whileOp, live));
   UpdateWhileOpInitArgsAlias(whileOp);
+  UpdateWhileOpBufferAlias(whileOp);
+  UpdateConditionOpBufferAlias(whileOp.getConditionOp());
   RecursionIR(&whileOp.getBefore(), live);
   RecursionIR(&whileOp.getAfter(), live);
-  UpdateWhileOpBufferAlias(whileOp);
   auto *whileEndSeq = UpdateLinearOperation(whileOp.getOperation());
   OpKillHandle(whileEndSeq, live, whileOp->getBlock());
 }
@@ -479,15 +478,17 @@ void MemLivenessAnalysis::RecursiveIfOp(scf::IfOp ifOp, Liveness live) {
   //      else:
   //        scf.yield %alloc1 : memref<16xf16, #hivm.address_space<ub>>
   (void)UpdateLinearOperation(ifOp.getOperation());
+  UpdateIfOpBufferAlias(ifOp, ifOp.thenYield());
+  if (ifOp.elseBlock()) {
+    UpdateIfOpBufferAlias(ifOp, ifOp.elseYield());
+  }
   RecursionIR(&ifOp.getThenRegion(), live);
   auto *curIfElse = UpdateLinearOperation(ifOp.getOperation());
-  UpdateIfOpBufferAlias(ifOp, ifOp.thenYield());
 
   auto *curIfEnd = curIfElse;
   if (ifOp.elseBlock()) {
     RecursionIR(&ifOp.getElseRegion(), live);
     curIfEnd = UpdateLinearOperation(ifOp.getOperation());
-    UpdateIfOpBufferAlias(ifOp, ifOp.elseYield());
   }
   OpKillHandle(curIfEnd, live, ifOp->getBlock());
 }
@@ -521,9 +522,9 @@ void MemLivenessAnalysis::RecursiveScopeOp(scope::ScopeOp scopeOp,
                                            Liveness live) {
   (void)UpdateLinearOperation(scopeOp.getOperation());
   auto &scopeRegion = scopeOp.getRegion();
-  RecursionIR(&scopeRegion, live);
   auto returnOp = cast<scope::ReturnOp>(scopeRegion.front().getTerminator());
   UpdateScopeOpBufferAlias(scopeOp, returnOp);
+  RecursionIR(&scopeRegion, live);
   auto *scopeEndSeq = UpdateLinearOperation(scopeOp.getOperation());
   OpKillHandle(scopeEndSeq, live, scopeOp->getBlock());
 }
@@ -585,8 +586,8 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
 }
 
 bool MemLivenessAnalysis::isSkippableOp(Operation *op) const {
-  return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp,
-             scope::ReturnOp>(op);
+  return isa<func::ReturnOp, scf::YieldOp, scf::ConditionOp, memref::DimOp,
+             hivm::DCCIOp, scope::ReturnOp>(op);
 }
 
 LogicalResult
@@ -962,111 +963,43 @@ void MemLivenessAnalysis::UpdateOpKillInfo(OpInfo *opInfo, Value operand,
                                            Liveness live) {
   auto aliasBuffers = GetAliasBuffers(operand);
   aliasBuffers.insert(operand);
+  if (!AllDeadAfter(opInfo->operation, aliasBuffers, live)) {
+    return;
+  }
   for (Value aliasBuffer : aliasBuffers) {
     auto iterBuffer = buffer2status.find(aliasBuffer);
     if (iterBuffer == buffer2status.end())
       return;
     if (iterBuffer->second == BufferStatus::GENED &&
-        isParentOpDominate(iterBuffer->first.getDefiningOp(),
-                           opInfo->operation) &&
-        AllDeadAfter(opInfo->operation, aliasBuffers, live)) {
+        isParentOpDominate(aliasBuffer.getDefiningOp(), opInfo->operation)) {
       genKillMap[opInfo].kill.push_back(aliasBuffer);
-      buffer2status[iterBuffer->first] = BufferStatus::KILLED;
+      buffer2status[aliasBuffer] = BufferStatus::KILLED;
     }
   }
 }
 
 bool MemLivenessAnalysis::isParentOpDominate(Operation *op1,
                                              Operation *op2) const {
-  assert((op1 != nullptr && op2 != nullptr && op2->getParentOp() != nullptr &&
-          op1->getParentOp() != nullptr) &&
-         "op must not be nullptr");
-  return op2->getParentOp()->isAncestor(op1->getParentOp());
-}
-
-bool MemLivenessAnalysis::IsBlockAfter(Block *afterBlock,
-                                       Block *beforeBlock) const {
-  if (afterBlock == beforeBlock) {
-    return false;
-  }
-  assert(afterBlock != nullptr && beforeBlock != nullptr);
-  mlir::Region *beforeRegion = beforeBlock->getParent();
-  mlir::Region *afterRegion = afterBlock->getParent();
-  assert(beforeRegion != nullptr && afterRegion != nullptr);
-  if (beforeRegion == afterRegion) {
-    for (auto it = beforeRegion->begin(); it != beforeRegion->end(); ++it) {
-      if (&*it == beforeBlock) {
-        for (++it; it != beforeRegion->end(); ++it) {
-          if (&*it == afterBlock) {
-            return true;
-          }
-        }
-        break;
-      }
-    }
-  } else {
-    unsigned beforeIndex = beforeRegion->getRegionNumber();
-    unsigned afterIndex = afterRegion->getRegionNumber();
-    return beforeIndex < afterIndex;
-  }
-
-  return false;
-}
-
-bool MemLivenessAnalysis::IsDeadAfterOp(Value value,
-                                        Operation *operation) const {
-  auto *moduleBlock = utils::getTopLevelModuleOp(operation).getBody();
-  // trace all blocks that contains ifOp until moduleBlock.
-  DenseMap<Block *, Operation *> block2Op;
-  DenseMap<Operation *, Operation *> parentToChild;
-  Operation *childOp = nullptr;
-  for (auto *op = operation; op != nullptr && op->getBlock() != moduleBlock;
-       op = op->getParentOp()) {
-    block2Op.try_emplace(op->getBlock(), op);
-    if (childOp) {
-      parentToChild[op] = childOp;
-    }
-    childOp = op;
-  }
-  for (Operation *user : value.getUsers()) {
-    // trace all blocks that contains user until funcBlock.
-    Operation *userChildOp = nullptr;
-    for (auto *op = user; op != nullptr; op = op->getParentOp()) {
-      auto it = block2Op.find(op->getBlock());
-      // Check whether the block of userOp is same as the block of currentOp
-      if (op->getBlock() != moduleBlock && it != block2Op.end()) {
-        auto *currentOp = it->second;
-        auto currChildIt = parentToChild.find(currentOp);
-        // check whether parent ops are same, ex: if then ... else ...
-        if (currentOp == op && userChildOp != nullptr &&
-            currChildIt != parentToChild.end() &&
-            IsBlockAfter(userChildOp->getBlock(),
-                         currChildIt->second->getBlock())) {
-          return false;
-        }
-        // once different parent ops in same block, check the order
-        if (currentOp->isBeforeInBlock(op)) {
-          return false;
-        } else {
-          // CurrentOp is after UserOp, check the next user
-          break;
-        }
-      }
-      userChildOp = op;
-    }
-  }
-
-  return true;
+  assert((op1 != nullptr && op2 != nullptr) && "op must not be nullptr");
+  Operation *op1Parent = op1->getParentOp();
+  Operation *op2Parent = op2->getParentOp();
+  assert(op2Parent != nullptr && op1Parent != nullptr && "must have parent op");
+  return op2Parent->isAncestor(op1Parent);
 }
 
 bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
                                        Liveness live) const {
-  for (auto aliasBuffer : aliasVec) {
-    if (!live.isDeadAfter(aliasBuffer, op) || !IsDeadAfterOp(aliasBuffer, op)) {
-      return false;
-    }
-  }
-  return true;
+  return llvm::all_of(aliasVec, [&](Value aliasBuffer) {
+    // isDeadAfter will only check liveOut and last use in op->getBlock(). It
+    // will not check ops in other blocks. And if op->getParentOp() don't have
+    // opResult, the liveOut set will be empty. So we need to check all users of
+    // aliasBuffer to ensure that they are not before op in memory view.
+    return live.isDeadAfter(aliasBuffer, op) &&
+           llvm::all_of(aliasBuffer.getUsers(), [&](Operation *user) {
+             // user is before or equal to (in same op but different block) op.
+             return !util::isBeforeInMemoryView(op, user);
+           });
+  });
 }
 
 BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
