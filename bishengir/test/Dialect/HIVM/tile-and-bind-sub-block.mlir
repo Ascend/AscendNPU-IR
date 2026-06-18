@@ -1427,8 +1427,8 @@ func.func @dynamic_shape_insert_slice(%arg0: tensor<64x?xf32>, %arg1: memref<64x
 // CHECK:                 %[[VAL_16:.*]] = affine.apply #[[$ATTR_0]](){{\[}}%[[VAL_14]]]
 // CHECK:                 %[[VAL_17:.*]] = affine.apply #[[$ATTR_1]](){{\[}}%[[VAL_14]]]
 // CHECK:                 %[[VAL_18:.*]] = memref.reinterpret_cast %[[VAL_0]] to offset: {{\[}}%[[VAL_17]]], sizes: [32], strides: [1] : memref<?xf32> to memref<32xf32, strided<[1], offset: ?>>
-// CHECK:                 %[[VAL_19:.*]] = memref.alloc() : memref<16xf32>
 // CHECK:                 %[[VAL_20:.*]] = memref.subview %[[VAL_18]]{{\[}}%[[VAL_7]]] [16] [1] : memref<32xf32, strided<[1], offset: ?>> to memref<16xf32, strided<[1], offset: ?>>
+// CHECK:                 %[[VAL_19:.*]] = memref.alloc() : memref<16xf32>
 // CHECK:                 hivm.hir.load ins(%[[VAL_20]] : memref<16xf32, strided<[1], offset: ?>>) outs(%[[VAL_19]] : memref<16xf32>)
 // CHECK:                 %[[VAL_21:.*]] = bufferization.to_tensor %[[VAL_19]] restrict writable : memref<16xf32>
 // CHECK:                 %[[VAL_22:.*]] = tensor.empty() : tensor<16xf32>
