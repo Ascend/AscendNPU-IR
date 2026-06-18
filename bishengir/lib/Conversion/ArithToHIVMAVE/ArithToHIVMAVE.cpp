@@ -627,7 +627,7 @@ struct ConstantOpToHivmBroadcastLowering
       if (tileElementType.isInteger(1)) {
         bool allTrue = denseAttr.getValues<bool>()[0];
         // Flatten [1, N] to [N] for createPRegFromConstantOp / PGE, then
-        // shape-cast back to [1, N].
+        // unrealized-conversion-cast back to [1, N].
         VectorType pgeTy = tileType;
         if (tileType.getRank() == 2 && tileType.getShape()[0] == 1)
           pgeTy = VectorType::get({tileType.getShape()[1]},
@@ -635,7 +635,7 @@ struct ConstantOpToHivmBroadcastLowering
         scalarValue = createMaskByPGE(pgeTy, rewriter, loc, allTrue);
         if (pgeTy != tileType)
           scalarValue =
-              rewriter.create<vector::ShapeCastOp>(loc, tileType, scalarValue);
+            rewriter.create<UnrealizedConversionCastOp>(loc, tileType, scalarValue)->getResult(0);
         rewriter.replaceOp(constantOp, scalarValue);
         return success();
       } else
