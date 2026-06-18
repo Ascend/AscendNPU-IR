@@ -113,8 +113,6 @@ ENABLE_DEFAULT_OP_LIBRARY_CALL_CONVENTION(VNotOp)
 // Elemwise Binary Ops
 ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VAddOp)
 ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VMulOp)
-ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VMaxOp)
-ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VMinOp)
 ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VOrOp)
 ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VAndOp)
 ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VXorOp)
@@ -130,6 +128,44 @@ ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION(VModUIOp)
 // Elemwise Binary Ops with Extended Support for VS and SV inputs
 ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION_WITH_EXTENED_SUPPORT(VSubOp)
 #undef ENABLE_DEFAULT_BINARY_OP_LIBRARY_CALL_CONVENTION_WITH_EXTENED_SUPPORT
+
+static bool isUnsignedIntegerSemantic(bool isSigned, Type type) {
+  auto elemTy = getElementTypeOrSelf(type);
+  if (auto intTy = dyn_cast<IntegerType>(elemTy))
+    return !isSigned || intTy.isUnsigned();
+  return false;
+}
+
+static void checkSignedOnlyLibraryCall(bool isSigned, Type type) {
+  if (isUnsignedIntegerSemantic(isSigned, type))
+    llvm_unreachable("Unsupported unsigned semantic");
+}
+
+template <typename Op>
+static std::string getSignedOnlyBinaryLibraryCallName(
+    Op op, std::optional<bool> isOpsAligned) {
+  (void)isOpsAligned;
+  std::string baseCallName = op.getOpName().str();
+  if (!(isa<ShapedType>(op.getSrc()[1].getType())))
+    baseCallName = baseCallName + "s_vs";
+  auto elemType = getElementTypeOrSelf(op.getDpsInits().front().getType());
+  checkSignedOnlyLibraryCall(op.getIsSigned(), elemType);
+  std::string elemTypeName = hivm::detail::getTypeName(op.getLoc(), elemType);
+  int rank = static_cast<int>(op.getNumLoops());
+  return concatVectorOpLibraryCallName(baseCallName,
+                                       op.getOpLibraryCallRank(rank),
+                                       elemTypeName);
+}
+
+std::string VMaxOp::getOpLibraryCallName(
+    [[maybe_unused]] std::optional<bool> isOpsAligned) {
+  return getSignedOnlyBinaryLibraryCallName(*this, isOpsAligned);
+}
+
+std::string VMinOp::getOpLibraryCallName(
+    [[maybe_unused]] std::optional<bool> isOpsAligned) {
+  return getSignedOnlyBinaryLibraryCallName(*this, isOpsAligned);
+}
 
 // Other Ops
 ENABLE_DEFAULT_OP_LIBRARY_CALL_CONVENTION(VInterleaveOp)
@@ -233,8 +269,6 @@ std::string getCumOpRankDimLibraryCallName(CUMOP op) {
 // Vector Binary Op
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VAddOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VMulOp)
-ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VMinOp)
-ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VMaxOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VAndOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VOrOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VSubOp)
@@ -261,6 +295,38 @@ void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   auto broadcastAttr = odsBuilder.getDenseI64ArrayAttr(broadcast);
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
         isSigned, transposeAttr, broadcastAttr);
+}
+
+//===----------------------------------------------------------------------===//
+// VMaxOp
+//===----------------------------------------------------------------------===//
+void VMaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   bool isSigned, DenseI64ArrayAttr transpose,
+                   DenseI64ArrayAttr broadcast) {
+  if (!transpose)
+    transpose = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+  if (!broadcast)
+    broadcast = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
+        isSigned, transpose, broadcast);
+}
+
+//===----------------------------------------------------------------------===//
+// VMinOp
+//===----------------------------------------------------------------------===//
+void VMinOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   bool isSigned, DenseI64ArrayAttr transpose,
+                   DenseI64ArrayAttr broadcast) {
+  if (!transpose)
+    transpose = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+  if (!broadcast)
+    broadcast = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
+        isSigned, transpose, broadcast);
 }
 
 //===----------------------------------------------------------------------===//

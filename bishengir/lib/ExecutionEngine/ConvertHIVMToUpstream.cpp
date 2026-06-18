@@ -318,6 +318,38 @@ struct RewriteFromGenericToGeneric final
   }
 };
 
+template <typename From, typename FloatTo, linalg::BinaryFn signedFn,
+          linalg::BinaryFn unsignedFn>
+struct RewriteSignedAwareBinaryToLinalg final
+    : public GenericPreprocessAndRewrite<From> {
+  using Base = GenericPreprocessAndRewrite<From>;
+  using Base::Base;
+
+  LogicalResult rewriteFromGeneric(From op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
+    Type elementType =
+        getElementTypeOrSelf(preprocessedOperands.front().getType());
+    if (isa<FloatType>(elementType)) {
+      rewriter.replaceOpWithNewOp<FloatTo>(op, op.getResultTypes(),
+                                           preprocessedOperands,
+                                           op.getDpsInits());
+      return success();
+    }
+
+    bool isSigned = op.getIsSigned();
+    if (auto intType = dyn_cast<IntegerType>(elementType))
+      isSigned = isSigned && !intType.isUnsigned();
+
+    linalg::BinaryFn fun = isSigned ? signedFn : unsignedFn;
+    rewriter.replaceOpWithNewOp<linalg::ElemwiseBinaryOp>(
+        op, op.getResultTypes(), preprocessedOperands, op.getDst(),
+        ArrayRef{rewriter.getNamedAttr(
+            "fun", rewriter.getAttr<linalg::BinaryFnAttr>(fun))});
+    return success();
+  }
+};
+
 template <typename From>
 struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
   using Base = RewriteUsingMapOp<From>;
@@ -1549,8 +1581,6 @@ struct ConvertHIVMToUpstream
              RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
              RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
              RewriteFromGenericToGeneric<hivm::VDivOp, linalg::DivOp>,
-             RewriteFromGenericToGeneric<hivm::VMaxOp, linalg::MaxOp>,
-             RewriteFromGenericToGeneric<hivm::VMinOp, linalg::MinOp>,
              RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
              RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
              RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
@@ -1559,6 +1589,13 @@ struct ConvertHIVMToUpstream
              RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
              RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>,
              RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>>(&ctx);
+    patterns.add<
+        RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
+                                         linalg::BinaryFn::max_signed,
+                                         linalg::BinaryFn::max_unsigned>,
+        RewriteSignedAwareBinaryToLinalg<hivm::VMinOp, linalg::MinOp,
+                                         linalg::BinaryFn::min_signed,
+                                         linalg::BinaryFn::min_unsigned>>(&ctx);
     patterns.add<RewriteElemwiseOp<hivm::VReluOp, hfusion::ElemwiseUnaryOp,
                                    hfusion::UnaryFn::relu>,
                  RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,

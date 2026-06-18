@@ -390,6 +390,17 @@ func.func @vsub_inline_OTF_broadcast(%arg0: tensor<64xf32>) -> tensor<64x64xf32>
 }
 
 // -----
+// COMMON-LABEL: func.func @unsigned_minmax_lowering
+func.func @unsigned_minmax_lowering(%a: tensor<4xi32>, %b: tensor<4xi32>) -> tensor<4xi32> {
+  %init = tensor.empty() : tensor<4xi32>
+  // COMMON: linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>}
+  // COMMON: linalg.elemwise_binary {fun = #linalg.binary_fn<min_unsigned>}
+  %0 = hivm.hir.vmax ins(%a, %b : tensor<4xi32>, tensor<4xi32>) outs(%init : tensor<4xi32>) is_signed = false -> tensor<4xi32>
+  %1 = hivm.hir.vmin ins(%0, %a : tensor<4xi32>, tensor<4xi32>) outs(%init : tensor<4xi32>) is_signed = false -> tensor<4xi32>
+  return %1 : tensor<4xi32>
+}
+
+// -----
 func.func @vmod(%arg0: tensor<32xi64>, %arg1: i64) -> tensor<32xi64> {
   %0 = tensor.empty() : tensor<32xi64>
  // COMMON: %{{.*}} = arith.remsi %{{.*}}, %{{.*}} : i64
