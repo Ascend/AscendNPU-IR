@@ -1266,8 +1266,21 @@ cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
         if (isHandledByOuterTerminator(use.getOwner()))
           continue;
         if (neededOps.contains(use.getOwner())) {
-          assert(false &&
-                 "dropping nested iter-arg/result still used by needed op");
+          // A live (non-terminator) op still consumes a nested result we are
+          // about to drop, and the rebuild has no replacement value for it.
+          // This happens on mix-mode (cv-pipeline) kernels where the loop's
+          // results are consumed downstream (e.g. bufferization.materialize_
+          // in_destination) rather than only by the parent terminator -- the
+          // isHandledByOuterTerminator exemption does not cover those. Bail
+          // gracefully instead of hard-asserting (see debugUnexpectedBuilder
+          // Failure): leaving the loop un-canonicalized is correct and safe,
+          // whereas aborting compilation in an assertion-enabled build is not.
+          debugUnexpectedBuilderFailure(
+              "cloneOpRecursivelyDroppingIterArgs(nested scf.for)", &oldOp,
+              &childKeep,
+              "nested iter-arg/result still used by a live op cannot be "
+              "dropped",
+              result, use.getOwner());
           return failure();
         }
       }
