@@ -559,7 +559,7 @@ int64_t getSiftedUsersNum(Value v) {
   const DenseSet<Operation *> container(v.getUsers().begin(),
                                         v.getUsers().end());
   auto filteredRange = llvm::make_filter_range(container, [](Operation *op) {
-    return !isa<tensor::DimOp>(op) && !isa<hivm::DebugOp>(op);
+    return !isa<annotation::MarkOp, hivm::DebugOp, tensor::DimOp>(op);
   });
   return DenseSet<Operation *>(filteredRange.begin(), filteredRange.end())
       .size();
@@ -640,9 +640,10 @@ private:
         inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
                                  op.getDpsInputOperand(0)->get());
       }
-    } else if (options.inlineQuantScale &&
-               isUserQuantScaleInlinable(op, curOp)) {
-      auto vMulOp = cast<hivm::VMulOp>(curOp);
+    } else if (auto vMulOp = dyn_cast<hivm::VMulOp>(curOp);
+               vMulOp &&
+               (options.inlineQuantScale || hasQuantScaleCompileHint(vMulOp)) &&
+               isUserQuantScaleInlinable(op, vMulOp)) {
       matched = true;
       inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
     } else if (isUserTransposeInlineable(op, curOp)) {
@@ -766,6 +767,15 @@ private:
     return curPreQuant;
   }
 
+  bool hasQuantScaleCompileHint(hivm::VMulOp op) const {
+    return any_of(op->getUsers(), [](Operation *userOp) {
+      auto markOp = dyn_cast<annotation::MarkOp>(userOp);
+      if (!markOp)
+        return false;
+      return markOp->hasAttr(utils::kInlinableQuantScaleAttr);
+    });
+  }
+
   bool isUserQuantScaleInlinable(hivm::FixpipeOp op, Operation *userOp) const {
     auto vMulOp = dyn_cast<hivm::VMulOp>(userOp);
     if (!vMulOp)
@@ -774,7 +784,9 @@ private:
       return false;
     if (op.getQuantScale())
       return false;
-    if (userOp->getNumResults() != 1)
+    if (llvm::count_if(userOp->getUsers(), [](Operation *afterVMulOp) {
+          return !isa<annotation::MarkOp>(afterVMulOp);
+        }) != 1)
       return false;
     if (!traceDownStoreOpWithSingleChain(userOp->getResult(0)))
       return false;
@@ -831,6 +843,12 @@ private:
         FixpipePreQuantModeAttr::get(rewriter.getContext(), quantPreMode),
         op.getPreReluAttr(), op.getChannelSplitAttr(), op.getUnitFlagModeAttr(),
         quantScaleValue);
+    for (auto *user : llvm::make_early_inc_range(vMulOp->getUsers()))
+      if (isa<annotation::MarkOp>(user)) {
+        newFixpipeOp->setAttr(utils::kInlinedQuantScaleAttr,
+                              rewriter.getUnitAttr());
+        rewriter.eraseOp(user);
+      }
     rewriter.replaceOp(vMulOp, newFixpipeOp);
     rewriter.eraseOp(op);
     LDBG("inlineFixPipeWithPreQuantEnd");
@@ -1017,6 +1035,16 @@ void populateDevicePrintPatterns(RewritePatternSet &patterns) {
   patterns.add<InsertFixpipeForDevicePrint>(ctx);
 }
 
+void eraseInlinableQuantScaleMarkOps(Operation *op) {
+  SmallVector<annotation::MarkOp> inlinableQuantScaleMarkOps;
+  op->walk([&](annotation::MarkOp markOp) {
+    if (markOp->hasAttrOfType<UnitAttr>(utils::kInlinableQuantScaleAttr))
+      inlinableQuantScaleMarkOps.push_back(markOp);
+  });
+  for (annotation::MarkOp markOp : inlinableQuantScaleMarkOps)
+    markOp.erase();
+}
+
 void InsertFixpipe::runOnOperation() {
   InsertFixpipePatternOptions options;
   options.inferFixpipeDmaMode = inferFixpipeDmaMode;
@@ -1055,6 +1083,8 @@ void InlineFixpipe::runOnOperation() {
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }
+
+  eraseInlinableQuantScaleMarkOps(getOperation());
 }
 
 std::unique_ptr<Pass>
