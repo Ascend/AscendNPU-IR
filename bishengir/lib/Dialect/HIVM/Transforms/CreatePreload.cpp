@@ -218,15 +218,18 @@ preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
 
 static Value getPreloadCondition(const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
-  Value cond;
-  auto indVar = info.mappings[info.preloadNum].lookup(info.indVar);
-  Value lb =
-      b.create<arith::ConstantOp>(loc, b.getIntegerAttr(info.ub.getType(), 0));
-  lb = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sle, lb, indVar);
-  Value ub =
-      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, info.ub);
-  cond = b.create<arith::AndIOp>(loc, lb, ub);
-  return cond;
+  auto &mapping = info.mappings[info.preloadNum];
+
+  Value indVar = mapping.lookup(info.indVar);
+  Value lb = mapping.lookupOrDefault(info.lb);
+  Value ub = mapping.lookupOrDefault(info.ub);
+
+  Value lowerCond =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, indVar, lb);
+  Value upperCond =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, ub);
+
+  return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
 }
 
 static void rewriteScopeReturnOp(ValueRange returnResults,

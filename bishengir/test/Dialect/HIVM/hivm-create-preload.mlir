@@ -121,3 +121,100 @@ module {
   // CHECK: }
   // CHECK: return
 }
+
+// -----
+
+module {
+  // The preload guard must use the original loop lower bound, not a fixed zero.
+  //
+  // This test uses a dynamic lower bound %lb. For preload_num = 0 and
+  // max_preload_num = 2, CreatePreload maps the original IV to:
+  //
+  //   mapped_iv = new_iv - step
+  //
+  // The generated guard must therefore be:
+  //
+  //   mapped_iv >= %lb && mapped_iv < %ub
+  //
+  // not:
+  //
+  //   mapped_iv >= 0 && mapped_iv < %ub
+
+  // CHECK-LABEL: func.func @test_preload_condition_uses_original_lower_bound
+  // CHECK-SAME: (%[[LB:arg[0-9]+]]: i32, %[[UB:arg[0-9]+]]: i32, %[[INIT0:arg[0-9]+]]: i32, %[[INIT1:arg[0-9]+]]: i32)
+  func.func @test_preload_condition_uses_original_lower_bound(
+      %lb: i32, %ub: i32, %init0: i32, %init1: i32) -> (i32, i32) {
+    %c1 = arith.constant 1 : i32
+
+    %0:2 = scf.for %i = %lb to %ub step %c1
+        iter_args(%arg0 = %init0, %arg1 = %init1) -> (i32, i32) : i32 {
+
+      // preload_num = 1:
+      //   old_iv -> new_iv
+      %s0 = scope.scope : () -> i32 {
+        %r0 = arith.addi %arg0, %i : i32
+        scope.return %r0 : i32
+      } {
+        no_inline,
+        hivm.preload_num = 1 : i32,
+        hivm.max_preload_num = 2 : i32
+      }
+
+      // preload_num = 0:
+      //   old_iv -> new_iv - step
+      //
+      // This scope exposes the old bug where the lower guard was fixed to 0.
+      %s1 = scope.scope : () -> i32 {
+        %r1 = arith.addi %arg1, %i : i32
+        scope.return %r1 : i32
+      } {
+        no_inline,
+        hivm.preload_num = 0 : i32,
+        hivm.max_preload_num = 2 : i32
+      }
+
+      scf.yield %s0, %s1 : i32, i32
+    }
+
+    return %0#0, %0#1 : i32, i32
+  }
+
+  // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i32
+  // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i32
+  //
+  // CHECK: %[[NEW_UB:.*]] = arith.addi %[[UB]], %[[C2]] : i32
+  //
+  // CHECK: %[[RESULTS:.*]]:2 = scf.for %[[NEW_IV:.*]] = %[[LB]] to %[[NEW_UB]] step %[[C1]] iter_args(%[[ARG0:.*]] = %[[INIT0]], %[[ARG1:.*]] = %[[INIT1]]) -> (i32, i32) : i32 {
+  //
+  // The shifted mapped IV may be materialized before either guard.
+  // CHECK: %[[MAPPED_IV:.*]] = arith.subi %[[NEW_IV]], %[[C1]] : i32
+  //
+  // preload_num = 1, direct mapping:
+  //   old_iv -> new_iv
+  // CHECK: %[[LOWER_DIRECT:.*]] = arith.cmpi sge, %[[NEW_IV]], %[[LB]] : i32
+  // CHECK: %[[UPPER_DIRECT:.*]] = arith.cmpi slt, %[[NEW_IV]], %[[UB]] : i32
+  // CHECK: %[[COND_DIRECT:.*]] = arith.andi %[[LOWER_DIRECT]], %[[UPPER_DIRECT]] : i1
+  // CHECK: %[[IF0:.*]] = scf.if %[[COND_DIRECT]] -> (i32) {
+  // CHECK:   %[[R0:.*]] = arith.addi %[[ARG0]], %[[NEW_IV]] : i32
+  // CHECK:   scf.yield %[[R0]] : i32
+  // CHECK: } else {
+  // CHECK:   scf.yield %[[ARG0]] : i32
+  // CHECK: }
+  //
+  // preload_num = 0, shifted mapping:
+  //   old_iv -> new_iv - step
+  //
+  // The key check is the lower comparison against %[[LB]], not a constant zero.
+  // CHECK: %[[LOWER_SHIFTED:.*]] = arith.cmpi sge, %[[MAPPED_IV]], %[[LB]] : i32
+  // CHECK: %[[UPPER_SHIFTED:.*]] = arith.cmpi slt, %[[MAPPED_IV]], %[[UB]] : i32
+  // CHECK: %[[COND_SHIFTED:.*]] = arith.andi %[[LOWER_SHIFTED]], %[[UPPER_SHIFTED]] : i1
+  // CHECK: %[[IF1:.*]] = scf.if %[[COND_SHIFTED]] -> (i32) {
+  // CHECK:   %[[R1:.*]] = arith.addi %[[ARG1]], %[[MAPPED_IV]] : i32
+  // CHECK:   scf.yield %[[R1]] : i32
+  // CHECK: } else {
+  // CHECK:   scf.yield %[[ARG1]] : i32
+  // CHECK: }
+  // CHECK: scf.yield %[[IF0]], %[[IF1]] : i32, i32
+  // CHECK: }
+  // CHECK: return %[[RESULTS]]#0, %[[RESULTS]]#1 : i32, i32
+}
