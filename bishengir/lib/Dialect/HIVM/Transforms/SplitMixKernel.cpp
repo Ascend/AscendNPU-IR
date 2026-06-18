@@ -88,6 +88,11 @@ void annotateOpOperand(OpBuilder builder, Operation *op,
     for (Value val : loopOp.getYieldedValues()) {
       propagateAnnotation(val);
     }
+  } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+    for (auto val : ifOp.thenYield().getResults())
+      propagateAnnotation(val);
+    for (auto val : ifOp.elseYield().getResults())
+      propagateAnnotation(val);
   }
 }
 
@@ -477,8 +482,10 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
 
   // filter vector ops from AIC kernel, and cube ops from AIV kernel
   filterMixFunc(builder, func, TCoreType::VECTOR);
+  LLVM_DEBUG({ llvm::dbgs() << "New aic: " << func << "\n"; });
   postProcessCubeFunc(func);
   filterMixFunc(builder, vecFunc, TCoreType::CUBE);
+  LLVM_DEBUG({ llvm::dbgs() << "New aiv: " << vecFunc << "\n"; });
   postProcessVectorFunc(vecFunc);
 }
 
