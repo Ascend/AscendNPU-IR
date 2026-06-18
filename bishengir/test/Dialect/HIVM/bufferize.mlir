@@ -513,3 +513,27 @@ func.func @test_vconcat_bufferize(%a_f16 : tensor<2x16xf16>, %b_f16 : tensor<2x1
                                   outs(%c_f16 : tensor<2x32xf16>) -> tensor<2x32xf16>
   return
 }
+
+// -----
+// CHECK-LABEL: test_indirect_load_nonvolatile_bufferize
+func.func @test_indirect_load_nonvolatile_bufferize(%src : memref<?xf32>) {
+  // ONE-SHOT: hivm.hir.indirect_load ins({{.*}} : memref<?xf32>, {{.*}} : memref<4x32xi32>, {{.*}} : memref<4x32xi1>, {{.*}} : memref<4x32xf32>) outs({{.*}} : memref<4x32xf32>) {isVolatile = false}
+  %offsets = tensor.empty() : tensor<4x32xi32>
+  %mask = tensor.empty() : tensor<4x32xi1>
+  %other = tensor.empty() : tensor<4x32xf32>
+  %dst = tensor.empty() : tensor<4x32xf32>
+  %res = hivm.hir.indirect_load ins(%src : memref<?xf32>, %offsets : tensor<4x32xi32>, %mask : tensor<4x32xi1>, %other : tensor<4x32xf32>) outs(%dst : tensor<4x32xf32>) {isVolatile = false} -> tensor<4x32xf32>
+  return
+}
+
+// -----
+// CHECK-LABEL: test_indirect_load_volatile_bufferize
+func.func @test_indirect_load_volatile_bufferize(%src : memref<?xf32>) {
+  // ONE-SHOT: hivm.hir.indirect_load ins({{.*}} : memref<?xf32>, {{.*}} : memref<4x32xi32>, {{.*}} : memref<4x32xi1>, {{.*}} : memref<4x32xf32>) outs({{.*}} : memref<4x32xf32>)
+  %offsets = tensor.empty() : tensor<4x32xi32>
+  %mask = tensor.empty() : tensor<4x32xi1>
+  %other = tensor.empty() : tensor<4x32xf32>
+  %dst = tensor.empty() : tensor<4x32xf32>
+  %res = hivm.hir.indirect_load ins(%src : memref<?xf32>, %offsets : tensor<4x32xi32>, %mask : tensor<4x32xi1>, %other : tensor<4x32xf32>) outs(%dst : tensor<4x32xf32>) -> tensor<4x32xf32>
+  return
+}

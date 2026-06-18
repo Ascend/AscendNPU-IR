@@ -638,20 +638,23 @@ struct IndirectLoadOpInterface
                                         /*resultType*/ TypeRange{},
                                         /*operands*/
                                         srcBuffer, *offsetBuffer, *dstBuffer,
-                                        *maskBuffer, *otherBuffer);
+                                        *maskBuffer, *otherBuffer,
+                                        indirectLoadOp.getIsVolatileAttr());
       } else {
         rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
                                         /*resultType*/ TypeRange{},
                                         /*operands*/
                                         srcBuffer, *offsetBuffer, *dstBuffer,
-                                        *maskBuffer, other);
+                                        *maskBuffer, other,
+                                        indirectLoadOp.getIsVolatileAttr());
       }
     } else {
       rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
                                       /*resultType*/ TypeRange{},
                                       /*operands*/
                                       srcBuffer, *offsetBuffer, *dstBuffer,
-                                      mask, other);
+                                      mask, other,
+                                      indirectLoadOp.getIsVolatileAttr());
     }
 
     if (indirectLoadOp->getNumResults() > 0) {
