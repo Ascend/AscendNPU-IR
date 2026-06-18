@@ -763,9 +763,22 @@ func.func @test_cumsum_i8_2d_dim0_no_extra_buffer(%src: memref<3x256xi8>,
 
 // -----
 
+func.func @test_cumsum_f32_1d_extra_buffer(%src: memref<2000xf32>,
+                                           %dst: memref<2000xf32>) {
+  // CHECK-LABEL: func.func @test_cumsum_f32_1d_extra_buffer
+  // 1D SIMT Sklansky scan needs a 2*ceil(N/32)-slot per-warp scratch (double space):
+  // 2 * ceil(2000/32) = 2 * 63 = 126.
+  // CHECK: memref.alloc() : memref<126xf32>
+  // CHECK: hivm.hir.vcumsum{{.*}}temp_buffer({{.*}}memref<126xf32>){{.*}}cum_dims = [0]
+  hivm.hir.vcumsum ins(%src : memref<2000xf32>) outs(%dst : memref<2000xf32>) cum_dims = [0] reverse = false
+  return
+}
+
+// -----
+
 func.func @test_cumsum_f32_2d_dim0_no_extra_buffer(%src: memref<3x256xf32>,
                                                    %dst: memref<3x256xf32>) {
-  // CHECK-LABEL: func.func @test_cumsum_f32_2d_dim0_no_extra_buffer      
+  // CHECK-LABEL: func.func @test_cumsum_f32_2d_dim0_no_extra_buffer
   // CHECK-NOT: memref.alloc
   // CHECK: hivm.hir.vcumsum{{.*}}cum_dims = [0]
   hivm.hir.vcumsum ins(%src : memref<3x256xf32>) outs(%dst : memref<3x256xf32>) cum_dims = [0] reverse = false
