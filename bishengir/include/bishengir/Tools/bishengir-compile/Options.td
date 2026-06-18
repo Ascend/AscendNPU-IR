@@ -324,7 +324,7 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
 def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
   "bool",
-  "true"
+  "false"
 > {
   let passGroup = ["HIVM"];
 }
