@@ -1288,7 +1288,7 @@ tryCollapseBubbleUpGeneral(tensor::ExtractSliceOp sliceOp,
 
           auto offsetAtTileDim = calculateOffsetAtTilingDim(
               rewriter, collapseOp.getLoc(), containingLoop, inputCollapse,
-              tilingDim);
+              inDim);
           inputOffsets[inDim] = offsetAtTileDim;
           inputSizes[inDim] = maybeSingleTileSize.value();
         } else {

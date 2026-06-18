@@ -626,3 +626,27 @@ func.func @bubble_up_gather_load(
       : tensor<64x16xf16> to tensor<32x16xf16>
   return %1 : tensor<32x16xf16>
 }
+
+// -----
+
+// CHECK-LABEL:   func.func @bubble_up_collapse_subblock_offset_uses_input_dim(
+// CHECK:           scf.for %[[IV:.*]] =
+// CHECK:             %[[OFFSET:.*]] = affine.apply {{.*}}()[%[[IV]]]
+// CHECK:             %[[SLICE:.*]] = tensor.extract_slice %arg0[0, %[[OFFSET]], 0] [1, 16, 17] [1, 1, 1] {to_be_bubbled_slice} : tensor<1x32x17xi16> to tensor<1x16x17xi16>
+// CHECK:             %[[COLLAPSED:.*]] = tensor.collapse_shape %[[SLICE]] {{\[\[}}0, 1], [2]] : tensor<1x16x17xi16> into tensor<16x17xi16>
+// CHECK:             annotation.mark %[[COLLAPSED]] : tensor<16x17xi16>
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+func.func @bubble_up_collapse_subblock_offset_uses_input_dim(%arg0: tensor<1x32x17xi16>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  scf.for %iv = %c0 to %c2 step %c1 {
+    %offset = affine.apply affine_map<()[s0] -> (s0 * 16)>()[%iv]
+    %collapsed = tensor.collapse_shape %arg0 [[0, 1], [2]]
+        : tensor<1x32x17xi16> into tensor<32x17xi16>
+    %slice = tensor.extract_slice %collapsed[%offset, 0] [16, 17] [1, 1] {to_be_bubbled_slice}
+        : tensor<32x17xi16> to tensor<16x17xi16>
+    annotation.mark %slice : tensor<16x17xi16>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return
+}
