@@ -338,18 +338,35 @@ Solver::getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
   return collectedMemConflicts;
 }
 
-bool Solver::checkReusedTightlyCoupledBuffer(RWOperation *rwOp1,
-                                             RWOperation *rwOp2) {
-  for (auto [memInfo1, memInfo2] : getMemInfoConflict(rwOp1, rwOp2)) {
+bool Solver::checkCVPipeliningMemConflict(RWOperation *rwOp1,
+                                          RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  auto memConflicts = getMemInfoConflict(rwOp1, rwOp2);
+  assert(!memConflicts.empty());
+  for (auto [memInfo1, memInfo2] : memConflicts) {
     if (!memInfo1->pointerLikeInfo || !memInfo2->pointerLikeInfo) {
-      continue;
+      return false;
     }
-    if (memInfo1->pointerLikeInfo->isTightlyCoupledBuffer !=
-        memInfo2->pointerLikeInfo->isTightlyCoupledBuffer) {
-      return true;
+    if (!(memInfo1->pointerLikeInfo->isWorkSpace &&
+          memInfo2->pointerLikeInfo->isWorkSpace) &&
+        !(memInfo1->pointerLikeInfo->isTightlyCoupledBuffer &&
+          memInfo2->pointerLikeInfo->isTightlyCoupledBuffer)) {
+      return false;
+    }
+    if (memInfo1->pointerLikeInfo->addresses !=
+        memInfo2->pointerLikeInfo->addresses) {
+      return false;
+    }
+    if (memInfo1->pointerLikeInfo->allocateSize !=
+        memInfo2->pointerLikeInfo->allocateSize) {
+      return false;
+    }
+    if (memInfo1->pointerLikeInfo->addressSpace !=
+        memInfo2->pointerLikeInfo->addressSpace) {
+      return false;
     }
   }
-  return false;
+  return true;
 }
 
 llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
@@ -620,7 +637,7 @@ Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
   if (!options.isCrossCoreMode()) {
     return {};
   }
-  if (checkReusedTightlyCoupledBuffer(rwOp1, rwOp2)) {
+  if (!checkCVPipeliningMemConflict(rwOp1, rwOp2)) {
     return {};
   }
   auto *parentLoop1 = rwOp1->getParentOfType<Loop>();
