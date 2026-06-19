@@ -772,11 +772,13 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value dst,
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_dst_mode,
+                      FixpipeSubBlockAttr sub_block_idx,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
                       Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ ValueRange{},
-        dma_mode, dual_dst_mode, pre_quant, pre_relu, channel_split,
+        dma_mode, dual_dst_mode, sub_block_idx, pre_quant,
+        pre_relu, channel_split,
         /*unit_flag_mode*/ ArrayAttr{}, quant_scale);
 }
 
@@ -784,11 +786,13 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       Type result, Value src, Value dst,
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_dst_mode,
+                      FixpipeSubBlockAttr sub_block_idx,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
                       Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond*/ ValueRange{},
-        dma_mode, dual_dst_mode, pre_quant, pre_relu, channel_split,
+        dma_mode, dual_dst_mode, sub_block_idx, pre_quant,
+        pre_relu, channel_split,
         /*unit_flag_mode*/ ArrayAttr{}, quant_scale);
 }
 
@@ -893,6 +897,12 @@ LogicalResult FixpipeOp::verify() {
   auto dualDstMode = dualDstModeAttr.getDualDstMode();
   if (!isDualDstEnabled(dualDstMode)) {
     return success();
+  }
+  // dual_dst_mode splits the matrix across both AIV sub-blocks, so it cannot
+  // simultaneously target a single sub-block: sub_block_idx must be absent.
+  if (getSubBlockIdxAttr()) {
+    return emitOpError(
+        "sub_block_idx must not be set when dual_dst_mode is enabled!");
   }
   // dual_dst_mode can only be enabled on Ascend950.
   if (!isAscend950) {

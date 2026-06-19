@@ -286,7 +286,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                            int64_t pre_quant,
                                            float32_t quant_scale,
                                            int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag);
+                                           uint8_t unit_flag,
+                                           bool sub_blockid);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
@@ -302,14 +303,24 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag);
+    bool channel_split, uint8_t unit_flag, bool sub_blockid);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag);
+    bool channel_split, uint8_t unit_flag, bool sub_blockid);
+
+#define FIXPIPE_SBPARAM_gm
+#define FIXPIPE_SBPARAM_cbuf
+#define FIXPIPE_SBPARAM_ubuf , bool sub_blockid
+#define FIXPIPE_SBPARAM(dst_scope) FIXPIPE_SBPARAM_##dst_scope
+
+#define FIXPIPE_SBARG_gm
+#define FIXPIPE_SBARG_cbuf
+#define FIXPIPE_SBARG_ubuf , sub_blockid
+#define FIXPIPE_SBARG(dst_scope) FIXPIPE_SBARG_##dst_scope
 
 #define DECLARE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,                                         \
                         dst_type, mode_name, transform_mode)                                                      \
@@ -318,7 +329,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                     \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                     \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                             \
-          bool channel_split, uint8_t unit_flag)
+          bool channel_split, uint8_t unit_flag FIXPIPE_SBPARAM(dst_scope))
 
 #define REGISTE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,         \
                         dst_type, mode_name, transform_mode)                      \
@@ -326,7 +337,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
                   mode_name, transform_mode) {                                    \
     copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d_core< \
         src_type, dst_type, transform_mode>(                                      \
-        src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);    \
+        src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
+        unit_flag FIXPIPE_SBARG(dst_scope));                                     \
   }
 
 #define DECLARE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                            \
