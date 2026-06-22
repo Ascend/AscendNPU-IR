@@ -107,7 +107,7 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
                           "Disable l0c multi buffer"))}]>,
     Option<"limitMixAutoMultiBufferBuffer",
            "limit-mix-auto-multi-buffer-buffer", "MultiBufferStrategy",
-           /*default=*/"MultiBufferStrategy::ONLY_CUBE",
+           /*default=*/"MultiBufferStrategy::NO_LIMIT",
            "Disable multi-buffer-buffer on cube, vector Or no limit",
            [{::llvm::cl::values(
                clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
