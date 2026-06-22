@@ -3071,3 +3071,51 @@ func.func @prepare_wy_repr_fwd_kernel_chunk64_mix_aiv(%arg0: memref<?xi8> {hacc.
   hivm.hir.store ins(%55#0 : tensor<32x32xf32>) outs(%subview_27 : memref<32x32xf32, strided<[1024, 1], offset: ?>>)
   return
 }
+
+// -----
+
+// CHECK-LABEL:   func.func @indirect_load_dual_store_mix_aiv(
+// CHECK:           scf.for
+// CHECK:             hivm.hir.indirect_load ins(%{{.*}} : memref<?xf32>, %{{.*}} : tensor<8xi64>, %{{.*}} : tensor<8xi8>, %{{.*}} : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+// CHECK:             hivm.hir.indirect_load ins(%{{.*}} : memref<?xf32>, %{{.*}} : tensor<8xi64>, %{{.*}} : tensor<8xi8>, %{{.*}} : tensor<8xf32>) outs(%{{.*}} : tensor<8xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+// CHECK:             hivm.hir.store ins(%{{.*}} : tensor<8xf32>) outs(%{{.*}} : memref<8xf32, strided<[1], offset: ?>>) {tiled_op}
+// CHECK:             hivm.hir.store ins(%{{.*}} : tensor<8xf32>) outs(%{{.*}} : memref<8xf32, strided<[1], offset: ?>>) {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+func.func @indirect_load_dual_store_mix_aiv(%arg0: memref<?xf32> {tt.divisibility = 16 : i32}, %arg1: memref<?xi64> {tt.divisibility = 16 : i32}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: i32, %arg6: i32, %arg7: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMT>, mix_mode = "mix", parallel_mode = "simd"} {
+  %cst = arith.constant 0.000000e+00 : f32
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c16_i64 = arith.constant 16 : i64
+  %c16_i32 = arith.constant 16 : i32
+  hivm.hir.set_ctrl false at ctrl[60]
+  hivm.hir.set_ctrl true at ctrl[48]
+  %0 = arith.muli %arg5, %arg6 : i32
+  %1 = arith.muli %0, %arg7 : i32
+  annotation.mark %1 {logical_block_num} : i32
+  %2 = hivm.hir.get_block_idx -> i64
+  %3 = arith.trunci %2 : i64 to i32
+  %4 = arith.remsi %3, %arg5 : i32
+  %5 = arith.muli %4, %c16_i32 : i32
+  %6 = arith.index_cast %5 : i32 to index
+  %reinterpret_cast = memref.reinterpret_cast %arg1 to offset: [%6], sizes: [16], strides: [1] : memref<?xi64> to memref<16xi64, strided<[1], offset: ?>>
+  %alloc = memref.alloc() : memref<16xi64>
+  hivm.hir.load ins(%reinterpret_cast : memref<16xi64, strided<[1], offset: ?>>) outs(%alloc : memref<16xi64>)
+  %7 = bufferization.to_tensor %alloc restrict writable : memref<16xi64>
+  %8 = tensor.empty() : tensor<16xi1>
+  %9 = hivm.hir.vcmp ins(%7, %c16_i64 : tensor<16xi64>, i64) outs(%8 : tensor<16xi1>) compare_mode = <lt> -> tensor<16xi1>
+  %10 = tensor.empty() : tensor<16xi8>
+  %11 = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%9 : tensor<16xi1>) outs(%10 : tensor<16xi8>) -> tensor<16xi8>
+  %12 = tensor.empty() : tensor<16xf32>
+  %13 = hivm.hir.vbrc ins(%cst : f32) outs(%12 : tensor<16xf32>) -> tensor<16xf32>
+  %14 = tensor.empty() : tensor<16xf32>
+  %15 = hivm.hir.indirect_load ins(%arg0 : memref<?xf32>, %7 : tensor<16xi64>, %11 : tensor<16xi8>, %13 : tensor<16xf32>) outs(%14 : tensor<16xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<16xf32>
+  %16 = tensor.empty() : tensor<16xf32>
+  %17 = hivm.hir.indirect_load ins(%arg2 : memref<?xf32>, %7 : tensor<16xi64>, %11 : tensor<16xi8>, %13 : tensor<16xf32>) outs(%16 : tensor<16xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<16xf32>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [%6], sizes: [16], strides: [1] : memref<?xf32> to memref<16xf32, strided<[1], offset: ?>>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg4 to offset: [%6], sizes: [16], strides: [1] : memref<?xf32> to memref<16xf32, strided<[1], offset: ?>>
+  hivm.hir.store ins(%15 : tensor<16xf32>) outs(%reinterpret_cast_0 : memref<16xf32, strided<[1], offset: ?>>)
+  hivm.hir.store ins(%17 : tensor<16xf32>) outs(%reinterpret_cast_1 : memref<16xf32, strided<[1], offset: ?>>)
+  return
+}
+
+// -----
