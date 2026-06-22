@@ -1023,6 +1023,20 @@ def PrintPassId : DFXControlOptions<
   "false"
 >;
 
+def VerifyEach : DFXControlOptions<
+  "Verify the IR after every pass. When disabled (default), the IR is only "
+  "verified once after the last pass of each pipeline.",
+  "bool",
+  "false"
+>;
+
+def EnableLibCallNoInline : DFXControlOptions<
+  "Mark the library-call function declarations generated during HIVM-to-"
+  "Standard conversion as hacc.noinline instead of hacc.always_inline.",
+  "bool",
+  "true"
+>;
+
 def InjectIrBefore : DFXControlOptions<
   "Inject IR from file before a specific pass. Format: pass_id@file_path",
   "std::string",
