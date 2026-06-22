@@ -126,3 +126,34 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// Test: skip tiling odd-sized reduction dimension (dimSize=15).
+// Reduce on dim 0 cannot be sub-block tiled; bubble-up verification rejects
+// dynamic-shape reduce input and bind-sub-block falls back to sub-block 0.
+// CHECK-LABEL: func.func @odd_reduce_dim_aiv(
+// CHECK-NOT: hivm.hir.vreduce {tiled_op}
+// CHECK: hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<15x4xf32>) outs(%{{.*}} : tensor<1x4xf32>) unsigned_src = false reduce_dims = [0]
+// CHECK: scf.if
+// CHECK: hivm.hir.store
+// CHECK: } {limit_sub_block_id0}
+// CHECK-NOT: map_for_to_forall
+func.func @odd_reduce_dim_aiv(%arg0: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg1: i32, %arg2: i32, %arg3: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+  hivm.hir.set_ctrl false at ctrl[60]
+  hivm.hir.set_ctrl true at ctrl[48]
+  %0 = arith.muli %arg1, %arg2 : i32
+  %1 = arith.muli %0, %arg3 : i32
+  annotation.mark %1 {logical_block_num} : i32
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [15, 4], strides: [4, 1] : memref<?xf32> to memref<15x4xf32, strided<[4, 1]>>
+  %alloc = memref.alloc() : memref<15x4xf32>
+  hivm.hir.load ins(%reinterpret_cast : memref<15x4xf32, strided<[4, 1]>>) outs(%alloc : memref<15x4xf32>)
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<15x4xf32>
+  %3 = tensor.empty() : tensor<1x4xf32>
+  %4 = hivm.hir.vreduce <sum> ins(%2 : tensor<15x4xf32>) outs(%3 : tensor<1x4xf32>) unsigned_src = false reduce_dims = [0] -> tensor<1x4xf32>
+  %reinterpret_cast_0 = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1, 4], strides: [4, 1] : memref<?xf32> to memref<1x4xf32, strided<[4, 1]>>
+  hivm.hir.store ins(%4 : tensor<1x4xf32>) outs(%reinterpret_cast_0 : memref<1x4xf32, strided<[4, 1]>>)
+  return
+}
+
+// -----
