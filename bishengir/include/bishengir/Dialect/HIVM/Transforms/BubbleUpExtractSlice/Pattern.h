@@ -131,10 +131,26 @@ public:
                         PatternRewriter &rewriter) const override;
 };
 
+class VInterleaveBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
 class IfBubbleUpStrategy : public BubbleUpStrategy {
 public:
   bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
 
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
+class VarangeBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+ 
   LogicalResult execute(tensor::ExtractSliceOp sliceOp,
                         PatternRewriter &rewriter) const override;
 };
@@ -181,6 +197,30 @@ private:
   FailureOr<memref::SubViewOp> createNewSubviewOpAfterBubbleUp(
       RewriterBase &rewriter, size_t tilingDim, memref::SubViewOp subviewOp,
       memref::SubViewOp parentViewOp, memref::SubViewOp newSrc) const;
+};
+
+class ScopeBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
+class SelectBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
+};
+
+class FixpipeBubbleUpStrategy : public BubbleUpStrategy {
+public:
+  bool isSupportedOperation(tensor::ExtractSliceOp sliceOp) const override;
+
+  LogicalResult execute(tensor::ExtractSliceOp sliceOp,
+                        PatternRewriter &rewriter) const override;
 };
 
 } // namespace mlir::hivm::detail

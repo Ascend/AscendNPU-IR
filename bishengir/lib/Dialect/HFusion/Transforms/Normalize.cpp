@@ -118,7 +118,7 @@ static SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
     return taylerParams;
   }
   }
-  llvm_unreachable("unsupported TaylerMode");
+  llvm::report_fatal_error("unsupported TaylerMode");
 }
 
 static Value getSinSign(PatternRewriter &rewriter, Location loc, Value x) {
@@ -232,7 +232,7 @@ static Value sign(PatternRewriter &rewriter, Location loc, Value x) {
     return getAtanSign(rewriter, loc, x);
   }
   }
-  llvm_unreachable("unsupported TaylerMode");
+  llvm::report_fatal_error("unsupported TaylerMode");
 }
 
 Value constructTaylerSeries(PatternRewriter &rewriter, Location loc,
@@ -597,6 +597,1012 @@ static bool isZero(Value v) {
   }
   return (cstOp.value() == 0);
 }
+// ============================================================================
+// lgamma(x) = ln|Γ(x)| implementation
+// ============================================================================
+//   lgamma(z + 1) = (log(2) + log(pi)) / 2
+//                   + (z + 1/2) * log(t(z))
+//                   - t(z) + log(a(z))
+//   where t(z) = z + g + 1/2
+//         a(z) = c0 + sum(k=1..n, c[k] / (z + k))
+//
+// For x < 0.5, use Euler's reflection formula:
+//   lgamma(x) = log(pi) - lgamma(1-x) - log(|sin(pi*x)|)
+// ============================================================================
+struct NormalizeLgammaOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  // Bundle of values computed during input preparation, shared across stages
+  struct InputContext {
+    Value x;             // possibly upcast to f32
+    Value empty;
+    Value half;
+    Value one;
+    Value needToReflect;
+    Value z;
+    Value absX;
+  };
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                              PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::UnaryFn::lgamma)
+      return failure();
+
+    Value rawX = op.getInputs()[0];
+    auto inType = getElementTypeOrSelf(rawX.getType());
+    assert((inType.isF16() || inType.isF32()) &&
+          "only support input Type is f16 or f32");
+
+    Location loc = op->getLoc();
+
+    // [1] FP16->FP32, compute shared values and z
+    InputContext ctx = prepareInput(rewriter, loc, rawX, inType);
+
+    // [2] Lanczos approximation: lgamma(z+1)
+    Value lgamma = computeLanczosLgamma(rewriter, loc, ctx.z, ctx.half, ctx.empty);
+
+    // [3] Reflection formula for x < 0.5
+    Value lgammaReflection = computeReflection(rewriter, loc, ctx.absX, lgamma,
+                                              ctx.half, ctx.one, ctx.empty);
+
+    // [4] inf handling + needToReflect select + FP32->FP16
+    Value result = applySpecialValues(rewriter, loc, ctx, lgamma,
+                                      lgammaReflection, inType);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+protected:
+  // [1] FP16->FP32 upcast if needed; compute empty, half, one,
+  //     needToReflect, z, absX for use in subsequent stages.
+  InputContext prepareInput(PatternRewriter &rewriter, Location loc,
+                            Value x, Type inType) const {
+    if (inType.isF16())
+      x = hfusion::castTo(rewriter, x, rewriter.getF32Type(),
+                          hfusion::RoundMode::ROUND);
+
+    auto empty = utils::createEmptyOp(rewriter, loc, x);
+    Value half = f32Const(rewriter, loc, 0.5);
+    Value one  = f32Const(rewriter, loc, 1.0);
+
+    // If the input is less than 0.5 use Euler's reflection formula.
+    //   z = -x      if x < 0.5
+    //   z = x - 1   otherwise
+    Value needToReflect =
+        hfusion::createCmpOp(rewriter, loc, x, half, hfusion::CompareFn::vlt)
+            ->getResult(0);
+    Value negX    = createUnaryOp(rewriter, loc, linalg::UnaryFn::negf, x, empty);
+    Value xSubOne = createBinOp(rewriter, loc, linalg::BinaryFn::sub, x, one, empty);
+    Value z       = createSelect(rewriter, loc, needToReflect, negX, xSubOne);
+    Value absX    = createUnaryOp(rewriter, loc, linalg::UnaryFn::abs, x, empty);
+
+    return {x, empty, half, one, needToReflect, z, absX};
+  }
+
+  // [2] Compute lgamma(z+1) using the Lanczos approximation:
+  //   a(z)   = c0 + sum(k=1..n, c[k] / (z + k))
+  //   log(t) = log(g + 1/2) + log1p(z / (g + 1/2))
+  //   r      = (z + 1/2 - t / log(t)) * log(t)
+  //   result = log(sqrt(2*pi)) + r + log(a(z))
+  Value computeLanczosLgamma(PatternRewriter &rewriter, Location loc,
+                              Value z, Value half, Value empty) const {
+    // Materialize a(z) = c0 + sum(k=1..n, c[k] / (z + k))
+    Value a = f32Const(rewriter, loc, lgamma_const::LANCZOS_C0);
+    for (size_t i = 0; i < std::size(lgamma_const::LANCZOS_COEFFS); ++i) {
+      Value coeff         = f32Const(rewriter, loc, lgamma_const::LANCZOS_COEFFS[i]);
+      Value oneBasedIndex = f32Const(rewriter, loc, static_cast<double>(i + 1));
+      Value zPlusK        = createBinOp(rewriter, loc, linalg::BinaryFn::add, z, oneBasedIndex, empty);
+      Value quotient      = createBinOp(rewriter, loc, linalg::BinaryFn::div, coeff, zPlusK, empty);
+      a = createBinOp(rewriter, loc, linalg::BinaryFn::add, a, quotient, empty);
+    }
+
+    // Materialize log(t) = log(g + 1/2) + log1p(z / (g + 1/2))
+    constexpr double gPlusHalf    = lgamma_const::LANCZOS_G + 0.5;
+    Value lanczosPlusHalf         = f32Const(rewriter, loc, gPlusHalf);
+    Value t                       = createBinOp(rewriter, loc, linalg::BinaryFn::add, lanczosPlusHalf, z, empty);
+    Value logTerm                 = f32Const(rewriter, loc, std::log(gPlusHalf));
+    Value zDivLanczosPlusHalf     = createBinOp(rewriter, loc, linalg::BinaryFn::div, z, lanczosPlusHalf, empty);
+    Value log1pTerm =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn, hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::log1p,
+            ValueRange{zDivLanczosPlusHalf}, empty)
+            ->getResult(0);
+    Value logT = createBinOp(rewriter, loc, linalg::BinaryFn::add, logTerm, log1pTerm, empty);
+
+    // Materialize r = (z + 1/2 - t / log(t)) * log(t)
+    Value zPlusHalf = createBinOp(rewriter, loc, linalg::BinaryFn::add, z, half, empty);
+    Value tDivLogT  = createBinOp(rewriter, loc, linalg::BinaryFn::div, t, logT, empty);
+    Value rInner    = createBinOp(rewriter, loc, linalg::BinaryFn::sub, zPlusHalf, tDivLogT, empty);
+    Value r         = createBinOp(rewriter, loc, linalg::BinaryFn::mul, rInner, logT, empty);
+
+    // lgamma(z+1) = log(sqrt(2*pi)) + r + log(a(z))
+    Value logA       = createUnaryOp(rewriter, loc, linalg::UnaryFn::log, a, empty);
+    Value logSqrt2Pi = f32Const(rewriter, loc, 0.5 * std::log(2.0 * M_PI));
+    Value lgamma     = createBinOp(rewriter, loc, linalg::BinaryFn::add, logSqrt2Pi, r, empty);
+    lgamma           = createBinOp(rewriter, loc, linalg::BinaryFn::add, lgamma, logA, empty);
+    return lgamma;
+  }
+
+  // [3] Compute lgamma(x) via Euler's reflection formula for x < 0.5:
+  //   lgamma(x) = log(pi) - log(|sin(pi * x)|) - lgamma(1 - x)
+  // Uses abs(frac(x)) with [0, 0.5] symmetry to avoid precision loss near poles.
+  Value computeReflection(PatternRewriter &rewriter, Location loc,
+                          Value absX, Value lgamma,
+                          Value half, Value one, Value empty) const {
+    // abs(frac(x)) = abs(x) - floor(abs(x))
+    Value floorAbsX = createUnaryOp(rewriter, loc, linalg::UnaryFn::floor, absX, empty);
+    Value absFrac   = createBinOp(rewriter, loc, linalg::BinaryFn::sub, absX, floorAbsX, empty);
+
+    // Symmetry: absFrac > 0.5 -> use (1 - absFrac) for better precision near integers
+    Value reduceAbsFrac =
+        hfusion::createCmpOp(rewriter, loc, absFrac, half, hfusion::CompareFn::vgt)
+            ->getResult(0);
+    Value oneMinusAbsFrac = createBinOp(rewriter, loc, linalg::BinaryFn::sub, one, absFrac, empty);
+    absFrac = createSelect(rewriter, loc, reduceAbsFrac, oneMinusAbsFrac, absFrac);
+
+    // reflectionDenom = log(|sin(pi * absFrac)|)
+    Value pi           = f32Const(rewriter, loc, M_PI);
+    Value piAbsFrac    = createBinOp(rewriter, loc, linalg::BinaryFn::mul, pi, absFrac, empty);
+    Value sinPiAbsFrac =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn, hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::sin,
+            ValueRange{piAbsFrac}, empty)
+            ->getResult(0);
+    Value reflectionDenom = createUnaryOp(rewriter, loc, linalg::UnaryFn::log, sinPiAbsFrac, empty);
+
+    // lgammaReflection = log(pi) - reflectionDenom - lgamma
+    Value logPi            = f32Const(rewriter, loc, std::log(M_PI));
+    Value lgammaReflection = createBinOp(rewriter, loc, linalg::BinaryFn::sub, logPi, reflectionDenom, empty);
+    lgammaReflection       = createBinOp(rewriter, loc, linalg::BinaryFn::sub, lgammaReflection, lgamma, empty);
+
+    // Avoid -inf - inf = nan: if reflectionDenom is +/-inf, return -reflectionDenom instead
+    Value posInf = f32Const(rewriter, loc, std::numeric_limits<float>::infinity());
+    Value absReflectionDenom =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::abs, reflectionDenom, empty);
+    Value finiteReflectionDenom =
+        hfusion::createCmpOp(rewriter, loc, absReflectionDenom, posInf,
+                            hfusion::CompareFn::vlt)
+            ->getResult(0);
+    Value negReflectionDenom = createUnaryOp(rewriter, loc, linalg::UnaryFn::negf, reflectionDenom, empty);
+    lgammaReflection = createSelect(rewriter, loc, finiteReflectionDenom, lgammaReflection, negReflectionDenom);
+
+    return lgammaReflection;
+  }
+
+  // [4] Select main/reflected result, clamp +/-inf input to +inf output,
+  //     then cast back to FP16 if the original input was FP16.
+  Value applySpecialValues(PatternRewriter &rewriter, Location loc,
+                          const InputContext &ctx,
+                          Value lgamma, Value lgammaReflection,
+                          Type inType) const {
+    // Select whether or not to rely on the reflection
+    Value result = createSelect(rewriter, loc, ctx.needToReflect, lgammaReflection, lgamma);
+
+    // Materialize +/-inf behavior: lgamma(+/-inf) = +inf
+    Value posInf = f32Const(rewriter, loc, std::numeric_limits<float>::infinity());
+    Value xIsInf =
+        hfusion::createCmpOp(rewriter, loc, ctx.absX, posInf,
+                            hfusion::CompareFn::vge)
+            ->getResult(0);
+    Value posInfTensor =
+        rewriter.create<linalg::FillOp>(loc, posInf, ctx.empty).getResult(0);
+    result = createSelect(rewriter, loc, xIsInf, posInfTensor, result);
+
+    // FP32 -> FP16 if needed
+    if (inType.isF16())
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                              hfusion::RoundMode::ROUND);
+    return result;
+  }
+
+  Value f32Const(PatternRewriter &rewriter, Location loc, double v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                    Value trueVal, Value falseVal) const {
+    auto selEmpty = utils::createEmptyOp(rewriter, loc, trueVal);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{selEmpty.getType()},
+                                  ValueRange{cond, trueVal, falseVal},
+                                  ValueRange{selEmpty})
+        .getResult(0);
+  }
+
+  Value createBinOp(PatternRewriter &rewriter, Location loc,
+                    linalg::BinaryFn fn, Value inp1, Value inp2,
+                    Value out) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                  linalg::BinaryFnAttr>(
+              rewriter, loc, fn, ValueRange({inp1, inp2}), out)
+        ->getResult(0);
+  }
+
+  Value createUnaryOp(PatternRewriter &rewriter, Location loc,
+                      linalg::UnaryFn fn, Value inp, Value out) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+              rewriter, loc, fn, ValueRange{inp}, ValueRange{out})
+        ->getResult(0);
+  }
+};
+
+class NormalizeInvTrigBase : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+protected:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  // Calculate: a * b + c
+  Value mulAdd(PatternRewriter &rewriter, Location loc, Value a, Value b,
+               Value c, Value out) const {
+    auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                       linalg::BinaryFn, linalg::BinaryFnAttr>(
+                   rewriter, loc, linalg::BinaryFn::mul, ValueRange{a, b}, out)
+                   ->getResult(0);
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{mul, c}, out)
+        ->getResult(0);
+  }
+
+  // Minimax polynomial P(t) via Horner scheme
+  // P(t) = P0 + t*(P1 + t*P2)
+  // single polynomial on [0, 0.25], shared by asin AND acos
+  // asin(x_in) ≈ x_in + x_in*t*P(t), t = x_in²
+  Value calculateHornerPolyP(PatternRewriter &rewriter, Location loc,
+                             Value t) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+
+    Value p = f32Const(rewriter, loc, trig::INVTRIG_P2);
+    p = mulAdd(rewriter, loc, p, t, f32Const(rewriter, loc, trig::INVTRIG_P1),
+               empty);
+    p = mulAdd(rewriter, loc, p, t, f32Const(rewriter, loc, trig::INVTRIG_P0),
+               empty);
+    return p;
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(empty),
+                                   ValueRange{cond, t, f}, ValueRange(empty))
+        ->getResult(0);
+  }
+};
+
+/// acos(x)
+/// 1. x_in = |a|<0.5 ? |a| : sqrt((1-|a|)/2)
+/// 2. t = x_in², Horner P(t), asin_x = x_in + x_in*t*P
+/// 3. |a|<0.5: acos = a>=0 ? π/2-asin_x : π/2+asin_x
+///    |a|>=0.5: acos = a>=0 ? 2*asin_x : π-2*asin_x
+struct NormalizeAcosOp : public NormalizeInvTrigBase {
+  using NormalizeInvTrigBase::NormalizeInvTrigBase;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::acos) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+    bool isF16 = inTy.isF16();
+
+    if (isF16) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    // -------------------------------------------------------------
+    // Pre-computation for polynomial
+    // -------------------------------------------------------------
+    Value xAbs, isSmall, xIn;
+    std::tie(xAbs, isSmall, xIn) = preprocess(rewriter, loc, input);
+
+    // -------------------------------------------------------------
+    // Polynomial approximation for asin(x)
+    // -------------------------------------------------------------
+    Value asinX = calculateAsinApproximation(rewriter, loc, xIn);
+
+    // -------------------------------------------------------------
+    // Combine results based on input ranges
+    // -------------------------------------------------------------
+    Value result = combine(rewriter, loc, input, asinX, isSmall);
+
+    if (isF16) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  // Pre-process input: calculate |a|, isSmall condition, and x_in for poly
+  std::tuple<Value, Value, Value> preprocess(PatternRewriter &rewriter,
+                                             Location loc, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // |a|
+    Value xAbs =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)
+            ->getResult(0);
+    // z = (1 - |a|) * 0.5
+    Value oneMinusAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, 1.0f), xAbs}, empty)
+            ->getResult(0);
+    Value z = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                      linalg::BinaryFn, linalg::BinaryFnAttr>(
+                  rewriter, loc, linalg::BinaryFn::mul,
+                  ValueRange{oneMinusAbs, f32Const(rewriter, loc, 0.5f)}, empty)
+                  ->getResult(0);
+    // s = sqrt(z)
+    Value s = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                     hfusion::UnaryFnAttr>(
+                  rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{z}, empty)
+                  ->getResult(0);
+    // isSmall = |a| < 0.5
+    Value isSmall = createCmpOp(rewriter, loc, xAbs,
+                                f32Const(rewriter, loc, 0.5f), CompareFn::vlt)
+                        ->getResult(0);
+    // x_in = isSmall ? |a| : s
+    Value xIn = createSelect(rewriter, loc, isSmall, xAbs, s);
+    return std::make_tuple(xAbs, isSmall, xIn);
+  }
+
+  // Calculate asin(x_in) ≈ x_in + x_in*t*P(t), where t = x_in²
+  Value calculateAsinApproximation(PatternRewriter &rewriter, Location loc,
+                                   Value xIn) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xIn);
+    // t = x_in * x_in
+    Value t =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xIn, xIn}, empty)
+            ->getResult(0);
+    // Horner: p = P(t)
+    Value p = calculateHornerPolyP(rewriter, loc, t);
+    // x_in * t
+    Value xT =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xIn, t}, empty)
+            ->getResult(0);
+    // x_in * t * P
+    Value xTP =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xT, p}, empty)
+            ->getResult(0);
+    // asin_x = x_in + x_in*t*P
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{xIn, xTP},
+               empty)
+        ->getResult(0);
+  }
+
+  // Combine results for the four cases of acos
+  Value combine(PatternRewriter &rewriter, Location loc, Value input,
+                Value asinX, Value isSmall) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    Value piHalf = f32Const(rewriter, loc, trig::PI_O_2);
+    // small_pos = π/2 - asin_x
+    Value smallPos =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub, ValueRange{piHalf, asinX},
+            empty)
+            ->getResult(0);
+    // small_neg = π/2 + asin_x
+    Value smallNeg =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{piHalf, asinX},
+            empty)
+            ->getResult(0);
+    // big_pos = 2 * asin_x
+    Value bigPos =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{asinX, f32Const(rewriter, loc, 2.0f)}, empty)
+            ->getResult(0);
+    // big_neg = π - 2*asin_x
+    Value bigNeg =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, trig::PI), bigPos}, empty)
+            ->getResult(0);
+    // a < 0 ?
+    Value isNeg = createCmpOp(rewriter, loc, input,
+                              f32Const(rewriter, loc, 0.0f), CompareFn::vlt)
+                      ->getResult(0);
+    // resSmall = isNeg ? smallNeg : smallPos
+    Value resSmall = createSelect(rewriter, loc, isNeg, smallNeg, smallPos);
+    // resLarge = isNeg ? bigNeg : bigPos
+    Value resLarge = createSelect(rewriter, loc, isNeg, bigNeg, bigPos);
+    // result = isSmall ? resSmall : resLarge
+    return createSelect(rewriter, loc, isSmall, resSmall, resLarge);
+  }
+};
+
+/// asin(x)
+/// 1. x_in = |a|<0.5 ? |a| : sqrt((1-|a|)/2)
+/// 2. t = x_in², Horner P(t), asin_x = x_in + x_in*t*P
+/// 3. |a|<0.5: result = asin_x
+///    |a|>=0.5: result = π/2 - 2*asin_x
+/// 4. result = sign(a) * result
+struct NormalizeAsinOp : public NormalizeInvTrigBase {
+  using NormalizeInvTrigBase::NormalizeInvTrigBase;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::UnaryFn::asin) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+    bool isF16 = inTy.isF16();
+
+    if (isF16) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    // -------------------------------------------------------------
+    // Pre-computation for polynomial
+    // -------------------------------------------------------------
+    Value xAbs, isSmall, xIn;
+    std::tie(xAbs, isSmall, xIn) = preprocess(rewriter, loc, input);
+
+    // -------------------------------------------------------------
+    // Polynomial approximation for asin(x)
+    // -------------------------------------------------------------
+    Value asinX = calculateAsinApproximation(rewriter, loc, xIn);
+
+    // -------------------------------------------------------------
+    // Combine results based on input ranges
+    // -------------------------------------------------------------
+    Value result = combine(rewriter, loc, input, asinX, isSmall);
+
+    if (isF16) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  // Pre-process input: calculate |a|, isSmall condition, and x_in for poly
+  std::tuple<Value, Value, Value> preprocess(PatternRewriter &rewriter,
+                                             Location loc, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // |a|
+    Value xAbs =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)
+            ->getResult(0);
+    // z = (1 - |a|) * 0.5
+    Value oneMinusAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, 1.0f), xAbs}, empty)
+            ->getResult(0);
+    Value z = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                      linalg::BinaryFn, linalg::BinaryFnAttr>(
+                  rewriter, loc, linalg::BinaryFn::mul,
+                  ValueRange{oneMinusAbs, f32Const(rewriter, loc, 0.5f)}, empty)
+                  ->getResult(0);
+    // s = sqrt(z)
+    Value s = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                     hfusion::UnaryFnAttr>(
+                  rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{z}, empty)
+                  ->getResult(0);
+    // isSmall = |a| < 0.5
+    Value isSmall = createCmpOp(rewriter, loc, xAbs,
+                                f32Const(rewriter, loc, 0.5f), CompareFn::vlt)
+                        ->getResult(0);
+    // x_in = isSmall ? |a| : s
+    Value xIn = createSelect(rewriter, loc, isSmall, xAbs, s);
+    return std::make_tuple(xAbs, isSmall, xIn);
+  }
+
+  // Calculate asin(x_in) ≈ x_in + x_in*t*P(t), where t = x_in²
+  Value calculateAsinApproximation(PatternRewriter &rewriter, Location loc,
+                                   Value xIn) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xIn);
+    // t = x_in * x_in
+    Value t =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xIn, xIn}, empty)
+            ->getResult(0);
+    // Horner: p = P(t)
+    Value p = calculateHornerPolyP(rewriter, loc, t);
+    // x_in * t
+    Value xT =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xIn, t}, empty)
+            ->getResult(0);
+    // x_in * t * P
+    Value xTP =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xT, p}, empty)
+            ->getResult(0);
+    // asin_x = x_in + x_in*t*P
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{xIn, xTP},
+               empty)
+        ->getResult(0);
+  }
+
+  // Combine results for the two cases of asin and apply sign
+  Value combine(PatternRewriter &rewriter, Location loc, Value input,
+                Value asinX, Value isSmall) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // 2 * asin_x
+    Value twoAsinX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{asinX, f32Const(rewriter, loc, 2.0f)}, empty)
+            ->getResult(0);
+    // π/2 - 2*asin_x
+    Value bigResult =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, trig::PI_O_2), twoAsinX}, empty)
+            ->getResult(0);
+    // resultAbs = isSmall ? asin_x : bigResult
+    Value resultAbs = createSelect(rewriter, loc, isSmall, asinX, bigResult);
+    // Apply sign: result = a < 0 ? -resultAbs : resultAbs
+    Value negResultAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{resultAbs, f32Const(rewriter, loc, -1.0f)}, empty)
+            ->getResult(0);
+    Value isNeg = createCmpOp(rewriter, loc, input,
+                              f32Const(rewriter, loc, 0.0f), CompareFn::vlt)
+                      ->getResult(0);
+    return createSelect(rewriter, loc, isNeg, negResultAbs, resultAbs);
+  }
+};
+
+/// atanh(x)
+/// Two-path piecewise implementation:
+/// 1. |x| < 0.5:  atanh(x) = 0.5 * log1p(2|x| + 2|x|²/(1-|x|))
+/// 2. |x| >= 0.5: atanh(x) = 0.5 * log1p(2|x|/(1-|x|))
+/// Final result is multiplied by sign(x).
+struct NormalizeAtanhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::UnaryFn::atanh) {
+      return failure();
+    }
+
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+
+    // FP16 -> FP32 for precision
+    if (inTy.isF16()) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    Location loc = op.getLoc();
+    Value resultAbs = calculateAbsAtanh(rewriter, loc, input);
+    Value result = applySign(rewriter, loc, input, resultAbs);
+
+    // FP32 -> FP16
+    if (inTy.isF16()) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(empty),
+                                   ValueRange{cond, t, f}, ValueRange(empty))
+        ->getResult(0);
+  }
+
+  // Case 1: |x| < 0.5, atanh(x) = 0.5 * log1p(2x + 2x^2/(1-x))
+  Value calculateSmallAbs(PatternRewriter &rewriter, Location loc, Value xAbs,
+                          Value oneMinusX, Value twoX) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xAbs);
+    // 2 * |x| * |x|
+    Value twoXSq =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{twoX, xAbs}, empty)
+            ->getResult(0);
+    // (2 * |x| * |x|) / (1 - |x|)
+    Value term2 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::div, ValueRange{twoXSq, oneMinusX},
+            empty)
+            ->getResult(0);
+    // numerator_small = 2|x| + ...
+    Value numSmall =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{twoX, term2},
+            empty)
+            ->getResult(0);
+    // log1p(numerator_small)
+    Value log1pSmall =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::log1p, ValueRange{numSmall}, empty)
+            ->getResult(0);
+    // resSmall = 0.5 * ...
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::mul,
+               ValueRange{f32Const(rewriter, loc, 0.5f), log1pSmall}, empty)
+        ->getResult(0);
+  }
+
+  // Case 2: 0.5 <= |x| < 1, atanh(x) = 0.5 * log1p(2x / (1-x))
+  Value calculateLargeAbs(PatternRewriter &rewriter, Location loc,
+                          Value oneMinusX, Value twoX) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, twoX);
+    // numerator_large = 2|x| / (1-|x|)
+    Value numLarge =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::div, ValueRange{twoX, oneMinusX},
+            empty)
+            ->getResult(0);
+    // log1p(numerator_large)
+    Value log1pLarge =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::log1p, ValueRange{numLarge}, empty)
+            ->getResult(0);
+    // resLarge = 0.5 * ...
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::mul,
+               ValueRange{f32Const(rewriter, loc, 0.5f), log1pLarge}, empty)
+        ->getResult(0);
+  }
+
+  // Calculate |atanh(x)|
+  Value calculateAbsAtanh(PatternRewriter &rewriter, Location loc,
+                          Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // Common Ops: abs(x)
+    Value xAbs =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::abs, ValueRange{input}, empty)
+            ->getResult(0);
+    // 1 - |x|
+    Value oneMinusX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{f32Const(rewriter, loc, 1.0f), xAbs}, empty)
+            ->getResult(0);
+    // 2 * |x|
+    Value twoX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{f32Const(rewriter, loc, 2.0f), xAbs}, empty)
+            ->getResult(0);
+
+    // -------------------------------------------------------------
+    // Case 1: |x| < 0.5
+    // -------------------------------------------------------------
+    Value resSmall = calculateSmallAbs(rewriter, loc, xAbs, oneMinusX, twoX);
+
+    // -------------------------------------------------------------
+    // Case 2: 0.5 <= |x| < 1
+    // -------------------------------------------------------------
+    Value resLarge = calculateLargeAbs(rewriter, loc, oneMinusX, twoX);
+
+    // -------------------------------------------------------------
+    // Combine Selection
+    // -------------------------------------------------------------
+    // Condition: |x| < 0.5 ?
+    Value isSmall = createCmpOp(rewriter, loc, xAbs,
+                                f32Const(rewriter, loc, 0.5f), CompareFn::vlt)
+                        ->getResult(0);
+    return createSelect(rewriter, loc, isSmall, resSmall, resLarge);
+  }
+
+  // Apply sign to the result: sign(x) * |atanh(x)|
+  Value applySign(PatternRewriter &rewriter, Location loc, Value input,
+                  Value resultAbs) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // result = x < 0 ? -resultAbs : resultAbs
+    Value negResultAbs =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul,
+            ValueRange{resultAbs, f32Const(rewriter, loc, -1.0f)}, empty)
+            ->getResult(0);
+    Value isNeg = createCmpOp(rewriter, loc, input,
+                              f32Const(rewriter, loc, 0.0f), CompareFn::vlt)
+                      ->getResult(0);
+    return createSelect(rewriter, loc, isNeg, negResultAbs, resultAbs);
+  }
+};
+
+/// acosh(x)
+/// Three-path piecewise implementation for x >= 1:
+/// 1. x >= 1e8 (large): acosh(x) ≈ log(x) + log(2)
+/// 2. 2 <= x < 1e8 (medium): acosh(x) = log(x + sqrt((x-1)(x+1)))
+/// 3. 1 <= x < 2 (small): acosh(x) = log1p(z + sqrt(z²+2z)), where z=x-1
+/// Handles domain errors (x < 1 -> NaN) and boundary (x=1 -> 0).
+struct NormalizeAcoshOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() ||
+        op.getFun() != hfusion::UnaryFn::acosh) {
+      return failure();
+    }
+
+    Value input = op.getDpsInputs()[0];
+    auto inTy = getElementTypeOrSelf(input.getType());
+
+    // FP16 -> FP32 for precision
+    if (inTy.isF16()) {
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    Location loc = op.getLoc();
+    Value finalRes = calculateAcosh(rewriter, loc, input);
+
+    // FP32 -> FP16
+    if (inTy.isF16()) {
+      finalRes = hfusion::castTo(rewriter, finalRes, rewriter.getF16Type(),
+                                 hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, finalRes);
+    return success();
+  }
+
+private:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f, Value init) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange(init), ValueRange{cond, t, f},
+                                   ValueRange(init))
+        ->getResult(0);
+  }
+
+  // Path 1: x >= 1e8, acosh(x) ~= log(x) + log(2)
+  Value pathLarge(PatternRewriter &rewriter, Location loc, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    Value log2 = f32Const(rewriter, loc, 0.69314718056f); // M_LN2
+    // log(x)
+    Value logX =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(
+            rewriter, loc, linalg::UnaryFn::log, ValueRange{input}, empty)
+            ->getResult(0);
+    // log(x) + log(2)
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::add, ValueRange{logX, log2},
+               empty)
+        ->getResult(0);
+  }
+
+  // Path 2: 2.0 <= x < 1e8, acosh(x) = log(x + sqrt((x - 1)(x + 1)))
+  Value pathMedium(PatternRewriter &rewriter, Location loc, Value input,
+                   Value one) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // x - 1
+    Value xMinus1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub, ValueRange{input, one}, empty)
+            ->getResult(0);
+    // x + 1
+    Value xPlus1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{input, one}, empty)
+            ->getResult(0);
+    // (x-1)*(x+1)
+    Value termMedium =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{xMinus1, xPlus1},
+            empty)
+            ->getResult(0);
+    // sqrt(...)
+    Value sqrtMedium =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{termMedium},
+            empty)
+            ->getResult(0);
+    // x + sqrt(...)
+    Value argMedium =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{input, sqrtMedium},
+            empty)
+            ->getResult(0);
+    // log(...)
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, linalg::UnaryFn::log, ValueRange{argMedium},
+               empty)
+        ->getResult(0);
+  }
+
+  // Path 3: 1 <= x < 2.0, acosh(x) = log1p(z + sqrt(z*z + 2z)) where z = x-1
+  Value pathSmall(PatternRewriter &rewriter, Location loc, Value xMinus1,
+                  Value two) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, xMinus1);
+    Value z = xMinus1;
+    // z*z
+    Value zSq =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{z, z}, empty)
+            ->getResult(0);
+    // 2*z
+    Value twoZ =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{two, z}, empty)
+            ->getResult(0);
+    // z^2 + 2z
+    Value innerSmall =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{zSq, twoZ}, empty)
+            ->getResult(0);
+    // sqrt(...)
+    Value sqrtSmall =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, loc, hfusion::UnaryFn::sqrt, ValueRange{innerSmall},
+            empty)
+            ->getResult(0);
+    // z + sqrt(...)
+    Value argSmall =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::add, ValueRange{z, sqrtSmall},
+            empty)
+            ->getResult(0);
+    // log1p(...)
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, hfusion::UnaryFn::log1p, ValueRange{argSmall},
+               empty)
+        ->getResult(0);
+  }
+
+  // Main calculation logic for acosh
+  Value calculateAcosh(PatternRewriter &rewriter, Location loc,
+                       Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    // Constants
+    Value one = f32Const(rewriter, loc, 1.0f);
+    Value two = f32Const(rewriter, loc, 2.0f);
+    Value largeThresh = f32Const(rewriter, loc, 1.0e8f);
+
+    // -------------------------------------------------------------
+    // Path 1: x >= 1e8
+    // -------------------------------------------------------------
+    Value resLarge = pathLarge(rewriter, loc, input);
+
+    // -------------------------------------------------------------
+    // Path 2: 2.0 <= x < 1e8
+    // -------------------------------------------------------------
+    Value resMedium = pathMedium(rewriter, loc, input, one);
+
+    // -------------------------------------------------------------
+    // Path 3: 1 <= x < 2.0
+    // -------------------------------------------------------------
+    Value xMinus1 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub, ValueRange{input, one}, empty)
+            ->getResult(0);
+    Value resSmall = pathSmall(rewriter, loc, xMinus1, two);
+
+    // -------------------------------------------------------------
+    // Combine Results
+    // -------------------------------------------------------------
+    // x >= 2.0 ?
+    Value condMedium =
+        createCmpOp(rewriter, loc, input, two, CompareFn::vge)->getResult(0);
+    Value res1 =
+        createSelect(rewriter, loc, condMedium, resMedium, resSmall, empty);
+    // x >= 1e8 ?
+    Value condLarge =
+        createCmpOp(rewriter, loc, input, largeThresh, CompareFn::vge)
+            ->getResult(0);
+    Value resultAbs =
+        createSelect(rewriter, loc, condLarge, resLarge, res1, empty);
+
+    // -------------------------------------------------------------
+    // Handle Domain Error (x < 1.0) and Exact 1.0
+    // -------------------------------------------------------------
+    Value nanVal = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32Type(),
+        rewriter.getFloatAttr(rewriter.getF32Type(),
+                              std::numeric_limits<float>::quiet_NaN()));
+    Value condDomain =
+        createCmpOp(rewriter, loc, input, one, CompareFn::vlt)->getResult(0);
+    Value resWithNan =
+        createSelect(rewriter, loc, condDomain, nanVal, resultAbs, empty);
+
+    Value zero = f32Const(rewriter, loc, 0.0f);
+    Value condOne =
+        createCmpOp(rewriter, loc, input, one, CompareFn::veq)->getResult(0);
+    return createSelect(rewriter, loc, condOne, zero, resWithNan, empty);
+  }
+};
 
 /// normalize the specific cmp pattern to cast op in the non-bool scenario.
 /// eg.
@@ -885,7 +1891,7 @@ private:
     } else if (hfusionFun == hfusion::UnaryFn::log10) {
       return 10;
     }
-    llvm_unreachable("unsupport log op");
+    llvm::report_fatal_error("unsupport log op");
   }
 
   Value logBaseChange(PatternRewriter &rewriter, hfusion::ElemwiseUnaryOp op,
@@ -954,7 +1960,7 @@ public:
     if (hfusionFun == hfusion::UnaryFn::log1p) {
       logOffset = 1;
     } else {
-      llvm_unreachable("unsupport log op");
+      llvm::report_fatal_error("unsupport log op");
     }
     Value plusValue = rewriter.create<arith::ConstantOp>(
         op->getLoc(), elementType,
@@ -987,7 +1993,8 @@ public:
 ///    (-72) % 8  = 0
 ///  int/fp16/bf16 types are converted to fp32 for the division to get
 ///  better numerical behavior.
-static constexpr llvm::StringLiteral normalizeModAlreadyHandle = "already_handle_mod_zero";
+static constexpr llvm::StringLiteral normalizeModAlreadyHandle =
+    "already_handle_mod_zero";
 struct NormalizeModOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
@@ -1033,7 +2040,7 @@ public:
             ->getResult(0);
 
     Value negOneValue =
-          utils::createConstantOp<float>(rewriter, loc, elemType, replaceValue);
+        utils::createConstantOp<float>(rewriter, loc, elemType, replaceValue);
 
     auto emptyResTensor = utils::createEmptyOp(rewriter, loc, result);
     return rewriter
@@ -1113,8 +2120,8 @@ public:
     Operation *divOp = nullptr;
     std::optional<Operation **> divF32 = &divOp;
     auto truncDivF32 = hfusion::divWithRoundMode(
-        rewriter, loc, rewriter.getF32Type(), xF32, yF32,
-        emptyDivTensor, hfusion::RoundMode::TRUNC, divF32);
+        rewriter, loc, rewriter.getF32Type(), xF32, yF32, emptyDivTensor,
+        hfusion::RoundMode::TRUNC, divF32);
     assert((divF32 != std::nullopt) && (*divF32.value()) != nullptr &&
            "div operation cannot be null!");
 
@@ -1131,8 +2138,8 @@ public:
         rewriter, op->getLoc(), resTensor, calElemType);
     auto mul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::mul,
-                   ValueRange{y, q}, emptyMulTensor)
+                   rewriter, loc, linalg::BinaryFn::mul, ValueRange{y, q},
+                   emptyMulTensor)
                    ->getResults()[0];
 
     // step 5: res = x - mul (still in original dtype)
@@ -1140,8 +2147,8 @@ public:
         rewriter, op->getLoc(), resTensor, calElemType);
     auto res = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
-                   rewriter, loc, linalg::BinaryFn::sub,
-                   ValueRange{x, mul}, emptyResTensor)
+                   rewriter, loc, linalg::BinaryFn::sub, ValueRange{x, mul},
+                   emptyResTensor)
                    ->getResults()[0];
 
     if (elemType.isInteger()) {
@@ -1448,6 +2455,415 @@ struct NormalizeArgMinMaxOp
   }
 };
 
+/// normalize atan2(y, x) by quadrant restoration
+/// formula:
+///   atan2(y, x) = angle between point (x, y) and positive x-axis
+/// range:
+///   atan2(y, x) in (-pi, pi]
+/// implementation:
+///   1. Reduce to first quadrant by t = min(|x|, |y|) / max(|x|, |y|)
+///   2. Approximate atan(t) by Horner polynomial
+///   3. Recover first-quadrant angle:
+///      a1 = swap(|y| > |x|) ? (pi/2 - a) : a
+///   4. Restore quadrant by signs of x and y
+///   5. Special case: atan2(0, 0) = 0
+class NormalizeAtan2Base : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+protected:
+  Value f32Const(PatternRewriter &rewriter, Location loc, float v) const {
+    auto f32 = rewriter.getF32Type();
+    return rewriter.create<arith::ConstantOp>(loc, f32,
+                                              rewriter.getFloatAttr(f32, v));
+  }
+
+  Value tensorConstLike(PatternRewriter &rewriter, Location loc,
+                        Value reference, float v) const {
+    auto elemType = getElementTypeOrSelf(reference.getType());
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, v));
+    auto empty = utils::createEmptyOp(rewriter, loc, reference);
+    return rewriter
+        .create<linalg::FillOp>(loc, ValueRange{scalar}, ValueRange{empty})
+        ->getResult(0);
+  }
+
+  Value createUnary(PatternRewriter &rewriter, Location loc,
+                    linalg::UnaryFn fn, Value input) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, input);
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fn, ValueRange{input}, ValueRange{empty})
+        ->getResult(0);
+  }
+
+  Value createBinary(PatternRewriter &rewriter, Location loc,
+                     linalg::BinaryFn fn, Value lhs, Value rhs,
+                     Value outLike) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, outLike);
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                   linalg::BinaryFn, linalg::BinaryFnAttr>(
+               rewriter, loc, fn, ValueRange{lhs, rhs}, ValueRange{empty})
+        ->getResult(0);
+  }
+
+  Value createCmp(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  CompareFn fn) const {
+    return createCmpOp(rewriter, loc, lhs, rhs, fn)->getResult(0);
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value t, Value f) const {
+    auto empty = utils::createEmptyOp(rewriter, loc, t);
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{empty.getType()},
+                                   ValueRange{cond, t, f}, ValueRange{empty})
+        ->getResult(0);
+  }
+
+  Value createVand(PatternRewriter &rewriter, Location loc, Value lhs,
+                   Value rhs) const {
+    return createVandOp(rewriter, loc, lhs, rhs)->getResult(0);
+  }
+
+  Value mulAdd(PatternRewriter &rewriter, Location loc, Value a, Value b,
+               Value c, Value outLike) const {
+    Value mul =
+        createBinary(rewriter, loc, linalg::BinaryFn::mul, a, b, outLike);
+    return createBinary(rewriter, loc, linalg::BinaryFn::add, mul, c, outLike);
+  }
+};
+
+struct NormalizeAtan2Op : public NormalizeAtan2Base {
+public:
+  using NormalizeAtan2Base::NormalizeAtan2Base;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics() || op.getFun() != hfusion::BinaryFn::atan2) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Value y = op.getInputs()[0];
+    Value x = op.getInputs()[1];
+
+    auto inType = getElementTypeOrSelf(y.getType());
+    auto xType = getElementTypeOrSelf(x.getType());
+    if ((!inType.isF16() && !inType.isF32()) || inType != xType) {
+      return failure();
+    }
+
+    bool isF16 = inType.isF16();
+    if (isF16) {
+      y = hfusion::castTo(rewriter, y, rewriter.getF32Type(),
+                          hfusion::RoundMode::ROUND);
+      x = hfusion::castTo(rewriter, x, rewriter.getF32Type(),
+                          hfusion::RoundMode::ROUND);
+    }
+
+    Value ax, ay, swapMask, maxv, minv, safeMaxv;
+    std::tie(ax, ay, swapMask, maxv, minv, safeMaxv) =
+        preprocess(rewriter, loc, x, y);
+
+    Value a = calculateFirstQuadrantAtan(rewriter, loc, y, minv, safeMaxv);
+    Value a1 = recoverFirstQuadrant(rewriter, loc, y, a, swapMask);
+    Value theta = restoreQuadrant(rewriter, loc, x, y, a1);
+    Value result = handleOrigin(rewriter, loc, x, y, theta);
+
+    if (isF16) {
+      result = hfusion::castTo(rewriter, result, rewriter.getF16Type(),
+                               hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  // Preprocess:
+  //   ax = |x|, ay = |y|
+  //   swapMask = ay > ax
+  //   maxv = swapMask ? ay : ax
+  //   minv = swapMask ? ax : ay
+  //   safeMaxv = maxv == 0 ? 1 : maxv
+  std::tuple<Value, Value, Value, Value, Value, Value>
+  preprocess(PatternRewriter &rewriter, Location loc, Value x, Value y) const {
+    Value ax = createUnary(rewriter, loc, linalg::UnaryFn::abs, x);
+    Value ay = createUnary(rewriter, loc, linalg::UnaryFn::abs, y);
+
+    Value swapMask = createCmp(rewriter, loc, ay, ax, CompareFn::vgt);
+    Value maxv = createSelect(rewriter, loc, swapMask, ay, ax);
+    Value minv = createSelect(rewriter, loc, swapMask, ax, ay);
+
+    Value zeroLike = tensorConstLike(rewriter, loc, maxv, 0.0f);
+    Value oneLike = tensorConstLike(rewriter, loc, maxv, 1.0f);
+
+    Value maxIsZero =
+        createCmp(rewriter, loc, maxv, zeroLike, CompareFn::veq);
+    Value safeMaxv =
+        createSelect(rewriter, loc, maxIsZero, oneLike, maxv);
+
+    return std::make_tuple(ax, ay, swapMask, maxv, minv, safeMaxv);
+  }
+
+  // First-quadrant atan approximation:
+  //   t = minv / safeMaxv
+  //   t2 = t * t
+  //   poly = c0 + t2*(c1 + t2*(c2 + t2*(c3 + t2*(c4 + t2*c5))))
+  //   a = t * poly
+  Value calculateFirstQuadrantAtan(PatternRewriter &rewriter, Location loc,
+                                   Value outLike, Value minv,
+                                   Value safeMaxv) const {
+    Value t =
+        createBinary(rewriter, loc, linalg::BinaryFn::div, minv, safeMaxv,
+                           outLike);
+    Value t2 = createBinary(rewriter, loc, linalg::BinaryFn::mul, t, t, outLike);
+
+    Value c0 = f32Const(rewriter, loc, 0.99998005f);
+    Value c1 = f32Const(rewriter, loc, -0.33269410f);
+    Value c2 = f32Const(rewriter, loc, 0.19401768f);
+    Value c3 = f32Const(rewriter, loc, -0.12123907f);
+    Value c4 = f32Const(rewriter, loc, 0.05292646f);
+    Value c5 = f32Const(rewriter, loc, -0.01171914f);
+
+    Value poly = c5;
+    poly = mulAdd(rewriter, loc, poly, t2, c4, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c3, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c2, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c1, outLike);
+    poly = mulAdd(rewriter, loc, poly, t2, c0, outLike);
+
+    return createBinary(rewriter, loc, linalg::BinaryFn::mul, t, poly, outLike);
+  }
+
+  // Recover first-quadrant angle:
+  //   a1 = swapMask ? (pi/2 - a) : a
+  Value recoverFirstQuadrant(PatternRewriter &rewriter, Location loc,
+                             Value outLike, Value a, Value swapMask) const {
+    Value halfPiLike = tensorConstLike(rewriter, loc, outLike, 1.57079632679f);
+    Value halfPiMinusA =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, halfPiLike, a,
+                     outLike);
+    return createSelect(rewriter, loc, swapMask, halfPiMinusA, a);
+  }
+
+  // Restore quadrant:
+  //   if x < 0 and y >= 0: theta = pi - a1
+  //   if x < 0 and y < 0 : theta = a1 - pi
+  //   if x >= 0 and y < 0: theta = -a1
+  //   else               : theta = a1
+  Value restoreQuadrant(PatternRewriter &rewriter, Location loc, Value x,
+                        Value y, Value a1) const {
+    Value zeroX = tensorConstLike(rewriter, loc, x, 0.0f);
+    Value zeroA = tensorConstLike(rewriter, loc, a1, 0.0f);
+    Value piLike = tensorConstLike(rewriter, loc, a1, 3.14159265359f);
+    Value negOne = f32Const(rewriter, loc, -1.0f);
+
+    Value xNeg = createCmp(rewriter, loc, x, zeroX, CompareFn::vlt);
+    Value yNeg = createCmp(rewriter, loc, y, zeroX, CompareFn::vlt);
+    Value yGeZero = createCmp(rewriter, loc, y, zeroX, CompareFn::vge);
+
+    Value q2Mask = createVand(rewriter, loc, xNeg, yGeZero);
+    Value q3Mask = createVand(rewriter, loc, xNeg, yNeg);
+
+    Value negA1 =
+        createBinary(rewriter, loc, linalg::BinaryFn::mul, a1, negOne, a1);
+    Value piMinusA =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, piLike, a1, a1);
+    Value aMinusPi =
+        createBinary(rewriter, loc, linalg::BinaryFn::sub, a1, piLike, a1);
+
+    Value theta = createSelect(rewriter, loc, yNeg, negA1, a1);
+    theta = createSelect(rewriter, loc, q2Mask, piMinusA, theta);
+    theta = createSelect(rewriter, loc, q3Mask, aMinusPi, theta);
+
+    Value isNan = createCmp(rewriter, loc, a1, a1, CompareFn::vne);
+    return createSelect(rewriter, loc, isNan, zeroA, theta);
+  }
+
+  // Special case:
+  //   atan2(0, 0) = 0
+  Value handleOrigin(PatternRewriter &rewriter, Location loc, Value x, Value y,
+                     Value theta) const {
+    Value zeroX = tensorConstLike(rewriter, loc, x, 0.0f);
+    Value zeroTheta = tensorConstLike(rewriter, loc, theta, 0.0f);
+
+    Value xZero = createCmp(rewriter, loc, x, zeroX, CompareFn::veq);
+    Value yZero = createCmp(rewriter, loc, y, zeroX, CompareFn::veq);
+    Value originMask = createVand(rewriter, loc, xZero, yZero);
+
+    return createSelect(rewriter, loc, originMask, zeroTheta, theta);
+  }
+};
+
+/// normalize expm1(x) to exp(x) - 1
+/// eg.
+/// y = hfusion elemwise unary {expm1} (x)
+/// is normalized to
+///  y = linalg.elemwise_unary{exp}(x) -1
+static Value createScalarConst(PatternRewriter &rewriter, Location loc,
+                               Type elemType, float value) {
+  return rewriter
+      .create<arith::ConstantOp>(
+          loc, elemType, rewriter.getFloatAttr(elemType, value))
+      ->getResult(0);
+}
+
+static Value createTensorConst(PatternRewriter &rewriter, Location loc,
+                               Value reference, float value) {
+  auto elementType = getElementTypeOrSelf(reference.getType());
+  auto constOp = rewriter.create<arith::ConstantOp>(
+      loc, elementType, rewriter.getFloatAttr(elementType, value));
+  auto empty = utils::createEmptyOp(rewriter, loc, reference);
+  return rewriter
+      .create<linalg::FillOp>(loc, ValueRange{constOp->getResult(0)},
+                              ValueRange{empty})
+      ->getResult(0);
+}
+
+static Value createCmpMask(PatternRewriter &rewriter, Location loc, Value src,
+                           float threshold,
+                           arith::CmpFPredicate predicate) {
+  Value thresholdTensor = createTensorConst(rewriter, loc, src, threshold);
+  return rewriter
+      .create<arith::CmpFOp>(loc, predicate, src, thresholdTensor)
+      ->getResult(0);
+}
+
+/// normalize sinh(x) implementation
+///
+/// Formula:
+///   sinh(x) = (exp(x) - exp(-x)) / 2
+///
+/// For better numerical stability, use range-based handling:
+///   if x > 5:
+///     result = 0.5 * exp(x)
+///   else if x < -5:
+///     result = -0.5 * exp(-x)
+///   else if -0.1 < x < 0.1:
+///     result = x
+///   else:
+///     result = (exp(x) - exp(-x)) * 0.5
+struct NormalizeSinhOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::UnaryFn::sinh)
+      return failure();
+
+    Value src = op.getInputs()[0];
+    auto inType = getElementTypeOrSelf(src.getType());
+    assert((inType.isF16() || inType.isF32()) &&
+           "only support input Type is f16 or f32");
+
+    if (inType.isF16()) {
+      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    Value res = buildSinh(rewriter, op->getLoc(), src);
+
+    if (inType.isF16()) {
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  Value buildSinh(PatternRewriter &rewriter, Location loc, Value src) const {
+    auto elementType = getElementTypeOrSelf(src.getType());
+
+    Value negOne = createScalarConst(rewriter, loc, elementType, -1.0f);
+    Value half = createScalarConst(rewriter, loc, elementType, 0.5f);
+    Value negHalf = createScalarConst(rewriter, loc, elementType, -0.5f);
+
+    auto exp0Empty = utils::createEmptyOp(rewriter, loc, src);
+    Value exp0 =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(rewriter, loc,
+                                                    linalg::UnaryFn::exp,
+                                                    ValueRange{src},
+                                                    ValueRange{exp0Empty})
+            ->getResult(0);
+
+    auto negXEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value negX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{src, negOne},
+            ValueRange{negXEmpty})
+            ->getResult(0);
+
+    auto exp1Empty = utils::createEmptyOp(rewriter, loc, src);
+    Value exp1 =
+        hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                               linalg::UnaryFnAttr>(rewriter, loc,
+                                                    linalg::UnaryFn::exp,
+                                                    ValueRange{negX},
+                                                    ValueRange{exp1Empty})
+            ->getResult(0);
+
+    auto subEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value sub =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::sub,
+            ValueRange{exp0, exp1}, ValueRange{subEmpty})
+            ->getResult(0);
+
+    auto midResEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value midRes =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{sub, half},
+            ValueRange{midResEmpty})
+            ->getResult(0);
+
+    auto largePosEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value largePos =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{exp0, half},
+            ValueRange{largePosEmpty})
+            ->getResult(0);
+
+    auto largeNegEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value largeNeg =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{exp1, negHalf},
+            ValueRange{largeNegEmpty})
+            ->getResult(0);
+
+    Value gtMask =
+        createCmpMask(rewriter, loc, src, 5.0f, arith::CmpFPredicate::OGT);
+    Value ltMask =
+        createCmpMask(rewriter, loc, src, -5.0f, arith::CmpFPredicate::OLT);
+    Value smallNegMask =
+        createCmpMask(rewriter, loc, src, -0.1f, arith::CmpFPredicate::OGT);
+    Value smallPosMask =
+        createCmpMask(rewriter, loc, src, 0.1f, arith::CmpFPredicate::OLT);
+
+    Value smallMask =
+        rewriter.create<arith::AndIOp>(loc, smallNegMask, smallPosMask);
+
+    Value base =
+        rewriter.create<arith::SelectOp>(loc, smallMask, src, midRes);
+    Value tmp =
+        rewriter.create<arith::SelectOp>(loc, gtMask, largePos, base);
+    return rewriter.create<arith::SelectOp>(loc, ltMask, largeNeg, tmp);
+  }
+};
+
 /// normalize expm1(x) to exp(x) - 1
 /// eg.
 /// y = hfusion elemwise unary {expm1} (x)
@@ -1483,7 +2899,7 @@ public:
     if (hfusionFun == hfusion::UnaryFn::expm1) {
       downOffset = 1;
     } else {
-      llvm_unreachable("unsupport exp op");
+      llvm::report_fatal_error("unsupport exp op");
     }
     Value subValue = rewriter.create<arith::ConstantOp>(
         op->getLoc(), elementType,
@@ -1836,7 +3252,7 @@ static Value castSrcTypeToI1ByVCmp(hfusion::CastOp &op, Type srcType,
   } else if (srcType.isF32() || srcType.isF16()) {
     castF16OrF32Value = inValue;
   } else {
-    llvm_unreachable("unsupport srcType to i1.");
+    llvm::report_fatal_error("unsupport srcType to i1.");
   }
 
   // 2. cast: f16/f32 -> i1, dst = vcmpvs_ne(src, 0)
@@ -1894,7 +3310,7 @@ hfusion::CastMode getCastMode(hfusion::CastOp op) {
   if (isI16ToI8)
     return hfusion::CastMode::I16TOI8;
 
-  llvm_unreachable("unsupported cast mode");
+  llvm::report_fatal_error("unsupported cast mode");
 }
 
 std::optional<StringRef> getAnnotateOverflowMode(hfusion::CastOp op) {
@@ -2528,7 +3944,7 @@ Value getSignMaskConstValue(PatternRewriter &rewriter, Location loc,
         loc, rewriter.getI16IntegerAttr(0x7FFF));
     return maskCstOp->getResults()[0];
   }
-  llvm_unreachable("unsupported bitwidth");
+  llvm::report_fatal_error("unsupported bitwidth");
 }
 
 /// get the complement of constant integer value of inf
@@ -2546,7 +3962,7 @@ Value getComplementOfInfConstValue(PatternRewriter &rewriter, Location loc,
         loc, rewriter.getI16IntegerAttr(-1 * (0x7C00)));
     return maskCstOp->getResults()[0];
   }
-  llvm_unreachable("unsupported bitwidth");
+  llvm::report_fatal_error("unsupported bitwidth");
 }
 
 /// mask the sign bit of f32/f16 type input
@@ -3053,7 +4469,7 @@ static SmallVector<NamedAttribute> getOpAttr(OpType op,
     // no extra attrs
     return {};
   } else
-    llvm_unreachable("Unsupport Normalize OpType.");
+    llvm::report_fatal_error("Unsupport Normalize OpType.");
 }
 
 static void replaceI1ResultsWithTargetType(const SmallVector<Value> &oldResults,
@@ -3180,11 +4596,8 @@ SmallVector<Value> normalizeSrcToTargetType(
 }
 
 SmallVector<Value> normalizeSrcToTargetIntegerType(
-    PatternRewriter &rewriter,
-    const SmallVector<Value> &values,
-    unsigned srcBitWidth,
-    unsigned targetBitWidth,
-    hfusion::TypeFn castType) {
+    PatternRewriter &rewriter, const SmallVector<Value> &values,
+    unsigned srcBitWidth, unsigned targetBitWidth, hfusion::TypeFn castType) {
   SmallVector<Value> result;
   for (Value v : values) {
     auto shapedType = mlir::dyn_cast<ShapedType>(v.getType());
@@ -3223,7 +4636,7 @@ arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   case arith::CmpIPredicate::uge:
     return arith::CmpFPredicate::OGE;
   }
-  llvm_unreachable("unexpected arith::CmpIPredicate");
+  llvm::report_fatal_error("unexpected arith::CmpIPredicate");
 }
 
 Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
@@ -3442,7 +4855,7 @@ public:
     } else if (computeByF32) {
       targetType = rewriter.getF32Type();
     } else {
-      llvm_unreachable("Unsupported Op.");
+      llvm::report_fatal_error("Unsupported Op.");
     }
     SmallVector<Value> newInputs = normalizeToTargetType<ElemType>(
         rewriter, op.getInputs(), targetType, castOpts);
@@ -3605,7 +5018,7 @@ private:
       return rewriter.create<hfusion::ElemwiseUnaryOp>(
           loc, ValueRange{newInputs}, ValueRange{newOutputs}, attrs);
     }
-    llvm_unreachable("Unsupport OpType to create with F16 operand.");
+    llvm::report_fatal_error("Unsupport OpType to create with F16 operand.");
   }
 };
 
@@ -3777,6 +5190,82 @@ public:
                                    rewriter,
                                    /*enableOverflow*/ false);
 
+    return success();
+  }
+};
+
+// Copy operation is simulated by i16 (2 bytes each). 
+// Hardware requires 32-byte alignment, which translates to 16 consecutive i16 elements.
+static bool needToTransform(Value src, int64_t stride0) {
+    auto type = mlir::cast<RankedTensorType>(src.getType());
+    auto inType = getElementTypeOrSelf(src.getType());
+    int64_t srcBitWidth = inType.getIntOrFloatBitWidth();
+
+    if (type.getRank() > 1) {
+      return true;
+    } 
+    int64_t num = type.getDimSize(0);
+    // 32 bytes -> 256 bits
+    int alignment = 256 / srcBitWidth;
+
+    // Require: misalignment with 32 bytes (i.e., num not multiple of 16) or stride[0] not equal to 1
+    return ((num % alignment) != 0) || (stride0 != 1);
+}
+
+// Rewrite pattern to normalize tensor.insert_slice operations with bool (i1) element type
+// Converts bool source/dest to f16 type to enable NPU hardware acceleration
+template <>
+struct NormalizeToTargetType<bool, tensor::InsertSliceOp>
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+public:
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> tensors = {op.getSource(), op.getDest()};
+    // Check if both tensors have i1 (boolean) element type
+    // If not, skip this pattern
+      if (!hasI1ElemType(tensors) || !needToTransform(op.getSource(), op.getStaticStrides()[0]))
+      return failure();
+
+    SmallVector<Value> newTensors =
+        normalizeSrcToTargetType<bool, Float16Type>(rewriter, tensors);
+    auto newOp = rewriter.create<tensor::InsertSliceOp>(
+        op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
+        op.getMixedSizes(), op.getMixedStrides());
+    // Replace the original bool result with the new f16 result
+    replaceI1ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+                                   rewriter,
+                                   /*enableOverflow*/ false);
+    return success();
+  }
+};
+
+// Rewrite pattern to normalize tensor.insert_slice operations with int8 element type
+// Converts int8 source/dest to f16 type for better NPU compatibility
+template <>
+struct NormalizeToTargetType<int8_t, tensor::InsertSliceOp>
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+public:
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<Value> tensors = {op.getSource(), op.getDest()};
+    // Check if both tensors have i8 (int8) element type
+    // If not, skip this pattern
+      if (!hasI8ElemType(tensors) || !needToTransform(op.getSource(), op.getStaticStrides()[0]))
+      return failure();
+
+    SmallVector<Value> newTensors =
+        normalizeSrcToTargetType<int8_t, Float16Type>(rewriter, tensors);
+    auto newOp = rewriter.create<tensor::InsertSliceOp>(
+        op.getLoc(), newTensors[0], newTensors[1], op.getMixedOffsets(),
+        op.getMixedSizes(), op.getMixedStrides());
+    // Replace the original int8 result with the new f16 result
+    replaceI8ResultsWithTargetType({op.getResult()}, {newOp.getResult()},
+                                   rewriter,
+                                   /*enableOverflow*/ false);
     return success();
   }
 };
@@ -3964,7 +5453,7 @@ Operation *createInterleaveLikeOp(OpType op, SmallVector<Value> &newInputs,
         loc, TypeRange(newOutputs), newInputs[0],
         op.getDeInterLeaveChannelIdx());
   }
-  llvm_unreachable(
+  llvm::report_fatal_error(
       "Unsupport interleaveLike OpType to create with F16 Operand.");
 }
 
@@ -4169,7 +5658,7 @@ public:
     auto newOutputs = normalizeSrcToTargetIntegerType(
         rewriter, outputs, /*srcBitWidth=*/8, /*targetBitWidth=*/32,
         hfusion::TypeFn::cast_signed);
-    
+
     Operation *newOp = rewriter.create<CumOpType>(
         op.getLoc(), TypeRange{newOutputs}, newInputs[0], op.getCumDims(),
         op.getReverse());
@@ -4807,14 +6296,14 @@ public:
   }
 };
 
-/// normalize shift i8 as bellow
+/// normalize shrui i8 to i16
 /// eg.
-///   %res = shift %src : i8
+///   %res = shrui %src : i8
 /// is normalized to
 ///   %tmp0 = cast %src i8 to i16
-///   %tmp1 = shift %tmp0 : i16
+///   %tmp1 = shrui %tmp0 : i16
 ///   %res = cast %tmp1 i16 to i8
-struct NormalizeShiftI8ToI16
+struct NormalizeShruiI8ToI16
     : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
@@ -4825,8 +6314,7 @@ public:
     }
 
     auto fun = op.getFun();
-    if (!(fun == hfusion::BinaryFn::shli || fun == hfusion::BinaryFn::shrsi ||
-          fun == hfusion::BinaryFn::shrui)) {
+    if (fun != hfusion::BinaryFn::shrui) {
       return failure();
     }
 
@@ -4839,13 +6327,10 @@ public:
     auto loc = op->getLoc();
     auto targetElemType = rewriter.getI16Type();
     auto shift = op.getDpsInputs()[1];
-    hfusion::TypeFn cast_integer_type = (fun == hfusion::BinaryFn::shrui)
-                                            ? hfusion::TypeFn::cast_unsigned
-                                            : hfusion::TypeFn::cast_signed;
-    Value inputOfI16 =
-        hfusion::castTo(rewriter, input, targetElemType, cast_integer_type);
-    Value shiftOfI16 =
-        hfusion::castTo(rewriter, shift, targetElemType, cast_integer_type);
+    Value inputOfI16 = hfusion::castTo(rewriter, input, targetElemType,
+                                       hfusion::TypeFn::cast_unsigned);
+    Value shiftOfI16 = hfusion::castTo(rewriter, shift, targetElemType,
+                                       hfusion::TypeFn::cast_unsigned);
 
     auto shiftInit = utils::createEmptyOp(rewriter, loc, inputOfI16);
     Value resOfI16 =
@@ -4861,8 +6346,9 @@ public:
     auto roundMode = (fun == hfusion::BinaryFn::shli)
                          ? hfusion::RoundMode::TRUNCWITHOVERFLOW
                          : selectMode;
-    auto resOfI8 = hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode,
-                                   std::nullopt, true, cast_integer_type);
+    auto resOfI8 =
+        hfusion::castTo(rewriter, resOfI16, srcElemType, roundMode,
+                        std::nullopt, true, hfusion::TypeFn::cast_unsigned);
 
     rewriter.replaceOp(op, resOfI8);
     return success();
@@ -4919,13 +6405,128 @@ public:
   }
 };
 
-/// nomalize frexp(x), which is mantissa for frexp(x), to x * (ilogb(x) +
-/// 1)^(-1)
+/// Convert exponent value to f32 tensor type.
+/// Supports i32, f16, f32 exponents.
+static Value convertExpToFloat(PatternRewriter &rewriter, Location loc, Value exp) {
+    Type expType = getElementTypeOrSelf(exp.getType());
+    if (expType.isInteger(32)) {
+        // i32 -> f32 (values > 16M may lose precision, acceptable for exponent)
+        return hfusion::castTo(rewriter, exp, rewriter.getF32Type());
+    } else if (expType.isF16() || expType.isF32()) {
+        return exp;
+    } else {
+        llvm::report_fatal_error("Type of exp is invalid");
+    }
+}
+
+/// If exponent is NaN, returns NaN; otherwise returns the exp2 result.
+static Value propagateNaNForExp2(PatternRewriter &rewriter, Location loc,
+                                 Value expFloat, Value exp2Result) {
+    // Create NaN mask for exponent
+    auto isNanTensorType = utils::getTensorTypeWithSameShape(expFloat.getType(), rewriter.getI1Type());
+    Value isNanMask = rewriter.create<IsNanOp>(loc, isNanTensorType, expFloat)->getResult(0);
+    
+    auto empty = utils::createEmptyOp(rewriter, loc, expFloat);
+    // Select NaN -> expFloat (NaN), else -> exp2Result
+    return rewriter.create<SelectOp>(loc, TypeRange(empty),
+                                     ValueRange({isNanMask, expFloat, exp2Result}),
+                                     ValueRange(empty))
+           ->getResult(0);
+}
+
+/// Return the negative infinity constant for the given floating-point bitwidth (16 or 32).
+static Value getComplementOfInfFloatConstValue(PatternRewriter &rewriter, Location loc,
+                                   int bitwidth, Value expFloat) {
+  if (bitwidth == 32) {
+    // 32-bit float -inf bit pattern: 0xFF800000
+    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getFloatAttr(getElementTypeOrSelf(expFloat.getType()), -1 * (0x7F800000)));
+    return maskCstOp->getResults()[0];
+  }
+  if (bitwidth == 16) {
+    // 16-bit float -inf bit pattern: 0xFC00
+    arith::ConstantOp maskCstOp = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getFloatAttr(getElementTypeOrSelf(expFloat.getType()), -1 * (0x7C00)));
+    return maskCstOp->getResults()[0];
+  }
+  llvm::report_fatal_error("unsupported bitwidth");
+}
+
+/// Handle exponent infinities: +inf -> inf, -inf -> 0.0, else pass through.
+static Value handleExponentInfinity(PatternRewriter &rewriter, Location loc,
+                             Value expFloat, Value nanOutOp) {
+  auto expFloatType = getElementTypeOrSelf(expFloat.getType());
+  Value constInf = getComplementOfInfFloatConstValue(
+      rewriter, loc, expFloatType.getIntOrFloatBitWidth(), expFloat);
+
+  // Create filler for infinity constant
+  auto fillEmptyOp = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto fillInfOp = rewriter.create<linalg::FillOp>(
+      loc, TypeRange(fillEmptyOp), ValueRange({constInf}),
+      ValueRange({fillEmptyOp}));
+
+  // Check positive infinity
+  auto isPositiveInf = createCmpOp(rewriter, loc, expFloat,
+                                   fillInfOp->getResult(0), hfusion::CompareFn::veq)
+                           ->getResult(0);
+  auto tempinfOut = utils::createEmptyOp(rewriter, loc, expFloat);
+  // For +inf: keep expFloat (inf), otherwise keep nanOutOp (which may be NaN or exp2 result)
+  auto infOutOp = rewriter.create<SelectOp>(
+      loc, TypeRange{tempinfOut},
+      ValueRange({isPositiveInf, expFloat, nanOutOp}),
+      ValueRange(tempinfOut));
+
+  // Check any infinity (positive or negative) by comparing absolute value to infinity constant
+  auto absEmptyOp = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto absExp = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                       linalg::UnaryFn, linalg::UnaryFnAttr>(
+                    rewriter, loc, linalg::UnaryFn::abs, expFloat,
+                    ValueRange(absEmptyOp))
+                    ->getResult(0);
+  auto isInf = createCmpOp(rewriter, loc, absExp, fillInfOp->getResult(0),
+                           hfusion::CompareFn::veq)
+                   ->getResult(0);
+
+  // Negative infinity = isInf AND not isPositiveInf
+  auto notPositiveInfInit = utils::createEmptyOp(rewriter, loc, isPositiveInf);
+  auto notPositiveInf =
+      hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                             hfusion::UnaryFnAttr>(
+          rewriter, loc, hfusion::UnaryFn::vnot, ValueRange(isPositiveInf),
+          ValueRange(notPositiveInfInit))
+          ->getResult(0);
+  auto isNegtiveInf = createVandOp(rewriter, loc, notPositiveInf, isInf)
+                          ->getResult(0);
+
+  // Constant 0.0 for -inf case
+  auto constZeros = rewriter.create<arith::ConstantOp>(
+      loc, expFloatType, rewriter.getFloatAttr(expFloatType, 0.0));
+  auto fillZeroEmptyOp = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto fillZerosOp = rewriter.create<linalg::FillOp>(
+      loc, TypeRange(fillZeroEmptyOp), ValueRange({constZeros}),
+      ValueRange({fillZeroEmptyOp}));
+
+  // Final selection: if negative infinity -> 0.0, else if positive infinity -> inf (from infOutOp),
+  // otherwise -> previous result (nanOutOp from earlier propagation)
+  auto neginfOutInit = utils::createEmptyOp(rewriter, loc, expFloat);
+  auto negiInfOutOp = rewriter.create<SelectOp>(
+      loc, TypeRange{neginfOutInit},
+      ValueRange({isNegtiveInf, fillZerosOp->getResults()[0],
+                  infOutOp->getResults()[0]}),
+      ValueRange(neginfOutInit));
+
+  return negiInfOutOp->getResults()[0];
+}
+
+/// Normalize ldexp(x, exp) = x * 2^exp to multiplication operation
+/// support: x -> f16/f32, exp -> f16/f32/int32
 struct NormalizeLdexpOp : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
 public:
   using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+  
   LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
                                 PatternRewriter &rewriter) const override {
+    // Check if operation uses pure tensor semantics
     if (!op.hasPureTensorSemantics()) {
       return failure();
     }
@@ -4934,27 +6535,49 @@ public:
       return failure();
     }
 
+    // Get mantissa input (x)
     Value input = op.getInputs()[0];
-#ifndef NDEBUG
     auto inType = getElementTypeOrSelf(input.getType());
+    // Get exponent and convert to float (i32 -> f32, f16/f32 unchanged)
+    Value exp = op.getInputs()[1];
+
+#ifndef NDEBUG
     assert((inType.isF16() || inType.isF32()) &&
            "only support input Type is f16 or f32");
 #endif
     auto loc = op->getLoc();
 
-    auto mulEmptyOp = utils::createEmptyOp(rewriter, loc, input);
+    Value expFloat = convertExpToFloat(rewriter, loc, exp);
+    // Temporary tensor for result shape propagation
+    auto mulEmptyRight = utils::createEmptyOp(rewriter, loc, expFloat);
+    
+    // Compute 2^exp using hardware-accelerated exp2 operation
+    auto *mulRightOp = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp,
+                                    hfusion::UnaryFn, hfusion::UnaryFnAttr>(
+                            rewriter, op->getLoc(), hfusion::UnaryFn::exp2, ValueRange{expFloat},
+                               ValueRange(mulEmptyRight)); 
+   
+    // Handle NaN exponent: propagate NaN to output
+    Value nanOutOp = propagateNaNForExp2(rewriter, loc, expFloat, mulRightOp->getResults()[0]);
+    // Handle infinite exponent: +inf -> +inf, -inf -> 0.0, normal values unchanged
+    Value expHandled = handleExponentInfinity(rewriter, loc, expFloat, nanOutOp);
 
-    auto xMul =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+    // Temporary tensor for multiplication result
+    auto mulEmpty = utils::createEmptyOp(rewriter, loc, input);
+    
+    // Replace ldexp(x, exp) with x * (2^exp) after NaN/Inf corrections
+    auto xMul = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
                                 linalg::BinaryFnAttr>(
-            rewriter, loc, linalg::BinaryFn::mul,
-            ValueRange{input, op.getInputs()[1]}, ValueRange(mulEmptyOp))
-            ->getResult(0);
+                        rewriter, loc, linalg::BinaryFn::mul,
+                        ValueRange{input, expHandled}, ValueRange(mulEmpty))
+                                ->getResult(0);
 
+    // Replace the original ldexp op with multiplication
     rewriter.replaceOp(op, xMul);
     return success();
   }
 };
+
 
 /// normalize powf(baseNum, exponent) as below
 /// powf(x, y) = 1, when abs(x) = 1 and abs(y) = inf
@@ -6127,7 +7750,8 @@ struct NormalizeGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
     Value initData = op.getInit()[0];
     Value initSize = op.getInit()[1];
 
-    int srcBitWidth = srcElemTy.getIntOrFloatBitWidth();
+    const int64_t srcBitWidth =
+        static_cast<int64_t>(srcElemTy.getIntOrFloatBitWidth());
 
     if (isSrcNeedCast) {
       src = hfusion::castTo(rewriter, src, rewriter.getF16Type(),
@@ -6153,6 +7777,1557 @@ struct NormalizeGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
     Value finalSize = newOp->getResults()[1];
 
     rewriter.replaceOp(op, {finalResult, finalSize});
+    return success();
+  }
+};
+
+template <typename MatmulOpType>
+struct NormalizeMatMulBase : public OpRewritePattern<MatmulOpType> {
+  using OpRewritePattern<MatmulOpType>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MatmulOpType op,
+                                PatternRewriter &rewriter) const override {
+
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+    Value output = dpsOp.getDpsInits()[0];
+    if (!isF16ElemType(output.getType())) {
+      return failure();
+    }
+
+    auto inputs = dpsOp.getDpsInputs();
+    Value lhs = inputs[0];
+    Value rhs = inputs[1];
+
+    Value outputF32 = hfusion::castTo(rewriter, output, rewriter.getF32Type());
+
+    auto newOp = rewriter.create<MatmulOpType>(
+        op.getLoc(), outputF32.getType(), ValueRange{lhs, rhs}, outputF32);
+
+    Value resultF16 = hfusion::castTo(rewriter, newOp.getResult(0), 
+                                      rewriter.getF16Type());
+
+    rewriter.replaceAllUsesWith(op.getResult(0), resultF16);
+    return success();
+  }
+};
+
+// Lowers erfinv(x) with the same piecewise approximation used before:
+//   w = -log(1 - x^2)
+//   t = w - 2.5            if w < 5
+//     = sqrt(w) - 3.0      otherwise
+//   P_lo(t) = ((((((((a0 * t + a1) * t + a2) * t + a3) * t + a4) * t + a5) *
+//                 t + a6) * t + a7) * t + a8)
+//   P_hi(t) = ((((((((b0 * t + b1) * t + b2) * t + b3) * t + b4) * t + b5) *
+//                 t + b6) * t + b7) * t + b8)
+//   erfinv(x) ~= x * (w < 5 ? P_lo(t) : P_hi(t))
+//   erfinv(+/-1) = +/-inf
+struct NormalizeErfInvOp : public OpRewritePattern<hfusion::ErfInvOp> {
+  using OpRewritePattern<hfusion::ErfInvOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ErfInvOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    auto inType = getElementTypeOrSelf(input.getType());
+    if (!inType.isF16() && !inType.isF32()) {
+      return failure();
+    }
+
+    if (inType.isF16()) {
+      // for high precision, cast src to fp32 and compute and then cast it back
+      // TODO: remove cast after enable automatical high precision computing
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    auto loc = op->getLoc();
+    auto elemType = getElementTypeOrSelf(input.getType());
+    auto f32Empty = utils::createEmptyOp(rewriter, loc, input);
+    auto i1Empty = utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
+                                                          rewriter.getI1Type());
+    Value res = buildTensorErfInvApproximation(rewriter, loc, elemType, input,
+                                               f32Empty, i1Empty);
+
+    if (inType.isF16()) {
+      // TODO: remove cast after enable automatical high precision computing
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  static constexpr std::array<float, 9> kErfInvWLessThan5Constants = {
+      2.81022636e-08f,  3.43273939e-07f, -3.5233877e-06f,
+      -4.39150654e-06f, 0.00021858087f,  -0.00125372503f,
+      -0.00417768164f,  0.246640727f,    1.50140941f};
+
+  static constexpr std::array<float, 9> kErfInvWGreaterThan5Constants = {
+      -0.000200214257f, 0.000100950558f, 0.00134934322f,
+      -0.00367342844f,  0.00573950773f,  -0.0076224613f,
+      0.00943887047f,   1.00167406f,     2.83297682f};
+
+  Value buildTensorErfInvApproximation(PatternRewriter &rewriter, Location loc,
+                                       Type elemType, Value input,
+                                       Value f32Empty, Value i1Empty) const {
+    Value w = computeW(rewriter, loc, elemType, input, f32Empty);
+    Value wLessThanFive = createCompareOp(
+        rewriter, loc, w, createFloatConst(rewriter, loc, elemType, 5.0),
+        hfusion::CompareFn::vlt, i1Empty);
+    Value adjustedW =
+        createAdjustedW(rewriter, loc, elemType, w, wLessThanFive, f32Empty);
+    Value polynomial = createPiecewisePolynomial(
+        rewriter, loc, elemType, adjustedW, wLessThanFive, f32Empty);
+    Value approximation = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                      polynomial, input, f32Empty);
+    return applyInfinityEdgeCase(rewriter, loc, elemType, input, approximation,
+                                 i1Empty, f32Empty);
+  }
+
+  Value computeW(PatternRewriter &rewriter, Location loc, Type elemType,
+                 Value input, Value outputLike) const {
+    Value negOne = createFloatConst(rewriter, loc, elemType, -1.0);
+    Value one = createFloatConst(rewriter, loc, elemType, 1.0);
+    Value xSquare = createBinOp(rewriter, loc, linalg::BinaryFn::mul, input,
+                                input, outputLike);
+    Value negXSquare = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                   xSquare, negOne, outputLike);
+    Value oneMinusXSquare = createBinOp(rewriter, loc, linalg::BinaryFn::add,
+                                        negXSquare, one, outputLike);
+    Value logOneMinusXSquare = createUnaryOp(
+        rewriter, loc, linalg::UnaryFn::log, oneMinusXSquare, outputLike);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::mul, logOneMinusXSquare,
+                       negOne, outputLike);
+  }
+
+  Value createAdjustedW(PatternRewriter &rewriter, Location loc, Type elemType,
+                        Value w, Value wLessThanFive, Value outputLike) const {
+    Value wMinusTwoPointFive = createBinOp(
+        rewriter, loc, linalg::BinaryFn::add, w,
+        createFloatConst(rewriter, loc, elemType, -2.5), outputLike);
+    Value sqrtW = createHFusionUnaryOp(rewriter, loc, hfusion::UnaryFn::sqrt, w,
+                                       outputLike);
+    Value sqrtWMinusThree = createBinOp(
+        rewriter, loc, linalg::BinaryFn::add, sqrtW,
+        createFloatConst(rewriter, loc, elemType, -3.0), outputLike);
+    return createSelectOp(rewriter, loc, wLessThanFive, wMinusTwoPointFive,
+                          sqrtWMinusThree, outputLike);
+  }
+
+  Value createPiecewisePolynomial(PatternRewriter &rewriter, Location loc,
+                                  Type elemType, Value adjustedW,
+                                  Value wLessThanFive, Value outputLike) const {
+    Value polynomial =
+        createSelectOp(rewriter, loc, wLessThanFive,
+                       createFloatConst(rewriter, loc, elemType,
+                                        kErfInvWLessThan5Constants[0]),
+                       createFloatConst(rewriter, loc, elemType,
+                                        kErfInvWGreaterThan5Constants[0]),
+                       outputLike);
+
+    for (size_t i = 1; i < kErfInvWLessThan5Constants.size(); ++i) {
+      Value coefficient =
+          createSelectOp(rewriter, loc, wLessThanFive,
+                         createFloatConst(rewriter, loc, elemType,
+                                          kErfInvWLessThan5Constants[i]),
+                         createFloatConst(rewriter, loc, elemType,
+                                          kErfInvWGreaterThan5Constants[i]),
+                         outputLike);
+      Value polynomialMulAdjustedW =
+          createBinOp(rewriter, loc, linalg::BinaryFn::mul, polynomial,
+                      adjustedW, outputLike);
+      polynomial = createBinOp(rewriter, loc, linalg::BinaryFn::add,
+                               polynomialMulAdjustedW, coefficient, outputLike);
+    }
+    return polynomial;
+  }
+
+  Value applyInfinityEdgeCase(PatternRewriter &rewriter, Location loc,
+                              Type elemType, Value input, Value approximation,
+                              Value i1Empty, Value outputLike) const {
+    Value one = createFloatConst(rewriter, loc, elemType, 1.0);
+    Value inf = createFloatConst(rewriter, loc, elemType,
+                                 std::numeric_limits<double>::infinity());
+    Value absInput =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::abs, input, outputLike);
+    Value absEqOne = createCompareOp(rewriter, loc, absInput, one,
+                                     hfusion::CompareFn::veq, i1Empty);
+    Value signedInf = createBinOp(rewriter, loc, linalg::BinaryFn::mul, input,
+                                  inf, outputLike);
+    return createSelectOp(rewriter, loc, absEqOne, signedInf, approximation,
+                          outputLike);
+  }
+
+  Value createBinOp(PatternRewriter &rewriter, Location loc,
+                    linalg::BinaryFn fun, Value lhs, Value rhs,
+                    Value outputLike) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createUnaryOp(PatternRewriter &rewriter, Location loc,
+                      linalg::UnaryFn fun, Value input,
+                      Value outputLike) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createHFusionUnaryOp(PatternRewriter &rewriter, Location loc,
+                             hfusion::UnaryFn fun, Value input,
+                             Value outputLike) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createSelectOp(PatternRewriter &rewriter, Location loc, Value cond,
+                       Value trueValue, Value falseValue,
+                       Value outputLike) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{outputLike},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createCompareOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                        Value rhs, CompareFn compareFn,
+                        Value outputLike) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(
+            loc, TypeRange{outputLike}, ValueRange{lhs, rhs},
+            ValueRange{outputLike}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createFloatConst(PatternRewriter &rewriter, Location loc, Type elemType,
+                         double value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+};
+
+// Lowers cyl_bessel_i0(x) with the Cephes i0e approximation:
+//   z = abs(x)
+//   cyl_bessel_i0(x) = exp(z) * i0e(z)
+//   i0e(z) = chbevl(z / 2 - 2, A)                  if z <= 8
+//          = chbevl(32 / z - 2, B) / sqrt(z)       otherwise
+//   chbevl(t, c) is evaluated with the Clenshaw recurrence:
+//     b0 = c0, b1 = 0, b2 = 0
+//     if N > 1:
+//       b1 = b0
+//       b0 = t * b0 + c1
+//     for i = 2 .. N - 1:
+//       b2 = b1
+//       b1 = b0
+//       b0 = t * b1 - b2 + c[i]
+//     chbevl(t, c) = 0.5 * (b0 - b2)
+// The implementation below folds the first recurrence step but computes the
+// same value.
+struct NormalizeCylBesselI0Op
+    : public OpRewritePattern<hfusion::CylBesselI0Op> {
+  using OpRewritePattern<hfusion::CylBesselI0Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::CylBesselI0Op op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    auto inType = getElementTypeOrSelf(input.getType());
+    if (!inType.isF16() && !inType.isF32()) {
+      return failure();
+    }
+
+    if (inType.isF16()) {
+      // for high precision, cast src to fp32 and compute and then cast it back
+      // TODO: remove cast after enable automatical high precision computing
+      input = hfusion::castTo(rewriter, input, rewriter.getF32Type(),
+                              hfusion::RoundMode::ROUND);
+    }
+
+    auto loc = op->getLoc();
+    auto elemType = getElementTypeOrSelf(input.getType());
+    auto f32Empty = utils::createEmptyOp(rewriter, loc, input);
+    auto i1Empty = utils::createEmptyOpWithTargetElemType(rewriter, loc, input,
+                                                          rewriter.getI1Type());
+    Value res = buildTensorCylBesselI0Approximation(rewriter, loc, elemType,
+                                                    input, f32Empty, i1Empty);
+
+    if (inType.isF16()) {
+      // TODO: remove cast after enable automatical high precision computing
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  static constexpr std::array<double, 30> kI0eCoeffsA = {
+      -4.41534164647933937950E-18, 3.33079451882223809783E-17,
+      -2.43127984654795469359E-16, 1.71539128555513303061E-15,
+      -1.16853328779934516808E-14, 7.67618549860493561688E-14,
+      -4.85644678311192946090E-13, 2.95505266312963983461E-12,
+      -1.72682629144155570723E-11, 9.67580903537323691224E-11,
+      -5.18979560163526290666E-10, 2.65982372468238665035E-9,
+      -1.30002500998624804212E-8,  6.04699502254191894932E-8,
+      -2.67079385394061173391E-7,  1.11738753912010371815E-6,
+      -4.41673835845875056359E-6,  1.64484480707288970893E-5,
+      -5.75419501008210370398E-5,  1.88502885095841655729E-4,
+      -5.76375574538582365885E-4,  1.63947561694133579842E-3,
+      -4.32430999505057594430E-3,  1.05464603945949983183E-2,
+      -2.37374148058994688156E-2,  4.93052842396707084878E-2,
+      -9.49010970480476444210E-2,  1.71620901522208775349E-1,
+      -3.04682672343198398683E-1,  6.76795274409476084995E-1};
+
+  static constexpr std::array<double, 25> kI0eCoeffsB = {
+      -7.23318048787475395456E-18, -4.83050448594418207126E-18,
+      4.46562142029675999901E-17,  3.46122286769746109310E-17,
+      -2.82762398051658348494E-16, -3.42548561967721913462E-16,
+      1.77256013305652638360E-15,  3.81168066935262242075E-15,
+      -9.55484669882830764870E-15, -4.15056934728722208663E-14,
+      1.54008621752140982691E-14,  3.85277838274214270114E-13,
+      7.18012445138366623367E-13,  -1.79417853150680611778E-12,
+      -1.32158118404477131188E-11, -3.14991652796324136454E-11,
+      1.18891471078464383424E-11,  4.94060238822496958910E-10,
+      3.39623202570838634515E-9,   2.26666899049817806459E-8,
+      2.04891858946906374183E-7,   2.89137052083475648297E-6,
+      6.88975834691682398426E-5,   3.36911647825569408990E-3,
+      8.04490411014108831608E-1};
+
+  Value buildTensorCylBesselI0Approximation(PatternRewriter &rewriter,
+                                            Location loc, Type elemType,
+                                            Value input, Value f32Empty,
+                                            Value i1Empty) const {
+    Value absInput =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::abs, input, f32Empty);
+    Value half = createFloatConst(rewriter, loc, elemType, 0.5);
+    Value two = createFloatConst(rewriter, loc, elemType, 2.0);
+    Value eight = createFloatConst(rewriter, loc, elemType, 8.0);
+    Value thirtyTwo = createFloatConst(rewriter, loc, elemType, 32.0);
+
+    Value zLe8 = buildSmallMagnitudeApproximation(
+        rewriter, loc, elemType, absInput, half, two, f32Empty);
+    Value zLe8Mask = createCompareOp(rewriter, loc, absInput, eight,
+                                     hfusion::CompareFn::vle, i1Empty);
+    Value safeAbsInput =
+        createSelectOp(rewriter, loc, zLe8Mask, eight, absInput, f32Empty);
+    Value zGt8 = buildLargeMagnitudeApproximation(
+        rewriter, loc, elemType, safeAbsInput, half, two, thirtyTwo, f32Empty);
+
+    Value i0e = createSelectOp(rewriter, loc, zLe8Mask, zLe8, zGt8, f32Empty);
+    Value expAbsInput =
+        createUnaryOp(rewriter, loc, linalg::UnaryFn::exp, absInput, f32Empty);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::mul, expAbsInput, i0e,
+                       f32Empty);
+  }
+
+  Value buildSmallMagnitudeApproximation(PatternRewriter &rewriter,
+                                         Location loc, Type elemType,
+                                         Value absInput, Value half, Value two,
+                                         Value outputLike) const {
+    Value zHalf = createBinOp(rewriter, loc, linalg::BinaryFn::mul, absInput,
+                              half, outputLike);
+    Value zHalfMinusTwo = createBinOp(rewriter, loc, linalg::BinaryFn::sub,
+                                      zHalf, two, outputLike);
+    return evaluateChebyshev(rewriter, loc, elemType, zHalfMinusTwo,
+                             kI0eCoeffsA, half, outputLike);
+  }
+
+  Value buildLargeMagnitudeApproximation(PatternRewriter &rewriter,
+                                         Location loc, Type elemType,
+                                         Value safeAbsInput, Value half,
+                                         Value two, Value thirtyTwo,
+                                         Value outputLike) const {
+    Value thirtyTwoDivZ = createBinOp(rewriter, loc, linalg::BinaryFn::div,
+                                      thirtyTwo, safeAbsInput, outputLike);
+    Value thirtyTwoDivZMinusTwo = createBinOp(
+        rewriter, loc, linalg::BinaryFn::sub, thirtyTwoDivZ, two, outputLike);
+    Value zGt8 =
+        evaluateChebyshev(rewriter, loc, elemType, thirtyTwoDivZMinusTwo,
+                          kI0eCoeffsB, half, outputLike);
+    Value sqrtAbsInput = createHFusionUnaryOp(
+        rewriter, loc, hfusion::UnaryFn::sqrt, safeAbsInput, outputLike);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::div, zGt8, sqrtAbsInput,
+                       outputLike);
+  }
+
+  Value createBinOp(PatternRewriter &rewriter, Location loc,
+                    linalg::BinaryFn fun, Value lhs, Value rhs,
+                    Value outputLike) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createUnaryOp(PatternRewriter &rewriter, Location loc,
+                      linalg::UnaryFn fun, Value operand,
+                      Value outputLike) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{operand}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createHFusionUnaryOp(PatternRewriter &rewriter, Location loc,
+                             hfusion::UnaryFn fun, Value operand,
+                             Value outputLike) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{operand}, ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createSelectOp(PatternRewriter &rewriter, Location loc, Value cond,
+                       Value trueValue, Value falseValue,
+                       Value outputLike) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{outputLike},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{outputLike})
+        ->getResult(0);
+  }
+
+  Value createCompareOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                        Value rhs, CompareFn compareFn,
+                        Value outputLike) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(
+            loc, TypeRange{outputLike}, ValueRange{lhs, rhs},
+            ValueRange{outputLike}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createFloatConst(PatternRewriter &rewriter, Location loc, Type elemType,
+                         double value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+
+  template <size_t N>
+  Value evaluateChebyshev(PatternRewriter &rewriter, Location loc,
+                          Type elemType, Value chebyInput,
+                          const std::array<double, N> &coefficients, Value half,
+                          Value outputLike) const {
+    static_assert(N > 0, "coefficients should not be empty");
+
+    Value b0 = createFloatConst(rewriter, loc, elemType, coefficients[0]);
+    Value b1 = createFloatConst(rewriter, loc, elemType, 0.0);
+    Value b2 = b1;
+
+    if constexpr (N > 1) {
+      auto inputMulB0 = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                    chebyInput, b0, outputLike);
+      b1 = b0;
+      b0 = createBinOp(
+          rewriter, loc, linalg::BinaryFn::add, inputMulB0,
+          createFloatConst(rewriter, loc, elemType, coefficients[1]),
+          outputLike);
+    }
+
+    for (size_t i = 2; i < N; ++i) {
+      b2 = b1;
+      b1 = b0;
+      auto inputMulB1 = createBinOp(rewriter, loc, linalg::BinaryFn::mul,
+                                    chebyInput, b1, outputLike);
+      auto inputMulB1MinusB2 = createBinOp(rewriter, loc, linalg::BinaryFn::sub,
+                                           inputMulB1, b2, outputLike);
+      b0 = createBinOp(
+          rewriter, loc, linalg::BinaryFn::add, inputMulB1MinusB2,
+          createFloatConst(rewriter, loc, elemType, coefficients[i]),
+          outputLike);
+    }
+
+    auto b0MinusB2 =
+        createBinOp(rewriter, loc, linalg::BinaryFn::sub, b0, b2, outputLike);
+    return createBinOp(rewriter, loc, linalg::BinaryFn::mul, b0MinusB2, half,
+                       outputLike);
+  }
+};
+
+// Lowers nextafter(x, y) with the same bit-stepping logic used before:
+//   if isnan(x) or isnan(y): return isnan(x) ? x : y
+//   if x == y: return y
+//   if x == 0: return y == 0 ? y : bitcast(sign(y) | 1)
+//   step = ((abs(x) > abs(y)) or (sign(x) != sign(y))) ? -1 : 1
+//   return bitcast(bitcast(x) +/- 1ULP)
+struct NormalizeNextAfterOp : public OpRewritePattern<hfusion::NextAfterOp> {
+  using OpRewritePattern<hfusion::NextAfterOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::NextAfterOp op,
+                                PatternRewriter &rewriter) const override {
+    Value x = op.getX();
+    Value y = op.getY();
+    auto elemType = getElementTypeOrSelf(x.getType());
+    auto yElemType = getElementTypeOrSelf(y.getType());
+    if (elemType != yElemType) {
+      return failure();
+    }
+    if (!elemType.isF16() && !elemType.isF32()) {
+      return failure();
+    }
+
+    int bitWidth = elemType.getIntOrFloatBitWidth();
+    int64_t signMaskVal = 0;
+    int64_t absMaskVal = 0;
+    if (!getSignAndAbsMasks(bitWidth, signMaskVal, absMaskVal)) {
+      return failure();
+    }
+
+    auto loc = op.getLoc();
+    Type intType = rewriter.getIntegerType(bitWidth);
+    Value floatEmpty = utils::createEmptyOp(rewriter, loc, x);
+    Value intEmpty =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, x, intType);
+    Value i1Empty = utils::createEmptyOpWithTargetElemType(
+        rewriter, loc, x, rewriter.getI1Type());
+    IntegerConstants constants =
+        createIntegerConstants(rewriter, loc, intType, signMaskVal, absMaskVal);
+    InputBits inputBits =
+        createInputBits(rewriter, loc, x, y, intType, intEmpty);
+    NaNAwareBits nanBits =
+        createNaNAwareBits(rewriter, loc, x, y, inputBits, intEmpty, i1Empty);
+    MagnitudeBits magnitudeBits =
+        createMagnitudeBits(rewriter, loc, inputBits, constants, intEmpty);
+    Value xAndYAreEqual =
+        createCompare(rewriter, loc, x, y, CompareFn::veq, i1Empty);
+    ZeroBits zeroBits =
+        createZeroBits(rewriter, loc, magnitudeBits, constants, i1Empty);
+    SignBits signBits =
+        createSignBits(rewriter, loc, inputBits, constants, intEmpty);
+    Value resultForXZeroYNonZero =
+        createOr(rewriter, loc, signBits.ySign, constants.one, intEmpty);
+    Value steppedResult =
+        buildDirectionalStepBits(rewriter, loc, inputBits, magnitudeBits,
+                                 signBits, constants, intEmpty, i1Empty);
+    Value resultForXZero =
+        createSelect(rewriter, loc, zeroBits.yIsZero, inputBits.yAsInt,
+                     resultForXZeroYNonZero, intEmpty);
+    Value resultAsInt = createSelect(rewriter, loc, zeroBits.xIsZero,
+                                     resultForXZero, steppedResult, intEmpty);
+    resultAsInt = createSelect(rewriter, loc, xAndYAreEqual, inputBits.yAsInt,
+                               resultAsInt, intEmpty);
+    resultAsInt =
+        createSelect(rewriter, loc, nanBits.nanInput, nanBits.resultForNanAsInt,
+                     resultAsInt, intEmpty);
+    Value nextAfter =
+        createBitcast(rewriter, loc, resultAsInt, elemType, floatEmpty);
+    rewriter.replaceOp(op, nextAfter);
+    return success();
+  }
+
+private:
+  struct IntegerConstants {
+    Value signMask;
+    Value absMask;
+    Value zero;
+    Value one;
+    Value minusOne;
+  };
+
+  struct InputBits {
+    Value xAsInt;
+    Value yAsInt;
+  };
+
+  struct NaNAwareBits {
+    Value nanInput;
+    Value resultForNanAsInt;
+  };
+
+  struct MagnitudeBits {
+    Value xAbs;
+    Value yAbs;
+  };
+
+  struct ZeroBits {
+    Value xIsZero;
+    Value yIsZero;
+  };
+
+  struct SignBits {
+    Value xSign;
+    Value ySign;
+  };
+
+  IntegerConstants createIntegerConstants(PatternRewriter &rewriter,
+                                          Location loc, Type intType,
+                                          int64_t signMaskVal,
+                                          int64_t absMaskVal) const {
+    return {
+        createIntConst(rewriter, loc, intType, signMaskVal),
+        createIntConst(rewriter, loc, intType, absMaskVal),
+        createIntConst(rewriter, loc, intType, 0),
+        createIntConst(rewriter, loc, intType, 1),
+        createIntConst(rewriter, loc, intType, -1),
+    };
+  }
+
+  InputBits createInputBits(PatternRewriter &rewriter, Location loc, Value x,
+                            Value y, Type intType, Value intEmpty) const {
+    Value xAsInt = createBitcast(rewriter, loc, x, intType, intEmpty);
+    Value yAsInt = createBitcast(rewriter, loc, y, intType, intEmpty);
+    return {xAsInt, yAsInt};
+  }
+
+  NaNAwareBits createNaNAwareBits(PatternRewriter &rewriter, Location loc,
+                                  Value x, Value y, const InputBits &inputBits,
+                                  Value intEmpty, Value i1Empty) const {
+    Value xIsNan = createNotEqual(rewriter, loc, x, x, i1Empty);
+    Value yIsNan = createNotEqual(rewriter, loc, y, y, i1Empty);
+    Value nanInput = createOr(rewriter, loc, xIsNan, yIsNan, i1Empty);
+    Value resultForNanAsInt = createSelect(
+        rewriter, loc, xIsNan, inputBits.xAsInt, inputBits.yAsInt, intEmpty);
+    return {nanInput, resultForNanAsInt};
+  }
+
+  MagnitudeBits createMagnitudeBits(PatternRewriter &rewriter, Location loc,
+                                    const InputBits &inputBits,
+                                    const IntegerConstants &constants,
+                                    Value intEmpty) const {
+    return {
+        createAnd(rewriter, loc, inputBits.xAsInt, constants.absMask, intEmpty),
+        createAnd(rewriter, loc, inputBits.yAsInt, constants.absMask, intEmpty),
+    };
+  }
+
+  ZeroBits createZeroBits(PatternRewriter &rewriter, Location loc,
+                          const MagnitudeBits &magnitudeBits,
+                          const IntegerConstants &constants,
+                          Value i1Empty) const {
+    return {
+        createCompare(rewriter, loc, magnitudeBits.xAbs, constants.zero,
+                      CompareFn::veq, i1Empty),
+        createCompare(rewriter, loc, magnitudeBits.yAbs, constants.zero,
+                      CompareFn::veq, i1Empty),
+    };
+  }
+
+  SignBits createSignBits(PatternRewriter &rewriter, Location loc,
+                          const InputBits &inputBits,
+                          const IntegerConstants &constants,
+                          Value intEmpty) const {
+    return {
+        createAnd(rewriter, loc, inputBits.xAsInt, constants.signMask,
+                  intEmpty),
+        createAnd(rewriter, loc, inputBits.yAsInt, constants.signMask,
+                  intEmpty),
+    };
+  }
+
+  Value buildDirectionalStepBits(PatternRewriter &rewriter, Location loc,
+                                 const InputBits &inputBits,
+                                 const MagnitudeBits &magnitudeBits,
+                                 const SignBits &signBits,
+                                 const IntegerConstants &constants,
+                                 Value intEmpty, Value i1Empty) const {
+    Value signsDisagree =
+        createNotEqual(rewriter, loc, signBits.xSign, signBits.ySign, i1Empty);
+    Value xMagnitudeLargerThanY =
+        createCompare(rewriter, loc, magnitudeBits.xAbs, magnitudeBits.yAbs,
+                      CompareFn::vgt, i1Empty);
+    Value resultHasSmallerMagnitude =
+        createOr(rewriter, loc, xMagnitudeLargerThanY, signsDisagree, i1Empty);
+    Value magnitudeAdjustment =
+        createSelect(rewriter, loc, resultHasSmallerMagnitude,
+                     constants.minusOne, constants.one, intEmpty);
+    return createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, inputBits.xAsInt, magnitudeAdjustment, intEmpty);
+  }
+
+  template <linalg::BinaryFn fun>
+  Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                          Value rhs, Value out) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <hfusion::BinaryFn fun>
+  Value createHFusionBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                           Value rhs, Value out) const {
+    return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                   hfusion::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createIntConst(PatternRewriter &rewriter, Location loc, Type intType,
+                       int64_t value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, value));
+  }
+
+  Value createBitcast(PatternRewriter &rewriter, Location loc, Value input,
+                      Type targetElemType, Value out) const {
+    auto shapedType = cast<ShapedType>(input.getType());
+    return rewriter
+        .create<hfusion::BitcastOp>(loc,
+                                    TypeRange{shapedType.clone(targetElemType)},
+                                    ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createCompare(PatternRewriter &rewriter, Location loc, Value lhs,
+                      Value rhs, CompareFn compareFn, Value out) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(loc, TypeRange{out}, ValueRange{lhs, rhs},
+                                    ValueRange{out}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createVNot(PatternRewriter &rewriter, Location loc, Value input,
+                   Value out) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, hfusion::UnaryFn::vnot, ValueRange{input},
+               ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createNotEqual(PatternRewriter &rewriter, Location loc, Value lhs,
+                       Value rhs, Value out) const {
+    auto eq = createCompare(rewriter, loc, lhs, rhs, CompareFn::veq, out);
+    return createVNot(rewriter, loc, eq, out);
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value trueValue, Value falseValue, Value out) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{out},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createAnd(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vand>(rewriter, loc, lhs, rhs,
+                                                       out);
+  }
+
+  Value createOr(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                 Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vor>(rewriter, loc, lhs, rhs,
+                                                      out);
+  }
+
+  bool getSignAndAbsMasks(int bitWidth, int64_t &signMask,
+                          int64_t &absMask) const {
+    if (bitWidth == 16) {
+      signMask = 0x8000;
+      absMask = 0x7FFF;
+      return true;
+    }
+    if (bitWidth == 32) {
+      signMask = 0x80000000LL;
+      absMask = 0x7FFFFFFFLL;
+      return true;
+    }
+    return false;
+  }
+};
+
+// Lowers hypot for 2 or 3 inputs with dtype-specific compute paths.
+// bf16 is accepted only for the 2-input form.
+//
+// Let inputs be v_i, i in [0, arity), where arity is 2 or 3.
+// For f16/bf16, inputs are first promoted to f32. Then:
+//   a_i = |v_i|
+//   any_nan = OR_i isnan(v_i)
+//   any_inf = OR_i (a_i == +inf)
+//
+// Direct path:
+//   direct_sum = sum_i (a_i * a_i)
+//   direct_result = sqrt(direct_sum)
+//
+// Scaled path:
+//   scale = max_i a_i
+//   safe_scale = scale == 0 ? 1 : scale
+//   scaled_term_i =
+//       0                          if scale == 0
+//       1                          if a_i == scale
+//       (a_i / safe_scale)^2       otherwise
+//   scaled_sum = sum_i scaled_term_i
+//   scaled_root = sqrt(scaled_sum)
+//   if original dtype is bf16:
+//     scaled_root =
+//         scaled_root                                      if scale == 0 or
+//         scaled_root == 0 0.5 * (scaled_root + scaled_sum / scaled_root)
+//         otherwise
+//   scaled_result = scale * scaled_root
+//
+// Final finite-result selection:
+//   f32:
+//     result = scaled_result
+//   f16:
+//     result = direct_result
+//   bf16 (2-input only):
+//     use_direct =
+//         sqrt(min_f32_normal) <= scale <= sqrt(max_f32 / 2)
+//     result = use_direct ? direct_result : scaled_result
+//
+// Special values are applied after the finite path:
+//   result = any_nan ? NaN : result
+//   result = any_inf ? +Inf : result
+// Therefore +Inf wins if both NaN and Inf appear across operands.
+//
+// Cast-back:
+//   f32: keep result as is
+//   f16: cast f32 -> f16 with round-to-nearest-even (RINT)
+//   bf16: first round to a bf16-exact f32 bit pattern, then cast with RINT
+struct NormalizeHypotOp : public OpRewritePattern<hfusion::HypotOp> {
+  using OpRewritePattern<hfusion::HypotOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::HypotOp op,
+                                PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    PreparedOperands operands;
+    if (failed(prepareOperands(rewriter, op, operands)))
+      return failure();
+
+    HypotConstants constants =
+        createHypotConstants(rewriter, loc, operands.computeElemType);
+    Value floatEmpty =
+        utils::createEmptyOp(rewriter, loc, operands.values.front());
+    Value i1Empty = utils::createEmptyOpWithTargetElemType(
+        rewriter, loc, operands.values.front(), rewriter.getI1Type());
+
+    SmallVector<Value> absOperands =
+        createAbsOperands(rewriter, loc, operands.values, floatEmpty);
+    if (absOperands.size() != operands.values.size())
+      return failure();
+    SpecialValueMasks masks = createSpecialValueMasks(
+        rewriter, loc, operands.values, absOperands, constants.inf, i1Empty);
+
+    Value result;
+    if (operands.originalElemType.isF16()) {
+      result = createDirectHypotResult(rewriter, loc, absOperands, floatEmpty);
+    } else {
+      Value scale =
+          createScale(rewriter, loc, absOperands, floatEmpty, i1Empty);
+      Value scaleIsZero;
+      Value safeScale = createSafeScale(rewriter, loc, constants, scale,
+                                        floatEmpty, i1Empty, scaleIsZero);
+      Value squareSum = createNormalizedSquareSum(
+          rewriter, loc, absOperands, constants, scale, safeScale, scaleIsZero,
+          floatEmpty, i1Empty);
+      result =
+          createHypotResult(rewriter, loc, operands, absOperands, constants,
+                            scale, squareSum, scaleIsZero, floatEmpty, i1Empty);
+    }
+    result =
+        applySpecialCases(rewriter, loc, constants, masks, result, floatEmpty);
+    result = castResultToOriginalType(rewriter, loc, operands, result);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+
+private:
+  struct PreparedOperands {
+    SmallVector<Value> values;
+    FloatType originalElemType;
+    FloatType computeElemType;
+    bool castBackToOriginal = false;
+
+    bool isBinary() const { return values.size() == 2; }
+  };
+
+  struct SpecialValueMasks {
+    Value anyInf;
+    Value anyNan;
+  };
+
+  struct HypotConstants {
+    Value nan;
+    Value inf;
+    Value one;
+    Value zero;
+  };
+
+  bool hasSupportedHypotArity(ArrayRef<Value> operands) const {
+    return operands.size() >= 2 && operands.size() <= 3;
+  }
+
+  LogicalResult prepareOperands(PatternRewriter &rewriter, hfusion::HypotOp op,
+                                PreparedOperands &operands) const {
+    operands.values = {op.getX(), op.getY()};
+    if (Value z = op.getZ())
+      operands.values.push_back(z);
+    if (!hasSupportedHypotArity(operands.values))
+      return failure();
+
+    auto elemType = dyn_cast<FloatType>(
+        getElementTypeOrSelf(operands.values.front().getType()));
+    auto yElemType =
+        dyn_cast<FloatType>(getElementTypeOrSelf(operands.values[1].getType()));
+    if (!elemType || !yElemType || elemType != yElemType)
+      return failure();
+    if (!elemType.isBF16() && !elemType.isF16() && !elemType.isF32())
+      return failure();
+    if (!operands.isBinary()) {
+      auto zElemType = dyn_cast<FloatType>(
+          getElementTypeOrSelf(operands.values[2].getType()));
+      if (!zElemType || zElemType != elemType)
+        return failure();
+      if (elemType.isBF16())
+        return failure();
+    }
+
+    operands.originalElemType = elemType;
+    operands.computeElemType = elemType;
+    operands.castBackToOriginal = !elemType.isF32();
+    if (!operands.castBackToOriginal)
+      return success();
+
+    operands.computeElemType = rewriter.getF32Type();
+    for (Value &operand : operands.values) {
+      operand = hfusion::castTo(rewriter, operand, operands.computeElemType,
+                                hfusion::RoundMode::ROUND);
+    }
+    return success();
+  }
+
+  HypotConstants createHypotConstants(PatternRewriter &rewriter, Location loc,
+                                      FloatType elemType) const {
+    return {createFloatConst(rewriter, loc, elemType,
+                             std::numeric_limits<double>::quiet_NaN()),
+            createFloatConst(rewriter, loc, elemType,
+                             std::numeric_limits<double>::infinity()),
+            createFloatConst(rewriter, loc, elemType, 1.0),
+            createFloatConst(rewriter, loc, elemType, 0.0)};
+  }
+
+  SmallVector<Value> createAbsOperands(PatternRewriter &rewriter, Location loc,
+                                       ArrayRef<Value> operands,
+                                       Value floatEmpty) const {
+    SmallVector<Value> absOperands;
+    absOperands.reserve(operands.size());
+    for (Value operand : operands) {
+      absOperands.push_back(createLinalgUnaryOp<linalg::UnaryFn::abs>(
+          rewriter, loc, operand, floatEmpty));
+    }
+    return absOperands;
+  }
+
+  SpecialValueMasks createSpecialValueMasks(PatternRewriter &rewriter,
+                                            Location loc,
+                                            ArrayRef<Value> operands,
+                                            ArrayRef<Value> absOperands,
+                                            Value inf, Value i1Empty) const {
+    Value anyInf = createOr(
+        rewriter, loc, createIsInf(rewriter, loc, absOperands[0], inf, i1Empty),
+        createIsInf(rewriter, loc, absOperands[1], inf, i1Empty), i1Empty);
+    Value anyNan = createOr(
+        rewriter, loc, createIsNan(rewriter, loc, operands[0], i1Empty),
+        createIsNan(rewriter, loc, operands[1], i1Empty), i1Empty);
+    for (size_t i = 2; i < operands.size(); ++i) {
+      anyInf = createOr(
+          rewriter, loc, anyInf,
+          createIsInf(rewriter, loc, absOperands[i], inf, i1Empty), i1Empty);
+      anyNan =
+          createOr(rewriter, loc, anyNan,
+                   createIsNan(rewriter, loc, operands[i], i1Empty), i1Empty);
+    }
+    return {anyInf, anyNan};
+  }
+
+  Value createScale(PatternRewriter &rewriter, Location loc,
+                    ArrayRef<Value> absOperands, Value floatEmpty,
+                    Value i1Empty) const {
+    Value scale = createMax(rewriter, loc, absOperands[0], absOperands[1],
+                            floatEmpty, i1Empty);
+    for (Value absOperand : absOperands.drop_front(2))
+      scale = createMax(rewriter, loc, scale, absOperand, floatEmpty, i1Empty);
+    return scale;
+  }
+
+  Value createSafeScale(PatternRewriter &rewriter, Location loc,
+                        const HypotConstants &constants, Value scale,
+                        Value floatEmpty, Value i1Empty,
+                        Value &scaleIsZero) const {
+    scaleIsZero = createCompare(rewriter, loc, scale, constants.zero,
+                                CompareFn::veq, i1Empty);
+    return createSelect(rewriter, loc, scaleIsZero, constants.one, scale,
+                        floatEmpty);
+  }
+
+  Value createNormalizedSquareSum(PatternRewriter &rewriter, Location loc,
+                                  ArrayRef<Value> absOperands,
+                                  const HypotConstants &constants, Value scale,
+                                  Value safeScale, Value scaleIsZero,
+                                  Value floatEmpty, Value i1Empty) const {
+    Value normalizedXSquare = createNormalizedSquareTerm(
+        rewriter, loc, absOperands[0], constants, scale, safeScale, scaleIsZero,
+        floatEmpty, i1Empty);
+    Value normalizedYSquare = createNormalizedSquareTerm(
+        rewriter, loc, absOperands[1], constants, scale, safeScale, scaleIsZero,
+        floatEmpty, i1Empty);
+    Value squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, normalizedXSquare, normalizedYSquare, floatEmpty);
+    for (Value absOperand : absOperands.drop_front(2)) {
+      Value normalizedSquare = createNormalizedSquareTerm(
+          rewriter, loc, absOperand, constants, scale, safeScale, scaleIsZero,
+          floatEmpty, i1Empty);
+      squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+          rewriter, loc, squareSum, normalizedSquare, floatEmpty);
+    }
+    return squareSum;
+  }
+
+  Value createNormalizedSquareTerm(PatternRewriter &rewriter, Location loc,
+                                   Value absInput,
+                                   const HypotConstants &constants, Value scale,
+                                   Value safeScale, Value scaleIsZero,
+                                   Value floatEmpty, Value i1Empty) const {
+    // The dominant term should be exactly 1 in real arithmetic. Selecting that
+    // exact contribution avoids rounding noise from (scale / safeScale)^2.
+    Value inputIsScale =
+        createCompare(rewriter, loc, absInput, scale, CompareFn::veq, i1Empty);
+    Value normalized =
+        createNormalizedValue(rewriter, loc, absInput, safeScale, floatEmpty);
+    Value normalizedSquare =
+        createSquare(rewriter, loc, normalized, floatEmpty);
+    Value nonZeroTerm = createSelect(rewriter, loc, inputIsScale, constants.one,
+                                     normalizedSquare, floatEmpty);
+    return createSelect(rewriter, loc, scaleIsZero, constants.zero, nonZeroTerm,
+                        floatEmpty);
+  }
+
+  Value createNormalizedValue(PatternRewriter &rewriter, Location loc,
+                              Value absInput, Value safeScale,
+                              Value floatEmpty) const {
+    return createLinalgBinOp<linalg::BinaryFn::div>(rewriter, loc, absInput,
+                                                    safeScale, floatEmpty);
+  }
+
+  Value createSquare(PatternRewriter &rewriter, Location loc, Value normalized,
+                     Value floatEmpty) const {
+    return createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, normalized,
+                                                    normalized, floatEmpty);
+  }
+
+  Value createHypotResult(PatternRewriter &rewriter, Location loc,
+                          const PreparedOperands &operands,
+                          ArrayRef<Value> absOperands,
+                          const HypotConstants &constants, Value scale,
+                          Value squareSum, Value scaleIsZero, Value floatEmpty,
+                          Value i1Empty) const {
+    Value scaledRoot = createHFusionUnaryOp<hfusion::UnaryFn::sqrt>(
+        rewriter, loc, squareSum, floatEmpty);
+    if (operands.originalElemType.isBF16()) {
+      Value directResult =
+          createDirectHypotResult(rewriter, loc, absOperands, floatEmpty);
+      Value useDirectResult = createUseDirectHypotMask(
+          rewriter, loc, constants, scale, absOperands.size(), i1Empty);
+      scaledRoot =
+          refineSqrtForBF16(rewriter, loc, constants, squareSum, scaledRoot,
+                            scaleIsZero, floatEmpty, i1Empty);
+      Value scaledResult = createLinalgBinOp<linalg::BinaryFn::mul>(
+          rewriter, loc, scale, scaledRoot, floatEmpty);
+      return createSelect(rewriter, loc, useDirectResult, directResult,
+                          scaledResult, floatEmpty);
+    }
+    return createLinalgBinOp<linalg::BinaryFn::mul>(rewriter, loc, scale,
+                                                    scaledRoot, floatEmpty);
+  }
+
+  Value createDirectHypotResult(PatternRewriter &rewriter, Location loc,
+                                ArrayRef<Value> absOperands,
+                                Value floatEmpty) const {
+    Value xSquare = createSquare(rewriter, loc, absOperands[0], floatEmpty);
+    Value ySquare = createSquare(rewriter, loc, absOperands[1], floatEmpty);
+    Value squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, xSquare, ySquare, floatEmpty);
+    for (Value absOperand : absOperands.drop_front(2)) {
+      Value operandSquare = createSquare(rewriter, loc, absOperand, floatEmpty);
+      squareSum = createLinalgBinOp<linalg::BinaryFn::add>(
+          rewriter, loc, squareSum, operandSquare, floatEmpty);
+    }
+    return createHFusionUnaryOp<hfusion::UnaryFn::sqrt>(rewriter, loc,
+                                                        squareSum, floatEmpty);
+  }
+
+  Value createUseDirectHypotMask(PatternRewriter &rewriter, Location loc,
+                                 const HypotConstants &constants, Value scale,
+                                 size_t arity, Value i1Empty) const {
+    double directMinScale = std::sqrt(std::numeric_limits<float>::min());
+    double directMaxScale = std::sqrt(std::numeric_limits<float>::max() /
+                                      static_cast<double>(arity));
+    Value minScale = createFloatConst(rewriter, loc, constants.zero.getType(),
+                                      directMinScale);
+    Value maxScale = createFloatConst(rewriter, loc, constants.zero.getType(),
+                                      directMaxScale);
+    Value scaleGeMin =
+        createCompare(rewriter, loc, scale, minScale, CompareFn::vge, i1Empty);
+    Value scaleLeMax =
+        createCompare(rewriter, loc, scale, maxScale, CompareFn::vle, i1Empty);
+    return createAnd(rewriter, loc, scaleGeMin, scaleLeMax, i1Empty);
+  }
+
+  Value refineSqrtForBF16(PatternRewriter &rewriter, Location loc,
+                          const HypotConstants &constants, Value squareSum,
+                          Value root, Value scaleIsZero, Value floatEmpty,
+                          Value i1Empty) const {
+    // For bf16 inputs the final answer is cast back from f32. A single Newton
+    // step on sqrt(sum), where sum is already normalized into a small range,
+    // reduces residual error enough to avoid rare multi-ulp bf16 mismatches.
+    Value rootIsZero = createCompare(rewriter, loc, root, constants.zero,
+                                     CompareFn::veq, i1Empty);
+    Value skipRefine =
+        createOr(rewriter, loc, scaleIsZero, rootIsZero, i1Empty);
+    Value sumOverRoot = createLinalgBinOp<linalg::BinaryFn::div>(
+        rewriter, loc, squareSum, root, floatEmpty);
+    Value rootPlusCorrection = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, root, sumOverRoot, floatEmpty);
+    Value half = createFloatConst(rewriter, loc, constants.zero.getType(), 0.5);
+    Value refined = createLinalgBinOp<linalg::BinaryFn::mul>(
+        rewriter, loc, rootPlusCorrection, half, floatEmpty);
+    return createSelect(rewriter, loc, skipRefine, root, refined, floatEmpty);
+  }
+
+  Value applySpecialCases(PatternRewriter &rewriter, Location loc,
+                          const HypotConstants &constants,
+                          const SpecialValueMasks &masks, Value result,
+                          Value floatEmpty) const {
+    result = createSelect(rewriter, loc, masks.anyNan, constants.nan, result,
+                          floatEmpty);
+    return createSelect(rewriter, loc, masks.anyInf, constants.inf, result,
+                        floatEmpty);
+  }
+
+  Value roundF32ToNearestEvenBF16Value(PatternRewriter &rewriter, Location loc,
+                                       Value input) const {
+    Type i32Type = rewriter.getI32Type();
+    Value i32Empty =
+        utils::createEmptyOpWithTargetElemType(rewriter, loc, input, i32Type);
+    Value f32Empty = utils::createEmptyOp(rewriter, loc, input);
+    Value bitPattern = createBitcast(rewriter, loc, input, i32Type, i32Empty);
+    Value shift16 = createIntConst(rewriter, loc, i32Type, 16);
+    Value one = createIntConst(rewriter, loc, i32Type, 1);
+    Value biasBase = createIntConst(rewriter, loc, i32Type, 0x7FFF);
+    Value truncationMask = createIntConst(rewriter, loc, i32Type, -65536);
+
+    Value upperHalf = createHFusionBinOp<hfusion::BinaryFn::shrui>(
+        rewriter, loc, bitPattern, shift16, i32Empty);
+    Value lsb = createHFusionBinOp<hfusion::BinaryFn::vand>(
+        rewriter, loc, upperHalf, one, i32Empty);
+    Value roundBias = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, biasBase, lsb, i32Empty);
+    Value biased = createLinalgBinOp<linalg::BinaryFn::add>(
+        rewriter, loc, bitPattern, roundBias, i32Empty);
+    Value roundedBits = createHFusionBinOp<hfusion::BinaryFn::vand>(
+        rewriter, loc, biased, truncationMask, i32Empty);
+    return createBitcast(rewriter, loc, roundedBits, rewriter.getF32Type(),
+                         f32Empty);
+  }
+
+  Value castResultToOriginalType(PatternRewriter &rewriter, Location loc,
+                                 const PreparedOperands &operands,
+                                 Value result) const {
+    if (!operands.castBackToOriginal)
+      return result;
+    if (operands.originalElemType.isBF16()) {
+      // Round to a bf16-exact f32 value first so the subsequent cast becomes an
+      // exact representation change instead of relying on backend tie-breaking
+      // at f32->bf16 midpoint cases.
+      result = roundF32ToNearestEvenBF16Value(rewriter, loc, result);
+    }
+    // Hypot computes low-precision results in f32, so cast-back should follow
+    // IEEE round-to-nearest-even for both f16 and bf16.
+    return hfusion::castTo(rewriter, result, operands.originalElemType,
+                           hfusion::RoundMode::RINT);
+  }
+
+  template <linalg::BinaryFn fun>
+  Value createLinalgBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                          Value rhs, Value out) const {
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                   linalg::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <linalg::UnaryFn fun>
+  Value createLinalgUnaryOp(PatternRewriter &rewriter, Location loc,
+                            Value input, Value out) const {
+    return hfusion::createUnaryOp<linalg::ElemwiseUnaryOp, linalg::UnaryFn,
+                                  linalg::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <hfusion::UnaryFn fun>
+  Value createHFusionUnaryOp(PatternRewriter &rewriter, Location loc,
+                             Value input, Value out) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, fun, ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  template <hfusion::BinaryFn fun>
+  Value createHFusionBinOp(PatternRewriter &rewriter, Location loc, Value lhs,
+                           Value rhs, Value out) const {
+    return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                   hfusion::BinaryFnAttr>(
+               rewriter, loc, fun, ValueRange{lhs, rhs}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createFloatConst(PatternRewriter &rewriter, Location loc, Type elemType,
+                         double value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getFloatAttr(elemType, value));
+  }
+
+  Value createIntConst(PatternRewriter &rewriter, Location loc, Type intType,
+                       int64_t value) const {
+    return rewriter.create<arith::ConstantOp>(
+        loc, intType, rewriter.getIntegerAttr(intType, value));
+  }
+
+  Value createBitcast(PatternRewriter &rewriter, Location loc, Value input,
+                      Type targetElemType, Value out) const {
+    auto shapedType = cast<ShapedType>(input.getType());
+    return rewriter
+        .create<hfusion::BitcastOp>(loc,
+                                    TypeRange{shapedType.clone(targetElemType)},
+                                    ValueRange{input}, ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createCompare(PatternRewriter &rewriter, Location loc, Value lhs,
+                      Value rhs, CompareFn compareFn, Value out) const {
+    auto cmpPredicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(compareFn);
+    auto cmpModeAttr = rewriter.getNamedAttr(
+        hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+    return rewriter
+        .create<hfusion::CompareOp>(loc, TypeRange{out}, ValueRange{lhs, rhs},
+                                    ValueRange{out}, ArrayRef{cmpModeAttr})
+        ->getResult(0);
+  }
+
+  Value createVNot(PatternRewriter &rewriter, Location loc, Value input,
+                   Value out) const {
+    return hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                                  hfusion::UnaryFnAttr>(
+               rewriter, loc, hfusion::UnaryFn::vnot, ValueRange{input},
+               ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createIsNan(PatternRewriter &rewriter, Location loc, Value input,
+                    Value i1Out) const {
+    auto equalSelf =
+        createCompare(rewriter, loc, input, input, CompareFn::veq, i1Out);
+    return createVNot(rewriter, loc, equalSelf, i1Out);
+  }
+
+  Value createIsInf(PatternRewriter &rewriter, Location loc, Value absInput,
+                    Value inf, Value i1Out) const {
+    return createCompare(rewriter, loc, absInput, inf, CompareFn::veq, i1Out);
+  }
+
+  Value createSelect(PatternRewriter &rewriter, Location loc, Value cond,
+                     Value trueValue, Value falseValue, Value out) const {
+    return rewriter
+        .create<hfusion::SelectOp>(loc, TypeRange{out},
+                                   ValueRange{cond, trueValue, falseValue},
+                                   ValueRange{out})
+        ->getResult(0);
+  }
+
+  Value createMax(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  Value out, Value i1Out) const {
+    auto lhsGtRhs =
+        createCompare(rewriter, loc, lhs, rhs, CompareFn::vgt, i1Out);
+    return createSelect(rewriter, loc, lhsGtRhs, lhs, rhs, out);
+  }
+
+  Value createOr(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                 Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vor>(rewriter, loc, lhs, rhs,
+                                                      out);
+  }
+
+  Value createAnd(PatternRewriter &rewriter, Location loc, Value lhs, Value rhs,
+                  Value out) const {
+    return createHFusionBinOp<hfusion::BinaryFn::vand>(rewriter, loc, lhs, rhs,
+                                                       out);
+  }
+};
+
+namespace {
+/// Compute mask and exp2 for valid shift
+/// outputs:
+///   mask: true        if shift_i in [0, 32) else false
+///   exp2: 2 ^ shift_i if shift_i in [0, 32) else     0
+std::tuple<Value, Value> createI32ValidExp2(PatternRewriter &rewriter,
+                                            Location loc, Value shift) {
+  Type i32 = rewriter.getI32Type();
+  Value c0 = utils::createConstantOp(rewriter, loc, i32, 0);
+  Value c2 = utils::createConstantOp(rewriter, loc, i32, 2);
+  Value c32 = utils::createConstantOp(rewriter, loc, i32, 32);
+
+  // compute mask
+  Value negativeMask =
+      createCmpOp(rewriter, loc, shift, c0, CompareFn::vge)->getResult(0);
+  Value bitwidthMask =
+      createCmpOp(rewriter, loc, shift, c32, CompareFn::vlt)->getResult(0);
+
+  Value maskEmpty = utils::createEmptyOp(rewriter, loc, negativeMask);
+  Value mask =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, hfusion::BinaryFn::vand,
+          ValueRange{negativeMask, bitwidthMask}, ValueRange{maskEmpty})
+          ->getResult(0);
+
+  // compute valid shift
+  Value validShiftEmpty = utils::createEmptyOp(rewriter, loc, shift);
+  Value validShift =
+      rewriter
+          .create<hfusion::SelectOp>(loc, TypeRange(validShiftEmpty.getType()),
+                                     ValueRange{mask, shift, c0},
+                                     ValueRange{validShiftEmpty})
+          ->getResult(0);
+
+  // compute 2 ^ valid_shift
+  Value exp2Empty = utils::createEmptyOp(rewriter, loc, validShift);
+  Value exp2 =
+      hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                              hfusion::BinaryFnAttr>(
+          rewriter, loc, hfusion::BinaryFn::powi, ValueRange{c2, validShift},
+          ValueRange{exp2Empty})
+          ->getResult(0);
+
+  return {mask, exp2};
+}
+
+/// Compute fallback result for shri with invalid shift
+/// outputs:
+///     fallback: 0 if value_i >= 0 else -1
+Value createI32ValueFallback(PatternRewriter &rewriter, Location loc,
+                             Value value) {
+  Type i32 = rewriter.getI32Type();
+  Value c0 = utils::createConstantOp(rewriter, loc, i32, 0);
+  Value cn1 = utils::createConstantOp(rewriter, loc, i32, -1);
+
+  Value posValue =
+      createCmpOp(rewriter, loc, value, c0, CompareFn::vge)->getResult(0);
+
+  Value fallbackEmpty = utils::createEmptyOp(rewriter, loc, value);
+  Value fallback =
+      rewriter
+          .create<hfusion::SelectOp>(loc, TypeRange{fallbackEmpty.getType()},
+                                     ValueRange{posValue, c0, cn1},
+                                     ValueRange{fallbackEmpty})
+          ->getResult(0);
+
+  return fallback;
+}
+
+} // namespace
+
+/// Normalize tensor shli to powi and mul for SIMD
+/// input:
+///   dst = hfusion.elemwise_binary {shli} (value, shift)
+/// range:
+///   value, shift in [i8, i16, i32]
+/// exception:
+///   result_i is 0 if shift_i < -1 or shift_i > 31
+/// detail:
+///   # 1. cast to i32
+///   shift = cast(shift) -> i32
+///   value = cast(value) -> i32
+///   # 2. compute masks for shift
+///   mask = (shift >= 0) && (shift < 32)
+///   # 3. compute for valid elems
+///   valid_shift = select(mask, shift, 0)
+///   valid_result = mul(value, pow(2, valid))
+///   # 4. merge result
+///   result = select(mask, valid_result, 0)
+///   # 5. cast back
+///   result = cast(result) -> origin [trunc-with-overflow]
+struct NormalizeShiftLeftOp
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::BinaryFn::shli)
+      return failure();
+
+    Location loc = op.getLoc();
+    auto inputs = op.getDpsInputs();
+    Value value = inputs[0];
+    Value shift = inputs[1];
+    Type valueElemType = getElementTypeOrSelf(value);
+    Type shiftElemType = getElementTypeOrSelf(shift);
+    if (valueElemType.isInteger(64) || shiftElemType.isInteger(64))
+      return failure();
+
+    // check tensor shape
+    auto valueType = dyn_cast<RankedTensorType>(value.getType());
+    auto shiftType = dyn_cast<RankedTensorType>(shift.getType());
+    if (!valueType || !shiftType ||
+        valueType.getShape() != shiftType.getShape()) {
+      return failure();
+    }
+
+    // cast
+    Type i32 = rewriter.getI32Type();
+    Value valueAsI32 =
+        (valueElemType == i32) ? value : hfusion::castTo(rewriter, value, i32);
+    Value shiftAsI32 =
+        (shiftElemType == i32) ? shift : hfusion::castTo(rewriter, shift, i32);
+
+    // compute 2 ^ shift for valid elems
+    auto [mask, exp2] = createI32ValidExp2(rewriter, loc, shiftAsI32);
+
+    // compute value * (2 ^ shift)
+    Value resultAsI32Empty = utils::createEmptyOp(rewriter, loc, valueAsI32);
+    Value resultAsI32 =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{valueAsI32, exp2},
+            ValueRange{resultAsI32Empty})
+            ->getResult(0);
+
+    // mask result for invalid
+    Value c0 = utils::createConstantOp(rewriter, loc, i32, 0);
+    Value maskedResultEmpty = utils::createEmptyOp(rewriter, loc, shiftAsI32);
+    Value maskedResult = rewriter
+                             .create<hfusion::SelectOp>(
+                                 loc, TypeRange(maskedResultEmpty.getType()),
+                                 ValueRange{mask, resultAsI32, c0},
+                                 ValueRange{maskedResultEmpty})
+                             ->getResult(0);
+
+    // cast back
+    Value result = (valueElemType == i32)
+                       ? maskedResult
+                       : hfusion::castTo(rewriter, maskedResult, valueElemType,
+                                         hfusion::RoundMode::TRUNCWITHOVERFLOW,
+                                         std::nullopt, /*enableOverflow*/ true);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  };
+};
+
+/// Normalize tensor shri to powi and div for SIMD
+/// input:
+///   dst = hfusion.elemwise_binary {shri} (value, shift)
+/// range:
+///   value, shift in [i8, i16]
+/// exceptions:
+///   result_i is  0 if (shift_i < -1 || shift_i > bitwidth) and value_i >= 0
+///   result_i is -1 if (shift_i < -1 || shift_i > bitwidth) and value_i <  0
+/// detail:
+///   # 1. cast to i32
+///   shift = cast(shift) -> i32
+///   value = cast(value) -> i32
+///   # 2. compute masks for shift
+///   mask = (shift >= 0) && (shift < 32)
+///   # 3. compute for valid elems
+///   valid_shift = select(mask, shift, 0)
+///   valid_result = floordiv(value, pow(2, valid))
+///   other_result = 0 ? value >= 0 : 1
+///   # 4. merge result
+///   result = select(mask, valid_result, other_result)
+///   # 5. cast back
+///   result = cast(result) -> origin [trunc-with-overflow]
+struct NormalizeShiftRightOp
+    : public OpRewritePattern<hfusion::ElemwiseBinaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseBinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::BinaryFn::shrsi)
+      return failure();
+
+    Location loc = op.getLoc();
+    auto inputs = op.getDpsInputs();
+    Value value = inputs[0];
+    Value shift = inputs[1];
+    Type valueElemType = getElementTypeOrSelf(value);
+    Type shiftElemType = getElementTypeOrSelf(shift);
+
+    // check tensor shape
+    auto valueType = dyn_cast<RankedTensorType>(value.getType());
+    auto shiftType = dyn_cast<RankedTensorType>(shift.getType());
+    if (!valueType || !shiftType ||
+        valueType.getShape() != shiftType.getShape()) {
+      return failure();
+    }
+
+    if (valueElemType.isInteger(32) || shiftElemType.isInteger(32) ||
+        valueElemType.isInteger(64) || shiftElemType.isInteger(64)) {
+      return failure();
+    }
+
+    // cast
+    Type i32 = rewriter.getI32Type();
+    Value valueAsI32 = hfusion::castTo(rewriter, value, i32);
+    Value shiftAsI32 = hfusion::castTo(rewriter, shift, i32);
+
+    // compute 2 ^ shift for valid elems
+    auto [mask, exp2] = createI32ValidExp2(rewriter, loc, shiftAsI32);
+
+    // compute floor_div(value, exp2Shift)
+    Value resultAsI32Empty = utils::createEmptyOp(rewriter, loc, valueAsI32);
+    Value resultAsI32 =
+        hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                hfusion::BinaryFnAttr>(
+            rewriter, loc, hfusion::BinaryFn::floordivsi,
+            ValueRange{valueAsI32, exp2}, ValueRange{resultAsI32Empty})
+            ->getResult(0);
+
+    // mask result for invalid
+    Value fallback = createI32ValueFallback(rewriter, loc, valueAsI32);
+    Value maskedEmpty = utils::createEmptyOp(rewriter, loc, resultAsI32);
+    Value masked =
+        rewriter
+            .create<hfusion::SelectOp>(loc, TypeRange{maskedEmpty.getType()},
+                                       ValueRange{mask, resultAsI32, fallback},
+                                       ValueRange{maskedEmpty})
+            ->getResult(0);
+
+    // cast back
+    Value result = hfusion::castTo(rewriter, masked, valueElemType,
+                                   hfusion::RoundMode::TRUNCWITHOVERFLOW,
+                                   std::nullopt, /*enableOverflow*/ true);
+
+    rewriter.replaceOp(op, result);
     return success();
   }
 };
@@ -6187,6 +9362,7 @@ void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<bool, SelectOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, linalg::TransposeOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, tensor::ConcatOp>>(ctx);
+  patterns.add<NormalizeToTargetType<bool, tensor::InsertSliceOp>>(ctx);
   patterns.add<NormalizeToTargetType<bool, hfusion::ReduceWithIndexOp>>(ctx);
   patterns.add<NormalizeMuli1i>(ctx);
 }
@@ -6204,6 +9380,7 @@ void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeToTargetType<int8_t, hfusion::ReduceWithIndexOp>>(ctx);
   patterns.add<NormalizeToTargetType<int8_t, hfusion::GatherOp>>(ctx);
   patterns.add<NormalizeToTargetType<int8_t, linalg::BroadcastOp>>(ctx);
+  patterns.add<NormalizeToTargetType<int8_t, tensor::InsertSliceOp>>(ctx);
   patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumsumOp>>(ctx);
   patterns.add<NormalizeCumOpI8ToTargetType<hfusion::CumprodOp>>(ctx);
 }
@@ -6215,6 +9392,8 @@ void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeF16ToF32Type<hfusion::ElemwiseUnaryOp>>(ctx);
   patterns.add<NormalizeCumOpF16ToF32Type<hfusion::CumsumOp>>(ctx);
   patterns.add<NormalizeCumOpF16ToF32Type<hfusion::CumprodOp>>(ctx);
+  patterns.add<NormalizeMatMulBase<linalg::BatchMatmulOp>>(ctx);
+  patterns.add<NormalizeMatMulBase<linalg::MatmulOp>>(ctx);
 }
 
 void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
@@ -6222,7 +9401,13 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeGatherMaskOp>(patterns.getContext());
   patterns.add<NormalizeSinOp>(patterns.getContext());
   patterns.add<NormalizeCosOp>(patterns.getContext());
+  patterns.add<NormalizeAsinOp>(patterns.getContext());
+  patterns.add<NormalizeAcosOp>(patterns.getContext());
+  patterns.add<NormalizeAcoshOp>(patterns.getContext());
+  patterns.add<NormalizeLgammaOp>(patterns.getContext());
   patterns.add<NormalizeAtanOp>(patterns.getContext());
+  patterns.add<NormalizeAtan2Op>(patterns.getContext());
+  patterns.add<NormalizeAtanhOp>(patterns.getContext());
   patterns.add<NormalizeTanOp>(patterns.getContext());
   patterns.add<NormalizeTanhOp>(patterns.getContext());
   patterns.add<NormalizeI8I32CmpOp>(patterns.getContext());
@@ -6239,6 +9424,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeLog1pOp>(patterns.getContext());
   patterns.add<NormalizeExp2Op>(patterns.getContext());
   patterns.add<NormalizeExpM1Op>(patterns.getContext());
+  patterns.add<NormalizeSinhOp>(patterns.getContext());
   patterns.add<NormalizeErfOp>(patterns.getContext());
   patterns.add<NormalizeBrcCast>(patterns.getContext());
   patterns.add<NormalizefillCastToTensorBrc>(patterns.getContext());
@@ -6247,7 +9433,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeIsInfOp>(patterns.getContext());
   patterns.add<NormalizeIsNanOp>(patterns.getContext());
   patterns.add<NormalizeXorOp>(patterns.getContext());
-  patterns.add<NormalizeShiftI8ToI16>(patterns.getContext());
+  patterns.add<NormalizeShruiI8ToI16>(patterns.getContext());
   patterns.add<NormalizeIlogbOp>(patterns.getContext());
   patterns.add<NormalizeLdexpOp>(patterns.getContext());
   patterns.add<NormalizePowfOp>(patterns.getContext());
@@ -6266,6 +9452,12 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());
   patterns.add<NormalizeToTargetType<int64_t, hfusion::ReduceWithIndexOp>>(
       patterns.getContext());
+  patterns.add<NormalizeHypotOp>(patterns.getContext());
+  patterns.add<NormalizeErfInvOp>(patterns.getContext());
+  patterns.add<NormalizeCylBesselI0Op>(patterns.getContext());
+  patterns.add<NormalizeNextAfterOp>(patterns.getContext());
+  patterns.add<NormalizeShiftLeftOp>(patterns.getContext());
+  patterns.add<NormalizeShiftRightOp>(patterns.getContext());
 }
 
 namespace {

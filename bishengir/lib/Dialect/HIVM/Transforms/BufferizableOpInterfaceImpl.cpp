@@ -104,6 +104,36 @@ struct MmadL1OpInterface
   }
 };
 
+struct Conv1DL1OpInterface
+    : public DstBufferizableOpInterfaceExternalModel<Conv1DL1OpInterface,
+                                                     hivm::Conv1DL1Op> {
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options);
+  }
+};
+
+struct Conv2DL1OpInterface
+    : public DstBufferizableOpInterfaceExternalModel<Conv2DL1OpInterface,
+                                                     hivm::Conv2DL1Op> {
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options);
+  }
+};
+
+struct Conv3DL1OpInterface
+    : public DstBufferizableOpInterfaceExternalModel<Conv3DL1OpInterface,
+                                                     hivm::Conv3DL1Op> {
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options);
+  }
+};
+
 struct FixpipeOpInterface
     : public DstBufferizableOpInterfaceExternalModel<FixpipeOpInterface,
                                                      hivm::FixpipeOp> {
@@ -168,24 +198,15 @@ struct NDNZConversionOpInterface
   }
 };
 
+template <typename CustomOpT>
 struct HIVMCustomOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<HIVMCustomOpInterface,
-                                                     hivm::CustomOp> {
+    : public DstBufferizableOpInterfaceExternalModel<
+          HIVMCustomOpInterface<CustomOpT>, CustomOpT> {
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
         rewriter, cast<DestinationStyleOpInterface>(op), options,
         /* supportMixedTensorBufferMode */ true);
-  }
-};
-
-struct HIVMCopyOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<HIVMCopyOpInterface,
-                                                     hivm::CopyOp> {
-  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
-                          const BufferizationOptions &options) const {
-    return bufferizeDestinationStyleOpInterface(
-        rewriter, cast<DestinationStyleOpInterface>(op), options);
   }
 };
 
@@ -199,9 +220,10 @@ struct HIVMLoadOpInterface
   }
 };
 
-struct HIVMStoreOpInterface
-    : public DstBufferizableOpInterfaceExternalModel<HIVMStoreOpInterface,
-                                                     hivm::StoreOp> {
+template <typename CopyOrStoreOpT>
+struct HIVMCopyOrStoreOpInterface
+    : public DstBufferizableOpInterfaceExternalModel<
+          HIVMCopyOrStoreOpInterface<CopyOrStoreOpT>, CopyOrStoreOpT> {
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
@@ -383,10 +405,10 @@ struct DebugOpInterface
       newArg = value;
     }
 
+    auto tcoretype = debugOp.getTcoretypeAttr();
+    auto memscope = debugOp.getMemscopeAttr();
     replaceOpWithNewBufferizedOp<hivm::DebugOp>(
-        rewriter, op, debugtype, prefix, hex, newArg,
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR));
+        rewriter, op, debugtype, prefix, hex, newArg, tcoretype, memscope);
 
     return success();
   }
@@ -481,6 +503,67 @@ struct BitcastOpInterface
   }
 };
 
+struct IndirectStoreOpInterface
+    : public BufferizableOpInterface::ExternalModel<IndirectStoreOpInterface,
+                                                  hivm::IndirectStoreOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() > 0;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0;
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto indirectStoreOp = cast<hivm::IndirectStoreOp>(op);
+
+    FailureOr<Value> srcBuffer =
+        getBuffer(rewriter, indirectStoreOp.getSrc(), options);
+    if (failed(srcBuffer))
+      return failure();
+
+    FailureOr<Value> offsetBuffer =
+        getBuffer(rewriter, indirectStoreOp.getOffsets(), options);
+    if (failed(offsetBuffer))
+      return failure();
+
+    auto dstBuffer = indirectStoreOp.getDst();
+
+    FailureOr<Value> maskBuffer = failure();
+    if (indirectStoreOp.getMask()) {
+      maskBuffer = getBuffer(rewriter, indirectStoreOp.getMask(), options);
+      if (failed(maskBuffer))
+        return failure();
+    }
+
+    auto mask = indirectStoreOp.getMask();
+    hivm::IndirectStoreOp newOp;
+    if (mask) {
+      newOp = rewriter.create<hivm::IndirectStoreOp>(
+          indirectStoreOp.getLoc(),
+          /*operands*/
+          dstBuffer, *offsetBuffer, *srcBuffer, *maskBuffer);
+    } else {
+      newOp = rewriter.create<hivm::IndirectStoreOp>(
+          indirectStoreOp.getLoc(),
+          /*operands*/
+          dstBuffer, *offsetBuffer, *srcBuffer, mask);
+    }
+
+    rewriter.replaceOp(op, newOp);
+
+    return success();
+  }
+};
+
 } // namespace
 
 void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
@@ -488,12 +571,17 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
   registry.addExtension(+[](MLIRContext *ctx, hivm::HIVMDialect *dialect) {
     FixpipeOp::attachInterface<FixpipeOpInterface>(*ctx);
     MmadL1Op::attachInterface<MmadL1OpInterface>(*ctx);
+    Conv1DL1Op::attachInterface<Conv1DL1OpInterface>(*ctx);
+    Conv2DL1Op::attachInterface<Conv2DL1OpInterface>(*ctx);
+    Conv3DL1Op::attachInterface<Conv3DL1OpInterface>(*ctx);
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
-    CopyOp::attachInterface<HIVMCopyOpInterface>(*ctx);
-    CustomOp::attachInterface<HIVMCustomOpInterface>(*ctx);
+    CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
+    CustomOp::attachInterface<HIVMCustomOpInterface<CustomOp>>(*ctx);
+    CustomMacroOp::attachInterface<HIVMCustomOpInterface<CustomMacroOp>>(*ctx);
     LoadOp::attachInterface<HIVMLoadOpInterface>(*ctx);
-    StoreOp::attachInterface<HIVMStoreOpInterface>(*ctx);
+    StoreOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::StoreOp>>(*ctx);
+    IndirectStoreOp::attachInterface<IndirectStoreOpInterface>(*ctx);
     MatmulOp::attachInterface<HIVMMatmulOpInterface>(*ctx);
     MixMatmulOp::attachInterface<HIVMMixMatmulOpInterface>(*ctx);
     MixGroupMatmulOp::attachInterface<HIVMMixGroupMatmulOpInterface>(*ctx);

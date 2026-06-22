@@ -278,6 +278,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
         {{hivm::PIPE::PIPE_FIX, hivm::PIPE::PIPE_M}, 1},
     };
     int64_t eventIdNum = INTRA_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedIntraCoreEventIdNum;
     auto it = reservedEventIdNum.find({setPipe, waitPipe});
     if (it != reservedEventIdNum.end()) {
       eventIdNum -= it->second;
@@ -285,6 +286,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
     return eventIdNum;
   } else if (syncMode == SyncMode::CROSS_CORE_SYNC) {
     int64_t eventIdNum = CROSS_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedCrossCoreEventIdNum;
     return eventIdNum;
   } else if (syncMode == SyncMode::TEST_INTRA_CORE_MODE) {
     int64_t eventIdNum = TEST_INTRA_CORE_EVENT_ID_NUM;
@@ -293,7 +295,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
     int64_t eventIdNum = TEST_CROSS_CORE_EVENT_ID_NUM;
     return eventIdNum;
   }
-  llvm_unreachable("getHWAvailableEventIdNum: unhandled SyncMode");
+  llvm::report_fatal_error("getHWAvailableEventIdNum: unhandled SyncMode");
 }
 
 SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
@@ -308,6 +310,7 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
         {{hivm::PIPE::PIPE_FIX, hivm::PIPE::PIPE_M}, 1},
     };
     int64_t eventIdNum = INTRA_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedIntraCoreEventIdNum;
     auto it = reservedEventIdNum.find({setPipe, waitPipe});
     if (it != reservedEventIdNum.end()) {
       eventIdNum -= it->second;
@@ -318,6 +321,7 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
     return hwAvailableEventIds;
   } else if (syncMode == SyncMode::CROSS_CORE_SYNC) {
     int64_t eventIdNum = CROSS_CORE_EVENT_ID_NUM;
+    eventIdNum -= reservedCrossCoreEventIdNum;
     SmallVector<int64_t> hwAvailableEventIds(eventIdNum);
     std::iota(hwAvailableEventIds.begin(), hwAvailableEventIds.end(),
               static_cast<int64_t>(0));
@@ -335,7 +339,7 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
               static_cast<int64_t>(0));
     return availableEventIds;
   }
-  llvm_unreachable("getHWAvailableEventIds: unhandled SyncMode");
+  llvm::report_fatal_error("getHWAvailableEventIds: unhandled SyncMode");
 }
 
 // Build a Value that is true for the first iteration of the given scf::ForOp.
@@ -407,7 +411,7 @@ Value getValueOrCreateCastToI64(IRRewriter &rewriter, Location loc, Value val) {
       val = rewriter.create<arith::ExtSIOp>(loc, rewriter.getIntegerType(64),
                                             val);
     } else {
-      llvm_unreachable("unhandled casting type");
+      llvm::report_fatal_error("unhandled casting type");
     }
   }
   return val;

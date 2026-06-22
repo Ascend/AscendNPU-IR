@@ -51,6 +51,12 @@ __aiv__ __attribute__((always_inline)) void
 gather_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *indices,
           memref_t<__ubuf__ T, 1> *dst,
           memref_t<__ubuf__ int32_t, 1> *tmp_buf) {
+  // Check alignment conditions for indices and dst
+  if (is_unaligned_gather_1d(src, indices, dst)) [[unlikely]] {
+    gather_1d_scalar<T>(src, indices, dst);
+    return;
+  }
+  
   const int64_t size_src = src->sizes[0];
   const int64_t size_indices = indices->sizes[0];
   // step 1: compute the gather index ub addrs of which unit is bytes
@@ -102,6 +108,46 @@ gather_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *indices,
   } else {
     static_assert("vgather unsupports this data type");
   }
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+gather_1d_scalar(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *indices,
+                 memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("gather_1d");
+#endif
+  __ubuf__ T *src_ptr = src->aligned + src->offset;
+  __ubuf__ int32_t *indices_ptr = indices->aligned + indices->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t size_indices = indices->sizes[0];
+  const int64_t src_stride = src->strides[0];
+  const int64_t dst_stride = dst->strides[0];
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  // Gather elements from src according to indices
+  for (int64_t i = 0; i < size_indices; ++i) {
+    int32_t idx = indices_ptr[i];
+    dst_ptr[i * dst_stride] = src_ptr[idx * src_stride];
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src, 
+                       memref_t<__ubuf__ int32_t, 1> *indices,
+                       memref_t<__ubuf__ T, 1> *dst) {
+  __ubuf__ int32_t *indices_ptr = indices->aligned + indices->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  bool is_offset_aligned = isAddress32ByteAligned<int32_t>(indices_ptr) &&
+                          isAddress32ByteAligned<T>(dst_ptr);
+  bool is_stride_aligned = (indices->strides[0] == 1) &&
+                          (dst->strides[0] == 1);
+  
+  return !is_offset_aligned || !is_stride_aligned;
 }
 
 extern "C" {

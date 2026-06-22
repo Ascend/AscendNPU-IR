@@ -17,6 +17,257 @@
 #include "Vector/Broadcast/BrcUtils.h"
 #include "Vector/Cast/CastUtils.h"
 
+// Round to nearest with configurable tie-breaking policy
+// TiesToEven=true: Banker's rounding (ties go to even)
+// TiesToEven=false: Von Neumann rounding (ties go to odd)
+template <typename IntermediateT, bool TiesToEven>
+__aiv__ __attribute__((always_inline)) IntermediateT
+round_to_nearest_with_tie_policy(float f_val, IntermediateT trunc_val) {
+  using SignedT = typename std::make_signed<IntermediateT>::type;
+  SignedT signed_trunc = static_cast<SignedT>(trunc_val);
+  float frac = f_val - static_cast<float>(signed_trunc);
+  float abs_frac = std::abs(frac);
+  bool is_tie = (abs_frac == 0.5f);
+  bool is_odd = (signed_trunc % 2 != 0);
+  bool round_away = false;
+  if constexpr (TiesToEven) {
+    round_away = (abs_frac > 0.5f) || (is_tie && is_odd);
+  } else {
+    round_away = (abs_frac > 0.5f) || (is_tie && !is_odd);
+  }
+
+  if (round_away) {
+    SignedT step = (f_val >= 0.0f) ? 1 : -1;
+    return static_cast<IntermediateT>(signed_trunc + step);
+  }
+  return trunc_val;
+}
+
+// CastMode::R (rint): round to nearest, ties to even.(Banker's rounding)
+// frac > 0.5  -> always round away from zero
+// frac == 0.5 -> round away from zero if the truncated integer is odd (to make it even)
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+castmode_r_round_to_nearest(float f_val, IntermediateT trunc_val) {
+  constexpr bool ties_to_even = true;
+  return round_to_nearest_with_tie_policy<IntermediateT, ties_to_even>(f_val, trunc_val);
+}
+
+// CastMode::A (round): round to nearest, tie away from zero.
+// Round to nearest integer; when exactly halfway between two integers, round away from zero.
+// e.g., 2.3 -> 2, 2.5 -> 3, 2.7 -> 3, -2.3 -> -2, -2.5 -> -3, -2.7 -> -3
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+castmode_a_round_away_from_zero(float f_val, IntermediateT trunc_val, bool has_fraction) {
+  if (f_val >= 0.0f) {
+    // Positive numbers: round up if fractional part >= 0.5
+    return (f_val >= static_cast<float>(trunc_val) + 0.5f) ? (trunc_val + 1) : trunc_val;
+  }
+  // Negative numbers: round down if fractional part <= -0.5
+  return (f_val <= static_cast<float>(trunc_val) - 0.5f) ? (trunc_val - 1) : trunc_val;
+}
+
+// CastMode::F (floor): round towards negative infinity, matching C language floor().
+// Negative + fraction -> trunc - 1,  Positive -> trunc (already floored).
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+castmode_f_floor_towards_neg_inf(float f_val, IntermediateT trunc_val, bool has_fraction) {
+  // Negative with fraction -> trunc - 1,  Positive or no fraction -> trunc
+  return (f_val >= 0.0f || !has_fraction) ? trunc_val : (trunc_val - 1);
+}
+
+// CastMode::C (ceil): round towards positive infinity, matching C language ceil().
+// Positive + fraction -> trunc + 1,  Negative -> trunc (already ceiled).
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+castmode_c_ceil_towards_pos_inf(float f_val, IntermediateT trunc_val, bool has_fraction) {
+  // Positive with fraction -> trunc + 1,  Negative or no fraction -> trunc
+  return (f_val <= 0.0f || !has_fraction) ? trunc_val : (trunc_val + 1);
+}
+
+// CastMode::O (odd): round to odd (Von Neumann rounding).
+// When the fractional part is exactly 0.5, round to the nearest odd integer.
+// e.g., 2.5 -> 3 (odd), 3.5 -> 3 (odd), -2.5 -> -3 (odd), -3.5 -> -3 (odd)
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+castmode_o_round_to_odd(float f_val, IntermediateT trunc_val) {
+  constexpr bool ties_to_even = false;
+  return round_to_nearest_with_tie_policy<IntermediateT, ties_to_even>(f_val, trunc_val);
+}
+
+// Dispatch rounding logic by CastMode.
+// R: round to nearest even (rint),  A: round to nearest, tie away from zero (round),
+// F: floor towards -inf (floor),  C: ceil towards +inf (ceil),
+// O: round to odd (Von Neumann rounding),  Z: trunc towards zero (trunc).
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+apply_rounding(float f_val, IntermediateT trunc_val, bool has_fraction, CastMode cast_mode) {
+  switch (cast_mode) {
+    case CastMode::R:
+      return castmode_r_round_to_nearest<IntermediateT>(f_val, trunc_val);
+    case CastMode::A:
+      return castmode_a_round_away_from_zero<IntermediateT>(f_val, trunc_val, has_fraction);
+    case CastMode::F:
+      return castmode_f_floor_towards_neg_inf<IntermediateT>(f_val, trunc_val, has_fraction);
+    case CastMode::C:
+      return castmode_c_ceil_towards_pos_inf<IntermediateT>(f_val, trunc_val, has_fraction);
+    case CastMode::O:
+      return castmode_o_round_to_odd<IntermediateT>(f_val, trunc_val);
+    case CastMode::Z:
+    default:
+      return trunc_val;
+  }
+}
+
+// Core float-to-integer conversion:
+// 1. Truncate towards zero to get the integer part.
+// 2. Detect fractional part.
+// 3. Apply rounding mode adjustment.
+template <typename IntermediateT>
+__aiv__ __attribute__((always_inline)) IntermediateT
+scalar_cast_float_to_int_internal(float f_val, CastMode cast_mode) {
+  using SignedT = typename std::make_signed<IntermediateT>::type;
+  SignedT signed_trunc = static_cast<SignedT>(f_val);
+  bool has_fraction = (f_val != static_cast<float>(signed_trunc));
+  IntermediateT trunc_val = static_cast<IntermediateT>(signed_trunc);
+  return apply_rounding<IntermediateT>(f_val, trunc_val, has_fraction, cast_mode);
+}
+
+// Float-to-integer cast: convert any float type (float, half, bfloat16) to
+// the signed counterpart of DST_T, then cast to the actual DST_T.
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) DST_T
+scalar_cast_float_to_int(SRC_T val, CastMode cast_mode) {
+  float f_val = static_cast<float>(val);
+  int64_t result = scalar_cast_float_to_int_internal<int64_t>(f_val, cast_mode);
+  return static_cast<DST_T>(result);
+}
+
+// Float to integer conversion dispatch
+// For bool, convert via int32 then compare to zero.
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) DST_T
+scalar_cast_float_to_int_dispatch(SRC_T val, CastMode cast_mode) {
+  if constexpr (std::is_same<DST_T, bool>::value) {
+    int32_t result =
+      scalar_cast_float_to_int<float, int32_t>(static_cast<float>(val), cast_mode);
+    return result != 0;
+  } else {
+    return scalar_cast_float_to_int<SRC_T, DST_T>(val, cast_mode);
+  }
+}
+
+// Float-to-float rounding: round via int64 intermediate, then cast back.
+// e.g. rint(2.7f): 2.7f -> round_to_int64 -> 3 -> 3.0f.
+template <typename DST_T>
+__aiv__ __attribute__((always_inline)) DST_T
+scalar_cast_float_to_float(float val, CastMode cast_mode) {
+  int64_t rounded_int = scalar_cast_float_to_int_internal<int64_t>(val, cast_mode);
+  return static_cast<DST_T>(static_cast<float>(rounded_int));
+}
+
+// Integer-to-float cast: bool via int8, unsigned via signed counterpart.
+// CastMode is unused (integers have no fractional part to round).
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) DST_T
+scalar_cast_int_to_float(SRC_T val, CastMode cast_mode) {
+  if constexpr (std::is_same<SRC_T, bool>::value) {
+    return static_cast<DST_T>(static_cast<int8_t>(val));
+  } else if constexpr (std::is_unsigned<SRC_T>::value) {
+    return static_cast<DST_T>(static_cast<int64_t>(val));
+  } else {
+    return static_cast<DST_T>(val);
+  }
+}
+
+// Integer-to-integer cast: direct static_cast, CastMode is unused
+// (integers have no fractional part; rounding/saturation not applicable).
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) DST_T
+scalar_cast_int_to_int(SRC_T val, CastMode cast_mode) {
+  return static_cast<DST_T>(val);
+}
+
+// Helper: Check if type is floating point
+template <typename T>
+__aiv__ constexpr bool is_float_type() {
+  return std::is_same<T, float>::value ||
+         std::is_same<T, half>::value ||
+         std::is_same<T, bfloat16_t>::value;
+}
+
+// Main scalar cast function with rounding mode support
+// Converts value from SRC_T to DST_T according to the specified cast mode
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) DST_T
+scalar_cast_value(SRC_T val, CastMode cast_mode) {
+  constexpr bool src_is_float = is_float_type<SRC_T>();
+  constexpr bool dst_is_float = is_float_type<DST_T>();
+
+  if constexpr (src_is_float && !dst_is_float) {
+    return scalar_cast_float_to_int_dispatch<SRC_T, DST_T>(val, cast_mode);
+  } else if constexpr (src_is_float && dst_is_float) {
+    if constexpr (std::is_same<SRC_T, float>::value &&
+                  std::is_same<DST_T, half>::value) {
+      // Scalar: Cast float to half may be precision loss, not support.
+      trap();
+    }
+    return scalar_cast_float_to_float<DST_T>(val, cast_mode);
+  } else if constexpr (!src_is_float && dst_is_float) {
+    return scalar_cast_int_to_float<SRC_T, DST_T>(val, cast_mode);
+  } else {
+    return scalar_cast_int_to_int<SRC_T, DST_T>(val, cast_mode);
+  }
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) float
+scalar_cast_value<half, float>(half val, CastMode cast_mode) {
+  return static_cast<float>(val);
+}
+
+// Scalar cast 1d with specified rounding mode
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) void
+scalar_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
+                         memref_t<__ubuf__ DST_T, 1> *dst,
+                         CastMode cast_mode) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("cast 1d unaligned");
+#endif
+  if constexpr (std::is_same<SRC_T, bfloat16_t>::value ||
+                std::is_same<DST_T, bfloat16_t>::value) {
+    // scalar cast bfloat16_t is not supported yet
+    return;
+  }
+
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  
+  __ubuf__ SRC_T *src_ptr = src->aligned + src->offset;
+  __ubuf__ DST_T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t n = src->sizes[0];
+  for (int64_t i = 0; i < n; ++i) {
+    SRC_T val;
+    if constexpr (std::is_same<SRC_T, bool>::value) {
+      val = get_condition_bit<SRC_T>(src, i);
+    } else {
+      val = src_ptr[i * src->strides[0]];
+    }
+    dst_ptr[i * dst->strides[0]] = scalar_cast_value<SRC_T, DST_T>(val, cast_mode);
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_cast_1d(memref_t<__ubuf__ SRC_T, 1> *src,
+                          memref_t<__ubuf__ DST_T, 1> *dst) {
+  return is_memref_aligned<SRC_T, 1>(src) &&
+         is_memref_aligned<DST_T, 1>(dst);
+}
+
 template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 vconv(intrin_args<1, SRC_T, DST_T> args, CastMode cast_mode) {
@@ -195,7 +446,7 @@ vector_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
   INTRINSIC_NO_ARGS(set_mask_norm);
 }
 
-template <typename SRC_T, typename DST_T>
+template <typename SRC_T, typename DST_T, bool DISABLE_SIZE_ALIGN>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
                              memref_t<__ubuf__ DST_T, 1> *dst,
@@ -239,7 +490,8 @@ vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
               {CEIL_DIV(dst->sizes[0], num_per_block_dst), num_per_block_dst},
               {num_per_block_dst, 1}};
   }
-  vector_cast_with_overflow(&src_2d, &dst_2d, tmp);
+  vector_cast_with_overflow<SRC_T, DST_T, DISABLE_SIZE_ALIGN>(&src_2d, &dst_2d,
+                                                             tmp);
 }
 
 template <typename SRC_T, typename DST_T>

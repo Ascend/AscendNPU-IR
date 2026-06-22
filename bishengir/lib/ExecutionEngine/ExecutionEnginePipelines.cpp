@@ -43,6 +43,7 @@ void execution_engine::buildCPURunnerPipeline(
   hostFuncWrapperOpts.wrapperName = options.wrapperName;
   pm.addPass(execution_engine::createCreateHostMainPass(hostFuncWrapperOpts));
 
+  pm.addPass(createConvertHFusionToUpstreamPass());
   // Conversion to upstream dialect Passes
   pm.addPass(createConvertHIVMToUpstreamPass());
 

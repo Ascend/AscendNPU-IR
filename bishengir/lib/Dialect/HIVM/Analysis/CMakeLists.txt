@@ -25,7 +25,6 @@ add_bishengir_dialect_library(BiShengIRHIVMAnalysis
   BiShengIRHACCDialect
   BiShengIRHACCUtils
   BiShengIRHIVMDialect
-  BiShengIRHIVMUtils
   MLIRIR
   MLIRLLVMCommonConversion
   MLIRLLVMDialect

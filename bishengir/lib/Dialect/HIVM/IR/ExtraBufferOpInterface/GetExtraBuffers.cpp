@@ -97,6 +97,8 @@ ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSqrtOp)
 ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VRecOp)
 #undef ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC
 
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomMacroOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSelOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VBrcOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCastOp)
@@ -138,8 +140,7 @@ int64_t getLastAxisInlineBrcBuffSize(MemRefType srcVecType,
                                         util::srcNumPerRepeatOfVBRCBIntrin);
 }
 
-template <typename HIVMOP>
-bool isHardwareNotSupportedVS() {
+template <typename HIVMOP> bool isHardwareNotSupportedVS() {
   return std::is_same<hivm::VDivOp, HIVMOP>::value ||
          std::is_same<hivm::VSubOp, HIVMOP>::value;
 }
@@ -372,3 +373,13 @@ std::optional<int64_t> VXorOp::getExtraBufferSize() {
       utils::traceToAllocMaxSize(this->getSrc()[0]);
   return srcAllocTotalSize;
 }
+
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+#define ENABLE_CUSTOM_OP_GET_TEMP_BUFFERS_IMPLEMENTATION(OP_NAME)              \
+  OperandRange OP_NAME::getExtraBuffers() { return getTempBuffersMutable(); }
+
+ENABLE_CUSTOM_OP_GET_TEMP_BUFFERS_IMPLEMENTATION(CustomOp)
+ENABLE_CUSTOM_OP_GET_TEMP_BUFFERS_IMPLEMENTATION(CustomMacroOp)

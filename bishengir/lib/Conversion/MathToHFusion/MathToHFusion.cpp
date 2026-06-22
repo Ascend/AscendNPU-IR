@@ -172,13 +172,19 @@ void mlir::hfusion::populateMathToHFusionConversionPatterns(
       ElementwiseOpToLinalgUnary<math::FloorOp, linalg::UnaryFn::floor>,
       ElementwiseOpToHFusionBinary<mathExt::LdexpOp, hfusion::BinaryFn::ldexp>,
       ElementwiseOpToHFusionBinary<math::PowFOp, hfusion::BinaryFn::powf>,
+      ElementwiseOpToHFusionBinary<math::Atan2Op, hfusion::BinaryFn::atan2>,
       ElementwiseOpToHFusionUnary<math::SqrtOp, hfusion::UnaryFn::sqrt>,
       ElementwiseOpToHFusionUnary<math::RsqrtOp, hfusion::UnaryFn::rsqrt>,
       ElementwiseOpToHFusionUnary<math::TanhOp, hfusion::UnaryFn::tanh>,
       ElementwiseOpToHFusionUnary<math::AtanOp, hfusion::UnaryFn::atan>,
+      ElementwiseOpToHFusionUnary<math::AtanhOp, hfusion::UnaryFn::atanh>,
       ElementwiseOpToHFusionUnary<math::TanOp, hfusion::UnaryFn::tan>,
       ElementwiseOpToHFusionUnary<math::SinOp, hfusion::UnaryFn::sin>,
+      ElementwiseOpToHFusionUnary<math::AsinOp, hfusion::UnaryFn::asin>,
       ElementwiseOpToHFusionUnary<math::CosOp, hfusion::UnaryFn::cos>,
+      ElementwiseOpToHFusionUnary<math::AcosOp, hfusion::UnaryFn::acos>,
+      ElementwiseOpToHFusionUnary<math::SinhOp, hfusion::UnaryFn::sinh>,
+      ElementwiseOpToHFusionUnary<math::AcoshOp, hfusion::UnaryFn::acosh>,
       ElementwiseOpToHFusionUnary<math::AbsIOp, hfusion::UnaryFn::absi>,
       ElementwiseOpToHFusionUnary<math::ErfOp, hfusion::UnaryFn::erf>,
       ElementwiseOpToHFusionUnary<math::Log2Op, hfusion::UnaryFn::log2>,
@@ -187,6 +193,7 @@ void mlir::hfusion::populateMathToHFusionConversionPatterns(
       ElementwiseOpToHFusionUnary<math::Exp2Op, hfusion::UnaryFn::exp2>,
       ElementwiseOpToHFusionUnary<math::ExpM1Op, hfusion::UnaryFn::expm1>,
       ElementwiseOpToHFusionUnary<mathExt::IlogbOp, hfusion::UnaryFn::ilogb>,
+      ElementwiseOpToHFusionUnary<mathExt::LgammaOp, hfusion::UnaryFn::lgamma>,
       MathFmaToComposeBinaryOp>(patterns.getContext());
 }
 

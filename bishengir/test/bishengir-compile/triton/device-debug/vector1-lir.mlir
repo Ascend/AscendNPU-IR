@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // RUN: bishengir-compile --enable-auto-multi-buffer=true --enable-hfusion-compile=true --enable-hivm-compile=true --enable-triton-kernel-compile=true %s
 
 module {

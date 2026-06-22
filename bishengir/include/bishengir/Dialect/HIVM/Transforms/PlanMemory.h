@@ -22,15 +22,18 @@
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <list>
+#include <random>
 
 namespace mlir {
 namespace hivm {
@@ -58,7 +61,8 @@ constexpr const int SPEC_LEVEL_0 = 0;
 /// continuous instructions caused by plan, offset = 1.
 constexpr const int SPEC_LEVEL_1 = 1;
 
-/// do not reuse the buffer in same loop when pipe conflicts between vector and dma.
+/// do not reuse the buffer in same loop when pipe conflicts between vector and
+/// dma.
 constexpr const int SPEC_LEVEL_2 = 2;
 
 /// do not reuse buffer when pipe conflicts.
@@ -261,8 +265,10 @@ using BufferCondPair = std::pair<Value, bool>;
 
 class MemLivenessAnalysis {
 public:
-  MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode)
-      : func_(func), planMode(planMode) {}
+  MemLivenessAnalysis(func::FuncOp func, MemPlanMode planMode,
+                      uint32_t randomSeed = 0)
+      : func_(func), planMode(planMode), randomSeed(randomSeed),
+        randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -270,7 +276,7 @@ public:
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
 
   /// map from buffer value to its buffer information.
-  std::map<Value, BufferInfo, utils::ValueComparator> bufferInfos;
+  llvm::MapVector<Value, BufferInfo> bufferInfos;
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
@@ -286,6 +292,9 @@ public:
 
   /// record inplace pair list.
   SmallVector<ValuePair> inplacePairList;
+
+  /// record marked buffer used in multi scope operations.
+  SmallVector<Value> preloadBuffers;
 
   /// now plan mode is LOCAL_MEM_PLAN.
   bool isLocalMemPlan() const;
@@ -333,6 +342,13 @@ private:
 
   /// Update buffer alias information for ifop.
   void UpdateIfOpBufferAlias(scf::IfOp ifOp, scf::YieldOp yieldOp);
+
+  /// Recursive operation scope.
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+
+  /// Update buffer alias information for scopeop.
+  void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
+                                scope::ReturnOp returnOp);
 
   /// Update and obtain op info information.
   OpInfo *UpdateLinearOperation(Operation *op);
@@ -410,8 +426,8 @@ private:
   /// Whether afterBlock is after beforeBlock.
   bool IsBlockAfter(Block *afterBlock, Block *beforeBlock) const;
 
-  /// Whether the value is dead after a certain block.
-  bool IsDeadAfterBlock(Value value, Block *block) const;
+  /// Whether the value is dead after a certain operation.
+  bool IsDeadAfterOp(Value value, Operation *operation) const;
 
   /// Have all alias buffer been killed.
   bool AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
@@ -421,6 +437,28 @@ private:
   /// ancestor of op1.
   bool isParentOpDominate(Operation *op1, Operation *op2) const;
 
+  /// Check whether operand is marked buffer used in multi scope operations.
+  bool IsPreloadBuffer(Value operand);
+
+  /// Check whether operand is marked buffer used in multi scope operations.
+  void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
+
+  /// Update Gen information for multi scope used buffers and their alias
+  /// buffers.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+
+  /// Update Kill information for multi scope used buffers and their alias
+  /// buffers.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+
+  /// Process mark op and update buffer's gen and kill.
+  void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
+                     Liveness live);
+
+  /// If buffer is used by multi vector scope, update buffer's gen and kill to
+  /// the start and end of `for` op which is the parent op of `scope` op.
+  void UpdatePreloadBuffersGenKillMap();
+
   /// Generate buffer's life time.
   void GenerateBufferLife();
 
@@ -428,6 +466,16 @@ private:
   /// namely, the alias buffers of memref.alloc,
   /// e.g. for iter arg and for yield.
   void InitializeInplacePairList();
+
+  mlir::SetVector<Value>
+  currentlyLiveValuesOrdered(const LivenessBlockInfo *livenessInfo,
+                             Operation *op) const;
+
+  template <typename RangeT> RangeT getShuffledRange(const RangeT &range) {
+    RangeT rangeClone = range;
+    std::shuffle(rangeClone.begin(), rangeClone.end(), randomGenerator);
+    return rangeClone;
+  }
 
   func::FuncOp func_;
 
@@ -438,9 +486,15 @@ private:
   DenseMap<Value, BufferStatus> buffer2status;
 
   /// map on buffer alias, and whether the alias buffer is conditional.
-  DenseMap<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
+  llvm::MapVector<Value, SmallVector<BufferCondPair>> buffer2AliasVec;
 
   int seqIndex{0};
+
+  /// random seed for shuffle operation order in plan memory.
+  uint32_t randomSeed{0};
+
+  /// random generator for shuffle operation order in plan memory.
+  std::mt19937 randomGenerator;
 };
 
 /// Pair of StorageEntry.
@@ -450,11 +504,11 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enableMemoryDisplay, bool restrictInplaceAsISA)
-      : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
-        enableMemoryDisplay(enableMemoryDisplay),
+      : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
+        enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA) {}
 
-  LogicalResult plan();
+  LogicalResult plan(bool emitErrors = true);
 
   /// Get buffer2Offsets
   inline DenseMap<Value, SmallVector<uint64_t>> GetBuffer2Offsets() {
@@ -466,8 +520,7 @@ public:
     linearOperation = std::move(linearOp);
   };
 
-  inline void
-  SetBufferInfos(std::map<Value, BufferInfo, utils::ValueComparator> bufsInfo) {
+  inline void SetBufferInfos(llvm::MapVector<Value, BufferInfo> bufsInfo) {
     bufferInfos = bufsInfo;
   }
 
@@ -498,19 +551,21 @@ public:
 
   void SetMemscope2rootSuccessStorageEntry();
 
-  DenseMap<hivm::AddressSpace, StorageEntry *> GetMemscope2rootStorageEntry() {
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+  GetMemscope2rootStorageEntry() {
     return memscope2rootStorageEntry;
   }
 
-  DenseMap<hivm::AddressSpace, StorageEntry *>
-      GetMemscope2rootFailStorageEntry() {
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+  GetMemscope2rootFailStorageEntry() {
     return memscope2rootFailStorageEntry;
   }
 
-  DenseMap<hivm::AddressSpace, StorageEntry *>
-      GetMemscope2rootSuccessStorageEntry() {
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+  GetMemscope2rootSuccessStorageEntry() {
     return memscope2rootSuccessStorageEntry;
   }
+
 private:
   /// different mode for mem plan.
   MemPlanMode planMode;
@@ -629,8 +684,16 @@ private:
                                 const SpecInfo &si) const;
 
   /// spec_level == SPEC_LEVEL_0, life time reuse.
-  inline bool VerifyConflictStage0(StorageEntry *e,
-                                   const std::shared_ptr<MemoryBound> &last);
+  inline bool
+  VerifyConflictStage0(StorageEntry *e,
+                       const std::shared_ptr<MemoryBound> &last,
+                       SmallVector<ValuePair> &stallPipelineInplacePairs);
+
+  /// Check if any pair formed by inplaceBuffers from buffer and conflictBuffer
+  /// matches a pair in inplacableBufferPairs.
+  bool
+  IsInplacableBufferPairMatched(Value buffer, Value conflictBuffer,
+                                SmallVector<ValuePair> &matchedPairs) const;
 
   /// Update the outline information and record history
   void UpdateOutline(MemBoundList &outline, PlanRecHis &his, StorageEntry *e,
@@ -676,6 +739,26 @@ private:
   /// generate inplace list by some rules
   SmallVector<ValuePair> GenerateInplaceList();
 
+  /// Check if src or its paired buffer in inplaceList has multi-buffer
+  /// attribute (multi-buffer num > 1).
+  bool IsInplaceMultiBuffer(Value src,
+                            const SmallVector<ValuePair> &inplaceList) const;
+
+  /// Check if src can be reachable under DstOpType OP.
+  template <typename DstOpType>
+  bool VisitDstOpTypeReachable(Value src, DenseSet<Value> &visited,
+                               const SmallVector<ValuePair> &inplaceList) const;
+
+  /// Check if it has user op.
+  template <typename DstOpType>
+  bool HasUser(Value src, const SmallVector<ValuePair> &inplaceList) const;
+
+  /// Check if gen is store and kill is (or reuse) load when multi-buffer
+  /// scenario, then it can cause mte2/mte3 pipeline stalls, which can not be
+  /// reused.
+  bool InplaceStallPipeline(Value gen, Value kill,
+                            const SmallVector<ValuePair> &inplaceList);
+
   /// the hivmop that can reuse dst address and src address in limited situation
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                      const Value &killBuffer) const;
@@ -695,7 +778,8 @@ private:
                                const StorageEntry *e) const;
 
   /// Assign otherbuffer storage entry address(es). Assigns
-  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each i.
+  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each
+  /// i.
   void PlanRelationOtherBufferEntryAddress(
       llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e);
 
@@ -732,7 +816,7 @@ private:
   SmallVector<std::unique_ptr<OpInfo>> linearOperation;
 
   /// map from buffer value to its buffer information.
-  std::map<Value, BufferInfo, utils::ValueComparator> bufferInfos;
+  llvm::MapVector<Value, BufferInfo> bufferInfos;
 
   /// map from buffer to its lifetime.
   DenseMap<Value, std::shared_ptr<BufferLife>> buffer2Life;
@@ -745,6 +829,10 @@ private:
 
   /// map from operation to its gen and kill buffer.
   DenseMap<OpInfo *, GenKillEntry> genKillMap;
+
+  /// Record pairs of buffers that can be inplaced but not be inplaced due to
+  /// pipeline stalls at earlier phase.
+  SmallVector<ValuePair> inplacableBufferPairs;
 
   /// record all storage entry to be plan address.
   SmallVector<std::unique_ptr<StorageEntry>> StorageEntryVec;
@@ -759,10 +847,10 @@ private:
   DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
 
   /// map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *> memscope2rootStorageEntry;
 
   /// map from workspace arg to its root StorageEntry.
-  DenseMap<Value, StorageEntry *> workSpaceArg2rootStorageEntry;
+  llvm::MapVector<Value, StorageEntry *> workSpaceArg2rootStorageEntry;
 
   /// map from buffer scope to its required size to plan rest memory without any
   /// reuse.
@@ -790,13 +878,15 @@ private:
   SmallVector<ValuePair> inplacePairList;
 
   /// The scope of the buffer applied memory fail and the max bits it applied.
-  std::map<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+  llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
 
   /// when plan memory fail, map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootFailStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+      memscope2rootFailStorageEntry;
 
   /// when plan memory success, map from each scope to its root StorageEntry.
-  DenseMap<hivm::AddressSpace, StorageEntry *> memscope2rootSuccessStorageEntry;
+  llvm::MapVector<hivm::AddressSpace, StorageEntry *>
+      memscope2rootSuccessStorageEntry;
 };
 
 } // namespace hivm

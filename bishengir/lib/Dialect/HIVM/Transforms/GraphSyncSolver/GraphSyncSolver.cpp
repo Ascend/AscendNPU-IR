@@ -70,6 +70,8 @@ void GraphSyncSolverPass::runOnOperation() {
   SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC, isMemBasedArch,
                             isRegBasedArch);
   options.enableUnitFlagFeature = this->enableUnitFlag;
+  options.intraCoreIgnoreWorkSpaceFunctionArguments =
+      this->ignoreWorkSpaceFunctionArguments;
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 
@@ -88,7 +90,17 @@ void GraphSyncSolverPass::runOnOperation() {
     }
   });
 
+  if (solver->hasCustomMacroEventIdConflict()) {
+    funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
+    return signalPassFailure();
+  }
+
   solver->solve();
+
+  if (solver->hasCustomMacroEventIdConflict()) {
+    funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
+    return signalPassFailure();
+  }
 
   CodeGenerator codeGen(std::move(solver));
   codeGen.generateResultOps();

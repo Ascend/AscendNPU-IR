@@ -25,7 +25,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
-#include <asm-generic/errno.h>
+#include <cerrno>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -367,8 +367,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
                corePipe);
         auto &triggeredOps = triggeredSetFlagOps[getTriggeredGroup(waitFlagOp)];
         assert(!waitFlagOp->eventIds.empty());
-        auto eventId =
-            waitFlagOp->eventIds[loopIdx % waitFlagOp->eventIds.size()];
+        auto eventId = waitFlagOp->eventIds[loopIdx % static_cast<int>(
+            waitFlagOp->eventIds.size())];
         auto it = triggeredOps.find(eventId);
         if (it != triggeredOps.end()) {
           assert((*it) == eventId);
@@ -559,7 +559,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     }
     assert(!setFlagOp->eventIds.empty());
     triggeredSetFlagOps[getTriggeredGroup(setFlagOp)].insert(
-        setFlagOp->eventIds[loopIndex % setFlagOp->eventIds.size()]);
+        setFlagOp->eventIds[loopIndex %
+                            static_cast<int>(setFlagOp->eventIds.size())]);
     refreshPipeQue(corePipeDst);
   };
 
@@ -702,9 +703,9 @@ llvm::LogicalResult SyncTester::test() {
 // If environment indicates tester mode, parse env vars and run SyncTester.
 void SyncTester::runTestMode(const SmallVector<int64_t> &options) {
   if (options.size() != SyncTester::getOptionsNum()) {
-    llvm_unreachable(("Expected size of sync-tester options to be equal to " +
-                      std::to_string(SyncTester::getOptionsNum()))
-                         .c_str());
+    llvm::report_fatal_error(("Expected size of sync-tester options to be equal to " +
+                              std::to_string(SyncTester::getOptionsNum()))
+                              .c_str());
     return;
   }
 

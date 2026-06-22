@@ -84,6 +84,41 @@ public:
   };
 };
 
+/// This class provides the API for HIVM Operations that have library
+/// functions that support operands with a static, predefined maximum rank.
+template <int MaxRank> class OpLibraryMaxRankTrait {
+public:
+  template <typename ConcreteType>
+  class Impl
+      : public TraitBase<ConcreteType, OpLibraryMaxRankTrait<MaxRank>::Impl> {
+  public:
+    static LogicalResult verifyTrait(Operation *op) { return success(); }
+    static int getOpLibraryMaxRankImpl() { return MaxRank; }
+  };
+};
+
+/// This class provides the API for HIVM Operations that have library
+/// functions that support operands with a dynamic maximum rank.
+class InferMaxRankTrait : public OpLibraryMaxRankTrait<0> {};
+
+/// This class provides the API for HIVM Operations that have library
+/// functions that have no restrictions on the operand rank.
+class NoMaxRankTrait : public OpLibraryMaxRankTrait<-1> {};
+
+/// This class provides the API for HIVM Operations that doesn't have a library
+/// function implemented.
+template <typename ConcreteType>
+class NoLibraryFunctionTrait
+    : public TraitBase<ConcreteType, NoLibraryFunctionTrait> {
+public:
+  static int getOpLibraryMaxRankImpl() {
+    llvm_unreachable("This op has no library function.");
+  }
+  static std::string getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+    llvm_unreachable("This op has no library function.");
+  }
+};
+
 template <typename ConcreteType>
 class BroadcastableOTF : public TraitBase<ConcreteType, BroadcastableOTF> {
 public:

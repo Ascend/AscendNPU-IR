@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "bishengir/Dialect/Utils/BytecodeDialectExtensions.h"
 
 #include "llvm/ADT/SmallVector.h"
@@ -130,3 +131,4 @@ void bishengir::registerBytecodeDialectExtensions(DialectRegistry &registry) {
     dialect->addInterfaces<FuncBytecodeDialectInterface>();
   });
 }
+#endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY

@@ -138,6 +138,8 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
   __ubuf__ uint64_t *ub_mask_ptr_ptr =
       (__ubuf__ uint64_t *)(ub_mask_ptr +
                             num_blocks_for_mask_aligned * INTR_BYTES_PER_BLOCK);
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   // to put the ub_mask_ptr in the CMPMASK
   ub_mask_ptr_ptr[0] =
       (uint64_t)((uint8_t *)(((uint64_t)((__ubuf__ uint8_t *)ub_mask_ptr))));
@@ -324,7 +326,9 @@ __aiv__ __attribute__((always_inline)) void
 scalar_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
                             memref_t<__ubuf__ T, 2> *dst_value,
                             memref_t<__ubuf__ int32_t, 2> *dst_index) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance.\n");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("reduceRA with index");
+#endif
   static_assert(std::is_same<half, T>() ||
                 std::is_same<float, T>(),
                 "T must be half or float.");
@@ -453,39 +457,14 @@ reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
   bool is_offset_address_aligned = is_offset_address_aligned_to_block<T>(src0, dst_value, dst_index);
   bool is_same_offset_aligned = is_same_element_nums_to_move_offset_aligned(src0, dst_value, dst_index);
 
-  // The stride sizes of source and dest are aligned.
-  if (is_stride_size_aligned) {
-    // The address of source, dest_value and dest_index with the offset is 32-byte aligned.
-    if (is_offset_address_aligned) {
+  // The stride sizes of source and dest are aligned and the address of source, dest_value and dest_index with the offset is 32-byte aligned.
+  if (is_stride_size_aligned && is_offset_address_aligned) [[likely]] {
       vector_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(src0, dst_value, dst_index, tmp_index);
-      return;
-    }
-
-    // The address of source, dest_value and dest_index with the offset is not 32-byte aligned.
-    // After an additional same offset is added, the addresses can be 32-byte aligned.
-    if (is_same_offset_aligned) {
-      // source, dest_value and dest_index. The unaligned part is calculated using the scalar,
-      // and the aligned part is calculated using the vector.
-      int64_t scalar_element_nums = element_nums_to_move_offset_aligned<T>(src0);
-      scalar_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(
-        src0, dst_value, dst_index, scalar_element_nums);
-
-      // If the scalar has processed all data, the vector does not need to be called for processing.
-      auto last_dim_ub_element_nums = src0->sizes[1] * src0->strides[1];
-      if (last_dim_ub_element_nums < scalar_element_nums) {
-        return;
-      }
-      vector_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(
-        src0, dst_value, dst_index, tmp_index, scalar_element_nums);
-      return;
-    }
-    // After an additional same offset is added, the addresses can not be 32-byte aligned.
+  } else [[unlikely]] {
+    // The address or stride is not aligned.
     scalar_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(src0, dst_value, dst_index);
-    return;
-  } 
-  
-  // The stride sizes of source and dest are not aligned.
-  scalar_reduce_ra_with_index<OP, WITH_INDEX_TYPE>(src0, dst_value, dst_index);
+  }
+
 }
 
 /// reduce src (r, a) with stride [n, 1] to dst (r, 1) and return the

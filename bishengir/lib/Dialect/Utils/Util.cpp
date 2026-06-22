@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -64,7 +65,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
     }
     if (auto whileOp =
             dyn_cast<scf::WhileOp>(arg.getParentRegion()->getParentOp())) {
-      result.emplace_back(whileOp.getTiedLoopInit(arg)->get());
+      if (auto *tiedLoopInit = whileOp.getTiedLoopInit(arg)) {
+        result.emplace_back(tiedLoopInit->get());
+      }
     }
   }
 
@@ -131,6 +134,20 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 } // namespace
 
 namespace utils {
+
+ModuleOp getTopLevelModuleOp(Operation *op) {
+  ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
+  while (moduleOp && moduleOp->getParentOp()) {
+    auto spec = moduleOp->getAttrOfType<TargetSystemSpecAttr>(
+        "dlti.target_system_spec");
+    if (spec) {
+      return moduleOp;
+    }
+    moduleOp = moduleOp->getParentOfType<ModuleOp>();
+  }
+  return moduleOp;
+}
+
 void eraseTriviallyDeadOps(ArrayRef<Operation *> ops) {
   for (auto I = ops.rbegin(), E = ops.rend(); I != E;) {
     Operation *curOp = *I;
@@ -191,7 +208,7 @@ Value createEmptyOpWithTargetElemType(
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 #else
     // TODO: it should be defined in Dialect/Tensor/IR
     return tensor::createTensorEmptyOpWithTargetElemType(builder, loc, source,
@@ -206,7 +223,7 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 #else
     return tensor::createTensorEmptyOp(builder, loc, source);
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -257,7 +274,7 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
         values.push_back(whileOp.getAfter().front().getArgument(resNum));
       })
       .Default([&](Operation *otherOp) {
-        llvm_unreachable("unsupported loop like op!");
+        llvm::report_fatal_error("unsupported loop like op!");
       });
 
   return values;
@@ -473,6 +490,11 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   }
   int64_t allocSize =
       maybeStaticTotalSize.value() / static_cast<int64_t>(i8TypeWidth);
+  auto sourceElemTypeWidth =
+      getElementTypeOrSelf(source.getType()).getIntOrFloatBitWidth();
+  auto srcAllocElemTypeWidth =
+      getElementTypeOrSelf(srcAllocMemref).getIntOrFloatBitWidth();
+  allocSize = allocSize * srcAllocElemTypeWidth / sourceElemTypeWidth;
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));
@@ -542,7 +564,7 @@ Value getDimValue(OpBuilder &builder, Location loc, Value v, int64_t dim) {
 OpFoldResult getDimOFR(OpBuilder &builder, Location loc, Value v, int64_t dim) {
   auto type = cast<ShapedType>(v.getType());
   if (!type.hasRank()) {
-    llvm_unreachable("Cannot get dim for type with no rank");
+    llvm::report_fatal_error("Cannot get dim for type with no rank");
     return {};
   }
 
@@ -594,11 +616,19 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
 bool isAlignedInUB(Type type) {
   if (auto shapedType = dyn_cast<ShapedType>(type)) {
     auto shape = shapedType.getShape();
-    auto lastDimSizeInBit =
-        shape.back() * shapedType.getElementType().getIntOrFloatBitWidth();
+    const int64_t lastDimSizeInBit =
+        shape.back() * static_cast<int64_t>(
+            shapedType.getElementType().getIntOrFloatBitWidth());
     return lastDimSizeInBit % kUBAlignSizeInBits == 0;
   }
   return type.getIntOrFloatBitWidth() % kUBAlignSizeInBits == 0;
+}
+
+bool isUnstructuredMemAccLoop(Operation *op) {
+  auto forOp = dyn_cast<scf::ForOp>(op);
+  if (!forOp)
+    return false;
+  return forOp->hasAttr("ExtractedLoadOrStore");
 }
 
 hivm::AxisKind getAxisKind(int dim, int rank) {

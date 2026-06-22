@@ -104,5 +104,26 @@ def ExecutionEngineHIVMToUpstreamConversion : Pass<"execution-engine-convert-hiv
     "tensor::TensorDialect",
   ];
 }
+def ExecutionEngineHFusionToUpstreamConversion : Pass<"execution-engine-convert-hfusion-to-upstream"> {
+  let summary = "Convert HFusion operations to upstream dialect's equivalent for execution engine";
+  let description = [{
+    Convert selected HFusion operations (e.g., HistogramOp) into upstream dialects 
+    to allow for CPU execution and precision debugging.
 
+    Modifications made:
+      * Decompose complex HFusion operations into standard Linalg, SCF, Arith, and Tensor ops.
+      * Support tensor shape collapsing, dynamic shape resolution, and mask semantics.
+
+    Constraints/Assumptions:
+      * Operations are currently expected to have pure tensor semantics
+  }];
+  let constructor = "mlir::execution_engine::createConvertHFusionToUpstreamPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "hfusion::HFusionDialect",
+    "linalg::LinalgDialect",
+    "scf::SCFDialect",
+    "tensor::TensorDialect"
+  ];
+}
 #endif // BISHENGIR_EXECUTION_ENGINE_TRANSFORMS_PASSES

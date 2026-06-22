@@ -6,4 +6,5 @@ add_bishengir_library(BiShengIRToolUtils
 
   LINK_LIBS PUBLIC
   BiShengIRPass
+  BiShengIRRetriablePassManager
 )

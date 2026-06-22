@@ -277,7 +277,7 @@ bool isVectorOnlyOperandImpl(Operation *op, size_t idx) {
   case 0:
     return hivmOp->hasTrait<mlir::OpTrait::VectorOnlyTrait<0>::Impl>();
   default:
-    llvm_unreachable("index not supported yet");
+    llvm::report_fatal_error("index not supported yet");
     break;
   }
   return false;

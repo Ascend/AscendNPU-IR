@@ -21,6 +21,158 @@
 #include "Vector/VecUtils.h"
 #include <cstdint>
 
+// Scalar fallback: dst[i] = condition[i] ? src0[i] : src1[i]
+template <typename T, typename COND_T>
+__aiv__ __attribute__((always_inline)) void
+scalar_select_vv_1d(memref_t<__ubuf__ COND_T, 1> *condition,
+                    memref_t<__ubuf__ T, 1> *src0,
+                    memref_t<__ubuf__ T, 1> *src1,
+                    memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("select vv 1d unaligned");
+#endif
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *src1_ptr = src1->aligned + src1->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t n = dst->sizes[0];
+
+  for (int64_t i = 0; i < n; ++i) {
+    bool cond = get_condition_bit<COND_T>(condition, i);
+    T val0 = src0_ptr[i * src0->strides[0]];
+    T val1 = src1_ptr[i * src1->strides[0]];
+    dst_ptr[i * dst->strides[0]] = cond ? val0 : val1;
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Scalar fallback: dst[i] = condition[i] ? src0 : src1 (both sources are scalars)
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_select_ss_1d(memref_t<__ubuf__ bool, 1> *condition,
+                    T src0,
+                    T src1,
+                    memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("select ss 1d unaligned");
+#endif
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t n = dst->sizes[0];
+
+  for (int64_t i = 0; i < n; ++i) {
+    bool cond = get_condition_bit(condition, i);
+    dst_ptr[i * dst->strides[0]] = cond ? src0 : src1;
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Scalar fallback: dst[i] = condition[i] ? src0[i] : src1 (vector vs scalar)
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_select_vs_1d(memref_t<__ubuf__ bool, 1> *condition,
+                    memref_t<__ubuf__ T, 1> *src0,
+                    T src1,
+                    memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("select vs 1d unaligned");
+#endif
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t n = src0->sizes[0];
+
+  for (int64_t i = 0; i < n; ++i) {
+    bool cond = get_condition_bit(condition, i);
+    T val0 = src0_ptr[i * src0->strides[0]];
+    dst_ptr[i * dst->strides[0]] = cond ? val0 : src1;
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Scalar fallback: dst[i] = condition[i] ? src0 : src1[i] (scalar vs vector)
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_select_sv_1d(memref_t<__ubuf__ bool, 1> *condition,
+                    T src0,
+                    memref_t<__ubuf__ T, 1> *src1,
+                    memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("select sv 1d unaligned");
+#endif
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+
+  __ubuf__ T *src1_ptr = src1->aligned + src1->offset;
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  const int64_t n = src1->sizes[0];
+
+  for (int64_t i = 0; i < n; ++i) {
+    bool cond = get_condition_bit(condition, i);
+    T val1 = src1_ptr[i * src1->strides[0]];
+    dst_ptr[i * dst->strides[0]] = cond ? src0 : val1;
+  }
+
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+// Check alignment for vector-vector select: condition, src0, src1, and dst must all be aligned.
+template <typename T, typename COND_T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_select_vv_1d(memref_t<__ubuf__ COND_T, 1> *condition,
+                               memref_t<__ubuf__ T, 1> *src0,
+                               memref_t<__ubuf__ T, 1> *src1,
+                               memref_t<__ubuf__ T, 1> *dst) {
+  return is_memref_aligned<COND_T, 1>(condition) &&
+         is_memref_aligned<T, 1>(src0) &&
+         is_memref_aligned<T, 1>(src1) &&
+         is_memref_aligned<T, 1>(dst);
+}
+
+// Check alignment for scalar-scalar select: condition and dst must be aligned.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_select_ss_1d(memref_t<__ubuf__ bool, 1> *condition,
+                               memref_t<__ubuf__ T, 1> *dst) {
+  return is_memref_aligned<bool, 1>(condition) &&
+         is_memref_aligned<T, 1>(dst);
+}
+
+// Check alignment for vector-scalar select: condition, src0, and dst must be aligned.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_select_vs_1d(memref_t<__ubuf__ bool, 1> *condition,
+                               memref_t<__ubuf__ T, 1> *src0,
+                               memref_t<__ubuf__ T, 1> *dst) {
+  return is_memref_aligned<bool, 1>(condition) &&
+         is_memref_aligned<T, 1>(src0) &&
+         is_memref_aligned<T, 1>(dst);
+}
+
+// Check alignment for scalar-vector select: condition, src1, and dst must be aligned.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_select_sv_1d(memref_t<__ubuf__ bool, 1> *condition,
+                               memref_t<__ubuf__ T, 1> *src1,
+                               memref_t<__ubuf__ T, 1> *dst) {
+  return is_memref_aligned<bool, 1>(condition) &&
+         is_memref_aligned<T, 1>(src1) &&
+         is_memref_aligned<T, 1>(dst);
+}
+
 /// General Constraints:
 /// 1. src0 and src1 should be float or half -> hence all other types are
 ///    casted into float or half.

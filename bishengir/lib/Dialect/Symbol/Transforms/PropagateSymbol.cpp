@@ -165,7 +165,7 @@ struct BindReifyResultShape
         bindValues.push_back(reifyOp->getResult(0));
         continue;
       }
-      llvm_unreachable("unsupported reify op type");
+      llvm::report_fatal_error("unsupported reify op type");
     }
 
     MLIRContext *ctx = getContext();
@@ -289,7 +289,7 @@ public:
       SmallVector<int64_t> statics;
       dispatchIndexOpFoldResults(sizes, indexOperands, statics);
     } else {
-      llvm_unreachable("unsupported tensor op type");
+      llvm::report_fatal_error("unsupported tensor op type");
     }
 
     // filter arith index operands
@@ -519,7 +519,7 @@ public:
                          std::is_same_v<tensor::ConcatOp, OpType>) {
       inputs = op.getInputs();
     } else {
-      llvm_unreachable("unsupported op type for UnifyPartialEquivalentDims");
+      llvm::report_fatal_error("unsupported op type for UnifyPartialEquivalentDims");
     }
     return inputs;
   }
@@ -537,7 +537,7 @@ public:
     } else if constexpr (std::is_same_v<tensor::ConcatOp, OpType>) {
       outputs.push_back(op.getResult());
     } else {
-      llvm_unreachable("unsupported op type for UnifyPartialEquivalentDims");
+      llvm::report_fatal_error("unsupported op type for UnifyPartialEquivalentDims");
     }
     return outputs;
   }

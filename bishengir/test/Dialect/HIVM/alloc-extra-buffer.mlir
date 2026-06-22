@@ -2548,7 +2548,7 @@ func.func @test_vreduce_vcg_temp_buffer() attributes {hivm.enable_saving_ub} {
 
 // -----
 
-func.func @test_cast_s322s8_2d() {
+func.func @test_cast_s322s8_2d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2x16xi32, #hivm.address_space<ub>> // 32 * 16 * i32
   %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
 
@@ -2562,7 +2562,7 @@ func.func @test_cast_s322s8_2d() {
 
 // -----
 
-func.func @test_cast_s322s8_1d() {
+func.func @test_cast_s322s8_1d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2xi32, #hivm.address_space<ub>> // 256 * i32
   %dst = memref.alloc() : memref<2xi8, #hivm.address_space<ub>>
 
@@ -2576,7 +2576,7 @@ func.func @test_cast_s322s8_1d() {
 
 // -----
 
-func.func @test_cast_s162s8_2d() {
+func.func @test_cast_s162s8_2d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2x16xi16, #hivm.address_space<ub>> //  32 * 16 * i16
   %dst = memref.alloc() : memref<2x16xi8, #hivm.address_space<ub>>
 
@@ -2590,7 +2590,7 @@ func.func @test_cast_s162s8_2d() {
 
 // -----
 
-func.func @test_cast_s162s8_1d() {
+func.func @test_cast_s162s8_1d_extra() attributes {hivm.disable_size_align_for_cast} {
   %src = memref.alloc() : memref<2xi16, #hivm.address_space<ub>> // 512 * i16
   %dst = memref.alloc() : memref<2xi8, #hivm.address_space<ub>>
 
@@ -2599,5 +2599,157 @@ func.func @test_cast_s162s8_1d() {
   hivm.hir.vcast ins(%src : memref<2xi16, #hivm.address_space<ub>>)
                  outs(%dst : memref<2xi8, #hivm.address_space<ub>>)
                  round_mode = <truncwithoverflow>
+  return
+}
+
+// -----
+
+//===----------------------------------------------------------------------===//
+// AAR (3D last-axis reduce) tests
+//===----------------------------------------------------------------------===//
+
+// AAR fusion path: extraBufferSize = aDim * numPerRepeat = 8 * 64 = 512
+func.func @test_aar_fusion_sum_f32() {
+  %src_buf = memref.alloc() : memref<2x4x100xf32>
+  %dst_buf = memref.alloc() : memref<2x4x1xf32>
+  %src = memref.subview %src_buf[0, 0, 0] [2, 3, 100] [1, 1, 1] : memref<2x4x100xf32> to memref<2x3x100xf32, strided<[400, 100, 1]>>
+  %dst = memref.subview %dst_buf[0, 0, 0] [2, 3, 1] [1, 1, 1] : memref<2x4x1xf32> to memref<2x3x1xf32, strided<[4, 1, 1]>>
+  // CHECK: memref.alloc() : memref<512xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<512xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<2x3x100xf32, strided<[400, 100, 1]>>) outs(%dst : memref<2x3x1xf32, strided<[4, 1, 1]>>) reduce_dims = [2]
+  return
+}
+
+// -----
+
+// AAR fallback: rows_per_plane mismatch (4 vs 5).
+func.func @test_aar_fallback_mismatch_rows_sum_f32() {
+  %src_buf = memref.alloc() : memref<2x4x100xf32>
+  %dst_buf = memref.alloc() : memref<2x5x1xf32>
+  %src = memref.subview %src_buf[0, 0, 0] [2, 3, 100] [1, 1, 1] : memref<2x4x100xf32> to memref<2x3x100xf32, strided<[400, 100, 1]>>
+  %dst = memref.subview %dst_buf[0, 0, 0] [2, 3, 1] [1, 1, 1] : memref<2x5x1xf32> to memref<2x3x1xf32, strided<[5, 1, 1]>>
+  // CHECK: memref.alloc() : memref<192xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<192xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<2x3x100xf32, strided<[400, 100, 1]>>) outs(%dst : memref<2x3x1xf32, strided<[5, 1, 1]>>) reduce_dims = [2]
+  return
+}
+
+// -----
+
+// AAR no stride info: contiguous 3D fallback, aDim = a0*a1 = 6.
+func.func @test_aar_no_stride_sum_f32() {
+  %src = memref.alloc() : memref<2x3x100xf32>
+  %dst = memref.alloc() : memref<2x3x1xf32>
+  // CHECK: memref.alloc() : memref<384xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<384xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<2x3x100xf32>) outs(%dst : memref<2x3x1xf32>) reduce_dims = [2]
+  return
+}
+
+// -----
+
+// AAR fallback: rows_per_plane 4!=5, dst_stride1=1 → loop over a0, aDim=3, extraBuf=192.
+func.func @test_aar_fallback_dst_stride1_eq1_sum_f32() {
+  %src_buf = memref.alloc() : memref<2x4x100xf32>
+  %dst_buf = memref.alloc() : memref<2x5x1xf32>
+  %src = memref.subview %src_buf[0, 0, 0] [2, 3, 100] [1, 1, 1] : memref<2x4x100xf32> to memref<2x3x100xf32, strided<[400, 100, 1]>>
+  %dst = memref.subview %dst_buf[0, 0, 0] [2, 3, 1] [1, 1, 1] : memref<2x5x1xf32> to memref<2x3x1xf32, strided<[5, 1, 1]>>
+  // CHECK: memref.alloc() : memref<192xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<192xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<2x3x100xf32, strided<[400, 100, 1]>>) outs(%dst : memref<2x3x1xf32, strided<[5, 1, 1]>>) reduce_dims = [2]
+  return
+}
+
+// -----
+
+// AAR fallback: rows_per_plane 4!=3, neither dst stride is 1, a0>a1 → loop over a1, aDim=4, extraBuf=256.
+func.func @test_aar_fallback_neither_stride1_sum_f32() {
+  %src_buf = memref.alloc() : memref<4x4x100xf32>
+  %dst_buf = memref.alloc() : memref<4x3x4xf32>
+  %src = memref.subview %src_buf[0, 0, 0] [4, 3, 100] [1, 1, 1] : memref<4x4x100xf32> to memref<4x3x100xf32, strided<[400, 100, 1]>>
+  %dst = memref.subview %dst_buf[0, 0, 0] [4, 3, 1] [1, 1, 1] : memref<4x3x4xf32> to memref<4x3x1xf32, strided<[12, 4, 1]>>
+  // CHECK: memref.alloc() : memref<256xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<256xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<4x3x100xf32, strided<[400, 100, 1]>>) outs(%dst : memref<4x3x1xf32, strided<[12, 4, 1]>>) reduce_dims = [2]
+  return
+}
+
+// -----
+
+//===----------------------------------------------------------------------===//
+// ARA (3D middle-axis reduce) tests
+//===----------------------------------------------------------------------===//
+
+// ARA dichotomy: repeatTimes=3 <= s0=128.
+func.func @test_ara_dichotomy_sum_f32() {
+  %src = memref.alloc() : memref<128x8x3xf32>
+  %dst = memref.alloc() : memref<128x1x3xf32>
+  // CHECK: memref.alloc() : memref<4096xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<4096xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<128x8x3xf32>) outs(%dst : memref<128x1x3xf32>) reduce_dims = [1]
+  return
+}
+
+// -----
+
+// ARA peeled: repeatTimes=42 > s0=2, contiguous.
+func.func @test_ara_peeled_sum_f32() {
+  %src = memref.alloc() : memref<2x100x3xf32>
+  %dst = memref.alloc() : memref<2x1x3xf32>
+  // CHECK: memref.alloc() : memref<300xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<300xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<2x100x3xf32>) outs(%dst : memref<2x1x3xf32>) reduce_dims = [1]
+  return
+}
+
+// -----
+
+// ARA dichotomy XOR: repeatTimes=3 <= s0=128.
+func.func @test_ara_dichotomy_xori_i32() {
+  %src = memref.alloc() : memref<128x8x3xi32>
+  %dst = memref.alloc() : memref<128x1x3xi32>
+  // CHECK: memref.alloc() : memref<8192xi32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<8192xi32>)
+  hivm.hir.vreduce <xori> ins(%src : memref<128x8x3xi32>) outs(%dst : memref<128x1x3xi32>) reduce_dims = [1]
+  return
+}
+
+// -----
+
+// ARA peeled XOR: repeatTimes=42 > s0=2, contiguous.
+func.func @test_ara_peeled_xori_i32() {
+  %src = memref.alloc() : memref<2x100x3xi32>
+  %dst = memref.alloc() : memref<2x1x3xi32>
+  // CHECK: memref.alloc() : memref<496xi32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<496xi32>)
+  hivm.hir.vreduce <xori> ins(%src : memref<2x100x3xi32>) outs(%dst : memref<2x1x3xi32>) reduce_dims = [1]
+  return
+}
+
+// -----
+
+// ARA peeled strided: stride1=16 > s2=3, reduceRaTmp=512 > s1*s2=300.
+func.func @test_ara_peeled_strided_sum_f32() {
+  %src_buf = memref.alloc() : memref<2x100x16xf32>
+  %dst_buf = memref.alloc() : memref<2x1x16xf32>
+  %src = memref.subview %src_buf[0, 0, 0] [2, 100, 3] [1, 1, 1] : memref<2x100x16xf32> to memref<2x100x3xf32, strided<[1600, 16, 1]>>
+  %dst = memref.subview %dst_buf[0, 0, 0] [2, 1, 3] [1, 1, 1] : memref<2x1x16xf32> to memref<2x1x3xf32, strided<[16, 16, 1]>>
+  // CHECK: memref.alloc() : memref<512xf32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<512xf32>)
+  hivm.hir.vreduce <sum> ins(%src : memref<2x100x3xf32, strided<[1600, 16, 1]>>) outs(%dst : memref<2x1x3xf32, strided<[16, 16, 1]>>) reduce_dims = [1]
+  return
+}
+
+// -----
+
+// ARA peeled strided XOR: stride1=16, xorReduceRaTmp=912.
+func.func @test_ara_peeled_strided_xori_i32() {
+  %src_buf = memref.alloc() : memref<2x100x16xi32>
+  %dst_buf = memref.alloc() : memref<2x1x16xi32>
+  %src = memref.subview %src_buf[0, 0, 0] [2, 100, 3] [1, 1, 1] : memref<2x100x16xi32> to memref<2x100x3xi32, strided<[1600, 16, 1]>>
+  %dst = memref.subview %dst_buf[0, 0, 0] [2, 1, 3] [1, 1, 1] : memref<2x1x16xi32> to memref<2x1x3xi32, strided<[16, 16, 1]>>
+  // CHECK: memref.alloc() : memref<912xi32>
+  // CHECK: hivm.hir.vreduce{{.*}}temp_buffer({{.*}}memref<912xi32>)
+  hivm.hir.vreduce <xori> ins(%src : memref<2x100x3xi32, strided<[1600, 16, 1]>>) outs(%dst : memref<2x1x3xi32, strided<[16, 16, 1]>>) reduce_dims = [1]
   return
 }

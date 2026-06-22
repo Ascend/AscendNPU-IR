@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -55,17 +56,19 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
 
   auto srcElemType = getElementTypeOrSelf(srcShapedType);
   auto dstElemType = getElementTypeOrSelf(dstShapedType);
-  auto srcElemBytes =
-      srcElemType.getIntOrFloatBitWidth() / mlir::utils::INTR_BITS_PER_BYTE;
-  auto dstElemBytes =
-      dstElemType.getIntOrFloatBitWidth() / mlir::utils::INTR_BITS_PER_BYTE;
+  const int64_t srcElemBytes =
+      static_cast<int64_t>(srcElemType.getIntOrFloatBitWidth()) /
+      static_cast<int64_t>(mlir::utils::INTR_BITS_PER_BYTE);
+  const int64_t dstElemBytes =
+      static_cast<int64_t>(dstElemType.getIntOrFloatBitWidth()) /
+      static_cast<int64_t>(mlir::utils::INTR_BITS_PER_BYTE);
 
   if (srcElemBytes == 0 || dstElemBytes == 0) {
     auto sz = utils::traceToAllocMaxSize(srcVal);
     return sz.value_or(0);
   }
 
-  int64_t bytesFactor = srcElemBytes / dstElemBytes;
+  const int64_t bytesFactor = srcElemBytes / dstElemBytes;
   int64_t rank = srcShapedType.getRank();
 
   // Fallback for unexpected rank.
@@ -87,7 +90,7 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
   }
 
   uint32_t hwAlignBytes = maybeHwAlignBytes.value();
-  int64_t numElemPerBlock =
+  const int64_t numElemPerBlock =
       static_cast<int64_t>(mlir::utils::INTR_BYTES_PER_BLOCK) / srcElemBytes;
   int64_t numElemPerBlockForDst = numElemPerBlock * bytesFactor;
   // For example (a, b)strides<n1, 1>*i32 cast to (a, b)strides<n2, 1>*i8:
@@ -113,10 +116,10 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
           numElemPerBlockForDst);
       hwAlignBytes = newAlignBytes;
     } else {
-      hwAlignBytes = static_cast<uint32_t>(
-          numElemPerBlockForDst * numElemPerBlockForDst * bytesFactor);
+      hwAlignBytes = static_cast<uint32_t>(numElemPerBlockForDst *
+                                           numElemPerBlockForDst * bytesFactor);
     }
-    int64_t alignUnit = static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
+    const int64_t alignUnit = static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
     alignedShape[0] = util::ceilFactor(dim0, alignUnit);
   } else {
     int64_t lastDim = rank - 1;
@@ -129,13 +132,13 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
     }
 
     // Align the second axis in castAlignDims.
-    int64_t alignUnitLast =
+    const int64_t alignUnitLast =
         static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
     alignedShape[lastDim] = util::ceilFactor(dimLast, alignUnitLast);
     // Align the first axis in castAlignDims.
     uint32_t hwAlignBytesFirst =
         static_cast<uint32_t>(numElemPerBlockForDst * bytesFactor);
-    int64_t alignUnitFirst =
+    const int64_t alignUnitFirst =
         static_cast<int64_t>(hwAlignBytesFirst) / srcElemBytes;
     alignedShape[firstDim] = util::ceilFactor(dimFirst, alignUnitFirst);
   }
@@ -151,7 +154,7 @@ static int64_t getAlignedSrcSizeForCast(VCastOp op) {
   if (isa<OpType>(op)) {                                                       \
     auto concreteOp = dyn_cast<OpType>(op);                                    \
     return concreteOp.shouldLowerToScalarLoops();                              \
-  } 
+  }
 
 bool shouldSkipAllocExtraBuffer(Operation *op) {
   CHECK_OP(VMulOp)
@@ -266,9 +269,25 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
     // requires additional tmp_buf to store the transposed result.
     ShapedType srcVecType = cast<ShapedType>(this->getSrc()[0].getType());
     auto eleType = srcVecType.getElementType();
-    int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
-    // Reserve 3 times the "aligned src size" for subsequent template conversion.
-    SmallVector<int64_t> extraBufSizes{alignedSrcSize * 3};
+
+    bool useExtraScheme = false;
+    if (auto func = getOperation()->getParentOfType<func::FuncOp>()) {
+      if (func->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+        useExtraScheme = true;
+      }
+    }
+
+    SmallVector<int64_t> extraBufSizes;
+    if (!useExtraScheme) {
+      std::optional<int64_t> srcAllocTotalSize =
+          utils::traceToAllocMaxSize(this->getSrc()[0]);
+      extraBufSizes = {srcAllocTotalSize.value() * 2};
+    } else {
+      int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
+      // Reserve 3 times the "aligned src size" for subsequent template
+      // conversion.
+      extraBufSizes = {alignedSrcSize * 3};
+    }
     extraBuf = allocExtraBuffer(this->getOperation(), extraBufSizes, eleType);
   } else if (isI32ToI16 || isI64ToI32) {
     if (this->getRoundMode() != hivm::RoundMode::TRUNCWITHOVERFLOW) {
@@ -426,9 +445,10 @@ LogicalResult VReduceOp::allocExtraBuffersIfPossible() {
   }
 
   if (this->shouldLowerToScalarLoops()) {
-      // if decompose to scalar later, there is no need to allocate an extra buffer.
-      return success();
-    }
+    // if decompose to scalar later, there is no need to allocate an extra
+    // buffer.
+    return success();
+  }
 
   MemRefType srcVecType = cast<MemRefType>(this->getSrc().getType());
   auto bufSizeMaybe = hivm::util::getExtraBufferSizeForReduceOp(
@@ -577,4 +597,35 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
                                     srcVecType.getElementType());
   this->getTempBufferMutable().assign(extraBuf);
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+template <typename CustomOpT>
+LogicalResult allocExtraBuffersForCustomOp(CustomOpT op) {
+  if (!llvm::to_vector(op.getTempBuffers()).empty()) {
+    op.emitWarning("already has extra temp buffers");
+    return success();
+  }
+
+  SmallVector<Value> buffs;
+  for (const auto &[type, size] : op.getExtraBuffersInfo()) {
+    Value extraBuf = allocExtraBuffer(op.getOperation(), {size}, type);
+    buffs.push_back(extraBuf);
+  }
+
+  op.getTempBuffersMutable().assign(buffs);
+  return success();
+}
+} // namespace
+
+LogicalResult CustomOp::allocExtraBuffersIfPossible() {
+  return allocExtraBuffersForCustomOp(*this);
+}
+
+LogicalResult CustomMacroOp::allocExtraBuffersIfPossible() {
+  return allocExtraBuffersForCustomOp(*this);
 }

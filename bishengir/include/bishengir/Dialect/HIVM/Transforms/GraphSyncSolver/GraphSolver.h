@@ -45,6 +45,9 @@ public:
     bool operator<(const Edge &other) const;
   };
 
+  // Configuration options.
+  const SyncSolverOptions options;
+
   // adjacencyList[pipeSrc][pipeDst] stores a set of Edge objects representing
   // directed transitions from pipeSrc to pipeDst that are valid for a given
   // (startIndex,endIndex) lifetime. Used by runDijkstra to compute minimum
@@ -52,6 +55,8 @@ public:
   // account.
   llvm::DenseMap<CorePipeInfo, llvm::DenseMap<CorePipeInfo, std::set<Edge>>>
       adjacencyList;
+
+  GraphSolver(const SyncSolverOptions &options) : options(options) {}
 
   // Add a pipe-pair edge annotated with its active index interval.
   void addPair(ConflictPair *conflictPair, CorePipeInfo corePipeSrc,

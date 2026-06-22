@@ -141,7 +141,7 @@ LogicalResult VBrcOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
-      (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
     return emitOpError("Current hardware doesn't support fp8 type");
 
   if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
@@ -712,7 +712,7 @@ LogicalResult VTransposeOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
-      (srcElemType.isFloat8E4M3FN() || srcElemType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (permutation.empty()) {
     return emitOpError() << "Permutation array should not be empty.";
@@ -871,7 +871,7 @@ void VArangeOp::getStridesFromValue(OpBuilder &builder, Location loc, Value val,
     else if (isa<TensorType>(shapedTy))
       size = builder.createOrFold<tensor::DimOp>(loc, val, dim);
     else
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "Expected arange to be initialized with tensor or memref type.");
     strides[dim - 1] =
         builder.createOrFold<arith::MulIOp>(loc, strides[dim], size);

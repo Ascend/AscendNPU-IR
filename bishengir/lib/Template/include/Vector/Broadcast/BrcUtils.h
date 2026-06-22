@@ -22,10 +22,45 @@
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
+brc_scalar_1d_by_scalar(T src_val, memref_t<__ubuf__ T, 1> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast scalar 1D");
+#endif
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  for (size_t i = 0; i < dst->sizes[0]; ++i) {
+    *(dst_ptr + i * dst->strides[0]) = src_val;
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+brc_scalar_2d_by_scalar(T src_val, memref_t<__ubuf__ T, 2> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast scalar 2D");
+#endif
+  __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  for (size_t i = 0; i < dst->sizes[0]; ++i) {
+    for (size_t j = 0; j < dst->sizes[1]; ++j) {
+      *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) = src_val;
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
 vector_broadcast_last_axis_by_scalar(memref_t<__ubuf__ T, 2> *src,
                                      memref_t<__ubuf__ T, 2> *dst) {
-  cce::printf("Warning: [broadcast last axis]This implementation uses scalar "
-              "instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast last axis");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -46,8 +81,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_broadcast_first_axis_by_scalar(memref_t<__ubuf__ T, 2> *src,
                                       memref_t<__ubuf__ T, 2> *dst) {
-  cce::printf("Warning: [broadcast first axis]This implementation uses scalar "
-              "instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast first axis");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -56,6 +92,56 @@ vector_broadcast_first_axis_by_scalar(memref_t<__ubuf__ T, 2> *src,
     for (int j = 0; j < dst->sizes[1]; ++j) {
       *(dst_ptr + i * dst->strides[0] + j * dst->strides[1]) =
           *(src_ptr + j * src->strides[1]);
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+
+  return;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_broadcast_middle_axis_by_scalar(memref_t<__ubuf__ T, 3> *src,
+                                       memref_t<__ubuf__ T, 3> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast middle axis");
+#endif
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  for (int i = 0; i < dst->sizes[0]; ++i) {
+    for (int j = 0; j < dst->sizes[1]; ++j) {
+      for (int k = 0; k < dst->sizes[2]; ++k) {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1] + k * dst->strides[2]) =
+            *(src_ptr + i * src->strides[0] + k * src->strides[2]);
+      }
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+
+  return;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_broadcast_first_axis_by_scalar(memref_t<__ubuf__ T, 3> *src,
+                                      memref_t<__ubuf__ T, 3> *dst) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("broadcast first axis");
+#endif
+  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  for (int i = 0; i < dst->sizes[0]; ++i) {
+    for (int j = 0; j < dst->sizes[1]; ++j) {
+      for (int k = 0; k < dst->sizes[2]; ++k) {
+        *(dst_ptr + i * dst->strides[0] + j * dst->strides[1] + k * dst->strides[2]) =
+            *(src_ptr + j * src->strides[1] + k * src->strides[2]);
+      }
     }
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
@@ -75,9 +161,9 @@ is_stride_aligned(memref_t<__ubuf__ T, 2> *tensor) {
 }
 
 /// Check if tensor has aligned offset
-template <typename T>
+template <typename T, size_t DIM>
 __aiv__ __attribute__((always_inline)) bool
-is_offset_aligned(memref_t<__ubuf__ T, 2> *tensor) {
+is_offset_aligned(memref_t<__ubuf__ T, DIM> *tensor) {
   return !tensor->offset ||
          isAddress32ByteAligned(tensor->aligned + tensor->offset);
 }

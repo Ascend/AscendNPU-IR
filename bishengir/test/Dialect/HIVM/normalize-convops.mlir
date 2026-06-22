@@ -1,259 +1,3062 @@
 // RUN: bishengir-opt -hivm-normalize-convops %s -split-input-file -verify-diagnostics -allow-unregistered-dialect | FileCheck %s
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_2d_fp16_nobias
-// test NormalizeConvResultTypePattern
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<30x128xf16>, tensor<30x15x5xf16>, i1) outs(%{{.*}} : tensor<30x126xf32>) -> tensor<30x126xf32>
-// CHECK: %{{.*}} = tensor.empty() : tensor<30x126xf16>
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30x126xf32>) outs(%{{.*}} : tensor<30x126xf16>) -> tensor<30x126xf16>
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_2d_fp16_nobias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg6, %arg7 : i32
-    %1 = arith.muli %0, %arg8 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [30, 128], strides: [128, 1] : memref<?xf16> to memref<30x128xf16, strided<[128, 1]>>
-    %alloc = memref.alloc() : memref<30x128xf16>
-    hivm.hir.load ins(%reinterpret_cast : memref<30x128xf16, strided<[128, 1]>>) outs(%alloc : memref<30x128xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<30x128xf16>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [30, 15, 5], strides: [75, 5, 1] : memref<?xf16> to memref<30x15x5xf16, strided<[75, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<30x15x5xf16>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<30x15x5xf16, strided<[75, 5, 1]>>) outs(%alloc_1 : memref<30x15x5xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<30x15x5xf16>
-    %4 = tensor.empty() : tensor<30x126xf16>
-    %5 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%2, %3, %true : tensor<30x128xf16>, tensor<30x15x5xf16>, i1) outs(%4 : tensor<30x126xf16>) -> tensor<30x126xf16>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [30, 126], strides: [126, 1] : memref<?xf16> to memref<30x126xf16, strided<[126, 1]>>
-    hivm.hir.store ins(%5 : tensor<30x126xf16>) outs(%reinterpret_cast_4 : memref<30x126xf16, strided<[126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf16> into tensor<1x32x128xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xf16> into tensor<1x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xf16>) outs(%{{.*}} : tensor<1x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xf16> into tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) -> tensor<1x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xf16> into tensor<32x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xf16>) outs(%{{.*}} : tensor<1x32x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xf16>) outs(%{{.*}} : tensor<1x32x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xf16>) outs(%{{.*}} : tensor<1x5x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xf16> into tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) -> tensor<1x1x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xf16>, tensor<1x1x5x32x16xf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<128x32xf16>) -> tensor<128x32xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf16> to tensor<126x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf16>) outs(%{{.*}} : tensor<32x126xf16>) permutation = [1, 0] -> tensor<32x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp16_nobias_ocaligned(%arg0: tensor<32x128xf16>, %arg1: tensor<32x16x5xf16>, %arg2: tensor<32x126xf16>) -> tensor<32x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128xf16>, tensor<32x16x5xf16>, i1) outs(%arg2 : tensor<32x126xf16>) -> tensor<32x126xf16>
+  return %0 : tensor<32x126xf16>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_2d_bf16_nobias
-// test NormalizeConvResultTypePattern
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<30x128xbf16>, tensor<30x15x5xbf16>, i1) outs(%{{.*}} : tensor<30x126xf32>) -> tensor<30x126xf32>
-// CHECK: %{{.*}} = tensor.empty() : tensor<30x126xbf16>
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30x126xf32>) outs(%{{.*}} : tensor<30x126xbf16>) -> tensor<30x126xbf16>
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_2d_bf16_nobias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg6, %arg7 : i32
-    %1 = arith.muli %0, %arg8 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [30, 128], strides: [128, 1] : memref<?xbf16> to memref<30x128xbf16, strided<[128, 1]>>
-    %alloc = memref.alloc() : memref<30x128xbf16>
-    hivm.hir.load ins(%reinterpret_cast : memref<30x128xbf16, strided<[128, 1]>>) outs(%alloc : memref<30x128xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<30x128xbf16>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [30, 15, 5], strides: [75, 5, 1] : memref<?xbf16> to memref<30x15x5xbf16, strided<[75, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<30x15x5xbf16>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<30x15x5xbf16, strided<[75, 5, 1]>>) outs(%alloc_1 : memref<30x15x5xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<30x15x5xbf16>
-    %4 = tensor.empty() : tensor<30x126xbf16>
-    %5 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%2, %3, %true : tensor<30x128xbf16>, tensor<30x15x5xbf16>, i1) outs(%4 : tensor<30x126xbf16>) -> tensor<30x126xbf16>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [30, 126], strides: [126, 1] : memref<?xbf16> to memref<30x126xbf16, strided<[126, 1]>>
-    hivm.hir.store ins(%5 : tensor<30x126xbf16>) outs(%reinterpret_cast_4 : memref<30x126xbf16, strided<[126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xf16> into tensor<2x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xf16>) outs(%{{.*}} : tensor<2x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xf16> into tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) -> tensor<2x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xf16> into tensor<32x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xf16>) outs(%{{.*}} : tensor<1x32x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xf16>) outs(%{{.*}} : tensor<1x32x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xf16>) outs(%{{.*}} : tensor<1x5x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xf16> into tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) -> tensor<1x1x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x5x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xf16>) -> tensor<128x64xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf16> to tensor<126x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf16>) outs(%{{.*}} : tensor<64x126xf16>) permutation = [1, 0] -> tensor<64x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf16> into tensor<2x32x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp16_nobias_ocaligned(%arg0: tensor<2x32x128xf16>, %arg1: tensor<32x16x5xf16>, %arg2: tensor<2x32x126xf16>) -> tensor<2x32x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128xf16>, tensor<32x16x5xf16>, i1) outs(%arg2 : tensor<2x32x126xf16>) -> tensor<2x32x126xf16>
+  return %0 : tensor<2x32x126xf16>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_2d_fp32_nobias
-// test NormalizeConvResultTypePattern
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<30x128xf32>, tensor<30x15x5xf32>, i1) outs(%{{.*}} : tensor<30x126xf32>) -> tensor<30x126xf32>
-// CHECK-NOT: hivm.hir.vcast
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_2d_fp32_nobias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg6, %arg7 : i32
-    %1 = arith.muli %0, %arg8 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [30, 128], strides: [128, 1] : memref<?xf32> to memref<30x128xf32, strided<[128, 1]>>
-    %alloc = memref.alloc() : memref<30x128xf32>
-    hivm.hir.load ins(%reinterpret_cast : memref<30x128xf32, strided<[128, 1]>>) outs(%alloc : memref<30x128xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<30x128xf32>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [30, 15, 5], strides: [75, 5, 1] : memref<?xf32> to memref<30x15x5xf32, strided<[75, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<30x15x5xf32>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<30x15x5xf32, strided<[75, 5, 1]>>) outs(%alloc_1 : memref<30x15x5xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<30x15x5xf32>
-    %4 = tensor.empty() : tensor<30x126xf32>
-    %5 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%2, %3, %true : tensor<30x128xf32>, tensor<30x15x5xf32>, i1) outs(%4 : tensor<30x126xf32>) -> tensor<30x126xf32>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [30, 126], strides: [126, 1] : memref<?xf32> to memref<30x126xf32, strided<[126, 1]>>
-    hivm.hir.store ins(%5 : tensor<30x126xf32>) outs(%reinterpret_cast_4 : memref<30x126xf32, strided<[126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_2d_bf16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xbf16> into tensor<1x32x128xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xbf16> into tensor<1x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xbf16>) outs(%{{.*}} : tensor<1x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xbf16> into tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) -> tensor<1x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xbf16> into tensor<32x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xbf16>) outs(%{{.*}} : tensor<1x32x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xbf16>) outs(%{{.*}} : tensor<1x32x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xbf16>) outs(%{{.*}} : tensor<1x5x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xbf16> into tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) -> tensor<1x1x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xbf16>, tensor<1x1x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<128x32xbf16>) -> tensor<128x32xbf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xbf16> to tensor<126x32xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xbf16>) outs(%{{.*}} : tensor<32x126xbf16>) permutation = [1, 0] -> tensor<32x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_bf16_nobias_ocaligned(%arg0: tensor<32x128xbf16>, %arg1: tensor<32x16x5xbf16>, %arg2: tensor<32x126xbf16>) -> tensor<32x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128xbf16>, tensor<32x16x5xbf16>, i1) outs(%arg2 : tensor<32x126xbf16>) -> tensor<32x126xbf16>
+  return %0 : tensor<32x126xbf16>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_2d_fp16_bias
-// test NormalizeConvResultTypePattern + DecomposeConv1dWithBiasPattern
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<30x128xf16>, tensor<30x15x5xf16>, i1) outs(%{{.*}} : tensor<30x126xf32>) -> tensor<30x126xf32>
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30x126xf32>) outs(%{{.*}} : tensor<30x126xf16>) -> tensor<30x126xf16>
-// CHECK: %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf16> into tensor<30x1xf16>
-// CHECK: %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x126xf16>, tensor<30x1xf16>) outs(%{{.*}} : tensor<30x126xf16>) broadcast = [1] -> tensor<30x126xf16>
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_2d_fp16_bias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg7, %arg8 : i32
-    %1 = arith.muli %0, %arg9 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [30, 128], strides: [128, 1] : memref<?xf16> to memref<30x128xf16, strided<[128, 1]>>
-    %alloc = memref.alloc() : memref<30x128xf16>
-    hivm.hir.load ins(%reinterpret_cast : memref<30x128xf16, strided<[128, 1]>>) outs(%alloc : memref<30x128xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<30x128xf16>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [30, 15, 5], strides: [75, 5, 1] : memref<?xf16> to memref<30x15x5xf16, strided<[75, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<30x15x5xf16>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<30x15x5xf16, strided<[75, 5, 1]>>) outs(%alloc_1 : memref<30x15x5xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<30x15x5xf16>
-    %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [30], strides: [1] : memref<?xf16> to memref<30xf16, strided<[1]>>
-    %alloc_3 = memref.alloc() : memref<30xf16>
-    hivm.hir.load ins(%reinterpret_cast_2 : memref<30xf16, strided<[1]>>) outs(%alloc_3 : memref<30xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<30xf16>
-    %5 = tensor.empty() : tensor<30x126xf16>
-    %6 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%2, %3, %true, %4 : tensor<30x128xf16>, tensor<30x15x5xf16>, i1, tensor<30xf16>) outs(%5 : tensor<30x126xf16>) -> tensor<30x126xf16>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg6 to offset: [0], sizes: [30, 126], strides: [126, 1] : memref<?xf16> to memref<30x126xf16, strided<[126, 1]>>
-    hivm.hir.store ins(%6 : tensor<30x126xf16>) outs(%reinterpret_cast_4 : memref<30x126xf16, strided<[126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_3d_bf16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xbf16> into tensor<2x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xbf16>) outs(%{{.*}} : tensor<2x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xbf16> into tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) -> tensor<2x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xbf16> into tensor<32x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xbf16>) outs(%{{.*}} : tensor<1x32x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xbf16>) outs(%{{.*}} : tensor<1x32x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xbf16>) outs(%{{.*}} : tensor<1x5x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xbf16> into tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) -> tensor<1x1x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xbf16>, tensor<1x1x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xbf16>) -> tensor<128x64xbf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xbf16> to tensor<126x64xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xbf16>) outs(%{{.*}} : tensor<64x126xbf16>) permutation = [1, 0] -> tensor<64x126xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xbf16> into tensor<2x32x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_bf16_nobias_ocaligned(%arg0: tensor<2x32x128xbf16>, %arg1: tensor<32x16x5xbf16>, %arg2: tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128xbf16>, tensor<32x16x5xbf16>, i1) outs(%arg2 : tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16>
+  return %0 : tensor<2x32x126xbf16>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_2d_bf16_bias
-// test NormalizeConvResultTypePattern + DecomposeConv1dWithBiasPattern
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30xbf16>) outs(%{{.*}} : tensor<30xf32>) -> tensor<30xf32>
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<30x128xbf16>, tensor<30x15x5xbf16>, i1) outs(%{{.*}} : tensor<30x126xf32>) -> tensor<30x126xf32>
-// CHECK: %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf32> into tensor<30x1xf32>
-// CHECK: %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x126xf32>, tensor<30x1xf32>) outs(%{{.*}} : tensor<30x126xf32>) broadcast = [1] -> tensor<30x126xf32>
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30x126xf32>) outs(%{{.*}} : tensor<30x126xbf16>) -> tensor<30x126xbf16>
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_2d_bf16_bias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg7, %arg8 : i32
-    %1 = arith.muli %0, %arg9 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [30, 128], strides: [128, 1] : memref<?xbf16> to memref<30x128xbf16, strided<[128, 1]>>
-    %alloc = memref.alloc() : memref<30x128xbf16>
-    hivm.hir.load ins(%reinterpret_cast : memref<30x128xbf16, strided<[128, 1]>>) outs(%alloc : memref<30x128xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<30x128xbf16>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [30, 15, 5], strides: [75, 5, 1] : memref<?xbf16> to memref<30x15x5xbf16, strided<[75, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<30x15x5xbf16>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<30x15x5xbf16, strided<[75, 5, 1]>>) outs(%alloc_1 : memref<30x15x5xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<30x15x5xbf16>
-    %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [30], strides: [1] : memref<?xbf16> to memref<30xbf16, strided<[1]>>
-    %alloc_3 = memref.alloc() : memref<30xbf16>
-    hivm.hir.load ins(%reinterpret_cast_2 : memref<30xbf16, strided<[1]>>) outs(%alloc_3 : memref<30xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<30xbf16>
-    %5 = tensor.empty() : tensor<30x126xbf16>
-    %6 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%2, %3, %true, %4 : tensor<30x128xbf16>, tensor<30x15x5xbf16>, i1, tensor<30xbf16>) outs(%5 : tensor<30x126xbf16>) -> tensor<30x126xbf16>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg6 to offset: [0], sizes: [30, 126], strides: [126, 1] : memref<?xbf16> to memref<30x126xbf16, strided<[126, 1]>>
-    hivm.hir.store ins(%6 : tensor<30x126xbf16>) outs(%reinterpret_cast_4 : memref<30x126xbf16, strided<[126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp32_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf32> into tensor<1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 128] : tensor<1x32x128xf32> into tensor<1x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x128xf32>) outs(%{{.*}} : tensor<1x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 1, 128, 8] : tensor<1x4x128x8xf32> into tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) -> tensor<1x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 5] : tensor<32x16x5xf32> into tensor<32x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x5xf32>) outs(%{{.*}} : tensor<2x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x5xf32>) outs(%{{.*}} : tensor<2x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x5x8xf32>) outs(%{{.*}} : tensor<2x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 32, 8] : tensor<2x5x32x8xf32> into tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) -> tensor<2x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x1x128x8xf32>, tensor<2x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf32> to tensor<126x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf32>) outs(%{{.*}} : tensor<32x126xf32>) permutation = [1, 0] -> tensor<32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp32_nobias_ocaligned(%arg0: tensor<32x128xf32>, %arg1: tensor<32x16x5xf32>, %arg2: tensor<32x126xf32>) -> tensor<32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128xf32>, tensor<32x16x5xf32>, i1) outs(%arg2 : tensor<32x126xf32>) -> tensor<32x126xf32>
+  return %0 : tensor<32x126xf32>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_2d_fp32_bias
-// test NormalizeConvResultTypePattern + DecomposeConv1dWithBiasPattern
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<30x128xf32>, tensor<30x15x5xf32>, i1) outs(%{{.*}} : tensor<30x126xf32>) -> tensor<30x126xf32>
-// CHECK: %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf32> into tensor<30x1xf32>
-// CHECK: %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x126xf32>, tensor<30x1xf32>) outs(%{{.*}} : tensor<30x126xf32>) broadcast = [1] -> tensor<30x126xf32>
-// CHECK-NOT: hivm.hir.vcast
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_2d_fp32_bias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg7, %arg8 : i32
-    %1 = arith.muli %0, %arg9 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [30, 128], strides: [128, 1] : memref<?xf32> to memref<30x128xf32, strided<[128, 1]>>
-    %alloc = memref.alloc() : memref<30x128xf32>
-    hivm.hir.load ins(%reinterpret_cast : memref<30x128xf32, strided<[128, 1]>>) outs(%alloc : memref<30x128xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<30x128xf32>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [30, 15, 5], strides: [75, 5, 1] : memref<?xf32> to memref<30x15x5xf32, strided<[75, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<30x15x5xf32>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<30x15x5xf32, strided<[75, 5, 1]>>) outs(%alloc_1 : memref<30x15x5xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<30x15x5xf32>
-    %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [30], strides: [1] : memref<?xf32> to memref<30xf32, strided<[1]>>
-    %alloc_3 = memref.alloc() : memref<30xf32>
-    hivm.hir.load ins(%reinterpret_cast_2 : memref<30xf32, strided<[1]>>) outs(%alloc_3 : memref<30xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<30xf32>
-    %5 = tensor.empty() : tensor<30x126xf32>
-    %6 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%2, %3, %true, %4 : tensor<30x128xf32>, tensor<30x15x5xf32>, i1, tensor<30xf32>) outs(%5 : tensor<30x126xf32>) -> tensor<30x126xf32>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg6 to offset: [0], sizes: [30, 126], strides: [126, 1] : memref<?xf32> to memref<30x126xf32, strided<[126, 1]>>
-    hivm.hir.store ins(%6 : tensor<30x126xf32>) outs(%reinterpret_cast_4 : memref<30x126xf32, strided<[126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp32_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 128] : tensor<2x32x128xf32> into tensor<2x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x128xf32>) outs(%{{.*}} : tensor<2x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 1, 128, 8] : tensor<2x4x128x8xf32> into tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) -> tensor<2x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 5] : tensor<32x16x5xf32> into tensor<32x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x5xf32>) outs(%{{.*}} : tensor<2x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x5xf32>) outs(%{{.*}} : tensor<2x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x5x8xf32>) outs(%{{.*}} : tensor<2x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 32, 8] : tensor<2x5x32x8xf32> into tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) -> tensor<2x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x1x128x8xf32>, tensor<2x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<64x126xf32>) permutation = [1, 0] -> tensor<64x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf32> into tensor<2x32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp32_nobias_ocaligned(%arg0: tensor<2x32x128xf32>, %arg1: tensor<32x16x5xf32>, %arg2: tensor<2x32x126xf32>) -> tensor<2x32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128xf32>, tensor<32x16x5xf32>, i1) outs(%arg2 : tensor<2x32x126xf32>) -> tensor<2x32x126xf32>
+  return %0 : tensor<2x32x126xf32>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_3d_fp16_bias
-// test NormalizeConvResultTypePattern + DecomposeConv1dWithBiasPattern
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 1 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x32x128xf16>, tensor<32x32x5xf16>, i1) outs(%{{.*}} : tensor<2x32x126xf32>) -> tensor<2x32x126xf32>
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x32x126xf32>) outs(%{{.*}} : tensor<2x32x126xf16>) -> tensor<2x32x126xf16>
-// CHECK: %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf16> into tensor<1x32x1xf16>
-// CHECK: %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x126xf16>, tensor<1x32x1xf16>) outs(%{{.*}} : tensor<2x32x126xf16>) broadcast = [0, 2] -> tensor<2x32x126xf16>
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_3d_fp16_bias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg7, %arg8 : i32
-    %1 = arith.muli %0, %arg9 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [2, 32, 128], strides: [4096, 128, 1] : memref<?xf16> to memref<2x32x128xf16, strided<[4096, 128, 1]>>
-    %alloc = memref.alloc() : memref<2x32x128xf16>
-    hivm.hir.load ins(%reinterpret_cast : memref<2x32x128xf16, strided<[4096, 128, 1]>>) outs(%alloc : memref<2x32x128xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<2x32x128xf16>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [32, 32, 5], strides: [160, 5, 1] : memref<?xf16> to memref<32x32x5xf16, strided<[160, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<32x32x5xf16>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<32x32x5xf16, strided<[160, 5, 1]>>) outs(%alloc_1 : memref<32x32x5xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<32x32x5xf16>
-    %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [32], strides: [1] : memref<?xf16> to memref<32xf16, strided<[1]>>
-    %alloc_3 = memref.alloc() : memref<32xf16>
-    hivm.hir.load ins(%reinterpret_cast_2 : memref<32xf16, strided<[1]>>) outs(%alloc_3 : memref<32xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<32xf16>
-    %5 = tensor.empty() : tensor<2x32x126xf16>
-    %6 = hivm.hir.Conv1dL1 {groups = 1 : i32, padding = 1 : i32} ins(%2, %3, %true, %4 : tensor<2x32x128xf16>, tensor<32x32x5xf16>, i1, tensor<32xf16>) outs(%5 : tensor<2x32x126xf16>) -> tensor<2x32x126xf16>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg6 to offset: [0], sizes: [2, 32, 126], strides: [4032, 126, 1] : memref<?xf16> to memref<2x32x126xf16, strided<[4032, 126, 1]>>
-    hivm.hir.store ins(%6 : tensor<2x32x126xf16>) outs(%reinterpret_cast_4 : memref<2x32x126xf16, strided<[4032, 126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf16> into tensor<1x32x128xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xf16> into tensor<1x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xf16>) outs(%{{.*}} : tensor<1x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xf16> into tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) -> tensor<1x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xf16> into tensor<32x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xf16>) outs(%{{.*}} : tensor<1x32x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xf16>) outs(%{{.*}} : tensor<1x32x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xf16>) outs(%{{.*}} : tensor<1x5x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xf16> into tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) -> tensor<1x1x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xf16>, tensor<1x1x5x32x16xf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<128x32xf16>) -> tensor<128x32xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf16> to tensor<126x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf16>) outs(%{{.*}} : tensor<32x126xf16>) permutation = [1, 0] -> tensor<32x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf16> into tensor<32x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<32x126xf16>, tensor<32x1xf16>) outs(%{{.*}} : tensor<32x126xf16>) broadcast = [1] -> tensor<32x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp16_bias_ocaligned(%arg0: tensor<32x128xf16>, %arg1: tensor<32x16x5xf16>, %arg2: tensor<32xf16>, %arg3: tensor<32x126xf16>) -> tensor<32x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128xf16>, tensor<32x16x5xf16>, i1, tensor<32xf16>) outs(%arg3 : tensor<32x126xf16>) -> tensor<32x126xf16>
+  return %0 : tensor<32x126xf16>
 }
 
 // -----
-// CHECK-LABEL: func.func @triton_conv1d_3d_bf16_bias
-// test NormalizeConvResultTypePattern + DecomposeConv1dWithBiasPattern
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32xbf16>) outs(%{{.*}} : tensor<32xf32>) -> tensor<32xf32>
-// CHECK: %{{.*}} = hivm.hir.Conv1dL1 {groups = 1 : i32, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x32x128xbf16>, tensor<32x32x5xbf16>, i1) outs(%{{.*}} : tensor<2x32x126xf32>) -> tensor<2x32x126xf32>
-// CHECK: %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf32> into tensor<1x32x1xf32>
-// CHECK: %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x126xf32>, tensor<1x32x1xf32>) outs(%{{.*}} : tensor<2x32x126xf32>) broadcast = [0, 2] -> tensor<2x32x126xf32>
-// CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x32x126xf32>) outs(%{{.*}} : tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16>
-module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>, #dlti.dl_entry<"UB_SIZE", 1572864 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>>>, memref.memref_as_ptr} {
-  func.func @triton_conv1d_3d_bf16_bias(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xbf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
-    %true = arith.constant true
-    hivm.hir.set_mask_norm
-    %0 = arith.muli %arg7, %arg8 : i32
-    %1 = arith.muli %0, %arg9 : i32
-    annotation.mark %1 {logical_block_num} : i32
-    %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [2, 32, 128], strides: [4096, 128, 1] : memref<?xbf16> to memref<2x32x128xbf16, strided<[4096, 128, 1]>>
-    %alloc = memref.alloc() : memref<2x32x128xbf16>
-    hivm.hir.load ins(%reinterpret_cast : memref<2x32x128xbf16, strided<[4096, 128, 1]>>) outs(%alloc : memref<2x32x128xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %2 = bufferization.to_tensor %alloc restrict writable : memref<2x32x128xbf16>
-    %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [32, 32, 5], strides: [160, 5, 1] : memref<?xbf16> to memref<32x32x5xbf16, strided<[160, 5, 1]>>
-    %alloc_1 = memref.alloc() : memref<32x32x5xbf16>
-    hivm.hir.load ins(%reinterpret_cast_0 : memref<32x32x5xbf16, strided<[160, 5, 1]>>) outs(%alloc_1 : memref<32x32x5xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<32x32x5xbf16>
-    %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [32], strides: [1] : memref<?xbf16> to memref<32xbf16, strided<[1]>>
-    %alloc_3 = memref.alloc() : memref<32xbf16>
-    hivm.hir.load ins(%reinterpret_cast_2 : memref<32xbf16, strided<[1]>>) outs(%alloc_3 : memref<32xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
-    %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<32xbf16>
-    %5 = tensor.empty() : tensor<2x32x126xbf16>
-    %6 = hivm.hir.Conv1dL1 {groups = 1 : i32, padding = 1 : i32} ins(%2, %3, %true, %4 : tensor<2x32x128xbf16>, tensor<32x32x5xbf16>, i1, tensor<32xbf16>) outs(%5 : tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16>
-    %reinterpret_cast_4 = memref.reinterpret_cast %arg6 to offset: [0], sizes: [2, 32, 126], strides: [4032, 126, 1] : memref<?xbf16> to memref<2x32x126xbf16, strided<[4032, 126, 1]>>
-    hivm.hir.store ins(%6 : tensor<2x32x126xbf16>) outs(%reinterpret_cast_4 : memref<2x32x126xbf16, strided<[4032, 126, 1]>>)
-    return
-  }
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xf16> into tensor<2x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xf16>) outs(%{{.*}} : tensor<2x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xf16> into tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) -> tensor<2x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xf16> into tensor<32x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xf16>) outs(%{{.*}} : tensor<1x32x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xf16>) outs(%{{.*}} : tensor<1x32x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xf16>) outs(%{{.*}} : tensor<1x5x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xf16> into tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) -> tensor<1x1x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xf16>) outs(%{{.*}} : tensor<1x1x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x5x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xf16>) -> tensor<128x64xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf16> to tensor<126x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf16>) outs(%{{.*}} : tensor<64x126xf16>) permutation = [1, 0] -> tensor<64x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf16> into tensor<2x32x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf16> into tensor<1x32x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x126xf16>, tensor<1x32x1xf16>) outs(%{{.*}} : tensor<2x32x126xf16>) broadcast = [0, 2] -> tensor<2x32x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp16_bias_ocaligned(%arg0: tensor<2x32x128xf16>, %arg1: tensor<32x16x5xf16>, %arg2: tensor<32xf16>, %arg3: tensor<2x32x126xf16>) -> tensor<2x32x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128xf16>, tensor<32x16x5xf16>, i1, tensor<32xf16>) outs(%arg3 : tensor<2x32x126xf16>) -> tensor<2x32x126xf16>
+  return %0 : tensor<2x32x126xf16>
 }
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_bf16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32xbf16>) outs(%{{.*}} : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xbf16> into tensor<1x32x128xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xbf16> into tensor<1x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xbf16>) outs(%{{.*}} : tensor<1x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xbf16> into tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) -> tensor<1x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xbf16> into tensor<32x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xbf16>) outs(%{{.*}} : tensor<1x32x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xbf16>) outs(%{{.*}} : tensor<1x32x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xbf16>) outs(%{{.*}} : tensor<1x5x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xbf16> into tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) -> tensor<1x1x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xbf16>, tensor<1x1x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf32> to tensor<126x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf32>) outs(%{{.*}} : tensor<32x126xf32>) permutation = [1, 0] -> tensor<32x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<32x126xf32>, tensor<32x1xf32>) outs(%{{.*}} : tensor<32x126xf32>) broadcast = [1] -> tensor<32x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32x126xf32>) outs(%{{.*}} : tensor<32x126xbf16>) -> tensor<32x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_bf16_bias_ocaligned(%arg0: tensor<32x128xbf16>, %arg1: tensor<32x16x5xbf16>, %arg2: tensor<32xbf16>, %arg3: tensor<32x126xbf16>) -> tensor<32x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128xbf16>, tensor<32x16x5xbf16>, i1, tensor<32xbf16>) outs(%arg3 : tensor<32x126xbf16>) -> tensor<32x126xbf16>
+  return %0 : tensor<32x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_bf16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32xbf16>) outs(%{{.*}} : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xbf16> into tensor<2x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xbf16>) outs(%{{.*}} : tensor<2x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xbf16> into tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) -> tensor<2x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 5] : tensor<32x16x5xbf16> into tensor<32x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x5xbf16>) outs(%{{.*}} : tensor<1x32x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x5xbf16>) outs(%{{.*}} : tensor<1x32x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x5x16xbf16>) outs(%{{.*}} : tensor<1x5x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 32, 16] : tensor<1x5x32x16xbf16> into tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) -> tensor<1x1x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x32x16xbf16>) outs(%{{.*}} : tensor<1x1x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xbf16>, tensor<1x1x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<64x126xf32>) permutation = [1, 0] -> tensor<64x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf32> into tensor<2x32x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf32> into tensor<1x32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x126xf32>, tensor<1x32x1xf32>) outs(%{{.*}} : tensor<2x32x126xf32>) broadcast = [0, 2] -> tensor<2x32x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x32x126xf32>) outs(%{{.*}} : tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_bf16_bias_ocaligned(%arg0: tensor<2x32x128xbf16>, %arg1: tensor<32x16x5xbf16>, %arg2: tensor<32xbf16>, %arg3: tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128xbf16>, tensor<32x16x5xbf16>, i1, tensor<32xbf16>) outs(%arg3 : tensor<2x32x126xbf16>) -> tensor<2x32x126xbf16>
+  return %0 : tensor<2x32x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp32_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf32> into tensor<1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 128] : tensor<1x32x128xf32> into tensor<1x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x128xf32>) outs(%{{.*}} : tensor<1x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 1, 128, 8] : tensor<1x4x128x8xf32> into tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) -> tensor<1x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 5] : tensor<32x16x5xf32> into tensor<32x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x5xf32>) outs(%{{.*}} : tensor<2x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x5xf32>) outs(%{{.*}} : tensor<2x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x5x8xf32>) outs(%{{.*}} : tensor<2x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 32, 8] : tensor<2x5x32x8xf32> into tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) -> tensor<2x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x1x128x8xf32>, tensor<2x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf32> to tensor<126x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf32>) outs(%{{.*}} : tensor<32x126xf32>) permutation = [1, 0] -> tensor<32x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<32x126xf32>, tensor<32x1xf32>) outs(%{{.*}} : tensor<32x126xf32>) broadcast = [1] -> tensor<32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp32_bias_ocaligned(%arg0: tensor<32x128xf32>, %arg1: tensor<32x16x5xf32>, %arg2: tensor<32xf32>, %arg3: tensor<32x126xf32>) -> tensor<32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128xf32>, tensor<32x16x5xf32>, i1, tensor<32xf32>) outs(%arg3 : tensor<32x126xf32>) -> tensor<32x126xf32>
+  return %0 : tensor<32x126xf32>
+}
+
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp32_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 128] : tensor<2x32x128xf32> into tensor<2x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x128xf32>) outs(%{{.*}} : tensor<2x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 1, 128, 8] : tensor<2x4x128x8xf32> into tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) -> tensor<2x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 5] : tensor<32x16x5xf32> into tensor<32x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x5xf32>) outs(%{{.*}} : tensor<2x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x5xf32>) outs(%{{.*}} : tensor<2x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x5x8xf32>) outs(%{{.*}} : tensor<2x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 32, 8] : tensor<2x5x32x8xf32> into tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) -> tensor<2x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x1x128x8xf32>, tensor<2x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<64x126xf32>) permutation = [1, 0] -> tensor<64x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf32> into tensor<2x32x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf32> into tensor<1x32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x126xf32>, tensor<1x32x1xf32>) outs(%{{.*}} : tensor<2x32x126xf32>) broadcast = [0, 2] -> tensor<2x32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp32_bias_ocaligned(%arg0: tensor<2x32x128xf32>, %arg1: tensor<32x16x5xf32>, %arg2: tensor<32xf32>, %arg3: tensor<2x32x126xf32>) -> tensor<2x32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128xf32>, tensor<32x16x5xf32>, i1, tensor<32xf32>) outs(%arg3 : tensor<2x32x126xf32>) -> tensor<2x32x126xf32>
+  return %0 : tensor<2x32x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf16> into tensor<1x32x128xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xf16> into tensor<1x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xf16>) outs(%{{.*}} : tensor<1x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xf16> into tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) -> tensor<1x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xf16> into tensor<30x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xf16>) outs(%{{.*}} : tensor<1x30x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xf16>) outs(%{{.*}} : tensor<1x30x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xf16>) outs(%{{.*}} : tensor<1x5x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xf16> into tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) -> tensor<1x1x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xf16>, tensor<1x1x5x30x16xf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<128x32xf16>) -> tensor<128x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x32xf16>) outs(%{{.*}} : tensor<32x128xf16>) permutation = [1, 0] -> tensor<32x128xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x128xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x128xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<32x128xf16> to tensor<15x128xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf16> into tensor<30x128xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<30x128xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 126] [1, 1] : tensor<30x128xf16> to tensor<30x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp16_nobias_ocunaligned(%arg0: tensor<32x128xf16>, %arg1: tensor<30x16x5xf16>, %arg2: tensor<30x126xf16>) -> tensor<30x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128xf16>, tensor<30x16x5xf16>, i1) outs(%arg2 : tensor<30x126xf16>) -> tensor<30x126xf16>
+  return %0 : tensor<30x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xf16> into tensor<2x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xf16>) outs(%{{.*}} : tensor<2x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xf16> into tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) -> tensor<2x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xf16> into tensor<30x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xf16>) outs(%{{.*}} : tensor<1x30x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xf16>) outs(%{{.*}} : tensor<1x30x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xf16>) outs(%{{.*}} : tensor<1x5x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xf16> into tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) -> tensor<1x1x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x5x30x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xf16>) -> tensor<128x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x64xf16>) outs(%{{.*}} : tensor<64x128xf16>) permutation = [1, 0] -> tensor<64x128xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x128xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x128xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<64x128xf16> to tensor<15x128xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf16> into tensor<60x128xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<60x128xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf16> to tensor<60x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf16> into tensor<2x30x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp16_nobias_ocunaligned(%arg0: tensor<2x32x128xf16>, %arg1: tensor<30x16x5xf16>, %arg2: tensor<2x30x126xf16>) -> tensor<2x30x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128xf16>, tensor<30x16x5xf16>, i1) outs(%arg2 : tensor<2x30x126xf16>) -> tensor<2x30x126xf16>
+  return %0 : tensor<2x30x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_bf16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xbf16> into tensor<1x32x128xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xbf16> into tensor<1x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xbf16>) outs(%{{.*}} : tensor<1x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xbf16> into tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) -> tensor<1x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xbf16> into tensor<30x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xbf16>) outs(%{{.*}} : tensor<1x30x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xbf16>) outs(%{{.*}} : tensor<1x30x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xbf16>) outs(%{{.*}} : tensor<1x5x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xbf16> into tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) -> tensor<1x1x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xbf16>, tensor<1x1x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<128x32xbf16>) -> tensor<128x32xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x32xbf16>) outs(%{{.*}} : tensor<32x128xbf16>) permutation = [1, 0] -> tensor<32x128xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x128xbf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x128xbf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<32x128xbf16> to tensor<15x128xbf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xbf16> into tensor<30x128xbf16>
+// CHECK:             scf.yield %{{.*}} : tensor<30x128xbf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 126] [1, 1] : tensor<30x128xbf16> to tensor<30x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_bf16_nobias_ocunaligned(%arg0: tensor<32x128xbf16>, %arg1: tensor<30x16x5xbf16>, %arg2: tensor<30x126xbf16>) -> tensor<30x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128xbf16>, tensor<30x16x5xbf16>, i1) outs(%arg2 : tensor<30x126xbf16>) -> tensor<30x126xbf16>
+  return %0 : tensor<30x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_bf16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xbf16> into tensor<2x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xbf16>) outs(%{{.*}} : tensor<2x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xbf16> into tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) -> tensor<2x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xbf16> into tensor<30x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xbf16>) outs(%{{.*}} : tensor<1x30x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xbf16>) outs(%{{.*}} : tensor<1x30x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xbf16>) outs(%{{.*}} : tensor<1x5x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xbf16> into tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) -> tensor<1x1x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xbf16>, tensor<1x1x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xbf16>) -> tensor<128x64xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x64xbf16>) outs(%{{.*}} : tensor<64x128xbf16>) permutation = [1, 0] -> tensor<64x128xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x128xbf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x128xbf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<64x128xbf16> to tensor<15x128xbf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xbf16> into tensor<60x128xbf16>
+// CHECK:             scf.yield %{{.*}} : tensor<60x128xbf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xbf16> to tensor<60x126xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xbf16> into tensor<2x30x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_bf16_nobias_ocunaligned(%arg0: tensor<2x32x128xbf16>, %arg1: tensor<30x16x5xbf16>, %arg2: tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128xbf16>, tensor<30x16x5xbf16>, i1) outs(%arg2 : tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16>
+  return %0 : tensor<2x30x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp32_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf32> into tensor<1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 128] : tensor<1x32x128xf32> into tensor<1x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x128xf32>) outs(%{{.*}} : tensor<1x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 1, 128, 8] : tensor<1x4x128x8xf32> into tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) -> tensor<1x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 5] : tensor<30x16x5xf32> into tensor<30x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x5xf32>) outs(%{{.*}} : tensor<2x30x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x5xf32>) outs(%{{.*}} : tensor<2x30x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x5x8xf32>) outs(%{{.*}} : tensor<2x5x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 30, 8] : tensor<2x5x30x8xf32> into tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) -> tensor<2x1x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x1x128x8xf32>, tensor<2x1x5x30x8xf32>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<32x128xf32>) permutation = [1, 0] -> tensor<32x128xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x128xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x128xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<32x128xf32> to tensor<15x128xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<30x128xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<30x128xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 126] [1, 1] : tensor<30x128xf32> to tensor<30x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp32_nobias_ocunaligned(%arg0: tensor<32x128xf32>, %arg1: tensor<30x16x5xf32>, %arg2: tensor<30x126xf32>) -> tensor<30x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128xf32>, tensor<30x16x5xf32>, i1) outs(%arg2 : tensor<30x126xf32>) -> tensor<30x126xf32>
+  return %0 : tensor<30x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp32_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 128] : tensor<2x32x128xf32> into tensor<2x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x128xf32>) outs(%{{.*}} : tensor<2x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 1, 128, 8] : tensor<2x4x128x8xf32> into tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) -> tensor<2x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 5] : tensor<30x16x5xf32> into tensor<30x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x5xf32>) outs(%{{.*}} : tensor<2x30x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x5xf32>) outs(%{{.*}} : tensor<2x30x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x5x8xf32>) outs(%{{.*}} : tensor<2x5x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 30, 8] : tensor<2x5x30x8xf32> into tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) -> tensor<2x1x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x1x128x8xf32>, tensor<2x1x5x30x8xf32>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<64x128xf32>) permutation = [1, 0] -> tensor<64x128xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x128xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x128xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<64x128xf32> to tensor<15x128xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<60x128xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<60x128xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp32_nobias_ocunaligned(%arg0: tensor<2x32x128xf32>, %arg1: tensor<30x16x5xf32>, %arg2: tensor<2x30x126xf32>) -> tensor<2x30x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128xf32>, tensor<30x16x5xf32>, i1) outs(%arg2 : tensor<2x30x126xf32>) -> tensor<2x30x126xf32>
+  return %0 : tensor<2x30x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf16> into tensor<1x32x128xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xf16> into tensor<1x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xf16>) outs(%{{.*}} : tensor<1x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xf16> into tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) -> tensor<1x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xf16>) outs(%{{.*}} : tensor<1x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xf16> into tensor<30x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xf16>) outs(%{{.*}} : tensor<1x30x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xf16>) outs(%{{.*}} : tensor<1x30x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xf16>) outs(%{{.*}} : tensor<1x5x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xf16> into tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) -> tensor<1x1x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xf16>, tensor<1x1x5x30x16xf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<128x32xf16>) -> tensor<128x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x32xf16>) outs(%{{.*}} : tensor<32x128xf16>) permutation = [1, 0] -> tensor<32x128xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x128xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x128xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<32x128xf16> to tensor<15x128xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf16> into tensor<30x128xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<30x128xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 126] [1, 1] : tensor<30x128xf16> to tensor<30x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf16> into tensor<30x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x126xf16>, tensor<30x1xf16>) outs(%{{.*}} : tensor<30x126xf16>) broadcast = [1] -> tensor<30x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp16_bias_ocunaligned(%arg0: tensor<32x128xf16>, %arg1: tensor<30x16x5xf16>, %arg2: tensor<30xf16>, %arg3: tensor<30x126xf16>) -> tensor<30x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128xf16>, tensor<30x16x5xf16>, i1, tensor<30xf16>) outs(%arg3 : tensor<30x126xf16>) -> tensor<30x126xf16>
+  return %0 : tensor<30x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xf16> into tensor<2x2x16x128xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xf16>) outs(%{{.*}} : tensor<2x2x128x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xf16> into tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) -> tensor<2x2x1x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xf16> into tensor<30x1x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xf16>) outs(%{{.*}} : tensor<1x30x16x5xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xf16>) outs(%{{.*}} : tensor<1x30x5x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xf16>) outs(%{{.*}} : tensor<1x5x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xf16> into tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) -> tensor<1x1x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xf16>) outs(%{{.*}} : tensor<1x1x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x5x30x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<128x64xf16>) -> tensor<128x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x64xf16>) outs(%{{.*}} : tensor<64x128xf16>) permutation = [1, 0] -> tensor<64x128xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x128xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x128xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<64x128xf16> to tensor<15x128xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf16> into tensor<60x128xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<60x128xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf16> to tensor<60x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf16> into tensor<2x30x126xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf16> into tensor<1x30x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x126xf16>, tensor<1x30x1xf16>) outs(%{{.*}} : tensor<2x30x126xf16>) broadcast = [0, 2] -> tensor<2x30x126xf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp16_bias_ocunaligned(%arg0: tensor<2x32x128xf16>, %arg1: tensor<30x16x5xf16>, %arg2: tensor<30xf16>, %arg3: tensor<2x30x126xf16>) -> tensor<2x30x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128xf16>, tensor<30x16x5xf16>, i1, tensor<30xf16>) outs(%arg3 : tensor<2x30x126xf16>) -> tensor<2x30x126xf16>
+  return %0 : tensor<2x30x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_bf16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30xbf16>) outs(%{{.*}} : tensor<30xf32>) -> tensor<30xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xbf16> into tensor<1x32x128xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 128] : tensor<1x32x128xbf16> into tensor<1x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x128xbf16>) outs(%{{.*}} : tensor<1x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 1, 128, 16] : tensor<1x2x128x16xbf16> into tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) -> tensor<1x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x1x128x16xbf16>) outs(%{{.*}} : tensor<1x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xbf16> into tensor<30x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xbf16>) outs(%{{.*}} : tensor<1x30x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xbf16>) outs(%{{.*}} : tensor<1x30x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xbf16>) outs(%{{.*}} : tensor<1x5x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xbf16> into tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) -> tensor<1x1x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x1x128x16xbf16>, tensor<1x1x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<32x128xf32>) permutation = [1, 0] -> tensor<32x128xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x128xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x128xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<32x128xf32> to tensor<15x128xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<30x128xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<30x128xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 126] [1, 1] : tensor<30x128xf32> to tensor<30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf32> into tensor<30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x126xf32>, tensor<30x1xf32>) outs(%{{.*}} : tensor<30x126xf32>) broadcast = [1] -> tensor<30x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30x126xf32>) outs(%{{.*}} : tensor<30x126xbf16>) -> tensor<30x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_2d_bf16_bias_ocunaligned(%arg0: tensor<32x128xbf16>, %arg1: tensor<30x16x5xbf16>, %arg2: tensor<30xbf16>, %arg3: tensor<30x126xbf16>) -> tensor<30x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128xbf16>, tensor<30x16x5xbf16>, i1, tensor<30xbf16>) outs(%arg3 : tensor<30x126xbf16>) -> tensor<30x126xbf16>
+  return %0 : tensor<30x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_bf16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30xbf16>) outs(%{{.*}} : tensor<30xf32>) -> tensor<30xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xbf16> into tensor<2x2x16x128xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x128xbf16>) outs(%{{.*}} : tensor<2x2x128x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 1, 128, 16] : tensor<2x2x128x16xbf16> into tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) -> tensor<2x2x1x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xbf16>) outs(%{{.*}} : tensor<2x2x1x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 5] : tensor<30x16x5xbf16> into tensor<30x1x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x5xbf16>) outs(%{{.*}} : tensor<1x30x16x5xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x5xbf16>) outs(%{{.*}} : tensor<1x30x5x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x5x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x5x16xbf16>) outs(%{{.*}} : tensor<1x5x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x5x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 5, 30, 16] : tensor<1x5x30x16xbf16> into tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) -> tensor<1x1x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x5x30x16xbf16>) outs(%{{.*}} : tensor<1x1x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xbf16>, tensor<1x1x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<64x128xf32>) permutation = [1, 0] -> tensor<64x128xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x128xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x128xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<64x128xf32> to tensor<15x128xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<60x128xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<60x128xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x126xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x126xf32>) broadcast = [0, 2] -> tensor<2x30x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x30x126xf32>) outs(%{{.*}} : tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16>
+// CHECK:         }
+func.func @triton_conv1d_3d_bf16_bias_ocunaligned(%arg0: tensor<2x32x128xbf16>, %arg1: tensor<30x16x5xbf16>, %arg2: tensor<30xbf16>, %arg3: tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128xbf16>, tensor<30x16x5xbf16>, i1, tensor<30xbf16>) outs(%arg3 : tensor<2x30x126xbf16>) -> tensor<2x30x126xbf16>
+  return %0 : tensor<2x30x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp32_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 32, 128] : tensor<32x128xf32> into tensor<1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 128] : tensor<1x32x128xf32> into tensor<1x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x128xf32>) outs(%{{.*}} : tensor<1x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 1, 128, 8] : tensor<1x4x128x8xf32> into tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) -> tensor<1x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 5] : tensor<30x16x5xf32> into tensor<30x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x5xf32>) outs(%{{.*}} : tensor<2x30x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x5xf32>) outs(%{{.*}} : tensor<2x30x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x5x8xf32>) outs(%{{.*}} : tensor<2x5x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 30, 8] : tensor<2x5x30x8xf32> into tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) -> tensor<2x1x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x1x128x8xf32>, tensor<2x1x5x30x8xf32>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x32xf32>) outs(%{{.*}} : tensor<32x128xf32>) permutation = [1, 0] -> tensor<32x128xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x128xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x128xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<32x128xf32> to tensor<15x128xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<30x128xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<30x128xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 126] [1, 1] : tensor<30x128xf32> to tensor<30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf32> into tensor<30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x126xf32>, tensor<30x1xf32>) outs(%{{.*}} : tensor<30x126xf32>) broadcast = [1] -> tensor<30x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp32_bias_ocunaligned(%arg0: tensor<32x128xf32>, %arg1: tensor<30x16x5xf32>, %arg2: tensor<30xf32>, %arg3: tensor<30x126xf32>) -> tensor<30x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128xf32>, tensor<30x16x5xf32>, i1, tensor<30xf32>) outs(%arg3 : tensor<30x126xf32>) -> tensor<30x126xf32>
+  return %0 : tensor<30x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp32_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 128] : tensor<2x32x128xf32> into tensor<2x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x128xf32>) outs(%{{.*}} : tensor<2x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 1, 128, 8] : tensor<2x4x128x8xf32> into tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) -> tensor<2x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 5] : tensor<30x16x5xf32> into tensor<30x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x5xf32>) outs(%{{.*}} : tensor<2x30x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x5xf32>) outs(%{{.*}} : tensor<2x30x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x5x8xf32>) outs(%{{.*}} : tensor<2x5x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 30, 8] : tensor<2x5x30x8xf32> into tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) -> tensor<2x1x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x30x8xf32>) outs(%{{.*}} : tensor<2x1x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x1x128x8xf32>, tensor<2x1x5x30x8xf32>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<64x128xf32>) permutation = [1, 0] -> tensor<64x128xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x128xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x128xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<64x128xf32> to tensor<15x128xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 128] [1, 1] : tensor<15x128xf32> into tensor<60x128xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<60x128xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 126] [1, 1] : tensor<60x128xf32> to tensor<60x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 126] : tensor<60x126xf32> into tensor<2x30x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x126xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x126xf32>) broadcast = [0, 2] -> tensor<2x30x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp32_bias_ocunaligned(%arg0: tensor<2x32x128xf32>, %arg1: tensor<30x16x5xf32>, %arg2: tensor<30xf32>, %arg3: tensor<2x30x126xf32>) -> tensor<2x30x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128xf32>, tensor<30x16x5xf32>, i1, tensor<30xf32>) outs(%arg3 : tensor<2x30x126xf32>) -> tensor<2x30x126xf32>
+  return %0 : tensor<2x30x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp32_icunaligned_1(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 15, 128] : tensor<2x30x128xf32> into tensor<2x2x15x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x2x1x128xf32>) -> tensor<2x2x1x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x2x15x128xf32>, tensor<2x2x1x128xf32>) outs(%{{.*}} : tensor<2x2x16x128xf32>) -> tensor<2x2x16x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] : tensor<2x2x16x128xf32> into tensor<2x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 128] : tensor<2x32x128xf32> into tensor<2x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x128xf32>) outs(%{{.*}} : tensor<2x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 1, 128, 8] : tensor<2x4x128x8xf32> into tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) -> tensor<2x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x1x5xf32>) -> tensor<32x1x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x15x5xf32>, tensor<32x1x5xf32>) outs(%{{.*}} : tensor<32x16x5xf32>) -> tensor<32x16x5xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 5] : tensor<32x16x5xf32> into tensor<32x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x5xf32>) outs(%{{.*}} : tensor<2x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x5xf32>) outs(%{{.*}} : tensor<2x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x5x8xf32>) outs(%{{.*}} : tensor<2x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 32, 8] : tensor<2x5x32x8xf32> into tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) -> tensor<2x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x1x128x8xf32>, tensor<2x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<64x126xf32>) permutation = [1, 0] -> tensor<64x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf32> into tensor<2x32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp32_icunaligned_1(%arg0: tensor<2x30x128xf32>, %arg1: tensor<32x15x5xf32>, %arg2: tensor<2x32x126xf32>) -> tensor<2x32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x30x128xf32>, tensor<32x15x5xf32>, i1) outs(%arg2 : tensor<2x32x126xf32>) -> tensor<2x32x126xf32>
+  return %0 : tensor<2x32x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_3d_fp32_icunaligned_2(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 1, 30, 128] : tensor<2x30x128xf32> into tensor<2x1x30x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x1x2x128xf32>) -> tensor<2x1x2x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x128xf32>, tensor<2x1x2x128xf32>) outs(%{{.*}} : tensor<2x1x32x128xf32>) -> tensor<2x1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] : tensor<2x1x32x128xf32> into tensor<2x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 128] : tensor<2x32x128xf32> into tensor<2x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x128xf32>) outs(%{{.*}} : tensor<2x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 1, 128, 8] : tensor<2x4x128x8xf32> into tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) -> tensor<2x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x1x128x8xf32>) outs(%{{.*}} : tensor<2x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x2x5xf32>) -> tensor<32x2x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x30x5xf32>, tensor<32x2x5xf32>) outs(%{{.*}} : tensor<32x32x5xf32>) -> tensor<32x32x5xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 4, 8, 5] : tensor<32x32x5xf32> into tensor<32x4x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x4x8x5xf32>) outs(%{{.*}} : tensor<4x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<4x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x8x5xf32>) outs(%{{.*}} : tensor<4x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x5x8xf32>) outs(%{{.*}} : tensor<4x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [4, 1, 5, 32, 8] : tensor<4x5x32x8xf32> into tensor<4x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<4x1x5x32x8xf32>) outs(%{{.*}} : tensor<4x1x5x32x8xf32>) -> tensor<4x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<4x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<4x1x5x32x8xf32>) outs(%{{.*}} : tensor<4x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<4x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x1x128x8xf32>, tensor<4x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 64] [1, 1] : tensor<128x64xf32> to tensor<126x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<64x126xf32>) permutation = [1, 0] -> tensor<64x126xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 126] : tensor<64x126xf32> into tensor<2x32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_3d_fp32_icunaligned_2(%arg0: tensor<2x30x128xf32>, %arg1: tensor<32x30x5xf32>, %arg2: tensor<2x32x126xf32>) -> tensor<2x32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 1 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x30x128xf32>, tensor<32x30x5xf32>, i1) outs(%arg2 : tensor<2x32x126xf32>) -> tensor<2x32x126xf32>
+  return %0 : tensor<2x32x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp32_icunaligned_1(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 30, 128] : tensor<30x128xf32> into tensor<1x30x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 15, 128] : tensor<1x30x128xf32> into tensor<1x2x15x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<1x2x1x128xf32>) -> tensor<1x2x1x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<1x2x15x128xf32>, tensor<1x2x1x128xf32>) outs(%{{.*}} : tensor<1x2x16x128xf32>) -> tensor<1x2x16x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] : tensor<1x2x16x128xf32> into tensor<1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 128] : tensor<1x32x128xf32> into tensor<1x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x128xf32>) outs(%{{.*}} : tensor<1x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 1, 128, 8] : tensor<1x4x128x8xf32> into tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) -> tensor<1x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x1x5xf32>) -> tensor<32x1x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x15x5xf32>, tensor<32x1x5xf32>) outs(%{{.*}} : tensor<32x16x5xf32>) -> tensor<32x16x5xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 5] : tensor<32x16x5xf32> into tensor<32x2x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x5xf32>) outs(%{{.*}} : tensor<2x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x5xf32>) outs(%{{.*}} : tensor<2x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x5x8xf32>) outs(%{{.*}} : tensor<2x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 5, 32, 8] : tensor<2x5x32x8xf32> into tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) -> tensor<2x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x1x5x32x8xf32>) outs(%{{.*}} : tensor<2x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x1x128x8xf32>, tensor<2x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf32> to tensor<126x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf32>) outs(%{{.*}} : tensor<32x126xf32>) permutation = [1, 0] -> tensor<32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp32_icunaligned_1(%arg0: tensor<30x128xf32>, %arg1: tensor<32x15x5xf32>, %arg2: tensor<32x126xf32>) -> tensor<32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<30x128xf32>, tensor<32x15x5xf32>, i1) outs(%arg2 : tensor<32x126xf32>) -> tensor<32x126xf32>
+  return %0 : tensor<32x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv1d_2d_fp32_icunaligned_2(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [1, 30, 128] : tensor<30x128xf32> into tensor<1x30x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 1, 30, 128] : tensor<1x30x128xf32> into tensor<1x1x30x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<1x1x2x128xf32>) -> tensor<1x1x2x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<1x1x30x128xf32>, tensor<1x1x2x128xf32>) outs(%{{.*}} : tensor<1x1x32x128xf32>) -> tensor<1x1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] : tensor<1x1x32x128xf32> into tensor<1x32x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 128] : tensor<1x32x128xf32> into tensor<1x4x8x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x128xf32>) outs(%{{.*}} : tensor<1x4x128x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x128x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 1, 128, 8] : tensor<1x4x128x8xf32> into tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) -> tensor<1x4x1x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x1x128x8xf32>) outs(%{{.*}} : tensor<1x4x1x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x1x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x2x5xf32>) -> tensor<32x2x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x30x5xf32>, tensor<32x2x5xf32>) outs(%{{.*}} : tensor<32x32x5xf32>) -> tensor<32x32x5xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 4, 8, 5] : tensor<32x32x5xf32> into tensor<32x4x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x4x8x5xf32>) outs(%{{.*}} : tensor<4x32x8x5xf32>) permutation = [1, 0, 2, 3] -> tensor<4x32x8x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x8x5xf32>) outs(%{{.*}} : tensor<4x32x5x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x32x5x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x5x8xf32>) outs(%{{.*}} : tensor<4x5x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x5x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [4, 1, 5, 32, 8] : tensor<4x5x32x8xf32> into tensor<4x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<4x1x5x32x8xf32>) outs(%{{.*}} : tensor<4x1x5x32x8xf32>) -> tensor<4x1x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<4x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<4x1x5x32x8xf32>) outs(%{{.*}} : tensor<4x1x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<4x1x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv1dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x1x128x8xf32>, tensor<4x1x5x32x8xf32>, i1) outs(%{{.*}} : tensor<128x32xf32>) -> tensor<128x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [126, 32] [1, 1] : tensor<128x32xf32> to tensor<126x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<126x32xf32>) outs(%{{.*}} : tensor<32x126xf32>) permutation = [1, 0] -> tensor<32x126xf32>
+// CHECK:         }
+func.func @triton_conv1d_2d_fp32_icunaligned_2(%arg0: tensor<30x128xf32>, %arg1: tensor<32x30x5xf32>, %arg2: tensor<32x126xf32>) -> tensor<32x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv1dL1 {groups = 1 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<30x128xf32>, tensor<32x30x5xf32>, i1) outs(%arg2 : tensor<32x126xf32>) -> tensor<32x126xf32>
+  return %0 : tensor<32x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf16> into tensor<1x32x128x128xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf16> into tensor<1x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xf16> into tensor<1x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xf16>) outs(%{{.*}} : tensor<1x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xf16> into tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) -> tensor<1x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf16> into tensor<32x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xf16> into tensor<32x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xf16>) outs(%{{.*}} : tensor<1x32x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xf16>) outs(%{{.*}} : tensor<1x32x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xf16>) outs(%{{.*}} : tensor<1x25x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xf16> into tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) -> tensor<1x5x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xf16>, tensor<1x5x5x32x16xf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<15888x32xf16>) -> tensor<15888x32xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf16> to tensor<15876x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf16>) outs(%{{.*}} : tensor<32x15876xf16>) permutation = [1, 0] -> tensor<32x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf16> into tensor<32x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp16_nobias_ocaligned(%arg0: tensor<32x128x128xf16>, %arg1: tensor<32x16x5x5xf16>, %arg2: tensor<32x126x126xf16>) -> tensor<32x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128x128xf16>, tensor<32x16x5x5xf16>, i1) outs(%arg2 : tensor<32x126x126xf16>) -> tensor<32x126x126xf16>
+  return %0 : tensor<32x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf16> into tensor<2x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xf16> into tensor<2x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xf16>) outs(%{{.*}} : tensor<2x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xf16> into tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) -> tensor<2x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf16> into tensor<32x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xf16> into tensor<32x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xf16>) outs(%{{.*}} : tensor<1x32x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xf16>) outs(%{{.*}} : tensor<1x32x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xf16>) outs(%{{.*}} : tensor<1x25x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xf16> into tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) -> tensor<1x5x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xf16>, tensor<1x5x5x32x16xf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<15888x64xf16>) -> tensor<15888x64xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf16> to tensor<15876x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf16>) outs(%{{.*}} : tensor<64x15876xf16>) permutation = [1, 0] -> tensor<64x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf16> into tensor<2x32x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf16> into tensor<2x32x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp16_nobias_ocaligned(%arg0: tensor<2x32x128x128xf16>, %arg1: tensor<32x16x5x5xf16>, %arg2: tensor<2x32x126x126xf16>) -> tensor<2x32x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128x128xf16>, tensor<32x16x5x5xf16>, i1) outs(%arg2 : tensor<2x32x126x126xf16>) -> tensor<2x32x126x126xf16>
+  return %0 : tensor<2x32x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_bf16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xbf16> into tensor<1x32x128x128xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xbf16> into tensor<1x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xbf16> into tensor<1x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xbf16>) outs(%{{.*}} : tensor<1x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xbf16> into tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) -> tensor<1x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xbf16> into tensor<32x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xbf16> into tensor<32x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xbf16>) outs(%{{.*}} : tensor<1x32x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xbf16>) outs(%{{.*}} : tensor<1x32x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xbf16>) outs(%{{.*}} : tensor<1x25x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xbf16> into tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) -> tensor<1x5x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xbf16>, tensor<1x5x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<15888x32xbf16>) -> tensor<15888x32xbf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xbf16> to tensor<15876x32xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xbf16>) outs(%{{.*}} : tensor<32x15876xbf16>) permutation = [1, 0] -> tensor<32x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xbf16> into tensor<32x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_bf16_nobias_ocaligned(%arg0: tensor<32x128x128xbf16>, %arg1: tensor<32x16x5x5xbf16>, %arg2: tensor<32x126x126xbf16>) -> tensor<32x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128x128xbf16>, tensor<32x16x5x5xbf16>, i1) outs(%arg2 : tensor<32x126x126xbf16>) -> tensor<32x126x126xbf16>
+  return %0 : tensor<32x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_bf16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xbf16> into tensor<2x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xbf16> into tensor<2x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xbf16>) outs(%{{.*}} : tensor<2x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xbf16> into tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) -> tensor<2x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xbf16> into tensor<32x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xbf16> into tensor<32x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xbf16>) outs(%{{.*}} : tensor<1x32x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xbf16>) outs(%{{.*}} : tensor<1x32x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xbf16>) outs(%{{.*}} : tensor<1x25x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xbf16> into tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) -> tensor<1x5x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xbf16>, tensor<1x5x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<15888x64xbf16>) -> tensor<15888x64xbf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xbf16> to tensor<15876x64xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xbf16>) outs(%{{.*}} : tensor<64x15876xbf16>) permutation = [1, 0] -> tensor<64x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xbf16> into tensor<2x32x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xbf16> into tensor<2x32x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_bf16_nobias_ocaligned(%arg0: tensor<2x32x128x128xbf16>, %arg1: tensor<32x16x5x5xbf16>, %arg2: tensor<2x32x126x126xbf16>) -> tensor<2x32x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128x128xbf16>, tensor<32x16x5x5xbf16>, i1) outs(%arg2 : tensor<2x32x126x126xbf16>) -> tensor<2x32x126x126xbf16>
+  return %0 : tensor<2x32x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp32_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf32> into tensor<1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf32> into tensor<1x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 16384] : tensor<1x32x16384xf32> into tensor<1x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x16384xf32>) outs(%{{.*}} : tensor<1x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 128, 128, 8] : tensor<1x4x16384x8xf32> into tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) -> tensor<1x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf32> into tensor<32x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 25] : tensor<32x16x25xf32> into tensor<32x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x25xf32>) outs(%{{.*}} : tensor<2x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x25xf32>) outs(%{{.*}} : tensor<2x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x25x8xf32>) outs(%{{.*}} : tensor<2x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 32, 8] : tensor<2x25x32x8xf32> into tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) -> tensor<2x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x128x128x8xf32>, tensor<2x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf32> to tensor<15876x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf32>) outs(%{{.*}} : tensor<32x15876xf32>) permutation = [1, 0] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf32> into tensor<32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp32_nobias_ocaligned(%arg0: tensor<32x128x128xf32>, %arg1: tensor<32x16x5x5xf32>, %arg2: tensor<32x126x126xf32>) -> tensor<32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128x128xf32>, tensor<32x16x5x5xf32>, i1) outs(%arg2 : tensor<32x126x126xf32>) -> tensor<32x126x126xf32>
+  return %0 : tensor<32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp32_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf32> into tensor<2x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 16384] : tensor<2x32x16384xf32> into tensor<2x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x16384xf32>) outs(%{{.*}} : tensor<2x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 128, 128, 8] : tensor<2x4x16384x8xf32> into tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) -> tensor<2x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf32> into tensor<32x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 25] : tensor<32x16x25xf32> into tensor<32x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x25xf32>) outs(%{{.*}} : tensor<2x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x25xf32>) outs(%{{.*}} : tensor<2x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x25x8xf32>) outs(%{{.*}} : tensor<2x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 32, 8] : tensor<2x25x32x8xf32> into tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) -> tensor<2x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x128x128x8xf32>, tensor<2x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf32> to tensor<15876x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf32>) outs(%{{.*}} : tensor<64x15876xf32>) permutation = [1, 0] -> tensor<64x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf32> into tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf32> into tensor<2x32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp32_nobias_ocaligned(%arg0: tensor<2x32x128x128xf32>, %arg1: tensor<32x16x5x5xf32>, %arg2: tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128x128xf32>, tensor<32x16x5x5xf32>, i1) outs(%arg2 : tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32>
+  return %0 : tensor<2x32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf16> into tensor<1x32x128x128xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf16> into tensor<1x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xf16> into tensor<1x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xf16>) outs(%{{.*}} : tensor<1x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xf16> into tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) -> tensor<1x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf16> into tensor<32x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xf16> into tensor<32x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xf16>) outs(%{{.*}} : tensor<1x32x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xf16>) outs(%{{.*}} : tensor<1x32x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xf16>) outs(%{{.*}} : tensor<1x25x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xf16> into tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) -> tensor<1x5x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xf16>, tensor<1x5x5x32x16xf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<15888x32xf16>) -> tensor<15888x32xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf16> to tensor<15876x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf16>) outs(%{{.*}} : tensor<32x15876xf16>) permutation = [1, 0] -> tensor<32x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf16> into tensor<32x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<32x15876xf16>, tensor<32x1xf16>) outs(%{{.*}} : tensor<32x15876xf16>) broadcast = [1] -> tensor<32x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf16> into tensor<32x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp16_bias_ocaligned(%arg0: tensor<32x128x128xf16>, %arg1: tensor<32x16x5x5xf16>, %arg2: tensor<32xf16>, %arg3: tensor<32x126x126xf16>) -> tensor<32x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128x128xf16>, tensor<32x16x5x5xf16>, i1, tensor<32xf16>) outs(%arg3 : tensor<32x126x126xf16>) -> tensor<32x126x126xf16>
+  return %0 : tensor<32x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf16> into tensor<2x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xf16> into tensor<2x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xf16>) outs(%{{.*}} : tensor<2x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xf16> into tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) -> tensor<2x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf16> into tensor<32x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xf16> into tensor<32x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xf16>) outs(%{{.*}} : tensor<1x32x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xf16>) outs(%{{.*}} : tensor<1x32x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xf16>) outs(%{{.*}} : tensor<1x25x32x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xf16> into tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) -> tensor<1x5x5x32x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xf16>) outs(%{{.*}} : tensor<1x5x5x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xf16>, tensor<1x5x5x32x16xf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<15888x64xf16>) -> tensor<15888x64xf16>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf16> to tensor<15876x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf16>) outs(%{{.*}} : tensor<64x15876xf16>) permutation = [1, 0] -> tensor<64x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf16> into tensor<2x32x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf16> into tensor<1x32x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x15876xf16>, tensor<1x32x1xf16>) outs(%{{.*}} : tensor<2x32x15876xf16>) broadcast = [0, 2] -> tensor<2x32x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf16> into tensor<2x32x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp16_bias_ocaligned(%arg0: tensor<2x32x128x128xf16>, %arg1: tensor<32x16x5x5xf16>, %arg2: tensor<32xf16>, %arg3: tensor<2x32x126x126xf16>) -> tensor<2x32x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128x128xf16>, tensor<32x16x5x5xf16>, i1, tensor<32xf16>) outs(%arg3 : tensor<2x32x126x126xf16>) -> tensor<2x32x126x126xf16>
+  return %0 : tensor<2x32x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_bf16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32xbf16>) outs(%{{.*}} : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xbf16> into tensor<1x32x128x128xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xbf16> into tensor<1x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xbf16> into tensor<1x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xbf16>) outs(%{{.*}} : tensor<1x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xbf16> into tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) -> tensor<1x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xbf16> into tensor<32x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xbf16> into tensor<32x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xbf16>) outs(%{{.*}} : tensor<1x32x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xbf16>) outs(%{{.*}} : tensor<1x32x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xbf16>) outs(%{{.*}} : tensor<1x25x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xbf16> into tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) -> tensor<1x5x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xbf16>, tensor<1x5x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf32> to tensor<15876x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf32>) outs(%{{.*}} : tensor<32x15876xf32>) permutation = [1, 0] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<32x15876xf32>, tensor<32x1xf32>) outs(%{{.*}} : tensor<32x15876xf32>) broadcast = [1] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf32> into tensor<32x126x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32x126x126xf32>) outs(%{{.*}} : tensor<32x126x126xbf16>) -> tensor<32x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_bf16_bias_ocaligned(%arg0: tensor<32x128x128xbf16>, %arg1: tensor<32x16x5x5xbf16>, %arg2: tensor<32xbf16>, %arg3: tensor<32x126x126xbf16>) -> tensor<32x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128x128xbf16>, tensor<32x16x5x5xbf16>, i1, tensor<32xbf16>) outs(%arg3 : tensor<32x126x126xbf16>) -> tensor<32x126x126xbf16>
+  return %0 : tensor<32x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_bf16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<32xbf16>) outs(%{{.*}} : tensor<32xf32>) -> tensor<32xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xbf16> into tensor<2x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xbf16> into tensor<2x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xbf16>) outs(%{{.*}} : tensor<2x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xbf16> into tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) -> tensor<2x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xbf16> into tensor<32x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 1, 16, 25] : tensor<32x16x25xbf16> into tensor<32x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x1x16x25xbf16>) outs(%{{.*}} : tensor<1x32x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x32x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x16x25xbf16>) outs(%{{.*}} : tensor<1x32x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x32x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x32x25x16xbf16>) outs(%{{.*}} : tensor<1x25x32x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x32x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 32, 16] : tensor<1x25x32x16xbf16> into tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) -> tensor<1x5x5x32x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x32x16xbf16>) outs(%{{.*}} : tensor<1x5x5x32x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x32x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xbf16>, tensor<1x5x5x32x16xbf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf32> to tensor<15876x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf32>) outs(%{{.*}} : tensor<64x15876xf32>) permutation = [1, 0] -> tensor<64x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf32> into tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf32> into tensor<1x32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x15876xf32>, tensor<1x32x1xf32>) outs(%{{.*}} : tensor<2x32x15876xf32>) broadcast = [0, 2] -> tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf32> into tensor<2x32x126x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x32x126x126xf32>) outs(%{{.*}} : tensor<2x32x126x126xbf16>) -> tensor<2x32x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_bf16_bias_ocaligned(%arg0: tensor<2x32x128x128xbf16>, %arg1: tensor<32x16x5x5xbf16>, %arg2: tensor<32xbf16>, %arg3: tensor<2x32x126x126xbf16>) -> tensor<2x32x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128x128xbf16>, tensor<32x16x5x5xbf16>, i1, tensor<32xbf16>) outs(%arg3 : tensor<2x32x126x126xbf16>) -> tensor<2x32x126x126xbf16>
+  return %0 : tensor<2x32x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp32_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf32> into tensor<1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf32> into tensor<1x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 16384] : tensor<1x32x16384xf32> into tensor<1x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x16384xf32>) outs(%{{.*}} : tensor<1x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 128, 128, 8] : tensor<1x4x16384x8xf32> into tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) -> tensor<1x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf32> into tensor<32x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 25] : tensor<32x16x25xf32> into tensor<32x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x25xf32>) outs(%{{.*}} : tensor<2x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x25xf32>) outs(%{{.*}} : tensor<2x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x25x8xf32>) outs(%{{.*}} : tensor<2x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 32, 8] : tensor<2x25x32x8xf32> into tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) -> tensor<2x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x128x128x8xf32>, tensor<2x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf32> to tensor<15876x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf32>) outs(%{{.*}} : tensor<32x15876xf32>) permutation = [1, 0] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [32, 1] : tensor<32xf32> into tensor<32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<32x15876xf32>, tensor<32x1xf32>) outs(%{{.*}} : tensor<32x15876xf32>) broadcast = [1] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf32> into tensor<32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp32_bias_ocaligned(%arg0: tensor<32x128x128xf32>, %arg1: tensor<32x16x5x5xf32>, %arg2: tensor<32xf32>, %arg3: tensor<32x126x126xf32>) -> tensor<32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128x128xf32>, tensor<32x16x5x5xf32>, i1, tensor<32xf32>) outs(%arg3 : tensor<32x126x126xf32>) -> tensor<32x126x126xf32>
+  return %0 : tensor<32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp32_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf32> into tensor<2x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 16384] : tensor<2x32x16384xf32> into tensor<2x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x16384xf32>) outs(%{{.*}} : tensor<2x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 128, 128, 8] : tensor<2x4x16384x8xf32> into tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) -> tensor<2x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf32> into tensor<32x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 25] : tensor<32x16x25xf32> into tensor<32x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x25xf32>) outs(%{{.*}} : tensor<2x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x25xf32>) outs(%{{.*}} : tensor<2x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x25x8xf32>) outs(%{{.*}} : tensor<2x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 32, 8] : tensor<2x25x32x8xf32> into tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) -> tensor<2x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x128x128x8xf32>, tensor<2x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf32> to tensor<15876x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf32>) outs(%{{.*}} : tensor<64x15876xf32>) permutation = [1, 0] -> tensor<64x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf32> into tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 32, 1] : tensor<32xf32> into tensor<1x32x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x32x15876xf32>, tensor<1x32x1xf32>) outs(%{{.*}} : tensor<2x32x15876xf32>) broadcast = [0, 2] -> tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf32> into tensor<2x32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp32_bias_ocaligned(%arg0: tensor<2x32x128x128xf32>, %arg1: tensor<32x16x5x5xf32>, %arg2: tensor<32xf32>, %arg3: tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128x128xf32>, tensor<32x16x5x5xf32>, i1, tensor<32xf32>) outs(%arg3 : tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32>
+  return %0 : tensor<2x32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf16> into tensor<1x32x128x128xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf16> into tensor<1x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xf16> into tensor<1x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xf16>) outs(%{{.*}} : tensor<1x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xf16> into tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) -> tensor<1x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf16> into tensor<30x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xf16> into tensor<30x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xf16>) outs(%{{.*}} : tensor<1x30x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xf16>) outs(%{{.*}} : tensor<1x30x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xf16>) outs(%{{.*}} : tensor<1x25x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xf16> into tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) -> tensor<1x5x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xf16>, tensor<1x5x5x30x16xf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<15888x32xf16>) -> tensor<15888x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x32xf16>) outs(%{{.*}} : tensor<32x15888xf16>) permutation = [1, 0] -> tensor<32x15888xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x15888xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x15888xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<32x15888xf16> to tensor<15x15888xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf16> into tensor<30x15888xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<30x15888xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 15876] [1, 1] : tensor<30x15888xf16> to tensor<30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [30, 126, 126] : tensor<30x15876xf16> into tensor<30x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp16_nobias_ocunaligned(%arg0: tensor<32x128x128xf16>, %arg1: tensor<30x16x5x5xf16>, %arg2: tensor<30x126x126xf16>) -> tensor<30x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128x128xf16>, tensor<30x16x5x5xf16>, i1) outs(%arg2 : tensor<30x126x126xf16>) -> tensor<30x126x126xf16>
+  return %0 : tensor<30x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf16> into tensor<2x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xf16> into tensor<2x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xf16>) outs(%{{.*}} : tensor<2x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xf16> into tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) -> tensor<2x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf16> into tensor<30x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xf16> into tensor<30x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xf16>) outs(%{{.*}} : tensor<1x30x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xf16>) outs(%{{.*}} : tensor<1x30x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xf16>) outs(%{{.*}} : tensor<1x25x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xf16> into tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) -> tensor<1x5x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xf16>, tensor<1x5x5x30x16xf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<15888x64xf16>) -> tensor<15888x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x64xf16>) outs(%{{.*}} : tensor<64x15888xf16>) permutation = [1, 0] -> tensor<64x15888xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x15888xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x15888xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<64x15888xf16> to tensor<15x15888xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf16> into tensor<60x15888xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<60x15888xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf16> to tensor<60x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf16> into tensor<2x30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf16> into tensor<2x30x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp16_nobias_ocunaligned(%arg0: tensor<2x32x128x128xf16>, %arg1: tensor<30x16x5x5xf16>, %arg2: tensor<2x30x126x126xf16>) -> tensor<2x30x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128x128xf16>, tensor<30x16x5x5xf16>, i1) outs(%arg2 : tensor<2x30x126x126xf16>) -> tensor<2x30x126x126xf16>
+  return %0 : tensor<2x30x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_bf16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xbf16> into tensor<1x32x128x128xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xbf16> into tensor<1x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xbf16> into tensor<1x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xbf16>) outs(%{{.*}} : tensor<1x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xbf16> into tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) -> tensor<1x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xbf16> into tensor<30x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xbf16> into tensor<30x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xbf16>) outs(%{{.*}} : tensor<1x30x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xbf16>) outs(%{{.*}} : tensor<1x30x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xbf16>) outs(%{{.*}} : tensor<1x25x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xbf16> into tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) -> tensor<1x5x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xbf16>, tensor<1x5x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<15888x32xbf16>) -> tensor<15888x32xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x32xbf16>) outs(%{{.*}} : tensor<32x15888xbf16>) permutation = [1, 0] -> tensor<32x15888xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x15888xbf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x15888xbf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<32x15888xbf16> to tensor<15x15888xbf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xbf16> into tensor<30x15888xbf16>
+// CHECK:             scf.yield %{{.*}} : tensor<30x15888xbf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 15876] [1, 1] : tensor<30x15888xbf16> to tensor<30x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [30, 126, 126] : tensor<30x15876xbf16> into tensor<30x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_bf16_nobias_ocunaligned(%arg0: tensor<32x128x128xbf16>, %arg1: tensor<30x16x5x5xbf16>, %arg2: tensor<30x126x126xbf16>) -> tensor<30x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128x128xbf16>, tensor<30x16x5x5xbf16>, i1) outs(%arg2 : tensor<30x126x126xbf16>) -> tensor<30x126x126xbf16>
+  return %0 : tensor<30x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_bf16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xbf16> into tensor<2x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xbf16> into tensor<2x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xbf16>) outs(%{{.*}} : tensor<2x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xbf16> into tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) -> tensor<2x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xbf16> into tensor<30x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xbf16> into tensor<30x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xbf16>) outs(%{{.*}} : tensor<1x30x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xbf16>) outs(%{{.*}} : tensor<1x30x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xbf16>) outs(%{{.*}} : tensor<1x25x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xbf16> into tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) -> tensor<1x5x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xbf16>, tensor<1x5x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<15888x64xbf16>) -> tensor<15888x64xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x64xbf16>) outs(%{{.*}} : tensor<64x15888xbf16>) permutation = [1, 0] -> tensor<64x15888xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x15888xbf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x15888xbf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<64x15888xbf16> to tensor<15x15888xbf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xbf16> into tensor<60x15888xbf16>
+// CHECK:             scf.yield %{{.*}} : tensor<60x15888xbf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xbf16> to tensor<60x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xbf16> into tensor<2x30x15876xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xbf16> into tensor<2x30x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_bf16_nobias_ocunaligned(%arg0: tensor<2x32x128x128xbf16>, %arg1: tensor<30x16x5x5xbf16>, %arg2: tensor<2x30x126x126xbf16>) -> tensor<2x30x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128x128xbf16>, tensor<30x16x5x5xbf16>, i1) outs(%arg2 : tensor<2x30x126x126xbf16>) -> tensor<2x30x126x126xbf16>
+  return %0 : tensor<2x30x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp32_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf32> into tensor<1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf32> into tensor<1x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 16384] : tensor<1x32x16384xf32> into tensor<1x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x16384xf32>) outs(%{{.*}} : tensor<1x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 128, 128, 8] : tensor<1x4x16384x8xf32> into tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) -> tensor<1x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf32> into tensor<30x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 25] : tensor<30x16x25xf32> into tensor<30x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x25xf32>) outs(%{{.*}} : tensor<2x30x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x25xf32>) outs(%{{.*}} : tensor<2x30x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x25x8xf32>) outs(%{{.*}} : tensor<2x25x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 30, 8] : tensor<2x25x30x8xf32> into tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) -> tensor<2x5x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x128x128x8xf32>, tensor<2x5x5x30x8xf32>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<32x15888xf32>) permutation = [1, 0] -> tensor<32x15888xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x15888xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x15888xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<32x15888xf32> to tensor<15x15888xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<30x15888xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<30x15888xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 15876] [1, 1] : tensor<30x15888xf32> to tensor<30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [30, 126, 126] : tensor<30x15876xf32> into tensor<30x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp32_nobias_ocunaligned(%arg0: tensor<32x128x128xf32>, %arg1: tensor<30x16x5x5xf32>, %arg2: tensor<30x126x126xf32>) -> tensor<30x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<32x128x128xf32>, tensor<30x16x5x5xf32>, i1) outs(%arg2 : tensor<30x126x126xf32>) -> tensor<30x126x126xf32>
+  return %0 : tensor<30x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp32_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf32> into tensor<2x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 16384] : tensor<2x32x16384xf32> into tensor<2x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x16384xf32>) outs(%{{.*}} : tensor<2x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 128, 128, 8] : tensor<2x4x16384x8xf32> into tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) -> tensor<2x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf32> into tensor<30x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 25] : tensor<30x16x25xf32> into tensor<30x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x25xf32>) outs(%{{.*}} : tensor<2x30x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x25xf32>) outs(%{{.*}} : tensor<2x30x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x25x8xf32>) outs(%{{.*}} : tensor<2x25x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 30, 8] : tensor<2x25x30x8xf32> into tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) -> tensor<2x5x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x128x128x8xf32>, tensor<2x5x5x30x8xf32>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<64x15888xf32>) permutation = [1, 0] -> tensor<64x15888xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x15888xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x15888xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<64x15888xf32> to tensor<15x15888xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<60x15888xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<60x15888xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf32> to tensor<60x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf32> into tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf32> into tensor<2x30x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp32_nobias_ocunaligned(%arg0: tensor<2x32x128x128xf32>, %arg1: tensor<30x16x5x5xf32>, %arg2: tensor<2x30x126x126xf32>) -> tensor<2x30x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x128x128xf32>, tensor<30x16x5x5xf32>, i1) outs(%arg2 : tensor<2x30x126x126xf32>) -> tensor<2x30x126x126xf32>
+  return %0 : tensor<2x30x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf16> into tensor<1x32x128x128xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf16> into tensor<1x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xf16> into tensor<1x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xf16>) outs(%{{.*}} : tensor<1x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xf16> into tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) -> tensor<1x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xf16>) outs(%{{.*}} : tensor<1x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf16> into tensor<30x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xf16> into tensor<30x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xf16>) outs(%{{.*}} : tensor<1x30x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xf16>) outs(%{{.*}} : tensor<1x30x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xf16>) outs(%{{.*}} : tensor<1x25x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xf16> into tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) -> tensor<1x5x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xf16>, tensor<1x5x5x30x16xf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<15888x32xf16>) -> tensor<15888x32xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x32xf16>) outs(%{{.*}} : tensor<32x15888xf16>) permutation = [1, 0] -> tensor<32x15888xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x15888xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x15888xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<32x15888xf16> to tensor<15x15888xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf16> into tensor<30x15888xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<30x15888xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 15876] [1, 1] : tensor<30x15888xf16> to tensor<30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf16> into tensor<30x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x15876xf16>, tensor<30x1xf16>) outs(%{{.*}} : tensor<30x15876xf16>) broadcast = [1] -> tensor<30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [30, 126, 126] : tensor<30x15876xf16> into tensor<30x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp16_bias_ocunaligned(%arg0: tensor<32x128x128xf16>, %arg1: tensor<30x16x5x5xf16>, %arg2: tensor<30xf16>, %arg3: tensor<30x126x126xf16>) -> tensor<30x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128x128xf16>, tensor<30x16x5x5xf16>, i1, tensor<30xf16>) outs(%arg3 : tensor<30x126x126xf16>) -> tensor<30x126x126xf16>
+  return %0 : tensor<30x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf16> into tensor<2x32x16384xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xf16> into tensor<2x2x16x16384xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xf16>) outs(%{{.*}} : tensor<2x2x16384x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xf16> into tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) -> tensor<2x2x128x128x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xf16>) outs(%{{.*}} : tensor<2x2x128x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf16> into tensor<30x16x25xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xf16> into tensor<30x1x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xf16>) outs(%{{.*}} : tensor<1x30x16x25xf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xf16>) outs(%{{.*}} : tensor<1x30x25x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xf16>) outs(%{{.*}} : tensor<1x25x30x16xf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xf16> into tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) -> tensor<1x5x5x30x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xf16>) outs(%{{.*}} : tensor<1x5x5x30x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xf16>, tensor<1x5x5x30x16xf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<15888x64xf16>) -> tensor<15888x64xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x64xf16>) outs(%{{.*}} : tensor<64x15888xf16>) permutation = [1, 0] -> tensor<64x15888xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x15888xf16>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x15888xf16>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<64x15888xf16> to tensor<15x15888xf16>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf16> into tensor<60x15888xf16>
+// CHECK:             scf.yield %{{.*}} : tensor<60x15888xf16>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf16> to tensor<60x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf16> into tensor<2x30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf16> into tensor<1x30x1xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x15876xf16>, tensor<1x30x1xf16>) outs(%{{.*}} : tensor<2x30x15876xf16>) broadcast = [0, 2] -> tensor<2x30x15876xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf16> into tensor<2x30x126x126xf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp16_bias_ocunaligned(%arg0: tensor<2x32x128x128xf16>, %arg1: tensor<30x16x5x5xf16>, %arg2: tensor<30xf16>, %arg3: tensor<2x30x126x126xf16>) -> tensor<2x30x126x126xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128x128xf16>, tensor<30x16x5x5xf16>, i1, tensor<30xf16>) outs(%arg3 : tensor<2x30x126x126xf16>) -> tensor<2x30x126x126xf16>
+  return %0 : tensor<2x30x126x126xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_bf16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30xbf16>) outs(%{{.*}} : tensor<30xf32>) -> tensor<30xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xbf16> into tensor<1x32x128x128xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xbf16> into tensor<1x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 16384] : tensor<1x32x16384xbf16> into tensor<1x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x16384xbf16>) outs(%{{.*}} : tensor<1x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 2, 128, 128, 16] : tensor<1x2x16384x16xbf16> into tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) -> tensor<1x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x2x128x128x16xbf16>) outs(%{{.*}} : tensor<1x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xbf16> into tensor<30x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xbf16> into tensor<30x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xbf16>) outs(%{{.*}} : tensor<1x30x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xbf16>) outs(%{{.*}} : tensor<1x30x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xbf16>) outs(%{{.*}} : tensor<1x25x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xbf16> into tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) -> tensor<1x5x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x2x128x128x16xbf16>, tensor<1x5x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<32x15888xf32>) permutation = [1, 0] -> tensor<32x15888xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x15888xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x15888xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<32x15888xf32> to tensor<15x15888xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<30x15888xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<30x15888xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 15876] [1, 1] : tensor<30x15888xf32> to tensor<30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf32> into tensor<30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x15876xf32>, tensor<30x1xf32>) outs(%{{.*}} : tensor<30x15876xf32>) broadcast = [1] -> tensor<30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [30, 126, 126] : tensor<30x15876xf32> into tensor<30x126x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30x126x126xf32>) outs(%{{.*}} : tensor<30x126x126xbf16>) -> tensor<30x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_3d_bf16_bias_ocunaligned(%arg0: tensor<32x128x128xbf16>, %arg1: tensor<30x16x5x5xbf16>, %arg2: tensor<30xbf16>, %arg3: tensor<30x126x126xbf16>) -> tensor<30x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128x128xbf16>, tensor<30x16x5x5xbf16>, i1, tensor<30xbf16>) outs(%arg3 : tensor<30x126x126xbf16>) -> tensor<30x126x126xbf16>
+  return %0 : tensor<30x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_bf16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<30xbf16>) outs(%{{.*}} : tensor<30xf32>) -> tensor<30xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xbf16> into tensor<2x32x16384xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 16384] : tensor<2x32x16384xbf16> into tensor<2x2x16x16384xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x16384xbf16>) outs(%{{.*}} : tensor<2x2x16384x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x16384x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 2, 128, 128, 16] : tensor<2x2x16384x16xbf16> into tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) -> tensor<2x2x128x128x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x128x128x16xbf16>) outs(%{{.*}} : tensor<2x2x128x128x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x128x128x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xbf16> into tensor<30x16x25xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 1, 16, 25] : tensor<30x16x25xbf16> into tensor<30x1x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x1x16x25xbf16>) outs(%{{.*}} : tensor<1x30x16x25xbf16>) permutation = [1, 0, 2, 3] -> tensor<1x30x16x25xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x16x25xbf16>) outs(%{{.*}} : tensor<1x30x25x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x30x25x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x30x25x16xbf16>) outs(%{{.*}} : tensor<1x25x30x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<1x25x30x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 5, 5, 30, 16] : tensor<1x25x30x16xbf16> into tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) -> tensor<1x5x5x30x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x5x5x30x16xbf16>) outs(%{{.*}} : tensor<1x5x5x30x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x5x5x30x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x128x128x16xbf16>, tensor<1x5x5x30x16xbf16>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<64x15888xf32>) permutation = [1, 0] -> tensor<64x15888xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x15888xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x15888xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<64x15888xf32> to tensor<15x15888xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<60x15888xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<60x15888xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf32> to tensor<60x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf32> into tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x15876xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x15876xf32>) broadcast = [0, 2] -> tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf32> into tensor<2x30x126x126xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x30x126x126xf32>) outs(%{{.*}} : tensor<2x30x126x126xbf16>) -> tensor<2x30x126x126xbf16>
+// CHECK:         }
+func.func @triton_conv2d_4d_bf16_bias_ocunaligned(%arg0: tensor<2x32x128x128xbf16>, %arg1: tensor<30x16x5x5xbf16>, %arg2: tensor<30xbf16>, %arg3: tensor<2x30x126x126xbf16>) -> tensor<2x30x126x126xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128x128xbf16>, tensor<30x16x5x5xbf16>, i1, tensor<30xbf16>) outs(%arg3 : tensor<2x30x126x126xbf16>) -> tensor<2x30x126x126xbf16>
+  return %0 : tensor<2x30x126x126xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp32_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 2 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 32, 128, 128] : tensor<32x128x128xf32> into tensor<1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf32> into tensor<1x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 16384] : tensor<1x32x16384xf32> into tensor<1x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x16384xf32>) outs(%{{.*}} : tensor<1x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 128, 128, 8] : tensor<1x4x16384x8xf32> into tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) -> tensor<1x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf32> into tensor<30x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 25] : tensor<30x16x25xf32> into tensor<30x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x25xf32>) outs(%{{.*}} : tensor<2x30x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x25xf32>) outs(%{{.*}} : tensor<2x30x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x25x8xf32>) outs(%{{.*}} : tensor<2x25x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 30, 8] : tensor<2x25x30x8xf32> into tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) -> tensor<2x5x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x128x128x8xf32>, tensor<2x5x5x30x8xf32>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x32xf32>) outs(%{{.*}} : tensor<32x15888xf32>) permutation = [1, 0] -> tensor<32x15888xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<30x15888xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<30x15888xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<32x15888xf32> to tensor<15x15888xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<30x15888xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<30x15888xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [30, 15876] [1, 1] : tensor<30x15888xf32> to tensor<30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [30, 1] : tensor<30xf32> into tensor<30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<30x15876xf32>, tensor<30x1xf32>) outs(%{{.*}} : tensor<30x15876xf32>) broadcast = [1] -> tensor<30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [30, 126, 126] : tensor<30x15876xf32> into tensor<30x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp32_bias_ocunaligned(%arg0: tensor<32x128x128xf32>, %arg1: tensor<30x16x5x5xf32>, %arg2: tensor<30xf32>, %arg3: tensor<30x126x126xf32>) -> tensor<30x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x128x128xf32>, tensor<30x16x5x5xf32>, i1, tensor<30xf32>) outs(%arg3 : tensor<30x126x126xf32>) -> tensor<30x126x126xf32>
+  return %0 : tensor<30x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp32_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 15 : index
+// CHECK:           %{{.*}} = arith.constant 16 : index
+// CHECK:           %{{.*}} = arith.constant 1 : index
+// CHECK:           %{{.*}} = arith.constant 4 : index
+// CHECK:           %{{.*}} = arith.constant 0 : index
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf32> into tensor<2x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 16384] : tensor<2x32x16384xf32> into tensor<2x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x16384xf32>) outs(%{{.*}} : tensor<2x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 128, 128, 8] : tensor<2x4x16384x8xf32> into tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) -> tensor<2x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<30x16x5x5xf32> into tensor<30x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [30, 2, 8, 25] : tensor<30x16x25xf32> into tensor<30x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<30x2x8x25xf32>) outs(%{{.*}} : tensor<2x30x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x30x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x8x25xf32>) outs(%{{.*}} : tensor<2x30x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x30x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x30x25x8xf32>) outs(%{{.*}} : tensor<2x25x30x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x30x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 30, 8] : tensor<2x25x30x8xf32> into tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) -> tensor<2x5x5x30x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x30x8xf32>) outs(%{{.*}} : tensor<2x5x5x30x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x30x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x128x128x8xf32>, tensor<2x5x5x30x8xf32>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15888x64xf32>) outs(%{{.*}} : tensor<64x15888xf32>) permutation = [1, 0] -> tensor<64x15888xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<60x15888xf32>
+// CHECK:           %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<60x15888xf32>) {
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = arith.muli %{{.*}}, %{{.*}} : index
+// CHECK:             %{{.*}} = tensor.extract_slice %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<64x15888xf32> to tensor<15x15888xf32>
+// CHECK:             %{{.*}} = tensor.insert_slice %{{.*}} into %{{.*}}[%{{.*}}, 0] [15, 15888] [1, 1] : tensor<15x15888xf32> into tensor<60x15888xf32>
+// CHECK:             scf.yield %{{.*}} : tensor<60x15888xf32>
+// CHECK:           }
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [60, 15876] [1, 1] : tensor<60x15888xf32> to tensor<60x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 30, 15876] : tensor<60x15876xf32> into tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 30, 1] : tensor<30xf32> into tensor<1x30x1xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<2x30x15876xf32>, tensor<1x30x1xf32>) outs(%{{.*}} : tensor<2x30x15876xf32>) broadcast = [0, 2] -> tensor<2x30x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 30, 126, 126] : tensor<2x30x15876xf32> into tensor<2x30x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp32_bias_ocunaligned(%arg0: tensor<2x32x128x128xf32>, %arg1: tensor<30x16x5x5xf32>, %arg2: tensor<30xf32>, %arg3: tensor<2x30x126x126xf32>) -> tensor<2x30x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x128x128xf32>, tensor<30x16x5x5xf32>, i1, tensor<30xf32>) outs(%arg3 : tensor<2x30x126x126xf32>) -> tensor<2x30x126x126xf32>
+  return %0 : tensor<2x30x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp32_icunaligned_1(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 2, 15, 128, 128] : tensor<2x30x128x128xf32> into tensor<2x2x15x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x2x1x128x128xf32>) -> tensor<2x2x1x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x2x15x128x128xf32>, tensor<2x2x1x128x128xf32>) outs(%{{.*}} : tensor<2x2x16x128x128xf32>) -> tensor<2x2x16x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] : tensor<2x2x16x128x128xf32> into tensor<2x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf32> into tensor<2x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 16384] : tensor<2x32x16384xf32> into tensor<2x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x16384xf32>) outs(%{{.*}} : tensor<2x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 128, 128, 8] : tensor<2x4x16384x8xf32> into tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) -> tensor<2x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x1x5x5xf32>) -> tensor<32x1x5x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x15x5x5xf32>, tensor<32x1x5x5xf32>) outs(%{{.*}} : tensor<32x16x5x5xf32>) -> tensor<32x16x5x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf32> into tensor<32x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 25] : tensor<32x16x25xf32> into tensor<32x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x25xf32>) outs(%{{.*}} : tensor<2x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x25xf32>) outs(%{{.*}} : tensor<2x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x25x8xf32>) outs(%{{.*}} : tensor<2x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 32, 8] : tensor<2x25x32x8xf32> into tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) -> tensor<2x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x128x128x8xf32>, tensor<2x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf32> to tensor<15876x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf32>) outs(%{{.*}} : tensor<64x15876xf32>) permutation = [1, 0] -> tensor<64x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf32> into tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf32> into tensor<2x32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp32_icunaligned_1(%arg0: tensor<2x30x128x128xf32>, %arg1: tensor<32x15x5x5xf32>, %arg2: tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x30x128x128xf32>, tensor<32x15x5x5xf32>, i1) outs(%arg2 : tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32>
+  return %0 : tensor<2x32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_4d_fp32_icunaligned_2(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 1, 30, 128, 128] : tensor<2x30x128x128xf32> into tensor<2x1x30x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x1x2x128x128xf32>) -> tensor<2x1x2x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x128x128xf32>, tensor<2x1x2x128x128xf32>) outs(%{{.*}} : tensor<2x1x32x128x128xf32>) -> tensor<2x1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] : tensor<2x1x32x128x128xf32> into tensor<2x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<2x32x128x128xf32> into tensor<2x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 16384] : tensor<2x32x16384xf32> into tensor<2x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x16384xf32>) outs(%{{.*}} : tensor<2x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [2, 4, 128, 128, 8] : tensor<2x4x16384x8xf32> into tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) -> tensor<2x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x4x128x128x8xf32>) outs(%{{.*}} : tensor<2x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x2x5x5xf32>) -> tensor<32x2x5x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x30x5x5xf32>, tensor<32x2x5x5xf32>) outs(%{{.*}} : tensor<32x32x5x5xf32>) -> tensor<32x32x5x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x32x5x5xf32> into tensor<32x32x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 4, 8, 25] : tensor<32x32x25xf32> into tensor<32x4x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x4x8x25xf32>) outs(%{{.*}} : tensor<4x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<4x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x8x25xf32>) outs(%{{.*}} : tensor<4x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x25x8xf32>) outs(%{{.*}} : tensor<4x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [4, 5, 5, 32, 8] : tensor<4x25x32x8xf32> into tensor<4x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<4x5x5x32x8xf32>) outs(%{{.*}} : tensor<4x5x5x32x8xf32>) -> tensor<4x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<4x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<4x5x5x32x8xf32>) outs(%{{.*}} : tensor<4x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<4x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x4x128x128x8xf32>, tensor<4x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x64xf32>) -> tensor<15888x64xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 64] [1, 1] : tensor<15888x64xf32> to tensor<15876x64xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x64xf32>) outs(%{{.*}} : tensor<64x15876xf32>) permutation = [1, 0] -> tensor<64x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [2, 32, 15876] : tensor<64x15876xf32> into tensor<2x32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [2, 32, 126, 126] : tensor<2x32x15876xf32> into tensor<2x32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_4d_fp32_icunaligned_2(%arg0: tensor<2x30x128x128xf32>, %arg1: tensor<32x30x5x5xf32>, %arg2: tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x30x128x128xf32>, tensor<32x30x5x5xf32>, i1) outs(%arg2 : tensor<2x32x126x126xf32>) -> tensor<2x32x126x126xf32>
+  return %0 : tensor<2x32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp32_icunaligned_1(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 30, 128, 128] : tensor<30x128x128xf32> into tensor<1x30x128x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 2, 15, 128, 128] : tensor<1x30x128x128xf32> into tensor<1x2x15x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<1x2x1x128x128xf32>) -> tensor<1x2x1x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<1x2x15x128x128xf32>, tensor<1x2x1x128x128xf32>) outs(%{{.*}} : tensor<1x2x16x128x128xf32>) -> tensor<1x2x16x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] : tensor<1x2x16x128x128xf32> into tensor<1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf32> into tensor<1x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 16384] : tensor<1x32x16384xf32> into tensor<1x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x16384xf32>) outs(%{{.*}} : tensor<1x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 128, 128, 8] : tensor<1x4x16384x8xf32> into tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) -> tensor<1x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x1x5x5xf32>) -> tensor<32x1x5x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x15x5x5xf32>, tensor<32x1x5x5xf32>) outs(%{{.*}} : tensor<32x16x5x5xf32>) -> tensor<32x16x5x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x16x5x5xf32> into tensor<32x16x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 2, 8, 25] : tensor<32x16x25xf32> into tensor<32x2x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x2x8x25xf32>) outs(%{{.*}} : tensor<2x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<2x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x8x25xf32>) outs(%{{.*}} : tensor<2x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x32x25x8xf32>) outs(%{{.*}} : tensor<2x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [2, 5, 5, 32, 8] : tensor<2x25x32x8xf32> into tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) -> tensor<2x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x5x5x32x8xf32>) outs(%{{.*}} : tensor<2x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x128x128x8xf32>, tensor<2x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf32> to tensor<15876x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf32>) outs(%{{.*}} : tensor<32x15876xf32>) permutation = [1, 0] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf32> into tensor<32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp32_icunaligned_1(%arg0: tensor<30x128x128xf32>, %arg1: tensor<32x15x5x5xf32>, %arg2: tensor<32x126x126xf32>) -> tensor<32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 2 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<30x128x128xf32>, tensor<32x15x5x5xf32>, i1) outs(%arg2 : tensor<32x126x126xf32>) -> tensor<32x126x126xf32>
+  return %0 : tensor<32x126x126xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv2d_3d_fp32_icunaligned_2(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3]] output_shape [1, 30, 128, 128] : tensor<30x128x128xf32> into tensor<1x30x128x128xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [1, 1, 30, 128, 128] : tensor<1x30x128x128xf32> into tensor<1x1x30x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<1x1x2x128x128xf32>) -> tensor<1x1x2x128x128xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<1x1x30x128x128xf32>, tensor<1x1x2x128x128xf32>) outs(%{{.*}} : tensor<1x1x32x128x128xf32>) -> tensor<1x1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] : tensor<1x1x32x128x128xf32> into tensor<1x32x128x128xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<1x32x128x128xf32> into tensor<1x32x16384xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 4, 8, 16384] : tensor<1x32x16384xf32> into tensor<1x4x8x16384xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x4x8x16384xf32>) outs(%{{.*}} : tensor<1x4x16384x8xf32>) permutation = [0, 1, 3, 2] -> tensor<1x4x16384x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3], [4]] output_shape [1, 4, 128, 128, 8] : tensor<1x4x16384x8xf32> into tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) -> tensor<1x4x128x128x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x4x128x128x8xf32>) outs(%{{.*}} : tensor<1x4x128x128x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x4x128x128x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<32x2x5x5xf32>) -> tensor<32x2x5x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<32x30x5x5xf32>, tensor<32x2x5x5xf32>) outs(%{{.*}} : tensor<32x32x5x5xf32>) -> tensor<32x32x5x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] : tensor<32x32x5x5xf32> into tensor<32x32x25xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [32, 4, 8, 25] : tensor<32x32x25xf32> into tensor<32x4x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<32x4x8x25xf32>) outs(%{{.*}} : tensor<4x32x8x25xf32>) permutation = [1, 0, 2, 3] -> tensor<4x32x8x25xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x8x25xf32>) outs(%{{.*}} : tensor<4x32x25x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x32x25x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x32x25x8xf32>) outs(%{{.*}} : tensor<4x25x32x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x25x32x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4]] output_shape [4, 5, 5, 32, 8] : tensor<4x25x32x8xf32> into tensor<4x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<4x5x5x32x8xf32>) outs(%{{.*}} : tensor<4x5x5x32x8xf32>) -> tensor<4x5x5x32x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<4x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<4x5x5x32x8xf32>) outs(%{{.*}} : tensor<4x5x5x32x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<4x5x5x32x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv2dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x4x128x128x8xf32>, tensor<4x5x5x32x8xf32>, i1) outs(%{{.*}} : tensor<15888x32xf32>) -> tensor<15888x32xf32>
+// CHECK:           %{{.*}} = tensor.extract_slice %{{.*}}[0, 0] [15876, 32] [1, 1] : tensor<15888x32xf32> to tensor<15876x32xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<15876x32xf32>) outs(%{{.*}} : tensor<32x15876xf32>) permutation = [1, 0] -> tensor<32x15876xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2]] output_shape [32, 126, 126] : tensor<32x15876xf32> into tensor<32x126x126xf32>
+// CHECK:         }
+func.func @triton_conv2d_3d_fp32_icunaligned_2(%arg0: tensor<30x128x128xf32>, %arg1: tensor<32x30x5x5xf32>, %arg2: tensor<32x126x126xf32>) -> tensor<32x126x126xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv2dL1 {groups = 1 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<30x128x128xf32>, tensor<32x30x5x5xf32>, i1) outs(%arg2 : tensor<32x126x126xf32>) -> tensor<32x126x126xf32>
+  return %0 : tensor<32x126x126xf32>
+}
+// -----
+// Conv3d normalize coverage matrix (aligned with Conv2d test style):
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf16> into tensor<2x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xf16> into tensor<2x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xf16>) outs(%{{.*}} : tensor<2x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xf16> into tensor<2x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf16> into tensor<12x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xf16> into tensor<12x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xf16>) outs(%{{.*}} : tensor<2x12x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xf16>) outs(%{{.*}} : tensor<2x12x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xf16>) outs(%{{.*}} : tensor<2x60x12x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xf16> into tensor<2x3x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xf16>, tensor<3x2x4x5x12x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<12x12x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xf16> into tensor<12x12x7x9xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xf16> into tensor<2x6x12x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xf16>) outs(%{{.*}} : tensor<2x12x6x7x9xf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp16_nobias_ocaligned(%arg0: tensor<2x32x8x10x13xf16>, %arg1: tensor<12x32x3x4x5xf16>, %arg2: tensor<2x12x6x7x9xf16>) -> tensor<2x12x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<2x32x8x10x13xf16>, tensor<12x32x3x4x5xf16>, i1) outs(%arg2 : tensor<2x12x6x7x9xf16>) -> tensor<2x12x6x7x9xf16>
+  return %0 : tensor<2x12x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp16_nobias_padding1_depthpad(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f16
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x32x1x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<2x32x1x10x13xf16>) -> tensor<2x32x1x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x32x1x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<2x32x1x10x13xf16>) -> tensor<2x32x1x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x32x9x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x32x1x10x13xf16>, tensor<2x32x8x10x13xf16>) outs(%{{.*}} : tensor<2x32x9x10x13xf16>) -> tensor<2x32x9x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x32x10x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x32x9x10x13xf16>, tensor<2x32x1x10x13xf16>) outs(%{{.*}} : tensor<2x32x10x10x13xf16>) -> tensor<2x32x10x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x10x10x13xf16> into tensor<2x32x1300xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1300] : tensor<2x32x1300xf16> into tensor<2x2x16x1300xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1300x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1300xf16>) outs(%{{.*}} : tensor<2x2x1300x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1300x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 10, 10, 13, 16] : tensor<2x2x1300x16xf16> into tensor<2x2x10x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x10x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x10x10x13x16xf16>) outs(%{{.*}} : tensor<2x10x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x10x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x10x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x10x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x10x2x10x13x16xf16>) -> tensor<2x10x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x10x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x10x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x10x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x10x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x10x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf16> into tensor<12x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xf16> into tensor<12x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xf16>) outs(%{{.*}} : tensor<2x12x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xf16>) outs(%{{.*}} : tensor<2x12x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xf16>) outs(%{{.*}} : tensor<2x60x12x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xf16> into tensor<2x3x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {conv3dDepthPadded, groups = 1 : i32, outputAlreadyNormalized, padding = 1 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x10x2x10x13x16xf16>, tensor<3x2x4x5x12x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [16, 12, 99] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<16x12x99xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [16, 12, 9, 11] : tensor<16x12x99xf16> into tensor<16x12x9x11xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 8, 12, 9, 11] : tensor<16x12x9x11xf16> into tensor<2x8x12x9x11xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x8x9x11xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x8x12x9x11xf16>) outs(%{{.*}} : tensor<2x12x8x9x11xf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x8x9x11xf16>
+// CHECK:           return %{{.*}} : tensor<2x12x8x9x11xf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp16_nobias_padding1_depthpad(%arg0: tensor<2x32x8x10x13xf16>, %arg1: tensor<12x32x3x4x5xf16>, %arg2: tensor<2x12x8x9x11xf16>) -> tensor<2x12x8x9x11xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 1 : i32} ins(%arg0, %arg1, %true : tensor<2x32x8x10x13xf16>, tensor<12x32x3x4x5xf16>, i1) outs(%arg2 : tensor<2x12x8x9x11xf16>) -> tensor<2x12x8x9x11xf16>
+  return %0 : tensor<2x12x8x9x11xf16>
+}
+
+// -----
+
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp16_nobias_dhw_padding_depthpad(
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x32x1x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x32x10x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {conv3dDepthPadded, groups = 1 : i32, outputAlreadyNormalized, padding = [1, 2, 3]} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x10x2x10x13x16xf16>, tensor<3x2x4x5x12x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [16, 12, 165] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<16x12x165xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [16, 12, 11, 15] : tensor<16x12x165xf16> into tensor<16x12x11x15xf16>
+// CHECK:           return %{{.*}} : tensor<2x12x8x11x15xf16>
+func.func @triton_conv3d_5d_fp16_nobias_dhw_padding_depthpad(%arg0: tensor<2x32x8x10x13xf16>, %arg1: tensor<12x32x3x4x5xf16>, %arg2: tensor<2x12x8x11x15xf16>) -> tensor<2x12x8x11x15xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = [1, 2, 3]} ins(%arg0, %arg1, %true : tensor<2x32x8x10x13xf16>, tensor<12x32x3x4x5xf16>, i1) outs(%arg2 : tensor<2x12x8x11x15xf16>) -> tensor<2x12x8x11x15xf16>
+  return %0 : tensor<2x12x8x11x15xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf16> into tensor<2x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xf16> into tensor<2x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xf16>) outs(%{{.*}} : tensor<2x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xf16> into tensor<2x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf16> into tensor<12x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xf16> into tensor<12x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xf16>) outs(%{{.*}} : tensor<2x12x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xf16>) outs(%{{.*}} : tensor<2x12x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xf16>) outs(%{{.*}} : tensor<2x60x12x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xf16> into tensor<2x3x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xf16>, tensor<3x2x4x5x12x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<12x12x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 12, 1] : tensor<12xf16> into tensor<1x12x1xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x12x63xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<12x12x63xf16>, tensor<1x12x1xf16>) outs(%{{.*}} : tensor<12x12x63xf16>) broadcast = [0, 2] -> tensor<12x12x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xf16> into tensor<12x12x7x9xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xf16> into tensor<2x6x12x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xf16>) outs(%{{.*}} : tensor<2x12x6x7x9xf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp16_bias_ocaligned(%arg0: tensor<2x32x8x10x13xf16>, %arg1: tensor<12x32x3x4x5xf16>, %arg2: tensor<12xf16>, %arg3: tensor<2x12x6x7x9xf16>) -> tensor<2x12x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x8x10x13xf16>, tensor<12x32x3x4x5xf16>, i1, tensor<12xf16>) outs(%arg3 : tensor<2x12x6x7x9xf16>) -> tensor<2x12x6x7x9xf16>
+  return %0 : tensor<2x12x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f16
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [2, 1, 30, 8, 10, 13] : tensor<2x30x8x10x13xf16> into tensor<2x1x30x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x2x8x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<2x1x2x8x10x13xf16>) -> tensor<2x1x2x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x8x10x13xf16>, tensor<2x1x2x8x10x13xf16>) outs(%{{.*}} : tensor<2x1x32x8x10x13xf16>) -> tensor<2x1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<2x1x32x8x10x13xf16> into tensor<2x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf16> into tensor<2x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xf16> into tensor<2x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xf16>) outs(%{{.*}} : tensor<2x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xf16> into tensor<2x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x2x3x4x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<11x2x3x4x5xf16>) -> tensor<11x2x3x4x5xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x32x3x4x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<11x30x3x4x5xf16>, tensor<11x2x3x4x5xf16>) outs(%{{.*}} : tensor<11x32x3x4x5xf16>) -> tensor<11x32x3x4x5xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<11x32x3x4x5xf16> into tensor<11x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [11, 2, 16, 60] : tensor<11x32x60xf16> into tensor<11x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<11x2x16x60xf16>) outs(%{{.*}} : tensor<2x11x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x11x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x16x60xf16>) outs(%{{.*}} : tensor<2x11x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x11x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x60x16xf16>) outs(%{{.*}} : tensor<2x60x11x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x11x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 11, 16] : tensor<2x60x11x16xf16> into tensor<2x3x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xf16>, tensor<3x2x4x5x11x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 11, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<12x11x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 11, 1] : tensor<11xf16> into tensor<1x11x1xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x11x63xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<12x11x63xf16>, tensor<1x11x1xf16>) outs(%{{.*}} : tensor<12x11x63xf16>) broadcast = [0, 2] -> tensor<12x11x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 11, 7, 9] : tensor<12x11x63xf16> into tensor<12x11x7x9xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 11, 7, 9] : tensor<12x11x7x9xf16> into tensor<2x6x11x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x11x7x9xf16>) outs(%{{.*}} : tensor<2x11x6x7x9xf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x11x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<2x11x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp16_bias_ocunaligned(%arg0: tensor<2x30x8x10x13xf16>, %arg1: tensor<11x30x3x4x5xf16>, %arg2: tensor<11xf16>, %arg3: tensor<2x11x6x7x9xf16>) -> tensor<2x11x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x30x8x10x13xf16>, tensor<11x30x3x4x5xf16>, i1, tensor<11xf16>) outs(%arg3 : tensor<2x11x6x7x9xf16>) -> tensor<2x11x6x7x9xf16>
+  return %0 : tensor<2x11x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_bf16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xbf16> into tensor<2x32x1040xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xbf16> into tensor<2x2x16x1040xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xbf16>) outs(%{{.*}} : tensor<2x2x1040x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xbf16> into tensor<2x2x8x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xbf16> into tensor<12x32x60xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xbf16> into tensor<12x2x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xbf16>) outs(%{{.*}} : tensor<2x12x16x60xbf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xbf16>) outs(%{{.*}} : tensor<2x12x60x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xbf16>) outs(%{{.*}} : tensor<2x60x12x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xbf16> into tensor<2x3x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xbf16>, tensor<3x2x4x5x12x16xbf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16> into tensor<12x12x63xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xbf16> into tensor<12x12x7x9xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xbf16> into tensor<2x6x12x7x9xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xbf16>) outs(%{{.*}} : tensor<2x12x6x7x9xbf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xbf16>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xbf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_bf16_nobias_ocaligned(%arg0: tensor<2x32x8x10x13xbf16>, %arg1: tensor<12x32x3x4x5xbf16>, %arg2: tensor<2x12x6x7x9xbf16>) -> tensor<2x12x6x7x9xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<2x32x8x10x13xbf16>, tensor<12x32x3x4x5xbf16>, i1) outs(%arg2 : tensor<2x12x6x7x9xbf16>) -> tensor<2x12x6x7x9xbf16>
+  return %0 : tensor<2x12x6x7x9xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_bf16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : bf16
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [2, 1, 30, 8, 10, 13] : tensor<2x30x8x10x13xbf16> into tensor<2x1x30x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x2x8x10x13xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : bf16) outs(%{{.*}} : tensor<2x1x2x8x10x13xbf16>) -> tensor<2x1x2x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x8x10x13xbf16>, tensor<2x1x2x8x10x13xbf16>) outs(%{{.*}} : tensor<2x1x32x8x10x13xbf16>) -> tensor<2x1x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<2x1x32x8x10x13xbf16> into tensor<2x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xbf16> into tensor<2x32x1040xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xbf16> into tensor<2x2x16x1040xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xbf16>) outs(%{{.*}} : tensor<2x2x1040x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xbf16> into tensor<2x2x8x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x2x3x4x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : bf16) outs(%{{.*}} : tensor<11x2x3x4x5xbf16>) -> tensor<11x2x3x4x5xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x32x3x4x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<11x30x3x4x5xbf16>, tensor<11x2x3x4x5xbf16>) outs(%{{.*}} : tensor<11x32x3x4x5xbf16>) -> tensor<11x32x3x4x5xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<11x32x3x4x5xbf16> into tensor<11x32x60xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [11, 2, 16, 60] : tensor<11x32x60xbf16> into tensor<11x2x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x16x60xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<11x2x16x60xbf16>) outs(%{{.*}} : tensor<2x11x16x60xbf16>) permutation = [1, 0, 2, 3] -> tensor<2x11x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x60x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x16x60xbf16>) outs(%{{.*}} : tensor<2x11x60x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x11x60x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x60x16xbf16>) outs(%{{.*}} : tensor<2x60x11x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 11, 16] : tensor<2x60x11x16xbf16> into tensor<2x3x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x11x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) -> tensor<3x2x4x5x11x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xbf16>, tensor<3x2x4x5x11x16xbf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 11, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16> into tensor<12x11x63xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 11, 7, 9] : tensor<12x11x63xbf16> into tensor<12x11x7x9xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 11, 7, 9] : tensor<12x11x7x9xbf16> into tensor<2x6x11x7x9xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x6x7x9xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x11x7x9xbf16>) outs(%{{.*}} : tensor<2x11x6x7x9xbf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x11x6x7x9xbf16>
+// CHECK:           return %{{.*}} : tensor<2x11x6x7x9xbf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_bf16_nobias_ocunaligned(%arg0: tensor<2x30x8x10x13xbf16>, %arg1: tensor<11x30x3x4x5xbf16>, %arg2: tensor<2x11x6x7x9xbf16>) -> tensor<2x11x6x7x9xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<2x30x8x10x13xbf16>, tensor<11x30x3x4x5xbf16>, i1) outs(%arg2 : tensor<2x11x6x7x9xbf16>) -> tensor<2x11x6x7x9xbf16>
+  return %0 : tensor<2x11x6x7x9xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_bf16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<12xbf16>) outs(%{{.*}} : tensor<12xf32>) -> tensor<12xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xbf16> into tensor<2x32x1040xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xbf16> into tensor<2x2x16x1040xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xbf16>) outs(%{{.*}} : tensor<2x2x1040x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xbf16> into tensor<2x2x8x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xbf16> into tensor<12x32x60xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xbf16> into tensor<12x2x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xbf16>) outs(%{{.*}} : tensor<2x12x16x60xbf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xbf16>) outs(%{{.*}} : tensor<2x12x60x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xbf16>) outs(%{{.*}} : tensor<2x60x12x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xbf16> into tensor<2x3x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xbf16>, tensor<3x2x4x5x12x16xbf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf32> into tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 12, 1] : tensor<12xf32> into tensor<1x12x1xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<12x12x63xf32>, tensor<1x12x1xf32>) outs(%{{.*}} : tensor<12x12x63xf32>) broadcast = [0, 2] -> tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xf32> into tensor<12x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xf32> into tensor<2x6x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xf32>) outs(%{{.*}} : tensor<2x12x6x7x9xf32>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x12x6x7x9xf32>) outs(%{{.*}} : tensor<2x12x6x7x9xbf16>) -> tensor<2x12x6x7x9xbf16>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xbf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_bf16_bias_ocaligned(%arg0: tensor<2x32x8x10x13xbf16>, %arg1: tensor<12x32x3x4x5xbf16>, %arg2: tensor<12xbf16>, %arg3: tensor<2x12x6x7x9xbf16>) -> tensor<2x12x6x7x9xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x8x10x13xbf16>, tensor<12x32x3x4x5xbf16>, i1, tensor<12xbf16>) outs(%arg3 : tensor<2x12x6x7x9xbf16>) -> tensor<2x12x6x7x9xbf16>
+  return %0 : tensor<2x12x6x7x9xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_bf16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : bf16
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11xf32>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<11xbf16>) outs(%{{.*}} : tensor<11xf32>) -> tensor<11xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [2, 1, 30, 8, 10, 13] : tensor<2x30x8x10x13xbf16> into tensor<2x1x30x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x2x8x10x13xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : bf16) outs(%{{.*}} : tensor<2x1x2x8x10x13xbf16>) -> tensor<2x1x2x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x8x10x13xbf16>, tensor<2x1x2x8x10x13xbf16>) outs(%{{.*}} : tensor<2x1x32x8x10x13xbf16>) -> tensor<2x1x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<2x1x32x8x10x13xbf16> into tensor<2x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xbf16> into tensor<2x32x1040xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 2, 16, 1040] : tensor<2x32x1040xbf16> into tensor<2x2x16x1040xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x16x1040xbf16>) outs(%{{.*}} : tensor<2x2x1040x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x2x1040x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 2, 8, 10, 13, 16] : tensor<2x2x1040x16xbf16> into tensor<2x2x8x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x2x8x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<2x8x2x10x13x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x2x3x4x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : bf16) outs(%{{.*}} : tensor<11x2x3x4x5xbf16>) -> tensor<11x2x3x4x5xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x32x3x4x5xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<11x30x3x4x5xbf16>, tensor<11x2x3x4x5xbf16>) outs(%{{.*}} : tensor<11x32x3x4x5xbf16>) -> tensor<11x32x3x4x5xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<11x32x3x4x5xbf16> into tensor<11x32x60xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [11, 2, 16, 60] : tensor<11x32x60xbf16> into tensor<11x2x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x16x60xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<11x2x16x60xbf16>) outs(%{{.*}} : tensor<2x11x16x60xbf16>) permutation = [1, 0, 2, 3] -> tensor<2x11x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x60x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x16x60xbf16>) outs(%{{.*}} : tensor<2x11x60x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x11x60x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x60x16xbf16>) outs(%{{.*}} : tensor<2x60x11x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 11, 16] : tensor<2x60x11x16xbf16> into tensor<2x3x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x11x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) -> tensor<3x2x4x5x11x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x11x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x2x10x13x16xbf16>, tensor<3x2x4x5x11x16xbf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 11, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf32> into tensor<12x11x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 11, 1] : tensor<11xf32> into tensor<1x11x1xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x11x63xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<12x11x63xf32>, tensor<1x11x1xf32>) outs(%{{.*}} : tensor<12x11x63xf32>) broadcast = [0, 2] -> tensor<12x11x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 11, 7, 9] : tensor<12x11x63xf32> into tensor<12x11x7x9xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 11, 7, 9] : tensor<12x11x7x9xf32> into tensor<2x6x11x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x6x7x9xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x11x7x9xf32>) outs(%{{.*}} : tensor<2x11x6x7x9xf32>) permutation = [0, 2, 1, 3, 4] -> tensor<2x11x6x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x6x7x9xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<2x11x6x7x9xf32>) outs(%{{.*}} : tensor<2x11x6x7x9xbf16>) -> tensor<2x11x6x7x9xbf16>
+// CHECK:           return %{{.*}} : tensor<2x11x6x7x9xbf16>
+// CHECK:           }
+func.func @triton_conv3d_5d_bf16_bias_ocunaligned(%arg0: tensor<2x30x8x10x13xbf16>, %arg1: tensor<11x30x3x4x5xbf16>, %arg2: tensor<11xbf16>, %arg3: tensor<2x11x6x7x9xbf16>) -> tensor<2x11x6x7x9xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x30x8x10x13xbf16>, tensor<11x30x3x4x5xbf16>, i1, tensor<11xbf16>) outs(%arg3 : tensor<2x11x6x7x9xbf16>) -> tensor<2x11x6x7x9xbf16>
+  return %0 : tensor<2x11x6x7x9xbf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp32_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf32> into tensor<2x32x1040xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 1040] : tensor<2x32x1040xf32> into tensor<2x4x8x1040xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x1040xf32>) outs(%{{.*}} : tensor<2x4x1040x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 4, 8, 10, 13, 8] : tensor<2x4x1040x8xf32> into tensor<2x4x8x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf32> into tensor<12x32x60xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 4, 8, 60] : tensor<12x32x60xf32> into tensor<12x4x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x12x8x60xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x4x8x60xf32>) outs(%{{.*}} : tensor<4x12x8x60xf32>) permutation = [1, 0, 2, 3] -> tensor<4x12x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x12x60x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x12x8x60xf32>) outs(%{{.*}} : tensor<4x12x60x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x12x60x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x60x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x12x60x8xf32>) outs(%{{.*}} : tensor<4x60x12x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x60x12x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [4, 3, 4, 5, 12, 8] : tensor<4x60x12x8xf32> into tensor<4x3x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x3x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x12x8xf32>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x4x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x12x8xf32>) -> tensor<3x4x4x5x12x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x4x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x12x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x4x10x13x8xf32>, tensor<3x4x4x5x12x8xf32>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf32> into tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 12, 1] : tensor<12xf32> into tensor<1x12x1xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<12x12x63xf32>, tensor<1x12x1xf32>) outs(%{{.*}} : tensor<12x12x63xf32>) broadcast = [0, 2] -> tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xf32> into tensor<12x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xf32> into tensor<2x6x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xf32>) outs(%{{.*}} : tensor<2x12x6x7x9xf32>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xf32>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xf32>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp32_bias_ocaligned(%arg0: tensor<2x32x8x10x13xf32>, %arg1: tensor<12x32x3x4x5xf32>, %arg2: tensor<12xf32>, %arg3: tensor<2x12x6x7x9xf32>) -> tensor<2x12x6x7x9xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x32x8x10x13xf32>, tensor<12x32x3x4x5xf32>, i1, tensor<12xf32>) outs(%arg3 : tensor<2x12x6x7x9xf32>) -> tensor<2x12x6x7x9xf32>
+  return %0 : tensor<2x12x6x7x9xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp32_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [2, 1, 30, 8, 10, 13] : tensor<2x30x8x10x13xf32> into tensor<2x1x30x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x2x8x10x13xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x1x2x8x10x13xf32>) -> tensor<2x1x2x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x32x8x10x13xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x8x10x13xf32>, tensor<2x1x2x8x10x13xf32>) outs(%{{.*}} : tensor<2x1x32x8x10x13xf32>) -> tensor<2x1x32x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<2x1x32x8x10x13xf32> into tensor<2x32x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf32> into tensor<2x32x1040xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 1040] : tensor<2x32x1040xf32> into tensor<2x4x8x1040xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x1040xf32>) outs(%{{.*}} : tensor<2x4x1040x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 4, 8, 10, 13, 8] : tensor<2x4x1040x8xf32> into tensor<2x4x8x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x2x3x4x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<11x2x3x4x5xf32>) -> tensor<11x2x3x4x5xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x32x3x4x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<11x30x3x4x5xf32>, tensor<11x2x3x4x5xf32>) outs(%{{.*}} : tensor<11x32x3x4x5xf32>) -> tensor<11x32x3x4x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<11x32x3x4x5xf32> into tensor<11x32x60xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [11, 4, 8, 60] : tensor<11x32x60xf32> into tensor<11x4x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x11x8x60xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<11x4x8x60xf32>) outs(%{{.*}} : tensor<4x11x8x60xf32>) permutation = [1, 0, 2, 3] -> tensor<4x11x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x11x60x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x11x8x60xf32>) outs(%{{.*}} : tensor<4x11x60x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x11x60x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x60x11x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x11x60x8xf32>) outs(%{{.*}} : tensor<4x60x11x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x60x11x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [4, 3, 4, 5, 11, 8] : tensor<4x60x11x8xf32> into tensor<4x3x4x5x11x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x11x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x3x4x5x11x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x11x8xf32>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x4x4x5x11x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x11x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x4x4x5x11x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x11x8xf32>) -> tensor<3x4x4x5x11x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x4x4x5x11x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x11x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x4x4x5x11x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x11x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x4x4x5x11x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x4x10x13x8xf32>, tensor<3x4x4x5x11x8xf32>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 11, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf32> into tensor<12x11x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 11, 1] : tensor<11xf32> into tensor<1x11x1xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x11x63xf32>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<12x11x63xf32>, tensor<1x11x1xf32>) outs(%{{.*}} : tensor<12x11x63xf32>) broadcast = [0, 2] -> tensor<12x11x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 11, 7, 9] : tensor<12x11x63xf32> into tensor<12x11x7x9xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 11, 7, 9] : tensor<12x11x7x9xf32> into tensor<2x6x11x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x6x7x9xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x11x7x9xf32>) outs(%{{.*}} : tensor<2x11x6x7x9xf32>) permutation = [0, 2, 1, 3, 4] -> tensor<2x11x6x7x9xf32>
+// CHECK:           return %{{.*}} : tensor<2x11x6x7x9xf32>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp32_bias_ocunaligned(%arg0: tensor<2x30x8x10x13xf32>, %arg1: tensor<11x30x3x4x5xf32>, %arg2: tensor<11xf32>, %arg3: tensor<2x11x6x7x9xf32>) -> tensor<2x11x6x7x9xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<2x30x8x10x13xf32>, tensor<11x30x3x4x5xf32>, i1, tensor<11xf32>) outs(%arg3 : tensor<2x11x6x7x9xf32>) -> tensor<2x11x6x7x9xf32>
+  return %0 : tensor<2x11x6x7x9xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp32_icunaligned_1(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [2, 2, 15, 8, 10, 13] : tensor<2x30x8x10x13xf32> into tensor<2x2x15x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x1x8x10x13xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x2x1x8x10x13xf32>) -> tensor<2x2x1x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x2x16x8x10x13xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x2x15x8x10x13xf32>, tensor<2x2x1x8x10x13xf32>) outs(%{{.*}} : tensor<2x2x16x8x10x13xf32>) -> tensor<2x2x16x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<2x2x16x8x10x13xf32> into tensor<2x32x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf32> into tensor<2x32x1040xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 1040] : tensor<2x32x1040xf32> into tensor<2x4x8x1040xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x1040xf32>) outs(%{{.*}} : tensor<2x4x1040x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 4, 8, 10, 13, 8] : tensor<2x4x1040x8xf32> into tensor<2x4x8x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x1x3x4x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<12x1x3x4x5xf32>) -> tensor<12x1x3x4x5xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x16x3x4x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<12x15x3x4x5xf32>, tensor<12x1x3x4x5xf32>) outs(%{{.*}} : tensor<12x16x3x4x5xf32>) -> tensor<12x16x3x4x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x16x3x4x5xf32> into tensor<12x16x60xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 8, 60] : tensor<12x16x60xf32> into tensor<12x2x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x8x60xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x8x60xf32>) outs(%{{.*}} : tensor<2x12x8x60xf32>) permutation = [1, 0, 2, 3] -> tensor<2x12x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x8x60xf32>) outs(%{{.*}} : tensor<2x12x60x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x8xf32>) outs(%{{.*}} : tensor<2x60x12x8xf32>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 8] : tensor<2x60x12x8xf32> into tensor<2x3x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x2x4x5x12x8xf32>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x2x4x5x12x8xf32>) -> tensor<3x2x4x5x12x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x2x4x5x12x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x4x10x13x8xf32>, tensor<3x2x4x5x12x8xf32>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf32> into tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xf32> into tensor<12x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xf32> into tensor<2x6x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xf32>) outs(%{{.*}} : tensor<2x12x6x7x9xf32>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xf32>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xf32>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp32_icunaligned_1(%arg0: tensor<2x30x8x10x13xf32>, %arg1: tensor<12x15x3x4x5xf32>, %arg2: tensor<2x12x6x7x9xf32>) -> tensor<2x12x6x7x9xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 2 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<2x30x8x10x13xf32>, tensor<12x15x3x4x5xf32>, i1) outs(%arg2 : tensor<2x12x6x7x9xf32>) -> tensor<2x12x6x7x9xf32>
+  return %0 : tensor<2x12x6x7x9xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_5d_fp32_icunaligned_2(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f32
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [2, 1, 30, 8, 10, 13] : tensor<2x30x8x10x13xf32> into tensor<2x1x30x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x2x8x10x13xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<2x1x2x8x10x13xf32>) -> tensor<2x1x2x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x1x32x8x10x13xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<2x1x30x8x10x13xf32>, tensor<2x1x2x8x10x13xf32>) outs(%{{.*}} : tensor<2x1x32x8x10x13xf32>) -> tensor<2x1x32x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<2x1x32x8x10x13xf32> into tensor<2x32x8x10x13xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<2x32x8x10x13xf32> into tensor<2x32x1040xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [2, 4, 8, 1040] : tensor<2x32x1040xf32> into tensor<2x4x8x1040xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x1040xf32>) outs(%{{.*}} : tensor<2x4x1040x8xf32>) permutation = [0, 1, 3, 2] -> tensor<2x4x1040x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [2, 4, 8, 10, 13, 8] : tensor<2x4x1040x8xf32> into tensor<2x4x8x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x4x8x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x8x4x10x13x8xf32>) outs(%{{.*}} : tensor<2x8x4x10x13x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x8x4x10x13x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x2x3x4x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f32) outs(%{{.*}} : tensor<12x2x3x4x5xf32>) -> tensor<12x2x3x4x5xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x32x3x4x5xf32>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<12x30x3x4x5xf32>, tensor<12x2x3x4x5xf32>) outs(%{{.*}} : tensor<12x32x3x4x5xf32>) -> tensor<12x32x3x4x5xf32>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf32> into tensor<12x32x60xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 4, 8, 60] : tensor<12x32x60xf32> into tensor<12x4x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x12x8x60xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x4x8x60xf32>) outs(%{{.*}} : tensor<4x12x8x60xf32>) permutation = [1, 0, 2, 3] -> tensor<4x12x8x60xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x12x60x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x12x8x60xf32>) outs(%{{.*}} : tensor<4x12x60x8xf32>) permutation = [0, 1, 3, 2] -> tensor<4x12x60x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<4x60x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x12x60x8xf32>) outs(%{{.*}} : tensor<4x60x12x8xf32>) permutation = [0, 2, 1, 3] -> tensor<4x60x12x8xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [4, 3, 4, 5, 12, 8] : tensor<4x60x12x8xf32> into tensor<4x3x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<4x3x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x12x8xf32>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x4x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x12x8xf32>) -> tensor<3x4x4x5x12x8xf32>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x4x4x5x12x8xf32>) outs(%{{.*}} : tensor<3x4x4x5x12x8xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x4x4x5x12x8xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x8x4x10x13x8xf32>, tensor<3x4x4x5x12x8xf32>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [12, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf32> into tensor<12x12x63xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [12, 12, 7, 9] : tensor<12x12x63xf32> into tensor<12x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [2, 6, 12, 7, 9] : tensor<12x12x7x9xf32> into tensor<2x6x12x7x9xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x6x7x9xf32>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x6x12x7x9xf32>) outs(%{{.*}} : tensor<2x12x6x7x9xf32>) permutation = [0, 2, 1, 3, 4] -> tensor<2x12x6x7x9xf32>
+// CHECK:           return %{{.*}} : tensor<2x12x6x7x9xf32>
+// CHECK:           }
+func.func @triton_conv3d_5d_fp32_icunaligned_2(%arg0: tensor<2x30x8x10x13xf32>, %arg1: tensor<12x30x3x4x5xf32>, %arg2: tensor<2x12x6x7x9xf32>) -> tensor<2x12x6x7x9xf32> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<2x30x8x10x13xf32>, tensor<12x30x3x4x5xf32>, i1) outs(%arg2 : tensor<2x12x6x7x9xf32>) -> tensor<2x12x6x7x9xf32>
+  return %0 : tensor<2x12x6x7x9xf32>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_4d_fp16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [1, 32, 8, 10, 13] : tensor<32x8x10x13xf16> into tensor<1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<1x32x8x10x13xf16> into tensor<1x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 1040] : tensor<1x32x1040xf16> into tensor<1x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x1040xf16>) outs(%{{.*}} : tensor<1x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [1, 2, 8, 10, 13, 16] : tensor<1x2x1040x16xf16> into tensor<1x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf16> into tensor<12x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xf16> into tensor<12x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xf16>) outs(%{{.*}} : tensor<2x12x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xf16>) outs(%{{.*}} : tensor<2x12x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xf16>) outs(%{{.*}} : tensor<2x60x12x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xf16> into tensor<2x3x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x8x2x10x13x16xf16>, tensor<3x2x4x5x12x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [6, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<6x12x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [6, 12, 7, 9] : tensor<6x12x63xf16> into tensor<6x12x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<6x12x7x9xf16>) outs(%{{.*}} : tensor<12x6x7x9xf16>) permutation = [1, 0, 2, 3] -> tensor<12x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<12x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_4d_fp16_nobias_ocaligned(%arg0: tensor<32x8x10x13xf16>, %arg1: tensor<12x32x3x4x5xf16>, %arg2: tensor<12x6x7x9xf16>) -> tensor<12x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<32x8x10x13xf16>, tensor<12x32x3x4x5xf16>, i1) outs(%arg2 : tensor<12x6x7x9xf16>) -> tensor<12x6x7x9xf16>
+  return %0 : tensor<12x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_4d_fp16_nobias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f16
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [1, 30, 8, 10, 13] : tensor<30x8x10x13xf16> into tensor<1x30x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [1, 1, 30, 8, 10, 13] : tensor<1x30x8x10x13xf16> into tensor<1x1x30x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x1x2x8x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<1x1x2x8x10x13xf16>) -> tensor<1x1x2x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<1x1x30x8x10x13xf16>, tensor<1x1x2x8x10x13xf16>) outs(%{{.*}} : tensor<1x1x32x8x10x13xf16>) -> tensor<1x1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<1x1x32x8x10x13xf16> into tensor<1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<1x32x8x10x13xf16> into tensor<1x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 1040] : tensor<1x32x1040xf16> into tensor<1x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x1040xf16>) outs(%{{.*}} : tensor<1x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [1, 2, 8, 10, 13, 16] : tensor<1x2x1040x16xf16> into tensor<1x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x2x3x4x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<11x2x3x4x5xf16>) -> tensor<11x2x3x4x5xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x32x3x4x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<11x30x3x4x5xf16>, tensor<11x2x3x4x5xf16>) outs(%{{.*}} : tensor<11x32x3x4x5xf16>) -> tensor<11x32x3x4x5xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<11x32x3x4x5xf16> into tensor<11x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [11, 2, 16, 60] : tensor<11x32x60xf16> into tensor<11x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<11x2x16x60xf16>) outs(%{{.*}} : tensor<2x11x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x11x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x16x60xf16>) outs(%{{.*}} : tensor<2x11x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x11x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x60x16xf16>) outs(%{{.*}} : tensor<2x60x11x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x11x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 11, 16] : tensor<2x60x11x16xf16> into tensor<2x3x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x8x2x10x13x16xf16>, tensor<3x2x4x5x11x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [6, 11, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<6x11x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [6, 11, 7, 9] : tensor<6x11x63xf16> into tensor<6x11x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<6x11x7x9xf16>) outs(%{{.*}} : tensor<11x6x7x9xf16>) permutation = [1, 0, 2, 3] -> tensor<11x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<11x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_4d_fp16_nobias_ocunaligned(%arg0: tensor<30x8x10x13xf16>, %arg1: tensor<11x30x3x4x5xf16>, %arg2: tensor<11x6x7x9xf16>) -> tensor<11x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<30x8x10x13xf16>, tensor<11x30x3x4x5xf16>, i1) outs(%arg2 : tensor<11x6x7x9xf16>) -> tensor<11x6x7x9xf16>
+  return %0 : tensor<11x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_4d_fp16_bias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [1, 32, 8, 10, 13] : tensor<32x8x10x13xf16> into tensor<1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<1x32x8x10x13xf16> into tensor<1x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 1040] : tensor<1x32x1040xf16> into tensor<1x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x1040xf16>) outs(%{{.*}} : tensor<1x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [1, 2, 8, 10, 13, 16] : tensor<1x2x1040x16xf16> into tensor<1x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xf16> into tensor<12x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xf16> into tensor<12x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xf16>) outs(%{{.*}} : tensor<2x12x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xf16>) outs(%{{.*}} : tensor<2x12x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xf16>) outs(%{{.*}} : tensor<2x60x12x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xf16> into tensor<2x3x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x8x2x10x13x16xf16>, tensor<3x2x4x5x12x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [6, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<6x12x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 12, 1] : tensor<12xf16> into tensor<1x12x1xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<6x12x63xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<6x12x63xf16>, tensor<1x12x1xf16>) outs(%{{.*}} : tensor<6x12x63xf16>) broadcast = [0, 2] -> tensor<6x12x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [6, 12, 7, 9] : tensor<6x12x63xf16> into tensor<6x12x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<6x12x7x9xf16>) outs(%{{.*}} : tensor<12x6x7x9xf16>) permutation = [1, 0, 2, 3] -> tensor<12x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<12x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_4d_fp16_bias_ocaligned(%arg0: tensor<32x8x10x13xf16>, %arg1: tensor<12x32x3x4x5xf16>, %arg2: tensor<12xf16>, %arg3: tensor<12x6x7x9xf16>) -> tensor<12x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<32x8x10x13xf16>, tensor<12x32x3x4x5xf16>, i1, tensor<12xf16>) outs(%arg3 : tensor<12x6x7x9xf16>) -> tensor<12x6x7x9xf16>
+  return %0 : tensor<12x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_4d_fp16_bias_ocunaligned(
+// CHECK:           %{{.*}} = arith.constant 0.000000e+00 : f16
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [1, 30, 8, 10, 13] : tensor<30x8x10x13xf16> into tensor<1x30x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] output_shape [1, 1, 30, 8, 10, 13] : tensor<1x30x8x10x13xf16> into tensor<1x1x30x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x1x2x8x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<1x1x2x8x10x13xf16>) -> tensor<1x1x2x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(2) ins(%{{.*}}, %{{.*}} : tensor<1x1x30x8x10x13xf16>, tensor<1x1x2x8x10x13xf16>) outs(%{{.*}} : tensor<1x1x32x8x10x13xf16>) -> tensor<1x1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1, 2], [3], [4], [5]] : tensor<1x1x32x8x10x13xf16> into tensor<1x32x8x10x13xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<1x32x8x10x13xf16> into tensor<1x32x1040xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 1040] : tensor<1x32x1040xf16> into tensor<1x2x16x1040xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x1040xf16>) outs(%{{.*}} : tensor<1x2x1040x16xf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x1040x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [1, 2, 8, 10, 13, 16] : tensor<1x2x1040x16xf16> into tensor<1x2x8x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x8x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x8x2x10x13x16xf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x8x2x10x13x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x2x3x4x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<11x2x3x4x5xf16>) -> tensor<11x2x3x4x5xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x32x3x4x5xf16>
+// CHECK:           %{{.*}} = hivm.hir.vconcat dim(1) ins(%{{.*}}, %{{.*}} : tensor<11x30x3x4x5xf16>, tensor<11x2x3x4x5xf16>) outs(%{{.*}} : tensor<11x32x3x4x5xf16>) -> tensor<11x32x3x4x5xf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<11x32x3x4x5xf16> into tensor<11x32x60xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [11, 2, 16, 60] : tensor<11x32x60xf16> into tensor<11x2x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x16x60xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<11x2x16x60xf16>) outs(%{{.*}} : tensor<2x11x16x60xf16>) permutation = [1, 0, 2, 3] -> tensor<2x11x16x60xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x11x60x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x16x60xf16>) outs(%{{.*}} : tensor<2x11x60x16xf16>) permutation = [0, 1, 3, 2] -> tensor<2x11x60x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x11x60x16xf16>) outs(%{{.*}} : tensor<2x60x11x16xf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x11x16xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 11, 16] : tensor<2x60x11x16xf16> into tensor<2x3x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x11x16xf16>) outs(%{{.*}} : tensor<3x2x4x5x11x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x11x16xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x8x2x10x13x16xf16>, tensor<3x2x4x5x11x16xf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [6, 11, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xf16> into tensor<6x11x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1, 2]] output_shape [1, 11, 1] : tensor<11xf16> into tensor<1x11x1xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<6x11x63xf16>
+// CHECK:           %{{.*}} = hivm.hir.vadd ins(%{{.*}}, %{{.*}} : tensor<6x11x63xf16>, tensor<1x11x1xf16>) outs(%{{.*}} : tensor<6x11x63xf16>) broadcast = [0, 2] -> tensor<6x11x63xf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [6, 11, 7, 9] : tensor<6x11x63xf16> into tensor<6x11x7x9xf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<11x6x7x9xf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<6x11x7x9xf16>) outs(%{{.*}} : tensor<11x6x7x9xf16>) permutation = [1, 0, 2, 3] -> tensor<11x6x7x9xf16>
+// CHECK:           return %{{.*}} : tensor<11x6x7x9xf16>
+// CHECK:           }
+func.func @triton_conv3d_4d_fp16_bias_ocunaligned(%arg0: tensor<30x8x10x13xf16>, %arg1: tensor<11x30x3x4x5xf16>, %arg2: tensor<11xf16>, %arg3: tensor<11x6x7x9xf16>) -> tensor<11x6x7x9xf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true, %arg2 : tensor<30x8x10x13xf16>, tensor<11x30x3x4x5xf16>, i1, tensor<11xf16>) outs(%arg3 : tensor<11x6x7x9xf16>) -> tensor<11x6x7x9xf16>
+  return %0 : tensor<11x6x7x9xf16>
+}
+
+// -----
+// CHECK-LABEL:   func.func @triton_conv3d_4d_bf16_nobias_ocaligned(
+// CHECK:           %{{.*}} = arith.constant true
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2], [3], [4]] output_shape [1, 32, 8, 10, 13] : tensor<32x8x10x13xbf16> into tensor<1x32x8x10x13xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<1x32x8x10x13xbf16> into tensor<1x32x1040xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [1, 2, 16, 1040] : tensor<1x32x1040xbf16> into tensor<1x2x16x1040xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x2x1040x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x16x1040xbf16>) outs(%{{.*}} : tensor<1x2x1040x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<1x2x1040x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4], [5]] output_shape [1, 2, 8, 10, 13, 16] : tensor<1x2x1040x16xbf16> into tensor<1x2x8x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<1x2x8x10x13x16xbf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xbf16>) permutation = [0, 2, 1, 3, 4, 5] -> tensor<1x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xbf16>) -> tensor<1x8x2x10x13x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : tensor<1x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<1x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x8x2x10x13x16xbf16>) outs(%{{.*}} : tensor<1x8x2x10x13x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x8x2x10x13x16xbf16>
+// CHECK:           %{{.*}} = tensor.collapse_shape %{{.*}} {{\[\[}}0], [1], [2, 3, 4]] : tensor<12x32x3x4x5xbf16> into tensor<12x32x60xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2], [3]] output_shape [12, 2, 16, 60] : tensor<12x32x60xbf16> into tensor<12x2x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x16x60xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<12x2x16x60xbf16>) outs(%{{.*}} : tensor<2x12x16x60xbf16>) permutation = [1, 0, 2, 3] -> tensor<2x12x16x60xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x12x60x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x16x60xbf16>) outs(%{{.*}} : tensor<2x12x60x16xbf16>) permutation = [0, 1, 3, 2] -> tensor<2x12x60x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<2x60x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x12x60x16xbf16>) outs(%{{.*}} : tensor<2x60x12x16xbf16>) permutation = [0, 2, 1, 3] -> tensor<2x60x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1, 2, 3], [4], [5]] output_shape [2, 3, 4, 5, 12, 16] : tensor<2x60x12x16xbf16> into tensor<2x3x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<2x3x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) permutation = [1, 0, 2, 3, 4, 5] -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) outs(%{{.*}} : tensor<3x2x4x5x12x16xbf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x2x4x5x12x16xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = hivm.hir.Conv3dL1 {groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<1x8x2x10x13x16xbf16>, tensor<3x2x4x5x12x16xbf16>, i1) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xf32>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xf32>) outs(%{{.*}} : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>) -> tensor<{{[0-9]+}}x{{[0-9]+}}xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0, 1], [2]] output_shape [6, 12, 63] : tensor<{{[0-9]+}}x{{[0-9]+}}xbf16> into tensor<6x12x63xbf16>
+// CHECK:           %{{.*}} = tensor.expand_shape %{{.*}} {{\[\[}}0], [1], [2, 3]] output_shape [6, 12, 7, 9] : tensor<6x12x63xbf16> into tensor<6x12x7x9xbf16>
+// CHECK:           %{{.*}} = tensor.empty() : tensor<12x6x7x9xbf16>
+// CHECK:           %{{.*}} = hivm.hir.vtranspose ins(%{{.*}} : tensor<6x12x7x9xbf16>) outs(%{{.*}} : tensor<12x6x7x9xbf16>) permutation = [1, 0, 2, 3] -> tensor<12x6x7x9xbf16>
+// CHECK:           return %{{.*}} : tensor<12x6x7x9xbf16>
+// CHECK:           }
+func.func @triton_conv3d_4d_bf16_nobias_ocaligned(%arg0: tensor<32x8x10x13xbf16>, %arg1: tensor<12x32x3x4x5xbf16>, %arg2: tensor<12x6x7x9xbf16>) -> tensor<12x6x7x9xbf16> {
+  %true = arith.constant true
+  %0 = hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32} ins(%arg0, %arg1, %true : tensor<32x8x10x13xbf16>, tensor<12x32x3x4x5xbf16>, i1) outs(%arg2 : tensor<12x6x7x9xbf16>) -> tensor<12x6x7x9xbf16>
+  return %0 : tensor<12x6x7x9xbf16>
+}
+
+// -----

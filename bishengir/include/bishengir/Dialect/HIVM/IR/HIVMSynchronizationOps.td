@@ -204,7 +204,7 @@ def CreateSyncBlockLockOp
 }
 
 def SyncBlockLockOp
-  : HIVM_Op<"sync_block_lock"> {
+  : HIVM_SynchronizationOp<"sync_block_lock", [HIVMCoreTypeInterface, VectorCoreTypeTrait]> {
   let summary = "sync block lock operation.";
   let description = [{
     The sync_block_lock operation will not release until the lock_var equals the block idx.
@@ -226,7 +226,7 @@ def SyncBlockLockOp
 }
 
 def SyncBlockUnlockOp
-  : HIVM_Op<"sync_block_unlock"> {
+  : HIVM_SynchronizationOp<"sync_block_unlock", [HIVMCoreTypeInterface, VectorCoreTypeTrait]> {
   let summary = "sync block unlock operation.";
   let description = [{
     The `sync_block_lock` operation will increase and release the lock_var.
@@ -244,6 +244,32 @@ def SyncBlockUnlockOp
 
   let extraClassDeclaration = [{
     static StringRef getOpName() { return "sync_block_unlock"; }
+  }];
+}
+
+def FreeLockVarOp
+  : HIVM_SynchronizationOp<"free_lock_var", [HIVMCoreTypeInterface, VectorCoreTypeTrait]> {
+  let summary = "free lock var when control flow skipped sync_block unlock.";
+  let description = [{
+    Lowered to the template `free_lock_var`, which runs one
+    sync_block_lock / sync_block_unlock pair so lock_var advances with the
+    same barrier and memory semantics as the normal ops. Inserted before
+    return when control flow may have skipped a guarded lock/unlock region.
+
+    Example:
+
+    ```mlir
+      hivm.hir.free_lock_var lock_var(%lock : memref<1xi64>)
+    ```
+  }];
+  let arguments = (ins MemRefRankOf<[I64], [1]>:$lock_var);
+
+  let assemblyFormat = [{
+    attr-dict `lock_var` `(` $lock_var `:` type($lock_var) `)`
+  }];
+
+  let extraClassDeclaration = [{
+    static StringRef getOpName() { return "free_lock_var"; }
   }];
 }
 

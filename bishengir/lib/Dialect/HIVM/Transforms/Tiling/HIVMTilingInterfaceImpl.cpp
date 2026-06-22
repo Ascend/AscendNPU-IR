@@ -225,12 +225,14 @@ inline FailureOr<TilingResult>
 generateResultTileValueImpl(Operation *op, OpBuilder &b, unsigned resultNumber,
                             ArrayRef<OpFoldResult> offsets,
                             ArrayRef<OpFoldResult> sizes) {
+  auto tilingInterfaceOp = cast<TilingInterface>(op);
   SmallVector<OpFoldResult> mappedOffsets, mappedSizes;
-  if (failed(getIterationDomainTileFromResultTileImpl(
-          op, b, resultNumber, offsets, sizes, mappedOffsets, mappedSizes))) {
+  LogicalResult domainTileResult =
+      tilingInterfaceOp.getIterationDomainTileFromResultTile(
+          b, resultNumber, offsets, sizes, mappedOffsets, mappedSizes);
+  if (failed(domainTileResult)) {
     return failure();
   }
-  auto tilingInterfaceOp = cast<TilingInterface>(op);
   FailureOr<TilingResult> tilingResult =
       tilingInterfaceOp.getTiledImplementation(b, mappedOffsets, mappedSizes);
 
@@ -248,7 +250,7 @@ generateResultTileValueImpl(Operation *op, OpBuilder &b, unsigned resultNumber,
 inline LogicalResult generateScalarImplementationImpl(
     [[maybe_unused]] Operation *op, [[maybe_unused]] OpBuilder &builder,
     [[maybe_unused]] Location loc, [[maybe_unused]] ValueRange ivs) {
-  llvm_unreachable("HIVM Op doesn't have body");
+  llvm::report_fatal_error("HIVM Op doesn't have body");
 }
 
 //===----------------------------------------------------------------------===//
@@ -398,7 +400,7 @@ private:
                         ArrayRef<OpFoldResult> offsets,
                         ArrayRef<OpFoldResult> tileSizes) const {
     if (tileSizes.size() != tiledOp.getNumLoops())
-      llvm_unreachable("Invalid tiling");
+      llvm::report_fatal_error("Invalid tiling");
 
     OpBuilder::InsertionGuard g(b);
     Location loc = tiledOp->getLoc();
@@ -409,6 +411,155 @@ private:
         b, loc, offsets[1], tiledOp.getRealN(), tileSizes[1]));
     tiledOp.getRealKMutable().assign(getBoundedRealMKN(
         b, loc, offsets[2], tiledOp.getRealK(), tileSizes[2]));
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Tiling interface impl. for LoadOp
+//===----------------------------------------------------------------------===//
+struct LoadOpTilingInterface
+    : public TilingInterface::ExternalModel<LoadOpTilingInterface,
+                                            hivm::LoadOp> {
+  DECLARE_DEFAULT_GET_LOOP_ITERATOR_TYPES
+  DECLARE_DEFAULT_GET_LOOP_ITERATION_DOMAIN
+  DECLARE_DEFAULT_GET_RESULT_TILE_POSITION
+  DECLARE_DEFAULT_GET_MAPPED_OFFSETS_AND_SIZE
+  DECLARE_DEFAULT_GET_GENERATE_RESULT_TILE_VALUE
+  DECLARE_DEFAULT_GET_SCALAR_IMPLEMENTATION
+
+  LogicalResult getIterationDomainTileFromResultTile(
+      Operation *op, OpBuilder &b, unsigned resultNumber,
+      ArrayRef<OpFoldResult> offsets, ArrayRef<OpFoldResult> sizes,
+      SmallVectorImpl<OpFoldResult> &iterDomainOffsets,
+      SmallVectorImpl<OpFoldResult> &iterDomainSizes) const {
+    if (!requiresCustomPaddingTiling(cast<hivm::LoadOp>(op))) {
+      return getIterationDomainTileFromResultTileImpl(
+          op, b, resultNumber, offsets, sizes, iterDomainOffsets,
+          iterDomainSizes);
+    }
+
+    // Load with padding: affineMap is (d0, d1)->()
+    // For a padded `LoadOp`, the operation is a pure 1:1 data movement without
+    // reduction dimensions. Thus, its iteration space perfectly matches its
+    // result space. By directly assigning the result `offsets`/`sizes` to the
+    // iteration domain,
+    iterDomainOffsets.assign(offsets.begin(), offsets.end());
+    iterDomainSizes.assign(sizes.begin(), sizes.end());
+    return success();
+  }
+
+  FailureOr<TilingResult>
+  getTiledImplementation(Operation *op, OpBuilder &b,
+                         ArrayRef<OpFoldResult> offsets,
+                         ArrayRef<OpFoldResult> sizes) const {
+    auto loadOp = cast<hivm::LoadOp>(op);
+    // If Load does not contain Padding, follow the default implementation, else
+    // perform additional processing.
+    if (!requiresCustomPaddingTiling(loadOp)) {
+      return getTiledImplementationImpl(op, b, offsets, sizes);
+    }
+
+    return generatePaddedLoadTiling(b, loadOp, offsets, sizes);
+  }
+
+private:
+  bool requiresCustomPaddingTiling(hivm::LoadOp loadOp) const {
+    return loadOp.getPadModeAttr() != nullptr &&
+           loadOp.getInitCondition() != nullptr;
+  }
+
+  /// Return the tiled implementation of the `hivm.hir.load` operation.
+  ///
+  /// Take a look at this example:
+  ///   %load = hivm.hir.load ins(%src : tensor<100x100xf32>)
+  ///                         outs(%dst : tensor<100x100xf32>)
+  ///                         pad_mode = %c0 init_condition = %c0
+  ///
+  /// When tiling this operation (e.g., with tile sizes [64, 64]), the loop
+  /// will encounter partial tiles at the boundaries (e.g., the remaining size
+  /// along a dimension is 36, which is strictly less than the tile size 64).
+  ///
+  /// To safely handle such out-of-bounds memory accesses, this interface
+  /// generates an asymmetric padded load implementation:
+  ///
+  ///   %bounded_size_x = affine.min #min_map(%tile_x, %remain_x) // min(64, 36)
+  ///   = 36 %is_partial = arith.cmpi slt, %remain_x, %tile_x %needs_init =
+  ///   arith.ori %is_partial, %c0 %src_slice = tensor.extract_slice
+  ///   %src[...][%bounded_size_x, ...][...] %dst_slice = tensor.extract_slice
+  ///   %dst[...][%tile_x, ...][...] %tiled_load = hivm.hir.load ins(%src_slice)
+  ///                               outs(%dst_slice)
+  ///                               init_condition = %needs_init
+  ///
+  /// This ensures that the underlying DMA engine safely reads only valid data
+  /// and pads the rest of the target L1 buffer when `needs_init` is true.
+  FailureOr<TilingResult>
+  generatePaddedLoadTiling(OpBuilder &b, hivm::LoadOp loadOp,
+                           ArrayRef<OpFoldResult> offsets,
+                           ArrayRef<OpFoldResult> sizes) const {
+
+    Location loc = loadOp.getLoc();
+    Value origSrc = loadOp.getSrc();
+    Value origDst = loadOp.getDst();
+
+    int64_t rank = offsets.size();
+    SmallVector<OpFoldResult> boundedSizes;
+    boundedSizes.reserve(rank);
+    SmallVector<OpFoldResult> strides(rank, b.getIndexAttr(1));
+    Value needsInit = nullptr;
+
+    MLIRContext *ctx = b.getContext();
+    AffineExpr d0, d1;
+    bindDims(ctx, d0, d1);
+    AffineMap minMap =
+        AffineMap::inferFromExprList({ArrayRef<AffineExpr>{d0, d1}}, ctx)
+            .front();
+
+    for (int64_t i = 0; i < rank; ++i) {
+      OpFoldResult origDim = tensor::getMixedSize(b, loc, origSrc, i);
+      // remain = origDim - offset
+      OpFoldResult remain = affine::makeComposedFoldedAffineApply(
+          b, loc, d0 - d1, {origDim, offsets[i]});
+      // boundedSize = min(size, remain)
+      boundedSizes.push_back(affine::makeComposedFoldedAffineMin(
+          b, loc, minMap, {sizes[i], remain}));
+
+      Value remainVal = getValueOrCreateConstantIndexOp(b, loc, remain);
+      Value tileSizeVal = getValueOrCreateConstantIndexOp(b, loc, sizes[i]);
+      Value isPartial = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                                remainVal, tileSizeVal);
+      needsInit =
+          needsInit
+              ? b.create<arith::OrIOp>(loc, needsInit, isPartial).getResult()
+              : isPartial;
+    }
+
+    if (!needsInit) {
+      needsInit = b.create<arith::ConstantIntOp>(loc, 0, 1);
+    }
+
+    Value tiledSrc = b.create<tensor::ExtractSliceOp>(loc, origSrc, offsets,
+                                                      boundedSizes, strides);
+    Value tiledDst =
+        b.create<tensor::ExtractSliceOp>(loc, origDst, offsets, sizes, strides);
+
+    SmallVector<Value> newOperands;
+    newOperands.reserve(loadOp->getNumOperands());
+    for (Value opnd : loadOp->getOperands()) {
+      if (opnd == origSrc)
+        newOperands.push_back(tiledSrc);
+      else if (opnd == origDst)
+        newOperands.push_back(tiledDst);
+      else
+        newOperands.push_back(opnd);
+    }
+
+    Operation *tiledOp = clone(b, loadOp, {tiledDst.getType()}, newOperands);
+    auto newLoadOp = cast<hivm::LoadOp>(tiledOp);
+    if (newLoadOp.getInitOutBufferAttr()) {
+      newLoadOp.getInitConditionMutable().assign(needsInit);
+    }
+
+    return TilingResult{{tiledOp}, {newLoadOp.getResult(0)}};
   }
 };
 
@@ -443,10 +594,10 @@ void hivm::registerTilingInterfaceExternalModels(DialectRegistry &registry) {
         registerAll<
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
             >(ctx);
-        registerOne<hivm::LoadOp>(ctx);
         registerOne<hivm::CopyOp>(ctx);
         registerOne<hivm::FixpipeOp>(ctx);
         registerOne<hivm::StoreOp>(ctx);
+        hivm::LoadOp::attachInterface<LoadOpTilingInterface>(*ctx);
         hivm::MmadL1Op::attachInterface<MmadL1OpTilingInterface>(*ctx);
       });
 }

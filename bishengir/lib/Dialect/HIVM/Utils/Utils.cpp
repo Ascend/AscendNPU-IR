@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -71,7 +72,7 @@ namespace {
 FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
   auto *bbOwner = bbArg.getOwner();
   if (!bbOwner) {
-    llvm_unreachable("parentOp doesn't exist");
+    llvm::report_fatal_error("parentOp doesn't exist");
     return failure();
   }
   auto *bbParentOp = bbOwner->getParentOp();
@@ -104,6 +105,12 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
 #else
         return getMemRefAlloc(op.getBuffer());
 #endif
+      })
+      .Case<scope::ScopeOp>([&](scope::ScopeOp scopeOp) {
+        auto returnOp =
+            cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+        return getMemRefAlloc(
+            returnOp->getOperands()[result.getResultNumber()]);
       })
       .Default([&](Operation *op) {
         LDBG("Unsupported op for finding the root alloc.");
@@ -343,7 +350,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
     return true;
   }
-  llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");
+  llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
 }
 
 SmallVector<Value> getOpTouchBuffer(Operation *op) {
@@ -922,6 +929,14 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
       })
       .Case([&](tensor::ExtractSliceOp op) {
         result.emplace_back(op.getResult(), op.getSource());
+      })
+      .Case([&](scope::ScopeOp scopeOp) {
+        auto returnOp =
+            cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+        for (auto [res, arg] :
+             llvm::zip_equal(scopeOp->getResults(), returnOp->getOperands())) {
+          result.emplace_back(res, arg);
+        }
       });
   return result;
 }
@@ -1273,6 +1288,20 @@ bool isArgminOrArgmax(ReduceOperation op) {
          op == ReduceOperation::max_with_index_left ||
          op == ReduceOperation::min_with_index_right ||
          op == ReduceOperation::max_with_index_right;
+}
+
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict) {
+  auto attr = attrDict.get(hivm::MultiBufferAttr::name);
+  if (!attr)
+    return;
+  mlir::IntegerAttr intAttr = mlir::dyn_cast<mlir::IntegerAttr>(attr);
+  if (!intAttr) {
+    llvm::report_fatal_error("MultiBufferAttr illegal!!!");
+  }
+  int64_t attrValue = intAttr.getValue().getSExtValue();
+  if (attrValue < 1) {
+    llvm::report_fatal_error("MultiBufferAttr should be >= 1!!");
+  }
 }
 } // namespace util
 } // namespace hivm

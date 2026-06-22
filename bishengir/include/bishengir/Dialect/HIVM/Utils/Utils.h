@@ -64,15 +64,29 @@ static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
 
+static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
+    "hivm_data_layout";
+
 /// TODO: add into hivm attrs
 static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
     "buffer_size_in_byte";
 
 static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
+static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
+    "tiling_dim_mapping";
+
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
+
 const std::string Ascend910BCubeTriple = "ascend_910b_cube-unknown-cce-unknown";
 const std::string Ascend910BDataLayout =
     "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
+
+// Marks the iteration-counter alloca created by NormalizeMatmul::initCounter so
+// downstream passes (e.g. CVPipelining) can recognize it.
+static constexpr llvm::StringLiteral kNormalizeMatmulCounterAttr =
+    "normalize_matmul_counter";
 
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr const int VBITSORT_NUM_PER_REPEAT = 32;
@@ -398,6 +412,7 @@ bool isGMPointerCastOp(Operation *op);
 
 bool isArgminOrArgmax(ReduceOperation op);
 
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict);
 } // namespace util
 } // namespace hivm
 } // namespace mlir

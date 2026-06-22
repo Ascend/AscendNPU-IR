@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-lir-compile=false %s -o %t.ll
 // RUN: bishengir-compile -enable-lir-compile=false %s -o %t.ll

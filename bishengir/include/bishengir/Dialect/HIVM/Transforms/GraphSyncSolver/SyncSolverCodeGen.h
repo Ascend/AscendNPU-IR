@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERCODEGEN_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERCODEGEN_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
@@ -55,17 +56,19 @@ private:
 
   // Per-multibuffer loop cached helper: nested index modular counters created
   // during codegen and reused to select between multi-buffer event ids.
-  llvm::DenseMap<std::pair<LoopLikeOpInterface, int64_t>, Value>
+  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t, int64_t>, Value>
       nestedIndexModularMem;
 
   // Cache mapping a loop + (eventIdA,eventIdB) pair to the created select Value
   // that chooses which buffer/event id to use at runtime.
-  llvm::DenseMap<LoopLikeOpInterface,
+  llvm::DenseMap<std::pair<LoopLikeOpInterface, int64_t>,
                  std::map<llvm::SmallVector<int64_t>, Value>>
       bufferSelectedMem;
 
   // Per-MMAD L1 op arguments collected during sync codegen insertion.
   llvm::DenseMap<hivm::MmadL1Op, MmadL1SyncArgs> mmadl1SyncArgsMap;
+
+  CustomMacroSyncCodegenState customMacroCodegen;
 
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
@@ -86,6 +89,8 @@ public:
     funcOp = solver->funcOp;
     funcIr = std::move(solver->funcIr);
     unitFlagFeaturedOps = std::move(solver->unitFlagFeaturedOps);
+    customMacroCodegen.setResolvedSlotEventIds(
+        std::move(solver->customMacroSync.resolvedSlotEventIds()));
   }
 
   // Insert sync ops into func-ir.
@@ -100,6 +105,9 @@ private:
 
   void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                                bool insertAfterOp);
+
+  void insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
+                     BarrierOp *barrierOp, bool insertAfterOp);
 
   void insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                        BarrierOp *barrierOp, bool insertAfterOp);
@@ -123,8 +131,14 @@ private:
                                           OperationBase *opBase,
                                           SyncOp *syncOp);
 
-  Value getNestedIndexModular(IRRewriter &rewriter, SetWaitOp *syncOp);
+  Value getNestedIndexModular(IRRewriter &rewriter,
+                              LoopLikeOpInterface multibufferLoop,
+                              int64_t eventIdNum, int64_t preloadOffset);
+
   Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
+
+  Value getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
+                                          SetWaitOp *syncOp);
 
   Value getCVMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 

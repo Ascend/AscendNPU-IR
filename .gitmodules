@@ -4,3 +4,6 @@
 [submodule "third-party/torch-mlir"]
 	path = third-party/torch-mlir
 	url = https://github.com/llvm/torch-mlir.git
+[submodule "third-party/shmem"]
+	path = third-party/shmem
+	url = https://gitcode.com/cann/shmem.git

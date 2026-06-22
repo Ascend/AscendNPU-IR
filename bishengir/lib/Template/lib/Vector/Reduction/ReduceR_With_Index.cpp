@@ -84,7 +84,9 @@ reduce_r_with_index_on_scalar(memref_t<__ubuf__ T, 1> *src0,
                               memref_t<__ubuf__ T, 1> *dst_value,
                               memref_t<__ubuf__ int32_t, 1> *dst_index,
                               int64_t scalar_element_num, bool need_merge) {
-  cce::printf("Warning: This implementation uses scalar instructions, which may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("reduceR with index");
+#endif
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
   __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
@@ -181,14 +183,10 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
   check_inputs_of_reduce_r_with_index(src0, dst_value, dst_index, tmp_buf,
                                       initvalue);
   int64_t scalar_element_num = reduction_get_element_nums_on_scalar_1d<T>(src0);
-  int64_t vector_element_num = src0->sizes[0] - scalar_element_num;
-  if (vector_element_num != 0) [[likely]] {
-    reduce_r_with_index_on_vector<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, tmp_buf, vector_element_num);
-  }
-
-  if (scalar_element_num != 0) {
-    bool need_merge = !(vector_element_num == 0);
-    reduce_r_with_index_on_scalar<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, scalar_element_num, need_merge);
+  if (scalar_element_num == 0) [[likely]] {
+    reduce_r_with_index_on_vector<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, tmp_buf, src0->sizes[0]);
+  } else [[unlikely]] {
+    reduce_r_with_index_on_scalar<OP, WITH_INDEX_TYPE, T>(src0, dst_value, dst_index, src0->sizes[0], false);
   }
 
   return;

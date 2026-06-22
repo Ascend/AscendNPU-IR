@@ -8,6 +8,7 @@ file(GLOB HIVM_LAYOUT ${CMAKE_CURRENT_SOURCE_DIR}/OpLayoutInterface/*.cpp)
 file(GLOB HIVM_LIBRARY_FUNCTION ${CMAKE_CURRENT_SOURCE_DIR}/LibraryFunctionOpInterface/*.cpp)
 file(GLOB HIVM_PIPE ${CMAKE_CURRENT_SOURCE_DIR}/OpPipeInterface/*.cpp)
 file(GLOB HIVM_VECTOR_BASE ${CMAKE_CURRENT_SOURCE_DIR}/VectorOpBase/*.cpp)
+file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -20,6 +21,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_LIBRARY_FUNCTION}
   ${HIVM_PIPE}
   ${HIVM_VECTOR_BASE}
+  ${HIVM_CANONICALIZATIONS}
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
   HIVMDialectExtension.cpp
@@ -31,9 +33,11 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMSynchronizationOps.cpp
   HIVMTraits.cpp
   HIVMVectorOps.cpp
+  ../Utils/Utils.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
 
   DEPENDS
   BiShengIRHIVMIncGen
@@ -43,9 +47,12 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRHIVMMacroOpsIncGen
   BiShengIRHIVMVectorOpsIncGen
   BiShengIRHIVMSynchronizationOpsIncGen
+  BiShengIRScopeIncGen
 
   LINK_LIBS PUBLIC
   BiShengIRAnnotationDialect
+  BiShengIRScopeDialect
+  MLIRBufferizationDialect
   MLIRArithDialect
   MLIRDestinationStyleOpInterface
   MLIRLinalgDialect
@@ -60,4 +67,5 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRViewLikeInterface
   BiShengIRDialectUtils
   BiShengIRHACCDialect
+  BiShengIRHACCUtils
 )

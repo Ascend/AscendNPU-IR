@@ -36,6 +36,12 @@ constexpr uint64_t MAX_UINT64 = ((uint64_t)1 << 63) - 1 + ((uint64_t)1 << 63);
 constexpr uint64_t HALF_BITS = 16;
 constexpr int64_t BITS_PER_BYTE = 8;
 constexpr int32_t MAX_VBRCB_REPEAT_TIMES = 254;
+constexpr int32_t UB_LIMIT_BYTES = 196608;
+
+//TODO: scalar warning print is enabled only when define ENABLE_CPU_TRACE_INTRINSIC. To be optimized.
+#define WARN_SCALAR_IMPL(x) \
+cce::printf("Warning: [%s] - This implementation uses scalar instructions, "\
+  "which may result in suboptimal performance\n", (x))
 
 enum class VectorOpTy : uint32_t {
   BINARY_VV_BEGIN = 100,
@@ -372,10 +378,17 @@ view_as(memref_t<__ubuf__ SRCTYPE, Dim> *src_buf,
 template <typename SRCTYPE, typename DSTTYPE, int Dim>
 __aiv__ __attribute__((always_inline)) void
 bitwise_view_as(memref_t<__ubuf__ SRCTYPE, Dim> *src_buf,
-        memref_t<__ubuf__ DSTTYPE, Dim> *dst_buf) {
+                memref_t<__ubuf__ DSTTYPE, Dim> *dst_buf) {
   dst_buf->allocated = (__ubuf__ DSTTYPE *)src_buf->allocated;
   dst_buf->aligned = (__ubuf__ DSTTYPE *)src_buf->aligned;
   dst_buf->offset = src_buf->offset;
+  if constexpr (bitwidthOf<SRCTYPE>() < bitwidthOf<DSTTYPE>()) {
+    auto bits_factor = bitwidthOf<DSTTYPE>() / bitwidthOf<SRCTYPE>();
+    dst_buf->offset = src_buf->offset / bits_factor;
+  } else if constexpr (bitwidthOf<SRCTYPE>() > bitwidthOf<DSTTYPE>()) {
+    auto bits_factor = bitwidthOf<SRCTYPE>() / bitwidthOf<DSTTYPE>();
+    dst_buf->offset = src_buf->offset * bits_factor;
+  }
   for (int i = 0; i < Dim; ++i) {
     dst_buf->sizes[i] = src_buf->sizes[i];
     dst_buf->strides[i] = src_buf->strides[i];
@@ -1046,6 +1059,20 @@ __aiv__ __attribute__((always_inline)) void move_memref_to_aligned_3d(memref_t<_
   }
 }
 
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) bool need_broadcast(
+    memref_t<__ubuf__ T, DIM> *src0, memref_t<__ubuf__ T, DIM> *src1, memref_t<__ubuf__ T, DIM> *dst) {
+  for (size_t i = 0; i < DIM; ++i) {
+    int64_t src0_size = src0 == nullptr ? 0 : src0->sizes[i];
+    int64_t src1_size = src1 == nullptr ? 0 : src1->sizes[i];
+    if (src0_size != dst->sizes[i] && src0_size == 1 ||
+      src1_size != dst->sizes[i] && src1_size == 1) {
+      return true;
+    }
+  }
+  return  false;
+}
+
 // Get the number of elements that need to be processed using scalar operations.
 // When the memory alignment of input or output is not suitable for vectorization, 
 // some elements must be handled using scalar operations util the rest element is aligned with 32 bytes.
@@ -1056,22 +1083,26 @@ __aiv__ __attribute__((always_inline)) int64_t eltwise_get_element_nums_on_scala
   auto src0_last_stride = src0 == nullptr ? 1 : src0->strides[DIM - 1];
   auto src1_last_stride = src1 == nullptr ? 1 : src1->strides[DIM - 1];
   auto dst_last_stride = dst->strides[DIM - 1];
-
+  bool broadcast_cond = need_broadcast<T, DIM>(src0, src1, dst);
+  
   if (src0_last_stride != 1 || src1_last_stride != 1 || dst_last_stride != 1) {
     return dst->sizes[DIM - 1];
   }
 
-  // Check if all other dimensions' strides are aligned to block size
-  for (size_t i = 0; i < DIM - 1; ++i) {
-    auto src0_stride = src0 == nullptr ? 0 : src0->strides[i];
-    auto src1_stride = src1 == nullptr ? 0 : src1->strides[i];
-    auto dst_stride = dst->strides[i];
-    if ((!isSizeAlignedToBlock<T>(src0_stride) && src0_stride != 1) ||
-        (!isSizeAlignedToBlock<T>(src1_stride) && src1_stride != 1) ||
-        (!isSizeAlignedToBlock<T>(dst_stride) && dst_stride != 1)) {
-      return dst->sizes[DIM - 1];
+  if (!broadcast_cond) {
+    // Check if all other dimensions' strides are aligned to block size
+    for (size_t i = 0; i < DIM - 1; ++i) {
+      auto src0_stride = src0 == nullptr ? 0 : src0->strides[i];
+      auto src1_stride = src1 == nullptr ? 0 : src1->strides[i];
+      auto dst_stride = dst->strides[i];
+      if ((!isSizeAlignedToBlock<T>(src0_stride) && src0_stride != 1) ||
+          (!isSizeAlignedToBlock<T>(src1_stride) && src1_stride != 1) ||
+          (!isSizeAlignedToBlock<T>(dst_stride) && dst_stride != 1)) {
+        return dst->sizes[DIM - 1];
+      }
     }
   }
+  
 
   // Check offset alignment
   bool is_src0_aligned = src0 == nullptr ? true : isAddress32ByteAligned(src0->aligned + src0->offset);
@@ -1338,6 +1369,22 @@ half handle_half_operation(half src0_oprand, half src1_oprand, VectorLastAxisMod
     int16_t res_int16 = scalar_operation<OP, int16_t>(*src0_oprand_int16);
     half *res_float16 = (half*)&res_int16;
     return *res_float16;
+  } else if constexpr (OP == VectorOpTy::VMAX || OP == VectorOpTy::VMIN ||
+                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS) {
+    float src0_oprand_float = static_cast<float>(src0_oprand);
+    float src1_oprand_float = static_cast<float>(src1_oprand);
+    // if one of the operands is NAN, return NAN.
+    if ((src0_oprand_float != src0_oprand_float) || (src1_oprand_float != src1_oprand_float)) {
+      return NAN;
+    }
+    float res_float = scalar_operation<OP, float>(src0_oprand_float, src1_oprand_float);
+    return static_cast<half>(res_float);
+  } else if constexpr (OP == VectorOpTy::VRELU) {
+    float src0_oprand_float = static_cast<float>(src0_oprand);
+    if ((src0_oprand_float != src0_oprand_float)) {
+      return NAN;
+    }
+    return scalar_operation<OP, float>(src0_oprand_float);
   } else {
     float src0_oprand_float = static_cast<float>(src0_oprand);
     float src1_oprand_float = static_cast<float>(src1_oprand);
@@ -1392,6 +1439,18 @@ float handle_float_operation(float src0_oprand, float src1_oprand, VectorLastAxi
     int32_t res_int32 = scalar_operation<OP, int32_t>(*src0_oprand_int32);
     float *res_float32 = (float*)&res_int32;
     return *res_float32;
+  } else if constexpr (OP == VectorOpTy::VMAX || OP == VectorOpTy::VMIN ||
+                       OP == VectorOpTy::VMAXS || OP == VectorOpTy::VMINS) {
+    // if one of the operands is NAN, return NAN.
+    if ((src0_oprand != src0_oprand) || (src1_oprand != src1_oprand)) {
+      return NAN;
+    }
+    return scalar_operation<OP, float>(src0_oprand, src1_oprand);
+  } else if constexpr (OP == VectorOpTy::VRELU) {
+    if ((src0_oprand != src0_oprand)) {
+      return NAN;
+    }
+    return scalar_operation<OP, float>(src0_oprand);
   } else {
     if (mode == VectorLastAxisMode::V) {
       return scalar_operation<OP, float>(src0_oprand);
@@ -1417,6 +1476,31 @@ T handle_vector_operation(T src0_oprand, T src1_oprand, VectorLastAxisMode mode)
         return scalar_operation<OP, T>(src0_oprand, src1_oprand);
     }
   }
+}
+
+// Read the i-th condition bit from a packed bitmask buffer.
+// COND_T can be bool (1 bit per element) or int8_t (8 bits per element).
+// For bool: bit position = offset + i * stride (each stride step is 1 bit).
+// For int8_t: bit position = offset * 8 + (i / 8) * stride * 8 + (i % 8)
+//   (stride is in bytes, so multiply by BITS_PER_BYTE to get bit-level stride).
+template <typename COND_T = bool>
+__aiv__ __attribute__((always_inline)) bool
+get_condition_bit(memref_t<__ubuf__ COND_T, 1> *condition, int64_t i) {
+  static_assert((std::is_same<COND_T, bool>::value ||
+                 std::is_same<COND_T, int8_t>::value),
+                "COND_T must be bool or int8");
+
+  __ubuf__ uint8_t *cond_byte_ptr = (__ubuf__ uint8_t *)(condition->aligned);
+  int64_t abs_bit_pos = 0;
+  if constexpr (std::is_same_v<COND_T, bool>) {
+    abs_bit_pos = condition->offset + i * condition->strides[0];
+  } else {
+    abs_bit_pos = condition->offset  * BITS_PER_BYTE +
+      (i / BITS_PER_BYTE) * (condition->strides[0]) * BITS_PER_BYTE + (i % BITS_PER_BYTE);
+  }
+  int64_t byte_pos = abs_bit_pos / BITS_PER_BYTE;
+  int64_t bit_in_byte = abs_bit_pos % BITS_PER_BYTE;
+  return (cond_byte_ptr[byte_pos] >> bit_in_byte) & 1;
 }
 
 extern "C" {

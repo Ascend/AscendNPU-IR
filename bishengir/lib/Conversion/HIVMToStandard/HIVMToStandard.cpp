@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace mlir {
@@ -151,7 +152,7 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
           break;
         case hivm::TCoreType::CUBE_OR_VECTOR:
         case hivm::TCoreType::CUBE_AND_VECTOR:
-          llvm_unreachable(
+          llvm::report_fatal_error(
               "standard library call shouldn't have mix core type!");
           break;
         }
@@ -382,6 +383,38 @@ private:
               std::back_inserter(additionalArgs));
 
     additionalArgs.push_back(op.getUnitFlagModeLibValue(rewriter));
+  }
+};
+
+class Conv1DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv1DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, {});
+    return success();
+  }
+};
+
+class Conv2DL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::Conv2DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv2DL1Op>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::Conv2DL1Op op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, {});
+    return success();
   }
 };
 
@@ -852,7 +885,7 @@ private:
                       op.getLoc(), rewriter.getFloatAttr(floatType, 0.0));
                 })
                 .Default([](Type) {
-                  llvm_unreachable("Unsupported type of pad value!");
+                  llvm::report_fatal_error("Unsupported type of pad value!");
                   return Value{};
                 });
       }
@@ -1284,31 +1317,48 @@ public:
       memrefValsMaybe.push_back(op.getIndices());
     }
     memrefValsMaybe.push_back(op.getDstValue());
-    auto arith = op.getArithAttr();
-    if (VReduceOp::isArgminOrArgmax(arith.getReduceOp())) {
+    bool isWithIndex = op.isWithIndex();
+    if (isWithIndex) {
       memrefValsMaybe.push_back(op.getDstIndex());
     }
 
+    // With-index reduce ops only have 2D library support
+    // (_ra_/_ar_ with index). 3D templates (_ra0a1_/_ara_/_aar_) do not
+    // register with-index variants, so peel to rank 2 for with-index cases.
+    int targetRank = isWithIndex ? 2 : 3;
+
     if (midAxis) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 0, reduceIdx);
-      reducedRank = reducedRank - reduceIdx;
-      if (reducedRank > 3) {
-        return op.emitError("Unsupported reduce template.");
+      // Mid-axis: collect non-reduce axes and peel them outward.
+      // When rank <= targetRank, no peeling is needed — the library
+      // handles it directly (e.g., _ara_ for rank-3 non-index).
+      int numToPeel = std::max(0, rank - targetRank);
+
+      std::set<int> loopIndices;
+      for (int i = 0;
+           i < rank && static_cast<int>(loopIndices.size()) < numToPeel;
+           i++) {
+        if (i != reduceIdx) {
+          loopIndices.insert(i);
+        }
       }
-    } else if (firstAxis && rank > 3) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 1, rank - 2);
-      reducedRank = 3;
-    } else if (lastAxis && rank > 2) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 0, rank - 2);
-      reducedRank = 2;
-    } else if (firstAxis && (rank > 2) &&
-               VReduceOp::isArgminOrArgmax(arith.getReduceOp())) {
-      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                               memrefValsMaybe, 1, rank - 1);
-      reducedRank = 2;
+      if (!loopIndices.empty()) {
+        convertedVals = reduceMemrefsToNestedForUsingAxes(
+          rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
+        reducedRank = rank - static_cast<int>(loopIndices.size());
+      }
+    } else {
+      // First/last axis: peel outer dimensions down to targetRank.
+      if (firstAxis && rank > targetRank) {
+        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                                 memrefValsMaybe, 1,
+                                                 rank - targetRank + 1);
+        reducedRank = targetRank;
+      } else if (lastAxis && rank > targetRank) {
+        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                                 memrefValsMaybe, 0,
+                                                 rank - targetRank);
+        reducedRank = targetRank;
+      }
     }
 
     if (reducedRank == rank) {
@@ -1577,6 +1627,26 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
   }
 };
 
+template <typename CustomOpT>
+class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
+  using OpRewritePattern<CustomOpT>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CustomOpT op,
+                                PatternRewriter &rewriter) const final {
+    SmallVector<Value> libParams;
+    if constexpr (std::is_same_v<CustomOpT, hivm::CustomMacroOp>) {
+      libParams = op.getLibraryCallOperands(rewriter);
+    } else {
+      libParams.assign(op.getOperands().begin(), op.getOperands().end());
+    }
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libParams, op.getResultTypes());
+    return success();
+  }
+};
+
 class SortOpToLibraryCallPattern
     : public MultiDimOpToLibraryCallPattern<hivm::VSortOp> {
 public:
@@ -1708,8 +1778,25 @@ public:
                                 PatternRewriter &rewriter) const final {
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
     std::string libCallName = op.getOpName().str();
+    if (op->hasAttr(SyncBlockLockWithSubblockAttr::name))
+      libCallName += "_with_subblock";
     createLibCall(rewriter, op, mod, libCallName, op->getOperands(), {});
     rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+class IndirectStoreOpToLibraryCallPattern
+    : public OpRewritePattern<hivm::IndirectStoreOp> {
+public:
+  using OpRewritePattern<hivm::IndirectStoreOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::IndirectStoreOp op,
+                                PatternRewriter &rewriter) const final {
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        op->getOperands(), {});
     return success();
   }
 };
@@ -1720,6 +1807,8 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
   // clang-format off
   patterns.add<
                MmadL1OpToLibraryCallPattern,
+               Conv1DL1OpToLibraryCallPattern,
+               Conv2DL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                NZ2NDOpToLibraryCallPattern,
                FixpipeOpToLibraryCallPattern,
@@ -1729,6 +1818,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                CopyOpToLibraryCallPattern<hivm::CopyOp>,
                CopyOpToLibraryCallPattern<hivm::LoadOp>,
                CopyOpToLibraryCallPattern<hivm::StoreOp>,
+               IndirectStoreOpToLibraryCallPattern,
                VectorOpToLibraryCallPattern<hivm::VAddOp>,
                VectorOpToLibraryCallPattern<hivm::VMulOp>,
                VectorOpToLibraryCallPattern<hivm::VSubOp>,
@@ -1762,11 +1852,14 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
+               CustomOpToLibraryCallPattern<hivm::CustomOp>,
+               CustomOpToLibraryCallPattern<hivm::CustomMacroOp>,
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
+               SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
                SortOpToLibraryCallPattern,
                FlipOpToLibraryCallPattern
                >
@@ -1796,13 +1889,18 @@ void ConvertHIVMToStandardPass::runOnOperation() {
   // Abstract Intrinsic Ops must be converted.
   // clang-format off
   target.addIllegalOp<hivm::MmadL1Op,
+                      hivm::Conv1DL1Op,
+                      hivm::Conv2DL1Op,
                       hivm::ND2NZOp,
                       hivm::NZ2NDOp,
                       hivm::FixpipeOp,
                       hivm::MatmulOp,
                       hivm::CopyOp,
+                      hivm::CustomOp,
+                      hivm::CustomMacroOp,
                       hivm::LoadOp,
                       hivm::StoreOp,
+                      hivm::IndirectStoreOp,
                       hivm::VAddOp,
                       hivm::VMulOp,
                       hivm::VSubOp,
@@ -1842,6 +1940,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::DebugOp,
                       hivm::SyncBlockLockOp,
                       hivm::SyncBlockUnlockOp,
+                      hivm::FreeLockVarOp,
                       hivm::VSortOp
                       >();
 

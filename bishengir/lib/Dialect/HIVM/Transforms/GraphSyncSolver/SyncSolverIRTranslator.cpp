@@ -149,15 +149,12 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemValsStep(Value val) {
   return collectedVals;
 }
 
-llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
-                                                        func::FuncOp funcOp) {
+llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val) {
   std::queue<Value> que;
   llvm::DenseSet<Value> visitedVals;
   llvm::SetVector<Value> collectedValsSet;
   que.push(val);
   visitedVals.insert(val);
-  bool isSplittedMixKernel =
-      funcOp->hasAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name);
 
   while (!que.empty()) {
     auto curVal = que.front();
@@ -175,14 +172,6 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
     }
 
     if (auto blockArg = dyn_cast<BlockArgument>(curVal)) {
-      if (options.isIntraCoreMode()) {
-        if (hacc::utils::isKernelArg(funcOp, blockArg.getArgNumber(),
-                                     hacc::KernelArgType::kWorkspace)) {
-          if (isSplittedMixKernel) {
-            continue;
-          }
-        }
-      }
       collectedValsSet.insert(curVal);
       continue;
     }
@@ -197,7 +186,8 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
     assert(defOp != nullptr);
 
     if (options.isIntraCoreMode()) {
-      if (isa<hivm::PointerCastOp, tensor::EmptyOp, memref::AllocOp>(defOp)) {
+      if (isa<hivm::PointerCastOp, bishengir::memref_ext::AllocWorkspaceOp,
+              tensor::EmptyOp, memref::AllocOp>(defOp)) {
         collectedValsSet.insert(resultVal);
         continue;
       }
@@ -223,12 +213,10 @@ llvm::SmallVector<Value> IRTranslator::tracebackMemVals(Value val,
 
 // Collect pointer operands for a vector of Values (flattening aliases).
 llvm::SmallVector<Value>
-IRTranslator::getMemoryOps(const SmallVector<Value> &vals,
-                           std::optional<func::FuncOp> funcOpOpt) {
+IRTranslator::getMemoryOps(const SmallVector<Value> &vals) {
   llvm::SetVector<Value> collectedValsSet;
-  auto curFuncOp = funcOpOpt.has_value() ? funcOpOpt.value() : this->funcOp;
   for (auto val : vals) {
-    for (auto memVal : tracebackMemVals(val, curFuncOp)) {
+    for (auto memVal : tracebackMemVals(val)) {
       collectedValsSet.insert(memVal);
     }
   }
@@ -491,6 +479,30 @@ std::optional<int64_t> IRTranslator::getLoopMultibufferUnrollNum(Loop *loopOp) {
   return {};
 }
 
+std::optional<int64_t> IRTranslator::getScopePreloadNum(Scope *scopeOp) {
+  assert(scopeOp != nullptr);
+  if (scopeOp->op == nullptr) {
+    return {};
+  }
+  if (auto intAttr = scopeOp->op->getAttrOfType<IntegerAttr>(
+          hivm::PreloadNumAttr::name)) {
+    return intAttr.getInt();
+  }
+  return {};
+}
+
+std::optional<int64_t> IRTranslator::getScopeMaxPreloadNum(Scope *scopeOp) {
+  assert(scopeOp != nullptr);
+  if (scopeOp->op == nullptr) {
+    return {};
+  }
+  if (auto intAttr = scopeOp->op->getAttrOfType<IntegerAttr>(
+          hivm::MaxPreloadNumAttr::name)) {
+    return intAttr.getInt();
+  }
+  return {};
+}
+
 void IRTranslator::updateBlockArgAliases(Block *block,
                                          OperandRange destOperands) {
   assert(block->getArguments().size() == destOperands.size());
@@ -508,7 +520,7 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
   scopeOp->parentOp = parentOp;
 
   if (!isa_and_present<Function>(parentOp) && region.getBlocks().size() > 1) {
-    llvm_unreachable(
+    llvm::report_fatal_error(
         "unsupported non-function region to have multiple blocks.");
   }
 
@@ -569,6 +581,8 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
       if (auto scopeScopeOp = dyn_cast<scope::ScopeOp>(op)) {
         auto curScopeOp =
             std::make_unique<Scope>(OpType::SCOPE, scopeScopeOp, scopeOp.get());
+        curScopeOp->preloadNum = getScopePreloadNum(curScopeOp.get());
+        curScopeOp->maxPreloadNum = getScopeMaxPreloadNum(curScopeOp.get());
         for (auto &region : scopeScopeOp->getRegions()) {
           auto regionOp = funcIrBuilder(region, curScopeOp.get());
           curScopeOp->body.push_back(std::move(regionOp));

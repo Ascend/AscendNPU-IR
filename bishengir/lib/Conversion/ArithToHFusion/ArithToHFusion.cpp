@@ -128,8 +128,15 @@ struct ElementwiseOpToHFusionBinary : public OpRewritePattern<BinaryOp> {
 };
 
 template <typename BinaryOp>
-struct MulIExtendedOpLowering : public OpRewritePattern<BinaryOp> {
+struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
+  
+  Operation* createMulExtOp(PatternRewriter &rewriter, Location loc, Type resultType,
+                            Value lhs, Value rhs, bool isUnsigned) const {
+    return isUnsigned ?
+            rewriter.create<hfusion::MulExtUiOp>(loc, resultType, resultType, lhs, rhs) :
+            rewriter.create<hfusion::MulExtOp>(loc, resultType, resultType, lhs, rhs);
+  }
 
   LogicalResult matchAndRewrite(BinaryOp op,
                                 PatternRewriter &rewriter) const final {
@@ -138,10 +145,8 @@ struct MulIExtendedOpLowering : public OpRewritePattern<BinaryOp> {
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
     auto resultType = op.getLow().getType();
-
-    auto mulExtOp = rewriter.create<hfusion::MulExtOp>(op->getLoc(), resultType,
-                                                       resultType, lhs, rhs);
-
+    constexpr bool isUnsigned = std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
+    auto mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType, lhs, rhs, isUnsigned);
     rewriter.replaceOp(op, mulExtOp);
     return success();
   }
@@ -199,13 +204,13 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       if (inType.isF32() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      llvm_unreachable("unsupported datatype for arith::TruncFOp to hfusion");
+      llvm::report_fatal_error("unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
       if (inType.isBF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      llvm_unreachable("unsupported datatype for arith::ExtFOp to hfusion");
+      llvm::report_fatal_error("unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -220,7 +225,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       }
       return hfusion::RoundMode::TRUNC;
     }
-    llvm_unreachable("unsupported arith op to hfusion");
+    llvm::report_fatal_error("unsupported arith op to hfusion");
   }
 
   static hfusion::TypeFn selectCast(CastOp op) {
@@ -300,7 +305,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
     case arith::CmpFPredicate::UGT:
       return CompareFn::vgt;
     default:
-      llvm_unreachable("unsupported arith cmp predicate to hfusion");
+      llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
   }
 
@@ -469,8 +474,8 @@ void mlir::hfusion::populateArithToHFusionConversionPatterns(
       ElementwiseOpToHFusionCompare<arith::CmpFOp>,
       ElementwiseOpToHFusionCompare<arith::CmpIOp>,
       ElementwiseOpToHFusionSelect<arith::SelectOp>,
-      MulIExtendedOpLowering<arith::MulSIExtendedOp>,
-      MulIExtendedOpLowering<arith::MulUIExtendedOp>,
+      MulExtendedOpLowering<arith::MulSIExtendedOp>,
+      MulExtendedOpLowering<arith::MulUIExtendedOp>,
       BitcastOpToHFusionBitcastOp>(patterns.getContext());
 }
 

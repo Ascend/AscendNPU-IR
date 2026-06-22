@@ -1,5 +1,28 @@
 // RUN: bishengir-opt -hivm-mark-stride-align -allow-unregistered-dialect -split-input-file %s | FileCheck %s
 
+// CHECK-LABEL: @test_mark_custom_operand_align_dim
+func.func @test_mark_custom_operand_align_dim(
+    %arg0: memref<1xi32, #hivm.address_space<ub>>,
+    %arg1: memref<2xi32, #hivm.address_space<ub>>) {
+  %out = memref.alloc() : memref<2xi32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark %[[ARG0_ALIGNED:.*]] {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1xi32, #hivm.address_space<ub>>
+  // CHECK-NOT: annotation.mark %arg1
+  // CHECK-NOT: annotation.mark %out
+  // CHECK: hivm.hir.custom
+  hivm.hir.custom
+      {hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+       hivm.pipe = #hivm.pipe<PIPE_V>,
+       hivm.vf_mode = #hivm.vf_mode<SIMD>,
+       symbol = "my_custom_impl",
+       arg_attrs = [{align_dim = 0 : i64}]}
+      "my_custom_op"
+      ins(%arg0, %arg1 : memref<1xi32, #hivm.address_space<ub>>, memref<2xi32, #hivm.address_space<ub>>)
+      outs(%out : memref<2xi32, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
 // CHECK-LABEL: @test_mark_elementwise_unary
 func.func @test_mark_elementwise_unary(%dim0 : index, %dim1: index) {
   // CHECK: %[[A:.*]] = memref.alloc
@@ -456,7 +479,7 @@ func.func @triton_part_max_2d_dim01(%arg0: memref<3x1835xf32, #hivm.address_spac
 
 // CHECK: %[[ALLOC:.*]] = memref.alloc() {alignment = 64 : i64} : memref<5x2x4x1x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x2x4x1x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<5x2x4x1x1xf16, #hivm.address_space<ub>>
 
 // CHECK: %[[COLLAPSE_SHAPE:.*]] = memref.collapse_shape %[[ALLOC]] {{\[}}{{\[}}0], {{\[}}1], {{\[}}2], {{\[}}3, 4]] : memref<5x2x4x1x1xf16, #hivm.address_space<ub>> into memref<5x2x4x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[COLLAPSE_SHAPE]]
@@ -506,7 +529,7 @@ func.func @triton_part_min_3d_dim12(%arg0: memref<1x22x39xf16, #hivm.address_spa
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2x3xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() {alignment = 64 : i64} : memref<203x1x2x2x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC_0]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[COLLAPSE_SHAPE:.*]] = memref.collapse_shape %[[ALLOC_0]] {{\[}}{{\[}}0], {{\[}}1], {{\[}}2], {{\[}}3, 4]] : memref<203x1x2x2x1xf16, #hivm.address_space<ub>> into memref<203x1x2x2xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[COLLAPSE_SHAPE]]
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<203x1x2x2xf16, #hivm.address_space<ub>>
@@ -532,7 +555,7 @@ func.func @triton_part_min_5d_dim0m1(%arg0: memref<203x1x2x2x3xi8, #hivm.address
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2x4xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC:.*]] = memref.alloc() {alignment = 64 : i64} : memref<2x91x4x2x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[COLLAPSE_SHAPE:.*]] = memref.collapse_shape %[[ALLOC]] {{\[}}{{\[}}0], {{\[}}1], {{\[}}2], {{\[}}3, 4]] : memref<2x91x4x2x1xf16, #hivm.address_space<ub>> into memref<2x91x4x2xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[COLLAPSE_SHAPE]]
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x91x4x2xf16, #hivm.address_space<ub>>
@@ -664,7 +687,7 @@ func.func @triton_part_argmax_dim0m1_4d(%arg0: memref<5x35x7x8xf32, #hivm.addres
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x2x2x2xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC:.*]] = memref.alloc() {alignment = 64 : i64} : memref<2x2x1x2x1xf16, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC]]
-// CHECK-SAME: {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x1x2x1xf16, #hivm.address_space<ub>>
+// CHECK-SAME: {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x1x2x1xf16, #hivm.address_space<ub>>
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x2x1x2x2xf16, strided<[16, 8, 4, 2, 1]>, #hivm.address_space<ub>>
 // CHECK: annotation.mark %[[ALLOC_0]]
 // CHECK-SAME: {hivm.stride_align_dims = array<i32: 3>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x1x2x2xf16, strided<[16, 8, 4, 2, 1]>, #hivm.address_space<ub>>
@@ -761,5 +784,28 @@ func.func @triton_part_min_2d_dim01_1(%arg0: memref<3x1835xf32, #hivm.address_sp
   hivm.hir.vreduce <min_with_index_left> ins(%alloc_2 : memref<3xf32, #hivm.address_space<ub>>) outs(%alloc_3, %alloc_4 : memref<1xf32, #hivm.address_space<ub>>, memref<1xi32, #hivm.address_space<ub>>) reduce_dims = [0]
   "some_use"(%alloc_3) : (memref<1xf32, #hivm.address_space<ub>>) -> ()
   "some_use"(%alloc_4) : (memref<1xi32, #hivm.address_space<ub>>) -> ()
+  return
+}
+
+// -----
+// Test custom op without operands - should NOT mark alignment
+
+// CHECK-LABEL: @test_dist_align_dim
+func.func @test_dist_align_dim() {
+  // CHECK-NOT: annotation.mark
+  %2 = hivm.hir.custom {hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_OR_VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "aclshmem_n_pes"} "dist.aclshmem_n_pes" -> i32
+  return
+}
+
+// -----
+// Test custom op without ub operands - should NOT mark alignment
+
+// CHECK-LABEL: @test_dist_all_gm
+func.func @test_dist_all_gm(
+    %arg0: memref<64x64xi64, #hivm.address_space<gm>>) {
+  %c1_i64 = arith.constant 1 : i64
+  %c0_i32 = arith.constant 0 : i32
+  // CHECK-NOT: annotation.mark
+  hivm.hir.custom {commScope = 2 : i32, hivm.is_distributed, hivm.pipe = #hivm.pipe<PIPE_S>, hivm.tcore_type = #hivm.tcore_type<CUBE_AND_VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>, sigOp = 1 : i32, symbol = "aclshmem_int64_p"} "dist.aclshmem_int64_p" ins(%arg0, %c1_i64, %c0_i32 : memref<64x64xi64, #hivm.address_space<gm>>, i64, i32)
   return
 }

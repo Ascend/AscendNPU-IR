@@ -116,7 +116,7 @@ ManagedStatic<BiShengIRCompileMainConfigCLOptions> clOptionsConfig;
 namespace option_handler {
 template <typename T, bool ExternalStorage>
 std::string handleOpt(const cl::opt<T, ExternalStorage> &opt) {
-  llvm_unreachable("not handled");
+  llvm::report_fatal_error("not handled");
 }
 
 template <bool ExternalStorage>

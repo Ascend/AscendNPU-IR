@@ -288,10 +288,10 @@ private:
 
   /// Compose grouped reduce operations
   void composeGroupedOperations(
-      const SmallVector<SmallVector<linalg::ReduceOp>> &reduceGrouping) const {
+      SmallVector<SmallVector<linalg::ReduceOp>> &reduceGrouping) const {
     for (auto &group : reduceGrouping) {
       if (group.size() > 1) {
-        composeReduceOps(const_cast<SmallVector<linalg::ReduceOp> &>(group));
+        composeReduceOps(group);
       }
     }
   }
@@ -370,7 +370,7 @@ private:
         utils::getShape(reduceOp.getDpsInits()[0].getType()),
         to_vector(basePivotInitShape), info.newExpandShapeInit);
     if (!can || !canInit) {
-      llvm_unreachable("Input and inits unexpectedly failed to collapse");
+      llvm::report_fatal_error("Input and inits unexpectedly failed to collapse");
     }
 
     tensor::reshape_utils::renumberReassociation(info.supposedExpand);

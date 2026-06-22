@@ -6,8 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMDialectExtension.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
+#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -16,8 +20,10 @@
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 #include <algorithm>
+#include <string>
 
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.cpp.inc"
 
@@ -163,6 +169,16 @@ std::string getVCastOpLibraryCallName(VCastOp concreteOp,
        isI64ToI32) &&
       concreteOp.getRoundMode() == hivm::RoundMode::TRUNCWITHOVERFLOW) {
     ss << "_with_overflow";
+    bool disableSizeAlignForCast = false;
+    if (auto funcOp = concreteOp->getParentOfType<func::FuncOp>()) {
+      if (funcOp->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+        disableSizeAlignForCast = true;
+      }
+    }
+    // Disable size align for overflow cast only when the cast is I32 to I8 or
+    // I16 to I8
+    if (disableSizeAlignForCast && (isI32ToI8 || isI16ToI8))
+      ss << "_no_size_align";
   } else {
     ss << (tempBufferCond ? "_with_temp" : "_with_mode");
   }
@@ -229,7 +245,7 @@ std::string getNZ2NDOpLibraryCallName(NZ2NDOp concreteOp,
          "_" + dataTypeStr;
 }
 
-std::string debugCallNameMangleSuffix(Operation *op) {
+std::string callNameMangleSuffix(Operation *op) {
   std::string suffix = "";
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   if (!moduleOp) {
@@ -247,9 +263,9 @@ std::string debugCallNameMangleSuffix(Operation *op) {
     std::optional<TFuncCoreType> funcCoreType = queryFuncCoreType(funcOp);
     if (funcCoreType.has_value()) {
       if (funcCoreType.value() == TFuncCoreType::AIC) {
-        suffix = "_mix_aic";
+        suffix = ".cube";
       } else if (funcCoreType.value() == TFuncCoreType::AIV) {
-        suffix = "_mix_aiv";
+        suffix = ".vector";
       }
     }
   }
@@ -277,7 +293,7 @@ std::string getVGatherMaskOpLibraryCallName(VGatherMaskOp concreteOp,
   ss << baseName.data() << "_1d_" << getTypeName(concreteOp.getLoc(), elemType);
   return ss.str();
 }
-  
+
 std::string getDebugOpLibraryCallName(DebugOp concreteOp,
                                       std::optional<bool> /*isOpsAligned*/) {
   std::string callName = concreteOp.getDebugtype().str();
@@ -326,7 +342,7 @@ std::string getDebugOpLibraryCallName(DebugOp concreteOp,
     callName += "_gm"; // currently, scalar can choose either gm or ubuf since
                        // they currently call the same core
   }
-  return callName + debugCallNameMangleSuffix(concreteOp.getOperation());
+  return callName + callNameMangleSuffix(concreteOp.getOperation());
 }
 
 void updateStringStreamForMixMatmulOp(std::stringstream &ss,
@@ -390,7 +406,7 @@ std::string getLibraryCallNameForGlobalMmadOps(GlobalMmadTy mmadOp) {
       ss << "_descalePerTensor";
       break;
     default:
-      llvm_unreachable("Unsupported descale mode");
+      llvm::report_fatal_error("Unsupported descale mode");
     }
     ss << "_TDESCALE"
        << getTypeName(mmadLoc, mmadOp.getDescale().getType().getElementType());
@@ -458,7 +474,7 @@ getLibraryCallNameForGlobalMixMatmulOps(GlobalMixMatmulTy mixMatmulOp) {
     ss << "_mix_aic";
     break;
   default:
-    llvm_unreachable("Unsupported CoreType");
+    llvm::report_fatal_error("Unsupported CoreType");
   }
   return ss.str();
 }
@@ -475,7 +491,7 @@ struct InferMaxRankExternalModel
           InferMaxRankExternalModel<ConcreteOp>, ConcreteOp> {
   std::string getOpLibraryCallName(Operation *op,
                                    std::optional<bool> isOpsAligned) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 
   std::optional<int> getOpLibraryMaxRank(Operation *op) const {
@@ -487,7 +503,7 @@ struct InferMaxRankExternalModel
   }
 
   int inferOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 };
 
@@ -532,6 +548,19 @@ struct StaticMaxRankExternalModel
     }
     if constexpr (std::is_same_v<ConcreteOp, VGatherMaskOp>) {
       return getVGatherMaskOpLibraryCallName(concreteOp, isOpsAligned);
+    }
+    if constexpr (std::is_same_v<ConcreteOp, IndirectStoreOp>) {
+      auto offsetType = cast<ShapedType>(concreteOp.getOffsets().getType());
+      int rank = offsetType.getRank();
+      std::string libCallDim = std::to_string(rank) + "d";
+      std::string hasMaskStr = concreteOp.getMask() ? "" : "_no_mask";
+      Type srcType = concreteOp.getSrc().getType();
+      std::string srcTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+      std::string offsetTypeStr = getTypeName(
+          concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
+      return concreteOp.getOpName().str() + hasMaskStr + "_" + libCallDim + "_" +
+             srcTypeStr + "_" + offsetTypeStr;
     }
     if constexpr (std::is_same_v<ConcreteOp, DebugOp>) {
       return getDebugOpLibraryCallName(concreteOp, isOpsAligned);
@@ -600,11 +629,11 @@ struct NoMaxRankExternalModel
   }
 
   int getOpLibraryCallRank(Operation *op, int rank) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 
   int inferOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
   }
 };
 
@@ -618,19 +647,19 @@ struct NoLibCallExternalModel
           NoLibCallExternalModel<ConcreteOp>, ConcreteOp> {
   std::string getOpLibraryCallName(Operation *op,
                                    std::optional<bool> isOpsAligned) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 
   std::optional<int> getOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 
   int getOpLibraryCallRank(Operation *op, int rank) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 
   int inferOpLibraryMaxRank(Operation *op) const {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 };
 
@@ -788,7 +817,7 @@ std::string InferMaxRankExternalModel<VDeinterleaveOp>::getOpLibraryCallName(
 template <>
 std::string NoMaxRankExternalModel<FinishDebugOp>::getOpLibraryCallName(
     Operation *op, std::optional<bool> isOpsAligned) const {
-  return "_mlir_ciface_finish_debug" + debugCallNameMangleSuffix(op);
+  return "_mlir_ciface_finish_debug" + callNameMangleSuffix(op);
 }
 
 //===----------------------------------------------------------------------===//
@@ -824,7 +853,7 @@ std::string NoMaxRankExternalModel<FixpipeOp>::getOpLibraryCallName(
 template <>
 std::string NoMaxRankExternalModel<InitDebugOp>::getOpLibraryCallName(
     Operation *op, std::optional<bool> isOpsAligned) const {
-  return "_mlir_ciface_init_debug" + debugCallNameMangleSuffix(op);
+  return "_mlir_ciface_init_debug" + callNameMangleSuffix(op);
 }
 
 //===----------------------------------------------------------------------===//
@@ -877,6 +906,7 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
   auto transposeA = concreteOp.getATranspose();
   auto transposeB = concreteOp.getBTranspose();
   auto enableHF32 = concreteOp.getEnable_HF32();
+  auto enableI4 = concreteOp.getEnable_I4();
   std::string transName = "";
   if (transposeA.has_value()) {
     transName = transName + "_ta";
@@ -887,7 +917,13 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
   if (enableHF32.has_value()) {
     transName = transName + "_hf32";
   }
+
+  if (enableI4.has_value()) {
+    assert(!transposeA.has_value() && "i4 mmad doesn't support transpose A");
+    transName = transName + "_i4";
+  }
   if (concreteOp.getPerChannelBias()) {
+    // TODO: change biasTypeName for int4 case
     auto biasTypeName = getTypeName(
         concreteOp.getLoc(),
         getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
@@ -896,6 +932,44 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
   } else {
     return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName + transName;
   }
+}
+
+//===----------------------------------------------------------------------===//
+// Conv1DL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<Conv1DL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> isOpsAligned) const {
+  auto concreteOp = cast<Conv1DL1Op>(op);
+  auto baseCallName = std::string("conv2d_group");
+
+  auto srcTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType()));
+  auto dstTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+  return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+}
+
+//===----------------------------------------------------------------------===//
+// Conv2DL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<Conv2DL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> isOpsAligned) const {
+  auto concreteOp = cast<Conv2DL1Op>(op);
+  auto baseCallName = std::string("conv2d_group");
+
+  auto srcTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType()));
+  auto dstTypeName =
+      getTypeName(concreteOp.getLoc(),
+                  getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+  return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
 }
 
 //===----------------------------------------------------------------------===//
@@ -941,13 +1015,16 @@ std::string InferMaxRankExternalModel<VReduceOp>::getOpLibraryCallName(
   bool firstAxis = reduceDims[0] == 0;
   bool lastAxis = reduceDims[0] == rank - 1;
   bool midAxis = !firstAxis && !lastAxis;
-  if (firstAxis && (rank > 2) &&
-      VReduceOp::isArgminOrArgmax(concreteOp.getArithAttr().getReduceOp())) {
-    rank = 2;
-  }
-
   auto reduceOpName =
       stringifyReduceOperation(concreteOp.getArith().getReduceOp());
+  // With-index reduce ops only have 2D library registrations
+  // (_r_, _ra_, _ar_ with index). 3D-only templates (_ra0a1_, _ara_, _aar_)
+  // do not register with-index variants, so we must skip them here.
+  bool isWithIndex = VReduceOp::isWithIndex(concreteOp.getArith().getReduceOp());
+  // Cap rank to 2 so 3D-only paths are unreachable.
+  if (isWithIndex && rank > 2) {
+    rank = 2;
+  }
   std::stringstream ss;
   if (concreteOp.useVectorCrossIntr(lastAxis, rank)) {
     ss << (enableVCG ? "enablevcg_" : "enablevc_");
@@ -960,12 +1037,19 @@ std::string InferMaxRankExternalModel<VReduceOp>::getOpLibraryCallName(
   const int maxLastDim = 2;
   if (rank == 1) {
     ss << "_r_";
-  } else if ((firstAxis && rank >= dim3Rank) ||
-             (midAxis && (rank - reduceDims[0] >= dim3Rank))) {
+  } else if (!isWithIndex && ((firstAxis && rank >= dim3Rank) ||
+             (midAxis && (reduceDims[0] <= rank - 3)))) {
     ss << "_ra0a1_";
     rank = dim3Rank;
-  } else if ((firstAxis && rank < dim3Rank) ||
-             (midAxis && (rank - reduceDims[0] < dim3Rank))) {
+  } else if (!isWithIndex && midAxis && (reduceDims[0] > rank - 3)) {
+    ss << "_ara_";
+    rank = dim3Rank;
+  } else if (firstAxis) {
+    ss << "_ra_";
+  } else if (!isWithIndex && lastAxis && rank >= dim3Rank) {
+    ss << "_aar_";
+    rank = dim3Rank;
+  } else if (midAxis) {
     ss << "_ra_";
   } else if (lastAxis) {
     ss << "_ar_";
@@ -1003,7 +1087,7 @@ int InferMaxRankExternalModel<VReduceOp>::inferOpLibraryMaxRank(
   if (firstAxis || lastAxis) {
     return 2;
   }
-  llvm_unreachable("no support for middle axis reduction");
+  llvm::report_fatal_error("no support for middle axis reduction");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1049,6 +1133,63 @@ std::string InferMaxRankExternalModel<VTransposeOp>::getOpLibraryCallName(
   return ss.str();
 }
 
+//===----------------------------------------------------------------------===//
+// CustomOp / CustomMacroOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+template <typename CustomOpT>
+std::string inferCustomOpMaxRank(Operation *op,
+                                 std::optional<bool> isOpsAligned) {
+  auto concreteOp = cast<CustomOpT>(op);
+
+  // TODO: add support for built-in template library
+  using InferBuiltinMaxRankFuncTy =
+      std::function<std::string(std::optional<bool>)>;
+  static const DenseMap<StringRef, InferBuiltinMaxRankFuncTy>
+      builtinsCallName{};
+
+  if (concreteOp.isBuiltin()) {
+    const auto inferBuiltinCallName = builtinsCallName.at(concreteOp.getName());
+    return inferBuiltinCallName(isOpsAligned);
+  }
+
+  // add _mlir_ciface_ prefix if no memref in op's operands and values
+  auto hasMemrefInArgOrRet = [&concreteOp]() {
+    auto isMemref = [](Value v) {
+      return ::llvm::isa<::mlir::BaseMemRefType>(v.getType());
+    };
+    if (::llvm::any_of(concreteOp->getOperands(), isMemref))
+      return true;
+    if (::llvm::any_of(concreteOp.getResults(), isMemref))
+      return true;
+    return false;
+  };
+  std::string prefix = concreteOp.getSymbol();
+  if (!hasMemrefInArgOrRet()) {
+    prefix = "_mlir_ciface_" + prefix;
+  }
+  return prefix + callNameMangleSuffix(op);
+}
+} // namespace
+
+#define DEFINE_CUSTOM_OP_INFER_MAX_RANK(OP)                                    \
+  template <>                                                                  \
+  int InferMaxRankExternalModel<OP>::inferOpLibraryMaxRank(Operation *op)      \
+      const {                                                                  \
+    return cast<OP>(op).getMaxRank();                                          \
+  }                                                                            \
+  template <>                                                                  \
+  std::string InferMaxRankExternalModel<OP>::getOpLibraryCallName(             \
+      Operation *op, std::optional<bool> isOpsAligned) const {                 \
+    return inferCustomOpMaxRank<OP>(op, isOpsAligned);                         \
+  }
+
+DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomOp)
+DEFINE_CUSTOM_OP_INFER_MAX_RANK(CustomMacroOp)
+
+#undef DEFINE_CUSTOM_OP_INFER_MAX_RANK
+
 #define REGISTER_STATIC_MAX_RANK(OP, MAX_RANK)                                 \
   OP::attachInterface<StaticMaxRankExternalModel<OP, /*MaxRank=*/MAX_RANK>>(   \
       *ctx)
@@ -1070,6 +1211,9 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_INFER_MAX_RANK(VReduceOp);
     REGISTER_INFER_MAX_RANK(VDeinterleaveOp);
     REGISTER_INFER_MAX_RANK(VTransposeOp);
+
+    REGISTER_INFER_MAX_RANK(CustomOp);
+    REGISTER_INFER_MAX_RANK(CustomMacroOp);
 
     REGISTER_STATIC_MAX_RANK(VExpOp, 3);
     REGISTER_STATIC_MAX_RANK(VAbsOp, 3);
@@ -1115,6 +1259,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     // Dma Ops
     REGISTER_STATIC_MAX_RANK(LoadOp, 3);
     REGISTER_STATIC_MAX_RANK(StoreOp, 3);
+    REGISTER_STATIC_MAX_RANK(IndirectStoreOp, 5);
     REGISTER_STATIC_MAX_RANK(CopyOp, 3);
     REGISTER_STATIC_MAX_RANK(NZ2NDOp, 2);
     REGISTER_NO_MAX_RANK(FixpipeOp);
@@ -1125,6 +1270,8 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
 
     // Macro Ops
     REGISTER_NO_MAX_RANK(MmadL1Op);
+    REGISTER_NO_MAX_RANK(Conv1DL1Op);
+    REGISTER_NO_MAX_RANK(Conv2DL1Op);
     REGISTER_NO_MAX_RANK(MatmulOp);
     REGISTER_NO_MAX_RANK(MixMatmulOp);
     REGISTER_NO_MAX_RANK(MixGroupMatmulOp);

@@ -27,6 +27,46 @@ check_3d_ubuf_stride_align(memref_t<__ubuf__ T, 3> *ub) {
            (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1)));
 }
 
+// Constraints: padding_num should be contained in memref.sizes.
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+padding_value_3d_by_scalar_on_load(T padding_value, memref_t<__ubuf__ T, 3> *dst) {
+  INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+  auto padding_start = dst->aligned + dst->offset;
+  for (int i = 0; i < dst->sizes[0]; ++i) {
+    for (int j = 0; j < dst->sizes[1]; ++j) {
+      for (int k = 0; k < dst->sizes[2]; ++k) {
+        *(padding_start + i * dst->strides[0] + j * dst->strides[1] +
+          k * dst->strides[2]) = padding_value;
+      }
+    }
+  }
+  INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+  INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+}
+
+// Constraints: padding_num should be contained in memref.sizes. 
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+padding_value_3d(T padding_value, memref_t<__ubuf__ T, 3> *dst) {
+  // we have to do that since brc not support non-contiguous
+  if (dst->strides[2] != 1) [[unlikely]] {
+    padding_value_3d_by_scalar_on_load<T>(padding_value, dst);
+    return;
+  }
+  for (int64_t i = 0; i < dst->sizes[0]; i++) {
+    memref_t<__ubuf__ T, 2> dst_padding_memref = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset + dst->strides[0] * i,
+        {dst->sizes[1], dst->sizes[2]},
+        {dst->strides[1], dst->strides[2]}
+      };
+    broadcast_scalar<T, 2>(padding_value, &dst_padding_memref);
+  }
+}
+
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
@@ -49,13 +89,90 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
     return;
   }
 
-  // the starting address of dst is not 32byte aligned
-  auto dst_ptr = dst->aligned + dst->offset - left_padding_num;
-  if (!isAddress32ByteAligned(dst_ptr)) {
-    // TODO: use scalar to load first block and use dma to load others
-    load_gm_to_ubuf_3d_by_scalar<T>(src, dst, left_padding_num, pad_value);
+  auto dst_ptr = dst->aligned + dst->offset - left_padding_num * dst->strides[2];
+  if (!isAddress32ByteAligned(dst_ptr) && dst->strides[2] != 1) {
+    load_gm_to_ubuf_3d_by_scalar<T>(src, dst, left_padding_num, pad_value);	 
     return;
   }
+
+  memref_t<__gm__ T, 3> src_memref_aligned = copy_memref<__gm__ T, 3>(src);
+  memref_t<__ubuf__ T, 3> dst_memref_aligned = copy_memref<__ubuf__ T, 3>(dst);
+
+  // the starting address of dst is not 32byte aligned
+  if (!isAddress32ByteAligned(dst_ptr)) {
+    // Use scalar to load first block and use dma to load others
+    int64_t distance = (UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(dst_ptr) & 0x1F)) / sizeof(T);
+    memref_t<__gm__ T, 3> src_memref_unaligned_head = copy_memref<__gm__ T, 3>(src);
+    memref_t<__ubuf__ T, 3> dst_memref_unaligned_head = copy_memref<__ubuf__ T, 3>(dst);
+
+    if (distance <= left_padding_num) {
+      dst_memref_unaligned_head.sizes[2] = distance;
+      dst_memref_unaligned_head.offset -= left_padding_num;
+      padding_value_3d<T>(pad_value, &dst_memref_unaligned_head);
+
+      // step 2-1: update left_padding_num only.
+      left_padding_num -= distance;
+    } else {
+      int64_t load_num = distance - left_padding_num;
+      load_num = (load_num > src->sizes[2]) ? src->sizes[2] : load_num;
+
+      src_memref_unaligned_head.sizes[2] = load_num;
+      dst_memref_unaligned_head.sizes[2] = load_num;
+      load_gm_to_ubuf_3d_by_scalar<T>(&src_memref_unaligned_head, &dst_memref_unaligned_head, left_padding_num, pad_value);
+
+      // step 2-2: update left_padding_num and src/dst memref.
+      src_memref_aligned.offset += load_num;
+      src_memref_aligned.sizes[2] -= load_num;
+
+      dst_memref_aligned.offset += load_num;
+      dst_memref_aligned.sizes[2] -= load_num;
+      left_padding_num = 0;
+
+      if (dst_memref_aligned.sizes[2] <= 0) {
+        return;
+      }
+    }
+  }
+  // step 3: update memref and continue load data to aligned dst. 
+  dst = &dst_memref_aligned;
+  src = &src_memref_aligned;
+
+  // do padding for pad more than 32B.
+  // step 0: find main block
+  int64_t left_padding_num_tail = left_padding_num % (UB_ALIGN_BYTES / sizeof(T));
+  int64_t left_padding_num_main = left_padding_num - left_padding_num_tail;
+  // step 1: brc paddinng
+  if (left_padding_num_main > 0) {
+      // reshape dst memref for padding. 
+      memref_t<__ubuf__ T, 3> dst_padding_memref = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset - left_padding_num * dst->strides[2],
+        {dst->sizes[0], dst->sizes[1], left_padding_num_main},
+        {dst->strides[0], dst->strides[1], dst->strides[2]}
+      };
+      padding_value_3d<T>(pad_value, &dst_padding_memref);
+
+      int64_t span_2 = (dst->sizes[2] + left_padding_num - 1) * dst->strides[2] + 1;
+      int64_t span_1 = (dst->sizes[1] - 1) * dst->strides[1] +
+                       (dst->sizes[2] + left_padding_num - 1) * dst->strides[2] + 1;
+      if (
+        (dst->strides[0] < span_1) ||
+        (dst->strides[1] < span_2)
+      ) {
+        // inject sync if padding and load overlap. 
+        if (dst->strides[2] == 1) {
+          INTRINSIC(set_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
+          INTRINSIC(wait_flag, PIPE_V, PIPE_MTE2, LIB_EVENT_ID0);
+        } else {
+          INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+          INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+        }
+      }
+  }
+  
+  // step 2: clamp left_padding_num under 32B:
+  left_padding_num = left_padding_num_tail;
 
   // deal copy memref<1x1x1> to memref<1x1x1>
   if (dst->sizes[0] == 1 && dst->sizes[1] == 1 && dst->sizes[2] == 1) {
@@ -70,6 +187,29 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
     // last dimension is contiguous
     load_gm_to_ubuf_3d_core_with_contiguous_last_dim(src, dst,
                                                      left_padding_num);
+
+    if (sizeof(T) == 8 && pad_mode == PadMode::Value) {
+      INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
+      // repadding value for B64. 
+      memref_t<__ubuf__ T, 3> dst_padding_b64_memref = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset - left_padding_num, // findal stride always 1
+        {dst->sizes[0], dst->sizes[1], left_padding_num},
+        {dst->strides[0], dst->strides[1], dst->strides[2]}
+      };
+      padding_value_3d<T>(pad_value, &dst_padding_b64_memref);
+    }
+    return;
+  }
+
+  if (src->strides[2] > 1 && dst->strides[2] == 1) {
+    // When GM's last dim stride > 1 but UB's last dim is contiguous,
+    // we cannot use the dimension-lifting trick because the gap calculation
+    // in the underlying intrinsic functions assumes contiguous last dim.
+    // Using scalar copy to avoid incorrect gap values.
+    load_gm_to_ubuf_3d_by_scalar<T>(src, dst, left_padding_num, pad_value);
     return;
   }
 
@@ -77,6 +217,16 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
   // view the src (size0, size1, size2) with stride [stride0, stride1, stride2]
   // as viewed_src (size0, size1, size2, 1) with stride [stride0, stride1,
   // stride2, 1], where last dimension of viewed_src is contiguous
+  // we need deal with padding outside.
+  if (left_padding_num > 0) {
+    // do padding via scalar since we do not have brc_3d.
+    memref_t<__ubuf__ T, 3> dst_memref_non_contiguous_padding = copy_memref<__ubuf__ T, 3>(dst);
+    dst_memref_non_contiguous_padding.offset -= left_padding_num * dst->strides[2];
+    dst_memref_non_contiguous_padding.sizes[2] = left_padding_num;
+    padding_value_3d_by_scalar_on_load<T>(pad_value, &dst_memref_non_contiguous_padding);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+  }
 
   int64_t size0 = src->sizes[0];
   int64_t size1 = src->sizes[1];
@@ -136,8 +286,7 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
                                      dst->offset + offset_loop_ub,
                                      {size1, size2, 1},
                                      {stride1_ub, stride2_ub, 1}};
-    load_gm_to_ubuf_3d_core_with_contiguous_last_dim(&gm_3d, &ub_3d,
-                                                     left_padding_num);
+    load_gm_to_ubuf_3d_core_with_contiguous_last_dim(&gm_3d, &ub_3d, 0);
   }
 }
 
@@ -152,11 +301,8 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   }
 
   if (!check_3d_ubuf_stride_align(src)) {
-    if (atomic_kind != AtomicKind::None) {
-      cce::printf("Atomic operations are not supported when the stride is not "
-                  "block‑aligned");
+    if (!check_atomic_none(atomic_kind))
       return;
-    }
     store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
     return;
   }
@@ -179,11 +325,8 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
   int64_t stride2_ub = src->strides[2];
   auto src_ptr = src->aligned + src->offset;
   if (!isAddress32ByteAligned(src_ptr)) {
-    if (atomic_kind != AtomicKind::None) {
-      cce::printf("Atomic operations are not supported when the ub address is "
-                  "not block‑aligned");
+    if (!check_atomic_none(atomic_kind))
       return;
-    }
     if (stride2_ub != 1) {
       store_ubuf_to_gm_3d_by_scalar<T>(src, dst);
       return;
@@ -211,6 +354,8 @@ store_ubuf_to_gm_3d_core(memref_t<__ubuf__ T, 3> *src,
     set_store_atomic_none(atomic_kind);
     return;
   }
+
+  // Check whether we need fall back to scalar when stride2_gm>1 and stride2_ub=1
 
   // last dimension is not contiguous,
   // view the src (size0, size1, size2) with stride [stride0, stride1, stride2]
@@ -360,7 +505,7 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
   bool is_stride_aligned =
       are_outer_strides_32bytes_aligned<T, 3>(src->strides) &&
       are_outer_strides_32bytes_aligned<T, 3>(dst->strides);
-  bool is_contiguous = (src_stride0 == 1 && dst_stride0 == 1);
+  bool is_contiguous = (src_stride2 == 1 && dst_stride2 == 1);
   bool is_offset_aligned =
       isAddress32ByteAligned(dst_ptr) && isAddress32ByteAligned(src_ptr);
 
@@ -368,7 +513,7 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
   // memory
   if (is_offset_aligned && is32ByteAligned<T>(src_stride0) &&
       is32ByteAligned<T>(dst_stride0) &&
-      is_unalign_collapsible_dims(src, dst)) {
+      is_all_continuous(src, dst)) {
     for (int i = 0; i < size0; ++i) {
       memref_t<__ubuf__ T, 1> src_1d{src->allocated,
                                      src->aligned,
@@ -383,6 +528,20 @@ copy_ubuf_to_ubuf_3d_core(memref_t<__ubuf__ T, 3> *src,
                                      {1}};
 
       copy_ubuf_to_ubuf_1d_core_with_contiguous_last_dim<T>(&src_1d, &dst_1d);
+    }
+    return;
+  }
+
+  /// For 3D copy scenarios where last 2 dims of dst is a contiguous memory region,
+  /// and for src, all strides except the last dimension are 32B-aligned with offset
+  /// alignment, vreduceV2 can be used to avoid scalar copy performance degradation.
+  /// e.g. src sizes(8, 128, 4) strides(1024, 8, 1) dst sizes(8, 128, 4) strides(512, 4, 1)
+  /// select PatternMode::ALL_ELEMENTS to copy all of elements of src
+  if constexpr (sizeof(T) == 2 || sizeof(T) == 4) {
+    if (is_offset_aligned && is32ByteAligned<T>(src_stride0) &&
+      is32ByteAligned<T>(dst_stride0) &&
+      is_unalign_collapsible_dims<T, 3>(src, dst)) {
+      copy_with_last_two_dims_collapsed<T>(src, dst);
       return;
     }
   }

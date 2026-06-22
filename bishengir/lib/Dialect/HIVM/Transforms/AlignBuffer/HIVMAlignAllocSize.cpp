@@ -149,7 +149,7 @@ LogicalResult alignAllocSize(HIVMOP op, OpBuilder &builder) {
 
 LogicalResult markAllocAlign(func::FuncOp funcOp) {
   OpBuilder builder(funcOp.getContext());
-  WalkResult result = funcOp->walk([&builder](Operation *op) {
+  WalkResult result = funcOp->walk([&builder, &funcOp](Operation *op) {
     if (auto transposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
       if (!transposeOp.isLastDimTranspose()) {
         // un-last transpose, no need to do alloc size alignment, just do stride
@@ -162,6 +162,24 @@ LogicalResult markAllocAlign(func::FuncOp funcOp) {
       }
 
       if (failed(alignAllocSize(transposeOp, builder))) {
+        return WalkResult::interrupt();
+      }
+      return WalkResult::skip();
+    } else if (auto castOp = dyn_cast<hivm::VCastOp>(op)) {
+      // Only apply cast-specific alloc size alignment when explicitly enabled
+      // via function attribute.
+      if (funcOp->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+        return WalkResult::skip();
+      }
+      auto srcType = getElementTypeOrSelf(castOp.getSrc()[0]);
+      auto dstType = getElementTypeOrSelf(castOp.getDst()[0]);
+      const bool isI32ToI8 = srcType.isInteger(32) && dstType.isInteger(8);
+      const bool isI16ToI8 = srcType.isInteger(16) && dstType.isInteger(8);
+      if (!isI32ToI8 && !isI16ToI8) {
+        return WalkResult::skip();
+      }
+
+      if (failed(alignAllocSize(castOp, builder))) {
         return WalkResult::interrupt();
       }
       return WalkResult::skip();

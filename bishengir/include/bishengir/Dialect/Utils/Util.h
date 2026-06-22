@@ -28,7 +28,11 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeRange.h"
+
+#include "llvm/Support/raw_ostream.h"
+
 #include <numeric>
+
 #define CEIL_FACTOR(x, y) (((x) + ((y)-1)) / (y) * (y))
 #define CEIL_DIV(x, y) (((x) + ((y)-1)) / (y))
 #define UINT8_WIDTH 8
@@ -62,6 +66,12 @@ template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
     : public std::true_type {};
 
+template <typename T, typename = void> struct IsPrintable : public std::false_type {};
+
+template <typename T>
+struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>() << std::declval<T>())>>
+    : public std::true_type {};
+
 template <typename T>
 std::string to_string(const T &container, int indent = 0, bool useEndl = false);
 
@@ -71,6 +81,12 @@ std::string toStrHelper(const T &value, int indent, bool useEndl) {
     return to_string(value, indent + 2, useEndl);
   } else if constexpr (detail::is_pair<T>::value) {
     return "(" + to_string(value.first) + ", " + to_string(value.second) + ")";
+  } else if constexpr (IsPrintable<T>::value) {
+    std::string buffer;
+    llvm::raw_string_ostream os(buffer);
+    os << value;
+    os.flush();
+    return buffer;
   } else {
     return std::to_string(value);
   }
@@ -121,11 +137,11 @@ std::string to_string(const T &container, int indent, bool useEndl) {
 
 // Currently dtype cast rules:
 // (1-RINT ) f32 -> f16/bf16/f32
-// (2-RINT ) f16 -> f32
-// (3-TRUNC) float -> int
-// (4-TRUNC) int -> float
-// (5-RINT ) int -> int
-// (6-RINT ) others
+// (2-RINT ) f16/bf16 -> f32
+// (3-RINT ) i8 -> f16
+// (4-TRUNC) float -> int
+// (5-RINT ) int -> float
+// (6-RINT ) int -> int
 template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isF32()) {
     if (outType.isF16() || outType.isBF16() || outType.isF32()) {
@@ -139,8 +155,7 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
     }
   }
 
-  if (inType.isInteger(8) && // for bit width of 8 and 16 use RINT mode
-      outType.isF16()) {
+  if (inType.isInteger(8) && outType.isF16()) {
     return T::RINT;
   }
 
@@ -155,7 +170,7 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isInteger() && outType.isInteger()) {
     return T::RINT;
   }
-  llvm_unreachable("unsupported type cast.");
+  llvm::report_fatal_error("unsupported type cast.");
 }
 
 inline Type getMostElementType(
@@ -420,11 +435,11 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   Attribute valueAttr = constOp.getValue();
   T v;
   if (auto valIntAttr = dyn_cast<IntegerAttr>(valueAttr)) {
-    v = valIntAttr.getInt();
+    v = static_cast<T>(valIntAttr.getInt());
   } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
-    v = valFPAttr.getValueAsDouble();
+    v = static_cast<T>(valFPAttr.getValueAsDouble());
   } else {
-    llvm_unreachable("getArithConstantOpValue supports only IntOrFloat");
+    llvm::report_fatal_error("getArithConstantOpValue supports only IntOrFloat");
   }
   return v;
 }
@@ -516,6 +531,10 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
                ArrayRef<OpFoldResult> strides);
 
 bool isAlignedInUB(Type type);
+
+bool isUnstructuredMemAccLoop(Operation *op);
+
+ModuleOp getTopLevelModuleOp(Operation *op);
 
 } // namespace utils
 

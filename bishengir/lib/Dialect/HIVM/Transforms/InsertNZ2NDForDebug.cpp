@@ -46,6 +46,7 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 #define DEBUG_TYPE "hivm-insert-nz2nd-for-debug"
+static constexpr llvm::StringLiteral alreadyInsertNZ2ND = "alreadyInsertNZ2ND";
 
 namespace {
 struct InsertNZ2NDForDebug
@@ -54,61 +55,77 @@ struct InsertNZ2NDForDebug
   void runOnOperation() override;
 };
 
-/// Insert nz2nd for the inputs of hivm::MmadL1Op.
-struct InsertNZ2NDForDebugPattern : public OpRewritePattern<hivm::MmadL1Op> {
-public:
-  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
-                                PatternRewriter &rewriter) const override {
-    llvm::SmallVector<Value> l1values = {op.getA(), op.getB()};
-    bool allInserted = true;
-    for (Value val : l1values) {
-      if (!isa<TensorType>(val.getType())) {
-        // currently only support tensors
-        continue;
-      }
-      TensorType tensorType = cast<TensorType>(val.getType());
-      if (val.getDefiningOp() == nullptr) {
-        // currently only support MmadL1Op inputs with defining op
-        continue;
-      }
-      Operation *definingOp = val.getDefiningOp();
-      bool inserted = false;
-      for (Operation *user : val.getUsers()) {
-        if (isa<hivm::NZ2NDOp>(user)) {
-          inserted = true;
-          break;
-        }
-      }
-      if (inserted) {
-        continue;
-      }
-      allInserted = false;
-      for (Operation *user : val.getUsers()) {
-        if (isa<hivm::DebugOp>(user)) {
-          hivm::DebugOp debugOp = cast<hivm::DebugOp>(user);
-          rewriter.setInsertionPointAfter(definingOp);
-          Value workSpaceTensor = getLocalWorkSpaceTensor(
-              rewriter, definingOp->getLoc(), tensorType.getShape(),
-              hivm::getTensorDynamicValues(rewriter, definingOp->getLoc(), val),
-              getElementTypeOrSelf(tensorType));
-          auto res = rewriter.create<hivm::NZ2NDOp>(
-              definingOp->getLoc(), workSpaceTensor.getType(),
-              /*src=*/val, /*dst=*/workSpaceTensor);
-          rewriter.modifyOpInPlace(debugOp, [&]() {
-            OpOperand &arg = debugOp.getArgMutable();
-            arg.assign(res.getResultTensor());
-          });
-        }
-      }
+LogicalResult insertNZ2NDForOperand(PatternRewriter &rewriter,
+                                    hivm::DebugOp debugOp) {
+  Value operand = debugOp.getArg();
+  Operation *definingOp = operand.getDefiningOp();
+  auto resultTensorType = mlir::dyn_cast<RankedTensorType>(operand.getType());
+
+  rewriter.setInsertionPointAfter(definingOp);
+  auto shape = resultTensorType.getShape();
+  Location loc = definingOp->getLoc();
+  for (int64_t dim : shape) {
+    if (dim == ShapedType::kDynamic) {
+      return emitError(operand.getLoc())
+             << "insertNZ2NDForOperand requires static shape, but got dynamic "
+                "dimension in "
+             << resultTensorType;
     }
-    return allInserted ? failure() : success();
+  }
+
+  // step1: Allocate the GM space
+  Value workSpaceTensor = getLocalWorkSpaceTensor(
+      rewriter, definingOp->getLoc(), shape,
+      hivm::getTensorDynamicValues(rewriter, loc, operand),
+      getElementTypeOrSelf(resultTensorType));
+
+  // step2: Call nz2nd to move the data to the GM so that it can be printed
+  // by device_print
+  auto nz2nd = rewriter.create<hivm::NZ2NDOp>(
+      definingOp->getLoc(), workSpaceTensor.getType(),
+      /*src=*/operand, /*dst=*/workSpaceTensor);
+
+  // step3: Replace printed value of L1 device_print
+  rewriter.modifyOpInPlace(debugOp, [&]() {
+    debugOp.getArgMutable().assign(nz2nd.getResultTensor());
+    debugOp->setAttr(alreadyInsertNZ2ND, rewriter.getBoolAttr(true));
+    debugOp.setMemscopeAttr(hivm::AddressSpaceAttr::get(
+        debugOp.getContext(), hivm::AddressSpace::GM));
+  });
+  return success();
+}
+
+/// Insert nz2nd for the inputs of hivm::DebugOp.
+struct InsertNZ2NDForDebugOpPattern : public OpRewritePattern<hivm::DebugOp> {
+public:
+  using OpRewritePattern<hivm::DebugOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::DebugOp op,
+                                PatternRewriter &rewriter) const override {
+    auto memscope = op.getMemscope();
+    bool isL1Memspace =
+        memscope && memscope->getAddressSpace() == hivm::AddressSpace::L1;
+    if (!isL1Memspace || op->getAttr(alreadyInsertNZ2ND))
+      return failure();
+
+    auto printValue = op.getArg();
+    auto resultTensorType =
+        mlir::dyn_cast<RankedTensorType>(printValue.getType());
+    if (!resultTensorType) {
+      return failure();
+    }
+    if (printValue.getDefiningOp() == nullptr) {
+      return failure();
+    }
+
+    ArrayRef<int64_t> shape = resultTensorType.getShape();
+    assert(shape.size() == 2 || shape.size() == 3);
+    return insertNZ2NDForOperand(rewriter, op);
   }
 };
 
 void InsertNZ2NDForDebug::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  patterns.add<InsertNZ2NDForDebugPattern>(patterns.getContext());
+  patterns.add<InsertNZ2NDForDebugOpPattern>(patterns.getContext());
   (void)applyPatternsGreedily(getOperation(), std::move(patterns));
 }
 

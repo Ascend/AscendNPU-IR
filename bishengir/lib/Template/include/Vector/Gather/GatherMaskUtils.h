@@ -27,6 +27,19 @@ gather_mask_1d(memref_t<__ubuf__ T, 1> *src,
                memref_t<__ubuf__ T, 1> *dst,
                memref_t<__ubuf__ int64_t, 1> *dst_size);  
 
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+gather_mask_1d_scalar(memref_t<__ubuf__ T, 1> *src,
+                      memref_t<__ubuf__ bool, 1> *mask,
+                      memref_t<__ubuf__ T, 1> *dst,
+                      memref_t<__ubuf__ int64_t, 1> *dst_size);
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_unaligned_gather_mask_1d(memref_t<__ubuf__ T, 1> *src,
+                            memref_t<__ubuf__ bool, 1> *mask,
+                            memref_t<__ubuf__ T, 1> *dst);  
+
 #define DECLARE_GATHER_MASK(dim, dtype)                                        \
   __aiv__ __attribute__((always_inline)) void                                  \
     _mlir_ciface_vgathermask_##dim##d_##dtype(                                 \

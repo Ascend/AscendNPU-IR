@@ -81,6 +81,13 @@ def HIVM_IteratorTypeEnum : HIVM_I32Enum<
     HIVM_IteratorType_Opaque
   ]>;
 
+def HIVM_IteratorTypeAttr
+    : HIVM_I32EnumAttr<"iterator_type", HIVM_IteratorTypeEnum> {
+  let description = [{
+    HIVM iterator_type attribute.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Data Layout
 //===----------------------------------------------------------------------===//
@@ -324,6 +331,9 @@ def HIVM_TCoreTypeAttr : HIVM_Attr<"TCoreType", "tcore_type"> {
   let description = [{
     HIVM op core type attribute.
   }];
+  let constBuilderCall =
+      "::mlir::hivm::TCoreTypeAttr::get($_builder.getContext(), "
+      "::mlir::hivm::TCoreType::CUBE_OR_VECTOR)";
 }
 
 def HIVM_TCoreTypeMarkerAttr : HIVM_Attr<"TCoreTypeMarker", "tcore_type_marker"> {
@@ -525,6 +535,54 @@ def HIVM_EventAttr : HIVM_Attr<"Event", "event"> {
   }];
 }
 
+def HIVM_SYNC_EVENT_SLOT_WAIT : I32EnumAttrCase<"wait", 0>;
+def HIVM_SYNC_EVENT_SLOT_SET : I32EnumAttrCase<"set", 1>;
+def HIVM_SYNC_EVENT_SLOT_INTERNAL : I32EnumAttrCase<"internal", 2>;
+
+def HIVM_SyncEventSlotMacroSyncEnum : HIVM_I32Enum<
+  "SyncEventSlotMacroSync",
+  "Whether the custom macro kernel waits, sets, or only needs an event id", [
+    HIVM_SYNC_EVENT_SLOT_WAIT,
+    HIVM_SYNC_EVENT_SLOT_SET,
+    HIVM_SYNC_EVENT_SLOT_INTERNAL
+  ]>;
+
+def HIVM_SyncEventSlotAttr : HIVM_Attr<"SyncEventSlot", "sync_event_slot"> {
+  let parameters = (ins OptionalParameter<"PipeAttr">:$set_pipe,
+      OptionalParameter<"PipeAttr">:$wait_pipe,
+      DefaultValuedParameter<"SyncEventSlotMacroSync",
+          "SyncEventSlotMacroSync::internal">:$macro_sync,
+      OptionalParameter<"EventAttr">:$event);
+  let hasCustomAssemblyFormat = 1;
+  let description = [{
+    One sync_event_slots entry for CustomMacroOp. macro_sync is `internal`
+    (default) when the macro only needs an allocated event id passed via
+    sync_related_args, without GraphSyncSolver inserting boundary
+    set_flag/wait_flag ops; `wait` when the macro kernel calls wait_flag on
+    (set_pipe, wait_pipe) and GraphSyncSolver injects set_flag before the macro;
+    `set` when the macro sets internally and GraphSyncSolver injects wait_flag
+    after the macro. set_pipe and wait_pipe are required for `wait`/`set` and
+    optional for `internal`. The optional event attribute pins a static hardware
+    event id for this slot.
+
+    Examples:
+    ```mlir
+    // internal (default): GSS allocates event id; pipes optional
+    #hivm.sync_event_slot<internal>
+    #hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>>
+    // wait: macro waits on (set_pipe, wait_pipe); GSS may inject set_flag
+    #hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, wait>
+    // set: macro sets on (set_pipe, wait_pipe); GSS injects wait_flag after macro
+    #hivm.sync_event_slot<#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_MTE2>, set>
+    #hivm.sync_event_slot<#hivm.pipe<PIPE_MTE2>, #hivm.pipe<PIPE_MTE1>, internal, <EVENT_ID1>>
+    ```
+  }];
+}
+
+def SyncEventSlotArrayAttr
+    : TypedArrayAttrBase<HIVM_SyncEventSlotAttr,
+                         "sync-event-slot array attribute">;
+
 //===----------------------------------------------------------------------===//
 // Unit Flag Mode
 //===----------------------------------------------------------------------===//
@@ -609,6 +667,19 @@ def HIVM_SyncBlockInstrModeAttr : HIVM_Attr<
       "::mlir::hivm::SyncBlockInstrModeAttr::get($_builder.getContext(), "
       "::mlir::hivm::SyncBlockInstrMode::INTRA_BLOCK_SYNCHRONIZATION)";
 }
+
+//===----------------------------------------------------------------------===//
+// Sync Block Lock Pipeline Phase (optimize-hivm-pipeline scheduling)
+//===----------------------------------------------------------------------===//
+
+def HIVM_SyncBlockLockPipelinePhase_Prepare : I32EnumAttrCase<"Prepare", 0, "prepare">;
+def HIVM_SyncBlockLockPipelinePhase_Finalize : I32EnumAttrCase<"Finalize", 1, "finalize">;
+
+def HIVM_SyncBlockLockPipelinePhaseEnum : HIVM_I32Enum<
+  "SyncBlockLockPipelinePhase", "Stage of sync-block-lock pipeline in optimize-hivm", [
+    HIVM_SyncBlockLockPipelinePhase_Prepare,
+    HIVM_SyncBlockLockPipelinePhase_Finalize,
+  ]>;
 
 //===----------------------------------------------------------------------===//
 // Reduction Op Kind
@@ -960,6 +1031,81 @@ def HIVM_EnableSavingUb : HIVM_Attr<"EnableSavingUb", "enable_saving_ub"> {
   }];
 }
 
+def DisableSizeAlignForCast
+    : HIVM_Attr<"DisableSizeAlignForCast", "disable_size_align_for_cast"> {
+  let description = [{
+    If a function is tagged with this attribute, VCast alloc size alignment is
+    disabled and the new temp buffer scheme (aligned-src-size based) is used.
+    When this attribute is absent, the original scheme (size align + src-alloc
+    based temp buffer) is used.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
+def HIVM_PaddingOptionAttr : HIVM_Attr<"PaddingOption", "padding_option"> {
+  let parameters = (ins EnumParameter<HIVM_PaddingOptionEnum>:$option);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Padding option.
+  }];
+}
+
+def HIVM_CacheNone : I32EnumAttrCase<"NONE", 1, "none">;
+def HIVM_CacheCA : I32EnumAttrCase<"CA", 2, "ca">;
+def HIVM_CacheCG : I32EnumAttrCase<"CG", 3, "cg">;
+def HIVM_CacheWB : I32EnumAttrCase<"WB", 4, "wb">;
+def HIVM_CacheCS : I32EnumAttrCase<"CS", 5, "cs">;
+def HIVM_CacheWT : I32EnumAttrCase<"WT", 6, "wt">;
+def HIVM_CacheCV : I32EnumAttrCase<"CV", 7, "cv">;
+def HIVM_CacheModifierEnum : HIVM_I32Enum<
+    "CacheModifier", "", [
+      HIVM_CacheNone,
+      HIVM_CacheCA,
+      HIVM_CacheCG,
+      HIVM_CacheWB,
+      HIVM_CacheCS,
+      HIVM_CacheWT,
+      HIVM_CacheCV
+    ]>;
+def HIVM_CacheModifierAttr : HIVM_Attr<"CacheModifier", "cache_modifier"> {
+  let parameters = (ins EnumParameter<HIVM_CacheModifierEnum>:$policy);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Cache modification policy.
+  }];
+}
+
+def HIVM_EvictNormal : I32EnumAttrCase<"EvictNormal", 1, "EvictNormal">;
+def HIVM_EvictFirst : I32EnumAttrCase<"EvictFirst", 2, "EvictFirst">;
+def HIVM_EvictLast : I32EnumAttrCase<"EvictLast", 3, "EvictLast">;
+def HIVM_EvictionPolicyEnum : HIVM_I32Enum<
+  "EvictionPolicy", "Eviction Policy for shared memory", [
+    HIVM_EvictNormal,
+    HIVM_EvictFirst,
+    HIVM_EvictLast
+  ]>;
+def HIVM_EvictionPolicyAttr : HIVM_Attr<"EvictionPolicy", "eviction_policy"> {
+  let parameters = (ins EnumParameter<HIVM_EvictionPolicyEnum>:$policy);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Eviction Policy for shared memory.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Misc.
 //===----------------------------------------------------------------------===//
@@ -1018,6 +1164,15 @@ def HIVM_FuncDynMemrefArgsAttr
   }];
 }
 
+def HIVM_TightlyCoupledBufferAttr
+    : HIVM_Attr<"HIVMTightlyCoupledBuffer", "tightly_coupled_buffer"> {
+  let parameters = (ins OptionalParameter<"std::optional<int32_t>">:$id);
+  let assemblyFormat =  "`<` params `>`";
+  let description = [{
+    HIVM tightly coupled buffer for cv.
+  }];
+}
+
 def HIVM_InsertSliceSourceIndexAttr
     : HIVM_Attr<"InsertSliceSourceIndex", "insert_slice_source_index"> {
   let description = [{
@@ -1045,10 +1200,56 @@ def HIVM_DisableAutoInjectBlockSyncAttr
   }];
 }
 
+def HIVM_SyncBlockLockWithSubblockAttr
+    : HIVM_Attr<"SyncBlockLockWithSubblock", "sync_block_lock_with_subblock"> {
+  let description = [{
+    Marks sync_block_lock, sync_block_unlock, and free_lock_var ops that use
+    subblock-aware block indexing in the device template.
+  }];
+}
+
 def HIVM_TileMixCubeNumAttr
     : HIVM_Attr<"TileMixCubeNum", "tile_mix_cube_num"> {
   let description = [{
-    Specifies the number of cube loops will be tiled in mix kernel
+    Specifies the number of cube loops will be tiled in mix kernel.
+  }];
+}
+
+def HIVM_PreloadNumAttr
+    : HIVM_Attr<"PreloadNum", "preload_num"> {
+  let description = [{
+    Specifies the preload number of scope op.
+  }];
+}
+
+def HIVM_MaxPreloadNumAttr
+    : HIVM_Attr<"MaxPreloadNum", "max_preload_num"> {
+  let description = [{
+    Specifies the max preload number of scope op.
+  }];
+}
+
+def HIVM_PreloadWorkspaceAttr
+    : HIVM_Attr<"PreloadWorkspace", "preload_workspace"> {
+  let description = [{
+    Specifies that related op is preload workspace.
+  }];
+}
+
+def HIVM_PreloadLocalBufferAttr
+    : HIVM_Attr<"PreloadLocalBuffer", "preload_local_buffer"> {
+  let description = [{
+    Specifies that related op is preload local buffer.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Distributed
+//===----------------------------------------------------------------------===//
+
+def HIVM_IsDistributedAttr : HIVM_Attr<"IsDistributed", "is_distributed"> {
+  let description = [{
+    Specifies an op is about distributed.
   }];
 }
 

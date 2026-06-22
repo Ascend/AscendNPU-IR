@@ -77,6 +77,8 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
     convertToHIVMOptions.enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
     convertToHIVMOptions.enableUbufSaving = config.getEnableUbufSaving();
+    convertToHIVMOptions.disableSizeAlignForCast =
+        config.getDisableSizeAlignForCast();
     hivm::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
     hivm::HIVMPipelineOptions options;
     setupHIVMPipelineOptions(options, config);
@@ -143,6 +145,7 @@ public:
         &enableAutoBindSubBlock,
         &enableAutoBlockifyLoop,
         &enableHIVMAutoCVBalance,
+        &enablePreload,
         &enableAutoMultiBuffer,
         &enableHIVMAutoStorageAlign,
         &enableBinRelocation,
@@ -164,6 +167,7 @@ public:
         &enableHIVMUnitFlagSync,
         &enableHIVMAssumeAliveLoops,
         &enableUbufSaving,
+        &disableSizeAlignForCast,
     };
 
     SmallVector<Pass::Option<unsigned> *> sharedWithHIVMCompileUnsigned = {

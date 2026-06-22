@@ -114,7 +114,7 @@ class NormalizeBitwiseSelectPass
 public:
   using NormalizeBitwiseSelectBase<
       NormalizeBitwiseSelectPass>::NormalizeBitwiseSelectBase;
-  void runOnOperation() {
+  void runOnOperation() override {
     MLIRContext *context = &getContext();
     RewritePatternSet patterns(context);
     patterns.add<NormalizeBitwiseSelectPattern>(patterns.getContext());

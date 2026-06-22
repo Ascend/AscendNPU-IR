@@ -155,7 +155,7 @@ generateMemoryInfo(const StorageEntry *storageEntry,
 
 void collectMemoryInfoForDebug(
     SmallVector<MemoryDisplayInfo> &memoryDisplayInfoList,
-    DenseMap<hivm::AddressSpace, StorageEntry *> selectRootMap,
+    llvm::MapVector<hivm::AddressSpace, StorageEntry *> selectRootMap,
     DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets,
     DenseMap<hivm::AddressSpace, std::string> errorInfo, bool isFail) {
   for (auto &it : selectRootMap) {
@@ -172,12 +172,6 @@ void collectMemoryInfoForDebug(
     MemoryInfo memoryRootInfo =
         generateMemoryInfo(rootStorageEntry, buffer2Offsets, rootOper);
     memoryDisplayInfo.memoryInfoArray.emplace_back(memoryRootInfo);
-    uint64_t needByte =
-        (rootStorageEntry->alignedConstBits + utils::kBitsToByte - 1) /
-        utils::kBitsToByte;
-    uint64_t offsetByte =
-        (rootStorageEntry->bitsOffset + utils::kBitsToByte - 1) /
-        utils::kBitsToByte;
     for (auto &childrenStorageEntry : rootStorageEntry->mergedChildren) {
       for (auto &buffer : childrenStorageEntry->inplaceBuffers) {
         if (buffer.getDefiningOp()) {

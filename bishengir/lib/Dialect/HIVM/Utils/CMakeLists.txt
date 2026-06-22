@@ -1,12 +1,2 @@
-add_bishengir_dialect_library(BiShengIRHIVMUtils
-  Utils.cpp
-
-  ADDITIONAL_HEADER_DIRS
-  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
-
-  LINK_LIBS PUBLIC
-  MLIRBufferizationDialect
-  BiShengIRHIVMDialect
-  MLIRMemRefDialect
-  BiShengIRMemRefExtDialect
-)
+# Utils.cpp is compiled into BiShengIRHIVMDialect. Depend on BiShengIRHIVMDialect
+# directly instead of a separate alias target (avoids MLIR export-set issues).

@@ -64,6 +64,23 @@ class ElementwiseNaryOpTrait<int N>
                          [HIVMStructuredOpInterface,
                           HIVMOpSameOperandsAndResultRank]>;
 
+/// Specify the maximum rank that library supports for current op.
+/// This trait must be used for every op with HIVMStructuredOpInterface
+class OpLibraryMaxRankTrait<int MaxRank>
+    : ParamNativeOpTrait<"OpLibraryMaxRankTrait", !cast<string>(MaxRank)>;
+
+/// For op with statically known max rank trait that library supports.
+class StaticMaxRankTrait<int MaxRank> : OpLibraryMaxRankTrait<MaxRank>;
+
+/// For op with statically unknown max rank trait that library supports.
+def InferMaxRankTrait : OpLibraryMaxRankTrait<0>;
+
+/// For op with no constraints on the maximum rank that library supports.
+def NoMaxRankTrait : OpLibraryMaxRankTrait<-1>;
+
+/// For op with no library function implemented.
+def NoLibraryFunctionTrait : NativeOpTrait<"NoLibraryFunctionTrait">;
+
 /// whether a op is commutative (note: only applies to the input operands)
 def CommutativeOpTrait : NativeOpTrait<"CommutativeOpTrait">;
 

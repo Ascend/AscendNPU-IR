@@ -69,6 +69,14 @@ def EnableUbufSaving : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
 }
 
+def DisableSizeAlignForCast : FeatureControlOptions<
+  "Disable VCast alloc size alignment and use new temp buffer scheme (s32/s16->s8).",
+  "bool",
+  "false"
+>{
+  let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
+}
+
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 def EnableTorchCompile : FeatureControlOptions<
   "Enable Torch-MLIR compilation.",
@@ -168,7 +176,7 @@ def DisableAutoInjectBlockSync : FeatureControlOptions<
 def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   "Use hivm graph-sync-solver instead of inject-sync.",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
@@ -184,7 +192,7 @@ def DisableAutoCVWorkSpaceManage : FeatureControlOptions<
 def EnableHIVMCrossCoreGSS : FeatureControlOptions<
   "Use hivm cross-core graph-sync-solver instead of inject-block-sync.",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
@@ -203,6 +211,14 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
   "false"
 > {
   let passGroup = ["HFUSION", "HIVM"];
+}
+
+def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
+  "Use legacy InsertLoadStoreForMixCV.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
 }
 
 //===----------------------------------------------------------------------===//
@@ -259,6 +275,12 @@ def InjectIRFromFile : DFXControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def SaveTemps : DFXControlOptions<
+  "Save intermediate compilation results to specified directory.",
+  "std::string",
+  "\"\""
+>;
+
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options
 //===----------------------------------------------------------------------===//
@@ -282,7 +304,7 @@ def EnableAutoMultiBuffer : GeneralOptimizationControlOptions<
 def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it only to work for local buffer",
   "bool",
-  "true"
+  "false"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
@@ -385,7 +407,7 @@ llvm::cl::values(
 def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit.",
   "MultiBufferStrategy",
-  "MultiBufferStrategy::NO_LIMIT"
+  "MultiBufferStrategy::ONLY_CUBE"
 > {
   let additionalOptFlags = [{
 llvm::cl::values(
@@ -435,9 +457,9 @@ def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
 >;
 
 def SetWorkspaceMultibuffer : HIVMOptimizationControlOptions<
-  "Override number of multibuffers for workspace, defaults to 2.",
+  "Override number of multibuffers for workspace, defaults to 4.",
   "unsigned",
-  "2"
+  "4"
 >;
 
 def EnableHIVMGlobalWorkspaceReuse : HIVMOptimizationControlOptions<
@@ -448,6 +470,12 @@ def EnableHIVMGlobalWorkspaceReuse : HIVMOptimizationControlOptions<
 
 def EnableHIVMAutoCVBalance : HIVMOptimizationControlOptions<
   "Enable balancing during cv-pipelining.",
+  "bool",
+  "false"
+>;
+
+def EnablePreload : HIVMOptimizationControlOptions<
+  "Enable preload.",
   "bool",
   "false"
 >;
@@ -473,13 +501,13 @@ def EnableAutoBlockifyLoop : HIVMOptimizationControlOptions<
 def TileMixVectorLoop : HIVMOptimizationControlOptions<
   "The trip count of the tiled vector loop for mix kernels.",
   "unsigned",
-  "1"
+  "2"
 >;
 
 def TileMixCubeLoop : HIVMOptimizationControlOptions<
   "The trip count of the tiled cube loop for mix kernels.",
   "unsigned",
-  "1"
+  "2"
 >;
 
 //===----------------------------------------------------------------------===//
@@ -513,6 +541,27 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
                 REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
                 REGISTER_TARGET(Ascend910_9599),
+                // Ascend950PR series
+                REGISTER_TARGET(Ascend950PR_950z), REGISTER_TARGET(Ascend950PR_9579),
+                REGISTER_TARGET(Ascend950PR_957a), REGISTER_TARGET(Ascend950PR_957b),
+                REGISTER_TARGET(Ascend950PR_957c), REGISTER_TARGET(Ascend950PR_957d),
+                REGISTER_TARGET(Ascend950PR_9589), REGISTER_TARGET(Ascend950PR_958a),
+                REGISTER_TARGET(Ascend950PR_958b), REGISTER_TARGET(Ascend950PR_958c),
+                REGISTER_TARGET(Ascend950PR_958d), REGISTER_TARGET(Ascend950PR_9599),
+                REGISTER_TARGET(Ascend950PR_959a), REGISTER_TARGET(Ascend950PR_959b),
+                // Ascend950DT series
+                REGISTER_TARGET(Ascend950DT_950x), REGISTER_TARGET(Ascend950DT_950y),
+                REGISTER_TARGET(Ascend950DT_9571), REGISTER_TARGET(Ascend950DT_9572),
+                REGISTER_TARGET(Ascend950DT_9573), REGISTER_TARGET(Ascend950DT_9574),
+                REGISTER_TARGET(Ascend950DT_9575), REGISTER_TARGET(Ascend950DT_9576),
+                REGISTER_TARGET(Ascend950DT_9577), REGISTER_TARGET(Ascend950DT_9578),
+                REGISTER_TARGET(Ascend950DT_9581), REGISTER_TARGET(Ascend950DT_9582),
+                REGISTER_TARGET(Ascend950DT_9583), REGISTER_TARGET(Ascend950DT_9584),
+                REGISTER_TARGET(Ascend950DT_9585), REGISTER_TARGET(Ascend950DT_9586),
+                REGISTER_TARGET(Ascend950DT_9587), REGISTER_TARGET(Ascend950DT_9588),
+                REGISTER_TARGET(Ascend950DT_9591), REGISTER_TARGET(Ascend950DT_9592),
+                REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
+                REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
                 REGISTER_TARGET(Unknown)
     #undef REGISTER_TARGET
     #undef TO_STRING

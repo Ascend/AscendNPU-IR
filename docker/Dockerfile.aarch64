@@ -1,0 +1,59 @@
+FROM quay.io/pypa/manylinux_2_28_aarch64:latest AS builder
+
+RUN yum install -y clang lld ccache git curl
+RUN /opt/python/cp310-cp310/bin/python3 -m pip install ninja && \
+    cp /opt/_internal/cpython-3.10.20/bin/ninja /usr/local/bin/ && \
+    chmod +x /usr/local/bin/ninja
+
+RUN CANN_URL="https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%209.0.0/Ascend-cann-toolkit_9.0.0_linux-aarch64.run" && \
+    curl -LO "$CANN_URL" && \
+    bash ./Ascend-cann-toolkit_9.0.0_linux-aarch64.run --noexec --extract=cann900 && \
+    bash cann900/run_package/cann-bisheng-compiler_*.run --noexec --extract=/opt/bisheng_toolkit && \
+    rm -rf cann900
+
+ENV BISHENG_COMPILER=/opt/bisheng_toolkit/bisheng_compiler/bin
+ENV PATH="/usr/local/bin:${PATH}"
+
+WORKDIR /workspace
+
+ARG REPO_URL=https://gitcode.com/Ascend/AscendNPU-IR.git
+ARG REPO_BRANCH=master
+RUN git clone --depth 1 --branch ${REPO_BRANCH} ${REPO_URL} . && \
+    git submodule update --init --depth 1 third-party/llvm-project && \
+    git submodule update --init --depth 1 third-party/torch-mlir
+
+RUN chmod +x build-tools/build.sh && \
+    build-tools/build.sh -o ./build \
+      --add-cmake-options="-DCMAKE_LINKER=LLD" \
+      --add-cmake-options="-DLLVM_ENABLE_LLD=ON" \
+      -t \
+      --bisheng-compiler=$BISHENG_COMPILER \
+      --build-torch-mlir \
+      --safety-options \
+      --safety-ld-options \
+      --skip-rpath \
+      --apply-patches
+
+RUN mkdir -p /workspace/output/bin && \
+    cp build/install/bin/bishengir-compile /workspace/output/bin/ && \
+    cp build/install/bin/bishengir-opt /workspace/output/bin/ && \
+    if [ -d build/install/lib ]; then \
+      mkdir -p /workspace/output/lib && \
+      cp -r build/install/lib/* /workspace/output/lib/ 2>/dev/null || true; \
+    fi
+
+FROM openeuler/openeuler:24.03
+
+RUN yum install -y libgomp python3 python3-pip util-linux findutils && yum clean all
+
+COPY --from=builder /Ascend-cann-toolkit_9.0.0_linux-aarch64.run ./
+RUN bash ./Ascend-cann-toolkit_9.0.0_linux-aarch64.run --install --quiet --install-for-all && \
+    rm -f Ascend-cann-toolkit_9.0.0_linux-aarch64.run
+
+COPY --from=builder /workspace/output/ /usr/local/Ascend/cann-9.0.0/tools/bishengir/
+
+ENV PATH="/usr/local/Ascend/cann-9.0.0/tools/bishengir/bin:${PATH}"
+
+RUN echo 'source /usr/local/Ascend/cann/set_env.sh 2>/dev/null' >> /etc/bashrc
+
+ENTRYPOINT ["/bin/bash", "-c", "source /usr/local/Ascend/cann/set_env.sh && exec \"$@\"", "--"]

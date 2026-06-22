@@ -16,6 +16,51 @@
 
 #include "Vector/Cast/CastUtils.h"
 
+// Scalar fallback for 2D cast with unaligned inputs.
+// Processes the 2D memref row-by-row: each row is treated as a 1D memref
+// and delegated to vector_cast_1d_with_mode.
+// pipe_barrier(PIPE_V) ensures the previous row's vector instructions
+// complete before issuing the next row's vconv, preventing pipeline
+// resource conflicts from multiple outstanding vector operations.
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) void
+scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
+                         memref_t<__ubuf__ DST_T, 2> *dst,
+                         CastMode cast_mode) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("cast 2d unaligned");
+#endif
+  if constexpr (std::is_same<SRC_T, bfloat16_t>::value ||
+                std::is_same<DST_T, bfloat16_t>::value) {
+    // scalar cast bfloat16_t is not supported yet
+    return;
+  }
+
+  for (int64_t i = 0; i < src->sizes[0]; ++i) {
+    INTRINSIC(pipe_barrier, PIPE_V);
+    memref_t<__ubuf__ SRC_T, 1> src_1d{src->aligned, src->aligned,
+                                       src->offset + i * src->strides[0],
+                                       {src->sizes[1]},
+                                       {src->strides[1]}};
+    memref_t<__ubuf__ DST_T, 1> dst_1d{dst->aligned, dst->aligned,
+                                       dst->offset + i * dst->strides[0],
+                                       {dst->sizes[1]},
+                                       {dst->strides[1]}};
+    scalar_cast_1d_with_mode<SRC_T, DST_T>(&src_1d, &dst_1d, cast_mode);
+  }
+}
+
+// Check if both src and dst 2D memrefs satisfy alignment requirements
+// for the vectorized cast path: offset 32B-aligned,
+// stride[0] block-aligned, stride[1] == 1.
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_cast_2d(memref_t<__ubuf__ SRC_T, 2> *src,
+                          memref_t<__ubuf__ DST_T, 2> *dst) {
+  return is_memref_aligned<SRC_T, 2>(src) &&
+         is_memref_aligned<DST_T, 2>(dst);
+}
+
 template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_vector_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
@@ -220,7 +265,7 @@ vector_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
   }
 }
 
-template <typename SRC_T, typename DST_T>
+template <typename SRC_T, typename DST_T, bool DISABLE_SIZE_ALIGN>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
                              memref_t<__ubuf__ DST_T, 2> *dst,
@@ -254,11 +299,12 @@ vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
                                          dst->offset + i * dst->strides[0],
                                          {dst->sizes[1]},
                                          {1}};
-      vector_cast_1d_with_overflow(&src_1d, &dst_1d, tmp);
+      vector_cast_1d_with_overflow<SRC_T, DST_T, DISABLE_SIZE_ALIGN>(
+          &src_1d, &dst_1d, tmp);
     }
     return;
   }
-  vector_cast_with_overflow(src, dst, tmp);
+  vector_cast_with_overflow<SRC_T, DST_T, DISABLE_SIZE_ALIGN>(src, dst, tmp);
 }
 
 template <typename SRC_T, typename DST_T>

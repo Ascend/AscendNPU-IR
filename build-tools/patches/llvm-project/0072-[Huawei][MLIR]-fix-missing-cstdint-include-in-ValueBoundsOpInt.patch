@@ -1,0 +1,12 @@
+diff --git a/mlir/include/mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h b/mlir/include/mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h
+index 451c466fa0c9..642e99d963ef 100644
+--- a/mlir/include/mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h
++++ b/mlir/include/mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h
+@@ -10,6 +10,7 @@
+ #define MLIR_DIALECT_AFFINE_IR_VALUEBOUNDSOPINTERFACEIMPL_H
+ 
+ #include "mlir/Support/LLVM.h"
++#include <cstdint>
+ 
+ namespace mlir {
+ class DialectRegistry;

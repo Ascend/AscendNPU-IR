@@ -18,6 +18,7 @@
 #include "Utils.h"
 #include "Vector/Broadcast/BrcUtils.h"
 #include "Vector/VecUtils.h"
+#include <cstdint>
 #include <type_traits>
 
 /// vcopy src to aligned dst. copy src size1 each repeat. support b16/b32
@@ -316,6 +317,58 @@ convert_3d_to_2d_args(memref_t<__ubuf__ T, 3> *src_3d,
              {src_3d->strides[0], 1}};
 }
 
+template <typename T, typename = typename std::enable_if_t<sizeof(T) == 2 ||
+                                                           sizeof(T) == 4>>
+__aiv__ __attribute__((always_inline)) void
+brc_first_axis_3d_vcopy(memref_t<__ubuf__ T, 3> *src,
+                        memref_t<__ubuf__ T, 3> *dst) {
+  auto src_ptr = src->aligned + src->offset;
+  auto dst_ptr = dst->aligned + dst->offset;
+  // INT32 example
+  // src: sizes [1, 5, 16], strides [32 * 5, 32, 1]
+  // OOOOOOOOOOOOOOOOXXXXXXXXXXXXXXXX
+  // OOOOOOOOOOOOOOOOXXXXXXXXXXXXXXXX
+  // OOOOOOOOOOOOOOOOXXXXXXXXXXXXXXXX
+  // OOOOOOOOOOOOOOOOXXXXXXXXXXXXXXXX
+  // OOOOOOOOOOOOOOOOXXXXXXXXXXXXXXXX
+  // dst: sizes [3, 5, 16], strides [16 * 5, 16, 1]
+  // OOOOOOOOOOOOOOOO
+  // OOOOOOOOOOOOOOOO
+  // OOOOOOOOOOOOOOOO
+  // OOOOOOOOOOOOOOOO
+  // OOOOOOOOOOOOOOOO
+  // Goal: we want to copy "O"s from source to destination dst->sizes[0] (i.e. 3) times
+  // Each iteration we have to shift dst address forward at dst->strides[1]( i.e 16 * 5 )
+  // parameters for vcopy:
+  //     repeats                                      : 5
+  //     elements, processed per repeat (IN ELEMENTS) : 16
+  //     stride between repeats for dst (IN BLOCKS!)  : 2
+  //     stride between repeats for src (IN BLOCKS!)  : 4 
+  INTRINSIC(set_vector_mask, 0x0, MIN(src->strides[1], dst->strides[1])); // in count mode
+  for (int i = 0; i < dst->sizes[0]; ++i) {
+    auto offset = dst->strides[0] * i;
+    if constexpr (sizeof(T) == BYTES_B16) {
+      INTRINSIC(vcopy,
+                (__ubuf__ uint16_t *)dst_ptr + offset,
+                (__ubuf__ uint16_t *)src_ptr,
+                dst->sizes[1], // repeats
+                1,             // dst block stride
+                1,             // src block stride
+                dst->strides[1] / (INTR_BYTES_PER_BLOCK / sizeof(T)), // dst rep stride
+                src->strides[1] / (INTR_BYTES_PER_BLOCK / sizeof(T)));  // src rep stride
+    } else {
+      INTRINSIC(vcopy,
+                (__ubuf__ uint32_t *)dst_ptr + offset,
+                (__ubuf__ uint32_t *)src_ptr,
+                dst->sizes[1], // repeats
+                1,             // dst block stride
+                1,             // src block stride
+                dst->strides[1] / (INTR_BYTES_PER_BLOCK / sizeof(T)), // dst rep stride
+                src->strides[1] / (INTR_BYTES_PER_BLOCK / sizeof(T)));  // src rep stride
+    }
+  }
+}
+
 /// broadcast src (1, a) to dst (b, a), here b is broadcast axis and a may be
 /// merged axis of multiple elementwise axes. Here the size of a is aligned to
 /// ub_block_unit.
@@ -342,12 +395,35 @@ brc_first_axis_align_core(memref_t<__ubuf__ T, Dim> *src,
   if constexpr (Dim == 2) {
     brc_first_axis_2d_align_core(src, dst);
   } else {
-    // reuse 2d core
-    memref_t<__ubuf__ T, 2> src_2d;
-    memref_t<__ubuf__ T, 2> dst_2d;
-    convert_3d_to_2d_args(src, &src_2d);
-    convert_3d_to_2d_args(dst, &dst_2d);
-    brc_first_axis_2d_align_core(&src_2d, &dst_2d);
+    // Process 3D case
+    if (!is_offset_aligned(src)) {
+      // offset is unaligned for 3D case => fallback to scalar copy scenario
+      vector_broadcast_first_axis_by_scalar(src, dst);
+      return;
+    }
+    if (src->strides[1] == dst->strides[1]) {
+      // if strides are equal for src/dst of [a, b, c] dimensions we can flatten
+      // tensor to [a, b * c] and reuse 2D case
+      memref_t<__ubuf__ T, 2> src_2d;
+      memref_t<__ubuf__ T, 2> dst_2d;
+      convert_3d_to_2d_args(src, &src_2d);
+      convert_3d_to_2d_args(dst, &dst_2d);
+      brc_first_axis_2d_align_core(&src_2d, &dst_2d);
+      return;
+    }
+    // 3D case and strides are not equal
+    INTRINSIC_NO_ARGS(set_mask_count);
+    if constexpr (sizeof(T) == BYTES_B16 || sizeof(T) == BYTES_B32){
+      brc_first_axis_3d_vcopy(src, dst);
+    } else {
+      // b64 scene
+      memref_t<__ubuf__ uint32_t, 3> src_tmp;
+      memref_t<__ubuf__ uint32_t, 3> dst_tmp;
+      view_as<T, uint32_t, 3>(src, &src_tmp);
+      view_as<T, uint32_t, 3>(dst, &dst_tmp);
+      brc_first_axis_3d_vcopy<uint32_t>(&src_tmp, &dst_tmp);
+    }
+    INTRINSIC_NO_ARGS(set_mask_norm);
   }
 }
 

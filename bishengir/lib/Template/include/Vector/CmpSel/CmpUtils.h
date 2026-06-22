@@ -31,27 +31,113 @@ __aiv__ __attribute__((always_inline)) void
 vector_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
                      memref_t<__ubuf__ bool, 1> *dst);
 
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                                memref_t<__ubuf__ T, 1> *src1,
+                                memref_t<__ubuf__ bool, 1> *dst);
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_memref_aligned_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0,
+                                memref_t<__ubuf__ bool, 1> *dst);
+
+// Check whether vector access on the last dimension stays within UB.
+// Assumes strides[Dim - 1] == 1 (vector path precondition). For multi-dim
+// buffers, the farthest slice start is derived from offset and strides; the
+// last dimension span is repeat(256B)-aligned.
+template <typename T, int Dim>
+__aiv__ __attribute__((always_inline)) bool
+is_ub_repeat_space_enough(memref_t<__ubuf__ T, Dim> *buf) {
+  if (buf == nullptr) {
+    return false;
+  }
+
+  int64_t last_slice_offset = buf->offset;
+  for (int i = 0; i < Dim - 1; ++i) {
+    last_slice_offset += (buf->sizes[i] - 1) * buf->strides[i];
+  }
+
+  int64_t last_dim_access_bytes =
+      CEIL_FACTOR(buf->sizes[Dim - 1] * sizeof(T), INTR_BYTES_PER_REPEAT);
+  auto max_address =
+      reinterpret_cast<uintptr_t>(buf->aligned + last_slice_offset) +
+      static_cast<uintptr_t>(last_dim_access_bytes);
+  if (max_address > UB_LIMIT_BYTES) {
+    return false;
+  }
+  return true;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_ub_repeat_space_enough_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                                        memref_t<__ubuf__ T, 1> *src1);
+
+// Check ub size remained for vector-scalar compare: src0 vector access span
+// (repeat-aligned) must not exceed UB limit.
+template <typename T>
+__aiv__ __attribute__((always_inline)) bool
+is_ub_repeat_space_enough_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0);
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                     memref_t<__ubuf__ T, 1> *src1,
+                     memref_t<__ubuf__ bool, 1> *dst);
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
+                     memref_t<__ubuf__ bool, 1> *dst);
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_scalar_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
+                            memref_t<__ubuf__ T, 1> *src1,
+                            memref_t<__ubuf__ bool, 1> *dst);
+
+template <VectorOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
+                            memref_t<__ubuf__ bool, 1> *dst);
+
 #define DECLARE_CMP_VV(op_name, op_type, dim, dtype)                           \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_vcmp_##op_name##_##dim##d_##dtype(                          \
-          memref_t<__ubuf__ dtype, dim> *src0,                                 \
-          memref_t<__ubuf__ dtype, dim> *src1,                                 \
-          memref_t<__ubuf__ bool, dim> *dst)
+  _mlir_ciface_vcmp_##op_name##_##dim##d_##dtype(                              \
+      memref_t<__ubuf__ dtype, dim> *src0,                                     \
+      memref_t<__ubuf__ dtype, dim> *src1, memref_t<__ubuf__ bool, dim> *dst)
 
 #define DECLARE_CMP_VS(op_name, op_type, dim, dtype)                           \
   __aiv__ __attribute__((always_inline)) void                                  \
-      _mlir_ciface_vcmps_##op_name##_##dim##d_##dtype(                         \
-          memref_t<__ubuf__ dtype, dim> *src0, dtype scalar,                   \
-          memref_t<__ubuf__ bool, dim> *dst)
+  _mlir_ciface_vcmps_##op_name##_##dim##d_##dtype(                             \
+      memref_t<__ubuf__ dtype, dim> *src0, dtype scalar,                       \
+      memref_t<__ubuf__ bool, dim> *dst)
 
 #define REGISTE_CMP_VV(op_name, op_type, dim, dtype)                           \
   DECLARE_CMP_VV(op_name, op_type, dim, dtype) {                               \
-    vector_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);               \
+    if (!is_memref_aligned_compare_vv_##dim##d<dtype>(src0, src1, dst))        \
+        [[unlikely]] {                                                         \
+      scalar_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);             \
+    } else if (!is_ub_repeat_space_enough_compare_vv_##dim##d<dtype>(          \
+                   src0, src1)) [[unlikely]] {                                 \
+      vector_scalar_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);      \
+    } else {                                                                   \
+      vector_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);             \
+    }                                                                          \
   }
 
 #define REGISTE_CMP_VS(op_name, op_type, dim, dtype)                           \
   DECLARE_CMP_VS(op_name, op_type, dim, dtype) {                               \
-    vector_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);             \
+    if (!is_memref_aligned_compare_vs_##dim##d<dtype>(src0, dst))              \
+        [[unlikely]] {                                                         \
+      scalar_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);           \
+    } else if (!is_ub_repeat_space_enough_compare_vs_##dim##d<dtype>(src0))    \
+        [[unlikely]] {                                                         \
+      vector_scalar_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);    \
+    } else {                                                                   \
+      vector_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);           \
+    }                                                                          \
   }
 
 extern "C" {

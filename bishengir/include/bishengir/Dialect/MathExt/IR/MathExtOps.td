@@ -90,6 +90,22 @@ def MathExt_IlogbOp : MathExt_FloatUnaryOp<"ilogb"> {
 }
 
 //===----------------------------------------------------------------------===//
+// LgammaOp
+//===----------------------------------------------------------------------===//
+
+def MathExt_LgammaOp : MathExt_FloatUnaryOp<"lgamma"> {
+  let summary = "log-gamma function";
+  let description = [{
+    lgamma(x) := log(|Γ(x)|)
+
+    The `lgamma` operation computes the natural logarithm of the absolute value
+    of the gamma function. It takes one operand of floating point type (i.e.,
+    scalar, tensor or vector) and returns one result of the same type.
+
+  }];
+}
+ 	 
+//===----------------------------------------------------------------------===//
 // LdexpOp
 //===----------------------------------------------------------------------===//
 

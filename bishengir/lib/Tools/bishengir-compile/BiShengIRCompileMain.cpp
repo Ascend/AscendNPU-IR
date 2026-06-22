@@ -17,6 +17,11 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Tools/Utils/Utils.h"
+#include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
+#include "bishengir/Tools/RetriablePassManager/CbufOverflowRetryPolicy.h"
+#include "bishengir/Tools/RetriablePassManager/CcOverflowRetryPolicy.h"
+#include "bishengir/Tools/RetriablePassManager/TuningRetryPolicy.h"
+#include "bishengir/Tools/RetriablePassManager/UbOverflowRetryPolicy.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 
@@ -178,12 +183,36 @@ LogicalResult runExternalHIVMC(ModuleOp module,
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
   std::string outputFile = config.getOutputFile();
-  auto inputFileHandler = getTempFile(inputFile, tempDirsStore);
-  if (!inputFileHandler) {
-    llvm::dbgs()
-        << "[ERROR] Failed to create temporary input file needed to run "
-           "hivm compile.\n";
-    return failure();
+  std::unique_ptr<llvm::ToolOutputFile> inputFileHandler;
+
+  // Handle --save-temps=<directory> option to store module.hivm.opt.mlir
+  if (!config.getSaveTemps().empty()) {
+    llvm::SmallString<256> saveTempsDir(config.getSaveTemps());
+    if (llvm::sys::fs::make_absolute(saveTempsDir)) {
+      llvm::errs() << "[ERROR] Failed to get absolute path for save-temps.\n";
+      return failure();
+    }
+    if (!llvm::sys::fs::exists(saveTempsDir))
+      if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        return failure();
+      }
+    llvm::sys::path::append(saveTempsDir, inputFile);
+    std::string errorMessage;
+    inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
+    if (!inputFileHandler) {
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
+      return failure();
+    }
+    // Make sure module.hivm.opt.mlir will not be deleted.
+    inputFileHandler->keep();
+  // If --save-temps is not set, use a temporary directory for module.hivm.opt.mlir
+  } else {
+    inputFileHandler = getTempFile(inputFile, tempDirsStore);
+    if (!inputFileHandler) {
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivm compile.\n";
+      return failure();
+    }
   }
   inputFile = inputFileHandler->outputFilename();
 
@@ -226,7 +255,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                                 BiShengIRCompileMainConfig config) {
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
-  std::vector<Diagnostic> collectedDiagnostics;
+  std::vector<std::unique_ptr<Diagnostic>> collectedDiagnostics;
 
   // Resolve hivmc backward compatibility
   auto versionMaybe = detectHIVMCVersion(getHIVMCName());
@@ -243,43 +272,46 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   // Collect diagnostics and emit them afterwards because we have tuning
   // mechanism.
   auto handlerID = diagEngine.registerHandler([&](Diagnostic &diag) {
-    collectedDiagnostics.emplace_back(std::move(diag));
+    collectedDiagnostics.push_back(
+        std::make_unique<Diagnostic>(std::move(diag)));
   });
 
-  bool hirCompileSuccess = false;
-  int tryTimes = config.getEnableTuningMode() ? 1 : 5;
-  for (int i = 0; i < tryTimes; i++) {
-    LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
-                            << config.getHfusionMaxBufferCountTuning());
-
-    ModuleOp hirCompileModule = cast<ModuleOp>(mod->clone());
-    auto buildPipeline =
-        std::bind(buildBiShengHIRPipeline, std::placeholders::_1, config);
-    if (succeeded(runPipeline(hirCompileModule, buildPipeline, config,
-                              "BiShengHIR"))) {
-      hirCompileSuccess = true;
-      mod.erase();
-      mod = hirCompileModule;
-      break;
-    }
-    hirCompileModule.erase();
-
-    // increase max buffers by 2 in HFusion auto schedule
-    config.increaseMaxBufferCountTuning(2);
+  RetriablePassManager retriablePm(config, ctx);
+  if (config.getEnableTritonKernelCompile()) {
+    retriablePm.addPolicy(std::make_unique<UbOverflowRetryPolicy>());
+    retriablePm.addPolicy(std::make_unique<CbufOverflowRetryPolicy>());
+    retriablePm.addPolicy(std::make_unique<CcOverflowRetryPolicy>());
   }
+
+  if (config.getEnableTuningMode() && !config.getEnableTritonKernelCompile()) {
+    retriablePm.addPolicy(std::make_unique<TuningRetryPolicy>());
+  }
+
+  std::vector<AppliedCompileFallback> retriablePipelineFallbacks;
+  auto buildPipeline = std::bind(buildBiShengHIRPipeline, std::placeholders::_1,
+                                 std::cref(config));
+  bool hirCompileSuccess =
+      succeeded(retriablePm.runWithRetry(mod, buildPipeline, "BiShengHIR",
+                                         collectedDiagnostics,
+                                         retriablePipelineFallbacks));
 
   // Restore to the default handler.
   diagEngine.eraseHandler(handlerID);
   for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-    [[maybe_unused]] auto res = handleDiagnostic(diag);
+    [[maybe_unused]] auto res = handleDiagnostic(*diag);
   }
 
   if (!hirCompileSuccess) {
+    RetriablePassManager::emitFallbackSummary(retriablePipelineFallbacks,
+                                              /*compilationSucceeded=*/false);
     for (auto &diag : llvm::reverse(collectedDiagnostics)) {
-      diagEngine.emit(std::move(diag));
+      diagEngine.emit(std::move(*diag));
     }
     return failure();
   }
+
+  RetriablePassManager::emitFallbackSummary(retriablePipelineFallbacks,
+                                            /*compilationSucceeded=*/true);
 
   if (config.shouldEnableCPURunner()) {
     auto outputFile = config.getOutputFile();
@@ -304,9 +336,11 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   addBitcodeAttrsToModule(mod, config.getExecutablePath(), config);
 
   auto res = runExternalHIVMC(mod, config);
-  if (res.failed())
-    mod.emitWarning("External hivmc run fails, returning module before running "
-                    "external compiler");
+  if (res.failed()) {
+    mod.emitError("External hivmc run fails, returning module before running "
+                  "external compiler");
+    return failure();
+  }
 
   return OwningModuleRef(mod);
 }

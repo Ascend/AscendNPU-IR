@@ -59,7 +59,7 @@ std::string SyncOperation::TypeName(SyncOperation::TYPE t) {
   if (typeIt != typeNameMap.cend()) {
     return typeIt->second;
   }
-  llvm_unreachable("Not supported sync type");
+  llvm::report_fatal_error("Not supported sync type");
   return "";
 }
 
@@ -73,7 +73,7 @@ std::string SyncOperation::GetCoreTypeName(TCoreType t) const {
   if (typeIt != coreTypeNameMap.cend()) {
     return typeIt->second;
   }
-  llvm_unreachable("Not supported sync type");
+  llvm::report_fatal_error("Not supported sync type");
   return "";
 }
 
@@ -215,13 +215,13 @@ bool checkAllParentLoopsAreForLoops(Operation *op) {
 
 void checkSyncIRIndex(const SyncIRs &syncIR, int index) {
   if (index < 0 || index >= static_cast<int>(syncIR.size())) {
-    llvm_unreachable("index out of bounds when accessing syncIR");
+    llvm::report_fatal_error("index out of bounds when accessing syncIR");
   }
 }
 
 void checkCondition(bool condition, const std::string &message) {
   if (!condition) {
-    llvm_unreachable(message.c_str());
+    llvm::report_fatal_error(message.c_str());
   }
 }
 

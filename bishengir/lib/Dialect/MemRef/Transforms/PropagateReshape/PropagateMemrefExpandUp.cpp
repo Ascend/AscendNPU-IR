@@ -30,6 +30,7 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/Utils/Utils.h"
 using namespace mlir::utils::debugger;
 
 namespace mlir {
@@ -56,89 +57,69 @@ LogicalResult handleAllocOp(memref::ExpandShapeOp expandOp,
   return success();
 }
 
-LogicalResult computeStridesFromLayout(PatternRewriter &rewriter,
-                                       memref::ExpandShapeOp expandOp,
-                                       SmallVector<OpFoldResult> &stridesOfr) {
-  auto expandResultRank = expandOp.getResult().getType().getRank();
-  auto reassociation = expandOp.getReassociationIndices();
-  stridesOfr.reserve(expandResultRank);
+static OpFoldResult multiplyOFR(PatternRewriter &rewriter, Location loc,
+                                OpFoldResult a, OpFoldResult b) {
+  auto aConstant = getConstantIntValue(a);
+  auto bConstant = getConstantIntValue(b);
 
-  auto stridedExpandLayout =
-      dyn_cast<StridedLayoutAttr>(expandOp.getResult().getType().getLayout());
-  if (!stridedExpandLayout)
-    return failure();
+  if (aConstant && bConstant)
+    return rewriter.getIndexAttr(*aConstant * *bConstant);
 
-  auto expandStrides = stridedExpandLayout.getStrides();
-  for (auto &group : reassociation) {
-    for (auto &el : group) {
-      auto &curStride = expandStrides[el];
-      if (!ShapedType::isDynamic(curStride)) {
-        stridesOfr.push_back(
-            getAsIndexOpFoldResult(rewriter.getContext(), curStride));
-      } else {
-        return rewriter.notifyMatchFailure(expandOp, "Has dynamic strides");
-      }
-    }
-  }
-  return success();
-}
-
-LogicalResult computeStridesFromShape(memref::ExpandShapeOp expandOp,
-                                      PatternRewriter &rewriter,
-                                      SmallVector<OpFoldResult> &stridesOfr) {
-  auto expandSrcShape = utils::getShape(expandOp.getSrc().getType());
-  auto staticOutputShape = expandOp.getStaticOutputShape();
-  auto expandResultRank = expandOp.getResult().getType().getRank();
-  auto total = utils::getStaticTotalSize(expandSrcShape);
-  if (!total.has_value())
-    return failure();
-  auto totalInt = total.value();
-  stridesOfr.reserve(expandResultRank);
-  for (int i = 0; i < expandResultRank; i++) {
-    if (ShapedType::isDynamic(staticOutputShape[i]))
-      return failure();
-    totalInt /= staticOutputShape[i];
-    stridesOfr.push_back(rewriter.getIndexAttr(totalInt));
-  }
-  return success();
-}
-
-LogicalResult computeStrides(memref::ExpandShapeOp expandOp,
-                             PatternRewriter &rewriter,
-                             SmallVector<OpFoldResult> &stridesOfr) {
-  // Try layout-based computation first
-  if (succeeded(computeStridesFromLayout(rewriter, expandOp, stridesOfr))) {
-    return success();
-  }
-  // Fall back to shape-based computation
-  return computeStridesFromShape(expandOp, rewriter, stridesOfr);
+  Value aVal = getValueOrCreateConstantIndexOp(rewriter, loc, a);
+  Value bVal = getValueOrCreateConstantIndexOp(rewriter, loc, b);
+  return rewriter.create<arith::MulIOp>(loc, aVal, bVal).getResult();
 }
 
 LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
                                     PatternRewriter &rewriter,
                                     Operation *definingOp) {
   auto reinterpretCast = cast<memref::ReinterpretCastOp>(definingOp);
-  if (ShapedType::isDynamicShape(expandOp.getSrc().getType().getShape())) {
-    return failure();
-  }
-  SmallVector<OpFoldResult> stridesOfr;
-  if (failed(computeStrides(expandOp, rewriter, stridesOfr))) {
-    return failure();
-  }
-  assert(stridesOfr.size() == expandOp.getResult().getType().getRank());
-  SmallVector<OpFoldResult> offsetsOfr = reinterpretCast.getMixedOffsets();
+  auto expandResType = cast<MemRefType>(expandOp.getResult().getType());
+
+  auto reassociation = expandOp.getReassociationIndices();
+
+  SmallVector<OpFoldResult> offsetOfr = reinterpretCast.getMixedOffsets();
+  SmallVector<OpFoldResult> oldStrides = reinterpretCast.getMixedStrides();
   SmallVector<OpFoldResult> sizesOfr = getMixedValues(
       expandOp.getStaticOutputShape(), expandOp.getOutputShape(), rewriter);
-  rewriter.setInsertionPointAfter(expandOp);
+
+  SmallVector<OpFoldResult> newStridesOfr;
+
+  rewriter.setInsertionPoint(reinterpretCast);
+
+  for (auto [idx, group] : llvm::enumerate(reassociation)) {
+    OpFoldResult currentStride = oldStrides[idx];
+    SmallVector<OpFoldResult> groupStrides;
+
+    for (size_t i = group.size(); i > 0; --i) {
+      groupStrides.push_back(currentStride);
+      if (i > 1) {
+        currentStride = multiplyOFR(rewriter, reinterpretCast.getLoc(),
+                                    currentStride, sizesOfr[group[i - 1]]);
+      }
+    }
+    std::reverse(groupStrides.begin(), groupStrides.end());
+    newStridesOfr.append(groupStrides.begin(), groupStrides.end());
+  }
+
+  expandOp->moveAfter(reinterpretCast);
+  rewriter.setInsertionPointAfterValue(expandOp);
+
   auto newReinterpret = rewriter.create<memref::ReinterpretCastOp>(
-      reinterpretCast->getLoc(), expandOp.getResultType(),
-      reinterpretCast.getSource(), offsetsOfr, sizesOfr, stridesOfr);
-  auto reassociation = expandOp.getReassociationIndices();
-  rewriter.replaceOp(expandOp, newReinterpret);
+      reinterpretCast->getLoc(), expandResType, reinterpretCast.getSource(),
+      offsetOfr, sizesOfr, newStridesOfr);
+
   auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
-      reinterpretCast.getLoc(), reinterpretCast.getResult().getType(),
-      newReinterpret.getResult(), reassociation);
-  rewriter.replaceOp(reinterpretCast, newCollapse);
+      reinterpretCast->getLoc(), reinterpretCast.getResult().getType(),
+      newReinterpret, reassociation);
+
+  rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
+  rewriter.replaceOp(expandOp, newReinterpret);
+
+  LDBG(*definingOp->getParentOp());
+
+  rewriter.eraseOp(reinterpretCast);
+
   return success();
 }
 
@@ -184,12 +165,38 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
     }
   }
   rewriter.setInsertionPoint(expandOp);
-  auto newExpand = rewriter.create<memref::ExpandShapeOp>(expandOp.getLoc(), newShape, subviewOp.getSource(), reassociation);
+  auto newExpand = rewriter.create<memref::ExpandShapeOp>(
+      expandOp.getLoc(), newShape, subviewOp.getSource(), reassociation);
   auto newSubView = rewriter.create<memref::SubViewOp>(
-      subviewOp.getLoc(), newExpand, newOffsets, newSizes,
-      newStrides);
+      subviewOp.getLoc(), newExpand, newOffsets, newSizes, newStrides);
   rewriter.replaceOp(expandOp, newSubView);
   return success();
+}
+
+// whether expand shape dims is all 1
+// eg: expand_shape<2x3> [[0][1, 2, 3]] -> <2, 1, 3, 1> true
+// eg: expand_shape<2x?> [[0][1, 2, 3]] -> <2, 1, ?, 1> true
+// eg: expand_shape<2x4> [[0][1, 2, 3]] -> <2, 1, 2, 2> false
+bool isExpandShapeAllOne(memref::ExpandShapeOp expandOp) {
+  auto targetShape = expandOp.getStaticOutputShape();
+  auto reassociation = expandOp.getReassociationIndices();
+  for (auto &indices : reassociation) {
+    // not expand dim: continue
+    if (indices.size() <= 1) {
+      continue;
+    }
+    // expand dim: get number of none one
+    int nonOneCount = 0;
+    for (auto idx : indices) {
+      if (targetShape[idx] != 1) {
+        nonOneCount++;
+      }
+      if (nonOneCount > 1) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 } // namespace
 
@@ -206,6 +213,16 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
   LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
   if (isa<memref::AllocOp>(definingOp)) {
+    auto dstType = expandOp.getResult().getType();
+    auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+    // expand shape dims is all 1, not propagate alloc op (only when dst rank >
+    // 3).
+    // TODO: remove this after the logic of HIVMInferDataLayout pass is
+    // refactored.
+    if (isExpandShapeAllOne(expandOp) && dstMemrefType &&
+        dstMemrefType.getRank() > 3) {
+      return failure();
+    }
     LDBG("Ok in here");
     return handleAllocOp(expandOp, rewriter, definingOp);
   }

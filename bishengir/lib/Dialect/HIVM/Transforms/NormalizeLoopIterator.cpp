@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -59,20 +60,55 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
-bool isBefore(Operation *before, Operation *after) {
-  if (before->getBlock() == after->getBlock()) {
-    return before->isBeforeInBlock(after);
+SmallVector<Block *> collectAncestorBlocks(Operation *op) {
+  assert(op && "Operation cannot be null");
+  Block *currBlock = op->getBlock();
+  assert(currBlock && "Operation must have a block");
+  SmallVector<Block *> blocks;
+  blocks.push_back(currBlock);
+  while (auto *parentOp = op->getParentOp()) {
+    if (auto *parentBlock = parentOp->getBlock()) {
+      blocks.push_back(parentBlock);
+      op = parentOp;
+    } else {
+      break;
+    }
   }
-
-  auto afterParentOp = after->getParentOp();
-  if (afterParentOp == nullptr) {
-    return false;
-  }
-  return isBefore(before, afterParentOp);
+  return blocks;
 }
 
-FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal,
-                                                 Value initVal,
+Block *findFirstCommonBlock(const SmallVector<Block *> &blocks1,
+                            const SmallVector<Block *> &blocks2) {
+  for (Block *b1 : blocks1) {
+    for (Block *b2 : blocks2) {
+      if (b1 == b2)
+        return b1;
+    }
+  }
+  return nullptr;
+}
+
+Operation *getOpInBlock(Operation *op, Block *block) {
+  while (op) {
+    if (op->getBlock() == block)
+      return op;
+    op = op->getParentOp();
+  }
+  return nullptr;
+}
+
+bool isBefore(Operation *before, Operation *after) {
+  SmallVector<Block *> beforeBlocks = collectAncestorBlocks(before);
+  SmallVector<Block *> afterBlocks = collectAncestorBlocks(after);
+  Block *commonBlock = findFirstCommonBlock(beforeBlocks, afterBlocks);
+  assert(commonBlock && "Operations must have a common ancestor block");
+  Operation *beforeInCommon = getOpInBlock(before, commonBlock);
+  Operation *afterInCommon = getOpInBlock(after, commonBlock);
+  assert(beforeInCommon && afterInCommon);
+  return beforeInCommon->isBeforeInBlock(afterInCommon);
+}
+
+FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal, Value initVal,
                                                  LoopLikeOpInterface loopOp) {
   if (auto mbIfOp = traceDefOp<scf::IfOp>(yieldVal)) {
     auto concreteIfOp = cast<scf::IfOp>(*mbIfOp);
@@ -84,9 +120,9 @@ FailureOr<Operation *> yieldMemoryInitialization(Value yieldVal,
       if (thenVal == initVal) {
         return yieldMemoryInitialization(elseVal, initVal, loopOp);
       }
-      
+
       if (elseVal == initVal) {
-        return yieldMemoryInitialization(thenVal, initVal, loopOp);  
+        return yieldMemoryInitialization(thenVal, initVal, loopOp);
       }
     }
   }
@@ -160,6 +196,40 @@ bool existIterArgUseAfterYieldValInit(Value iterArg, Operation *yieldInit) {
   return false;
 }
 
+void replaceReturnValueByIterArg(scope::ScopeOp &scopeOp,
+                                 PatternRewriter &rewriter, size_t index,
+                                 Value iterArg, Value originYield) {
+  auto returnOp =
+      cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+  rewriter.setInsertionPoint(returnOp);
+  size_t resultIndex = 0;
+  for (size_t i = 0; i < scopeOp.getNumResults(); ++i) {
+    if (scopeOp.getResult(i) == originYield) {
+      resultIndex = i;
+      break;
+    }
+  }
+  Value originReturn = returnOp.getOperand(resultIndex);
+  rewriter.create<hivm::CopyOp>(scopeOp->getLoc(), TypeRange{},
+                                /*src*/ originReturn, /*dst*/ iterArg);
+  assert(returnOp.getNumOperands() != 0);
+  rewriter.modifyOpInPlace(
+      returnOp, [&]() { returnOp.setOperand(resultIndex, iterArg); });
+}
+
+void replaceLoopYieldValueByIterArg(PatternRewriter &rewriter,
+                                    LoopLikeOpInterface &loopOp, size_t index,
+                                    Value iterArg, Value originYield) {
+  rewriter.setInsertionPoint(
+      loopOp.getLoopRegions()[0]->front().getTerminator());
+  rewriter.create<hivm::CopyOp>(loopOp->getLoc(), TypeRange{},
+                                /*src*/ originYield, /*dst*/ iterArg);
+  assert(loopOp.getYieldedValuesMutable().has_value());
+  rewriter.modifyOpInPlace(loopOp, [&]() {
+    loopOp.getYieldedValuesMutable().value()[index].assign(iterArg);
+  });
+}
+
 class NormalizeIterUseAfterYieldInit
     : public OpInterfaceRewritePattern<LoopLikeOpInterface> {
   using OpInterfaceRewritePattern<
@@ -204,18 +274,15 @@ class NormalizeIterUseAfterYieldInit
     if (candidate.empty())
       return failure();
 
-    rewriter.setInsertionPoint(
-        loopOp.getLoopRegions()[0]->front().getTerminator());
     for (auto index : candidate) {
-      Value iterArg = iterArgs[index];
-      Value originYield = yieldVals[index];
-      rewriter.create<hivm::CopyOp>(loopOp->getLoc(), TypeRange{},
-                                    /*src*/ originYield, /*dst*/ iterArg);
-
-      assert(loopOp.getYieldedValuesMutable().has_value());
-      rewriter.modifyOpInPlace(loopOp, [&]() {
-        loopOp.getYieldedValuesMutable().value()[index].assign(iterArg);
-      });
+      if (auto scopeOp =
+              dyn_cast<scope::ScopeOp>(yieldVals[index].getDefiningOp())) {
+        replaceReturnValueByIterArg(scopeOp, rewriter, index, iterArgs[index],
+                                    yieldVals[index]);
+        continue;
+      }
+      replaceLoopYieldValueByIterArg(rewriter, loopOp, index, iterArgs[index],
+                                     yieldVals[index]);
     }
     return success();
   }

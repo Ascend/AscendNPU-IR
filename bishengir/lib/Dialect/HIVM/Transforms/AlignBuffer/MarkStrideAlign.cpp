@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/STLExtras.h"
 
@@ -122,6 +123,25 @@ bool isAnyOfLocalBuffer(const SmallVectorImpl<MemRefType> &memrefTypes) {
   return anyOfLocalBuffer;
 }
 
+static bool noNeedAlign(Operation *op) {
+  // Check if at least one operand is non-GM memscope
+  bool hasNonGMMemref = false;
+  for (Value operand : op->getOperands()) {
+    if (auto memrefType = dyn_cast<MemRefType>(operand.getType())) {
+      auto memSpace = memrefType.getMemorySpace();
+      assert(memSpace && "memSpace must not be null");
+      if (auto spaceAttr = dyn_cast<AddressSpaceAttr>(memSpace)) {
+        if (spaceAttr.getAddressSpace() != hivm::AddressSpace::GM) {
+          hasNonGMMemref = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return !hasNonGMMemref;
+}
+
 void MarkStrideAlignPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto funcOp = getOperation();
@@ -130,12 +150,7 @@ void MarkStrideAlignPass::runOnOperation() {
 
   WalkResult result = funcOp->walk([&builder](Operation *op) {
     LDBG("Walk operation : " << *op);
-    if (!isa<HIVMStructuredOp>(op)) {
-      return WalkResult::advance();
-    }
-
-    // TODO: Relax when enable user provided optimization hints
-    if (isa<CustomOp>(op)) {
+    if (!isa<HIVMStructuredOp>(op) || noNeedAlign(op)) {
       return WalkResult::advance();
     }
 
@@ -143,6 +158,30 @@ void MarkStrideAlignPass::runOnOperation() {
     if (!hivmOp.hasPureBufferSemantics()) {
       hivmOp->emitError("Not bufferized.");
       return WalkResult::interrupt();
+    }
+
+    if (isa<CustomOp, CustomMacroOp>(op)) {
+      ArrayAttr argAttrs =
+          op->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
+      if (!argAttrs)
+        return WalkResult::advance();
+
+      for (const auto &[idx, dictAttrs] : llvm::enumerate(argAttrs)) {
+        auto dict = dyn_cast_or_null<DictionaryAttr>(dictAttrs);
+        if (!dict)
+          continue;
+
+        auto intAttr =
+            dyn_cast_or_null<IntegerAttr>(dict.get(CustomOp::kAlignDimName));
+        if (!intAttr)
+          continue;
+
+        const int alignDim = intAttr.getInt();
+        if (failed(markAlignedDim(builder, op, op->getOperand(idx), alignDim)))
+          return WalkResult::interrupt();
+      }
+
+      return WalkResult::advance();
     }
 
     if (isa<hivm::VTransposeOp>(op) &&

@@ -38,6 +38,29 @@ __aiv__ __attribute__((always_inline)) bool isSizeAlignedToBlock(int64_t size) {
 }
 
 enum class AtomicKind : uint32_t { None = 0, Add = 1, Max = 2, Min = 3 };
+/// Returns a copy of original memref.
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) memref_t<T, DIM>
+copy_memref(memref_t<T, DIM> *src) {
+    memref_t<T, DIM> ret;
+    ret.allocated = src->allocated;
+    ret.aligned = src->aligned;
+    ret.offset = src->offset;
+
+    if constexpr (DIM >= 1) {
+        ret.sizes[0] = src->sizes[0];
+        ret.strides[0] = src->strides[0];
+    }
+    if constexpr (DIM >= 2) {
+        ret.sizes[1] = src->sizes[1];
+        ret.strides[1] = src->strides[1];
+    }
+    if constexpr (DIM >= 3) {
+        ret.sizes[2] = src->sizes[2];
+        ret.strides[2] = src->strides[2];
+    }
+    return ret;
+}
 
 /// Returns the number of elements to advance from 'offset' to reach the next
 /// alignment boundary.
@@ -255,8 +278,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_intrin_core(
   } else if constexpr (bytes == BYTES_B64) {
     int32_t factor = 2;
     INTRINSIC(copy_gm_to_ubuf_align_b32,
-              ub_ptr + ub_offset * factor - left_padding_num * factor,
-              gm_ptr + gm_offset * factor, 0, burst_cnt, burst_len,
+              ((__ubuf__ int32_t *)ub_ptr) + ub_offset * factor - left_padding_num * factor,
+              ((__gm__ int32_t *)gm_ptr) + gm_offset * factor, 0, burst_cnt, burst_len,
               left_padding_num * factor, rightPaddingNum * factor, src_gap,
               dst_gap);
   }
@@ -340,7 +363,7 @@ load_gm_to_ubuf_2d_core_with_contiguous_last_dim(memref_t<__gm__ T, 2> *gm,
   int64_t stride0_gm = gm->strides[0];
   int64_t stride0_ub = ub->strides[0];
   constexpr int32_t bytes = sizeof(T);
-  const int64_t ub_gap = calc_ub_gap<T>(stride0_ub, size1);
+  const int64_t ub_gap = calc_ub_gap<T>(stride0_ub, size1 + left_padding_num);
   const int64_t gm_gap = (stride0_gm - size1) * bytes;
 
   if (gm_gap > INTRIN_MAX_GAP || 0 > ub_gap || 0 > stride0_gm - size1)
@@ -584,8 +607,9 @@ __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_1d_core_by_scalar(memref_t<__ubuf__ T, 1> *src,
                                     memref_t<__ubuf__ T, 1> *dst,
                                     int64_t copy_length) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("copy 1d");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -604,8 +628,9 @@ __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_2d_core_by_scalar(memref_t<__ubuf__ T, 2> *src,
                                     memref_t<__ubuf__ T, 2> *dst,
                                     int64_t copy_length) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("copy 2d");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -627,8 +652,9 @@ __aiv__ __attribute__((always_inline)) void
 copy_ubuf_to_ubuf_3d_core_by_scalar(memref_t<__ubuf__ T, 3> *src,
                                     memref_t<__ubuf__ T, 3> *dst,
                                     int64_t copy_length) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("copy 3d");
+#endif
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   auto src_ptr = src->aligned + src->offset;
@@ -873,8 +899,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
                               memref_t<__gm__ T, 1> *dst) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("store 1d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
@@ -882,6 +909,7 @@ store_ubuf_to_gm_1d_by_scalar(memref_t<__ubuf__ T, 1> *src,
   for (int i = 0; i < src->sizes[0]; ++i) {
     *(dst_ptr + i * dst->strides[0]) = *(src_ptr + i * src->strides[0]);
   }
+  INTRINSIC(dcci, dst_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
@@ -891,20 +919,22 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_1d_by_scalar(memref_t<__gm__ T, 1> *src,
                              memref_t<__ubuf__ T, 1> *dst,
                              int64_t left_padding_num, T pad_value) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("load 1d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   if (left_padding_num > 0) {
     auto padding_start =
         dst->aligned + dst->offset - left_padding_num * dst->strides[0];
-    INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    for (int i = 0; i < src->sizes[0]; ++i) {
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    // for (int i = 0; i < src->sizes[0]; ++i) {
+    for (int i = 0; i < left_padding_num; ++i) {
       *(padding_start + i * dst->strides[0]) = pad_value;
     }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   }
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
@@ -919,8 +949,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
                               memref_t<__gm__ T, 2> *dst) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("store 2d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
@@ -931,6 +962,7 @@ store_ubuf_to_gm_2d_by_scalar(memref_t<__ubuf__ T, 2> *src,
           *(src_ptr + i * src->strides[0] + j * src->strides[1]);
     }
   }
+  INTRINSIC(dcci, dst_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
@@ -940,23 +972,24 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_2d_by_scalar(memref_t<__gm__ T, 2> *src,
                              memref_t<__ubuf__ T, 2> *dst,
                              int64_t left_padding_num, T pad_value) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("load 2d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   if (left_padding_num > 0) {
     auto padding_start =
         dst->aligned + dst->offset - left_padding_num * dst->strides[1];
-    INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
-      for (int j = 0; j < src->sizes[1]; ++j) {
+      for (int j = 0; j < left_padding_num; ++j) {
         *(padding_start + i * dst->strides[0] + j * dst->strides[1]) =
             pad_value;
       }
     }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   }
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
@@ -974,8 +1007,9 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) void
 store_ubuf_to_gm_3d_by_scalar(memref_t<__ubuf__ T, 3> *src,
                               memref_t<__gm__ T, 3> *dst) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("store 3d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
@@ -989,6 +1023,7 @@ store_ubuf_to_gm_3d_by_scalar(memref_t<__ubuf__ T, 3> *src,
       }
     }
   }
+  INTRINSIC(dcci, dst_ptr, 1);
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
 }
@@ -998,25 +1033,26 @@ __aiv__ __attribute__((always_inline)) void
 load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
                              memref_t<__ubuf__ T, 3> *dst,
                              int64_t left_padding_num, T pad_value) {
-  cce::printf("Warning: This implementation uses scalar instructions, which "
-              "may result in suboptimal performance");
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+  WARN_SCALAR_IMPL("load 3d");
+#endif
   auto src_ptr = src->aligned + src->offset;
   auto dst_ptr = dst->aligned + dst->offset;
   if (left_padding_num > 0) {
     auto padding_start =
         dst->aligned + dst->offset - left_padding_num * dst->strides[2];
-    INTRINSIC(set_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_MTE3, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
     for (int i = 0; i < src->sizes[0]; ++i) {
       for (int j = 0; j < src->sizes[1]; ++j) {
-        for (int k = 0; k < src->sizes[2]; ++k) {
+        for (int k = 0; k < left_padding_num; ++k) {
           *(padding_start + i * dst->strides[0] + j * dst->strides[1] +
             k * dst->strides[2]) = pad_value;
         }
       }
     }
-    INTRINSIC(set_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
-    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE3, LIB_EVENT_ID0);
+    INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   }
   INTRINSIC(set_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_MTE2, PIPE_S, LIB_EVENT_ID0);
@@ -1031,6 +1067,16 @@ load_gm_to_ubuf_3d_by_scalar(memref_t<__gm__ T, 3> *src,
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_MTE2, LIB_EVENT_ID0);
+}
+
+__aiv__ inline bool check_atomic_none(AtomicKind atomic_kind) {
+  if (atomic_kind != AtomicKind::None) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
+    cce::printf("Atomic operations do not support this stride pattern");
+#endif
+    return false;
+  }
+  return true;
 }
 
 template <typename T>
@@ -1051,8 +1097,10 @@ __aiv__ __attribute__((always_inline)) int64_t
 store_ubuf_to_gm_initial_misalignment_1d(memref_t<__ubuf__ T, 1> *src,
                                          memref_t<__gm__ T, 1> *dst,
                                          bool update_to_aligned_addr = true) {
+#ifdef ENABLE_CPU_TRACE_INTRINSIC
   cce::printf("Warning: Scalar transport is used for the elements of the first "
               "misaligned block");
+#endif
   int64_t data_to_copy = misaligned_prefix_elem_cnt<T>(src);
   data_to_copy = min(data_to_copy, src->sizes[0]);
   memref_t<__ubuf__ T, 1> src_tmp{src->allocated,
@@ -1071,7 +1119,6 @@ store_ubuf_to_gm_initial_misalignment_1d(memref_t<__ubuf__ T, 1> *src,
     src->sizes[0] -= data_to_copy;
     dst->offset += data_to_copy;
     dst->sizes[0] -= data_to_copy;
-    INTRINSIC(dcci, dst->allocated, 1);
   }
   return data_to_copy;
 }
@@ -1109,7 +1156,6 @@ store_ubuf_to_gm_initial_misalignment_nd(memref_t<__ubuf__ T, Dim> *src,
     src->sizes[Dim - 1] -= data_to_copy;
     dst->offset += data_to_copy;
     dst->sizes[Dim - 1] -= data_to_copy;
-    INTRINSIC(dcci, dst->allocated, 1);
     return data_to_copy;
   }
 }
@@ -1117,12 +1163,26 @@ store_ubuf_to_gm_initial_misalignment_nd(memref_t<__ubuf__ T, Dim> *src,
 template <typename T, size_t DIM,
           typename = typename std::enable_if<DIM == 2 || DIM == 3>::type>
 __aiv__ __attribute__((always_inline)) bool
-is_unalign_collapsible_dims(memref_t<__ubuf__ T, DIM> *src,
-                            memref_t<__ubuf__ T, DIM> *dst) {
+is_all_continuous(memref_t<__ubuf__ T, DIM> *src,
+                  memref_t<__ubuf__ T, DIM> *dst) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if (dst->strides[DIM - 2] == dst->sizes[DIM - 1] &&
       src->strides[DIM - 2] == src->sizes[DIM - 1] &&
       dst->strides[DIM - 2] % num_per_block != 0) {
+    return true;
+  }
+  return false;
+}
+
+template <typename T, size_t DIM>
+__aiv__ __attribute__((always_inline)) bool
+is_unalign_collapsible_dims(memref_t<__ubuf__ T, DIM> *src,
+                            memref_t<__ubuf__ T, DIM> *dst) {
+  static_assert(DIM == 2 || DIM == 3);
+  constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
+  if (dst->strides[DIM - 2] == dst->sizes[DIM - 1] &&
+      isSizeAlignedToBlock<T>(src->strides[DIM - 2]) &&
+      src->strides[DIM - 1] == 1) {
     return true;
   }
   return false;

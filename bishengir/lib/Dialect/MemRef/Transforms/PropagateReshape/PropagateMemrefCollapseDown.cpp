@@ -29,6 +29,7 @@
 #define DBGSNL() (llvm::dbgs() << "\n")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+#include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 using namespace mlir::utils::debugger;
 
@@ -51,6 +52,15 @@ Operation *createNewExpandOpFromCollapseOp(memref::CollapseShapeOp &collapseOp,
       RankedTensorType::get(currentShape, getElementTypeOrSelf(operand));
   return rewriter.create<tensor::ExpandShapeOp>(loc, resultType, operand,
                                                 reassociation);
+}
+
+LogicalResult handleCopyOp(memref::CollapseShapeOp collapseOp,
+                           PatternRewriter &rewriter, Operation *userOp) {
+  auto resultRank = collapseOp.getResult().getType().getRank();
+  SmallVector<Value> newOperands = getNewOperands(
+      collapseOp, rewriter, userOp, resultRank);
+  rewriter.modifyOpInPlace(userOp, [&]() { userOp->setOperands(newOperands); });
+  return success();
 }
 
 LogicalResult handleLoadOp(memref::CollapseShapeOp collapseOp,
@@ -140,9 +150,14 @@ PropagateMemrefCollapseDown::matchAndRewrite(memref::CollapseShapeOp collapseOp,
   if (!src)
     return failure();
 
+  LDBG("Handling CollapseShapeOp: " << collapseOp);
+
   for (Operation *userOp : users) {
     if (collapseOp->getParentOp() != userOp->getParentOp())
       continue;
+    if (isa<memref::CopyOp>(userOp)) {
+      return handleCopyOp(collapseOp, rewriter, userOp);
+    }
     if (isa<hivm::LoadOp>(userOp)) {
       return handleLoadOp(collapseOp, rewriter, userOp);
     }

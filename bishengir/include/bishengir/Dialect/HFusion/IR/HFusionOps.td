@@ -131,6 +131,29 @@ def MulExtOp : HFusion_Op<"mulext", [Pure, Commutative,
 }
 
 //===----------------------------------------------------------------------===//
+// MulExtUiOp
+//===----------------------------------------------------------------------===//
+
+def MulExtUiOp : HFusion_Op<"mulextui", [Pure, Commutative,
+    AllTypesMatch<["lhs", "rhs", "low", "high"]>]> {
+  let summary = [{
+    extended unsigned integer multiplication operation
+  }];
+
+  let description = [{
+    Performs (2*N)-bit multiplication on zero-extended unsigned operands. Returns two
+    N-bit results: the low and the high halves of the product. The low half has
+    the same value as the result of regular multiplication with the same operands.
+  }];
+
+  let arguments = (ins SignlessIntegerLike:$lhs, SignlessIntegerLike:$rhs);
+  let results = (outs SignlessIntegerLike:$low, SignlessIntegerLike:$high);
+
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+
+}
+
+//===----------------------------------------------------------------------===//
 // InterleaveOp
 //===----------------------------------------------------------------------===//
 
@@ -526,6 +549,125 @@ def HistogramOp : HFusion_Op<"histogram", [
 }
 
 //===----------------------------------------------------------------------===//
+// GatherLoadOp
+//===----------------------------------------------------------------------===//
+
+def GatherLoadOp : HFusion_Op<"gather_load", [
+    DestinationStyleOpInterface,
+    InferTypeOpAdaptor,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize,
+    AllElementTypesMatch<["base", "dst"]>,
+    AllRanksMatch<["indices", "dst"]>,
+    AllShapesMatch<["indices", "dst"]>
+]> {
+  let summary = [{
+    Perform sparse memory loading with optional mask and other
+  }];
+
+  let description = [{
+    This operation takes a source memory buffer and a tensor of offsets,
+    and produces an output tensor by gathering elements from the source
+    at the specified offset positions. The operation supports masking
+    and provides fallback values for masked-out positions.
+    The meanings of the arguments are as follows:
+      - base : base address of the data to be loaded.
+      - indices : indices of the data to be loaded.
+      - burst_len : indicates the continuity of index values on the innermost dim.
+      - mask : (optional) load mask that controls which positions should be
+               actually load and which positions should not be loaded. It
+               is meaningful in call cases except block pointers.
+      - other : (optional) a default/fallback value when the corresponding
+                mask element is false. It is meaningful in call cases except
+                block pointers.
+      - dst : destination buffer/tensor specifying output shape and type.
+      - cache : (optional) a enum hint that controls how the NPU L1 caches the
+                data being loaded from global memory.
+      - evict : (optional) a enum hint that controls the priority of data being
+                removed from NPU cache when cache space is full.
+      - isVolatile : (optional) the load op marked as volatile is not allowed
+                     to be optimized in any way.
+  }];
+  let arguments = (ins AnyMemRef:$base,
+                       RankedTensorOf<[I32, I64]>:$indices,
+                       AnyTypeOf<[I32, I64]>:$burst_len,
+                       Optional<RankedTensorOf<[I1]>>:$mask,
+                       Optional<AnyRankedTensor>:$other,
+                       TensorOrMemref:$dst,
+                       OptionalAttr<HFusion_CacheModifierAttr>:$cache,
+                       OptionalAttr<HFusion_EvictionPolicyAttr>:$evict,
+                       OptionalAttr<BoolAttr>:$isVolatile);
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+    `ins` `(` $base `:` type($base) `,` $indices `:` type($indices) `,`
+    $burst_len `:` type($burst_len)
+    (`,` $mask `:` type($mask)^)? (`,` $other `:` type($other)^)? `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    attr-dict
+    (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getDstMutable();
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterStoreOp
+//===----------------------------------------------------------------------===//
+
+def ScatterStoreOp : HFusion_Op<"scatter_store", [
+    DestinationStyleOpInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize,
+    AllElementTypesMatch<["base", "data"]>,
+    AllRanksMatch<["indices", "data"]>,
+    AllShapesMatch<["indices", "data"]>
+]> {
+  let summary = [{
+    Performs sparse memory storing with optional mask
+  }];
+
+  let description = [{
+    This operation takes a source tensor and a tensor of offsets from UB,
+    and stores elements from the source into the destination GM buffer
+    at the specified offset positions. The operation supports masking to
+    conditionally control which elements are stored.
+    The meanings of the arguments are the same as these of the gather_load.
+  }];
+  let arguments = (ins RankedTensorOf<[I32, I64]>:$indices,
+                       AnyRankedTensor:$data,
+                       AnyTypeOf<[I32, I64]>:$burst_len,
+                       Optional<RankedTensorOf<[I1]>>:$mask,
+                       TensorOrMemref:$base,
+                       OptionalAttr<HFusion_CacheModifierAttr>:$cache,
+                       OptionalAttr<HFusion_EvictionPolicyAttr>:$evict);
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+    `ins` `(` $indices `:` type($indices) `,`
+    $data `:` type($data) `,` $burst_len `:` type($burst_len)
+    (`,` $mask `:` type($mask)^)? `)`
+    `outs` `(` $base `:` type($base) `)`
+    attr-dict
+    (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getBaseMutable();
+    }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // MatMulMxOp
 //===----------------------------------------------------------------------===//
 def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
@@ -540,7 +682,9 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
     ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputB,
     ShapedTypeOf<[UI8, I8]>:$scaleA,
     ShapedTypeOf<[UI8, I8]>:$scaleB,
-    ShapedTypeOf<[AnyFloat]>:$acc
+    ShapedTypeOf<[AnyFloat]>:$acc,
+    OptionalAttr<HFusion_MatMulMxDataFormatAttr>:$lhsFormat,
+    OptionalAttr<HFusion_MatMulMxDataFormatAttr>:$rhsFormat
   );
 
   let results = (outs
@@ -572,6 +716,103 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
     `outs` `(` $acc `:` type($acc) `)`
     `->` type($result)
   }];
+}
+
+def ErfInvOp : HFusion_Op<"erfinv", [Pure, SameOperandsAndResultType]> {
+  let summary = [{
+    Computes the element-wise inverse error function
+  }];
+
+  let description = [{
+    Computes the inverse error function of the input tensor.
+    The input and output must have the same ranked tensor type.
+  }];
+
+  let arguments = (ins RankedTensorOf<[F16, F32]>:$input);
+  let results = (outs RankedTensorOf<[F16, F32]>:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
+def CylBesselI0Op : HFusion_Op<"cyl_bessel_i0",
+                               [Pure, SameOperandsAndResultType]> {
+  let summary = [{
+    Computes the element-wise modified Bessel function of the first kind
+  }];
+
+  let description = [{
+    Computes the modified Bessel function of the first kind of order zero
+    for the input tensor.
+    The input and output must have the same ranked tensor type.
+  }];
+
+  let arguments = (ins RankedTensorOf<[F16, F32]>:$input);
+  let results = (outs RankedTensorOf<[F16, F32]>:$output);
+
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($output)
+  }];
+}
+
+def NextAfterOp : HFusion_Op<"nextafter", [Pure, SameOperandsAndResultType]> {
+  let summary = [{
+    Computes the element-wise next representable floating-point value
+  }];
+
+  let description = [{
+    Computes the next representable floating-point value after `x`
+    in the direction of `y`.
+    The operands and result must have the same ranked tensor type.
+  }];
+
+  let arguments = (ins
+    RankedTensorOf<[F16, F32]>:$x,
+    RankedTensorOf<[F16, F32]>:$y
+  );
+
+  let results = (outs RankedTensorOf<[F16, F32]>:$output);
+
+  let assemblyFormat = [{
+    $x `,` $y attr-dict `:` type($x) `,` type($y) `->` type($output)
+  }];
+}
+
+def HypotOp : HFusion_Op<"hypot", [Pure]> {
+  let summary = [{
+    Computes the element-wise hypotenuse of two or three tensors
+  }];
+
+  let description = [{
+    Computes:
+      hypot(x, y)    = sqrt(x * x + y * y)
+      hypot(x, y, z) = sqrt(x * x + y * y + z * z)
+
+    The third operand is optional. Therefore this op supports exactly
+    2-input and 3-input forms.
+
+    BF16 is supported only for the 2-input form. The 3-input form supports
+    F16 and F32.
+  }];
+
+  let arguments = (ins
+    RankedTensorOf<[BF16, F16, F32]>:$x,
+    RankedTensorOf<[BF16, F16, F32]>:$y,
+    Optional<RankedTensorOf<[BF16, F16, F32]>>:$z
+  );
+
+  let results = (outs
+    RankedTensorOf<[BF16, F16, F32]>:$output
+  );
+
+  let assemblyFormat = [{
+    $x `,` $y (`,` $z^)?
+    attr-dict
+    `:` type($x) `,` type($y) (`,` type($z)^)? `->` type($output)
+  }];
+
+  let hasVerifier = 1;
 }
 
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

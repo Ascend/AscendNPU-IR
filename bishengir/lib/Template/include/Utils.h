@@ -106,4 +106,48 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) bool is32ByteAligned(int64_t value) {
   return (value * sizeof(T)) % UB_ALIGN_BYTES == 0;
 }
+
+template <typename T, int Dim>
+__aiv__ __attribute__((always_inline))
+bool is_memref_single_element(memref_t<__ubuf__ T, Dim> *buf) {
+  for (int i = 0; i < Dim; i++) {
+    if (buf->sizes[i] != 1) {
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename T, int Dim>
+__aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ T, Dim> *buf) {
+  // Check if buf pointer is null
+  if (buf == nullptr) {
+    return false;
+  }
+
+  // Calculate alignment factor: number of elements per alignment unit
+  // UB_ALIGN_BYTES * BITS_B8 converts bytes to bits, then divide by element bit width
+  constexpr int align_factor = (UB_ALIGN_BYTES * BITS_B8) / bitwidthOf<T>();
+
+  // Check if offset is aligned to the alignment factor
+  if ((buf->offset % align_factor) != 0) {
+    return false;
+  }
+
+  // If the offset is aligned and the memref has only one element, take the vector path.
+  if (is_memref_single_element<T, Dim>(buf)) {
+    return true;
+  }
+
+  // Check if last dimension is contiguous in memory (stride must be 1)
+  if (buf->strides[Dim - 1] != 1) {
+    return false;
+  }
+
+  // For 2D and higher dimensions, check alignment of second-to-last dimension stride
+  if constexpr (Dim >= 2) {
+    return ((buf->strides[Dim - 2] % align_factor) == 0);
+  }
+  return true;
+}
 #endif // HIVM_MLIR_TEMPLATE_UTILS_H

@@ -244,7 +244,7 @@ LogicalResult LoadOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
 
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
@@ -343,7 +343,7 @@ LogicalResult StoreOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
@@ -463,10 +463,69 @@ static LogicalResult checkCopyOpTensor(CopyOp &op) {
   return success();
 }
 
+static LogicalResult checkCopyOpMixTensorAndMemRef(CopyOp &op) {
+  ShapedType dstOperType = op.getDstOperandType();
+  auto resultTensor = op.getResultTensor();
+  if (resultTensor) {
+    RankedTensorType resTensorType = resultTensor.getType();
+    if (dstOperType.getElementType() != resTensorType.getElementType()) {
+      return op.emitOpError(
+          "element types of dst src and res should be the same!");
+    }
+
+    if (!resTensorType.hasRank()) {
+      return op.emitOpError("res should have a known number of dimensions!");
+    }
+
+    if (resTensorType.getRank() != dstOperType.getRank()) {
+      return op.emitOpError("res and dst should have the same dimensions!");
+    }
+
+    auto resShape = resTensorType.getShape();
+    if (!op.getPadMode() &&
+        failed(verifyCompatibleShape(resShape, dstOperType.getShape()))) {
+      return op.emitOpError(
+          "if pad_mode is not set, res and dst shape should be the same!");
+    }
+  }
+
+  // check dst memref
+  auto dstMemRefType = cast<MemRefType>(op.getDst().getType());
+  auto dstMemSpaceAttr = dstMemRefType.getMemorySpace();
+  // As infer memscope is supported, memscope is not required.
+  // But if memscope exists, only support gm/ub.
+  if (dstMemSpaceAttr) {
+    auto dstAddrSpaceAttr = dyn_cast<AddressSpaceAttr>(dstMemSpaceAttr);
+    if (!dstAddrSpaceAttr) {
+      return success();
+    }
+
+    auto dstAddrSpace = dstAddrSpaceAttr.getAddressSpace();
+
+    static DenseSet<AddressSpace> kCopySupported{
+        AddressSpace::UB,
+        AddressSpace::L1,
+    };
+
+    if (!kCopySupported.count(dstAddrSpace)) {
+      auto dstStr = stringifyAddressSpace(dstAddrSpace).str();
+      return op.emitOpError() << "Unsupported copy to " << dstStr << "!";
+    }
+  }
+
+  return success();
+}
+
 void CopyOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange res, Value src, Value dst) {
   build(odsBuilder, odsState, res, src, dst, /*pad_mode=*/nullptr,
         /*pad_value=*/nullptr, /*collapse_reassociation=*/nullptr);
+}
+
+void CopyOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
 }
 
 LogicalResult CopyOp::verify() {
@@ -478,7 +537,7 @@ LogicalResult CopyOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (srcType.isFloat8E4M3FN() || srcType.isFloat8E5M2()))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
@@ -527,14 +586,14 @@ LogicalResult CopyOp::verify() {
     return checkCopyOpTensor(*this);
   }
 
-  return emitOpError("dst/src should be memref/memref or tensor/tensor, res "
-                     "should be tensor!");
+  // in case of tensor mix memref
+  return checkCopyOpMixTensorAndMemRef(*this);
 }
 
 SmallVector<ReassociationIndices, 4>
 CopyOp::getReassociationIndices(bool isCollapse) {
   if (!isCollapse)
-    llvm_unreachable("Unsupported");
+    llvm::report_fatal_error("Unsupported");
 
   SmallVector<ReassociationIndices, 4> reassociationIndices;
   auto collapseReassociation = getCollapseReassociation();
@@ -551,7 +610,7 @@ CopyOp::getReassociationIndices(bool isCollapse) {
 
 SmallVector<AffineMap, 4> CopyOp::getReassociationMaps(bool isCollapse) {
   if (!isCollapse)
-    llvm_unreachable("Unsupported");
+    llvm::report_fatal_error("Unsupported");
 
   return getSymbolLessAffineMaps(getReassociationExprs(isCollapse));
 }
@@ -559,7 +618,7 @@ SmallVector<AffineMap, 4> CopyOp::getReassociationMaps(bool isCollapse) {
 SmallVector<ReassociationExprs, 4>
 CopyOp::getReassociationExprs(bool isCollapse) {
   if (!isCollapse)
-    llvm_unreachable("Unsupported");
+    llvm::report_fatal_error("Unsupported");
 
   return convertReassociationIndicesToExprs(
       getContext(), getReassociationIndices(isCollapse));
@@ -594,11 +653,12 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_mode,
                       FixpipePreQuantModeAttr pre_quant,
-                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
+                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
+                      Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ ValueRange{},
         dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
         channel_split,
-        /*unit_flag_mode=*/ ArrayAttr{});
+        /*unit_flag_mode=*/ ArrayAttr{}, quant_scale);
 }
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -606,11 +666,12 @@ void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       FixpipeDMAModeAttr dma_mode,
                       FixpipeDualDstModeAttr dual_mode,
                       FixpipePreQuantModeAttr pre_quant,
-                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split) {
+                      FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
+                      Value quant_scale) {
   build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ ValueRange{},
         dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
         channel_split,
-        /*unit_flag_mode=*/ ArrayAttr{});
+        /*unit_flag_mode=*/ ArrayAttr{}, quant_scale);
 }
 
 enum FixpipeState {
@@ -651,6 +712,7 @@ int FixpipeOp::getFixpipeState() {
 
 void getElidedAttrs(FixpipeOp op,
                     llvm::SmallVector<llvm::StringRef, 2> &elidedAttrs) {
+  elidedAttrs.push_back("operandSegmentSizes");
   elidedAttrs.push_back("unit_flag_mode");
   Builder odsBuilder(op.getContext());
   {
@@ -704,6 +766,7 @@ OptionalAttr<UnitAttr>:$enable_nz2nd
 */
 static void printVersion0_1(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
   ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
   elidedAttrs.push_back("unit_flag_mode");
   {
     ::mlir::Builder odsBuilder(op.getContext());
@@ -730,7 +793,7 @@ static void printVersion0_1(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
 
   // backward compatibility
   auto addInterleave = [&](auto idx, auto size) {
-    if (idx < size - 1)
+    if (static_cast<int64_t>(idx) < static_cast<int64_t>(size) - 1)
       _odsPrinter << ", ";
     return;
   };
@@ -826,6 +889,7 @@ FixpipeOp assemblyFormat in HIVMC version == 0.2.*
 */
 static void printVersion0_2(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
   ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
   elidedAttrs.push_back("dual_dst_mode");
   elidedAttrs.push_back("unit_flag_mode");
   {
@@ -1093,6 +1157,12 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   if (parser.resolveOperands(unit_flag_condOperands, odsBuildableType0,
                              unit_flag_condOperandsLoc, result.operands))
     return ::mlir::failure();
+  // AttrSizedOperandSegments / Properties: must match ODS-generated build()
+  // (src, dst, unit_flag_cond variadic, optional quant_scale — not in assembly).
+  ::llvm::copy(::llvm::ArrayRef<int32_t>(
+                   {1, 1, static_cast<int32_t>(unit_flag_condOperands.size()), 0}),
+               result.getOrAddProperties<FixpipeOp::Properties>()
+                   .operandSegmentSizes.begin());
   return ::mlir::success();
 }
 

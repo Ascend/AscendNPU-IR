@@ -14,6 +14,7 @@ configure_lit_site_cfg(
 
 llvm_canonicalize_cmake_booleans(
   MLIR_ENABLE_BINDINGS_PYTHON
+  SHMEM_BUILD_TEMPLATE
 )
 
 set(BISHENGIR_TEST_DEPENDS

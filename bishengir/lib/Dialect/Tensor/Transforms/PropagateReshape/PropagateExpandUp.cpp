@@ -53,19 +53,6 @@ using namespace mlir::utils::debugger;
 
 namespace {
 
-// Given the old expand op, this will create a new expand op based on the
-// shape of the final result
-Operation *createNewExpandOpFromExpandOp(tensor::ExpandShapeOp expandOp,
-                                         PatternRewriter &rewriter,
-                                         Location loc, Value operand) {
-  auto reassociation = expandOp.getReassociationIndices();
-  auto currentShape = utils::getShape(expandOp.getResult().getType());
-  auto resultType =
-      RankedTensorType::get(currentShape, getElementTypeOrSelf(operand));
-  return rewriter.create<tensor::ExpandShapeOp>(loc, resultType, operand,
-                                                reassociation);
-}
-
 // %c = elemwise %a, %b
 // %d = expand %c
 // Folds into
@@ -194,7 +181,7 @@ LogicalResult handleTransposeOp(tensor::ExpandShapeOp expandOp,
     newTransposeOp = rewriter.create<linalg::TransposeOp>(
         transposeOp->getLoc(), newSrcOp, newDstOp, newPermutation);
   } else {
-    llvm_unreachable("Transpose op unrecognized");
+    llvm::report_fatal_error("Transpose op unrecognized");
   }
 
   // Add new collapse operation (old transpose replaced by collapse)
@@ -1252,6 +1239,17 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   }
   if (!options.forHIVM && isa<tensor::InsertSliceOp>(definingOp)) {
     return handleInsertSliceOp(expandOp, rewriter, definingOp);
+  }
+  // `linalg.fill` is included in `isMarkedAsElementwiseOp`, but lifting
+  // `tensor.expand_shape` across fill interacts with `PropagateCollapseDown`
+  // through `tensor.concat` / `extract_slice` chains (e.g. insert/concat
+  // regions) and can make `applyPatternsGreedily` fail to reach a fixed point.
+  // Collapse-down propagation through fill is unchanged.
+  if (isa<linalg::FillOp>(definingOp)) {
+    return rewriter.notifyMatchFailure(
+        expandOp,
+        "not propagating expand through linalg.fill (non-termination with "
+        "collapse-down/concat)");
   }
   if (isMarkedAsElementwiseOp(definingOp)) {
     return handleElementwiseOp(expandOp, rewriter, definingOp);

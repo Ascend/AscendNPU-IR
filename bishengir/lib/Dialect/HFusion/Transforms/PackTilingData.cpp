@@ -871,7 +871,7 @@ private:
     if (resourceIsManagedByCaller.at(caller)) {
       func::CallOp oldTilingFuncCall = tilingCaseInfo.getTilingFuncCall();
       if (!oldTilingFuncCall) {
-        llvm_unreachable("oldTilingFuncCall doesn't exist");
+        llvm::report_fatal_error("oldTilingFuncCall doesn't exist");
         return failure();
       }
       builder.setInsertionPoint(oldTilingFuncCall);

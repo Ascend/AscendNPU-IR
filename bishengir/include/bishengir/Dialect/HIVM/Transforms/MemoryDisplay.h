@@ -26,29 +26,29 @@ namespace hivm {
 
 class MemoryInfo {
 public:
-  MemoryInfo(Location sourceLocation) : sourceLocation(sourceLocation) {}
-  Value buffer;
-  SmallVector<uint64_t> offset;
-  uint64_t extent;
-  int64_t allocTimeInIR;
-  std::pair<int64_t, int64_t> lifeTimeInIR;
+  MemoryInfo(Location loc) : sourceLocation(loc) {}
+  Value buffer{};
+  SmallVector<uint64_t> offset{};
+  uint64_t extent{};
+  int64_t allocTimeInIR{};
+  std::pair<int64_t, int64_t> lifeTimeInIR{};
   Location sourceLocation;
-  bool isTmpBuf;
+  bool isTmpBuf{};
 };
 
 class MemoryDisplayInfo {
 public:
-  std::string scope;
-  std::string status;
-  std::string errorInfo = "";
-  SmallVector<MemoryInfo> memoryInfoArray;
+  std::string scope{};
+  std::string status{};
+  std::string errorInfo{};
+  SmallVector<MemoryInfo> memoryInfoArray{};
 };
 
 // Memory visualization tool JSON generator
 class MemoryInfoJsonBuilder {
 private:
-  llvm::json::Object root;
-  llvm::json::Array recordArray;
+  llvm::json::Object root{};
+  llvm::json::Array recordArray{};
 
 public:
   MemoryInfoJsonBuilder() = default;
@@ -81,7 +81,7 @@ public:
 // collect the memory information required for memory display tools.
 void collectMemoryInfoForDebug(
     SmallVector<MemoryDisplayInfo> &memoryDisplayInfoList,
-    DenseMap<hivm::AddressSpace, StorageEntry *> selectRootMap,
+    llvm::MapVector<hivm::AddressSpace, StorageEntry *> selectRootMap,
     DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets,
     DenseMap<hivm::AddressSpace, std::string> errorInfo, bool isFail);
 

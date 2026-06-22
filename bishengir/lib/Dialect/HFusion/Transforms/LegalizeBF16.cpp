@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
@@ -47,13 +48,21 @@ static bool isBF16ElemType(Operation *op) {
   return false;
 }
 
+static void setFastMathContractAtttr(Operation *castOp) {
+  auto fastMathAttr = arith::FastMathFlagsAttr::get(
+    castOp->getContext(), arith::FastMathFlags::contract);
+  castOp->setAttr(mlir::arith::FastMathFlagsAttr::name, fastMathAttr);
+}
+
 static bool shouldLegalizeBF16Op(Operation *op) {
   return !(isa<hfusion::CastOp>(op) || isa<linalg::FillOp>(op) ||
            isa<linalg::CopyOp>(op) || !isBF16ElemType(op) ||
            isa<linalg::MatmulOp>(op) || isa<linalg::BatchMatmulOp>(op) ||
-           isa<linalg::TransposeOp>(op) || isa<hfusion::LoadOp>(op) ||
-           isa<hfusion::StoreOp>(op) || isa<hfusion::BitcastOp>(op) ||
-           isa<hfusion::SelectOp>(op) || isa<hfusion::Conv1DOp>(op));
+           isa<linalg::TransposeOp>(op) || isa<linalg::BroadcastOp>(op) ||
+           isa<hfusion::LoadOp>(op) || isa<hfusion::StoreOp>(op) ||
+           isa<hfusion::BitcastOp>(op) || isa<hfusion::SelectOp>(op) ||
+           isa<hfusion::Conv1DOp>(op) || isa<hfusion::Conv2DOp>(op) ||
+           isa<hfusion::Conv3DOp>(op));
 }
 
 template <typename Op>
@@ -67,12 +76,16 @@ static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
   auto *newOp = rewriter.cloneWithoutRegions(*op, mapper);
   auto *ctx = op->getContext();
   for (const auto &[idx, res] : llvm::enumerate(op->getResults())) {
-    ShapedType shapedType = cast<ShapedType>(res.getType());
-    if (!(shapedType && getElementTypeOrSelf(shapedType).isBF16())) {
-      continue;
+    // Use dyn_cast to safely handle both ShapedType and scalar types
+    if (auto shapedType = dyn_cast<ShapedType>(res.getType())) {
+      if (getElementTypeOrSelf(shapedType).isBF16()) {
+        auto newResTy = shapedType.clone(Float32Type::get(ctx));
+        newOp->getResult(idx).setType(newResTy);
+      }
+    } else if (res.getType().isBF16()) {
+      // Handle scalar BF16 types (e.g., from arith.addf with scalar operands)
+      newOp->getResult(idx).setType(Float32Type::get(ctx));
     }
-    auto newResTy = shapedType.clone(Float32Type::get(ctx));
-    newOp->getResult(idx).setType(newResTy);
   }
 
   if (op->getNumRegions() <= 0)
@@ -123,6 +136,9 @@ static void createF32ElementTypeOpRegion(Op bf16Op, PatternRewriter &rewriter) {
                       ? castTo(rewriter, operand,
                                /*targetElemType=*/rewriter.getF32Type())
                       : operand;
+              if (Operation *castOp =
+                      castedOperand.getDefiningOp<hfusion::CastOp>())
+                setFastMathContractAtttr(castOp);
               // only replace operand used in this regionOp, rely on later
               // CSE and DCE to eliminate duplicate value
               rewriter.replaceUsesWithIf(operand, castedOperand,
@@ -152,6 +168,8 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
         getElementTypeOrSelf(oper.getType()).isBF16()
             ? castTo(rewriter, oper, /*targetElemType=*/f32Type)
             : oper;
+    if (Operation *castOp = castedOperand.getDefiningOp<hfusion::CastOp>())
+      setFastMathContractAtttr(castOp);
     castedOperands.push_back(castedOperand);
   }
 
@@ -165,6 +183,8 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
     Value castedResult =
         resType.isF32() ? castTo(rewriter, res, /*targetElemType=*/bf16Type)
                         : res;
+    if (Operation *castOp = castedResult.getDefiningOp<hfusion::CastOp>())
+      setFastMathContractAtttr(castOp);
     castedResults.push_back(castedResult);
   }
 
@@ -215,6 +235,7 @@ void populateLegalizeBF16Pattern(RewritePatternSet &patterns) {
   registerOne<hfusion::SortOp>(patterns);
   registerOne<tensor::ConcatOp>(patterns);
   registerOne<tensor::PadOp>(patterns);
+  registerOne<arith::AddFOp>(patterns);
 }
 
 void LegalizeBF16Pass::runOnOperation() {

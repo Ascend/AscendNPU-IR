@@ -97,7 +97,7 @@ extractNDToFractalConversionParams(ArrayRef<OpFoldResult> currentShape,
   params.batchIndexBias = computeBatchIndexBias(currentShape.size());
   LDBG("Batch index bias: " << params.batchIndexBias);
 
-  if (params.batchIndexBias) {
+  if (params.batchIndexBias > 0) {
     params.batch = currentShape[0];
   }
   params.a = currentShape[0 + params.batchIndexBias];
@@ -129,7 +129,7 @@ assembleFractalShape(OpFoldResult aTiles, OpFoldResult bTiles,
   SmallVector<OpFoldResult> fractalShape = {
       aTiles, bTiles, getAsIndexOpFoldResult(ctx, params.fractalSize.first),
       getAsIndexOpFoldResult(ctx, params.fractalSize.second)};
-  if (params.batchIndexBias) {
+  if (params.batchIndexBias > 0) {
     LDBG("Inserting batch dimension");
     fractalShape.insert(fractalShape.begin(), params.batch);
   }

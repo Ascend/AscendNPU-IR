@@ -11,5 +11,4 @@ add_bishengir_dialect_library(BiShengIRHIVMTransformOps
   BiShengIRHIVMDialect
   MLIRTransformDialect
   MLIRTransformDialectUtils
-  BiShengIRHIVMUtils
   )

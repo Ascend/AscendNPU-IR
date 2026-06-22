@@ -162,6 +162,18 @@ bool VMulExtOp::shouldLowerToScalarLoops() {
 }
 
 //===----------------------------------------------------------------------===//
+// VMulExtUiOp
+//===----------------------------------------------------------------------===//
+
+bool VMulExtUiOp::shouldLowerToScalarLoops() {
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+  auto elemType = getElementTypeOrSelf(getOperandTypes()[0]);
+  return elemType.isInteger(32) || elemType.isInteger(64);
+}
+
+//===----------------------------------------------------------------------===//
 // VReduceOp
 //===----------------------------------------------------------------------===//
 

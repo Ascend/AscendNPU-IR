@@ -24,9 +24,16 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/InsertPropagation.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/PropagateOp.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/ResolvePropagation.h"
+#include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
+
+#include "bishengir/Transforms/Passes.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -36,7 +43,9 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -50,12 +59,19 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 #define DEBUG_TYPE "insert-load-store"
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
+#define DBGSNL() (llvm::dbgs() << "\n")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace {
 struct InsertLoadStoreForMixCVPass
     : public impl::InsertLoadStoreForMixCVBase<InsertLoadStoreForMixCVPass> {
+public:
   using Base::Base;
   void runOnOperation() override;
+
+private:
+  void runLegacyInsertLoadStoreForMixCV();
 };
 
 namespace {
@@ -65,18 +81,13 @@ namespace {
 
 bool isGM(Value v) {
   // TODO: include func's args
-  // TODO: use interface and use this function for storelike throughout this file
+  // TODO: use interface and use this function for storelike throughout this
+  // file
   return traceDefOp<hivm::FixpipeOp>(v).has_value() ||
          traceDefOp<hivm::StoreOp>(v).has_value();
 }
 
-bool isCube(Value v) {
-  // TODO: use interface (including ConvOp)
-  return traceDefOp<hivm::MmadL1Op>(v).has_value();
-}
-
-template <typename... OpType>
-bool canTraceTo(Value v) {
+template <typename... OpType> bool canTraceTo(Value v) {
   return (false || ... || traceDefOp<OpType>(v).has_value());
 }
 
@@ -85,13 +96,16 @@ bool isVec(Value v) {
   return canTraceTo<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-  >(v);
+             >(v) ||
+         traceDefOp<tensor::InsertOp>(v).has_value() ||
+         traceDefOp<tensor::InsertSliceOp>(v).has_value();
 }
 
 void markToAvoidDCE(PatternRewriter &rewriter, Location location, Value value) {
   rewriter.setInsertionPointAfterValue(value);
   auto markOp = rewriter.create<annotation::MarkOp>(location, value);
-  markOp->setAttr("InsertLoadStoreForMixCV::markToAvoidDCE", rewriter.getI32IntegerAttr(1));
+  markOp->setAttr("InsertLoadStoreForMixCV::markToAvoidDCE",
+                  rewriter.getI32IntegerAttr(1));
 }
 
 } // namespace
@@ -176,7 +190,7 @@ insertLoadStoreOp(PatternRewriter &rewriter, Location loc,
                                                &lastInsertOp, insertInit);
     }
     if (!lastInsertOp) {
-      llvm_unreachable("lastInsertOp not defined");
+      llvm::report_fatal_error("lastInsertOp not defined");
       return failure();
     }
     rewriter.modifyOpInPlace(consumerOperand->getOwner(),
@@ -214,6 +228,7 @@ struct InsertLoadOpBetweenStoreLikeAndVectorOrCube
                                 PatternRewriter &rewriter) const override {
     if (!isa<hivm::HIVMStructuredOp>(op.getOperation()) &&
         !isa<tensor::ExtractOp>(op.getOperation()) &&
+        !isa<tensor::InsertOp>(op.getOperation()) &&
         !isa<tensor::InsertSliceOp>(op.getOperation())) {
       return failure();
     }
@@ -290,10 +305,14 @@ struct InsertStoreOpBetweenVectorAndLoad
   LogicalResult matchAndRewrite(hivm::LoadOp op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<OpOperand *> consumerOperands;
-    for (OpOperand &operand : op->getOpOperands()) {
-      if (traceDefOp<OpType>(operand.get()).has_value()) {
-        consumerOperands.push_back(&operand);
-      }
+    OpOperand &srcOperand = op.getSrcMutable();
+
+    if (traceDefOp<OpType>(srcOperand.get()).has_value()) {
+      consumerOperands.push_back(&srcOperand);
+    }
+
+    if (consumerOperands.empty()) {
+      return failure();
     }
     return insertLoadStoreOp(rewriter, op.getLoc(), consumerOperands,
                              InsertMode::StoreOnly);
@@ -407,7 +426,7 @@ struct InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, CubeOpType>
       auto scfForDef = traceDefOp<scf::ForOp>(operand.get());
       if (scfForDef.has_value()) {
         auto forOp = llvm::cast<scf::ForOp>(scfForDef.value());
-        if (forOp->getAttr("ExtractedLoadOrStore") != nullptr) {
+        if (forOp->getAttr(ExtractLoadStoreAttr) != nullptr) {
           consumerOperands.push_back(&operand);
         }
       }
@@ -502,11 +521,13 @@ struct InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
       auto toTensorOp =
           llvm::cast<bufferization::ToTensorOp>(toTensorOpDef.value());
       auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
-          toTensorOp->getResult(0), "MayImplicitTransposeWithLastAxis");
+          toTensorOp->getResult(0), kMayImplicitTransposeWithLastAxis);
 
       if (maybeAnnotateOp.has_value()) {
         consumerOperands.push_back(&operand);
       } else if (toTensorOp->getAttr("gather_load") != nullptr) {
+        consumerOperands.push_back(&operand);
+      } else if (toTensorOp->getAttr("index_select_simd") != nullptr) {
         consumerOperands.push_back(&operand);
       }
     }
@@ -644,9 +665,9 @@ struct DuplicateTensorExtractForCube
       if (!visited.insert(currentOp).second) {
         continue;
       }
-
       currentOp->walk([&hasCubeUser](Operation *nestedOp) {
-        if (getCoreType(nestedOp) == TCoreType::CUBE) {
+        if (getCoreType(nestedOp) == TCoreType::CUBE ||
+            getCoreType(nestedOp) == TCoreType::CUBE_OR_VECTOR) {
           hasCubeUser = true;
           return WalkResult::interrupt();
         } else if (getCoreType(nestedOp) == TCoreType::VECTOR) {
@@ -695,6 +716,12 @@ struct DuplicateTensorExtractForCube
     if (!definingOp) {
       return failure();
     }
+
+    // only process cases with cube users
+    if (!findCubeUser(extractOp)) {
+      return failure();
+    }
+
     TensorType tensorType = cast<TensorType>(originTensor.getType());
     TCoreType originCoreType = getCoreType(definingOp).value();
     if (originCoreType != TCoreType::VECTOR) {
@@ -734,11 +761,6 @@ struct DuplicateTensorExtractForCube
       }
     }
 
-    // only process cases with cube users
-    if (!findCubeUser(extractOp)) {
-      return failure();
-    }
-
     // prepare for insertion
     Location loc = extractOp->getLoc();
     rewriter.setInsertionPointAfterValue(extractOp.getResult());
@@ -766,8 +788,7 @@ struct DuplicateTensorExtractForCube
   }
 };
 
-struct InsertStoreForSCFIF
-    : public OpRewritePattern<scf::IfOp> {
+struct InsertStoreForSCFIF : public OpRewritePattern<scf::IfOp> {
   using OpRewritePattern<scf::IfOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(scf::IfOp ifOp,
@@ -828,9 +849,18 @@ template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   patterns.add<
       InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::MmadL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv1DL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv2DL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::Conv3DL1Op>,
+      InsertLoadStoreOpBetweenVectorAndCube<OpType, hivm::BatchMmadL1Op>,
       InsertStoreOpBetweenVectorAndLoad<OpType>,
       InsertLoadOpBetweenStoreLikeAndVectorOrCube<OpType>,
-      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>>(
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType,
+                                                     hivm::BatchMmadL1Op>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::MmadL1Op>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv1DL1Op>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv2DL1Op>,
+      InsertLoadStoreOpBetweenCrossLoopVectorAndCube<OpType, hivm::Conv3DL1Op>>(
       patterns.getContext());
 }
 
@@ -845,18 +875,52 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
       >(patterns);
   registerOne<tensor::InsertSliceOp>(patterns);
+  registerOne<tensor::InsertOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::Conv1DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::Conv2DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::Conv3DL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
       patterns.getContext());
   patterns
       .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::MmadL1Op>>(
           patterns.getContext());
+  patterns
+      .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::Conv1DL1Op>>(
+          patterns.getContext());
+  patterns
+      .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::Conv2DL1Op>>(
+          patterns.getContext());
+  patterns
+      .add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp, hivm::Conv3DL1Op>>(
+          patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
                                                      hivm::MmadL1Op>>(
       patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
+                                                     hivm::Conv1DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
+                                                     hivm::Conv2DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<bufferization::ToTensorOp,
+                                                     hivm::Conv3DL1Op>>(
+      patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
                                                      hivm::MmadL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
+                                                     hivm::Conv1DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
+                                                     hivm::Conv2DL1Op>>(
+      patterns.getContext());
+  patterns.add<InsertLoadStoreOpBetweenVectorAndCube<tensor::CollapseShapeOp,
+                                                     hivm::Conv3DL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<tensor::ExtractOp>>(
       patterns.getContext());
@@ -871,30 +935,29 @@ LogicalResult applyInsertLoadBeforeSCFInitArgs(MLIRContext *context,
   return applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
-LogicalResult preProcessComplexControlFlow(MLIRContext *context, Operation *funcOp) {
+LogicalResult preProcessComplexControlFlow(MLIRContext *context,
+                                           Operation *funcOp) {
   RewritePatternSet patterns(context);
   patterns.insert<InsertStoreForSCFIF>(patterns.getContext());
   patterns.insert<InsertLoadOpBetweenStoreLikeAndVectorOrCube<scf::YieldOp>>(
-    patterns.getContext()
-  );
+      patterns.getContext());
   return applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
-void InsertLoadStoreForMixCVPass::runOnOperation() {
-  OpBuilder builder(&getContext());
-  auto *context = &getContext();
+void InsertLoadStoreForMixCVPass::runLegacyInsertLoadStoreForMixCV() {
   auto funcOp = getOperation();
-  if (failed(preProcessComplexControlFlow(context, funcOp))) {
+  auto *ctx = funcOp.getContext();
+  if (failed(preProcessComplexControlFlow(ctx, funcOp))) {
     signalPassFailure();
   }
-  if (failed(applyInsertLoadBeforeSCFInitArgs(context, funcOp))) {
+  if (failed(applyInsertLoadBeforeSCFInitArgs(ctx, funcOp))) {
     signalPassFailure();
   }
-  RewritePatternSet patterns(context);
+  RewritePatternSet patterns(ctx);
   populateInsertLoadStorePattern(patterns);
   patterns.insert<InsertStoreForSCFYield>(patterns.getContext());
-  // TODO: move InferFuncCoreType to previous places; then this pass may return
-  // immediately depending on FuncCoreType
+  // TODO: move InferFuncCoreType to previous places; then this pass may
+  // return immediately depending on FuncCoreType
   bool hasCube = false;
   funcOp->walk([&hasCube](Operation *nestedOp) {
     if (isa<hivm::MmadL1Op>(nestedOp)) {
@@ -911,6 +974,154 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass() {
-  return std::make_unique<InsertLoadStoreForMixCVPass>();
+static LogicalResult runPropagateOpPatterns(func::FuncOp funcOp,
+                                            PropagationStep step) {
+  RewritePatternSet patterns(funcOp.getContext());
+  GreedyRewriteConfig rewriteConfig;
+  patterns.add<PropagateUpPattern, PropagateDownPattern>(patterns.getContext(),
+                                                         step);
+
+  patterns.add<ResolvePropagationPattern, RemoveRedundantPropagationPattern>(
+      patterns.getContext());
+  rewriteConfig.fold = false;
+  if (failed(
+          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
+    return failure();
+  }
+  LDBG("After propagation step " << static_cast<int>(step));
+  LDBG(funcOp);
+  return success();
+}
+
+static LogicalResult insertPropagationOp(func::FuncOp funcOp) {
+  IRRewriter rewriter(funcOp.getContext());
+  rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+  for (auto arg : funcOp.getArguments()) {
+    if (isa<ShapedType>(arg.getType())) {
+      Value newArg = PropagatorUtil::createPropagator(
+          arg, kPropagateDownAttr, hivm::AddressSpace::GM, rewriter);
+      rewriter.replaceAllUsesExcept(arg, newArg, newArg.getDefiningOp());
+    }
+  }
+
+  RewritePatternSet patterns(funcOp.getContext());
+  GreedyRewriteConfig rewriteConfig;
+  patterns.add<InsertPropagationPattern>(patterns.getContext());
+  rewriteConfig.fold = false;
+  if (failed(
+          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
+    return failure();
+  }
+  return success();
+}
+
+static LogicalResult propagateAndResolve(func::FuncOp funcOp) {
+  SmallVector<PropagationStep> propagations = {
+      PropagationStep::LOCAL, PropagationStep::GM, PropagationStep::UB,
+      PropagationStep::L1, PropagationStep::ALL};
+  for (auto step : propagations) {
+    if (failed(runPropagateOpPatterns(funcOp, step))) {
+      return failure();
+    }
+  }
+  RewritePatternSet patterns(funcOp.getContext());
+  GreedyRewriteConfig rewriteConfig;
+  patterns.add<CloneMultipleAddressSpaceOperation>(patterns.getContext());
+  rewriteConfig.fold = false;
+  if (failed(
+          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
+    return failure();
+  }
+  LDBG("After clone multiple address space: " << funcOp);
+  if (failed(runPropagateOpPatterns(funcOp, PropagationStep::ALL))) {
+    return failure();
+  }
+  return success();
+}
+
+void InsertLoadStoreForMixCVPass::runOnOperation() {
+  OpBuilder builder(&getContext());
+  auto *ctx = &getContext();
+  auto funcOp = getOperation();
+
+  if (enableLegacy)
+    return runLegacyInsertLoadStoreForMixCV();
+  if (!hacc::utils::isDeviceEntry(funcOp))
+    return;
+
+  PassManager pm(ctx);
+  pm.addPass(tensor::createReplicateOutEmptyTensorPass());
+
+  if (failed(pm.run(funcOp))) {
+    return signalPassFailure();
+  }
+  // To maintain propagator, rewriteConfig.fold should be false
+  if (failed(insertPropagationOp(funcOp))) {
+    return signalPassFailure();
+  }
+  LDBG("After inserting Propagation Op: " << funcOp);
+  if (failed(propagateAndResolve(funcOp))) {
+    return signalPassFailure();
+  }
+  LDBG("After propagation & resolve: " << funcOp);
+  LLVM_DEBUG({
+    if (failed(verifyPropagation(funcOp))) {
+      return signalPassFailure();
+    }
+  });
+
+  /// Postprocess of adding core type attribute
+  funcOp->walk([](Operation *op) {
+    TypeSwitch<Operation *>(op)
+        .Case([&](hivm::DebugOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
+          if (upProp) {
+            auto coreType = PropagatorUtil::getCoreType(upProp);
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            if (!addressSpaces.empty()) {
+              auto memScopeAttr = hivm::AddressSpaceAttr::get(op.getContext(),
+                                                              addressSpaces[0]);
+              op.setMemscopeAttr(memScopeAttr);
+            }
+            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+              op.setTcoretypeAttr(
+                  TCoreTypeAttr::get(op.getContext(), coreType));
+            } else {
+              auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                        : addressSpaces[0];
+              op.setTcoretypeAttr(TCoreTypeAttr::get(
+                  op.getContext(),
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
+            }
+          }
+        })
+        .Case([&](hivm::LoadOp op) {
+          auto upProp = PropagatorUtil::getUpPropagator(&op.getDstMutable());
+          if (upProp) {
+            auto coreType = PropagatorUtil::getCoreType(upProp);
+            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+              op.setTcoretypeAttr(
+                  TCoreTypeAttr::get(op.getContext(), coreType));
+            } else {
+              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+              auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                        : addressSpaces[0];
+              op.setTcoretypeAttr(TCoreTypeAttr::get(
+                  op.getContext(),
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
+            }
+          }
+        });
+  });
+
+  PassManager pm2(ctx);
+  pm2.addPass(bishengir::createExtendedCanonicalizerPass());
+  if (failed(pm2.run(funcOp))) {
+    return signalPassFailure();
+  }
+}
+
+std::unique_ptr<Pass> mlir::hivm::createInsertLoadStoreForMixCVPass(
+    const InsertLoadStoreForMixCVOptions &options) {
+  return std::make_unique<InsertLoadStoreForMixCVPass>(options);
 }

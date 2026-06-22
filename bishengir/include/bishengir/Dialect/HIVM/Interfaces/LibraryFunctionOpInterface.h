@@ -18,9 +18,11 @@
 #ifndef BISHENGIR_DIALECT_HIVM_INTERFACES_LIBRARYFUNCTIONOPINTERFACE_H
 #define BISHENGIR_DIALECT_HIVM_INTERFACES_LIBRARYFUNCTIONOPINTERFACE_H
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
+
+#include <optional>
+#include <string>
 
 // Include the generated interface declarations.
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h.inc"

@@ -69,6 +69,15 @@ func.func @test_mulhi(%arg0 : tensor<6xi32>, %arg1 : tensor<6xi32>) -> tensor<6x
 
 // -----
 
+// CHECK-LABEL: func.func @test_umulhi
+func.func @test_umulhi(%arg0 : tensor<6xi32>, %arg1 : tensor<6xi32>) -> tensor<6xi32> {
+  // CHECK:       %[[VAL_2:.*]], %[[VAL_3:.*]] = hfusion.mulextui
+  %low, %high = arith.mului_extended %arg0, %arg1 : tensor<6xi32>
+  return %high : tensor<6xi32>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_divf
 func.func @test_divf(%arg0 : tensor<6x6xf32>, %arg1 : tensor<6x6xf32>) -> tensor<6x6xf32> {
   // CHECK:       %[[EMPTY:.*]] = tensor.empty()

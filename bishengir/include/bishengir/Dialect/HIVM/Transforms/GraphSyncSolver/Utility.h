@@ -37,6 +37,13 @@
 #define TEST_INTRA_CORE_EVENT_ID_NUM (int64_t)8
 #define TEST_CROSS_CORE_EVENT_ID_NUM (int64_t)999
 
+namespace mlir::hivm::syncsolver {
+const int64_t blockAllIntraSyncFlagId1 = 15;
+const int64_t blockAllIntraSyncFlagId2 = 14;
+const int64_t reservedCrossCoreEventIdNum = 2;
+const int64_t reservedIntraCoreEventIdNum = 0;
+} // namespace mlir::hivm::syncsolver
+
 using SyncMap = llvm::MapVector<
     mlir::hivm::syncsolver::OperationBase *,
     std::deque<std::unique_ptr<mlir::hivm::syncsolver::SyncOp>>>;
@@ -134,6 +141,9 @@ struct SyncSolverOptions {
 
   // Use different flag-ids for multibuffer backward sync pairs.
   bool useDifferentMultiBufferFlagIds{false};
+
+  // Ignore workspace function arguments.
+  bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
 
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
@@ -293,6 +303,9 @@ struct ConflictPair {
   Occurrence *backwardSyncLoopOcc{nullptr};
   EventIdInfo eventIdInfo;
   EventIdNode *eventIdNode{nullptr};
+  // When set, GraphSyncSolver must assign this event id for the conflict
+  // (from CustomMacroOp sync_event_slots with an optional pinned event).
+  std::optional<int64_t> pinnedEventId;
 
   ConflictPair(RWOperation *op1, RWOperation *op2, OperationBase *setOp,
                OperationBase *waitOp, Occurrence *setOcc, Occurrence *waitOcc,
@@ -338,6 +351,7 @@ struct ConflictPair {
     clonedConflictPair->backwardSyncLoopOcc = backwardSyncLoopOcc;
     clonedConflictPair->eventIdInfo = eventIdInfo;
     clonedConflictPair->eventIdNode = eventIdNode;
+    clonedConflictPair->pinnedEventId = pinnedEventId;
     return clonedConflictPair;
   }
 

@@ -34,7 +34,7 @@ using namespace bishengir;
 struct EnableHIVMCCompatiblePrintPass
     : public impl::EnableHIVMCCompatiblePrintBase<
           EnableHIVMCCompatiblePrintPass> {
-  void runOnOperation() {
+  void runOnOperation() override {
     auto *ctx = &getContext();
     Operation *moduleOp = getOperation();
     moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,

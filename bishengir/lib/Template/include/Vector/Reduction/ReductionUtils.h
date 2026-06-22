@@ -1043,6 +1043,58 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
     reduce_ra0a1<op_type, dtype>(src0, dst, tmp, initvalue);                   \
   }
 
+/// Reduce src (a0, r, a1) with stride [n0, n1, 1] to dst (a0, 1, a1) with
+/// stride [n0, n1, 1] by dichotomy + hardware repeat, reducing along dim1.
+#define DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                 \
+  __aiv__ __attribute__((always_inline)) void                                   \
+      _mlir_ciface_##op_name##_ara_##dtype(                                     \
+          memref_t<__ubuf__ dtype, dim> *src0,                                  \
+          memref_t<__ubuf__ dtype, dim> *dst,                                   \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype)                \
+  DECLARE_ENTIRE_REDUCE_ARA(op_name, op_type, dim, dtype) {                    \
+    reduce_ara<op_type, dtype>(src0, dst, tmp, initvalue);                     \
+  }
+
+/// Reduce src (a0, a1, r) with stride [n0, n1, 1] to dst (a0, a1, 1) with
+/// stride [n0, n1, 1] by merging first two dims and reusing reduce_ar.
+#define DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                 \
+  __aiv__ __attribute__((always_inline)) void                                   \
+      _mlir_ciface_##op_name##_aar_##dtype(                                     \
+          memref_t<__ubuf__ dtype, dim> *src0,                                  \
+          memref_t<__ubuf__ dtype, dim> *dst,                                   \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype)                \
+  DECLARE_ENTIRE_REDUCE_AAR(op_name, op_type, dim, dtype) {                    \
+    reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                     \
+  }
+
+#define DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)        \
+  __aiv__ __attribute__((always_inline)) void                                    \
+      _mlir_ciface_enablevc_##op_name##_aar_##dtype(                             \
+          memref_t<__ubuf__ dtype, dim> *src0,                                   \
+          memref_t<__ubuf__ dtype, dim> *dst,                                    \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype)       \
+  DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(op_name, op_type, dim, dtype) {            \
+    reduce_aar<op_type, dtype>(src0, dst, tmp, initvalue);                      \
+  }
+
+#define DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)       \
+  __aiv__ __attribute__((always_inline)) void                                    \
+      _mlir_ciface_enablevcg_##op_name##_aar_##dtype(                            \
+          memref_t<__ubuf__ dtype, dim> *src0,                                   \
+          memref_t<__ubuf__ dtype, dim> *dst,                                    \
+          memref_t<__ubuf__ dtype, 1> *tmp, dtype initvalue)
+
+#define REGISTE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype)      \
+  DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(op_name, op_type, dim, dtype) {           \
+    reduce_aar_vcg<op_type, dtype>(src0, dst, tmp, initvalue);                  \
+  }
+
 #define REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(op_name,      \
                                                                  op_type,      \
                                                                  with_index_type, \
@@ -1235,6 +1287,186 @@ isnan_value(T data) {
                 std::is_same<float, T>(),
                 "T must be half or float.");
   return static_cast<float>(data) != static_cast<float>(data);
+}
+
+/// Dichotomy reduction on buffer (in-place).
+/// Reduces buffer[0..current_size-1] to buffer[0..half-1] by folding front/back halves.
+/// Returns the new size (current_size / 2).
+/// Template parameter BufPtr can be T* or __ubuf__ T*.
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+int64_t dichotomy_reduce_buffer(BufPtr buffer, int64_t current_size) {
+  int64_t half = current_size / 2;
+  for (int64_t i = 0; i < half; ++i) {
+    buffer[i] = reduction_scalar_operation<OP, T>(buffer[i], buffer[i + half]);
+  }
+  return half;
+}
+
+/// Pairwise reduction on buffer (in-place).
+/// Reduces buffer[0..current_size-1] to buffer[0..half_size-1] by pairing adjacent elements.
+/// Returns the new size (ceil(current_size/2)).
+/// Template parameter BufPtr can be T* or __ubuf__ T*.
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+int64_t pairwise_reduce_buffer(BufPtr buffer, int64_t current_size) {
+  int64_t half_size = (current_size + 1) / 2;
+  for (int64_t i = 0; i < half_size; ++i) {
+    if (2 * i + 1 < current_size) {
+      buffer[i] = reduction_scalar_operation<OP, T>(buffer[2 * i], buffer[2 * i + 1]);
+    } else {
+      buffer[i] = buffer[2 * i];
+    }
+  }
+  return half_size;
+}
+
+/// Pairwise reduction from source to buffer (first step).
+/// Reads pairs directly from src_ptr and stores to tmp_buffer.
+/// Returns the new size (ceil(n/2)).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+int64_t pairwise_reduce_from_src(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                                  BufPtr tmp_buffer) {
+  int64_t half_size = (n + 1) / 2;
+  for (int64_t i = 0; i < half_size; ++i) {
+    tmp_buffer[i] = *(src_ptr + (2 * i) * stride);
+    if (2 * i + 1 < n) {
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(
+          tmp_buffer[i], *(src_ptr + (2 * i + 1) * stride));
+    }
+  }
+  return half_size;
+}
+
+/// Implements tree-based reduction to reduce to target_size elements.
+/// The result is stored in tmp_buffer[0..return_value-1], returns the final size after reduction.
+///
+/// IMPORTANT: target_size MUST be a power of 2 (including 1).
+///
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), int64_t>
+scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                                   BufPtr tmp_buffer, int64_t target_size) {
+  const int64_t dichotomy_num = Log2(n);
+  const int64_t main_size = static_cast<int64_t>(1) << dichotomy_num;
+  const int64_t tail_size = n - main_size;
+
+  int64_t half = main_size / 2;
+  for (int64_t i = 0; i < half; ++i) {
+    T val0 = *(src_ptr + i * stride);
+    T val1 = *(src_ptr + (i + half) * stride);
+    tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
+  }
+
+  if (tail_size > 0) {
+    int64_t tail_loop_num = CEIL_DIV(tail_size, half);
+    for (int64_t loop = 0; loop < tail_loop_num; ++loop) {
+      int64_t tail_start = main_size + loop * half;
+      int64_t sub_tail_size = MIN(tail_size - loop * half, half);
+      for (int64_t i = 0; i < sub_tail_size; ++i) {
+        T tail_val = *(src_ptr + (tail_start + i) * stride);
+        tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], tail_val);
+      }
+    }
+  }
+
+  int64_t current_size = half;
+  while (current_size > target_size) {
+    current_size = dichotomy_reduce_buffer<OP, T>(tmp_buffer, current_size);
+  }
+
+  return current_size;
+}
+
+/// Wrapper that reduces to a single element (target_size = 1).
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+scalar_reduce_dichotomy(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                         BufPtr tmp_buffer) {
+  scalar_reduce_dichotomy_to_target<OP, T>(src_ptr, stride, n, tmp_buffer, 1);
+  return tmp_buffer[0];
+}
+
+/// Reduces to single element using pairwise reduction for SUM (half/float).
+/// - If n <= num_per_repeat: directly pairwise reduce to 1
+/// - If n > num_per_repeat: first dichotomy to num_per_repeat, then pairwise to 1
+/// Template parameter BufPtr can be T* (stack buffer) or __ubuf__ T* (UB buffer).
+template <ReduceOpTy OP, typename T, typename BufPtr>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM), T>
+scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                        BufPtr tmp_buffer) {
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  
+  if (n == 1) {
+    return *src_ptr;
+  }
+  
+  int64_t current_size;
+  if (n > num_per_repeat) {
+    current_size = scalar_reduce_dichotomy_to_target<OP, T>(
+        src_ptr, stride, n, tmp_buffer, num_per_repeat);
+  } else {
+    current_size = pairwise_reduce_from_src<OP, T>(src_ptr, stride, n, tmp_buffer);
+  }
+  
+  while (current_size > 1) {
+    current_size = pairwise_reduce_buffer<OP, T>(tmp_buffer, current_size);
+  }
+  
+  return tmp_buffer[0];
+}
+
+/// Block-wise reduction to num_per_repeat, then dichotomy to 1.
+/// - If n <= num_per_repeat: directly dichotomy reduce to 1
+/// - If n > num_per_repeat: first block-wise reduce to num_per_repeat, then dichotomy to 1
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline))
+std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD), T>
+scalar_reduce_two_phase(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
+                        __ubuf__ T *tmp_buffer) {
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  
+  if (n == 1) {
+    return *src_ptr;
+  }
+  
+  if (n <= num_per_repeat) {
+    return scalar_reduce_dichotomy<OP, T, __ubuf__ T*>(src_ptr, stride, n, tmp_buffer);
+  }
+  
+  int64_t num_chunks = n / num_per_repeat;
+  int64_t tail_size = n % num_per_repeat;
+  
+  for (int64_t i = 0; i < num_per_repeat; ++i) {
+    tmp_buffer[i] = *(src_ptr + i * stride);
+  }
+  
+  for (int64_t chunk = 1; chunk < num_chunks; ++chunk) {
+    for (int64_t i = 0; i < num_per_repeat; ++i) {
+      T val = *(src_ptr + (chunk * num_per_repeat + i) * stride);
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
+    }
+  }
+  
+  if (tail_size > 0) {
+    for (int64_t i = 0; i < tail_size; ++i) {
+      T val = *(src_ptr + (num_chunks * num_per_repeat + i) * stride);
+      tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
+    }
+  }
+  
+  int64_t current_size = num_per_repeat;
+  while (current_size > 1) {
+    current_size = dichotomy_reduce_buffer<OP, T>(tmp_buffer, current_size);
+  }
+  
+  return tmp_buffer[0];
 }
 
 extern "C" {
@@ -1440,6 +1672,120 @@ DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t);
 DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t);
 DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
 DECLARE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
+
+//===-------------------------------------------------------------------===//
+// reduce 3d middim (dim1), 3 dim
+//===-------------------------------------------------------------------===//
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, half);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, float);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int64_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint64_t);
+
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_ARA(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
+
+//===-------------------------------------------------------------------===//
+// reduce aar (3D, reduce along last axis), 3 dim
+//===-------------------------------------------------------------------===//
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, half);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, float);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_prod, ReduceOpTy::REDUCE_PROD, 3, int16_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_xori, ReduceOpTy::REDUCE_XOR, 3, int64_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_ori, ReduceOpTy::REDUCE_OR, 3, uint64_t);
+
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint8_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint16_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t);
+DECLARE_ENTIRE_REDUCE_AAR(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t);
+
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, float);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_sum, ReduceOpTy::REDUCE_SUM, 3,
+                                     float);
+
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,
+                                   float);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,
+                                    half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_max, ReduceOpTy::REDUCE_MAX, 3,
+                                    float);
+
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3, half);
+DECLARE_ENTIRE_REDUCE_ENABLEVC_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3,
+                                   float);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3,
+                                    half);
+DECLARE_ENTIRE_REDUCE_ENABLEVCG_AAR(reduce_min, ReduceOpTy::REDUCE_MIN, 3,
+                                    float);
 
 //===-------------------------------------------------------------------===//
 // reduce r with index, 1 dim

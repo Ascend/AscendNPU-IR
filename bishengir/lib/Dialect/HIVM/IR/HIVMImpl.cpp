@@ -55,9 +55,20 @@ static Container filterNonIgnoredOps(const Container &container) {
 }
 
 int64_t getUsersNum(Value v) {
-  return filterNonIgnoredOps(
-             DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()))
-      .size();
+  auto users = filterNonIgnoredOps(
+      DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()));
+
+  // DebugOp and FixpipeOp used for DebugOp cannot be as a user.
+  for (auto it = users.begin(); it != users.end();) {
+    if (isa<DebugOp>(*it) ||
+        (isa<FixpipeOp>(*it) &&
+         dyn_cast<FixpipeOp>(*it)->getAttr(usedForDebugOp))) {
+      users.erase(it++);
+    } else {
+      ++it;
+    }
+  }
+  return users.size();
 }
 
 bool isLocalMatmulInit(Operation *op, Value v) {
@@ -74,6 +85,17 @@ bool traceSingleChainUser(
     Value v, const std::function<bool(Operation *, Value v)> &isMatchedOp) {
   auto users = filterNonIgnoredOps(
       DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()));
+
+  // DebugOp and FixpipeOp used for DebugOp cannot be as a user.
+  for (auto it = users.begin(); it != users.end();) {
+    if (isa<DebugOp>(*it) ||
+        (isa<FixpipeOp>(*it) &&
+         dyn_cast<FixpipeOp>(*it)->getAttr(usedForDebugOp))) {
+      users.erase(it++);
+    } else {
+      ++it;
+    }
+  }
   LDBG("Here computin for value " << v << " " << users.size());
   if (users.size() != 1)
     return false;
@@ -228,6 +250,23 @@ std::optional<TFuncCoreType> queryFuncCoreType(Operation *funcOp) {
   return std::nullopt;
 }
 
+// TODO: Refactor, expand getCoreType of copy op
+bool isCopytoL1(Operation *op) {
+  if (!isa<hivm::CopyOp>(op))
+    return false;
+
+  auto copy = dyn_cast<hivm::CopyOp>(op);
+  auto maybeAlloc = traceDefOp<memref::AllocOp>(copy.getDst());
+  if (!maybeAlloc.has_value())
+    return false;
+  auto allocOp = dyn_cast<memref::AllocOp>(maybeAlloc.value());
+  auto mayAddrSpace =
+      mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
+  if (mayAddrSpace.has_value())
+    return mayAddrSpace.value() == AddressSpace::L1;
+  return false;
+}
+
 FailureOr<TCoreType> getCoreType(Operation *op) {
   // coretype attribute has the highest priority.
   if (auto coreTypeAttr =
@@ -264,7 +303,7 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
     return kTFuncCoreType2TCoreType.find(funcCoreType.value())->second;
   }
   if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
-    if (auto attr = forOp->getAttr("ExtractedLoadOrStore")) {
+    if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;
@@ -383,7 +422,7 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
   } else if (isa<MemRefType>(src.getType())) {
     resultTypeRange = TypeRange({});
   } else {
-    llvm_unreachable("Cast src is neither in tensor type nor in memref type");
+    llvm::report_fatal_error("Cast src is neither in tensor type nor in memref type");
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
@@ -450,7 +489,7 @@ static bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
   case IntegerType::Unsigned:
     return true;
   }
-  llvm_unreachable("Unexpected IntegerType::SignednessSemantics");
+  llvm::report_fatal_error("Unexpected IntegerType::SignednessSemantics");
 }
 
 std::string getTypeName(Location loc, Type type,
@@ -495,6 +534,130 @@ std::string getTypeName(Location loc, Type type,
   return unknown;
 }
 
+static LogicalResult getCastSrcUnAlignSizeInfo(
+    Value src, SmallVector<int64_t> castAlignDims, int64_t bytesFactor,
+    std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList) {
+  // get alignment bytes
+  ShapedType srcType = cast<ShapedType>(src.getType());
+  auto maybeHwAlignBytes = getHWAlignBytes(srcType);
+  if (!maybeHwAlignBytes.has_value()) {
+    return failure();
+  }
+
+
+  // collect unalign info of src if cast src dims are not aligned.
+  auto hwAlignBytes = maybeHwAlignBytes.value();
+  auto elemTypeBytes = getElementTypeOrSelf(srcType).getIntOrFloatBitWidth() /
+                      mlir::utils::INTR_BITS_PER_BYTE;
+  #ifndef NDEBUG
+  const int b16InByte = 2;
+  const int b32InByte = 4;
+  assert((elemTypeBytes == b16InByte || elemTypeBytes == b32InByte) &&
+      "Src only supports b32/b16 in cast overflow.");
+  #endif
+  auto shape = cast<ShapedType>(src.getType()).getShape();
+  int64_t numElemPerBlock = mlir::utils::INTR_BYTES_PER_BLOCK / elemTypeBytes;
+  int64_t numElemPerBlockForDst = numElemPerBlock * bytesFactor;
+  int64_t rank = srcType.getRank();
+  // For example (a, b)strides<n1, 1>*i32 cast to (a, b)strides<n2, 1>*i8:
+  // 1. (a, b)strides<n1, 1>*i32 view as (a, b*4)strides<n1*4, 1>*i8
+  // 2. i8 transpose: Used to separate the high and low bits of int32, make sure
+  //    the shape of tranpose is 32*32 aligned.
+  // 3. i8 copyubtoub: Take out the lower 8 bits.
+  // 4. i8 transpose: Transpose back to get the final cast result, make sure the
+  //    shape of tranpose is 32*32 aligned.
+  // 5. When n2 is aligned with multiple blocks, need to add another copyubtoub
+  //    to adjust it to the target stride.
+  if (rank == 1) {
+    // The 1D scene is quite special and needs to be converted into a
+    // corresponding 2D scene to implement.
+    if (!ShapedType::isDynamic(shape[0]) && shape[0] <= numElemPerBlockForDst) {
+      hwAlignBytes = static_cast<unsigned>(
+        CEIL_FACTOR(shape[0] * bytesFactor, numElemPerBlockForDst) *
+        numElemPerBlockForDst);
+    } else {
+      hwAlignBytes = static_cast<unsigned>(numElemPerBlockForDst *
+                                          numElemPerBlockForDst * bytesFactor);
+    }
+    if (ShapedType::isDynamic(shape[0]) ||
+        (shape[0] * elemTypeBytes) % hwAlignBytes != 0) {
+      auto srcAlignInfo = std::make_unique<OperAlignInfo>(src, 0, hwAlignBytes);
+      operAlignInfoList->push_back(std::move(srcAlignInfo));
+    }
+  } else {
+  #ifndef NDEBUG
+    const int supportedCastAlignDimSize = 2;
+    assert(castAlignDims.size() == supportedCastAlignDimSize &&
+        "When cast rank >= 2, castAlignDims size must be equal to 2");
+  #endif
+    // Align the second axis in castAlignDims.
+    if (ShapedType::isDynamic(shape[castAlignDims[1]]) ||
+        (shape[castAlignDims[1]] * elemTypeBytes) % hwAlignBytes != 0) {
+      auto srcAlignInfo =
+          std::make_unique<OperAlignInfo>(src, castAlignDims[1], hwAlignBytes);
+      operAlignInfoList->push_back(std::move(srcAlignInfo));
+    }
+    // Align the first axis in castAlignDims.
+    hwAlignBytes = static_cast<unsigned>(numElemPerBlockForDst * bytesFactor);
+    if (ShapedType::isDynamic(shape[castAlignDims[0]]) ||
+        (static_cast<uint64_t>(shape[castAlignDims[0]]) * elemTypeBytes) %
+        hwAlignBytes !=
+        0) {
+      auto srcAlignInfo =
+          std::make_unique<OperAlignInfo>(src, castAlignDims[0], hwAlignBytes);
+      operAlignInfoList->push_back(std::move(srcAlignInfo));
+    }
+  }
+  return success();
+}
+
+
+static LogicalResult getCastDstUnAlignSizeInfo(
+    Value dst, SmallVector<int64_t> castAlignDims,
+    std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList) {
+  // get alignment bytes
+  ShapedType dstType = cast<ShapedType>(dst.getType());
+  auto maybeHwAlignBytes = getHWAlignBytes(dstType);
+  if (!maybeHwAlignBytes.has_value()) {
+    return failure();
+  }
+
+
+  // collect unalign info of dst if cast dst dims are not aligned
+  auto hwAlignBytes = maybeHwAlignBytes.value();
+  auto elemTypeBytes = getElementTypeOrSelf(dstType).getIntOrFloatBitWidth() /
+                      mlir::utils::INTR_BITS_PER_BYTE;
+  assert(elemTypeBytes == 1 && "Dst only supports b8 in cast overflow.");
+  auto shape = cast<ShapedType>(dst.getType()).getShape();
+  uint64_t numElemPerBlock = mlir::utils::INTR_BYTES_PER_BLOCK / elemTypeBytes;
+  int64_t rank = dstType.getRank();
+  // For example (a, b)strides<n1, 1>*i32 cast to (a, b)strides<n2, 1>*i8:
+  // 1. (a, b)strides<n1, 1>*i32 view as (a, b*4)strides<n1*4, 1>*i8
+  // 2. i8 transpose: Used to separate the high and low bits of int32, make sure
+  //    the shape of tranpose is 32*32 aligned.
+  // 3. i8 copyubtoub: Take out the lower 8 bits.
+  // 4. i8 transpose: Transpose back to get the final cast result, make sure the
+  //    shape of tranpose is 32*32 aligned.
+  // 5. When n2 is aligned with multiple blocks, need to add another copyubtoub
+  //    to adjust it to the target stride.
+  if (rank == 1) {
+    // The 1D scene is quite special and needs to be converted into a
+    // corresponding 2D scene to implement.
+    hwAlignBytes = numElemPerBlock * numElemPerBlock;
+  }
+  for (auto checkDim : castAlignDims) {
+    if (ShapedType::isDynamic(shape[checkDim]) ||
+        (static_cast<uint64_t>(shape[checkDim]) * elemTypeBytes) %
+        hwAlignBytes !=
+        0) {
+      auto dstAlignInfo =
+          std::make_unique<OperAlignInfo>(dst, checkDim, hwAlignBytes);
+      operAlignInfoList->push_back(std::move(dstAlignInfo));
+    }
+  }
+  return success();
+}
+
 static void collectOpAlignInfo(
     Operation *op, SmallVector<int64_t> checkDims,
     llvm::SmallDenseMap<Value, uint32_t> *alignBytes,
@@ -514,6 +677,46 @@ static void collectOpAlignInfo(
       }
     }
   }
+}
+
+LogicalResult getUnAlignSizeInfo(
+    VCastOp op,
+    std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList) {
+  auto srcType = cast<ShapedType>(op.getSrc()[0].getType());
+  auto dstType = cast<ShapedType>(op.getDst()[0].getType());
+  auto srcElemTypeBytes =
+      getElementTypeOrSelf(srcType).getIntOrFloatBitWidth() /
+      mlir::utils::INTR_BITS_PER_BYTE;
+  auto dstElemTypeBytes =
+      getElementTypeOrSelf(dstType).getIntOrFloatBitWidth() /
+      mlir::utils::INTR_BITS_PER_BYTE;
+  auto bytesFactor = srcElemTypeBytes / dstElemTypeBytes;
+
+
+  // Get the cast axis that needs to be aligned.
+  SmallVector<int64_t> castAlignDims;
+  int64_t rank = srcType.getRank();
+  if (rank == 1) {
+    castAlignDims.push_back(0);
+  } else if (rank >= 2) {
+    castAlignDims.push_back(rank - 2);
+    castAlignDims.push_back(rank - 1);
+  } else {
+    llvm::report_fatal_error("cast op rank need lager than 0.");
+  }
+
+
+  // Get the unalign information of the axis corresponding to cast src.
+  if (failed(getCastSrcUnAlignSizeInfo(op.getSrc()[0], castAlignDims,
+                                      bytesFactor, operAlignInfoList))) {
+    return failure();
+  }
+  // Get the unalign information of the axis corresponding to cast dst.
+  if (failed(getCastDstUnAlignSizeInfo(op.getDst()[0], castAlignDims,
+                                      operAlignInfoList))) {
+    return failure();
+  }
+  return success();
 }
 
 LogicalResult getUnAlignSizeInfo(
@@ -625,7 +828,7 @@ uint32_t getHWAlignBytes(Attribute spaceAttr) {
   case hivm::AddressSpace::L1:
     return hivm::util::BL;
   default:
-    llvm_unreachable("Unsupported address space");
+    llvm::report_fatal_error("Unsupported address space");
   }
 }
 
@@ -647,11 +850,109 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
     return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
                                    targetMemScope);
   }
-  llvm_unreachable("Unexpected BaseMemRefType");
+  llvm::report_fatal_error("Unexpected BaseMemRefType");
   return type;
 }
 
 } // namespace util
+
+namespace {
+mlir::FailureOr<EventAttr> parseOptionalEventAttr(AsmParser &parser) {
+  if (Attribute stripped = EventAttr::parse(parser, Type{}))
+    return llvm::cast<EventAttr>(stripped);
+  return failure();
+}
+
+std::optional<SyncEventSlotMacroSync>
+tryParseMacroSyncKeyword(AsmParser &parser) {
+  for (StringRef keyword : {"wait", "set", "internal"}) {
+    if (succeeded(parser.parseOptionalKeyword(keyword)))
+      return symbolizeSyncEventSlotMacroSync(keyword);
+  }
+  return std::nullopt;
+}
+} // namespace
+
+Attribute SyncEventSlotAttr::parse(AsmParser &parser, Type) {
+  PipeAttr setPipe;
+  PipeAttr waitPipe;
+  SyncEventSlotMacroSync macroSync = SyncEventSlotMacroSync::internal;
+  EventAttr event;
+
+  if (parser.parseLess())
+    return {};
+
+  if (auto parsedMacroSync = tryParseMacroSyncKeyword(parser)) {
+    if (*parsedMacroSync != SyncEventSlotMacroSync::internal) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "macro_sync without pipes is only supported for "
+                       "`internal`");
+      return {};
+    }
+    macroSync = *parsedMacroSync;
+    if (parser.parseOptionalComma().succeeded()) {
+      auto parsedEvent = parseOptionalEventAttr(parser);
+      if (failed(parsedEvent))
+        return {};
+      event = *parsedEvent;
+    }
+    if (parser.parseGreater())
+      return {};
+    return SyncEventSlotAttr::get(parser.getContext(), setPipe, waitPipe,
+                                  macroSync, event);
+  }
+
+  if (parser.parseAttribute(setPipe) || parser.parseComma() ||
+      parser.parseAttribute(waitPipe))
+    return {};
+
+  if (parser.parseOptionalComma().succeeded()) {
+    auto loc = parser.getCurrentLocation();
+    if (auto parsedMacroSync = tryParseMacroSyncKeyword(parser)) {
+      macroSync = *parsedMacroSync;
+      if (parser.parseOptionalComma().succeeded()) {
+        auto parsedEvent = parseOptionalEventAttr(parser);
+        if (failed(parsedEvent))
+          return {};
+        event = *parsedEvent;
+      }
+    } else {
+      auto parsedEvent = parseOptionalEventAttr(parser);
+      if (failed(parsedEvent)) {
+        parser.emitError(loc, "expected `wait`, `set`, `internal`, or an event "
+                              "attribute");
+        return {};
+      }
+      event = *parsedEvent;
+    }
+  }
+
+  if (parser.parseGreater())
+    return {};
+
+  return SyncEventSlotAttr::get(parser.getContext(), setPipe, waitPipe,
+                                macroSync, event);
+}
+
+void SyncEventSlotAttr::print(AsmPrinter &printer) const {
+  printer << "<";
+  if (!getSetPipe()) {
+    printer << stringifySyncEventSlotMacroSync(getMacroSync());
+  } else {
+    printer << getSetPipe();
+    printer << ", ";
+    printer << getWaitPipe();
+    if (getMacroSync() != SyncEventSlotMacroSync::internal)
+      printer << ", " << stringifySyncEventSlotMacroSync(getMacroSync());
+    else if (getEvent())
+      printer << ", internal";
+  }
+  if (getEvent()) {
+    printer << ", ";
+    printer.printStrippedAttrOrType(getEvent());
+  }
+  printer << ">";
+}
 
 } // namespace hivm
 } // namespace mlir

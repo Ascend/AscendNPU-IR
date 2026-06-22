@@ -21,6 +21,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -76,7 +77,8 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   for (auto *user : users) {
     // TODO: add auto tracedDownUser = traceDown(user) and use tracedDownUser to
     // judge
-    if (!isa<scf::YieldOp>(user) || !isa<scf::ForOp>(user->getParentOp())) {
+    auto forOp = user->getParentOfType<scf::ForOp>();
+    if (!isa<scf::YieldOp>(user) || !forOp) {
       continue;
     } else {
       yieldOperands.emplace(user);
@@ -96,28 +98,66 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   auto yieldValueIndx = findIdx(llvm::to_vector(yieldOperand->getOperands()),
                                 op->getResult(resultIndx));
   if (!yieldValueIndx.has_value())
-    llvm_unreachable("yield value must have user");
+    llvm::report_fatal_error("yield value must have user");
   resultIndx = yieldValueIndx.value();
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
+bool isAccumulationImpl(Operation *op, Value accumulator) {
+  if (!accumulator)
+    return false;
+
+  auto forOp = op->getParentOfType<scf::ForOp>();
+  if (!forOp)
+    return false;
+
+  auto accArg = dyn_cast<BlockArgument>(accumulator);
+  if (!accArg || accArg.getOwner() != forOp.getBody() ||
+      accArg.getArgNumber() < forOp.getNumInductionVars()) {
+    return false;
+  }
+
+  unsigned iterIdx = accArg.getArgNumber() - forOp.getNumInductionVars();
+
+  Value val = op->getResult(0);
+  while (val) {
+    if (val == forOp.getBody()->getTerminator()->getOperand(iterIdx)) {
+      return true;
+    }
+
+    if (!val.hasOneUse()) {
+      return false;
+    }
+
+    auto yieldOp = dyn_cast<scf::YieldOp>(*val.user_begin());
+    if (!yieldOp) {
+      return false;
+    }
+
+    if (auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp())) {
+      unsigned operandIdx = val.use_begin()->getOperandNumber();
+      val = ifOp.getResult(operandIdx);
+    } else {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 bool isAccumulation(Operation *op) {
-  // TODO: make this check more accurate
-  auto mmadL1Op = dyn_cast_if_present<hivm::MmadL1Op>(op);
-  if (!mmadL1Op) {
-    return false;
-  }
-  auto scfForOp = dyn_cast_if_present<scf::ForOp>(mmadL1Op->getParentOp());
-  if (!scfForOp) {
-    return false;
-  }
-  Value c = mmadL1Op.getC();
-  Value r = mmadL1Op.getResultTensors()[0];
-  if (isa<BlockArgument>(c)) {
-    return traceSingleChainUser(r, [](Operation *op, Value val) {
-             return isa<scf::YieldOp>(op);
-           });
-  }
+  if (auto mmadOp = dyn_cast<hivm::MmadL1Op>(op))
+    return isAccumulationImpl(op, mmadOp.getC());
+
+  if (auto conv1d = dyn_cast<hivm::Conv1DL1Op>(op))
+    return isAccumulationImpl(op, conv1d.getInit());
+
+  if (auto conv2d = dyn_cast<hivm::Conv2DL1Op>(op))
+    return isAccumulationImpl(op, conv2d.getInit());
+
+  if (auto conv3d = dyn_cast<hivm::Conv3DL1Op>(op))
+    return isAccumulationImpl(op, conv3d.getInit());
+
   return false;
 }
 
@@ -179,6 +219,76 @@ public:
   }
 };
 
+/// Insert fixpipe for hivm::ConvOp.
+template <typename ConvOp>
+struct InsertFixpipeForConvOpPattern : public OpRewritePattern<ConvOp> {
+public:
+  using OpRewritePattern<ConvOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(ConvOp op,
+                                PatternRewriter &rewriter) const override {
+
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+
+    if (op->getAttr(fixpipeAlreadyInserted))
+      return failure();
+
+    auto result = op.getResultTensors()[0];
+    auto resultType = dyn_cast<RankedTensorType>(result.getType());
+    if (!resultType) {
+      return failure();
+    }
+
+    auto init = op.getInit();
+    auto initType = dyn_cast<RankedTensorType>(init.getType());
+    if (!initType) {
+      return failure();
+    }
+
+    auto elementType = resultType.getElementType();
+
+    // === insert fixpipe ===
+    int resultIndx = 0;
+    Operation *insertAfterOp = nullptr;
+    if (isAccumulation(op)) {
+      // only insert fixpipe outside of the for loop when it is an accumulation
+      // loop
+      insertAfterOp = getInsertPoint(op, resultIndx);
+    } else {
+      insertAfterOp = op;
+    }
+    rewriter.setInsertionPointAfter(insertAfterOp);
+    Location loc = insertAfterOp->getLoc();
+
+    Value fixpipeInit = rewriter.create<tensor::EmptyOp>(
+        loc, resultType.getShape(), elementType);
+
+    // Create FixpipeDMAModeAttr with NZ2ND mode
+    MLIRContext *ctx = rewriter.getContext();
+    FixpipeDMAModeAttr dmaModeAttr =
+        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+
+    auto fixpipeOp = rewriter.create<FixpipeOp>(
+        loc,
+        fixpipeInit.getType(),                // result_tensor
+        insertAfterOp->getResult(resultIndx), // src
+        fixpipeInit,                          // dst
+        dmaModeAttr,                          // dma_mode (NZ2ND)
+        FixpipeDualDstModeAttr{},             // dual_dst_mode (default)
+        /*pre_quant=*/nullptr,                // pre_quant
+        /*pre_relu=*/nullptr,                 // pre_relu
+        /*channel_split=*/nullptr             // channel_split
+    );
+
+    rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
+                                  fixpipeOp.getResultTensor(), fixpipeOp);
+
+    op->setAttr(fixpipeAlreadyInserted, rewriter.getBoolAttr(true));
+    return success();
+  }
+};
+
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
@@ -203,7 +313,7 @@ std::optional<FixpipePreReluMode> getReluMode(OpType op) {
   if constexpr (std::is_same_v<OpType, hivm::VReluOp>) {
     return hivm::symbolizeFixpipePreReluMode("NORMAL_RELU");
   }
-  llvm_unreachable("unsupported ReluValue");
+  llvm::report_fatal_error("unsupported ReluValue");
 }
 
 Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
@@ -216,7 +326,7 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
     return rewriter.getBF16Type();
   if (quant == FixpipePreQuantMode::S322I8)
     return rewriter.getI8Type();
-  llvm_unreachable("unsupported QuantMode");
+  llvm::report_fatal_error("unsupported QuantMode");
 }
 
 int64_t getSiftedUsersNum(Value v) {
@@ -262,9 +372,10 @@ private:
     auto loc = op.getLoc();
     Operation *curOp = nullptr;
     for (Operation *maybeDebugOp : op.getResultTensor().getUsers()) {
-      if (isa<hivm::DebugOp>(maybeDebugOp)) {
+      if (isa<hivm::DebugOp>(maybeDebugOp) && !op->getAttr(usedForDebugOp)) {
         rewriter.setInsertionPoint(maybeDebugOp);
         FixpipeOp clonedFixpipeOp = cast<FixpipeOp>(rewriter.clone(*op));
+        clonedFixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
         Value clonedResult = clonedFixpipeOp->getResult(0);
         hivm::DebugOp debugOp = cast<hivm::DebugOp>(maybeDebugOp);
         rewriter.modifyOpInPlace(
@@ -526,9 +637,6 @@ public:
         !traceDefOp<BatchMmadL1Op>(maybeMmadRes).has_value())
       return failure();
 
-    if (!isUsedByForYieldOp(maybeMmadRes))
-      return failure();
-
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, op->getLoc(), maybeMmadRes);
     MLIRContext *ctx = rewriter.getContext();
@@ -540,18 +648,19 @@ public:
         /*dst=*/fixpipeInit, dmaModeAttr, FixpipeDualDstModeAttr{},
         /*pre_quant=*/nullptr,
         /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+    fixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
+    auto tcoretype = op.getTcoretypeAttr();
+    auto memscope = op.getMemscopeAttr();
     rewriter.replaceOpWithNewOp<DebugOp>(
         op, op.getDebugtype(), op.getPrefix(), op.getHex(),
-        fixpipeOp.getResultTensor(),
-        hivm::TCoreTypeAttr::get(op->getContext(),
-                                 hivm::TCoreType::CUBE_OR_VECTOR));
+        fixpipeOp.getResultTensor(), tcoretype, memscope);
     LDBG("InsertFixpipeForDevicePrint");
     return success();
   }
 
-  bool isUsedByForYieldOp(Value v) const {
+  bool isUsedByDebugOp(Value v) const {
     for (Operation *user : v.getUsers()) {
-      if (isa<scf::YieldOp>(user) && isa<scf::ForOp>(user->getParentOp()))
+      if (isa<DebugOp>(user))
         return true;
     }
     return false;
@@ -562,8 +671,10 @@ void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
+  patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
+  patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
+  patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
   patterns.add<InlineFixpipeOpPattern>(ctx);
-  patterns.add<InsertFixpipeForDevicePrint>(ctx);
 }
 
 void InlineFixpipe::runOnOperation() {
@@ -571,6 +682,12 @@ void InlineFixpipe::runOnOperation() {
   populateInlineFixpipePatterns(patterns);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    signalPassFailure();
+  }
+  RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
+  MLIRContext *ctx = insertFixpipeForDevicePrintPattern.getContext();
+  insertFixpipeForDevicePrintPattern.add<InsertFixpipeForDevicePrint>(ctx);
+  if (failed(applyPatternsGreedily(getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
     signalPassFailure();
   }
 }

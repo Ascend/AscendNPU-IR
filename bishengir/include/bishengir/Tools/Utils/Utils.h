@@ -19,6 +19,7 @@
 #define BISHENGIR_TOOLS_UTILS_UTILS_H
 
 #include "bishengir/Tools/BiShengIRConfigBase/Config.h"
+#include "bishengir/Tools/bishengir-compile/Config.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/SmallString.h"
@@ -44,7 +45,7 @@ using IRFilePair =
 llvm::LogicalResult
 runPipeline(mlir::ModuleOp mod,
             const std::function<void(mlir::PassManager &)> &buildPipeline,
-            const bishengir::BiShengIRCompileConfigBase &config,
+            BiShengIRCompileMainConfig &config,
             const std::string &pipelineName);
 
 // apply make_absolute and remove_dots on the given path.

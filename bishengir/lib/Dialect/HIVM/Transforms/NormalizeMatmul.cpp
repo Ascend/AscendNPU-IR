@@ -452,7 +452,9 @@ public:
       return rewriter.notifyMatchFailure(op, "no bias");
     }
     if (op.shouldDecomposeBiasByElementAdd()) {
-      assert(op.isInitConstant(false));
+      if constexpr(std::is_same_v<T, hivm::MmadL1Op>) {
+        assert(op.isInitConstant(false));
+      }
       LDBG("decompose matmul with elemwise add");
       return decomposeMatmulWithElementwiseAdd<T>(rewriter, op);
     }

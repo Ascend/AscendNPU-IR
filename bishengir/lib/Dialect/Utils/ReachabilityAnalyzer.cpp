@@ -50,7 +50,7 @@ inline void ReachabilityAnalyzer::getAndSetMemrefEdge(Operation *op,
     if (curIdx > lastOperationOnMemref[ref])
       edge[lastOperationOnMemref[ref]].push_back(curIdx);
     else
-      llvm_unreachable("should be DAG");
+      llvm::report_fatal_error("should be DAG");
   }
   lastOperationOnMemref[ref] = curIdx;
 }

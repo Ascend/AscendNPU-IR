@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -optimize-hivm-pipeline %s | FileCheck %s
-// RUN: bishengir-opt -optimize-hivm-pipeline="enable-hivm-inject-barrier-all-sync=true" %s | FileCheck %s -check-prefix=CHECK-BAR-ALL
+// RUN: bishengir-opt -optimize-hivm-pipeline="tile-mix-cube-loop=1 tile-mix-vector-loop=1" %s | FileCheck %s
+// RUN: bishengir-opt -optimize-hivm-pipeline="enable-hivm-inject-barrier-all-sync=true tile-mix-cube-loop=1 tile-mix-vector-loop=1" %s | FileCheck %s -check-prefix=CHECK-BAR-ALL
 
 module {
 // CHECK: hivm.hir.set_mask_norm

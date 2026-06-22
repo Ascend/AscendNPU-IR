@@ -269,7 +269,7 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
       rewriter.replaceOp(callOp, rewriter.create<hfusion::CumprodOp>(
                                      loc, srcTy, src, cumDims, *reverse));
     } else {
-      llvm_unreachable("unsupport cumulative function");
+      llvm::report_fatal_error("unsupport cumulative function");
     }
     rewriter.eraseOp(funcOp);
     return success();

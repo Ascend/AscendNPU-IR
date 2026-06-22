@@ -19,8 +19,10 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 
 #include <numeric>
+#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::utils::debugger;
@@ -237,8 +239,10 @@ void DimensionAnalyzerBase::processPadOp(tensor::PadOp padOp) {
 
 template <class T, typename>
 void DimensionAnalyzerBase::processSlicingOp(T slicingOp) {
-  auto src = slicingOp.getSource();
-  auto res = slicingOp.getResult();
+  Value src = slicingOp.getSource();
+  Value res = slicingOp.getResult();
+  if (std::is_same_v<T, tensor::InsertSliceOp>)
+    std::swap(src, res);
   SmallVector<OpFoldResult> srcShape;
   if (auto expandOp = src.template getDefiningOp<tensor::ExpandShapeOp>()) {
     srcShape = expandOp.getMixedOutputShape();

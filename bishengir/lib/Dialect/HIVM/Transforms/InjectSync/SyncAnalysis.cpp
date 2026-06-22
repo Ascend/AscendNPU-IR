@@ -539,9 +539,10 @@ void SyncAnalyzer::MemAnalyze(CompoundInstanceElement *nowCompound,
     return;
   }
   if (forEndIndex.has_value()) {
-    size_t eventIdNum = GetEventIdNum(depBaseMemInfosVec);
-    for (size_t i = 1; i < eventIdNum; i++) {
-      if (isAlreadySync(nowCompound, frontCompound, syncRecordList, i)) {
+    const int eventIdNum = GetEventIdNum(depBaseMemInfosVec);
+    for (int i = 1; i < eventIdNum; ++i) {
+      if (isAlreadySync(nowCompound, frontCompound, syncRecordList,
+                        static_cast<unsigned>(i))) {
         // already sync by checking corresponding multi buffer records, no need
         // to insert sync any more
         return;
@@ -662,7 +663,7 @@ void SyncAnalyzer::InsertBlockSyncOperation(
     } else {
       // currently it is only expected to have cube-cube pipe-barrier-cube
       // sync-operations. as vecto-vector is not supported yet.
-      llvm_unreachable("unsupported vector-vector sync mode");
+      llvm::report_fatal_error("unsupported vector-vector sync mode");
     }
   } else {
     std::unique_ptr<SyncOperation, std::default_delete<SyncOperation>>

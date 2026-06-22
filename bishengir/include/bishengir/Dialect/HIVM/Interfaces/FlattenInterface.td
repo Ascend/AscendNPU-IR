@@ -50,7 +50,7 @@ def FlattenInterface : OpInterface<"FlattenInterface"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm_unreachable("get limited axes is not implemented");
+        llvm::report_fatal_error("get limited axes is not implemented");
       }]
     >,
     InterfaceMethod<

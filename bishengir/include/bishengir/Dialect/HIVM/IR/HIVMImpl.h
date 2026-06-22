@@ -30,6 +30,10 @@
 
 namespace mlir {
 namespace hivm {
+static constexpr llvm::StringLiteral usedForDebugOp = "used_for_debug_op";
+
+static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+
 /// find v in vector valueVec
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v);
 
@@ -294,6 +298,9 @@ LogicalResult getUnAlignSizeInfo(
     std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 LogicalResult getUnAlignSizeInfo(
+  VCastOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
+
+LogicalResult getUnAlignSizeInfo(
     VSortOp op, std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList);
 
 // TODO: move to platform info
@@ -305,6 +312,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope);
 
 } // namespace util
+bool isCopytoL1(Operation *op);
 } // namespace hivm
 } // namespace mlir
 
