@@ -30,3 +30,17 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK: func.func @simple_indirect_load_from_to_tensor_scope_0(%arg0: memref<8xi64> {hivm.memory_effect = #hivm.memory_effect<read>}, %arg1: memref<?xf32> {hivm.memory_effect = #hivm.memory_effect<read>}, %arg2: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<write>})
+module {
+  func.func @simple_indirect_load_from_to_tensor_scope_0(%arg0: memref<8xi64>, %arg1: memref<?xf32>, %arg2: memref<8xf32>) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %c1_i32 = arith.constant 1 : i32
+    %0 = bufferization.to_tensor %arg0 restrict writable : memref<8xi64>
+    %1 = tensor.empty() : tensor<8xf32>
+    %2 = hivm.hir.gather_load ins(%arg1 : memref<?xf32>, %0 : tensor<8xi64>, %c1_i32 : i32) outs(%1 : tensor<8xf32>) -> tensor<8xf32>
+    hivm.hir.local_store ins(%arg2 : memref<8xf32>, %2 : tensor<8xf32>)
+    return
+  }
+}

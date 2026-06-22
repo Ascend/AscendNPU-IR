@@ -64,6 +64,20 @@ func.func @test_elemwise_binary_ops(
 }
 
 // -----
+func.func @test_elemwise_binary_ops_minmax_unsigned(
+  %src1 : memref<6x6xi32>, %src2 : memref<6x6xi32>, %dst : memref<6x6xi32>) {
+  //     CHECK: hivm.hir.vmax{{.*}}is_signed = false
+  linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>}
+    ins(%src1, %src2 : memref<6x6xi32>, memref<6x6xi32>)
+    outs(%dst : memref<6x6xi32>)
+  //     CHECK: hivm.hir.vmin{{.*}}is_signed = false
+  linalg.elemwise_binary {fun = #linalg.binary_fn<min_unsigned>}
+    ins(%src1, %src2 : memref<6x6xi32>, memref<6x6xi32>)
+    outs(%dst : memref<6x6xi32>)
+  return
+}
+
+// -----
 func.func @test_elemwise_binary_ops_div_unsigned(
   %src1 : memref<6x6xi16>, %src2 : memref<6x6xi16>, %dst : memref<6x6xi16>) {
   //     CHECK: hivm.hir.vdiv{{.*}}isSigned = false

@@ -803,15 +803,18 @@ def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
   }];
   let arguments = (ins Variadic<AnyType>:$src, Variadic<AnyShaped>:$dst,
       Optional<AnyMemRef>:$temp_buffer,
+      DefaultValuedAttr<BoolAttr, "true">:$is_signed,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast);
   let builders = [OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
-      "ValueRange":$dst, CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
+      "ValueRange":$dst, CArg<"bool", "true">:$is_signed,
+      CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
       CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>];
   let assemblyFormat = [{
       attr-dict `ins` `(` $src `:` type($src) `)`
       `outs` `(` $dst  `:` type($dst) `)`
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+      (`is_signed` `=` $is_signed^)?
       (`broadcast` `=` $broadcast^)?
       (`transpose` `=` $transpose^)?
       (`->` type($result)^)?
@@ -839,15 +842,18 @@ def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
   }];
   let arguments = (ins Variadic<AnyType>:$src, Variadic<AnyShaped>:$dst,
       Optional<AnyMemRef>:$temp_buffer,
+      DefaultValuedAttr<BoolAttr, "true">:$is_signed,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast);
   let builders = [OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
-      "ValueRange":$dst, CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
+      "ValueRange":$dst, CArg<"bool", "true">:$is_signed,
+      CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
       CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>];
   let assemblyFormat = [{
       attr-dict `ins` `(` $src `:` type($src) `)`
       `outs` `(` $dst  `:` type($dst) `)`
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+      (`is_signed` `=` $is_signed^)?
       (`broadcast` `=` $broadcast^)?
       (`transpose` `=` $transpose^)?
       (`->` type($result)^)?
@@ -1818,6 +1824,8 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
      UniformReassociationFlattenTrait,
      DeclareOpInterfaceMethods<FlattenInterface,
        ["getLimitedAxes", "adjustTargetDimensions"]>,
+     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
+       ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>
     ]> {
   let summary = "Vector Cumprod Op";
@@ -1845,14 +1853,24 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$dst,
+                       Optional<AnyMemRef>:$temp_buffer,
                        ConfinedAttr<DenseI64ArrayAttr,
                        [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
                        BoolAttr:$reverse
   );
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                  "DenseI64ArrayAttr":$cum_dims,
+                  "bool":$reverse)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                  "ArrayRef<int64_t>":$cum_dims,
+                  "bool":$reverse)>
+    ];
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
     attr-dict `ins` `(` $src `:` type($src) `)`
     `outs` `(` $dst `:` type($dst) `)`
+    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
     `cum_dims` `=` $cum_dims
     `reverse` `=` $reverse
     (`->` type($result)^)?

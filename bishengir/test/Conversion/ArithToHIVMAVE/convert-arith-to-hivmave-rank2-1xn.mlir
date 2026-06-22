@@ -61,7 +61,7 @@ func.func @test_select_f16_1x128(%cond: vector<1x128xi1>, %a: vector<1x128xf16>,
 // CHECK-LABEL: @test_constant_dense_false_1x256
 func.func @test_constant_dense_false_1x256() -> vector<1x256xi1> attributes {hivm.vector_function} {
   // CHECK: ave.hir.pge <ALLF> : vector<256xi1>
-  // CHECK: vector.shape_cast %{{.*}} : vector<256xi1> to vector<1x256xi1>
+  // CHECK: builtin.unrealized_conversion_cast %{{.*}} : vector<256xi1> to vector<1x256xi1>
   %cst = arith.constant dense<false> : vector<1x256xi1>
   return %cst : vector<1x256xi1>
 }
@@ -70,7 +70,7 @@ func.func @test_constant_dense_false_1x256() -> vector<1x256xi1> attributes {hiv
 // CHECK-LABEL: @test_constant_dense_true_1x256
 func.func @test_constant_dense_true_1x256() -> vector<1x256xi1> attributes {hivm.vector_function} {
   // CHECK: ave.hir.pge <ALL> : vector<256xi1>
-  // CHECK: vector.shape_cast %{{.*}} : vector<256xi1> to vector<1x256xi1>
+  // CHECK: builtin.unrealized_conversion_cast %{{.*}} : vector<256xi1> to vector<1x256xi1>
   %cst = arith.constant dense<true> : vector<1x256xi1>
   return %cst : vector<1x256xi1>
 }

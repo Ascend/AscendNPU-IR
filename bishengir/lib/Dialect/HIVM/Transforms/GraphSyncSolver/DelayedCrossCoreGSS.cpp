@@ -540,9 +540,8 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
       [&](int64_t anchorId, AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
           AnchorInfo vectorAnchorInfo) {
         assert(isa<Anchor>(mixAnchorInfo.anchorAfter));
-        int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
-        int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
-        assert(depthBefore < depthAfter);
+        assert(mixAnchorInfo.anchorBefore->parentOp !=
+               mixAnchorInfo.anchorAfter->parentOp);
         mixAnchorInfo.anchorBefore =
             dyn_cast<Scope>(mixAnchorInfo.anchorAfter->parentOp)
                 ->body.front()
@@ -563,9 +562,8 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
       [&](int64_t anchorId, AnchorInfo mixAnchorInfo, AnchorInfo cubeAnchorInfo,
           AnchorInfo vectorAnchorInfo) {
         assert(isa<Anchor>(mixAnchorInfo.anchorBefore));
-        int64_t depthBefore = mixAnchorInfo.anchorBefore->getDepth();
-        int64_t depthAfter = mixAnchorInfo.anchorAfter->getDepth();
-        assert(depthBefore > depthAfter);
+        assert(mixAnchorInfo.anchorBefore->parentOp !=
+               mixAnchorInfo.anchorAfter->parentOp);
         mixAnchorInfo.anchorAfter =
             dyn_cast<Scope>(mixAnchorInfo.anchorBefore->parentOp)
                 ->body.back()
@@ -695,6 +693,17 @@ DelayedCrossCoreIRTranslator::buildDelayedFuncIr() {
           mixPlaceHolderOp->cubeAnchorInfo = AnchorInfo(cubePlaceHolderOp);
           mixPlaceHolderOp->vectorAnchorInfo = AnchorInfo(vectorPlaceHolderOp);
         }
+      }
+    }
+    if (depthBefore == depthAfter && mixAnchorInfo.anchorBefore->parentOp !=
+                                         mixAnchorInfo.anchorAfter->parentOp) {
+      if (isa<Anchor>(mixAnchorInfo.anchorAfter)) {
+        createRWOperationBlockBegin(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                    vectorAnchorInfo);
+      }
+      if (isa<Anchor>(mixAnchorInfo.anchorBefore)) {
+        createRWOperationBlockEnd(anchorId, mixAnchorInfo, cubeAnchorInfo,
+                                  vectorAnchorInfo);
       }
     }
   }

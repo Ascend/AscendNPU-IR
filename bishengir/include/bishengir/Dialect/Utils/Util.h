@@ -65,6 +65,10 @@ static constexpr llvm::StringLiteral elementAlignmentBitWidth =
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 const llvm::StringLiteral padConst = "pad_const";
+static constexpr llvm::StringLiteral kInlinableQuantScaleAttr =
+    "enable_fast_tf32_mul";
+static constexpr llvm::StringLiteral kInlinedQuantScaleAttr =
+    "inlined_fast_tf32_mul";
 
 int64_t getNumPerBlock(Type t);
 

@@ -98,6 +98,16 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     signalPassFailure();
   }
 
+  // Remove redundant memref.alloc
+  module->walk([&](memref::AllocOp alloc) {
+    if (alloc.use_empty()) {
+      alloc.erase();
+    } else {
+      module->emitError("memref.alloc should have no use!");
+      signalPassFailure();
+    }
+  });
+
   // Stage2: Convert FuncOp alone
   // Note: Return values are allowed only in test scenarios.
   if (!allowReturnValue) {
@@ -110,6 +120,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
     stage2Target.addLegalOp<tensor::ExtractSliceOp>();
     stage2Target.addIllegalOp<func::FuncOp>();
     stage2Target.addLegalOp<UnrealizedConversionCastOp>();
+    stage2Target.addLegalDialect<scf::SCFDialect>();
     populateFuncToTritonPatterns(stage2Patterns);
 
     if (failed(applyPartialConversion(module, stage2Target,

@@ -488,3 +488,40 @@ func.func @keep_outer_iter_arg_used_by_nested_if_branch_calls(%arg0: index, %arg
   return %res#0 : index
 }
 
+
+// -----
+
+// Regression: the backward dead-iter-arg pattern must not hard-assert when a
+// nested loop result that would be dropped is still consumed by a live
+// (non-terminator) op. This mirrors a mix-mode / cv-pipeline kernel: the outer
+// loop's own results are dead (so the pattern tries to prune both channels),
+// but the nested loop's result feeds an annotation.mark in the outer body
+// (besides being yielded). The nested result does not trace back to the outer
+// iter-arg -- it is produced from a freshly written memref -- so the backward
+// trace leaves the channel removable while a live op still uses it. The pass
+// must bail and leave the loop nest intact instead of aborting.
+// CHECK-LABEL: func.func @bail_nested_result_used_by_live_op
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<1xf32>) {
+// CHECK:   scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}) -> (tensor<1xf32>) {
+// CHECK:     memref.store
+// CHECK:     scf.yield %{{.*}} : tensor<1xf32>
+// CHECK:   }
+// CHECK:   annotation.mark
+// CHECK:   scf.yield %{{.*}} : tensor<1xf32>
+// CHECK: }
+func.func @bail_nested_result_used_by_live_op(%lb: index, %ub: index, %step: index) {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 1.000000e+00 : f32
+  %e = tensor.empty() : tensor<1xf32>
+  %outer = scf.for %i = %lb to %ub step %step iter_args(%a = %e) -> (tensor<1xf32>) {
+    %n = scf.for %j = %lb to %ub step %step iter_args(%x = %a) -> (tensor<1xf32>) {
+      %m = memref.alloc() : memref<1xf32>
+      memref.store %cst, %m[%c0] : memref<1xf32>
+      %t = bufferization.to_tensor %m restrict writable : memref<1xf32>
+      scf.yield %t : tensor<1xf32>
+    }
+    annotation.mark %n {cv_pipeline_lazy_load = true} : tensor<1xf32>
+    scf.yield %n : tensor<1xf32>
+  }
+  return
+}

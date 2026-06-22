@@ -1,4 +1,7 @@
-// RUN: bishengir-opt %s -hivm-split-mix-kernel -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt %s -hivm-mark-tightly-coupled-buffer -hivm-split-mix-kernel -split-input-file -verify-diagnostics | FileCheck %s
+// NOTE: tightly-coupled-buffer tagging moved out of SplitMixKernel into the
+// standalone -hivm-mark-tightly-coupled-buffer pass; it is run first here so the
+// AIC/AIV tightly-coupled CHECK lines below still hold.
 
 module {
   // CHECK-LABEL: add(

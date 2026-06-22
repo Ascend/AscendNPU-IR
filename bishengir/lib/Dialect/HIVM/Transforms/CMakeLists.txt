@@ -66,6 +66,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   HIVMOptFuncOutput.cpp
   HIVMOptSinglePoint.cpp
   HIVMVectorizeOps.cpp
+  HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
   InferHIVMDataLayout.cpp
   InferHIVMMemScope.cpp
@@ -97,6 +98,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   MarkSyncBlockLockWithSubblock.cpp
   MarkMultiBuffer.cpp
   MarkRealCoreType.cpp
+  MarkTightlyCoupledBuffer.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   OutlineAllocInVF.cpp

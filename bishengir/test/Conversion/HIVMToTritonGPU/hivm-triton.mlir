@@ -274,3 +274,23 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: tt.func @merge_16x16_to_64x64_inverse_kernel_mix_mix_aiv_scope_0
+// CHECK-NOT: memref.alloc()
+module {
+  func.func @merge_16x16_to_64x64_inverse_kernel_mix_mix_aiv_scope_0(%arg0: i32, %arg12: index, %arg13: memref<?xf32, #hivm.address_space<gm>> {hivm.memory_effect = #hivm.memory_effect<read>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<gm>}, %arg14: memref<16xf32, #hivm.address_space<ub>> {hivm.memory_effect = #hivm.memory_effect<write>, hivm.simt_mem_scope_hint = #hivm.simt_mem_scope_hint<ub>}) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMT>, no_inline, noinline, outline, vector_type = "simt"} {
+    %cst_1 = arith.constant -1.000000e+00 : f32
+    %218 = arith.index_cast %arg0 : i32 to index
+    %219 = affine.apply affine_map<()[s0, s1] -> (s0 + s1)>()[%arg12, %218]
+    %reinterpret_cast = memref.reinterpret_cast %arg13 to offset: [%219], sizes: [16], strides: [1] : memref<?xf32, #hivm.address_space<gm>> to memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>
+    %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%reinterpret_cast : memref<16xf32, strided<[1], offset: ?>, #hivm.address_space<gm>>) outs(%alloc : memref<16xf32, #hivm.address_space<ub>>) eviction_policy = <EvictFirst> core_type = <VECTOR>
+    %220 = bufferization.to_tensor %alloc restrict writable : memref<16xf32, #hivm.address_space<ub>>
+    %221 = tensor.empty() : tensor<16xf32>
+    %222 = hivm.hir.vmul ins(%220, %cst_1 : tensor<16xf32>, f32) outs(%221 : tensor<16xf32>) -> tensor<16xf32>
+    hivm.hir.local_store ins(%arg14 : memref<16xf32, #hivm.address_space<ub>>, %222 : tensor<16xf32>)
+    return
+  }
+}

@@ -6,22 +6,28 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implement create scope for gather_load and scatter_store.
+// This file implements autoscope creation for gather_load and scatter_store.
+//
+// Core design:
+// 1. AutoScope uses a conservative boundary and only clones the tensor/SSA
+//    subgraph needed by each SIMT seed.
+// 2. Backward collection stops as soon as it reaches a memref-typed value, so
+//    memory-access producers stay outside the SIMT scope by default.
+// 3. This keeps scope placement independent from alloc sharing and matches the
+//    default preference for leaving memory movement in surrounding SIMD code.
+// 4. Broader scope expansion is left to future cost-model driven policies.
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
-#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Support/LLVM.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
@@ -40,6 +46,129 @@ struct AutoScopePass : public impl::AutoScopeBase<AutoScopePass> {
   void runOnOperation() override;
 };
 
+using OrderedOps = llvm::SmallVector<Operation *>;
+using VisitedOps = llvm::SmallPtrSet<Operation *, 16>;
+using SeedSet = llvm::SmallPtrSet<Operation *, 16>;
+
+// Per-seed rewrite plan. The plan only contains tensor/SSA producers and the
+// seed itself; memref-side producers remain outside the scope boundary.
+struct SeedInfo {
+  explicit SeedInfo(Operation *seedOp) : seedOp(seedOp) {}
+  SeedInfo() = default;
+
+  Operation *seedOp = nullptr;
+  OrderedOps plannedOps;
+};
+
+bool isSimtSeedOp(Operation *op) {
+  return isa<hivm::GatherLoadOp, hivm::ScatterStoreOp>(op);
+}
+
+bool isMemRefBoundary(Value value) {
+  return llvm::isa<BaseMemRefType>(value.getType());
+}
+
+void forEachSeedDependencyValue(Operation *seedOp,
+                                llvm::function_ref<void(Value)> fn) {
+  if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(seedOp)) {
+    fn(loadOp.getBase());
+    fn(loadOp.getIndices());
+    fn(loadOp.getDst());
+    if (loadOp.getMask()) {
+      fn(loadOp.getMask());
+    }
+    if (loadOp.getOther()) {
+      fn(loadOp.getOther());
+    }
+    return;
+  }
+  if (auto storeOp = llvm::dyn_cast<hivm::ScatterStoreOp>(seedOp)) {
+    fn(storeOp.getBase());
+    fn(storeOp.getIndices());
+    if (storeOp.getMask()) {
+      fn(storeOp.getMask());
+    }
+  }
+}
+
+RankedTensorType getSeedIndicesType(Operation *seedOp) {
+  if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(seedOp)) {
+    return dyn_cast<RankedTensorType>(loadOp.getIndices().getType());
+  }
+  auto storeOp = cast<hivm::ScatterStoreOp>(seedOp);
+  return dyn_cast<RankedTensorType>(storeOp.getIndices().getType());
+}
+
+void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                           Operation *op, Operation *seedOp,
+                           const SeedSet &allSeedOps);
+
+void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                              Value val, Operation *seedOp,
+                              const SeedSet &allSeedOps) {
+  // Memref-typed values form the default autoscope boundary: keep memory-side
+  // producers outside the SIMT scope and only clone the tensor/SSA subgraph.
+  if (isMemRefBoundary(val)) {
+    return;
+  }
+  auto defOp = val.getDefiningOp();
+  if (!defOp || llvm::isa<scope::ScopeOp>(defOp) ||
+      (allSeedOps.contains(defOp) && defOp != seedOp)) {
+    return;
+  }
+  collectOpDependencies(simtVFOps, visitedOps, defOp, seedOp, allSeedOps);
+}
+
+void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
+                           Operation *op, Operation *seedOp,
+                           const SeedSet &allSeedOps) {
+  if (!visitedOps.insert(op).second) {
+    return;
+  }
+  for (auto operand : op->getOperands()) {
+    collectValueDependencies(simtVFOps, visitedOps, operand, seedOp,
+                             allSeedOps);
+  }
+  simtVFOps.emplace_back(op);
+}
+
+OrderedOps gatherSimtOps(Operation *seedOp, const SeedSet &allSeedOps) {
+  OrderedOps simtVFOps;
+  VisitedOps visitedOps;
+  forEachSeedDependencyValue(seedOp, [&](Value value) {
+    collectValueDependencies(simtVFOps, visitedOps, value, seedOp, allSeedOps);
+  });
+  simtVFOps.emplace_back(seedOp);
+  return simtVFOps;
+}
+
+scope::ScopeOp createScope(const OrderedOps &simtVFOps, IRRewriter &rewriter,
+                           Location loc) {
+  auto scopeOp = rewriter.create<scope::ScopeOp>(
+      loc, simtVFOps.back()->getResultTypes(), true);
+  scopeOp->setAttr("outline", rewriter.getUnitAttr());
+  scopeOp->setAttr(
+      TFuncCoreTypeAttr::name,
+      TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
+  auto vfMode =
+      hivm::VFModeAttr::get(scopeOp->getContext(), hivm::VFMode::SIMT);
+  scopeOp->setAttr(hivm::VFModeAttr::name, vfMode);
+  rewriter.createBlock(&scopeOp->getRegion(0));
+  rewriter.setInsertionPointToStart(&scopeOp.getRegion().getBlocks().front());
+  IRMapping mapping;
+  Operation *cloned = nullptr;
+  for (Operation *op : simtVFOps) {
+    cloned = rewriter.clone(*op, mapping);
+    for (size_t i = 0; i < cloned->getNumResults(); i++) {
+      mapping.map(op->getResult(i), cloned->getResult(i));
+    }
+  }
+  if (cloned != nullptr) {
+    rewriter.create<scope::ReturnOp>(loc, cloned->getResults());
+  }
+  return scopeOp;
+}
+
 // Check if the op is in simt scope
 bool inSimtScope(Operation *op) {
   auto parentOp = op->getParentOp();
@@ -56,215 +185,46 @@ bool inSimtScope(Operation *op) {
   return false;
 }
 
-template <typename SIMTOP>
-struct AutoScopePattern : public OpRewritePattern<SIMTOP> {
-public:
-  using OpRewritePattern<SIMTOP>::OpRewritePattern;
-  LogicalResult matchAndRewrite(SIMTOP simtOp,
-                                PatternRewriter &rewriter) const override {
-    
-    // Filter out the simtOp that is already in simt scope
-    if (inSimtScope(simtOp)) {
-      return failure();
-    }
-    
-    auto indices = simtOp.getIndices();
-    auto indicesTy = dyn_cast<RankedTensorType>(indices.getType());
-    if (!indicesTy) {
-      return rewriter.notifyMatchFailure(simtOp, "indices must be ranked tensor type");
-    }
-    unsigned blockSize = indicesTy.getShape().front();
-    if (!(blockSize  && !(blockSize & (blockSize - 1)))) {
-      llvm::report_fatal_error("BLOCK size of simd_simt mode must be power of 2");
-    }
-    
-    OrderedOps simtVFOps = gatherSimtOps(simtOp);
-    auto loc = simtOp->getLoc();
-    auto scopeOp = createScope(simtVFOps, rewriter, loc);
-    rewriter.replaceOp(simtOp, scopeOp);
-    return success();
-  }
-
-private:
-  using OrderedOps = llvm::SmallVector<Operation *>;
-  using VisitedOps = llvm::SmallPtrSet<Operation *, 16>;
-
-  scope::ScopeOp createScope(const OrderedOps &simtVFOps,
-                             PatternRewriter &rewriter, Location &loc) const {
-    auto scopeOp = rewriter.create<scope::ScopeOp>(
-        loc, simtVFOps.back()->getResultTypes(), true);
-    scopeOp->setAttr("outline", rewriter.getUnitAttr());
-    scopeOp->setAttr(
-        TFuncCoreTypeAttr::name,
-        TFuncCoreTypeAttr::get(rewriter.getContext(), TFuncCoreType::AIV));
-    auto vfMode =
-        hivm::VFModeAttr::get(scopeOp->getContext(), hivm::VFMode::SIMT);
-    scopeOp->setAttr(hivm::VFModeAttr::name, vfMode);
-    rewriter.createBlock(&scopeOp->getRegion(0));
-    rewriter.setInsertionPointToStart(&scopeOp.getRegion().getBlocks().front());
-    IRMapping mapping;
-    Operation *cloned = nullptr;  
-    for (Operation *op : simtVFOps) {
-      cloned = rewriter.clone(*op, mapping);
-      for (size_t i = 0; i < cloned->getNumResults(); i++) {
-        mapping.map(op->getResult(i), cloned->getResult(i));
-      }
-      if (llvm::isa<DestinationStyleOpInterface>(op) &&
-          op != simtVFOps.back() && op->use_empty()) {
-        rewriter.eraseOp(op);
-      }
-    }
-    if (cloned != nullptr) {
-      rewriter.create<scope::ReturnOp>(loc, cloned->getResults());
-    }
-    return scopeOp;
-  }
-
-  void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
-                                Value val) const {
-    auto defOp = val.getDefiningOp();
-    if (!defOp || llvm::isa<scope::ScopeOp, memref::AllocOp>(defOp)) {
-      return;
-    }
-    collectOpDependencies(simtVFOps, visitedOps, defOp);
-  }
-
-  void collectValueDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
-                                Value val, Operation *simtOp) const {
-    auto defOp = val.getDefiningOp();
-    if (!defOp || llvm::isa<scope::ScopeOp>(defOp)) {
-      return;
-    }
-    if (auto allocOp = llvm::dyn_cast<memref::AllocOp>(defOp)) {
-      collectDestinationStyleOp(simtVFOps, visitedOps, allocOp, simtOp);
-      return;
-    }
-    collectOpDependencies(simtVFOps, visitedOps, defOp, simtOp);
-  }
-
-  void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
-                             Operation *op) const {
-    if (!visitedOps.insert(op).second) {
-      return;
-    }
-    for (auto operand : op->getOperands()) {
-      collectValueDependencies(simtVFOps, visitedOps, operand);
-    }
-    simtVFOps.emplace_back(op);
-  }
-
-  void collectOpDependencies(OrderedOps &simtVFOps, VisitedOps &visitedOps,
-                             Operation *op, Operation *simtOp) const {
-    if (!visitedOps.insert(op).second) {
-      return;
-    }
-    for (auto operand : op->getOperands()) {
-      collectValueDependencies(simtVFOps, visitedOps, operand, simtOp);
-    }
-    simtVFOps.emplace_back(op);
-  }
-
-  void collectDestinationStyleOp(OrderedOps &simtVFOps,
-                                 VisitedOps &visitedOps,
-                                 Operation *allocOp, Operation *simtOp) const {
-    // currently only concern alloc op and simt op in the same block
-    if (allocOp->getBlock() != simtOp->getBlock()) {
-      return;
-    }
-    bool startMatch = false;
-    auto &opList = allocOp->getBlock()->getOperations();
-    // reverse iteration, find the nearest destination style op, which after
-    // alloc op and before simt op
-    for (auto iter = opList.rbegin(); iter != opList.rend(); iter++) {
-      auto &op = *iter;
-      if (&op == simtOp) {
-        startMatch = true;
-        continue;
-      }
-      if (!startMatch) {
-        continue;
-      }
-      if (&op == allocOp) {
-        break;
-      }
-      if (auto destinationStyleOp =
-              llvm::dyn_cast<DestinationStyleOpInterface>(&op)) {
-        bool isOperandsFromAlloc = false;
-        for (auto val : destinationStyleOp.getDpsInits()) {
-          auto maybeAllocOp = utils::tracebackMemRefToAlloc(val);
-          if (maybeAllocOp.has_value() && *maybeAllocOp == allocOp) {
-            isOperandsFromAlloc = true;
-            break;
-          }
-        }
-        // don't gather destination style op with multiple operands
-        if (destinationStyleOp.getDpsInits().size() > 1 &&
-            isOperandsFromAlloc) {
-          break;
-        }
-        auto val = destinationStyleOp.getDpsInitOperand(0)->get();
-        auto maybeAllocOp = utils::tracebackMemRefToAlloc(val);
-        if (maybeAllocOp && *maybeAllocOp == allocOp) {
-          if (!visitedOps.insert(&op).second) {
-            return;
-          }
-          collectValueDependencies(simtVFOps, visitedOps, val);
-          collectValueDependencies(simtVFOps, visitedOps,
-                                   destinationStyleOp.getDpsInputs()[0],
-                                   simtOp);
-          simtVFOps.emplace_back(&op);
-          break;
-        }
-      }
-    }
-  }
-
-  OrderedOps gatherSimtOps(Operation *simtOp) const {
-    OrderedOps simtVFOps;
-    VisitedOps visitedOps;
-    if (auto loadOp = llvm::dyn_cast<hivm::GatherLoadOp>(simtOp)) {
-      collectValueDependencies(simtVFOps, visitedOps, loadOp.getBase(), simtOp);
-      collectValueDependencies(simtVFOps, visitedOps, loadOp.getIndices(),
-                               simtOp);
-      collectValueDependencies(simtVFOps, visitedOps, loadOp.getDst(), simtOp);
-      if (loadOp.getMask()) {
-        collectValueDependencies(simtVFOps, visitedOps, loadOp.getMask(),
-                                 simtOp);
-      }
-      if (loadOp.getOther()) {
-        collectValueDependencies(simtVFOps, visitedOps, loadOp.getOther(),
-                                 simtOp);
-      }
-    } else if (auto storeOp =
-                   llvm::dyn_cast<hivm::ScatterStoreOp>(simtOp)) {
-      collectValueDependencies(simtVFOps, visitedOps, storeOp.getBase(),
-                               simtOp);
-      collectValueDependencies(simtVFOps, visitedOps, storeOp.getIndices(),
-                               simtOp);
-      if (storeOp.getMask()) {
-        collectValueDependencies(simtVFOps, visitedOps, storeOp.getMask(),
-                                 simtOp);
-      }
-    }
-    simtVFOps.emplace_back(simtOp);
-    return simtVFOps;
-  }
-};
-
 } // namespace
 
 void AutoScopePass::runOnOperation() {
   auto mod = getOperation();
 
-  RewritePatternSet patterns(&getContext());
-  patterns.add<AutoScopePattern<hivm::GatherLoadOp>>(patterns.getContext());
-  patterns.add<AutoScopePattern<hivm::ScatterStoreOp>>(patterns.getContext());
-
-  GreedyRewriteConfig config;
-  config.strictMode = GreedyRewriteStrictness::ExistingOps;
-  (void)applyPatternsGreedily(mod, std::move(patterns), config);
-
   IRRewriter rewriter(&getContext());
+  SeedSet allSeedOps;
+  llvm::SmallVector<SeedInfo, 4> seedInfos;
+
+  // Collect every SIMT seed that still needs autoscope materialization.
+  mod->walk([&](Operation *op) {
+    if (!isSimtSeedOp(op) || inSimtScope(op)) {
+      return;
+    }
+    allSeedOps.insert(op);
+    seedInfos.emplace_back(op);
+  });
+
+  // Build one conservative tensor/SSA-only rewrite plan per seed.
+  for (auto &seedInfo : seedInfos) {
+    auto indicesTy = getSeedIndicesType(seedInfo.seedOp);
+    if (!indicesTy) {
+      continue;
+    }
+    unsigned blockSize = indicesTy.getShape().front();
+    if (!(blockSize && !(blockSize & (blockSize - 1)))) {
+      llvm::report_fatal_error(
+          "BLOCK size of simd_simt mode must be power of 2");
+    }
+    seedInfo.plannedOps = gatherSimtOps(seedInfo.seedOp, allSeedOps);
+  }
+
+  // Materialize the planned scope for each seed and replace the original op.
+  for (auto &seedInfo : seedInfos) {
+    rewriter.setInsertionPoint(seedInfo.seedOp);
+    auto scopeOp =
+        createScope(seedInfo.plannedOps, rewriter, seedInfo.seedOp->getLoc());
+    rewriter.replaceOp(seedInfo.seedOp, scopeOp->getResults());
+  }
+
   // Deal with existed scopeOps.
   mod->walk([&](scope::ScopeOp scopeOp) {
     if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {

@@ -99,12 +99,25 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            [{::llvm::cl::values(
                clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
                           "no limit for local multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
+                          "only cube for local multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_VECTOR, "only-vector",
+                          "only vector for local multi buffer"),
                clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
                           "Disable l0c multi buffer"))}]>,
     Option<"limitMixAutoMultiBufferBuffer",
            "limit-mix-auto-multi-buffer-buffer", "MultiBufferStrategy",
            /*default=*/"MultiBufferStrategy::ONLY_CUBE",
-           "Disable multi-buffer-buffer on cube, vector Or no limit">,
+           "Disable multi-buffer-buffer on cube, vector Or no limit",
+           [{::llvm::cl::values(
+               clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
+                          "no limit for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
+                          "only cube for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_VECTOR, "only-vector",
+                          "only vector for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
+                          "Disable l0c for mix auto multi buffer"))}]>,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
            /*default=*/"2", "Override for multibuffer number for workspace">,
     Option<"disableMultiBufferOnUB",
@@ -167,6 +180,42 @@ def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::Func
   let dependentDialects =
     ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
      "bufferization::BufferizationDialect"];
+}
+
+def MarkTightlyCoupledBuffer
+    : Pass<"hivm-mark-tightly-coupled-buffer", "func::FuncOp"> {
+  let summary = "Mark L1/UB allocs with tightly-coupled-buffer attribute.";
+  let description = [{
+    Before SplitMixKernel clones a MIX function into AIC/AIV copies, every
+    L1/UB `memref.alloc` is given a `hivm.tightly_coupled_buffer` id (skipping
+    allocs that already carry one and preserving their ids). The ids are
+    assigned on the single MIX function, so both clones inherit identical ids
+    and PlanMemory can later pair the AIC/AIV buffers at consistent offsets.
+    Only runs for Ascend950 (RegBase) targets.
+  }];
+  let constructor = "mlir::hivm::createMarkTightlyCoupledBufferPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "annotation::AnnotationDialect",
+                           "memref::MemRefDialect"];
+}
+
+def HoistTightlyCoupledAlloc
+    : Pass<"hivm-hoist-tightly-coupled-alloc", "func::FuncOp"> {
+  let summary = "Hoist yielded tightly-coupled allocs out of inner regions.";
+  let description = [{
+    A tightly-coupled `memref.alloc` whose tensor view (through
+    `memory_space_cast`/`to_tensor`/`subview`/`extract_slice`/`expand_shape`/
+    `collapse_shape`/`cast`) is yielded out of its enclosing `scf.for`/
+    `scf.if`/`scf.while` is moved up to the outermost region that the yielded
+    value escapes to. This keeps the buffer anchored on the same loop on both
+    the AIC and AIV side after SplitMixKernel, so the auto-multi-buffer slot
+    rotation does not diverge between the two cores (a CV tightly-coupled
+    buffer must not rotate on the inner loop on one core and the outer loop on
+    the other).
+  }];
+  let constructor = "mlir::hivm::createHoistTightlyCoupledAllocPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "tensor::TensorDialect", "memref::MemRefDialect",
+                           "bufferization::BufferizationDialect"];
 }
 
 def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {

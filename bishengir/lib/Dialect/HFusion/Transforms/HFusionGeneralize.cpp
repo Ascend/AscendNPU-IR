@@ -6,7 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 namespace mlir {
@@ -27,6 +29,42 @@ public:
 
 void HFusionGeneralizePass::runOnOperation() {
   auto module = getOperation();
+  // Cumsum cancellation detector (runs in the active RegBase HFusion pipeline, on the
+  // clean pre-fusion IR where cumsum's result is still consumed by a bare
+  // linalg.elemwise_binary<sub>). Tag a float 2D dim0 cumsum whose result feeds a
+  // subtraction (X - cumsum(X), e.g. dg): fp32 cancellation amplifies the scan's
+  // rounding error -> must use the TwoSum-compensated template. The "needs_compensation"
+  // attr is copied to the VCumsumOp by HFusionToHIVMCumOp and read by
+  // VCumsumOp::getOpLibraryCallName (appends "_comp").
+  module.walk([&](hfusion::CumsumOp c) {
+    auto resTy = dyn_cast<ShapedType>(c->getResult(0).getType());
+    llvm::ArrayRef<int64_t> cumDims = c.getCumDims();
+    // Compensation scope (must mirror the available "_comp" template symbols):
+    // f32, 2D dim0, 3D dim0/dim1.
+    if (!resTy || !resTy.getElementType().isF32() || cumDims.size() != 1)
+      return;
+    int64_t rank = resTy.getRank(), dim = cumDims[0];
+    if (!((rank == 2 && dim == 0) || (rank == 3 && (dim == 0 || dim == 1))))
+      return;
+    auto isSubOp = [](Operation *op) {
+      if (!op)
+        return false;
+      if (isa<arith::SubFOp>(op))
+        return true;
+      if (auto eb = dyn_cast<linalg::ElemwiseBinaryOp>(op))
+        return eb.getFun() == linalg::BinaryFn::sub;
+      return false;
+    };
+
+    bool cancel = isSubOp(c.getInput().getDefiningOp());
+    for (Operation *user : c->getResult(0).getUsers()) {
+      if (cancel)
+        break;
+      cancel = isSubOp(user);
+    }
+    if (cancel)
+      c->setAttr("needs_compensation", UnitAttr::get(c->getContext()));
+  });
   module.walk([&](hfusion::GatherOp op) {
     IRRewriter rewriter(op->getContext());
     rewriter.setInsertionPoint(op);

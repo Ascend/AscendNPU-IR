@@ -318,6 +318,38 @@ struct RewriteFromGenericToGeneric final
   }
 };
 
+template <typename From, typename FloatTo, linalg::BinaryFn signedFn,
+          linalg::BinaryFn unsignedFn>
+struct RewriteSignedAwareBinaryToLinalg final
+    : public GenericPreprocessAndRewrite<From> {
+  using Base = GenericPreprocessAndRewrite<From>;
+  using Base::Base;
+
+  LogicalResult rewriteFromGeneric(From op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
+    Type elementType =
+        getElementTypeOrSelf(preprocessedOperands.front().getType());
+    if (isa<FloatType>(elementType)) {
+      rewriter.replaceOpWithNewOp<FloatTo>(op, op.getResultTypes(),
+                                           preprocessedOperands,
+                                           op.getDpsInits());
+      return success();
+    }
+
+    bool isSigned = op.getIsSigned();
+    if (auto intType = dyn_cast<IntegerType>(elementType))
+      isSigned = isSigned && !intType.isUnsigned();
+
+    linalg::BinaryFn fun = isSigned ? signedFn : unsignedFn;
+    rewriter.replaceOpWithNewOp<linalg::ElemwiseBinaryOp>(
+        op, op.getResultTypes(), preprocessedOperands, op.getDst(),
+        ArrayRef{rewriter.getNamedAttr(
+            "fun", rewriter.getAttr<linalg::BinaryFnAttr>(fun))});
+    return success();
+  }
+};
+
 template <typename From>
 struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
   using Base = RewriteUsingMapOp<From>;
@@ -885,16 +917,23 @@ struct RewriteVCumOpToHFusion : public OpRewritePattern<FromOp> {
                   std::is_same_v<FromOp, hivm::VCumminOp>) {
       propagateNan = op.getPropagateNan();
     }
+    // Preserve only the cumsum cancellation marker "needs_compensation" across
+    // the HIVM->hfusion reverse lowering (other discardable attrs are HIVM
+    // specific and must not be carried onto the hfusion op). The new op
+    // otherwise only carries the structural operands/attrs below.
+    bool needsCompensation = op->hasAttr("needs_compensation");
     auto newOp = rewriter.replaceOpWithNewOp<ToOp>(
-        op, 
+        op,
         /*output=*/op.getDst().getType(),
-        /*input=*/op.getSrc(), 
+        /*input=*/op.getSrc(),
         /*cum_dims*/op.getCumDims(),
         /*reverse=*/op.getReverse());
     if constexpr (std::is_same_v<ToOp, hfusion::CummaxOp> ||
                   std::is_same_v<ToOp, hfusion::CumminOp>) {
       newOp.setPropagateNan(propagateNan);
     }
+    if (needsCompensation)
+      newOp->setAttr("needs_compensation", rewriter.getUnitAttr());
     return success();
   }
 };
@@ -1549,8 +1588,6 @@ struct ConvertHIVMToUpstream
              RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
              RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
              RewriteFromGenericToGeneric<hivm::VDivOp, linalg::DivOp>,
-             RewriteFromGenericToGeneric<hivm::VMaxOp, linalg::MaxOp>,
-             RewriteFromGenericToGeneric<hivm::VMinOp, linalg::MinOp>,
              RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
              RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
              RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
@@ -1559,6 +1596,13 @@ struct ConvertHIVMToUpstream
              RewriteFromGenericToGeneric<hivm::VRecOp, linalg::ReciprocalOp>,
              RewriteFromGenericToGeneric<hivm::VSelOp, linalg::SelectOp>,
              RewriteFromGenericToGeneric<hivm::VErfOp, linalg::ErfOp>>(&ctx);
+    patterns.add<
+        RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
+                                         linalg::BinaryFn::max_signed,
+                                         linalg::BinaryFn::max_unsigned>,
+        RewriteSignedAwareBinaryToLinalg<hivm::VMinOp, linalg::MinOp,
+                                         linalg::BinaryFn::min_signed,
+                                         linalg::BinaryFn::min_unsigned>>(&ctx);
     patterns.add<RewriteElemwiseOp<hivm::VReluOp, hfusion::ElemwiseUnaryOp,
                                    hfusion::UnaryFn::relu>,
                  RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
