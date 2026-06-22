@@ -36,8 +36,8 @@ struct VFStackInfo {
 
 class VFStackInfoBuilder {
 public:
-  // Bisheng uses 16-bit stack slots; current conservative guard keeps 58 slots.
-  static constexpr int64_t kDefaultSlotLimit = 58;
+  // Bisheng uses 16-bit stack slots; lowered limit to catch i64-heavy overflow.
+  static constexpr int64_t kDefaultSlotLimit = 40;
 
   explicit VFStackInfoBuilder(int64_t slotLimit = kDefaultSlotLimit)
       : slotLimit(slotLimit) {}
