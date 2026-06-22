@@ -156,5 +156,6 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRMemRefExtDialect
+  MLIRMemRefTransforms
   BiShengIRDialectUtils
   )
