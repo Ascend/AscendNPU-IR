@@ -783,6 +783,13 @@ void EnableStrideAlignPass::runOnOperation() {
       LDBG("enable align allocation failed");
       return signalPassFailure();
     }
+
+    // Handle failed unrealized conversion cast propagations after all allocs
+    // have been processed. This ensures data consistency by inserting CopyOps
+    // between original and aligned memrefs where propagation could not push
+    // the conversion cast past certain operations.
+    IRRewriter rewriter(context);
+    handlePropagateFailure(rewriter, funcOp);
   });
 }
 
