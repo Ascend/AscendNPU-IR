@@ -29,6 +29,7 @@
 #include "llvm/Support/Debug.h"
 
 #include <algorithm>
+#include <cassert>
 #include <numeric>
 
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -170,6 +171,143 @@ bool analyzeMemrefDepdencies(Operation *op1, Operation *op2,
 }
 
 using DependMap = DenseMap<Operation *, DenseSet<Operation *>>;
+
+class VFDependencyGraph {
+public:
+  void addNode(Operation *op) {
+    vfDeps.try_emplace(op);
+    vfUsers.try_emplace(op);
+  }
+
+  void addDependency(Operation *user, Operation *dep) {
+    if (user == dep)
+      return;
+    addNode(user);
+    addNode(dep);
+    vfDeps[user].insert(dep);
+    vfUsers[dep].insert(user);
+  }
+
+  bool areRelated(Operation *lhs, Operation *rhs) const {
+    return hasDependency(lhs, rhs) || hasDependency(rhs, lhs);
+  }
+
+  void mergeNodes(Operation *oldVf1, Operation *oldVf2, Operation *mergedVf) {
+    assert(oldVf1 != oldVf2 && oldVf1 != mergedVf && oldVf2 != mergedVf);
+
+    auto mergedDeps = getAdjacentNodes(vfDeps, oldVf1);
+    auto oldVf2Deps = getAdjacentNodes(vfDeps, oldVf2);
+    mergedDeps.insert(oldVf2Deps.begin(), oldVf2Deps.end());
+    mergedDeps.erase(oldVf1);
+    mergedDeps.erase(oldVf2);
+    mergedDeps.erase(mergedVf);
+
+    auto mergedUsers = getAdjacentNodes(vfUsers, oldVf1);
+    auto oldVf2Users = getAdjacentNodes(vfUsers, oldVf2);
+    mergedUsers.insert(oldVf2Users.begin(), oldVf2Users.end());
+    mergedUsers.erase(oldVf1);
+    mergedUsers.erase(oldVf2);
+    mergedUsers.erase(mergedVf);
+
+    addNode(mergedVf);
+    vfDeps[mergedVf] = mergedDeps;
+    vfUsers[mergedVf] = mergedUsers;
+
+    for (Operation *dep : mergedDeps) {
+      auto &users = getAdjacentNodes(vfUsers, dep);
+      users.erase(oldVf1);
+      users.erase(oldVf2);
+      users.insert(mergedVf);
+    }
+    for (Operation *user : mergedUsers) {
+      auto &deps = getAdjacentNodes(vfDeps, user);
+      deps.erase(oldVf1);
+      deps.erase(oldVf2);
+      deps.insert(mergedVf);
+    }
+
+    vfDeps.erase(oldVf1);
+    vfDeps.erase(oldVf2);
+    vfUsers.erase(oldVf1);
+    vfUsers.erase(oldVf2);
+  }
+
+  void verify() const {
+    for (const auto &entry : vfDeps) {
+      Operation *user = entry.first;
+      assert(vfUsers.count(user) && "missing VF users node");
+      for (Operation *dep : entry.second) {
+        assert(user != dep && "unexpected VF self dependency");
+        auto usersIt = vfUsers.find(dep);
+        assert(usersIt != vfUsers.end() && usersIt->second.contains(user) &&
+               "VF dependency is missing its reverse user edge");
+      }
+    }
+    for (const auto &entry : vfUsers) {
+      Operation *dep = entry.first;
+      assert(vfDeps.count(dep) && "missing VF dependencies node");
+      for (Operation *user : entry.second) {
+        assert(user != dep && "unexpected VF self user");
+        auto depsIt = vfDeps.find(user);
+        assert(depsIt != vfDeps.end() && depsIt->second.contains(dep) &&
+               "VF user edge is missing its forward dependency");
+      }
+    }
+  }
+
+  void print(llvm::raw_ostream &os) const {
+    os << "VF dependencies:\n";
+    for (const auto &entry : vfDeps) {
+      os << "Key: " << cast<func::FuncOp>(entry.first).getName() << "\n";
+      os << "  Depends on: {";
+      printNodes(os, entry.second);
+      os << "}\n";
+    }
+    os << "VF users:\n";
+    for (const auto &entry : vfUsers) {
+      os << "Key: " << cast<func::FuncOp>(entry.first).getName() << "\n";
+      os << "  Used by: {";
+      printNodes(os, entry.second);
+      os << "}\n";
+    }
+  }
+
+private:
+  using AdjacencyMap = DenseMap<Operation *, DenseSet<Operation *>>;
+
+  static const DenseSet<Operation *> &
+  getAdjacentNodes(const AdjacencyMap &graph, Operation *op) {
+    auto it = graph.find(op);
+    assert(it != graph.end() && "missing VF dependency graph node");
+    return it->second;
+  }
+
+  static DenseSet<Operation *> &getAdjacentNodes(AdjacencyMap &graph,
+                                                 Operation *op) {
+    auto it = graph.find(op);
+    assert(it != graph.end() && "missing VF dependency graph node");
+    return it->second;
+  }
+
+  bool hasDependency(Operation *user, Operation *dep) const {
+    auto it = vfDeps.find(user);
+    return it != vfDeps.end() && it->second.contains(dep);
+  }
+
+  static void printNodes(llvm::raw_ostream &os,
+                         const DenseSet<Operation *> &nodes) {
+    bool first = true;
+    for (Operation *op : nodes) {
+      if (!first)
+        os << ", ";
+      os << cast<func::FuncOp>(op).getName();
+      first = false;
+    }
+  }
+
+  AdjacencyMap vfDeps;
+  AdjacencyMap vfUsers;
+};
 
 bool isIgnoredBetweenOp(Operation *op) { return isa<hivm::AnchorOp>(op); }
 
@@ -557,20 +695,21 @@ void MergeVecScopePass::runOnOperation() {
     llvm::dbgs() << useIncrIdx[n - 1] << "]\n";
   });
   SmallVector<Operation *> startVFs;
-  DenseMap<Operation *, DenseSet<Operation *>> relatedVFIdxs;
+  VFDependencyGraph vfDependencyGraph;
   for (size_t i = 0; i < vfs.size(); ++i) {
     auto idx = useIncrIdx[i];
     if (mergeLevel != 1 || useScoreTotal[idx] == 0) {
       startVFs.push_back(vfs[idx].getOperation());
     }
-    DenseSet<Operation *> relatedVFs;
+    vfDependencyGraph.addNode(vfs[i].getOperation());
     for (size_t j = 0; j < vfs.size(); ++j) {
       if (useScoreMat[i][j] > 0) {
-        relatedVFs.insert(vfs[j].getOperation());
+        vfDependencyGraph.addDependency(vfs[j].getOperation(),
+                                        vfs[i].getOperation());
       }
     }
-    relatedVFIdxs[vfs[i].getOperation()] = relatedVFs;
   }
+  LLVM_DEBUG(vfDependencyGraph.verify(););
 
   // try to merge vfs
   size_t scoreIdx = 0;
@@ -603,18 +742,7 @@ void MergeVecScopePass::runOnOperation() {
         llvm::dbgs() << vfs[n - 1].getName() << "]\n";
       }
       //
-      llvm::dbgs() << "relatedVFIdxs:\n";
-      for (const auto &entry : relatedVFIdxs) {
-        llvm::dbgs() << "Key: " << cast<func::FuncOp>(entry.first).getName() << "\n";
-        llvm::dbgs() << "  Operations: {";
-        bool first = true;
-        for (mlir::Operation *op : entry.second) {
-          if (!first) llvm::dbgs() << ", ";
-          llvm::dbgs() << cast<func::FuncOp>(op).getName();
-          first = false;
-        }
-        llvm::dbgs() << "}\n";
-      }
+      vfDependencyGraph.print(llvm::dbgs());
     );
     // clang-format on
     auto vf1Op = startVFs[scoreIdx];
@@ -637,10 +765,8 @@ void MergeVecScopePass::runOnOperation() {
     //
     if (mergeLevel == 1) {
       // Merge VFs only without dependency/usage
-      if (relatedVFIdxs[vf1Obj.getOperation()].contains(
-              vf2Obj.getOperation()) ||
-          relatedVFIdxs[vf2Obj.getOperation()].contains(
-              vf1Obj.getOperation())) {
+      if (vfDependencyGraph.areRelated(vf1Obj.getOperation(),
+                                       vf2Obj.getOperation())) {
         scoreIdx++;
         continue;
       }
@@ -695,13 +821,13 @@ void MergeVecScopePass::runOnOperation() {
       // clang-format on
       // We still need to merge the new created merged VF with its right VF
       startVFs.push_back(mergedVfRef.getOperation());
-      //
-      auto mergedRelatedVFIdxs = relatedVFIdxs[vf1Obj];
-      mergedRelatedVFIdxs.insert(relatedVFIdxs[vf2Obj].begin(),
-                                 relatedVFIdxs[vf2Obj].end());
-      relatedVFIdxs[mergedVfRef.getOperation()] = mergedRelatedVFIdxs;
-      relatedVFIdxs.erase(vf2Obj);
-      relatedVFIdxs.erase(vf1Obj);
+
+      Operation *mergedVfOp = mergedVfRef.getOperation();
+      Operation *oldVf1Op = vf1Obj.getOperation();
+      Operation *oldVf2Op = vf2Obj.getOperation();
+
+      vfDependencyGraph.mergeNodes(oldVf1Op, oldVf2Op, mergedVfOp);
+      LLVM_DEBUG(vfDependencyGraph.verify(););
     }
     scoreIdx++;
   }
