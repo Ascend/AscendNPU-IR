@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinAttributes.h"
 
 #define DEBUG_TYPE "hivm-extra-buffer"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -46,6 +47,163 @@ int64_t getNumPerRepeat(Type t) {
   unsigned bytesPerElem = CEIL_DIV(bitWidth, utils::INTR_BITS_PER_BYTE);
 
   return CEIL_DIV(INTR_BYTES_PER_REPEAT, bytesPerElem);
+}
+
+int64_t largestPow2Le(int64_t n) {
+  if (n <= 0)
+    return 0;
+  int64_t r = 1;
+  while (r * 2 <= n)
+    r *= 2;
+  return r;
+}
+
+/// Stride descriptors extracted from a MemRef-shaped type. Returns std::nullopt
+/// when either the type is not a MemRefType or the layout is not a static
+/// StridedLayoutAttr.
+struct StrideInfo {
+  SmallVector<int64_t> srcStrides;
+  SmallVector<int64_t> dstStrides;
+};
+
+std::optional<StrideInfo>
+getStaticStrides(ShapedType srcType, ShapedType dstType) {
+  auto srcMemref = dyn_cast<MemRefType>(srcType);
+  auto dstMemref = dyn_cast<MemRefType>(dstType);
+  if (!srcMemref || !dstMemref)
+    return std::nullopt;
+  auto srcLayout = dyn_cast<StridedLayoutAttr>(srcMemref.getLayout());
+  auto dstLayout = dyn_cast<StridedLayoutAttr>(dstMemref.getLayout());
+  if (!srcLayout || !dstLayout)
+    return std::nullopt;
+  auto srcStrides = srcLayout.getStrides();
+  auto dstStrides = dstLayout.getStrides();
+  for (auto s : srcStrides)
+    if (s == ShapedType::kDynamic)
+      return std::nullopt;
+  for (auto s : dstStrides)
+    if (s == ShapedType::kDynamic)
+      return std::nullopt;
+  return StrideInfo{SmallVector<int64_t>(srcStrides.begin(), srcStrides.end()),
+                    SmallVector<int64_t>(dstStrides.begin(), dstStrides.end())};
+}
+
+/// Extract a single static stride from a ShapedType at the given axis.
+/// Returns fallback if the type is not a MemRefType, has no StridedLayoutAttr,
+/// or the stride is dynamic.
+int64_t getStaticStride(ShapedType type, int64_t axis, int64_t fallback) {
+  auto memref = dyn_cast<MemRefType>(type);
+  if (!memref)
+    return fallback;
+  auto layout = dyn_cast<StridedLayoutAttr>(memref.getLayout());
+  if (!layout)
+    return fallback;
+  int64_t stride = layout.getStrides()[axis];
+  return stride != ShapedType::kDynamic ? stride : fallback;
+}
+
+/// ARA dichotomy parameters derived from the reduction axis size s1.
+struct ARADichotomyParams {
+  int64_t mainSize;     // largest power of 2 <= s1
+  int64_t tailSize;     // s1 - mainSize
+  int64_t dichotomyNum; // log2(mainSize)
+  int64_t repeatTimes;  // dichotomyNum + tailSize
+};
+
+ARADichotomyParams computeARADichotomy(int64_t s1) {
+  int64_t mainSize = largestPow2Le(s1);
+  int64_t tailSize = s1 - mainSize;
+  int64_t dichotomyNum = 0;
+  for (int64_t m = mainSize; m > 1; m >>= 1)
+    dichotomyNum++;
+  return {mainSize, tailSize, dichotomyNum, dichotomyNum + tailSize};
+}
+
+/// Compute the extra buffer size for a 3D middle-axis reduce (ARA).
+/// The reduce_ara template has two runtime paths:
+///   1. Dichotomy: repeatTimes <= s0, uses tmp of (mainSize/2)*s0*alignedS2
+///   2. Peeled:    repeatTimes >  s0, loops over s0 calling reduce_ra
+/// For XOR, both paths need additional buffer due to the XOR front-end.
+///
+/// \param baseline  The default tmp_buf (e.g., srcAllocTotalSize) to return
+///                  when ARA-specific computation doesn't apply.
+/// \param isXor     Whether the operation is XOR (needs extra XOR front buffer).
+std::optional<int64_t>
+computeARAExtraBufferSize(ShapedType srcType, int64_t baseline, bool isXor) {
+  if (srcType.getRank() != 3 || !srcType.hasStaticShape())
+    return baseline;
+
+  int64_t s0 = srcType.getShape()[0];
+  int64_t s1 = srcType.getShape()[1];
+  int64_t s2 = srcType.getShape()[2];
+  int64_t numPerBlk = getNumPerBlock(srcType.getElementType());
+  int64_t stride1 = getStaticStride(srcType, srcType.getRank() - 2, s2);
+
+  auto dp = computeARADichotomy(s1);
+  int64_t alignedS2 = ceilFactor(s2, numPerBlk);
+
+  if (dp.repeatTimes <= s0) {
+    // Dichotomy path: (mainSize/2) * s0 * alignedS2
+    int64_t dichotomyHalf = (dp.mainSize / 2) * s0 * alignedS2;
+    if (isXor) {
+      return std::max(baseline,
+                      ceilFactor(dichotomyHalf, numPerBlk) + dichotomyHalf);
+    }
+    return std::max(baseline, dichotomyHalf);
+  }
+
+  // Peeled path: loop over s0, each iteration calls reduce_ra([s1, s2]).
+  if (isXor) {
+    int64_t xorFront = ceilFactor(s1 * alignedS2 / 2, numPerBlk);
+    int64_t dichotomyPart = (dp.mainSize / 2) * stride1;
+    int64_t xorReduceRaTmp = xorFront + dichotomyPart;
+    return std::max(s1 * s2 + numPerBlk, xorReduceRaTmp);
+  }
+  int64_t reduceRaTmp = (dp.mainSize / 2) * stride1;
+  return std::max(s1 * s2, reduceRaTmp);
+}
+
+/// Determine the effective row count (aDim) for the 3D+ last-axis reduce
+/// (AAR pattern). This mirrors the path-selection logic in reduce_aar:
+///   1. Fusion path  — src/dst fusable with matching rows_per_plane
+///                      → fused 2D view [a0*rows_per_plane, r]
+///   2. Fallback     — loop direction chosen by dst stride; aDim equals the
+///                      inner-loop row count of a single reduce_ar call
+///   3. No stride    — contiguous, flattened to [a0*a1, r]
+int64_t getAARAdim(ShapedType srcType, ShapedType dstType) {
+  int64_t rank = srcType.getRank();
+  int64_t a0 = srcType.getShape()[rank - 3];
+  int64_t a1 = srcType.getShape()[rank - 2];
+
+  auto info = getStaticStrides(srcType, dstType);
+  if (!info)
+    return a0 * a1;
+
+  int64_t srcStride0 = info->srcStrides[rank - 3];
+  int64_t srcStride1 = info->srcStrides[rank - 2];
+  int64_t srcStride2 = info->srcStrides[rank - 1];
+  int64_t dstStride0 = info->dstStrides[rank - 3];
+  int64_t dstStride1 = info->dstStrides[rank - 2];
+  int64_t dstStride2 = info->dstStrides[rank - 1];
+
+  bool srcFusable =
+      srcStride1 != 0 && srcStride0 % srcStride1 == 0 && srcStride2 == 1;
+  bool dstFusable =
+      dstStride1 != 0 && dstStride0 % dstStride1 == 0 && dstStride2 == 1;
+
+  if (srcFusable && dstFusable) {
+    int64_t srcRowsPerPlane = srcStride0 / srcStride1;
+    int64_t dstRowsPerPlane = dstStride0 / dstStride1;
+    if (srcRowsPerPlane == dstRowsPerPlane)
+      return a0 * srcRowsPerPlane;
+  }
+
+  // Fallback: mirror reduce_aar's loop-direction heuristic.
+  // Loop-over-a0 → reduce_ar([a1, r]) → aDim = a1
+  // Loop-over-a1 → reduce_ar([a0, r]) → aDim = a0
+  bool loopOverA0 =
+      (dstStride1 == 1) || (dstStride0 != 1 && a0 <= a1);
+  return loopOverA0 ? a1 : a0;
 }
 } // namespace
 static std::optional<int64_t>
@@ -90,7 +248,7 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
       return std::nullopt;
     } else {
       // TODO : support unalign
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "unsupport unalign and unknown align middle-axis broadcast");
     }
   }
@@ -130,6 +288,8 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
     } else {
       // Unknown broadcast temp buffer is same to unaligned broadcast.
       if (!dstType.hasStaticShape()) {
+        if (srcMaxSizeMaybe == 0)
+          return std::nullopt;
         auto alignedSrc =
             llvm::alignTo(srcMaxSizeMaybe, srcNumPerRepeatOfVBRCBIntrin);
         b = dstMaxSizeMaybe / srcMaxSizeMaybe;
@@ -215,7 +375,7 @@ std::optional<int64_t> getExtraBufferSizeForBroadcastOp(Operation *op,
   if (auto vBrcOp = dyn_cast<hivm::VBrcOp>(op)) {
     broadcastDims = vBrcOp.getBroadcastDims();
   } else {
-    llvm_unreachable("Not implemented!");
+    llvm::report_fatal_error("Not implemented!");
   }
   for (auto broadcastDim : broadcastDims) {
     std::optional<int64_t> bufSizeMaybe =
@@ -229,7 +389,6 @@ std::optional<int64_t> getVcgReduceExtraBufferSize(ShapedType srcType,
                                                    int64_t srcAllocTotalSize,
                                                    int64_t reductionDim) {
   int64_t rDim = srcType.getShape()[reductionDim];
-  int64_t aDim = srcType.getShape()[0];
   auto eleType = srcType.getElementType();
   const int numPerBlock = getNumPerBlock(eleType);
   const int numPerRepeat = getNumPerRepeat(eleType);
@@ -248,7 +407,8 @@ std::optional<int64_t> getVcgReduceExtraBufferSize(ShapedType srcType,
 std::optional<int64_t>
 refineReduceExtraBufferSize(ShapedType srcType, int64_t srcAllocTotalSize,
                             int64_t reductionDim, hivm::ReduceOperation arithOp,
-                            bool saveUbUf) {
+                            bool saveUbUf,
+                            ShapedType dstType = ShapedType()) {
   auto eleType = srcType.getElementType();
   if (!srcType.hasStaticShape()) {
     if (eleType.isInteger() && (reductionDim == srcType.getRank() - 1)) {
@@ -266,6 +426,9 @@ refineReduceExtraBufferSize(ShapedType srcType, int64_t srcAllocTotalSize,
   int64_t aDim;
   if (reductionDim == 0) {
     aDim = 1;
+  } else if (srcType.getRank() >= 3 &&
+             reductionDim == srcType.getRank() - 1) {
+    aDim = getAARAdim(srcType, dstType);
   } else {
     aDim = srcType.getShape()[reductionDim - 1];
   }
@@ -326,6 +489,10 @@ std::optional<int64_t>
 getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
                                        int64_t reductionDim, bool saveUbUf) {
   ShapedType srcType = cast<ShapedType>(op->getOpOperand(0).get().getType());
+  auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op);
+  ShapedType dstType =
+      dpsOp ? cast<ShapedType>(dpsOp.getDpsInitOperand(0)->get().getType())
+            : ShapedType();
   auto vReduceOp = dyn_cast<hivm::VReduceOp>(op);
   hivm::ReduceOperation arithOp = vReduceOp.getArith().getReduceOp();
   auto eleType = srcType.getElementType();
@@ -363,7 +530,7 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       }
       constexpr int64_t bitsPerByte = 8;
       // FIXME indices hardcodes as int32
-      const int64_t eltByteSize = elementBitWidth / bitsPerByte;
+      const int64_t eltByteSize = CEIL_DIV(elementBitWidth, bitsPerByte);
       constexpr int64_t idxByteSize = sizeof(int32_t);
       int64_t numElemPerRepeat = getNumPerRepeat(eleType);
       int64_t elementsSize =
@@ -373,9 +540,10 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
           ceilDiv(aDimension, bitsPerByte * numElemPerBlock) * numElemPerBlock;
       return elementsSize + maskSize + numElemPerBlock;
     }
-    // RA, dynamic shape
-    // use 1.5 * alloc_size aligned to ub_block_unit
-    return ceilFactor(1.5 * srcAllocTotalSize.value(), numElemPerBlock);
+    // RA, dynamic shape: 1.5× alloc_size (int64_t, no float), align to block.
+    const int64_t alloc = srcAllocTotalSize.value();
+    const int64_t scaledAlloc = static_cast<int64_t>(1.5 * alloc);
+    return ceilFactor(scaledAlloc, numElemPerBlock);
   }
   if (arithOp == hivm::ReduceOperation::sum ||
       arithOp == hivm::ReduceOperation::max ||
@@ -384,32 +552,29 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       arithOp == hivm::ReduceOperation::ori ||
       arithOp == hivm::ReduceOperation::andi) {
     if (reductionDim != srcType.getRank() - 1) {
-      // reduce_sum/reduce_max/reduce_min/reduce_prod
-      // reduce_or/reduce_and not last axis
-      // reduce(RA/RA0A1).
-      return srcAllocTotalSize.value();
+      // reduce(RA/RA0A1) — not last axis.
+      int64_t baseline = srcAllocTotalSize.value();
+      return computeARAExtraBufferSize(srcType, baseline, /*isXor=*/false);
     }
     // reduce_sum/reduce_max/reduce_min/reduce_prod
     // reduce_or/reduce_and last axis
     // reduce(R/AR).
     return refineReduceExtraBufferSize(srcType, srcAllocTotalSize.value(),
-                                       reductionDim, arithOp, saveUbUf);
+                                       reductionDim, arithOp, saveUbUf, dstType);
   }
   if (arithOp == hivm::ReduceOperation::xori) {
     if (reductionDim != srcType.getRank() - 1) {
-      // reduce_xor not last axis reduce(RA/RA0A1), requires additional tmp_buf
-      // space of src/2 to process the xor operation. Since src/2 will cause the
-      // instruction starting address to be misaligned by 32 bytes, an
-      // additional block is required.
+      // reduce_xor not last axis reduce(RA/RA0A1)
       int64_t elementPerBlock =
           vectorBlockSizeBit / srcType.getElementTypeBitWidth();
-      return srcAllocTotalSize.value() + elementPerBlock;
+      int64_t baseline = srcAllocTotalSize.value() + elementPerBlock;
+      return computeARAExtraBufferSize(srcType, baseline, /*isXor=*/true);
     }
     // reduce_xor last axis reduce(R/AR)
     return refineReduceExtraBufferSize(srcType, srcAllocTotalSize.value(),
-                                       reductionDim, arithOp, saveUbUf);
+                                       reductionDim, arithOp, saveUbUf, dstType);
   }
-  llvm_unreachable("unsupported reduce case");
+  llvm::report_fatal_error("unsupported reduce case");
 }
 
 std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,

@@ -18,6 +18,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Tools/bishengir-compile/Config.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ManagedStatic.h"
 
@@ -36,8 +37,8 @@ static cl::OptionCategory
 static cl::OptionCategory targetCategory("BiShengIR Target Options");
 static llvm::cl::OptionCategory
     enableCPURunnerCategory("BiShengIR CPU Runner Options");
-static cl::OptionCategory sharedWithDownstreamToolchainCategory(
-    "Options Shared with bishengir-hivm-compile");
+static cl::OptionCategory
+    sharedWithDownstreamToolchainCategory("Options Shared with HIVMC");
 
 /// This class is intended to manage the handling of command line options for
 /// creating bishengir-compile config. This is a singleton.
@@ -98,9 +99,10 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
             llvm::cl::cat(enableCPURunnerCategory)};
 #endif // MLIR_ENABLE_EXECUTION_ENGINE
 
-    // when enableSanitizer is true, enable printDebugInfoOpt
+    // when enableSanitizer/enableMemoryDisplay is true, enable
+    // printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();
-    if ((enableSanitizer || enableDebugInfo) &&
+    if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo) &&
         (opts.count("mlir-print-debuginfo") != 0)) {
       static_cast<cl::opt<bool> *>(opts["mlir-print-debuginfo"])
           ->setValue(true);
@@ -114,7 +116,7 @@ ManagedStatic<BiShengIRCompileMainConfigCLOptions> clOptionsConfig;
 namespace option_handler {
 template <typename T, bool ExternalStorage>
 std::string handleOpt(const cl::opt<T, ExternalStorage> &opt) {
-  llvm_unreachable("not handled");
+  llvm::report_fatal_error("not handled");
 }
 
 template <bool ExternalStorage>
@@ -170,6 +172,33 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
 
     for (auto arg : llvm::split(args, " "))
       collectedArgs.push_back(arg.str());
+  }
+
+  // collect all --link-aicore-bitcode args and merge them
+  std::vector<std::string> filteredArgs;
+  for (const auto &arg : collectedArgs) {
+    llvm::StringRef argRef(arg);
+    if (argRef.starts_with("--link-aicore-bitcode=") ||
+        argRef.starts_with("link-aicore-bitcode="))
+      continue;
+    filteredArgs.push_back(arg);
+  }
+  collectedArgs = std::move(filteredArgs);
+
+  // Collect .bc paths from --link-aicore-bitcode only.
+  std::vector<std::string> linkPaths;
+  for (const auto &path : clOptionsConfig->getLinkAicoreBitcode()) {
+    if (!path.empty())
+      linkPaths.push_back(path);
+  }
+  if (!linkPaths.empty()) {
+    std::string linkOpt = "link-aicore-bitcode=";
+    for (size_t i = 0; i < linkPaths.size(); ++i) {
+      if (i > 0)
+        linkOpt += ',';
+      linkOpt += linkPaths[i];
+    }
+    collectedArgs.push_back(std::move(linkOpt));
   }
 
   clOptionsConfig->setHIVMCArgs(collectedArgs);

@@ -16,8 +16,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -37,11 +38,14 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/Debug.h"
 
 // For function inliner support
 #include "mlir/Transforms/InliningUtils.h"
 
 #include <numeric>
+
+#define DEBUG_TYPE "hivm-ops"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -55,11 +59,11 @@ int64_t AddressSpaceAttr::getMappingId() const {
 }
 
 bool AddressSpaceAttr::isLinearMapping() const {
-  llvm_unreachable("AddressSpaceAttr does not support linear mapping");
+  llvm::report_fatal_error("AddressSpaceAttr does not support linear mapping");
 }
 
 int64_t AddressSpaceAttr::getRelativeIndex() const {
-  llvm_unreachable("AddressSpaceAttr does not support relative index");
+  llvm::report_fatal_error("AddressSpaceAttr does not support relative index");
 }
 
 //===----------------------------------------------------------------------===//
@@ -117,11 +121,11 @@ int64_t HIVMSubBlockMappingAttr::getMappingId() const {
 }
 
 bool HIVMSubBlockMappingAttr::isLinearMapping() const {
-  llvm_unreachable("HIVMSubBlockMappingAttr does not support linear mapping");
+  llvm::report_fatal_error("HIVMSubBlockMappingAttr does not support linear mapping");
 }
 
 int64_t HIVMSubBlockMappingAttr::getRelativeIndex() const {
-  llvm_unreachable("HIVMSubBlockMappingAttr does not support relative index");
+  llvm::report_fatal_error("HIVMSubBlockMappingAttr does not support relative index");
 }
 
 void hivm::populateHIVMAddressSpaceAttributeConversions(
@@ -197,12 +201,12 @@ LogicalResult PointerCastOp::verify() {
     return emitOpError("addrs of PointerCastOp should not be empty!");
   }
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  if (const std::size_t dynDims = getResult().getType().getNumDynamicDims(),
-      dynDimValues = getDynamicSizes().size();
-      dynDims != dynDimValues) {
-    return emitOpError() << "expected " << dynDims
+  const int64_t expectedDynamicDims = static_cast<int64_t>(
+      getResult().getType().getNumDynamicDims());
+  if (static_cast<int64_t>(getDynamicSizes().size()) != expectedDynamicDims) {
+    return emitOpError() << "expected " << expectedDynamicDims
                          << " dynamic size operands, but found "
-                         << dynDimValues;
+                         << getDynamicSizes().size();
   }
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
   return success();
@@ -401,9 +405,10 @@ LogicalResult ConvertLayoutOp::verify() {
       return emitOpError(
           "requires the same element type for all operands and results");
   }
-  size_t numDynamic = llvm::count_if(getStaticOutputShape(), [](int64_t dim) {
-    return ShapedType::isDynamic(dim);
-  });
+  const size_t numDynamic = static_cast<size_t>(llvm::count_if(
+      getStaticOutputShape(), [](int64_t dim) {
+        return ShapedType::isDynamic(dim);
+      }));
   if (numDynamic != getOutputShape().size()) {
     return emitOpError("expected ")
            << numDynamic << " dynamic dimensions but got "
@@ -415,6 +420,14 @@ LogicalResult ConvertLayoutOp::verify() {
 //===----------------------------------------------------------------------===//
 // CustomOp
 //===----------------------------------------------------------------------===//
+
+// Builder with empty temp_buffers.
+void CustomOp::build(OpBuilder &builder, OperationState &result, StringRef name,
+                     TypeRange resultTypes, ValueRange inputs,
+                     ValueRange outputs) {
+  build(builder, result, resultTypes, name, inputs, outputs,
+        /*temp_buffers=*/ValueRange{});
+}
 
 // Helper functions
 void CustomOp::setPipe(PIPE pipe) {
@@ -494,7 +507,8 @@ ParseResult CustomOp::parse(OpAsmParser &parser, OperationState &result) {
       return success();
     };
 
-    if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs"))) {
+    if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs")) ||
+        failed(parseVariadicArgs("tmps"))) {
       return failure();
     }
 
@@ -550,6 +564,7 @@ void CustomOp::print(OpAsmPrinter &p) {
 
   printVariadicArgs(getInputs(), "ins");
   printVariadicArgs(getOutputs(), "outs");
+  printVariadicArgs(getTempBuffers(), "tmps");
 
   if (!getResults().empty())
     p.printOptionalArrowTypeList(getResultTypes());
@@ -592,13 +607,179 @@ LogicalResult CustomOp::verify() {
 
   // Check VF mode attribute
   if (*coreType != TCoreType::CUBE) {
-    if (!getVFMode())
+    auto moduleOp =
+        this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+    if (hacc::utils::isAscend910_95(moduleOp) && (!getVFMode()))
       return emitOpError() << "Missing vf mode information";
   } else { // Pure cube
     // Cube function ignores vf mode information
   }
 
+  // Check extra buffers attributes
+  const auto typeArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersTypesName);
+  const auto sizesArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersSizesName);
+  if (typeArrayAttr && sizesArrayAttr) {
+    if (typeArrayAttr.size() != sizesArrayAttr.size())
+      return emitOpError() << "Extra buffers' types and sizes mismatch";
+  } else if (!typeArrayAttr && !sizesArrayAttr) {
+    // No extra buffers attributes specified, ok
+  } else {
+    return emitOpError() << "Either extra buffers' types or sizes missing";
+  }
+
+  if (getSymbol().empty())
+    return emitOpError() << "Missing implementation function name";
+
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// GatherLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult GatherLoadOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    GatherLoadOp::Adaptor adaptor,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  auto dstType = dyn_cast<RankedTensorType>(adaptor.getDst().getType());
+  if (dstType)
+    inferredReturnTypes.push_back(dstType);
+  return success();
+}
+
+LogicalResult GatherLoadOp::verify() {
+  auto indicesType = getIndices().getType();
+  if (auto mask = getMask()) {
+    if (mask.getType().getShape() != indicesType.getShape()) {
+      return emitOpError("mask of hivm::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+  }
+  if (auto other = getOther()) {
+    auto otherType = cast<RankedTensorType>(other.getType());
+    if (otherType.getShape() != indicesType.getShape()) {
+      return emitOpError("other of hivm::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+    auto otherElementType = otherType.getElementType();
+    if (otherElementType != getElementTypeOrSelf(getBase())) {
+      return emitOpError("other of hivm::GatherLoadOp must have the same "
+                         "element type as base");
+    }
+  }
+  return success();
+}
+
+void GatherLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ScatterStoreOp::verify() {
+  auto dataType = getData().getType();
+  if (auto mask = getMask()) {
+    if (mask.getType().getShape() != dataType.getShape()) {
+      return emitOpError("mask of hivm::ScatterStoreOp must have the same "
+                         "shape and rank as data");
+    }
+  }
+  return success();
+}
+
+void ScatterStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// IndirectStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult IndirectStoreOp::verify() {
+  auto dstType = getDst().getType();
+  auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+  if (!dstMemrefType) {
+    return emitError("dst must be a memref type");
+  }
+
+  auto offsetsType = getOffsets().getType();
+  auto offsetsTensorType = dyn_cast<TensorType>(offsetsType);
+  auto offsetsMemrefType = dyn_cast<MemRefType>(offsetsType);
+  if (!(offsetsTensorType || offsetsMemrefType)) {
+    return emitOpError("offset must be tensor or memref type");
+  }
+
+  auto srcType = getSrc().getType();
+  auto srcTensorType = dyn_cast<TensorType>(srcType);
+  auto srcMemrefType = dyn_cast<MemRefType>(srcType);
+  if (!(srcTensorType || srcMemrefType)) {
+    return emitOpError("src must be tensor or memref type");
+  }
+
+  auto dstElementType = dstMemrefType.getElementType();
+  auto srcElementType = srcMemrefType ? srcMemrefType.getElementType()
+                                      : srcTensorType.getElementType();
+  if (srcElementType != dstElementType) {
+    return emitOpError(
+        "src of hivm::IndirectStoreOp must have the same element type as dst");
+  }
+
+  auto offsetShape = offsetsMemrefType ? offsetsMemrefType.getShape()
+                                       : offsetsTensorType.getShape();
+  auto srcShape =
+      srcMemrefType ? srcMemrefType.getShape() : srcTensorType.getShape();
+  if (offsetShape != srcShape) {
+    return emitOpError("offsets of hivm::IndirectStoreOp must have the same "
+                       "shape and rank as src");
+  }
+
+  if (auto mask = getMask()) {
+    auto maskType = mask.getType();
+    auto maskTensorType = dyn_cast<TensorType>(maskType);
+    auto maskMemrefType = dyn_cast<MemRefType>(maskType);
+    if (!(maskTensorType || maskMemrefType)) {
+      return emitOpError("mask must be tensor or memref type");
+    }
+
+    auto maskShape =
+        maskMemrefType ? maskMemrefType.getShape() : maskTensorType.getShape();
+    if (maskShape != offsetShape) {
+      return emitOpError("mask of hivm::IndirectStoreOp must have the same "
+                         "shape and rank as offsets");
+    }
+  }
+
+  return success();
+}
+
+void IndirectStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getOffsetsMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  if (getMask()) {
+    effects.emplace_back(
+        MemoryEffects::Read::get(),
+        &getOperation()->getOpOperand(getODSOperandIndexAndLength(3).first),
+        SideEffects::DefaultResource::get());
+  }
 }
 
 PIPE CustomOp::getPipe() {
@@ -609,5 +790,77 @@ PIPE CustomOp::getPipe() {
   return PIPE::PIPE_UNASSIGNED;
 }
 
-const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
-    {"__builtin_gather_load", {TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT}}};
+SmallVector<std::pair<Type, int64_t>> CustomOp::getExtraBuffersInfo() {
+  SmallVector<std::pair<Type, int64_t>> res;
+  const auto typeArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersTypesName);
+  const auto sizesArrayAttr =
+      getOperation()->getAttrOfType<ArrayAttr>(kExtraBuffersSizesName);
+  if (!typeArrayAttr) {
+    LLVM_DEBUG(assert(!sizesArrayAttr && "custom op verification failed?"));
+    return res;
+  }
+
+  LLVM_DEBUG(assert(typeArrayAttr.size() == sizesArrayAttr.size() &&
+                    "custom op verification failed?"));
+
+  for (auto [typeAttr, sizeAttr] : llvm::zip(typeArrayAttr, sizesArrayAttr)) {
+    const mlir::Type type = cast<mlir::TypeAttr>(typeAttr).getValue();
+    const int64_t size = cast<mlir::IntegerAttr>(sizeAttr).getInt();
+    res.push_back(std::make_pair(type, size));
+  }
+
+  return res;
+}
+
+int CustomOp::getMaxRank() {
+  if (auto maxRankAttr =
+          getOperation()->template getAttrOfType<IntegerAttr>(kMaxRankAttrName))
+    return static_cast<int>(maxRankAttr.getValue().getSExtValue());
+
+  static constexpr int defaultMaxRank = 5;
+  return defaultMaxRank;
+}
+
+std::string CustomOp::getSymbol() {
+  if (auto attr =
+          getOperation()->template getAttrOfType<StringAttr>(kSymbolAttrName))
+    return attr.str();
+  emitOpError() << "Missing implementation function name";
+  return "";
+}
+
+void CustomOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!getNoSideEffect()) {
+    effects.emplace_back(MemoryEffects::Write::get(),
+                         SideEffects::DefaultResource::get());
+    effects.emplace_back(MemoryEffects::Read::get(),
+                         SideEffects::DefaultResource::get());
+  }
+}
+
+const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{};
+
+//===----------------------------------------------------------------------===//
+// DebugOp
+//===----------------------------------------------------------------------===//
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::TCoreTypeAttr tcoretype) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, tcoretype, {});
+}
+
+void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    StringRef debugtype, StringRef prefix, bool hex,
+                    Value arg, hivm::AddressSpaceAttr memscope) {
+  build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, memscope);
+}

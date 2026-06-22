@@ -16,14 +16,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/Utils/Utils.h"
-#include "bishengir/Pass/PassManager.h"
-#include "bishengir/Tools/BiShengIRConfigBase/Config.h"
+#include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
+#include "bishengir/Tools/bishengir-compile/Config.h"
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
@@ -41,22 +42,9 @@ using namespace bishengir;
 
 LogicalResult bishengir::runPipeline(
     ModuleOp mod, const std::function<void(mlir::PassManager &)> &buildPipeline,
-    const BiShengIRCompileConfigBase &config, const std::string &pipelineName) {
-  bishengir::BiShengIRPassManager passManager(config, mod->getContext(),
-                                              ModuleOp::getOperationName(),
-                                              OpPassManager::Nesting::Implicit);
-  buildPipeline(passManager);
-
-  // Apply MLIR PassManager command line options.
-  // Ignore the result because the invocation point of this function might not
-  // necessarily be the command line, so the options might not be loaded.
-  (void)mlir::applyPassManagerCLOptions(passManager);
-  (void)bishengir::applyPassManagerCLOptions(passManager);
-
-  if (failed(passManager.run(mod)))
-    return mod->emitError("Failed to run " + pipelineName + " pipeline\n");
-
-  return success();
+    BiShengIRCompileMainConfig &config, const std::string &pipelineName) {
+  RetriablePassManager rpm(config, mod->getContext());
+  return rpm.runOnce(mod, buildPipeline, pipelineName);
 }
 
 llvm::LogicalResult
@@ -109,12 +97,29 @@ std::error_code bishengir::canonicalizePath(StringTmpPath &path) {
   return {};
 }
 
+/// True if \p path is \p root or a path nested under \p root (not e.g. /tmpfoo).
+static bool isPathUnderPrefix(StringRef path, StringRef root) {
+  if (path == root)
+    return true;
+  if (!path.starts_with(root))
+    return false;
+  if (root.size() >= path.size())
+    return false;
+  return llvm::sys::path::is_separator(path[root.size()],
+                                       llvm::sys::path::Style::native);
+}
+
 void TempDirectoriesStore::assertInsideTmp(StringTmpPath path) const {
   llvm::cantFail(llvm::errorCodeToError(canonicalizePath(path)),
                  "failed to canonicalize temp path.");
-  if (!path.starts_with("/tmp")) {
-    llvm_unreachable("unexpected temp folder created outside of /tmp");
-  }
+  llvm::SmallString<256> tempRoot;
+  llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/true, tempRoot);
+  std::error_code ec = llvm::sys::fs::make_absolute(tempRoot);
+  llvm::cantFail(llvm::errorCodeToError(ec),
+                 "failed to canonicalize system temp directory");
+  llvm::sys::path::remove_dots(tempRoot, /*remove_dot_dot=*/true);
+  if (!isPathUnderPrefix(path, tempRoot))
+    llvm::report_fatal_error("unexpected temp folder created outside of system temp dir");
 }
 
 TempDirectoriesStore::~TempDirectoriesStore() {
@@ -214,11 +219,10 @@ bishengir::parseHIVMCVersion(llvm::StringRef content) {
 
 llvm::VersionTuple findHIVMCVersion(llvm::StringRef content) {
   StringRef versionLine = content.split('\n').first;
-  Regex R(
-    "^(hivmc) "                         // name
-    "([0-9]+\\.[0-9]+\\.[0-9]+) "       // version
-    "\\(([0-9a-fA-F]{6,40}) "           // commit hash
-    "([0-9]{4}-[0-9]{2}-[0-9]{2})\\)$"  // build date
+  Regex R("^(hivmc) "                        // name
+          "([0-9]+\\.[0-9]+\\.[0-9]+) "      // version
+          "\\(([0-9a-fA-F]{6,40}) "          // commit hash
+          "([0-9]{4}-[0-9]{2}-[0-9]{2})\\)$" // build date
   );
   SmallVector<StringRef, 4> M;
   if (!R.match(versionLine, &M)) {
@@ -280,6 +284,23 @@ std::string bishengir::getBiShengInstallPath() {
     llvm::report_fatal_error("Failed to get absolute path for " + path +
                              " please verify its validity");
   return path.str().str();
+}
+
+std::string bishengir::getExecutablePath(const char *argv0, void *mainAddr) {
+  std::string path = llvm::sys::fs::getMainExecutable(argv0, mainAddr);
+  if (!path.empty()) {
+    llvm::SmallString<256> realPath;
+    if (!llvm::sys::fs::real_path(path, realPath))
+      return std::string(realPath.str());
+    return path;
+  }
+  llvm::SmallString<256> absPath(argv0);
+  if (llvm::sys::fs::make_absolute(absPath))
+    return "";
+  llvm::SmallString<256> realPath;
+  if (llvm::sys::fs::real_path(absPath, realPath))
+    return std::string(absPath.str());
+  return std::string(realPath.str());
 }
 
 mlir::LogicalResult bishengir::handleDiagnostic(const mlir::Diagnostic &diag) {

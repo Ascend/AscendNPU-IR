@@ -801,7 +801,7 @@ void Flattener::adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder) {
     tensorOutOp.getSourceMutable().assign(expandOp.value().getResult());
     return;
   }
-  llvm_unreachable("Expand op collapse failed");
+  llvm::report_fatal_error("Expand op collapse failed");
 }
 
 template <typename OpTy>
@@ -814,7 +814,7 @@ void Flattener::adjustTensorOutOpDest(OpTy tensorOutOp, OpBuilder &builder) {
     tensorOutOp.getDestMutable().assign(expandOp.value().getResult());
     return;
   }
-  llvm_unreachable("Expand op collapse failed");
+  llvm::report_fatal_error("Expand op collapse failed");
 }
 
 template <typename OpTy>
@@ -827,7 +827,7 @@ void Flattener::adjustTensorOutOpSrc(OpTy tensorOutOp, OpBuilder &builder) {
     tensorOutOp.getSrcMutable().assign(expandOp.value().getResult());
     return;
   }
-  llvm_unreachable("Expand op collapse failed");
+  llvm::report_fatal_error("Expand op collapse failed");
 }
 
 void Flattener::eraseOp(mlir::Operation *op) {

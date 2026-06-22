@@ -533,7 +533,7 @@ bool FusibleBlockAnalyzer::isRestrictedByShapePivot(int nodeA, int nodeB) {
     return !checkOutputSameShape(opA, opB);
   case FusionKind::Unknown:
   default:
-    llvm_unreachable("Fusion kind is not supported");
+    llvm::report_fatal_error("Fusion kind is not supported");
   }
   return true;
 }

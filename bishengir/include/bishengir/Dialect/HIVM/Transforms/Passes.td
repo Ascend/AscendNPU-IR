@@ -34,11 +34,30 @@ def ConvertToHIVMOp : Pass<"convert-to-hivm-op"> {
   ];
 }
 
+def EnableHIVMCCompatiblePrint : Pass<"enable-hivmc-compatible-print"> {
+  let summary = "Enable HIVMC version-compatible IR print";
+  let description = [{
+    Once HIVMC version-compatible IR print is enabled,
+    Operation::print(OpAsmPrinter) function will read the hivmc version attribute from moduleOp.
+    The corresponding hivmc version-compatible MLIR will be printed.
+  }];
+  let constructor = "mlir::hivm::createEnableHIVMCCompatiblePrintPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def NormalizeMatmul : Pass<"hivm-normalize-matmul"> {
   let summary = "Normalize hivm matmul op";
   let constructor = "mlir::hivm::createNormalizeMatmulPass()";
   let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
                            "tensor::TensorDialect",
+  ];
+}
+
+def NormalizeConvOps : Pass<"hivm-normalize-convops"> {
+  let summary = "Normalize hivm conv op";
+  let constructor = "mlir::hivm::createNormalizeConvOpsPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect", "annotation::AnnotationDialect",
   ];
 }
 
@@ -89,14 +108,27 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            [{::llvm::cl::values(
                clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
                           "no limit for local multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
+                          "only cube for local multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_VECTOR, "only-vector",
+                          "only vector for local multi buffer"),
                clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
                           "Disable l0c multi buffer"))}]>,
     Option<"limitMixAutoMultiBufferBuffer",
            "limit-mix-auto-multi-buffer-buffer", "MultiBufferStrategy",
            /*default=*/"MultiBufferStrategy::ONLY_CUBE",
-           "Disable multi-buffer-buffer on cube, vector Or no limit">,
+           "Disable multi-buffer-buffer on cube, vector Or no limit",
+           [{::llvm::cl::values(
+               clEnumValN(MultiBufferStrategy::NO_LIMIT, "no-limit",
+                          "no limit for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_CUBE, "only-cube",
+                          "only cube for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::ONLY_VECTOR, "only-vector",
+                          "only vector for mix auto multi buffer"),
+               clEnumValN(MultiBufferStrategy::CUBE_NO_L0C, "no-l0c",
+                          "Disable l0c for mix auto multi buffer"))}]>,
     Option<"workspaceMultiBufferNum", "set-workspace-multibuffer", "unsigned",
-           /*default=*/"2", "Override for multibuffer number for workspace">,
+           /*default=*/"4", "Override for multibuffer number for workspace">,
   ];
 }
 
@@ -138,7 +170,9 @@ def CloneTensorEmpty : Pass<"hivm-clone-tensor-empty", "func::FuncOp"> {
 def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   let summary = "Infer data layout for HIVM Ops";
   let constructor = "mlir::hivm::createInferHIVMDataLayoutPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", 
+                           "annotation::AnnotationDialect",
+  ];
 }
 
 def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
@@ -159,6 +193,9 @@ def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
     Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
            /*default=*/"false",
            "Enable global workspace reuse ,default : false">,
+    Option<"enableMemoryDisplay", "enable-memory-display", "bool",
+           /*default=*/"false",
+           "Enable memory display, default : false">,
     Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
            /*default=*/"false",
            "restrict memory inplace as isa, default : false">,
@@ -208,10 +245,47 @@ def InjectBlockSync : Pass<"hivm-inject-block-sync", "func::FuncOp"> {
 def GraphSyncSolver : Pass<"hivm-graph-sync-solver", "func::FuncOp"> {
   let summary = "graph sync solver ";
   let constructor = "mlir::hivm::createGraphSyncSolverPass()";
-  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect", ];
+  let dependentDialects = ["affine::AffineDialect", "hivm::HIVMDialect"];
   let options = [Option<"enableUnitFlag", "enable-unit-flag", "bool",
                         /*default=*/"false",
-                        "Enable unit-flag modes for synchronization">];
+                        "Enable unit-flag modes for synchronization">,
+                 Option<"ignoreWorkSpaceFunctionArguments", "ignore-workspace-func-args", "bool",
+                        /*default=*/"false",
+                        "Ignore workspace function arguments.">,
+                 Option<"enableTesterMode", "enable-tester-mode", "bool",
+                        /*default=*/"false", "Enable sync-tester mode">,
+                 ListOption<"syncTesterOptions", "sync-tester-options",
+                            "int64_t",
+                            "Sync-tester options (num_runs, init_seed, "
+                            "num_ops, num_ptrs, enable-multibuffer)">,
+  ];
+}
+
+def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
+  let summary = "cross-core graph-sync-solver ";
+  let constructor = "mlir::hivm::createCrossCoreGSSPass()";
+  let dependentDialects = ["hacc::HACCDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect"];
+  let options =
+      [Option<"blockAllSync", "block-all-sync", "bool", /*default=*/"false",
+              "Enable inject all block sync for HIVM injectBlockSync.">,
+       Option<"disableAutoInjectBlockSync", "disable-auto-inject-block-sync",
+              "bool", /*default=*/"false",
+              "Toggle auto set/wait insertion, always keep SetFFTSBaseAddrOp">,
+       Option<
+           "alwaysUsePipeSAsWaitingPipe", "always-use-pipe-s", "bool",
+           /*default=*/"false",
+           "Always use scalar pipeline as waiting pipeline for wait_flag ops.">,
+       Option<"useDifferentMultiBufferFlagIds",
+              "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
+              "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"forceIsMemBased", "force-is-mem-based", "bool",
+              /*default=*/"false",
+              "Force memory based ai-core architecture mode.">,
+       Option<"forceIsRegBased", "force-is-reg-based", "bool",
+              /*default=*/"false",
+              "Force register based ai-core architecture mode.">,
+  ];
 }
 
 def HIVMDecomposeOp : Pass<"hivm-decompose-op", "func::FuncOp"> {
@@ -259,6 +333,10 @@ def HIVMAggregatedDecomposeOp : Pass<"hivm-aggregated-decompose-op", "func::Func
                        "after-infer-hivm-data-layout",
                        "for ops that get decompose after infer HIVM data "
                        "layout"),
+            clEnumValN(bishengir::DecomposePhase::AFTER_LIFT_LOWEST_STRIDE,
+                       "after-hivm-lift-lowest-stride",
+                       "for ops that get decompose after infer lift lowest "
+                       "stride"),
             clEnumValN(bishengir::DecomposePhase::AFTER_HIVM_FLATTEN_OPS,
                        "after-hivm-flatten-ops",
                        "for ops that get decompose after HIVM flatten ops"))}]>,
@@ -371,7 +449,8 @@ def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
 def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
   let summary = "Mark scalar operations with core-type attribute.";
   let constructor = "mlir::hivm::createMarkRealCoreTypePass()";
-  let dependentDialects = ["func::FuncDialect"];
+  let dependentDialects = ["func::FuncDialect", "annotation::AnnotationDialect",
+                           "hacc::HACCDialect"];
   let options = [Option<"removeCoreTypeAttrs", "remove-core-type-attrs", "bool",
                         /*default=*/"false",
                         "Remove all core type attributes. If set to true, this "
@@ -452,7 +531,7 @@ def LiftLowestStride : Pass<"hivm-lift-lowest-stride", "func::FuncOp"> {
 
     Exceptions: MacroOp and VArangeOp.
 
-    For exmaple, the type of operand is memref<16xf16, strided<[8]>>,
+    For example, the type of operand is memref<16xf16, strided<[8]>>,
     after LiftLowestStride, the type would be
     memref<16x1xf32, strided<[8, 1]>> with contiguous last dim.
   }];
@@ -492,7 +571,7 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let summary = "Convert ops to HIVM Fixpipe op";
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect", "annotation::AnnotationDialect"];
 }
 
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {
@@ -510,7 +589,24 @@ def InsertLoadStoreForMixCV
     : Pass<"hivm-insert-load-store-for-mix-cv", "func::FuncOp"> {
   let summary = "insert load store op for mix cv";
   let constructor = "mlir::hivm::createInsertLoadStoreForMixCVPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "annotation::AnnotationDialect"];
+  let options = [Option<
+    "enableLegacy", "enable-legacy", "bool",
+    /*default=*/"false",
+    "Run legacy logic for insert load store op for mix cv">];
+}
+
+def InsertLoadStoreForScalar
+    : Pass<"hivm-insert-load-store-for-scalar", "func::FuncOp"> {
+  let summary = "Insert explicit load/store boundaries for scalar values crossing vector and cube cores";
+  let constructor = "mlir::hivm::createInsertLoadStoreForScalarPass()";
+  let dependentDialects = ["hivm::HIVMDialect",
+                           "bishengir::memref_ext::MemRefExtDialect",
+                           "bufferization::BufferizationDialect",
+                           "annotation::AnnotationDialect"];
 }
 
 def InsertInferWorkSpaceSizeFunc : Pass<"hivm-insert-infer-workspace-size-func",
@@ -572,6 +668,20 @@ def LowerCreateSyncBlockLock : Pass<"hivm-lower-create-sync-block-lock", "func::
                            "hivm::HIVMDialect"];
 }
 
+def InsertFreeLockVarBeforeReturn : Pass<"hivm-insert-free-lock-var-before-return",
+                                        "ModuleOp"> {
+  let summary = "Insert FreeLockVarOp before return to prevent deadlock "
+                "when control flow skips sync_block_lock/unlock";
+  let description = [{
+    When SyncBlockLock/Unlock are in conditional branches (e.g. else block),
+    some blocks may not execute them, causing lock_var count mismatch and
+    deadlock. This pass inserts FreeLockVarOp before every return.
+    Each FreeLockVarOp lowers to one sync_block_lock / sync_block_unlock pair.
+  }];
+  let constructor = "mlir::hivm::createInsertFreeLockVarBeforeReturnPass()";
+  let dependentDialects = ["func::FuncDialect", "hivm::HIVMDialect"];
+}
+
 def AutoInferBufferSize : Pass<"hivm-auto-infer-buffer-size", "func::FuncOp"> {
   let summary = "Auto infer buffer size";
   let description = "infer buffer size by inserting annotation.mark Op";
@@ -585,7 +695,8 @@ def InsertWorkSpaceForMixCV : Pass<"insert-workspace-for-mix-cv"> {
   let constructor = "mlir::hivm::createInsertWorkSpaceForMixCVPass()";
   let dependentDialects = [
     "hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
-                         "bufferization::BufferizationDialect"
+                         "bufferization::BufferizationDialect", 
+                         "annotation::AnnotationDialect"
   ];
 }
 
@@ -610,6 +721,15 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let dependentDialects = [
     "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
   ];
+  let options = [Option<
+  // TODO: Please remove the strictMode option,
+    "strictMode", "strict-mode", "bool",
+    /*default=*/"true",
+    "Run on strict mode when bubble up extract slice">,
+    Option<
+    "enableTile", "enable-tile", "bool",
+    /*default=*/"true",
+    "Enable TileAndBindSubBlock pass">];
 }
 
 def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncOp"> {
@@ -618,6 +738,10 @@ def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncO
   let dependentDialects = [
     "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
   ];
+  let options = [Option<
+    "strictMode", "strict-mode", "bool",
+    /*default=*/"true",
+    "Run on strict mode when bubble up extract slice">];
 }
 
 def InsertInitAndFinishForDebug : Pass<"hivm-insert-init-and-finish-for-debug"> {
@@ -630,6 +754,22 @@ def MarkDisableLoad : Pass<"hivm-mark-disable-load"> {
   let summary = "mark the memref.loads that need to disable dcache";
   let constructor = "mlir::hivm::createMarkDisableLoadPass()";
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
+def MarkSyncBlockLockWithSubblock : Pass<"hivm-mark-sync-block-lock-with-subblock",
+                                         "ModuleOp"> {
+  let summary = "Mark sync_block_lock and sync_block_unlock ops with "
+                "sync_block_lock_with_subblock tag when they are not inside "
+                "limit_sub_block_id0 if op in mix module";
+  let description = [{
+    When the module is mix type, this pass marks sync_block_lock and
+    sync_block_unlock ops that are NOT inside an scf.if op with
+    limit_sub_block_id0 attribute. The marked ops get a sync_block_lock_with_subblock
+    attribute to indicate they should use subblockid-based block_idx calculation
+    (get_block_idx * get_subblocknum + get_subblockid).
+  }];
+  let constructor = "mlir::hivm::createMarkSyncBlockLockWithSubblockPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
 }
 
 def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
@@ -645,11 +785,19 @@ def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
 def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let summary = "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
   let constructor = "mlir::hivm::createCVPipeliningPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect"];
-  let options = [Option<
-      "enableAutoBalance", "enable-auto-balance", "bool",
-      /*default=*/"true",
-      "Enable balancing of vector subtasks during pipelining.">];
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect", "mlir::scope::ScopeDialect"];
+  let options = [
+      Option<"enableSkewMode", "enable-skew-mode", "bool",
+            /*default=*/"false",
+            "Enable skew-mode cv-pipelining instead of the "
+            "default unroll-mode.">,
+      Option<"setDepthInUnrollMode", "set-depth-in-unroll-mode", "int",
+            /*default=*/"-1",
+            "Specify pipeline depth for cv-pipelining.">,
+      Option<"enableLazyLoading", "enable-lazy-loading", "bool",
+            /*default=*/"false",
+            "Allow load ops to be cloned into multiple work items "
+            "to reduce intermediate buffer expansion">];
 }
 
 def AutoBlockifyParallelLoop
@@ -691,6 +839,36 @@ def ConvertNonContiguousReshapeToCopy : Pass<"convert-non-contiguous-reshape-to-
   let summary = "Generate copy for reassociative reshape that might be non-contiguous";
   let constructor = "mlir::hivm::createNonContiguousReshapeToCopyPass()";
   let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect"];
+}
+
+def InsertConvertLayout : Pass<"hivm-insert-convert-layout", "func::FuncOp"> {
+  let summary = "Insert convert layout for matmul operations";
+  let constructor = "mlir::hivm::createInsertConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+}
+
+def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp"> {
+  let summary = "Propagate convert layout for matmul operations";
+  let constructor = "mlir::hivm::createPropagateConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+
+  let options = [Option<"allowAgnosticOps", "allow-agnostic-ops", "bool",
+                        /*default=*/"false",
+                        "Enable allow agnostic ops propagate reshape."
+                        "Currently disabled because other passes has not supported"
+                        "fractal-layout operations.">];
+}
+
+def CreatePreload : Pass<"create-preload"> {
+  let summary = "Create preload for CV pipelining";
+  let constructor = "mlir::hivm::createCreatePreloadPass()";
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
+}
+
+def RemoveHIVMDataLayoutAnnotation : Pass<"hivm-remove-layout-annotation", "func::FuncOp"> {
+  let summary = "Remove HIVM data layout annotation";
+  let constructor = "mlir::hivm::createRemoveHIVMDataLayoutAnnotationPass()";
+  let dependentDialects = ["annotation::AnnotationDialect"];
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

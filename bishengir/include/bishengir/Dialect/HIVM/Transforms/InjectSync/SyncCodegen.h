@@ -67,7 +67,7 @@ class SyncCodegen {
 public:
   SyncCodegen(SyncIRs &syncIR, func::FuncOp func,
               SyncAnalysisMode syncAnalysisMode)
-      : syncIR(syncIR), func_(func), syncAnalysisMode(syncAnalysisMode) {};
+      : syncIR(syncIR), func_(func), syncAnalysisMode(syncAnalysisMode){};
 
   ~SyncCodegen() = default;
 
@@ -153,8 +153,9 @@ private:
   /// MmadL1 and the library.
   void UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter);
 
-  void HandleEnableUnitFlag(IRRewriter &rewriter,
-                            CompoundInstanceElement *nowCompound) const;
+  void HandleUnitFlagEnabledOp(IRRewriter &rewriter,
+                               UnitFlagEnabledInterface unitFlagEnabledOp,
+                               UnitFlagInfo unitFlagInfo) const;
 
 private:
   /// Save the Global syncIR.
@@ -175,8 +176,9 @@ private:
       {4, hivm::EVENT::EVENT_ID4}, {5, hivm::EVENT::EVENT_ID5},
       {6, hivm::EVENT::EVENT_ID6}, {7, hivm::EVENT::EVENT_ID7}};
 
-  /// Record the loop and corresponding counter buffer.
-  DenseMap<LoopLikeOpInterface, Value> loop2BufferCounter;
+  /// Record the loop and corresponding counter buffer, with eventidNum as
+  /// part of the key to handle different buffer counts for the same loop
+  DenseMap<std::pair<LoopLikeOpInterface, unsigned>, Value> loop2BufferCounter;
 
   /// Collect sync index and corresponding event id expressions.
   DenseMap<unsigned, Value> SyncIndex2SelectBuffer;

@@ -19,13 +19,17 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
+#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 
@@ -84,7 +88,43 @@ void annotateOpOperand(OpBuilder builder, Operation *op,
     for (Value val : loopOp.getYieldedValues()) {
       propagateAnnotation(val);
     }
+  } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
+    for (auto val : ifOp.thenYield().getResults())
+      propagateAnnotation(val);
+    for (auto val : ifOp.elseYield().getResults())
+      propagateAnnotation(val);
   }
+}
+
+static bool isDefinedOutside(Value value, Region &region) {
+  if (Operation *defOp = value.getDefiningOp()) {
+    return !region.isAncestor(defOp->getParentRegion());
+  }
+  if (BlockArgument arg = dyn_cast<BlockArgument>(value)) {
+    return !region.isAncestor(arg.getOwner()->getParent());
+  }
+  return false;
+}
+
+static Value createZeroOrEmptyStub(OpBuilder &builder, Location loc,
+                                   Type type) {
+  return llvm::TypeSwitch<Type, Value>(type)
+      .Case<TensorType>([&](TensorType t) {
+        return builder.create<tensor::EmptyOp>(loc, t.getShape(),
+                                               t.getElementType());
+      })
+      .Case<IntegerType>([&](IntegerType t) {
+        return builder.create<arith::ConstantOp>(loc, t,
+                                                 builder.getIntegerAttr(t, 0));
+      })
+      .Case<FloatType>([&](FloatType t) {
+        return builder.create<arith::ConstantOp>(loc, t,
+                                                 builder.getFloatAttr(t, 0.0));
+      })
+      .Default([&](Type t) {
+        llvm::errs() << "Unsupported result type for stubbing: " << t << "\n";
+        return Value();
+      });
 }
 
 static SmallVector<Value> getOutOperands(Operation *op) {
@@ -116,8 +156,39 @@ static SmallVector<Value> getOutOperands(Operation *op) {
     return outOperands;
   }
 
+  // For scope ops: derive replacement values from the terminator's operands.
+  // Values defined outside the scope are used directly; values defined inside
+  // are replaced with zero/empty stubs created immediately before the scope op.
+  if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+    Operation *terminator = scopeOp.getBody()->getTerminator();
+    SmallVector<Value> outVals;
+    for (auto [index, result] : llvm::enumerate(scopeOp.getResults())) {
+      if (result.use_empty()) {
+        // Sentinel: result has no uses, no replacement needed.
+        outVals.push_back(Value());
+        continue;
+      }
+      Value yieldedVal = terminator->getOperand(index);
+      if (isDefinedOutside(yieldedVal, scopeOp.getRegion())) {
+        outVals.push_back(yieldedVal);
+      } else {
+        // Insert stub immediately before the scope op so it is visible to
+        // all users of the scope result after the scope is erased.
+        OpBuilder localBuilder(op->getBlock(), Block::iterator(op));
+        Value stub = createZeroOrEmptyStub(localBuilder, scopeOp.getLoc(),
+                                           result.getType());
+        if (!stub)
+          scopeOp.emitError()
+              << "Failed to create replacement stub for scope result #" << index
+              << " with unsupported type: " << result.getType();
+        outVals.push_back(stub); // null on failure; caller checks
+      }
+    }
+    return outVals;
+  }
+
   // TODO: should we get the last operands as out operands by default?
-  llvm_unreachable("unsupported op to get out operands");
+  llvm::report_fatal_error("unsupported op to get out operands");
 }
 
 void replaceResultWithInitOperand(Operation *op) {
@@ -126,9 +197,6 @@ void replaceResultWithInitOperand(Operation *op) {
   if (numResults == 0 || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
     return;
   }
-  auto numOperands = op->getNumOperands();
-  if (numResults > numOperands)
-    op->emitError("invalid element type");
 
   SmallVector<Value> outOperands = getOutOperands(op);
   assert(outOperands.size() == numResults &&
@@ -180,6 +248,49 @@ struct PostCubeReplacement : public OpRewritePattern<tensor::ExtractOp> {
   }
 };
 
+struct FoldEmptyInsertSlice : public OpRewritePattern<tensor::InsertSliceOp> {
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getSource().getDefiningOp<tensor::EmptyOp>()) {
+      rewriter.replaceOp(op, op.getDest());
+      return success();
+    }
+    return failure();
+  }
+};
+
+struct RemoveUselessMarkOps : public OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp markOp,
+                                PatternRewriter &rewriter) const override {
+    if (!markOp->getAttrs().empty()) {
+      return failure();
+    }
+
+    Value src = markOp.getSrc();
+    // TODO: The subsequent logic should be handled correctly for mark, rather
+    // than applying special processing.
+    Operation *defOp = src.getDefiningOp();
+    if (isa<hivm::FixpipeOp, hivm::StoreOp>(defOp)) {
+      return failure();
+    }
+
+    bool isOnlyMark = llvm::all_of(src.getUsers(), [](Operation *user) {
+      return isa<annotation::MarkOp>(user);
+    });
+
+    if (isOnlyMark) {
+      return failure();
+    }
+
+    rewriter.eraseOp(markOp);
+    return success();
+  }
+};
+
 template <typename OpType>
 void removeOpWithAttrFromFunc(std::string attr, func::FuncOp func) {
   func.walk<WalkOrder::PostOrder>([&](Operation *op) {
@@ -194,6 +305,9 @@ void removeOpWithAttrFromFunc(std::string attr, func::FuncOp func) {
 void postProcessCubeFunc(func::FuncOp func) {
   RewritePatternSet patterns(func.getOperation()->getContext());
   patterns.insert<PostCubeReplacement>(patterns.getContext());
+  patterns.insert<FoldEmptyInsertSlice>(patterns.getContext());
+  patterns.insert<RemoveUselessMarkOps>(patterns.getContext());
+  tensor::populateFoldTensorEmptyPatterns(patterns);
   if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
     llvm::report_fatal_error("postProcessCubeFunc failed");
   }
@@ -206,6 +320,11 @@ void postProcessCubeFunc(func::FuncOp func) {
 }
 
 void postProcessVectorFunc(func::FuncOp func) {
+  RewritePatternSet patterns(func.getOperation()->getContext());
+  patterns.insert<RemoveUselessMarkOps>(patterns.getContext());
+  if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
+    llvm::report_fatal_error("postProcessVectorFunc failed");
+  }
   removeOpWithAttrFromFunc<annotation::MarkOp>(
       "DuplicateTensorExtractForCube::replacementLabel", func);
   removeOpWithAttrFromFunc<tensor::ExtractOp>(
@@ -216,8 +335,35 @@ void postProcessVectorFunc(func::FuncOp func) {
 
 static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
   FailureOr<TCoreType> inferredCoreType = getCoreType(forOp);
+  if (auto coreTypeAttr = forOp->getAttrOfType<hivm::TCoreTypeAttr>(
+        hivm::kPipelinedLoopCoreTypeAttrName)) {
+    return coreType == coreTypeAttr.getTcoretype();
+  }
   return llvm::succeeded(inferredCoreType) &&
          coreType == inferredCoreType.value();
+}
+
+static void inferDistributedCoreType(func::FuncOp mixedFunc) {
+  auto rectifyCoreType = [mixedFunc](hivm::TCoreType &cur) {
+    auto funcCoreType = mixedFunc
+                            ->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+                                hivm::TFuncCoreTypeAttr::name)
+                            .getFuncCoreType();
+    if (cur == TCoreType::CUBE_AND_VECTOR) {
+      return kTFuncCoreType2TCoreType.at(funcCoreType);
+    }
+    return cur;
+  };
+  mixedFunc->walk([&rectifyCoreType](Operation *op) {
+    if (isDistributedTypeCustomOp(op)) {
+      if (auto res = hivm::detail::queryCoreTypeHelper(op)) {
+        auto coreType = rectifyCoreType(res.value());
+        auto coreTypeAttr =
+            hivm::TCoreTypeAttr::get(op->getContext(), coreType);
+        op->setAttr(hivm::TCoreTypeAttr::name, coreTypeAttr);
+      }
+    }
+  });
 }
 
 // erase ops of given core type from function
@@ -228,6 +374,12 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
 
   SmallVector<Operation *> toSinkOutOfLoop;
+  // TODO: Refactor filter logic: First infer all op's core type, then filter
+  // and erase ops according to core type does not match.
+
+  // because of filter will erase op during walk, distributed op needs infer
+  // core type before filter
+  inferDistributedCoreType(mixedFunc);
   mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
       if (isLoopOfCoreType(forOp, filterCoreType)) {
@@ -235,7 +387,16 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
         return;
       }
     }
+
     FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      if (auto coreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
+              hivm::kPipelinedLoopCoreTypeAttrName)) {
+        auto scopeCoreType = coreTypeAttr.getTcoretype();
+        res = scopeCoreType == filterCoreType;
+      }
+    }
+
     if (failed(res)) {
       signalPassFailure();
       return;
@@ -321,8 +482,10 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
 
   // filter vector ops from AIC kernel, and cube ops from AIV kernel
   filterMixFunc(builder, func, TCoreType::VECTOR);
+  LLVM_DEBUG({ llvm::dbgs() << "New aic: " << func << "\n"; });
   postProcessCubeFunc(func);
   filterMixFunc(builder, vecFunc, TCoreType::CUBE);
+  LLVM_DEBUG({ llvm::dbgs() << "New aiv: " << vecFunc << "\n"; });
   postProcessVectorFunc(vecFunc);
 }
 

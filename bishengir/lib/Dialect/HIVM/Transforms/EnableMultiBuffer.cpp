@@ -109,15 +109,14 @@ public:
   /// %1 = hivm.hir.pointer_cast(addr2) [] : memref<4x128xf32>
   /// scf.for %iv = %c0 to %c16 step %c4 {
   ///   %2 = affine.apply #map()[%iv]
-  //    %3 = arith.index_cast %2 : index to i1
-  //    %4 = arith.select %3, %0, %1 : memref<16xf16, #hivm.address_space<ub>>
+  ///   %3 = arith.index_cast %2 : index to i64
+  ///   %4 = ... // Select a value within [%0, %1] based on the value of %3.
   ///   "some_use"(%4) : (memref<4x128xf32, strided<...>) -> ()
   /// }
   /// ```
   LogicalResult extMultiBuffer() {
     LLVM_DEBUG(DBGS() << "Try multi buffer: " << ptrCastOp_ << "\n");
-    LLVM_DEBUG(DBGS() << "Currently only supports double buffering (factor = "
-                         "2) in split buffer mode\n");
+    LLVM_DEBUG(DBGS() << "Enable multi-buffer in split buffer mode\n");
 
     assert(ptrCastOp_ && "ptrCastOp can't be null.");
     if (!ptrCastOp_->getParentOfType<LoopLikeOpInterface>()) {
@@ -127,18 +126,34 @@ public:
 
     OpBuilder builder(ptrCastOp_);
     auto newPtrCastOps = createPtrCastOps(builder);
+    // Multi-buffer factor = number of physical buffers (one per addr)
+    const unsigned factor = newPtrCastOps.size();
+    if (factor < 2) {
+      LLVM_DEBUG(DBGS() << "multi-buffer factor < 2, skip\n");
+      return failure();
+    }
     createMarkOp(builder, newPtrCastOps);
 
-    // create affineApply and indexCast
     Location loc = ptrCastOp_->getLoc();
-    auto counter = createNestedIndexModular(builder, ptrCastOp_.getOperation());
+    auto idxType = builder.getI64Type();
+    Value modularIndex =
+        createNestedIndexModular(builder, ptrCastOp_.getOperation(), factor);
+    Value modularIdx =
+        builder.create<arith::IndexCastOp>(loc, idxType, modularIndex);
 
-    // TODO: currently only support double buffer.
-    assert(newPtrCastOps.size() >= 2);
-    auto ptrCastOp0 = newPtrCastOps[0];
-    auto ptrCastOp1 = newPtrCastOps[1];
-    Value selectedBuffer = builder.create<arith::SelectOp>(
-        loc, ptrCastOp_.getType(), counter, ptrCastOp0, ptrCastOp1);
+    // Build N-way selection:
+    //   selected = buf0;
+    //   for i in 1..factor-1:
+    //     if (idx == i) selected = bufi else keep previous
+    Value selectedBuffer = newPtrCastOps[0];
+    for (unsigned i = 1; i < factor; ++i) {
+      Value iVal = builder.create<arith::ConstantIntOp>(
+          loc, static_cast<int64_t>(i), idxType);
+      Value cond = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
+                                                 modularIdx, iVal);
+      selectedBuffer = builder.create<arith::SelectOp>(
+          loc, ptrCastOp_.getType(), cond, newPtrCastOps[i], selectedBuffer);
+    }
 
     ptrCastOp_.replaceAllUsesWith(selectedBuffer);
     ptrCastOp_.erase();
@@ -252,6 +267,21 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
     }
 
     LoopLikeOpInterface loopOp = getParentLoop(op.getResult());
+    /// When the outmost loopOp of PointerCastOp is null ptr, it means multi
+    /// buffer can not be enabled directly. CopyOp is needed to copy yield value
+    /// (which is also the result of PointerCastOp) to iter_arg of
+    /// PointerCastOp's parent loop to enable multi buffer.
+    if (!loopOp) {
+      LoopLikeOpInterface parentLoop =
+          op->getParentOfType<LoopLikeOpInterface>();
+      if (!isa_and_nonnull<scf::ForOp>(parentLoop)) {
+        LLVM_DEBUG(DBGS() << " PointerCastOp op has no parent for loop!\n");
+        return failure();
+      }
+      auto yieldIndex = GetParentLoopYieldIndex(parentLoop, op.getResult());
+      assert(yieldIndex.has_value());
+      InsertCopyBeforeLoopYield(rewriter, parentLoop, yieldIndex.value());
+    }
     while (loopOp) {
       if (!isa<scf::ForOp>(loopOp))
         return failure();
@@ -262,7 +292,73 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
 
 private:
   LogicalResult OptMultiBuffer(hivm::PointerCastOp op) const;
+  std::optional<size_t> GetParentLoopYieldIndex(LoopLikeOpInterface parentLoop,
+                                                Value val) const;
+  void InsertCopyBeforeLoopYield(PatternRewriter &rewriter,
+                                 LoopLikeOpInterface parentLoopOp,
+                                 size_t yieldIndex) const;
 };
+
+std::optional<size_t>
+MultiBufferPattern::GetParentLoopYieldIndex(LoopLikeOpInterface parentLoop,
+                                            Value val) const {
+  auto *valDefOp = val.getDefiningOp();
+  if (!valDefOp)
+    llvm::report_fatal_error("val should have defining op.");
+
+  // Need to determine whether val is yielded by the loop.
+  auto yieldedValues = parentLoop.getYieldedValues();
+  if (yieldedValues.empty())
+    return std::nullopt;
+
+  auto idxLoopRes = getYieldValueIdx(val, yieldedValues);
+  if (idxLoopRes.has_value()) {
+    return idxLoopRes.value();
+  }
+
+  // Need to determine whether val is yielded by if/else.
+  auto parentIf = valDefOp->getParentOfType<scf::IfOp>();
+  if (!parentIf || parentIf.getResults().empty())
+    return std::nullopt;
+
+  auto thenYieldOp = parentIf.thenYield();
+  auto thenYieldOpers = thenYieldOp.getOperands();
+
+  auto idxThenYielded = getYieldValueIdx(val, thenYieldOpers);
+  if (idxThenYielded.has_value()) {
+    // The val is yielded by ifOp, need to find yield index of ifOp's result
+    auto res = parentIf.getResults()[*idxThenYielded];
+    return GetParentLoopYieldIndex(parentLoop, res);
+  }
+
+  auto elseYieldOp = parentIf.elseYield();
+  auto elseYieldOpers = elseYieldOp.getOperands();
+  auto idxElseYielded = getYieldValueIdx(val, elseYieldOpers);
+  if (idxElseYielded.has_value()) {
+    auto res = parentIf.getResults()[*idxElseYielded];
+    return GetParentLoopYieldIndex(parentLoop, res);
+  }
+
+  return std::nullopt;
+}
+
+void MultiBufferPattern::InsertCopyBeforeLoopYield(
+    PatternRewriter &rewriter, LoopLikeOpInterface parentLoopOp,
+    size_t yieldIndex) const {
+  rewriter.setInsertionPoint(
+      parentLoopOp.getLoopRegions()[0]->front().getTerminator());
+  auto iterArgs = parentLoopOp.getRegionIterArgs();
+  auto yieldVals = parentLoopOp.getYieldedValues();
+  assert(yieldIndex < iterArgs.size() && iterArgs.size() == yieldVals.size());
+  Value iterArg = iterArgs[yieldIndex];
+  Value originYield = yieldVals[yieldIndex];
+  rewriter.create<hivm::CopyOp>(parentLoopOp->getLoc(), TypeRange{},
+                                /*src*/ originYield, /*dst*/ iterArg);
+  assert(parentLoopOp.getYieldedValuesMutable().has_value());
+  rewriter.modifyOpInPlace(parentLoopOp, [&]() {
+    parentLoopOp.getYieldedValuesMutable().value()[yieldIndex].assign(iterArg);
+  });
+}
 
 LogicalResult MultiBufferPattern::OptMultiBuffer(hivm::PointerCastOp op) const {
   auto status = MultiBufferHelper(op).extMultiBuffer();

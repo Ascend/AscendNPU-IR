@@ -84,3 +84,20 @@ DecomposePhase VTransposeOp::getDecomposePhase() {
   return DecomposePhase::AFTER_HIVM_STRIDE_ALIGNMENT;
 }
 
+//===----------------------------------------------------------------------===//
+// Binary VectorOp
+//===----------------------------------------------------------------------===//
+#define GET_DECOMPOSE_PHASE_BINARY_VEC_OP(opName)                                           \
+  DecomposePhase opName::getDecomposePhase() {                                              \
+    return DecomposePhase::AFTER_LIFT_LOWEST_STRIDE;                                        \
+}
+
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VAndOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VOrOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VMulOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VAddOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VSubOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VDivOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VMaxOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VMinOp)
+GET_DECOMPOSE_PHASE_BINARY_VEC_OP(VXorOp)

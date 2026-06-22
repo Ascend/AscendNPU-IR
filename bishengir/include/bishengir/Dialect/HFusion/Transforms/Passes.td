@@ -492,7 +492,9 @@ def Decompose : Pass<"hfusion-decompose", "func::FuncOp">{
         clEnumValN(::bishengir::DecomposePhase::NO_CONSTRAINT, "no-constraint",
                    "decompose with no constraint specified"),
         clEnumValN(::bishengir::DecomposePhase::AFTER_HFUSION_FLATTEN, "after-hfusion-flatten",
-                   "for ops that get decompose after tidy flatten")
+                   "for ops that get decompose after tidy flatten"),
+        clEnumValN(::bishengir::DecomposePhase::BEFORE_LOWER_TO_LOOPS, "before-lower-to-loops",
+                   "decompose before convert linalg to loops")
     )}]>,
   ];
 }

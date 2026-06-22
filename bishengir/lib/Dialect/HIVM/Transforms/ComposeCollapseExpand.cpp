@@ -159,8 +159,14 @@ private:
     // so we need to map original shape index to dynamic shape index.
     auto resDynamicIndex =
         findDynamicShapeIndex(resultOp.getResultType().getShape(), resultIndex);
-    auto resultSize = resultOp.getOutputShape()[resDynamicIndex]
-                          .getDefiningOp<memref::DimOp>();
+    if (resDynamicIndex < 0)
+      return false;
+    const auto resultDynShapes = resultOp.getOutputShape();
+    if (static_cast<size_t>(resDynamicIndex) >= resultDynShapes.size())
+      return false;
+    auto resultSize =
+        resultDynShapes[static_cast<size_t>(resDynamicIndex)]
+            .getDefiningOp<memref::DimOp>();
     if (!resultSize) {
       return false;
     }
@@ -182,6 +188,8 @@ private:
     Value dstSymbolicValue;
     auto srcDynamicIndex =
         findDynamicShapeIndex(srcOp.getSrcType().getShape(), srcIndex);
+    if (srcDynamicIndex < 0)
+      return false;
     auto srcParentOp = srcOp->getParentOp();
     assert(srcParentOp != nullptr && "srcOp should have parent");
     srcParentOp->walk<WalkOrder::PreOrder>(

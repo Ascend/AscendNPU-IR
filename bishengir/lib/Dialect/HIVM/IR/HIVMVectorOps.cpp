@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
@@ -135,6 +136,14 @@ void VBrcOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 LogicalResult VBrcOp::verify() {
   // tmpBuf can be null
   auto tmpBuf = getTempBuffer();
+  Type srcElemType = getElementTypeOrSelf(getSrc().getType());
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
+    return emitOpError("Current hardware doesn't support fp8 type");
+
   if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
     return emitOpError() << "temp_buffer'rank should be one";
   }
@@ -698,6 +707,13 @@ bool VTransposeOp::isLastTwoAxesTranspose() {
 LogicalResult VTransposeOp::verify() {
   ArrayRef<int64_t> permutation = this->getPermutation();
   size_t permSize = permutation.size();
+  Type srcElemType = getElementTypeOrSelf(getSrc().getType());
+
+  auto moduleOp =
+      this->getOperation()->template getParentOfType<mlir::ModuleOp>();
+  if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
+    return emitOpError("Current hardware doesn't support fp8 type");
   if (permutation.empty()) {
     return emitOpError() << "Permutation array should not be empty.";
   }
@@ -855,7 +871,7 @@ void VArangeOp::getStridesFromValue(OpBuilder &builder, Location loc, Value val,
     else if (isa<TensorType>(shapedTy))
       size = builder.createOrFold<tensor::DimOp>(loc, val, dim);
     else
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "Expected arange to be initialized with tensor or memref type.");
     strides[dim - 1] =
         builder.createOrFold<arith::MulIOp>(loc, strides[dim], size);

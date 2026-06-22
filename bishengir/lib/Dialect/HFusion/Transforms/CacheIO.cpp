@@ -86,7 +86,7 @@ void cacheWriteFuncReturn(mlir::OpBuilder &builder, func::FuncOp funcOp,
   func::ReturnOp returnOp = nullptr;
   funcOp->walk([&returnOp](func::ReturnOp op) { returnOp = op; });
   if (returnOp == nullptr)
-    llvm_unreachable("Return Op not found");
+    llvm::report_fatal_error("Return Op not found");
   for (size_t i = 0; i < returnOp->getNumOperands(); ++i) {
     if (funcOp.getResultAttr(i, hacc::CachedIOAttr::name)) {
       // ignore already cached func result

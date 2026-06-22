@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -50,6 +51,16 @@ namespace {
 // Patterns that convert ops from other dialects to HIVM ops.
 //===---------------------------------------------------------------------===//
 
+inline bool isFromDistCallResult(mlir::Value v) {
+  auto *srcOp = utils::tracebackMemRef(v).getDefiningOp();
+  if (!srcOp)
+    return false;
+  if (hivm::isDistributedTypeCustomOp(srcOp)) {
+    return true;
+  }
+  return false;
+}
+
 std::optional<Value>
 getPadValueForSingleValue(std::optional<Operation *> allocOpAlias) {
   if (!allocOpAlias.has_value())
@@ -59,6 +70,10 @@ getPadValueForSingleValue(std::optional<Operation *> allocOpAlias) {
     if (llvm::isa_and_nonnull<hivm::VBrcOp>(user) &&
         user->getOperand(0).getType().isIntOrFloat()) {
       return user->getOperand(0);
+    } else if (llvm::isa_and_nonnull<memref::CollapseShapeOp>(user)) {
+      auto maybePadValue = getPadValueForSingleValue(user);
+      if (maybePadValue.has_value())
+        return maybePadValue;
     }
   }
   return std::nullopt;
@@ -232,19 +247,24 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
   LogicalResult matchAndRewrite(memref::CopyOp copyOp,
                                 PatternRewriter &rewriter) const override {
     Value src = copyOp.getSource();
-    bool convertToLoad = isFromGMSpace(src);
+    // TODO：remove memref.copy conversion after changing to use
+    // hivm.load/hivm.store directly
+    bool convertToLoad = isFromGMSpace(src) || isFromDistCallResult(src);
     if (convertToLoad) {
       return replaceMemCopyByHIVMLoadOp(copyOp, rewriter);
     }
 
     Value dst = copyOp.getTarget();
-    bool convertToStore = isFromGMSpace(dst);
+    // TODO：remove memref.copy conversion after changing to use
+    // hivm.load/hivm.store directly
+    bool convertToStore = isFromGMSpace(dst) || isFromDistCallResult(dst);
+
     if (convertToStore) {
       auto storeOp = rewriter.replaceOpWithNewOp<hivm::StoreOp>(
           copyOp, TypeRange(), src, dst);
       // TODO: change TA to create hivm.load/store op directly
       auto implicitTransposeAttr = utils::getAnnotateOpWithAttr(
-          copyOp.getTarget(), "MayImplicitTransposeWithLastAxis");
+          dst, "MayImplicitTransposeWithLastAxis");
       if (implicitTransposeAttr.has_value()) {
         storeOp.setMayImplicitTransposeWithLastAxis(true);
       }
@@ -265,7 +285,9 @@ struct BufferizeMaterializeOpLowering
   matchAndRewrite(bufferization::MaterializeInDestinationOp bufMIDOp,
                   PatternRewriter &rewriter) const override {
     Value dst = bufMIDOp.getDest();
-    bool convertToStore = isFromGMSpace(dst);
+    // TODO：remove bufferization conversion after changing to use
+    // hivm.load/hivm.store directly
+    bool convertToStore = isFromGMSpace(dst) || isFromDistCallResult(dst);
     if (convertToStore) {
       rewriter.replaceOpWithNewOp<hivm::StoreOp>(bufMIDOp, TypeRange(),
                                                  bufMIDOp.getSource(), dst);

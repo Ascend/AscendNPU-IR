@@ -52,7 +52,7 @@ PIPE CopyOp::getPipe() {
   if (iter != kSrcDstSpace2Pipe.end()) {
     return iter->second;
   }
-  llvm_unreachable("Unknown PIPE!");
+  llvm::report_fatal_error("Unknown PIPE!");
 }
 
 //===----------------------------------------------------------------------===//
@@ -67,5 +67,5 @@ PIPE VBrcOp::getPipe() {
   if (getHIVMAddressSpace(dstType) == hivm::AddressSpace::UB) {
     return PIPE::PIPE_V;
   }
-  llvm_unreachable("Unknown PIPE!");
+  llvm::report_fatal_error("Unknown PIPE!");
 }

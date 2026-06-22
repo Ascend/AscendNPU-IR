@@ -19,14 +19,13 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Transforms/InliningUtils.h"
 
-using namespace mlir;
-using namespace mlir::annotation;
-
 #include "bishengir/Dialect/Annotation/IR/AnnotationOpsDialect.cpp.inc"
 
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/Annotation/IR/AnnotationOps.cpp.inc"
 
+using namespace mlir;
+using namespace mlir::annotation;
 //===----------------------------------------------------------------------===//
 // Annotation Dialect Inliner Interfaces
 //===----------------------------------------------------------------------===//

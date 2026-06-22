@@ -16,7 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "llvm/ADT/StringExtras.h"
+#include <string>
 
 using namespace mlir;
 using namespace hivm::syncsolver;
@@ -27,13 +31,14 @@ int OperationBase::globalIndex = 0;
 
 // Map OpType enum to human-readable strings for debugging output.
 std::string getOpTypeStr(OpType opType) {
-  std::map<OpType, std::string> conv = {
+  const llvm::DenseMap<OpType, std::string> conv = {
       {OpType::OPERATION, "OperationBase"},
-      {OpType::GHOST, "Ghost"},
+      {OpType::PLACE_HOLDER, "PlaceHolder"},
       {OpType::SCOPE, "Scope"},
       {OpType::FUNCTION, "Function"},
+      {OpType::FUNCTION_BLOCK, "FunctionBlock"},
       {OpType::LOOP, "Loop"},
-      {OpType::MMAD_LOOP, "MmadLoop"},
+      {OpType::MMAD_SCOPE, "MmadLoop"},
       {OpType::CONDITION, "Condition"},
       {OpType::BARRIER_OP, "BarrierOp"},
       {OpType::SET_FLAG_OP, "SetFlagOp"},
@@ -45,7 +50,7 @@ std::string getOpTypeStr(OpType opType) {
       {OpType::MMAD_LOAD_BIAS_OPERATION, "LoadMmadBias"},
       {OpType::RW_OPERATION_END, "RW_OPERATION_END"},
   };
-  return conv[opType];
+  return conv.at(opType);
 }
 
 bool operator<(const SyncOp &op1, const SyncOp &op2) {
@@ -61,9 +66,49 @@ struct Comma {
   }
 };
 
+std::string PointerLikeInfo::str() const {
+  std::string ret = "PointerLikeInfo(";
+  Comma comma;
+  if (addressSpace.has_value()) {
+    ret += comma.get();
+    ret += stringifyEnum(addressSpace.value());
+  }
+  ret += comma.get();
+  {
+    Comma comma;
+    ret += "[";
+    for (auto addr : addresses) {
+      ret += comma.get();
+      ret += std::to_string(addr);
+    }
+    ret += "]";
+  }
+  if (allocateSize.has_value()) {
+    ret += comma.get();
+    ret += std::to_string(allocateSize.value());
+  }
+  ret += ")";
+  return ret;
+}
+
+std::string MemInfo::str() const {
+  std::string ret = "MemInfo(";
+  Comma comma;
+  if (this->value) {
+    ret += comma.get();
+    ret += op2str(value);
+  }
+  if (this->pointerLikeInfo) {
+    ret += comma.get();
+    ret += this->pointerLikeInfo->str();
+  }
+  ret += ")";
+  return ret;
+}
+
 // Provide readable string representations for IR nodes used in logs and dumps.
 // Each specialized .str implementation documents what it prints.
-std::string Ghost::str(int indent, bool recursive) const {
+std::string PlaceHolder::str(int indent, bool recursive) const {
   std::string opStr =
       (op != nullptr
            ? op2str(op)
@@ -77,6 +122,12 @@ std::string Scope::str(int indent, bool recursive) const {
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
+  if (maxPreloadNum.has_value()) {
+    ret += " max-preload-num=" + std::to_string(maxPreloadNum.value());
+  }
+  if (preloadNum.has_value()) {
+    ret += " preload-num=" + std::to_string(preloadNum.value());
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
@@ -87,11 +138,18 @@ std::string Scope::str(int indent, bool recursive) const {
   return ret;
 }
 
-std::string Function::str(int indent, bool recursive) const {
+std::string Loop::str(int indent, bool recursive) const {
   std::string ret =
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
+  if (isParallel) {
+    ret += " parallel-loop";
+  }
+  if (multibufferUnrollNum.has_value()) {
+    ret += " multibuffer-unroll-num=" +
+           std::to_string(multibufferUnrollNum.value());
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
@@ -107,7 +165,9 @@ std::string Condition::str(int indent, bool recursive) const {
       std::string(indent, ' ') +
       llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
       std::to_string(this->id);
-  ;
+  if (isUnlikely) {
+    ret += " unlikely-cond";
+  }
   if (recursive) {
     ret += " {\n";
     for (auto &op : body) {
@@ -130,56 +190,44 @@ std::string RWOperation::str(int indent, bool recursive) const {
            ? op2str(op)
            : llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType))) +
       std::to_string(this->id);
-  std::string pipes;
+  std::string coreTypeStr;
+  if (coreType != hivm::TCoreType::CUBE_OR_VECTOR) {
+    coreTypeStr = "[<" + stringifyTCoreType(coreType).str() + ">]";
+  }
+  std::string pipesStr;
   if (this->pipeRead != this->pipeWrite) {
-    pipes = "[<" + stringifyPIPE(this->pipeRead).str() + ">, <" +
-            stringifyPIPE(this->pipeRead).str() + ">]";
+    pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">, <" +
+               stringifyPIPE(this->pipeRead).str() + ">]";
   } else {
-    pipes = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
+    pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
   std::string unitFlag;
-  if (hasUnitFlagFeat) {
-    unitFlag = "unit-flag(";
-    Comma comma;
-    if (unitFlagModeAsSet == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      unitFlag += comma.get() + "as-set";
-    } else if (unitFlagModeAsSet == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-      unitFlag += comma.get() + "as-set-only-last-iter";
-    } else if (unitFlagModeAsSet == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-      unitFlag += comma.get() + "as-set-only-first-iter";
-    }
-    if (unitFlagModeAsWait == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      unitFlag += comma.get() + "as-wait";
-    } else if (unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-      unitFlag += comma.get() + "as-wait-only-last-iter";
-    } else if (unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-      unitFlag += comma.get() + "as-wait-only-first-iter";
-    }
-    unitFlag += ")";
+  if (!mergedUnitFlagInfo.disabledAsSet()) {
+    std::string iteratorsStr;
+    llvm::raw_string_ostream ss(iteratorsStr);
+    ss << "unitFlagAsSet(";
+    llvm::interleaveComma(
+        mergedUnitFlagInfo.getUnitFlagModesAsSet(/*compress=*/true), ss);
+    ss << ")";
+    unitFlag += ss.str();
   }
-  ret += std::string(indent, ' ') + opStr + " " + pipes + " " + unitFlag + "\n";
+  if (!mergedUnitFlagInfo.disabledAsWait()) {
+    std::string iteratorsStr;
+    llvm::raw_string_ostream ss(iteratorsStr);
+    ss << "unitFlagAsWait(";
+    llvm::interleaveComma(
+        mergedUnitFlagInfo.getUnitFlagModesAsWait(/*compress=*/true), ss);
+    ss << ")";
+    unitFlag += (!unitFlag.empty() ? " " : "") + ss.str();
+  }
+  ret += std::string(indent, ' ') + opStr + " " + coreTypeStr + " " + pipesStr +
+         " " + unitFlag + "\n";
   if (indent) {
-    for (auto val : this->readMemVals) {
-      ret += std::string(indent + 2, ' ') + "read: " + op2str(val) + "\n";
+    for (auto memInfo : this->readMemInfo) {
+      ret += std::string(indent + 2, ' ') + "read: " + memInfo.str() + "\n";
     }
-    for (auto val : this->writeMemVals) {
-      ret += std::string(indent + 2, ' ') + "write: " + op2str(val) + "\n";
-    }
-    for (auto &ptr : this->testReadMemVals) {
-      ret += std::string(indent + 2, ' ') + "read: ptr(";
-      Comma comma;
-      for (auto val : ptr) {
-        ret += comma.get() + std::to_string(val);
-      }
-      ret += ") \n";
-    }
-    for (auto &ptr : this->testWriteMemVals) {
-      ret += std::string(indent + 2, ' ') + "write: ptr(";
-      Comma comma;
-      for (auto val : ptr) {
-        ret += comma.get() + std::to_string(val);
-      }
-      ret += ") \n";
+    for (auto memInfo : this->writeMemInfo) {
+      ret += std::string(indent + 2, ' ') + "write: " + memInfo.str() + "\n";
     }
   }
   ret.pop_back();
@@ -194,11 +242,15 @@ std::string SetFlagOp::str(int indent, bool recursive) const {
   if (this->debugId.has_value()) {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
-  ret += " [<" + stringifyPIPE(this->pipeSrc).str() + ">, <" +
+  ret += " [<";
+  if (this->coreType != hivm::TCoreType::CUBE_OR_VECTOR) {
+    ret += stringifyTCoreType(this->coreType).str() + ">, <";
+  }
+  ret += stringifyPIPE(this->pipeSrc).str() + ">, <" +
          stringifyPIPE(this->pipeDst).str() + ">, (";
   Comma comma;
   for (auto eventId : this->eventIds) {
-    ret += comma.get() + hivm::stringifyEVENT(eventId).str();
+    ret += comma.get() + "EVENT_ID" + llvm::itostr(eventId);
   }
   ret += ")]";
   if (allAtOnce) {
@@ -221,11 +273,15 @@ std::string WaitFlagOp::str(int indent, bool recursive) const {
   if (this->debugId.has_value()) {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
-  ret += " [<" + stringifyPIPE(this->pipeSrc).str() + ">, <" +
+  ret += " [<";
+  if (this->coreType != hivm::TCoreType::CUBE_OR_VECTOR) {
+    ret += stringifyTCoreType(this->coreType).str() + ">, <";
+  }
+  ret += stringifyPIPE(this->pipeSrc).str() + ">, <" +
          stringifyPIPE(this->pipeDst).str() + ">, (";
   Comma comma;
   for (auto eventId : this->eventIds) {
-    ret += comma.get() + hivm::stringifyEVENT(eventId).str();
+    ret += comma.get() + "EVENT_ID" + llvm::itostr(eventId);
   }
   ret += ")]";
   if (allAtOnce) {
@@ -254,17 +310,25 @@ std::string BarrierOp::str(int indent, bool recursive) const {
 
 std::string ConflictPair::str() const {
   std::string ret;
-  ret += "ConflictPair" + std::to_string(this->debugId);
+  ret += "ConflictPair" + std::to_string(this->id);
   ret += " (" + std::to_string(this->startIndex) + ", " +
          std::to_string(this->endIndex) + ")";
   if (this->isBarrier()) {
-    ret += " [<" + stringifyPIPE(setPipe).str() + ">]";
+    ret += " [<" + stringifyPIPE(setCorePipeInfo.pipe).str() + ">]";
   } else {
-    ret += " [<" + stringifyPIPE(setPipe).str() + ">, <" +
-           stringifyPIPE(waitPipe).str() + ">, (";
+    if (setCorePipeInfo.coreType != hivm::TCoreType::CUBE_OR_VECTOR ||
+        waitCorePipeInfo.coreType != hivm::TCoreType::CUBE_OR_VECTOR) {
+      ret += "[<" + stringifyTCoreType(setCorePipeInfo.coreType).str() +
+             ">, <" + stringifyTCoreType(waitCorePipeInfo.coreType).str() +
+             ">]";
+    }
+    ret += " [<" + stringifyPIPE(setCorePipeInfo.pipe).str() + ">, <" +
+           stringifyPIPE(waitCorePipeInfo.pipe).str() + ">, (";
     Comma comma;
-    for (auto eventId : this->eventIds) {
-      ret += comma.get() + hivm::stringifyEVENT(eventId).str();
+    if (this->eventIdNode != nullptr) {
+      for (auto eventId : this->eventIdNode->getEventIds()) {
+        ret += comma.get() + "EVENT_ID" + llvm::itostr(eventId);
+      }
     }
     ret += ")]";
   }
@@ -274,6 +338,8 @@ std::string ConflictPair::str() const {
   ret += (isBarrier() ? (comma.get() + "is-barrier") : "");
   ret += (isInnerBackward ? (comma.get() + "is-backward") : "");
   ret += (isUseless ? (comma.get() + "is-useless") : "");
+  ret +=
+      (replacedWithUnitFlag ? (comma.get() + "replaced-with-unit-flag") : "");
   ret += "}";
 
   ret += "\n";

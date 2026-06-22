@@ -515,6 +515,8 @@ def VAddOp : HIVM_ElementwiseBinaryOp<"vadd",
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Addition Op";
@@ -548,6 +550,8 @@ def VMulOp : HIVM_ElementwiseBinaryOp<"vmul",
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Multiplication Op";
@@ -592,12 +596,32 @@ def VMulExtOp : HIVM_ElementwiseBinaryOp<"vmulext",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+def VMulExtUiOp : HIVM_ElementwiseBinaryOp<"vmulextui",
+    [SameOperandsElementType,
+     OperElemTypeConstraints<[0, 1], [I32]>,
+     VectorOnlyTrait<0>,
+    DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+    ]> {
+  let summary = [{
+    Elementwise Binary Vector Unsigned Integer Multiplication that Calculates
+    the Most Significant 32-bits.
+  }];
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. Support Vector-Vector operation.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
 def VSubOp
     : HIVM_ElementwiseBinaryOp<
           "vsub", [SameOperandsElementType,
                    OperElemTypeConstraints<[0, 1], [I16, I32, F16, F32, I64]>,
                    DeclareOpInterfaceMethods<ExtraBufferOpInterface,
                      ["getExtraBufferSize"]>,
+                   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+                     ["decomposeOperation","getDecomposePhase"]>,
                    DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
                    BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Subtraction Op";
@@ -625,6 +649,8 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
                           OperElemTypeConstraints<[0, 1], [F16, F32, I64]>,
                           DeclareOpInterfaceMethods<ExtraBufferOpInterface,
                             ["getExtraBufferSize"]>,
+                          DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+                            ["decomposeOperation","getDecomposePhase"]>,
                           DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
                           BroadcastableOTF]> {
   let summary = "Elementwise Binary Vector Division Op";
@@ -653,6 +679,8 @@ def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
      CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
      BroadcastableOTF
     ]> {
@@ -686,6 +714,8 @@ def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
      CommutativeOpTrait, VectorOnlyTrait<0>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      DeclareOpInterfaceMethods<ImplByScalarOpInterface>,
      BroadcastableOTF
     ]> {
@@ -720,6 +750,8 @@ def VOrOp : HIVM_ElementwiseBinaryOp<"vor",
      VectorOnlyTrait<0>, VectorOnlyTrait<1>, CommutativeOpTrait,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector Or Op";
@@ -753,6 +785,8 @@ def VAndOp : HIVM_ElementwiseBinaryOp<"vand",
      VectorOnlyTrait<0>, VectorOnlyTrait<1>, CommutativeOpTrait,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
        ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      BroadcastableOTF
     ]> {
   let summary = "Elementwise Binary Vector And Op";
@@ -784,6 +818,8 @@ def VXorOp : HIVM_ElementwiseBinaryOp<"vxor",
      OperElemTypeConstraints<[0, 1],
        [I1, I8, UI8, I16, UI16, I32, UI32, I64, UI64]>,
      VectorOnlyTrait<0>, VectorOnlyTrait<1>,
+     DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+       ["decomposeOperation","getDecomposePhase"]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface, ["getExtraBufferSize"]>
     ], AnyShaped> {
   let summary = "Elementwise Binary Vector Xor Op";
@@ -969,12 +1005,8 @@ def VSelOp : HIVM_ElementwiseTernaryOp<"vsel",
 
 def VBrcOp : HIVM_VectorOp<"vbrc",
     [SameOperandsElementType,
-     OperElemTypeConstraints<
-         [0], [
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-         F8E4M3FN, F8E5M2, 
-#endif
-         I8, UI8, I16, F16, UI16, I32, F32, UI32, BF16, I64, UI64, I1]>,
+     OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I8, UI8, I16,
+      F16, UI16, I32, F32, UI32, BF16, I64, UI64, I1]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
                                ["getIteratorTypesArray", "getIndexingMaps"]>,
@@ -1126,6 +1158,14 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
              op == ReduceOperation::min_with_index_right ||
              op == ReduceOperation::max_with_index_right;
     }
+
+    static bool isWithIndex(ReduceOperation op) {
+      return isArgminOrArgmax(op);
+    }
+
+    bool isWithIndex() {
+      return isWithIndex(getArithAttr().getReduceOp());
+    }
   }];
 }
 
@@ -1134,11 +1174,8 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
 //===----------------------------------------------------------------------===//
 
 def VTransposeOp : HIVM_VectorOp<"vtranspose",
-    [OperElemTypeConstraints<[0], [
-#ifdef BISHENGIR_ENABLE_A5_UNPUBLISHED_FEATURES
-       F8E4M3FN, F8E5M2, 
-#endif
-       AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64]>,
+    [OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2,
+      AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray", "setIteratorTypesArray"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
@@ -1595,7 +1632,7 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is True.
     Writes the result to the pre-allocated `dst` tensor/memref (InPlace semantics), 
     and returns the `dst` tensor as `result` for functional compatibility.
-    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.(currently only suppport 1D)
+    The `dst`/`result` tensor will have the same shape and element type as the `src` tensor.
 
     Arguments:
       * `src`: the tensor/memref from which to gather elements
@@ -1603,15 +1640,14 @@ def VGatherMaskOp : HIVM_VectorOp<"vgathermask",
       * `dst`: the pre-allocated tensor/memref to store the gathered elements (InPlace write)
     Results:
       * `result`: the same as `dst` (functional return for compatibility)
-    TODO: 
-      * `dst_size`: returning the size of dst as this result
-
+      * `dst_size`: the actual number of elements gathered from src
+    
     Usage:
-      result = gather_mask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst : tensor<16xf32>)
+      result_data, result_size = vgathermask ins (%src : tensor<16xf32>) mask (%mask : tensor<16xi1>) outs (%dst_data, %dst_size : tensor<16xf32>, tensor<1xi64>)
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$mask,
-                       TensorOrMemref:$dst  
+                       Variadic<TensorOrMemref>:$dst  
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{

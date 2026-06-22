@@ -53,6 +53,7 @@
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -65,12 +66,81 @@
 using namespace mlir;
 using namespace mlir::hfusion;
 
+namespace {
+
+//===----------------------------------------------------------------------===//
+// Utils for Conv Ops
+//===----------------------------------------------------------------------===//
+
+template <size_t Rank>
+FailureOr<std::array<int64_t, Rank>>
+getConvIntArrayAttr(Attribute attr, StringRef attrName,
+                    function_ref<InFlightDiagnostic()> emitError) {
+  auto emitInvalidAttr = [&]() {
+    emitError() << "`" << attrName << "` must be an integer scalar or a "
+                << Rank << "-element integer array";
+    return failure();
+  };
+
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+    int64_t value = intAttr.getInt();
+    std::array<int64_t, Rank> values;
+    values.fill(value);
+    return values;
+  }
+
+  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
+    if (denseAttr.size() != Rank)
+      return emitInvalidAttr();
+    std::array<int64_t, Rank> values;
+    for (size_t idx = 0; idx < Rank; ++idx)
+      values[idx] = denseAttr[idx];
+    return values;
+  }
+
+  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+    if (arrayAttr.size() != Rank)
+      return emitInvalidAttr();
+
+    std::array<int64_t, Rank> values;
+    for (auto [idx, element] : llvm::enumerate(arrayAttr)) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      if (!intAttr)
+        return emitInvalidAttr();
+      values[idx] = intAttr.getInt();
+    }
+    return values;
+  }
+
+  return emitInvalidAttr();
+}
+
+FailureOr<std::array<int64_t, 2>>
+getConv2DIntPairAttr(Attribute attr, StringRef attrName,
+                     function_ref<InFlightDiagnostic()> emitError) {
+  return getConvIntArrayAttr<2>(attr, attrName, emitError);
+}
+
+FailureOr<std::array<int64_t, 3>>
+getConv3DIntTripleAttr(Attribute attr, StringRef attrName,
+                       function_ref<InFlightDiagnostic()> emitError) {
+  return getConvIntArrayAttr<3>(attr, attrName, emitError);
+}
+
+} // namespace
+
 //===----------------------------------------------------------------------===//
 // Support for named HFusion ops defined in ods-gen.
 //===----------------------------------------------------------------------===//
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 using RegionBuilderFn = llvm::function_ref<void(ImplicitLocOpBuilder &, Block &,
                                                 ArrayRef<NamedAttribute>)>;
+#else
+using RegionBuilderFn = llvm::function_ref<void(ImplicitLocOpBuilder &, Block &,
+                                                ArrayRef<NamedAttribute>,
+                                                function_ref<InFlightDiagnostic()>)>;
+#endif
 
 /// Fills the region of a structured operation using the provided
 /// `regionBuilder`. The method is used by both named structured ops created by
@@ -104,7 +174,13 @@ static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
 
   opBuilder.setInsertionPointToStart(body);
   ImplicitLocOpBuilder b(opBuilder.getUnknownLoc(), opBuilder);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   regionBuilder(b, *body, attrs);
+#else
+  regionBuilder(b, *body, attrs, [&]() {
+    return mlir::emitError(opBuilder.getUnknownLoc());
+  });
+#endif
 
   // indexing_maps is an auto-generated method.
 
@@ -365,8 +441,18 @@ public:
       return builder.create<math::SinOp>(arg.getLoc(), arg);
     case UnaryFn::cos:
       return builder.create<math::CosOp>(arg.getLoc(), arg);
+    case UnaryFn::acos:
+      return builder.create<math::AcosOp>(arg.getLoc(), arg);
+    case UnaryFn::acosh:
+      return builder.create<math::AcoshOp>(arg.getLoc(), arg);
+    case UnaryFn::asin:
+      return builder.create<math::AsinOp>(arg.getLoc(), arg);
+    case UnaryFn::asinh:
+      return builder.create<math::AsinhOp>(arg.getLoc(), arg);
     case UnaryFn::atan:
       return builder.create<math::AtanOp>(arg.getLoc(), arg);
+    case UnaryFn::atanh:
+      return builder.create<math::AtanhOp>(arg.getLoc(), arg);
     case UnaryFn::absi:
       return builder.create<math::AbsIOp>(arg.getLoc(), arg);
     case UnaryFn::erf:
@@ -383,14 +469,18 @@ public:
       return builder.create<math::ExpM1Op>(arg.getLoc(), arg);
     case UnaryFn::ilogb:
       return builder.create<mathExt::IlogbOp>(arg.getLoc(), arg);
+    case UnaryFn::sinh:
+      return builder.create<math::SinhOp>(arg.getLoc(), arg);
     case UnaryFn::relu:
       return buildUnaryRelu(builder, arg);
     case UnaryFn::rec:
       return buildUnaryRec(builder, arg);
     case UnaryFn::vnot:
       return buildUnaryVNot(builder, arg);
+    case UnaryFn::lgamma:
+      return builder.create<mathExt::LgammaOp>(arg.getLoc(), arg);
     }
-    llvm_unreachable("unsupported unary function");
+    llvm::report_fatal_error("unsupported unary function");
   }
 
   Value buildUnaryRelu(OpBuilder &builder, Value arg) {
@@ -406,7 +496,7 @@ public:
           arg.getLoc(), type, builder.getIntegerAttr(type, 0));
       return builder.create<arith::MaxSIOp>(arg.getLoc(), zero, arg);
     }
-    llvm_unreachable("unsupported type for relu");
+    llvm::report_fatal_error("unsupported type for relu");
   }
 
   Value buildUnaryRec(OpBuilder &builder, Value arg) {
@@ -422,7 +512,7 @@ public:
           arg.getLoc(), type, builder.getIntegerAttr(type, 1));
       return builder.create<arith::DivSIOp>(arg.getLoc(), one, arg);
     }
-    llvm_unreachable("unsupported type for reciprocal");
+    llvm::report_fatal_error("unsupported type for reciprocal");
   }
 
   Value buildUnaryVNot(OpBuilder &builder, Value arg) {
@@ -432,7 +522,7 @@ public:
           arg.getLoc(), type, builder.getIntegerAttr(type, 0));
       return builder.create<arith::XOrIOp>(arg.getLoc(), zero, arg);
     }
-    llvm_unreachable("unsupported type for not");
+    llvm::report_fatal_error("unsupported type for not");
   }
 
   // Build the binary functions defined by OpDSL.
@@ -441,87 +531,91 @@ public:
     bool allFloatingPoint = isFloatingPoint(arg0) && isFloatingPoint(arg1);
     bool allInteger = isInteger(arg0) && isInteger(arg1);
     if (!allComplex && !allFloatingPoint && !allInteger)
-      llvm_unreachable("unsupported non numeric type");
+      llvm::report_fatal_error("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (binaryFn) {
     case BinaryFn::vor:
       if (allInteger)
         return builder.create<arith::OrIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vor");
+      llvm::report_fatal_error("unsupported type for vor");
     case BinaryFn::vxor:
       if (allInteger)
         return builder.create<arith::XOrIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vxor");
+      llvm::report_fatal_error("unsupported type for vxor");
     case BinaryFn::vand:
       if (allInteger)
         return builder.create<arith::AndIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vand");
+      llvm::report_fatal_error("unsupported type for vand");
     case BinaryFn::minf:
       if (allFloatingPoint)
         return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmin");
+      llvm::report_fatal_error("unsupported type for vmin");
     case BinaryFn::maxf:
       if (allFloatingPoint)
         return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmax");
+      llvm::report_fatal_error("unsupported type for vmax");
     case BinaryFn::minnumf:
       if (allFloatingPoint)
         return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmin");
+      llvm::report_fatal_error("unsupported type for vmin");
     case BinaryFn::maxnumf:
       if (allFloatingPoint)
         return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vmax");
+      llvm::report_fatal_error("unsupported type for vmax");
     case BinaryFn::powf:
       if (allFloatingPoint)
         return builder.create<math::PowFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vpow");
+      llvm::report_fatal_error("unsupported type for vpow");
+    case BinaryFn::atan2:
+      if (allFloatingPoint)
+        return builder.create<math::Atan2Op>(arg0.getLoc(), arg0, arg1);
+      llvm::report_fatal_error("unsupported type for atan2");
     case BinaryFn::powi:
       if (allInteger)
         return builder.create<math::IPowIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for vpowi");
+      llvm::report_fatal_error("unsupported type for vpowi");
     case BinaryFn::mod:
       if (allInteger)
         return builder.create<arith::RemSIOp>(arg0.getLoc(), arg0, arg1);
       if (allFloatingPoint)
         return builder.create<arith::RemFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for mod");
+      llvm::report_fatal_error("unsupported type for mod");
     case BinaryFn::modui:
       if (allInteger)
         return builder.create<arith::RemUIOp>(arg0.getLoc(), arg0, arg1);
       if (allFloatingPoint)
         return builder.create<arith::RemFOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for modui");
+      llvm::report_fatal_error("unsupported type for modui");
     case BinaryFn::shli:
       if (allInteger)
         return builder.create<arith::ShLIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for shli");
+      llvm::report_fatal_error("unsupported type for shli");
     case BinaryFn::shrsi:
       if (allInteger)
         return builder.create<arith::ShRSIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for shrsi");
+      llvm::report_fatal_error("unsupported type for shrsi");
     case BinaryFn::shrui:
       if (allInteger)
         return builder.create<arith::ShRUIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for shrui");
+      llvm::report_fatal_error("unsupported type for shrui");
     case BinaryFn::ldexp:
       if (allFloatingPoint)
         return builder.create<mathExt::LdexpOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for ldexp");
+      llvm::report_fatal_error("unsupported type for ldexp");
     case BinaryFn::floordivsi:
       if (allInteger)
         return builder.create<arith::FloorDivSIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for floordivsi");
+      llvm::report_fatal_error("unsupported type for floordivsi");
     case BinaryFn::ceildivsi:
       if (allInteger)
         return builder.create<arith::CeilDivSIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for ceildivsi");
+      llvm::report_fatal_error("unsupported type for ceildivsi");
     case BinaryFn::ceildivui:
       if (allInteger)
         return builder.create<arith::CeilDivUIOp>(arg0.getLoc(), arg0, arg1);
-      llvm_unreachable("unsupported type for ceildivui");
+      llvm::report_fatal_error("unsupported type for ceildivui");
     }
-    llvm_unreachable("unsupported binary function");
+    llvm::report_fatal_error("unsupported binary function");
   }
 
   // Build the compare functions defined by OpDSL.
@@ -530,7 +624,7 @@ public:
     bool allFloatingPoint = isFloatingPoint(arg0) && isFloatingPoint(arg1);
     bool allInteger = isInteger(arg0) && isInteger(arg1);
     if (!allComplex && !allFloatingPoint && !allInteger)
-      llvm_unreachable("unsupported non numeric type");
+      llvm::report_fatal_error("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (compareFn) {
     case CompareFn::veq:
@@ -540,7 +634,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OEQ, arg0, arg1);
-      llvm_unreachable("unsupported type for veq");
+      llvm::report_fatal_error("unsupported type for veq");
     case CompareFn::vne:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
@@ -548,7 +642,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::UNE, arg0, arg1);
-      llvm_unreachable("unsupported type for vne");
+      llvm::report_fatal_error("unsupported type for vne");
     case CompareFn::vle:
     case CompareFn::vule:
       if (allInteger)
@@ -557,7 +651,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLE, arg0, arg1);
-      llvm_unreachable("unsupported type for vle");
+      llvm::report_fatal_error("unsupported type for vle");
     case CompareFn::vlt:
     case CompareFn::vult:
       if (allInteger)
@@ -566,7 +660,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OLT, arg0, arg1);
-      llvm_unreachable("unsupported type for vlt");
+      llvm::report_fatal_error("unsupported type for vlt");
     case CompareFn::vge:
     case CompareFn::vuge:
       if (allInteger)
@@ -575,7 +669,7 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGE, arg0, arg1);
-      llvm_unreachable("unsupported type for vge");
+      llvm::report_fatal_error("unsupported type for vge");
     case CompareFn::vgt:
     case CompareFn::vugt:
       if (allInteger)
@@ -584,9 +678,9 @@ public:
       if (allFloatingPoint)
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OGT, arg0, arg1);
-      llvm_unreachable("unsupported type for vgt");
+      llvm::report_fatal_error("unsupported type for vgt");
     }
-    llvm_unreachable("unsupported binary function");
+    llvm::report_fatal_error("unsupported binary function");
   }
 
   // Build the Ternary functions defined by OpDSL.
@@ -596,15 +690,15 @@ public:
     bool allFloatingPoint = isFloatingPoint(arg1) && isFloatingPoint(arg2);
     bool allInteger = isInteger(arg1) && isInteger(arg2);
     if (!allComplex && !allFloatingPoint && !allInteger)
-      llvm_unreachable("unsupported non numeric type");
+      llvm::report_fatal_error("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (ternaryFn) {
     case TernaryFn::select:
       if (allInteger || allFloatingPoint)
         return builder.create<arith::SelectOp>(arg0.getLoc(), arg0, arg1, arg2);
-      llvm_unreachable("unsupported type for select");
+      llvm::report_fatal_error("unsupported type for select");
     }
-    llvm_unreachable("unsupported select function");
+    llvm::report_fatal_error("unsupported select function");
   }
 
   // Build the type functions defined by OpDSL.
@@ -620,7 +714,7 @@ public:
       auto op = builder.create<arith::BitcastOp>(loc, toType, operand);
       return op;
     }
-    llvm_unreachable("unsupported type conversion function");
+    llvm::report_fatal_error("unsupported type conversion function");
   }
 
   // Build the type functions defined by OpDSL.
@@ -1018,10 +1112,19 @@ void codeGenWithIndexDispatch(OpBuilder &builder, Block &block, Type elemType,
   }
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>, 
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 ReduceWithIndexOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &b, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     // check numArgs
     constexpr int kNumArgsWithoutIndex = 3;
     auto numArgs = block.getNumArguments();
@@ -1286,7 +1389,8 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
   using OpRewritePattern<hfusion::CastOp>::OpRewritePattern;
   template <typename T> inline T roundToOdd(T x) const {
     T rounded = std::round(x);
-    if (std::fabs(x - std::floor(x)) == 0.5) {
+    const double epsilon = 1e-9;
+    if (std::fabs(std::fabs(x - std::floor(x)) - 0.5) < epsilon) {
       if (static_cast<int>(rounded) % 2 != 0) {
         if (x > 0) {
           rounded = std::floor(x);
@@ -1821,7 +1925,13 @@ ParseResult ArangeOp::parse(OpAsmParser &parser, OperationState &result) {
   ImplicitLocOpBuilder builder(unknownLoc, parser.getContext());
   builder.setInsertionPointToStart(&block);
   // Build the region
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   getRegionBuilder()(builder, block, result.attributes.getAttrs());
+#else
+  getRegionBuilder()(builder, block, result.attributes.getAttrs(), [&]() {
+    return mlir::emitError(builder.getLoc());
+  });
+#endif
 
   return success();
 }
@@ -1846,10 +1956,19 @@ ArrayAttr ArangeOp::getIndexingMaps() {
   return builder.getAffineMapArrayAttr(maps);
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 ArangeOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     OpBuilder::InsertionGuard guard(builder);
 
     auto segmentSizes = cast_or_null<DenseI32ArrayAttr>(
@@ -1902,7 +2021,7 @@ void ArangeOp::getStridesFromValue(OpBuilder &builder, Location loc, Value val,
     else if (isa<TensorType>(shapedTy))
       size = builder.createOrFold<tensor::DimOp>(loc, val, dim);
     else
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "Expected arange to be initialized with tensor or memref type.");
     strides[dim - 1] =
         builder.createOrFold<arith::MulIOp>(loc, strides[dim], size);
@@ -1959,7 +2078,7 @@ MutableOperandRange GatherOp::getDpsInitsMutable() { return getInitMutable(); }
 
 SmallVector<utils::IteratorType> GatherOp::getIteratorTypesArray() {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-  llvm_unreachable("Not implemented");
+  llvm::report_fatal_error("Not implemented");
 #else
   SmallVector<utils::IteratorType> result(getInit().getType().getRank() + 1,
                                           utils::IteratorType::parallel);
@@ -2033,10 +2152,19 @@ void GatherOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
 ///   %cmp = arith.cmpi eq, <indexVal>, %iter
 ///   %sel = arith.select %cmp, <srcVal>, <outVal>
 ///   linalg.yield %sel
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 GatherOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> attrs) {
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     assert(block.getNumArguments() == 3 &&
            "GatherOp expecting 3 block arguments");
     Value srcVal = block.getArgument(0);
@@ -2239,9 +2367,12 @@ MutableOperandRange GatherMaskOp::getDpsInitsMutable() {
 
 SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-  llvm_unreachable("Not implemented");
+  llvm::report_fatal_error("Not implemented");
 #else
-  SmallVector<utils::IteratorType> result(getInit().getType().getRank(),
+  mlir::Value initData = getInit()[0];
+  mlir::Type initDataType = initData.getType();
+  mlir::ShapedType initShapeType = mlir::cast<mlir::ShapedType>(initDataType);
+  SmallVector<utils::IteratorType> result(initShapeType.getRank(),
                                           utils::IteratorType::parallel);
   return result;
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -2249,7 +2380,10 @@ SmallVector<utils::IteratorType> GatherMaskOp::getIteratorTypesArray() {
 
 ArrayAttr GatherMaskOp::getIndexingMaps() {
   MLIRContext *ctx = getContext();
-  int64_t numIters = getInit().getType().getRank();
+  mlir::Value initData = getInit()[0];
+  mlir::Type initDataType = initData.getType();
+  mlir::ShapedType initShapeType = mlir::cast<mlir::ShapedType>(initDataType);
+  int64_t numIters = initShapeType.getRank();
 
   SmallVector<AffineExpr> dims(numIters);
   auto dimsArrayRef = MutableArrayRef(dims);
@@ -2258,7 +2392,10 @@ ArrayAttr GatherMaskOp::getIndexingMaps() {
   AffineMap identityMap = AffineMap::getMultiDimIdentityMap(numIters, ctx);
   AffineMapAttr identityMapAttr = AffineMapAttr::get(identityMap);
 
-  return ArrayAttr::get(ctx, {identityMapAttr, identityMapAttr, identityMapAttr});
+  AffineMap scalarMap = AffineMap::get(1, 0, getAffineConstantExpr(0, ctx), ctx); 
+  AffineMapAttr scalarMapAttr = AffineMapAttr::get(scalarMap);
+
+  return ArrayAttr::get(ctx, {identityMapAttr, identityMapAttr, identityMapAttr, scalarMapAttr});
 }
 
 void GatherMaskOp::getEffects(
@@ -2267,28 +2404,53 @@ void GatherMaskOp::getEffects(
 }
 
 void GatherMaskOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                         Value src, Value mask, Value init) {
-  auto resultTy = dyn_cast<TensorType>(init.getType());
-  buildStructuredOp(odsBuilder, odsState, resultTy, {src, mask}, init, {},
+                         Value src, Value mask, ValueRange init) {
+  SmallVector<Type, 2> resultTys;
+  for (Value initVal : init) {
+    resultTys.push_back(initVal.getType());
+  }
+  
+  buildStructuredOp(odsBuilder, odsState, resultTys, {src, mask}, init, {},
                     getRegionBuilder());
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
 GatherMaskOp::getRegionBuilder() {
   return [](ImplicitLocOpBuilder &builder, Block &block,
-            ArrayRef<NamedAttribute> /*attrs*/) {
-    assert(block.getNumArguments() == 3 &&
-           "GatherMaskOp expecting 3 block arguments: src, mask, init");
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
     Value srcVal = block.getArgument(0);
     Value maskVal = block.getArgument(1);
-    Value initVal = block.getArgument(2);
-    Type i1Type = builder.getI1Type();
+    ValueRange initArgs = block.getArguments().drop_front(2);
 
+    Type i1Type = builder.getI1Type();
     if (maskVal.getType() != i1Type) {
       maskVal = builder.create<arith::TruncIOp>(builder.getLoc(), i1Type, maskVal);
     }
-    Value yieldVal = builder.create<arith::SelectOp>(maskVal, srcVal, initVal);
-    builder.create<linalg::YieldOp>(yieldVal);
+
+    SmallVector<Value, 2> yieldVals;
+    for (size_t i = 0; i < initArgs.size(); ++i) {
+      Value initVal = initArgs[i];
+      if (i == 0) {
+        yieldVals.push_back(builder.create<arith::SelectOp>(maskVal, srcVal, initVal));
+      } else {
+        yieldVals.push_back(builder.create<arith::ConstantOp>(
+            builder.getLoc(),
+            builder.getI32IntegerAttr(0)
+        ));
+      }
+    }
+
+
+    builder.create<linalg::YieldOp>(builder.getLoc(), yieldVals);
   };
 }
 
@@ -2330,12 +2492,12 @@ LogicalResult GatherMaskOp::verify() {
   }
 
   if (isTensorSemantic) {
-    if (getNumResults() != 1) {
-      return emitOpError("expecting exactly 1 result for tensor semantics, but got ") << getNumResults();
+    if (getNumResults() != 2) {
+      return emitOpError("expecting exactly 2 result for tensor semantics, but got ") << getNumResults();
     }
     Value resultValue = getResult()[0];
     Type resultType = resultValue.getType();
-    Type initType = getInit().getType();
+    Type initType = getInit()[0].getType();
     if (resultType != initType) {
       return emitOpError("tensor semantics: result type (")
              << resultType << ") must match init type (" << initType << ")";
@@ -2369,7 +2531,7 @@ LogicalResult GatherMaskOp::verify() {
 
   std::optional<int64_t> srcRank = getRank(getSrc());
   std::optional<int64_t> maskRank = getRank(getMask());
-  std::optional<int64_t> initRank = getRank(getInit());
+  std::optional<int64_t> initRank = getRank(getInit()[0]);
 
   // Check: ranks must match for ranked types; skip for unranked types (adapt to any shape)
   if (srcRank != -1 && maskRank != -1 && initRank != -1) {
@@ -2382,23 +2544,12 @@ LogicalResult GatherMaskOp::verify() {
   }
 
   Type srcElementType = getElementTypeOrSelf(getSrc());
-  Type initElementType = getElementTypeOrSelf(getInit());
+  Type initElementType = getElementTypeOrSelf(getInit()[0]);
   if (srcElementType != initElementType) {
     return emitOpError("src element type (") << srcElementType
            << ") must match init element type (" << initElementType << ")";
   }
   return success();
-}
-
-static Type getElementTypeOrSelf(Value value) {
-  Type type = value.getType();
-  if (auto tensorTy = mlir::dyn_cast<TensorType>(type)) {
-    return tensorTy.getElementType();
-  }
-  if (auto memrefTy = mlir::dyn_cast<MemRefType>(type)) {
-    return memrefTy.getElementType();
-  }
-  return type;
 }
 
 //===----------------------------------------------------------------------===//
@@ -2590,7 +2741,11 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   };
   auto cstInZero = [&](Value src) -> Value {
     auto ty = cast<IntegerType>(src.getType());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     return b.create<arith::ConstantIntOp>(loc, 0, ty);
+#else
+    return b.create<arith::ConstantIntOp>(loc, ty, static_cast<int64_t>(0));
+#endif
   };
 
   // Constants
@@ -2746,5 +2901,1019 @@ LogicalResult MatMulMxOp::verify() {
     }
   }
 
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// GatherLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult GatherLoadOp::inferReturnTypes(
+    MLIRContext *context, std::optional<Location> location,
+    GatherLoadOp::Adaptor adaptor,
+    SmallVectorImpl<Type> &inferredReturnTypes) {
+  auto dstType = dyn_cast<RankedTensorType>(adaptor.getDst().getType());
+  if (dstType)
+    inferredReturnTypes.push_back(dstType);
+  return success();
+}
+
+LogicalResult GatherLoadOp::verify() {
+  auto indicesType = getIndices().getType();
+  if (auto mask = getMask()) {
+    if (mask.getType().getShape() != indicesType.getShape()) {
+      return emitOpError("mask of hfusion::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+  }
+  if (auto other = getOther()) {
+    auto otherType = cast<RankedTensorType>(other.getType());
+    if (otherType.getShape() != indicesType.getShape()) {
+      return emitOpError("other of hfusion::GatherLoadOp must have the same "
+                         "shape and rank as indices");
+    }
+    auto otherElementType = otherType.getElementType();
+    if (otherElementType != getElementTypeOrSelf(getBase())) {
+      return emitOpError("other of hfusion::GatherLoadOp must have the same "
+                         "element type as base");
+    }
+  }
+  return success();
+}
+
+void GatherLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ScatterStoreOp::verify() {
+  auto dataType = getData().getType();
+  if (auto mask = getMask()) {
+    if (mask.getType().getShape() != dataType.getShape()) {
+      return emitOpError("mask of hfusion::ScatterStoreOp must have the same "
+                         "shape and rank as data");
+    }
+  }
+  return success();
+}
+
+void ScatterStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getBaseMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// Conv1DOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult Conv1DOp::verify() {
+  auto inputTy = mlir::dyn_cast<ShapedType>(getInput().getType());
+  auto weightTy = mlir::dyn_cast<ShapedType>(getWeight().getType());
+  auto initTy = mlir::dyn_cast<ShapedType>(getInit().getType());
+  auto resultTy = mlir::dyn_cast<ShapedType>(getResult().getType());
+
+  if (!inputTy || !weightTy || !initTy || !resultTy)
+    return emitOpError()
+           << "requires shaped types for input/weight/init/result";
+
+  // init and result must be consistent
+  if (initTy.getRank() != resultTy.getRank())
+    return emitOpError() << "init and result must have the same rank";
+
+  for (int i = 0; i < initTy.getRank(); ++i) {
+    if (!initTy.isDynamicDim(i) && !resultTy.isDynamicDim(i) &&
+        initTy.getDimSize(i) != resultTy.getDimSize(i))
+      return emitOpError() << "init and result must have the same shape";
+  }
+
+  // input and init must be 2D or 3D and have same rank
+  int64_t inputRank = inputTy.getRank();
+  int64_t initRank = initTy.getRank();
+  if (inputRank != initRank)
+    return emitOpError() << "requires input and init to have the same rank";
+
+  if (inputRank != 2 && inputRank != 3)
+    return emitOpError() << "requires input and init to be 2D or 3D tensors";
+
+  // weight must be [oC, iC/groups, wW]
+  if (weightTy.getRank() != 3)
+    return emitOpError()
+           << "requires weight to have rank 3: [oC, iC/groups, wW]";
+
+  // bias must be 1D if present, and match oC
+  if (getBias()) {
+    auto biasTy = mlir::dyn_cast<ShapedType>(getBias().getType());
+    if (!biasTy)
+      return emitOpError() << "requires shaped type for bias";
+
+    if (biasTy.getRank() != 1)
+      return emitOpError() << "requires bias to be 1D tensor";
+
+    if (!weightTy.isDynamicDim(0) && !biasTy.isDynamicDim(0) &&
+        biasTy.getDimSize(0) != weightTy.getDimSize(0))
+      return emitOpError() << "requires bias shape to be oC from weight";
+
+    // init: [oC, oW] or [N, oC, oW]
+    int64_t oCDimInInit = (initRank == 2) ? 0 : 1;
+    if (!initTy.isDynamicDim(oCDimInInit) && !biasTy.isDynamicDim(0) &&
+        biasTy.getDimSize(0) != initTy.getDimSize(oCDimInInit))
+      return emitOpError() << "requires bias shape to be oC from init";
+  }
+
+  // input.shape[C] == weight.shape[1] * groups
+  int64_t groups = getGroups();
+  int64_t inputCDim = (inputRank == 2) ? 0 : 1;
+
+  if (!inputTy.isDynamicDim(inputCDim) && !weightTy.isDynamicDim(1)) {
+    int64_t expectedIC = weightTy.getDimSize(1) * groups;
+    if (inputTy.getDimSize(inputCDim) != expectedIC)
+      return emitOpError()
+             << "requires input channels == weight.shape[1] * groups";
+  }
+
+  // batch check: if 3D, input.shape[0] == init.shape[0]
+  if (inputRank == 3) {
+    if (!inputTy.isDynamicDim(0) && !initTy.isDynamicDim(0) &&
+        inputTy.getDimSize(0) != initTy.getDimSize(0))
+      return emitOpError() << "requires batch size of input and init to match";
+  }
+
+  int64_t stride = getStride();
+  int64_t dilation = getDilation();
+
+  // Currently only support stride == 1 and dilation == 1
+  if (stride != 1 || dilation != 1)
+    return emitOpError()
+           << "currently does not support stride != 1 or dilation != 1";
+
+  // Check output width oW
+  // oW = floor((iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1)
+  int64_t padding = getPadding();
+  int64_t inputWDim = (inputRank == 2) ? 1 : 2;
+  int64_t outputWDim = (initRank == 2) ? 1 : 2;
+
+  if (!inputTy.isDynamicDim(inputWDim) && !weightTy.isDynamicDim(2) &&
+      !initTy.isDynamicDim(outputWDim)) {
+    int64_t iW = inputTy.getDimSize(inputWDim);
+    int64_t wW = weightTy.getDimSize(2);
+    int64_t oWExpected =
+        (iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1;
+
+    if (initTy.getDimSize(outputWDim) != oWExpected)
+      return emitOpError()
+             << "requires output width oW to be computed as: "
+             << "(iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1";
+  }
+
+  return success();
+}
+
+void Conv1DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, int32_t stride,
+                     int32_t padding, int32_t dilation, int32_t groups) {
+  odsState.addAttribute("stride", odsBuilder.getI32IntegerAttr(stride));
+  odsState.addAttribute("padding", odsBuilder.getI32IntegerAttr(padding));
+  odsState.addAttribute("dilation", odsBuilder.getI32IntegerAttr(dilation));
+  odsState.addAttribute("groups", odsBuilder.getI32IntegerAttr(groups));
+  auto outType = output.getType();
+  odsState.addOperands(inputs);
+  odsState.addOperands(output);
+  odsState.addTypes(outType);
+  Region &region = *odsState.addRegion();
+  fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
+                         TypeRange(output), odsState.attributes.getAttrs(),
+                         getRegionBuilder());
+}
+
+MutableOperandRange Conv1DOp::getDpsInitsMutable() { return getInitMutable(); }
+
+SmallVector<utils::IteratorType> Conv1DOp::getIteratorTypesArray() {
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 3) {
+      hasBatch = true;
+    }
+  }
+
+  if (hasBatch) {
+    // [N, ic, iw] [oc, ic/groups, ww] -> [N, oc, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel};
+  } else {
+    // [ic, iw] [oc, ic/groups, ww] -> [oc, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel};
+  }
+}
+
+void Conv1DOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  getGenericEffectsImpl(effects, cast<linalg::LinalgOp>(getOperation()));
+}
+
+ArrayAttr Conv1DOp::getIndexingMaps() {
+  MLIRContext *ctx = getContext();
+  AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
+  SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 3) {
+      hasBatch = true;
+    }
+  }
+  if (hasBatch) {
+    // [N, ic, iw] [oc, ic/groups, ww] -> [N, oc, ow]
+    AffineMap iMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5, d6) -> (d0, d1, d2)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5, d6) -> (d3, d4, d5)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap =
+          parseAffineMap("(d0, d1, d2, d3, d4, d5, d6) -> (d3)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5, d6) -> (d0, d3, d6)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  } else {
+    // [ic, iw] [oc, ic/groups, ww] -> [oc, ow]
+    AffineMap iMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5) -> (d0, d1)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5) -> (d2, d3, d4)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap = parseAffineMap("(d0, d1, d2, d3, d4, d5) -> (d2)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5) -> (d2, d5)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  }
+}
+
+void Conv1DOp::print(OpAsmPrinter &p) {
+  // attr-dict
+  p.printOptionalAttrDict((*this)->getAttrs(), ArrayRef<StringRef>{});
+  if (getODSOperands(2).empty())
+    printCommonStructuredOpParts(p, {getInput(), getWeight()}, getInit());
+  else
+    printCommonStructuredOpParts(p, {getInput(), getWeight(), getBias()},
+                                 getInit());
+  p.printArrowTypeList(TypeRange{getResult().getType()});
+}
+
+ParseResult Conv1DOp::parse(OpAsmParser &p, OperationState &result) {
+  // Parse attr-dict
+  if (p.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  SmallVector<Type> inputTypes;
+  SmallVector<Type, 1> outputTypes;
+  if (parseCommonStructuredOpParts(p, result, inputTypes, outputTypes,
+                                   /*OperandSegmentSizes*/ false))
+    return failure();
+
+  // Parse optional result type
+  if (p.parseOptionalArrowTypeList(result.types))
+    return failure();
+
+  // Build implicit region
+  OpBuilder opBuilder(p.getContext());
+  fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
+                         outputTypes, result.attributes.getAttrs(),
+                         getRegionBuilder());
+
+  return success();
+}
+
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
+Conv1DOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
+    RegionBuilderHelper helper(builder.getContext(), block);
+    SmallVector<Value> yields;
+
+    if (block.getNumArguments() == 4) {
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(3).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    } else {
+      assert(block.getNumArguments() == 3 &&
+             "Conv1DOp regionBuilder expects 3 (>=0) args");
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(2).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    }
+
+    helper.yieldOutputs(yields);
+  };
+}
+
+//===----------------------------------------------------------------------===//
+// Conv2DOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult Conv2DOp::verify() {
+  auto inputTy = mlir::dyn_cast<ShapedType>(getInput().getType());
+  auto weightTy = mlir::dyn_cast<ShapedType>(getWeight().getType());
+  auto initTy = mlir::dyn_cast<ShapedType>(getInit().getType());
+  auto resultTy = mlir::dyn_cast<ShapedType>(getResult().getType());
+
+  if (!inputTy || !weightTy || !initTy || !resultTy)
+    return emitOpError()
+           << "requires shaped types for input/weight/init/result";
+
+  // init and result must be consistent
+  if (initTy.getRank() != resultTy.getRank())
+    return emitOpError() << "init and result must have the same rank";
+
+  for (int i = 0; i < initTy.getRank(); ++i) {
+    if (!initTy.isDynamicDim(i) && !resultTy.isDynamicDim(i) &&
+        initTy.getDimSize(i) != resultTy.getDimSize(i))
+      return emitOpError() << "init and result must have the same shape";
+  }
+
+  // input and init must be 3D or 4D and have same rank
+  int64_t inputRank = inputTy.getRank();
+  int64_t initRank = initTy.getRank();
+  if (inputRank != initRank)
+    return emitOpError() << "requires input and init to have the same rank";
+
+  if (inputRank != 3 && inputRank != 4)
+    return emitOpError() << "requires input and init to be 3D or 4D tensors";
+
+  // weight must be [oC, iC/groups, wH, wW]
+  if (weightTy.getRank() != 4)
+    return emitOpError()
+           << "requires weight to have rank 4: [oC, iC/groups, wH, wW]";
+
+  // bias must be 1D if present, and match oC
+  if (getBias()) {
+    auto biasTy = mlir::dyn_cast<ShapedType>(getBias().getType());
+    if (!biasTy)
+      return emitOpError() << "requires shaped type for bias";
+
+    if (biasTy.getRank() != 1)
+      return emitOpError() << "requires bias to be 1D tensor";
+
+    if (!weightTy.isDynamicDim(0) && !biasTy.isDynamicDim(0) &&
+        biasTy.getDimSize(0) != weightTy.getDimSize(0))
+      return emitOpError() << "requires bias shape to be oC from weight";
+
+    // init: [oC, oH, oW] or [N, oC, oH, oW]
+    int64_t oCDimInInit = (initRank == 3) ? 0 : 1;
+    if (!initTy.isDynamicDim(oCDimInInit) && !biasTy.isDynamicDim(0) &&
+        biasTy.getDimSize(0) != initTy.getDimSize(oCDimInInit))
+      return emitOpError() << "requires bias shape to be oC from init";
+  }
+
+  // input.shape[C] == weight.shape[1] * groups
+  int64_t groups = getGroups();
+  int64_t inputCDim = (inputRank == 3) ? 0 : 1;
+
+  if (!inputTy.isDynamicDim(inputCDim) && !weightTy.isDynamicDim(1)) {
+    int64_t expectedIC = weightTy.getDimSize(1) * groups;
+    if (inputTy.getDimSize(inputCDim) != expectedIC)
+      return emitOpError()
+             << "requires input channels == weight.shape[1] * groups";
+  }
+
+  // batch check: if 4D, input.shape[0] == init.shape[0]
+  if (inputRank == 4) {
+    if (!inputTy.isDynamicDim(0) && !initTy.isDynamicDim(0) &&
+        inputTy.getDimSize(0) != initTy.getDimSize(0))
+      return emitOpError() << "requires batch size of input and init to match";
+  }
+
+  FailureOr<std::array<int64_t, 2>> stride = getConv2DIntPairAttr(
+      getStrideAttr(), "stride", [&]() { return emitOpError(); });
+  FailureOr<std::array<int64_t, 2>> dilation = getConv2DIntPairAttr(
+      getDilationAttr(), "dilation", [&]() { return emitOpError(); });
+  FailureOr<std::array<int64_t, 2>> padding = getConv2DIntPairAttr(
+      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
+  if (failed(stride) || failed(dilation) || failed(padding))
+    return failure();
+
+  // Currently only support stride == 1 and dilation == 1
+  if ((*stride)[0] != 1 || (*stride)[1] != 1 || (*dilation)[0] != 1 ||
+      (*dilation)[1] != 1)
+    return emitOpError()
+           << "currently does not support stride != 1 or dilation != 1";
+
+  // Check output height oH
+  // oH = floor((iH + 2 * paddingH - dilationH * (wH - 1) - 1) / strideH + 1)
+  int64_t inputHDim = (inputRank == 3) ? 1 : 2;
+  int64_t outputHDim = (initRank == 3) ? 1 : 2;
+
+  if (!inputTy.isDynamicDim(inputHDim) && !weightTy.isDynamicDim(2) &&
+      !initTy.isDynamicDim(outputHDim)) {
+    int64_t iH = inputTy.getDimSize(inputHDim);
+    int64_t wH = weightTy.getDimSize(2);
+    int64_t oHExpected =
+        (iH + 2 * (*padding)[0] - (*dilation)[0] * (wH - 1) - 1) /
+            (*stride)[0] +
+        1;
+
+    if (initTy.getDimSize(outputHDim) != oHExpected)
+      return emitOpError()
+             << "requires output height oH to be computed as: "
+             << "(iH + 2 * paddingH - dilationH * (wH - 1) - 1) / strideH + 1";
+  }
+
+  // Check output width oW
+  // oW = floor((iW + 2 * paddingW - dilationW * (wW - 1) - 1) / strideW + 1)
+  int64_t inputWDim = (inputRank == 3) ? 2 : 3;
+  int64_t outputWDim = (initRank == 3) ? 2 : 3;
+
+  if (!inputTy.isDynamicDim(inputWDim) && !weightTy.isDynamicDim(3) &&
+      !initTy.isDynamicDim(outputWDim)) {
+    int64_t iW = inputTy.getDimSize(inputWDim);
+    int64_t wW = weightTy.getDimSize(3);
+    int64_t oWExpected =
+        (iW + 2 * (*padding)[1] - (*dilation)[1] * (wW - 1) - 1) /
+            (*stride)[1] +
+        1;
+
+    if (initTy.getDimSize(outputWDim) != oWExpected)
+      return emitOpError()
+             << "requires output width oW to be computed as: "
+             << "(iW + 2 * paddingW - dilationW * (wW - 1) - 1) / strideW + 1";
+  }
+
+  return success();
+}
+
+void Conv2DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, int32_t stride,
+                     int32_t padding, int32_t dilation, int32_t groups) {
+  build(odsBuilder, odsState, inputs, output,
+        odsBuilder.getI32IntegerAttr(stride),
+        odsBuilder.getI32IntegerAttr(padding),
+        odsBuilder.getI32IntegerAttr(dilation), groups);
+}
+
+void Conv2DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, Attribute stride,
+                     Attribute padding, Attribute dilation, int32_t groups) {
+  odsState.addAttribute("stride", stride);
+  odsState.addAttribute("padding", padding);
+  odsState.addAttribute("dilation", dilation);
+  odsState.addAttribute("groups", odsBuilder.getI32IntegerAttr(groups));
+  auto outType = output.getType();
+  odsState.addOperands(inputs);
+  odsState.addOperands(output);
+  odsState.addTypes(outType);
+  Region &region = *odsState.addRegion();
+  fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
+                         TypeRange(output), odsState.attributes.getAttrs(),
+                         getRegionBuilder());
+}
+
+MutableOperandRange Conv2DOp::getDpsInitsMutable() { return getInitMutable(); }
+
+SmallVector<utils::IteratorType> Conv2DOp::getIteratorTypesArray() {
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 4) {
+      hasBatch = true;
+    }
+  }
+
+  if (hasBatch) {
+    // [N, ic, ih, iw] [oc, ic/groups, wh, ww] -> [N, oc, oh, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::parallel};
+  } else {
+    // [ic, ih, iw] [oc, ic/groups, wh, ww] -> [oc, oh, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::parallel};
+  }
+}
+
+void Conv2DOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  getGenericEffectsImpl(effects, cast<linalg::LinalgOp>(getOperation()));
+}
+
+ArrayAttr Conv2DOp::getIndexingMaps() {
+  MLIRContext *ctx = getContext();
+  AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
+  SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 4) {
+      hasBatch = true;
+    }
+  }
+  if (hasBatch) {
+    // [N, ic, ih, iw] [oc, ic/groups, wh, ww] -> [N, oc, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d0, d1, d2, d3)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d4, d5, d6, d7)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap = parseAffineMap(
+          "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d4)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9) -> (d0, d4, d8, d9)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  } else {
+    // [ic, ih, iw] [oc, ic/groups, wh, ww] -> [oc, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d0, d1, d2)", ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3, d4, d5, d6)", ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap =
+          parseAffineMap("(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8) -> (d3, d7, d8)", ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  }
+}
+
+void Conv2DOp::print(OpAsmPrinter &p) {
+  // attr-dict
+  p.printOptionalAttrDict((*this)->getAttrs(), ArrayRef<StringRef>{});
+  if (getODSOperands(2).empty())
+    printCommonStructuredOpParts(p, {getInput(), getWeight()}, getInit());
+  else
+    printCommonStructuredOpParts(p, {getInput(), getWeight(), getBias()},
+                                 getInit());
+  p.printArrowTypeList(TypeRange{getResult().getType()});
+}
+
+ParseResult Conv2DOp::parse(OpAsmParser &p, OperationState &result) {
+  // Parse attr-dict
+  if (p.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  SmallVector<Type> inputTypes;
+  SmallVector<Type, 1> outputTypes;
+  if (parseCommonStructuredOpParts(p, result, inputTypes, outputTypes,
+                                   /*OperandSegmentSizes*/ false))
+    return failure();
+
+  // Parse optional result type
+  if (p.parseOptionalArrowTypeList(result.types))
+    return failure();
+
+  // Build implicit region
+  OpBuilder opBuilder(p.getContext());
+  fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
+                         outputTypes, result.attributes.getAttrs(),
+                         getRegionBuilder());
+
+  return success();
+}
+
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
+Conv2DOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+  ) {
+    RegionBuilderHelper helper(builder.getContext(), block);
+    SmallVector<Value> yields;
+
+    if (block.getNumArguments() == 4) {
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(3).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    } else {
+      assert(block.getNumArguments() == 3 &&
+             "Conv2DOp regionBuilder expects 3 (>=0) args");
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(2).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    }
+
+    helper.yieldOutputs(yields);
+  };
+}
+
+//===----------------------------------------------------------------------===//
+// Conv3DOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult Conv3DOp::verify() {
+  auto inputTy = mlir::dyn_cast<ShapedType>(getInput().getType());
+  auto weightTy = mlir::dyn_cast<ShapedType>(getWeight().getType());
+  auto initTy = mlir::dyn_cast<ShapedType>(getInit().getType());
+  auto resultTy = mlir::dyn_cast<ShapedType>(getResult().getType());
+
+  if (!inputTy || !weightTy || !initTy || !resultTy)
+    return emitOpError()
+           << "requires shaped types for input/weight/init/result";
+
+  if (!inputTy.hasStaticShape() || !weightTy.hasStaticShape() ||
+      !initTy.hasStaticShape() || !resultTy.hasStaticShape())
+    return emitOpError()
+           << "currently only supports static shape for input/weight/init/result";
+
+  // init and result must be consistent
+  if (initTy.getRank() != resultTy.getRank())
+    return emitOpError() << "init and result must have the same rank";
+
+  for (int i = 0; i < initTy.getRank(); ++i) {
+    if (initTy.getDimSize(i) != resultTy.getDimSize(i))
+      return emitOpError() << "init and result must have the same shape";
+  }
+
+  // input and init must be 4D or 5D and have same rank
+  int64_t inputRank = inputTy.getRank();
+  int64_t initRank = initTy.getRank();
+  if (inputRank != initRank)
+    return emitOpError() << "requires input and init to have the same rank";
+
+  if (inputRank != 4 && inputRank != 5)
+    return emitOpError() << "requires input and init to be 4D or 5D tensors";
+
+  // weight must be [oC, iC/groups, wD, wH, wW]
+  if (weightTy.getRank() != 5)
+    return emitOpError()
+           << "requires weight to have rank 5: [oC, iC/groups, wD, wH, wW]";
+
+  // bias must be 1D if present, and match oC
+  if (getBias()) {
+    auto biasTy = mlir::dyn_cast<ShapedType>(getBias().getType());
+    if (!biasTy)
+      return emitOpError() << "requires shaped type for bias";
+
+    if (!biasTy.hasStaticShape())
+      return emitOpError() << "currently only supports static shape for bias";
+
+    if (biasTy.getRank() != 1)
+      return emitOpError() << "requires bias to be 1D tensor";
+
+    if (biasTy.getDimSize(0) != weightTy.getDimSize(0))
+      return emitOpError() << "requires bias shape to be oC from weight";
+
+    // init: [oC, oD, oH, oW] or [N, oC, oD, oH, oW]
+    int64_t oCDimInInit = (initRank == 4) ? 0 : 1;
+    if (biasTy.getDimSize(0) != initTy.getDimSize(oCDimInInit))
+      return emitOpError() << "requires bias shape to be oC from init";
+  }
+
+  // input.shape[C] == weight.shape[1] * groups
+  int64_t groups = getGroups();
+  int64_t inputCDim = (inputRank == 4) ? 0 : 1;
+
+  int64_t expectedIC = weightTy.getDimSize(1) * groups;
+  if (inputTy.getDimSize(inputCDim) != expectedIC)
+    return emitOpError()
+           << "requires input channels == weight.shape[1] * groups";
+
+  // batch check: if 5D, input.shape[0] == init.shape[0]
+  if (inputRank == 5) {
+    if (inputTy.getDimSize(0) != initTy.getDimSize(0))
+      return emitOpError() << "requires batch size of input and init to match";
+  }
+
+  FailureOr<std::array<int64_t, 3>> stride = getConv3DIntTripleAttr(
+      getStrideAttr(), "stride", [&]() { return emitOpError(); });
+  FailureOr<std::array<int64_t, 3>> dilation = getConv3DIntTripleAttr(
+      getDilationAttr(), "dilation", [&]() { return emitOpError(); });
+  FailureOr<std::array<int64_t, 3>> padding = getConv3DIntTripleAttr(
+      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
+  if (failed(stride) || failed(dilation) || failed(padding))
+    return failure();
+
+  // Currently only support stride == 1 and dilation == 1
+  if ((*stride)[0] != 1 || (*stride)[1] != 1 || (*stride)[2] != 1 ||
+      (*dilation)[0] != 1 || (*dilation)[1] != 1 || (*dilation)[2] != 1)
+    return emitOpError()
+           << "currently does not support stride != 1 or dilation != 1";
+
+  // Check output depth/height/width
+  // oX = floor((iX + 2 * paddingX - dilationX * (wX - 1) - 1) / strideX + 1)
+  int64_t inputDDim = (inputRank == 4) ? 1 : 2;
+  int64_t inputHDim = (inputRank == 4) ? 2 : 3;
+  int64_t inputWDim = (inputRank == 4) ? 3 : 4;
+  int64_t outputDDim = (initRank == 4) ? 1 : 2;
+  int64_t outputHDim = (initRank == 4) ? 2 : 3;
+  int64_t outputWDim = (initRank == 4) ? 3 : 4;
+
+  auto checkOutputDim = [&](int64_t inputDim, int64_t weightDim,
+                            int64_t outputDim, int64_t dimIdx,
+                            const char *dimName) -> LogicalResult {
+    int64_t iX = inputTy.getDimSize(inputDim);
+    int64_t wX = weightTy.getDimSize(weightDim);
+    int64_t oXExpected =
+        (iX + 2 * (*padding)[dimIdx] - (*dilation)[dimIdx] * (wX - 1) - 1) /
+            (*stride)[dimIdx] +
+        1;
+
+    if (initTy.getDimSize(outputDim) != oXExpected)
+      return emitOpError()
+             << "requires output " << dimName << " to be computed as: "
+             << "(iX + 2 * paddingX - dilationX * (wX - 1) - 1) / strideX + 1";
+    return success();
+  };
+
+  if (failed(checkOutputDim(inputDDim, 2, outputDDim, 0, "depth oD")) ||
+      failed(checkOutputDim(inputHDim, 3, outputHDim, 1, "height oH")) ||
+      failed(checkOutputDim(inputWDim, 4, outputWDim, 2, "width oW")))
+    return failure();
+
+  return success();
+}
+
+void Conv3DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, int32_t stride,
+                     int32_t padding, int32_t dilation, int32_t groups) {
+  build(odsBuilder, odsState, inputs, output,
+        odsBuilder.getI32IntegerAttr(stride),
+        odsBuilder.getI32IntegerAttr(padding),
+        odsBuilder.getI32IntegerAttr(dilation), groups);
+}
+
+void Conv3DOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                     ValueRange inputs, Value output, Attribute stride,
+                     Attribute padding, Attribute dilation, int32_t groups) {
+  odsState.addAttribute("stride", stride);
+  odsState.addAttribute("padding", padding);
+  odsState.addAttribute("dilation", dilation);
+  odsState.addAttribute("groups", odsBuilder.getI32IntegerAttr(groups));
+  auto outType = output.getType();
+  odsState.addOperands(inputs);
+  odsState.addOperands(output);
+  odsState.addTypes(outType);
+  Region &region = *odsState.addRegion();
+  fillStructuredOpRegion(odsBuilder, region, TypeRange(inputs),
+                         TypeRange(output), odsState.attributes.getAttrs(),
+                         getRegionBuilder());
+}
+
+MutableOperandRange Conv3DOp::getDpsInitsMutable() { return getInitMutable(); }
+
+SmallVector<utils::IteratorType> Conv3DOp::getIteratorTypesArray() {
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 5) {
+      hasBatch = true;
+    }
+  }
+
+  if (hasBatch) {
+    // [N, ic, id, ih, iw] [oc, ic/groups, wd, wh, ww] -> [N, oc, od, oh, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::parallel,
+        utils::IteratorType::parallel};
+  } else {
+    // [ic, id, ih, iw] [oc, ic/groups, wd, wh, ww] -> [oc, od, oh, ow]
+    return SmallVector<utils::IteratorType>{
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::parallel,  utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::reduction,
+        utils::IteratorType::reduction, utils::IteratorType::parallel,
+        utils::IteratorType::parallel,  utils::IteratorType::parallel};
+  }
+}
+
+void Conv3DOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  getGenericEffectsImpl(effects, cast<linalg::LinalgOp>(getOperation()));
+}
+
+ArrayAttr Conv3DOp::getIndexingMaps() {
+  MLIRContext *ctx = getContext();
+  AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
+  SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
+  bool hasBatch = false;
+  if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
+    if (inputType.hasRank() && inputType.getRank() == 5) {
+      hasBatch = true;
+    }
+  }
+  if (hasBatch) {
+    // [N, ic, id, ih, iw] [oc, ic/groups, wd, wh, ww] -> [N, oc, od, oh, ow]
+    AffineMap iMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, "
+                       "d12) -> (d0, d1, d2, d3, d4)",
+                       ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, "
+                       "d12) -> (d5, d6, d7, d8, d9)",
+                       ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap = parseAffineMap(
+          "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, d12) -> (d5)",
+          ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap =
+        parseAffineMap("(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11, "
+                       "d12) -> (d0, d5, d10, d11, d12)",
+                       ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  } else {
+    // [ic, id, ih, iw] [oc, ic/groups, wd, wh, ww] -> [oc, od, oh, ow]
+    AffineMap iMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11) -> (d0, d1, d2, "
+        "d3)",
+        ctx);
+    indexingMaps[getInputMutable().getOperandNumber()] = iMap;
+
+    AffineMap wMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11) -> (d4, d5, d6, "
+        "d7, d8)",
+        ctx);
+    indexingMaps[getWeightMutable().getOperandNumber()] = wMap;
+
+    auto bias = getBiasMutable();
+    if (!bias.empty()) {
+      AffineMap bMap = parseAffineMap(
+          "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11) -> (d4)", ctx);
+      indexingMaps[bias.begin()->getOperandNumber()] = bMap;
+    }
+    AffineMap oMap = parseAffineMap(
+        "(d0, d1, d2, d3, d4, d5, d6, d7, d8, d9, d10, d11) -> (d4, d9, d10, "
+        "d11)",
+        ctx);
+    indexingMaps[getInitMutable().getOperandNumber()] = oMap;
+    return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
+  }
+}
+
+void Conv3DOp::print(OpAsmPrinter &p) {
+  // attr-dict
+  p.printOptionalAttrDict((*this)->getAttrs(), ArrayRef<StringRef>{});
+  if (getODSOperands(2).empty())
+    printCommonStructuredOpParts(p, {getInput(), getWeight()}, getInit());
+  else
+    printCommonStructuredOpParts(p, {getInput(), getWeight(), getBias()},
+                                 getInit());
+  p.printArrowTypeList(TypeRange{getResult().getType()});
+}
+
+ParseResult Conv3DOp::parse(OpAsmParser &p, OperationState &result) {
+  // Parse attr-dict
+  if (p.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  SmallVector<Type> inputTypes;
+  SmallVector<Type, 1> outputTypes;
+  if (parseCommonStructuredOpParts(p, result, inputTypes, outputTypes,
+                                   /*OperandSegmentSizes*/ false))
+    return failure();
+
+  // Parse optional result type
+  if (p.parseOptionalArrowTypeList(result.types))
+    return failure();
+
+  // Build implicit region
+  OpBuilder opBuilder(p.getContext());
+  fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
+                         outputTypes, result.attributes.getAttrs(),
+                         getRegionBuilder());
+
+  return success();
+}
+
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+#else
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>,
+                   function_ref<InFlightDiagnostic()>)>
+#endif
+Conv3DOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> attrs
+#ifdef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            , function_ref<InFlightDiagnostic()> emitError
+#endif
+           ) {
+    RegionBuilderHelper helper(builder.getContext(), block);
+    SmallVector<Value> yields;
+
+    if (block.getNumArguments() == 4) {
+      // With bias: input, weight, bias, init -> 4 arguments
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(3).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    } else if (block.getNumArguments() == 3) {
+      // Without bias: input, weight, init -> 3 arguments
+      Value arg0 = block.getArgument(0);
+      Type targetType = block.getArgument(2).getType();
+      yields.push_back(
+          helper.buildTypeFn(TypeFn::cast_signed, targetType, arg0));
+    } else {
+      llvm::report_fatal_error("Conv3DOp region expects 3 or 4 arguments");
+    }
+
+    helper.yieldOutputs(yields);
+  };
+}
+
+
+LogicalResult HypotOp::verify() {
+  auto xType = dyn_cast<RankedTensorType>(getX().getType());
+  auto yType = dyn_cast<RankedTensorType>(getY().getType());
+  auto outType = dyn_cast<RankedTensorType>(getOutput().getType());
+  if (!xType || !yType || !outType)
+    return emitOpError() << "requires ranked tensor types for x, y and output";
+  if (yType != xType)
+    return emitOpError() << "requires x and y to have the same type";
+  if (outType != xType)
+    return emitOpError() << "requires output to have the same type as inputs";
+  if (Value z = getZ()) {
+    auto zType = dyn_cast<RankedTensorType>(z.getType());
+    if (!zType)
+      return emitOpError() << "requires z to be a ranked tensor";
+    if (zType != xType)
+      return emitOpError() << "requires z to have the same type as x and y";
+    auto elemType = dyn_cast<FloatType>(xType.getElementType());
+    if (elemType && elemType.isBF16()) {
+      return emitOpError() << "supports bf16 only for the 2-input form";
+    }
+  }
   return success();
 }

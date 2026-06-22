@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -199,23 +200,16 @@ void SyncDebug::PrintCompoundIR(const InstanceElement *e, raw_ostream &os) {
 
 void SyncDebug::printUnitFlag(const CompoundInstanceElement *e,
                               raw_ostream &os) const {
-  if (e->getUnitFlagMode() != UNIT_FLAG::DISABLED) {
-    Comma comma;
-    os << "unitFlag(";
-    if (e->unitFlagModeAsSet == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      os << comma.get() << "as-set";
-    } else if (e->unitFlagModeAsSet == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-      os << comma.get() << "as-set-only-last-iter";
-    } else if (e->unitFlagModeAsSet == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-      os << comma.get() << "as-set-only-first-iter";
-    }
-    if (e->unitFlagModeAsWait == UNIT_FLAG::ENABLED_WITH_UPDATE) {
-      os << comma.get() << "as-wait";
-    } else if (e->unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_LAST_ITER) {
-      os << comma.get() << "as-wait-only-last-iter";
-    } else if (e->unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER) {
-      os << comma.get() << "as-wait-only-first-iter";
-    }
+  if (!e->unitFlagInfo.disabledAsSet()) {
+    os << "unitFlagAsSet(";
+    llvm::interleaveComma(
+        e->unitFlagInfo.getUnitFlagModesAsSet(/*compress=*/true), os);
+    os << ") ";
+  }
+  if (!e->unitFlagInfo.disabledAsWait()) {
+    os << "unitFlagAsWait(";
+    llvm::interleaveComma(
+        e->unitFlagInfo.getUnitFlagModesAsWait(/*compress=*/true), os);
     os << ") ";
   }
 }

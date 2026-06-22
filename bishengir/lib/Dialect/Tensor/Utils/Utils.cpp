@@ -50,7 +50,7 @@ getHyperrectangleFromArray(int64_t superviewShape, int64_t offset, int64_t size,
   if (totalElements != superviewShape) {
     LDBG("Total elements are not the same as the superviewShape "
          << totalElements << " " << superviewShape);
-    llvm_unreachable("Total elements are not the same as the superviewShape");
+    llvm::report_fatal_error("Total elements are not the same as the superviewShape");
   }
   // Compute row-major strides (step sizes between dimensions)
   llvm::SmallVector<int64_t> computedStrides(n, 1);
@@ -184,7 +184,7 @@ Value getReverseReshapedValue(OpBuilder &builder, Value initialValue,
           /*src=*/result,
           /*reassociation=*/collapseOp.getReassociationIndices());
     } else {
-      llvm_unreachable(
+      llvm::report_fatal_error(
           "only support reshape Op including tensor::ExpandShapeOp "
           "and tensor::CollapseShapeOp");
     }

@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -30,6 +31,8 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "llvm/Support/LogicalResult.h"
+#include <type_traits>
 
 using namespace mlir;
 
@@ -70,6 +73,14 @@ public:
     }
 
     mmadL0C_ = op_.getDpsInitOperand(0)->get();
+
+    std::string wasI4ToI8ConversionStr{"enable_i4"};
+    std::optional<Operation *> wasI4ToI8ConversionMarkOp =
+      utils::getAnnotateOpWithAttr(op_.getResult(0), wasI4ToI8ConversionStr);
+
+    if (wasI4ToI8ConversionMarkOp.has_value()) {
+      wasI4ToI8Conversion_ = true;
+    }
   }
 
   T getSourceMatmulOp() const { return op_; };
@@ -81,18 +92,19 @@ public:
         getSourceMatmulOp().getLoc(), 0);
     auto newOp = rewriter.template create<ReplaceOpTy>(
         getSourceMatmulOp().getLoc(),
-        getMmadL1OpResultTypes(),          // result types
-        mmadL1A_,                          // Matrix A on L1
-        mmadL1B_,                          // Matrix B on L1
-        initCondition_,                    // L0C init condition
-        constZero,                         // MMAD Real M
-        constZero,                         // MMAD Real K
-        constZero,                         // MMAD Real N
-        mmadL0C_,                          // init operand
-        Value{},                           // per channel bias
-        getMmadL1TransposeAFlag(rewriter), // transpose A
-        getMmadL1TransposeBFlag(rewriter), // transpose B
-        getMmadL1EnableHF32Flag(rewriter)  // enable hf32 mode
+        getMmadL1OpResultTypes(),           // result types
+        mmadL1A_,                           // Matrix A on L1
+        mmadL1B_,                           // Matrix B on L1
+        initCondition_,                     // L0C init condition
+        constZero,                          // MMAD Real M
+        constZero,                          // MMAD Real K
+        constZero,                          // MMAD Real N
+        mmadL0C_,                           // init operand
+        Value{},                            // per channel bias
+        getMmadL1TransposeAFlag(rewriter),  // transpose A
+        getMmadL1TransposeBFlag(rewriter),  // transpose B
+        getMmadL1EnableHF32Flag(rewriter),  // enable hf32 mode
+        getMmadL1WasI4ToI8ConversionFlag(rewriter) // was i4 -> i8 conversion
     );
     return newOp.getOperation();
   }
@@ -110,6 +122,22 @@ public:
   ///                         outs(%arg3 : tensor<?x?xf32>) -> tensor<?x?xf32>
   /// \endcode
   /// the init condition is (%arg0 == lower_bound) && (%arg2 == lower_bound1).
+  ///
+  /// Another example, for the below IR:
+  /// \code
+  /// %0 = tensor.empty() : tensor<?x?xf32>
+  /// %cst = linalg.fill ins(%cst: f32) outs(%0: tensor<?x?xf32>)
+  /// ...
+  /// %res = scf.for %arg0 = lower_bound to upper_bound ... iter_args(%arg1 = %cst) { // K loop
+  ///  %ret = linalg.matmul ins(%A, %B : tensor<?x?xf16>, tensor<?x?xf16>)
+  ///                       outs(%arg1 : tensor<?x?xf32>) -> tensor<?x?xf32>
+  ///  yiled %ret
+  /// %res1 = scf.for %arg2 = lower_bound1 to upper_bound1 ... iter_args(%arg3 = %res) { // K loop
+  ///  %ret = linalg.matmul ins(%A, %B : tensor<?x?xf16>, tensor<?x?xf16>)
+  ///                       outs(%arg3 : tensor<?x?xf32>) -> tensor<?x?xf32>
+  ///  yiled %ret
+  /// \endcode
+  /// the init condition is (%arg2 == lower_bound1) && (lower_bound >= upper_bound).
   void extractInitCondition(PatternRewriter &rewriter);
 
   /// Judge whether the input of mmad can be trasposed along being loaded
@@ -121,7 +149,7 @@ public:
     auto perm = l1TransposeOp.getPermutation();
     const auto rank = static_cast<int>(perm.size());
     if (rank < 2)
-      llvm_unreachable("rank for matmul need not less than 2");
+      llvm::report_fatal_error("rank for matmul need not less than 2");
     if ((perm[rank - 1] == rank - 2) && (perm[rank - 2] == rank - 1))
       return l1TransposeOp.getInput();
 
@@ -163,6 +191,7 @@ private:
   UnitAttr getMmadL1TransposeAFlag(OpBuilder &rewriter) const;
   UnitAttr getMmadL1TransposeBFlag(OpBuilder &rewriter) const;
   UnitAttr getMmadL1EnableHF32Flag(OpBuilder &rewriter) const;
+  UnitAttr getMmadL1WasI4ToI8ConversionFlag(OpBuilder &rewriter) const;
 
   /// Original Op
   T op_;
@@ -170,6 +199,7 @@ private:
   bool transposeA_{false};
   bool transposeB_{false};
   bool enableHF32_{false};
+  bool wasI4ToI8Conversion_{false};
 
   /// Operands for MmadL1Op
   Value mmadL1A_;
@@ -199,6 +229,12 @@ template <typename T, typename U>
 UnitAttr
 MmadL1InfoCollector<T, U>::getMmadL1EnableHF32Flag(OpBuilder &rewriter) const {
   return enableHF32_ ? rewriter.getUnitAttr() : UnitAttr();
+}
+
+template <typename T, typename U>
+UnitAttr
+MmadL1InfoCollector<T, U>::getMmadL1WasI4ToI8ConversionFlag(OpBuilder &rewriter) const {
+  return wasI4ToI8Conversion_ ? rewriter.getUnitAttr() : UnitAttr();
 }
 
 template <typename T, typename U>
@@ -250,42 +286,124 @@ bool MmadL1InfoCollector<T, U>::isZeroOrEmptyTensor(Value op) {
   return cstFloat && cstFloat.getValue().isZero();
 }
 
+
 template <typename T, typename U>
 LogicalResult
 MmadL1InfoCollector<T, U>::buildInitCondition(InitTensorInfo &info,
                                               PatternRewriter &rewriter) const {
-  // If current destination value satisfies empty space, return
+  // Base Case: If current destination value satisfies empty space, return
   if (isZeroOrEmptyTensor(info.currentValue)) {
+    if (info.currentValue.hasOneUse()) {
+      return success();
+    }
+
+    // TODO: add restriction when block argument have several users (even if this users are matmul)
+    // for i iter_arg(%arg0 = ..., % arg1 = ...)
+    // %res0 = mm outs(%arg0)
+    // %res1 = mm outs(%arg0)
+    // scf.yield %res0, %res1
+    for (auto use : info.currentValue.getUsers()) {
+      auto forOp = dyn_cast<scf::ForOp>(use);
+      if (!forOp) {
+        continue;
+      }
+
+      for (unsigned i = 0; i < forOp.getNumRegionIterArgs(); ++i) {
+        if (forOp.getInitArgs()[i] != info.currentValue) {
+          continue;
+        }
+
+        BlockArgument regionIterArg = forOp.getRegionIterArg(i);
+        OpOperand *tiedYielded = forOp.getTiedLoopYieldedValue(regionIterArg);
+        if (!tiedYielded) {
+          continue;
+        }
+
+        auto yieldedMatmul = hivm::traceDefOp<T>(tiedYielded->get());
+        if (!yieldedMatmul.has_value()) {
+          continue;
+        }
+
+        auto matmulOp = cast<T>(yieldedMatmul.value());
+        if (matmulOp.getDpsInitOperand(0)->get() == info.currentValue) {
+          return failure();
+        }
+      }
+    }
+
     return success();
   }
-  // Currently, we can only handle cases where the current value is an iter
-  // argument for a scf::ForOp.
-  // Then, consider case where current dst value is an iter argument of
-  // scf::ForOp and then trace for `ZeroOrEmptyTensor` continually
-  // Otherwise, we think MmadL1 dst has meaningful value for accumulation
-  auto blockArg = dyn_cast_if_present<BlockArgument>(info.currentValue);
-  if (!blockArg) {
+
+  // TODO: to remove the code by doing bmm decomposition before it.
+  if constexpr (std::is_same_v<T, linalg::BatchMatmulOp>) {
     return failure();
   }
-  auto scfForOp =
-      dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
-  if (!scfForOp) {
-    return failure();
+
+  // Case A: L0C is an iteration argument of scf::ForOp
+  if (auto blockArg = dyn_cast<BlockArgument>(info.currentValue)) {
+    auto scfForOp =
+        dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
+    if (!scfForOp) {
+      return failure();
+    }
+
+    if (OpOperand* tiedYielded = scfForOp.getTiedLoopYieldedValue(blockArg)) {
+      // TODO: Change to potential definers analysis which returns set of definers to fix if
+      if (!info.initTensorOutermostLoop && !hivm::traceDefOp<T>(tiedYielded->get()).has_value()) {
+        return failure();
+      }
+    }
+
+    OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg);
+
+    // Update information.
+    info.initTensorOutermostLoop = scfForOp.getOperation();
+    info.initTensorIterArgIndex = iterArgOperand->getOperandNumber();
+    info.currentValue = iterArgOperand->get();
+
+    auto loc = info.currentCondition.getLoc();
+    // Init condition for current loop is `(iv == lower_bound)`
+    auto isFirstIter = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, scfForOp.getLowerBound(),
+        scfForOp.getInductionVar());
+
+    // Joint condition is `(currentCondition && (iv == lower_bound))`
+    info.currentCondition =
+        rewriter.create<arith::AndIOp>(loc, info.currentCondition, isFirstIter);
+
+    // Directly reuse and pass 'info' upward
+    return buildInitCondition(info, rewriter);
   }
-  OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg);
-  // Update information.
-  info.initTensorOutermostLoop = scfForOp.getOperation();
-  info.initTensorIterArgIndex = iterArgOperand->getOperandNumber();
-  info.currentValue = iterArgOperand->get();
-  auto loc = info.currentCondition.getLoc();
-  // Init condition for current loop is `(iv == lower_bound)`
-  auto additionalCondition = rewriter.create<arith::CmpIOp>(
-      loc, arith::CmpIPredicate::eq, scfForOp.getLowerBound(),
-      scfForOp.getInductionVar());
-  // Joint condition is `((iv == lower_bound) && currentCondition)`
-  info.currentCondition = rewriter.create<arith::AndIOp>(
-      loc, info.currentCondition, additionalCondition);
-  return buildInitCondition(info, rewriter);
+
+  // Case B: L0C is the result of scf::ForOp
+  if (auto prevLoop =
+          dyn_cast_if_present<scf::ForOp>(info.currentValue.getDefiningOp())) {
+    auto resultIndex = cast<OpResult>(info.currentValue).getResultNumber();
+    Value prevInit = prevLoop.getInitArgs()[resultIndex];
+
+    BlockArgument tiedBlockArg = prevLoop.getRegionIterArg(resultIndex);
+
+    // Update information.
+    info.initTensorOutermostLoop = prevLoop.getOperation();
+    info.initTensorIterArgIndex =
+        prevLoop.getTiedLoopInit(tiedBlockArg)->getOperandNumber();
+    info.currentValue = prevInit;
+
+    // Init condition for current loop is `LowerBound >= UpperBound`
+    auto loc = prevLoop.getLoc();
+    auto loopNotRun = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::sge, prevLoop.getLowerBound(),
+        prevLoop.getUpperBound());
+
+    // Joint condition is `((LowerBound >= UpperBound) && currentCondition)`
+    info.currentCondition =
+        rewriter.create<arith::AndIOp>(loc, info.currentCondition, loopNotRun);
+
+    return buildInitCondition(info, rewriter);
+  }
+
+  // Unable to trace, return failure (init_c = false)
+  return failure();
 }
 
 template <typename T, typename U>

@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -36,6 +37,117 @@ Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
   rewriter.setInsertionPoint(op);
   return rewriter.create<memref::AllocOp>(op->getLoc(),
                                           MemRefType::get(bufSize, elemType));
+}
+
+/// Compute the total number of elements for VCastOp src as if AlignAllocSize
+/// had aligned its root alloc size according to the original
+/// getCastSrcUnAlignSizeInfo rules (i32/i16 -> i8 overflow cast).
+static int64_t getAlignedSrcSizeForCast(VCastOp op) {
+  Value srcVal = op.getSrc()[0];
+  auto srcShapedType = dyn_cast<ShapedType>(srcVal.getType());
+  auto dstShapedType = dyn_cast<ShapedType>(op.getDst()[0].getType());
+  if (!srcShapedType || !dstShapedType || !srcShapedType.hasStaticShape()) {
+    auto sz = utils::traceToAllocMaxSize(srcVal);
+    return sz.value_or(0);
+  }
+
+  auto shape = srcShapedType.getShape();
+  SmallVector<int64_t> alignedShape(shape.begin(), shape.end());
+
+  auto srcElemType = getElementTypeOrSelf(srcShapedType);
+  auto dstElemType = getElementTypeOrSelf(dstShapedType);
+  const int64_t srcElemBytes =
+      static_cast<int64_t>(srcElemType.getIntOrFloatBitWidth()) /
+      static_cast<int64_t>(mlir::utils::INTR_BITS_PER_BYTE);
+  const int64_t dstElemBytes =
+      static_cast<int64_t>(dstElemType.getIntOrFloatBitWidth()) /
+      static_cast<int64_t>(mlir::utils::INTR_BITS_PER_BYTE);
+
+  if (srcElemBytes == 0 || dstElemBytes == 0) {
+    auto sz = utils::traceToAllocMaxSize(srcVal);
+    return sz.value_or(0);
+  }
+
+  const int64_t bytesFactor = srcElemBytes / dstElemBytes;
+  int64_t rank = srcShapedType.getRank();
+
+  // Fallback for unexpected rank.
+  if (rank <= 0) {
+    auto sz = utils::traceToAllocMaxSize(srcVal);
+    return sz.value_or(0);
+  }
+
+  auto memrefType = dyn_cast<MemRefType>(srcVal.getType());
+  if (!memrefType) {
+    auto sz = utils::traceToAllocMaxSize(srcVal);
+    return sz.value_or(0);
+  }
+  // get alignment bytes
+  auto maybeHwAlignBytes = hivm::util::getHWAlignBytes(memrefType);
+  if (!maybeHwAlignBytes.has_value()) {
+    auto sz = utils::traceToAllocMaxSize(srcVal);
+    return sz.value_or(0);
+  }
+
+  uint32_t hwAlignBytes = maybeHwAlignBytes.value();
+  const int64_t numElemPerBlock =
+      static_cast<int64_t>(mlir::utils::INTR_BYTES_PER_BLOCK) / srcElemBytes;
+  int64_t numElemPerBlockForDst = numElemPerBlock * bytesFactor;
+  // For example (a, b)strides<n1, 1>*i32 cast to (a, b)strides<n2, 1>*i8:
+  // 1. (a, b)strides<n1, 1>*i32 view as (a, b*4)strides<n1*4, 1>*i8
+  // 2. i8 transpose: Used to separate the high and low bits of int32, make sure
+  //    the shape of tranpose is 32*32 aligned.
+  // 3. i8 copyubtoub: Take out the lower 8 bits.
+  // 4. i8 transpose: Transpose back to get the final cast result, make sure the
+  //    shape of tranpose is 32*32 aligned.
+  // 5. When n2 is aligned with multiple blocks, need to add another copyubtoub
+  //    to adjust it to the target stride.
+  if (rank == 1) {
+    // The 1D scene is quite special and needs to be converted into a
+    // corresponding 2D scene to implement.
+    int64_t dim0 = shape[0];
+    if (ShapedType::isDynamic(dim0)) {
+      auto sz = utils::traceToAllocMaxSize(srcVal);
+      return sz.value_or(0);
+    }
+    if (dim0 <= numElemPerBlockForDst) {
+      uint32_t newAlignBytes = static_cast<uint32_t>(
+          CEIL_FACTOR(dim0 * bytesFactor, numElemPerBlockForDst) *
+          numElemPerBlockForDst);
+      hwAlignBytes = newAlignBytes;
+    } else {
+      hwAlignBytes = static_cast<uint32_t>(
+          numElemPerBlockForDst * numElemPerBlockForDst * bytesFactor);
+    }
+    const int64_t alignUnit =
+        static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
+    alignedShape[0] = util::ceilFactor(dim0, alignUnit);
+  } else {
+    int64_t lastDim = rank - 1;
+    int64_t firstDim = rank - 2;
+    int64_t dimLast = shape[lastDim];
+    int64_t dimFirst = shape[firstDim];
+    if (ShapedType::isDynamic(dimLast) || ShapedType::isDynamic(dimFirst)) {
+      auto sz = utils::traceToAllocMaxSize(srcVal);
+      return sz.value_or(0);
+    }
+
+    // Align the second axis in castAlignDims.
+    const int64_t alignUnitLast =
+        static_cast<int64_t>(hwAlignBytes) / srcElemBytes;
+    alignedShape[lastDim] = util::ceilFactor(dimLast, alignUnitLast);
+    // Align the first axis in castAlignDims.
+    uint32_t hwAlignBytesFirst =
+        static_cast<uint32_t>(numElemPerBlockForDst * bytesFactor);
+    const int64_t alignUnitFirst =
+        static_cast<int64_t>(hwAlignBytesFirst) / srcElemBytes;
+    alignedShape[firstDim] = util::ceilFactor(dimFirst, alignUnitFirst);
+  }
+  int64_t alignedTotal = 1;
+  for (auto dimSz : alignedShape) {
+    alignedTotal *= dimSz;
+  }
+  return alignedTotal;
 }
 } // namespace
 
@@ -156,11 +268,26 @@ LogicalResult VCastOp::allocExtraBuffersIfPossible() {
   if (isI32ToI8 || isI16ToI8) {
     // The implementation of high-bit truncation through transposition
     // requires additional tmp_buf to store the transposed result.
-    std::optional<int64_t> srcAllocTotalSize =
-        utils::traceToAllocMaxSize(this->getSrc()[0]);
-    SmallVector<int64_t> extraBufSizes{srcAllocTotalSize.value() * 2};
     ShapedType srcVecType = cast<ShapedType>(this->getSrc()[0].getType());
     auto eleType = srcVecType.getElementType();
+
+    bool useExtraScheme = false;
+    if (auto func = getOperation()->getParentOfType<func::FuncOp>()) {
+      if (func->hasAttr(hivm::DisableSizeAlignForCastAttr::name)) {
+        useExtraScheme = true;
+      }
+    }
+
+    SmallVector<int64_t> extraBufSizes;
+    if (!useExtraScheme) {
+      std::optional<int64_t> srcAllocTotalSize =
+          utils::traceToAllocMaxSize(this->getSrc()[0]);
+      extraBufSizes = {srcAllocTotalSize.value() * 2};
+    } else {
+      int64_t alignedSrcSize = getAlignedSrcSizeForCast(*this);
+      // Reserve 3 times the "aligned src size" for subsequent template conversion.
+      extraBufSizes = {alignedSrcSize * 3};
+    }
     extraBuf = allocExtraBuffer(this->getOperation(), extraBufSizes, eleType);
   } else if (isI32ToI16 || isI64ToI32) {
     if (this->getRoundMode() != hivm::RoundMode::TRUNCWITHOVERFLOW) {
@@ -468,5 +595,25 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
   Value extraBuf = allocExtraBuffer(this->getOperation(), extraBufSizes,
                                     srcVecType.getElementType());
   this->getTempBufferMutable().assign(extraBuf);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// CustomOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CustomOp::allocExtraBuffersIfPossible() {
+  if (!llvm::to_vector(this->getTempBuffers()).empty()) {
+    this->emitWarning("already has extra temp buffers");
+    return success();
+  }
+
+  SmallVector<Value> buffs;
+  for (const auto &[type, size] : getExtraBuffersInfo()) {
+    Value extraBuf = allocExtraBuffer(getOperation(), {size}, type);
+    buffs.push_back(extraBuf);
+  }
+
+  this->getTempBuffersMutable().assign(buffs);
   return success();
 }

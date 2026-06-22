@@ -64,15 +64,29 @@ static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
 
+static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
+    "hivm_data_layout";
+
 /// TODO: add into hivm attrs
 static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
     "buffer_size_in_byte";
 
 static constexpr llvm::StringLiteral kLogicalBlockNumAttr = "logical_block_num";
 
+static constexpr llvm::StringLiteral kTilingDimMappingAttrName =
+    "tiling_dim_mapping";
+
+static constexpr llvm::StringLiteral kMayImplicitTransposeWithLastAxis =
+    "MayImplicitTransposeWithLastAxis";
+
 const std::string Ascend910BCubeTriple = "ascend_910b_cube-unknown-cce-unknown";
 const std::string Ascend910BDataLayout =
     "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
+
+// Marks the iteration-counter alloca created by NormalizeMatmul::initCounter so
+// downstream passes (e.g. CVPipelining) can recognize it.
+static constexpr llvm::StringLiteral kNormalizeMatmulCounterAttr =
+    "normalize_matmul_counter";
 
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr const int VBITSORT_NUM_PER_REPEAT = 32;
@@ -167,7 +181,7 @@ LoopLikeOpInterface getParentLoop(Value val);
 /// In the position of ptrCastOp, affineApply and indexCastOp would be
 /// created.
 ///
-/// \return IndexCastOp of affineApply
+/// \return Index value of affineApply
 Value createNestedIndexModular(OpBuilder &builder, Operation *op,
                                int modular = 2);
 
@@ -239,8 +253,6 @@ std::vector<scf::ForOp> createNestedLoops(
 FailureOr<SmallVector<Operation *>> traceForPotentialMatrixC(Value v,
                                                              Block *storeBlock);
 
-bool isMarkedAsHIVMElementwiseOp(Operation *op);
-
 bool isMixModule(ModuleOp mod);
 
 bool isAICModule(ModuleOp mod);
@@ -259,12 +271,23 @@ void removeModuleCoreTypeAttr(ModuleOp mod);
 /// Constraints: Skip bufferization::ToMemrefOp
 void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 
+/// Get dynamic values of the tensor.
+SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
+                                          Value src);
+
 // Create local workspace of current block
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
-                                SmallVector<int64_t> shape, Type elementType);
+                                SmallVector<int64_t> targetShape,
+                                SmallVector<Value> dynamicSizes,
+                                Type elementType);
 
-Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
-                              ArrayRef<int64_t> targetShapes, Type elementType);
+// Create local workspace and to_tensor ops. When staticAllocShape is provided,
+// add annotation::MarkOp to mark the static buffer size in byte (for dynamic
+// tensor case). When std::nullopt, skip the mark (for static tensor case).
+Value getLocalWorkSpaceTensor(
+    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
+    ArrayRef<Value> dynamicShape, Type elementType,
+    std::optional<ArrayRef<int64_t>> staticAllocShape = std::nullopt);
 
 // Create local lock var
 hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
@@ -389,6 +412,7 @@ bool isGMPointerCastOp(Operation *op);
 
 bool isArgminOrArgmax(ReduceOperation op);
 
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict);
 } // namespace util
 } // namespace hivm
 } // namespace mlir

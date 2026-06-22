@@ -19,6 +19,7 @@
 #define BISHENGIR_TOOLS_UTILS_UTILS_H
 
 #include "bishengir/Tools/BiShengIRConfigBase/Config.h"
+#include "bishengir/Tools/bishengir-compile/Config.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/SmallString.h"
@@ -44,7 +45,7 @@ using IRFilePair =
 llvm::LogicalResult
 runPipeline(mlir::ModuleOp mod,
             const std::function<void(mlir::PassManager &)> &buildPipeline,
-            const bishengir::BiShengIRCompileConfigBase &config,
+            BiShengIRCompileMainConfig &config,
             const std::string &pipelineName);
 
 // apply make_absolute and remove_dots on the given path.
@@ -78,6 +79,11 @@ std::optional<llvm::VersionTuple> detectHIVMCVersion(llvm::StringRef hivmcName);
 
 /// Get the path set by environment variable `BISHENG_INSTALL_PATH`.
 std::string getBiShengInstallPath();
+
+/// Get the absolute path of the current executable. Resolves symlinks and
+/// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
+/// is reinterpret_cast<void*>(main). Returns empty string on failure.
+std::string getExecutablePath(const char *argv0, void *mainAddr);
 
 /// Prints a diagnostic to llvm::outs() and return a LogicalResult.
 mlir::LogicalResult handleDiagnostic(const mlir::Diagnostic &diag);

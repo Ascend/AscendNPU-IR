@@ -145,6 +145,7 @@ def NormalizeLastDimUnalignedTensorOp : Pass<"normalize-last-dim-unaligned-tenso
   let dependentDialects = [
     "tensor::TensorDialect",
     "linalg::LinalgDialect",
+    "annotation::AnnotationDialect",
   ];
 }
 
@@ -181,6 +182,15 @@ def OptimizeDpsOpWithYieldedInsertSlice :
   let constructor = [{
     mlir::tensor::createOptimizeDpsOpWithYieldedInsertSlicePass()
   }];
+  let dependentDialects = [
+    "tensor::TensorDialect",
+  ];
+}
+
+def ReplicateOutEmptyTensor
+    : Pass<"replicate-out-empty-tensor", "func::FuncOp"> {
+  let summary = "Clone tensor empty for destination style interface";
+  let constructor = "mlir::tensor::createReplicateOutEmptyTensorPass()";
   let dependentDialects = [
     "tensor::TensorDialect",
   ];

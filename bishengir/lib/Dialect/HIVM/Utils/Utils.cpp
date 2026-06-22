@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -31,6 +32,7 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/Utils/Utils.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Block.h"
@@ -70,7 +72,7 @@ namespace {
 FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
   auto *bbOwner = bbArg.getOwner();
   if (!bbOwner) {
-    llvm_unreachable("parentOp doesn't exist");
+    llvm::report_fatal_error("parentOp doesn't exist");
     return failure();
   }
   auto *bbParentOp = bbOwner->getParentOp();
@@ -98,7 +100,17 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
         return getMemRefAlloc(initSource);
       })
       .Case<bufferization::ToTensorOp>([&](bufferization::ToTensorOp op) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
         return getMemRefAlloc(op.getMemref());
+#else
+        return getMemRefAlloc(op.getBuffer());
+#endif
+      })
+      .Case<scope::ScopeOp>([&](scope::ScopeOp scopeOp) {
+        auto returnOp =
+            cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+        return getMemRefAlloc(
+            returnOp->getOperands()[result.getResultNumber()]);
       })
       .Default([&](Operation *op) {
         LDBG("Unsupported op for finding the root alloc.");
@@ -158,7 +170,7 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
 ///
 /// the sequence is: 0,1,2,..., i*upperJ + j, ...
 ///
-/// \return IndexCastOp of affineApply
+/// \return Index value of affineApply
 Value createNestedIndexModularUsingLoopInfo(
     OpBuilder &builder, Location loc, const std::vector<LoopInfo> &loopInfoVec,
     int modular) {
@@ -208,16 +220,14 @@ Value createNestedIndexModularUsingLoopInfo(
   if (modular == -1) {
     Value affineApply = mlir::affine::makeComposedAffineApply(
         builder, loc, targetExpr, ArrayRef(symbolValueVec));
-    return builder.create<arith::IndexCastOp>(loc, builder.getI64Type(),
-                                              affineApply);
+    return affineApply;
   }
 
   targetExpr = targetExpr % modular;
 
   Value affineApply = mlir::affine::makeComposedAffineApply(
       builder, loc, targetExpr, ArrayRef(symbolValueVec));
-  return builder.create<arith::IndexCastOp>(loc, builder.getI1Type(),
-                                            affineApply);
+  return affineApply;
 }
 
 } // namespace
@@ -340,7 +350,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   if (LocalBufferSpace.count(memorySpaceAttr.value().getAddressSpace())) {
     return true;
   }
-  llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");
+  llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
 }
 
 SmallVector<Value> getOpTouchBuffer(Operation *op) {
@@ -661,7 +671,12 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps) {
     if (isa<tensor::CollapseShapeOp, tensor::ExpandShapeOp,
             memref::CollapseShapeOp, memref::ExpandShapeOp, memref::SubViewOp,
             memref::ViewOp, memref::ReinterpretCastOp,
-            bufferization::ToMemrefOp, bufferization::ToTensorOp>(userOp)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+            bufferization::ToMemrefOp,
+#else
+            bufferization::ToBufferOp,
+#endif
+            bufferization::ToTensorOp>(userOp)) {
       getOpUsers(userOp, userOps);
     } else {
       userOps.push_back(userOp);
@@ -766,37 +781,79 @@ traceForPotentialMatrixC(Value v, Block *storeBlock) {
   return failure();
 }
 
+SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
+                                          Value src) {
+  SmallVector<Value> dynamicSizes;
+  if (auto reifiableOp = dyn_cast<tensor::EmptyOp>(src.getDefiningOp())) {
+    ReifiedRankedShapedTypeDims outputShapes;
+    if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
+      dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+    } else {
+      for (auto dimValue : outputShapes[0]) {
+        if (!getConstantIntValue(dimValue).has_value()) {
+          dynamicSizes.push_back(
+              getValueOrCreateConstantIndexOp(builder, loc, dimValue));
+        }
+      }
+    }
+  } else {
+    dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+  }
+  return dynamicSizes;
+}
+
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
-                                SmallVector<int64_t> shape, Type elementType) {
-  assert(!ShapedType::isDynamicShape(shape) &&
-         "AllocWorkspaceOp only supports static shape");
-  Type allocWorkspaceType = MemRefType::get(shape, elementType);
+                                SmallVector<int64_t> targetShape,
+                                SmallVector<Value> dynamicSizes,
+                                Type elementType) {
+  Type allocWorkspaceType = MemRefType::get(targetShape, elementType);
 
   auto allocWorkspaceOp =
       builder.create<bishengir::memref_ext::AllocWorkspaceOp>(
           loc, allocWorkspaceType,
-          /*workspaceArg*/ Value(), ValueRange{},
+          /*workspaceArg*/ Value(), ValueRange{dynamicSizes},
           /*offset*/ ValueRange{});
   return allocWorkspaceOp.getMemref();
 }
 
-Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
-                              ArrayRef<int64_t> targetShapes,
-                              Type elementType) {
-#ifndef NDEBUG
-  std::optional<int64_t> totalStaticSize =
-      utils::getStaticTotalSize(targetShapes);
-  // TODO：support dynamic shape.
-  assert(totalStaticSize.has_value() && "Can only handle static shape");
-#endif
-
+Value getLocalWorkSpaceTensor(
+    PatternRewriter &rewriter, Location loc, ArrayRef<int64_t> targetShape,
+    ArrayRef<Value> dynamicShape, Type elementType,
+    std::optional<ArrayRef<int64_t>> staticAllocShape) {
   // 1. Get AllocWorkspaceOp of current block
   Value localWorkSpace = createAllocLocalWorkSpace(
-      rewriter, loc, SmallVector<int64_t>(targetShapes), elementType);
+      rewriter, loc, SmallVector<int64_t>(targetShape),
+      SmallVector<Value>(dynamicShape), elementType);
 
-  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+  // 2. When staticAllocShape is provided, mark static alloc size for dynamic
+  // tensor case
+  if (staticAllocShape.has_value()) {
+    auto localWorkSpaceOp =
+        localWorkSpace.getDefiningOp<bishengir::memref_ext::AllocWorkspaceOp>();
+    auto maybeStaticTotalSize =
+        utils::getStaticTotalSizeInBits(*staticAllocShape, elementType);
+    if (!maybeStaticTotalSize.has_value()) {
+      emitError(localWorkSpaceOp->getLoc(), "shape has dynamic dimension");
+      llvm::report_fatal_error("shape has dynamic dimension");
+      return nullptr;
+    }
+    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
+    auto tmpMarkOp = rewriter.create<annotation::MarkOp>(
+        localWorkSpaceOp->getLoc(), localWorkSpaceOp->getResult(0));
+    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+                       rewriter.getI64IntegerAttr(allocSizeInByte));
+  }
+
+  // 3. Use bufferization::ToTensorOp to convert current workspace to tensor
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
+#else
+  // return tensor type
+  auto tensorType = RankedTensorType::get(targetShape, elementType);
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, localWorkSpace, true, true);
+#endif
   return toTensor;
 }
 
@@ -813,43 +870,74 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
 }
 
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
-
   std::vector<std::pair<Value, Value>> result;
-  if (auto subViewOp = dyn_cast<memref::SubViewOp>(op)) {
-    result.emplace_back(subViewOp.getResult(), subViewOp.getViewSource());
-  } else if (auto extSliceOp = dyn_cast<tensor::ExtractSliceOp>(op)) {
-    result.emplace_back(extSliceOp.getResult(), extSliceOp.getSource());
-  } else if (auto collapseShapeOp = dyn_cast<memref::CollapseShapeOp>(op)) {
-    result.emplace_back(collapseShapeOp.getResult(),
-                        collapseShapeOp.getViewSource());
-  } else if (auto expandShapeOp = dyn_cast<memref::ExpandShapeOp>(op)) {
-    result.emplace_back(expandShapeOp.getResult(),
-                        expandShapeOp.getViewSource());
-  } else if (auto expandShapeOp = dyn_cast<tensor::ExpandShapeOp>(op)) {
-    result.emplace_back(expandShapeOp.getResult(), expandShapeOp.getSrc());
-  } else if (auto viewOp = dyn_cast<memref::ViewOp>(op)) {
-    result.emplace_back(viewOp.getResult(), viewOp.getViewSource());
-  } else if (auto reinterpretCastOp = dyn_cast<memref::ReinterpretCastOp>(op)) {
-    result.emplace_back(reinterpretCastOp.getResult(),
-                        reinterpretCastOp.getViewSource());
-  } else if (auto reshapeOp = dyn_cast<memref::ReshapeOp>(op)) {
-    result.emplace_back(reshapeOp.getResult(), reshapeOp.getViewSource());
-  } else if (auto castOp = dyn_cast<memref::CastOp>(op)) {
-    result.emplace_back(castOp.getResult(), castOp.getViewSource());
-  } else if (auto extractStridedMetadataOp =
-                 dyn_cast<memref::ExtractStridedMetadataOp>(op)) {
-    result.emplace_back(extractStridedMetadataOp.getBaseBuffer(),
-                        extractStridedMetadataOp.getViewSource());
-  } else if (auto toMemrefOp = dyn_cast<bufferization::ToMemrefOp>(op)) {
-    result.emplace_back(toMemrefOp.getResult(), toMemrefOp.getOperand());
-  } else if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(op)) {
-    result.emplace_back(toTensorOp.getResult(), toTensorOp.getOperand());
-  } else if (auto bitCastOp = dyn_cast<hivm::BitcastOp>(op)) {
-    result.emplace_back(bitCastOp.getResult(), bitCastOp.getSrc());
-  } else if (auto selectOp = dyn_cast<arith::SelectOp>(op)) {
-    result.emplace_back(selectOp.getResult(), selectOp.getTrueValue());
-    result.emplace_back(selectOp.getResult(), selectOp.getFalseValue());
-  }
+  TypeSwitch<Operation *, void>(op)
+      .Case([&](arith::SelectOp op) {
+        result.emplace_back(op.getResult(), op.getTrueValue());
+        result.emplace_back(op.getResult(), op.getFalseValue());
+      })
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+      .Case([&](bufferization::ToMemrefOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+#else
+      .Case([&](bufferization::ToBufferOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+#endif
+      .Case([&](bufferization::ToTensorOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+      .Case([&](hivm::BitcastOp op) {
+        result.emplace_back(op.getResult(), op.getSrc());
+      })
+      .Case([&](memref::CastOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::CollapseShapeOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::ExpandShapeOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::ExtractStridedMetadataOp op) {
+        result.emplace_back(op.getBaseBuffer(), op.getViewSource());
+      })
+      .Case([&](memref::MemorySpaceCastOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
+      .Case([&](memref::ReinterpretCastOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::ReshapeOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::SubViewOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](memref::TransposeOp op) {
+        result.emplace_back(op.getResult(), op.getIn());
+      })
+      .Case([&](memref::ViewOp op) {
+        result.emplace_back(op.getResult(), op.getViewSource());
+      })
+      .Case([&](tensor::CollapseShapeOp op) {
+        result.emplace_back(op.getResult(), op.getSrc());
+      })
+      .Case([&](tensor::ExpandShapeOp op) {
+        result.emplace_back(op.getResult(), op.getSrc());
+      })
+      .Case([&](tensor::ExtractSliceOp op) {
+        result.emplace_back(op.getResult(), op.getSource());
+      })
+      .Case([&](scope::ScopeOp scopeOp) {
+        auto returnOp =
+            cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+        for (auto [res, arg] :
+             llvm::zip_equal(scopeOp->getResults(), returnOp->getOperands())) {
+          result.emplace_back(res, arg);
+        }
+      });
   return result;
 }
 
@@ -1200,6 +1288,20 @@ bool isArgminOrArgmax(ReduceOperation op) {
          op == ReduceOperation::max_with_index_left ||
          op == ReduceOperation::min_with_index_right ||
          op == ReduceOperation::max_with_index_right;
+}
+
+void validateMultiBufferAttr(mlir::DictionaryAttr attrDict) {
+  auto attr = attrDict.get(hivm::MultiBufferAttr::name);
+  if (!attr)
+    return;
+  mlir::IntegerAttr intAttr = mlir::dyn_cast<mlir::IntegerAttr>(attr);
+  if (!intAttr) {
+    llvm::report_fatal_error("MultiBufferAttr illegal!!!");
+  }
+  int64_t attrValue = intAttr.getValue().getSExtValue();
+  if (attrValue < 1) {
+    llvm::report_fatal_error("MultiBufferAttr should be >= 1!!");
+  }
 }
 } // namespace util
 } // namespace hivm

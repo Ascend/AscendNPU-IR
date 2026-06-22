@@ -18,11 +18,11 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "llvm/Support/LogicalResult.h"
 
-using namespace mlir;
-using namespace mlir::hivm;
-
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMSynchronizationOps.cpp.inc"
+
+using namespace mlir;
+using namespace mlir::hivm;
 
 //===----------------------------------------------------------------------===//
 // Printing/parsing for EventID

@@ -23,6 +23,7 @@
 #define BISHENGIR_DIALECT_HIVM_INTERFACES_OPLAYOUTINTERFACE_TD
 
 include "mlir/IR/OpBase.td"
+include "bishengir/Dialect/HIVM/IR/HIVMAttrs.td"
 
 def OpLayoutInterface : OpInterface<"OpWithLayoutInterface"> {
   let description = [{
@@ -31,6 +32,15 @@ def OpLayoutInterface : OpInterface<"OpWithLayoutInterface"> {
   }];
   let cppNamespace = "::mlir::hivm";
   let methods = [
+    InterfaceMethod<
+    /*desc=*/"Returns the target data layouts for memref-typed operands.",
+    /*retTy=*/"llvm::SmallDenseMap<mlir::Value, mlir::hivm::DataLayoutAttr>",
+    /*methodName=*/"getOperandsTargetFractalLayout",
+    /*args=*/(ins), /*methodBody=*/[{}],
+    /*defaultImplementation=*/[{
+      llvm::report_fatal_error("getOperandsTargetFractalLayout is not implemented.");
+    }]
+    >,
     InterfaceMethod<
     /*desc=*/"Returns the target data layouts for memref-typed operands.",
     /*retTy=*/"llvm::SmallDenseMap<mlir::Value, mlir::hivm::DataLayoutAttr>",

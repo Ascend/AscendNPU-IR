@@ -18,8 +18,11 @@
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVERIR_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
+#include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Casting.h"
 #include <memory>
 #include <utility>
 
@@ -33,14 +36,31 @@ class RWOperation;
 class MmadL0Operation;
 using Body = std::vector<std::unique_ptr<OperationBase>>;
 
+// Currently gss-code-gen will handle offsetting induction variables for
+// multibuffer-enabled sync pairs, which can be done by create-preload.
+// TODO: move create-preload pass after gss in the hivm compilation pipeline and
+// let it handle preload-offset values.
+struct EventIdInfo {
+  int64_t eventIdNum{0};
+  int64_t eventIdRepeatNum{1};
+  int64_t preloadOffset1{0};
+  int64_t preloadOffset2{0};
+  LoopLikeOpInterface multibufferLoop{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop1{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop2{nullptr};
+  EventIdInfo() {};
+  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum) {};
+};
+
 enum struct OpType {
   OPERATION,
-  GHOST,
+  PLACE_HOLDER,
   SCOPE,
   FUNCTION,
+  FUNCTION_BLOCK,
   LOOP,
-  MMAD_LOOP,
   LOOP_END,
+  MMAD_SCOPE,
   CONDITION,
   SCOPE_END,
   SYNC_OP,
@@ -86,23 +106,23 @@ public:
   static bool sameScope(OperationBase *op1, OperationBase *op2);
 
   // Compute the depth (levels up to root) of the provided operation.
-  static int getDepth(OperationBase *op);
+  int getDepth() const;
 
   // Return the ancestor `dist` levels above this operation.
   OperationBase *getNthParent(int dist);
-
-  // Cache mapping pair<op1,op2> -> pair<op_below_lca_op1, op_below_lca_op2>
-  // used to avoid repeated LCA walks between operation pairs.
-  static llvm::DenseMap<std::pair<OperationBase *, OperationBase *>,
-                        std::pair<OperationBase *, OperationBase *>>
-      getLCAOpMem;
-
-  static void resetLCAMem() { getLCAOpMem.clear(); }
 
   // Given two operations, return the pair of operations directly below their
   // LCA.
   static std::pair<OperationBase *, OperationBase *>
   getLCAPair(OperationBase *op1, OperationBase *op2);
+
+  template <typename TyOp> TyOp *getParentOfType() {
+    OperationBase *cur = this->parentOp;
+    while (cur != nullptr && !isa<TyOp>(cur)) {
+      cur = cur->parentOp;
+    }
+    return llvm::dyn_cast_if_present<TyOp>(cur);
+  }
 
   // Find nearest parent operation that is a loop-like construct, or nullptr.
   static OperationBase *getParentloop(OperationBase *op);
@@ -114,22 +134,28 @@ public:
   bool isProperAncestor(OperationBase *op);
 
   // Collect and return all parent operations (walking upwards).
-  std::vector<OperationBase *> getAllParents();
+  llvm::SmallVector<OperationBase *> getAllParents();
 
   // Human-readable string representation (override in derived classes).
   virtual std::string str(int indent = 0, bool recursive = false) const = 0;
+
+  static OperationBase *getUnlikelyParentCondition(OperationBase *op);
 };
 
-class Ghost : public OperationBase {
+class PlaceHolder : public OperationBase {
 public:
   mlir::Block *block{nullptr};
+  OperationBase *beforeOp{nullptr};
+  OperationBase *afterOp{nullptr};
+  Scope *scopeBegin{nullptr};
+  Scope *scopeEnd{nullptr};
 
 public:
-  Ghost(Operation *op, OperationBase *parentOp, mlir::Block *block)
-      : OperationBase(OpType::GHOST, op, parentOp), block(block) {}
+  PlaceHolder(Operation *op, OperationBase *parentOp)
+      : OperationBase(OpType::PLACE_HOLDER, op, parentOp) {}
 
   static bool classof(const OperationBase *e) {
-    return e->opType == OpType::GHOST;
+    return e->opType == OpType::PLACE_HOLDER;
   }
 
   std::string str(int indent, bool recursive) const override;
@@ -139,6 +165,8 @@ class Scope : public OperationBase {
 
 public:
   Body body;
+  std::optional<int64_t> preloadNum;
+  std::optional<int64_t> maxPreloadNum;
 
 public:
   Scope(const OpType &opType = OpType::SCOPE, Operation *op = nullptr,
@@ -152,6 +180,15 @@ public:
   std::string str(int indent, bool recursive) const override;
 };
 
+class FunctionBlock : public Scope {
+public:
+  FunctionBlock() : Scope(OpType::FUNCTION_BLOCK) {}
+
+  static bool classof(const OperationBase *e) {
+    return e->opType == OpType::FUNCTION_BLOCK;
+  }
+};
+
 class Function : public Scope {
 public:
   Function(Operation *op) : Scope(OpType::FUNCTION, op, nullptr) {}
@@ -159,33 +196,34 @@ public:
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::FUNCTION;
   }
-
-  std::string str(int indent, bool recursive) const override;
 };
 
 class Loop : public Scope {
 
 private:
 public:
+  bool isParallel{false};
+  std::optional<int64_t> multibufferUnrollNum;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
 
   static bool classof(const OperationBase *e) {
     return e->opType >= OpType::LOOP && e->opType < OpType::LOOP_END;
   }
+
+  std::string str(int indent, bool recursive) const override;
 };
 
 class MmadL1LoopOp : public Scope {
 private:
 public:
-  MmadL0Operation *mmadL0Op;
+  MmadL0Operation *mmadL0Op{nullptr};
 
   MmadL1LoopOp(Operation *op, OperationBase *parentOp)
-      : Scope(OpType::MMAD_LOOP, op, parentOp),
-        mmadL0Op(nullptr) {};
+      : Scope(OpType::MMAD_SCOPE, op, parentOp) {};
 
   static bool classof(const OperationBase *e) {
-    return e->opType == OpType::MMAD_LOOP;
+    return e->opType == OpType::MMAD_SCOPE;
   }
 };
 
@@ -195,6 +233,7 @@ private:
 public:
   Scope *trueScope{nullptr};
   Scope *falseScope{nullptr};
+  bool isUnlikely{false};
   Condition(Operation *op, OperationBase *parentOp,
             std::unique_ptr<Scope> trueScope, std::unique_ptr<Scope> falseScope)
       : Scope(OpType::CONDITION, op, parentOp) {
@@ -242,30 +281,51 @@ public:
 
 class RWOperation : public OperationBase {
 public:
+  hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeRead{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeWrite{hivm::PIPE::PIPE_UNASSIGNED};
-  hivm::TCoreType coreType{TCoreType::CUBE_OR_VECTOR};
-  llvm::SmallVector<Value> readMemVals;
-  llvm::SmallVector<Value> writeMemVals;
-  llvm::SmallVector<llvm::SmallVector<int>> testReadMemVals;
-  llvm::SmallVector<llvm::SmallVector<int>> testWriteMemVals;
+  llvm::SmallVector<MemInfo> readMemInfo;
+  llvm::SmallVector<MemInfo> writeMemInfo;
   bool hasUnitFlagFeat{false};
-  UNIT_FLAG unitFlagModeAsSet{UNIT_FLAG::DISABLED};
-  UNIT_FLAG unitFlagModeAsWait{UNIT_FLAG::DISABLED};
-  RWOperation *linkedUnitFlagOpAsSet{nullptr};
-  RWOperation *linkedUnitFlagOpAsWait{nullptr};
+  UnitFlagInfoBase mergedUnitFlagInfo;
 
-private:
+  const llvm::SmallVector<Value> readMemVals;
+  const llvm::SmallVector<Value> writeMemVals;
+  const llvm::SmallVector<llvm::SmallVector<int64_t>> testReadMemVals;
+  const llvm::SmallVector<llvm::SmallVector<int64_t>> testWriteMemVals;
+
 public:
-  RWOperation(Operation *op, OperationBase *parentOp, hivm::PIPE pipeRead,
-              hivm::PIPE pipeWrite, TCoreType coreType,
-              llvm::SmallVector<Value> readMemVals,
-              llvm::SmallVector<Value> writeMemVals,
+  RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+              hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+              const llvm::SmallVector<Value> &readMemVals,
+              const llvm::SmallVector<Value> &writeMemVals,
               OpType opType = OpType::RW_OPERATION)
-      : OperationBase(opType, op, parentOp), pipeRead(pipeRead),
-        pipeWrite(pipeWrite), coreType(coreType),
-        readMemVals(std::move(readMemVals)),
-        writeMemVals(std::move(writeMemVals)) {};
+      : OperationBase(opType, op, parentOp), coreType(coreType),
+        pipeRead(pipeRead), pipeWrite(pipeWrite), readMemVals(readMemVals),
+        writeMemVals(writeMemVals) {
+    for (auto &val : readMemVals) {
+      readMemInfo.push_back(getMemInfo(val));
+    }
+    for (auto &val : writeMemVals) {
+      writeMemInfo.push_back(getMemInfo(val));
+    }
+  };
+  RWOperation(
+      Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+      hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testReadMemVals,
+      const llvm::SmallVector<llvm::SmallVector<int64_t>> &testWriteMemVals,
+      OpType opType = OpType::RW_OPERATION)
+      : OperationBase(opType, op, parentOp), coreType(coreType),
+        pipeRead(pipeRead), pipeWrite(pipeWrite),
+        testReadMemVals(testReadMemVals), testWriteMemVals(testWriteMemVals) {
+    for (auto &val : testReadMemVals) {
+      readMemInfo.push_back(getMemInfo(val));
+    }
+    for (auto &val : testWriteMemVals) {
+      writeMemInfo.push_back(getMemInfo(val));
+    }
+  };
 
   std::string str(int indent, bool recursive) const override;
 
@@ -278,11 +338,11 @@ public:
 class LoadL0AOp : public RWOperation {
 private:
 public:
-  LoadL0AOp(Operation *op, OperationBase *parentOp, hivm::PIPE pipeRead,
-            hivm::PIPE pipeWrite, TCoreType coreType,
-            llvm::SmallVector<Value> readMemVals,
-            llvm::SmallVector<Value> writeMemVals)
-      : RWOperation(op, parentOp, pipeRead, pipeWrite, coreType, readMemVals,
+  LoadL0AOp(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+            hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+            const llvm::SmallVector<Value> &readMemVals,
+            const llvm::SmallVector<Value> &writeMemVals)
+      : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
                     writeMemVals, OpType::MMAD_LOAD_L0A_OPERATION) {}
 
   static bool classof(const OperationBase *e) {
@@ -293,11 +353,11 @@ public:
 class LoadL0BOp : public RWOperation {
 private:
 public:
-  LoadL0BOp(Operation *op, OperationBase *parentOp, hivm::PIPE pipeRead,
-            hivm::PIPE pipeWrite, TCoreType coreType,
-            llvm::SmallVector<Value> readMemVals,
-            llvm::SmallVector<Value> writeMemVals)
-      : RWOperation(op, parentOp, pipeRead, pipeWrite, coreType, readMemVals,
+  LoadL0BOp(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+            hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+            const llvm::SmallVector<Value> &readMemVals,
+            const llvm::SmallVector<Value> &writeMemVals)
+      : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
                     writeMemVals, OpType::MMAD_LOAD_L0B_OPERATION) {}
 
   static bool classof(const OperationBase *e) {
@@ -308,11 +368,11 @@ public:
 class LoadBiasOp : public RWOperation {
 private:
 public:
-  LoadBiasOp(Operation *op, OperationBase *parentOp, hivm::PIPE pipeRead,
-             hivm::PIPE pipeWrite, TCoreType coreType,
-             llvm::SmallVector<Value> readMemVals,
-             llvm::SmallVector<Value> writeMemVals)
-      : RWOperation(op, parentOp, pipeRead, pipeWrite, coreType, readMemVals,
+  LoadBiasOp(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+             hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+             const llvm::SmallVector<Value> &readMemVals,
+             const llvm::SmallVector<Value> &writeMemVals)
+      : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
                     writeMemVals, OpType::MMAD_LOAD_BIAS_OPERATION) {}
 
   static bool classof(const OperationBase *e) {
@@ -323,11 +383,12 @@ public:
 class MmadL0Operation : public RWOperation {
 private:
 public:
-  MmadL0Operation(Operation *op, OperationBase *parentOp, hivm::PIPE pipeRead,
-                  hivm::PIPE pipeWrite, TCoreType coreType,
-                  llvm::SmallVector<Value> readMemVals,
-                  llvm::SmallVector<Value> writeMemVals)
-      : RWOperation(op, parentOp, pipeRead, pipeWrite, coreType, readMemVals,
+  MmadL0Operation(Operation *op, OperationBase *parentOp,
+                  hivm::TCoreType coreType, hivm::PIPE pipeRead,
+                  hivm::PIPE pipeWrite,
+                  const llvm::SmallVector<Value> &readMemVals,
+                  const llvm::SmallVector<Value> &writeMemVals)
+      : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
                     writeMemVals, OpType::MMAD_OPERATION) {}
 
   static bool classof(const OperationBase *e) {
@@ -348,19 +409,20 @@ public:
 
 class SetWaitOp : public SyncOp {
 public:
-  llvm::SmallVector<hivm::EVENT> eventIds;
+  llvm::SmallVector<int64_t> eventIds;
+  hivm::TCoreType coreType{hivm::TCoreType::CUBE_OR_VECTOR};
   hivm::PIPE pipeSrc{hivm::PIPE::PIPE_UNASSIGNED};
   hivm::PIPE pipeDst{hivm::PIPE::PIPE_UNASSIGNED};
-  LoopLikeOpInterface multibufferLoopPar{nullptr};
+  EventIdInfo eventIdInfo;
   bool allAtOnce{false};
   bool checkFirstIter{false};
   bool checkLastIter{false};
 
   SetWaitOp(const OpType &opType, Operation *op, OperationBase *parentOp,
-            llvm::SmallVector<hivm::EVENT> eventIds, hivm::PIPE pipeSrc,
+            const llvm::SmallVector<int64_t> &eventIds, hivm::PIPE pipeSrc,
             hivm::PIPE pipeDst)
-      : SyncOp(opType, op, parentOp), eventIds(std::move(eventIds)),
-        pipeSrc(pipeSrc), pipeDst(pipeDst) {}
+      : SyncOp(opType, op, parentOp), eventIds(eventIds), pipeSrc(pipeSrc),
+        pipeDst(pipeDst) {}
 
   static bool classof(const OperationBase *e) {
     return e->opType >= OpType::SW_FLAG_OP &&
@@ -373,10 +435,10 @@ class SetFlagOp : public SetWaitOp {
 private:
 public:
   SetFlagOp(Operation *op, OperationBase *parentOp,
-            llvm::SmallVector<hivm::EVENT> eventIds, hivm::PIPE pipeSrc,
+            const llvm::SmallVector<int64_t> &eventIds, hivm::PIPE pipeSrc,
             hivm::PIPE pipeDst)
-      : SetWaitOp(OpType::SET_FLAG_OP, op, parentOp, std::move(eventIds),
-                  pipeSrc, pipeDst) {}
+      : SetWaitOp(OpType::SET_FLAG_OP, op, parentOp, eventIds, pipeSrc,
+                  pipeDst) {}
 
   std::unique_ptr<SetFlagOp> clone() {
     return std::make_unique<SetFlagOp>(op, parentOp, eventIds, pipeSrc,
@@ -395,10 +457,10 @@ class WaitFlagOp : public SetWaitOp {
 private:
 public:
   WaitFlagOp(Operation *op, OperationBase *parentOp,
-             llvm::SmallVector<hivm::EVENT> eventIds, hivm::PIPE pipeSrc,
+             const llvm::SmallVector<int64_t> &eventIds, hivm::PIPE pipeSrc,
              hivm::PIPE pipeDst)
-      : SetWaitOp(OpType::WAIT_FLAG_OP, op, parentOp, std::move(eventIds),
-                  pipeSrc, pipeDst) {}
+      : SetWaitOp(OpType::WAIT_FLAG_OP, op, parentOp, eventIds, pipeSrc,
+                  pipeDst) {}
 
   std::unique_ptr<WaitFlagOp> clone() {
     return std::make_unique<WaitFlagOp>(op, parentOp, eventIds, pipeSrc,

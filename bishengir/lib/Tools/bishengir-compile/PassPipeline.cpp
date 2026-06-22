@@ -22,7 +22,6 @@
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
-#include "bishengir/Tools/bishengir-hivm-compile/BiShengIRHIVMCompile.h"
 #include "bishengir/Transforms/Passes.h"
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -46,16 +45,16 @@ void setupHFusionPipelineOptions(hfusion::HFusionPipelineOptions &options,
 
 void setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &options,
                               const BiShengIRCompileMainConfig &config) {
-// TODO: Delete bishengir/Tools/bishengir-hivm-compile
 #define GEN_HIVM_OPTION_SETUP
-#include "bishengir/Tools/bishengir-hivm-compile/HIVMConfigUtils.cpp.inc"
+#include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
 }
 
 void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   pm.addPass(createCanonicalizeModulePass());
-  pm.addPass(hacc::createAppendDeviceSpecPass(
-      hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
+  pm.addPass(
+      hacc::createAppendDeviceSpecPass(hacc::AppendTargetDeviceSpecOptions{
+          config.getTarget(), config.getHIVMCVersion()}));
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {
@@ -78,6 +77,8 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
     convertToHIVMOptions.enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
     convertToHIVMOptions.enableUbufSaving = config.getEnableUbufSaving();
+    convertToHIVMOptions.disableSizeAlignForCast =
+        config.getDisableSizeAlignForCast();
     hivm::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
     hivm::HIVMPipelineOptions options;
     setupHIVMPipelineOptions(options, config);
@@ -121,7 +122,8 @@ public:
 
     // DFX control options
     config.setEnableSanitizer(enableSanitizer)
-        .setEnableDebugInfo(enableDebugInfo);
+        .setEnableDebugInfo(enableDebugInfo)
+        .setEnableMemoryDisplay(enableMemoryDisplay);
 
     // Output setting options
     config.setOutputFile(outputFile);
@@ -140,29 +142,32 @@ public:
         .setCubeTilingTuning(cubeTilingTuning);
 
     SmallVector<Pass::Option<bool> *> sharedWithHIVMCompileBool = {
-      &enableAutoBindSubBlock,
-      &enableAutoBlockifyLoop,
-      &enableHIVMAutoCVBalance,
-      &enableAutoMultiBuffer,
-      &enableHIVMAutoStorageAlign,
-      &enableBinRelocation,
-      &enableCodeMotion,
+        &enableAutoBindSubBlock,
+        &enableAutoBlockifyLoop,
+        &enableHIVMAutoCVBalance,
+        &enablePreload,
+        &enableAutoMultiBuffer,
+        &enableHIVMAutoStorageAlign,
+        &enableBinRelocation,
+        &enableCodeMotion,
 #if (!BISHENGIR_PUBLISH)
-      &enableCpuTraceIntrinsic,
-      &enableLIRCompile,
+        &enableCpuTraceIntrinsic,
+        &enableLIRCompile,
 #endif
-      &enableDebugInfo,
-      &enableHIVMGlobalWorkspaceReuse,
-      &enableHIVMCompile,
-      &enableHIVMInjectBarrierAllSync,
-      &enableHIVMInjectBlockAllSync,
-      &enableHivmNd2nzOnVector,
-      &enableSanitizer,
-      &enableStaticBarePtr,
-      &enableTritonKernelCompile,
-      &enableHIVMUnitFlagSync,
-      &enableHIVMAssumeAliveLoops,
-      &enableUbufSaving,
+        &enableDebugInfo,
+        &enableHIVMGlobalWorkspaceReuse,
+        &enableHIVMCompile,
+        &enableHIVMInjectBarrierAllSync,
+        &enableHIVMInjectBlockAllSync,
+        &enableHivmNd2nzOnVector,
+        &enableSanitizer,
+        &enableMemoryDisplay,
+        &enableStaticBarePtr,
+        &enableTritonKernelCompile,
+        &enableHIVMUnitFlagSync,
+        &enableHIVMAssumeAliveLoops,
+        &enableUbufSaving,
+        &disableSizeAlignForCast,
     };
 
     SmallVector<Pass::Option<unsigned> *> sharedWithHIVMCompileUnsigned = {

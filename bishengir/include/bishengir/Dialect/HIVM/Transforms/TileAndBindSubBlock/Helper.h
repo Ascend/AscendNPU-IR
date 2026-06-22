@@ -33,6 +33,9 @@ namespace mlir {
 namespace hivm {
 
 static constexpr llvm::StringLiteral toBeBubbleUpSlice = "to_be_bubbled_slice";
+inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
+inline constexpr llvm::StringLiteral tileAndSliceFailure =
+    "tile_and_slice_failure";
 static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 
@@ -71,6 +74,10 @@ DenseSet<size_t> getIntersectionDims(DenseSet<size_t> dims1,
                                      const DenseSet<size_t> &dims2);
 
 bool createdByTiling(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp);
+
+void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
+                            OpFoldResult tiledOffset, OpFoldResult tiledSize,
+                            Location loc, OpBuilder &builder);
 
 } // namespace hivm
 } // namespace mlir

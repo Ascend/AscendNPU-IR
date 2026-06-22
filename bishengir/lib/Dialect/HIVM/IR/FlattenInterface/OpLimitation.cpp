@@ -121,7 +121,7 @@ SmallVector<int64_t> computeElementwiseLimitation(HIVMStructuredOp op) {
     return broadcastDims;
   }
   if (op.existInlineTransposeLoopDims()) {
-    llvm_unreachable("use flatten unit for permutation instead");
+    llvm::report_fatal_error("use flatten unit for permutation instead");
   }
   return {};
 }

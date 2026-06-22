@@ -73,24 +73,30 @@ public:
       return op->emitOpError("only support lower AllocWorkspaceOp with offset");
 
     // 1. Get offset inner workspace per block
-    assert(offset.size() <= 2); // Making sure offset is not more than 2
+    assert(offset.size() <= 2 || offset.size() == 4); // Making sure offset is 1, 2, or 4
     Value localOffset = offset.back();
     // Consider loop double buffer state
-    if (offset.size() == 2) { // loop of double buffer
+    if (offset.size() > 1) { // loop of double buffer
       auto loopOp = op->getParentOfType<LoopLikeOpInterface>();
       if (!loopOp)
-        llvm_unreachable("Illegal state where DB workspace is not in loop");
+        llvm::report_fatal_error("Illegal state where DB workspace is not in loop");
 
       Value selectCounter;
       {
         PatternRewriter::InsertionGuard insertGuard(rewriter);
         selectCounter = createNestedIndexModular(
-            rewriter, op, 2); // nested modular value is 2 for this case
+            rewriter, op, offset.size()); // nested modular value is offset size for this case
       }
 
       assert(selectCounter);
-      localOffset = rewriter.create<arith::SelectOp>(
-          loc, rewriter.getIndexType(), selectCounter, offset[1], offset[0]);
+      for (size_t i = 1; i < offset.size(); i++) {
+        Value curIdx = rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIndexAttr(i));
+        Value selectCondition = rewriter.create<arith::CmpIOp>(
+          loc, arith::CmpIPredicate::eq, selectCounter, curIdx);
+        localOffset = rewriter.create<arith::SelectOp>(
+          loc, selectCondition, offset[i], localOffset);
+      }
     }
 
     // 2. For workspace of current block, here get start address offset from

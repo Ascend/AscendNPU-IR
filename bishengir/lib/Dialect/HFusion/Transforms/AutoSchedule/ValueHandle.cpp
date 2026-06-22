@@ -53,10 +53,10 @@ namespace hfusion {
 //===----------------------------------------------------------------------===//
 
 Value ValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
-  llvm_unreachable("Not implemented!");
+  llvm::report_fatal_error("Not implemented!");
 }
 
-Value ValueHandle::getImpl() { llvm_unreachable("Not implemented!"); }
+Value ValueHandle::getImpl() { llvm::report_fatal_error("Not implemented!"); }
 
 void ValueHandle::setStatus(HandleStatus s) { status_ = s; }
 
@@ -96,7 +96,7 @@ std::optional<ValueHandle *> ValueHandleFoldResult::getValueHandle() {
 Value RegularValueHandle::getImpl() {
   if (this->status_ == HandleStatus::kValid)
     return handle_;
-  llvm_unreachable("Invalid handle!");
+  llvm::report_fatal_error("Invalid handle!");
 }
 
 //===----------------------------------------------------------------------===//
@@ -108,7 +108,7 @@ Value NamedValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
     return handle_;
 
   if (this->status_ != HandleStatus::kNeedsRematch) {
-    llvm_unreachable("Invalid handle!");
+    llvm::report_fatal_error("Invalid handle!");
     return Value{};
   }
 
@@ -136,7 +136,7 @@ Value NamedValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
             .getResults();
     break;
   default:
-    llvm_unreachable("Not implemented!");
+    llvm::report_fatal_error("Not implemented!");
     return Value();
   }
 
@@ -171,7 +171,7 @@ Value FuncArgHandle::getImpl(Value funcValue, OpBuilder &opBuilder) {
     this->status_ = HandleStatus::kValid;
     return handle_;
   }
-  llvm_unreachable("Invalid handle!");
+  llvm::report_fatal_error("Invalid handle!");
   return {};
 }
 
@@ -202,7 +202,7 @@ void HandleRecord::resetAllHandles() {
             [](RegularValueHandle *h) { h->setStatus(HandleStatus::kInvalid); })
         .Case(
             [](FuncArgHandle *h) { h->setStatus(HandleStatus::kNeedsRematch); })
-        .Default([](ValueHandle *) { llvm_unreachable("Not implemented!"); });
+        .Default([](ValueHandle *) { llvm::report_fatal_error("Not implemented!"); });
   }
 }
 

@@ -57,6 +57,9 @@ std::unique_ptr<Pass> createInferFuncCoreTypePass();
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
 
+/// Create a pass to enable HIVMC version-compatible IR print.
+std::unique_ptr<Pass> createEnableHIVMCCompatiblePrintPass();
+
 /// Create a pass to normalize hivm matmul op.
 std::unique_ptr<Pass> createNormalizeMatmulPass();
 
@@ -104,6 +107,10 @@ createInjectSyncPass(const InjectSyncOptions &options = {});
 /// Create a pass to graph sync solver.
 std::unique_ptr<Pass>
 createGraphSyncSolverPass(const GraphSyncSolverOptions &options = {});
+
+/// Create a pass to cross-core graph-sync-solver.
+std::unique_ptr<Pass>
+createCrossCoreGSSPass(const CrossCoreGSSOptions &options = {});
 
 /// Create a pass to inject block sync
 std::unique_ptr<Pass>
@@ -188,7 +195,10 @@ std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
 std::unique_ptr<Pass> createLiftZeroRankPass();
 
 // Create a pass to insert load/store op for mix cv function.
-std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass();
+std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
+    const InsertLoadStoreForMixCVOptions &options = {});
+
+std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
 
 // Create a pass to insert infer-workspace callback func for host
 std::unique_ptr<Pass> createInsertInferWorkSpaceSizeFuncPass();
@@ -211,6 +221,10 @@ std::unique_ptr<Pass> createInsertInferSyncBlockLockNumAndInitFuncPass();
 // Create a pass to lower CreateSyncBlockLockOp.
 std::unique_ptr<Pass> createSyncBlockLockLoweringPass();
 
+// Create a pass to insert FreeLockVarOp before return to prevent
+// deadlock when control flow skips sync_block_lock/unlock.
+std::unique_ptr<Pass> createInsertFreeLockVarBeforeReturnPass();
+
 // Create a pass to auto infer buffer size by inserting Annotation MarkOp
 std::unique_ptr<Pass> createAutoInferBufferSizePass();
 
@@ -227,13 +241,19 @@ std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 std::unique_ptr<Pass> createTileAndBindSubBlockPass();
 
 /// Create a pass to bubble up extract slice for hivm ops.
-std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass();
+std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
+    const HIVMBubbleUpExtractSliceOptions &options = {});
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
 
 // Create a pass to mark memref.loads that need to disable dcache.
 std::unique_ptr<Pass> createMarkDisableLoadPass();
+
+/// Create a pass to mark sync_block_lock/sync_block_unlock with
+/// sync_block_lock_with_subblock tag when not inside limit_sub_block_id0 if in
+/// mix module.
+std::unique_ptr<Pass> createMarkSyncBlockLockWithSubblockPass();
 
 // Create a pass to insert nz2nd for debug.
 std::unique_ptr<Pass> createInsertNZ2NDForDebugPass();
@@ -258,6 +278,21 @@ createTileCubeVectorLoopPass(const TileCubeVectorLoopOptions &options = {});
 std::unique_ptr<Pass> createNonContiguousReshapeToCopyPass();
 
 std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
+
+std::unique_ptr<Pass> createPropagateConvertLayoutPass(
+    const PropagateConvertLayoutOptions &options = {});
+
+/// Create a pass to insert convert layout operations for matmul ops
+std::unique_ptr<Pass> createInsertConvertLayoutPass();
+
+/// Create a pass to normalize conv1d operation.
+std::unique_ptr<Pass> createNormalizeConvOpsPass();
+
+/// Create a pass to create preload for CV pipelining
+std::unique_ptr<Pass> createCreatePreloadPass();
+
+/// Create a pass to remove HIVM data layout annotation.
+std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();
 
 //===----------------------------------------------------------------------===//
 // Registration

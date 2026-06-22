@@ -51,10 +51,15 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMulExtOp, HIVMOP>::value) {
-    auto mulextOp = rewriter.create<arith::MulUIExtendedOp>(
+    auto mulextOp = rewriter.create<arith::MulSIExtendedOp>(
         op.getLoc(), scalarInputs[0], scalarInputs[1]);
     resTensors.push_back(mulextOp.getLow());
     resTensors.push_back(mulextOp.getHigh());
+  } else if constexpr (std::is_same<hivm::VMulExtUiOp, HIVMOP>::value) {
+    auto mulextuiOp = rewriter.create<arith::MulUIExtendedOp>(
+        op.getLoc(), scalarInputs[0], scalarInputs[1]);
+    resTensors.push_back(mulextuiOp.getLow());
+    resTensors.push_back(mulextuiOp.getHigh());
   } else if constexpr (std::is_same<hivm::VModOp, HIVMOP>::value) {
     resTensor = getScalarResult<hivm::VModOp, arith::RemSIOp>(
         rewriter, op.getLoc(), scalarInputs);
@@ -119,7 +124,7 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else {
-    llvm_unreachable("Unsupport op type.");
+    llvm::report_fatal_error("Unsupport op type.");
   }
   return resTensors;
 }
@@ -228,7 +233,7 @@ createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
                     : getScalarResult<hivm::VCumprodOp, arith::MulFOp>(
                           rewriter, op.getLoc(), scalarInputs);
   } else {
-    llvm_unreachable("Unsupport op type.");
+    llvm::report_fatal_error("Unsupport op type.");
   }
   llvm::SmallVector<Value> resTensors;
   resTensors.push_back(resTensor);
@@ -573,6 +578,14 @@ FailureOr<SmallVector<Value>> VMulExtOp::lowerToLoops(RewriterBase &b) {
 }
 
 //===----------------------------------------------------------------------===//
+// VMulExtUiOp
+//===----------------------------------------------------------------------===//
+
+FailureOr<SmallVector<Value>> VMulExtUiOp::lowerToLoops(RewriterBase &b) {
+  return decomposeVectorOpToScalarOp<VMulExtUiOp>(b, *this);
+}
+
+//===----------------------------------------------------------------------===//
 // VReduceOp
 //===----------------------------------------------------------------------===//
 
@@ -719,7 +732,7 @@ createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
             arith::CmpIPredicate::sle, arith::CmpFPredicate::OLE);
     break;
   default:
-    llvm_unreachable("Unsupport Reduction Arith Attr.");
+    llvm::report_fatal_error("Unsupport Reduction Arith Attr.");
   }
   llvm::SmallVector<Value> resTensors;
   resTensors.push_back(resTensor);

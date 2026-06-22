@@ -269,7 +269,7 @@ struct TritonCumToHFusionCumPattern : public OpRewritePattern<func::CallOp> {
       rewriter.replaceOp(callOp, rewriter.create<hfusion::CumprodOp>(
                                      loc, srcTy, src, cumDims, *reverse));
     } else {
-      llvm_unreachable("unsupport cumulative function");
+      llvm::report_fatal_error("unsupport cumulative function");
     }
     rewriter.eraseOp(funcOp);
     return success();
@@ -413,12 +413,11 @@ void AdaptTritonKernelPass::runOnOperation() {
     markSyncBlockLockArgument(funcOp);
   });
   // Add metadata.
-  if (version_utils::isCompatibleHIVMCVersion(this->hivmcVersion)) {
+  if (hacc::utils::getHIVMCVersion(module) > llvm::VersionTuple(0, 0, 0)) {
     module->setAttr(utils::kMemrefAsPtr, UnitAttr::get(context));
   }
 }
 
-std::unique_ptr<Pass>
-mlir::hfusion::createAdaptTritonKernelPass(std::string hivmcVersion) {
-  return std::make_unique<AdaptTritonKernelPass>(hivmcVersion);
+std::unique_ptr<Pass> mlir::hfusion::createAdaptTritonKernelPass() {
+  return std::make_unique<AdaptTritonKernelPass>();
 }

@@ -34,8 +34,8 @@ func.func @sameTypes(%arg0: tensor<bf16>) -> tensor<bf16> {
 func.func @pair(%arg0: tensor<bf16>) -> tensor<bf16> {
     %empty_f32 = tensor.empty() : tensor<f32>
     %empty_bf16 = tensor.empty() : tensor<bf16>
-    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    %1 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %1 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     return %1 : tensor<bf16>
 }
 
@@ -50,10 +50,10 @@ func.func @symmetricChain(%arg0: tensor<bf16>) -> tensor<bf16> {
     %empty_f32 = tensor.empty() : tensor<f32>
     %empty_i1 = tensor.empty() : tensor<i1>
     %empty_bf16 = tensor.empty() : tensor<bf16>
-    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    %1 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
-    %2 = hfusion.cast ins(%1 : tensor<i1>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    %3 = hfusion.cast ins(%2 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %1 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
+    %2 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%1 : tensor<i1>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %3 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%2 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     return %3 : tensor<bf16>
 }
 
@@ -97,11 +97,11 @@ func.func @bifurcation(%arg0: tensor<bf16>) -> tensor<bf16> {
     %empty_f32 = tensor.empty() : tensor<f32>
     %empty_i1 = tensor.empty() : tensor<i1>
     %empty_bf16 = tensor.empty() : tensor<bf16>
-    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
     %1 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
     %2 = hfusion.cast ins(%1 : tensor<i1>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     %3 = hfusion.cast ins(%1 : tensor<i1>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    %4 = hfusion.cast ins(%3 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    %4 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%3 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     %add_res = linalg.elemwise_binary { add, fun = #linalg.binary_fn<add> } ins(%2, %4 : tensor<bf16>, tensor<bf16>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     return %add_res : tensor<bf16>
 }
@@ -110,13 +110,13 @@ func.func @bifurcation(%arg0: tensor<bf16>) -> tensor<bf16> {
 
 // CHECK-LABEL: @bifurcationMultiOuts
 // CHECK-SAME: (%[[arg0:.*]]: tensor<bf16>)
-// CHECK: %[[cast0:.*]] = hfusion.cast ins(%[[arg0]] : tensor<bf16>)
+// CHECK: %[[cast0:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%[[arg0]] : tensor<bf16>)
 // CHECK: return %[[cast0]], %[[arg0]] : tensor<f32>, tensor<bf16>
 func.func @bifurcationMultiOuts(%arg0: tensor<bf16>) -> (tensor<f32>, tensor<bf16>) {
     %empty_f32 = tensor.empty() : tensor<f32>
     %empty_bf16 = tensor.empty() : tensor<bf16>
-    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    %1 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %1 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     return %0, %1 : tensor<f32>, tensor<bf16>
 }
 
@@ -134,10 +134,10 @@ func.func @unusedBifurcation(%arg0: tensor<bf16>) -> tensor<bf16> {
     %empty_f32 = tensor.empty() : tensor<f32>
     %empty_i1 = tensor.empty() : tensor<i1>
     %empty_bf16 = tensor.empty() : tensor<bf16>
-    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
     %1 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_i1 : tensor<i1>) -> tensor<i1>
     %2 = hfusion.cast ins(%1 : tensor<i1>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
-    %3 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    %3 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     %add_res = linalg.elemwise_binary { add, fun = #linalg.binary_fn<add> } ins(%arg0, %3 : tensor<bf16>, tensor<bf16>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
     return %add_res : tensor<bf16>
 }
@@ -175,7 +175,7 @@ func.func @liveChain(%arg0: tensor<bf16>) -> tensor<f32> {
 
 // CHECK-LABEL: @liveBifurcation
 // CHECK-SAME: (%[[arg0:.*]]: tensor<bf16>)
-// CHECK: %[[cast0:.*]] = hfusion.cast ins(%[[arg0]]
+// CHECK: %[[cast0:.*]] = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%[[arg0]]
 // CHECK-NOT: hfusion.cast
 // CHECK: %[[result:.*]] = linalg.elemwise_binary
 // CHECK: ins(%[[cast0]], %[[cast0]]
@@ -184,9 +184,9 @@ func.func @liveChain(%arg0: tensor<bf16>) -> tensor<f32> {
 func.func @liveBifurcation(%arg0: tensor<bf16>) -> tensor<f32> {
     %empty_bf16 = tensor.empty() : tensor<bf16>
     %empty_f32 = tensor.empty() : tensor<f32>
-    %0 = hfusion.cast ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
-    %1 = hfusion.cast ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
-    %2 = hfusion.cast ins(%1 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %0 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%arg0 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
+    %1 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%0 : tensor<f32>) outs(%empty_bf16 : tensor<bf16>) -> tensor<bf16>
+    %2 = hfusion.cast {arith.fastmath = #arith.fastmath<contract>} ins(%1 : tensor<bf16>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
     %add_res = linalg.elemwise_binary { add, fun = #linalg.binary_fn<add> } ins(%0, %2 : tensor<f32>, tensor<f32>) outs(%empty_f32 : tensor<f32>) -> tensor<f32>
     return %add_res : tensor<f32>
 }

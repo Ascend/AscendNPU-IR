@@ -96,3 +96,31 @@ func.func @test_swap_collapse_expand(%arg0: i64 {hacc.arg_type = #hacc.arg_type<
   hivm.hir.store ins(%alloc : memref<128x16x3xbf16, #hivm.address_space<ub>>) outs(%reinterpret_cast_2 : memref<128x16x3xbf16, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+
+//CHECK: Valid
+//CHECK-LABEL: @cancel_out_collapse_expand
+func.func @cancel_out_collapse_expand(%arg0: memref<?xf32>, %arg1: i64, %arg2: i1) {
+  %c1 = arith.constant 1 : index
+  %c1024 = arith.constant 1024 : index
+  %c1_i64 = arith.constant 1 : i64
+  %c0_i64 = arith.constant 0 : i64
+  %c0 = arith.constant 0 : index
+  %0 = arith.index_cast %arg1 : i64 to index
+  %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%0], sizes: [1, 1, 1024], strides: [1024, 1024, 1] : memref<?xf32> to memref<1x1x1024xf32, strided<[1024, 1024, 1], offset: ?>>
+  %alloc = memref.alloc() : memref<1x1x1024xf32>
+  %collapse_shape = memref.collapse_shape %alloc [[0, 1], [2]] : memref<1x1x1024xf32> into memref<1x1024xf32>
+  %1 = arith.index_castui %arg2 : i1 to index
+  %2 = arith.muli %1, %c1024 : index
+  %3 = arith.minsi %1, %c1 : index
+  %4 = arith.minsi %2, %c1 : index
+  %subview = memref.subview %reinterpret_cast[0, 0, 0] [1, %3, %4] [1, 1, 1] : memref<1x1x1024xf32, strided<[1024, 1024, 1], offset: ?>> to memref<1x?x?xf32, strided<[1024, 1024, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0, 0] [1, %3, %4] [1, 1, 1] : memref<1x1x1024xf32> to memref<1x?x?xf32, strided<[1024, 1024, 1]>>
+  %collapse_shape_1 = memref.collapse_shape %subview_0 [[0, 1], [2]] : memref<1x?x?xf32, strided<[1024, 1024, 1]>> into memref<?x?xf32, strided<[1024, 1]>>
+  %dim = memref.dim %collapse_shape_1, %c0 : memref<?x?xf32, strided<[1024, 1]>>
+  %dim_2 = memref.dim %collapse_shape_1, %c1 : memref<?x?xf32, strided<[1024, 1]>>
+  %expand_shape = memref.expand_shape %collapse_shape_1 [[0, 1], [2]] output_shape [1, %dim, %dim_2] : memref<?x?xf32, strided<[1024, 1]>> into memref<1x?x?xf32, strided<[?, 1024, 1]>>
+  memref.copy %subview, %expand_shape : memref<1x?x?xf32, strided<[1024, 1024, 1], offset: ?>> to memref<1x?x?xf32, strided<[?, 1024, 1]>>
+  return
+}

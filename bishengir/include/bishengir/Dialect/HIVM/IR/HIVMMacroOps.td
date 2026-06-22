@@ -77,8 +77,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                         synchronization instructions, they are 
                         managed by inject-sync passes.
                        }]>:$sync_related_args,
-                       Arg<Optional<I1>, [{
-                        An optional condition to enable unit-flge mode, 
+                       Arg<Variadic<I1>, [{
+                        An optional condition to enable unit-flag mode, 
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
                        Optional<TensorOrMemref>:$per_channel_bias,
@@ -93,10 +93,10 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                         to HF32 by CUBE before matrix multiplication, which achieves
                         double performance of MMAD.F32 but losing precision.
                        }]>:$enable_HF32,
-                       Arg<OptionalAttr<HIVM_UnitFlagAttr>, [{
-                        Enable unit-flag for synchronization, it is 
-                        managed by inject-sync passes.
-                       }]>:$unit_flag_mode
+                       Arg<OptionalAttr<UnitAttr>, [{
+                        Was i4 -> i8 conversion
+                       }]>:$enable_I4,
+                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode
                        );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   code localMmadBaseDecls = [{
@@ -113,9 +113,6 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     int getNumSyncRelatedArgs();
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
-    // Needed for unit-flag-enabled interface.
-    ::std::optional<::mlir::hivm::UnitFlagAttr> getUnitFlagModeValue();
-    ::std::optional<::mlir::Value> getUnitFlagModeCondition();
   }];
   string localMmadBaseDes = [{
     The computation logic is:
@@ -143,7 +140,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
-    (`unit_flag` `[` $unit_flag_mode^ (`,` $unit_flag_cond^)? `]`)?
+    (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
+    (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
     (`->` type($result_tensors)^)?
   }];
 
@@ -159,7 +157,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                    CArg<"Value", "{}">:$per_channel_bias,
                    CArg<"UnitAttr", "{}">:$a_transpose,
                    CArg<"UnitAttr", "{}">:$b_transpose,
-                   CArg<"UnitAttr", "{}">:$enable_HF32)>
+                   CArg<"UnitAttr", "{}">:$enable_HF32,
+                   CArg<"UnitAttr", "{}">:$enable_I4)>
   ];
 
   let hasVerifier = 1;
@@ -184,6 +183,7 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetFractalLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
   }];
 }
@@ -549,4 +549,220 @@ def MixGroupMatmulOp : HIVM_GlobalMmadOp<"mix_group_matmul"> {
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// HIVM Conv1DL1Op definitions.
+//===----------------------------------------------------------------------===//
+
+def Conv1DL1Op : HIVM_MacroOp<"Conv1dL1",[
+  CubeCoreTypeTrait,
+  MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  OpLayoutInterface,
+  AttrSizedOperandSegments,
+]>{
+  let arguments = (ins Arg<TensorOrMemref, "Conv1d input">:$input,
+                      Arg<TensorOrMemref, "Conv1d weight">:$weight,
+                      Arg<Optional<TensorOrMemref>, "Conv1d bias">:$bias,
+                      Arg<TensorOrMemref, "Conv1d init">:$init,
+                      Arg<I1, [{
+                        The condition under which
+                        data in L0C is cleared before use
+                      }]>:$init_condition,
+                      Arg<Variadic<I64>, [{
+                        Arguments required by grouped convolution to insert
+                        synchronization instructions, they are
+                        managed by inject-sync passes.
+                      }]>:$sync_related_args,
+                      I32Attr:$padding,
+                      I32Attr:$groups
+                      );
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let summary = [{
+    1D convolution operator with inputs from L1 memory hierarchy.
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+      $input `,` $weight
+      `,` $init_condition
+      (`,` $bias^)?
+      `:` type($input) `,` type($weight)
+      `,` type($init_condition)
+      (`,` type($bias)^)?
+    `)`
+    `outs` `(` $init `:` type($init) `)`
+    (`sync_related_args`
+      `(` $sync_related_args^ `:` type($sync_related_args) `)`
+    )?
+    (`->` type($result_tensors)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getInitMutable();
+    }
+    bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    void setInitCondition(Value init);
+  
+    static StringRef getOpName() { return "Conv1dL1"; }
+
+    FailureOr<DataLayoutAttr> getInputLayout();
+    FailureOr<DataLayoutAttr> getWeightLayout();
+    FailureOr<DataLayoutAttr> getBiasLayout();
+    FailureOr<DataLayoutAttr> getInitLayout();
+
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
+
+    int getNumSyncRelatedArgs();
+    // Needed for lower-hivm-to-std, should be updated if input operands got changed.
+    SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
+    SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Conv2DL1Op definitions.
+//===----------------------------------------------------------------------===//
+
+def Conv2DL1Op : HIVM_MacroOp<"Conv2dL1",[
+  CubeCoreTypeTrait,
+  MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  OpLayoutInterface,
+  AttrSizedOperandSegments,
+]>{
+  let arguments = (ins Arg<TensorOrMemref, "Conv2d input">:$input,
+                      Arg<TensorOrMemref, "Conv2d weight">:$weight,
+                      Arg<Optional<TensorOrMemref>, "Conv2d bias">:$bias,
+                      Arg<TensorOrMemref, "Conv2d init">:$init,
+                      Arg<I1, [{
+                        The condition under which
+                        data in L0C is cleared before use
+                      }]>:$init_condition,
+                      Arg<Variadic<I64>, [{
+                        Arguments required by grouped convolution to insert
+                        synchronization instructions, they are
+                        managed by inject-sync passes.
+                      }]>:$sync_related_args,
+                      Arg<AnyAttr, [{
+                        Zero-padding for Conv2d. Accepts an integer scalar or a
+                        2-element integer array [paddingH, paddingW]. A scalar
+                        applies to both H and W directions. During library-call
+                        lowering, paddingH is used for padT/padB and paddingW
+                        is used for padL/padR.
+                      }]>:$padding,
+                      I32Attr:$groups
+                      );
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let summary = [{
+    2D convolution operator with inputs from L1 memory hierarchy.
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+      $input `,` $weight
+      `,` $init_condition
+      (`,` $bias^)?
+      `:` type($input) `,` type($weight)
+      `,` type($init_condition)
+      (`,` type($bias)^)?
+    `)`
+    `outs` `(` $init `:` type($init) `)`
+    (`sync_related_args`
+      `(` $sync_related_args^ `:` type($sync_related_args) `)`
+    )?
+    (`->` type($result_tensors)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getInitMutable();
+    }
+    bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    void setInitCondition(Value init);
+  
+    static StringRef getOpName() { return "Conv2dL1"; }
+
+    FailureOr<DataLayoutAttr> getInputLayout();
+    FailureOr<DataLayoutAttr> getWeightLayout();
+    FailureOr<DataLayoutAttr> getBiasLayout();
+    FailureOr<DataLayoutAttr> getInitLayout();
+
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
+
+    int getNumSyncRelatedArgs();
+    // Needed for lower-hivm-to-std, should be updated if input operands got changed.
+    SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
+    SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Conv3DL1Op definitions.
+//===----------------------------------------------------------------------===//
+
+def Conv3DL1Op : HIVM_MacroOp<"Conv3dL1",[
+  CubeCoreTypeTrait,
+  MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  AttrSizedOperandSegments,
+]>{
+  let arguments = (ins Arg<TensorOrMemref, "Conv3d input">:$input,
+                      Arg<TensorOrMemref, "Conv3d weight">:$weight,
+                      Arg<Optional<TensorOrMemref>, "Conv3d bias">:$bias,
+                      Arg<TensorOrMemref, "Conv3d init">:$init,
+                      Arg<I1, [{
+                        The condition under which
+                        data in L0C is cleared before use
+                      }]>:$init_condition,
+                      Arg<Variadic<I64>, [{
+                        Arguments required by grouped convolution to insert
+                        synchronization instructions, they are
+                        managed by inject-sync passes.
+                      }]>:$sync_related_args,
+                      Arg<AnyAttr, [{
+                        Zero-padding for Conv3d. Accepts an integer scalar or a
+                        3-element integer array [paddingD, paddingH, paddingW].
+                        A scalar applies to all D/H/W directions. Normalize
+                        materializes paddingD and decompose forwards paddingH
+                        and paddingW to Conv2dL1.
+                      }]>:$padding,
+                      I32Attr:$groups
+                      );
+  let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
+  let summary = [{
+    3D convolution operator with inputs from L1 memory hierarchy.
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+      $input `,` $weight
+      `,` $init_condition
+      (`,` $bias^)?
+      `:` type($input) `,` type($weight)
+      `,` type($init_condition)
+      (`,` type($bias)^)?
+    `)`
+    `outs` `(` $init `:` type($init) `)`
+    (`sync_related_args`
+      `(` $sync_related_args^ `:` type($sync_related_args) `)`
+    )?
+    (`->` type($result_tensors)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getInitMutable();
+    }
+    bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    void setInitCondition(Value init);
+
+    static StringRef getOpName() { return "Conv3dL1"; }
+  }];
+  let hasVerifier = 1;
+}
+ 	 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMMACROOPS_TD

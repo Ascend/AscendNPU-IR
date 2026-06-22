@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Interfaces/ExtraBufferOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/ImplByScalarOpInterface.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/OpPipeInterface.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
@@ -33,7 +34,7 @@ namespace mlir {
 namespace hivm {
 /// Forward declarations.
 class HIVMStructuredOp;
-class HIVMUnitFlagEnabled;
+class UnitFlagEnabledInterface;
 enum class TCoreType : uint32_t;
 enum class IteratorType : uint32_t;
 enum class AddressSpace : uint32_t;
@@ -103,7 +104,9 @@ bool isVectorOnlyOperandImpl(Operation *op, size_t idx);
 /// Verify that `op` conforms to the invariants of StructuredOpInterface
 LogicalResult verifyStructuredOpInterface(Operation *op);
 
-Value getUnitFlagModeLibValueImpl(HIVMUnitFlagEnabled op,
+LogicalResult verifyUnitFlagEnabledInterface(UnitFlagEnabledInterface op);
+
+Value getUnitFlagModeLibValueImpl(UnitFlagEnabledInterface op,
                                   PatternRewriter &rewriter);
 
 ArrayAttr getIndexingMapsImpl(HIVMStructuredOp op);

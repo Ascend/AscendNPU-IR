@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
@@ -231,6 +232,9 @@ inline bool hasHIVMUser(Operation *op) {
 ///  some_user(%res)
 /// ```
 ///
+/// All optional operands (pad_value, left/right_padding_num, init_condition)
+/// and attributes from the original memref load are preserved.
+///
 /// Restriction:
 ///   - the memref load's dst operand must have one user that is a
 ///   `bufferization.to_tensor` op
@@ -277,10 +281,10 @@ public:
     rewriter.setInsertionPointAfter(toTensorUser);
     auto tensorType = RankedTensorType::get(
         maybeDstMemRefType.getShape(), maybeDstMemRefType.getElementType());
-    // Create a tensor load, using the tensorized source/dst values
     auto tensorLoadOp = rewriter.create<hivm::LoadOp>(
-        loc, SmallVector<Type>{tensorType},
-        SmallVector<Value>{src, toTensorUser.getResult()}, loadOp->getAttrs());
+        loc, TypeRange{tensorType}, loadOp->getOperands(), loadOp->getAttrs());
+    tensorLoadOp.getSrcMutable().set(src);
+    tensorLoadOp.getDstMutable().set(toTensorUser.getResult());
     // Replace the users of `bufferization.to_tensor` by the new load
     // Except it's use in the newly created load op
     rewriter.replaceAllUsesExcept(toTensorUser.getResult(),
@@ -292,10 +296,30 @@ public:
   }
 };
 
+struct CanonicalizeAllocToTensor : public OpRewritePattern<memref::AllocOp> {
+public:
+  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(memref::AllocOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasOneUse())
+      return failure();
+    auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(*op->user_begin());
+    if (!toTensorOp)
+      return failure();
+    auto tensorType = toTensorOp.getType();
+    rewriter.replaceOpWithNewOp<tensor::EmptyOp>(
+        toTensorOp, tensorType.getShape(), tensorType.getElementType());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 LogicalResult liftMemRefLoadsInLoop(ModuleOp module) {
   MLIRContext *ctx = module.getContext();
   RewritePatternSet patterns(ctx);
   patterns.add<LiftToTensor>(ctx);
+  patterns.add<CanonicalizeAllocToTensor>(ctx);
   return applyPatternsGreedily(module, std::move(patterns));
 }
 
@@ -402,7 +426,7 @@ struct TilingParams {
 /// Structure for holding information on an op to-be-tiled.
 struct OpToTile {
   /// Order by the ops appearance in the IR.
-  bool operator<(const OpToTile &other) {
+  bool operator<(const OpToTile &other) const {
     assert(this->op);
     assert(other.op);
     assert(this->op->getBlock() == other.op->getBlock() &&
@@ -537,7 +561,7 @@ public:
                    Attribute value) {
     recordLazyAction([op, attrName, value]() {
       if (!op)
-        llvm_unreachable("corrupted operation");
+        llvm::report_fatal_error("corrupted operation");
 
       op->setAttr(attrName, value);
     });
@@ -679,8 +703,16 @@ public:
   void setFixpipeOp(hivm::FixpipeOp op) { fixpipeOp = op; }
   hivm::FixpipeOp getFixpipeOp() { return fixpipeOp; }
 
+  void setTileCubeAttr(bool hasAttr) { hasTileCubeAttr = hasAttr; }
+  bool getTileCubeAttr() { return hasTileCubeAttr; }
+
+  void setTiledDim(std::optional<int64_t> dim) { tiledDim = dim; }
+  std::optional<int64_t> getTiledDim() { return tiledDim; }
+
 private:
   hivm::FixpipeOp fixpipeOp{nullptr};
+  bool hasTileCubeAttr{false};
+  std::optional<int64_t> tiledDim;
 };
 
 //===----------------------------------------------------------------------===//
@@ -724,8 +756,11 @@ public:
 private:
   /// Main entry to collect loop information.
   void collectLoopInfo(ModuleOp topLevelModule);
-  LogicalResult collectCubeLoopInfo(scf::ForOp cubeLoop);
-  LogicalResult collectVectorLoopInfo(scf::ForOp vectorLoop);
+  template <typename OpType>
+  WalkResult processCandidateLoop(OpType candidateLoop);
+  template <typename OpType> LogicalResult collectCubeLoopInfo(OpType cubeLoop);
+  template <typename OpType>
+  LogicalResult collectVectorLoopInfo(OpType vectorLoop);
   std::optional<TilingParams> calculateFixpipeTiling(CubeLoopInfo &info) const;
 
   /// Main entry to apply transformation
@@ -777,10 +812,11 @@ tryCollectTilingInfoForStore(hivm::StoreOp storeOp, VectorLoopInfo &info,
 ///   a) the yielded value does not have tensor type.
 ///   b) the yielded value is not produced by a HIVM Structured Op.
 ///   c) dimension analyzer failed to analyze tiling dimension.
+template <typename TerminateType>
 LogicalResult
-tryCollectTilingInfoForYield(scf::YieldOp yieldOp, Value yieldedVal,
-                             VectorLoopInfo &info,
-                             hivm::detail::DimensionAnalyzer &analyzer) {
+tryCollectTilingInfoForTerminate(TerminateType terminateOp, Value yieldedVal,
+                                 VectorLoopInfo &info,
+                                 hivm::detail::DimensionAnalyzer &analyzer) {
   if (!isRankedTensor(yieldedVal.getType())) {
     LDBG("Yielding non-tensor values, skip");
     return failure();
@@ -789,7 +825,7 @@ tryCollectTilingInfoForYield(scf::YieldOp yieldOp, Value yieldedVal,
   // Try to find the immediate HIVM producer
   // Note: Currently we assume that all vector computations are done in
   // tensor.
-  SmallVector<Operation *> trace = {yieldOp, yieldedVal.getDefiningOp()};
+  SmallVector<Operation *> trace = {terminateOp, yieldedVal.getDefiningOp()};
   Operation *tracedProducer =
       traceProducerTo<HIVMStructuredOp>(yieldedVal.getDefiningOp(), trace);
   if (!tracedProducer) {
@@ -870,6 +906,36 @@ void markOpTouchingMMAD(hivm::LoadOp load, CubeLoopInfo &info) {
   if (!maybeMmadL1Op)
     return;
 
+  auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(maybeMmadL1Op);
+  std::optional<Operation *> ADefOp = traceDefOp<hivm::LoadOp>(mmadL1Op.getA());
+  std::optional<Operation *> BDefOp = traceDefOp<hivm::LoadOp>(mmadL1Op.getB());
+  std::optional<Operation *> maybeReinterpretCastOp =
+      traceDefOp<memref::ReinterpretCastOp>(load.getSrc());
+  bool isFromEntryBlock{false};
+  // If the source of load op originates from entry block, we will not tile it
+  if (maybeReinterpretCastOp.has_value()) {
+    if (auto reinterpretCastOp = dyn_cast<memref::ReinterpretCastOp>(
+            maybeReinterpretCastOp.value())) {
+      auto viewSrc = reinterpretCastOp.getViewSource();
+      if (auto blockArg = dyn_cast<mlir::BlockArgument>(viewSrc)) {
+        mlir::Block *ownerBlock = blockArg.getOwner();
+        if (ownerBlock->isEntryBlock()) {
+          isFromEntryBlock = true;
+        }
+      }
+    }
+  }
+
+  auto tileDim = info.getTiledDim();
+  if (tileDim.has_value() && isFromEntryBlock &&
+      maybeMmadL1Op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
+    // if tiled dim is not from this load op, we will not tile it
+    if (tileDim.value() == 1 && ADefOp.value() == load)
+      return;
+    if (tileDim.value() == 0 && BDefOp.value() == load)
+      return;
+  }
+
   // Also consider the loaded operands as potential producers
   trace.append(
       {load.getSource().getDefiningOp(), load.getTarget().getDefiningOp()});
@@ -909,8 +975,9 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   LDBG("Total size required in L0C: " << maybeStaticTotalSize.value());
   const int64_t kL0CSizeInBits = hacc::utils::getIntegerSpecValue(
       this->spec.getSpecForIdentifierEnum(hacc::DeviceSpec::L0C_SIZE));
+  bool hasTileCubeAttr = info.getTileCubeAttr();
   if (maybeStaticTotalSize.value() <= kL0CSizeInBits &&
-      info.getTripCount() != 1) {
+      info.getTripCount() != 1 && !hasTileCubeAttr) {
     LDBG("No need to tile because the data can fit on L0C");
     fixpipeOp.emitWarning(
         "Ignoring candidate cube loop trip count because it's suboptimal");
@@ -925,7 +992,9 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   TilingParams result;
   assert(dstType.getRank() == 2 && "MmadL1 operand rank must be two");
   // Tile the larger dimension
-  int64_t singleTileDim = dstType.getDimSize(0) > dstType.getDimSize(1) ? 0 : 1;
+  int64_t singleTileDim =
+      dstType.getDimSize(0) >= dstType.getDimSize(1) ? 0 : 1;
+  info.setTiledDim(singleTileDim);
   result.tiledDims = {singleTileDim};
   result.tileSizes = SmallVector<int64_t>(dstType.getRank(), 0);
   result.tileSizes[singleTileDim] = llvm::divideCeilSigned(
@@ -933,31 +1002,38 @@ TileCubeVectorLoopPass::calculateFixpipeTiling(CubeLoopInfo &info) const {
   return result;
 }
 
-void TileCubeVectorLoopPass::collectLoopInfo(ModuleOp topLevelModule) {
-  topLevelModule->walk([this](scf::ForOp candidateLoop) {
-    auto maybeLoopCoreType = candidateLoop->getAttrOfType<hivm::TCoreTypeAttr>(
-        hivm::kPipelinedLoopCoreTypeAttrName);
+template <typename OpType>
+WalkResult TileCubeVectorLoopPass::processCandidateLoop(OpType candidateLoop) {
+  auto maybeLoopCoreType =
+      candidateLoop->template getAttrOfType<hivm::TCoreTypeAttr>(
+          hivm::kPipelinedLoopCoreTypeAttrName);
 
-    if (!maybeLoopCoreType)
-      return WalkResult::advance();
-
-    // No need to walk inside loop.
-    if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::CUBE) {
-      LDBG("Collecting cube loop info");
-      (void)collectCubeLoopInfo(candidateLoop);
-      return WalkResult::skip();
-    }
-    if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::VECTOR) {
-      LDBG("Collecting vector loop info");
-      (void)collectVectorLoopInfo(candidateLoop);
-      return WalkResult::skip();
-    }
-
+  if (!maybeLoopCoreType)
     return WalkResult::advance();
-  });
+
+  // No need to walk inside loop.
+  if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::CUBE) {
+    LDBG("Collecting cube loop info");
+    (void)collectCubeLoopInfo(candidateLoop);
+    return WalkResult::skip();
+  }
+  if (maybeLoopCoreType.getTcoretype() == hivm::TCoreType::VECTOR) {
+    LDBG("Collecting vector loop info");
+    (void)collectVectorLoopInfo(candidateLoop);
+    return WalkResult::skip();
+  }
+
+  return WalkResult::advance();
 }
 
-
+void TileCubeVectorLoopPass::collectLoopInfo(ModuleOp topLevelModule) {
+  topLevelModule->walk([this](scf::ForOp candidateLoop) {
+    return processCandidateLoop(candidateLoop);
+  });
+  topLevelModule->walk([this](scope::ScopeOp candidateLoop) {
+    return processCandidateLoop(candidateLoop);
+  });
+}
 
 static bool
 areValuesAlignedAfterTiling(ValueRange valueRange,
@@ -980,7 +1056,15 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
       }
     }
     bitUsed = bitUsed * static_cast<int>(resultType.getElementTypeBitWidth());
-    if (bitUsed % alignSize != 0)
+
+    // Determine alignment size based on element type because template supports
+    // i1 type which does not require 32-byte alignment.
+    int64_t actualAlignSize = alignSize;
+    if (resultType.getElementType().isInteger(1)) {
+      actualAlignSize = 8; // 8 bits
+    }
+
+    if (bitUsed % actualAlignSize != 0)
       return false;
   }
   return true;
@@ -1000,8 +1084,8 @@ areValuesAlignedAfterTiling(ValueRange valueRange,
 /// ```
 /// Note that the yielded values may not be stored. So we have to tile
 /// both the store and the yielded values.
-LogicalResult
-TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
+template <typename OpType>
+LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
   VectorLoopInfo info(loopsToTile.size(),
                       static_cast<int64_t>(this->tiledMixVectorLoopNumber));
   if (info.getTripCount() == 1)
@@ -1026,8 +1110,8 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
           return WalkResult::advance();
         }
 
-	// TODO:: Use MarkStrideAlign to annotate the unaligned axis and
-	// rely on StrideAlign to make it aligned
+        // TODO:: Use MarkStrideAlign to annotate the unaligned axis and
+        // rely on StrideAlign to make it aligned
         if (!areValuesAlignedAfterTiling(op->getResults(), analyzer,
                                          info.getTripCount(), ubAlignSize) ||
             !areValuesAlignedAfterTiling(op->getOperands(), analyzer,
@@ -1048,15 +1132,18 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
     return vectorLoop.emitOpError("Failed to collect vector loop tiling info");
 
   // Visit yield op next because it will generate dummy store op
-  auto yieldOp = dyn_cast<scf::YieldOp>(vectorLoop.getBody()->getTerminator());
-  if (!yieldOp)
-    llvm_unreachable("scf.for must have a scf.yield terminator");
-
-  for (auto yieldedVal : yieldOp.getOperands())
-    if (failed(
-            tryCollectTilingInfoForYield(yieldOp, yieldedVal, info, analyzer)))
-      return vectorLoop.emitOpError(
-          "Failed to collect vector loop tiling info");
+  if (!isa<scf::ForOp>(vectorLoop) && !isa<scope::ScopeOp>(vectorLoop)) {
+    return vectorLoop.emitOpError(
+        "Collect vector loop tiling info only support ForOp and ScopeOp.");
+  } else {
+    auto terminateOp = vectorLoop.getBody()->getTerminator();
+    for (auto terminateOpVal : terminateOp->getOperands()) {
+      if (failed(tryCollectTilingInfoForTerminate(terminateOp, terminateOpVal,
+                                                  info, analyzer)))
+        return vectorLoop.emitOpError(
+            "Failed to collect vector loop tiling info");
+    }
+  }
 
   if (info.getOpTileInfo().empty())
     return failure();
@@ -1065,6 +1152,25 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
   info.commitLazyActions();
   loopsToTile.emplace_back(std::make_unique<VectorLoopInfo>(info));
   return success();
+}
+
+template <typename OpType>
+std::optional<int64_t> getMixCubeLoopNumber(OpType cubeLoop,
+                                            CubeLoopInfo &info) {
+  std::optional<int64_t> tileCubeLoopNum;
+  cubeLoop->walk([&tileCubeLoopNum](hivm::MmadL1Op op) {
+    if (op->hasAttr(hivm::TileMixCubeNumAttr::name)) {
+      IntegerAttr attr =
+          op->getAttrOfType<IntegerAttr>(hivm::TileMixCubeNumAttr::name);
+      if (attr) {
+        op.emitWarning("cube loop trip count will depend on attr instead of "
+                       "compile option");
+        tileCubeLoopNum = attr.getInt();
+      }
+    }
+    return WalkResult::interrupt();
+  });
+  return tileCubeLoopNum;
 }
 
 /// Collect cube loop information.
@@ -1080,7 +1186,8 @@ TileCubeVectorLoopPass::collectVectorLoopInfo(scf::ForOp vectorLoop) {
 /// }
 /// ```
 /// Note that the load of matrix A/B are not necessarily in the loop.
-LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(scf::ForOp cubeLoop) {
+template <typename OpType>
+LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(OpType cubeLoop) {
   CubeLoopInfo info(loopsToTile.size(),
                     static_cast<int64_t>(this->tiledMixCubeLoopNumber));
   if (info.getTripCount() == 1)
@@ -1104,6 +1211,13 @@ LogicalResult TileCubeVectorLoopPass::collectCubeLoopInfo(scf::ForOp cubeLoop) {
     return cubeLoop.emitOpError("Cannot find fixpipe in cube loop");
 
   info.setFixpipeOp(singleFixpipeOp);
+
+  // set mix cube loop number depending on TileMixCubeNumAttr
+  auto tileCubeLoopNum = getMixCubeLoopNumber(cubeLoop, info);
+  if (tileCubeLoopNum.has_value()) {
+    info.setTileCubeAttr(true);
+    info.setTripCount(tileCubeLoopNum.value());
+  }
 
   // Calculate fixpipe tiling
   auto maybeTilingResult = calculateFixpipeTiling(info);
@@ -1137,6 +1251,7 @@ TileCubeVectorLoopPass::applyTransformation(ModuleOp topLevelModule,
   builder.setInsertionPointToEnd(topLevelModule.getBody());
   transform::NamedSequenceOp transformSequenceOp =
       info.createTransformSequence(builder, topLevelModule->getLoc());
+
   if (!transformSequenceOp)
     return topLevelModule.emitError("Failed to create transform sequence");
 

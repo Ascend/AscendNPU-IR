@@ -46,9 +46,18 @@ private:
 /// \note MmadL1Op should be bufferized beforehand.
 LogicalResult inferAndPropagateMemScopeForMmadL1(MmadL1Op op);
 
+/// Infer, propagate, and set memory scope information to ConvOp.
+/// \note ConvOp should be bufferized beforehand.
+template<typename ConvOp>
+LogicalResult inferAndPropagateMemScopeForConvOp(ConvOp op);
+
 /// Infer, propagate, and set memory scope information to FuncOp.
 /// \note FuncOp should be bufferized beforehand.
 LogicalResult inferAndPropagateMemScopeForFunc(func::FuncOp op);
+
+/// Infer, propagate, and set memory scope information to DistributedOp.
+/// \note DistributedOp should be bufferized beforehand.
+LogicalResult inferAndPropagateMemScopeForDistributed(hivm::CustomOp op);
 
 /// Infer, propagate, and set memory scope information to PointerCastOp.
 LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op);

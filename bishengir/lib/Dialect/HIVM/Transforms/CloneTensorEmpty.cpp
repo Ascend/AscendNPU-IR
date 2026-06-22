@@ -14,9 +14,11 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -31,16 +33,35 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
-void CloneNewTensorEmpty(HIVMStructuredOp op, PatternRewriter &rewriter) {
+void copyAnnotationMark(Value src, Value dst, PatternRewriter &rewriter) {
+  for (Operation *user : src.getUsers()) {
+    auto markOp = dyn_cast<annotation::MarkOp>(user);
+    if (!markOp || markOp.getSrc() != src) 
+      continue;
+    
+    // Only copy markOp that contains buffer_size_in_byte attribute
+    if (!markOp->hasAttr(hivm::kBufferSizeInByteAttr))
+      continue;
+      
+    auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
+        markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
+    for (NamedAttribute attr : markOp->getAttrs()) {
+      clonedMarkOp->setAttr(attr.getName(), attr.getValue());
+    }
+  }
+}
+
+void cloneNewTensorEmpty(HIVMStructuredOp op, PatternRewriter &rewriter) {
   for (Value dst : op.getDpsInits()) {
-    auto DstDefiningOp = dst.getDefiningOp();
-    if (!DstDefiningOp)
+    auto * dstDefiningOp = dst.getDefiningOp();
+    if (!dstDefiningOp)
       continue;
     if (!isa<TensorType>(dst.getType()))
       continue;
-    if (isa<tensor::EmptyOp>(DstDefiningOp)) {
+    if (isa<tensor::EmptyOp>(dstDefiningOp)) {
       rewriter.setInsertionPoint(op);
-      auto clonedOp = rewriter.clone(*DstDefiningOp);
+      auto * clonedOp = rewriter.clone(*dstDefiningOp);
+      copyAnnotationMark(dst, clonedOp->getResult(0), rewriter);
       op->replaceUsesOfWith(dst, clonedOp->getResult(0));
     }
   }
@@ -55,18 +76,19 @@ struct CloneTensorEmptyHIVMStructuredOpPattern : public OpRewritePattern<OpTy> {
     if (!isa<hivm::HIVMStructuredOp>(op.getOperation())) {
       return failure();
     }
-    CloneNewTensorEmpty(op, rewriter);
+    cloneNewTensorEmpty(op, rewriter);
     return success();
   }
 };
 
-struct CloneTensorEmptySCFForPattern : public OpRewritePattern<scf::ForOp> {
-  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+template <typename LoopOp>
+struct CloneTensorEmptyLoopPattern : public OpRewritePattern<LoopOp> {
+  using OpRewritePattern<LoopOp>::OpRewritePattern;
 
-  LogicalResult matchAndRewrite(scf::ForOp op,
+  LogicalResult matchAndRewrite(LoopOp op,
                                 PatternRewriter &rewriter) const override {
     llvm::SmallVector<unsigned> emptyInitIndex;
-    for (auto [idx, init] : llvm::enumerate(op.getInitArgs())) {
+    for (auto [idx, init] : llvm::enumerate(op.getInits())) {
       auto initDefOp = init.getDefiningOp();
       if (initDefOp && isa<tensor::EmptyOp>(initDefOp)) {
         emptyInitIndex.push_back(idx);
@@ -77,7 +99,7 @@ struct CloneTensorEmptySCFForPattern : public OpRewritePattern<scf::ForOp> {
       return failure();
     }
 
-    auto mutableInits = op.getInitArgsMutable();
+    auto mutableInits = op.getInitsMutable();
     rewriter.setInsertionPoint(op);
     for (auto idx : emptyInitIndex) {
       auto &mtEmptyInit = mutableInits[idx];
@@ -137,8 +159,11 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns) {
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::StoreOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::FixpipeOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::MmadL1Op>,
-               CloneTensorInsert, CloneTensorEmptySCFForPattern>(
-      patterns.getContext());
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::Conv1DL1Op>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::Conv2DL1Op>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::Conv3DL1Op>,
+               CloneTensorInsert, CloneTensorEmptyLoopPattern<scf::WhileOp>,
+               CloneTensorEmptyLoopPattern<scf::ForOp>>(patterns.getContext());
   registerAll<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"

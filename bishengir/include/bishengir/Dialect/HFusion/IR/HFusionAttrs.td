@@ -98,4 +98,44 @@ def HFusion_InsertSliceSourceIndexAttr : HFusion_Attr<"InsertSliceSourceIndex", 
   }];
 }
 
+def HFusion_PaddingOptionAttr : HFusion_Attr<"PaddingOption", "padding_option"> {
+  let parameters = (ins
+    EnumParameter<HFusion_PaddingOptionEnum>:$option
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Padding option.
+  }];
+}
+
+def HFusion_CacheModifierAttr : HFusion_Attr<"CacheModifier", "cache_modifier"> {
+  let parameters = (ins
+    EnumParameter<HFusion_CacheModifierEnum>:$policy
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Cache modification policy.
+  }];
+}
+
+def HFusion_EvictionPolicyAttr : HFusion_Attr<"EvictionPolicy", "eviction_policy"> {
+  let parameters = (ins
+    EnumParameter<HFusion_EvictionPolicyEnum>:$policy
+  );
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    Eviction policy.
+  }];
+}
+
+def HFusion_MatMulMxDataFormatAttr : I32EnumAttr<
+    "Dataformat", "Microscaling floating-point data format for MatMulMx",
+    [
+        I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+        I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+        I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">
+    ]> {
+    let cppNamespace = "::mlir::hfusion";
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONATTRS_TD

@@ -75,7 +75,7 @@ func.func @test_vmulhi_op_memref_i32() {
   // CHECK: scf.for %[[VAL_8:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_1]] {
   // CHECK:   %[[VAL_9:.*]] = memref.load %[[VAL_4]]{{\[}}%[[VAL_8]]] : memref<6xi32>
   // CHECK:   %[[VAL_10:.*]] = memref.load %[[VAL_5]]{{\[}}%[[VAL_8]]] : memref<6xi32>
-  // CHECK:   %[[LOW:.*]], %[[HIGH:.*]] = arith.mului_extended {{.*}}, {{.*}} : i32
+  // CHECK:   %[[LOW:.*]], %[[HIGH:.*]] = arith.mulsi_extended {{.*}}, {{.*}} : i32
   // CHECK:   memref.store %[[LOW]], %[[VAL_6]]{{\[}}%[[VAL_8]]] : memref<6xi32>
   // CHECK:   memref.store %[[HIGH]], %[[VAL_7]]{{\[}}%[[VAL_8]]] : memref<6xi32>
   // CHECK: }
@@ -85,6 +85,34 @@ func.func @test_vmulhi_op_memref_i32() {
   %alloc = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
   hivm.hir.vmulext ins(%lhs, %rhs : memref<6xi32>, memref<6xi32>) outs(%alloc, %alloc_0 : memref<6xi32>, memref<6xi32>)
+  return
+}
+
+//===----------------------------------------------------------------------===//
+// Test VMulHiOp Decompose MemRef(I32)
+//===----------------------------------------------------------------------===//
+// -----
+func.func @test_vmuluihi_op_memref_i32() {
+  // CHECK-DAG: %[[VAL_1:.*]] = arith.constant 1 : index
+  // CHECK-DAG: %[[VAL_2:.*]] = arith.constant 0 : index
+  // CHECK-DAG: %[[VAL_3:.*]] = arith.constant 6 : index
+  // CHECK: %[[VAL_4:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: %[[VAL_5:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: %[[VAL_6:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: %[[VAL_7:.*]] = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  // CHECK: scf.for %[[VAL_8:.*]] = %[[VAL_2]] to %[[VAL_3]] step %[[VAL_1]] {
+  // CHECK:   %[[VAL_9:.*]] = memref.load %[[VAL_4]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK:   %[[VAL_10:.*]] = memref.load %[[VAL_5]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK:   %[[LOW:.*]], %[[HIGH:.*]] = arith.mului_extended {{.*}}, {{.*}} : i32
+  // CHECK:   memref.store %[[LOW]], %[[VAL_6]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK:   memref.store %[[HIGH]], %[[VAL_7]]{{\[}}%[[VAL_8]]] : memref<6xi32>
+  // CHECK: }
+
+  %lhs = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  %rhs = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  %alloc = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<6xi32>
+  hivm.hir.vmulextui ins(%lhs, %rhs : memref<6xi32>, memref<6xi32>) outs(%alloc, %alloc_0 : memref<6xi32>, memref<6xi32>)
   return
 }
 

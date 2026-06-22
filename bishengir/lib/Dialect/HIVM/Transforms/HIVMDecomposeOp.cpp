@@ -21,8 +21,12 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
@@ -34,6 +38,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/RWMutex.h"
+
+#include <array>
 
 namespace mlir {
 #define GEN_PASS_DEF_HIVMDECOMPOSEOP
@@ -47,6 +53,43 @@ using namespace mlir::hivm;
 using namespace utils;
 
 namespace {
+static constexpr llvm::StringLiteral conv3dDepthPadded =
+    "conv3dDepthPadded";
+
+template <size_t Rank>
+FailureOr<std::array<int64_t, Rank>> getConvIntArrayAttr(Attribute attr) {
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+    int64_t value = intAttr.getInt();
+    std::array<int64_t, Rank> values;
+    values.fill(value);
+    return values;
+  }
+
+  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
+    if (denseAttr.size() != Rank)
+      return failure();
+    std::array<int64_t, Rank> values;
+    for (size_t idx = 0; idx < Rank; ++idx)
+      values[idx] = denseAttr[idx];
+    return values;
+  }
+
+  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+    if (arrayAttr.size() != Rank)
+      return failure();
+
+    std::array<int64_t, Rank> values;
+    for (auto [idx, element] : llvm::enumerate(arrayAttr)) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      if (!intAttr)
+        return failure();
+      values[idx] = intAttr.getInt();
+    }
+    return values;
+  }
+
+  return failure();
+}
 
 //===----------------------------------------------------------------------===//
 // VCastOp Decompose
@@ -299,7 +342,7 @@ private:
               loc, rewriter.getFloatAttr(floatType, 1.0));
         })
         .Default([](Type) {
-          llvm_unreachable("Unsupported type!");
+          llvm::report_fatal_error("Unsupported type!");
           return Value{};
         });
   }
@@ -567,7 +610,7 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
     } else if (syncBlockMode == SyncBlockMode::ALL) {
       insertBlockAll(op, rewriter);
     } else {
-      llvm_unreachable("unsupported sync mode");
+      llvm::report_fatal_error("unsupported sync mode");
     }
     rewriter.eraseOp(op);
     return success();
@@ -612,7 +655,7 @@ struct HIVMSetAtomicOpLowering : public OpRewritePattern<SetAtomicOp> {
       ctrlIdxEnableMap[kAtomicKindBit1] = true;
       break;
     default:
-      llvm_unreachable("unsupported atomic kind");
+      llvm::report_fatal_error("unsupported atomic kind");
     }
 
     if (type.isF32()) {
@@ -640,7 +683,7 @@ struct HIVMSetAtomicOpLowering : public OpRewritePattern<SetAtomicOp> {
       ctrlIdxEnableMap[kAtomicTypeBit1] = true;
       ctrlIdxEnableMap[kAtomicTypeBit2] = true;
     } else {
-      llvm_unreachable("unsupported atomic type");
+      llvm::report_fatal_error("unsupported atomic type");
     }
 
     generateSetCtrlOps(ctrlIdxEnableMap, loc, rewriter, op);
@@ -657,6 +700,103 @@ private:
       rewriter.create<hivm::SetCtrlOp>(loc, enable, idx);
     }
     rewriter.eraseOp(op);
+  }
+};
+
+/// =============== Optimizing rewrite for vsel(vcmp(...), ...) ===============================
+/// Match:
+///   vsel(vcmp(...): (...) --> container(i1), ...) --> ...
+/// Replace with:
+///   vsel(vcmp(...): (...) --> container(i8), ...) --> ...
+/// Why?
+///   vsel works faster on NPU when it uses i8 as the filtering condition output instead of i1.
+struct VSelOpLowering : public OpRewritePattern<hivm::VSelOp> {
+  using OpRewritePattern<hivm::VSelOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::VSelOp op,
+                                PatternRewriter &rewriter) const final {
+    // [[Guard 0]] Quit if op does not already have pure buffer semantics.
+    if (!op.hasPureBufferSemantics()) {
+      return failure();
+    }
+    
+    // [[Guard 1]] Quit if vsel has wrongly typed arguments.
+    Value condUB = nullptr;
+    {
+      // [[Guard 1.0]] Quit if vsel uses something other than il for the condition argument.
+      condUB = op->getOperand(0);
+      Type condUBType = condUB.getType();
+      auto condUBTypeValue = getElementTypeOrSelf(condUBType);
+      if (!condUBTypeValue.isInteger(1)) {
+        return failure();
+      }
+      // [[Guard 1.1]] Quit if vsel's first argument is a scalar.
+      Value lhs = op->getOperand(1);
+      Type lhsType = lhs.getType();
+      if (lhsType.isIntOrFloat()) {
+        return failure();
+      }
+      // [[Guard 1.2]] Quit if vsel's second argument is a scalar.
+      Value rhs = op->getOperand(2);
+      Type rhsType = rhs.getType();
+      if (rhsType.isIntOrFloat()) {
+        return failure();
+      }
+    }
+
+    // [[Guard 2]] Quit if the output type of the vsel is something other than int64.
+    Value vselDst = op.getDst()[0];
+    auto vselDstElemType = getElementTypeOrSelf(vselDst);
+    if (!vselDstElemType.isInteger(64)) {
+      return failure();
+    }
+
+    // Find a vcmp producing the condition filter for vsel.
+    hivm::VCmpOp cmpOp = nullptr;
+    for (Operation *user : condUB.getUsers()) {
+      // Do not count annotation marks as true users:
+      if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
+        continue;
+      }
+      // The user may be the vsel itself:
+      if (op == dyn_cast<hivm::VSelOp>(user)) {
+        continue;
+      }
+      // The user may be the required vcmp producing the condition for the vsel:
+      if ((cmpOp = dyn_cast<hivm::VCmpOp>(user)) && (cmpOp.getDst()[0] == condUB)) {
+        continue;
+      }
+      // [[Guard 3]] There must be no other users:
+      return failure();
+    }
+
+    // [[Guard 4]] Quit if no vcmp produces the condition for the vsel:
+    if (nullptr == cmpOp) {
+      return failure();
+    }
+
+
+    // [[Step 1]] Allocate enough memory to store the result of vcmp as i8's instead of il's.
+    rewriter.setInsertionPoint(cmpOp);
+    auto cmpAlloc = createTmpBufferOrTensorWithTargetType(
+        rewriter, cmpOp.getLoc(), cmpOp.getOperand(0), rewriter.getIntegerType(8));
+
+    // [[Step 2]] Update the original vcmp to output its result as i8's to the allocated memory.
+    rewriter.setInsertionPointAfter(cmpOp);
+    hivm::VCmpOp newCmpOp = rewriter.create<hivm::VCmpOp>(
+        cmpOp.getLoc(), TypeRange(), ValueRange({cmpOp->getOperand(0), cmpOp->getOperand(1)}),
+        Value(cmpAlloc), cmpOp.getCompareModeAttr(),
+        cmpOp.getTransposeAttr(), cmpOp.getBroadcastAttr());
+    rewriter.replaceOp(cmpOp, newCmpOp);
+    
+    // [[Step 3]] Update the original vsel to use the i8-typed result of vcmp.
+    rewriter.setInsertionPointAfter(op);
+    hivm::VSelOp newSelOp = rewriter.create<hivm::VSelOp>(op.getLoc(), TypeRange(),
+        ValueRange({cmpAlloc, op->getOperand(1), op->getOperand(2)}),
+        op.getDst(), Value());
+    rewriter.replaceOp(op, newSelOp);
+
+
+    return success();
   }
 };
 
@@ -723,6 +863,20 @@ template <typename ExtOp>
 struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
   using OpRewritePattern<ExtOp>::OpRewritePattern;
 
+  Value createExtOp(PatternRewriter &rewriter, Location loc,
+                    Value value, bool isUnsigned) const {
+    return isUnsigned ? 
+        rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), value).getResult() :
+        rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), value).getResult();
+  }
+
+  Value createShROp(PatternRewriter &rewriter, Location loc,
+                    Value value, Value shift, bool isUnsigned) const {
+    return isUnsigned ?
+        rewriter.create<arith::ShRUIOp>(loc, value, shift).getResult() :
+        rewriter.create<arith::ShRSIOp>(loc, value, shift).getResult();
+  }
+
   LogicalResult matchAndRewrite(ExtOp op,
                                 PatternRewriter &rewriter) const final {
     // The type of operand is i32(scalar)
@@ -730,34 +884,32 @@ struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
     if (!oper.getType().isInteger(32)) {
       return failure();
     }
-    if constexpr (std::is_same<arith::MulUIExtendedOp, ExtOp>::value) {
-      // cast i32 inputs to i64
-      auto lhsExtSIOp = rewriter.create<arith::ExtSIOp>(
-          op.getLoc(), rewriter.getI64Type(), op.getLhs());
-      auto rhsExtSIOp = rewriter.create<arith::ExtSIOp>(
-          op.getLoc(), rewriter.getI64Type(), op.getRhs());
-      // mul i64
+
+    if constexpr (std::is_same<arith::MulSIExtendedOp, ExtOp>::value ||
+                  std::is_same<arith::MulUIExtendedOp, ExtOp>::value) {
+      constexpr bool isUnsigned =
+          std::is_same<arith::MulUIExtendedOp, ExtOp>::value;
+      auto lhsExtOp = createExtOp(rewriter, op.getLoc(), op.getLhs(), isUnsigned);
+      auto rhsExtOp = createExtOp(rewriter, op.getLoc(), op.getRhs(), isUnsigned);
       auto mulI64Res =
-          rewriter.create<arith::MulIOp>(op.getLoc(), lhsExtSIOp, rhsExtSIOp);
-      // get low 32 bits of a 64-bit number
+          rewriter.create<arith::MulIOp>(op.getLoc(), lhsExtOp, rhsExtOp);
       auto constThirtyTwo = rewriter.create<arith::ConstantIntOp>(
           op.getLoc(), 32, rewriter.getI64Type());
       auto shLIOp = rewriter.create<arith::ShLIOp>(op.getLoc(), mulI64Res,
                                                    constThirtyTwo);
-      auto shRSIOp1 = rewriter.create<arith::ShRSIOp>(
-          op.getLoc(), shLIOp.getResult(), constThirtyTwo);
+      auto shROpForLow = createShROp(rewriter, op.getLoc(),
+                                      shLIOp.getResult(), constThirtyTwo, isUnsigned);
       auto resLow32Bits =
           rewriter
               .create<arith::TruncIOp>(op.getLoc(), rewriter.getI32Type(),
-                                       shRSIOp1.getResult())
+                                       shROpForLow)
               .getResult();
-      // get high 32 bits of a 64-bit number
-      auto shRSIOp = rewriter.create<arith::ShRSIOp>(op.getLoc(), mulI64Res,
-                                                     constThirtyTwo);
+      auto shROpForHigh = createShROp(rewriter, op.getLoc(),
+                                       mulI64Res, constThirtyTwo, isUnsigned);
       auto resHigh32Bits =
           rewriter
               .create<arith::TruncIOp>(op.getLoc(), rewriter.getI32Type(),
-                                       shRSIOp.getResult())
+                                       shROpForHigh)
               .getResult();
       rewriter.replaceOp(op, {resLow32Bits, resHigh32Bits});
     }
@@ -1157,7 +1309,7 @@ struct DecomposeVSubScalarOp : public OpRewritePattern<hivm::VSubOp> {
               return rewriter.create<arith::SubFOp>(loc, zero, scalarSrc);
             })
             .Default([](Type) {
-              llvm_unreachable("Unsupported type!");
+              llvm::report_fatal_error("Unsupported type!");
               return Value{};
             });
 
@@ -1213,6 +1365,12 @@ class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
         assert(elemType.getIntOrFloatBitWidth() == 8);
         return decomposeEltwiseAtomic(op, rewriter, loc, /*isUnsigned=*/true);
       }
+      if ((*atomicKind == hivm::AtomicKind::ADD ||
+           *atomicKind == hivm::AtomicKind::MAX ||
+           *atomicKind == hivm::AtomicKind::MIN) &&
+           isAtomicOpHaveReturnedValue(op)) {
+        return addSyncForReturnedValue(op, rewriter, loc);
+      }
     }
     if (!op.isSWAtomic()) {
       return failure();
@@ -1228,6 +1386,55 @@ class AtomicStoreOpLowering : public OpRewritePattern<hivm::StoreOp> {
   }
 
 private:
+  /// Find the load operation used to save the returned value before atomic operation being calculated
+  /// e.g. hivm.hir.load ins(%reinterpret_cast) outs(%alloc)
+  /// hivm.hir.store ins(%cast) outs(%reinterpret_cast)
+  ///
+  /// The load operation whose outs operand is same as store's ins operand is required
+  Operation* findReturnedValueLoadOp(hivm::StoreOp storeOp, Value targetValue) const {
+    if (!targetValue) return nullptr;
+
+    Operation* op = storeOp->getPrevNode();
+    while (op) {
+      if (auto loadOp = dyn_cast<hivm::LoadOp>(op)) {
+        if (loadOp->getOperand(0) == targetValue) {
+          return loadOp;
+        }
+      }
+      op = op->getPrevNode();
+    }
+
+    return nullptr;
+  }
+
+  bool isAtomicOpHaveReturnedValue(hivm::StoreOp storeOp) const {
+    Operation* returnedValueLoadOp = findReturnedValueLoadOp(storeOp, storeOp.getDst());
+    if (auto LoadOp = dyn_cast_or_null<hivm::LoadOp>(returnedValueLoadOp)) {
+      auto dst = LoadOp.getDst();
+      // If the dst of loadOp just be used for this loadop, the returned value dead code.
+      return llvm::range_size(dst.getUsers()) > 1;
+    }
+    return false;
+  }
+
+  LogicalResult addSyncForReturnedValue(hivm::StoreOp op, 
+                                        PatternRewriter &rewriter, Location loc) const {
+    static constexpr llvm::StringLiteral kAlreadySync =
+        "already_sync";
+    if (op->hasAttr(kAlreadySync)) {
+      return failure();
+    }
+    Operation* returnedValueLoadOp = findReturnedValueLoadOp(op, op.getDst());
+    PatternRewriter::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(returnedValueLoadOp);
+    auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+    rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
+    rewriter.setInsertionPointAfter(op);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
+    op->setAttr(kAlreadySync, UnitAttr::get(op->getContext()));
+    return success();
+  }
+  
   /// implement atomic by software way
   /// e.g.store ins(% res_ub) outs(% res_gm) with atomic XOR is converted to
   /// % lock_var = create_sync_lock()
@@ -1576,6 +1783,306 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
   }
 };
 
+//===----------------------------------------------------------------------===//
+// Conv3dL1 decompose to Conv2dL1 loop
+//===----------------------------------------------------------------------===//
+
+/// Decompose a normalized packed Conv3dL1 into Conv2dL1 + depth loop.
+///
+/// Why this pattern exists:
+///   The hardware execution path directly supports Conv2d-style cube compute.
+///   Conv3d is lowered by slicing kernel depth (wD) and accumulating multiple
+///   Conv2d results along the depth window.
+///
+/// Required input contract (after NormalizeConvOps):
+///   - input : [N, D, C1, H, W, C0]
+///             D already includes materialized front/back depth padding when
+///             padD > 0.
+///   - weight: [wD, C1/groups, wH, wW, oC, C0]
+///   - bias  : none. NormalizeConvOps decomposes Conv3d bias into a standalone
+///             vector add before this memref-only decompose stage.
+///   - init  : rank2 [oHWCeil, (N*oD*oC)Ceil], same aligned orientation as
+///             Conv1d/Conv2d normalized output.
+///
+/// Mathematical equivalence sketch:
+///   Let X be the depth-padded input produced by NormalizeConvOps and let
+///   padding = [padD, padH, padW]. Since padD is already materialized in X,
+///   decompose only forwards [padH, padW] as logical Conv2d padding.
+///
+///   Conv3d:
+///     Y[n, oc, od, oh, ow] =
+///       sum_{kd, ic, kh, kw}
+///         X[n, od + kd, ic, oh + kh - padH, ow + kw - padW] *
+///         W[kd, ic, kh, kw, oc]
+///
+///   Decomposed form:
+///     for each n:
+///       acc = init slice for batch n
+///       for each kd in [0, wD):
+///         input2d  = X[n, od + kd, :, :, :]
+///         weight2d = W[kd, :, :, :, :]
+///         init = original init_condition when kd == 0, otherwise false
+///         Conv2dL1(input2d, weight2d, acc,
+///                  padding = [padH, padW], init_condition = init)
+///
+///   Each Conv2dL1 accumulates one kernel-depth slice into the same rank-2
+///   accumulator. After all kd slices are processed, the accumulator is
+///   mathematically equivalent to Conv3d without bias.
+///
+/// Core decomposition algorithm:
+///   1. Validate packed structure, groups, shape consistency, and padding
+///      preconditions. If padD > 0, NormalizeConvOps must have marked the op
+///      with conv3dDepthPadded.
+///   2. Use rank2 init directly as Conv2d accumulation buffer.
+///   3. Slice one original batch at a time so accumulator offsets stay static.
+///   4. Emit the first Conv2d for kd = 0 with the original init_condition.
+///   5. Emit scf.for for kd in [1, wD), using init_condition=false.
+///   6. Erase Conv3d op because Conv2d writes are already committed to init.
+///
+/// Notes:
+///   - This decomposition is intentionally memref-only at this stage.
+///   - The pattern intentionally does not match Conv3d with bias.
+///   - D padding is consumed by NormalizeConvOps; H/W logical padding is
+///     forwarded to Conv2dL1 as [padH, padW].
+struct DecomposeConv3dOp
+    : public OpRewritePattern<hivm::Conv3DL1Op> {
+public:
+  using OpRewritePattern<hivm::Conv3DL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::Conv3DL1Op op,
+                                PatternRewriter &rewriter) const override {
+    // This pass stage decompose Conv3d only after bufferization.
+    if (!op.hasPureBufferSemantics()) {
+      return failure();
+    }
+    if (op.getBias()) {
+      return failure();
+    }
+
+    auto inputType = dyn_cast<MemRefType>(op.getInput().getType());
+    auto weightType = dyn_cast<MemRefType>(op.getWeight().getType());
+    auto initType = dyn_cast<MemRefType>(op.getInit().getType());
+    if (!inputType || !weightType || !initType) {
+      return failure();
+    }
+    if (!inputType.hasStaticShape() || !weightType.hasStaticShape() ||
+        !initType.hasStaticShape()) {
+      return failure();
+    }
+    // Structure-based gate:
+    // only decompose packed Conv3d forms generated by normalize.
+    // No dedicated "decompose marker" is required; rank/layout shape contract
+    // is used as the source of truth.
+    if (inputType.getRank() != 6 || weightType.getRank() != 6 ||
+        initType.getRank() != 2) {
+      return failure();
+    }
+
+    int64_t groups = op.getGroups();
+    if (groups <= 0) {
+      return failure();
+    }
+
+    const int64_t n = inputType.getDimSize(0);
+    const int64_t iD = inputType.getDimSize(1);
+    const int64_t c1 = inputType.getDimSize(2);
+    const int64_t h = inputType.getDimSize(3);
+    const int64_t w = inputType.getDimSize(4);
+    const int64_t c0 = inputType.getDimSize(5);
+
+    const int64_t wD = weightType.getDimSize(0);
+    const int64_t c1PerGroup = weightType.getDimSize(1);
+    const int64_t wH = weightType.getDimSize(2);
+    const int64_t wW = weightType.getDimSize(3);
+    const int64_t oC = weightType.getDimSize(4);
+    const int64_t wC0 = weightType.getDimSize(5);
+
+    if (wD <= 0 || c0 != wC0 || c1PerGroup * groups != c1) {
+      return failure();
+    }
+
+    auto padding = getConvIntArrayAttr<3>(op.getPaddingAttr());
+    if (failed(padding)) {
+      return failure();
+    }
+    const int64_t padD = (*padding)[0];
+    const int64_t padH = (*padding)[1];
+    const int64_t padW = (*padding)[2];
+    if (padD < 0 || padH < 0 || padW < 0) {
+      return failure();
+    }
+    const bool depthAlreadyPadded = op->hasAttr(conv3dDepthPadded);
+    // Depth padding policy:
+    // Normalize materializes D padding (front/back) when padD > 0, so
+    // decompose expects that precondition via conv3dDepthPadded. H/W padding
+    // remains logical and is forwarded to Conv2dL1.
+    if (padD > 0 && !depthAlreadyPadded) {
+      return failure();
+    }
+    if (iD < wD || h + 2 * padH < wH || w + 2 * padW < wW) {
+      return failure();
+    }
+    const int64_t expectedOD = iD - wD + 1;
+    const int64_t expectedOH = h + 2 * padH - wH + 1;
+    const int64_t expectedOW = w + 2 * padW - wW + 1;
+
+    const int64_t oD = expectedOD;
+    const int64_t fusedND = n * expectedOD;
+    const int64_t oHW = expectedOH * expectedOW;
+    const int64_t oHWCeil = llvm::divideCeil(oHW, utils::FRACTAL_BLOCK_NUM) *
+                            utils::FRACTAL_BLOCK_NUM;
+    const int64_t oCPerGroup = oC / groups;
+    const int64_t oCPerGroupCeil =
+        llvm::divideCeil(oCPerGroup, utils::FRACTAL_BLOCK_NUM) *
+        utils::FRACTAL_BLOCK_NUM;
+    const int64_t oCCeil = oCPerGroupCeil * groups;
+    const int64_t fusedOCCeil = fusedND * oCCeil;
+    if (initType.getDimSize(0) != oHWCeil ||
+        initType.getDimSize(1) != fusedOCCeil) {
+      return failure();
+    }
+    Location loc = op.getLoc();
+    Attribute conv2DPadding =
+        isa<IntegerAttr>(op.getPaddingAttr())
+            ? op.getPaddingAttr()
+            : rewriter.getArrayAttr({rewriter.getI64IntegerAttr(padH),
+                                     rewriter.getI64IntegerAttr(padW)});
+
+    auto collapseShape =
+        [&](Value src, ArrayRef<ReassociationIndices> reassociation)
+        -> FailureOr<Value> {
+      auto srcMemRefType = dyn_cast<MemRefType>(src.getType());
+      if (!srcMemRefType) {
+        return failure();
+      }
+
+      auto collapsedType =
+          memref::CollapseShapeOp::computeCollapsedType(srcMemRefType,
+                                                        reassociation);
+      if (!collapsedType) {
+        return failure();
+      }
+      return rewriter
+          .create<memref::CollapseShapeOp>(loc, collapsedType, src,
+                                           reassociation)
+          .getResult();
+    };
+
+    // rank2 init is normalized aligned output shape [oHWCeil, fusedOCCeil].
+    Value accumulator = op.getInit();
+
+    Value cst1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value cstKernelDepth = rewriter.create<arith::ConstantIndexOp>(loc, wD);
+    Value falseCondition =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
+
+    Value paddedInput = op.getInput();
+
+    SmallVector<ReassociationIndices> collapseInputTo2DReassoc = {
+        {0, 1}, {2}, {3}, {4}, {5}};
+    SmallVector<ReassociationIndices> collapseWeightTo2DReassoc = {
+        {0, 1}, {2}, {3}, {4}, {5}};
+
+    auto getBatchAccumulatorSlice = [&](Value src, int64_t batchIdx)
+        -> FailureOr<Value> {
+      SmallVector<OpFoldResult> outputOffsets = {
+          rewriter.getIndexAttr(0),
+          rewriter.getIndexAttr(batchIdx * oD * oCCeil)};
+      SmallVector<OpFoldResult> outputSizes = {
+          rewriter.getIndexAttr(oHWCeil),
+          rewriter.getIndexAttr(oD * oCCeil)};
+      SmallVector<OpFoldResult> outputStrides(2, rewriter.getIndexAttr(1));
+      Value outputSlice =
+          getSlice(rewriter, loc, src, outputOffsets, outputSizes,
+                   outputStrides);
+      if (!outputSlice) {
+        return failure();
+      }
+      return outputSlice;
+    };
+
+    // Emit one depth-sliced Conv2d at given batch and kernel depth offsets.
+    // Bias is expected to be handled by normalize path (e.g. decomposed to
+    // standalone vadd), so decompose only controls init_condition here.
+    auto createConv2DForDepthOffset = [&](OpFoldResult batchOffset,
+                                          OpFoldResult depthOffset,
+                                          Value iterAcc,
+                                          Value initCondition) -> Value {
+      SmallVector<OpFoldResult> inputOffsets(6, rewriter.getIndexAttr(0));
+      SmallVector<OpFoldResult> inputSizes = {
+          rewriter.getIndexAttr(1), rewriter.getIndexAttr(oD),
+          rewriter.getIndexAttr(c1), rewriter.getIndexAttr(h),
+          rewriter.getIndexAttr(w), rewriter.getIndexAttr(c0)};
+      SmallVector<OpFoldResult> inputStrides(6, rewriter.getIndexAttr(1));
+      inputOffsets[0] = batchOffset;
+      inputOffsets[1] = depthOffset;
+      Value inputDepthSlice =
+          getSlice(rewriter, loc, paddedInput, inputOffsets, inputSizes,
+                   inputStrides);
+      assert(inputDepthSlice &&
+             "failed to extract tensor/memref slice for Conv3d input");
+      // Slice one original batch at a time. The leading dimension is size 1, so
+      // collapsing [1, oD] into Conv2D's batch axis is layout-valid without a
+      // CBUF-to-CBUF materialization copy.
+      auto input2D = collapseShape(inputDepthSlice, collapseInputTo2DReassoc);
+      assert(succeeded(input2D) &&
+             "failed to collapse Conv3d input slice to Conv2d layout");
+
+      SmallVector<OpFoldResult> weightOffsets(6, rewriter.getIndexAttr(0));
+      SmallVector<OpFoldResult> weightSizes = {
+          rewriter.getIndexAttr(1), rewriter.getIndexAttr(c1PerGroup),
+          rewriter.getIndexAttr(wH), rewriter.getIndexAttr(wW),
+          rewriter.getIndexAttr(oC), rewriter.getIndexAttr(c0)};
+      SmallVector<OpFoldResult> weightStrides(6, rewriter.getIndexAttr(1));
+      weightOffsets[0] = depthOffset;
+      Value weightDepthSlice =
+          getSlice(rewriter, loc, op.getWeight(), weightOffsets, weightSizes,
+                   weightStrides);
+      assert(weightDepthSlice &&
+             "failed to extract tensor/memref slice for Conv3d weight");
+      auto weight2D = collapseShape(weightDepthSlice, collapseWeightTo2DReassoc);
+      assert(succeeded(weight2D) &&
+             "failed to collapse Conv3d weight slice to Conv2d layout");
+
+      auto conv2D = rewriter.create<hivm::Conv2DL1Op>(
+          loc, TypeRange{}, *input2D, *weight2D, Value(), iterAcc,
+          initCondition, ValueRange{}, conv2DPadding, op.getGroupsAttr());
+      (void)conv2D;
+      return iterAcc;
+    };
+
+    // Keep the original batch axis outside Conv2D. A dynamic batch loop would
+    // create a rank-2 CC subview with dynamic column offset, which the current
+    // data-layout rewrite cannot remap reliably. Since Conv3D shapes are static
+    // here, emit one batch slice at a time and keep the CC offset static.
+    for (int64_t batchIdx = 0; batchIdx < n; ++batchIdx) {
+      auto batchOffset = rewriter.getIndexAttr(batchIdx);
+      auto batchAccSlice = getBatchAccumulatorSlice(accumulator, batchIdx);
+      assert(succeeded(batchAccSlice) &&
+             "failed to slice Conv3d rank2 accumulator by batch");
+
+      // First depth slice (kd=0) initializes this batch's accumulation slice.
+      createConv2DForDepthOffset(
+          batchOffset, rewriter.getIndexAttr(0), *batchAccSlice,
+          op.getInitCondition());
+
+      // Remaining depth slices accumulate into the same batch slice.
+      auto depthLoop =
+          rewriter.create<scf::ForOp>(loc, cst1, cstKernelDepth, cst1);
+      {
+        OpBuilder::InsertionGuard depthGuard(rewriter);
+        rewriter.setInsertionPointToStart(depthLoop.getBody());
+        Value kd = depthLoop.getInductionVar();
+        Value nextAcc = createConv2DForDepthOffset(
+            batchOffset, kd, *batchAccSlice, falseCondition);
+        assert(nextAcc && "failed to create Conv2d in depth loop");
+      }
+    }
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct HIVMDecomposeOpPass
     : public impl::HIVMDecomposeOpBase<HIVMDecomposeOpPass> {
   void runOnOperation() override;
@@ -1599,10 +2106,13 @@ void HIVMDecomposeOpPass::runOnOperation() {
                DecomposeCastScalarToVecOp<arith::SIToFPOp>,
                DecomposeCastScalarToVecOp<arith::TruncFOp>,
                DecomposeScalarOpToVecOp<math::LogOp, hivm::VLnOp>,
+               DecomposeI32ScalarExtOp<arith::MulSIExtendedOp>,
                DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
                DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
+               DecomposeConv3dOp,
                AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
-               AtomicRMWOpLowering, HIVMSetAtomicOpLowering>(&getContext());
+               AtomicRMWOpLowering, HIVMSetAtomicOpLowering,
+               VSelOpLowering>(&getContext());
 
   bool isMixModule =
       mlir::hivm::isMixModule(funcOp->getParentOfType<ModuleOp>());

@@ -334,7 +334,7 @@ struct AtomicLinalgGenericToHFusionStorePattern
       atomicKind = AtomicKindAttr::get(context, AtomicKind::XCHG);
     } else {
       op.emitOpError("unsupported atomic operation: ");
-      llvm_unreachable("Not implemented");
+      llvm::report_fatal_error("Unsupported atomic operation kind in AtomicLinalgGenericToHFusionStorePattern");
     }
     bool hasReturn = op.getOutputs().size() > 1;
     TypeRange returnTypes;

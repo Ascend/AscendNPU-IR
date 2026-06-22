@@ -211,12 +211,15 @@ void DimensionAnalyzer::processInterleaveOp(
   const auto rank = static_cast<int>(resultShape.size());
   auto firstOperand = interleaveOp.getOperand(0);
   createDummyRefIfNotExist(SmallVector<Value>(interleaveOp->getOperands()));
+  if (rank < 1)
+    return;
+  const int lastIdx = rank - 1;
   for (auto opr : interleaveOp.getOperands()) {
     if (utils::getShapeRank(opr.getType()).value_or(0) != resultShape.size())
       continue;
     auto oprRef = getArgumentRefOrCreateDummy(opr);
     auto resRef = getArgumentRefOrCreateDummy(res);
-    for (int i = 0; i < rank - 1; ++i) {
+    for (int i = 0; i < lastIdx; ++i) {
       isConnected_[resRef[i]].elementKind =
           (resultShape[i] == 1 ? ElementKind::Unit : ElementKind::NoMutation);
       // Shape elem has type inference, can only be joined if the shape is
@@ -225,11 +228,11 @@ void DimensionAnalyzer::processInterleaveOp(
     }
     // Last element is a mutation kind
     auto firstOperandRef = getArgumentRef(firstOperand);
-    isConnected_[resRef[rank - 1]].elementKind = ElementKind::NoMutation;
+    isConnected_[resRef[lastIdx]].elementKind = ElementKind::NoMutation;
     // Bind shape with each other
-    joinShape(firstOperandRef[rank - 1], oprRef[rank - 1]);
+    joinShape(firstOperandRef[lastIdx], oprRef[lastIdx]);
     // Bind structure with res
-    joinCollapser(resRef[rank - 1], oprRef[rank - 1]);
+    joinCollapser(resRef[lastIdx], oprRef[lastIdx]);
   }
   // No need to disconnect anything, handled by elementKind resolver
 }
@@ -242,9 +245,12 @@ void DimensionAnalyzer::processDeinterleaveOp(
   const auto rank = static_cast<int>(resultShape.size());
   auto src = deinterleaveOp.getInput();
   auto oprRef = getArgumentRefOrCreateDummy(src);
+  if (rank < 1)
+    return;
+  const int lastIdx = rank - 1;
   for (auto res : results) {
     auto resRef = getArgumentRefOrCreateDummy(res);
-    for (int i = 0; i < rank - 1; ++i) {
+    for (int i = 0; i < lastIdx; ++i) {
       isConnected_[resRef[i]].elementKind =
           (resultShape[i] == 1 ? ElementKind::Unit : ElementKind::NoMutation);
       // Shape elem has type inference, can only be joined if the shape is
@@ -253,11 +259,11 @@ void DimensionAnalyzer::processDeinterleaveOp(
     }
     // Last element is a mutation kind
     auto firstResRef = getArgumentRef(results[0]);
-    isConnected_[resRef[rank - 1]].elementKind = ElementKind::NoMutation;
+    isConnected_[resRef[lastIdx]].elementKind = ElementKind::NoMutation;
     // Bind shape with each other
-    joinShape(firstResRef[rank - 1], resRef[rank - 1]);
+    joinShape(firstResRef[lastIdx], resRef[lastIdx]);
     // Bind structure with opr, but not shape
-    joinCollapser(resRef[rank - 1], oprRef[rank - 1]);
+    joinCollapser(resRef[lastIdx], oprRef[lastIdx]);
   }
   // No need to disconnect anything, handled by elementKind resolver
 }

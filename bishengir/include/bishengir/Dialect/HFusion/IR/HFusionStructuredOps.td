@@ -119,8 +119,14 @@ def ReduceWithIndexOp : HFusionStructuredBase_Op<"reduce_with_index",
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
   }];
 }
@@ -159,8 +165,14 @@ def ArangeOp : HFusionStructuredBase_Op<"arange", [AttrSizedOperandSegments,
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
     /// Precondition: `val` must be of type ShapedType
     static void getStridesFromValue(OpBuilder & builder, Location loc,
@@ -231,8 +243,14 @@ def GatherOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
 
     // Used for AggregateOpInterface to decompose into legal operations
@@ -247,9 +265,8 @@ def GatherOp
 def GatherMaskOp
     : HFusionStructuredBase_Op<
           "gather_mask", [
-              AllRanksMatch<["src", "mask", "init"]>,    
-              AllShapesMatch<["src", "mask", "init"]>,   
-              AllElementTypesMatch<["src", "init"]>,     
+              AllRanksMatch<["src", "mask"]>,    
+              AllShapesMatch<["src", "mask"]>,        
               ResultOnlyIfTensor
           ]>
 {
@@ -261,22 +278,23 @@ def GatherMaskOp
     Gathers elements from the `src` tensor where the corresponding element in the `mask` tensor is non-zero (True for bool type, 1 for int8 type).
     Writes the result to the pre-allocated `init` tensor (equivalent to HIVM's `dst`), 
     and returns `init` as `result` for functional compatibility.
-    The `init`/`result` tensor has the same shape and element type as the `src` tensor.(currently only suppport 1D)
-    
+    The `init`/`result` tensor has the same shape and element type as the `src` tensor.
+    Additionally, returns `dst_size` which represents the actual length of the gathered data.
+
     Usage:
-      result = gather_mask(src, mask, init)  
+      result, dst_size = gather_mask(src, mask, init)  
   }];
 
   let arguments = (ins 
     AnyShaped:$src,
     AnyShaped:$mask,
-    AnyShaped:$init  
+    Variadic<AnyShaped>:$init  
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let regions = (region AnyRegion:$region);  
   let skipDefaultBuilders = 1;
   let builders = [
-    OpBuilder<(ins "Value":$src, "Value":$mask, "Value":$init)>  
+    OpBuilder<(ins "Value":$src, "Value":$mask, "ValueRange":$init)>  
   ];
   let hasCustomAssemblyFormat = 1; 
   let hasVerifier = 1;  
@@ -287,10 +305,262 @@ def GatherMaskOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
     getRegionBuilder();
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// Conv1DOp
+//===----------------------------------------------------------------------===//
+
+def Conv1DOp
+    : HFusionStructuredBase_Op<
+          "conv1d", [AllElementTypesMatch<["input","weight","bias", "init"]>,
+                    ResultOnlyIfTensor,
+                    BiShengIRAggregatedOpInterface]>
+{
+
+  let description = [{
+    1D convolution operator with semantics aligned to 
+    triton.language.extra.cann.extension.conv1d(
+        input, weight, bias, groups, padding_size
+    ),
+    and default parameters matching 
+    torch.nn.functional.conv1d(
+        stride=1, dilation=1, padding_mode='zeros'
+    ).
+
+    Dimension constraints:
+    - input: [iC, iW] (input channel count, input width) 
+      / [N, iC, iW] (batch size, input channel count, input width)
+    - weight: [oC, iC/groups, wW] (output channel count, 
+      input channel count per group, convolution kernel width)
+    - bias (optional): [oC] (output channel bias)
+    - init/result: [oC, oW] (output channel count, output width) 
+      / [N, oC, oW] (batch size, output channel count, output width)
+
+    Configurable parameters (with default values):
+    - padding: Number of zero-padding elements on both sides, default=0
+    - groups: Number of groups for grouped convolution, default=1
+    }];
+  let arguments = (ins AnyShaped:$input,
+                      AnyShaped:$weight,
+                      Optional<AnyShaped>:$bias,
+                      AnyShaped:$init,
+                      I32Attr:$stride,
+                      I32Attr:$padding,
+                      I32Attr:$dilation,
+                      I32Attr:$groups);
+  let results = (outs AnyTensor:$result);
+  let regions = (region AnyRegion:$region);
+  let skipDefaultBuilders = 1;
+  let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "int32_t":$stride,
+                        "int32_t":$padding,
+                        "int32_t":$dilation,
+                        "int32_t":$groups)>];
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = structuredOpsBaseDecls#[{
+    // Declare functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable();
+    // Declare functions necessary for LinalgStructuredInterface.
+    SmallVector<utils::IteratorType> getIteratorTypesArray();
+    ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
+    getRegionBuilder();
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Conv2DOp
+//===----------------------------------------------------------------------===//
+
+def Conv2DOp
+    : HFusionStructuredBase_Op<
+          "conv2d", [AllElementTypesMatch<["input","weight","bias", "init"]>,
+                    ResultOnlyIfTensor,
+                    BiShengIRAggregatedOpInterface]>
+{
+
+  let description = [{
+    2D convolution operator with semantics aligned to 
+    triton.language.extra.cann.extension.conv2d(
+        input, weight, bias, groups, padding_size
+    ),
+    and default parameters matching 
+    torch.nn.functional.conv2d(
+        stride=1, dilation=1, padding_mode='zeros'
+    ).
+
+    Dimension constraints:
+    - input: [iC, iH, iW] (input channel count, input height, input width) 
+      / [N, iC, iH, iW] (batch size, input channel count, input height, input width)
+    - weight: [oC, iC/groups, wH, wW] (output channel count, 
+      input channel count per group, convolution kernel height, convolution kernel width)
+    - bias (optional): [oC] (output channel bias)
+    - init/result: [oC, oH, oW] (output channel count, output height, output width) 
+      / [N, oC, oH, oW] (batch size, output channel count, output height, output width)
+
+    Configurable parameters (with default values):
+    - stride: Convolution stride. Accepts an integer scalar or a 2-element
+      integer array [strideH, strideW], default=1. Currently only stride=1
+      is supported.
+    - padding: Number of zero-padding elements. Accepts an integer scalar or a
+      2-element integer array [paddingH, paddingW], default=0. A scalar applies
+      to both H and W directions.
+    - dilation: Kernel dilation. Accepts an integer scalar or a 2-element
+      integer array [dilationH, dilationW], default=1. Currently only
+      dilation=1 is supported.
+    - groups: Number of groups for grouped convolution, default=1
+    }];
+  let arguments = (ins AnyShaped:$input,
+                      AnyShaped:$weight,
+                      Optional<AnyShaped>:$bias,
+                      AnyShaped:$init,
+                      AnyAttr:$stride,
+                      AnyAttr:$padding,
+                      AnyAttr:$dilation,
+                      I32Attr:$groups);
+  let results = (outs AnyTensor:$result);
+  let regions = (region AnyRegion:$region);
+  let skipDefaultBuilders = 1;
+  let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "Attribute":$stride,
+                        "Attribute":$padding,
+                        "Attribute":$dilation,
+                        "int32_t":$groups)>,
+                  OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "int32_t":$stride,
+                        "int32_t":$padding,
+                        "int32_t":$dilation,
+                        "int32_t":$groups)>];
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = structuredOpsBaseDecls#[{
+    // Declare functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable();
+    // Declare functions necessary for LinalgStructuredInterface.
+    SmallVector<utils::IteratorType> getIteratorTypesArray();
+    ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
+    getRegionBuilder();
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Conv3DOp
+//===----------------------------------------------------------------------===//
+
+def Conv3DOp
+    : HFusionStructuredBase_Op<
+          "conv3d", [AllElementTypesMatch<["input","weight","bias", "init"]>,
+                    ResultOnlyIfTensor]>
+{
+
+  let description = [{
+    3D convolution operator with semantics aligned to
+    triton.language.extra.cann.extension.conv3d(
+        input, weight, bias, groups, padding_size
+    ),
+    and default parameters matching
+    torch.nn.functional.conv3d(
+        stride=1, dilation=1, padding_mode='zeros'
+    ).
+
+    Dimension constraints:
+    - input: [iC, iD, iH, iW] (input channel count, input depth, input height, input width)
+      / [N, iC, iD, iH, iW] (batch size, input channel count, input depth, input height, input width)
+    - weight: [oC, iC/groups, wD, wH, wW] (output channel count,
+      input channel count per group, convolution kernel depth, convolution kernel height, convolution kernel width)
+    - bias (optional): [oC] (output channel bias)
+    - init/result: [oC, oD, oH, oW] (output channel count, output depth, output height, output width)
+      / [N, oC, oD, oH, oW] (batch size, output channel count, output depth, output height, output width)
+
+    Configurable parameters (with default values):
+    - stride: Convolution stride. Accepts an integer scalar or a 3-element
+      integer array [strideD, strideH, strideW], default=1. Currently only
+      stride=1 is supported.
+    - padding: Number of zero-padding elements. Accepts an integer scalar or a
+      3-element integer array [paddingD, paddingH, paddingW], default=0. A
+      scalar applies to all D/H/W directions.
+    - dilation: Kernel dilation. Accepts an integer scalar or a 3-element
+      integer array [dilationD, dilationH, dilationW], default=1. Currently
+      only dilation=1 is supported.
+    - groups: Number of groups for grouped convolution, default=1
+    }];
+
+  let arguments = (ins AnyShaped:$input,
+                      AnyShaped:$weight,
+                      Optional<AnyShaped>:$bias,
+                      AnyShaped:$init,
+                      AnyAttr:$stride,
+                      AnyAttr:$padding,
+                      AnyAttr:$dilation,
+                      I32Attr:$groups);
+  let results = (outs AnyTensor:$result);
+  let regions = (region AnyRegion:$region);
+  let skipDefaultBuilders = 1;
+  let builders = [OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "Attribute":$stride,
+                        "Attribute":$padding,
+                        "Attribute":$dilation,
+                        "int32_t":$groups)>,
+                  OpBuilder<
+                    (ins "ValueRange":$inputs,
+                        "Value":$output,
+                        "int32_t":$stride,
+                        "int32_t":$padding,
+                        "int32_t":$dilation,
+                        "int32_t":$groups)>];
+  let hasVerifier = 1;
+  let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = structuredOpsBaseDecls#[{
+    // Declare functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable();
+    // Declare functions necessary for LinalgStructuredInterface.
+    SmallVector<utils::IteratorType> getIteratorTypesArray();
+    ArrayAttr getIndexingMaps();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>)>
+#else
+    static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
+                              mlir::ArrayRef<mlir::NamedAttribute>,
+                              mlir::function_ref<mlir::InFlightDiagnostic()>)>
+#endif
+    getRegionBuilder();
+
+  }];
+}
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONSTRUCTUREDOPS_TD

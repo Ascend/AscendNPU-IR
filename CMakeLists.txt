@@ -20,6 +20,20 @@ if(LLVM_MAJOR_VERSION_21_COMPATIBLE)
   add_definitions(-D__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
 endif()
 
+# Some compatibility changes for LLVM 21 are also needed on LLVM 22.
+# Therefore __LLVM_MAJOR_VERSION_21_COMPATIBLE__ would be enabled too.
+option(LLVM_MAJOR_VERSION_22_COMPATIBLE "NPUIR build with LLVM 22" OFF)
+if(LLVM_MAJOR_VERSION_22_COMPATIBLE)
+  message(STATUS "Building with LLVM 22 or later")
+  add_definitions(-D__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
+  add_definitions(-D__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+endif()
+
+option(LLVM_MAJOR_VERSION_20_COMPATIBLE "NPUIR build with LLVM 20" OFF)
+if(LLVM_MAJOR_VERSION_20_COMPATIBLE)
+  message(STATUS "Building with LLVM 20 or later")
+  add_definitions(-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
+endif()
 # -------------------------------------------------------------------------------
 # Handle Option
 # -------------------------------------------------------------------------------
@@ -36,6 +50,10 @@ if("torch-mlir" IN_LIST LLVM_EXTERNAL_PROJECTS)
 else()
   set(BISHENGIR_ENABLE_TORCH_CONVERSIONS 0)
 endif()
+
+# The BISHENGIR_BUILD_TEMPLATE option is used to build BiShengIR template.
+option(BISHENGIR_BUILD_TEMPLATE
+  "Build the BiShengIR template." OFF)
 
 # The BISHENGIR_BUILD_STANDALONE_IR_ONLY option is used to only build IR definitions.
 option(BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -184,6 +202,7 @@ configure_file(
 
 add_subdirectory(bishengir/tools/bishengir-hfusion-ods-gen)
 if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+  add_definitions(-DBISHENGIR_BUILD_STANDALONE_IR_ONLY)
   add_subdirectory(bishengir/include/bishengir/Interfaces)
   set(STANDALONE_IR_BUILD_DIALECT
   Annotation
@@ -203,6 +222,8 @@ if (BISHENGIR_BUILD_STANDALONE_IR_ONLY)
   # TODO: Math and Utils should be added in STANDALONE_IR_BUILD_DIALECT
   add_subdirectory(bishengir/include/bishengir/Dialect/MathExt)
   add_subdirectory(bishengir/lib/Dialect/HIVM/Utils)
+  add_subdirectory(bishengir/lib/Dialect/HACC/Transforms)
+  add_subdirectory(bishengir/lib/Dialect/HACC/Utils)
   add_subdirectory(bishengir/lib/Dialect/Math)
   add_subdirectory(bishengir/lib/Dialect/Utils)
 else()
@@ -214,6 +235,7 @@ add_subdirectory(bishengir/lib/CAPI)
 if(MLIR_INCLUDE_TESTS)
   add_definitions(-DMLIR_INCLUDE_TESTS)
   add_subdirectory(bishengir/test)
+  add_subdirectory(bishengir/unittests)
 endif()
 
 # TODO: Standalone build should support python binding

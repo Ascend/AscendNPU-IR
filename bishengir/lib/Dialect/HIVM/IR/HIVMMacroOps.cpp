@@ -25,10 +25,12 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -36,6 +38,7 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
+#include <array>
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -50,7 +53,9 @@ namespace {
 // Design for 1D bias specially
 constexpr size_t kDimOne = 1;
 constexpr size_t kDimTwo = 2;
+constexpr size_t kDimThree = 3;
 constexpr size_t kDimFour = 4;
+constexpr size_t kDimFive = 5;
 
 FailureOr<size_t> getRankFromShapedTypeValue(Value val) {
   auto valType = dyn_cast<ShapedType>(val.getType());
@@ -58,6 +63,65 @@ FailureOr<size_t> getRankFromShapedTypeValue(Value val) {
     return failure();
   }
   return valType.getRank();
+}
+
+//===----------------------------------------------------------------------===//
+// Utils for Conv Ops
+//===----------------------------------------------------------------------===//
+
+template <size_t Rank>
+FailureOr<std::array<int64_t, Rank>>
+getConvIntArrayAttr(Attribute attr, StringRef attrName,
+                    function_ref<InFlightDiagnostic()> emitError) {
+  auto emitInvalidAttr = [&]() {
+    emitError() << "`" << attrName << "` must be an integer scalar or a "
+                << Rank << "-element integer array";
+    return failure();
+  };
+
+  if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
+    int64_t value = intAttr.getInt();
+    std::array<int64_t, Rank> values;
+    values.fill(value);
+    return values;
+  }
+
+  if (auto denseAttr = dyn_cast<DenseI64ArrayAttr>(attr)) {
+    if (denseAttr.size() != Rank)
+      return emitInvalidAttr();
+    std::array<int64_t, Rank> values;
+    for (size_t idx = 0; idx < Rank; ++idx)
+      values[idx] = denseAttr[idx];
+    return values;
+  }
+
+  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+    if (arrayAttr.size() != Rank)
+      return emitInvalidAttr();
+
+    std::array<int64_t, Rank> values;
+    for (auto [idx, element] : llvm::enumerate(arrayAttr)) {
+      auto intAttr = dyn_cast<IntegerAttr>(element);
+      if (!intAttr)
+        return emitInvalidAttr();
+      values[idx] = intAttr.getInt();
+    }
+    return values;
+  }
+
+  return emitInvalidAttr();
+}
+
+FailureOr<std::array<int64_t, 2>>
+getConv2DIntPairAttr(Attribute attr, StringRef attrName,
+                     function_ref<InFlightDiagnostic()> emitError) {
+  return getConvIntArrayAttr<2>(attr, attrName, emitError);
+}
+
+FailureOr<std::array<int64_t, 3>>
+getConv3DIntTripleAttr(Attribute attr, StringRef attrName,
+                       function_ref<InFlightDiagnostic()> emitError) {
+  return getConvIntArrayAttr<3>(attr, attrName, emitError);
 }
 
 //===----------------------------------------------------------------------===//
@@ -188,9 +252,9 @@ bool isInitFirstLoopIterForLocalMmadOp(LocalMmadTy *localMatmulOp) {
         isConstantRhs = false;
       }
       auto forLowerConst = getConstantFromDefine(forOp.getLowerBound());
-      
+
       if (cmpConst.has_value() && forLowerConst.has_value()) {
-        return isConstantRhs 
+        return isConstantRhs
                ? (cmpConst.value() == forLowerConst.value()) && (cmpOp.getLhs() == forOp.getInductionVar())
                : (cmpConst.value() == forLowerConst.value()) && (cmpOp.getRhs() == forOp.getInductionVar());
       }
@@ -229,11 +293,11 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                      Value init_condition, Value real_m, Value real_k,
                      Value real_n, Value c, Value per_channel_bias,
                      UnitAttr a_transpose, UnitAttr b_transpose,
-                     UnitAttr enable_HF32) {
+                     UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ Value{}, per_channel_bias, a_transpose, b_transpose,
-        enable_HF32, /*unit_flag_mode*/ UnitFlagAttr{});
+        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
+        enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -406,7 +470,7 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
 /// %init = tensor.empty()
 /// %mat = for (%iterator = %init) {
 ///   %acc_mad = mmadL1 dst(%iterator)
-///   %vec_res = VectorOp %acc_mad 
+///   %vec_res = VectorOp %acc_mad
 //    yield %vec_res
 /// }
 
@@ -416,7 +480,13 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
 template <typename LocalMmadTy>
 MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   OpOperand &matmulOutput = localMatmulOp.getCMutable();
-
+  if constexpr(std::is_same_v<LocalMmadTy, hivm::BatchMmadL1Op>) {
+    auto defOp = matmulOutput.get().getDefiningOp();
+    if(defOp != nullptr &&  (dyn_cast_if_present<tensor::EmptyOp>(defOp) != nullptr)) {
+      return MatmulBiasMode::NoBias;
+    }
+    return MatmulBiasMode::ElementwiseAdd;
+  }
   // Here just traces forward to find satisfied first axis VBrcOp
   if (isPerChannelPattern(matmulOutput))
     return MatmulBiasMode::PerChannelAdd;
@@ -564,11 +634,11 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
                           Value init_condition, Value real_m, Value real_k,
                           Value real_n, Value c, Value per_channel_bias,
                           UnitAttr a_transpose, UnitAttr b_transpose,
-                          UnitAttr enable_HF32) {
+                          UnitAttr enable_HF32, UnitAttr enable_i4) {
   build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
-        /*unit_flag_cond*/ Value{}, per_channel_bias, a_transpose, b_transpose,
-        enable_HF32, /*unit_flag_mode*/ UnitFlagAttr{});
+        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
+        enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -603,8 +673,7 @@ MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
 }
 
 bool BatchMmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd ||
-      !isInitConstant(false)) {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
     // Type of C is not used for accumulating
     return false;
   }
@@ -722,4 +791,286 @@ LogicalResult MixGroupMatmulOp::verify() {
     return failure();
 
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Conv1DL1Op
+//===----------------------------------------------------------------------===//
+
+bool Conv1DL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<Conv1DL1Op>(this, cst);
+}
+
+void Conv1DL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getInputLayout() {
+  auto rank = getRankFromShapedTypeValue(getInput());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimThree:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getWeightLayout() {
+  auto rank = getRankFromShapedTypeValue(getWeight());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimThree:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getBiasLayout() {
+  return DataLayoutAttr::get(getContext(), DataLayout::ND);
+}
+
+FailureOr<DataLayoutAttr> Conv1DL1Op::getInitLayout() {
+  auto rank = getRankFromShapedTypeValue(getInit());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+
+int Conv1DL1Op::getNumSyncRelatedArgs() { return 6; }
+
+SmallVector<Value>
+Conv1DL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getInput());
+  retOperands.push_back(getWeight());
+  retOperands.push_back(getInitCondition());
+  if (getBias()) {
+    retOperands.push_back(getBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
+
+SmallVector<Value>
+Conv1DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
+  // inputs
+  SmallVector<Value> libParams =
+      getInputOperands(/*includeSyncRelatedArgs=*/false);
+
+  // outputs
+  libParams.push_back(getInit());
+
+  // conv1d attributes
+  Location loc = getLoc();
+  auto i64Ty = rewriter.getI64Type();
+  auto makeI64 = [&](int64_t val) -> Value {
+    return rewriter.create<arith::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(val));
+  };
+
+  libParams.push_back(makeI64(getGroups()));
+
+  int64_t pad = getPadding();
+  libParams.push_back(makeI64(0));   // padT
+  libParams.push_back(makeI64(0));   // padB
+  libParams.push_back(makeI64(pad)); // padL
+  libParams.push_back(makeI64(pad)); // padR
+
+  libParams.push_back(makeI64(1)); // strideH
+  libParams.push_back(makeI64(1)); // strideW
+
+  libParams.push_back(makeI64(1)); // dilationH
+  libParams.push_back(makeI64(1)); // dilationW
+
+  // additional sync arguments
+  if (getSyncRelatedArgs().empty()) {
+    auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+    getSyncRelatedArgsMutable().assign(ValueRange(
+        SmallVector<Value>(getNumSyncRelatedArgs(), negOneDefaultValue)));
+  }
+
+  auto syncRelatedArgs = getSyncRelatedArgs();
+  std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+            std::back_inserter(libParams));
+
+  return libParams;
+}
+
+//===----------------------------------------------------------------------===//
+// Conv2DL1Op
+//===----------------------------------------------------------------------===//
+
+LogicalResult Conv2DL1Op::verify() {
+  FailureOr<std::array<int64_t, 2>> padding = getConv2DIntPairAttr(
+      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
+  return failed(padding) ? failure() : success();
+}
+
+bool Conv2DL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<Conv2DL1Op>(this, cst);
+}
+
+void Conv2DL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getInputLayout() {
+  auto rank = getRankFromShapedTypeValue(getInput());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimThree:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getWeightLayout() {
+  auto rank = getRankFromShapedTypeValue(getWeight());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
+  case kDimFive:
+    return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getBiasLayout() {
+  return DataLayoutAttr::get(getContext(), DataLayout::ND);
+}
+
+FailureOr<DataLayoutAttr> Conv2DL1Op::getInitLayout() {
+  auto rank = getRankFromShapedTypeValue(getInit());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+
+int Conv2DL1Op::getNumSyncRelatedArgs() { return 6; }
+
+SmallVector<Value>
+Conv2DL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getInput());
+  retOperands.push_back(getWeight());
+  retOperands.push_back(getInitCondition());
+  if (getBias()) {
+    retOperands.push_back(getBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
+
+SmallVector<Value>
+Conv2DL1Op::getLibraryCallOperands(PatternRewriter &rewriter) {
+  // inputs
+  SmallVector<Value> libParams =
+      getInputOperands(/*includeSyncRelatedArgs=*/false);
+
+  // outputs
+  libParams.push_back(getInit());
+
+  // conv2d attributes
+  Location loc = getLoc();
+  auto i64Ty = rewriter.getI64Type();
+  auto makeI64 = [&](int64_t val) -> Value {
+    return rewriter.create<arith::ConstantOp>(
+        loc, i64Ty, rewriter.getI64IntegerAttr(val));
+  };
+
+  libParams.push_back(makeI64(getGroups()));
+
+  FailureOr<std::array<int64_t, 2>> padding =
+      getConv2DIntPairAttr(getPaddingAttr(), "padding",
+                           [&]() { return emitOpError(); });
+  assert(!failed(padding) && "Conv2DL1Op padding must be verified");
+  libParams.push_back(makeI64((*padding)[0])); // padT
+  libParams.push_back(makeI64((*padding)[0])); // padB
+  libParams.push_back(makeI64((*padding)[1])); // padL
+  libParams.push_back(makeI64((*padding)[1])); // padR
+
+  libParams.push_back(makeI64(1)); // strideH
+  libParams.push_back(makeI64(1)); // strideW
+
+  libParams.push_back(makeI64(1)); // dilationH
+  libParams.push_back(makeI64(1)); // dilationW
+
+  // additional sync arguments
+  if (getSyncRelatedArgs().empty()) {
+    auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+    getSyncRelatedArgsMutable().assign(ValueRange(
+        SmallVector<Value>(getNumSyncRelatedArgs(), negOneDefaultValue)));
+  }
+
+  auto syncRelatedArgs = getSyncRelatedArgs();
+  std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+            std::back_inserter(libParams));
+
+  return libParams;
+}
+//===----------------------------------------------------------------------===//
+// Conv3DL1Op
+//===----------------------------------------------------------------------===//
+
+LogicalResult Conv3DL1Op::verify() {
+  FailureOr<std::array<int64_t, 3>> padding = getConv3DIntTripleAttr(
+      getPaddingAttr(), "padding", [&]() { return emitOpError(); });
+  return failed(padding) ? failure() : success();
+}
+
+bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<Conv3DL1Op>(this, cst);
+}
+
+void Conv3DL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
 }

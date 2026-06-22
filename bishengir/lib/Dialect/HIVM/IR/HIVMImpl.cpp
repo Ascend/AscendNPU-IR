@@ -55,9 +55,20 @@ static Container filterNonIgnoredOps(const Container &container) {
 }
 
 int64_t getUsersNum(Value v) {
-  return filterNonIgnoredOps(
-             DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()))
-      .size();
+  auto users = filterNonIgnoredOps(
+      DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()));
+
+  // DebugOp and FixpipeOp used for DebugOp cannot be as a user.
+  for (auto it = users.begin(); it != users.end();) {
+    if (isa<DebugOp>(*it) ||
+        (isa<FixpipeOp>(*it) &&
+         dyn_cast<FixpipeOp>(*it)->getAttr(usedForDebugOp))) {
+      users.erase(it++);
+    } else {
+      ++it;
+    }
+  }
+  return users.size();
 }
 
 bool isLocalMatmulInit(Operation *op, Value v) {
@@ -74,6 +85,17 @@ bool traceSingleChainUser(
     Value v, const std::function<bool(Operation *, Value v)> &isMatchedOp) {
   auto users = filterNonIgnoredOps(
       DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()));
+
+  // DebugOp and FixpipeOp used for DebugOp cannot be as a user.
+  for (auto it = users.begin(); it != users.end();) {
+    if (isa<DebugOp>(*it) ||
+        (isa<FixpipeOp>(*it) &&
+         dyn_cast<FixpipeOp>(*it)->getAttr(usedForDebugOp))) {
+      users.erase(it++);
+    } else {
+      ++it;
+    }
+  }
   LDBG("Here computin for value " << v << " " << users.size());
   if (users.size() != 1)
     return false;
@@ -97,31 +119,42 @@ bool traceSingleChainUser(
     return traceSingleChainUser(insertSliceOp.getResult(), isMatchedOp);
   }
 
-  if (isa<scf::ForOp>(curOperation)) {
-    auto forOp = dyn_cast_if_present<scf::ForOp>(curOperation);
-    auto initArgs = forOp.getInitArgs();
+  if (isa<LoopLikeOpInterface>(curOperation)) {
+    auto loop = dyn_cast_if_present<LoopLikeOpInterface>(curOperation);
+    auto initArgs = loop.getInits();
     auto it = std::find(initArgs.begin(), initArgs.end(), v);
     int initIndx = it == initArgs.end() ? -1 : it - initArgs.begin();
     if (initIndx >= 0) {
-      bool hasTraceMmad = traceSingleChainUser(
-          forOp.getRegionIterArgs()[initIndx], isMatchedOp);
+      bool hasTraceMmad =
+          traceSingleChainUser(loop.getRegionIterArgs()[initIndx], isMatchedOp);
       if (getUsersNum(initArgs[initIndx]) == 1 && hasTraceMmad)
         return true;
       return false;
     }
   }
 
-  if (isa<scf::ForOp>(curOperation->getParentOp()) &&
+  if (isa<LoopLikeOpInterface>(curOperation->getParentOp()) &&
       isa<scf::YieldOp>(curOperation)) {
-    auto scfForOp =
-        dyn_cast_if_present<scf::ForOp>(curOperation->getParentOp());
+    auto loopLikeOp =
+        dyn_cast_if_present<LoopLikeOpInterface>(curOperation->getParentOp());
     SmallVector<Value> yieldValues =
-        llvm::to_vector(scfForOp.getYieldedValues());
+        llvm::to_vector(loopLikeOp.getYieldedValues());
     auto idx = findIdx(yieldValues, v);
     if (idx.has_value()) {
-      auto forResult = scfForOp.getLoopResults().value()[idx.value()];
+      auto forResult = loopLikeOp.getLoopResults().value()[idx.value()];
       return traceSingleChainUser(forResult, isMatchedOp);
     }
+  }
+
+  if (isa<scf::WhileOp>(curOperation->getParentOp()) &&
+      isa<scf::ConditionOp>(curOperation)) {
+    auto whileOp = cast<scf::WhileOp>(curOperation->getParentOp());
+    auto condOp = cast<scf::ConditionOp>(curOperation);
+    SmallVector<Value> argsValue = llvm::to_vector(condOp.getArgs());
+    auto idx = findIdx(argsValue, v);
+    if (idx.has_value())
+      return traceSingleChainUser(
+          whileOp.getAfter().front().getArgument(idx.value()), isMatchedOp);
   }
 
   if (isa<scf::IfOp>(curOperation->getParentOp()) &&
@@ -217,6 +250,23 @@ std::optional<TFuncCoreType> queryFuncCoreType(Operation *funcOp) {
   return std::nullopt;
 }
 
+// TODO: Refactor, expand getCoreType of copy op
+bool isCopytoL1(Operation *op) {
+  if (!isa<hivm::CopyOp>(op))
+    return false;
+
+  auto copy = dyn_cast<hivm::CopyOp>(op);
+  auto maybeAlloc = traceDefOp<memref::AllocOp>(copy.getDst());
+  if (!maybeAlloc.has_value())
+    return false;
+  auto allocOp = dyn_cast<memref::AllocOp>(maybeAlloc.value());
+  auto mayAddrSpace =
+      mlir::hivm::getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
+  if (mayAddrSpace.has_value())
+    return mayAddrSpace.value() == AddressSpace::L1;
+  return false;
+}
+
 FailureOr<TCoreType> getCoreType(Operation *op) {
   // coretype attribute has the highest priority.
   if (auto coreTypeAttr =
@@ -253,7 +303,7 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
     return kTFuncCoreType2TCoreType.find(funcCoreType.value())->second;
   }
   if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
-    if (auto attr = forOp->getAttr("ExtractedLoadOrStore")) {
+    if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;
@@ -372,7 +422,7 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
   } else if (isa<MemRefType>(src.getType())) {
     resultTypeRange = TypeRange({});
   } else {
-    llvm_unreachable("Cast src is neither in tensor type nor in memref type");
+    llvm::report_fatal_error("Cast src is neither in tensor type nor in memref type");
     return nullptr;
   }
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
@@ -439,7 +489,7 @@ static bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
   case IntegerType::Unsigned:
     return true;
   }
-  llvm_unreachable("Unexpected IntegerType::SignednessSemantics");
+  llvm::report_fatal_error("Unexpected IntegerType::SignednessSemantics");
 }
 
 std::string getTypeName(Location loc, Type type,
@@ -494,16 +544,17 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
     return failure();
   }
 
+
   // collect unalign info of src if cast src dims are not aligned.
   auto hwAlignBytes = maybeHwAlignBytes.value();
   auto elemTypeBytes = getElementTypeOrSelf(srcType).getIntOrFloatBitWidth() /
-                       mlir::utils::INTR_BITS_PER_BYTE;
-#ifndef NDEBUG
+                      mlir::utils::INTR_BITS_PER_BYTE;
+  #ifndef NDEBUG
   const int b16InByte = 2;
   const int b32InByte = 4;
   assert((elemTypeBytes == b16InByte || elemTypeBytes == b32InByte) &&
       "Src only supports b32/b16 in cast overflow.");
-#endif
+  #endif
   auto shape = cast<ShapedType>(src.getType()).getShape();
   int64_t numElemPerBlock = mlir::utils::INTR_BYTES_PER_BLOCK / elemTypeBytes;
   int64_t numElemPerBlockForDst = numElemPerBlock * bytesFactor;
@@ -526,7 +577,7 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
         numElemPerBlockForDst);
     } else {
       hwAlignBytes = static_cast<unsigned>(numElemPerBlockForDst *
-                                           numElemPerBlockForDst * bytesFactor);
+                                          numElemPerBlockForDst * bytesFactor);
     }
     if (ShapedType::isDynamic(shape[0]) ||
         (shape[0] * elemTypeBytes) % hwAlignBytes != 0) {
@@ -534,11 +585,11 @@ static LogicalResult getCastSrcUnAlignSizeInfo(
       operAlignInfoList->push_back(std::move(srcAlignInfo));
     }
   } else {
-#ifndef NDEBUG
+  #ifndef NDEBUG
     const int supportedCastAlignDimSize = 2;
     assert(castAlignDims.size() == supportedCastAlignDimSize &&
         "When cast rank >= 2, castAlignDims size must be equal to 2");
-#endif
+  #endif
     // Align the second axis in castAlignDims.
     if (ShapedType::isDynamic(shape[castAlignDims[1]]) ||
         (shape[castAlignDims[1]] * elemTypeBytes) % hwAlignBytes != 0) {
@@ -571,10 +622,11 @@ static LogicalResult getCastDstUnAlignSizeInfo(
     return failure();
   }
 
+
   // collect unalign info of dst if cast dst dims are not aligned
   auto hwAlignBytes = maybeHwAlignBytes.value();
   auto elemTypeBytes = getElementTypeOrSelf(dstType).getIntOrFloatBitWidth() /
-                       mlir::utils::INTR_BITS_PER_BYTE;
+                      mlir::utils::INTR_BITS_PER_BYTE;
   assert(elemTypeBytes == 1 && "Dst only supports b8 in cast overflow.");
   auto shape = cast<ShapedType>(dst.getType()).getShape();
   uint64_t numElemPerBlock = mlir::utils::INTR_BYTES_PER_BLOCK / elemTypeBytes;
@@ -625,6 +677,46 @@ static void collectOpAlignInfo(
       }
     }
   }
+}
+
+LogicalResult getUnAlignSizeInfo(
+    VCastOp op,
+    std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList) {
+  auto srcType = cast<ShapedType>(op.getSrc()[0].getType());
+  auto dstType = cast<ShapedType>(op.getDst()[0].getType());
+  auto srcElemTypeBytes =
+      getElementTypeOrSelf(srcType).getIntOrFloatBitWidth() /
+      mlir::utils::INTR_BITS_PER_BYTE;
+  auto dstElemTypeBytes =
+      getElementTypeOrSelf(dstType).getIntOrFloatBitWidth() /
+      mlir::utils::INTR_BITS_PER_BYTE;
+  auto bytesFactor = srcElemTypeBytes / dstElemTypeBytes;
+
+
+  // Get the cast axis that needs to be aligned.
+  SmallVector<int64_t> castAlignDims;
+  int64_t rank = srcType.getRank();
+  if (rank == 1) {
+    castAlignDims.push_back(0);
+  } else if (rank >= 2) {
+    castAlignDims.push_back(rank - 2);
+    castAlignDims.push_back(rank - 1);
+  } else {
+    llvm::report_fatal_error("cast op rank need lager than 0.");
+  }
+
+
+  // Get the unalign information of the axis corresponding to cast src.
+  if (failed(getCastSrcUnAlignSizeInfo(op.getSrc()[0], castAlignDims,
+                                      bytesFactor, operAlignInfoList))) {
+    return failure();
+  }
+  // Get the unalign information of the axis corresponding to cast dst.
+  if (failed(getCastDstUnAlignSizeInfo(op.getDst()[0], castAlignDims,
+                                      operAlignInfoList))) {
+    return failure();
+  }
+  return success();
 }
 
 LogicalResult getUnAlignSizeInfo(
@@ -699,44 +791,6 @@ LogicalResult getUnAlignSizeInfo(
 }
 
 LogicalResult getUnAlignSizeInfo(
-    VCastOp op,
-    std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList) {
-  auto srcType = cast<ShapedType>(op.getSrc()[0].getType());
-  auto dstType = cast<ShapedType>(op.getDst()[0].getType());
-  auto srcElemTypeBytes =
-      getElementTypeOrSelf(srcType).getIntOrFloatBitWidth() /
-      mlir::utils::INTR_BITS_PER_BYTE;
-  auto dstElemTypeBytes =
-      getElementTypeOrSelf(dstType).getIntOrFloatBitWidth() /
-      mlir::utils::INTR_BITS_PER_BYTE;
-  auto bytesFactor = srcElemTypeBytes / dstElemTypeBytes;
-
-  // Get the cast axis that needs to be aligned.
-  SmallVector<int64_t> castAlignDims;
-  int64_t rank = srcType.getRank();
-  if (rank == 1) {
-    castAlignDims.push_back(0);
-  } else if (rank >= 2) {
-    castAlignDims.push_back(rank - 2);
-    castAlignDims.push_back(rank - 1);
-  } else {
-    llvm_unreachable("cast op rank need lager than 0.");
-  }
-
-  // Get the unalign information of the axis corresponding to cast src.
-  if (failed(getCastSrcUnAlignSizeInfo(op.getSrc()[0], castAlignDims,
-                                       bytesFactor, operAlignInfoList))) {
-    return failure();
-  }
-  // Get the unalign information of the axis corresponding to cast dst.
-  if (failed(getCastDstUnAlignSizeInfo(op.getDst()[0], castAlignDims,
-                                       operAlignInfoList))) {
-    return failure();
-  }
-  return success();
-}
-
-LogicalResult getUnAlignSizeInfo(
     VSortOp op,
     std::vector<std::unique_ptr<OperAlignInfo>> *operAlignInfoList) {
   // get alignment bytes
@@ -774,7 +828,7 @@ uint32_t getHWAlignBytes(Attribute spaceAttr) {
   case hivm::AddressSpace::L1:
     return hivm::util::BL;
   default:
-    llvm_unreachable("Unsupported address space");
+    llvm::report_fatal_error("Unsupported address space");
   }
 }
 
@@ -796,7 +850,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
     return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
                                    targetMemScope);
   }
-  llvm_unreachable("Unexpected BaseMemRefType");
+  llvm::report_fatal_error("Unexpected BaseMemRefType");
   return type;
 }
 

@@ -34,15 +34,20 @@ namespace mlir {
 namespace hivm {
 namespace detail {
 
-DimensionAnalyzer::DimensionAnalyzer(Operation *op)
-    : DimensionAnalyzerBase(op) {}
+DimensionAnalyzer::DimensionAnalyzer(Operation *op, int64_t tilingSize)
+    : DimensionAnalyzerBase(op), tilingSize(tilingSize) {
+  assert(tilingSize > 0 && "Tiling Size must be positive integer");
+}
 
 LogicalResult DimensionAnalyzer::initialize() {
-  auto result = DimensionAnalyzerBase::initialize();
+  solverGroup_ = std::make_unique<mlir::detail::SimpleUnionFind>();
+  if (failed(DimensionAnalyzerBase::initialize()))
+    return failure();
   propagateConnection();
   spreadConnection();
-  markDimensionKind();
-  return result;
+  markDimensions();
+  transferDimMark();
+  return success();
 }
 
 void DimensionAnalyzer::initializeStructures() {

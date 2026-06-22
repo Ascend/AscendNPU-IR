@@ -17,13 +17,13 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/GraphSolver.h"
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "bishengir/Dialect/Utils/Util.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseSet.h"
@@ -32,44 +32,112 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 #include <algorithm>
 #include <climits>
+#include <cstdint>
 #include <memory>
+#include <numeric>
+#include <tuple>
 #include <utility>
 
-#define DEBUG_TYPE "hivm-graph-sync-solver"
+#define DEBUG_TYPE "hivm-gss-solver"
 
 using namespace mlir;
 using namespace hivm::syncsolver;
 
 // Reset per-pass bookkeeping to start fresh.
-void Solver::reset() {
+void Solver::reset(bool resetEventIdRanOutOpts) {
+  if (resetEventIdRanOutOpts) {
+    reusePairs.clear();
+    disabledMultiEventIdPairs.clear();
+    backwardSyncEventsAfterMerge.clear();
+    moveBackwardSyncPairsToOutmostLoop = false;
+    dontMoveBackwardSyncPairsToOutmostLoop = false;
+  }
   skipOcc.clear();
   syncedPairs.clear();
   processedOccPairs.clear();
   chosenConflictedPairs.clear();
-  scopeOpChosenConflicts.clear();
-  scopeOpPairChosenConflicts.clear();
   scopeOccChosenConflicts.clear();
   scopeOccPairChosenConflicts.clear();
   backwardSyncEvents.clear();
   replacedWithReusableSyncedPairs.clear();
+  reusedPairs.clear();
+  barrierAllPairs.clear();
+  insertedBarrierAllBefore.clear();
+  eventIdSolver.clear();
+  resetUnitFlag();
 }
 
-// Return true if two operations cannot be synchronized due to being in
-// different branches of an if (if-else mutual exclusive) under the same
-// condition.
-bool Solver::checkImpossibleOpPair(OperationBase *op1, OperationBase *op2) {
-  assert(op1 != nullptr && op2 != nullptr);
-  if (op1->op == op2->op) {
+void Solver::resetUnitFlag() {
+  for (auto *rwOp : unitFlagFeaturedOps) {
+    rwOp->mergedUnitFlagInfo.reset();
+    for (auto *occ : opAllOccurrences[rwOp]) {
+      occ->unitFlagInfo.reset();
+    }
+  }
+}
+
+// Helpers to find first/last iteration occurrences relative to parent
+// occurrences.
+Occurrence *Solver::getFirstIterOcc(Occurrence *occ, Occurrence *parOcc) {
+  assert(occ != nullptr && parOcc != nullptr);
+  if (parOcc->depth + 1 < occ->depth) {
+    auto *newParOcc = getFirstIterOcc(
+        occ->getNthParent(occ->depth - parOcc->depth - 1), parOcc);
+    return getFirstIterOcc(occ, newParOcc);
+  }
+  auto *it =
+      std::find_if(parOcc->childOccs.begin(), parOcc->childOccs.end(),
+                   [occ](Occurrence *curOcc) { return occ->op == curOcc->op; });
+  assert(it != parOcc->childOccs.end());
+  return *it;
+}
+
+Occurrence *Solver::getLastIterOcc(Occurrence *occ, Occurrence *parOcc) {
+  assert(occ != nullptr && parOcc != nullptr);
+  if (parOcc->depth + 1 < occ->depth) {
+    auto *newParOcc = getLastIterOcc(
+        occ->getNthParent(occ->depth - parOcc->depth - 1), parOcc);
+    return getLastIterOcc(occ, newParOcc);
+  }
+  auto it =
+      std::find_if(parOcc->childOccs.rbegin(), parOcc->childOccs.rend(),
+                   [occ](Occurrence *curOcc) { return occ->op == curOcc->op; });
+  assert(it != parOcc->childOccs.rend());
+  return *it;
+}
+
+bool Solver::checkSkipCrossCorePair(Occurrence *occ1, Occurrence *occ2) {
+  if (!options.isCrossCoreMode()) {
     return false;
   }
-  auto [parOp1, parOp2] = OperationBase::getLCAPair(op1, op2);
-  assert(parOp1 != nullptr && parOp2 != nullptr);
-  bool isIfElseSituation = parOp1->parentOp != nullptr &&
-                           parOp1->parentOp == parOp2->parentOp &&
-                           llvm::isa_and_present<Condition>(parOp1->parentOp);
-  return isIfElseSituation;
+  auto *rwOp1 = llvm::dyn_cast<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast<RWOperation>(occ2->op);
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  assert(rwOp1->coreType != hivm::TCoreType::CUBE_OR_VECTOR);
+  assert(rwOp2->coreType != hivm::TCoreType::CUBE_OR_VECTOR);
+  if (rwOp1->coreType == rwOp2->coreType) {
+    return true;
+  }
+  if (rwOp1->coreType == hivm::TCoreType::CUBE_AND_VECTOR) {
+    return true;
+  }
+  return false;
+}
+
+bool Solver::checkSkipParallelLoop(Occurrence *occ1, Occurrence *occ2) {
+  if (!isBackwardSync(occ1, occ2)) {
+    return false;
+  }
+  auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
+  auto *parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
+  assert(parentLCALoopOcc != nullptr);
+  auto *parentLCALoopOp = llvm::cast<Loop>(parentLCALoopOcc->op);
+  return parentLCALoopOp->isParallel;
 }
 
 // Check whether occurrences belong to impossible (if-else) pairing.
@@ -91,73 +159,82 @@ bool Solver::checkImpossibleOccPair(Occurrence *occ1, Occurrence *occ2) {
 bool Solver::checkAlreadySynced(Occurrence *occ1, Occurrence *occ2) {
   assert(occ1 != nullptr && occ2 != nullptr);
   assert(occ1->op != nullptr && occ2->op != nullptr);
+
   auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
   assert(parOcc1->parentOcc != nullptr && parOcc2->parentOcc != nullptr);
+
   auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
   assert(parOp1 != nullptr && parOp2 != nullptr);
   assert(parOp1->parentOp != nullptr && parOp2->parentOp != nullptr);
-  return OperationBase::getParentloop(parOcc1->op) !=
-         OperationBase::getParentloop(parOp1);
+
+  auto *parentLoop = OperationBase::getParentloop(parOcc1->op);
+  auto *curLoop = OperationBase::getParentloop(parOp1);
+  if (parentLoop == nullptr || parentLoop == curLoop) {
+    return false;
+  }
+
+  assert(curLoop != nullptr);
+  assert(parentLoop->isProperAncestor(curLoop));
+  while (curLoop != parentLoop) {
+    if (!llvm::cast<Loop>(curLoop)->isParallel) {
+      return true;
+    }
+    curLoop = OperationBase::getParentloop(curLoop);
+    assert(curLoop != nullptr);
+  }
+  return false;
 }
 
 // Unit-flag reuse check between two RWOperations.
-bool Solver::checkAlreadySyncedWithUnitFlag(RWOperation *rwOp1,
-                                            RWOperation *rwOp2) {
-  if (!enableUnitFlagFeature) {
+bool Solver::checkAlreadySyncedWithUnitFlag(Occurrence *occ1,
+                                            Occurrence *occ2) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  if (!options.enableUnitFlagFeature) {
     return false;
   }
-  assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!rwOp1->hasUnitFlagFeat || !rwOp2->hasUnitFlagFeat) {
+  if (!occ1->hasUnitFlagFeat || !occ2->hasUnitFlagFeat) {
     return false;
   }
-  RWOperation *curRwOp = rwOp1->linkedUnitFlagOpAsSet;
-  while (curRwOp != nullptr) {
-    if (curRwOp == rwOp2) {
+  llvm::DenseSet<Occurrence *> visited;
+  DEBUG_WITH_TYPE("gss-sync-solver-check-unit-flag", {
+    llvm::dbgs() << "unit-flag-step: " << occ1->syncIrIndex << ' '
+                 << occ1->op->str(0, false) << "\n";
+  });
+  Occurrence *curOcc = occ1->unitFlagInfo.linkedElementAsSet;
+  while (curOcc != nullptr) {
+    DEBUG_WITH_TYPE("gss-sync-solver-check-unit-flag", {
+      llvm::dbgs() << "unit-flag-step: " << curOcc->syncIrIndex << ' '
+                   << curOcc->op->str(0, false) << "\n";
+    });
+    auto [it, isInserted] = visited.insert(curOcc);
+    if (!isInserted) {
+      break;
+    }
+    if (curOcc == occ2) {
       return true;
     }
-    curRwOp = rwOp1->linkedUnitFlagOpAsSet;
+    curOcc = curOcc->unitFlagInfo.linkedElementAsSet;
   }
   return false;
 }
 
-// Check pointer-cast based buffer overlap conservatively when addresses are
-// known. Used for memref pointer-cast conflict detection.
-bool Solver::checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
-                                         hivm::PointerCastOp pointerCastOp2) {
-  auto spaceAttr1 = GetBufferSpaceAttr(pointerCastOp1.getResult());
-  auto spaceAttr2 = GetBufferSpaceAttr(pointerCastOp2.getResult());
-  if (!spaceAttr1.has_value() || !spaceAttr2.has_value()) {
-    return false;
-  }
-  auto memSpace1 = spaceAttr1.value().getAddressSpace();
-  auto memSpace2 = spaceAttr2.value().getAddressSpace();
-  if (memSpace1 != memSpace2) {
-    return false;
-  }
-  auto bufferSize1 = GetBufferBitSize(pointerCastOp1.getResult());
-  auto bufferSize2 = GetBufferBitSize(pointerCastOp2.getResult());
-  assert(bufferSize1.has_value() && bufferSize2.has_value());
-  for (auto addr1 : pointerCastOp1.getAddrs()) {
-    for (auto addr2 : pointerCastOp2.getAddrs()) {
-      auto constOp1 =
-          llvm::dyn_cast_if_present<arith::ConstantOp>(addr1.getDefiningOp());
-      auto constOp2 =
-          llvm::dyn_cast_if_present<arith::ConstantOp>(addr2.getDefiningOp());
-      if (constOp1 == nullptr || constOp2 == nullptr) {
-        return true;
+bool Solver::ignoreMemoryConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                  const MemInfo &memInfo1,
+                                  const MemInfo &memInfo2) {
+  if (options.isIntraCoreMode()) {
+    if (memInfo1.isWorkSpace && memInfo2.isWorkSpace) {
+      if (isa_and_present<hivm::FixpipeOp>(rwOp1->op) &&
+          isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+              rwOp2->op)) {
+        return false;
       }
-      int64_t baseAddr1 =
-          static_cast<int64_t>(cast<IntegerAttr>(constOp1.getValue()).getInt());
-      int64_t baseAddr2 =
-          static_cast<int64_t>(cast<IntegerAttr>(constOp2.getValue()).getInt());
-      int64_t baseAddrInBits1 = baseAddr1 * utils::kBitsToByte;
-      int64_t baseAddrInBits2 = baseAddr2 * utils::kBitsToByte;
-      int64_t l1 = baseAddrInBits1;
-      int64_t r1 = baseAddrInBits1 + bufferSize1.value();
-      int64_t l2 = baseAddrInBits2;
-      int64_t r2 = baseAddrInBits2 + bufferSize2.value();
-      // !(r2 <= l1 || r1 <= l2)
-      if (r2 > l1 && r1 > l2) {
+      if (isa_and_present<hivm::FixpipeOp>(rwOp2->op) &&
+          isa_and_present<hivm::LoadOp, hivm::ND2NZOp, hivm::CopyOp>(
+              rwOp1->op)) {
+        return false;
+      }
+      if (options.intraCoreIgnoreWorkSpaceFunctionArguments) {
         return true;
       }
     }
@@ -165,24 +242,27 @@ bool Solver::checkPointerCastMemConflict(hivm::PointerCastOp pointerCastOp1,
   return false;
 }
 
-// General RW memory-conflict check between lists of Values (handles
-// pointer-casts).
-bool Solver::checkRWMemoryConflicts(
-    const llvm::SmallVector<Value> &memValsList1,
-    const llvm::SmallVector<Value> &memValsList2) {
-  for (auto val1 : memValsList1) {
-    for (auto val2 : memValsList2) {
-      if (val1 == val2) {
+bool Solver::checkMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                                  const MemInfo &memInfo1,
+                                  const MemInfo &memInfo2,
+                                  std::optional<int64_t> lcmLen,
+                                  std::optional<int64_t> eventIdNum) {
+  if (ignoreMemoryConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
+    return false;
+  }
+  return MemInfo::checkConflict(memInfo1, memInfo2, lcmLen, eventIdNum);
+}
+
+bool Solver::checkMemInfoConflict(
+    RWOperation *rwOp1, RWOperation *rwOp2,
+    const llvm::SmallVector<MemInfo> &memInfoList1,
+    const llvm::SmallVector<MemInfo> &memInfoList2,
+    std::optional<int64_t> lcmLen, std::optional<int64_t> eventIdNum) {
+  for (auto &memInfo1 : memInfoList1) {
+    for (auto &memInfo2 : memInfoList2) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2, lcmLen,
+                               eventIdNum)) {
         return true;
-      }
-      if (auto pointerCastOp1 =
-              dyn_cast_if_present<hivm::PointerCastOp>(val1.getDefiningOp())) {
-        if (auto pointerCastOp2 = dyn_cast_if_present<hivm::PointerCastOp>(
-                val2.getDefiningOp())) {
-          if (checkPointerCastMemConflict(pointerCastOp1, pointerCastOp2)) {
-            return true;
-          }
-        }
       }
     }
   }
@@ -191,254 +271,406 @@ bool Solver::checkRWMemoryConflicts(
 
 // High-level wrapper computing pipe pairs that represent memory conflicts
 // between two RW ops.
-std::vector<std::pair<hivm::PIPE, hivm::PIPE>>
+llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>
 Solver::checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  auto [it, inserted] = checkMemoryConflictsMem.insert({{rwOp1, rwOp2}, {}});
-  if (!inserted) {
+  auto [it, isInserted] = checkMemoryConflictsMem.insert({{rwOp1, rwOp2}, {}});
+  if (!isInserted) {
     return it->second;
   }
-  std::vector<std::pair<hivm::PIPE, hivm::PIPE>> collectedConflicts;
-  if (checkRWMemoryConflicts(rwOp1->readMemVals, rwOp2->writeMemVals)) {
-    collectedConflicts.emplace_back(rwOp1->pipeRead, rwOp2->pipeWrite);
+  auto coreSrc = rwOp1->coreType;
+  auto coreDst = rwOp2->coreType;
+  if (options.isCrossCoreMode()) {
+    if (coreDst == hivm::TCoreType::CUBE_AND_VECTOR) {
+      coreDst = (coreSrc == hivm::TCoreType::VECTOR) ? hivm::TCoreType::CUBE
+                                                     : hivm::TCoreType::VECTOR;
+    }
+    assert(coreSrc == hivm::TCoreType::VECTOR ||
+           coreSrc == hivm::TCoreType::CUBE);
+    assert(coreDst == hivm::TCoreType::VECTOR ||
+           coreDst == hivm::TCoreType::CUBE);
   }
-  if (checkRWMemoryConflicts(rwOp1->writeMemVals, rwOp2->readMemVals)) {
-    collectedConflicts.emplace_back(rwOp1->pipeWrite, rwOp2->pipeRead);
+  llvm::SetVector<std::tuple<CorePipeInfo, CorePipeInfo>> collectedConflictsSet;
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                           rwOp2->writeMemInfo)) {
+    collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeRead),
+                                  CorePipeInfo(coreDst, rwOp2->pipeWrite)});
   }
-  if (checkRWMemoryConflicts(rwOp1->writeMemVals, rwOp2->writeMemVals)) {
-    collectedConflicts.emplace_back(rwOp1->pipeWrite, rwOp2->pipeWrite);
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->readMemInfo)) {
+    collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeWrite),
+                                  CorePipeInfo(coreDst, rwOp2->pipeRead)});
   }
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->writeMemInfo)) {
+    collectedConflictsSet.insert({CorePipeInfo(coreSrc, rwOp1->pipeWrite),
+                                  CorePipeInfo(coreDst, rwOp2->pipeWrite)});
+  }
+  llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>> collectedConflicts(
+      collectedConflictsSet.begin(), collectedConflictsSet.end());
   return it->second = collectedConflicts;
 }
 
-// Helpers that determine whether multi-buffer double-event-id is possible by
-// exploring pointer-cast patterns.
-std::optional<LoopLikeOpInterface>
-Solver::checkDoubleMultiBufferEventId(hivm::PointerCastOp pointerCastOp1,
-                                      hivm::PointerCastOp pointerCastOp2) {
-  auto loopPar1 = pointerCastOp1->getParentOfType<LoopLikeOpInterface>();
-  auto loopPar2 = pointerCastOp2->getParentOfType<LoopLikeOpInterface>();
-  if (loopPar1 == nullptr || loopPar2 == nullptr) {
-    return {};
-  }
-  if (loopPar1 != loopPar2) {
-    return {};
-  }
-  auto bufferSize1 = GetBufferBitSize(pointerCastOp1.getResult());
-  auto bufferSize2 = GetBufferBitSize(pointerCastOp2.getResult());
-  assert(bufferSize1.has_value() && bufferSize2.has_value());
-  auto addrs1 = pointerCastOp1.getAddrs();
-  auto addrs2 = pointerCastOp2.getAddrs();
-  auto sz1 = static_cast<int>(addrs1.size());
-  auto sz2 = static_cast<int>(addrs2.size());
-  assert(sz1 <= 2 && sz2 <= 2);
-  const int eventIdNum = 2;
-  int lcmLen = sz1 * sz2 / std::__gcd(sz1, sz2);
-  lcmLen = (lcmLen * eventIdNum) / std::__gcd(lcmLen, eventIdNum);
-  for (int i = 0; i < lcmLen; i++) {
-    for (int j = 0; j < lcmLen; j++) {
-      if (i % eventIdNum != j % eventIdNum) {
-        auto addr1 = addrs1[i % sz1];
-        auto addr2 = addrs2[j % sz2];
-        auto constOp1 =
-            llvm::dyn_cast_if_present<arith::ConstantOp>(addr1.getDefiningOp());
-        auto constOp2 =
-            llvm::dyn_cast_if_present<arith::ConstantOp>(addr2.getDefiningOp());
-        if (constOp1 == nullptr || constOp2 == nullptr) {
-          return {};
-        }
-        int64_t baseAddr1 = static_cast<int64_t>(
-            cast<IntegerAttr>(constOp1.getValue()).getInt());
-        int64_t baseAddr2 = static_cast<int64_t>(
-            cast<IntegerAttr>(constOp2.getValue()).getInt());
-        int64_t baseAddrInBits1 = baseAddr1 * utils::kBitsToByte;
-        int64_t baseAddrInBits2 = baseAddr2 * utils::kBitsToByte;
-        int64_t l1 = baseAddrInBits1;
-        int64_t r1 = baseAddrInBits1 + bufferSize1.value();
-        int64_t l2 = baseAddrInBits2;
-        int64_t r2 = baseAddrInBits2 + bufferSize2.value();
-        // !(r2 <= l1 || r1 <= l2)
-        if (r2 > l1 && r1 > l2) {
-          return {};
-        }
-      }
-    }
-  }
-  return loopPar1;
-}
-
-std::optional<LoopLikeOpInterface> Solver::checkDoubleMultiBufferEventId(
-    const llvm::SmallVector<Value> &memValsList1,
-    const llvm::SmallVector<Value> &memValsList2) {
-  LoopLikeOpInterface loopPar = nullptr;
-  for (auto &val1 : memValsList1) {
-    for (auto &val2 : memValsList2) {
-      if (auto pointerCastOp1 =
-              dyn_cast_if_present<hivm::PointerCastOp>(val1.getDefiningOp())) {
-        if (auto pointerCastOp2 = dyn_cast_if_present<hivm::PointerCastOp>(
-                val2.getDefiningOp())) {
-          if (!checkPointerCastMemConflict(pointerCastOp1, pointerCastOp2)) {
-            continue;
-          }
-          auto curLoopParOpt =
-              checkDoubleMultiBufferEventId(pointerCastOp1, pointerCastOp2);
-          if (!curLoopParOpt.has_value()) {
-            return {};
-          }
-          if (loopPar != nullptr && loopPar != curLoopParOpt.value()) {
-            return {};
-          }
-          loopPar = curLoopParOpt.value();
-        }
-      } else if (val1 == val2) {
-        return {};
-      }
-    }
-  }
-  if (loopPar == nullptr) {
-    return {};
-  }
-  return loopPar;
-}
-
-std::optional<LoopLikeOpInterface>
-Solver::checkDoubleMultiBufferEventId(RWOperation *rwOp1, RWOperation *rwOp2) {
+bool Solver::checkMemoryConflictBetweenOccExclusive(
+    Occurrence *occ1, Occurrence *occ2,
+    std::function<bool(RWOperation *)> filter) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  LoopLikeOpInterface loopPar = nullptr;
-  if (checkRWMemoryConflicts(rwOp1->readMemVals, rwOp2->writeMemVals)) {
-    auto curLoopParOpt =
-        checkDoubleMultiBufferEventId(rwOp1->readMemVals, rwOp2->writeMemVals);
-    if (!curLoopParOpt.has_value()) {
-      return {};
+  for (int i = occ1->syncIrEndIndex; i < occ2->syncIrIndex; i++) {
+    if (auto *otherOp = llvm::dyn_cast_if_present<RWOperation>(syncIr[i]->op)) {
+      if (!filter(otherOp)) {
+        continue;
+      }
+      if (!checkMemoryConflicts(rwOp1, otherOp).empty()) {
+        return true;
+      }
+      if (!checkMemoryConflicts(rwOp2, otherOp).empty()) {
+        return true;
+      }
     }
-    if (loopPar != nullptr && loopPar != curLoopParOpt.value()) {
-      return {};
-    }
-    loopPar = curLoopParOpt.value();
   }
-  if (checkRWMemoryConflicts(rwOp1->writeMemVals, rwOp2->readMemVals)) {
-    auto curLoopParOpt =
-        checkDoubleMultiBufferEventId(rwOp1->writeMemVals, rwOp2->readMemVals);
-    if (!curLoopParOpt.has_value()) {
-      return {};
+  return false;
+}
+
+std::optional<LoopLikeOpInterface>
+Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
+                           const llvm::SmallVector<MemInfo> &memInfoList1,
+                           const llvm::SmallVector<MemInfo> &memInfoList2) {
+  std::optional<LoopLikeOpInterface> multibufferLoop;
+  for (auto &memInfo1 : memInfoList1) {
+    for (auto &memInfo2 : memInfoList2) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
+        if (!memInfo1.pointerLikeInfo.has_value() ||
+            !memInfo2.pointerLikeInfo.has_value()) {
+          return {};
+        }
+        auto multibufferLoop1 = memInfo1.pointerLikeInfo->parentLoop;
+        auto multibufferLoop2 = memInfo2.pointerLikeInfo->parentLoop;
+        if (multibufferLoop1 == nullptr ||
+            multibufferLoop1 != multibufferLoop2) {
+          return {};
+        }
+        if (multibufferLoop.has_value() &&
+            multibufferLoop.value() != multibufferLoop1) {
+          return {};
+        }
+        multibufferLoop = multibufferLoop1;
+      }
     }
-    if (loopPar != nullptr && loopPar != curLoopParOpt.value()) {
-      return {};
-    }
-    loopPar = curLoopParOpt.value();
   }
-  if (checkRWMemoryConflicts(rwOp1->writeMemVals, rwOp2->writeMemVals)) {
-    auto curLoopParOpt =
-        checkDoubleMultiBufferEventId(rwOp1->writeMemVals, rwOp2->writeMemVals);
-    if (!curLoopParOpt.has_value()) {
+  return multibufferLoop;
+}
+
+std::optional<LoopLikeOpInterface>
+Solver::getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2) {
+  std::optional<LoopLikeOpInterface> multibufferLoop;
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                           rwOp2->writeMemInfo)) {
+    auto curMultibufferLoop = getMultiBufferLoop(
+        rwOp1, rwOp2, rwOp1->readMemInfo, rwOp2->writeMemInfo);
+    if (multibufferLoop.has_value() &&
+        multibufferLoop.value() != curMultibufferLoop) {
       return {};
     }
-    if (loopPar != nullptr && loopPar != curLoopParOpt.value()) {
-      return {};
-    }
-    loopPar = curLoopParOpt.value();
+    multibufferLoop = curMultibufferLoop;
   }
-  if (loopPar == nullptr) {
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->readMemInfo)) {
+    auto curMultibufferLoop = getMultiBufferLoop(
+        rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->readMemInfo);
+    if (multibufferLoop.has_value() &&
+        multibufferLoop.value() != curMultibufferLoop) {
+      return {};
+    }
+    multibufferLoop = curMultibufferLoop;
+  }
+  if (checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                           rwOp2->writeMemInfo)) {
+    auto curMultibufferLoop = getMultiBufferLoop(
+        rwOp1, rwOp2, rwOp1->writeMemInfo, rwOp2->writeMemInfo);
+    if (multibufferLoop.has_value() &&
+        multibufferLoop.value() != curMultibufferLoop) {
+      return {};
+    }
+    multibufferLoop = curMultibufferLoop;
+  }
+  return multibufferLoop;
+}
+
+std::optional<EventIdInfo>
+Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
+                                  RWOperation *rwOp1, RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+
+  int64_t lcm = 1;
+  int64_t minWriteSize = LONG_MAX;
+  LoopLikeOpInterface multibufferLoop{nullptr};
+
+  if (options.isTestMode()) {
+    auto *parLoop1 = occ1->getParentOfType<Loop>();
+    auto *parLoop2 = occ2->getParentOfType<Loop>();
+    if (!parLoop1 || parLoop1 != parLoop2) {
+      return {};
+    }
+    auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
+    if (!parLoop1->isProperAncestor(setOcc) ||
+        !parLoop1->isProperAncestor(waitOcc)) {
+      return {};
+    }
+  } else {
+    auto multibufferLoopOpt = getMultiBufferLoop(rwOp1, rwOp2);
+    if (!multibufferLoopOpt.has_value() || !multibufferLoopOpt.value()) {
+      return {};
+    }
+    multibufferLoop = multibufferLoopOpt.value();
+    assert(multibufferLoop != nullptr);
+    auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
+    if (!setOcc->getParentWithOp(multibufferLoop,
+                                 /*assertExists=*/false) ||
+        !waitOcc->getParentWithOp(multibufferLoop,
+                                  /*assertExists=*/false)) {
+      return {};
+    }
+  }
+
+  for (auto &memInfo1 : rwOp1->readMemInfo) {
+    for (auto &memInfo2 : rwOp2->writeMemInfo) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
+        int64_t curLcm = std::lcm(memInfo1.getSz(), memInfo2.getSz());
+        lcm = std::lcm(lcm, curLcm);
+        minWriteSize = std::min(minWriteSize, memInfo2.getSz());
+      }
+    }
+  }
+  for (auto &memInfo1 : rwOp1->writeMemInfo) {
+    for (auto &memInfo2 : rwOp2->readMemInfo) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
+        int64_t curLcm = std::lcm(memInfo1.getSz(), memInfo2.getSz());
+        lcm = std::lcm(lcm, curLcm);
+        minWriteSize = std::min(minWriteSize, memInfo1.getSz());
+      }
+    }
+  }
+  for (auto &memInfo1 : rwOp1->writeMemInfo) {
+    for (auto &memInfo2 : rwOp2->writeMemInfo) {
+      if (checkMemInfoConflict(rwOp1, rwOp2, memInfo1, memInfo2)) {
+        int64_t curLcm = std::lcm(memInfo1.getSz(), memInfo2.getSz());
+        lcm = std::lcm(lcm, curLcm);
+        minWriteSize = std::min(minWriteSize, memInfo1.getSz());
+        minWriteSize = std::min(minWriteSize, memInfo2.getSz());
+      }
+    }
+  }
+
+  // In case no write sizes were positive.
+  if (minWriteSize == LONG_MAX) {
+    minWriteSize = 1;
     return {};
   }
-  return loopPar;
+
+  int64_t eventIdNum = minWriteSize;
+  for (; eventIdNum >= 1; eventIdNum--) {
+    // llvm::dbgs() << "checking event-id-num: " << eventIdNum << '\n';
+    int64_t curLcm = std::lcm(lcm, eventIdNum);
+    bool okRW = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->readMemInfo,
+                                      rwOp2->writeMemInfo, curLcm, eventIdNum);
+    bool okWR = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                                      rwOp2->readMemInfo, curLcm, eventIdNum);
+    bool okWW = !checkMemInfoConflict(rwOp1, rwOp2, rwOp1->writeMemInfo,
+                                      rwOp2->writeMemInfo, curLcm, eventIdNum);
+    if (okRW && okWR && okWW) {
+      break;
+    }
+  }
+  if (eventIdNum <= 1) {
+    return {};
+  }
+  EventIdInfo eventIdInfo(eventIdNum);
+  eventIdInfo.multibufferLoop = multibufferLoop;
+  return eventIdInfo;
+}
+
+std::optional<EventIdInfo>
+Solver::checkMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
+                                    RWOperation *rwOp1, RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (!options.isTestMode()) {
+    if (!checkAllParentLoopsAreForLoops(rwOp1->op) ||
+        !checkAllParentLoopsAreForLoops(rwOp2->op)) {
+      return {};
+    }
+  }
+  if (auto eventIdInfo = getMultiBufferEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
+    return eventIdInfo;
+  }
+  return {};
+}
+
+std::optional<EventIdInfo>
+Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
+                                            RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (!options.isCrossCoreMode()) {
+    return {};
+  }
+  auto *parentLoop1 = rwOp1->getParentOfType<Loop>();
+  auto *parentLoop2 = rwOp2->getParentOfType<Loop>();
+  while (parentLoop1 != nullptr && !parentLoop1->multibufferUnrollNum) {
+    parentLoop1 = parentLoop1->getParentOfType<Loop>();
+  }
+  while (parentLoop2 != nullptr && !parentLoop2->multibufferUnrollNum) {
+    parentLoop2 = parentLoop2->getParentOfType<Loop>();
+  }
+  if (!parentLoop1 || !parentLoop2) {
+    return {};
+  }
+  if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
+    if (!parCond1->isProperAncestor(rwOp2)) {
+      return {};
+    }
+  }
+  if (auto *parCond2 = rwOp2->getParentOfType<Condition>()) {
+    if (!parCond2->isProperAncestor(rwOp1)) {
+      return {};
+    }
+  }
+  assert(parentLoop1->multibufferUnrollNum.value() ==
+         parentLoop2->multibufferUnrollNum.value());
+  EventIdInfo eventIdInfo;
+  eventIdInfo.eventIdNum = parentLoop1->multibufferUnrollNum.value();
+  eventIdInfo.multibufferUnrollLoop1 =
+      cast<LoopLikeOpInterface>(parentLoop1->op);
+  eventIdInfo.multibufferUnrollLoop2 =
+      cast<LoopLikeOpInterface>(parentLoop2->op);
+  return eventIdInfo;
+}
+
+std::optional<EventIdInfo>
+Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
+                                             RWOperation *rwOp2) {
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  if (!options.isCrossCoreMode()) {
+    return {};
+  }
+  auto *parentScope1 = rwOp1->getParentOfType<Scope>();
+  auto *parentScope2 = rwOp2->getParentOfType<Scope>();
+  while (parentScope1 != nullptr && !parentScope1->maxPreloadNum.has_value()) {
+    parentScope1 = parentScope1->getParentOfType<Scope>();
+  }
+  while (parentScope2 != nullptr && !parentScope2->maxPreloadNum.has_value()) {
+    parentScope2 = parentScope2->getParentOfType<Scope>();
+  }
+  if (!parentScope1 || !parentScope2) {
+    return {};
+  }
+  if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
+    if (!parCond1->isProperAncestor(rwOp2)) {
+      return {};
+    }
+  }
+  if (auto *parCond2 = rwOp2->getParentOfType<Condition>()) {
+    if (!parCond2->isProperAncestor(rwOp1)) {
+      return {};
+    }
+  }
+
+  auto *parentLoop1 = parentScope1->getParentOfType<Loop>();
+  auto *parentLoop2 = parentScope2->getParentOfType<Loop>();
+  if (parentLoop1 == nullptr || parentLoop1 != parentLoop2) {
+    return {};
+  }
+
+  assert(parentScope1->preloadNum.has_value());
+  assert(parentScope2->preloadNum.has_value());
+  assert(parentScope1->maxPreloadNum.value() ==
+         parentScope2->maxPreloadNum.value());
+
+  auto parentForLoop = llvm::dyn_cast_if_present<scf::ForOp>(parentLoop1->op);
+  assert(parentForLoop != nullptr);
+
+  EventIdInfo eventIdInfo;
+  eventIdInfo.eventIdNum = parentScope1->maxPreloadNum.value();
+  eventIdInfo.preloadOffset1 = parentScope1->maxPreloadNum.value() -
+                               parentScope1->preloadNum.value() - 1;
+  eventIdInfo.preloadOffset2 = parentScope2->maxPreloadNum.value() -
+                               parentScope2->preloadNum.value() - 1;
+  eventIdInfo.multibufferLoop = parentForLoop;
+  return eventIdInfo;
 }
 
 // Determine required event id count and optional multibuffer loop parent for
 // occurrences.
-std::pair<uint32_t, LoopLikeOpInterface>
-Solver::getEventIdNum(Occurrence *occ1, Occurrence *occ2, hivm::PIPE setPipe,
-                      hivm::PIPE waitPipe) {
+EventIdInfo Solver::getEventIdInfo(Occurrence *occ1, Occurrence *occ2,
+                                   RWOperation *rwOp1, RWOperation *rwOp2,
+                                   CorePipeInfo corePipeSrc,
+                                   CorePipeInfo corePipeDst) {
   assert(occ1 != nullptr && occ2 != nullptr);
-  if (barrierAllPairs.contains({setPipe, waitPipe})) {
-    return {1, nullptr};
-  }
-  assert(occ1->op != nullptr && occ2->op != nullptr);
-  if (!isBackwardSync(occ1, occ2)) {
-    return {1, nullptr};
-  }
-  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
-  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  assert(!checkMemoryConflicts(rwOp1, rwOp2).empty());
-  auto loopParOpt = checkDoubleMultiBufferEventId(rwOp1, rwOp2);
-  if (!loopParOpt.has_value()) {
-    return {1, nullptr};
+  EventIdInfo singleEventId(1);
+  if (!isBackwardSync(occ1, occ2)) {
+    return singleEventId;
   }
-  auto loopPar = loopParOpt.value();
-  assert(loopPar != nullptr);
-  auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
-  if (isa<Ghost>(setOcc->op) || isa<Ghost>(waitOcc->op)) {
-    return {1, nullptr};
+  if (auto eventIdInfo = checkCVMultiBufferUnrollEventIdInfo(rwOp1, rwOp2)) {
+    return eventIdInfo.value();
   }
-  assert(setOcc->op->op != nullptr);
-  assert(waitOcc->op->op != nullptr);
-  if (!loopPar->isProperAncestor(setOcc->op->op)) {
-    return {1, nullptr};
+  if (auto eventIdInfo = checkCVMultiBufferPreloadEventIdInfo(rwOp1, rwOp2)) {
+    return eventIdInfo.value();
   }
-  if (!loopPar->isProperAncestor(waitOcc->op->op)) {
-    return {1, nullptr};
+  if (auto eventIdInfo =
+          checkMultiBufferEventIdInfo(occ1, occ2, rwOp1, rwOp2)) {
+    return eventIdInfo.value();
   }
-  if (!checkAllLoopParentsAreForLoops(loopPar->getParentOp())) {
-    return {1, nullptr};
-  }
-  return {2, loopPar};
+  return singleEventId;
 }
 
 // Graph-based check to determine if adding a sync between occ1 and occ2 would
 // block progress. Uses GraphSolver (Dijkstra) to estimate minimal reachable
 // index.
-bool Solver::checkGraphConflict(Occurrence *occ1, Occurrence *occ2,
-                                hivm::PIPE startPipe, hivm::PIPE endPipe,
-                                uint32_t eventIdNum) {
+bool Solver::checkGraphConflict(
+    Occurrence *occ1, Occurrence *occ2, CorePipeInfo corePipeSrc,
+    CorePipeInfo corePipeDst, EventIdInfo eventIdInfo,
+    std::optional<int> startIndex, std::optional<int> endIndex,
+    const llvm::SmallVector<ConflictPair *> &extraConflictPairs,
+    const llvm::SmallVector<ConflictPair *> &ignoreConflictPairs) {
   assert(occ1 != nullptr && occ2 != nullptr);
-  GraphSolver graphSolver;
+  if (!startIndex.has_value()) {
+    startIndex = occ1->endIndex;
+  }
+  if (!endIndex.has_value()) {
+    endIndex = occ2->startIndex;
+  }
+  GraphSolver graphSolver(options);
   llvm::DenseSet<ConflictPair *> visited;
-
   auto handleConflictPair = [&](ConflictPair *conflictPair) {
     if (conflictPair->couldNotRun) {
       return;
     }
-    if (conflictPair->replacedWithUnitFlag) {
-      if (conflictPair->setPipe == startPipe ||
-          conflictPair->waitPipe == endPipe) {
+    if (conflictPair->endIndex < startIndex.value() ||
+        conflictPair->startIndex > endIndex.value()) {
+      return;
+    }
+    if (conflictPair->isInnerBackward) {
+      if ((eventIdInfo.eventIdNum * eventIdInfo.eventIdRepeatNum) <
+          (conflictPair->eventIdInfo.eventIdNum *
+           conflictPair->eventIdInfo.eventIdRepeatNum)) {
         return;
       }
     }
-    if (conflictPair->isInnerBackward &&
-        conflictPair->eventIds.size() > eventIdNum) {
+    if (llvm::find(ignoreConflictPairs, conflictPair) !=
+        ignoreConflictPairs.end()) {
       return;
     }
-    auto [it, inserted] = visited.insert(conflictPair);
-    if (!inserted) {
+    auto [it, isInserted] = visited.insert(conflictPair);
+    if (!isInserted) {
       return;
     }
+    DEBUG_WITH_TYPE("gss-sync-solver-check-graph-conflict", {
+      llvm::dbgs() << "add-conflict-pair: " << conflictPair->str() << '\n';
+    });
     graphSolver.addConflictPair(conflictPair);
   };
-
-  for (auto *parOp : occ1->op->getAllParents()) {
-    if (scopeOpChosenConflicts.contains(parOp)) {
-      for (auto *conflictPair : scopeOpChosenConflicts[parOp]) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto *parOp : occ2->op->getAllParents()) {
-    if (scopeOpChosenConflicts.contains(parOp)) {
-      for (auto *conflictPair : scopeOpChosenConflicts[parOp]) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
-  for (auto &[scopeOpPair, chosenConflicts] : scopeOpPairChosenConflicts) {
-    auto [scopeOp1, scopeOp2] = scopeOpPair;
-    if (scopeOp1->isProperAncestor(occ1->op) &&
-        scopeOp2->isProperAncestor(occ2->op)) {
-      for (auto *conflictPair : chosenConflicts) {
-        handleConflictPair(conflictPair);
-      }
-    }
-  }
 
   for (auto *parOcc : occ1->getAllParents()) {
     if (scopeOccChosenConflicts.contains(parOcc)) {
@@ -463,7 +695,6 @@ bool Solver::checkGraphConflict(Occurrence *occ1, Occurrence *occ2,
       }
     }
   }
-
   for (auto *parOcc : occ1->getAllParents()) {
     if (persistentScopeOccChosenConflicts.contains(parOcc)) {
       for (auto *conflictPair : persistentScopeOccChosenConflicts[parOcc]) {
@@ -478,124 +709,186 @@ bool Solver::checkGraphConflict(Occurrence *occ1, Occurrence *occ2,
       }
     }
   }
-  for (auto &[scopeOccPair, chosenConflicts] :
-       persistentScopeOccPairChosenConflicts) {
-    auto [scopeOcc1, scopeOcc2] = scopeOccPair;
-    if (scopeOcc1->isProperAncestor(occ1) &&
-        scopeOcc2->isProperAncestor(occ2)) {
-      for (auto *conflictPair : chosenConflicts) {
-        handleConflictPair(conflictPair);
+  for (auto *conflictPair : extraConflictPairs) {
+    handleConflictPair(conflictPair);
+  }
+  std::optional<int> mnDistance;
+  if (options.enableUnitFlagFeature) {
+    mnDistance = graphSolver.runDijkstraUnitFlagEnabled(
+        occ1, occ2, corePipeSrc, corePipeDst, startIndex.value(),
+        endIndex.value());
+  } else {
+    mnDistance = graphSolver.runDijkstra(corePipeSrc, corePipeDst,
+                                         startIndex.value(), endIndex.value());
+  }
+  return !mnDistance.has_value() || mnDistance.value() > endIndex.value();
+}
+
+bool Solver::checkSyncOpsConflicts(ConflictPair *conflictPair1,
+                                   ConflictPair *conflictPair2) {
+  if (conflictPair1->isBarrier() || conflictPair2->isBarrier()) {
+    return false;
+  }
+  if (conflictPair1->startIndex > conflictPair2->startIndex) {
+    std::swap(conflictPair1, conflictPair2);
+  }
+  if (conflictPair1->startIndex >= conflictPair2->startIndex ||
+      conflictPair1->endIndex >= conflictPair2->endIndex) {
+    return true;
+  }
+  bool result = false;
+  if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo) {
+    auto corePipeSrc = conflictPair1->setCorePipeInfo;
+    auto corePipeDst = conflictPair2->setCorePipeInfo;
+    Occurrence *occ1 = conflictPair1->setOcc;
+    Occurrence *occ2 = conflictPair2->setOcc;
+    auto startIndex = conflictPair1->startIndex + 1;
+    auto endIndex = conflictPair2->startIndex;
+    conflictPair1->startIndex += 1;
+    assert(occ1 != nullptr && occ2 != nullptr);
+    result = result ||
+             checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                conflictPair1->eventIdInfo, startIndex,
+                                endIndex, {conflictPair1}, {conflictPair2});
+    conflictPair1->startIndex -= 1;
+  }
+  if (conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
+    auto corePipeSrc = conflictPair1->waitCorePipeInfo;
+    auto corePipeDst = conflictPair2->waitCorePipeInfo;
+    Occurrence *occ1 = conflictPair1->waitOcc;
+    Occurrence *occ2 = conflictPair2->waitOcc;
+    auto startIndex = conflictPair1->endIndex;
+    auto endIndex = conflictPair2->endIndex - 1;
+    conflictPair2->endIndex -= 1;
+    assert(occ1 != nullptr && occ2 != nullptr);
+    result = result ||
+             checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                                conflictPair1->eventIdInfo, startIndex,
+                                endIndex, {conflictPair1}, {conflictPair2});
+    conflictPair2->endIndex += 1;
+  }
+  DEBUG_WITH_TYPE("gss-check-sync-ops-conflicts", {
+    if (result) {
+      llvm::dbgs() << "sync-ops-conflict-found: " << "\n";
+      llvm::dbgs() << " " << conflictPair1->str() << '\n';
+      llvm::dbgs() << " " << conflictPair2->str() << '\n';
+    }
+  });
+  return result;
+}
+
+// Check whether two ConflictPair entries conflict in pipe and time ranges.
+bool Solver::checkIntersect(ConflictPair *conflictPair1,
+                            ConflictPair *conflictPair2) {
+  assert(conflictPair1 != nullptr && conflictPair2 != nullptr);
+  if (conflictPair1 == conflictPair2) {
+    return false;
+  }
+  if (conflictPair1->isBarrier() || conflictPair2->isBarrier()) {
+    return false;
+  }
+  if (conflictPair1->dontCheckForConflict ||
+      conflictPair2->dontCheckForConflict) {
+    return false;
+  }
+  if (options.isCrossCoreMode()) {
+    return checkSyncOpsConflicts(conflictPair1, conflictPair2);
+  }
+  if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo ||
+      conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
+    return false;
+  }
+  for (auto [l1, r1] : getRanges(conflictPair1)) {
+    for (auto [l2, r2] : getRanges(conflictPair2)) {
+      if (checkRangesIntersect(l1, r1 + 1, l2, r2 + 1)) {
+        return true;
       }
     }
   }
-
-  auto mnDistance = graphSolver.runDijkstra(startPipe, endPipe, occ1->endIndex,
-                                            occ2->startIndex);
-  return !mnDistance.has_value() || mnDistance.value() > occ2->startIndex;
+  return false;
 }
 
 // Obtain available event ids while accounting for already chosen conflicts.
-SmallVector<hivm::EVENT>
-Solver::getAvailableEventIds(ConflictPair *conflictPair) {
+std::vector<ConflictPair *>
+Solver::getIntersectingConflictPairs(ConflictPair *conflictPair) {
   assert(conflictPair != nullptr);
   if (conflictPair->isBarrier()) {
     return {};
   }
-  llvm::DenseSet<hivm::EVENT> visitedEventIds;
+  if (conflictPair->dontCheckForConflict) {
+    return {};
+  }
+  std::vector<ConflictPair *> intersectingConflictPairs;
   for (auto &curConflictPair : chosenConflictedPairs) {
     if (checkIntersect(conflictPair, curConflictPair.get())) {
-      for (auto eventId : curConflictPair->eventIds) {
-        visitedEventIds.insert(eventId);
-      }
+      intersectingConflictPairs.push_back(curConflictPair.get());
     }
   }
   for (auto &curConflictPair : persistentChosenConflictedPairs) {
     if (checkIntersect(conflictPair, curConflictPair.get())) {
-      for (auto eventId : curConflictPair->eventIds) {
-        visitedEventIds.insert(eventId);
-      }
+      intersectingConflictPairs.push_back(curConflictPair.get());
     }
   }
-  SmallVector<hivm::EVENT> availableEventIds;
-  for (auto eventId :
-       getHWAvailableEventIds(conflictPair->setPipe, conflictPair->waitPipe)) {
-    if (!visitedEventIds.contains(eventId)) {
-      availableEventIds.push_back(eventId);
-    }
-  }
-  return availableEventIds;
+  return intersectingConflictPairs;
 }
 
 // Processed-pair tracking helpers.
 bool Solver::checkVisited(Occurrence *occ1, Occurrence *occ2) {
-  auto [it, inserted] = processedOccPairs.insert(std::make_pair(occ1, occ2));
-  return !inserted;
+  auto [it, isInserted] = processedOccPairs.insert(std::make_pair(occ1, occ2));
+  return !isInserted;
 }
 
-bool Solver::checkSkippable(Occurrence *occ) { return skipOcc.contains(occ); }
+bool Solver::checkSkippable(bool reverseOrder, Occurrence *occ) {
+  return skipOcc[reverseOrder].contains(occ);
+}
 
 // Synced-pair memoization helpers.
-std::optional<llvm::SmallVector<hivm::EVENT>>
-Solver::getOldEventIdIfExists(OperationBase *scopeOp, Occurrence *occ1,
-                              Occurrence *occ2, ConflictPair *conflictPair) {
-  auto it = syncedPairs.find({scopeOp, occ1->op, occ2->op,
-                              conflictPair->setPipe, conflictPair->waitPipe});
-  if (it == syncedPairs.end()) {
+EventIdNode *Solver::getOldEventIdNodeIfExists(ConflictPair *conflictPair) {
+  assert(conflictPair != nullptr);
+  auto oldConflictPairs = getMemorizedSyncedPairs(conflictPair);
+  if (oldConflictPairs.empty()) {
     return {};
   }
-  return it->second->eventIds;
+  ConflictPair *oldConflictPair = *oldConflictPairs.begin();
+  assert(oldConflictPair != nullptr && oldConflictPair->eventIdNode != nullptr);
+  return oldConflictPair->eventIdNode;
 }
 
-void Solver::memorizeSyncedPair(OperationBase *scopeOp,
-                                ConflictPair *conflictPair) {
-  assert(scopeOp != nullptr && conflictPair != nullptr);
-  syncedPairs[{scopeOp, conflictPair->op1, conflictPair->op2,
-               conflictPair->setPipe, conflictPair->waitPipe}] = conflictPair;
+llvm::DenseSet<ConflictPair *>
+Solver::getMemorizedSyncedPairs(ConflictPair *conflictPair) {
+  auto key = std::make_tuple(
+      conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+      conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
+  return syncedPairs[key];
 }
 
-void Solver::forgetSyncedPair(OperationBase *scopeOp,
-                              ConflictPair *conflictPair) {
-  assert(scopeOp != nullptr && conflictPair != nullptr);
-  syncedPairs[{scopeOp, conflictPair->op1, conflictPair->op2,
-               conflictPair->setPipe, conflictPair->waitPipe}] = conflictPair;
+void Solver::memorizeSyncedPair(ConflictPair *conflictPair) {
+  auto key = std::make_tuple(
+      conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+      conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
+  syncedPairs[key].insert(conflictPair);
+#ifndef NDEBUG
+  for (auto *oldConflictPair : syncedPairs[key]) {
+    assert(oldConflictPair->eventIdNode == conflictPair->eventIdNode);
+  }
+#endif
 }
 
-void Solver::memorizeReusedSyncedPair(OperationBase *scopeOp,
-                                      ConflictPair *conflictPair,
+void Solver::forgetSyncedPair(ConflictPair *conflictPair) {
+  assert(conflictPair != nullptr);
+  auto key = std::make_tuple(
+      conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+      conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo);
+  syncedPairs[key].erase(conflictPair);
+}
+
+void Solver::memorizeReusedSyncedPair(ConflictPair *conflictPair,
                                       ConflictPair *reusedConflictPair) {
-  assert(scopeOp != nullptr && conflictPair != nullptr);
+  assert(conflictPair != nullptr);
   replacedWithReusableSyncedPairs[{
-      scopeOp, conflictPair->op1, conflictPair->op2, conflictPair->setPipe,
-      conflictPair->waitPipe}] = reusedConflictPair;
-}
-
-// Select an available event id (or multiple) with optional reversed priority.
-llvm::SmallVector<hivm::EVENT>
-Solver::getAnyAvailableEventId(ConflictPair *conflictPair, uint32_t count,
-                               bool reversedPriority) {
-  assert(conflictPair != nullptr);
-  auto availableEventIds = getAvailableEventIds(conflictPair);
-  if (reversedPriority) {
-    std::reverse(availableEventIds.begin(), availableEventIds.end());
-  }
-  if (availableEventIds.size() > count) {
-    availableEventIds.resize(count);
-  }
-  return availableEventIds;
-}
-
-llvm::SmallVector<hivm::EVENT> Solver::getAnyAvailableMultiBufferEventIds(
-    ConflictPair *conflictPair, uint32_t count, bool reversedPriority) {
-  assert(conflictPair != nullptr);
-  auto availableEventIds = getAvailableEventIds(conflictPair);
-  assert(conflictPair->isInnerBackward);
-  if (reversedPriority) {
-    std::reverse(availableEventIds.begin(), availableEventIds.end());
-  }
-  if (availableEventIds.size() > count) {
-    availableEventIds.resize(count);
-  }
-  return availableEventIds;
+      conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+      conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo}] =
+      reusedConflictPair;
 }
 
 bool Solver::skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2) {
@@ -612,148 +905,395 @@ bool Solver::skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2) {
   return false;
 }
 
-std::pair<Occurrence *, Occurrence *>
+std::optional<std::pair<Occurrence *, Occurrence *>>
 Solver::checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair, Occurrence *occ1,
                                    Occurrence *occ2, Occurrence *parOcc1,
                                    Occurrence *parOcc2) {
-  if (occ1->parentOcc != nullptr && occ1->parentOcc->parentOcc == parOcc1 &&
+  if (!options.decomposeMmadl1Op) {
+    return {};
+  }
+  if (occ1->parentOcc != nullptr && occ1->parentOcc->parentOcc != nullptr &&
+      occ1->parentOcc->parentOcc->parentOcc == parOcc1 &&
       llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
           occ1->op) &&
-      llvm::isa_and_present<syncsolver::MmadL1LoopOp>(parOcc1->op)) {
+      llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
+          occ1->parentOcc->parentOcc->op)) {
     conflictPair->setOnLastIterOnly = true;
     return std::make_pair(occ1, parOcc2);
   }
   if (!conflictPair->isInnerBackward && occ2->parentOcc != nullptr &&
-      occ2->parentOcc->parentOcc == parOcc2 &&
+      occ2->parentOcc->parentOcc != nullptr &&
+      occ2->parentOcc->parentOcc->parentOcc == parOcc2 &&
       llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
           occ2->op) &&
-      llvm::isa_and_present<syncsolver::MmadL1LoopOp>(parOcc2->op)) {
+      llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
+          occ2->parentOcc->parentOcc->op)) {
     conflictPair->waitOnFirstIterOnly = true;
     return std::make_pair(parOcc1, occ2);
   }
-  return std::make_pair(parOcc1, parOcc2);
+  return {};
 }
 
-std::optional<std::pair<hivm::UNIT_FLAG, hivm::UNIT_FLAG>>
-Solver::checkUnitFlagPatterns(ConflictPair *conflictPair, Occurrence *occ1,
-                              Occurrence *occ2, Occurrence *parentLCALoopOcc) {
-  if (!enableUnitFlagFeature) {
+std::optional<UnitFlagInfo> Solver::checkUnitFlagPatterns(Occurrence *occ1,
+                                                          Occurrence *occ2) {
+  if (!options.enableUnitFlagFeature) {
     return {};
   }
-  if (conflictPair->isBarrier()) {
-    return {};
-  }
-  auto *rwOp1 = dyn_cast<RWOperation>(occ1->op);
-  auto *rwOp2 = dyn_cast<RWOperation>(occ2->op);
+  assert(occ1 != nullptr && occ1->op != nullptr);
+  assert(occ2 != nullptr && occ2->op != nullptr);
+  auto *rwOp1 = llvm::dyn_cast<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast<RWOperation>(occ2->op);
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
   if (!rwOp1->hasUnitFlagFeat || !rwOp2->hasUnitFlagFeat) {
     return {};
   }
-  if (rwOp1->unitFlagModeAsSet != UNIT_FLAG::DISABLED ||
-      rwOp2->unitFlagModeAsWait != UNIT_FLAG::DISABLED) {
+  if (!occ1->unitFlagInfo.disabledAsSet() ||
+      !occ2->unitFlagInfo.disabledAsWait()) {
     return {};
   }
-  if (conflictPair->isInnerBackward) {
+  if (checkMemoryConflictBetweenOccExclusive(occ1, occ2, [](RWOperation *rwOp) {
+        return isa_and_present<hivm::MmadL1Op, hivm::FixpipeOp>(rwOp->op);
+      })) {
+    return {};
+  }
+  scf::ForOp backwardSyncLoop;
+  if (isBackwardSync(occ1, occ2)) {
+    auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+    assert(parOcc1 != nullptr && parOcc2 != nullptr);
+    auto *parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
     assert(parentLCALoopOcc != nullptr);
-    assert(parentLCALoopOcc->op != nullptr);
     assert(rwOp1->op != nullptr && rwOp2->op != nullptr);
+    if (!(backwardSyncLoop =
+              llvm::dyn_cast<scf::ForOp>(parentLCALoopOcc->op->op))) {
+      return {};
+    }
     if (rwOp1->op->getParentOp() != parentLCALoopOcc->op->op ||
         rwOp2->op->getParentOp() != parentLCALoopOcc->op->op) {
       return {};
     }
   }
-  if (auto unitFlagMode = checkMmadl1FixpipeUnitFlagPattern(
-          rwOp1, rwOp2, conflictPair->setPipe, conflictPair->waitPipe)) {
-    return unitFlagMode;
+  if (auto unitFlagInfo = checkUnitFlagSameBlockPattern(
+          occ1->op->op, occ2->op->op, rwOp1->mergedUnitFlagInfo,
+          rwOp2->mergedUnitFlagInfo, backwardSyncLoop)) {
+    return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
-  if (auto unitFlagMode = checkMmadl1FixpipeSingleForLoopUnitFlagPattern(
-          rwOp1, rwOp2, conflictPair->setPipe, conflictPair->waitPipe,
-          /*rw1IsFrontOcc=*/true)) {
-    return unitFlagMode;
-  }
-  if (rwOp1->unitFlagModeAsWait == UNIT_FLAG::ENABLED_WITH_UPDATE ||
-      rwOp1->unitFlagModeAsWait == UNIT_FLAG::ENABLED_ONLY_FIRST_ITER ||
-      rwOp1->unitFlagModeAsWait ==
-          UNIT_FLAG::ENABLED_ONLY_FIRST_AND_LAST_ITERS) {
-    // fixpipe expect unit-flag to be enabled in a mmadl1 operation before it,
-    // so by this condition, we are making sure to not link a fixpipe
-    // operation with an operation after it if it was not linked with an
-    // operation before it
-    if (auto unitFlagMode = checkMmadl1FixpipeUnitFlagPattern(
-            rwOp2, rwOp1, conflictPair->waitPipe, conflictPair->setPipe)) {
-      return unitFlagMode;
-    }
-    if (auto unitFlagMode = checkMmadl1FixpipeSingleForLoopUnitFlagPattern(
-            rwOp2, rwOp1, conflictPair->waitPipe, conflictPair->setPipe,
-            /*rw1IsFrontOcc=*/false)) {
-      return unitFlagMode;
-    }
+  if (auto unitFlagInfo = checkUnitFlagOpLoopOpPattern(
+          occ1->op->op, occ2->op->op, rwOp1->mergedUnitFlagInfo,
+          rwOp2->mergedUnitFlagInfo, backwardSyncLoop)) {
+    return std::optional<UnitFlagInfo>(unitFlagInfo);
   }
   return {};
 }
 
-std::optional<std::pair<hivm::UNIT_FLAG, hivm::UNIT_FLAG>>
-Solver::checkMmadl1FixpipeUnitFlagPattern(RWOperation *rwOp1,
-                                          RWOperation *rwOp2, hivm::PIPE pipe1,
-                                          hivm::PIPE pipe2) {
-  auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(rwOp1->op);
-  auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(rwOp2->op);
-  if (fixpipeOp == nullptr || mmadl1Op == nullptr) {
-    return {};
-  }
-  if (pipe1 != PIPE::PIPE_M || pipe2 != PIPE::PIPE_FIX) {
-    return {};
-  }
-  if (fixpipeOp.getSrc() != mmadl1Op.getC()) {
-    return {};
-  }
-  if (fixpipeOp->getParentRegion() != mmadl1Op->getParentRegion()) {
-    return {};
-  }
-  return std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                        UNIT_FLAG::ENABLED_WITH_UPDATE);
+Occurrence *Solver::getBeforePlaceHolderOcc(Occurrence *occ) {
+  assert(occ != nullptr);
+  assert(llvm::isa_and_present<Scope>(occ->op));
+  int index = occ->syncIrIndex - 1;
+  assert(0 <= index && index < static_cast<int>(syncIr.size()));
+  auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
+  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
+  assert(placeHolderOp != nullptr);
+  assert(placeHolderOp->beforeOp == occ->op);
+#endif
+  return placeHolderOcc;
 }
 
-std::optional<std::pair<hivm::UNIT_FLAG, hivm::UNIT_FLAG>>
-Solver::checkMmadl1FixpipeSingleForLoopUnitFlagPattern(RWOperation *rwOp1,
-                                                       RWOperation *rwOp2,
-                                                       hivm::PIPE pipe1,
-                                                       hivm::PIPE pipe2,
-                                                       bool op1IsFrontOcc) {
-  auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(rwOp1->op);
-  auto fixpipeOp = dyn_cast<hivm::FixpipeOp>(rwOp2->op);
-  if (!fixpipeOp || !mmadl1Op) {
-    return {};
+Occurrence *Solver::getAfterPlaceHolderOcc(Occurrence *occ) {
+  assert(occ != nullptr);
+  assert(llvm::isa_and_present<Scope>(occ->op));
+  int index = occ->syncIrEndIndex;
+  assert(0 <= index && index < static_cast<int>(syncIr.size()));
+  auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
+  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
+  assert(placeHolderOp != nullptr);
+  assert(placeHolderOp->afterOp == occ->op);
+#endif
+  return placeHolderOcc;
+}
+
+Occurrence *Solver::getScopeBeginPlaceHolderOcc(Occurrence *occ) {
+  assert(occ != nullptr);
+  assert(llvm::isa_and_present<Scope>(occ->op));
+  int index = occ->syncIrIndex + 1;
+  assert(0 <= index && index < static_cast<int>(syncIr.size()));
+  auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
+  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
+  assert(placeHolderOp != nullptr);
+  assert(placeHolderOp->scopeBegin == occ->op);
+#endif
+  return placeHolderOcc;
+}
+
+Occurrence *Solver::getScopeEndPlaceHolderOcc(Occurrence *occ) {
+  assert(occ != nullptr);
+  assert(llvm::isa_and_present<Scope>(occ->op));
+  int index = occ->syncIrEndIndex - 1;
+  assert(0 <= index && index < static_cast<int>(syncIr.size()));
+  auto *placeHolderOcc = syncIr[index].get();
+#ifndef NDEBUG
+  auto *placeHolderOp = llvm::dyn_cast<PlaceHolder>(placeHolderOcc->op);
+  assert(placeHolderOp != nullptr);
+  assert(placeHolderOp->scopeEnd == occ->op);
+#endif
+  return placeHolderOcc;
+}
+
+std::pair<Occurrence *, Occurrence *>
+Solver::getSetWaitLCAPairOcc(Occurrence *occ1, Occurrence *occ2) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+
+  auto [grandParOcc1, grandParOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  assert(grandParOcc1 != nullptr && grandParOcc2 != nullptr);
+  assert(grandParOcc1->parentOcc != nullptr &&
+         grandParOcc2->parentOcc != nullptr);
+
+  auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
+  assert(parOp1 != nullptr && parOp2 != nullptr);
+  assert(parOp1->parentOp != nullptr && parOp2->parentOp != nullptr);
+  assert(parOp1->parentOp == parOp2->parentOp);
+
+  auto *parOcc1 = occ1->getParentWithOp(parOp1->parentOp);
+  auto *parOcc2 = occ2->getParentWithOp(parOp2->parentOp);
+  assert(parOcc1 != nullptr && parOcc2 != nullptr);
+  assert(parOcc1 != occ1 && parOcc2 != occ2);
+
+  auto *setOcc = occ1->getNthParent(occ1->depth - parOcc1->depth - 1);
+  auto *waitOcc = occ2->getNthParent(occ2->depth - parOcc2->depth - 1);
+  assert(setOcc != nullptr && waitOcc != nullptr);
+  assert(parOcc1->isProperAncestor(setOcc));
+  assert(parOcc2->isProperAncestor(waitOcc));
+
+  auto *parLoop = Occurrence::getParentloop(setOcc);
+  while (parLoop != nullptr && grandParOcc1->isProperAncestor(parLoop)) {
+    setOcc = parLoop;
+    waitOcc = Occurrence::getParentloop(waitOcc);
+    parLoop = Occurrence::getParentloop(setOcc);
   }
-  if (pipe1 != PIPE::PIPE_M || pipe2 != PIPE::PIPE_FIX) {
-    return {};
-  }
-  if (fixpipeOp.getSrc() != mmadl1Op.getC()) {
-    return {};
-  }
-  if (fixpipeOp->getParentRegion() == mmadl1Op->getParentRegion()) {
-    return {};
-  }
-  auto mmadl1ForOp = dyn_cast<scf::ForOp>(mmadl1Op->getParentOp());
-  auto fixpipeOpForOp = dyn_cast<scf::ForOp>(fixpipeOp->getParentOp());
-  if (mmadl1ForOp && fixpipeOpForOp) {
-    if (mmadl1ForOp->getParentRegion() == fixpipeOpForOp->getParentRegion()) {
-      return std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                            UNIT_FLAG::ENABLED_ONLY_FIRST_ITER);
+  return std::make_pair(setOcc, waitOcc);
+}
+
+std::pair<Occurrence *, Occurrence *>
+Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
+  // - get setOcc waitOcc where:
+  // setOcc->op->parent = waitOcc->op->parent = lca(occ1, occ2)->op
+  auto [setOcc, waitOcc] = getSetWaitLCAPairOcc(occ1, occ2);
+
+  // - check if it's the case of while loop:
+  // while{
+  //  before{
+  //    occ1
+  //  }
+  //  setOcc;
+  //  waitOcc;
+  //  after{
+  //    occ2
+  //  }
+  // }
+  // - and fix it to be:
+  // while{
+  //  before{
+  //    occ1
+  //    setOcc;
+  //    ...
+  //    waitOcc;
+  //    placeHolder
+  //  }
+  //  after{
+  //    occ2
+  //  }
+  // }
+  if (setOcc->op != waitOcc->op) {
+    if (auto *parLoopOp =
+            llvm::dyn_cast_if_present<Loop>(setOcc->parentOcc->op)) {
+      if (parLoopOp->body.size() > 1 && !isa<PlaceHolder>(waitOcc->op)) {
+        auto *placeHolderOcc = getScopeEndPlaceHolderOcc(setOcc);
+        std::tie(setOcc, waitOcc) = getSetWaitLCAPairOcc(occ1, placeHolderOcc);
+      }
     }
-  } else if (mmadl1ForOp) {
-    if (mmadl1ForOp->getParentRegion() == fixpipeOp->getParentRegion()) {
-      return op1IsFrontOcc ? std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                                            UNIT_FLAG::ENABLED_WITH_UPDATE)
-                           : std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                                            UNIT_FLAG::ENABLED_ONLY_FIRST_ITER);
+  }
+
+  // - check if it's the case of:
+  // loop(iter-1){
+  //   condition{
+  //     true-scope{}
+  //     setOcc()
+  //     false-scope{}
+  //   }
+  // }
+  // loop(iter-2){
+  //   condition{
+  //     true-scope{}
+  //     waitOcc()
+  //     false-scope{}
+  //   }
+  // }
+  // - and fix it to be:
+  // loop(iter-1){
+  //   condition{
+  //     true-scope{}
+  //     false-scope{}
+  //   }
+  //   setOcc()
+  // }
+  // loop(iter-2){
+  //   waitOcc()
+  //   condition{
+  //     true-scope{}
+  //     false-scope{}
+  //   }
+  // }
+  if (isBackwardSync(occ1, occ2)) {
+    if (setOcc->parentOcc != nullptr) {
+      if (llvm::isa_and_present<Condition>(setOcc->parentOcc->op)) {
+        setOcc = setOcc->parentOcc;
+      }
     }
-  } else if (fixpipeOpForOp) {
-    if (fixpipeOpForOp->getParentRegion() == mmadl1Op->getParentRegion()) {
-      return op1IsFrontOcc ? std::make_pair(UNIT_FLAG::ENABLED_WITH_UPDATE,
-                                            UNIT_FLAG::ENABLED_ONLY_FIRST_ITER)
-                           : std::make_pair(UNIT_FLAG::ENABLED_ONLY_LAST_ITER,
-                                            UNIT_FLAG::ENABLED_WITH_UPDATE);
+    if (waitOcc->parentOcc != nullptr) {
+      if (llvm::isa_and_present<Condition>(waitOcc->parentOcc->op)) {
+        waitOcc = waitOcc->parentOcc;
+      }
+    }
+  }
+
+  // - for the case of cv-pipelining:
+  // loop(){
+  //   op1
+  // } {unroll=x}
+  // setOcc
+  // waitOcc
+  // loop(){
+  //   op2
+  // } {unroll=x}
+  // - and fix it to be:
+  // loop(){
+  //   op1
+  //   setOcc
+  // } {unroll=x}
+  // loop(){
+  //   waitOcc
+  //   op2
+  // } {unroll=x}
+  if (options.isCrossCoreMode()) {
+    assert(setOcc->op != nullptr && waitOcc->op != nullptr);
+    auto *forOp1 = llvm::dyn_cast_if_present<Loop>(setOcc->op);
+    auto *forOp2 = llvm::dyn_cast_if_present<Loop>(waitOcc->op);
+    if (forOp1 != nullptr && forOp2 != nullptr) {
+      if (forOp1->multibufferUnrollNum && forOp2->multibufferUnrollNum) {
+        assert(forOp1->multibufferUnrollNum == forOp2->multibufferUnrollNum);
+        setOcc = occ1->getNthParent(occ1->depth - setOcc->depth - 2);
+        waitOcc = occ2->getNthParent(occ2->depth - waitOcc->depth - 2);
+      }
+    }
+  }
+
+  // - for the case of cv-pipelining:
+  // scope(){
+  //   op1
+  // } {preload=x}
+  // setOcc
+  // waitOcc
+  // scope(){
+  //   op2
+  // } {preload=x}
+  // - and fix it to be:
+  // scope(){
+  //   op1
+  //   setOcc
+  // } {preload=x}
+  // scope(){
+  //   waitOcc
+  //   op2
+  // } {preload=x}
+  if (options.isCrossCoreMode()) {
+    assert(setOcc->op != nullptr && waitOcc->op != nullptr);
+    auto *scopeOp1 = llvm::dyn_cast_if_present<Scope>(setOcc->op);
+    auto *scopeOp2 = llvm::dyn_cast_if_present<Scope>(waitOcc->op);
+    if (scopeOp1 != nullptr && scopeOp2 != nullptr) {
+      if (scopeOp1->maxPreloadNum && scopeOp2->maxPreloadNum) {
+        assert(scopeOp1->maxPreloadNum == scopeOp2->maxPreloadNum);
+        setOcc = occ1->getNthParent(occ1->depth - setOcc->depth - 2);
+        waitOcc = occ2->getNthParent(occ2->depth - waitOcc->depth - 2);
+      }
+    }
+  }
+
+  // - check if it's the case of:
+  // {
+  //   op1
+  //   setOcc
+  //   ...
+  //   waitOcc
+  //   loop(){}
+  //   setOcc
+  //   ...
+  //   waitOcc
+  //   op2
+  // }
+  // - and fix it to be:
+  // {
+  //   op1
+  //   setOcc
+  //   ...
+  //   waitOcc
+  //   placeHolder
+  //   loop(){}
+  //   placeHolder
+  //   setOcc
+  //   ...
+  //   waitOcc
+  //   op2
+  // }
+  if (llvm::isa_and_present<Loop>(setOcc->op)) {
+    setOcc = getAfterPlaceHolderOcc(setOcc);
+  }
+  if (llvm::isa_and_present<Loop>(waitOcc->op)) {
+    waitOcc = getBeforePlaceHolderOcc(waitOcc);
+  }
+
+  return std::make_pair(setOcc, waitOcc);
+}
+
+std::optional<std::pair<Occurrence *, Occurrence *>>
+Solver::getFunctionBlockSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  auto *parFunctionBlock1 = occ1->getParentOfType<FunctionBlock>();
+  auto *parFunctionBlock2 = occ2->getParentOfType<FunctionBlock>();
+  if (parFunctionBlock1 == parFunctionBlock2) {
+    return {};
+  }
+  auto *placeHolderOcc = getScopeBeginPlaceHolderOcc(parFunctionBlock2);
+  return std::make_pair(placeHolderOcc, occ2);
+}
+
+std::optional<std::pair<Occurrence *, Occurrence *>>
+Solver::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  if (options.isCrossCoreMode() && isBackwardSync(occ1, occ2)) {
+    return {};
+  }
+  if (auto *unlikelyParCondOcc1 =
+          Occurrence::getUnlikelyParentCondition(occ1)) {
+    if (!unlikelyParCondOcc1->isProperAncestor(occ2)) {
+      auto *parentLoopOcc = Occurrence::getParentloop(unlikelyParCondOcc1);
+      if (parentLoopOcc == nullptr || parentLoopOcc->isProperAncestor(occ2)) {
+        auto *placeHolderOcc = getScopeEndPlaceHolderOcc(
+            occ1->getNthParent(occ1->depth - unlikelyParCondOcc1->depth - 1));
+        return std::make_pair(occ1, placeHolderOcc);
+      }
+    }
+  }
+  if (auto *unlikelyParCondOcc2 =
+          Occurrence::getUnlikelyParentCondition(occ2)) {
+    if (!unlikelyParCondOcc2->isProperAncestor(occ1)) {
+      auto *parentLoopOcc = Occurrence::getParentloop(unlikelyParCondOcc2);
+      if (parentLoopOcc == nullptr || parentLoopOcc->isProperAncestor(occ1)) {
+        auto *placeHolderOcc = getScopeBeginPlaceHolderOcc(
+            occ2->getNthParent(occ2->depth - unlikelyParCondOcc2->depth - 1));
+        return std::make_pair(placeHolderOcc, occ2);
+      }
     }
   }
   return {};
@@ -761,71 +1301,49 @@ Solver::checkMmadl1FixpipeSingleForLoopUnitFlagPattern(RWOperation *rwOp1,
 
 std::pair<Occurrence *, Occurrence *> Solver::getSetWaitOcc(Occurrence *occ1,
                                                             Occurrence *occ2) {
-  assert(occ1 != nullptr && occ2 != nullptr);
-  auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
-  assert(parOp1 != nullptr && parOp2 != nullptr);
-  assert(parOp1->parentOp != nullptr && parOp2->parentOp != nullptr);
-  assert(parOp1->parentOp == parOp2->parentOp);
-  auto *parOcc1 = occ1->getParentWithOp(parOp1->parentOp);
-  auto *parOcc2 = occ2->getParentWithOp(parOp2->parentOp);
-  assert(parOcc1 != nullptr && parOcc2 != nullptr);
-  assert(parOcc1 != occ1 && parOcc2 != occ2);
-  auto *setOcc = occ1->getNthParent(occ1->depth - parOcc1->depth - 1);
-  auto *waitOcc = occ2->getNthParent(occ2->depth - parOcc2->depth - 1);
-  // if (setOcc->op != waitOcc->op) {
-  //   // llvm::dbgs() << setOcc->op->str(0, false) << '\n';
-  //   // llvm::dbgs() << waitOcc->op->str(0, false) << '\n';
-  //   if (isa<Condition>(setOcc->parentOcc->op) && !isa<Ghost>(waitOcc->op)) {
-  //     assert(setOcc->syncIrEndIndex != -1);
-  //     assert(setOcc->syncIrEndIndex < static_cast<int>(syncIr.size()));
-  //     auto *ghostOcc = syncIr[setOcc->syncIrEndIndex - 1].get();
-  //     assert(isa<Ghost>(ghostOcc->op));
-  //     return getSetWaitOcc(occ1, ghostOcc);
-  //   }
-  // }
-  assert(setOcc != nullptr && waitOcc != nullptr &&
-         setOcc->parentOcc != nullptr && waitOcc->parentOcc != nullptr);
-  if (setOcc->op != waitOcc->op) {
-    if (auto *parLoopOp =
-            llvm::dyn_cast_if_present<Loop>(setOcc->parentOcc->op)) {
-      if (parLoopOp->body.size() > 1 && !isa<Ghost>(waitOcc->op)) {
-        assert(setOcc->syncIrEndIndex != -1);
-        assert(setOcc->syncIrEndIndex < static_cast<int>(syncIr.size()));
-        auto *ghostOcc = syncIr[setOcc->syncIrEndIndex - 1].get();
-        assert(isa<Ghost>(ghostOcc->op));
-        return getSetWaitOcc(occ1, ghostOcc);
-      }
-    }
+  if (auto functionBlockOpt = getFunctionBlockSetWaitOcc(occ1, occ2)) {
+    std::tie(occ1, occ2) = functionBlockOpt.value();
   }
-
-  if (setOcc->parentOcc != nullptr) {
-    if (llvm::isa_and_present<Condition>(setOcc->parentOcc->op)) {
-      setOcc = setOcc->parentOcc;
-    }
+  if (auto unlikelyOpt = getUnlikelyCondSetWaitOcc(occ1, occ2)) {
+    std::tie(occ1, occ2) = unlikelyOpt.value();
   }
-  if (waitOcc->parentOcc != nullptr) {
-    if (llvm::isa_and_present<Condition>(waitOcc->parentOcc->op)) {
-      waitOcc = waitOcc->parentOcc;
-    }
-  }
-  return {setOcc, waitOcc};
+  return getFixedSetWaitOcc(occ1, occ2);
 }
 
-void Solver::insertBarrierAllBefore(Occurrence *occ, bool isUseless,
-                                    bool isPersistent) {
+Occurrence *Solver::getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2) {
+  auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
+  if (!waitOcc->isProperAncestor(occ2)) {
+    return waitOcc;
+  }
+  auto allParents = occ2->getAllParents();
+  while (!allParents.empty() && allParents.back()->isProperAncestor(waitOcc)) {
+    allParents.pop_back();
+  }
+  while (allParents.size() >= 2 &&
+         llvm::isa_and_present<Condition>(allParents.back()->op)) {
+    allParents.pop_back();
+    assert(llvm::isa_and_present<Scope>(allParents.back()->op));
+    allParents.pop_back();
+  }
+  waitOcc = !allParents.empty() ? allParents.back() : occ2;
+  return waitOcc;
+}
+
+void Solver::insertBarrierAllBeforeOcc(Occurrence *occ, bool isUseless,
+                                       bool isPersistent) {
+  assert(occ != nullptr);
+  auto *rwOp = llvm::dyn_cast_if_present<RWOperation>(occ->op);
+  assert(rwOp != nullptr);
   auto conflictPair = std::make_unique<ConflictPair>(
-      nullptr, nullptr, occ->op, occ->op, hivm::PIPE::PIPE_ALL,
-      hivm::PIPE::PIPE_ALL, occ->startIndex, occ->startIndex);
-  isUseless |= llvm::any_of(
-      persistentChosenConflictedPairs, [occ](const auto &conflictPair) {
-        return !conflictPair->isUseless &&
-               conflictPair->setPipe == hivm::PIPE::PIPE_ALL &&
-               conflictPair->opSet == occ->op;
-      });
+      nullptr, nullptr, rwOp, rwOp, occ, occ,
+      CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
+      CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
+      occ->startIndex, occ->startIndex);
   conflictPair->isUseless = isUseless;
   auto *normScopeOcc = occ->parentOcc;
   assert(normScopeOcc != nullptr);
-  LLVM_DEBUG(llvm::dbgs() << occ->op->str(0, false) << ' '
+  LLVM_DEBUG(llvm::dbgs() << (isPersistent ? "is-persistent " : "")
+                          << occ->op->str(0, false) << ' '
                           << conflictPair->str() << '\n';);
   if (isPersistent) {
     persistentScopeOccChosenConflicts[normScopeOcc].insert(conflictPair.get());
@@ -837,437 +1355,12 @@ void Solver::insertBarrierAllBefore(Occurrence *occ, bool isUseless,
   }
 }
 
-bool Solver::isBackwardSync(Occurrence *occ1, Occurrence *occ2) {
-  if (occ1->op->id >= occ2->op->id) {
-    return true;
-  }
-  assert(occ1 != nullptr && occ2 != nullptr);
-  assert(occ1->op != nullptr && occ2->op != nullptr);
-  auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
-  auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
-  return parOcc1->parentOcc->op != parOp1->parentOp;
-}
-
-ConflictPair *Solver::getReusableConflictPair(
-    ConflictPair *conflictPair,
-    const llvm::DenseSet<ConflictPair *> &conflictPairsSet) {
-  assert(conflictPair != nullptr);
-  ConflictPair *ret = nullptr;
-  for (auto *curConflictPair : conflictPairsSet) {
-    if (curConflictPair->opSet == nullptr ||
-        curConflictPair->opWait == nullptr) {
-      continue;
-    }
-    assert(conflictPair->opSet->parentOp == curConflictPair->opSet->parentOp);
-    assert(conflictPair->opWait->parentOp == curConflictPair->opWait->parentOp);
-    if (!checkIntersect(conflictPair, curConflictPair)) {
-      continue;
-    }
-    assert(curConflictPair->endIndex <= conflictPair->endIndex);
-    assert(curConflictPair->startIndex < conflictPair->startIndex);
-    if (ret == nullptr || ret->startIndex < curConflictPair->startIndex) {
-      ret = curConflictPair;
-    }
-  }
-  return ret;
-}
-
-bool Solver::reuseConflictPair(ConflictPair *conflictPair,
-                               Occurrence *scopeOcc1, Occurrence *scopeOcc2) {
-  if (conflictPair->isBarrier()) {
-    return false;
-  }
-
-  auto setPipe = conflictPair->setPipe;
-  auto waitPipe = conflictPair->waitPipe;
-
-  ConflictPair *oldReusedConflictPair = nullptr;
-  if (conflictPair->isUseless) {
-    auto it = replacedWithReusableSyncedPairs.find(
-        {scopeOcc1->op, conflictPair->op1, conflictPair->op2,
-         conflictPair->setPipe, conflictPair->waitPipe});
-    if (it != replacedWithReusableSyncedPairs.end()) {
-      oldReusedConflictPair = it->second;
-    }
-  }
-
-  if (oldReusedConflictPair == nullptr && reusePairs[{setPipe, waitPipe}] < 1) {
-    return false;
-  }
-
-  ConflictPair *opt1 = nullptr;
-  ConflictPair *opt2 = nullptr;
-  ConflictPair *opt3 = nullptr;
-
-  auto it1 = scopeOccChosenConflicts.find(scopeOcc1);
-  auto it2 = scopeOccChosenConflicts.find(scopeOcc2);
-  auto it3 = scopeOccPairChosenConflicts.find({scopeOcc1, scopeOcc2});
-
-  if (it1 != scopeOccChosenConflicts.end()) {
-    opt1 = getReusableConflictPair(conflictPair, it1->second);
-  }
-  if (it2 != scopeOccChosenConflicts.end()) {
-    opt2 = getReusableConflictPair(conflictPair, it2->second);
-  }
-  if (it3 != scopeOccPairChosenConflicts.end()) {
-    opt3 = getReusableConflictPair(conflictPair, it3->second);
-  }
-
-  ConflictPair *reusableConflictPair = nullptr;
-  for (auto *opt : {opt1, opt2, opt3}) {
-    if (reusableConflictPair == nullptr ||
-        reusableConflictPair->startIndex < opt->startIndex) {
-      reusableConflictPair = opt;
-    }
-  }
-
-  if (reusableConflictPair == nullptr) {
-    return false;
-  }
-
-  assert(reusableConflictPair->startIndex < conflictPair->startIndex);
-  assert(reusableConflictPair->endIndex <= conflictPair->endIndex);
-  forgetSyncedPair(scopeOcc1->op, reusableConflictPair);
-  reusableConflictPair->op1 = conflictPair->op1;
-  reusableConflictPair->opSet = conflictPair->opSet;
-  reusableConflictPair->startIndex = conflictPair->startIndex;
-  memorizeSyncedPair(scopeOcc1->op, reusableConflictPair);
-
-  if (!conflictPair->isUseless) {
-    memorizeReusedSyncedPair(scopeOcc1->op, conflictPair, reusableConflictPair);
-  }
-
-  if (oldReusedConflictPair != nullptr) {
-    assert(oldReusedConflictPair->op1 == reusableConflictPair->op1);
-    assert(oldReusedConflictPair->op2 == reusableConflictPair->op2);
-    assert(oldReusedConflictPair->opSet == reusableConflictPair->opSet);
-    assert(oldReusedConflictPair->opWait == reusableConflictPair->opWait);
-  }
-
-  reusePairs[{setPipe, waitPipe}] -= 1;
-  return true;
-}
-
-// Core handler that records a discovered conflict, chooses event ids (or
-// converts to barrier-all), and records necessary bookkeeping structures.
-void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
-                            hivm::PIPE setPipe, hivm::PIPE waitPipe,
-                            bool isUseless, uint32_t eventIdNum,
-                            LoopLikeOpInterface multibufferLoopPar) {
-  assert(occ1 != nullptr && occ2 != nullptr);
-  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
-  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
-  assert(rwOp1 != nullptr && rwOp2 != nullptr);
-
-  LLVM_DEBUG({
-    llvm::dbgs() << "conflict found: eventIdNum(" << eventIdNum << ")\n";
-    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
-                 << occ1->endIndex << ' ' << rwOp1->str(0, false) << '\n';
-    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
-                 << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
-  });
-
-  Occurrence *parentLCALoopOcc{nullptr};
-  OperationBase *parentLCALoopOp{nullptr};
-  [[maybe_unused]] Scope *parentLCALoopScopeOp{nullptr};
-  std::unique_ptr<ConflictPair> conflictPair;
-
-  auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
-  auto *normScopeOcc1 = setOcc->parentOcc;
-  auto *normScopeOcc2 = waitOcc->parentOcc;
-  assert(normScopeOcc1->op == normScopeOcc2->op);
-  auto *normScopeOp = llvm::dyn_cast_if_present<Scope>(normScopeOcc1->op);
-  assert(normScopeOp != nullptr);
-
-  conflictPair = std::make_unique<ConflictPair>(
-      rwOp1, rwOp2, setOcc->op, waitOcc->op, setPipe, waitPipe,
-      setOcc->endIndex, waitOcc->startIndex);
-  conflictPair->isUseless = isUseless;
-  assert(conflictPair->startIndex <= conflictPair->endIndex);
-
-  if (reuseConflictPair(conflictPair.get(), normScopeOcc1, normScopeOcc2)) {
-    return;
-  }
-
-  if (conflictPair->isBarrier() &&
-      conflictPair->setPipe == hivm::PIPE::PIPE_S) {
-    return;
-  }
-
-  if (conflictPair->isBarrier() &&
-      conflictPair->setPipe == hivm::PIPE::PIPE_M) {
-    conflictPair->isUseless = isUseless = true;
-  }
-
-  if (isBackwardSync(occ1, occ2)) {
-    auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
-    assert(parOcc1 != nullptr && parOcc2 != nullptr);
-    assert(parOcc1->parentOcc == parOcc2->parentOcc);
-    assert(parOcc1->parentOcc != nullptr);
-    parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
-    assert(parentLCALoopOcc != nullptr);
-    assert(parentLCALoopOcc->op != nullptr);
-    // llvm::dbgs() << parentLCALoopOcc->op->str(0, false) << '\n';
-    parentLCALoopOp = llvm::dyn_cast_if_present<Loop>(parentLCALoopOcc->op);
-    assert(parentLCALoopOp != nullptr);
-    parentLCALoopScopeOp =
-        llvm::dyn_cast_if_present<Scope>(parentLCALoopOcc->op);
-    assert(parentLCALoopScopeOp != nullptr);
-  }
-
-  if (!conflictPair->isBarrier()) {
-    if (isBackwardSync(setOcc, waitOcc)) {
-      assert(parentLCALoopScopeOp != nullptr);
-      conflictPair->isInnerBackward = true;
-    }
-  }
-
-  if (!conflictPair->isBarrier()) {
-    auto newParOccs = checkAndApplyMmadl0LoopOpt(conflictPair.get(), occ1, occ2,
-                                                 setOcc, waitOcc);
-    setOcc = newParOccs.first;
-    waitOcc = newParOccs.second;
-    conflictPair->updateSetWaitOps(setOcc, waitOcc);
-  }
-
-  if (auto unitFlagMode = checkUnitFlagPatterns(conflictPair.get(), occ1, occ2,
-                                                parentLCALoopOcc)) {
-    setOcc = occ1;
-    waitOcc = occ2;
-    conflictPair->updateSetWaitOps(setOcc, waitOcc);
-    conflictPair->isUseless = true;
-    conflictPair->replacedWithUnitFlag = true;
-    if (!isUseless) {
-      rwOp1->unitFlagModeAsSet = unitFlagMode->first;
-      rwOp2->unitFlagModeAsWait = unitFlagMode->second;
-      rwOp1->linkedUnitFlagOpAsSet = rwOp2;
-      rwOp2->linkedUnitFlagOpAsWait = rwOp1;
-    }
-    assert(rwOp1->unitFlagModeAsSet == unitFlagMode->first);
-    assert(rwOp2->unitFlagModeAsWait == unitFlagMode->second);
-    assert(rwOp1->linkedUnitFlagOpAsSet == rwOp2);
-    assert(rwOp2->linkedUnitFlagOpAsWait == rwOp1);
-  }
-
-  if (!conflictPair->isBarrier() && !conflictPair->replacedWithUnitFlag) {
-    llvm::SmallVector<hivm::EVENT> eventIds;
-    if (auto oldEventIds = getOldEventIdIfExists(normScopeOp, occ1, occ2,
-                                                 conflictPair.get())) {
-      eventIds = oldEventIds.value();
-    } else {
-      bool reversedPriority = false;
-      if (conflictPair->isInnerBackward) {
-        if (normScopeOcc1->parentOcc != nullptr) {
-          if (OperationBase::getParentloop(occ1->op) ==
-                  normScopeOcc1->parentOcc->op &&
-              OperationBase::getParentloop(occ2->op) ==
-                  normScopeOcc1->parentOcc->op) {
-            reversedPriority = true;
-          }
-        }
-        auto clonedConflictPair = conflictPair->clone(
-            parentLCALoopOcc->startIndex, parentLCALoopOcc->endIndex);
-        eventIds = getAnyAvailableMultiBufferEventIds(
-            clonedConflictPair.get(), eventIdNum, reversedPriority);
-      }
-      if (eventIdNum < 2 || eventIds.size() < 2) {
-        eventIds =
-            getAnyAvailableEventId(conflictPair.get(), 1, reversedPriority);
-      }
-    }
-    if (eventIds.empty()) {
-      LLVM_DEBUG(llvm::dbgs() << "will-be-converted-to-barrier-all "
-                              << conflictPair->str() << '\n';);
-      insertBarrierAllBefore(occ2, conflictPair->isUseless);
-      barrierAllPairs.insert({conflictPair->setPipe, conflictPair->waitPipe});
-      return;
-    }
-    if (!eventIds.empty()) {
-      conflictPair->eventIds = eventIds;
-    }
-    if (multibufferLoopPar != nullptr) {
-      if (eventIdNum > 1 && conflictPair->eventIds.size() > 1) {
-        conflictPair->multibufferLoopPar = multibufferLoopPar;
-      }
-    }
-  }
-
-  LLVM_DEBUG({
-    llvm::dbgs() << conflictPair->str() << '\n';
-    if (parentLCALoopOcc != nullptr) {
-      llvm::dbgs() << parentLCALoopOcc->op->str(0, false) << '\n';
-    }
-  });
-
-  // insert header/footer useless conflictPairs to reserve the eventIds.
-  if (conflictPair->isInnerBackward && !conflictPair->eventIds.empty()) {
-    auto *loopOpOcc1 = getFirstIterOcc(waitOcc, normScopeOcc1);
-    auto *loopOpOcc2 = getLastIterOcc(setOcc, normScopeOcc2);
-    assert(loopOpOcc1 != nullptr && loopOpOcc2 != nullptr);
-    auto extraConflictPair1 = std::make_unique<ConflictPair>(
-        nullptr, nullptr, nullptr, nullptr, setPipe, waitPipe,
-        parentLCALoopOcc->startIndex, loopOpOcc1->startIndex);
-    auto extraConflictPair2 = std::make_unique<ConflictPair>(
-        nullptr, nullptr, nullptr, nullptr, setPipe, waitPipe,
-        loopOpOcc2->endIndex, parentLCALoopOcc->endIndex);
-    extraConflictPair1->isUseless = true;
-    extraConflictPair2->isUseless = true;
-    extraConflictPair1->couldNotRun = true;
-    extraConflictPair2->couldNotRun = true;
-    extraConflictPair1->eventIds = conflictPair->eventIds;
-    extraConflictPair2->eventIds = conflictPair->eventIds;
-    scopeOccChosenConflicts[parentLCALoopOcc].insert(extraConflictPair1.get());
-    scopeOccChosenConflicts[parentLCALoopOcc].insert(extraConflictPair2.get());
-    chosenConflictedPairs.push_back(std::move(extraConflictPair1));
-    chosenConflictedPairs.push_back(std::move(extraConflictPair2));
-  }
-
-  // backward sync are not inserted as a conflictPairs, they are recorded in
-  // backwardSyncEvents instead.
-  if (conflictPair->isInnerBackward && !conflictPair->eventIds.empty()) {
-    for (auto eventId : conflictPair->eventIds) {
-      backwardSyncEvents[parentLCALoopOp]
-                        [{conflictPair->setPipe, conflictPair->waitPipe}]
-                            .insert(eventId);
-    }
-  }
-
-  // insert useless conflictPair to cover the whole loop when having
-  // multi-eventid backward sync to reserve the eventIds.
-  if (conflictPair->isInnerBackward && !conflictPair->eventIds.empty()) {
-    if (multibufferLoopPar != nullptr) {
-      auto extraConflictPair3 = std::make_unique<ConflictPair>(
-          nullptr, nullptr, nullptr, nullptr, setPipe, waitPipe,
-          parentLCALoopOcc->startIndex, parentLCALoopOcc->endIndex);
-      extraConflictPair3->isUseless = true;
-      extraConflictPair3->couldNotRun = true;
-      extraConflictPair3->eventIds = conflictPair->eventIds;
-      assert(parentLCALoopOcc->parentOcc != nullptr);
-      scopeOccChosenConflicts[parentLCALoopOcc->parentOcc].insert(
-          extraConflictPair3.get());
-      chosenConflictedPairs.push_back(std::move(extraConflictPair3));
-    }
-  }
-
-  // backwardSyncEventsAfterMerge opt
-  if (conflictPair->isInnerBackward && !conflictPair->eventIds.empty()) {
-    if (backwardSyncEventsAfterMerge[parentLCALoopOp].contains(
-            {conflictPair->setPipe, conflictPair->waitPipe})) {
-      llvm::SmallVector<hivm::EVENT> eventIdsAfterMerge;
-      auto &curBackwardSyncEventsAfterMerge =
-          backwardSyncEventsAfterMerge[parentLCALoopOp][{
-              conflictPair->setPipe, conflictPair->waitPipe}];
-      for (auto eventId : conflictPair->eventIds) {
-        if (curBackwardSyncEventsAfterMerge.contains(eventId)) {
-          eventIdsAfterMerge.push_back(eventId);
-        }
-      }
-      if (!eventIdsAfterMerge.empty()) {
-        auto extraConflictPair4 = std::make_unique<ConflictPair>(
-            nullptr, nullptr, nullptr, nullptr, setPipe, waitPipe,
-            parentLCALoopOcc->startIndex, parentLCALoopOcc->endIndex);
-        extraConflictPair4->isUseless = true;
-        extraConflictPair4->couldNotRun = false; // notice this
-        extraConflictPair4->eventIds = eventIdsAfterMerge;
-        assert(parentLCALoopOcc->parentOcc != nullptr);
-        scopeOccChosenConflicts[parentLCALoopOcc->parentOcc].insert(
-            extraConflictPair4.get());
-        chosenConflictedPairs.push_back(std::move(extraConflictPair4));
-      }
-    }
-  }
-
-  bool dontInsert = false;
-  if (parentLCALoopOcc != nullptr && normScopeOcc1 != normScopeOcc2) {
-    auto *parCond = OperationBase::getParentCondition(conflictPair->opSet);
-    if (auto *conditionOp = llvm::dyn_cast_if_present<Condition>(parCond)) {
-      if (parentLCALoopOcc->op->isProperAncestor(conditionOp)) {
-        scopeOccPairChosenConflicts[{normScopeOcc1, normScopeOcc2}].insert(
-            conflictPair.get());
-        dontInsert = true;
-      }
-    }
-  }
-  if (!dontInsert) {
-    assert(parentLCALoopOcc != nullptr || normScopeOcc1 == normScopeOcc2);
-    scopeOccChosenConflicts[normScopeOcc1].insert(conflictPair.get());
-    scopeOccChosenConflicts[normScopeOcc2].insert(conflictPair.get());
-  }
-
-  memorizeSyncedPair(normScopeOp, conflictPair.get());
-  chosenConflictedPairs.push_back(std::move(conflictPair));
-}
-
-// Main processing loop that iterates processingOrders and attempts to discover
-// and record conflicts.
-void Solver::processOrders() {
-  for (auto &[curOcc, start, end, reverseOrder, isUseless, skip] :
-       processingOrders) {
-    assert(start <= end + 1);
-    if (start > end) {
-      continue;
-    }
-    if (skip) {
-      for (int i = start; i <= end; i++) {
-        skipOcc.insert(syncIr[i].get());
-      }
-      continue;
-    }
-    if (checkSkippable(curOcc)) {
-      continue;
-    }
-    assert(llvm::isa_and_present<RWOperation>(curOcc->op));
-    int iStart, iEnd, iStep;
-    if (!reverseOrder) {
-      iStart = start;
-      iEnd = end + 1;
-      iStep = +1;
-    } else {
-      iStart = end;
-      iEnd = start - 1;
-      iStep = -1;
-    }
-    for (int i = iStart; i != iEnd; i += iStep) {
-      if (llvm::isa_and_present<RWOperation>(syncIr[i]->op)) {
-        Occurrence *occ1, *occ2;
-        if (!reverseOrder) {
-          occ1 = curOcc;
-          occ2 = syncIr[i].get();
-        } else {
-          occ1 = syncIr[i].get();
-          occ2 = curOcc;
-        }
-        if (checkSkippable(occ1)) {
-          continue;
-        }
-        if (checkVisited(occ1, occ2)) {
-          continue;
-        }
-        if (checkImpossibleOccPair(occ1, occ2)) {
-          continue;
-        }
-        if (checkAlreadySynced(occ1, occ2)) {
-          continue;
-        }
-        if (skipMMad1DecomposedLoopOpt(occ1, occ2)) {
-          continue;
-        }
-        auto *rwOp1 = dyn_cast<RWOperation>(occ1->op);
-        auto *rwOp2 = dyn_cast<RWOperation>(occ2->op);
-        assert(rwOp1 != nullptr && rwOp2 != nullptr);
-        if (checkAlreadySyncedWithUnitFlag(rwOp1, rwOp2)) {
-          continue;
-        }
-        for (auto [setPipe, waitPipe] : checkMemoryConflicts(rwOp1, rwOp2)) {
-          auto [eventIdNum, loopPar] =
-              getEventIdNum(occ1, occ2, setPipe, waitPipe);
-          if (checkGraphConflict(occ1, occ2, setPipe, waitPipe, eventIdNum)) {
-            handleConflict(occ1, occ2, setPipe, waitPipe, isUseless, eventIdNum,
-                           loopPar);
-          }
-        }
-      }
-    }
+void Solver::insertBarrierAllBeforeOp(OperationBase *op, bool isUseless,
+                                      bool isPersistent) {
+  assert(op != nullptr);
+  for (auto *occ : opAllOccurrences[op]) {
+    insertBarrierAllBeforeOcc(occ, isUseless, isPersistent);
+    isUseless = true;
   }
 }
 
@@ -1285,37 +1378,1252 @@ void Solver::pickAndInsertABarrierAll() {
     }
   }
   assert(chosenOp != nullptr);
-  for (auto *occ : opAllOccurrences[chosenOp]) {
-    insertBarrierAllBefore(occ, false, /*isPersistent=*/true);
+  insertBarrierAllBeforeOp(chosenOp, /*isUseless=*/false,
+                           /*isPersistent=*/true);
+}
+
+bool Solver::isBackwardSync(Occurrence *occ1, Occurrence *occ2) {
+  if (occ1->op->id >= occ2->op->id) {
+    return true;
   }
-  return;
+  assert(occ1 != nullptr && occ2 != nullptr);
+  assert(occ1->op != nullptr && occ2->op != nullptr);
+  auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+  auto [parOp1, parOp2] = OperationBase::getLCAPair(occ1->op, occ2->op);
+  return parOcc1->parentOcc->op != parOp1->parentOp;
+}
+
+bool Solver::reuseCmp(ConflictPair *conflictPair1,
+                      ConflictPair *conflictPair2) {
+  assert(conflictPair1 != nullptr && conflictPair2 != nullptr);
+  assert(conflictPair1->op1 != nullptr && conflictPair1->op2 != nullptr);
+  assert(conflictPair2->op1 != nullptr && conflictPair2->op2 != nullptr);
+  if (conflictPair1->startIndex != conflictPair2->startIndex) {
+    return conflictPair1->startIndex < conflictPair2->startIndex;
+  }
+  if (conflictPair1->endIndex != conflictPair2->endIndex) {
+    return conflictPair1->endIndex > conflictPair2->endIndex;
+  }
+  if (conflictPair1->op1 != conflictPair2->op1) {
+    return conflictPair1->op1->id > conflictPair2->op1->id;
+  }
+  if (conflictPair1->op2 != conflictPair2->op2) {
+    return conflictPair1->op2->id > conflictPair2->op2->id;
+  }
+  return false;
+}
+
+ConflictPair *Solver::getReusableConflictPair(
+    ConflictPair *conflictPair,
+    const llvm::DenseSet<ConflictPair *> &conflictPairsSet) {
+  assert(conflictPair != nullptr);
+  ConflictPair *ret = nullptr;
+  for (auto *curConflictPair : conflictPairsSet) {
+    if (curConflictPair->isBarrier() || curConflictPair->dontReuse) {
+      continue;
+    }
+    if (!checkIntersect(conflictPair, curConflictPair)) {
+      continue;
+    }
+    if (curConflictPair->startIndex >= conflictPair->startIndex) {
+      continue;
+    }
+    if (conflictPair->eventIdNode->eventIdNum <
+        curConflictPair->eventIdNode->eventIdNum) {
+      continue;
+    }
+    assert(conflictPair->eventIdNode != nullptr);
+    assert(curConflictPair->eventIdNode != nullptr);
+    if (conflictPair->eventIdNode->eventIdNum >
+        curConflictPair->eventIdNode->eventIdNum) {
+      if (conflictPair->eventIdNode->eventIdNum %
+          curConflictPair->eventIdNode->eventIdNum) {
+        continue;
+      }
+    }
+    assert(conflictPair->startIndex <= curConflictPair->endIndex);
+    assert(curConflictPair->endIndex <= conflictPair->endIndex);
+    if (ret == nullptr || reuseCmp(ret, curConflictPair)) {
+      ret = curConflictPair;
+    }
+  }
+  return ret;
+}
+
+bool Solver::reuseConflictPair(ConflictPair *conflictPair,
+                               Occurrence *scopeOcc1, Occurrence *scopeOcc2) {
+  if (conflictPair->isBarrier()) {
+    return false;
+  }
+  if (scopeOcc1->op != scopeOcc2->op) {
+    return false;
+  }
+  if (!barrierAllPairs.empty()) {
+    return false;
+  }
+
+  ConflictPair *oldReusedConflictPair = nullptr;
+  if (conflictPair->isUseless) {
+    auto it = replacedWithReusableSyncedPairs.find(
+        {conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+         conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo});
+    if (it != replacedWithReusableSyncedPairs.end()) {
+      oldReusedConflictPair = it->second;
+    }
+  }
+
+#ifndef NDEBUG
+  if (!conflictPair->isUseless) {
+    auto it = replacedWithReusableSyncedPairs.find(
+        {conflictPair->backwardSyncLoopOp, conflictPair->op1, conflictPair->op2,
+         conflictPair->setCorePipeInfo, conflictPair->waitCorePipeInfo});
+    assert(it == replacedWithReusableSyncedPairs.end());
+  }
+#endif
+
+  if (conflictPair->isUseless && oldReusedConflictPair == nullptr) {
+    return false;
+  }
+
+  auto corePipeSrc = conflictPair->setCorePipeInfo;
+  auto corePipeDst = conflictPair->waitCorePipeInfo;
+
+  if (oldReusedConflictPair == nullptr) {
+    if (!reusePairs.contains({corePipeSrc, corePipeDst}) ||
+        reusePairs[{corePipeSrc, corePipeDst}] <=
+            reusedPairs[{corePipeSrc, corePipeDst}]) {
+      return false;
+    }
+  }
+
+  assert(reusePairs.contains(std::make_tuple(corePipeSrc, corePipeDst)));
+  assert(reusePairs[std::make_tuple(corePipeSrc, corePipeDst)] >=
+         reusedPairs[std::make_tuple(corePipeSrc, corePipeDst)]);
+
+  ConflictPair *opt1 = nullptr;
+  ConflictPair *opt2 = nullptr;
+  ConflictPair *opt3 = nullptr;
+  ConflictPair *opt4 = nullptr;
+  ConflictPair *opt5 = nullptr;
+
+  auto it1 = scopeOccChosenConflicts.find(scopeOcc1);
+  auto it2 = scopeOccChosenConflicts.find(scopeOcc2);
+  auto it3 = scopeOccPairChosenConflicts.find({scopeOcc1, scopeOcc2});
+  auto it4 = persistentScopeOccChosenConflicts.find(scopeOcc1);
+  auto it5 = persistentScopeOccChosenConflicts.find(scopeOcc2);
+
+  if (it1 != scopeOccChosenConflicts.end()) {
+    opt1 = getReusableConflictPair(conflictPair, it1->second);
+  }
+  if (it2 != scopeOccChosenConflicts.end()) {
+    opt2 = getReusableConflictPair(conflictPair, it2->second);
+  }
+  if (it3 != scopeOccPairChosenConflicts.end()) {
+    opt3 = getReusableConflictPair(conflictPair, it3->second);
+  }
+  if (it4 != persistentScopeOccChosenConflicts.end()) {
+    opt4 = getReusableConflictPair(conflictPair, it4->second);
+  }
+  if (it5 != persistentScopeOccChosenConflicts.end()) {
+    opt5 = getReusableConflictPair(conflictPair, it5->second);
+  }
+
+  ConflictPair *reusableConflictPair = nullptr;
+  for (auto *opt : {opt1, opt2, opt3, opt4, opt5}) {
+    if (opt != nullptr) {
+      if (reusableConflictPair == nullptr ||
+          reuseCmp(reusableConflictPair, opt)) {
+        reusableConflictPair = opt;
+      }
+    }
+  }
+
+  if (reusableConflictPair == nullptr) {
+    return false;
+  }
+
+  DEBUG_WITH_TYPE("gss-sync-solver-reuse", {
+    llvm::dbgs() << "reuse: " << conflictPair->str() << '\n';
+    llvm::dbgs() << "with: " << reusableConflictPair->str() << '\n';
+  });
+
+  assert(reusableConflictPair->startIndex < conflictPair->startIndex);
+  assert(reusableConflictPair->endIndex <= conflictPair->endIndex);
+  reusableConflictPair->setOp = conflictPair->setOp;
+  reusableConflictPair->setOcc = conflictPair->setOcc;
+  reusableConflictPair->startIndex = conflictPair->startIndex;
+
+  if (!conflictPair->isUseless) {
+    memorizeReusedSyncedPair(conflictPair, reusableConflictPair);
+  }
+
+  DEBUG_WITH_TYPE("gss-sync-solver-reuse", {
+    if (oldReusedConflictPair != nullptr) {
+      llvm::dbgs() << "old-reuse: " << oldReusedConflictPair->str() << '\n';
+    }
+  });
+
+  if (oldReusedConflictPair != nullptr) {
+    assert(oldReusedConflictPair->op1 == reusableConflictPair->op1);
+    assert(oldReusedConflictPair->op2 == reusableConflictPair->op2);
+    assert(oldReusedConflictPair->waitOp == reusableConflictPair->waitOp);
+  }
+
+  if (!conflictPair->isUseless) {
+    reusedPairs[{corePipeSrc, corePipeDst}] += 1;
+  }
+
+  return true;
+}
+
+std::unique_ptr<EventIdSolver> &
+Solver::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
+  if (options.isCrossCoreMode()) {
+    pipeSrc = hivm::PIPE::PIPE_UNASSIGNED;
+    pipeDst = hivm::PIPE::PIPE_UNASSIGNED;
+  }
+  auto key = std::make_tuple(pipeSrc, pipeDst);
+  if (!eventIdSolver.contains(key)) {
+    int64_t eventIdNumMax =
+        getHWAvailableEventIdNum(options.syncMode, pipeSrc, pipeDst);
+    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax);
+  }
+  return eventIdSolver[key];
+}
+
+bool Solver::checkReuseMultiBufferFlagId(ConflictPair *conflictPair) {
+  if (options.useDifferentMultiBufferFlagIds) {
+    return false;
+  }
+  if (!conflictPair->isInnerBackward ||
+      conflictPair->eventIdInfo.eventIdNum <= 1 ||
+      conflictPair->movedToOuterLoop) {
+    return false;
+  }
+  auto [setOcc, waitOcc] =
+      std::tie(conflictPair->setOcc, conflictPair->waitOcc);
+  auto *backwardSyncLoopOcc = conflictPair->backwardSyncLoopOcc;
+  assert(backwardSyncLoopOcc != nullptr);
+  if (auto *parCondOcc1 = setOcc->getParentOfType<Condition>()) {
+    if (!parCondOcc1->isProperAncestor(backwardSyncLoopOcc)) {
+      return false;
+    }
+  }
+  if (auto *parCondOcc2 = waitOcc->getParentOfType<Condition>()) {
+    if (!parCondOcc2->isProperAncestor(backwardSyncLoopOcc)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
+                                   CorePipeInfo corePipeSrc,
+                                   CorePipeInfo corePipeDst,
+                                   EventIdInfo eventIdInfo, bool isUseless) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  assert(corePipeSrc != corePipeDst);
+
+  Loop *parentLCALoopOp{nullptr};
+  Occurrence *parentLCALoopOcc{nullptr};
+  Occurrence *parentLCALoopBeforePHOcc{nullptr};
+  Occurrence *parentLCALoopAfterPHOcc{nullptr};
+  auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2);
+
+  auto [lcaSetOp, lcaWaitOp] =
+      OperationBase::getLCAPair(setOcc->op, waitOcc->op);
+  auto *normScopeOcc1 = setOcc->getParentWithOp(lcaSetOp->parentOp);
+  auto *normScopeOcc2 = waitOcc->getParentWithOp(lcaWaitOp->parentOp);
+  assert(normScopeOcc1->op == normScopeOcc2->op);
+  auto *normScopeOp = normScopeOcc1->op;
+  assert(normScopeOp != nullptr);
+  assert(normScopeOp->parentOp != nullptr);
+
+  auto conflictPair = std::make_unique<ConflictPair>(
+      rwOp1, rwOp2, setOcc->op, waitOcc->op, setOcc, waitOcc, corePipeSrc,
+      corePipeDst, setOcc->endIndex, waitOcc->startIndex);
+  assert(conflictPair->startIndex <= conflictPair->endIndex);
+
+  conflictPair->isUseless = isUseless;
+  conflictPair->isInnerBackward = isBackwardSync(setOcc, waitOcc);
+  conflictPair->eventIdInfo = eventIdInfo;
+
+  if (conflictPair->isInnerBackward) {
+    auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+    assert(parOcc1 != nullptr && parOcc2 != nullptr);
+
+    parentLCALoopOcc = parOcc1->getParentOfType<Loop>();
+    if (moveBackwardSyncPairsToOutmostLoop) {
+      while (auto *grandParentLoopOcc =
+                 parentLCALoopOcc->getParentOfType<Loop>()) {
+        conflictPair->movedToOuterLoop = true;
+        parentLCALoopOcc = grandParentLoopOcc;
+      }
+    }
+    assert(parentLCALoopOcc != nullptr);
+    conflictPair->backwardSyncLoopOcc = parentLCALoopOcc;
+
+    parentLCALoopOp = llvm::dyn_cast<Loop>(parentLCALoopOcc->op);
+    assert(parentLCALoopOp != nullptr);
+    conflictPair->backwardSyncLoopOp = parentLCALoopOp;
+
+    parentLCALoopBeforePHOcc = getBeforePlaceHolderOcc(parentLCALoopOcc);
+    assert(parentLCALoopBeforePHOcc != nullptr);
+    parentLCALoopAfterPHOcc = getAfterPlaceHolderOcc(parentLCALoopOcc);
+    assert(parentLCALoopAfterPHOcc != nullptr);
+  }
+
+  if (auto setWaitOccs = checkAndApplyMmadl0LoopOpt(conflictPair.get(), occ1,
+                                                    occ2, setOcc, waitOcc)) {
+    std::tie(setOcc, waitOcc) = setWaitOccs.value();
+    conflictPair->updateSetWaitOccs(setOcc, waitOcc);
+  }
+
+  if (!conflictPair->isInnerBackward ||
+      disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst})) {
+    conflictPair->eventIdInfo = EventIdInfo(1);
+  }
+  if (checkReuseMultiBufferFlagId(conflictPair.get())) {
+    conflictPair->eventIdInfo.eventIdRepeatNum =
+        conflictPair->eventIdInfo.eventIdNum;
+    conflictPair->eventIdInfo.eventIdNum = 1;
+  }
+
+  auto &curEventIdSolver = getEventIdSolverRef(
+      conflictPair->setCorePipeInfo.pipe, conflictPair->waitCorePipeInfo.pipe);
+  curEventIdSolver->pushActionNone();
+
+  auto checkColorable = [&]() -> bool {
+    if (curEventIdSolver->isColorable()) {
+      return true;
+    }
+    LLVM_DEBUG(llvm::dbgs() << "will-be-converted-to-barrier-all "
+                            << conflictPair->str() << '\n';);
+    insertBarrierAllBeforeOp(occ2->op, conflictPair->isUseless,
+                             /*isPersistent=*/false);
+    barrierAllPairs.insert({corePipeSrc, corePipeDst});
+    curEventIdSolver->undoActions();
+    return false;
+  };
+
+  if (auto *oldEventIdNode = getOldEventIdNodeIfExists(conflictPair.get())) {
+    conflictPair->eventIdNode = oldEventIdNode;
+    curEventIdSolver->insertConflictPair(oldEventIdNode, conflictPair.get());
+  } else {
+    bool reversedPriority = false;
+    if (conflictPair->isInnerBackward) {
+      if (OperationBase::getParentloop(occ1->op) == normScopeOp->parentOp &&
+          OperationBase::getParentloop(occ2->op) == normScopeOp->parentOp) {
+        reversedPriority = true;
+      }
+    }
+    conflictPair->eventIdNode = curEventIdSolver->createNode(
+        conflictPair.get(), conflictPair->eventIdInfo.eventIdNum,
+        reversedPriority);
+  }
+
+  if (options.reuseSyncPairToSaveEventIds) {
+    if (reuseConflictPair(conflictPair.get(), normScopeOcc1, normScopeOcc2)) {
+      curEventIdSolver->undoActions();
+      return;
+    }
+  }
+
+  auto intersectingConflictPairs =
+      getIntersectingConflictPairs(conflictPair.get());
+  curEventIdSolver->addConflicts(conflictPair.get(), intersectingConflictPairs);
+  if (!checkColorable()) {
+    return;
+  }
+
+  LLVM_DEBUG({
+    llvm::dbgs() << conflictPair->str() << '\n';
+    if (parentLCALoopOcc != nullptr) {
+      llvm::dbgs() << parentLCALoopOcc->op->str(0, false) << '\n';
+    }
+  });
+
+  llvm::SmallVector<std::pair<std::unique_ptr<ConflictPair>, Occurrence *>>
+      extraConflictPairs;
+
+  auto insertExtraConflictPair = [&](Occurrence *setOcc, Occurrence *waitOcc,
+                                     Occurrence *parentScope,
+                                     bool couldNotRun = false) -> bool {
+    assert(setOcc != nullptr && waitOcc != nullptr && parentScope != nullptr);
+    auto extraConflictPair = conflictPair->clone(setOcc, waitOcc);
+    extraConflictPair->isUseless = true;
+    extraConflictPair->dontReuse = true;
+    if (couldNotRun || options.moveOutAndMergeBackwardSyncPairs) {
+      extraConflictPair->couldNotRun = true;
+    }
+    LLVM_DEBUG({
+      llvm::dbgs() << "extra-conflict-pair: " << extraConflictPair->str()
+                   << "\n";
+    });
+    curEventIdSolver->insertConflictPair(conflictPair->eventIdNode,
+                                         extraConflictPair.get());
+    auto intersectingConflictPairs =
+        getIntersectingConflictPairs(extraConflictPair.get());
+    curEventIdSolver->addConflicts(extraConflictPair.get(),
+                                   intersectingConflictPairs);
+    if (!checkColorable()) {
+      return false;
+    }
+    extraConflictPairs.push_back(
+        std::make_pair(std::move(extraConflictPair), parentScope));
+    return true;
+  };
+
+  if (conflictPair->isInnerBackward && conflictPair->eventIdNode != nullptr) {
+    bool insertOuterBwdConflictPair = false;
+    if ((conflictPair->eventIdInfo.eventIdNum *
+         conflictPair->eventIdInfo.eventIdRepeatNum) > 1) {
+      insertOuterBwdConflictPair = true;
+    } else if (options.isCrossCoreMode()) {
+      if (setOcc->parentOcc == nullptr ||
+          setOcc->parentOcc->parentOcc == nullptr ||
+          setOcc->parentOcc->parentOcc->op != parentLCALoopOp) {
+        insertOuterBwdConflictPair = true;
+      } else if (waitOcc->parentOcc == nullptr ||
+                 waitOcc->parentOcc->parentOcc == nullptr ||
+                 waitOcc->parentOcc->parentOcc->op != parentLCALoopOp) {
+        insertOuterBwdConflictPair = true;
+      }
+    }
+    if (insertOuterBwdConflictPair) {
+      // insert useless conflictPair to cover the whole loop when having
+      // multi-eventid backward sync to reserve the eventIds.
+      if (!insertExtraConflictPair(parentLCALoopBeforePHOcc,
+                                   parentLCALoopAfterPHOcc,
+                                   parentLCALoopOcc->parentOcc)) {
+        return;
+      }
+    }
+  }
+
+  if (conflictPair->isInnerBackward && conflictPair->eventIdNode != nullptr) {
+    // insert header/footer useless conflictPairs to reserve the eventIds.
+    auto *loopOpOcc1 = getFirstIterOcc(waitOcc, normScopeOcc1);
+    auto *loopOpOcc2 = getLastIterOcc(setOcc, normScopeOcc2);
+    if (!insertExtraConflictPair(parentLCALoopBeforePHOcc, loopOpOcc1,
+                                 parentLCALoopOcc, /*couldNotRun=*/true)) {
+      return;
+    }
+    if (!insertExtraConflictPair(loopOpOcc2, parentLCALoopAfterPHOcc,
+                                 parentLCALoopOcc, /*couldNotRun=*/true)) {
+      return;
+    }
+  }
+
+  bool dontInsert = false;
+  if (conflictPair->isInnerBackward && normScopeOcc1 != normScopeOcc2) {
+    auto *parCond = OperationBase::getParentCondition(conflictPair->setOp);
+    if (auto *conditionOp = llvm::dyn_cast_if_present<Condition>(parCond)) {
+      if (parentLCALoopOcc->op->isProperAncestor(conditionOp)) {
+        scopeOccPairChosenConflicts[{normScopeOcc1, normScopeOcc2}].insert(
+            conflictPair.get());
+        dontInsert = true;
+      }
+    }
+  }
+  if (!dontInsert) {
+    assert(parentLCALoopOcc != nullptr || normScopeOcc1 == normScopeOcc2);
+    scopeOccChosenConflicts[normScopeOcc1].insert(conflictPair.get());
+    scopeOccChosenConflicts[normScopeOcc2].insert(conflictPair.get());
+  }
+
+  memorizeSyncedPair(conflictPair.get());
+  chosenConflictedPairs.push_back(std::move(conflictPair));
+
+  for (auto &[extraConflictPair, parentScope] : extraConflictPairs) {
+    scopeOccChosenConflicts[parentScope].insert(extraConflictPair.get());
+    chosenConflictedPairs.push_back(std::move(extraConflictPair));
+  }
+
+  curEventIdSolver->clearActionStack();
+}
+
+void Solver::handleBarrierConflict(Occurrence *occ1, Occurrence *occ2,
+                                   CorePipeInfo corePipeSrc,
+                                   CorePipeInfo corePipeDst, bool isUseless) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+
+  assert(corePipeSrc == corePipeDst);
+  if (corePipeSrc.pipe == hivm::PIPE::PIPE_S) {
+    return;
+  }
+  if (options.isRegBasedArch) {
+    if (corePipeSrc.pipe == hivm::PIPE::PIPE_V) {
+      return;
+    }
+  }
+  if (corePipeSrc.pipe == hivm::PIPE::PIPE_M) {
+    isUseless = true;
+  }
+
+  auto *waitOcc = getBarrierWaitOcc(occ1, occ2);
+
+  auto conflictPair = std::make_unique<ConflictPair>(
+      rwOp1, rwOp2, waitOcc->op, waitOcc->op, waitOcc, waitOcc, corePipeSrc,
+      corePipeDst, waitOcc->startIndex, waitOcc->startIndex);
+  conflictPair->isUseless = isUseless;
+  assert(conflictPair->startIndex <= conflictPair->endIndex);
+
+  LLVM_DEBUG({ llvm::dbgs() << conflictPair->str() << '\n'; });
+
+  auto *normScopeOcc = waitOcc->parentOcc;
+  scopeOccChosenConflicts[normScopeOcc].insert(conflictPair.get());
+  chosenConflictedPairs.push_back(std::move(conflictPair));
+}
+
+void Solver::handleUnitFlagConflict(Occurrence *occ1, Occurrence *occ2,
+                                    CorePipeInfo corePipeSrc,
+                                    CorePipeInfo corePipeDst,
+                                    UnitFlagInfo unitFlagInfo, bool isUseless) {
+  assert(occ1 != nullptr && occ2 != nullptr);
+  auto *rwOp1 = llvm::dyn_cast_if_present<RWOperation>(occ1->op);
+  auto *rwOp2 = llvm::dyn_cast_if_present<RWOperation>(occ2->op);
+  assert(rwOp1 != nullptr && rwOp2 != nullptr);
+  assert(corePipeSrc != corePipeDst);
+
+  auto *setOcc = occ1;
+  auto *waitOcc = occ2;
+  auto *normScopeOcc1 = setOcc->parentOcc;
+  auto *normScopeOcc2 = waitOcc->parentOcc;
+
+  auto conflictPair = std::make_unique<ConflictPair>(
+      rwOp1, rwOp2, setOcc->op, waitOcc->op, setOcc, waitOcc, corePipeSrc,
+      corePipeDst, setOcc->endIndex, waitOcc->startIndex);
+  assert(conflictPair->startIndex <= conflictPair->endIndex);
+
+  conflictPair->isUseless = true;
+  conflictPair->dontReuse = true;
+  conflictPair->replacedWithUnitFlag = true;
+  conflictPair->dontCheckForConflict = true;
+  conflictPair->isInnerBackward = isBackwardSync(setOcc, waitOcc);
+
+#ifndef NDEBUG
+  Occurrence *parentLCALoopOcc{nullptr};
+  if (conflictPair->isInnerBackward) {
+    auto [parOcc1, parOcc2] = Occurrence::getLCAPair(occ1, occ2);
+    assert(parOcc1 != nullptr && parOcc2 != nullptr);
+    parentLCALoopOcc = Occurrence::getParentloop(parOcc1);
+    assert(parentLCALoopOcc != nullptr);
+  }
+
+  LLVM_DEBUG({
+    llvm::dbgs() << conflictPair->str() << '\n';
+    if (parentLCALoopOcc != nullptr) {
+      llvm::dbgs() << parentLCALoopOcc->op->str(0, false) << '\n';
+    }
+  });
+#endif
+
+  occ1->unitFlagInfo.merge(unitFlagInfo, occ1, occ2,
+                           /*asSet=*/true, /*asWait=*/false);
+  occ2->unitFlagInfo.merge(unitFlagInfo, occ1, occ2,
+                           /*asSet=*/false, /*asWait=*/true);
+  if (!isUseless) {
+    rwOp1->mergedUnitFlagInfo.merge(unitFlagInfo, /*asSet=*/true,
+                                    /*asWait=*/false);
+    rwOp2->mergedUnitFlagInfo.merge(unitFlagInfo, /*asSet=*/false,
+                                    /*asWait=*/true);
+  }
+
+  scopeOccPairChosenConflicts[{normScopeOcc1, normScopeOcc2}].insert(
+      conflictPair.get());
+  chosenConflictedPairs.push_back(std::move(conflictPair));
+}
+
+void Solver::handleConflict(Occurrence *occ1, Occurrence *occ2,
+                            RWOperation *rwOp1, RWOperation *rwOp2,
+                            CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst,
+                            EventIdInfo eventIdInfo, bool isUseless) {
+  if (!checkGraphConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo)) {
+    return;
+  }
+  LLVM_DEBUG({
+    llvm::dbgs() << "conflict found: " << "eventIdNum("
+                 << eventIdInfo.eventIdNum << ")\n";
+    llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
+                 << occ1->endIndex << ' ' << rwOp1->str(0, false) << '\n';
+    llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
+                 << occ2->endIndex << ' ' << rwOp2->str(0, false) << '\n';
+  });
+  if (corePipeSrc == corePipeDst) {
+    handleBarrierConflict(occ1, occ2, corePipeSrc, corePipeDst, isUseless);
+  } else if (auto unitFlagInfo = checkUnitFlagPatterns(occ1, occ2)) {
+    handleUnitFlagConflict(occ1, occ2, corePipeSrc, corePipeDst,
+                           unitFlagInfo.value(), isUseless);
+  } else {
+    handleSetWaitConflict(occ1, occ2, corePipeSrc, corePipeDst, eventIdInfo,
+                          isUseless);
+  }
+}
+
+void Solver::calcAllEventIds() {
+  for (auto &[pipes, eventIdSolver] : eventIdSolver) {
+    assert(eventIdSolver != nullptr);
+
+    [[maybe_unused]] auto result =
+        eventIdSolver->shrinkEventIdMaxToEventIdNum();
+    assert(llvm::succeeded(result));
+    assert(eventIdSolver->isColorable());
+  }
+}
+
+void Solver::collectBackwardSyncEventIds() {
+  LLVM_DEBUG(llvm::dbgs() << "collectBackwardSyncEventIds\n";);
+  for (auto &conflictPair : chosenConflictedPairs) {
+    if (!conflictPair->isUseless && conflictPair->isInnerBackward &&
+        conflictPair->eventIdNode != nullptr) {
+      LLVM_DEBUG(llvm::dbgs() << "  " << conflictPair->str() << "\n";);
+      for (auto eventId : conflictPair->eventIdNode->getEventIds()) {
+        auto &e = backwardSyncEvents[conflictPair->backwardSyncLoopOp]
+                                    [{conflictPair->setCorePipeInfo,
+                                      conflictPair->waitCorePipeInfo}][eventId];
+        e = std::max(e, conflictPair->eventIdInfo.eventIdRepeatNum);
+      }
+    }
+  }
+}
+
+void Solver::resetAndBuildSetWaitOpIndex(const SyncMap &syncMapBefore,
+                                         const SyncMap &syncMapAfter) {
+  globalSetWaitIndex = 0;
+  setWaitStartIndex.clear();
+  setWaitEndIndex.clear();
+  setWaitStartIndexInclusive.clear();
+  setWaitEndIndexInclusive.clear();
+  setWaitFlagOpsIndex.clear();
+  collectSetWaitOpsIndexes(funcIr.get(), syncMapBefore, syncMapAfter);
+}
+
+std::set<std::pair<int64_t, SetWaitOp *>> &
+Solver::getSetWaitOpsIndexRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst,
+                              int64_t eventId) {
+  auto key = std::make_tuple(pipeSrc, pipeDst, eventId);
+  return setWaitFlagOpsIndex[key];
+}
+
+// Collect indices for all Set/Wait ops to facilitate merging decisions.
+void Solver::collectSetWaitOpsIndexes(OperationBase *op,
+                                      const SyncMap &syncMapBefore,
+                                      const SyncMap &syncMapAfter) {
+  assert(op != nullptr);
+  setWaitStartIndexInclusive[op] = globalSetWaitIndex++;
+  if (syncMapBefore.count(op)) {
+    auto *it = syncMapBefore.find(op);
+    assert(it != syncMapBefore.end());
+    for (auto &syncOp : it->second) {
+      if (auto *setWaitOp = llvm::dyn_cast<SetWaitOp>(syncOp.get())) {
+        for (auto eventId : setWaitOp->eventIds) {
+          auto &index = getSetWaitOpsIndexRef(setWaitOp->pipeSrc,
+                                              setWaitOp->pipeDst, eventId);
+          index.insert({globalSetWaitIndex++, setWaitOp});
+        }
+      }
+    }
+  }
+  setWaitStartIndex[op] = globalSetWaitIndex++;
+  if (auto *scopeOp = llvm::dyn_cast<Scope>(op)) {
+    for (auto &childOp : scopeOp->body) {
+      collectSetWaitOpsIndexes(childOp.get(), syncMapBefore, syncMapAfter);
+    }
+  }
+  setWaitEndIndex[op] = globalSetWaitIndex++;
+  if (syncMapAfter.count(op)) {
+    auto *it = syncMapAfter.find(op);
+    assert(it != syncMapAfter.end());
+    for (auto &syncOp : it->second) {
+      if (auto *setWaitOp = llvm::dyn_cast<SetWaitOp>(syncOp.get())) {
+        for (auto eventId : setWaitOp->eventIds) {
+          auto &index = getSetWaitOpsIndexRef(setWaitOp->pipeSrc,
+                                              setWaitOp->pipeDst, eventId);
+          index.insert({globalSetWaitIndex++, setWaitOp});
+        }
+      }
+    }
+  }
+  setWaitEndIndexInclusive[op] = globalSetWaitIndex++;
+}
+
+bool Solver::checkBackwardSyncEventsContains(OperationBase *op,
+                                             CorePipeInfo corePipeSrc,
+                                             CorePipeInfo corePipeDst,
+                                             int64_t eventId) {
+  auto *it1 = backwardSyncEvents.find(op);
+  if (it1 == backwardSyncEvents.end()) {
+    return false;
+  }
+  auto it2 = it1->second.find({corePipeSrc, corePipeDst});
+  if (it2 == it1->second.end()) {
+    return false;
+  }
+  return it2->second.contains(eventId);
+}
+
+bool Solver::checkBackwardSyncEventsContainsAfterMerge(
+    OperationBase *op, CorePipeInfo corePipeSrc, CorePipeInfo corePipeDst) {
+  auto *it1 = backwardSyncEventsAfterMerge.find(op);
+  if (it1 == backwardSyncEventsAfterMerge.end()) {
+    return false;
+  }
+  return it1->second.contains({corePipeSrc, corePipeDst});
+}
+
+// Check whether a backward-sync event id can be merged at scope level.
+bool Solver::checkMergeable(Scope *scopeOp, CorePipeInfo corePipeSrc,
+                            CorePipeInfo corePipeDst, int64_t eventId,
+                            bool shouldBeUsedAtleastOnce) {
+  auto &index =
+      getSetWaitOpsIndexRef(corePipeSrc.pipe, corePipeDst.pipe, eventId);
+  if (shouldBeUsedAtleastOnce) {
+    auto it = index.lower_bound({setWaitStartIndexInclusive[scopeOp], nullptr});
+    bool usedAtleastOnce =
+        it != index.end() && it->first < setWaitEndIndexInclusive[scopeOp];
+    if (!usedAtleastOnce) {
+      return false;
+    }
+  }
+  {
+    auto it1 =
+        index.lower_bound({setWaitStartIndexInclusive[scopeOp], nullptr});
+    auto it2 = index.lower_bound({setWaitEndIndex[scopeOp], nullptr});
+    bool usedBefore =
+        it1 != index.end() && it1->first < setWaitStartIndex[scopeOp];
+    bool usedAfter =
+        it2 != index.end() && it2->first < setWaitEndIndexInclusive[scopeOp];
+    if (usedBefore || usedAfter) {
+      return false;
+    }
+  }
+  if (auto *conditionOp = llvm::dyn_cast<Condition>(scopeOp)) {
+    return checkMergeable(conditionOp->getTrueScope(), corePipeSrc, corePipeDst,
+                          eventId, true) &&
+           checkMergeable(conditionOp->getFalseScope(), corePipeSrc,
+                          corePipeDst, eventId, true);
+  }
+  if (auto *loopOp = llvm::dyn_cast<Loop>(scopeOp)) {
+    for (auto &childOp : loopOp->body) {
+      if (auto *childScopeOp = llvm::dyn_cast<Scope>(childOp.get())) {
+        if (!checkMergeable(childScopeOp, corePipeSrc, corePipeDst, eventId,
+                            false)) {
+          return false;
+        }
+      }
+    }
+    for (auto &childOp : loopOp->body) {
+      if (auto *childScopeOp = llvm::dyn_cast<Scope>(childOp.get())) {
+        if (checkMergeable(childScopeOp, corePipeSrc, corePipeDst, eventId,
+                           true)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  for (auto &childOp : scopeOp->body) {
+    auto it1 =
+        index.lower_bound({setWaitStartIndexInclusive[childOp.get()], nullptr});
+    auto it2 = index.lower_bound({setWaitEndIndex[childOp.get()], nullptr});
+    bool usedAtleastOnce = it1 != index.end() &&
+                           it1->first < setWaitEndIndexInclusive[childOp.get()];
+    if (!usedAtleastOnce) {
+      continue;
+    }
+    bool before =
+        it1 != index.end() && it1->first < setWaitStartIndex[childOp.get()];
+    bool after = it2 != index.end() &&
+                 it2->first < setWaitEndIndexInclusive[childOp.get()];
+    if (before || after) {
+      return false;
+    }
+    if (!checkBackwardSyncEventsContains(childOp.get(), corePipeSrc,
+                                         corePipeDst, eventId)) {
+      return false;
+    }
+    if (checkBackwardSyncEventsContainsAfterMerge(childOp.get(), corePipeSrc,
+                                                  corePipeDst)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Attempt to merge backward sync events across children and prune duplicates.
+void Solver::mergeBackwardSyncEventIds(OperationBase *op) {
+  auto *scopeOp = llvm::dyn_cast_if_present<Scope>(op);
+  if (scopeOp == nullptr) {
+    return;
+  }
+  for (auto &op : scopeOp->body) {
+    mergeBackwardSyncEventIds(op.get());
+  }
+
+  if (llvm::isa_and_present<FunctionBlock>(op)) {
+    return;
+  }
+  if (llvm::isa_and_present<Condition, Loop>(op->parentOp)) {
+    return;
+  }
+
+  auto *conditionOp = llvm::dyn_cast<Condition>(op);
+  if (conditionOp != nullptr) {
+    if (!conditionOp->hasFalseScope()) {
+      return;
+    }
+  }
+
+  llvm::DenseSet<std::tuple<CorePipeInfo, CorePipeInfo, int64_t>> toBeErased;
+
+  llvm::SmallVector<hivm::TCoreType> coreTypes;
+  if (options.isCrossCoreMode()) {
+    coreTypes = {hivm::TCoreType::VECTOR, hivm::TCoreType::CUBE};
+  } else {
+    coreTypes = {hivm::TCoreType::CUBE_OR_VECTOR};
+  }
+  size_t pipeNumMax = static_cast<size_t>(hivm::PIPE::PIPE_NUM);
+  const int64_t eventIdMax = getHWAvailableEventIdNum(options.syncMode);
+
+  for (int64_t eventId = 0; eventId < eventIdMax; ++eventId) {
+    for (auto coreSrc : coreTypes) {
+      for (auto coreDst : coreTypes) {
+        for (size_t pipeSrcInt = 0; pipeSrcInt < pipeNumMax; pipeSrcInt++) {
+          for (size_t pipeDstInt = 0; pipeDstInt < pipeNumMax; pipeDstInt++) {
+            auto pipeSrc = static_cast<hivm::PIPE>(pipeSrcInt);
+            auto pipeDst = static_cast<hivm::PIPE>(pipeDstInt);
+            auto corePipeSrc = CorePipeInfo(coreSrc, pipeSrc);
+            auto corePipeDst = CorePipeInfo(coreDst, pipeDst);
+            if (checkBackwardSyncEventsContains(scopeOp, corePipeSrc,
+                                                corePipeDst, eventId)) {
+              continue;
+            }
+            if (checkMergeable(scopeOp, corePipeSrc, corePipeDst, eventId)) {
+              toBeErased.insert({corePipeSrc, corePipeDst, eventId});
+              backwardSyncEvents[scopeOp][{corePipeSrc, corePipeDst}].insert(
+                  {eventId, 1});
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (isa<Condition, Loop>(scopeOp)) {
+    for (auto &op : scopeOp->body) {
+      if (auto *block = llvm::dyn_cast<Scope>(op.get())) {
+        for (auto &childOp : block->body) {
+          if (auto *childScopeOp = llvm::dyn_cast<Scope>(childOp.get())) {
+            for (auto [corePipeSrc, corePipeDst, eventId] : toBeErased) {
+              if (checkBackwardSyncEventsContains(childScopeOp, corePipeSrc,
+                                                  corePipeDst, eventId)) {
+                auto key = std::make_tuple(corePipeSrc, corePipeDst);
+                backwardSyncEvents[childScopeOp][key].erase(eventId);
+                if (backwardSyncEvents[childScopeOp][key].empty()) {
+                  backwardSyncEvents[childScopeOp].erase(key);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  } else {
+    for (auto &childOp : scopeOp->body) {
+      if (auto *childScopeOp = llvm::dyn_cast<Scope>(childOp.get())) {
+        for (auto [corePipeSrc, corePipeDst, eventId] : toBeErased) {
+          if (checkBackwardSyncEventsContains(childScopeOp, corePipeSrc,
+                                              corePipeDst, eventId)) {
+            auto key = std::make_tuple(corePipeSrc, corePipeDst);
+            backwardSyncEvents[childScopeOp][key].erase(eventId);
+            if (backwardSyncEvents[childScopeOp][key].empty()) {
+              backwardSyncEvents[childScopeOp].erase(key);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void Solver::mergeBackwardSyncPairs(SyncMap &syncMapBefore,
+                                    SyncMap &syncMapAfter) {
+  if (!options.moveOutAndMergeBackwardSyncPairs) {
+    return;
+  }
+  if (options.isIntraCoreMode()) {
+    resetAndBuildSetWaitOpIndex(syncMapBefore, syncMapAfter);
+    auto *scopeOp = llvm::dyn_cast<Scope>(funcIr.get());
+    assert(scopeOp != nullptr && scopeOp->body.front() != nullptr);
+    mergeBackwardSyncEventIds(scopeOp->body.front().get());
+  }
+}
+
+SyncBeforeAfterMap Solver::getBeforeAfterSyncMaps() {
+  calcAllEventIds();
+  SyncMap syncMapBefore, syncMapAfter;
+  std::vector<ConflictPair *> conflictPairs;
+  for (auto &conflictPair : chosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+  for (auto &conflictPair : persistentChosenConflictedPairs) {
+    conflictPairs.push_back(conflictPair.get());
+  }
+
+  for (auto *conflictPair : conflictPairs) {
+    if (conflictPair->isUseless) {
+      continue;
+    }
+    if (conflictPair->replacedWithUnitFlag) {
+      continue;
+    }
+    assert(conflictPair->setOp != nullptr && conflictPair->waitOp != nullptr);
+    if (conflictPair->isBarrier()) {
+      auto barrierOp = std::make_unique<BarrierOp>(
+          conflictPair->waitOp->op, conflictPair->waitOp->parentOp,
+          conflictPair->waitCorePipeInfo.pipe);
+      LLVM_DEBUG(barrierOp->debugId = conflictPair->id);
+      syncMapBefore[conflictPair->waitOp].push_back(std::move(barrierOp));
+    } else {
+      assert(conflictPair->eventIdNode != nullptr);
+      auto setOp = std::make_unique<SetFlagOp>(
+          conflictPair->setOp->op, conflictPair->setOp->parentOp,
+          conflictPair->eventIdNode->getEventIds(),
+          conflictPair->setCorePipeInfo.pipe,
+          conflictPair->waitCorePipeInfo.pipe);
+      auto waitOp = std::make_unique<WaitFlagOp>(
+          conflictPair->waitOp->op, conflictPair->waitOp->parentOp,
+          conflictPair->eventIdNode->getEventIds(),
+          conflictPair->setCorePipeInfo.pipe,
+          conflictPair->waitCorePipeInfo.pipe);
+      if (options.isCrossCoreMode()) {
+        setOp->coreType = conflictPair->setCorePipeInfo.coreType;
+        waitOp->coreType = conflictPair->waitCorePipeInfo.coreType;
+      }
+      setOp->eventIdInfo = conflictPair->eventIdInfo;
+      waitOp->eventIdInfo = conflictPair->eventIdInfo;
+      setOp->checkLastIter = conflictPair->setOnLastIterOnly;
+      waitOp->checkFirstIter = conflictPair->waitOnFirstIterOnly;
+      LLVM_DEBUG({
+        setOp->debugId = conflictPair->id;
+        waitOp->debugId = conflictPair->id;
+      });
+      assert(setOp != nullptr && waitOp != nullptr);
+      syncMapAfter[conflictPair->setOp].push_back(std::move(setOp));
+      syncMapBefore[conflictPair->waitOp].push_front(std::move(waitOp));
+    }
+  }
+
+  collectBackwardSyncEventIds();
+  mergeBackwardSyncPairs(syncMapBefore, syncMapAfter);
+
+  for (auto &[op, mp] : backwardSyncEvents) {
+    if (mp.empty()) {
+      continue;
+    }
+    auto *scopeOp = llvm::dyn_cast<Scope>(op);
+    assert(scopeOp != nullptr);
+    for (auto [setWaitCorePipes, eventIdsMp] : mp) {
+      if (eventIdsMp.empty()) {
+        continue;
+      }
+      llvm::SmallVector<int64_t> eventIds;
+      for (auto [eventId, repeatNum] : eventIdsMp) {
+        llvm::SmallVector<int64_t> curEventIds(repeatNum, eventId);
+        llvm::append_range(eventIds, curEventIds);
+      }
+      llvm::sort(eventIds);
+      auto [corePipeSrc, corePipeDst] = setWaitCorePipes;
+      auto setOp =
+          std::make_unique<SetFlagOp>(scopeOp->op, scopeOp->parentOp, eventIds,
+                                      corePipeSrc.pipe, corePipeDst.pipe);
+      auto waitOp =
+          std::make_unique<WaitFlagOp>(scopeOp->op, scopeOp->parentOp, eventIds,
+                                       corePipeSrc.pipe, corePipeDst.pipe);
+      setOp->allAtOnce = true;
+      waitOp->allAtOnce = true;
+      if (options.isCrossCoreMode()) {
+        setOp->coreType = corePipeSrc.coreType;
+        waitOp->coreType = corePipeDst.coreType;
+      }
+      assert(setOp != nullptr && waitOp != nullptr);
+      syncMapBefore[scopeOp].push_back(std::move(setOp));
+      syncMapAfter[scopeOp].push_front(std::move(waitOp));
+    }
+  }
+  return std::make_pair(std::move(syncMapBefore), std::move(syncMapAfter));
+}
+
+void Solver::processConflict(Occurrence *occ1, Occurrence *occ2,
+                             RWOperation *rwOp1, RWOperation *rwOp2,
+                             bool isUseless) {
+  for (auto [corePipeSrc, corePipeDst] : checkMemoryConflicts(rwOp1, rwOp2)) {
+    if (options.alwaysUsePipeSAsWaitingPipe) {
+      corePipeDst.pipe = hivm::PIPE::PIPE_S;
+    }
+    auto eventIdInfo =
+        getEventIdInfo(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst);
+    handleConflict(occ1, occ2, rwOp1, rwOp2, corePipeSrc, corePipeDst,
+                   eventIdInfo, isUseless);
+  }
+}
+
+// Main processing loop that iterates processingOrders and attempts to
+// discover and record conflicts.
+void Solver::processOrders() {
+  for (auto &[occ1, occ2, rwOp1, rwOp2, isUseless] : processingOrders) {
+    assert(occ1 != occ2);
+    assert(occ1->syncIrIndex < occ2->syncIrIndex);
+    if (checkVisited(occ1, occ2)) {
+      assert(false && "expected to not check a pair more than once.");
+      continue;
+    }
+    if (checkImpossibleOccPair(occ1, occ2) || checkAlreadySynced(occ1, occ2) ||
+        skipMMad1DecomposedLoopOpt(occ1, occ2) ||
+        checkSkipParallelLoop(occ1, occ2) ||
+        checkSkipCrossCorePair(occ1, occ2)) {
+      continue;
+    }
+    DEBUG_WITH_TYPE("gss-sync-solver-checking", {
+      llvm::dbgs() << "checking: " << (isUseless ? "is-useless\n" : "\n");
+      llvm::dbgs() << occ1->syncIrIndex << ' ' << occ1->startIndex << ' '
+                   << occ1->endIndex << ' ' << occ1->op->str(0, false) << '\n';
+      llvm::dbgs() << occ2->syncIrIndex << ' ' << occ2->startIndex << ' '
+                   << occ2->endIndex << ' ' << occ2->op->str(0, false) << '\n';
+    });
+    if (checkAlreadySyncedWithUnitFlag(occ1, occ2)) {
+      continue;
+    }
+    processConflict(occ1, occ2, rwOp1, rwOp2, isUseless);
+  }
+}
+
+void Solver::insertMergedBackwardSyncPairs() {
+  for (auto &[scopeOp, st] : backwardSyncEventsAfterMerge) {
+    for (auto &corePipeInfoPair : st) {
+      auto [corePipeSrc, corePipeDst] = corePipeInfoPair;
+      for (auto *scopeOcc : opAllOccurrences[scopeOp]) {
+        auto *parentScopeOcc = scopeOcc->parentOcc;
+        assert(parentScopeOcc != nullptr);
+        Occurrence *setOcc = nullptr;
+        Occurrence *waitOcc = nullptr;
+        auto startIndex = scopeOcc->startIndex;
+        auto endIndex = scopeOcc->endIndex;
+        if (isa<Loop>(scopeOp)) {
+          setOcc = getBeforePlaceHolderOcc(scopeOcc);
+          waitOcc = getAfterPlaceHolderOcc(scopeOcc);
+          startIndex = setOcc->endIndex;
+          endIndex = waitOcc->startIndex;
+        }
+        auto conflictPair = std::make_unique<ConflictPair>(
+            nullptr, nullptr, nullptr, nullptr, setOcc, waitOcc, corePipeSrc,
+            corePipeDst, startIndex, endIndex);
+        assert(conflictPair->startIndex <= conflictPair->endIndex);
+        conflictPair->isUseless = true;
+        conflictPair->dontReuse = true;
+        conflictPair->dontCheckForConflict = true;
+        conflictPair->couldNotRun = false; // notice this
+        LLVM_DEBUG({
+          llvm::dbgs() << "consider-merged-backward-pair: "
+                       << scopeOp->str(0, false) << ' ' << conflictPair->str()
+                       << "\n";
+        });
+        scopeOccChosenConflicts[parentScopeOcc].insert(conflictPair.get());
+        chosenConflictedPairs.push_back(std::move(conflictPair));
+      }
+    }
+  }
+}
+
+llvm::LogicalResult Solver::considerOuterBackwardSyncPairs() {
+  if (!options.considerOuterBackwardSyncPairs) {
+    return llvm::failure();
+  }
+  bool backwardPairsPositionChanged = false;
+  for (auto &[scopeOp, st] : backwardSyncEventsAfterMerge) {
+    SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>> toBeErased;
+    for (auto &corePipeInfoPair : st) {
+      if (!backwardSyncEvents.contains(scopeOp) ||
+          !backwardSyncEvents[scopeOp].contains(corePipeInfoPair)) {
+        toBeErased.push_back(corePipeInfoPair);
+      }
+    }
+    if (!toBeErased.empty()) {
+      backwardPairsPositionChanged = true;
+      for (auto &corePipeInfoPair : toBeErased) {
+        st.erase(corePipeInfoPair);
+      }
+    }
+  }
+  int chosenOpsDepth = -1;
+  SmallVector<OperationBase *> chosenOps;
+  for (auto &[scopeOp, mp] : backwardSyncEvents) {
+    if (backwardSyncEventsAfterMerge.contains(scopeOp)) {
+      continue;
+    }
+    int scopeOpDepth = scopeOp->getDepth();
+    if (chosenOpsDepth == scopeOpDepth) {
+      chosenOps.push_back(scopeOp);
+    } else if (chosenOpsDepth == -1 || chosenOpsDepth < scopeOpDepth) {
+      chosenOps.clear();
+      chosenOps.push_back(scopeOp);
+      chosenOpsDepth = scopeOpDepth;
+    }
+  }
+  if (chosenOps.empty()) {
+    return llvm::failure();
+  }
+  bool newPairIsInserted = false;
+  for (auto *chosenOp : chosenOps) {
+    for (auto &[corePipeInfoPair, eventIdsMp] : backwardSyncEvents[chosenOp]) {
+      assert(!eventIdsMp.empty());
+      if (!eventIdsMp.empty()) {
+        auto [it, isInserted] =
+            backwardSyncEventsAfterMerge[chosenOp].insert(corePipeInfoPair);
+        newPairIsInserted |= isInserted;
+      }
+    }
+  }
+  return llvm::success(backwardPairsPositionChanged || newPairIsInserted);
+}
+
+llvm::LogicalResult Solver::reuseSyncPairToSaveEventIds() {
+  if (!options.reuseSyncPairToSaveEventIds || barrierAllPairs.empty()) {
+    return llvm::failure();
+  }
+  bool limitReached = true;
+  for (auto [corePipeSrc, corePipeDst] : barrierAllPairs) {
+    if (reusePairs[{corePipeSrc, corePipeDst}] < maxReuseNum) {
+      if (reusePairs[{corePipeSrc, corePipeDst}] <=
+          reusedPairs[{corePipeSrc, corePipeDst}]) {
+        reusePairs[{corePipeSrc, corePipeDst}] += 1;
+        limitReached = false;
+      }
+    }
+  }
+  DEBUG_WITH_TYPE("gss-sync-solver-reuse", {
+    llvm::dbgs() << "reusePairs: \n";
+    for (auto [pipeCorePairs, cnt] : reusePairs) {
+      llvm::dbgs() << get<0>(pipeCorePairs).pipe << ' '
+                   << get<1>(pipeCorePairs).pipe << ' ' << cnt << '\n';
+    }
+  });
+  return llvm::success(!limitReached);
+}
+
+llvm::LogicalResult Solver::disableMultiEventIdForBarrierAllPairs() {
+  if (!options.disableMultiEventIdForBarrierAllPairs ||
+      barrierAllPairs.empty()) {
+    return llvm::failure();
+  }
+  bool newPairIsInserted = false;
+  for (auto corePipeInfoPair : barrierAllPairs) {
+    auto [it, isInserted] = disabledMultiEventIdPairs.insert(corePipeInfoPair);
+    newPairIsInserted |= isInserted;
+  }
+  LLVM_DEBUG({
+    if (newPairIsInserted) {
+      llvm::dbgs() << "disabled-multi-event-id-pairs: \n";
+      for (auto &[corePipeSrc, corePipeDst] : disabledMultiEventIdPairs) {
+        llvm::dbgs() << corePipeSrc.coreType << ' ' << corePipeSrc.pipe << ' '
+                     << corePipeDst.coreType << ' ' << corePipeDst.pipe << '\n';
+      }
+    }
+  });
+  return llvm::success(newPairIsInserted);
+}
+
+llvm::LogicalResult Solver::tryMovingOutBackwardSyncPairsToOuterLoops() {
+  if (!options.moveOutAndMergeBackwardSyncPairs || !options.isCrossCoreMode() ||
+      dontMoveBackwardSyncPairsToOutmostLoop) {
+    return llvm::failure();
+  }
+  if (!moveBackwardSyncPairsToOutmostLoop) {
+    moveBackwardSyncPairsToOutmostLoop = true;
+    return llvm::success();
+  }
+  if (!barrierAllPairs.empty()) {
+    moveBackwardSyncPairsToOutmostLoop = false;
+    dontMoveBackwardSyncPairsToOutmostLoop = true;
+    return llvm::success();
+  }
+  return llvm::failure();
 }
 
 // High-level solve orchestration with multiple passes and optional merging
 // iterations.
-void Solver::solve(int runNum) {
-  LLVM_DEBUG(llvm::dbgs() << "runNum: " << runNum << '\n');
-  processOrders();
-  if (disableMultiEventIdForBarrierAllPairs) {
+llvm::LogicalResult Solver::runSolver(bool enableOpts1, bool enableOpts2) {
+  reset(/*resetEventIdRanOutOpts=*/true);
+
+  int64_t runNum = 0;
+  while (runNum++ < maxRunNum) {
+    LLVM_DEBUG(llvm::dbgs() << "runNum: " << runNum << '\n');
+
+    reset();
+    insertMergedBackwardSyncPairs();
+    processOrders();
+
+    if (llvm::succeeded(tryMovingOutBackwardSyncPairsToOuterLoops())) {
+      continue;
+    }
+
+    if (enableOpts1) {
+      if (options.considerOuterBackwardSyncPairs) {
+        getBeforeAfterSyncMaps();
+        if (llvm::succeeded(considerOuterBackwardSyncPairs())) {
+          continue;
+        }
+        if (!barrierAllPairs.empty()) {
+          backwardSyncEventsAfterMerge.clear();
+        }
+      }
+    }
+
+    if (enableOpts2) {
+      if (!barrierAllPairs.empty()) {
+        if (llvm::succeeded(reuseSyncPairToSaveEventIds())) {
+          continue;
+        }
+        if (llvm::succeeded(disableMultiEventIdForBarrierAllPairs())) {
+          continue;
+        }
+      }
+    }
+
     if (!barrierAllPairs.empty()) {
-      reset();
-      insertedBarrierAllBefore.clear();
-      processOrders();
+      pickAndInsertABarrierAll();
+      reset(/*resetEventIdRanOutOpts=*/true);
+      continue;
+    }
+    break;
+  }
+
+  reset();
+  insertMergedBackwardSyncPairs();
+  processOrders();
+
+  return llvm::success(runNum < maxRunNum);
+}
+
+void Solver::solve() {
+  if (llvm::succeeded(runSolver())) {
+    return;
+  }
+  if (!options.isTestMode()) {
+    if (llvm::succeeded(runSolver(/*enableOpts1=*/false))) {
+      return;
+    }
+    if (llvm::succeeded(
+            runSolver(/*enableOpts1=*/false, /*enableOpts2=*/false))) {
+      return;
     }
   }
-  if (considerMergedBackwardSyncEventIds) {
-    getBeforeAfterSyncMaps();
-    backwardSyncEventsAfterMerge = backwardSyncEvents;
-    reset();
-    insertedBarrierAllBefore.clear();
-    processOrders();
-  }
-  if (!insertedBarrierAllBefore.empty() && runNum < 99) {
-    reset();
-    pickAndInsertABarrierAll();
-    insertedBarrierAllBefore.clear();
-    backwardSyncEventsAfterMerge.clear();
-    barrierAllPairs.clear();
-    solve(runNum + 1);
-  }
+  llvm::report_fatal_error("GSS: runSolver() failed.");
 }

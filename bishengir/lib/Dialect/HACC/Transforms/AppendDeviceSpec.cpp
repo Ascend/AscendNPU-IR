@@ -52,7 +52,7 @@ getNPUTargetSpecAttr(MLIRContext *context, TargetDevice target, Location loc) {
   auto maybeSpec = getTargetSpec(target);
   if (!maybeSpec.has_value() ||
       maybeSpec.value()->device == TargetDevice::Unknown)
-    llvm_unreachable("Unknown target device");
+    llvm::report_fatal_error("Unknown target device");
 
   ImplicitLocOpBuilder builder(loc, context);
   SmallVector<DataLayoutEntryInterface> entries;
@@ -102,6 +102,14 @@ void AppendDeviceSpec::runOnOperation() {
   MLIRContext *ctx = &getContext();
   auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, moduleOp->getLoc());
   utils::setNPUTargetSpec(moduleOp, targetSpec);
+
+  llvm::VersionTuple hivmcVersion;
+  if (hivmcVersion.tryParse(HIVMCVersion))
+    hivmcVersion = llvm::VersionTuple(0, 0, 0);
+  moduleOp->setAttr(hacc::HIVMCVersionAttr::name,
+                    hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
+  moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,
+                    BoolAttr::get(ctx, false));
 
   // Remove attr if exists
   moduleOp->removeAttr(TargetAttr::name);

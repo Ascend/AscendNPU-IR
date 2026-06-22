@@ -8,11 +8,11 @@ func.func @test_fixpipe_mixed_type_bufferize() {
   %gmCSubview = memref.subview %gmC[0, 0][256, 128][1, 1]
                        : memref<1024x2048xf16> to
                          memref<256x128xf16, strided<[2048, 1], offset: 0>>
-  // CHECK: hivm.hir.fixpipe {enable_nz2nd}
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
   // CHECK-SAME: ins(%[[ALLOC:.*]] : memref<256x128xf16>)
   // CHECK-SAME: outs(%[[SUBVIEW]] : memref<256x128xf16, strided<[2048, 1]>>)
   %l0c = tensor.empty() : tensor<256x128xf16>
-  hivm.hir.fixpipe {enable_nz2nd}
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
       ins(%l0c : tensor<256x128xf16>)
       outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
 

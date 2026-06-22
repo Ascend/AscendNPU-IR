@@ -1,3 +1,4 @@
+// REQUIRES: hivmc
 // UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-lir-compile=false -enable-hfusion-compile=true  -block-dim=20 %s -o %t.ll
 // RUN: FileCheck --input-file=%t.ll %s

@@ -1,0 +1,116 @@
+diff --git a/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td b/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td
+index 477478a4651c..303a05c9d366 100644
+--- a/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td
++++ b/mlir/include/mlir/Dialect/Arith/IR/ArithOps.td
+@@ -19,6 +19,7 @@ include "mlir/Interfaces/VectorInterfaces.td"
+ include "mlir/IR/BuiltinAttributeInterfaces.td"
+ include "mlir/IR/OpAsmInterface.td"
+ include "mlir/IR/EnumAttr.td"
++include "mlir/Bytecode/BytecodeOpInterface.td"
+ 
+ // Base class for Arith dialect ops. Ops in this dialect have no memory
+ // effects and can be applied element-wise to vectors and tensors.
+@@ -1225,7 +1226,7 @@ def Arith_ExtFOp : Arith_FToFCastOp<"extf", [DeclareOpInterfaceMethods<ArithFast
+ // TruncIOp
+ //===----------------------------------------------------------------------===//
+ 
+-def Arith_TruncIOp : Arith_IToICastOp<"trunci"> {
++def Arith_TruncIOp : Arith_IToICastOp<"trunci", [DeclareOpInterfaceMethods<BytecodeOpInterface>]> {
+   let summary = "integer truncation operation";
+   let description = [{
+     The integer truncation operation takes an integer input of
+diff --git a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
+index 2e1635e590ca..ed56715aaf67 100644
+--- a/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
++++ b/mlir/include/mlir/Dialect/LLVMIR/LLVMIntrinsicOps.td
+@@ -7,6 +7,7 @@ include "mlir/Dialect/LLVMIR/LLVMEnums.td"
+ include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
+ include "mlir/Interfaces/InferTypeOpInterface.td"
+ include "mlir/Interfaces/MemorySlotInterfaces.td"
++include "mlir/Bytecode/BytecodeOpInterface.td"
+ 
+ // Operations that correspond to LLVM intrinsics. With MLIR operation set being
+ // extendable, there is no reason to introduce a hard boundary between "core"
+@@ -426,7 +427,7 @@ def LLVM_USHLSat : LLVM_BinarySameArgsIntrOpI<"ushl.sat">;
+ //
+ 
+ def LLVM_AssumeOp
+-  : LLVM_ZeroResultIntrOp<"assume", []>, Arguments<(ins I1:$cond)>;
++  : LLVM_ZeroResultIntrOp<"assume", [], [DeclareOpInterfaceMethods<BytecodeOpInterface>]>, Arguments<(ins I1:$cond)>;
+ 
+ def LLVM_SSACopyOp : LLVM_OneResultIntrOp<"ssa.copy", [], [0],
+                                             [Pure, SameOperandsAndResultType]> {
+diff --git a/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td b/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
+index acbcbae105db..70fccb0c4445 100644
+--- a/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
++++ b/mlir/include/mlir/Dialect/SCF/IR/SCFOps.td
+@@ -22,6 +22,7 @@ include "mlir/Interfaces/InferTypeOpInterface.td"
+ include "mlir/Interfaces/ParallelCombiningOpInterface.td"
+ include "mlir/Interfaces/SideEffectInterfaces.td"
+ include "mlir/Interfaces/ViewLikeInterface.td"
++include "mlir/Bytecode/BytecodeOpInterface.td"
+ 
+ def SCF_Dialect : Dialect {
+   let name = "scf";
+@@ -145,7 +146,8 @@ def ForOp : SCF_Op<"for",
+        DeclareOpInterfaceMethods<RegionBranchOpInterface,
+         ["getEntrySuccessorOperands"]>,
+        SingleBlockImplicitTerminator<"scf::YieldOp">,
+-       RecursiveMemoryEffects]> {
++       RecursiveMemoryEffects,
++       DeclareOpInterfaceMethods<BytecodeOpInterface>]> {
+   let summary = "for operation";
+   let description = [{
+     The `scf.for` operation represents a loop taking 3 SSA value as operands
+diff --git a/mlir/lib/Dialect/Arith/IR/ArithOps.cpp b/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
+index aa5eb95a3d22..63b6288c5397 100644
+--- a/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
++++ b/mlir/lib/Dialect/Arith/IR/ArithOps.cpp
+@@ -1482,6 +1482,13 @@ LogicalResult arith::TruncIOp::verify() {
+   return verifyTruncateOp<IntegerType>(*this);
+ }
+ 
++LogicalResult arith::TruncIOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  return success();
++}
++
++void arith::TruncIOp::writeProperties(DialectBytecodeWriter &writer) {
++}
++
+ //===----------------------------------------------------------------------===//
+ // TruncFOp
+ //===----------------------------------------------------------------------===//
+diff --git a/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp b/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
+index b572b79d089a..5206f4a4dca0 100644
+--- a/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
++++ b/mlir/lib/Dialect/LLVMIR/IR/LLVMDialect.cpp
+@@ -3442,3 +3442,10 @@ bool mlir::LLVM::satisfiesLLVMModule(Operation *op) {
+   return op->hasTrait<OpTrait::SymbolTable>() &&
+          op->hasTrait<OpTrait::IsIsolatedFromAbove>();
+ }
++
++LogicalResult AssumeOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  return success();
++}
++
++void AssumeOp::writeProperties(DialectBytecodeWriter &writer) {
++}
+\ No newline at end of file
+diff --git a/mlir/lib/Dialect/SCF/IR/SCF.cpp b/mlir/lib/Dialect/SCF/IR/SCF.cpp
+index 4de8dacc0edb..6936a00bf4c5 100644
+--- a/mlir/lib/Dialect/SCF/IR/SCF.cpp
++++ b/mlir/lib/Dialect/SCF/IR/SCF.cpp
+@@ -4335,6 +4335,13 @@ void IndexSwitchOp::getCanonicalizationPatterns(RewritePatternSet &results,
+   results.add<FoldConstantCase>(context);
+ }
+ 
++LogicalResult ForOp::readProperties(DialectBytecodeReader &reader, OperationState &state) {
++  return success();
++}
++
++void ForOp::writeProperties(DialectBytecodeWriter &writer) {
++}
++
+ //===----------------------------------------------------------------------===//
+ // TableGen'd op method definitions
+ //===----------------------------------------------------------------------===//

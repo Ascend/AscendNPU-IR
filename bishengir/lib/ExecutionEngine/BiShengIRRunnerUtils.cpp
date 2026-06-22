@@ -37,13 +37,13 @@ getFileHandle(const char *filePath) {
   if (const auto parentPath = llvm::sys::path::parent_path(filePath);
       !parentPath.empty() &&
       llvm::sys::fs::create_directories(parentPath).value() != 0) {
-    llvm_unreachable("Couldn't create directories!");
+    llvm::report_fatal_error("Couldn't create directories!");
     return nullptr;
   }
 
   auto output = mlir::openOutputFile(filePath);
   if (!output) {
-    llvm_unreachable("Couldn't open output file!");
+    llvm::report_fatal_error("Couldn't open output file!");
     return nullptr;
   }
   output->keep();
@@ -53,7 +53,7 @@ getFileHandle(const char *filePath) {
 extern "C" void MLIR_RUNNERUTILS_EXPORT
 closeFileHandle(llvm::ToolOutputFile *output) {
   if (output == nullptr)
-    llvm_unreachable("Erasing non-existing pointer to a file");
+    llvm::report_fatal_error("Erasing non-existing pointer to a file");
 
   delete output;
 }

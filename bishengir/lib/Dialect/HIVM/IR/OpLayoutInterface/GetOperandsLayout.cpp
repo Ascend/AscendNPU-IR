@@ -100,3 +100,104 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   }
   return valLayoutMap;
 }
+
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadL1Op::getOperandsTargetFractalLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto operA = getA();
+  auto aBlockSizes = getBlockSizes(operA);
+  auto mALayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal,
+      nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+  valLayoutMap[operA] = mALayoutAttr;
+
+  auto operB = getB();
+  auto bBlockSizes = getBlockSizes(operB);
+  auto mBLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal,
+      nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+  valLayoutMap[operB] = mBLayoutAttr;
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto mCLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+  valLayoutMap[getC()] = mCLayoutAttr;
+
+  if (auto bias = getPerChannelBias()) {
+    auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
+                                              nullptr, nullptr);
+    valLayoutMap[bias] = biasLayoutAttr;
+  }
+  return valLayoutMap;
+}
+
+//===----------------------------------------------------------------------===//
+// Conv1DL1Op
+//===----------------------------------------------------------------------===//
+ 	 
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+Conv1DL1Op::getOperandsCurrentLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+  valLayoutMap[getDpsInputOperand(0)->get()] = *getInputLayout();
+  valLayoutMap[getDpsInputOperand(1)->get()] = *getWeightLayout();
+  valLayoutMap[getDpsInitOperand(0)->get()] = *getInitLayout();
+  // TODO: bias
+  return valLayoutMap;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+Conv1DL1Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+  valLayoutMap[getDpsInputOperand(0)->get()] =
+      DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+  valLayoutMap[getDpsInputOperand(1)->get()] =
+      DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  llvm::SmallVector<int64_t> outputBlockSizes;
+  outputBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  outputBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto outputLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(outputBlockSizes)));
+  valLayoutMap[getDpsInitOperand(0)->get()] = outputLayoutAttr;
+  // TODO: bias
+  return valLayoutMap;
+}
+
+//===----------------------------------------------------------------------===//
+// Conv2DL1Op
+//===----------------------------------------------------------------------===//
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+Conv2DL1Op::getOperandsCurrentLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+  valLayoutMap[getDpsInputOperand(0)->get()] = *getInputLayout();
+  valLayoutMap[getDpsInputOperand(1)->get()] = *getWeightLayout();
+  valLayoutMap[getDpsInitOperand(0)->get()] = *getInitLayout();
+  // TODO: bias
+  return valLayoutMap;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+Conv2DL1Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+  valLayoutMap[getDpsInputOperand(0)->get()] =
+      DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+  valLayoutMap[getDpsInputOperand(1)->get()] =
+      DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  llvm::SmallVector<int64_t> outputBlockSizes;
+  outputBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  outputBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto outputLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(outputBlockSizes)));
+  valLayoutMap[getDpsInitOperand(0)->get()] = outputLayoutAttr;
+  // TODO: bias
+  return valLayoutMap;
+}

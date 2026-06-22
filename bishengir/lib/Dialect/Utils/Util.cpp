@@ -20,14 +20,15 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Support/VersionTuple.h"
 
 #include <algorithm>
 #include <numeric>
@@ -64,7 +65,9 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
     }
     if (auto whileOp =
             dyn_cast<scf::WhileOp>(arg.getParentRegion()->getParentOp())) {
-      result.emplace_back(whileOp.getTiedLoopInit(arg)->get());
+      if (auto *tiedLoopInit = whileOp.getTiedLoopInit(arg)) {
+        result.emplace_back(tiedLoopInit->get());
+      }
     }
   }
 
@@ -131,6 +134,20 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 } // namespace
 
 namespace utils {
+
+ModuleOp getTopLevelModuleOp(Operation *op) {
+  ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
+  while (moduleOp && moduleOp->getParentOp()) {
+    auto spec = moduleOp->getAttrOfType<TargetSystemSpecAttr>(
+        "dlti.target_system_spec");
+    if (spec) {
+      return moduleOp;
+    }
+    moduleOp = moduleOp->getParentOfType<ModuleOp>();
+  }
+  return moduleOp;
+}
+
 void eraseTriviallyDeadOps(ArrayRef<Operation *> ops) {
   for (auto I = ops.rbegin(), E = ops.rend(); I != E;) {
     Operation *curOp = *I;
@@ -191,7 +208,7 @@ Value createEmptyOpWithTargetElemType(
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 #else
     // TODO: it should be defined in Dialect/Tensor/IR
     return tensor::createTensorEmptyOpWithTargetElemType(builder, loc, source,
@@ -206,7 +223,7 @@ Value createEmptyOp(OpBuilder &builder, Location loc, Value source) {
   auto shapedType = cast<ShapedType>(source.getType());
   if (isa<TensorType>(shapedType)) {
 #if BISHENGIR_BUILD_STANDALONE_IR_ONLY
-    llvm_unreachable("Not implemented");
+    llvm::report_fatal_error("Not implemented");
 #else
     return tensor::createTensorEmptyOp(builder, loc, source);
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
@@ -245,9 +262,8 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
   SmallVector<Value> values;
   auto resNum = operand.getOperandNumber();
   TypeSwitch<Operation *>(op)
-      .Case<scf::IfOp>([&](scf::IfOp ifOp) {
-        values.push_back(ifOp.getResult(resNum));
-      })
+      .Case<scf::IfOp>(
+          [&](scf::IfOp ifOp) { values.push_back(ifOp.getResult(resNum)); })
       .Case<scf::ForOp>([&](scf::ForOp forOp) {
         values.push_back(forOp.getResult(resNum));
         values.push_back(forOp.getRegionIterArg(resNum));
@@ -257,20 +273,36 @@ SmallVector<Value> getAliasValues(Operation *op, OpOperand &operand) {
         values.push_back(whileOp.getBefore().front().getArgument(resNum));
         values.push_back(whileOp.getAfter().front().getArgument(resNum));
       })
-      .Default([&](Operation *otherOp){
-        llvm_unreachable("unsupported loop like op!");
+      .Default([&](Operation *otherOp) {
+        llvm::report_fatal_error("unsupported loop like op!");
       });
 
   return values;
 }
 
 std::optional<bool>
-checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
+checkUsersAllWithCondition(Value v, Operation *rootOp,
                            const std::function<bool(Operation *op)> &condFn,
                            const std::function<bool(Operation *op)> &skipFn) {
+  /*
+  A static visited set is needed to solve an infinite recursion issue that could
+  happen when loadOp::inferCoreType and checkUsersAllWithCondition keep calling
+  each other.
+  TODO: rewrite loadOp::inferCoreType so we don't use a static visited set.
+   */
+  static DenseSet<Value> visited;
   if (!visited.insert(v).second)
     return std::nullopt;
-  
+  auto returnedValue =
+      checkUsersAllWithConditionImpl(v, rootOp, condFn, skipFn);
+  visited.erase(v);
+  return returnedValue;
+}
+
+std::optional<bool> checkUsersAllWithConditionImpl(
+    Value v, Operation *rootOp,
+    const std::function<bool(Operation *op)> &condFn,
+    const std::function<bool(Operation *op)> &skipFn) {
   // Flag initialization is nullopt which means we can't infer flag now
   std::optional<bool> flag = std::nullopt;
 
@@ -293,7 +325,7 @@ checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
 
     // For all skipped ops, just continue searching its result
     for (auto opRes : op->getResults()) {
-      auto resCheck = checkUsersAllWithCondition(opRes, rootOp, visited, condFn, skipFn);
+      auto resCheck = checkUsersAllWithCondition(opRes, rootOp, condFn, skipFn);
       if (!resCheck.has_value())
         continue;
 
@@ -307,20 +339,21 @@ checkUsersAllWithCondition(Value v, Operation *rootOp, DenseSet<Value> &visited,
       assert(parentOp && "parent op cannot be nullptr");
       auto aliasValues = getAliasValues(parentOp, use);
       SmallVector<std::optional<bool>> coreTypes;
-      llvm::transform(aliasValues, std::back_inserter(coreTypes), [&](Value &v) {
-        return checkUsersAllWithCondition(v, rootOp, visited, condFn, skipFn);
-      });
+      llvm::transform(
+          aliasValues, std::back_inserter(coreTypes), [&](Value &v) {
+            return checkUsersAllWithCondition(v, rootOp, condFn, skipFn);
+          });
 
       if (llvm::all_of(coreTypes, [&](std::optional<bool> &maybeCoreType) {
             return !maybeCoreType.has_value();
           }))
         continue;
-      
+
       if (llvm::any_of(coreTypes, [&](std::optional<bool> &maybeCoreType) {
             return maybeCoreType.has_value() && !maybeCoreType.value();
           }))
         return false;
-      
+
       flag = true;
     }
   }
@@ -435,7 +468,7 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
                               memref::AllocOp &tmpAllocOp,
                               bool allowDynShapeAlloc) {
   auto srcAlloc = utils::tracebackMemRefToAlloc(source);
-  if (!srcAlloc.has_value() || !srcAlloc.value()) {
+  if (!srcAlloc.has_value()) {
     if (allowDynShapeAlloc)
       return;
     emitError(tmpAllocOp->getLoc(), "alloc is not found");
@@ -457,6 +490,11 @@ inline void markDynShapeAlloc(OpBuilder &builder, Value source,
   }
   int64_t allocSize =
       maybeStaticTotalSize.value() / static_cast<int64_t>(i8TypeWidth);
+  auto sourceElemTypeWidth =
+      getElementTypeOrSelf(source.getType()).getIntOrFloatBitWidth();
+  auto srcAllocElemTypeWidth =
+      getElementTypeOrSelf(srcAllocMemref).getIntOrFloatBitWidth();
+  allocSize = allocSize * srcAllocElemTypeWidth / sourceElemTypeWidth;
   // for dynamic case, set buffer size by annotation.mark op
   auto tmpMarkOp = builder.create<annotation::MarkOp>(tmpAllocOp->getLoc(),
                                                       tmpAllocOp->getResult(0));
@@ -526,7 +564,7 @@ Value getDimValue(OpBuilder &builder, Location loc, Value v, int64_t dim) {
 OpFoldResult getDimOFR(OpBuilder &builder, Location loc, Value v, int64_t dim) {
   auto type = cast<ShapedType>(v.getType());
   if (!type.hasRank()) {
-    llvm_unreachable("Cannot get dim for type with no rank");
+    llvm::report_fatal_error("Cannot get dim for type with no rank");
     return {};
   }
 
@@ -575,6 +613,24 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
       .Default([](auto) { return nullptr; });
 }
 
+bool isAlignedInUB(Type type) {
+  if (auto shapedType = dyn_cast<ShapedType>(type)) {
+    auto shape = shapedType.getShape();
+    const int64_t lastDimSizeInBit =
+        shape.back() * static_cast<int64_t>(
+            shapedType.getElementType().getIntOrFloatBitWidth());
+    return lastDimSizeInBit % kUBAlignSizeInBits == 0;
+  }
+  return type.getIntOrFloatBitWidth() % kUBAlignSizeInBits == 0;
+}
+
+bool isUnstructuredMemAccLoop(Operation *op) {
+  auto forOp = dyn_cast<scf::ForOp>(op);
+  if (!forOp)
+    return false;
+  return forOp->hasAttr("ExtractedLoadOrStore");
+}
+
 hivm::AxisKind getAxisKind(int dim, int rank) {
   if (dim == rank - 1)
     return hivm::AxisKind::LAST;
@@ -598,7 +654,8 @@ bool utils::isAllocLikeOp(Value val) {
 bool utils::isAllocLikeOp(Operation *op) {
   if (!op)
     return false;
-  return isa<memref::AllocOp>(op) || isa<memref::AllocaOp>(op);
+  return isa<memref::AllocOp>(op) || isa<memref::AllocaOp>(op) ||
+         isa<bishengir::memref_ext::AllocWorkspaceOp>(op);
 }
 
 bool utils::isCollapseShapeOp(Value val) {
@@ -637,23 +694,36 @@ utils::createAllocWithSettingBufferSize(Operation *op, int64_t bufferSize,
       MemRefType::get({bufferSize}, opBuilder.getI8Type(), mlir::AffineMap{},
                       oldType.getMemorySpace());
   Value newAlloc;
+  memref::ViewOp viewOp;
+  auto startOffset = opBuilder.create<arith::ConstantIndexOp>(loc, 0);
   if (isa<memref::AllocOp>(op)) {
     memref::AllocOp oldOp = cast<memref::AllocOp>(op);
     newAlloc = opBuilder
                    .create<memref::AllocOp>(loc, newMemrefType,
                                             oldOp.getAlignmentAttr())
                    .getMemref();
-  } else {
+    viewOp = opBuilder.create<memref::ViewOp>(loc, oldType, newAlloc,
+                                              startOffset, op->getOperands());
+  } else if (isa<memref::AllocaOp>(op)) {
     memref::AllocaOp oldOp = cast<memref::AllocaOp>(op);
     newAlloc = opBuilder
                    .create<memref::AllocaOp>(loc, newMemrefType,
                                              oldOp.getAlignmentAttr())
                    .getMemref();
+    viewOp = opBuilder.create<memref::ViewOp>(loc, oldType, newAlloc,
+                                              startOffset, op->getOperands());
+  } else if (isa<bishengir::memref_ext::AllocWorkspaceOp>(op)) {
+    bishengir::memref_ext::AllocWorkspaceOp oldOp =
+        cast<bishengir::memref_ext::AllocWorkspaceOp>(op);
+    newAlloc = opBuilder
+                   .create<bishengir::memref_ext::AllocWorkspaceOp>(
+                       loc, newMemrefType, oldOp.getWorkspaceArg(),
+                       ValueRange{}, /*offset*/ ValueRange{})
+                   .getMemref();
+    viewOp =
+        opBuilder.create<memref::ViewOp>(loc, oldType, newAlloc, startOffset,
+                                         ValueRange{oldOp.getDynamicSize()});
   }
-  // Create view from new alloc to old alloc's sizes and replace its use.
-  auto startOffset = opBuilder.create<arith::ConstantIndexOp>(loc, 0);
-  auto viewOp = opBuilder.create<memref::ViewOp>(
-      loc, oldType, newAlloc, startOffset, op->getOperands());
   return viewOp;
 }
 
@@ -994,9 +1064,9 @@ utils::tracebackMemRefVecByTargetFn(Value memrefVal,
 
 std::optional<memref::AllocOp> utils::tracebackMemRefToAlloc(Value memrefVal) {
   auto tracedValue = utils::tracebackMemRef(memrefVal);
-  return utils::isAllocLikeOp(tracedValue)
-             ? tracedValue.getDefiningOp<memref::AllocOp>()
-             : std::optional<memref::AllocOp>();
+  if (auto allocOp = tracedValue.getDefiningOp<memref::AllocOp>())
+    return allocOp;
+  return std::nullopt;
 }
 
 SmallVector<Value> utils::tracebackMemRefAllocAndAlias(Value memrefVal) {
@@ -1059,8 +1129,12 @@ bool isElementwiseOp(Operation *op) {
 
 bool isMarkedAsElementwiseOp(Operation *op) {
   // This would handle scalar as well
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   return isa_and_present<linalg::ElemwiseBinaryOp, linalg::ElemwiseUnaryOp,
                          linalg::FillOp>(op);
+#else
+  return isa_and_present<linalg::FillOp>(op) || isElementwiseOp(op);
+#endif
 }
 
 bool isZeroDimensionOp(Operation *op) {
@@ -1075,7 +1149,18 @@ bool isZeroDimensionOp(Operation *op) {
 
 bool isMarkedAsElementwiseUnaryOp(Operation *op) {
   // This would handle scalar as well
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   return isa_and_present<linalg::ElemwiseUnaryOp, linalg::FillOp>(op);
+#else
+  if (isa_and_present<linalg::FillOp>(op)) {
+    return true;
+  }
+  if (isElementwiseOp(op)) {
+    auto genericOp = dyn_cast<linalg::LinalgOp>(op);
+    return genericOp.getNumDpsInputs() == 1;
+  }
+  return false;
+#endif
 }
 
 bool isAllParallelOp(Operation *op) {
@@ -1091,7 +1176,9 @@ bool isAllParallelOp(Operation *op) {
 // TODO: Need to refactor this.
 bool isLegalOp(Operation *op) {
   if (isa<linalg::MapOp, linalg::FillOp, linalg::GenericOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
           linalg::ElemwiseBinaryOp, linalg::ElemwiseUnaryOp,
+#endif
           linalg::BroadcastOp, linalg::ReduceOp, linalg::TransposeOp,
           linalg::MatmulOp, linalg::MatmulTransposeAOp,
           linalg::MatmulTransposeBOp, tensor::ExtractOp>(op)) {
@@ -1240,14 +1327,4 @@ std::optional<int64_t> utils::traceToAllocMaxSize(mlir::Value memrefVal) {
   return allocSizeInBit /
          static_cast<int>(originalMemRefType.getElementTypeBitWidth());
 }
-
-bool version_utils::isCompatibleHIVMCVersion(StringRef versionStr) {
-  llvm::VersionTuple version;
-  bool fail = version.tryParse(versionStr.trim());
-  if (fail || version.empty()) {
-    return false;
-  }
-  return true;
-}
-
 } // namespace mlir

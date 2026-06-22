@@ -1,15 +1,19 @@
 file(GLOB ALIGN_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/AlignBuffer/*.cpp)
 file(GLOB BUBBLE_UP_EXTRACT_SLICE ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
-file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
 file(GLOB GRAPH_SYNC_CONFLICT_SOLVER ${CMAKE_CURRENT_SOURCE_DIR}/GraphSyncSolver/*.cpp)
+file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
+file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadStoreForMixCV/*.cpp)
 file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
-file(GLOB TILE_AND_BIND_SUB_BLOCK ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/*.cpp)
+set(TILE_AND_BIND_SUB_BLOCK
+    ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/Helper.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
 
 add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${ALIGN_BUFFER}
   ${BUBBLE_UP_EXTRACT_SLICE}
-  ${INJECT_SYNC}
   ${GRAPH_SYNC_CONFLICT_SOLVER}
+  ${INJECT_SYNC}
+  ${INSERT_LOAD_STORE_FOR_MIX_CV}
   ${TILING}
   ${TILE_AND_BIND_SUB_BLOCK}
   AddFFTSToSyncBlockSetOp.cpp
@@ -26,7 +30,21 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConstantizeBufferSize.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
+  ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp
+  ConvertLayout/ConvertLayoutUtils.cpp
+  ConvertLayout/HoistConvertLayout.cpp
+  ConvertLayout/InsertConvertLayout.cpp
+  ConvertLayout/Propagate/PropagateConvertLayout.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutElementwise.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutScfIf.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutScfFor.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutScfWhile.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
+  CreatePreload.cpp
   CVPipelining.cpp
+  EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp
@@ -45,11 +63,13 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InlineFixpipe.cpp
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
+  InsertFreeLockVarBeforeReturn.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
   InsertInferTaskTypeFunc.cpp
   InsertInferWorkSpaceSizeFunc.cpp
   InsertInitAndFinishForDebug.cpp
   InsertLoadStoreForMixCV.cpp
+  InsertLoadStoreForScalar.cpp
   InsertNZ2NDForDebug.cpp
   InsertWorkSpaceForMixCV.cpp
   LiftLowestStride.cpp
@@ -57,14 +77,18 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   LowerCreateSyncBlockLock.cpp
   MarkDisableLoad.cpp
   MarkMultiBuffer.cpp
+  MarkSyncBlockLockWithSubblock.cpp
   MarkRealCoreType.cpp
+  MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
+  NormalizeConvOps.cpp
   NormalizeLoopIterator.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   ReduceRankSubview.cpp
+  RemoveHIVMDataLayoutAnnotation.cpp
   SetBufferSize.cpp
   SinkOpToConsumerInLoop.cpp
   SplitMixKernel.cpp
@@ -73,6 +97,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TileBatchMMIntoLoop.cpp
   TileCubeVectorLoop.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
+  UnitFlagInfoBase.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Transforms

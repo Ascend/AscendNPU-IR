@@ -1,4 +1,4 @@
-// RUN: bishengir-compile -enable-hfusion-compile=true  -block-dim=1 %s
+// RUN: bishengir-compile -enable-hfusion-compile=true -enable-legacy-insert-load-store-for-mix-cv=true  -block-dim=1 %s
 
 module {
   func.func @model_2(%arg0: tensor<391x1xf16>, %arg1: tensor<1x288xf16>, %arg2: tensor<391x288xf16>) -> tensor<391x288xf16>
