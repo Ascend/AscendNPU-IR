@@ -13,6 +13,7 @@ add_bishengir_dialect_library(MLIRHIVMAVETransforms
   SIMTLoopNestsScheduling.cpp
   CombineAVEOPs.cpp
   HoistVstas.cpp
+  ProcessWideVextf.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVMAVE/Transforms

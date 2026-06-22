@@ -658,7 +658,7 @@ struct HIVMNormalizeToTargetTypeTraits<bool, hivm::VCmpOp>
                                           SmallVector<Value> &) {
     return rewriter.create<hivm::VCmpOp>(
         loc, TypeRange(op->getResultTypes()), ValueRange(newInputs),
-        ValueRange(op.getDpsInits()), op.getCompareModeAttr(),
+        ValueRange(op.getDpsInits()), op.getIsSigned(), op.getCompareMode(),
         op.getTransposeAttr(), op.getBroadcastAttr());
   }
 
@@ -711,7 +711,9 @@ struct HIVMNormalizeCumOpTraitsBase : public hivm::NormalizeTraitsBase {
   static bool shouldNormalize(CumOpType op) {
     return op.hasPureTensorSemantics() &&
            (std::is_same_v<CumOpType, hivm::VCumsumOp> ||
-            std::is_same_v<CumOpType, hivm::VCumprodOp>);
+            std::is_same_v<CumOpType, hivm::VCumprodOp> ||
+            std::is_same_v<CumOpType, hivm::VCummaxOp> ||
+            std::is_same_v<CumOpType, hivm::VCumminOp>);
   }
 
   static Value rebuildOpInF32(PatternRewriter &rewriter, Location loc,
@@ -719,6 +721,12 @@ struct HIVMNormalizeCumOpTraitsBase : public hivm::NormalizeTraitsBase {
     auto newOp = rewriter.create<CumOpType>(loc, TypeRange{newOutput}, newInput,
                                             newOutput, op.getCumDims(),
                                             op.getReverse());
+    // Preserve the NaN-propagation flag across normalization for cummax/cummin
+    // (cumsum/cumprod have no such attribute).
+    if constexpr (std::is_same_v<CumOpType, hivm::VCummaxOp> ||
+                  std::is_same_v<CumOpType, hivm::VCumminOp>) {
+      newOp.setPropagateNan(op.getPropagateNan());
+    }
     return newOp->getResult(0);
   }
 
@@ -804,7 +812,11 @@ void mlir::hivm::populateNormalizeF16ToF32Patterns(
   addTypeConversionPatterns<mlir::NormalizeCumOpF16ToF32Type<
       hivm::VCumsumOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCumsumOp>>,
       mlir::NormalizeCumOpF16ToF32Type<
-          hivm::VCumprodOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCumprodOp>>>(patterns);
+          hivm::VCumprodOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCumprodOp>>,
+      mlir::NormalizeCumOpF16ToF32Type<
+          hivm::VCummaxOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCummaxOp>>,
+      mlir::NormalizeCumOpF16ToF32Type<
+          hivm::VCumminOp, HIVMNormalizeCumOpF16ToF32Traits<hivm::VCumminOp>>>(patterns);
 }
 
 void mlir::hivm::populateNormalizeI8ToTargetPatterns(
@@ -823,7 +835,11 @@ void mlir::hivm::populateNormalizeI8ToTargetPatterns(
     addTypeConversionPatterns<mlir::NormalizeCumOpI8ToTargetType<
         hivm::VCumsumOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCumsumOp>>,
         mlir::NormalizeCumOpI8ToTargetType<
-            hivm::VCumprodOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCumprodOp>>>(patterns);
+            hivm::VCumprodOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCumprodOp>>,
+        mlir::NormalizeCumOpI8ToTargetType<
+            hivm::VCummaxOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCummaxOp>>,
+        mlir::NormalizeCumOpI8ToTargetType<
+            hivm::VCumminOp, HIVMNormalizeCumOpI8ToTargetTraits<hivm::VCumminOp>>>(patterns);
   }
   if (archisAscend950) {
     addNormalizeToTargetPatterns<int8_t, hivm::VAddOp, hivm::VSubOp,

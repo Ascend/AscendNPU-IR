@@ -894,12 +894,7 @@ LogicalResult FixpipeOp::verify() {
   if (!isDualDstEnabled(dualDstMode)) {
     return success();
   }
-
-  // dual_dst_mode can only be enabled in NZ2ND/NZ2NZ and only on Ascend950.
-  if (dmaMode == FixpipeDMAMode::NZ2DN) {
-    return emitOpError("dual_dst_mode requires dma_mode to be NZ2ND or "
-                       "NZ2NZ, but got NZ2DN!");
-  }
+  // dual_dst_mode can only be enabled on Ascend950.
   if (!isAscend950) {
     return emitOpError("dual_dst_mode is only supported on Ascend950!");
   }

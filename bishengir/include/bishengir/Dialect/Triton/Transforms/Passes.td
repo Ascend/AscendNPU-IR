@@ -212,6 +212,8 @@ def SIMTFastDiv : Pass<"simt-fast-div", "mlir::triton::FuncOp"> {
   let constructor = "bishengir::triton::createSIMTFastDivPass()";
   let dependentDialects = ["mlir::ascend_dpx::AscendDPXDialect",
                            "mlir::arith::ArithDialect",
+                           "mlir::hivm::HIVMDialect",
+                           "mlir::hivm_regbaseintrins::HIVMRegbaseIntrinsDialect",
                            "mlir::LLVM::LLVMDialect",
                            "mlir::triton::TritonDialect",
                            "mlir::triton::gpu::TritonGPUDialect"];

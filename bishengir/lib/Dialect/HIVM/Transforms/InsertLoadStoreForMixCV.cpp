@@ -382,12 +382,15 @@ void populateInsertLoadStorePattern(RewritePatternSet &patterns) {
       >(patterns);
   registerOne<func::CallOp>(patterns);
   registerOne<hivm::IndirectLoadOp>(patterns);
+  registerOne<hivm::StrideLoadOp>(patterns);
   registerOne<hivm::BitcastOp>(patterns);
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::MmadL1Op>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StoreOp>>(
       patterns.getContext());
   patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::IndirectStoreOp>>(
+      patterns.getContext());
+  patterns.add<InsertLoadOpBetweenStoreLikeAndVectorOrCube<hivm::StrideStoreOp>>(
       patterns.getContext());
   patterns.add<InsertLoadStoreOpBetweenVectorAndCube<scf::ForOp>>(
       patterns.getContext());
@@ -869,6 +872,7 @@ LogicalResult InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp f
     func::CallOp,
     mlir::scf::ForOp,
     hivm::IndirectLoadOp,
+    hivm::StrideLoadOp,
     mlir::hivm::GatherLoadOp,
     mlir::scope::ScopeOp,
     tensor::CollapseShapeOp,

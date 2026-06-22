@@ -237,7 +237,7 @@
                     kIsValidItype<ITYPE>,                                      \
                 int> = 0>                                                      \
   __aiv__ __attribute__((always_inline))                                       \
-  void indirect_atomic_no_mask_##op(                                           \
+  void indirect_atomic_##op##_no_mask(                                         \
       memref_t<__gm__ DTYPE, 1> *src,                                          \
       memref_t<__ubuf__ ITYPE, 1> *offsets,                                    \
       memref_t<__ubuf__ DTYPE, 1> *value,                                      \

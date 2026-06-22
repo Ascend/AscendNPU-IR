@@ -331,23 +331,23 @@ struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
     assert(op.getDst().size() == 1);
     rewriter.replaceOpWithNewOp<linalg::MapOp>(
         op, preprocessedOperands, op.getDst()[0],
-        [this](OpBuilder &rewriter, const Location loc, ValueRange operands) {
+        [this, &op](OpBuilder &rewriter, const Location loc, ValueRange operands) {
           rewriter.create<linalg::YieldOp>(
-              loc, ValueRange(rewriteFromMap(rewriter, loc, operands)));
+              loc, ValueRange(rewriteFromMap(rewriter, loc, operands, op)));
         });
     return success();
   }
 
   virtual Value rewriteFromMap(OpBuilder &rewriter, Location loc,
-                               ValueRange operands) const = 0;
+                               ValueRange operands, FromOp& op) const = 0;
 };
 
-template <typename FromOp, typename ToOp>
-struct RewriteVBitwiseOp final : public RewriteUsingMapOp<FromOp> {
+template <typename FromOp>
+struct RewriteVBitwiseOp : public RewriteUsingMapOp<FromOp> {
   using RewriteUsingMapOp<FromOp>::RewriteUsingMapOp;
 
   Value rewriteFromMap(OpBuilder &rewriter, const Location loc,
-                       ValueRange operands) const final {
+                       ValueRange operands, FromOp& fromOp) const final {
     assert(operands.size() == 2);
     Value lhs = operands[0], rhs = operands[1];
 
@@ -358,11 +358,34 @@ struct RewriteVBitwiseOp final : public RewriteUsingMapOp<FromOp> {
           loc, rewriter.getIntegerType(floatType.getWidth()), rhs);
     }
 
-    Value result = rewriter.create<ToOp>(loc, lhs, rhs);
+    Value result = createToOp(rewriter, loc, lhs, rhs, fromOp);
 
     if (const auto type = dyn_cast<FloatType>(operands[0].getType()))
       result = rewriter.create<arith::BitcastOp>(loc, type, result);
     return result;
+  }
+
+  virtual Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp &fromOp) const = 0;
+};
+
+template <typename FromOp, typename ToOp>
+struct RewriteVBitwiseLogicOp final : public RewriteVBitwiseOp<FromOp> {
+  using RewriteVBitwiseOp<FromOp>::RewriteVBitwiseOp;
+
+  Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
+    return rewriter.create<ToOp>(loc, lhs, rhs);
+  }
+};
+
+template <typename SignedOp, typename UnsignedOp>
+struct RewriteVBitwiseShiftOp final : public RewriteVBitwiseOp<hivm::VShROp> {
+  using RewriteVBitwiseOp<hivm::VShROp>::RewriteVBitwiseOp;
+
+  Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
+    if (fromOp.getIsSigned()) {
+      return rewriter.create<SignedOp>(loc, lhs, rhs);
+    }
+    return rewriter.create<UnsignedOp>(loc, lhs, rhs);
   }
 };
 
@@ -740,7 +763,36 @@ struct RewriteVModOp : public OpRewritePattern<From> {
   }
 };
 
-template <typename FromOp, typename ToIOp, typename ToFOp, int64_t identity>
+// Identity element of the cumulative combiner used to seed the accumulator.
+enum class CumIdentityKind { Zero, One, LowestValue, LargestValue };
+
+static TypedAttr getCumIdentityAttr(Type type, CumIdentityKind kind) {
+  switch (kind) {
+  case CumIdentityKind::Zero:
+    return getConstantTypedAttr(type, 0);
+  case CumIdentityKind::One:
+    return getConstantTypedAttr(type, 1);
+  case CumIdentityKind::LowestValue:
+    if (auto floatType = dyn_cast<FloatType>(type))
+      return FloatAttr::get(
+          type, APFloat::getInf(floatType.getFloatSemantics(), true));
+    return IntegerAttr::get(
+        type, APInt::getSignedMinValue(type.getIntOrFloatBitWidth()));
+  case CumIdentityKind::LargestValue:
+    if (auto floatType = dyn_cast<FloatType>(type))
+      return FloatAttr::get(
+          type, APFloat::getInf(floatType.getFloatSemantics(), false));
+    return IntegerAttr::get(
+        type, APInt::getSignedMaxValue(type.getIntOrFloatBitWidth()));
+  }
+  llvm_unreachable("unknown cum identity kind");
+}
+
+// `ToFOp` is the float combiner for propagate-NaN semantics (Maximum/Minimum);
+// `ToFOpIgnoreNan` is the ignore-NaN counterpart (MaxNum/MinNum). For
+// cumsum/cumprod both are the same (Add/Mul) and the flag is always propagate.
+template <typename FromOp, typename ToIOp, typename ToFOp,
+          CumIdentityKind identity, typename ToFOpIgnoreNan = ToFOp>
 struct RewriteVCumOpToGeneric : public OpRewritePattern<FromOp> {
 
   using OpRewritePattern<FromOp>::OpRewritePattern;
@@ -748,6 +800,11 @@ struct RewriteVCumOpToGeneric : public OpRewritePattern<FromOp> {
   LogicalResult matchAndRewrite(FromOp op,
                                 PatternRewriter &rewriter) const final {
     const auto loc = op.getLoc();
+    bool propagateNan = true;
+    if constexpr (std::is_same_v<FromOp, hivm::VCummaxOp> ||
+                  std::is_same_v<FromOp, hivm::VCumminOp>) {
+      propagateNan = op.getPropagateNan();
+    }
     const auto cumDim = op.getCumDims()[0];
     const auto shapedResult = cast<ShapedValue>(op.getDst());
     const auto shapedType = shapedResult.getType();
@@ -759,7 +816,7 @@ struct RewriteVCumOpToGeneric : public OpRewritePattern<FromOp> {
         });
 
     auto identityAttr =
-        getConstantTypedAttr(shapedType.getElementType(), identity);
+        getCumIdentityAttr(shapedType.getElementType(), identity);
     auto identityValue = rewriter.create<arith::ConstantOp>(loc, identityAttr);
     auto filler = rewriter.create<linalg::FillOp>(
         loc, ValueRange(identityValue), ValueRange(tempBuffer));
@@ -787,12 +844,17 @@ struct RewriteVCumOpToGeneric : public OpRewritePattern<FromOp> {
         isTensor ? TypeRange({shapedType, tempBuffer.getType()}) : TypeRange(),
         op.getSrc(), ValueRange({op.getDst(), tempBuffer}), indexingMaps,
         iteratorTypes,
-        [](OpBuilder &rewriter, const Location loc, ValueRange args) {
+        [propagateNan](OpBuilder &rewriter, const Location loc,
+                       ValueRange args) {
           Value result;
-          if (isa<FloatType>(args[0].getType()))
-            result = rewriter.create<ToFOp>(loc, args[0], args[2]);
-          else
+          if (isa<FloatType>(args[0].getType())) {
+            if (propagateNan)
+              result = rewriter.create<ToFOp>(loc, args[0], args[2]);
+            else
+              result = rewriter.create<ToFOpIgnoreNan>(loc, args[0], args[2]);
+          } else {
             result = rewriter.create<ToIOp>(loc, args[0], args[2]);
+          }
 
           rewriter.create<linalg::YieldOp>(loc, ValueRange({result, result}));
         });
@@ -816,12 +878,23 @@ struct RewriteVCumOpToHFusion : public OpRewritePattern<FromOp> {
       rewriter.eraseOp(op);
       return success();
     }
-    rewriter.replaceOpWithNewOp<ToOp>(
+    // Read the NaN-propagation flag before the source op is erased; cummax/cummin
+    // carry it, cumsum/cumprod do not.
+    bool propagateNan = true;
+    if constexpr (std::is_same_v<FromOp, hivm::VCummaxOp> ||
+                  std::is_same_v<FromOp, hivm::VCumminOp>) {
+      propagateNan = op.getPropagateNan();
+    }
+    auto newOp = rewriter.replaceOpWithNewOp<ToOp>(
         op, 
         /*output=*/op.getDst().getType(),
         /*input=*/op.getSrc(), 
         /*cum_dims*/op.getCumDims(),
         /*reverse=*/op.getReverse());
+    if constexpr (std::is_same_v<ToOp, hfusion::CummaxOp> ||
+                  std::is_same_v<ToOp, hfusion::CumminOp>) {
+      newOp.setPropagateNan(propagateNan);
+    }
     return success();
   }
 };
@@ -1198,7 +1271,8 @@ struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
                                 PatternRewriter &rewriter) const final {
     Location loc = op.getLoc();
     hivm::CompareMode hivmMode = op.getCompareMode();
-    hfusion::CompareFn hsMode = mapCompareModeHiVMToHFusion(hivmMode);
+    hfusion::CompareFn hsMode =
+        mapCompareModeHiVMToHFusion(hivmMode, op.getIsSigned());
     auto *ctx = op.getContext();
     auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hsMode);
     auto dpsOp = dyn_cast<mlir::DestinationStyleOpInterface>(op.getOperation());
@@ -1214,20 +1288,21 @@ struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
 
 private:
   hfusion::CompareFn
-  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode) const {
+  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode,
+                              bool isSigned) const {
     switch (hivmCmpMode) {
     case hivm::CompareMode::EQ:
       return hfusion::CompareFn::veq;
     case hivm::CompareMode::NE:
       return hfusion::CompareFn::vne;
     case hivm::CompareMode::LE:
-      return hfusion::CompareFn::vle;
+      return isSigned ? hfusion::CompareFn::vle : hfusion::CompareFn::vule;
     case hivm::CompareMode::LT:
-      return hfusion::CompareFn::vlt;
+      return isSigned ? hfusion::CompareFn::vlt : hfusion::CompareFn::vult;
     case hivm::CompareMode::GE:
-      return hfusion::CompareFn::vge;
+      return isSigned ? hfusion::CompareFn::vge : hfusion::CompareFn::vuge;
     case hivm::CompareMode::GT:
-      return hfusion::CompareFn::vgt;
+      return isSigned ? hfusion::CompareFn::vgt : hfusion::CompareFn::vugt;
     }
     llvm_unreachable("Unknown hivm::CompareMode in HiVM -> HFusion mapping");
   }
@@ -1488,20 +1563,31 @@ struct ConvertHIVMToUpstream
                                    hfusion::UnaryFn::relu>,
                  RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
                                    hfusion::UnaryFn::vnot>>(&ctx);
-    patterns.add<RewriteVBitwiseOp<hivm::VAndOp, arith::AndIOp>,
-                 RewriteVBitwiseOp<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseOp<hivm::VXorOp, arith::XOrIOp>,
-                 RewriteVBitwiseOp<hivm::VShROp, arith::ShRSIOp>>(&ctx);
+    patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
+                 RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
     if (convertToNamedOp) {
       patterns
           .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
-               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>>(
+               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>,
+               RewriteVCumOpToHFusion<hivm::VCummaxOp, hfusion::CummaxOp>,
+               RewriteVCumOpToHFusion<hivm::VCumminOp, hfusion::CumminOp>>(
               &ctx);
     } else {
       patterns
-          .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,
-              RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(
-              &ctx);
+          .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp,
+                                      arith::MulFOp, CumIdentityKind::One>,
+               RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp,
+                                      arith::AddFOp, CumIdentityKind::Zero>,
+               RewriteVCumOpToGeneric<hivm::VCummaxOp, arith::MaxSIOp,
+                                      arith::MaximumFOp,
+                                      CumIdentityKind::LowestValue,
+                                      arith::MaxNumFOp>,
+               RewriteVCumOpToGeneric<hivm::VCumminOp, arith::MinSIOp,
+                                      arith::MinimumFOp,
+                                      CumIdentityKind::LargestValue,
+                                      arith::MinNumFOp>>(&ctx);
     }
     // TODO: delete RewriteLoadOp, relate to issue:897
     patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,

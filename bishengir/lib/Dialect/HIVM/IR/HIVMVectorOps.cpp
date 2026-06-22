@@ -200,6 +200,21 @@ std::string getCumOpLibraryCallName(CUMOP op) {
   return ss.str();
 }
 
+// Library call name in the `<op>_<rank>d_<type>_dim<cumDim>` form used by
+// cum ops whose templates are specialized per rank and cum dim.
+template <typename CUMOP>
+std::string getCumOpRankDimLibraryCallName(CUMOP op) {
+  StringRef baseName = op.getOpName();
+  ShapedType srcVecType = cast<ShapedType>(op.getSrc().getType());
+  Type elemType = srcVecType.getElementType();
+  int rank = srcVecType.getRank();
+  int64_t cumDim = op.getCumDims()[0];
+  std::stringstream ss;
+  ss << baseName.data() << "_" << rank << "d_"
+     << hivm::detail::getTypeName(op.getLoc(), elemType) << "_dim" << cumDim;
+  return ss.str();
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -253,10 +268,10 @@ void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 //===----------------------------------------------------------------------===//
 void VShROp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   BoolAttr round, DenseI64ArrayAttr transpose,
+                   BoolAttr is_signed, BoolAttr round, DenseI64ArrayAttr transpose,
                    DenseI64ArrayAttr broadcast) {
-  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, round,
-        transpose, broadcast);
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, is_signed,
+		  round, transpose, broadcast);
 }
 
 //===----------------------------------------------------------------------===//
@@ -271,6 +286,8 @@ std::string VCmpOp::getOpLibraryCallName(
     baseCallName = baseCallName + "s";
   baseCallName = baseCallName + "_" + modeName.str();
   Type elemType = getElementTypeOrSelf(getDpsInputs().front().getType());
+  if (!getIsSigned())
+    llvm_unreachable("Unsupported unsigned semantic");
   std::string elemTypeName = hivm::detail::getTypeName(getLoc(), elemType);
   int rank = static_cast<int>(getNumLoops());
   return concatVectorOpLibraryCallName(baseCallName, getOpLibraryCallRank(rank),
@@ -1331,16 +1348,7 @@ LogicalResult VCumprodOp::verify() { return verifyCumOp(*this); }
 
 std::string VCumsumOp::getOpLibraryCallName(
     [[maybe_unused]] std::optional<bool> isOpsAligned) {
-  StringRef baseName = this->getOpName();
-  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
-  Type elemType = srcVecType.getElementType();
-  int rank = srcVecType.getRank();
-  llvm::ArrayRef<int64_t> cumsumDims = this->getCumDims();
-  int64_t cumsumDim = cumsumDims[0];
-  std::stringstream ss;
-  ss << baseName.data() << "_" << rank << "d_"
-     << hivm::detail::getTypeName(this->getLoc(), elemType) << "_dim" << cumsumDim;
-  return ss.str();
+  return getCumOpRankDimLibraryCallName(*this);
 }
 
 LogicalResult VCumsumOp::verify() { return verifyCumOp(*this); }
@@ -1359,6 +1367,60 @@ void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, result, src, dst,
         DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims),
         reverse);
+}
+
+//===----------------------------------------------------------------------===//
+// VCummaxOp
+//===----------------------------------------------------------------------===//
+
+std::string VCummaxOp::getOpLibraryCallName(
+    [[maybe_unused]] std::optional<bool> isOpsAligned) {
+  return getCumOpRankDimLibraryCallName(*this);
+}
+
+LogicalResult VCummaxOp::verify() { return verifyCumOp(*this); }
+
+void VCummaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      DenseI64ArrayAttr cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse),
+        /*propagate_nan=*/BoolAttr::get(odsBuilder.getContext(), true));
+}
+
+void VCummaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims), reverse);
+}
+
+//===----------------------------------------------------------------------===//
+// VCumminOp
+//===----------------------------------------------------------------------===//
+
+std::string VCumminOp::getOpLibraryCallName(
+    [[maybe_unused]] std::optional<bool> isOpsAligned) {
+  return getCumOpRankDimLibraryCallName(*this);
+}
+
+LogicalResult VCumminOp::verify() { return verifyCumOp(*this); }
+
+void VCumminOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      DenseI64ArrayAttr cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse),
+        /*propagate_nan=*/BoolAttr::get(odsBuilder.getContext(), true));
+}
+
+void VCumminOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims), reverse);
 }
 
 //===----------------------------------------------------------------------===//

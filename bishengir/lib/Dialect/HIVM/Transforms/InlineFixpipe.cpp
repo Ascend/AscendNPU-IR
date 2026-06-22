@@ -645,6 +645,10 @@ private:
       auto vMulOp = cast<hivm::VMulOp>(curOp);
       matched = true;
       inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
+    } else if (isUserTransposeInlineable(op, curOp)) {
+      auto vTransposeOp = cast<hivm::VTransposeOp>(curOp);
+      matched = true;
+      inlineFixPipeWithTranspose(rewriter, op, vTransposeOp);
     } else if (isa<tensor::ExtractSliceOp>(curOp) &&
                hasCompatibleShape(
                    op.getSource(),
@@ -784,6 +788,20 @@ private:
     return true;
   }
 
+  bool isUserTransposeInlineable(hivm::FixpipeOp op, Operation *userOp) const {
+    auto vTransposeOp = dyn_cast<hivm::VTransposeOp>(userOp);
+    if (!vTransposeOp)
+      return false;
+    auto dmaModeAttr = op.getDmaModeAttr();
+    bool isNZ2ND = (dmaModeAttr && dmaModeAttr.getValue() == FixpipeDMAMode::NZ2ND);
+    if (!isNZ2ND)
+      return false;
+    ArrayRef<int64_t> permutation = vTransposeOp.getPermutation();
+    if (permutation[0] != 1 || permutation[1] != 0)
+      return false;
+    return true;
+  }
+
   void inlineFixPipeWithQuantScale(PatternRewriter &rewriter,
                                    hivm::FixpipeOp op,
                                    hivm::VMulOp vMulOp) const {
@@ -816,6 +834,26 @@ private:
     rewriter.replaceOp(vMulOp, newFixpipeOp);
     rewriter.eraseOp(op);
     LDBG("inlineFixPipeWithPreQuantEnd");
+  }
+
+
+  void inlineFixPipeWithTranspose(PatternRewriter &rewriter,
+                                   hivm::FixpipeOp op,
+                                   hivm::VTransposeOp vTransOp) const {
+    LDBG("inling fixpipe with transpose");
+
+    rewriter.setInsertionPointAfter(vTransOp);
+    Value vTransDst = vTransOp.getDst();
+    Value fixPipeSrc = op.getSource();
+    MLIRContext *ctx = rewriter.getContext();
+    FixpipeDMAModeAttr NZ2DNAttr = FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2DN);
+    SmallVector<Value> oprs({fixPipeSrc, vTransDst});
+    auto newFixpipeOp = rewriter.create<FixpipeOp>(
+        op.getLoc(), vTransDst.getType(), oprs, op->getAttrs());
+    newFixpipeOp.setDmaModeAttr(NZ2DNAttr);
+    rewriter.replaceOp(vTransOp, newFixpipeOp);
+    rewriter.eraseOp(op);
+    LDBG("inlineFixPipeWithTranspose End");
   }
 
   void

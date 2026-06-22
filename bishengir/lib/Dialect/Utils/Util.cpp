@@ -29,11 +29,13 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -1787,6 +1789,21 @@ namespace mlir {
 
 namespace triton {
 namespace util {
+// Create a private llvm.func declaration
+LLVM::LLVMFuncOp createLLVMFuncDecl(OpBuilder &b, Location loc, StringRef name,
+                                    LLVM::LLVMFunctionType fnTy) {
+  auto decl = b.create<LLVM::LLVMFuncOp>(loc, name, fnTy);
+  auto haccAlwaysInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
+      hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
+  decl->setAttr(haccAlwaysInlineAttr, b.getUnitAttr());
+  decl->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(), b.getUnitAttr());
+  decl->setAttr(mlir::SymbolTable::getVisibilityAttrName(),
+                b.getStringAttr("private"));
+  MLIRContext *ctx = decl.getContext();
+  decl->setAttr(mlir::hivm::TFuncCoreTypeAttr::name,
+                hivm::TFuncCoreTypeAttr::get(ctx, hivm::TFuncCoreType::AIV));
+  return decl;
+}
 
 int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName) {
   // get module

@@ -88,6 +88,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       .Case<hfusion::CumsumOp>([&](auto cumsumOp) { processCumOp(cumsumOp); })
       .Case<hfusion::CumprodOp>(
           [&](auto cumprodOp) { processCumOp(cumprodOp); })
+      .Case<hfusion::CummaxOp>([&](auto cummaxOp) { processCumOp(cummaxOp); })
+      .Case<hfusion::CumminOp>([&](auto cumminOp) { processCumOp(cumminOp); })
       .Case<hfusion::FlipOp>([&](auto flipOp) { processFlipOp(flipOp); })
       .Case<hfusion::SortOp>([&](auto sortOp) { processSortOp(sortOp); })
       .Case<hfusion::EmbeddingGatherOp>([&](auto embeddingGatherOp) {
@@ -95,9 +97,13 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       })
       .Case<hfusion::IndirectLoadOp>(
           [&](auto indirectLoadOp) { processIndirectLoadOp(indirectLoadOp); })
+      .Case<hfusion::StrideLoadOp>(
+          [&](auto strideLoadOp) { processStrideLoadOp(strideLoadOp); })
       .Case<hfusion::IndirectStoreOp>([&](auto indirectStoreOp) {
         processIndirectStoreOp(indirectStoreOp);
       })
+      .Case<hfusion::StrideStoreOp>(
+          [&](auto strideStoreOp) { processStrideStoreOp(strideStoreOp); })
       .Default([&](Operation *op) {
         // TODO: remove hivm op here, add process of CopyLikeInterface
         bool isParallelRegbased =
@@ -510,6 +516,13 @@ void DimensionAnalyzer::processIndirectLoadOp(
   }
 }
 
+void DimensionAnalyzer::processStrideLoadOp(hfusion::StrideLoadOp op) {
+  Value dst = op.getDst();
+  createDummyRefIfNotExist({dst});
+  if (op.getResult())
+    processValue(op.getResult(), dst);
+}
+
 void DimensionAnalyzer::processIndirectStoreOp(hfusion::IndirectStoreOp op) {
   Value input = op.getSrc();
   Value offsets = op.getOffsets();
@@ -520,6 +533,11 @@ void DimensionAnalyzer::processIndirectStoreOp(hfusion::IndirectStoreOp op) {
     createDummyRefIfNotExist({mask});
     processValue(mask, input);
   }
+}
+
+void DimensionAnalyzer::processStrideStoreOp(hfusion::StrideStoreOp op) {
+  Value input = op.getSrc();
+  createDummyRefIfNotExist({input});
 }
 
 } // namespace detail

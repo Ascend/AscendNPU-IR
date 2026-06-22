@@ -393,6 +393,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
     vfFusionOptions.enableRA = treeReduceFlags.enableRA;
     vfFusionOptions.enableAR = treeReduceFlags.enableAR;
+    vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);
   }
@@ -400,11 +401,13 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   PreVectorizationFusionOptions preVecOptions;
   preVecOptions.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
   preVecOptions.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;
+  preVecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
   pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(preVecOptions));
   pm.nest<func::FuncOp>().addPass(createPrepareI1Nx1ForVectorizationPass());
   canonicalizationPipeline(pm, hfusionOptions);
   if (hfusionOptions.enableAutoVectorizeV2) {
     AutoVectorizeV2Options vecOptions;
+    vecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     vecOptions.enableMultipleConsumerFusion =
         hfusionOptions.hfusionEnableMultipleConsumerFusion;
     if (hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2 >= 0)

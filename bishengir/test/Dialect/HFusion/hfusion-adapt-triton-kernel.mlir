@@ -152,6 +152,76 @@ func.func @triton_kernel_cumprodop(%arg0: memref<4x6x8xi16>) -> (tensor<4x6x8xi1
 }
 
 // -----
+// CHECK-LABEL: @triton_kernel_cummaxop
+// CHECK: hfusion.cummax
+// CHECK: hfusion.cummax
+// CHECK: hfusion.cummax
+func.func private @triton_cummax_0(tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+func.func private @triton_cummax_1(tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+func.func private @triton_cummax_2(tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+func.func @triton_kernel_cummaxop(%arg0: memref<4x6x8xf32>) -> (tensor<4x6x8xf32>, tensor<4x6x8xf32>, tensor<4x6x8xf32>) {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xf32>
+  %1 = call @triton_cummax_0(%0, %c0_i32, %c0_i32) : (tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+  %2 = call @triton_cummax_1(%0, %c1_i32, %c0_i32) : (tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+  %3 = call @triton_cummax_2(%0, %c2_i32, %c0_i32) : (tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+  return %1, %2, %3 : tensor<4x6x8xf32>, tensor<4x6x8xf32>, tensor<4x6x8xf32>
+}
+
+// -----
+// CHECK-LABEL: @triton_kernel_cumminop
+// CHECK: hfusion.cummin
+// CHECK: hfusion.cummin
+// CHECK: hfusion.cummin
+func.func private @triton_cummin_0(tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+func.func private @triton_cummin_1(tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+func.func private @triton_cummin_2(tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+func.func @triton_kernel_cumminop(%arg0: memref<4x6x8xi16>) -> (tensor<4x6x8xi16>, tensor<4x6x8xi16>, tensor<4x6x8xi16>) {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xi16>
+  %1 = call @triton_cummin_0(%0, %c0_i32, %c0_i32) : (tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+  %2 = call @triton_cummin_1(%0, %c1_i32, %c0_i32) : (tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+  %3 = call @triton_cummin_2(%0, %c2_i32, %c0_i32) : (tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+  return %1, %2, %3 : tensor<4x6x8xi16>, tensor<4x6x8xi16>, tensor<4x6x8xi16>
+}
+
+// -----
+// CHECK-LABEL: @triton_kernel_cummax_propagate_nan
+// CHECK: hfusion.cummax %{{.*}} {propagate_nan = false}
+// CHECK: hfusion.cummax %{{.*}} :
+func.func private @triton_cummax_nonan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func private @triton_cummax_propnan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func @triton_kernel_cummax_propagate_nan(%arg0: memref<4x6x8xf32>) -> (tensor<4x6x8xf32>, tensor<4x6x8xf32>) {
+  %c0_i32 = arith.constant 0 : i32
+  %false = arith.constant false
+  %true = arith.constant true
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xf32>
+  %1 = call @triton_cummax_nonan_0(%0, %c0_i32, %c0_i32, %false) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  %2 = call @triton_cummax_propnan_0(%0, %c0_i32, %c0_i32, %true) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  return %1, %2 : tensor<4x6x8xf32>, tensor<4x6x8xf32>
+}
+
+// -----
+// CHECK-LABEL: @triton_kernel_cummin_propagate_nan
+// CHECK: hfusion.cummin %{{.*}} {propagate_nan = false}
+// CHECK: hfusion.cummin %{{.*}} :
+func.func private @triton_cummin_nonan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func private @triton_cummin_propnan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func @triton_kernel_cummin_propagate_nan(%arg0: memref<4x6x8xf32>) -> (tensor<4x6x8xf32>, tensor<4x6x8xf32>) {
+  %c0_i32 = arith.constant 0 : i32
+  %false = arith.constant false
+  %true = arith.constant true
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xf32>
+  %1 = call @triton_cummin_nonan_0(%0, %c0_i32, %c0_i32, %false) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  %2 = call @triton_cummin_propnan_0(%0, %c0_i32, %c0_i32, %true) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  return %1, %2 : tensor<4x6x8xf32>, tensor<4x6x8xf32>
+}
+
+// -----
 // CHECK-LABEL: @triton_kernel_indirect_load
 // CHECK: hfusion.indirect_load
 // CHECK: hfusion.indirect_load
@@ -335,5 +405,32 @@ func.func @scatterT_test(%arg0: memref<4x32xf32>, %arg1: tensor<4x32xf32>,%arg2:
   %c32_i32 = arith.constant 32 : i32
 
   call @triton_scatter_ub_to_out_0(%arg0, %arg1, %arg2, %c32_i32, %c1_i32, %c32_i32, %c1_i32, %c4_i32, %c32_i32, %c0_i32, %c0_i32) : (memref<4x32xf32>, tensor<4x32xf32>, tensor<4x32xi32>, i32, i32, i32, i32, i32, i32, i32, i32) -> ()
+  return
+}
+
+// -----
+// CHECK-LABEL: @stride_load_test
+// CHECK: hfusion.stride_load
+func.func private @triton_stride_load_0(memref<?xf32>, i64, f32, i64, i64) -> tensor<32xf32>
+
+func.func @stride_load_test(%arg0: memref<?xf32>) attributes {global_kernel = "local"} {
+  %offset = arith.constant 4 : i64
+  %other = arith.constant 0.000000e+00 : f32
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  %0 = call @triton_stride_load_0(%arg0, %offset, %other, %stride, %numel) : (memref<?xf32>, i64, f32, i64, i64) -> tensor<32xf32>
+  return
+}
+
+// -----
+// CHECK-LABEL: @stride_store_test
+// CHECK: hfusion.stride_store
+func.func private @triton_stride_store_0(memref<?xf32>, tensor<32xf32>, i64, i64, i64)
+
+func.func @stride_store_test(%arg0: memref<?xf32>, %arg1: tensor<32xf32>) attributes {global_kernel = "local"} {
+  %offset = arith.constant 4 : i64
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  call @triton_stride_store_0(%arg0, %arg1, %offset, %stride, %numel) : (memref<?xf32>, tensor<32xf32>, i64, i64, i64) -> ()
   return
 }

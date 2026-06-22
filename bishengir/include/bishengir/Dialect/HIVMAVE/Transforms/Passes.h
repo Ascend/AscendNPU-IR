@@ -28,6 +28,9 @@ std::unique_ptr<Pass> createAVENormalizeOpsPass();
 /// Create a pass to normalize arith ops for simd backend
 std::unique_ptr<Pass> createReplaceWithVectorScalarPass();
 
+/// Unroll and add deintlv for vextf
+std::unique_ptr<Pass> createProcessWideVextfPass();
+
 /// Unroll and add deintlv for vsstb
 std::unique_ptr<Pass> createProcessVsstbPass();
 

@@ -54,7 +54,7 @@ struct WorkspaceAllocParams {
 
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer,
-                 PipelineMode pipelineMode, bool enableLazyLoading)
+                 CVPipelineMode pipelineMode, bool enableLazyLoading)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
         numMultibuffer(multibuffer), pipelineMode(pipelineMode),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
@@ -149,7 +149,7 @@ private:
   int numMultibuffer;
 
   // Pipeline mode for CV-pipelining.
-  PipelineMode pipelineMode;
+  CVPipelineMode pipelineMode;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -381,12 +381,12 @@ static Value createExtractSlice(OpBuilder &builder, Location loc, Value from,
 static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
   Operation *markedOp = markedVal.getDefiningOp();
   if (markedOp)
-    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name,
-                      builder.getUnitAttr());
+    markedOp->setAttr(hivm::PreloadWorkspaceAttr::name, builder.getUnitAttr());
 }
 
-static Value createWorkspaceSubview(OpBuilder &builder, Location loc, Value from,
-                                    Value iv, bool isPreload = false) {
+static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
+                                    Value from, Value iv,
+                                    bool isPreload = false) {
   auto const1 = builder.getIndexAttr(1);
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
@@ -627,7 +627,7 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
   SmallVector<AllocWorkspaceOp> incompleteAllocs;
   for (auto &[alloc, info] : workspaceAllocs_) {
     if (!info.marker || !info.toTensor) {
-      incompleteAllocs.push_back(alloc); 
+      incompleteAllocs.push_back(alloc);
       continue;
     }
     if (!info.toTensor.getResult().hasOneUse())
@@ -667,7 +667,7 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
-      if (pipelineMode == PipelineMode::Skew) {
+      if (pipelineMode == CVPipelineMode::Skew) {
         auto dps = dyn_cast<DestinationStyleOpInterface>(op);
         if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
           auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
@@ -842,8 +842,6 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
 /// Expand the localOutputs of each work item by number of multibuffer/pipeline
 /// stages.
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
-  OpBuilder::InsertionGuard g(builder);
-  builder.setInsertionPointToStart(newLoop.getBody());
   for (auto &[output, expanded] : item.localOutputs) {
     Operation *defining = output.getDefiningOp();
     if (!defining)
@@ -1043,11 +1041,23 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       loc, cappedUBExpr, ValueRange({ub, iv, originStep}));
   Value actualUB = builder.create<arith::MinUIOp>(loc, cappedUB, pipelineIters);
 
+  // Opposite-core loops run concurrently, so an expanded alloc must be
+  // placed above them to keep its linear live range valid for PlanMemory;
+  // it may only skip preceding same-core (sequential) loops.
+  DenseMap<TCoreType, scf::ForOp> lastForOpByCore;
+  scf::ForOp lastForOp = nullptr;
   for (auto &item : worklist) {
-    // Reset insertion point after we're done with this item
-    OpBuilder::InsertionGuard g(builder);
+    if (auto lastSameCore = lastForOpByCore.lookup(item->core))
+      builder.setInsertionPointAfter(lastSameCore);
+    else
+      builder.setInsertionPointToStart(newLoop.getBody());
     if (failed(expandOutputInits(*item.get())))
       return failure();
+    // Loops themselves keep program order.
+    if (lastForOp)
+      builder.setInsertionPointAfter(lastForOp);
+    else
+      builder.setInsertionPointAfter(actualUB.getDefiningOp());
 
     // Create iter arg inits in order: yieldOutputs followed by localOutputs
     SmallVector<Value> inits;
@@ -1095,6 +1105,11 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       item->irMap.map(pipelineLoop.getRegionIterArg(opNumber),
                       item->forOp.getRegionIterArg(yieldArg++));
     }
+
+    builder.setInsertionPointAfter(item->forOp);
+    lastForOpByCore[item->core] = item->forOp;
+    lastForOp = item->forOp;
+
 
     // If inits are empty, the default builder creates a yield by default, we
     // don't want that right now so we remove it
@@ -1726,7 +1741,7 @@ LogicalResult CVPipelineImpl::run() {
     revert();
     return failure();
   }
-  if (pipelineMode == PipelineMode::Skew &&
+  if (pipelineMode == CVPipelineMode::Skew &&
       failed(collectWorkspaceAllocsForPreload()))
     return failure();
   if (failed(markOutputs())) {
@@ -1759,7 +1774,7 @@ LogicalResult CVPipelineImpl::run() {
   }
 
   // Preload pipeline reuse workitems with cvpipeline.
-  if (pipelineMode == PipelineMode::Skew) {
+  if (pipelineMode == CVPipelineMode::Skew) {
     expandWorkspace(builder);
     return markScopesForPreload();
   }

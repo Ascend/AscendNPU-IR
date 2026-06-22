@@ -231,12 +231,29 @@ FailureOr<SmallVector<Value>> extractRealMKN(T op, PatternRewriter &rewriter) {
   if (failed(realKN) || (*realKN).size() != matrixSize + batchIndexBias) {
     return failure();
   }
-  // set m,k,n
+  // set m, k, n
+  // TODO: m is set to be l1M for group gemm scenario (use kDotPadOnlyK),
+  //       which should be enhanced.
+  Value realM;
   if (op.getATranspose().has_value()) {
-    mkn.push_back((*realMK)[1 + batchIndexBias]);
+    realM = (*realMK)[1 + batchIndexBias];
+  } else {
+    realM = (*realMK)[0 + batchIndexBias];
+  }
+
+  if (utils::getAnnotateOpWithAttr(op.getA(), kDotPadOnlyK).has_value()) {
+    auto cType = dyn_cast<RankedTensorType>(op.getC().getType());
+    if (cType && cType.hasStaticShape()) {
+      size_t l1MIdx = (std::is_same_v<T, hivm::BatchMmadL1Op>) ? 1 : 0;
+      int64_t l1M = cType.getShape()[l1MIdx + batchIndexBias];
+      realM = rewriter.create<arith::ConstantIndexOp>(loc, l1M);
+    }
+  }
+
+  mkn.push_back(realM);
+  if (op.getATranspose().has_value()) {
     mkn.push_back((*realMK)[0 + batchIndexBias]);
   } else {
-    mkn.push_back((*realMK)[0 + batchIndexBias]);
     mkn.push_back((*realMK)[1 + batchIndexBias]);
   }
   if (op.getBTranspose().has_value()) {

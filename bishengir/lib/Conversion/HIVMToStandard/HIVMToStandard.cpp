@@ -580,15 +580,20 @@ protected:
   }
 };
 
-class CumsumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<VCumsumOp> {
+// Library-call lowering shared by cum ops that carry an optional temp buffer
+// and lower to `<op>_<rank>d_<dtype>_dim<cumDim>` template functions
+// (vcumsum/vcummax/vcummin).
+template <typename CumOpWithTemp>
+class CumOpWithTempToLibraryCallPattern
+    : public MultiDimOpToLibraryCallPattern<CumOpWithTemp> {
 public:
-  explicit CumsumOpToLibraryCallPattern(MLIRContext *context,
-                                     PatternBenefit benefit = 1,
-                                     ArrayRef<StringRef> generatedNames = {})
-      : MultiDimOpToLibraryCallPattern<VCumsumOp>(context, benefit,
-                                              generatedNames) {}
-  
-  LogicalResult matchAndRewrite(VCumsumOp op,
+  explicit CumOpWithTempToLibraryCallPattern(
+      MLIRContext *context, PatternBenefit benefit = 1,
+      ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<CumOpWithTemp>(context, benefit,
+                                                      generatedNames) {}
+
+  LogicalResult matchAndRewrite(CumOpWithTemp op,
                                 PatternRewriter &rewriter) const final {
     assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
 
@@ -610,6 +615,15 @@ public:
     Value isReverseValue = rewriter.create<mlir::arith::ConstantOp>(
         op->getLoc(), rewriter.getBoolAttr(isReverse));
     operands.push_back(isReverseValue);
+
+    // cummax/cummin take a trailing propagateNan flag selecting the float NaN
+    // semantics (max/minimum vs max/minnum). cumsum has no such argument.
+    if constexpr (std::is_same_v<CumOpWithTemp, hivm::VCummaxOp> ||
+                  std::is_same_v<CumOpWithTemp, hivm::VCumminOp>) {
+      Value propagateNanValue = rewriter.create<mlir::arith::ConstantOp>(
+          op->getLoc(), rewriter.getBoolAttr(op.getPropagateNan()));
+      operands.push_back(propagateNanValue);
+    }
 
     auto libCallName = op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     createLibCall(rewriter, op, mod, libCallName, operands, {});
@@ -1812,11 +1826,11 @@ public:
 };
 } // namespace mlir::hivm
 
-class EmbeddingGatherOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::EmbeddingGatherOp> {
+template <typename OpTy>
+class SIMTOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
 public:
-  using OpRewritePattern<hivm::EmbeddingGatherOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(EmbeddingGatherOp op,
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
                        op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
@@ -1825,77 +1839,11 @@ public:
   }
 };
 
-class IndirectLoadOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndirectLoadOp> {
+template <typename CustomOpTy>
+class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpTy> {
 public:
-  using OpRewritePattern<hivm::IndirectLoadOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(IndirectLoadOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-class IndirectStoreOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndirectStoreOp> {
-public:
-  using OpRewritePattern<hivm::IndirectStoreOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(IndirectStoreOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-
-    return success();
-  }
-};
-
-class ScatterTOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::ScatterTOp> {
-public:
-  using OpRewritePattern<hivm::ScatterTOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(ScatterTOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-
-    return success();
-  }
-};
-
-template <typename CustomOpT>
-class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
-public:
-  using OpRewritePattern<CustomOpT>::OpRewritePattern;
-  LogicalResult matchAndRewrite(CustomOpT op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-class GatherTOpToLibraryCallPattern : public OpRewritePattern<hivm::GatherTOp> {
-public:
-  using OpRewritePattern<hivm::GatherTOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(GatherTOp op,
-                                PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
-    return success();
-  }
-};
-
-class IndexPutOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndexPutOp> {
-public:
-  using OpRewritePattern<hivm::IndexPutOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(IndexPutOp op,
+  using OpRewritePattern<CustomOpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(CustomOpTy op,
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
                        op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
@@ -1948,7 +1896,9 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                VArangeOpToLibraryCallPattern,
                VCastOpToLibraryCallPattern,
                ReduceOpToLibraryCallPattern,
-               CumsumOpToLibraryCallPattern,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumsumOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCummaxOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumminOp>,
                CumOpToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
@@ -1958,16 +1908,18 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
-               EmbeddingGatherOpToLibraryCallPattern,
-               IndirectLoadOpToLibraryCallPattern,
-               IndirectStoreOpToLibraryCallPattern,
-               GatherTOpToLibraryCallPattern,
+               SIMTOpToLibraryCallPattern<hivm::EmbeddingGatherOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndirectLoadOp>,
+               SIMTOpToLibraryCallPattern<hivm::StrideLoadOp>,
+               SIMTOpToLibraryCallPattern<hivm::StrideStoreOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndirectStoreOp>,
+               SIMTOpToLibraryCallPattern<hivm::GatherTOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndexPutOp>,
+               SIMTOpToLibraryCallPattern<hivm::ScatterTOp>,
                CustomOpToLibraryCallPattern<hivm::CustomOp>,
                CustomOpToLibraryCallPattern<hivm::CustomMacroOp>,
-               IndexPutOpToLibraryCallPattern,
                FlipOpToLibraryCallPattern,
-               SortOpToLibraryCallPattern,
-               ScatterTOpToLibraryCallPattern
+               SortOpToLibraryCallPattern
                >
                (patterns.getContext());
   // clang-format on
@@ -2027,6 +1979,8 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::VReduceOp,
                       hivm::VCumsumOp,
                       hivm::VCumprodOp,
+                      hivm::VCummaxOp,
+                      hivm::VCumminOp,
                       hivm::VTransposeOp,
                       hivm::VShLOp,
                       hivm::VShROp,
@@ -2042,6 +1996,8 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::SyncBlockUnlockOp,
                       hivm::FreeLockVarOp,
                       hivm::IndirectLoadOp,
+                      hivm::StrideLoadOp,
+                      hivm::StrideStoreOp,
                       hivm::IndirectStoreOp,
                       hivm::GatherTOp,
                       hivm::ScatterTOp

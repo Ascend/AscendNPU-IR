@@ -6,6 +6,7 @@ file(GLOB NORMALIZE_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/Utils/*.cpp)
 
 set(BISHENGIR_PRIVATE_LIBS
   BiShengIRDialectUtils
+  BiShengIRVFFusion
   BiShengIRSCFTransformOps
   BiShengIRScopeDialect
   BiShengIRTensorTransforms

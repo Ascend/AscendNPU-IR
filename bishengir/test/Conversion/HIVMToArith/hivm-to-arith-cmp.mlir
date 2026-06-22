@@ -160,6 +160,15 @@ func.func @test_func_vcmp_arith.cmpi_i64_lt(%arg0:tensor<4x64x32xi64>,%arg1:tens
     return %0 : tensor<4x64x32xi1>
 }
 
+// CHECK-LABEL: func.func @test_func_vcmp_arith.cmpi_i8_ult
+func.func @test_func_vcmp_arith.cmpi_i8_ult(%arg0:tensor<4x64x32xi8>,%arg1:tensor<4x64x32xi8>) -> tensor<4x64x32xi1> {
+    %0 = tensor.empty():tensor<4x64x32xi1>
+    //     CHECK: %[[RET:.*]] = arith.cmpi ult, {{.*}}, {{.*}} : tensor<4x64x32xi8>
+    hivm.hir.vcmp  ins(%arg0,%arg1 : tensor<4x64x32xi8>, tensor<4x64x32xi8>) outs(%0:tensor<4x64x32xi1>) compare_mode = <lt> is_signed = false -> tensor<4x64x32xi1>
+
+    return %0 : tensor<4x64x32xi1>
+}
+
 // CHECK-LABEL: func.func @test_func_vcmp_arith.cmpf_f16_ge
 func.func @test_func_vcmp_arith.cmpf_f16_ge(%arg0:tensor<4x64x32xf16>,%arg1:tensor<4x64x32xf16>) -> tensor<4x64x32xi1> {
     %0 = tensor.empty():tensor<4x64x32xi1>

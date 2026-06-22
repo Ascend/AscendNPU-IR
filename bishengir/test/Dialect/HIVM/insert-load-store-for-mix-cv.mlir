@@ -1185,3 +1185,48 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: @insert_tight_coupled_buffer_between_stride_load_and_mmad
+// CHECK: %[[RHS_LOAD:.*]] = hivm.hir.load {{.*}} core_type = <CUBE>
+// CHECK: %[[STRIDE_LOAD:.*]] = hivm.hir.stride_load
+// CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[STRIDE_LOAD]]
+// CHECK: %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]]
+// CHECK: %[[NZ:.*]] = tensor.expand_shape %[[TRANSPOSE]]
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]]
+// CHECK: %[[L1_TENSOR:.*]] = bufferization.to_tensor %[[CAST]]
+// CHECK: hivm.hir.copy ins(%[[NZ]]
+// CHECK-SAME: "inserted-copy"
+// CHECK: hivm.hir.mmadL1 ins(%[[L1_TENSOR]], %[[RHS_LOAD]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @insert_tight_coupled_buffer_between_stride_load_and_mmad(
+      %src: memref<?xf16>, %rhs: tensor<16x16xf16>)
+      -> tensor<16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %off = arith.constant 0 : i32
+    %s0 = arith.constant 32 : i32
+    %s1 = arith.constant 3 : i32
+    %n0 = arith.constant 16 : i32
+    %n1 = arith.constant 16 : i32
+    %other = arith.constant 0.000000e+00 : f16
+    %dst = tensor.empty() : tensor<16x16xf16>
+    %load = hivm.hir.stride_load
+      ins(%src : memref<?xf16>)
+      outs(%dst : tensor<16x16xf16>)
+      offset(%off : i32)
+      other(%other : f16)
+      strides([%s0, %s1 : i32, i32])
+      numels([%n0, %n1 : i32, i32])
+      {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<16x16xf16>
+    %out = tensor.empty() : tensor<16x16xf32>
+    %mm = hivm.hir.mmadL1
+      ins(%load, %rhs, %true, %c16, %c16, %c16
+          : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+      outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %mm : tensor<16x16xf32>
+  }
+}

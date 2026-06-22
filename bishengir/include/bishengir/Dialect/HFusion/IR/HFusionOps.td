@@ -323,6 +323,62 @@ def CumprodOp : HFusion_Op<"cumprod",
 }
 
 //===----------------------------------------------------------------------===//
+// CummaxOp
+//===----------------------------------------------------------------------===//
+
+def CummaxOp : HFusion_Op<"cummax",
+    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+  let summary = [{
+    Calculate cumulative maximum on a certain dim of the input tensor
+  }];
+  let description = [{
+    The cummax operation calculates cumulative maximum on a certain dim of
+    the input tensor.
+    Currently only support one cumulation dim.
+  }];
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+                       ConfinedAttr<DenseI64ArrayAttr,[DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan);
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// CumminOp
+//===----------------------------------------------------------------------===//
+
+def CumminOp : HFusion_Op<"cummin",
+    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+  let summary = [{
+    Calculate cumulative minimum on a certain dim of the input tensor
+  }];
+  let description = [{
+    The cummin operation calculates cumulative minimum on a certain dim of
+    the input tensor.
+    Currently only support one cumulation dim.
+  }];
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+                       ConfinedAttr<DenseI64ArrayAttr,[DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan);
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // AtomicCasOp
 //===----------------------------------------------------------------------===//
 
@@ -684,6 +740,104 @@ def IndirectLoadOp : HFusion_Op<"indirect_load", [
 
   let extraClassDeclaration = [{
       static StringRef getOpName() { return "indirect_load"; }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// StrideLoadOp
+//===----------------------------------------------------------------------===//
+
+def StrideLoadOp : HFusion_Op<"stride_load", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize
+]> {
+  let summary = [{
+    Performs strided memory loading with scalar padding.
+  }];
+
+  let description = [{
+    This operation takes a source GM buffer, one linear base offset,
+    per-dimension physical strides, and logical valid element counts. It
+    produces the destination tensor/memref by loading:
+
+      dst[i, ...] = all(dim_index < numel[dim])
+          ? src[offset + sum(dim_index * stride[dim])]
+          : other
+
+    The operation is intended for SIMT Stride Load. The current
+    implementation supports 1D-3D.
+  }];
+
+  let arguments = (ins AnyMemRef:$src,
+                       AnyRankedTensor:$dst,
+                       AnyTypeOf<[I32, I64]>:$offset,
+                       AnyType:$other,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numel
+  );
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      `offset` `(` $offset `:` type($offset) `)`
+      `other` `(` $other `:` type($other) `)`
+      `strides` `(` `[` $stride `:` type($stride) `]` `)`
+      `numels` `(` `[` $numel `:` type($numel) `]` `)`
+      attr-dict
+      (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "stride_load"; }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+def StrideStoreOp : HFusion_Op<"stride_store", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize
+]> {
+  let summary = [{
+    Performs strided memory storing.
+  }];
+
+  let description = [{
+    This operation takes a destination GM buffer, a source tensor, one linear
+    base offset, per-dimension physical strides, and logical valid element
+    counts. It stores source elements into:
+
+      dst[offset + sum(dim_index * stride[dim])] = src[i, ...]
+
+    for positions where all(dim_index < numel[dim]). The operation is intended
+    for SIMT Stride Store. The current implementation supports 1D-3D.
+  }];
+
+  let arguments = (ins AnyMemRef:$dst,
+                       AnyRankedTensor:$src,
+                       AnyTypeOf<[I32, I64]>:$offset,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numel
+  );
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      `offset` `(` $offset `:` type($offset) `)`
+      `strides` `(` `[` $stride `:` type($stride) `]` `)`
+      `numels` `(` `[` $numel `:` type($numel) `]` `)`
+      attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "stride_store"; }
   }];
 
   let hasVerifier = 1;

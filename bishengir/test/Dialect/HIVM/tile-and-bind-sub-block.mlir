@@ -1010,10 +1010,9 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9579">, hivm.module_cor
 // -----
 
 // CHECK-LABEL: func.func @check_split_nz2dn
-// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%{{.*}} : tensor<32x128xf32>) outs(%{{.*}} : memref<128x32xf32, #hivm.address_space<ub>>)
-// CHECK: scf.if
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%{{.*}} : tensor<32x128xf32>) outs(%{{.*}} : memref<64x32xf32, #hivm.address_space<ub>>) dual_dst_mode = <COLUMN_SPLIT>
 // CHECK: hivm.hir.store
-// CHECK: limit_sub_block_id0
+// CHECK: map_for_to_forall
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @check_split_nz2dn_aic() attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
     %alloc = memref.alloc() : memref<128x32xf32, #hivm.address_space<ub>>
@@ -1448,6 +1447,37 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 
 // -----
 
+// CHECK-LABEL: func.func @check_split_stride_store
+// CHECK-DAG: %[[C1024:.*]] = arith.constant 1024 : i64
+// CHECK-DAG: %[[C64:.*]] = arith.constant 64 : i64
+// CHECK-DAG: %[[C1_I64:.*]] = arith.constant 1 : i64
+// CHECK-DAG: %[[C8:.*]] = arith.constant 8 : i64
+// CHECK: scf.for
+// CHECK: %[[TILE_OFFSET_IDX:.*]] = affine.apply
+// CHECK: %[[SRC:.*]] = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<8x64xf16>) -> tensor<8x64xf16>
+// CHECK: %[[TILE_OFFSET:.*]] = arith.index_cast %[[TILE_OFFSET_IDX]] : index to i64
+// CHECK: %[[NEW_OFFSET:.*]] = arith.muli %[[TILE_OFFSET]], %[[C64]] : i64
+// CHECK: %[[REMAINING:.*]] = arith.subi %[[C1024]], %[[TILE_OFFSET]] : i64
+// CHECK: %[[BOUNDED:.*]] = arith.minsi %[[REMAINING]], %[[C8]] : i64
+// CHECK: %[[NEW_NUMEL:.*]] = arith.maxsi %[[BOUNDED]], %{{.*}} : i64
+// CHECK: hivm.hir.stride_store ins(%[[SRC]] : tensor<8x64xf16>) outs(%arg0 : memref<?xf16>) offset(%[[NEW_OFFSET]] : i64) strides([%[[C64]], %[[C1_I64]] : i64, i64]) numels([%[[NEW_NUMEL]], %[[C64]] : i64, i64]) {tiled_op}
+// CHECK-NOT: limit_sub_block_id0
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_split_stride_store(%arg0: memref<?xf16>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty() : tensor<16x64xf16>
+    %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<16x64xf16>) -> tensor<16x64xf16>
+    hivm.hir.stride_store ins(%1 : tensor<16x64xf16>) outs(%arg0 : memref<?xf16>) offset(%c0_i64 : i64) strides([%c64_i64, %c1_i64 : i64, i64]) numels([%c1024_i64, %c64_i64 : i64, i64])
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @_hstu_attn_fwd_mix_aiv
 // CHECK-DAG: annotation.mark {{.*}} {buffer_size_in_byte = 18560 : i64} : memref<?x80xf32>
 // CHECK-DAG: annotation.mark {{.*}} {buffer_size_in_byte = 9280 : i64} : tensor<?x80xf16>
@@ -1691,6 +1721,28 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     %4 = tensor.empty(%arg1) : tensor<?x64xi1>
     %5 = linalg.fill ins(%true : i1) outs(%4 : tensor<?x64xi1>) -> tensor<?x64xi1>
     hivm.hir.indirect_store ins(%1 : tensor<?x64xf16>, %3 : tensor<?x64xi64>, %5 : tensor<?x64xi1>) outs(%arg0 : memref<?xf16>)
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @check_stride_store_in_dynamic_shape_mix_aiv
+// CHECK: %[[SUB_BLOCK:.*]] = hivm.hir.get_sub_block_idx
+// CHECK: %[[SUB_BLOCK_IDX:.*]] = arith.index_cast %[[SUB_BLOCK]] : i64 to index
+// CHECK: %[[IS_SUB_BLOCK_0:.*]] = arith.cmpi eq, %[[SUB_BLOCK_IDX]], %{{.*}} : index
+// CHECK: scf.if %[[IS_SUB_BLOCK_0]] {
+// CHECK:   hivm.hir.stride_store
+// CHECK: } {limit_sub_block_id0}
+module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @check_stride_store_in_dynamic_shape_mix_aiv(%arg0: memref<?xf16>, %arg1: index) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty(%arg1) : tensor<?x64xf16>
+    %1 = linalg.fill ins(%cst : f16) outs(%0 : tensor<?x64xf16>) -> tensor<?x64xf16>
+    hivm.hir.stride_store ins(%1 : tensor<?x64xf16>) outs(%arg0 : memref<?xf16>) offset(%c0_i64 : i64) strides([%c64_i64, %c1_i64 : i64, i64]) numels([%c64_i64, %c64_i64 : i64, i64])
     return
   }
 }

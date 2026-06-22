@@ -89,6 +89,13 @@ public:
         isSigned = false;
       }
     }
+
+    if (isa<hfusion::ElemwiseBinaryOp>(op)) {
+      hfusion::BinaryFn kind = cast<hfusion::ElemwiseBinaryOp>(op).getFun();
+      if (kind == hfusion::BinaryFn::shrui) {
+        isSigned = false;
+      }
+    }
     opType hivmOp;
 
     if constexpr (std::is_base_of_v<
@@ -98,7 +105,11 @@ public:
       if constexpr (std::is_same_v<opType, VDivOp>) {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value(), isSigned);
-      } else {
+      } else if constexpr (std::is_same_v<opType, VShROp>) {
+        hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
+			          /*temp_buffer=*/Value(), isSigned);
+      }
+      else {
         hivmOp = b.create<opType>(loc, resultTypes, inputs, inits,
                                   /*temp_buffer=*/Value());
       }
@@ -148,6 +159,18 @@ hivm::CompareMode mapCompareModeHFusionToHiVM(hfusion::CompareFn hsCmpMode) {
   }
 }
 
+bool isSignedCompareMode(hfusion::CompareFn hsCmpMode) {
+  switch (hsCmpMode) {
+  case hfusion::CompareFn::vule:
+  case hfusion::CompareFn::vuge:
+  case hfusion::CompareFn::vugt:
+  case hfusion::CompareFn::vult:
+    return false;
+  default:
+    return true;
+  }
+}
+
 template <>
 Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
   auto dpsOp = cast<DestinationStyleOpInterface>(op);
@@ -156,7 +179,7 @@ Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
 
   return b.create<hivm::VCmpOp>(dpsOp->getLoc(), dpsOp->getResultTypes(),
                                 dpsOp.getDpsInputs(), dpsOp.getDpsInits(),
-                                hvCmpMode);
+                                isSignedCompareMode(hsCmpMode), hvCmpMode);
 }
 
 static hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
@@ -1019,9 +1042,16 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
     if (failed(
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
-    rewriter.replaceOpWithNewOp<HIVMOP>(op, op->getResultTypes(), op.getInput(),
-                                        dsts[0], op.getCumDims(),
-                                        op.getReverse());
+    auto newOp = rewriter.create<HIVMOP>(op.getLoc(), op->getResultTypes(),
+                                         op.getInput(), dsts[0], op.getCumDims(),
+                                         op.getReverse());
+    // cummax/cummin carry a NaN-propagation flag (max/minimum vs max/minnum).
+    // Forward it; cumsum/cumprod have no such attribute.
+    if constexpr (std::is_same_v<HFUSIONOP, hfusion::CummaxOp> ||
+                  std::is_same_v<HFUSIONOP, hfusion::CumminOp>) {
+      newOp.setPropagateNan(op.getPropagateNan());
+    }
+    rewriter.replaceOp(op, newOp->getResults());
     return success();
   }
 };
@@ -1247,6 +1277,50 @@ struct HFusionToHIVMIndirectLoadOp
 };
 
 //===----------------------------------------------------------------------===//
+// HFusionToHIVMStrideLoadOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMStrideLoadOp
+    : public OpRewritePattern<hfusion::StrideLoadOp> {
+  using OpRewritePattern<hfusion::StrideLoadOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::StrideLoadOp op,
+                                PatternRewriter &rewriter) const override {
+    auto strideLoadOp = rewriter.create<hivm::StrideLoadOp>(
+        op.getLoc(), op.getResult().getType(), op.getSrc(), op.getDst(),
+        op.getOffset(), op.getOther(), op.getStride(), op.getNumel());
+
+    strideLoadOp->setAttr(VFModeAttr::name,
+                          VFModeAttr::get(op->getContext(), VFMode::SIMT));
+
+    rewriter.replaceOp(op, strideLoadOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// HFusionToHIVMStrideStoreOp
+//===----------------------------------------------------------------------===//
+
+struct HFusionToHIVMStrideStoreOp
+    : public OpRewritePattern<hfusion::StrideStoreOp> {
+  using OpRewritePattern<hfusion::StrideStoreOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::StrideStoreOp op,
+                                PatternRewriter &rewriter) const override {
+    auto strideStoreOp = rewriter.create<hivm::StrideStoreOp>(
+        op.getLoc(), op.getDst(), op.getSrc(), op.getOffset(), op.getStride(),
+        op.getNumel());
+
+    strideStoreOp->setAttr(VFModeAttr::name,
+                           VFModeAttr::get(op->getContext(), VFMode::SIMT));
+
+    rewriter.replaceOp(op, strideStoreOp);
+    return success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
 // HFusionToHIVMIndirectStoreOp
 //===----------------------------------------------------------------------===//
 
@@ -1405,6 +1479,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMGatherLoadOp,
     HFusionToHIVMScatterStoreOp,
     HFusionToHIVMIndirectLoadOp,
+    HFusionToHIVMStrideLoadOp,
+    HFusionToHIVMStrideStoreOp,
     HFusionToHIVMIndirectStoreOp,
     HFusionToHIVMGatherTOp,
     HFusionToHIVMIndexPutOp,
@@ -1419,6 +1495,8 @@ void populateLowerHFusionToHIVMPattern(RewritePatternSet &patterns) {
     HFusionToHIVMSortOp,
     HFusionToHIVMCumOp<hfusion::CumsumOp, hivm::VCumsumOp>,
     HFusionToHIVMCumOp<hfusion::CumprodOp, hivm::VCumprodOp>,
+    HFusionToHIVMCumOp<hfusion::CummaxOp, hivm::VCummaxOp>,
+    HFusionToHIVMCumOp<hfusion::CumminOp, hivm::VCumminOp>,
     HFusionToHIVMAtomicOp<hfusion::AtomicCasOp, hivm::AtomicCasOp>,
     HFusionToHIVMAtomicOp<hfusion::AtomicXchgOp, hivm::AtomicXchgOp>
   >(patterns.getContext());

@@ -347,12 +347,6 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                << ", fallback with disabled VF reachable check");
           clear = true;
           config.setDisableVFReachableCheck(true);
-        } else if (!config.getDisableTightCoupledBuffer()) {
-          LDBG("ub overflow detected at attempt "
-               << (i + 1) << "/" << tryTimes
-               << ", fallback with MixCV GM path");
-          clear = true;
-          config.setDisableTightCoupledBuffer(true);
         }
         if (clear && i != tryTimes)
           collectedDiagnostics.clear();

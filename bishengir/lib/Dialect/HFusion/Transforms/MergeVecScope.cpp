@@ -1071,9 +1071,11 @@ void MergeVecScopePass::GetMemOps(const SmallVector<Operation *> &betweenOps,
   // TODO: add Flag to not move DMA ops
   for (Operation *op : betweenOps) {
     if (isa<hivm::LoadOp, hivm::StoreOp, hivm::CopyOp, hivm::IndirectLoadOp,
-            hivm::IndirectStoreOp, hfusion::LoadOp, hfusion::StoreOp,
-            hfusion::IndirectLoadOp, hfusion::IndirectStoreOp, memref::LoadOp,
-            memref::StoreOp, memref::CopyOp, memref::SubViewOp, memref::AllocOp,
+            hivm::StrideLoadOp, hivm::StrideStoreOp, hivm::IndirectStoreOp,
+            hfusion::LoadOp, hfusion::StoreOp, hfusion::IndirectLoadOp,
+            hfusion::StrideLoadOp, hfusion::StrideStoreOp,
+            hfusion::IndirectStoreOp, memref::LoadOp, memref::StoreOp,
+            memref::CopyOp, memref::SubViewOp, memref::AllocOp,
             memref::ExpandShapeOp, memref::CollapseShapeOp, tensor::EmptyOp,
             tensor::ExtractSliceOp, tensor::DimOp, annotation::MarkOp>(op)) {
       if (memOpsSet.insert(op).second) {

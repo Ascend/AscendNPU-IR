@@ -70,9 +70,9 @@ VBrcOp::decomposeOperation(mlir::OpBuilder &b) {
     // Convert F16 -> I1 by VCompare F16 != 0
     Value floatZero =
         b.create<arith::ConstantOp>(getLoc(), b.getFloatAttr(dstElemType, 0.0));
-    b.create<hivm::VCmpOp>(
-        getLoc(), TypeRange(), ValueRange({castedDst, floatZero}), getDst(),
-        b.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::NE));
+    b.create<hivm::VCmpOp>(getLoc(), TypeRange(),
+                            ValueRange({castedDst, floatZero}), getDst(),
+                            /*is_signed=*/true, hivm::CompareMode::NE);
   } else if (isI8) {
     // Convert F16 -> I8 by VCast
     b.create<hivm::VCastOp>(getLoc(), TypeRange(), castedDst, getDst(),

@@ -197,6 +197,8 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
   if (isSupportExtra) {
     patterns.add<CloneTensorEmptyOperationPattern<hivm::EmbeddingGatherOp>,
                  CloneTensorEmptyOperationPattern<hivm::IndirectLoadOp>,
+                 CloneTensorEmptyOperationPattern<hivm::StrideLoadOp>,
+                 CloneTensorEmptyOperationPattern<hivm::StrideStoreOp>,
                  CloneTensorEmptyOperationPattern<hivm::IndirectStoreOp>,
                  CloneTensorEmptyOperationPattern<func::CallOp>>(
         patterns.getContext());

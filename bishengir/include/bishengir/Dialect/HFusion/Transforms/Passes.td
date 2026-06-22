@@ -122,6 +122,8 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
     Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
     Option<"maxFusedOps", "max-fused-ops", "unsigned", "15",
            "Maximum number of ops allowed in one fused node.">,
+    Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
+           "Enable conservative vector function stack slot limit.">,
     Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
            "Enable multiple consumer fusion in AutoVectorizeV2.">,
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
@@ -666,7 +668,9 @@ def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::Fun
            "bool", "false", "Enable Triton compile.">,
     Option<"maxFusedElementwiseOps", "max-fused-elementwise-ops", "int", "-1",
            "Maximum number of elementwise ops to combine into one fused "
-           "linalg.generic (-1 means unlimited).">
+           "linalg.generic (-1 means unlimited).">,
+    Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
+           "Enable conservative vector function stack slot limit.">
   ];
 }
 

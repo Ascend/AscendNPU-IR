@@ -2707,6 +2707,89 @@ module {
 
 
 // -----
+// CHECK-LABEL: func @test_stride_load
+module {
+  func.func @test_stride_load(%src: memref<?xf32>) {
+    %offset = arith.constant 0 : i64
+    %stride = arith.constant 2 : i64
+    %numel = arith.constant 8 : i64
+    %other = arith.constant 0.000000e+00 : f32
+    %dst = memref.alloc() : memref<8xf32>
+    // CHECK: call @stride_load_1d_float_int64_t
+    hivm.hir.stride_load
+      ins(%src : memref<?xf32>)
+      outs(%dst : memref<8xf32>)
+      offset(%offset : i64)
+      other(%other : f32)
+      strides([%stride : i64])
+      numels([%numel : i64])
+    %offset_i32 = arith.constant 0 : i32
+    %stride_i32 = arith.constant 3 : i32
+    %numel0_i32 = arith.constant 4 : i32
+    %numel1_i32 = arith.constant 8 : i32
+    %dst2d = memref.alloc() : memref<4x8xf32>
+    // CHECK: call @stride_load_2d_float_int32_t
+    hivm.hir.stride_load
+      ins(%src : memref<?xf32>)
+      outs(%dst2d : memref<4x8xf32>)
+      offset(%offset_i32 : i32)
+      other(%other : f32)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+    %numel2_i32 = arith.constant 2 : i32
+    %dst3d = memref.alloc() : memref<2x4x8xf32>
+    // CHECK: call @stride_load_3d_float_int32_t
+    hivm.hir.stride_load
+      ins(%src : memref<?xf32>)
+      outs(%dst3d : memref<2x4x8xf32>)
+      offset(%offset_i32 : i32)
+      other(%other : f32)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+    return
+  }
+}
+
+
+// -----
+// CHECK-LABEL: func @test_stride_store
+module {
+  func.func @test_stride_store(%dst: memref<?xf32>, %src1d: memref<8xf32>, %src2d: memref<4x8xf32>, %src3d: memref<2x4x8xf32>) {
+    %offset = arith.constant 0 : i64
+    %stride = arith.constant 2 : i64
+    %numel = arith.constant 8 : i64
+    // CHECK: call @stride_store_1d_float_int64_t
+    hivm.hir.stride_store
+      ins(%src1d : memref<8xf32>)
+      outs(%dst : memref<?xf32>)
+      offset(%offset : i64)
+      strides([%stride : i64])
+      numels([%numel : i64])
+    %offset_i32 = arith.constant 0 : i32
+    %stride_i32 = arith.constant 3 : i32
+    %numel0_i32 = arith.constant 4 : i32
+    %numel1_i32 = arith.constant 8 : i32
+    // CHECK: call @stride_store_2d_float_int32_t
+    hivm.hir.stride_store
+      ins(%src2d : memref<4x8xf32>)
+      outs(%dst : memref<?xf32>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32 : i32, i32])
+      numels([%numel0_i32, %numel1_i32 : i32, i32])
+    %numel2_i32 = arith.constant 2 : i32
+    // CHECK: call @stride_store_3d_float_int32_t
+    hivm.hir.stride_store
+      ins(%src3d : memref<2x4x8xf32>)
+      outs(%dst : memref<?xf32>)
+      offset(%offset_i32 : i32)
+      strides([%stride_i32, %stride_i32, %stride_i32 : i32, i32, i32])
+      numels([%numel2_i32, %numel0_i32, %numel1_i32 : i32, i32, i32])
+    return
+  }
+}
+
+
+// -----
 // CHECK-LABEL: func @test_indirect_store
 module {
   func.func @test_indirect_store(%arg0: memref<?xf32>, %arg1: memref<2x32xi32>, %arg2: memref<4x32xf32>, %arg3: memref<2x32xi8>) attributes {DirectlyUsedGMArgIdxList = [2, 2, 2]} {

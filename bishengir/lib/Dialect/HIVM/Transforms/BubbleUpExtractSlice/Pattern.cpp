@@ -27,6 +27,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Transforms.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -2525,6 +2526,104 @@ GatherLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.replaceOp(sliceOp, newGather.getResult());
   if (gatherOp->use_empty())
     rewriter.eraseOp(gatherOp);
+  return success();
+}
+
+bool StrideLoadBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto strideLoadOp = sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>();
+  int64_t rank = sliceOp.getType().getRank();
+  return strideLoadOp && rank >= 1 && rank <= 3 &&
+         !isDynamicSlice(sliceOp);
+}
+
+LogicalResult
+StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                    PatternRewriter &rewriter) const {
+  auto strideLoadOp = sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>();
+  if (!strideLoadOp)
+    return failure();
+
+  auto loc = sliceOp.getLoc();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+  int64_t rank = sliceOp.getType().getRank();
+  if (rank < 1 || rank > 3 ||
+      offsets.size() != static_cast<size_t>(rank) ||
+      sizes.size() != static_cast<size_t>(rank) ||
+      strides.size() != static_cast<size_t>(rank) ||
+      strideLoadOp.getStride().size() != static_cast<size_t>(rank) ||
+      strideLoadOp.getNumel().size() != static_cast<size_t>(rank))
+    return failure();
+
+  rewriter.setInsertionPoint(strideLoadOp);
+
+  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
+      loc, strideLoadOp.getDst(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newDst);
+
+  SmallVector<Value> newStrides;
+  SmallVector<Value> newNumels;
+  newStrides.reserve(rank);
+  newNumels.reserve(rank);
+
+  Value newOffset = strideLoadOp.getOffset();
+  Type indexType = newOffset.getType();
+  Value zero =
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType, 0));
+  Value one =
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType, 1));
+  for (int64_t i = 0; i < rank; ++i) {
+    Value oldStride = strideLoadOp.getStride()[i];
+    Value oldNumel = strideLoadOp.getNumel()[i];
+    if (!oldStride || !oldNumel || oldStride.getType() != indexType ||
+        oldNumel.getType() != indexType)
+      return failure();
+
+    Value sliceOffset = getValueOrCreateCastToIndexLike(
+        rewriter, loc, indexType,
+        getValueOrCreateConstantIndexOp(rewriter, loc, offsets[i]));
+    Value sliceSize = getValueOrCreateCastToIndexLike(
+        rewriter, loc, indexType,
+        getValueOrCreateConstantIndexOp(rewriter, loc, sizes[i]));
+    Value sliceStride = getValueOrCreateCastToIndexLike(
+        rewriter, loc, indexType,
+        getValueOrCreateConstantIndexOp(rewriter, loc, strides[i]));
+    if (!sliceOffset || !sliceSize || !sliceStride)
+      return failure();
+
+    Value offsetDelta =
+        rewriter.create<arith::MulIOp>(loc, sliceOffset, oldStride);
+    newOffset = rewriter.create<arith::AddIOp>(loc, newOffset, offsetDelta);
+    newStrides.push_back(
+        rewriter.create<arith::MulIOp>(loc, oldStride, sliceStride));
+
+    Value remaining =
+        rewriter.create<arith::SubIOp>(loc, oldNumel, sliceOffset);
+    Value positiveRemaining =
+        rewriter.create<arith::MaxSIOp>(loc, remaining, zero);
+    Value strideMinusOne =
+        rewriter.create<arith::SubIOp>(loc, sliceStride, one);
+    Value ceilNumerator =
+        rewriter.create<arith::AddIOp>(loc, positiveRemaining, strideMinusOne);
+    Value validInSlice =
+        rewriter.create<arith::DivSIOp>(loc, ceilNumerator, sliceStride);
+    newNumels.push_back(
+        rewriter.create<arith::MinSIOp>(loc, validInSlice, sliceSize));
+  }
+
+  auto newOp = rewriter.create<hivm::StrideLoadOp>(
+      strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(),
+      newDst, newOffset, strideLoadOp.getOther(), newStrides, newNumels);
+
+  for (auto attr : strideLoadOp->getAttrs()) {
+    if (!newOp->hasAttr(attr.getName()))
+      newOp->setAttr(attr.getName(), attr.getValue());
+  }
+  rewriter.replaceOp(sliceOp, newOp);
+  if (strideLoadOp->use_empty())
+    rewriter.eraseOp(strideLoadOp);
   return success();
 }
 

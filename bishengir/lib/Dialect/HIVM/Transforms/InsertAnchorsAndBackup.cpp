@@ -407,6 +407,7 @@ func::FuncOp InsertAnchorsAndBackupPass::getOrCreateBackupFunc(
 
   func::FuncOp backupFuncOp = backupFunc(funcOp);
   backupFuncs.try_emplace(funcOp.getOperation(), backupFuncOp);
+  retargetCallsToBackupFuncs(backupFuncOp, backupFuncs);
   return backupFuncOp;
 }
 

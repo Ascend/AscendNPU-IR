@@ -808,7 +808,7 @@ void MarkStrideAlignPass::runOnOperation() {
     }
     auto types = hivmOp.getHIVMOperandTypes(/*includeExtraBuffer=*/false);
     auto memrefTypes = util::getMemRefTypes(types);
-    if (isAllRank0(memrefTypes) || isAllOnesShape(memrefTypes)) {
+    if (isAllRank0(memrefTypes)) {
       return WalkResult::advance();
     }
     if (!isAnyOfLocalBuffer(memrefTypes)) {
@@ -819,6 +819,14 @@ void MarkStrideAlignPass::runOnOperation() {
                      isa<hivm::CopyOp>(op);
     std::optional<int> alignDim;
     if (archIsRegbased) {
+      // TODO: refactor is needed — it should not depend on specific op
+      // Fixpipe may write through a subview/collapse that produces an all-ones
+      // memref (e.g. <1x1>), while the underlying alloc has non-unit dims
+      // (e.g. <3x1x1>). Skip isAllOnesShape for fixpipe so the 3d-dot stride
+      // alignment can still reach the root alloc.
+      if (!isa<FixpipeOp>(op) && isAllOnesShape(memrefTypes)) {
+        return WalkResult::advance();
+      }
       // Filter memrefs not in ubspace
       auto filterMemrefTypes = filterNonHivmSpace(memrefTypes);
       LDBG("mark-stride-align: reg-based path, filterMemrefTypes="
@@ -872,6 +880,9 @@ void MarkStrideAlignPass::runOnOperation() {
       }
     } else {
       // For A2/3
+      if (isAllOnesShape(memrefTypes)) {
+        return WalkResult::advance();
+      }
       auto hivmFlattenInterfaceOp = dyn_cast<hivm::FlattenInterface>(op);
       if (hivmFlattenInterfaceOp == nullptr) {
         return WalkResult::skip();

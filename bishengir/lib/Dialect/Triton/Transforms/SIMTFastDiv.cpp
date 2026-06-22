@@ -33,8 +33,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/AscendDPX/IR/AscendDPX.h"
+#include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
 #include "bishengir/Dialect/Triton/IR/TritonExtension.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/IR/Builders.h"
@@ -114,9 +116,7 @@ static LLVM::LLVMFuncOp ensureDecl(OpBuilder &b, ModuleOp mod, Location loc,
       fnTy.getInputs());
   OpBuilder::InsertionGuard g(b);
   b.setInsertionPointToStart(mod.getBody());
-  auto decl = b.create<LLVM::LLVMFuncOp>(loc, name, llvmFnTy);
-  decl.setLinkage(LLVM::Linkage::External);
-  return decl;
+  return util::createLLVMFuncDecl(b, loc, name, llvmFnTy);
 }
 
 /// One i32 element in shared memory with \p rank dimensions (shape is all-ones)

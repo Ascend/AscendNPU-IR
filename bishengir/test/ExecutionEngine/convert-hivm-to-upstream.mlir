@@ -190,6 +190,14 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
     // COMMON: linalg.map
     // COMMON-SAME:  arith.xori
     hivm.hir.vxor ins(%bB, %bB: memref<5x?x10xi32>, memref<5x?x10xi32>) outs(%bB: memref<5x?x10xi32>)
+
+    // COMMON: linalg.map
+    // COMMON-SAME:  arith.shrsi
+    hivm.hir.vshr {is_signed = true} ins(%bB, %bB: memref<5x?x10xi32>, memref<5x?x10xi32>) outs(%bB: memref<5x?x10xi32>)
+
+    // COMMON: linalg.map
+    // COMMON-SAME:  arith.shrui
+    hivm.hir.vshr {is_signed = false} ins(%bB, %bB: memref<5x?x10xi32>, memref<5x?x10xi32>) outs(%bB: memref<5x?x10xi32>)
  
     func.return %1: tensor<5x?x10xf32>
 }
@@ -359,6 +367,16 @@ func.func @vmp_lowering(
   memref.store %gt_0, %sink[%c0] : memref<4xi1>
   memref.store %ge_1, %sink[%c1] : memref<4xi1>
   return
+}
+
+// -----
+
+// COMMON-LABEL: func.func @vcmp_unsigned_lowering(
+// COMMON: hfusion.compare {compare_fn = #hfusion.compare_fn<vult>}
+func.func @vcmp_unsigned_lowering(%a: tensor<4xi8>, %b: tensor<4xi8>) -> tensor<4xi1> {
+  %init = tensor.empty() : tensor<4xi1>
+  %0 = hivm.hir.vcmp ins(%a, %b : tensor<4xi8>, tensor<4xi8>) outs(%init : tensor<4xi1>) compare_mode = #hivm.compare_mode<lt> is_signed = false -> tensor<4xi1>
+  return %0 : tensor<4xi1>
 }
 
 // -----
