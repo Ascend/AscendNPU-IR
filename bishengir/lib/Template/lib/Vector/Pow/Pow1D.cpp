@@ -41,6 +41,12 @@ pow_is_aligned(memref_t<__ubuf__ T, 1> *base, memref_t<__ubuf__ T, 1> *exp,
 template <typename T>
 __aiv__ __attribute__((always_inline)) T scalar_pow_calc(T base_val,
                                                          T exp_val) {
+  if (base_val == 1) {
+    return 1;
+  }
+  if (base_val == -1) {
+    return exp_val % 2 == 0 ? 1 : -1;
+  }
   if (exp_val == INT32_MIN) {
     exp_val = -2;
   }
