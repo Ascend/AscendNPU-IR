@@ -1513,8 +1513,8 @@ struct CmpOpPattern : public OpConversionPattern<ArithCmpOp> {
     auto flatTy = VectorType::get({flatLen}, resVecType.getElementType());
     auto flatSrcTy = VectorType::get({flatLen}, srcVecType.getElementType());
 
-    Value flatLhs = rewriter.create<vector::ShapeCastOp>(loc, flatSrcTy, lhs);
-    Value flatRhs = rewriter.create<vector::ShapeCastOp>(loc, flatSrcTy, rhs);
+    Value flatLhs = rewriter.create<UnrealizedConversionCastOp>(loc, flatSrcTy, lhs)->getResult(0);
+    Value flatRhs = rewriter.create<UnrealizedConversionCastOp>(loc, flatSrcTy, rhs)->getResult(0);
 
     Value mask = hivmave::findReuseableMaskOrCreateOne(op, flatTy, rewriter);
     Value flatResult;
@@ -1558,7 +1558,7 @@ struct CmpOpPattern : public OpConversionPattern<ArithCmpOp> {
                                                 flatRhs, mask);
     }
 
-    rewriter.replaceOpWithNewOp<vector::ShapeCastOp>(op, resType, flatResult);
+    rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, resType, flatResult);
     return success();
   }
 
@@ -1667,11 +1667,11 @@ struct SelectOpPattern : public OpConversionPattern<arith::SelectOp> {
           mlir::cast<VectorType>(trueVal.getType()).getElementType());
 
       Value flatCond =
-          rewriter.create<vector::ShapeCastOp>(loc, flatCondTy, condition);
+          rewriter.create<UnrealizedConversionCastOp>(loc, flatCondTy, condition)->getResult(0);
       Value flatTrue =
-          rewriter.create<vector::ShapeCastOp>(loc, flatValTy, trueVal);
+          rewriter.create<UnrealizedConversionCastOp>(loc, flatValTy, trueVal)->getResult(0);
       Value flatFalse =
-          rewriter.create<vector::ShapeCastOp>(loc, flatValTy, falseVal);
+          rewriter.create<UnrealizedConversionCastOp>(loc, flatValTy, falseVal)->getResult(0);
 
       Value flatResult;
       // Check if the result type is FP8: f8e5m2 or f8e4m3fn
@@ -1689,7 +1689,7 @@ struct SelectOpPattern : public OpConversionPattern<arith::SelectOp> {
         flatResult = rewriter.create<hivmave::VFSelectOp>(
             loc, flatResTy, flatCond, flatTrue, flatFalse);
       }
-      rewriter.replaceOpWithNewOp<vector::ShapeCastOp>(op, resType, flatResult);
+      rewriter.replaceOpWithNewOp<UnrealizedConversionCastOp>(op, resType, flatResult);
       return success();
     }
 
