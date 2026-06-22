@@ -71,6 +71,11 @@ public:
         if (isMarkedInsertSliceOp(insertSliceOp))
           return WalkResult::interrupt();
       }
+      if (auto reduceOp = dyn_cast<hivm::VReduceOp>(op)) {
+        auto srcType = cast<ShapedType>(reduceOp.getSrc().getType());
+        if (ShapedType::isDynamicShape(srcType.getShape()))
+          return WalkResult::interrupt();
+      }
 
       if (!isa<tensor::ExtractSliceOp>(op)) {
         return WalkResult::advance();
