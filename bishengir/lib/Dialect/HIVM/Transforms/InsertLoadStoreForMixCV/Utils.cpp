@@ -453,8 +453,10 @@ static WalkResult verifyFail(Value upOp, Operation *downOp, StringRef msg,
 }
 
 static WalkResult verifyUpPropagator(UnrealizedConversionCastOp upPropOp) {
-  auto downPropOp =
-      upPropOp.getInputs()[0].getDefiningOp<UnrealizedConversionCastOp>();
+  auto srcUpPropVal = upPropOp.getInputs()[0];
+  if (srcUpPropVal.getDefiningOp<tensor::EmptyOp>())
+    return WalkResult::advance();
+  auto downPropOp = srcUpPropVal.getDefiningOp<UnrealizedConversionCastOp>();
   if (!downPropOp || !downPropOp->hasAttr(kPropagateDownAttr)) {
     if (upPropOp.getInputs()[0].getType().isIntOrIndexOrFloat())
       return WalkResult::advance();
@@ -488,7 +490,7 @@ static WalkResult verifyDownPropagator(UnrealizedConversionCastOp downPropOp) {
 }
 
 LogicalResult verifyPropagation(func::FuncOp funcOp) {
-  auto walkResult = funcOp.walk([&](Operation *op) {
+  auto walkResult = funcOp.walk([&](Operation *op) -> WalkResult {
     if (auto uccOp = dyn_cast<UnrealizedConversionCastOp>(op)) {
       LDBG("Verifying propagator: " << *op);
       if (op->hasAttr(kPropagateUpAttr))
