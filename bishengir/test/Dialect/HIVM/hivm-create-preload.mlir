@@ -195,8 +195,11 @@ module {
   // CHECK: %[[UPPER_DIRECT:.*]] = arith.cmpi slt, %[[NEW_IV]], %[[UB]] : i32
   // CHECK: %[[COND_DIRECT:.*]] = arith.andi %[[LOWER_DIRECT]], %[[UPPER_DIRECT]] : i1
   // CHECK: %[[IF0:.*]] = scf.if %[[COND_DIRECT]] -> (i32) {
+  // CHECK:   %[[SCOPE0:.*]] = scope.scope : () -> i32 {
   // CHECK:   %[[R0:.*]] = arith.addi %[[ARG0]], %[[NEW_IV]] : i32
-  // CHECK:   scf.yield %[[R0]] : i32
+  // CHECK:   scope.return %[[R0]] : i32
+  // CHECK:   } {hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32}
+  // CHECK:   scf.yield %[[SCOPE0]] : i32
   // CHECK: } else {
   // CHECK:   scf.yield %[[ARG0]] : i32
   // CHECK: }
@@ -209,8 +212,11 @@ module {
   // CHECK: %[[UPPER_SHIFTED:.*]] = arith.cmpi slt, %[[MAPPED_IV]], %[[UB]] : i32
   // CHECK: %[[COND_SHIFTED:.*]] = arith.andi %[[LOWER_SHIFTED]], %[[UPPER_SHIFTED]] : i1
   // CHECK: %[[IF1:.*]] = scf.if %[[COND_SHIFTED]] -> (i32) {
+  // CHECK:   %[[SCOPE1:.*]] = scope.scope : () -> i32 {
   // CHECK:   %[[R1:.*]] = arith.addi %[[ARG1]], %[[MAPPED_IV]] : i32
-  // CHECK:   scf.yield %[[R1]] : i32
+  // CHECK:   scope.return %[[R1]] : i32
+  // CHECK:   } {hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32}
+  // CHECK:   scf.yield %[[SCOPE1]] : i32
   // CHECK: } else {
   // CHECK:   scf.yield %[[ARG1]] : i32
   // CHECK: }
@@ -263,7 +269,14 @@ func.func @test_preload_false_branch_copy_dst_yield(
 // CHECK:   %[[LOWER:.*]] = arith.cmpi sge, %[[IV]], {{.*}} : i32
 // CHECK:   %[[UPPER:.*]] = arith.cmpi slt, %[[IV]], {{.*}} : i32
 // CHECK:   %[[COND:.*]] = arith.andi %[[LOWER]], %[[UPPER]] : i1
-// CHECK:   %[[SELECT:.*]] = arith.select %[[COND]], %[[SRC]], %[[INIT]] : memref<128x128xf32>
-// CHECK:   hivm.hir.copy ins(%[[SELECT]] : memref<128x128xf32>) outs(%[[INIT]] : memref<128x128xf32>)
+// CHECK:   %[[IF:.*]] = scf.if %[[COND]] -> (memref<128x128xf32>) {
+// CHECK:     %[[SCOPE:.*]] = scope.scope : () -> memref<128x128xf32> {
+// CHECK:       scope.return %[[SRC]] : memref<128x128xf32>
+// CHECK:     } {hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32}
+// CHECK:     scf.yield %[[SCOPE]] : memref<128x128xf32>
+// CHECK:   } else {
+// CHECK:     scf.yield %[[INIT]] : memref<128x128xf32>
+// CHECK:   }
+// CHECK:   hivm.hir.copy ins(%[[IF]] : memref<128x128xf32>) outs(%[[INIT]] : memref<128x128xf32>)
 // CHECK: }
 // CHECK: return %[[INIT]] : memref<128x128xf32>

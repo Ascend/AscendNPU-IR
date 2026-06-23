@@ -196,8 +196,6 @@ private:
   // process
   IRMapping globalIRMap;
 
-  DenseMap<Value, Value> localOuputsToRedurnRes;
-
   DenseSet<Operation *> toErase;
 
   // Checkpoint for revert in case things go wrong
@@ -377,6 +375,19 @@ static Value createExtractSlice(OpBuilder &builder, Location loc, Value from,
   auto finalTy = cast<RankedTensorType>(to);
   return builder.create<tensor::ExtractSliceOp>(loc, finalTy, from, offsets,
                                                 sizes, strides);
+}
+
+static bool isTCBLocalOutput(const std::pair<Value, Value> &localOutput) {
+  Value localBuffer = traceValueDef(localOutput.second);
+  if (!localBuffer)
+    return false;
+
+  for (Operation *user : localBuffer.getUsers())
+    if (utils::isAnnotationWithAttr(
+            user, hivm::HIVMTightlyCoupledBufferAttr::name))
+      return true;
+
+  return false;
 }
 
 static void createAttrForPreloadWS(OpBuilder &builder, Value markedVal) {
@@ -1544,15 +1555,22 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     LLVM_DEBUG(dbgs() << "Creating scope for work item #" << item->id << '\n');
     scf::ForOp parentFor = pipelineLoop;
 
-    // collect return values
+    // TCB local outputs are backed by local buffers and are rebuilt as
+    // tensor views after the scope.
+    bool hasTCBLocalOutput = false;
     SmallVector<Value> returnTensors{};
     for (auto &localOutput : item->localOutputs) {
-      returnTensors.push_back(localOutput.first);
+      if (isTCBLocalOutput(localOutput)) {
+        hasTCBLocalOutput = true;
+      } else {
+        returnTensors.push_back(localOutput.first);
+      }
     }
     for (auto &yieldedOutput : item->yieldedOutputs) {
       returnTensors.push_back(yieldedOutput.first);
     }
-    if (returnTensors.empty() && item->workspaceOutputs.empty()) {
+    if (returnTensors.empty() && item->workspaceOutputs.empty() &&
+        !hasTCBLocalOutput) {
       preloadNum--;
       continue;
     }
@@ -1592,12 +1610,25 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
 
     LLVM_DEBUG(dbgs() << "Created scope for work item #" << item->id << " with "
                       << returnTensors.size() << " results\n");
+
+    // Skip original TCB to_tensor ops here. They are rebuilt after the
+    // scope from the same local buffers.
+    DenseSet<Operation *> tcbToTensorOps;
+    for (auto &localOutput : item->localOutputs) {
+      if (!isTCBLocalOutput(localOutput))
+        continue;
+      auto toTensorOp =
+          localOutput.first.getDefiningOp<bufferization::ToTensorOp>();
+      if (toTensorOp)
+        tcbToTensorOps.insert(toTensorOp);
+    }
     for (Operation &op : parentFor.getBody()->getOperations()) {
       if (!item->ops.contains(&op))
         continue;
-
-      builder.clone(op, scopeMap);
       toErase.insert(&op);
+      if (tcbToTensorOps.contains(&op))
+        continue;
+      builder.clone(op, scopeMap);
     }
     item->irMap = scopeMap;
 
@@ -1621,11 +1652,22 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     }
     builder.create<scope::ReturnOp>(loc, ValueRange(newReturnTensors));
 
+    builder.setInsertionPointAfter(newScopeOp);
+    for (auto &localOutput : item->localOutputs) {
+      if (!isTCBLocalOutput(localOutput))
+        continue;
+      Value toTensor = createToTensor(builder, loc, localOutput.second);
+      if (!toTensor)
+        return failure();
+      globalIRMap.map(localOutput.first, toTensor);
+    }
+
     size_t resultIdx = 0;
     for (auto &localOutput : item->localOutputs) {
+      if (isTCBLocalOutput(localOutput))
+        continue;
       Value returnTensor = localOutput.first;
       Value scopeResult = newScopeOp->getResult(resultIdx++);
-      localOuputsToRedurnRes[returnTensor] = scopeResult;
       globalIRMap.map(returnTensor, scopeResult);
     }
 
