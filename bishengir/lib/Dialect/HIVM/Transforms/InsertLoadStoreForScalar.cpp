@@ -102,14 +102,30 @@ struct DuplicateTensorExtractForCube
       if (hasCubeUser) {
         return true;
       }
-      
-      // Add all users of currentOp to worklist for indirect user checking
-      for (Operation *userOp : currentOp->getUsers()) {
-        if (visited.insert(userOp).second)
+
+      auto enqueue = [&](Operation *userOp) {
+        if (userOp && visited.insert(userOp).second)
           worklist.push_back(userOp);
+      };
+
+      for (Operation *userOp : currentOp->getUsers()) {
+        // Follow scf.for loop-carried deps: yield operand -> region iter arg.
+        if (auto yieldOp = dyn_cast<scf::YieldOp>(userOp)) {
+          if (auto forOp = dyn_cast<scf::ForOp>(yieldOp->getParentOp())) {
+            for (OpOperand &operand : yieldOp->getOpOperands()) {
+              if (operand.get().getDefiningOp() != currentOp)
+                continue;
+              for (Operation *u :
+                   forOp.getRegionIterArg(operand.getOperandNumber()).getUsers())
+                enqueue(u);
+            }
+            continue;
+          }
+        }
+        enqueue(userOp);
       }
     }
- 
+
     return false;
   }
  
