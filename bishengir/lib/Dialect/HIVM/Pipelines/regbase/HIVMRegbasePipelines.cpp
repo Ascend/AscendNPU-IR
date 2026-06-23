@@ -393,21 +393,28 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableVFReachableCheck;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
-  // Cross-Core Auto-Sync passes STEP=1
-  hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
-                                CrossCoreAutoSyncMode::CCGSS_STEP_1);
-
-  if (hivmPipelineOptions.enableTritonKernelCompile)
-    // Must place after plan-workspace-memory
-    pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
   // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
   // function, then hoist any tightly-coupled alloc that is yielded out of an
   // inner region up to the region the yielded value escapes to. Both run
   // before SplitMixKernel so the AIC/AIV clones share consistent buffer ids and
   // identical alloc placement; this keeps the auto-multi-buffer slot-rotation
   // anchor consistent across cores for CV tightly-coupled buffers.
+  // Note: if we ran split-mix-kernel with canonicalize passes before marking
+  // tightly-coupled-buffers with memory effect attributes, those buffers might
+  // get deleted by memref-dse. So it's important to position these passes
+  // before mark-real-core-type.
   pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
   pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
+
+  // Cross-Core Auto-Sync passes STEP=1
+  hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
+                                CrossCoreAutoSyncMode::CCGSS_STEP_1);
+
+  if (hivmPipelineOptions.enableTritonKernelCompile) {
+    // Must place after plan-workspace-memory
+    pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
+  }
+
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
