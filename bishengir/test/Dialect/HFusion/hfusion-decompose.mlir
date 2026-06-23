@@ -199,9 +199,10 @@ module {
     // CHECK:   %[[IS_NEG:.*]] = arith.cmpf oeq, %[[IN]], %[[NEG_INF]] : f32
     // CHECK:   %[[RES:.*]] = arith.ori %[[IS_POS]], %[[IS_NEG]] : i1
     // CHECK:   linalg.yield %[[RES]] : i1
-    %0 = "hfusion.isinf"(%arg0) : (tensor<4xf32>) -> tensor<4xi1>
+    %0 = hfusion.isinf %arg0 : tensor<4xf32> -> tensor<4xi1>
     return %0 : tensor<4xi1>
-
+  }
+}
 
 // -----
 
