@@ -20,7 +20,6 @@ func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x
     // COMMON: linalg.mul
     %3 = hivm.hir.vmul ins(%1, %2: tensor<5x?x10xf32>, tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
  
-    // COMMON: linalg.div
     %4 = hivm.hir.vdiv ins(%2, %3: tensor<5x?x10xf32>, tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
  
     // COMMON: linalg.max
@@ -80,7 +79,6 @@ func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x
     // COMMON: linalg.mul
     hivm.hir.vmul ins(%c, %d: memref<5x?x10xf32>, memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
  
-    // COMMON: linalg.div
     hivm.hir.vdiv ins(%c, %d: memref<5x?x10xf32>, memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
  
     // COMMON: linalg.max
@@ -574,4 +572,34 @@ func.func @vreduce_min_ui32(%arg0: tensor<4x8xi32>) -> tensor<4x1xi32> {
   // COMMON: arith.minui
   %0 = hivm.hir.vreduce <min> ins(%arg0 : tensor<4x8xi32>) outs(%init : tensor<4x1xi32>) unsigned_src = true reduce_dims = [1] -> tensor<4x1xi32>
   return %0 : tensor<4x1xi32>
+}
+
+// -----
+
+// COMMON-LABEL: @vdiv_lowering
+func.func @vdiv_lowering(%a: tensor<64xi32>, %c: i32, %d: tensor<64xi32>) -> tensor<64xi32> {
+  // CHECK-TRUE: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+  // CHECK-FALSE: linalg.div
+  %0 = hivm.hir.vdiv ins(%a, %c : tensor<64xi32>, i32) outs(%d : tensor<64xi32>) -> tensor<64xi32>
+  return %0 : tensor<64xi32>
+}
+
+// -----
+
+// COMMON-LABEL: @vdiv_unsigned_lowering
+func.func @vdiv_unsigned_lowering(%a: tensor<64xi32>, %c: i32, %d: tensor<64xi32>) -> tensor<64xi32> {
+  // CHECK-TRUE: linalg.elemwise_binary {fun = #linalg.binary_fn<div_unsigned>}
+  // CHECK-FALSE: linalg.div_unsigned
+  %0 = hivm.hir.vdiv ins(%a, %c : tensor<64xi32>, i32) outs(%d : tensor<64xi32>) isSigned = false -> tensor<64xi32>
+  return %0 : tensor<64xi32>
+}
+
+// -----
+
+// COMMON-LABEL: @vdiv_float_lowering
+func.func @vdiv_float_lowering(%a: tensor<64xf32>, %c: f32, %d: tensor<64xf32>) -> tensor<64xf32> {
+  // CHECK-TRUE: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
+  // CHECK-FALSE: linalg.div
+  %0 = hivm.hir.vdiv ins(%a, %c : tensor<64xf32>, f32) outs(%d : tensor<64xf32>) -> tensor<64xf32>
+  return %0 : tensor<64xf32>
 }
