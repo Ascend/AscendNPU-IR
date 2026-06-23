@@ -177,10 +177,23 @@ static LogicalResult verifyTileBounds(const TileView &permTile,
 
   for (unsigned rootDim = 0, e = permTile.droppedDims.size(); rootDim < e;
        ++rootDim) {
-    if (!isEqualConstantIntOrValue(loadTile.offsets[rootDim],
-                                   permTile.offsets[rootDim]) ||
-        !isEqualConstantIntOrValue(loadTile.strides[rootDim],
+    if (!isEqualConstantIntOrValue(loadTile.strides[rootDim],
                                    permTile.strides[rootDim])) {
+      return failure();
+    }
+
+    if (permTile.view == permTile.root) {
+      // permTile.view == permTile.root == loadTile.root, meaning that the whole
+      // load dst buffer is being transposed, so load tile must be a part of
+      // perm tile.
+      // TODO: the current implementation is kind of aggressive, not sure
+      // whether not-contiguous load tile is safely transposed, and whether we
+      // should consider view size > root size cases.
+      continue;
+    }
+
+    if (!isEqualConstantIntOrValue(loadTile.offsets[rootDim],
+                                   permTile.offsets[rootDim])) {
       return failure();
     }
 

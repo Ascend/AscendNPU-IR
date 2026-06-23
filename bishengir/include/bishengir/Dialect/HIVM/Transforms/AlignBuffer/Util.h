@@ -19,6 +19,11 @@
 namespace mlir {
 namespace hivm {
 
+// Attribute name used to mark operations that failed during unrealized
+// conversion cast propagation. These marked ops are handled later by
+// handlePropagateFailure.
+constexpr StringRef propagateFailureName = "PropagateFailure";
+
 struct AlignInfo {
   llvm::SmallVector<int32_t> alignDims;
   llvm::SmallVector<int32_t> alignBytes;
@@ -151,6 +156,11 @@ calculateAlignedShape(OpBuilder &b, const Location loc,
                       const SmallVector<OpFoldResult> &shape,
                       const SmallVector<int> &alignUnits);
 
+/// Handle all operations marked with propagateFailureName after allocation
+/// processing is complete. This resolves failed unrealized conversion cast
+/// propagations by inserting CopyOps to maintain data consistency between
+/// the original and aligned memrefs.
+void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp);
 LogicalResult replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                             const Location loc, Value from,
                                             Value to);

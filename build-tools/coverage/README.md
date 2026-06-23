@@ -118,8 +118,42 @@ Open the HTML entry directly, for example:
 xdg-open ./build-cov/coverage-bishengir-full/html/index.html
 ```
 
+## Diff File Coverage
+
+Use `--diff-range` to filter the coverage report to only include files changed in a git diff range. The runner collects full coverage data as usual, then filters `coverage.cleaned.info` to only keep files listed by `git diff --name-only --diff-filter=ACMRT <range>`. The resulting `html/index.html` only shows coverage for those files — unchanged files are excluded.
+
+This is **file-level** filtering: any file that appears in the diff is kept in full with its line-level coverage detail. It does not restrict to changed lines only.
+
+If the diff range returns no files, or none of the diff files match any coverage records, the runner exits with a clear error instead of producing an empty report.
+
+A common use case is filtering coverage to a pull request diff, e.g. `origin/A5/dev...HEAD`. The flag accepts any range that `git diff` understands: branch names, commit SHAs, or `origin/<branch>...HEAD`.
+
+Example — collect coverage for `bishengir/test` lit tests, then report only files changed between `origin/A5/dev` and the current branch:
+
+```bash
+python3 build-tools/coverage/run.py lit \
+  --build-dir ./build-cov \
+  --lit-test-root ./bishengir/test \
+  --jobs 4 \
+  --diff-range "origin/A5/dev...HEAD" \
+  --out-dir ./build-cov/coverage-diff
+```
+
+The same flag works with gtest mode:
+
+```bash
+python3 build-tools/coverage/run.py gtest \
+  --build-dir ./build-cov \
+  --binary tools/bishengir/unittests/Dialect/Utils/BiShengIRDialectUtilsTests \
+  --diff-range "origin/A5/dev...HEAD" \
+  --out-dir ./build-cov/coverage-diff
+```
+
+When `--diff-range` is omitted, the runner behaves exactly as before.
+
 ## Useful Options
 
 - `--out-dir`: output directory. Default is `<build-dir>/coverage`.
 - `--jobs`: lit worker count and gtest pre-build parallelism.
 - `--test`: lit test file or directory. Can be passed multiple times.
+- `--diff-range`: git diff range to filter coverage to changed files only.

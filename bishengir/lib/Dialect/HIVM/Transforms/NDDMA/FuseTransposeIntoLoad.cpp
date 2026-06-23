@@ -26,12 +26,14 @@
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Dialect/MemRef/Transforms/ComposeSubView.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Transforms/NDDMA/ComposeUnitStrideSubview.h"
 #include "bishengir/Dialect/HIVM/Transforms/NDDMA/TileView.h"
 #include "bishengir/Dialect/HIVM/Transforms/NDDMA/ViewPermutator.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -230,6 +232,18 @@ struct FuseTransposeIntoLoadPass
     auto func = getOperation();
     MLIRContext *ctx = func.getContext();
 
+    LDBG("First, compose subviews (unit-stride or static sizes)");
+    {
+      RewritePatternSet subviewPatterns(ctx);
+      memref::populateComposeSubViewPatterns(subviewPatterns, ctx);
+      populateComposeUnitStrideSubviewPatterns(subviewPatterns, ctx);
+      if (failed(applyPatternsGreedily(func, std::move(subviewPatterns)))) {
+        signalPassFailure();
+        return;
+      }
+    }
+
+    LDBG("Second, fuse transpose into load");
     RewritePatternSet patterns(ctx);
     patterns.add<FuseTransposeIntoLoadPattern>(ctx);
 

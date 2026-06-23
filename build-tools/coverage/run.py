@@ -117,6 +117,7 @@ class CommonOptions:
     build_dir: Path
     out_dir: Path
     jobs: int
+    diff_range: str | None = None
 
     @classmethod
     def from_namespace(cls, args: argparse.Namespace, repo_root: Path) -> "CommonOptions":
@@ -126,6 +127,7 @@ class CommonOptions:
             build_dir=build_dir,
             out_dir=out_dir,
             jobs=args.jobs,
+            diff_range=args.diff_range,
         )
 
 
@@ -180,8 +182,9 @@ def read_blacklist_patterns() -> tuple[str, ...]:
 
 
 class CoverageSession:
-    def __init__(self, common: CommonOptions) -> None:
+    def __init__(self, common: CommonOptions, repo_root: Path) -> None:
         self.common = common
+        self.repo_root = repo_root
         self.lcov = require_tool("lcov")
         self.genhtml = require_tool("genhtml")
         self.llvm_cov = require_tool("llvm-cov")
@@ -224,6 +227,8 @@ class CoverageSession:
             self._capture()
             self._extract()
             self._remove()
+            if self.common.diff_range is not None:
+                self._filter_by_diff()
             self._generate_html()
         self._print_outputs()
         if workload_returncode != 0:
@@ -328,6 +333,78 @@ class CoverageSession:
             ]
         )
 
+    def _resolve_repo_path(self, path: str) -> str:
+        """Normalize an absolute or repo-relative file path to an absolute string."""
+        p = Path(path)
+        if p.is_absolute():
+            return str(p.resolve(strict=False))
+        return str((self.repo_root / p).resolve(strict=False))
+
+    def _filter_by_diff(self) -> None:
+        """Filter coverage.cleaned.info to only keep records for files in the diff range."""
+        diff_range = self.common.diff_range
+        if diff_range is None:
+            return
+
+        # Retrieve the list of added, modified, copied, renamed, or type-changed
+        # files from the given diff range.  The output is relative to repo root,
+        # so we resolve against repo_root to get absolute paths for LCOV matching.
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(self.repo_root), "diff", "--name-only",
+                 "--diff-filter=ACMRT", diff_range],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise CoverageError(
+                f"git diff --name-only {diff_range} failed: {exc.stderr.strip()}"
+            ) from exc
+
+        diff_files = [f.strip() for f in result.stdout.strip().split("\n") if f.strip()]
+        if not diff_files:
+            raise CoverageError(
+                f"git diff --name-only --diff-filter=ACMRT {diff_range} returned no files; "
+                "the range may be empty or invalid"
+            )
+
+        diff_abs: set[str] = set()
+        for rel in diff_files:
+            diff_abs.add(self._resolve_repo_path(rel))
+
+        src = self.outputs.filtered_info
+        dst = src.with_name(f"{src.name}.diff.tmp")
+
+        kept = 0
+        with open(src, encoding="utf-8") as fin, open(dst, "w", encoding="utf-8") as fout:
+            record: list[str] = []
+            keep_record = False
+            for line in fin:
+                if line.startswith("SF:"):
+                    record = [line]
+                    sf_path = line[3:].strip()
+                    keep_record = self._resolve_repo_path(sf_path) in diff_abs
+                    if keep_record:
+                        kept += 1
+                elif record:
+                    record.append(line)
+                if line.strip() == "end_of_record":
+                    if keep_record:
+                        fout.writelines(record)
+                    record = []
+
+        if kept == 0:
+            dst.unlink(missing_ok=True)
+            raise CoverageError(
+                f"none of the {len(diff_files)} diff file(s) matched any coverage records; "
+                "check that the diff range covers files under the coverage scope"
+            )
+
+        src.unlink()
+        dst.rename(src)
+        log(f"diff filter: kept {kept} file(s) out of {len(diff_files)} diff file(s)")
+
     def _generate_html(self) -> None:
         self.outputs.html_dir.mkdir(parents=True, exist_ok=True)
         log(f"generating html report at {self.outputs.html_dir / 'index.html'}")
@@ -431,6 +508,11 @@ def add_common_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--build-dir", required=True, help="Build directory containing coverage-enabled binaries")
     parser.add_argument("--out-dir", default="", help="Coverage output directory (default: <repo-root>/coverage)")
     parser.add_argument("--jobs", type=positive_int, default=default_jobs())
+    parser.add_argument(
+        "--diff-range",
+        default=None,
+        help="Git diff range (e.g., 'main...HEAD') to filter coverage to changed files only",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -467,7 +549,7 @@ def main(argv: list[str]) -> int:
         repo_root = discover_repo_root(Path.cwd())
         args = build_parser().parse_args(argv)
         common = CommonOptions.from_namespace(args, repo_root)
-        session = CoverageSession(common)
+        session = CoverageSession(common, repo_root)
         if args.runner == "lit":
             plan = build_lit_plan(args, common, repo_root)
         else:
