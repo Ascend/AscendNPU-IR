@@ -66,7 +66,6 @@ def HACC_ToLLVMIRTranslateAttr : HACC_I32Enum<"HACCToLLVMIRTranslateAttr", "", [
   // For Mix Device Entry Functions
   I32EnumAttrCase<"MIX_ENTRY", 1, "hacc.mix_entry">,
   I32EnumAttrCase<"ALWAYS_INLINE", 2, "hacc.always_inline">,
-  I32EnumAttrCase<"NOINLINE", 3, "hacc.noinline">,
 ]> {
   let cppNamespace = "::mlir::hacc";
 }
