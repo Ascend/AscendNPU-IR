@@ -257,10 +257,6 @@ static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
 
   pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
   pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
-
-  // must run CloneTensorEmpty to restore merged&hoisted tensor.empty caused by CSE
-  // TODO: will remove the cloneTensorEmpty after insertLoadStoreForMixCV fix the bug.
-  pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
 }
 
 static void

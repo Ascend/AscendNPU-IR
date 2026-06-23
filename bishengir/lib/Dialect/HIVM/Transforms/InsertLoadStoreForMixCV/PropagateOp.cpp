@@ -473,6 +473,7 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
         }
         return success();
       })
+      .Case([&](tensor::EmptyOp emptyOp) { return failure(); })
       .Default([&](Operation *op) {
         if (step == PropagationStep::LOCAL &&
             !llvm::all_of(op->getResultTypes(),
