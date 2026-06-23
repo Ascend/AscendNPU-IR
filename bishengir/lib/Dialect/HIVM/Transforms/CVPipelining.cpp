@@ -819,6 +819,91 @@ LogicalResult CVPipelineImpl::checkWorkItemDependencies() {
             "scale replicated onto both cores); skipping pipelining");
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Reject cross-core loop-carried dependencies.
+  //
+  // CV pipelining splits the loop body into a VECTOR stage and a CUBE stage,
+  // each of which runs all of its iterations in its own loop before the other
+  // stage's loop runs. A tensor carried across the iteration boundary (a loop
+  // iter_arg) that is *produced* on one core but *consumed* on the other can
+  // therefore never be honored: the consuming stage would read the loop-entry
+  // value instead of the previous iteration's result computed by the other
+  // core. The split happens silently, so the existing operand-resolvability
+  // walk above does not catch it — an iter_arg is a BlockArgument and so is
+  // always deemed "resolvable" there. Detect it here, before any IR mutation,
+  // and leave the loop un-pipelined.
+  //
+  // Same-core carries (e.g. a CUBE matmul accumulator) are fine: that stage's
+  // own loop runs sequentially. Non-tensor carries (loop-index / address
+  // arithmetic) are replicated onto every stage and never form a cross-core
+  // data hazard, so they are ignored.
+  DenseMap<unsigned, const WorkItem *> producerByIterArg;
+  for (const auto &item : worklist)
+    for (auto &yielded : item->yieldedOutputs)
+      producerByIterArg[yielded.second] = item.get();
+
+  // Collect the cross-core consuming ops of an iter_arg, paired with the core
+  // they run on. An op mapped in opToWorkItemMap is the consuming work item; an
+  // unmapped glue op (view / cast / index math) is followed to its own users.
+  auto consumerUses = [this](BlockArgument iterArg) {
+    SmallVector<std::pair<TCoreType, Operation *>> uses;
+    DenseSet<Operation *> visited;
+    SmallVector<Operation *> stack(iterArg.getUsers().begin(),
+                                   iterArg.getUsers().end());
+    while (!stack.empty()) {
+      Operation *top = getContainedParent(pipelineLoop, stack.pop_back_val());
+      if (!top || isa<scf::YieldOp>(top) || !visited.insert(top).second)
+        continue;
+      auto it = opToWorkItemMap.find(top);
+      if (it != opToWorkItemMap.end()) {
+        for (const WorkItem *wi : it->second)
+          uses.push_back({wi->core, top});
+        continue; // stop at the consuming work item; don't walk past it
+      }
+      for (Operation *next : top->getUsers())
+        stack.push_back(next);
+    }
+    return uses;
+  };
+
+  ArrayRef<BlockArgument> iterArgs = pipelineLoop.getRegionIterArgs();
+  ValueRange yieldedValues = pipelineLoop.getYieldedValues();
+  for (unsigned pos = 0, e = iterArgs.size(); pos < e; ++pos) {
+    BlockArgument iterArg = iterArgs[pos];
+    if (!isa<TensorType>(iterArg.getType()))
+      continue; // only tensor data can form a cross-core hazard
+    auto prodIt = producerByIterArg.find(pos);
+    if (prodIt == producerByIterArg.end())
+      continue; // not produced by a work item (e.g. forwarded unchanged)
+    TCoreType producerCore = prodIt->second->core;
+    if (producerCore != TCoreType::CUBE && producerCore != TCoreType::VECTOR)
+      continue;
+    for (auto [consumerCore, consumerOp] : consumerUses(iterArg)) {
+      if (consumerCore != TCoreType::CUBE && consumerCore != TCoreType::VECTOR)
+        continue;
+      if (consumerCore == producerCore)
+        continue;
+      // Name the offending iter_arg and the two cores, and point at the ops
+      // that produce and consume the carried value so the user can locate the
+      // dependency in a larger kernel.
+      InFlightDiagnostic diag =
+          pipelineLoop->emitWarning()
+          << "[cv-pipelining] cannot pipeline loop: loop-carried tensor "
+             "iter_arg #"
+          << pos << " is produced on the " << stringifyTCoreType(producerCore)
+          << " core but consumed on the " << stringifyTCoreType(consumerCore)
+          << " core across the iteration boundary; skipping pipelining";
+      if (Operation *producerOp = yieldedValues[pos].getDefiningOp())
+        diag.attachNote(producerOp->getLoc())
+            << "loop-carried value produced here on the "
+            << stringifyTCoreType(producerCore) << " core";
+      diag.attachNote(consumerOp->getLoc())
+          << "and consumed here on the " << stringifyTCoreType(consumerCore)
+          << " core the next iteration";
+      return diag;
+    }
+  }
   return success();
 }
 
