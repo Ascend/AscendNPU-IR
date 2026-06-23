@@ -211,11 +211,8 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 
 ### 约束能力
 
-- 仅支持tensor和scalar的打印
-- 当前device_print打印的大小固定为16KB
-- 目前triton侧sanitizer和device_print不支持同时开启
-- 打印支持如下数据类型：bool/int8/uint8/int16/uint16/int32/uint32/int64/bfloat16/half/float32
-- device_print打印的时候推荐单个tensor打印并且紧贴着要打印的tensor打印，防止因为打印的tensor生命周期变化而引起异常
-- kernel store完成后在load搬进来且没有后续op使用（除了Debug op）暂不支持
-- triton dot接口当输入是3维场景时暂不支持打印
-- 当前打印等待kernel结束设置的时间是30s，若超过30s的用例开启打印会导致超时报错
+| 适用硬件 | 约束规则 |
+|--------|--------|
+| A3 & A5 | - 打印对象仅支持张量、标量。<br> - `device_print` 打印缓冲区固定为16KB。<br> - Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br> - 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br> - 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br> - 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br> - 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
+| A3 | 支持打印数据类型：`bool`、`int8`、`uint8`、`int16`、`uint16`、`int32`、`uint32`、`int64`、`bfloat16`、`half`、`float32`。 |
+| A5 | - 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br> - 融合调度约束：插入`device_print`破坏`VF`融合边界情况下可能引发`UB`溢出，需减小`tiling`分块。<br> - 缓存资源约束：打印`fp8`张量、`L1`张量边界情况下可能会引发`UB`溢出，需减小`tiling`分块规避缓存溢出。 |
