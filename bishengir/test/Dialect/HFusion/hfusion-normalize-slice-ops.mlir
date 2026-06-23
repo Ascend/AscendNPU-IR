@@ -5,7 +5,7 @@
 // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<4x2x64xf16>
 // CHECK: %[[VAL_1:.*]] = tensor.empty() : tensor<4x2x64xf16>
 // CHECK: %[[VAL_2:.*]] = hfusion.interleave %[[VAL_0]], %[[VAL_1]] : tensor<4x2x64xf16>, tensor<4x2x64xf16> -> tensor<4x2x128xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.insert_slice
+// CHECK-NOT: tensor.insert_slice
 func.func @test_interleave() -> tensor<4x2x128xf16> {
   %0 = tensor.empty() : tensor<4x2x64xf16>
   %1 = tensor.empty() : tensor<4x2x64xf16>
@@ -22,7 +22,7 @@ func.func @test_interleave() -> tensor<4x2x128xf16> {
 // CHECK-DAG: %[[EXPAND_0:.*]] = tensor.expand_shape %[[VAL_0]] {{\[}}[0], [1, 2]] output_shape [4, 2, 1] : tensor<4x2xf16> into tensor<4x2x1xf16>
 // CHECK-DAG: %[[EXPAND_1:.*]] = tensor.expand_shape %[[VAL_1]] {{\[}}[0], [1, 2]] output_shape [4, 2, 1] : tensor<4x2xf16> into tensor<4x2x1xf16>
 // CHECK: hfusion.interleave %[[EXPAND_0]], %[[EXPAND_1]] : tensor<4x2x1xf16>, tensor<4x2x1xf16> -> tensor<4x2x2xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.insert_slice
+// CHECK-NOT: tensor.insert_slice
 func.func @test_interleave_reduced_rank() -> tensor<4x2x2xf16> {
   %0 = tensor.empty() : tensor<4x2xf16>
   %1 = tensor.empty() : tensor<4x2xf16>
@@ -39,7 +39,7 @@ func.func @test_interleave_reduced_rank() -> tensor<4x2x2xf16> {
 // CHECK-DAG: %[[EXPAND_0:.*]] = tensor.expand_shape %[[VAL_0]] {{\[}}[0], [1, 2]] output_shape [%[[DIM_0:.*]], 2, 1] : tensor<?x2xf16> into tensor<?x2x1xf16>
 // CHECK-DAG: %[[EXPAND_1:.*]] = tensor.expand_shape %[[VAL_1]] {{\[}}[0], [1, 2]] output_shape [%[[DIM_1:.*]], 2, 1] : tensor<?x2xf16> into tensor<?x2x1xf16>
 // CHECK: hfusion.interleave %[[EXPAND_0]], %[[EXPAND_1]] : tensor<?x2x1xf16>, tensor<?x2x1xf16> -> tensor<?x2x2xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.insert_slice
+// CHECK-NOT: tensor.insert_slice
 func.func @test_interleave_reduced_rank(%arg0: tensor<?x2xf16>) -> tensor<?x2x2xf16> {
   %c0 = arith.constant 0 : index
   %dim = tensor.dim %arg0, %c0 : tensor<?x2xf16>
@@ -56,6 +56,7 @@ func.func @test_interleave_reduced_rank(%arg0: tensor<?x2xf16>) -> tensor<?x2x2x
 // -----
 
 // CHECK-NOT: hfusion.interleave
+// CHECK: tensor.insert_slice
 func.func @test_not_interleave() -> tensor<4x32x64xf16> {
   %0 = tensor.empty() : tensor<4x32xf16>
   %1 = tensor.empty() : tensor<4x32xf16>
@@ -69,7 +70,7 @@ func.func @test_not_interleave() -> tensor<4x32x64xf16> {
 
 // CHECK-LABEL: func.func @test_interleave_i64_non_regbase
 // CHECK: hfusion.interleave
-// CHECK-NOT-NORMALIZE-SLICE: tensor.insert_slice
+// CHECK-NOT: tensor.insert_slice
 func.func @test_interleave_i64_non_regbase() -> tensor<4x2xi64> {
   %0 = tensor.empty() : tensor<4xi64>
   %1 = tensor.empty() : tensor<4xi64>
@@ -81,15 +82,11 @@ func.func @test_interleave_i64_non_regbase() -> tensor<4x2xi64> {
 
 // -----
 
-// CHECK-LABEL: func.func @test_not_interleave_i64_regbase
-// CHECK-NOT: hfusion.interleave
-// CHECK: tensor.insert_slice
-// CHECK-NOT: hfusion.interleave
-// CHECK: tensor.insert_slice
-// CHECK-NOT: hfusion.interleave
-// CHECK: return
+// CHECK-LABEL: func.func @test_interleave_i64_regbase
+// CHECK: hfusion.interleave
+// CHECK-NOT: tensor.insert_slice
 module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
-  func.func @test_not_interleave_i64_regbase() -> tensor<4x2xi64> {
+  func.func @test_interleave_i64_regbase() -> tensor<4x2xi64> {
     %0 = tensor.empty() : tensor<4xi64>
     %1 = tensor.empty() : tensor<4xi64>
     %2 = tensor.empty() : tensor<4x2xi64>
@@ -103,7 +100,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
 
 // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<4x2x128xf16>
 // CHECK: %[[VAL_1:.*]] = hfusion.deinterleave %[[VAL_0]] channel<0> : tensor<4x2x128xf16> -> tensor<4x2x64xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
+// CHECK-NOT: tensor.extract_slice
 func.func @test_deinterleave() -> tensor<4x2x64xf16> {
   %0 = tensor.empty() : tensor<4x2x128xf16>
   %1 = tensor.extract_slice %0[0, 0, 0] [4, 2, 64] [1, 1, 2] : tensor<4x2x128xf16> to tensor<4x2x64xf16>
@@ -114,7 +111,7 @@ func.func @test_deinterleave() -> tensor<4x2x64xf16> {
 
 // CHECK: %[[VAL_0:.*]] = tensor.empty() : tensor<4x2x128xf16>
 // CHECK: %[[VAL_1:.*]] = hfusion.deinterleave %[[VAL_0]] channel<1> : tensor<4x2x128xf16> -> tensor<4x2x64xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
+// CHECK-NOT: tensor.extract_slice
 func.func @test_deinterleave() -> tensor<4x2x64xf16> {
   %0 = tensor.empty() : tensor<4x2x128xf16>
   %1 = tensor.extract_slice %0[0, 0, 1] [4, 2, 64] [1, 1, 2] : tensor<4x2x128xf16> to tensor<4x2x64xf16>
@@ -126,7 +123,7 @@ func.func @test_deinterleave() -> tensor<4x2x64xf16> {
 // CHECK-DAG: %[[INPUT:.*]] = tensor.empty() : tensor<4x2x2xf16>
 // CHECK: %[[OUTPUT:.*]] = hfusion.deinterleave %[[INPUT]] channel<1> : tensor<4x2x2xf16> -> tensor<4x2x1xf16>
 // CHECK: %[[COLLPASE:.*]] = tensor.collapse_shape %[[OUTPUT]] {{\[}}[0], [1, 2]] : tensor<4x2x1xf16> into tensor<4x2xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
+// CHECK-NOT: tensor.extract_slice
 func.func @test_deinterleave_reduced_rank() -> tensor<4x2xf16> {
   %0 = tensor.empty() : tensor<4x2x2xf16>
   %1 = tensor.extract_slice %0[0, 0, 1] [4, 2, 1] [1, 1, 2] : tensor<4x2x2xf16> to tensor<4x2xf16>
@@ -137,7 +134,7 @@ func.func @test_deinterleave_reduced_rank() -> tensor<4x2xf16> {
 
 // CHECK: %[[OUTPUT:.*]] = hfusion.deinterleave %arg0 channel<1> : tensor<?x?x2xf16> -> tensor<?x?x1xf16>
 // CHECK: %[[COLLPASE:.*]] = tensor.collapse_shape %[[OUTPUT]] {{\[}}[0], [1, 2]] : tensor<?x?x1xf16> into tensor<?x?xf16>
-// CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
+// CHECK-NOT: tensor.extract_slice
 func.func @test_deinterleave_dynamic(%arg0: tensor<?x?x2xf16>) -> tensor<?x?xf16> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -151,6 +148,7 @@ func.func @test_deinterleave_dynamic(%arg0: tensor<?x?x2xf16>) -> tensor<?x?xf16
 // -----
 
 // CHECK-NOT: hfusion.deinterleave
+// CHECK: tensor.extract_slice
 func.func @test_not_deinterleave() -> tensor<4xf16> {
   %0 = tensor.empty() : tensor<4x32xf16>
   %1 = tensor.extract_slice %0[0, 0] [4, 1] [1, 2] : tensor<4x32xf16> to tensor<4xf16>
@@ -180,7 +178,7 @@ func.func @test_not_deinterleave_with_dynamic_last_dim_offset(%arg0: tensor<1x32
 
 // CHECK-LABEL: func.func @test_deinterleave_i64_non_regbase
 // CHECK: hfusion.deinterleave
-// CHECK-NOT-NORMALIZE-SLICE: tensor.extract_slice
+// CHECK-NOT: tensor.extract_slice
 func.func @test_deinterleave_i64_non_regbase(%arg0: tensor<4x2xi64>) -> tensor<4xi64> {
   %0 = tensor.extract_slice %arg0[0, 1] [4, 1] [1, 2] : tensor<4x2xi64> to tensor<4xi64>
   return %0 : tensor<4xi64>
@@ -188,13 +186,11 @@ func.func @test_deinterleave_i64_non_regbase(%arg0: tensor<4x2xi64>) -> tensor<4
 
 // -----
 
-// CHECK-LABEL: func.func @test_not_deinterleave_i64_regbase
-// CHECK-NOT: hfusion.deinterleave
-// CHECK: tensor.extract_slice
-// CHECK-NOT: hfusion.deinterleave
-// CHECK: return
+// CHECK-LABEL: func.func @test_deinterleave_i64_regbase
+// CHECK: hfusion.deinterleave
+// CHECK-NOT: tensor.extract_slice
 module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
-  func.func @test_not_deinterleave_i64_regbase(%arg0: tensor<4x2xi64>) -> tensor<4xi64> {
+  func.func @test_deinterleave_i64_regbase(%arg0: tensor<4x2xi64>) -> tensor<4xi64> {
     %0 = tensor.extract_slice %arg0[0, 1] [4, 1] [1, 2] : tensor<4x2xi64> to tensor<4xi64>
     return %0 : tensor<4xi64>
   }
