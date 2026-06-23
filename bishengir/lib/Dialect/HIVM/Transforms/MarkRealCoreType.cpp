@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/Support/Debug.h"
 #include <cstdint>
 
 namespace mlir {
@@ -112,6 +113,10 @@ void MarkRealCoreTypePass::runOnOperation() {
   if (failed(pm.run(moduleClone))) {
     return signalPassFailure();
   }
+
+  LLVM_DEBUG({
+    llvm::dbgs() << "canonicalized splitted kernels:\n" << moduleClone << '\n';
+  });
 
   // get function with aic core type from cloned module.
   moduleClone->walk<WalkOrder::PreOrder>([&](func::FuncOp funcOp) {

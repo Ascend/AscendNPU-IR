@@ -19,6 +19,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Iterators.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -140,6 +141,21 @@ void annotateOpOperand(OpBuilder builder, Operation *op,
   }
 }
 
+static bool isPreloadScope(scope::ScopeOp scopeOp) {
+  return scopeOp->hasAttr(hivm::PreloadNumAttr::name) ||
+         scopeOp->hasAttr(hivm::MaxPreloadNumAttr::name);
+}
+
+static bool shouldPreserveContainer(Operation *op) {
+  if (isa<LoopLikeOpInterface>(op))
+    return true;
+  if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+    if (isPreloadScope(scopeOp))
+      return true;
+  }
+  return false;
+}
+
 static bool isDefinedOutside(Value value, Region &region) {
   if (Operation *defOp = value.getDefiningOp()) {
     return !region.isAncestor(defOp->getParentRegion());
@@ -171,13 +187,18 @@ static Value createZeroOrEmptyStub(OpBuilder &builder, Location loc,
       });
 }
 
-static SmallVector<Value> getOutOperands(Operation *op) {
+static FailureOr<SmallVector<Value>> getOutOperands(Operation *op) {
   if (op->getResults().empty()) {
     return {};
   }
 
+  // Skip some unhandled cases
+  if (isa<LoopLikeOpInterface, hivm::ConvertLayoutOp>(op)) {
+    return failure();
+  }
+
   if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op)) {
-    return dpsOp.getDpsInits();
+    return SmallVector<Value>(dpsOp.getDpsInits());
   }
   if (auto callOp = dyn_cast<func::CallOp>(op)) {
     SmallVector<Value> outOperands;
@@ -242,31 +263,36 @@ static SmallVector<Value> getOutOperands(Operation *op) {
     return outVals;
   }
 
-  LDBG("unsupported op: " << *op);
+  LDBG("ERROR: Unsupported op: " << *op << '\n');
   // TODO: should we get the last operands as out operands by default?
   llvm_unreachable("unsupported op to get out operands");
+  return failure();
 }
 
 LogicalResult replaceResultWithInitOperand(Operation *op) {
   // replace uses of op result with out operand
-  auto numResults = op->getNumResults();
-  if (numResults == 0 || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
+  if (op->use_empty() || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
     return success();
   }
 
-  SmallVector<Value> outOperands = getOutOperands(op);
-  assert(outOperands.size() == numResults &&
+  FailureOr<SmallVector<Value>> tryOutOperands = getOutOperands(op);
+  if (failed(tryOutOperands)) {
+    return failure();
+  }
+
+  auto outOperands = tryOutOperands.value();
+  assert(outOperands.size() == op->getNumResults() &&
          "out operands and numResults mismatch");
 
-  for (size_t i = 0; i < numResults; i++) {
-    OpResult res = op->getResult(i);
-    if (!outOperands[i]) {
+  for (auto [i, resultVal, outOperand] :
+       llvm::enumerate(op->getResults(), outOperands)) {
+    if (!outOperand) {
       // Null sentinel is only valid when the result has no uses.
-      if (!res.use_empty())
+      if (!resultVal.use_empty())
         return failure();
       continue;
     }
-    res.replaceAllUsesWith(outOperands[i]);
+    resultVal.replaceAllUsesWith(outOperand);
   }
   return success();
 }
@@ -371,12 +397,6 @@ void postProcessVectorFunc(func::FuncOp func) {
 }
 } // namespace
 
-static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
-  FailureOr<TCoreType> inferredCoreType = getCoreType(forOp);
-  return llvm::succeeded(inferredCoreType) &&
-         coreType == inferredCoreType.value();
-}
-
 static void inferDistributedCoreType(func::FuncOp mixedFunc) {
   auto rectifyCoreType = [mixedFunc](hivm::TCoreType &cur) {
     auto funcCoreType = mixedFunc
@@ -407,15 +427,11 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   const enum TCoreType coreType =
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
 
+  LDBG("filtering ops with coretype: " << filterCoreType);
+
   inferDistributedCoreType(mixedFunc);
 
-  // Do a first walk to erase scope in pre-order
-  mixedFunc.walk<WalkOrder::PreOrder>([&](Operation *op) {
-    LDBG("current op: " << *op);
-    auto scopeOp = dyn_cast<scope::ScopeOp>(op);
-    if (!scopeOp) {
-      return WalkResult::advance();
-    }
+  mixedFunc.walk<WalkOrder::PreOrder>([&](scope::ScopeOp scopeOp) {
     if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
       if (vectorType.getValue() == "simt") {
         scopeOp->setAttr(
@@ -423,61 +439,55 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
             hivm::TCoreTypeAttr::get(builder.getContext(), TCoreType::VECTOR));
       }
     }
-    if (scopeOp->getNumResults() != 0) {
-      return WalkResult::advance();
-    }
-    auto attr =
-        scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
-    if (attr.getTcoretype() != coreType) {
-      op->erase();
-      return WalkResult::skip();
-    }
     return WalkResult::advance();
   });
 
-  SmallVector<Operation *> toSinkOutOfLoop;
-  mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
-    LDBG("current op: " << *op);
-    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      if (isLoopOfCoreType(forOp, filterCoreType)) {
-        return WalkResult::skip();
-      }
-    }
-    FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
-    if (failed(res)) {
-      signalPassFailure();
-      return WalkResult::interrupt();
-    }
-    // If core type does not match, erase the operation.
-    if (res.value()) {
-      // For any op with regions: first walk internals to replace filtered
-      // ops' results before the parent op is erased.
-      if (op->getNumRegions() > 0) {
-        op->walk<WalkOrder::PostOrder>([&](Operation *innerOp) {
-          FailureOr<bool> innerRes = isCoreTypeOp(innerOp, filterCoreType);
-          if (failed(innerRes)) {
-            signalPassFailure();
-            return WalkResult::interrupt();
-          }
-          if (innerRes.value()) {
-            annotateOpOperand(builder, op, coreType);
-            (void)replaceResultWithInitOperand(innerOp);
-          }
-          return WalkResult::advance();
+  auto walkResult =
+      mixedFunc.walk<WalkOrder::PostOrder, ReverseIterator>([&](Operation *op) {
+        FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
+        if (failed(res)) {
+          return WalkResult::interrupt();
+        }
+
+        LLVM_DEBUG({
+          llvm::dbgs() << "current op: ";
+          op->print(llvm::dbgs(), OpPrintingFlags().skipRegions());
+          llvm::dbgs() << "\n";
         });
-      }
-      annotateOpOperand(builder, op, coreType);
-      if (failed(replaceResultWithInitOperand(op))) {
-        signalPassFailure();
-        return WalkResult::interrupt();
-      }
-      op->erase();
-    }
-    return WalkResult::advance();
-  });
 
-  for (Operation *op : toSinkOutOfLoop)
-    op->moveAfter(op->getParentOfType<scf::ForOp>());
+        // Skip if core-type doesn't match filtered core-type.
+        if (!res.value()) {
+          return WalkResult::advance();
+        }
+
+        // Replace uses of op results with its init operands if possible, if not
+        // skip erasing this op.
+        if (failed(replaceResultWithInitOperand(op))) {
+          return WalkResult::advance();
+        }
+
+        // Skip deleting specified containers.
+        if (shouldPreserveContainer(op)) {
+          return WalkResult::advance();
+        }
+
+        // Preserve defining ops of op operands that have same core-type. So
+        // they don't get deleted as they will not have any uses after
+        // deleting op.
+        annotateOpOperand(builder, op, coreType);
+
+        LLVM_DEBUG({
+          llvm::dbgs() << "erase op: ";
+          op->print(llvm::dbgs(), OpPrintingFlags().skipRegions());
+          llvm::dbgs() << "\n";
+        });
+        op->erase();
+        return WalkResult::advance();
+      });
+
+  if (walkResult.wasInterrupted()) {
+    signalPassFailure();
+  }
 }
 
 void SplitMixKernelPass::generateMixKernelDecl(func::FuncOp &funcOp) {
