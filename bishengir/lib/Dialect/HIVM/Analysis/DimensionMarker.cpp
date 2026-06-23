@@ -323,8 +323,7 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
                 isa_and_nonnull<CopyOpInterface>(op) ||
                 utils::isAllocLikeOp(op) ||
                 isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-                    bufferization::ToMemrefOp, hivm::IndirectLoadOp,
-                    hivm::IndirectStoreOp>(op)) {
+                    bufferization::ToMemrefOp>(op)) {
               processParallelOp(op, current);
               return true;
             }
@@ -825,9 +824,8 @@ bool DimensionAnalyzer::finalizeTransaction() {
     }
     if (!invalidIndices.empty()) {
       invalidUpdates.emplace_back(repIdx[rIdx], invalidIndices);
-      LDBG("Adding invalid updates: ("
-           << structuralDsu_->find(repIdx[rIdx]) << ", "
-           << utils::debugger::to_string(invalidIndices) << ") ");
+      LDBG("Adding invalid updates: (" << structuralDsu_->find(repIdx[rIdx])
+                                       << ", " << utils::debugger::to_string(invalidIndices) << ") ");
     }
   }
 
