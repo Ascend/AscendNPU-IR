@@ -14,6 +14,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
@@ -429,6 +430,17 @@ struct RewriteVDivOp final
   LogicalResult rewriteFromGeneric(hivm::VDivOp op,
                                    SmallVector<Value> &&preprocessedOperands,
                                    PatternRewriter &rewriter) const final {
+    if (op.getIsHP()) {
+      rewriter.replaceOpWithNewOp<linalg::MapOp>(
+          op, preprocessedOperands, op.getDst()[0],
+          [](OpBuilder &builder, Location loc, ValueRange operands) {
+            Value div = builder.create<mathExt::DivFHPOp>(
+                loc, operands[0].getType(), operands[0], operands[1]);
+            builder.create<linalg::YieldOp>(loc, div);
+          });
+      return success();
+    }
+
     if (op.getIsSigned()) {
       rewriter.replaceOpWithNewOp<linalg::DivOp>(op, op.getResultTypes(),
                                       preprocessedOperands, op.getDpsInits());
@@ -449,6 +461,15 @@ struct RewriteNamedVDivOp final
   LogicalResult rewriteFromGeneric(hivm::VDivOp op,
                                    SmallVector<Value> &&preprocessedOperands,
                                    PatternRewriter &rewriter) const final {
+    if (op.getIsHP()) {
+      rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
+          op, op.getResultTypes(), preprocessedOperands, op.getDst(),
+          ArrayRef{rewriter.getNamedAttr(
+              "fun", rewriter.getAttr<hfusion::BinaryFnAttr>(
+                         hfusion::BinaryFn::divfhp))});
+      return success();
+    }
+
     linalg::BinaryFn equivalentFn = linalg::BinaryFn::div;
     if (!op.getIsSigned()) {
       equivalentFn = linalg::BinaryFn::div_unsigned;

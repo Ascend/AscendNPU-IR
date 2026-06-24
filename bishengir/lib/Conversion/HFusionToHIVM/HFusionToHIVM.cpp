@@ -375,9 +375,13 @@ Operation *convertBinaryHFusionOp(ElemwiseOpConvertor &b,
   case hfusion::BinaryFn::shrui:
     hivmOp = b.create<hivm::VShROp>();
     break;
-  // This is here just so it pass tests. This operation never gets gneerated
   case hfusion::BinaryFn::divfhp:
-    hivmOp = b.create<hivm::VDivOp>();
+    {
+      auto dpsOp = cast<DestinationStyleOpInterface>(b.getOp());
+      hivmOp = b.getBuilder().create<hivm::VDivOp>(
+          dpsOp->getLoc(), dpsOp->getResultTypes(), dpsOp.getDpsInputs(),
+          dpsOp.getDpsInits(), /*isSigned=*/true, /*isHP=*/true);
+    }
     break;
   case hfusion::BinaryFn::modui:
     hivmOp = b.create<hivm::VModUIOp>();

@@ -760,6 +760,7 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
                        Variadic<AnyShaped>:$dst,
                        Optional<AnyMemRef>:$temp_buffer,
                        DefaultValuedAttr<BoolAttr, "true">:$isSigned,
+                       DefaultValuedAttr<BoolAttr, "false">:$isHP,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
                        DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
   );
@@ -768,6 +769,7 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
                    "ValueRange":$src,
                    "ValueRange":$dst,
                    CArg<"bool", "true">:$isSigned,
+                   CArg<"bool", "false">:$isHP,
                    CArg<"ArrayRef<int64_t>", "{}">:$transpose,
                    CArg<"ArrayRef<int64_t>", "{}">:$broadcast)>
   ];
@@ -776,6 +778,7 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
       `outs` `(` $dst  `:` type($dst) `)`
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
       (`isSigned` `=` $isSigned^)?
+      (`isHP` `=` $isHP^)?
       (`broadcast` `=` $broadcast^)?
       (`transpose` `=` $transpose^)?
       (`->` type($result)^)?

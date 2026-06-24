@@ -289,12 +289,12 @@ ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VRecOp)
 //===----------------------------------------------------------------------===//
 void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   bool isSigned, ArrayRef<int64_t> transpose,
+                   bool isSigned, bool isHP, ArrayRef<int64_t> transpose,
                    ArrayRef<int64_t> broadcast) {
   auto transposeAttr = odsBuilder.getDenseI64ArrayAttr(transpose);
   auto broadcastAttr = odsBuilder.getDenseI64ArrayAttr(broadcast);
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
-        isSigned, transposeAttr, broadcastAttr);
+        isSigned, isHP, transposeAttr, broadcastAttr);
 }
 
 //===----------------------------------------------------------------------===//
