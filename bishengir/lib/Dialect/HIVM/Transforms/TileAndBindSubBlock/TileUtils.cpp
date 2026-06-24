@@ -430,6 +430,20 @@ bool hasImplicitTransposeWithLastAxisInAiv(
   });
 }
 
+// Scalar or single-element UB tightly-coupled buffers may stay untiled.
+static bool canSkipTilingForTrivialUbAlloc(annotation::MarkOp markOp) {
+  auto memrefType = dyn_cast<MemRefType>(markOp.getSrc().getType());
+  if (!memrefType)
+    return false;
+
+  auto maybeSpace = getOptionalHIVMAddressSpace(memrefType);
+  if (!maybeSpace || *maybeSpace != AddressSpace::UB)
+    return false;
+
+  return memrefType.getRank() < 1 ||
+         (memrefType.hasStaticShape() && memrefType.getNumElements() == 1);
+}
+
 LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     func::FuncOp newFunc,
     llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
@@ -441,6 +455,7 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
       return;
     int32_t id = attr.getId().value();
     if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc) &&
+        !canSkipTilingForTrivialUbAlloc(markOp) &&
         tightlyCoupledBufferToTilingDim.erase(id))
       erasedAny = true;
     auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
