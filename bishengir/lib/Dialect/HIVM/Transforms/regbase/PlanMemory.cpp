@@ -1290,35 +1290,27 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
     }
 
     if (auto subview = dyn_cast<memref::SubViewOp>(user)) {
-      // recursively visit subview result users
-      return VisitInplaceReuseReachable<DstOpType>(
-          subview.getResult(), vfInfo, visited, reachableMap, extraCheck);
-    } else if (auto reshapeOp = dyn_cast<memref::CollapseShapeOp>(user)) {
-      return VisitInplaceReuseReachable<DstOpType>(
-          reshapeOp.getResult(), vfInfo, visited, reachableMap, extraCheck);
-    } else if (auto reshapeOp = dyn_cast<memref::ExpandShapeOp>(user)) {
-      return VisitInplaceReuseReachable<DstOpType>(
-          reshapeOp.getResult(), vfInfo, visited, reachableMap, extraCheck);
-    }
-
-    if (!hivm::isVFCall(user)) {
-      // not reachable if user is neither subview op nor vf call
-      continue;
-    }
-
-    // src is reachable if any of the reusable vf operands is reachable
-    for (Value reuseOperand : vfInfo->getInplaceReusableOperands(user, src)) {
-      LDBG("continue to visit vf inplace reusable operand: " << reuseOperand
-                                                             << "\n");
-      // check reachablility from source alloc
-      auto reuseAlloc = utils::tracebackMemRefToAlloc(reuseOperand);
-      if (!reuseAlloc.has_value()) {
-        continue;
-      }
+      // Recursively visit subview result users. If this path does not reach
+      // the target, keep checking the other users of `src`.
       if (VisitInplaceReuseReachable<DstOpType>(
-              reuseAlloc.value(), vfInfo, visited, reachableMap, extraCheck)) {
+              subview.getResult(), vfInfo, visited, reachableMap, extraCheck)) {
         return true;
       }
+      continue;
+    } else if (auto reshapeOp = dyn_cast<memref::CollapseShapeOp>(user)) {
+      if (VisitInplaceReuseReachable<DstOpType>(reshapeOp.getResult(), vfInfo,
+                                                visited, reachableMap,
+                                                extraCheck)) {
+        return true;
+      }
+      continue;
+    } else if (auto reshapeOp = dyn_cast<memref::ExpandShapeOp>(user)) {
+      if (VisitInplaceReuseReachable<DstOpType>(reshapeOp.getResult(), vfInfo,
+                                                visited, reachableMap,
+                                                extraCheck)) {
+        return true;
+      }
+      continue;
     }
   }
 
@@ -1332,6 +1324,7 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
 
 template <typename DstOpType>
 void InplaceReuseReachableMap::put(Value key, bool val) {
+  key = find(key);
   if constexpr (std::is_same_v<DstOpType, hivm::StoreOp>) {
     storeReachable[key] = val;
   } else if constexpr (std::is_same_v<DstOpType, hivm::LoadOp>) {
@@ -1343,6 +1336,7 @@ void InplaceReuseReachableMap::put(Value key, bool val) {
 
 template <typename DstOpType>
 std::optional<bool> InplaceReuseReachableMap::get(Value key) {
+  key = find(key);
   if constexpr (std::is_same_v<DstOpType, hivm::StoreOp>) {
     auto iter = storeReachable.find(key);
     if (iter != storeReachable.end()) {
@@ -1357,6 +1351,34 @@ std::optional<bool> InplaceReuseReachableMap::get(Value key) {
     llvm::report_fatal_error("Unsupported op type");
   }
   return std::nullopt;
+}
+
+Value InplaceReuseReachableMap::find(Value val) {
+  auto iter = parent.find(val);
+  if (iter == parent.end()) {
+    return parent[val] = val;
+  }
+  Value p = iter->getSecond();
+  if (val == p)
+    return p;
+  return parent[val] = find(p);
+}
+
+void InplaceReuseReachableMap::unite(Value gen, Value kill) {
+  Value genRoot = find(gen);
+  Value killRoot = find(kill);
+  if (genRoot == killRoot)
+    return;
+
+  // propagate killRoot's reachability to genRoot before union
+  auto killLoad = get<hivm::LoadOp>(killRoot);
+  auto killStore = get<hivm::StoreOp>(killRoot);
+  if (killLoad && killLoad.value())
+    put<hivm::LoadOp>(genRoot, true);
+  if (killStore && killStore.value())
+    put<hivm::StoreOp>(genRoot, true);
+
+  parent[killRoot] = genRoot;
 }
 
 /// Determines whether the value `src` is reachable to an operand of a
@@ -1413,8 +1435,6 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
     Operation *op = it->first->operation;
     bool isVFCallReusable = vfInplaceReuseInfo && hivm::isVFCall(op) &&
                             !VFCallInplaceReuseInfo::hasAliasArgRisk(op);
-    std::optional<ValuePair> bestVFInplacePair;
-    int64_t bestVFInplaceBits = -1;
     DenseMap<ValuePair, bool> vfReuseCache;
 
     auto isVFInplacePair = [&](Value genBuffer, Value killBuffer) {
@@ -1434,17 +1454,13 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
           .first->second;
     };
 
-    auto updateBestVFInplacePair = [&](Value genBuffer, Value killBuffer,
-                                       int64_t genBits) {
-      // select gen buffer with largest bits for best inplace-reuse benefit
-      if (genBits <= bestVFInplaceBits) {
-        return;
-      }
-      bestVFInplacePair = {genBuffer, killBuffer};
-      bestVFInplaceBits = genBits;
-    };
+    SmallVector<Value> sortedGen(it->second.gen.begin(), it->second.gen.end());
+    llvm::stable_sort(sortedGen, [&](Value a, Value b) {
+      return bufferInfos[a].constBits > bufferInfos[b].constBits;
+    });
 
-    for (const Value &genBuffer : it->second.gen) {
+    DenseSet<Value> reusedKill;
+    for (const Value &genBuffer : sortedGen) {
       auto genBufferIter = bufferInfos.find(genBuffer);
       assert(genBufferIter != bufferInfos.end() &&
              "genBuffer should be find in bufferInfos");
@@ -1460,6 +1476,8 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
             killBufferIter->second.memoryUnique) {
           continue;
         }
+        if (reusedKill.contains(killBuffer))
+          continue;
 
         int64_t genBits = genBufferIter->second.constBits;
         int64_t killBits = killBufferIter->second.constBits;
@@ -1468,20 +1486,21 @@ SmallVector<ValuePair> MemPlanRegBase::GenerateInplaceList() {
         }
 
         if (isVFInplacePair(genBuffer, killBuffer)) {
-          updateBestVFInplacePair(genBuffer, killBuffer, genBits);
-          continue;
+          reusedKill.insert(killBuffer);
+          reachableMap.unite(genBuffer, killBuffer);
+          inplaceList.emplace_back(genBuffer, killBuffer);
+          break;
         }
 
         if (!IsReuseHIVMOp(op, genBuffer, killBuffer)) {
           continue;
         }
 
+        reusedKill.insert(killBuffer);
+        reachableMap.unite(genBuffer, killBuffer);
         inplaceList.emplace_back(genBuffer, killBuffer);
         break;
       }
-    }
-    if (bestVFInplacePair.has_value()) {
-      inplaceList.push_back(bestVFInplacePair.value());
     }
     // Nodes in inplace are only processed once.
     hasTouchOp[operationSeq->operation] = true;
