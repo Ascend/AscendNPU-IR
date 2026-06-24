@@ -673,3 +673,38 @@ func.func @test_stride_layout_not_same() {
   return
 }
 
+// -----
+// AFTERLAYOUT-LABEL: func @test_unaligned_i1_subview
+func.func @test_unaligned_i1_subview(%offset: index) {
+  %alloc = memref.alloc() : memref<64x256x1xi1, #hivm.address_space<ub>>
+  %subview = memref.subview %alloc[0, 0, 0] [64, 64, 1] [1, 1, 1]
+      : memref<64x256x1xi1, #hivm.address_space<ub>>
+      to memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+  %unaligned_subview = memref.subview %subview[0, %offset] [64, 32] [1, 1]
+      : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      to memref<64x32xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<64x32xi1, #hivm.address_space<ub>>
+  // AFTERLAYOUT-NOT: memref.subview %{{.*}}[0, %{{.*}}] [64, 32] [1, 1] : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> to memref<64x32xi1
+  // AFTERLAYOUT: hivm.hir.vcast ins(%{{.*}} : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) outs(%{{.*}} : memref<64x64xf16, #hivm.address_space<ub>>)
+  // AFTERLAYOUT: memref.subview %{{.*}}[0, %{{.*}}] [64, 32] [1, 1] : memref<64x64xf16, #hivm.address_space<ub>> to memref<64x32xf16, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>
+  // AFTERLAYOUT: hivm.hir.copy ins(%{{.*}} : memref<64x32xf16, strided<[64, 1], offset: ?>, #hivm.address_space<ub>>)
+  // AFTERLAYOUT: hivm.hir.vcmp ins(%{{.*}}, %{{.*}} : memref<64x32xf16, #hivm.address_space<ub>>, f16) outs(%{{.*}} : memref<64x32xi1, #hivm.address_space<ub>>)
+  hivm.hir.copy ins(%unaligned_subview : memref<64x32xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>)
+                outs(%dst : memref<64x32xi1, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+// AFTERLAYOUT-LABEL: func @test_aligned_i1_subview
+func.func @test_aligned_i1_subview(%offset: index) {
+  %alloc = memref.alloc() : memref<64x512xi1, #hivm.address_space<ub>>
+  %subview = memref.subview %alloc[0, %offset] [64, 256] [1, 1]
+      : memref<64x512xi1, #hivm.address_space<ub>>
+      to memref<64x256xi1, strided<[512, 1], offset: ?>, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<64x256xi1, #hivm.address_space<ub>>
+  // AFTERLAYOUT: memref.subview %{{.*}}[0, %{{.*}}] [64, 256] [1, 1] : memref<64x512xi1, #hivm.address_space<ub>> to memref<64x256xi1, strided<[512, 1], offset: ?>, #hivm.address_space<ub>>
+  // AFTERLAYOUT-NOT: hivm.hir.vcast
+  hivm.hir.copy ins(%subview : memref<64x256xi1, strided<[512, 1], offset: ?>, #hivm.address_space<ub>>)
+                outs(%dst : memref<64x256xi1, #hivm.address_space<ub>>)
+  return
+}
