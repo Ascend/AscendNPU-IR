@@ -118,6 +118,38 @@ func.func @plan_memory_vf_read_once_and_write_once_subview_0() {
 
 // -----
 
+func.func @read_once_and_write_once_widening_0(
+  %arg0: memref<32xf16, #hivm.address_space<ub>>,
+  %arg1: memref<8xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %cst = arith.constant 0.000000e+00 : f16
+  %c1 = arith.constant 1 : index
+  %c8 = arith.constant 8 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg2 = %c0 to %c8 step %c1 {
+    %subview = memref.subview %arg0[%arg2] [1] [1] : memref<32xf16, #hivm.address_space<ub>> to memref<1xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %arg1[%arg2] [1] [1] : memref<8xf32, #hivm.address_space<ub>> to memref<1xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    %0 = vector.transfer_read %subview[%c0], %cst {in_bounds = [true]} : memref<1xf16, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<1xf16>
+    %1 = arith.extf %0 : vector<1xf16> to vector<1xf32>
+    vector.transfer_write %1, %subview_0[%c0] {in_bounds = [true]} : vector<1xf32>, memref<1xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @plan_memory_vf_no_inplace_reuse_widening_0
+// CHECK-DAG: %[[CONST1:.*]] = arith.constant 64 : i64
+// CHECK-DAG: %[[CONST0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: hivm.hir.pointer_cast(%[[CONST0]]) : memref<32xf16, #hivm.address_space<ub>>
+// CHECK-DAG: hivm.hir.pointer_cast(%[[CONST1]]) : memref<8xf32, #hivm.address_space<ub>>
+func.func @plan_memory_vf_no_inplace_reuse_widening_0() {
+  %alloc = memref.alloc() : memref<32xf16, #hivm.address_space<ub>>
+  %alloc_0 = memref.alloc() : memref<8xf32, #hivm.address_space<ub>>
+  call @read_once_and_write_once_widening_0(%alloc, %alloc_0) {hivm.vector_function} :
+    (memref<32xf16, #hivm.address_space<ub>>, memref<8xf32, #hivm.address_space<ub>>) -> ()
+  return
+}
+
+// -----
+
 func.func @write_only_once_0(%arg0: memref<64x64xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
   %cst = arith.constant dense<0.000000e+00> : vector<1x64xf32>
   %c1 = arith.constant 1 : index
