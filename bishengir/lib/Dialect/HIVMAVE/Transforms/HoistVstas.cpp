@@ -41,6 +41,11 @@ using namespace mlir::hivmave;
  
 namespace {
  
+// The hardware spec limit is 4, leaving one for use inside a for loop
+// TODO: Need to do registers pressure analysis.
+static constexpr int64_t kMaxInitAlignDataForHoist = 3;
+static int64_t initAlignDataCount = 0;
+
 struct HoistVstasPattern : public OpRewritePattern<hivm_regbaseintrins::VstasInstrOp> {
   using OpRewritePattern::OpRewritePattern;
  
@@ -82,6 +87,12 @@ struct HoistVstasPattern : public OpRewritePattern<hivm_regbaseintrins::VstasIns
  
     if (extractVecOp.getOperand().getDefiningOp() != vstusResult) return failure();
  
+    // Count init.vector.align.data ops in the loop body. If the count
+    // exceeds the threshold, skip hoisting to avoid excessive loop-carried
+    // variables.
+    ++initAlignDataCount;
+    if (initAlignDataCount > kMaxInitAlignDataForHoist) return failure();
+
     // 6. Perform Hoisting Transformation
     rewriter.setInsertionPoint(forOp);
     Value initAlignedVec = vstusOp->getOperand(3);

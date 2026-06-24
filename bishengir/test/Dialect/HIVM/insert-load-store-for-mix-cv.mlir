@@ -1230,3 +1230,27 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %mm : tensor<16x16xf32>
   }
 }
+
+// -----
+// CHECK: func.func @tensor_outs_multiple_scope(
+// CHECK-NOT: {"inserted-store"}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @tensor_outs_multiple_scope(%arg0: tensor<128x1xf32>, %arg1: tensor<128x64xf32>, %arg2: tensor<128x128xbf16>, %arg3: tensor<64x128xbf16>) -> tensor<128x64xf32> {
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %true = arith.constant true
+    %0 = tensor.empty() : tensor<128x64xf32>
+    %1 = tensor.empty() : tensor<4x8x16x16xf32>
+    %2 = tensor.empty() : tensor<8x8x16x16xbf16>
+    %3 = tensor.empty() : tensor<4x8x16x16xbf16>
+    %4 = hivm.hir.vbrc ins(%arg0 : tensor<128x1xf32>) outs(%0 : tensor<128x64xf32>) broadcast_dims = [1] -> tensor<128x64xf32>
+    %5 = hivm.hir.vmul ins(%arg1, %4 : tensor<128x64xf32>, tensor<128x64xf32>) outs(%0 : tensor<128x64xf32>) -> tensor<128x64xf32>
+    %6 = hivm.hir.nd2nz {dst_continuous} ins(%arg2 : tensor<128x128xbf16>) outs(%2 : tensor<8x8x16x16xbf16>) -> tensor<8x8x16x16xbf16>
+    %7 = hivm.hir.nd2nz {dst_continuous} ins(%arg3 : tensor<64x128xbf16>) outs(%3 : tensor<4x8x16x16xbf16>) -> tensor<4x8x16x16xbf16>
+    %8 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%6, %7, %true, %c128, %c128, %c64 : tensor<8x8x16x16xbf16>, tensor<4x8x16x16xbf16>, i1, index, index, index) outs(%1 : tensor<4x8x16x16xf32>) -> tensor<4x8x16x16xf32>
+    %9 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%8 : tensor<4x8x16x16xf32>) outs(%0 : tensor<128x64xf32>) -> tensor<128x64xf32>
+    %10 = hivm.hir.load ins(%9 : tensor<128x64xf32>) outs(%0 : tensor<128x64xf32>) {"inserted-load"} core_type = <VECTOR> -> tensor<128x64xf32>
+    %11 = hivm.hir.vadd ins(%10, %5 : tensor<128x64xf32>, tensor<128x64xf32>) outs(%0 : tensor<128x64xf32>) -> tensor<128x64xf32>
+    return %11 : tensor<128x64xf32>
+  }
+}
