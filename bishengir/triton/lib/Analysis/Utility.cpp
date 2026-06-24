@@ -429,6 +429,8 @@ getWarpLayoutConvertDecomposition(RankedTensorType srcTy,
           if (nextVal != 0) {
             nextDim = inDimNames[nextDimIdx];
             nextIdx = llvm::Log2_32(nextVal);
+            assert(nextIdx >= 0 && nextIdx < 32 &&
+                   "Log2_32 result out of valid shift range");
           }
         }
         // Set a `pReg` or `pLane` vector, or mark an r->l or l->r transition.
@@ -446,6 +448,8 @@ getWarpLayoutConvertDecomposition(RankedTensorType srcTy,
         // If a subsequence of the form (.. r_m l_j .. l_k r_i ..) has been
         // found, perform the prescribed factorization.
         if (regEndIdx >= 0) {
+          assert(regEndIdx < 32 && laneStartIdx >= 0 && laneStartIdx < 32 &&
+                 "Invalid shift amount for layout basis");
           // Assign r_m to map to r_i as in (.. r_m r_i ..).
           regBases[regStartIdx][0] = 1 << regEndIdx;
           // Assign l_k to map to l_j as in (l_j .. l_k).

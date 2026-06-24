@@ -261,13 +261,16 @@ bool CTAPlanner::processDot(triton::FuncOp &funcOp) {
   // TODO: This is a naive implementation and should be refactored
   auto getCTATiling = [](int64_t M, int64_t N, int64_t K,
                          unsigned numCTAs) -> std::pair<unsigned, unsigned> {
+    assert(numCTAs > 0 && "numCTAs must be positive");
     // prefer a larger chunk size, at most 128; first assign splitM.
     unsigned chunk_m = 128;
     auto isLegal = [](unsigned chunk) { return chunk >= 64; };
-    unsigned splitM, splitN;
+    unsigned splitM = 1, splitN = 1;
     for (; isLegal(chunk_m); chunk_m /= 2) {
       splitM = std::clamp<unsigned>(M / chunk_m, 1, numCTAs);
       splitN = numCTAs / splitM;
+      if (splitN == 0)
+        continue;
       if (isLegal(N / splitN)) // chunk_n;
         break;
     }
