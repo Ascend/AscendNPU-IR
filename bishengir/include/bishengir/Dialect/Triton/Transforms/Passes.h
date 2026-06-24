@@ -36,7 +36,8 @@ std::unique_ptr<mlir::Pass> createSetBishengirSimtOptAttrPass(
     const SetBishengirSimtOptAttrOptions &options = {});
 
 /// Create a pass to adapt Triton IR kernel.
-std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass();
+std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass(
+    const AdaptTritonIRKernelOptions &options = {});
 
 /// Create a pass to batch logical Triton programs onto a limited number of
 /// physical SIMT cores.

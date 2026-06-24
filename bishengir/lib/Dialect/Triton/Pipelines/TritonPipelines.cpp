@@ -97,8 +97,10 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       options.enableBishengirSimtOptimization;
   pm.addPass(
       bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));
+  AdaptTritonIRKernelOptions adaptOpt;
+  adaptOpt.superBlockBarrier = options.superBlockBarrier;
   pm.addNestedPass<mlir::triton::FuncOp>(
-      bishengir::triton::createAdaptTritonIRKernelPass());
+      bishengir::triton::createAdaptTritonIRKernelPass(adaptOpt));
   if (options.enableSIMTAutoBlockify)
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createSIMTAutoBlockifyPass(

@@ -13,6 +13,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/IR/HIVMRegbaseIntrins.h"
+#include "bishengir/Dialect/Triton/IR/TritonExtension.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
 #include "mlir/Conversion/LLVMCommon/Pattern.h"
@@ -30,7 +31,9 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 #include <string>
 #include <type_traits>
 
@@ -824,6 +827,332 @@ using AscendDPXCoreIdOpLowering =
     DirectConversion<ascend_dpx::CoreIdOp, ascend_dpx::CoreIdOp::Adaptor,
                      hivm_regbaseintrins::CoreIdOp>;
 
+static inline Value getSharedMemBase(LLVM::LLVMFuncOp funcOp) {
+  for (auto [idx, arg] : llvm::enumerate(funcOp.getArguments())) {
+    if (DictionaryAttr dictAttr = funcOp.getArgAttrDict(idx)) {
+      if (dictAttr.get(hivm::SharedMemoryAttr::name))
+        return arg;
+    }
+  }
+  llvm::report_fatal_error("Shared memory base is missing");
+}
+
+/// Lower barrier operations with super-blocking support using per-task barrier
+/// state.
+///
+/// This function implements a generation barrier synchronization mechanism for
+/// super-blocking scenarios where multiple tasks are executed in parallel
+/// within a single hardware block. Each task maintains its own barrier state
+/// (count and epoch) to ensure warps within the same task synchronize correctly
+/// without interfering with other tasks.
+///
+/// Super-blocking mapping:
+///   - Total warps in hardware block: superBlockFactor * numWarps
+///   - Task ID: warpId % superBlockFactor
+///   - Warp ID within task: warpId / superBlockFactor
+///
+/// Barrier mechanism:
+///   - Each task has its own count[taskId] and epoch[taskId] in shared memory
+///   - Only lane 0 of each warp participates in barrier synchronization
+///   - Warps atomically increment count, last warp resets count and increments
+///   epoch
+///   - Non-last warps spin-wait on epoch using volatile loads to detect
+///   generation change
+///
+/// Implementation steps:
+///   1. Allocate shared memory for barrier state arrays: count[SBF] +
+///   epoch[SBF]
+///   2. Initialize barrier state dynamically (only task's warp 0 lane 0)
+///   3. Synchronize to ensure initialization completes before any barrier
+///   4. Lower each SyncThreadsOp to generation barrier logic
+///
+/// \param moduleOp The module containing barrier operations to lower
+/// \return Success if lowering completed, failure otherwise
+static LogicalResult lowerBarrierBySoft(ModuleOp moduleOp) {
+  // Skip if num-warps attribute not present (not a triton kernel module)
+  if (!moduleOp->getAttrOfType<IntegerAttr>(triton::gpu::AttrNumWarpsName)) {
+    return success();
+  }
+  // Read the super block barrier switch attribute on module
+  // Skip this pass execution if the attribute does not exist or is explicitly
+  // set to false
+  auto barrierAttr =
+      moduleOp->getAttrOfType<BoolAttr>(bishengir::AttrSuperBlockBarrier);
+  if (!barrierAttr || !barrierAttr.getValue()) {
+    return success();
+  }
+
+  int32_t superBlockFactor = 1;
+  if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
+          triton::gpu::AttrSuperBlockFactor))
+    superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+
+  int32_t numWarps = triton::gpu::lookupNumWarps(moduleOp);
+
+  // Skip lowering if no complex barrier is needed
+  if (numWarps == 1 || superBlockFactor == 1) {
+    return success();
+  }
+
+  int32_t totalWarps = numWarps * superBlockFactor;
+  if (totalWarps > 32) {
+    return moduleOp.emitError("super-block barrier requires numWarps * "
+                              "superBlockFactor <= 32, "
+                              "but got numWarps=")
+           << numWarps << " and superBlockFactor=" << superBlockFactor
+           << " (totalWarps=" << totalWarps << ")";
+  }
+
+  constexpr static char AttrShared[] = "ttg.shared";
+  LLVM::LLVMFuncOp targetFuncOp = nullptr;
+  SmallVector<ascend_dpx::SyncThreadsOp> complexBarrierOps;
+  // Collect all SyncThreadsOps that require complex barrier lowering
+  moduleOp.walk([&](ascend_dpx::SyncThreadsOp op) {
+    if (!targetFuncOp) {
+      targetFuncOp = op->getParentOfType<LLVM::LLVMFuncOp>();
+    }
+    complexBarrierOps.push_back(op);
+  });
+
+  if (!targetFuncOp) {
+    return success();
+  }
+
+  // Allocate shared memory for per-task barrier state arrays
+  // Layout: [taskId * 8] -> count, [taskId * 8 + 4] -> epoch
+  int32_t barrierStateOffset = 0;
+  int32_t sharedMemSize = 0;
+  if (auto sharedAttr = moduleOp->getAttrOfType<IntegerAttr>(AttrShared))
+    sharedMemSize = sharedAttr.getInt();
+
+  // Get device specification to validate memory limits
+  auto maybeSpecInterface = hacc::utils::getNPUTargetSpec(moduleOp);
+  if (!maybeSpecInterface.has_value()) {
+    return moduleOp.emitError(
+        "Cannot get NPU target spec for shared memory check");
+  }
+  auto specInterface = maybeSpecInterface.value();
+  // Retrieve UB total capacity and DCache reservation ranges
+  int32_t ubSize =
+      cast<IntegerAttr>(
+          specInterface.getSpecForIdentifierEnum(hacc::DeviceSpec::UB_SIZE)
+              .getValue())
+          .getInt();
+  int32_t minimalDCacheSize =
+      cast<IntegerAttr>(
+          specInterface
+              .getSpecForIdentifierEnum(hacc::DeviceSpec::MINIMAL_D_CACHE_SIZE)
+              .getValue())
+          .getInt();
+
+  // Calculate barrier state size and total memory after allocation
+  int32_t barrierStateSize = superBlockFactor * 8;
+  int32_t newTotalSize = sharedMemSize + barrierStateSize;
+
+  // Validate hardware limits
+  // Valid UB range: [ubSize - maximumDCacheSize, ubSize - minimalDCacheSize]
+  int32_t maxAllowedUB = ubSize - minimalDCacheSize;
+  if (newTotalSize > maxAllowedUB) {
+    return moduleOp.emitError("Soft barrier shared memory overflow: requires ")
+           << newTotalSize << " bytes (original " << sharedMemSize
+           << " + barrier state " << barrierStateSize << "), "
+           << "but maximum available is " << maxAllowedUB
+           << " bytes. Consider reducing superBlockFactor or numWarps.";
+  }
+
+  barrierStateOffset = sharedMemSize;
+  moduleOp->setAttr(
+      AttrShared, IntegerAttr::get(IntegerType::get(moduleOp->getContext(), 32),
+                                   sharedMemSize + barrierStateSize));
+
+  // Initialize rewriter and create basic constants/variables
+  Location loc = targetFuncOp.getLoc();
+  IRRewriter rewriter(targetFuncOp);
+  rewriter.setInsertionPointToStart(&targetFuncOp.getBody().front());
+
+  auto i32Ty = rewriter.getI32Type();
+  auto ptrTy =
+      LLVM::LLVMPointerType::get(rewriter.getContext(), SHARED_ADDR_SPACE);
+
+  auto zero = rewriter.create<LLVM::ConstantOp>(loc, i32Ty, 0);
+  Value sharedMemBase = getSharedMemBase(targetFuncOp);
+
+  auto llvmPtrTy = rewriter.getType<LLVM::LLVMPointerType>();
+  auto one = rewriter.create<LLVM::ConstantOp>(loc, i32Ty, 1);
+  // localEpoch: per-warp epoch counter stored in thread-local memory
+  auto localEpochPtr =
+      rewriter.create<LLVM::AllocaOp>(loc, llvmPtrTy, i32Ty, one);
+  rewriter.create<LLVM::StoreOp>(loc, zero, localEpochPtr);
+
+  int32_t threadsPerWarp = triton::gpu::lookupThreadsPerWarp(rewriter);
+
+  auto numWarpsVal = rewriter.create<LLVM::ConstantOp>(loc, i32Ty, numWarps);
+  auto warpSizeVal =
+      rewriter.create<LLVM::ConstantOp>(loc, i32Ty, threadsPerWarp);
+
+  auto tid =
+      rewriter.create<hivm_regbaseintrins::ThreadIdXOp>(loc, i32Ty).getResult();
+  auto laneId =
+      rewriter.create<LLVM::URemOp>(loc, i32Ty, tid, warpSizeVal).getResult();
+  auto isLane0 =
+      rewriter.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, laneId, zero)
+          .getResult();
+
+  // Compute warp ID and task ID based on super-blocking mapping
+  // taskId determines which barrier state array element this warp uses
+  auto superBlockFactorVal =
+      rewriter.create<LLVM::ConstantOp>(loc, i32Ty, superBlockFactor);
+
+  auto warpId =
+      rewriter.create<LLVM::UDivOp>(loc, i32Ty, tid, warpSizeVal).getResult();
+  auto taskId =
+      rewriter.create<LLVM::URemOp>(loc, i32Ty, warpId, superBlockFactorVal)
+          .getResult();
+  auto taskWarpId =
+      rewriter.create<LLVM::UDivOp>(loc, i32Ty, warpId, superBlockFactorVal)
+          .getResult();
+  // Determine which threads perform initialization: task's warp 0 lane 0
+  auto isTaskWarp0Lane0 =
+      rewriter
+          .create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq, taskWarpId, zero)
+          .getResult();
+  isTaskWarp0Lane0 =
+      rewriter.create<LLVM::AndOp>(loc, isTaskWarp0Lane0, isLane0).getResult();
+
+  auto taskBarrierOffset =
+      rewriter
+          .create<LLVM::MulOp>(loc, i32Ty, taskId,
+                               rewriter.create<LLVM::ConstantOp>(loc, i32Ty, 8))
+          .getResult();
+
+  auto countOffset =
+      rewriter
+          .create<LLVM::AddOp>(
+              loc, i32Ty,
+              rewriter.create<LLVM::ConstantOp>(loc, i32Ty, barrierStateOffset),
+              taskBarrierOffset)
+          .getResult();
+  auto countPtr = rewriter.create<LLVM::GEPOp>(loc, ptrTy, rewriter.getI8Type(),
+                                               sharedMemBase, countOffset);
+
+  auto epochOffset =
+      rewriter
+          .create<LLVM::AddOp>(loc, i32Ty,
+                               rewriter.create<LLVM::ConstantOp>(
+                                   loc, i32Ty, barrierStateOffset + 4),
+                               taskBarrierOffset)
+          .getResult();
+  auto epochPtr = rewriter.create<LLVM::GEPOp>(loc, ptrTy, rewriter.getI8Type(),
+                                               sharedMemBase, epochOffset);
+
+  // Initialize barrier state for each task (only by task's warp 0 lane 0)
+  // Ensures count[taskId] and epoch[taskId] start at zero
+  rewriter.create<scf::IfOp>(loc, isTaskWarp0Lane0,
+                             [&](OpBuilder &b, Location loc) {
+                               b.create<LLVM::StoreOp>(loc, zero, countPtr);
+                               b.create<LLVM::StoreOp>(loc, zero, epochPtr);
+                               b.create<scf::YieldOp>(loc);
+                             });
+
+  // Ensure all threads wait for initialization to complete
+  // Prevents race conditions where barriers execute before init
+  rewriter.create<ascend_dpx::SyncThreadsOp>(loc);
+
+  // Lower each SyncThreadsOp to generation barrier logic
+  // Generation barrier ensures proper synchronization across multiple
+  // invocations
+  for (auto dpx_op : complexBarrierOps) {
+    IRRewriter opRewriter(dpx_op);
+    loc = dpx_op.getLoc();
+
+    opRewriter.setInsertionPointAfter(dpx_op);
+    // Lane 0 executes barrier logic:
+    //   1. Increment local epoch counter
+    //   2. Atomically increment shared count
+    //   3. If last warp (count == numWarps):
+    //      - Reset count to zero
+    //      - Atomically increment shared epoch
+    //   4. If not last warp:
+    //      - Spin-wait on epoch using volatile load
+    //      - Ensures detection of generation change
+    auto IfStmt = opRewriter.create<scf::IfOp>(
+        loc, isLane0,
+        [&i32Ty, &localEpochPtr, &one, &countPtr, &numWarpsVal, &epochPtr,
+         &zero](OpBuilder &b, Location loc) {
+          // Step 1: Increment local epoch counter
+          auto localEpoch =
+              b.create<LLVM::LoadOp>(loc, i32Ty, localEpochPtr).getResult();
+          localEpoch =
+              b.create<LLVM::AddOp>(loc, i32Ty, localEpoch, one).getResult();
+          b.create<LLVM::StoreOp>(loc, localEpoch, localEpochPtr);
+
+          // Step 2: Atomically increment shared count
+          auto countOld =
+              b.create<ascend_dpx::AtomicAddOp>(loc, i32Ty, countPtr, one)
+                  .getRes();
+
+          // Step 3: Determine if this is the last warp to arrive
+          // Use countOld (value before increment) to avoid race condition
+          // Only the warp that increments count from numWarps-1 to numWarps is
+          // last
+          auto numWarpsMinusOne =
+              b.create<LLVM::SubOp>(loc, i32Ty, numWarpsVal, one).getResult();
+          auto isLast = b.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::eq,
+                                               countOld, numWarpsMinusOne)
+                            .getResult();
+
+          b.create<scf::IfOp>(
+              loc, isLast,
+              [&countPtr, &epochPtr, &zero, &i32Ty, &one](OpBuilder &b2,
+                                                          Location loc) {
+                // Last warp: reset count and increment epoch to signal
+                // completion
+                b2.create<ascend_dpx::AtomicExchangeOp>(loc, i32Ty, countPtr,
+                                                        zero);
+                b2.create<ascend_dpx::AtomicAddOp>(loc, i32Ty, epochPtr, one);
+                b2.create<scf::YieldOp>(loc);
+              },
+              [&epochPtr, &i32Ty, &localEpoch](OpBuilder &b2, Location loc) {
+                // Non-last warps: spin-wait for epoch change (generation
+                // barrier)
+                b2.create<scf::WhileOp>(
+                    loc, TypeRange{}, ValueRange{},
+                    [&epochPtr, &i32Ty, &localEpoch](
+                        OpBuilder &b3, Location loc, ValueRange args) {
+                      // Constants for LLVM::LoadOp parameters
+                      // DEFAULT_ALIGNMENT: Use compiler-inferred alignment (0 =
+                      // unspecified) IS_VOLATILE: Force memory read on each
+                      // iteration
+                      constexpr unsigned DEFAULT_ALIGNMENT = 0;
+                      constexpr bool IS_VOLATILE = true;
+                      // Volatile load ensures each iteration reads from memory,
+                      // not cached register Critical for spin-wait correctness
+                      // in multi-threaded environment
+                      auto currentEpoch = b3.create<LLVM::LoadOp>(
+                                                loc, i32Ty, epochPtr,
+                                                DEFAULT_ALIGNMENT, IS_VOLATILE)
+                                              .getResult();
+                      // Check if generation has changed (epoch incremented by
+                      // last warp)
+                      auto spinCond =
+                          b3.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::ne,
+                                                  currentEpoch, localEpoch)
+                              .getResult();
+                      b3.create<scf::ConditionOp>(loc, spinCond, ValueRange{});
+                    },
+                    [](OpBuilder &b3, Location loc, ValueRange args) {
+                      b3.create<scf::YieldOp>(loc, ValueRange{});
+                    });
+                b2.create<scf::YieldOp>(loc);
+              });
+          b.create<scf::YieldOp>(loc);
+        });
+
+    opRewriter.replaceOp(dpx_op, IfStmt);
+  }
+  return success();
+}
+
 struct AscendDPXSyncThreadsOpLowering
     : public ConvertOpToLLVMPattern<ascend_dpx::SyncThreadsOp> {
   explicit AscendDPXSyncThreadsOpLowering(LLVMTypeConverter &converter)
@@ -1281,6 +1610,8 @@ struct AscendDPXToHIVMRegbaseIntrins
   }
 
   void runOnOperation() override {
+    auto moduleOp = getOperation();
+    
     MLIRContext &ctx = getContext();
     LLVMConversionTarget target(ctx);
     ctx.loadDialect<hivm::HIVMDialect>();
@@ -1300,6 +1631,9 @@ struct AscendDPXToHIVMRegbaseIntrins
               ? (uint32_t)hivm::AddressSpace::UB
               : type.getAddressSpace());
     });
+
+    if (failed(lowerBarrierBySoft(moduleOp)))
+      signalPassFailure();
     patterns
         .add<AscendDPXLoadOpLowering, AscendDPXStoreOpLowering,
              AscendDPXBlockDimXOpLowering, AscendDPXBlockDimYOpLowering,
@@ -1320,7 +1654,6 @@ struct AscendDPXToHIVMRegbaseIntrins
              AscendDPXReduceMinOpLowering, AscendDPXReduceUMaxOpLowering,
              AscendDPXReduceUMinOpLowering, AscendDPXCastOpLowering>(converter);
     addAscendDPXMathOpsLoweringPatterns(patterns, converter);
-    auto moduleOp = getOperation();
     if (failed(applyPartialConversion(moduleOp, target, std::move(patterns))))
       signalPassFailure();
 

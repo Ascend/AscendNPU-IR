@@ -24,6 +24,8 @@
 
 namespace bishengir {
 
+inline constexpr char AttrSuperBlockBarrier[] = "ttg.super-block-barrier";
+
 /// Register the bishengir Triton dialect extension into \p registry.
 /// When the Triton dialect is loaded, this adds tt.call_scalar (and any other
 /// bishengir-specific ops) to the dialect.
