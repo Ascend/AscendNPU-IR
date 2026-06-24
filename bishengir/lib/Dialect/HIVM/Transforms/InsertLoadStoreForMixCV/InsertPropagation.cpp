@@ -60,6 +60,23 @@ InsertPropagationPattern::matchAndRewrite(Operation *op,
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.cpp.inc"
           >(
           [&](Operation *op) { return insertPropagatorForDMAOp(op, rewriter); })
+      .Case<hivm::CustomOp>([&](hivm::CustomOp op) {
+        PropagatorUtil::insertPropagatorsForCustomLikeOp({op.getPipe()}, op,
+                                                         rewriter);
+        return success();
+      })
+      .Case<hivm::CustomMacroOp>([&](hivm::CustomMacroOp op) {
+        PropagatorUtil::insertPropagatorsForCustomLikeOp(
+            {op.getInPipe(), op.getOutPipe()}, op, rewriter);
+        return success();
+      })
+      .Case<tensor::EmptyOp>([&](auto op) {
+        if (isa<hivm::FixpipeOp>(*op->user_begin()))
+          return failure();
+        PropagatorUtil::createPropagatorDown(op, TCoreType::CUBE_AND_VECTOR,
+                                             rewriter);
+        return success();
+      })
       .Default([&](auto *op) { return failure(); });
 }
 

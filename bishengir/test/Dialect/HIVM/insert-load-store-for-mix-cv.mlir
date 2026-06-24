@@ -1254,3 +1254,59 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %11 : tensor<128x64xf32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: @custom_gm_addr_arg_preserved(
+// CHECK-SAME: %[[DST:.*]]: memref<?xf32>
+// CHECK-NOT: hivm.hir.load ins(%[[DST]]
+// CHECK: hivm.hir.custom
+// CHECK-SAME: gm_addr_args_indices = array<i32: 0>
+// CHECK-SAME: "__builtin_indirect_atomic" ins(%[[DST]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @custom_gm_addr_arg_preserved(
+      %dst: memref<?xf32>, %offsets: tensor<256xi64>, %old: tensor<256xf32>,
+      %updates: tensor<256xf32>) -> tensor<256xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %cst = arith.constant 1.000000e+00 : f32
+    %0 = hivm.hir.custom {extra_attr = "operate=cas",
+                           gm_addr_args_indices = array<i32: 0>,
+                           hivm.pipe = #hivm.pipe<PIPE_V>,
+                           hivm.tcore_type = #hivm.tcore_type<VECTOR>,
+                           hivm.vf_mode = #hivm.vf_mode<SIMT>,
+                           symbol = "__builtin_indirect_atomic"}
+        "__builtin_indirect_atomic"
+        ins(%dst, %offsets, %old, %updates
+            : memref<?xf32>, tensor<256xi64>, tensor<256xf32>, tensor<256xf32>)
+        outs(%old : tensor<256xf32>) -> tensor<256xf32>
+    %empty = tensor.empty() : tensor<256xf32>
+    %1 = hivm.hir.vmul ins(%0, %cst : tensor<256xf32>, f32)
+        outs(%empty : tensor<256xf32>) -> tensor<256xf32>
+    return %1 : tensor<256xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @cube_custom_gm_addr_arg_preserved(
+// CHECK-SAME: %[[DST:.*]]: memref<?xf32>
+// CHECK-NOT: hivm.hir.load ins(%[[DST]]
+// CHECK: hivm.hir.custom
+// CHECK-SAME: hivm.pipe = #hivm.pipe<PIPE_M>
+// CHECK-SAME: hivm.tcore_type = #hivm.tcore_type<CUBE>
+// CHECK-SAME: ins(%[[DST]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @cube_custom_gm_addr_arg_preserved(
+      %dst: memref<?xf32>, %lhs: tensor<16x16xf16>,
+      %out: tensor<16x16xf32>) -> tensor<16x16xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %0 = hivm.hir.custom {gm_addr_args_indices = array<i32: 0>,
+                           hivm.pipe = #hivm.pipe<PIPE_M>,
+                           hivm.tcore_type = #hivm.tcore_type<CUBE>,
+                           symbol = "my_cube_custom"}
+        "my_cube_custom"
+        ins(%dst, %lhs : memref<?xf32>, tensor<16x16xf16>)
+        outs(%out : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %0 : tensor<16x16xf32>
+  }
+}

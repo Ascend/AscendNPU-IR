@@ -1424,7 +1424,7 @@ static ParseResult parseForCustomOps(OpAsmParser &parser,
 
     if (failed(parseVariadicArgs("ins")) ||
         failed(parseVariadicArgs("outs")) ||
-        failed(parseVariadicArgs("temp_buffer"))) {
+        failed(parseVariadicArgs("tmps"))) {
       return failure();
     }
 
@@ -1489,7 +1489,7 @@ static void printForCustomOps(CustomOp op, OpAsmPrinter &p) {
 
   printVariadicArgs(op.getInputs(), "ins");
   printVariadicArgs(op.getOutputs(), "outs");
-  printVariadicArgs(op.getTempBuffer(), "temp_buffer");
+  printVariadicArgs(op.getTempBuffers(), "tmps");
 
   if (!op.getResults().empty())
     p.printOptionalArrowTypeList(op.getResultTypes());
