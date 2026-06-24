@@ -1177,7 +1177,7 @@ def VTransposeOp : HIVM_VectorOp<"vtranspose",
     [OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2,
       AnyI8, AnyI16, AnyI32, F16, BF16, F32, I64, UI64]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
-       ["getIteratorTypesArray", "setIteratorTypesArray"]>,
+       ["getIteratorTypesArray", "setIteratorTypesArray", "getIndexingMaps"]>,
      DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
        ["decomposeOperation","getDecomposePhase"]>,
      // VTranspose is considered as uniform because it is swapping two dimensions
@@ -1243,7 +1243,8 @@ def VArangeOp
           "varange", [AttrSizedOperandSegments,
                       OperElemTypeConstraints<[0], [I16, I32, F16, F32, I64]>,
                       DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
-                                                ["getIteratorTypesArray"]>,
+                                                ["getIteratorTypesArray",
+                                                 "getIndexingMaps"]>,
                       // Will automatically use the default
                       // uniform reassociation impl
                       DeclareOpInterfaceMethods<FlattenInterface,

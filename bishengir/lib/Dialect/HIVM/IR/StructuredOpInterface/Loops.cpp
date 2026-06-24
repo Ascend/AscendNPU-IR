@@ -115,6 +115,18 @@ SmallVector<hivm::IteratorType> VArangeOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
+ArrayAttr VArangeOp::getIndexingMaps() {
+  MLIRContext *context = getContext();
+  unsigned numLoops = getNumLoops();
+  AffineMap scalarMap = AffineMap::get(numLoops, 0, context);
+  AffineMap identityMap = AffineMap::getMultiDimIdentityMap(numLoops, context);
+  SmallVector<AffineMap> indexingMaps;
+  for (OpOperand &opOperand : getOperation()->getOpOperands()) {
+    indexingMaps.push_back(getRank(&opOperand) == 0 ? scalarMap : identityMap);
+  }
+  return Builder(context).getAffineMapArrayAttr(indexingMaps);
+}
+
 //===----------------------------------------------------------------------===//
 // VBrcOp
 //===----------------------------------------------------------------------===//
@@ -328,6 +340,32 @@ VTransposeOp::setIteratorTypesArray(const IteratorType iteratorType,
   assert(iteratorType == hivm::IteratorType::kTranspose);
   getOperation()->setAttr(stringifyIteratorType(iteratorType), arrayAttr);
   return success();
+}
+
+ArrayAttr VTransposeOp::getIndexingMaps() {
+  Builder builder(getContext());
+  int64_t rank = getRankFromShapedTypeValue(getDst());
+  // The iteration domain is the destination index space, so the output map is
+  // the identity.
+  AffineMap outputMap = builder.getMultiDimIdentityMap(rank);
+  ArrayRef<int64_t> perm = getPermutation();
+  AffineMap inputMap;
+  // `dim(dst, i) = dim(src, permutation[i])`, so loop dim `i` indexes the src
+  // axis `permutation[i]`. Build the src access map by placing loop dim `i` at
+  // src position `permutation[i]`, which yields a (projected) permutation map.
+  if (static_cast<int64_t>(perm.size()) != rank) {
+    // Degenerate/unspecified permutation: fall back to identity.
+    inputMap = outputMap;
+  } else {
+    SmallVector<AffineExpr, 4> srcExprs(rank);
+    for (int64_t i = 0; i < rank; ++i)
+      srcExprs[perm[i]] = builder.getAffineDimExpr(i);
+    inputMap = AffineMap::get(rank, 0, srcExprs, builder.getContext());
+  }
+  // Mirror VBrcOp/VReduceOp: emit one map per non-extra-buffer operand
+  // (src input followed by the dst init); the optional temp_buffer is an
+  // extra buffer and is intentionally excluded.
+  return builder.getAffineMapArrayAttr({inputMap, outputMap});
 }
 
 //===----------------------------------------------------------------------===//
