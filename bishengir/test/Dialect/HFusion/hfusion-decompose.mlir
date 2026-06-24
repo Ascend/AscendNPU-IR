@@ -189,6 +189,7 @@ func.func @histogram_mask(%arg0: tensor<8xi32>, %mask: tensor<8xi1>)
 
 // -----
 // CHECK-LABEL: func.func @test_isinf_decompose
+// CHECK-NOT: hfusion.isinf
 module {
   func.func @test_isinf_decompose(%arg0: tensor<4xf32>) -> tensor<4xi1> {
     // CHECK-DAG: %[[POS_INF:.*]] = arith.constant 0x7F800000 : f32

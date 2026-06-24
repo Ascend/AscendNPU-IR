@@ -215,8 +215,8 @@ struct IsInfDecomposeInterface
   }
 
     bishengir::DecomposePhase getDecomposePhase(Operation *op) const {
-    return bishengir::DecomposePhase::NO_CONSTRAINT;
-  }
+      return bishengir::DecomposePhase::AFTER_HFUSION_FLATTEN;
+    }
 };
 
     // SortDecomposeInterface implements the decomposition logic for
