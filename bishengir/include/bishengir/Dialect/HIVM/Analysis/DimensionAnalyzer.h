@@ -25,6 +25,7 @@ public:
     Parallel,
     RankReduced,
     Reduce,
+    InvalidColumnSplit,
   };
   explicit DimensionAnalyzer(Operation *op, int64_t tilingSize = 2);
   LogicalResult initialize() override;
