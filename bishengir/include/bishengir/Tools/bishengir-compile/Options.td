@@ -301,6 +301,12 @@ def InjectIRFromFile : DFXControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def SaveTemps : DFXControlOptions<
+  "Save intermediate compilation results to specified directory.",
+  "std::string",
+  "\"\""
+>;
+
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options
 //===----------------------------------------------------------------------===//
