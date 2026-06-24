@@ -43,8 +43,6 @@ using namespace mlir::hivm;
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
-                                        Operation *hookOp = nullptr);
 namespace {
 
 constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
@@ -956,49 +954,80 @@ struct BrcBiasInfo {
   hivm::VAddOp addOp;
 };
 
-// Get the Bias mode
-// PerChannelAdd: Vbrc(x, [0])
-// ZeroInitNoAccumulation: Vbrc(0)
-// ReuseL0C: prev_val (mmadL1) is confrimly executed and current mayNotExec is
-//          false; TODO: mayNotExecWithIf criteria should be removed
-// NoBias: empty ElementwiseAdd: x[n, m]
+// Match PostPerChannelAddWithSplitK: ccfOutVal has one use that is VAddOp
+// with a perChannel VBrcOp source. Covers:
+//   vbrc(x,[0]) + vadd, empty() + vadd, vbrc(0) + vadd
+static std::optional<BrcBiasInfo>
+matchPostPerChannelAddWithSplitK(Value ccfOutVal) {
+  if (!ccfOutVal.hasOneUse())
+    return std::nullopt;
+  auto addOp = dyn_cast<hivm::VAddOp>(*ccfOutVal.getUsers().begin());
+  if (!addOp)
+    return std::nullopt;
+  for (Value src : addOp.getSrc()) {
+    if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
+      if (isSatisfiedBrcForPerChannel(brcOp)) {
+        BrcBiasInfo result;
+        result.perChannelValue = getBiasInputForPerChannelAdd(src);
+        result.addOp = addOp;
+        result.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
+        return result;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// Get the Bias mode — rules tried in priority order, first match wins:
+//   1. PerChannelAdd:          ccfInVal = Vbrc(x, [0])
+//   2. PostPerChannel(vbrc0):  ccfInVal = Vbrc(0) with perChannel vadd
+//   3. ZeroInitNoAccumulation: ccfInVal = Vbrc(0) without vadd
+//   4. ReuseL0C:               ccfInVal is reusable L0C from previous mmad
+//   5. PostPerChannel(empty):  ccfInVal traces to empty() with perChannel vadd
+//   6. NoBias:                 ccfInVal traces to empty() without vadd
+//   7. ElementwiseAdd:         fallback
 template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
-  // refer to getMatmulLikeBiasMode
-  Value outerInVal = ccfinfo.inVal;
-  BrcBiasInfo info;
-  if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
+  Value ccfInVal = ccfinfo.inVal;
+  Value ccfOutVal = ccfinfo.outVal;
+
+  if (auto brcOp = ccfInVal.getDefiningOp<hivm::VBrcOp>()) {
     if (isSatisfiedBrcForPerChannel(brcOp)) {
-      info.perChannelValue = getBiasInputForPerChannelAdd(outerInVal);
+      BrcBiasInfo info;
+      info.perChannelValue = getBiasInputForPerChannelAdd(ccfInVal);
       info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
       return info;
     }
     if (isConstZero(brcOp.getSrc())) {
+      auto postPerChannel = matchPostPerChannelAddWithSplitK(ccfOutVal);
+      if (postPerChannel)
+        return *postPerChannel;
+      BrcBiasInfo info;
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
       return info;
     }
-  } else if (couldReuse(outerInVal) && (!ccfinfo.mayNotExecWithIf)) {
+  }
+
+  if (couldReuse(ccfInVal) && (!ccfinfo.mayNotExecWithIf)) {
+    BrcBiasInfo info;
     info.brcBiasMode = MatmulBiasMode::ReuseL0C;
     return info;
-  } else if (outerInVal.hasOneUse()) {
-    if (auto addOp = dyn_cast<hivm::VAddOp>(*outerInVal.getUsers().begin())) {
-      for (Value src : addOp.getSrc()) {
-        if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
-          if (isSatisfiedBrcForPerChannel(brcOp)) {
-            info.perChannelValue = getBiasInputForPerChannelAdd(src);
-            info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
-            return info;
-          }
-        }
-      }
-    }
   }
+
   auto emptyOps =
-      traceDefOps<tensor::EmptyOp>(outerInVal,
+      traceDefOps<tensor::EmptyOp>(ccfInVal,
                                    /*isSingleChain=*/false,
                                    /*traceMode=*/TraceResultMode::StrictSame);
-  info.brcBiasMode = !emptyOps.empty() ? MatmulBiasMode::NoBias
-                                       : MatmulBiasMode::ElementwiseAdd;
+  if (!emptyOps.empty()) {
+    auto postPerChannel = matchPostPerChannelAddWithSplitK(ccfOutVal);
+    if (postPerChannel)
+      return *postPerChannel;
+    BrcBiasInfo info;
+    info.brcBiasMode = MatmulBiasMode::NoBias;
+    return info;
+  }
 
+  BrcBiasInfo info;
+  info.brcBiasMode = MatmulBiasMode::ElementwiseAdd;
   return info;
 }
 
