@@ -61,8 +61,6 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   InsertLoadStoreForMixCVOptions options;
   options.enableLegacy =
       hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
-  if (!hivmPipelineOptions.enableMixedCV)
-    options.enableLegacy = true;
   options.target = hivmPipelineOptions.target;
   options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
   options.disableTightCoupledBuffer =
