@@ -12,8 +12,7 @@
 // RUN:   2>&1 | FileCheck %s --check-prefixes CHECK,CHECK-NO-SAMPLING
 
 // default option, compile
-// RUN: bishengir-compile \
-// RUN:   %s \
+// RUN: bishengir-compile %s \
 // RUN:   --target=Ascend910_9589 \
 // RUN:   --enable-triton-ir-compile \
 // RUN:   --use-dpx \
@@ -22,11 +21,12 @@
 // RUN:   --threads-per-warp=32 \
 // RUN:   --enable-bishengir-simt-optimization=100 \
 // RUN:   --mlir-print-ir-after-all \
+// RUN:   --enable-sink-dpx-load=false \
 // RUN:   2>&1 | FileCheck %s --check-prefixes CHECK,CHECK-NO-SAMPLING --dump-input=fail
 
 // non-default option
-// RUN: bishengir-compile \
-// RUN:   %s \
+// default option, compile
+// RUN: bishengir-compile %s \
 // RUN:   --target=Ascend910_9589 \
 // RUN:   --enable-triton-ir-compile \
 // RUN:   --use-dpx \
@@ -38,11 +38,11 @@
 // RUN:   --proton-profile-scratch-size=1024 \
 // RUN:   --proton-clk-ext=true \
 // RUN:   --mlir-print-ir-after-all \
+// RUN:   --enable-sink-dpx-load=false \
 // RUN:   2>&1 | FileCheck %s --check-prefixes CHECK,CHECK-NO-SAMPLING
 
 // selective sampling
-// RUN: bishengir-compile \
-// RUN:   %s \
+// RUN: bishengir-compile %s \
 // RUN:   --target=Ascend910_9589 \
 // RUN:   --enable-triton-ir-compile \
 // RUN:   --use-dpx \
@@ -53,8 +53,8 @@
 // RUN:   --proton-sampling-strategy=selective \
 // RUN:   --proton-sampling-options=0,2 \
 // RUN:   --mlir-print-ir-after-all \
+// RUN:   --enable-sink-dpx-load=false \
 // RUN:   2>&1 | FileCheck %s --check-prefixes CHECK,CHECK-SELECTIVE
-
 
 module attributes { "ttg.num-warps" = 8, "ttg.enable-bishengir-simt-optimization" = 100 : i32 } {
   tt.func public @foo() {
