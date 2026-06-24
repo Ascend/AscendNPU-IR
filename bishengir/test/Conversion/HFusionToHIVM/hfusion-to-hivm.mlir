@@ -248,6 +248,18 @@ func.func @test_hfusion_elemwise_extended_ops(
   %low, %high = hfusion.mulext %src1, %src2 : tensor<6xi32>
   return %low : tensor<6xi32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_hfusion_divfhp
+func.func @test_hfusion_divfhp(
+  %src1 : memref<6x6xf32>, %src2 : memref<6x6xf32>, %dst : memref<6x6xf32>) {
+  // CHECK: hivm.hir.vdiv{{.*}}isHP = true
+  hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>}
+    ins(%src1, %src2 : memref<6x6xf32>, memref<6x6xf32>)
+    outs(%dst : memref<6x6xf32>)
+  return
+}
 // -----
 
 // CHECK-LABEL: func @normal_tensor_copy

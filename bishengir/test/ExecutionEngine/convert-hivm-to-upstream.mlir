@@ -603,3 +603,14 @@ func.func @vdiv_float_lowering(%a: tensor<64xf32>, %c: f32, %d: tensor<64xf32>) 
   %0 = hivm.hir.vdiv ins(%a, %c : tensor<64xf32>, f32) outs(%d : tensor<64xf32>) -> tensor<64xf32>
   return %0 : tensor<64xf32>
 }
+
+// -----
+
+// COMMON-LABEL: @vdiv_hp_float_lowering
+func.func @vdiv_hp_float_lowering(%a: tensor<64xf32>, %b: tensor<64xf32>, %d: tensor<64xf32>) -> tensor<64xf32> {
+  // CHECK-TRUE: hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>}
+  // CHECK-FALSE: linalg.map
+  // CHECK-FALSE: mathExt.divfhp
+  %0 = hivm.hir.vdiv ins(%a, %b : tensor<64xf32>, tensor<64xf32>) outs(%d : tensor<64xf32>) isHP = true -> tensor<64xf32>
+  return %0 : tensor<64xf32>
+}
