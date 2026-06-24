@@ -8,7 +8,9 @@
 
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include <type_traits>
 
@@ -131,7 +133,8 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     for (auto [store, dim] : parallelDimMaps[groupIdx][idxToMerge])
       tilingDim_[store] = dim;
     for (auto &idx : llvm::drop_begin(indices)) {
-      if (invalidConnection.contains({repIdx, idx}) || exclusiveDimIdx[repIdx].contains(idx))
+      if (invalidConnection.contains({repIdx, idx}) ||
+          exclusiveDimIdx[repIdx].contains(idx))
         continue;
       auto curSize = candidateGroupSize[candGroupDSU.find(idxToMerge)];
       auto size = candidateGroupSize[candGroupDSU.find(idx)];
@@ -168,8 +171,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   DenseMap<int64_t, int> selectedTilingParIdxMap;
   for (const auto &[groupIndex, parallelDimMap] : parallelDimMaps) {
     auto numStoreOp = 0;
-    if (auto it = numStoreOps.find(groupIndex);
-        it != numStoreOps.end())
+    if (auto it = numStoreOps.find(groupIndex); it != numStoreOps.end())
       numStoreOp = it->second;
     LDBG("Group " << groupIndex << " has " << numStoreOp << " operations");
     for (const auto &[parentIndex, candidate] : parallelDimMap) {

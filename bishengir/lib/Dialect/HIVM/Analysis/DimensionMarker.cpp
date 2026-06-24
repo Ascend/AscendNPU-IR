@@ -943,6 +943,31 @@ void DimensionAnalyzer::markDimensions() {
       processSlice(extractOp);
     } else if (auto vtransposeOp = dyn_cast<hivm::VTransposeOp>(op)) {
       markTransposedDim(vtransposeOp);
+    } else if (auto allocOp = dyn_cast<memref::AllocOp>(op)) {
+      // FIXME: FIXPIPE intrinsic has the constraint that N has to be multiples
+      // of 32 for COL_SPLIT. For compiler to lift this constraint, we need to
+      // enhance Stride Align.
+      LDBG("Trying to mark this alloc op " << allocOp);
+      auto addressAttr = dyn_cast_or_null<hivm::AddressSpaceAttr>(
+          allocOp.getType().getMemorySpace());
+      auto alloc = allocOp.getMemref();
+      if (addressAttr &&
+          addressAttr.getAddressSpace() == hivm::AddressSpace::UB &&
+          utils::getAnnotateOpWithAttr(alloc,
+                                       hivm::HIVMTightlyCoupledBufferAttr::name)
+              .has_value()) {
+        auto shape = allocOp.getType().getShape();
+        if (shape.size() == 2 && shape[1] < 32) {
+          createDummyRefIfNotExist(alloc);
+          auto args = getValueDimIndices(alloc);
+          tilingDimKindMapForCollapser[structuralDsu_->find(args[1])] =
+              TilingDimensionKind::InvalidColumnSplit;
+          tilingDimKindMapForShape[equivalentDsu_->find(args[1])] =
+              TilingDimensionKind::InvalidColumnSplit;
+          LDBG("Invalid dim: " << structuralDsu_->find(args[1]) << "("
+                               << equivalentDsu_->find(args[1]) << ")");
+        }
+      }
     }
   });
 }
