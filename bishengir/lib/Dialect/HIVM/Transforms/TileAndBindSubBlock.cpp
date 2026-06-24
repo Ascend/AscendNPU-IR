@@ -1322,6 +1322,25 @@ static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
   if (hasBatchMatmulLoopInAicFuncs(aicFunctions))
     return true;
 
+  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+        bool hasSingleElementTensor = false;
+        bool hasSyncBlockOperations = false;
+        aivFunc.walk([&](Operation *op) {
+          if (isa<hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
+              hivm::SyncBlockUnlockOp>(op)) {
+            hasSyncBlockOperations = true;
+          }
+          for (Value operand : op->getOperands()) {
+            if (isTensorSingleElement(operand)) {
+              hasSingleElementTensor = true;
+            }
+          }
+          return WalkResult::advance();
+        });
+        return hasSingleElementTensor && hasSyncBlockOperations;
+      }))
+    return true;
+
   // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully
   // loaded and extracted to use. In some cases, the extract slice is not fused
   // into the vector function, which will lead to precision error because of the
