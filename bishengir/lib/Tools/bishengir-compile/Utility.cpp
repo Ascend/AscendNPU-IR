@@ -12,6 +12,7 @@
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/IR/Verifier.h"
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -123,6 +124,11 @@ runPipeline(ModuleOp mod,
                                               OpPassManager::Nesting::Implicit);
   buildPipeline(passManager, config);
 
+  // By default the IR is only verified once after the last pass of the
+  // pipeline. With `--verify-each` the verifier runs after every pass instead.
+  const bool verifyEach = config.getVerifyEach();
+  passManager.enableVerifier(verifyEach);
+
   // Apply MLIR PassManager command line options.
   // Ignore the result because the invocation point of this function might not
   // necessarily be the command line, so the options might not be loaded.
@@ -139,6 +145,11 @@ runPipeline(ModuleOp mod,
 
   if (failed(passManager.run(mod))) {
     return mod->emitError("Failed to run " + pipelineName + " pipeline\n");
+  }
+
+  if (!verifyEach && failed(mlir::verify(mod))) {
+    return mod->emitError("Verification failed after " + pipelineName +
+                          " pipeline\n");
   }
 
   return success();
