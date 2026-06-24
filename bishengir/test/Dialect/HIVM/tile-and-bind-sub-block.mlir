@@ -55,6 +55,31 @@ func.func @mm_01_mix_aiv(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 
 // -----
 
+#off_scalar_ub = affine_map<()[s0] -> (s0 * 128)>
+module {
+  // The scalar UB alloc mirrors input_fa_bwd's memref<f32, ub> tightly-coupled
+  // buffers: it is allowed to stay untiled while other ops still bind sub-blocks.
+  // CHECK-LABEL:   func.func @scalar_ub_tightly_coupled_buffer_allows_bind(
+  // CHECK:           annotation.mark %{{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>, hivm.tiling_dim = -1 : index} : memref<f32, #hivm.address_space<ub>>
+  // CHECK:           hivm.hir.store{{.*}} {tiled_op}
+  // CHECK:         } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  func.func @scalar_ub_tightly_coupled_buffer_allows_bind(%arg0: tensor<256xf32>, %arg1: memref<128xf32>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %alloc = memref.alloc() : memref<f32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<f32, #hivm.address_space<ub>>
+    scf.for %i = %c0 to %c2 step %c1 {
+      %offset = affine.apply #off_scalar_ub()[%i]
+      %slice = tensor.extract_slice %arg0[%offset] [128] [1] {to_be_bubbled_slice} : tensor<256xf32> to tensor<128xf32>
+      hivm.hir.store ins(%slice : tensor<128xf32>) outs(%arg1 : memref<128xf32>)
+    }
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL:   func.func @_attn_fwd_mix_aiv_plain(
 // CHECK:           %[[VAL_23:.*]] = arith.constant 0 : index
 // CHECK:           %[[VAL_24:.*]] = arith.constant 1 : index
