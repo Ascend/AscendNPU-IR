@@ -40,6 +40,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 
 #include <cassert>
@@ -858,6 +859,79 @@ protected:
                                   linalg::UnaryFnAttr>(
                rewriter, loc, fn, ValueRange{inp}, ValueRange{out})
         ->getResult(0);
+  }
+};
+
+/// Normalize signbit(x) using bitwise operations on IEEE 754 values.
+struct NormalizeSignBitOp : public OpRewritePattern<SignBitOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(SignBitOp op,
+                                PatternRewriter &rewriter) const override {
+    Value input = op.getInput();
+    auto loc = op.getLoc();
+
+    auto inputTensorType = mlir::dyn_cast<RankedTensorType>(input.getType());
+    if (!inputTensorType) {
+      return failure();
+    }
+
+    auto elementType = getElementTypeOrSelf(input.getType());
+    Type intType;
+    uint64_t maskVal;
+
+    if (elementType.isF32()) {
+      intType = rewriter.getI32Type();
+      maskVal = 0x80000000U;
+    } else if (elementType.isF16() || elementType.isBF16()) {
+      intType = rewriter.getI16Type();
+      maskVal = 0x8000U;
+    } else {
+      llvm_unreachable("unsupported data type");
+    }
+
+    auto intTensorType = inputTensorType.clone(intType);
+
+    Value emptyInt1 = rewriter.create<tensor::EmptyOp>(
+        loc, intTensorType.getShape(), intType);
+    Value bitcasted = rewriter
+                          .create<hfusion::BitcastOp>(
+                              loc, TypeRange{intTensorType}, ValueRange{input},
+                              ValueRange{emptyInt1})
+                          .getResult(0);
+
+    Value maskScalar =
+        rewriter.create<arith::ConstantIntOp>(loc, maskVal, intType);
+    Value emptyInt2 = rewriter.create<tensor::EmptyOp>(
+        loc, intTensorType.getShape(), intType);
+    auto vandAttr = hfusion::BinaryFnAttr::get(rewriter.getContext(),
+                                               hfusion::BinaryFn::vand);
+    Value andResult = rewriter
+                          .create<hfusion::ElemwiseBinaryOp>(
+                              loc, TypeRange{intTensorType},
+                              ValueRange{bitcasted, maskScalar},
+                              ValueRange{emptyInt2},
+                              ArrayRef<NamedAttribute>{
+                                  rewriter.getNamedAttr("fun", vandAttr)})
+                          .getResult(0);
+
+    Value zeroScalar = rewriter.create<arith::ConstantIntOp>(loc, 0, intType);
+    auto i1TensorType = inputTensorType.clone(rewriter.getI1Type());
+    Value emptyI1 = rewriter.create<tensor::EmptyOp>(
+        loc, i1TensorType.getShape(), rewriter.getI1Type());
+    auto vneAttr = hfusion::CompareFnAttr::get(rewriter.getContext(),
+                                               hfusion::CompareFn::vne);
+    Value cmpResult = rewriter
+                          .create<hfusion::CompareOp>(
+                              loc, TypeRange{i1TensorType},
+                              ValueRange{andResult, zeroScalar},
+                              ValueRange{emptyI1},
+                              ArrayRef<NamedAttribute>{rewriter.getNamedAttr(
+                                  "compare_fn", vneAttr)})
+                          .getResult(0);
+
+    rewriter.replaceOp(op, cmpResult);
+    return success();
   }
 };
 
@@ -9526,6 +9600,9 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeArgMinMaxOp>(patterns.getContext());
   patterns.add<NormalizeToTargetType<int64_t, hfusion::ReduceWithIndexOp>>(
       patterns.getContext());
+
+  patterns.add<NormalizeSignBitOp>(patterns.getContext());
+
   patterns.add<NormalizeHypotOp>(patterns.getContext());
   patterns.add<NormalizeErfInvOp>(patterns.getContext());
   patterns.add<NormalizeCylBesselI0Op>(patterns.getContext());

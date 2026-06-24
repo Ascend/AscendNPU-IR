@@ -359,7 +359,7 @@ def AtomicCasOp : HFusion_Op<"atomic_cas",
     Compare-And-Swap (CAS) is an atomic operation that consists of three operands:
     Memory location (V), Expected old value (A), New value (B).
     The semantics of the operation are: the value of V is updated to B,
-    only if the value of memory location V is equal to the expected old value A. 
+    only if the value of memory location V is equal to the expected old value A.
     The operation returns the original value of V regardless of whether it is updated or not.
 
     Constraints:
@@ -718,6 +718,21 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
   }];
 }
 
+
+def SignBitOp : HFusion_Op<"signbit", [
+    Pure,
+    Elementwise,
+    SameOperandsAndResultShape
+]> {
+    let summary = "Extracts the sign bit of floating-point values";
+    let description = [{
+        Returns 1 (i8) or true (i1) if the sign bit is set, 0 otherwise.
+    }];
+
+    let arguments = (ins RankedTensorOf<[F16, F32]>:$input);
+
+    let results = (outs RankedTensorOf<[I1, I8]>:$output);
+}
 def ErfInvOp : HFusion_Op<"erfinv", [Pure, SameOperandsAndResultType]> {
   let summary = [{
     Computes the element-wise inverse error function
@@ -813,6 +828,7 @@ def HypotOp : HFusion_Op<"hypot", [Pure]> {
   }];
 
   let hasVerifier = 1;
+
 }
 
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

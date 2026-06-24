@@ -2087,7 +2087,7 @@ func.func @test_normalize_reduce_with_index_ra_to_ar(%arg0: tensor<32x32x128xf32
 // CHECK: %[[NAN_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
 // CHECK: %[[DENANED_T:.*]] = hfusion.select ins(%[[NAN_MASK]], %[[MIN_INF]], %[[ZERO]] : tensor<32x128x32xi1>, f32, f32)
 // CHECK: %[[DENANED_REDUCE:.*]]:2 = hfusion.reduce_with_index {already_denaned, tie_break_left = true} <min> ins(%[[DENANED_T]], %[[IDXS]] : tensor<32x128x32xf32>, tensor<32x128x32xi32>)
-// CHECK: %[[INF_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} 
+// CHECK: %[[INF_MASK:.*]] = hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>}
 // CHECK: %[[RES:.*]] = hfusion.select ins(%[[INF_MASK]], %[[DENANED_REDUCE]]#1, %[[REAL_REDUCE]]#1 : tensor<32x128xi1>, tensor<32x128xi32>, tensor<32x128xi32>)
 // CHECK: return %[[RES]]
 func.func @test_normalize_reduce_denaned(%arg0: tensor<32x32x128xf32>, %arg1: tensor<32x32x128xi32>) -> tensor<32x128xi32> {
@@ -2392,7 +2392,7 @@ func.func @test_cast_i64_to_i8(%arg0: tensor<4x4xi64>) -> tensor<4x4xi8> {
 // -----
 // CHECK-LABEL: @test_broadcast_i1
 // CHECK: %[[CAST16:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins({{.*}} : tensor<8xi1>) outs({{.*}} : tensor<8xf16>) -> tensor<8xf16>
-// CHECK: %[[BROADCAST16:.*]] = linalg.broadcast ins(%[[CAST16]] : tensor<8xf16>) outs({{.*}} : tensor<8x16xf16>) dimensions = [1] 
+// CHECK: %[[BROADCAST16:.*]] = linalg.broadcast ins(%[[CAST16]] : tensor<8xf16>) outs({{.*}} : tensor<8x16xf16>) dimensions = [1]
 // CHECK: %[[VEQ:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[BROADCAST16]], {{.*}} : tensor<8x16xf16>, f16) outs({{.*}} : tensor<8x16xi1>) -> tensor<8x16xi1>
 // CHECK: hfusion.elemwise_unary {fun = #hfusion.unary_fn<vnot>} ins(%[[VEQ]] : tensor<8x16xi1>) outs(%{{.*}} : tensor<8x16xi1>) -> tensor<8x16xi1>
 func.func @test_broadcast_i1(%arg0: tensor<8xi1>, %arg1: tensor<8x16xi1>) -> tensor<8x16xi1> {
@@ -2407,7 +2407,7 @@ func.func @test_broadcast_i1(%arg0: tensor<8xi1>, %arg1: tensor<8x16xi1>) -> ten
 // -----
 // CHECK-LABEL: @test_broadcast_i8
 // CHECK: %[[CAST16:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<trunc>} ins({{.*}} : tensor<8xi8>) outs({{.*}} : tensor<8xf16>) -> tensor<8xf16>
-// CHECK: %[[BROADCAST16:.*]] = linalg.broadcast ins(%[[CAST16]] : tensor<8xf16>) outs({{.*}} : tensor<8x16xf16>) dimensions = [1] 
+// CHECK: %[[BROADCAST16:.*]] = linalg.broadcast ins(%[[CAST16]] : tensor<8xf16>) outs({{.*}} : tensor<8x16xf16>) dimensions = [1]
 // CHECK: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = false, round_mode = #hfusion.round_mode<trunc>} ins(%[[BROADCAST16]] : tensor<8x16xf16>) outs({{.*}} : tensor<8x16xi8>) -> tensor<8x16xi8>
 func.func @test_broadcast_i8(%arg0: tensor<8xi8>, %arg1: tensor<8x16xi8>) -> tensor<8x16xi8> {
   %0 = tensor.empty() : tensor<8x16xi8>
@@ -2747,10 +2747,10 @@ func.func @test_maxnumf_normalize(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) ->
 // CHECK: %[[VAL_23:.*]] = memref.subview %[[VAL_21]][0] {{\[}}%[[VAL_6]]] [1] : memref<1024xi8, strided<[1], offset: ?>> to memref<?xi8, strided<[1], offset: ?>>
 // CHECK: bufferization.materialize_in_destination %[[VAL_22]] in writable %[[VAL_23]] : (tensor<?xi8>, memref<?xi8, strided<[1], offset: ?>>) -> ()
 func.func @test_unsigned_cast_for_uint8_triton_maximum(%arg4: memref<?xi8>, %arg9: i32) {
-  %arg12 = arith.constant 0 : i32 
-  %c32768_i32 = arith.constant 32768 : i32 
-  %0 = arith.muli %arg9, %c32768_i32 : i32 
-  %1 = arith.addi %0, %arg12 : i32 
+  %arg12 = arith.constant 0 : i32
+  %c32768_i32 = arith.constant 32768 : i32
+  %0 = arith.muli %arg9, %c32768_i32 : i32
+  %1 = arith.addi %0, %arg12 : i32
   %2 = arith.index_cast %1 : i32 to index
   %6 = arith.index_cast %1 : i32 to index
   %7 = arith.subi %6, %2 : index
@@ -2906,7 +2906,7 @@ func.func @test_normalize_reduce_ui8_to_f16(%arg0: tensor<16x2x2x2xi8>) -> tenso
   %c0_i8 = arith.constant 0 : i8
   %init = tensor.empty() : tensor<16x2x2xi8>
   %filled = linalg.fill ins(%c0_i8 : i8) outs(%init : tensor<16x2x2xi8>) -> tensor<16x2x2xi8>
-  %reduced = linalg.reduce ins(%arg0 : tensor<16x2x2x2xi8>) outs(%filled : tensor<16x2x2xi8>) dimensions = [3] 
+  %reduced = linalg.reduce ins(%arg0 : tensor<16x2x2x2xi8>) outs(%filled : tensor<16x2x2xi8>) dimensions = [3]
     (%in: i8, %init_val: i8) {
       %max = arith.maxui %in, %init_val : i8
       linalg.yield %max : i8
@@ -2995,16 +2995,43 @@ func.func @test_gathermask(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memr
   memref.copy %reinterpret_cast_0, %alloc_1 : memref<16xi8, strided<[1]>> to memref<16xi8>
   %1 = bufferization.to_tensor %alloc_1 restrict writable : memref<16xi8>
   %4 = tensor.empty() : tensor<1xi32>
-  %2 = tensor.empty() : tensor<16xi8>  
+  %2 = tensor.empty() : tensor<16xi8>
   %3:2 = hfusion.gather_mask ins(%0, %1 : tensor<16xi8>, tensor<16xi8>) outs(%2, %4 : tensor<16xi8>, tensor<1xi32>) -> (tensor<16xi8>, tensor<1xi32>)
-  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16], strides: [1] : memref<?xi8> to memref<16xi8, strided<[1]>>  
-  bufferization.materialize_in_destination %3#0 in writable %reinterpret_cast_2 : (tensor<16xi8>, memref<16xi8, strided<[1]>>) -> ()  
+  %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [16], strides: [1] : memref<?xi8> to memref<16xi8, strided<[1]>>
+  bufferization.materialize_in_destination %3#0 in writable %reinterpret_cast_2 : (tensor<16xi8>, memref<16xi8, strided<[1]>>) -> ()
   %alloc_size = memref.alloc() : memref<1xi32>
   bufferization.materialize_in_destination %3#1 in writable %alloc_size : (tensor<1xi32>, memref<1xi32>) -> ()
   return
 }
 
 // -----
+// CHECK-LABEL: func.func @test_hfusion_signbit_f32
+// CHECK-DAG: %[[CST0:.*]] = arith.constant 0 : i32
+// CHECK-DAG: %[[CST_MASK:.*]] = arith.constant -2147483648 : i32
+// CHECK: %[[BITCAST:.*]] = hfusion.bitcast ins(%{{.*}} : tensor<4xf32>)
+// CHECK: %[[AND:.*]] = hfusion.elemwise_binary {{.*}} ins(%[[BITCAST]], %[[CST_MASK]] : tensor<4xi32>, i32)
+// CHECK: %[[CMP:.*]] = hfusion.compare {{.*}} ins(%[[AND]], %[[CST0]] : tensor<4xi32>, i32)
+// CHECK: %[[NOT:.*]] = hfusion.elemwise_unary {{.*}} ins(%[[CMP]] : tensor<4xi1>)
+// CHECK: return %[[NOT]] : tensor<4xi1>
+func.func @test_hfusion_signbit_f32(%arg0 : tensor<4xf32>) -> tensor<4xi1> {
+  %ret = "hfusion.signbit"(%arg0) : (tensor<4xf32>) -> tensor<4xi1>
+  return %ret : tensor<4xi1>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_hfusion_signbit_f16
+// CHECK-DAG: %[[CST0_H:.*]] = arith.constant 0 : i16
+// CHECK-DAG: %[[CST_MASK_H:.*]] = arith.constant -32768 : i16
+// CHECK: %[[BITCAST_H:.*]] = hfusion.bitcast ins(%{{.*}} : tensor<4xf16>)
+// CHECK: %[[AND_H:.*]] = hfusion.elemwise_binary {{.*}} ins(%[[BITCAST_H]], %[[CST_MASK_H]] : tensor<4xi16>, i16)
+// CHECK: %[[CMP_H:.*]] = hfusion.compare {{.*}} ins(%[[AND_H]], %[[CST0_H]] : tensor<4xi16>, i16)
+// CHECK: %[[NOT_H:.*]] = hfusion.elemwise_unary {{.*}} ins(%[[CMP_H]] : tensor<4xi1>)
+// CHECK: return %[[NOT_H]] : tensor<4xi1>
+func.func @test_hfusion_signbit_f16(%arg0 : tensor<4xf16>) -> tensor<4xi1> {
+  %ret = "hfusion.signbit"(%arg0) : (tensor<4xf16>) -> tensor<4xi1>
+  return %ret : tensor<4xi1>
+}
+
 // CHECK-LABEL: func.func @test_compare_i32_lt
 // CHECK-SAME: ([[ARG0:%.*]]: tensor<16x32xi32>, [[ARG1:%.*]]: tensor<16x32xi32>, [[DST:%.*]]: tensor<16x32xi1>)
 func.func @test_compare_i32_lt(%arg0: tensor<16x32xi32>, %arg1: tensor<16x32xi32>,  %dst : tensor<16x32xi1>) -> (tensor<16x32xi1>) {
@@ -3128,6 +3155,8 @@ func.func @test_matmul_f32_output(%arg0: tensor<16x32xf16>, %arg1: tensor<32x16x
   %1 = linalg.matmul ins(%arg0, %arg1 : tensor<16x32xf16>, tensor<32x16xf16>) outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %1 : tensor<16x16xf32>
 }
+
+
 
 
 // -----
@@ -4147,7 +4176,7 @@ func.func @test_insert_slice_i1_misalignment(%arg0: tensor<25xi1>, %arg1: tensor
   %ret = tensor.insert_slice %arg0 into %arg1[%args2] [25] [1] : tensor<25xi1> into tensor<1024xi1>
   return %ret : tensor<1024xi1>
 }
-    
+
 // -----
 // CHECK-LABEL: func.func @test_insert_slice_i8_misalignment
 // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<25xf16>
