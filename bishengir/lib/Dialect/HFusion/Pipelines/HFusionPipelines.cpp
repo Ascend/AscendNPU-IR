@@ -426,6 +426,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
     pm.addPass(createHFusionAutoVectorizePass(vecOptions));
   }
   pm.addPass(createAutoVectorizeVerifierPass());
+  pm.nest<func::FuncOp>().addPass(createPostVectorizationNormalizationPass());
   pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
   pm.addPass(mlir::createHFusionToVectorConversionPass());
   pm.nest<func::FuncOp>().addPass(
