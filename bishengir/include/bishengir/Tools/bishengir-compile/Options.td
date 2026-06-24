@@ -583,6 +583,12 @@ def SuperBlockFactor : HIVMOptimizationControlOptions<
   "0"
 >;
 
+def SuperBlockBarrier : HIVMOptimizationControlOptions<
+  "Enable/disable super-block barrier lowering.",
+  "bool",
+  "false"
+>;
+
 def TileMixVectorLoop : HIVMOptimizationControlOptions<
   "The trip count of the tiled vector loop for mix kernels.",
   "unsigned",

@@ -10,8 +10,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Triton/IR/TritonExtension.h"
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/IR/Builders.h"
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
@@ -31,6 +33,8 @@ constexpr uint64_t kGridSize = 3;
 class AdaptTritonIRKernelPass
     : public impl::AdaptTritonIRKernelBase<AdaptTritonIRKernelPass> {
 public:
+  using impl::AdaptTritonIRKernelBase<
+      AdaptTritonIRKernelPass>::AdaptTritonIRKernelBase;
   void runOnOperation() override {
     mlir::triton::FuncOp ttFunc = getOperation();
     if (!ttFunc.isPublic())
@@ -38,12 +42,19 @@ public:
 
     MLIRContext *ctx = &getContext();
     OpBuilder builder(ctx);
+
+    ModuleOp moduleOp = ttFunc->getParentOfType<ModuleOp>();
+    if (moduleOp && superBlockBarrier) {
+      moduleOp->setAttr(bishengir::AttrSuperBlockBarrier,
+                        builder.getBoolAttr(superBlockBarrier));
+    }
+
     Location loc = UnknownLoc::get(ctx);
     NamedAttribute divisibility(builder.getStringAttr("tt.divisibility"),
                                 builder.getI32IntegerAttr(1));
     for (uint64_t gridDim = 0; gridDim < kGridSize; gridDim++) {
-      std::optional<gpu::MappingId> maybeMappingId =
-          gpu::symbolizeMappingId(gridDim);
+      std::optional<mlir::gpu::MappingId> maybeMappingId =
+          mlir::gpu::symbolizeMappingId(gridDim);
       if (!maybeMappingId.has_value())
         break;
 
@@ -53,17 +64,19 @@ public:
               ctx,
               SmallVector<NamedAttribute>{
                   divisibility,
-                  NamedAttribute(
-                      builder.getStringAttr(gpu::GPUBlockMappingAttr::name),
-                      gpu::GPUBlockMappingAttr::get(ctx, *maybeMappingId))}),
+                  NamedAttribute(builder.getStringAttr(
+                                     mlir::gpu::GPUBlockMappingAttr::name),
+                                 mlir::gpu::GPUBlockMappingAttr::get(
+                                     ctx, *maybeMappingId))}),
           loc);
     }
   }
 };
 } // namespace
 
-std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass() {
-  return std::make_unique<AdaptTritonIRKernelPass>();
+std::unique_ptr<mlir::Pass>
+createAdaptTritonIRKernelPass(const AdaptTritonIRKernelOptions &options) {
+  return std::make_unique<AdaptTritonIRKernelPass>(options);
 }
 
 } // namespace triton

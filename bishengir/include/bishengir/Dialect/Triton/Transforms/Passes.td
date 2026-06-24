@@ -39,7 +39,12 @@ def AdaptTritonIRKernel
    : Pass<"adapt-triton-ir-kernel", "mlir::triton::FuncOp"> {
   let constructor = "bishengir::triton::createAdaptTritonIRKernelPass()";
   let dependentDialects = [
-    "gpu::GPUDialect",
+    "mlir::gpu::GPUDialect",
+  ];
+  let options = [
+    Option<"superBlockBarrier", "super-block-barrier",
+           "bool", /*default*/"false",
+           "Enable/disable super-block barrier lowering">,
   ];
 }
 
