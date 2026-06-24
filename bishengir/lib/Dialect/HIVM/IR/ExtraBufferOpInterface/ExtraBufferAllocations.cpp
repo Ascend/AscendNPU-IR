@@ -447,7 +447,7 @@ static LogicalResult allocCustomAttrExtraBuffers(CustomOp op) {
     extraBuffers.push_back(extraBuffer);
   }
   if (!extraBuffers.empty())
-    op.getTempBufferMutable().assign(extraBuffers);
+    op.getTempBuffersMutable().assign(extraBuffers);
   return success();
 }
 
@@ -485,7 +485,7 @@ static LogicalResult allocIndirectAtomicExtraBuffer(CustomOp op) {
   Type elementType = getElementTypeOrSelf(inputs[2]);
   Value extraBuf = allocExtraBuffer(op.getOperation(),
                                     {offsetType.getNumElements()}, elementType);
-  op.getTempBufferMutable().assign(extraBuf);
+  op.getTempBuffersMutable().assign(extraBuf);
   return success();
 }
 
@@ -495,7 +495,7 @@ static const DenseMap<StringRef, LogicalResult (*)(CustomOp)>
     };
 
 LogicalResult CustomOp::allocExtraBuffersIfPossible() {
-  if (!getTempBuffer().empty())
+  if (!getTempBuffers().empty())
     return success();
 
   if (!getExtraBuffersInfo().empty())

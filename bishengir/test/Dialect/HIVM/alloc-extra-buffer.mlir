@@ -620,7 +620,7 @@ func.func @custom_indirect_atomic_block_alloc_temp_buffer(
   // CHECK-LABEL: func.func @custom_indirect_atomic_block_alloc_temp_buffer
   // CHECK: %[[TMP:.*]] = memref.alloc() : memref<16xi32>
   // CHECK: hivm.hir.custom
-  // CHECK-SAME: temp_buffer(%[[TMP]] : memref<16xi32>)
+  // CHECK-SAME: tmps(%[[TMP]] : memref<16xi32>)
   hivm.hir.custom {extra_attr = "scope=cta, operate=or",
                    extra_buffers_sizes = [16 : i64],
                    extra_buffers_types = [i32]}
@@ -645,7 +645,7 @@ func.func @custom_indirect_atomic_soft_alloc_temp_buffer(
   // CHECK-LABEL: func.func @custom_indirect_atomic_soft_alloc_temp_buffer
   // CHECK: %[[TMP:.*]] = memref.alloc() : memref<16xi32>
   // CHECK: hivm.hir.custom
-  // CHECK-SAME: temp_buffer(%[[TMP]] : memref<16xi32>)
+  // CHECK-SAME: tmps(%[[TMP]] : memref<16xi32>)
   hivm.hir.custom {extra_attr = "operate=or",
                    extra_buffers_sizes = [16 : i64],
                    extra_buffers_types = [i32]}
@@ -688,7 +688,7 @@ func.func @custom_attr_extra_buffer_alloc(
   // CHECK: %[[TMP0:.*]] = memref.alloc() : memref<32xf32>
   // CHECK: %[[TMP1:.*]] = memref.alloc() : memref<64xi32>
   // CHECK: hivm.hir.custom
-  // CHECK-SAME: temp_buffer(%[[TMP0]], %[[TMP1]] : memref<32xf32>, memref<64xi32>)
+  // CHECK-SAME: tmps(%[[TMP0]], %[[TMP1]] : memref<32xf32>, memref<64xi32>)
   hivm.hir.custom
       {extra_buffers_sizes = [32 : i64, 64 : i64],
        extra_buffers_types = [f32, i32],

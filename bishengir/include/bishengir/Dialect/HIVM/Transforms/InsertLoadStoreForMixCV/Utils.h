@@ -23,6 +23,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
 #include <optional>
@@ -48,6 +49,68 @@ struct AllocationResult {
   Value plainMemref; // Memref without address space (after cast)
 };
 
+//===----------------------------------------------------------------------===//
+// Propagation marker model
+//===----------------------------------------------------------------------===//
+//
+// Propagation uses `builtin.unrealized_conversion_cast` markers tagged with
+// `propagate_up` or `propagate_down`, plus `hivm.tcore_type` and
+// `hivm.address_space`.
+//
+//   propagate_up on operand O     requirement flows to O's producer
+//   propagate_down on result R    requirement flows to R's users
+//
+// InsertPropagation seeds markers on ops. PropagateUp/PropagateDown patterns
+// then walk the IR and mirror markers across region boundaries and structured
+// op boundaries until ResolvePropagation can insert loads/stores.
+//
+// Structured ops (DMA, CustomOp, CustomMacroOp) share one boundary rule:
+//
+//   Direction reached op via          Action on the structured op
+//   ------------------------          ---------------------------
+//   propagate_down -> operand         input/temp: up on matched operand only
+//                                     init:       up on matched init +
+//                                                 down on all results
+//   propagate_up   -> result          down on all results +
+//                                     up on all init operands
+//
+// Custom-like ops additionally map pipe(s) to scope at insert time:
+//   pipes[0]  -> inputs and temp_buffers (up)
+//   pipes[n-1] or pipes[0] when n==1 -> inits (up) and results (down)
+//
+//===----------------------------------------------------------------------===//
+
+/// Map a pipe to the core type and address space used for scope propagation.
+std::pair<TCoreType, hivm::AddressSpace>
+getPropagationInfoForPipe(hivm::PIPE pipe);
+
+/// Resolved in/out scopes derived from `pipes` (1 pipe: same in/out; 2 pipes:
+/// [inPipe, outPipe]).
+struct CustomOpPipePropagationInfo {
+  TCoreType inCoreType;
+  hivm::AddressSpace inAddressSpace;
+  TCoreType outCoreType;
+  hivm::AddressSpace outAddressSpace;
+};
+
+CustomOpPipePropagationInfo
+getCustomOpPropagationInfo(llvm::ArrayRef<hivm::PIPE> pipes);
+
+/// Seed propagation markers on CustomOp / CustomMacroOp from their pipe(s).
+void insertPropagatorsForCustomLikeOp(llvm::ArrayRef<hivm::PIPE> pipes,
+                                      Operation *op, PatternRewriter &rewriter);
+
+/// Mirror a down-propagator that reached `op` through operand `use`.
+LogicalResult
+propagateDownForCustomLikeOp(Operation *op, OpOperand *use,
+                             UnrealizedConversionCastOp propagateOp,
+                             PatternRewriter &rewriter);
+
+/// Mirror an up-propagator that reached `op` through one of its results.
+LogicalResult propagateUpForCustomLikeOp(Operation *op,
+                                         UnrealizedConversionCastOp propagateOp,
+                                         PatternRewriter &rewriter);
+
 /// Read core-type/address-space metadata carried by a propagation cast.
 std::pair<TCoreType, SmallVector<hivm::AddressSpace, 2>>
 extractPropagatorInfo(UnrealizedConversionCastOp propagateOp);
@@ -69,6 +132,7 @@ Value createPropagator(Value v, StringRef directionAttrName,
                        UnrealizedConversionCastOp propagateOp,
                        OpBuilder &builder);
 
+/// Tag `operand` with propagate_up and core/address metadata.
 void createPropagatorUp(OpOperand *operand, TCoreType coreType,
                         ArrayRef<hivm::AddressSpace> addressSpaces,
                         PatternRewriter &rewriter);
@@ -84,6 +148,7 @@ void createPropagatorUp(OpOperand *operand,
                         UnrealizedConversionCastOp propagateOp,
                         PatternRewriter &rewriter);
 
+/// Tag `res` (or its sole user) with propagate_down and core/address metadata.
 void createPropagatorDown(Value res, TCoreType coreType,
                           ArrayRef<hivm::AddressSpace> addressSpaces,
                           PatternRewriter &rewriter);
@@ -138,8 +203,11 @@ UnrealizedConversionCastOp getUpPropagator(OpOperand *operand);
 /// Return the down-propagator attached to a result, if present.
 UnrealizedConversionCastOp getDownPropagator(OpResult res);
 
-/// Insert a store that materializes `value` into local workspace.
-hivm::StoreOp insertStore(Value value, Location loc, PatternRewriter &rewriter);
+/// Insert a store that materializes `value` into a local buffer. UB targets use
+/// memref.alloc; GM workspace targets use memref_ext.alloc_workspace.
+hivm::StoreOp
+insertStore(Value value, Location loc, PatternRewriter &rewriter,
+            std::optional<hivm::AddressSpace> dstAddressSpace = std::nullopt);
 
 /// Insert a load that rematerializes `value` with matching element type.
 hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
@@ -151,8 +219,9 @@ std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBuffer
 std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToUB(Value value, Location loc, PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize);
 
 /// Convenience helper to insert store followed by load for `value`.
-std::pair<hivm::StoreOp, hivm::LoadOp>
-insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter);
+std::pair<hivm::StoreOp, hivm::LoadOp> insertStoreAndLoad(
+    Value value, Location loc, PatternRewriter &rewriter,
+    std::optional<hivm::AddressSpace> dstAddressSpace = std::nullopt);
 
 } // namespace PropagatorUtil
 
