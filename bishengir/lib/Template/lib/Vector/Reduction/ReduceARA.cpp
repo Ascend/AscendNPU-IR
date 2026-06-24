@@ -350,43 +350,19 @@ reduce_ara(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
     return;
   }
 
-  if (is_last_axis_contiguous && is_stride_aligned && (!is_offset_aligned) &&
-      reduction_is_same_element_nums_to_move_offset_aligned<T>(src0->offset,
-                                                               dst->offset)) {
-    int64_t elements_calc_by_scalar =
-        reduction_element_nums_to_move_offset_aligned<T>(src0->offset);
-
-    // Scalar fallback for the unaligned prefix
-    memref_t<__ubuf__ T, 3> scalar_src{
-        src0->allocated, src0->aligned, src0->offset,
-        {src0->sizes[0], src0->sizes[1], MIN(s2, elements_calc_by_scalar)},
-        {stride0, stride1, stride2}};
-    memref_t<__ubuf__ T, 3> scalar_dst{
-        dst->allocated, dst->aligned, dst->offset,
-        {dst->sizes[0], 1, MIN(s2, elements_calc_by_scalar)},
-        {dst_stride0, dst_stride1, dst_stride2}};
-    scalar_reduce_ara<OP, T>(&scalar_src, &scalar_dst);
-
-    if (s2 <= elements_calc_by_scalar) {
-      return;
+  for (int64_t i = 0; i < s0; ++i){
+      memref_t<__ubuf__ T, 2> src_slice{
+          src0->allocated, src0->aligned,
+          src0->offset + i * stride0,
+          {s1, s2},
+          {stride1, stride2}};
+      memref_t<__ubuf__ T, 2> dst_slice{
+          dst->allocated, dst->aligned,
+          dst->offset + i * dst_stride0,
+          {1, s2},
+          {dst_stride1, dst_stride2}};
+      reduce_ra<OP, T>(&src_slice, &dst_slice, tmp_buf, initvalue);
     }
-
-    // Vector path for the aligned remainder
-    memref_t<__ubuf__ T, 3> new_src{
-        src0->allocated, src0->aligned,
-        src0->offset + elements_calc_by_scalar,
-        {src0->sizes[0], src0->sizes[1], s2 - elements_calc_by_scalar},
-        {stride0, stride1, stride2}};
-    memref_t<__ubuf__ T, 3> new_dst{
-        dst->allocated, dst->aligned,
-        dst->offset + elements_calc_by_scalar,
-        {dst->sizes[0], 1, s2 - elements_calc_by_scalar},
-        {dst_stride0, dst_stride1, dst_stride2}};
-    reduce_ara_core<OP, T>(&new_src, &new_dst, tmp_buf, initvalue);
-    return;
-  }
-
-  scalar_reduce_ara<OP, T>(src0, dst);
 }
 
 extern "C" {
