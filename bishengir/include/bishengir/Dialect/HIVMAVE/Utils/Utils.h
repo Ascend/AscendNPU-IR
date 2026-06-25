@@ -24,6 +24,11 @@ Value castToDstVectorType(Value src, VectorType dstTy, OpBuilder &b);
 /// Get the indices that the given load/store operation is operating on.
 ValueRange getIndices(mlir::Operation *op);
 
+/// Compute the linearized memref offset from a set of indices and strides.
+/// The result type must be either index or an integer type.
+Value computeLinearMemRefOffset(OpBuilder &builder, Location loc, Value memref,
+                                ValueRange indices, Type resultType);
+
 /// Check whether the memref with indices is aligned by 32B.
 bool isLoadStoreIndexAligned(Value memrefVal,
                              mlir::Operation::operand_range indices);

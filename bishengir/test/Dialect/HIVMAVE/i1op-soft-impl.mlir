@@ -200,3 +200,135 @@ func.func @test_offset_beyond_vl(%arg0: memref<512xi1, #hivm.address_space<ub>>,
   }
   return
 }
+
+// CHECK-LABEL: func.func @test_rank2_singleton_i1
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: memref.extract_strided_metadata
+// CHECK: memref.reinterpret_cast
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.vsel
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.reduction <xori>
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
+func.func @test_rank2_singleton_i1(%arg0: memref<2x2xi1, strided<[256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %0 = ave.hir.pge <ALLF> : vector<256xi1>
+  %1 = ave.hir.pge <VL4> {mask_op_idx = 0 : i32} : vector<256xi1>
+  %c2 = arith.constant 2 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg1 = %c0 to %c2 step %c1 {
+    scf.for %arg2 = %c0 to %c2 step %c1 {
+      %subview = memref.subview %arg0[%arg1, %arg2] [1, 1] [1, 1] : memref<2x2xi1, strided<[256, 1]>, #hivm.address_space<ub>> to memref<1x1xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+      %res = ave.hir.vload <NORM> %subview[%c0, %c0] : memref<1x1xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>> into vector<256xi1>
+      %2 = ave.hir.vcmp <NE> %res, %0, %1 : vector<256xi1>, vector<256xi1> -> vector<256xi1>
+      annotation.mark %2 {mask_op_idx = 0 : i32} : vector<256xi1>
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @test_dynamic_strided_rank3_singleton_i1
+// CHECK-NOT: -9223372036854775808
+// CHECK: arith.addi
+// CHECK: arith.muli
+// CHECK: memref.extract_strided_metadata
+// CHECK: memref.reinterpret_cast
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.vsel
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.reduction <xori>
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
+func.func @test_dynamic_strided_rank3_singleton_i1(%arg0: memref<4x8x2xi1, strided<[?, 2, 1], offset: ?>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %0 = ave.hir.pge <ALLF> : vector<256xi1>
+  %1 = ave.hir.pge <VL4> {mask_op_idx = 0 : i32} : vector<256xi1>
+  %c4 = arith.constant 4 : index
+  %c2 = arith.constant 2 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg1 = %c0 to %c2 step %c1 {
+    scf.for %arg2 = %c0 to %c4 step %c1 {
+      %off0 = arith.addi %arg1, %c1 : index
+      %off1 = arith.muli %arg2, %c2 : index
+      %subview = memref.subview %arg0[%off0, %off1, %c1] [1, 1, 1] [1, 1, 1] : memref<4x8x2xi1, strided<[?, 2, 1], offset: ?>, #hivm.address_space<ub>> to memref<1x1x1xi1, strided<[?, 2, 1], offset: ?>, #hivm.address_space<ub>>
+      %res = ave.hir.vload <NORM> %subview[%c0, %c0, %c0] : memref<1x1x1xi1, strided<[?, 2, 1], offset: ?>, #hivm.address_space<ub>> into vector<256xi1>
+      %2 = ave.hir.vcmp <NE> %res, %0, %1 : vector<256xi1>, vector<256xi1> -> vector<256xi1>
+      annotation.mark %2 {mask_op_idx = 0 : i32} : vector<256xi1>
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @test_rank4_singleton_i1
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: memref.extract_strided_metadata
+// CHECK: memref.reinterpret_cast
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.vsel
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.reduction <xori>
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
+func.func @test_rank4_singleton_i1(%arg0: memref<2x3x4x5xi1, strided<[512, 128, 16, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %0 = ave.hir.pge <ALLF> : vector<256xi1>
+  %1 = ave.hir.pge <VL4> {mask_op_idx = 0 : i32} : vector<256xi1>
+  %c5 = arith.constant 5 : index
+  %c4 = arith.constant 4 : index
+  %c3 = arith.constant 3 : index
+  %c2 = arith.constant 2 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg1 = %c0 to %c2 step %c1 {
+    scf.for %arg2 = %c0 to %c3 step %c1 {
+      scf.for %arg3 = %c0 to %c4 step %c1 {
+        scf.for %arg4 = %c0 to %c5 step %c1 {
+          %subview = memref.subview %arg0[%arg1, %arg2, %arg3, %arg4] [1, 1, 1, 1] [1, 1, 1, 1] : memref<2x3x4x5xi1, strided<[512, 128, 16, 1]>, #hivm.address_space<ub>> to memref<1x1x1x1xi1, strided<[512, 128, 16, 1], offset: ?>, #hivm.address_space<ub>>
+          %res = ave.hir.vload <NORM> %subview[%c0, %c0, %c0, %c0] : memref<1x1x1x1xi1, strided<[512, 128, 16, 1], offset: ?>, #hivm.address_space<ub>> into vector<256xi1>
+          %2 = ave.hir.vcmp <NE> %res, %0, %1 : vector<256xi1>, vector<256xi1> -> vector<256xi1>
+          annotation.mark %2 {mask_op_idx = 0 : i32} : vector<256xi1>
+        }
+      }
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @test_unit_dims_rank4_singleton_i1
+// CHECK: arith.muli
+// CHECK: arith.addi
+// CHECK: memref.extract_strided_metadata
+// CHECK: memref.reinterpret_cast
+// CHECK: ave.hir.vload
+// CHECK: ave.hir.vsel
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.plt
+// CHECK: ave.hir.preg.xor
+// CHECK: ave.hir.reduction <xori>
+// CHECK: ave.hir.vector_broadcast
+// CHECK: ave.hir.vcmp
+func.func @test_unit_dims_rank4_singleton_i1(%arg0: memref<1x2x1x4xi1, strided<[512, 128, 64, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %0 = ave.hir.pge <ALLF> : vector<256xi1>
+  %1 = ave.hir.pge <VL4> {mask_op_idx = 0 : i32} : vector<256xi1>
+  %c4 = arith.constant 4 : index
+  %c2 = arith.constant 2 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg1 = %c0 to %c2 step %c1 {
+    scf.for %arg2 = %c0 to %c4 step %c1 {
+      %subview = memref.subview %arg0[%c0, %arg1, %c0, %arg2] [1, 1, 1, 1] [1, 1, 1, 1] : memref<1x2x1x4xi1, strided<[512, 128, 64, 1]>, #hivm.address_space<ub>> to memref<1x1x1x1xi1, strided<[512, 128, 64, 1], offset: ?>, #hivm.address_space<ub>>
+      %res = ave.hir.vload <NORM> %subview[%c0, %c0, %c0, %c0] : memref<1x1x1x1xi1, strided<[512, 128, 64, 1], offset: ?>, #hivm.address_space<ub>> into vector<256xi1>
+      %2 = ave.hir.vcmp <NE> %res, %0, %1 : vector<256xi1>, vector<256xi1> -> vector<256xi1>
+      annotation.mark %2 {mask_op_idx = 0 : i32} : vector<256xi1>
+    }
+  }
+  return
+}
