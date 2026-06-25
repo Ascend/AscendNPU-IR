@@ -109,10 +109,6 @@ createHFusionAutoVectorizePass(const AutoVectorizeOptions &options = {});
 /// Create a pass to handle non-vectorizeable linalg.generic cases
 std::unique_ptr<Pass> createGenericUnrollerPass();
 
-/// Post-vectorize normalization: replace broadcast transfer_read on i1 with
-/// non-broadcast read + sitofp to f16 + vector.broadcast + arith.cmpf une 0.
-std::unique_ptr<Pass> createPostVectorizationNormalizationPass();
-
 /// Create a pass that pulls extract_slice/insert_slice into VF callees.
 std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
 

@@ -104,13 +104,6 @@ def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
                          "vector::VectorDialect"];
 }
 
-def PostVectorizationNormalization : Pass<"hfusion-post-vectorization-normalization", "func::FuncOp"> {
-  let summary = "Post-vectorize normalization: replace broadcast transfer_read on i1 with non-broadcast read + sitofp to f16 + vector.broadcast + arith.cmpf une 0 chain";
-  let constructor = "mlir::hfusion::createPostVectorizationNormalizationPass()";
-  let dependentDialects = ["arith::ArithDialect",
-                           "vector::VectorDialect"];
-}
-
 def PullSliceIntoVectorFunction : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
   let summary = "Pull tensor.extract_slice/tensor.insert_slice into VF callees to reduce buffer copies";
   let constructor = "mlir::hfusion::createPullSliceIntoVectorFunctionPass()";
