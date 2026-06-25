@@ -368,6 +368,16 @@ def ConvertHIVMAVEToStandard : Pass<"convert-hivmave-to-std", "ModuleOp"> {
   let dependentDialects = ["func::FuncDialect", "memref::MemRefDialect", "scf::SCFDialect", "LLVM::LLVMDialect"];
 }
 
+//===----------------------------------------------------------------------===//
+// FixCallUnknownLoc
+//===----------------------------------------------------------------------===//
+
+def FixCallUnknownLoc : Pass<"fix-call-unknown-loc", "func::FuncOp"> {
+  let summary = "Fix UnknownLoc on call ops by inheriting location from users or parent ops";
+  let constructor = "mlir::createFixCallUnknownLocPass()";
+  let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect"];
+}
+
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS
 //===----------------------------------------------------------------------===//
 // Torch conversions

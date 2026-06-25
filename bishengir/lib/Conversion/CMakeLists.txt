@@ -21,6 +21,7 @@ add_subdirectory(HFusionToVector)
 add_subdirectory(GPUToDPX)
 add_subdirectory(HIVMAVEToAVEIntrin)
 add_subdirectory(HIVMAVEToStandard)
+add_subdirectory(FixCallUnknownLoc)
 add_subdirectory(HIVMToStandard)
 add_subdirectory(HIVMToTritonGPU)
 

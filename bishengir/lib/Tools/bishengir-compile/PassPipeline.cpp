@@ -9,6 +9,10 @@
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
+#include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
+#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
 #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
@@ -261,6 +265,7 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   hivm::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
+  pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
   pm.addPass(hivmave::createHoistVstasPass());

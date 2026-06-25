@@ -728,4 +728,5 @@ def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::Func
   let summary = "Fold Extract Insert Pair.";
   let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
 }
+
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES
