@@ -37,10 +37,21 @@ scalar_select_vv_1d(memref_t<__ubuf__ COND_T, 1> *condition,
   __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
   __ubuf__ T *src1_ptr = src1->aligned + src1->offset;
   __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+  __ubuf__ COND_T *cond_ptr = condition->aligned + condition->offset;
   const int64_t n = dst->sizes[0];
+  bool cond = false;
 
   for (int64_t i = 0; i < n; ++i) {
-    bool cond = get_condition_bit<COND_T>(condition, i);
+    if constexpr (std::is_same_v<COND_T, bool>) {
+      cond = get_condition_bit<COND_T>(condition, i);
+    } else {
+      if constexpr (std::is_same_v<T, int64_t>) {
+        COND_T cond_value = cond_ptr[i * condition->strides[0]];
+        cond = (cond_value == 0) ? false : true;
+      } else {
+        cond = get_condition_bit<COND_T>(condition, i);
+      }
+    }
     T val0 = src0_ptr[i * src0->strides[0]];
     T val1 = src1_ptr[i * src1->strides[0]];
     dst_ptr[i * dst->strides[0]] = cond ? val0 : val1;
