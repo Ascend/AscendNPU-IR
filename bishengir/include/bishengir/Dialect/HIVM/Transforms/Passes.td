@@ -785,7 +785,9 @@ def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
 def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let summary = "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
   let constructor = "mlir::hivm::createCVPipeliningPass()";
-  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect", "mlir::scope::ScopeDialect"];
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "mlir::scope::ScopeDialect",
+                           "annotation::AnnotationDialect"];
   let options = [
       Option<"enableSkewMode", "enable-skew-mode", "bool",
             /*default=*/"false",

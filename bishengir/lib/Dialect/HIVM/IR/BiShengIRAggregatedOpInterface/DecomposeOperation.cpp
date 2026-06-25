@@ -430,6 +430,64 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
   auto allocMemRefType = dyn_cast<MemRefType>(allocOp.getType());
   if (!allocMemRefType)
     return failure();
+  // The cv-pipelining pass marks multi-buffered allocs with an
+  // `annotation.mark` carrying `hivm.cv_pipelined_multi_buffer`. In
+  // that case `dst` is the current tile inside one slot of a multi-slot
+  // alloc. Padding the whole alloc would clobber sibling slots being
+  // consumed concurrently by other pipeline stages, while padding only
+  // `dst` would leave the rest of the current slot uninitialized.
+  //
+  // The cv-pipelining pass always materializes the multi-buffer slot
+  // as a fresh *leading* axis: it prepends `numMultibuffer` to the
+  // original alloc shape (see CVPipelineImpl::expandOutputInits in
+  // CVPipelining.cpp). Trust the marker as a contract — dim 0 is the
+  // slot dim; every other dim is within-slot. Build a fresh subview
+  // of the alloc where:
+  //   * dim 0 borrows the dst subview's offset and size (pins the
+  //     current slot);
+  //   * every other dim explicitly starts at offset 0 with the
+  //     alloc's full extent for size — so even if the dst subview
+  //     happens to be a partial within-slot tile with non-zero
+  //     within-slot offsets, vbrc still covers the entire current
+  //     slot;
+  //   * strides reuse the dst subview's (cv-pipelining produces
+  //     unit-step subviews; passing them through preserves that).
+  // Otherwise fall back to the legacy "pad the whole alloc" behavior.
+  auto maybeMarked = utils::getAnnotateOpWithAttr(
+      alloc, hivm::CVPipelinedMultiBufferAttr::name);
+  if (maybeMarked.has_value()) {
+    if (auto subview = dst.getDefiningOp<memref::SubViewOp>();
+        subview && subview.getSource() == alloc) {
+      auto allocSizes = allocOp.getMixedSizes();
+      auto subOffsets = subview.getMixedOffsets();
+      auto subSizes = subview.getMixedSizes();
+      if (!subSizes.empty()) {
+        Location loc = alloc.getLoc();
+        SmallVector<OpFoldResult> newOffsets;
+        SmallVector<OpFoldResult> newSizes;
+        newOffsets.reserve(subOffsets.size());
+        newSizes.reserve(subSizes.size());
+        // dim 0 (slot): borrow from the dst subview.
+        newOffsets.push_back(subOffsets.front());
+        newSizes.push_back(subSizes.front());
+        // remaining dims (within-slot): start at 0, cover the
+        // alloc's full extent.
+        OpFoldResult zero = b.getIndexAttr(0);
+        for (auto a : llvm::drop_begin(allocSizes)) {
+          newOffsets.push_back(zero);
+          newSizes.push_back(a);
+        }
+        // Don't copy the dst's rank-reduction pattern — let
+        // SubViewOp::build infer the canonical full-rank result type
+        // from source + offsets/sizes/strides. vbrc accepts any rank;
+        // what matters is the physical region (offset/sizes/strides),
+        // which now exactly covers the current slot.
+        return b.create<memref::SubViewOp>(loc, alloc, newOffsets, newSizes,
+                                           subview.getMixedStrides()).getResult();
+      }
+    }
+  }
+
   if (allocMemRefType.getElementType() == dstMemRefType.getElementType())
     return alloc;
 

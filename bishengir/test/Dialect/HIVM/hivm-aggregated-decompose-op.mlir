@@ -695,6 +695,42 @@ func.func @test_unaligned_i1_subview(%offset: index) {
 }
 
 // -----
+// When the nd2nz dst is a subview of an alloc carrying an
+// `annotation.mark` with the `hivm.cv_pipelined_multi_buffer` attribute
+// (stamped by the cv-pipelining pass on its expanded multi-buffer
+// storage), the decompose must materialize a fresh subview of the
+// alloc that pins the slot dim to the current slot (size 1) but
+// expands every within-slot dim to the alloc's full extent, and use
+// that subview as the vbrc destination. Targeting the whole alloc
+// would clobber sibling slots in flight; targeting only the dst tile
+// would leave the rest of the current slot uninitialized.
+//
+// In this case the dst subview already covers the entire slot (every
+// non-slot size equals the corresponding alloc size), so the
+// materialized subview is geometrically equivalent to the dst, but it
+// is still emitted as a fresh SubViewOp off the alloc (CSE may dedup
+// it later).
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_cv_pipelined_multibuf_slot
+// AFTERLAYOUT-SAME:  %[[ARG0:.+]]: {{.*}}, %[[SLOT:.+]]: index, %[[COND:.+]]: i1
+func.func @nd2nz_cv_pipelined_multibuf_slot(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  annotation.mark %alloc {hivm.cv_pipelined_multi_buffer} : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1]
+    : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+     to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT:      %[[VBRC_DST:.+]] = memref.subview %alloc[%[[SLOT]], 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1] : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>> to memref<1x4x2x16x8xf32, strided<[1024, 256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT-NOT:  outs(%alloc :
+  // AFTERLAYOUT:      scf.if %[[COND]] {
+  // AFTERLAYOUT-NEXT:   hivm.hir.vbrc {{.*}} outs(%[[VBRC_DST]] :
+  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT:      hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
+  return
+}
+
+// -----
 // AFTERLAYOUT-LABEL: func @test_aligned_i1_subview
 func.func @test_aligned_i1_subview(%offset: index) {
   %alloc = memref.alloc() : memref<64x512xi1, #hivm.address_space<ub>>
@@ -706,5 +742,103 @@ func.func @test_aligned_i1_subview(%offset: index) {
   // AFTERLAYOUT-NOT: hivm.hir.vcast
   hivm.hir.copy ins(%subview : memref<64x256xi1, strided<[512, 1], offset: ?>, #hivm.address_space<ub>>)
                 outs(%dst : memref<64x256xi1, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+// When the dst subview covers only a *partial* within-slot tile (some
+// non-slot dim sizes are smaller than the alloc's), the decompose must
+// expand those within-slot dims to the alloc's full extent in the vbrc
+// target, so the pre-load padding covers the entire current slot — not
+// just the partial tile. The slot dim itself stays pinned to size 1 to
+// avoid touching sibling slots.
+//
+// Here:
+//   alloc      : 2 x 4 x 2 x 16 x 8     (slot dim = 0)
+//   dst tile   : 1 x %tileN x 2 x 16 x 8  (within-slot dim 1 is dynamic
+//                                          / smaller than alloc dim 1)
+//   vbrc tile  : 1 x 4 x 2 x 16 x 8     (within-slot dim 1 expanded
+//                                          to the alloc's full extent)
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_cv_pipelined_partial_tile_targets_full_slot
+// AFTERLAYOUT-SAME:  %[[ARG0:.+]]: {{.*}}, %[[SLOT:.+]]: index, %[[TILEN:.+]]: index, %[[COND:.+]]: i1
+func.func @nd2nz_cv_pipelined_partial_tile_targets_full_slot(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %tileN: index, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  annotation.mark %alloc {hivm.cv_pipelined_multi_buffer} : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, %tileN, 2, 16, 8] [1, 1, 1, 1, 1]
+    : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+     to memref<?x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // The materialized vbrc subview must use the alloc's full size 4
+  // for the partial-tile dim (dim 1), not the dynamic %tileN, and the
+  // slot dim must stay pinned to size 1.
+  // AFTERLAYOUT:      %[[VBRC_DST:.+]] = memref.subview %alloc[%[[SLOT]], 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1] : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>> to memref<1x4x2x16x8xf32, strided<[1024, 256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT-NOT:  outs(%alloc :
+  // AFTERLAYOUT:      scf.if %[[COND]] {
+  // AFTERLAYOUT-NEXT:   hivm.hir.vbrc {{.*}} outs(%[[VBRC_DST]] :
+  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT:      hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<?x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<?x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
+  return
+}
+
+// -----
+// cv-pipelining strictly prepends the slot axis at dim 0
+// (CVPipelineImpl::expandOutputInits in CVPipelining.cpp: it builds
+// `newShape = [numMultibuffer] + origShape`). Therefore only dim 0 is
+// the slot dim — a within-slot dim whose subview size happens to be 1
+// is NOT a slot, it is a partial tile of 1 element that must still be
+// expanded to the alloc's full extent.
+//
+// Here:
+//   alloc      : 2 x 8 x 1 x 16 x 8     (slot dim = 0)
+//   dst tile   : 1 x 1 x 1 x 16 x 8     (within-slot dim 1 has size 1
+//                                        — partial tile, not a slot)
+//   vbrc tile  : 1 x 8 x 1 x 16 x 8     (within-slot dim 1 expanded
+//                                        to alloc's full extent 8)
+//
+// A naive "size-1 anywhere" heuristic would misidentify dim 1 as a
+// slot and pin it to size 1, leaving 7/8 of the current slot
+// uninitialized; this test locks in the dim-0-only rule.
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_cv_pipelined_within_slot_size_one_not_misidentified
+// AFTERLAYOUT-SAME:  %[[ARG0:.+]]: {{.*}}, %[[SLOT:.+]]: index, %[[COND:.+]]: i1
+func.func @nd2nz_cv_pipelined_within_slot_size_one_not_misidentified(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<2x8x1x16x8xf32, #hivm.address_space<cbuf>>
+  annotation.mark %alloc {hivm.cv_pipelined_multi_buffer} : memref<2x8x1x16x8xf32, #hivm.address_space<cbuf>>
+  %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, 1, 1, 16, 8] [1, 1, 1, 1, 1]
+    : memref<2x8x1x16x8xf32, #hivm.address_space<cbuf>>
+     to memref<1x1x16x8xf32, strided<[1024, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // The vbrc subview's dim 1 must be 8 (alloc full extent), not 1.
+  // AFTERLAYOUT:      %[[VBRC_DST:.+]] = memref.subview %alloc[%[[SLOT]], 0, 0, 0, 0] [1, 8, 1, 16, 8] [1, 1, 1, 1, 1] : memref<2x8x1x16x8xf32, #hivm.address_space<cbuf>> to memref<1x8x1x16x8xf32, strided<[1024, 128, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT-NOT:  outs(%alloc :
+  // AFTERLAYOUT:      scf.if %[[COND]] {
+  // AFTERLAYOUT-NEXT:   hivm.hir.vbrc {{.*}} outs(%[[VBRC_DST]] :
+  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT:      hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<1x1x16x8xf32, strided<[1024, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<1x1x16x8xf32, strided<[1024, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
+  return
+}
+
+// -----
+// Without any `annotation.mark` carrying `hivm.cv_pipelined_multi_buffer`
+// on the alloc, even when dst is a subview of the alloc, the vbrc must
+// target the whole alloc — preserving the legacy "pad the whole backing
+// buffer" behavior for non-pipelined kernels (e.g. matmul preamble)
+// that rely on it.
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_unmarked_alloc_subview_targets_whole_alloc
+func.func @nd2nz_unmarked_alloc_subview_targets_whole_alloc(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %slot: index, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+  %subview = memref.subview %alloc[%slot, 0, 0, 0, 0] [1, 4, 2, 16, 8] [1, 1, 1, 1, 1]
+    : memref<2x4x2x16x8xf32, #hivm.address_space<cbuf>>
+     to memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT: scf.if %{{.*}} {
+  // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%alloc
+  // AFTERLAYOUT-NEXT: }
+  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>)
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%subview : memref<4x2x16x8xf32, strided<[256, 128, 8, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
   return
 }

@@ -1130,6 +1130,19 @@ def HIVM_MultiBufferAttr : HIVM_Attr<"MultiBuffer", "multi_buffer"> {
   }];
 }
 
+def HIVM_CVPipelinedMultiBufferAttr
+    : HIVM_Attr<"CVPipelinedMultiBuffer", "cv_pipelined_multi_buffer"> {
+  let description = [{
+    Marks a `memref.alloc` as a multi-buffered storage produced by the
+    cv-pipelining transformation. The leading dimension is the slot
+    dimension (one slot per pipeline stage); sibling slots may be in
+    concurrent use by other pipeline stages, so any pre-init / pad
+    operation derived from the aggregated `hivm.hir.nd2nz` (or similar)
+    must target only the current slot tile (the subview that drives the
+    consumer op), never the whole alloc.
+  }];
+}
+
 def HIVM_StrideAlignValueAttr : HIVM_Attr<"StrideAlignDims", "stride_align_dims"> {
   let description = [{
     HIVM stride align dims.
