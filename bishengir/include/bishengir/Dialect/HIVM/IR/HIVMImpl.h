@@ -555,9 +555,6 @@ Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
                        Type elemType);
 
 bool isCopytoL1(Operation *op);
-
-bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp, Operation *hookOp = nullptr);
-
 } // namespace hivm
 } // namespace mlir
 
