@@ -226,9 +226,10 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
     Value lhsTensor =
         castAtomicOpToF32IfFp8<Traits>(rewriter, loc, lhsBuffer.toStaticTensor(),
                              gmMemref.getType(), /*isForward=*/true);
-    FailureOr<Value> maybeResult =
-        Traits::createStoreBinary(rewriter, loc, op, lhsTensor, rhsTensor,
-                                  lhsTensor);
+    Value binOpResultBuffer = rewriter.create<tensor::EmptyOp>(
+        loc, lhsTensor.getType(), ValueRange({}));
+    FailureOr<Value> maybeResult = Traits::createStoreBinary(
+        rewriter, loc, op, lhsTensor, rhsTensor, binOpResultBuffer);
     if (failed(maybeResult))
       return failure();
 
