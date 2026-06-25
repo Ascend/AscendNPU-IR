@@ -355,6 +355,20 @@ public:
     if (!subview)
       return failure();
 
+    // Dynamic offsets or non-zero offsets are not supported.
+    auto offsets = subview.getStaticOffsets();
+    if (llvm::any_of(offsets, [](int64_t offset) {
+          return ShapedType::isDynamic(offset) || offset != 0;
+        }))
+      return failure();
+
+    // Dynamic strides or non-unit strides are not supported.
+    auto strides = subview.getStaticStrides();
+    if (llvm::any_of(strides, [](int64_t stride) {
+          return ShapedType::isDynamic(stride) || stride != 1;
+        }))
+      return failure();
+
     rewriter.setInsertionPoint(subview);
     rewriter.replaceOpWithNewOp<memref::AllocOp>(
         subview, subview.getMixedSizes(),

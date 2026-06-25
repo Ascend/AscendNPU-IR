@@ -663,3 +663,98 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
  	     return
  	   }
  	 }
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  func.func @test_shrink_alloc_positive() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    // CHECK-CUBE: memref.alloc() : memref<64x64xf16>
+    // CHECK-CUBE-NOT: memref.subview
+    %alloc = memref.alloc() : memref<128x64xf16>
+    %subview = memref.subview %alloc[0, 0] [64, 64] [1, 1] : memref<128x64xf16> to memref<64x64xf16>
+    hivm.hir.vadd ins(%subview, %subview : memref<64x64xf16>, memref<64x64xf16>) outs(%subview : memref<64x64xf16>)
+    %res = scf.for %iv = %c0 to %c10 step %c1 iter_args(%arg = %c0) -> (index) {
+      scf.yield %arg : index
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    return
+  }
+}
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  func.func @test_shrink_alloc_nonzero_offset() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    // CHECK-CUBE: memref.alloc() : memref<128x64xf16>
+    // CHECK-CUBE: memref.subview
+    %alloc = memref.alloc() : memref<128x64xf16>
+    %subview = memref.subview %alloc[64, 0] [64, 64] [1, 1] : memref<128x64xf16> to memref<64x64xf16, strided<[64, 1], offset: 4096>>
+    hivm.hir.vadd ins(%subview, %subview : memref<64x64xf16, strided<[64, 1], offset: 4096>>, memref<64x64xf16, strided<[64, 1], offset: 4096>>) outs(%subview : memref<64x64xf16, strided<[64, 1], offset: 4096>>)
+    %res = scf.for %iv = %c0 to %c10 step %c1 iter_args(%arg = %c0) -> (index) {
+      scf.yield %arg : index
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    return
+  }
+}
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  func.func @test_shrink_alloc_dynamic_offset(%off: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    // CHECK-CUBE: memref.alloc() : memref<128x64xf16>
+    // CHECK-CUBE: memref.subview
+    %alloc = memref.alloc() : memref<128x64xf16>
+    %subview = memref.subview %alloc[%off, 0] [64, 64] [1, 1] : memref<128x64xf16> to memref<64x64xf16, strided<[64, 1], offset: ?>>
+    hivm.hir.vadd ins(%subview, %subview : memref<64x64xf16, strided<[64, 1], offset: ?>>, memref<64x64xf16, strided<[64, 1], offset: ?>>) outs(%subview : memref<64x64xf16, strided<[64, 1], offset: ?>>)
+    %res = scf.for %iv = %c0 to %c10 step %c1 iter_args(%arg = %c0) -> (index) {
+      scf.yield %arg : index
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    return
+  }
+}
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  func.func @test_shrink_alloc_nonunit_stride() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    // CHECK-CUBE: memref.alloc() : memref<128x64xf16>
+    // CHECK-CUBE: memref.subview
+    %alloc = memref.alloc() : memref<128x64xf16>
+    %subview = memref.subview %alloc[0, 0] [64, 64] [2, 1] : memref<128x64xf16> to memref<64x64xf16, strided<[128, 1]>>
+    hivm.hir.vadd ins(%subview, %subview : memref<64x64xf16, strided<[128, 1]>>, memref<64x64xf16, strided<[128, 1]>>) outs(%subview : memref<64x64xf16, strided<[128, 1]>>)
+    %res = scf.for %iv = %c0 to %c10 step %c1 iter_args(%arg = %c0) -> (index) {
+      scf.yield %arg : index
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    return
+  }
+}
+
+// -----
+
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"L0C_SIZE", 1048576 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>>>} {
+  func.func @test_shrink_alloc_dynamic_stride(%st: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c10 = arith.constant 10 : index
+    // CHECK-CUBE: memref.alloc() : memref<128x64xf16>
+    // CHECK-CUBE: memref.subview
+    %alloc = memref.alloc() : memref<128x64xf16>
+    %subview = memref.subview %alloc[0, 0] [64, 64] [%st, 1] : memref<128x64xf16> to memref<64x64xf16, strided<[?, 1]>>
+    hivm.hir.vadd ins(%subview, %subview : memref<64x64xf16, strided<[?, 1]>>, memref<64x64xf16, strided<[?, 1]>>) outs(%subview : memref<64x64xf16, strided<[?, 1]>>)
+    %res = scf.for %iv = %c0 to %c10 step %c1 iter_args(%arg = %c0) -> (index) {
+      scf.yield %arg : index
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>}
+    return
+  }
+}
