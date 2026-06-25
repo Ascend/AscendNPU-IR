@@ -8,6 +8,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "llvm/ADT/STLExtras.h"
@@ -102,6 +103,126 @@ public:
   }
 };
 
+/// Fold redundant extract_slice -> transfer_write -> insert_slice pattern:
+///
+///   %slice = tensor.extract_slice %src[offsets] [sizes] [strides]
+///            : tensor<...> to tensor<?x...>
+///   %written = vector.transfer_write %vec, %slice[offsets] {mask}
+///              : vector<...>, tensor<?x...>
+///   %result = tensor.insert_slice %written into %slice[offsets] [sizes]
+///   [strides]
+///             : tensor<?x...> into tensor<?x...>
+///
+/// into:
+///
+///   %result = %written
+///
+/// This pattern matches when:
+/// 1. %slice is defined by tensor.extract_slice
+/// 2. %written is defined by vector.transfer_write to %slice at the same offsets
+/// 3. %result is tensor.insert_slice of %written into %slice at the same offsets
+/// 4. The sizes and strides of extract_slice and insert_slice match
+///
+/// This is redundant because %written already has the same shape as %slice,
+/// and inserting it back at offset [0,0] with the same size is a no-op.
+class FoldExtractSliceInsertSlice
+    : public OpRewritePattern<tensor::InsertSliceOp> {
+public:
+  using OpRewritePattern<tensor::InsertSliceOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::InsertSliceOp insertOp,
+                                PatternRewriter &rewriter) const override {
+    Value source = insertOp.getSource();
+    Value dest = insertOp.getDest();
+    auto transferWriteOp = source.getDefiningOp<vector::TransferWriteOp>();
+    if (!transferWriteOp)
+      return rewriter.notifyMatchFailure(
+          insertOp, "source is not defined by vector.transfer_write");
+
+    auto tensorValue = transferWriteOp.getSource();
+    auto extractSliceOp = tensorValue.getDefiningOp<tensor::ExtractSliceOp>();
+    if (!extractSliceOp)
+      return rewriter.notifyMatchFailure(
+          insertOp,
+          "transfer_write dest is not defined by tensor.extract_slice");
+
+    if (extractSliceOp.getResult() != dest) {
+      return rewriter.notifyMatchFailure(
+          insertOp,
+          "extract_slice and insert_slice operate on different tensors");
+    }
+
+    // Check if transfer_write indices match insert_slice offsets
+    auto writeIndices = transferWriteOp.getIndices();
+    auto insertOffsets = insertOp.getMixedOffsets();
+    if (writeIndices.size() != insertOffsets.size()) {
+      return rewriter.notifyMatchFailure(insertOp, "offset sizes differ");
+    }
+
+    for (auto [writeIdx, insertOff] :
+         llvm::zip(writeIndices, insertOffsets)) {
+      auto writeInt = mlir::getConstantIntValue(writeIdx);
+      auto insertInt = mlir::getConstantIntValue(insertOff);
+
+      if (writeInt && insertInt) {
+        if (writeInt.value() == insertInt.value())
+          continue;
+        return rewriter.notifyMatchFailure(insertOp, "offsets do not match");
+      }
+
+      // For dynamic values, require exact match
+      if (auto insertVal =
+              mlir::dyn_cast_if_present<mlir::Value>(insertOff)) {
+        if (writeIdx != insertVal) {
+          return rewriter.notifyMatchFailure(insertOp, "offsets do not match");
+        }
+      } else {
+        return rewriter.notifyMatchFailure(insertOp, "offsets do not match");
+      }
+    }
+
+    // Check if extract_slice sizes match insert_slice sizes
+    auto extractSizes = extractSliceOp.getMixedSizes();
+    auto insertSizes = insertOp.getMixedSizes();
+    if (extractSizes.size() != insertSizes.size()) {
+      return rewriter.notifyMatchFailure(insertOp, "size ranks differ");
+    }
+
+    for (auto [extractSz, insertSz] :
+         llvm::zip(extractSizes, insertSizes)) {
+      auto extractInt = mlir::getConstantIntValue(extractSz);
+      auto insertInt = mlir::getConstantIntValue(insertSz);
+
+      if (extractInt && insertInt) {
+        if (extractInt.value() != insertInt.value()) {
+          return rewriter.notifyMatchFailure(insertOp, "sizes do not match");
+        }
+      } else if (extractSz != insertSz) {
+        // For dynamic sizes, require exact value match
+        auto extractVal =
+            mlir::dyn_cast_if_present<mlir::Value>(extractSz);
+        auto insertVal =
+            mlir::dyn_cast_if_present<mlir::Value>(insertSz);
+        if (!extractVal || !insertVal || extractVal != insertVal) {
+          return rewriter.notifyMatchFailure(insertOp, "sizes do not match");
+        }
+      }
+    }
+
+    // Check if strides match (all should be 1 for this pattern)
+    auto insertStrides = insertOp.getMixedStrides();
+    for (auto insertStride : insertStrides) {
+      auto strideInt = mlir::getConstantIntValue(insertStride);
+      if (!strideInt || strideInt.value() != 1) {
+        return rewriter.notifyMatchFailure(insertOp, "strides must be 1");
+      }
+    }
+
+    rewriter.replaceOp(insertOp, source);
+    return success();
+  }
+};
+
 struct FoldExtractInsertPairPass
     : public impl::FoldExtractInsertPairBase<FoldExtractInsertPairPass> {
   void runOnOperation() override;
@@ -113,6 +234,7 @@ void FoldExtractInsertPairPass::runOnOperation() {
   auto *ctx = &getContext();
   RewritePatternSet patterns(ctx);
   patterns.add<FoldExtractInsertPair>(ctx);
+  patterns.add<FoldExtractSliceInsertSlice>(ctx);
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     signalPassFailure();
   }

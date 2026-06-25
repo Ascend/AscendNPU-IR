@@ -212,6 +212,9 @@ bufferizationPipeline(OpPassManager &pm,
     pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
   }
   pm.addPass(hfusion::createSimplifyVFArgsPass());
+  // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
+  // before bufferization to avoid unnecessary memref operations
+  pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
