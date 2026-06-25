@@ -78,8 +78,8 @@ LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
 
   if (op.getDmaMode() == FixpipeDMAMode::NZ2DN) {
     /// FIXME: please double checkout the constraint of nz2dn.
-    constexpr int64_t nz2dnRowSplitConstraint = 8;
-    constexpr int64_t nz2dnColSplitConstraint = 8;
+    constexpr int64_t nz2dnRowSplitConstraint = 2;
+    constexpr int64_t nz2dnColSplitConstraint = 32;
     if (tilingDim == rank - 2) {
       splitMode = FixpipeDualDstMode::COLUMN_SPLIT;
       constraints = nz2dnColSplitConstraint;
