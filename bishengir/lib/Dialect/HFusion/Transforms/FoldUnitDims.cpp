@@ -1575,7 +1575,18 @@ struct DropUnitDimsLinalgOp
     if (rewriteNoOpReduce(rewriter, linalgOp)) {
       return success();
     }
-
+    // Skip reduce with 1x dtype output to avoid scalar
+    auto reduce = dyn_cast<linalg::ReduceOp>(linalgOp.getOperation());
+    if (reduce && reduce.hasPureTensorSemantics()) {
+      for (auto result : reduce->getResults()) {
+        auto resultTy = dyn_cast<RankedTensorType>(result.getType());
+        if (resultTy && resultTy.getRank() == 1 &&
+            resultTy.getShape()[0] == 1) {
+          return rewriter.notifyMatchFailure(
+              linalgOp, "Skip reduce with 1x dtype output to avoid scalar");
+        }
+      }
+    }
     if (shouldSkip(linalgOp.getOperation())) {
       return rewriter.notifyMatchFailure(linalgOp,
                                          "Do not process ops inside scope");
