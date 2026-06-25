@@ -49,8 +49,16 @@ struct EventIdInfo {
   Loop *multibufferLoop{nullptr};
   Loop *multibufferUnrollLoop1{nullptr};
   Loop *multibufferUnrollLoop2{nullptr};
-  EventIdInfo(){};
-  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum){};
+  bool cannotRepeatFlagId{false};
+  bool isCVPipeline{false};
+  bool isCVPreload{false};
+  EventIdInfo() {};
+  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum) {};
+
+  void useRepeatFlagId() {
+    eventIdRepeatNum = eventIdNum;
+    eventIdNum = 1;
+  }
 };
 
 enum struct OpType {

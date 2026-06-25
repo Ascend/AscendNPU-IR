@@ -672,10 +672,25 @@ Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
   }
   assert(parentLoop1->multibufferUnrollNum.value() ==
          parentLoop2->multibufferUnrollNum.value());
+  // dynamic loop: eventId -> attr, disable repeat flag id
+  // constant loop: eventId -> loop trip count
+  auto multibufferUnrollLoop1 = cast<LoopLikeOpInterface>(parentLoop1->op);
+  auto multibufferUnrollLoop2 = cast<LoopLikeOpInterface>(parentLoop2->op);
+  int64_t multibufferUnrollNum = parentLoop1->multibufferUnrollNum.value();
+  std::optional<int64_t> loopCount1 = getStaticLoopCount(multibufferUnrollLoop1);
+  std::optional<int64_t> loopCount2 = getStaticLoopCount(multibufferUnrollLoop2);
+  bool staticLoopCount = loopCount1.has_value() && loopCount2.has_value() &&
+                         loopCount1.value() == loopCount2.value();
+
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = parentLoop1->multibufferUnrollNum.value();
   eventIdInfo.multibufferUnrollLoop1 = parentLoop1;
   eventIdInfo.multibufferUnrollLoop2 = parentLoop2;
+  eventIdInfo.isCVPipeline = true;
+  eventIdInfo.eventIdNum =
+      staticLoopCount ? std::min(multibufferUnrollNum, loopCount1.value())
+                      : multibufferUnrollNum;
+  eventIdInfo.cannotRepeatFlagId = !staticLoopCount;
   return eventIdInfo;
 }
 
@@ -729,6 +744,7 @@ Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
   eventIdInfo.preloadOffset2 = parentScope2->maxPreloadNum.value() -
                                parentScope2->preloadNum.value() - 1;
   eventIdInfo.multibufferLoop = parentLoop1;
+  eventIdInfo.isCVPreload = true;
   return eventIdInfo;
 }
 
@@ -1256,7 +1272,7 @@ Solver::getSetWaitLCAPairOcc(Occurrence *occ1, Occurrence *occ2) {
 
 std::pair<Occurrence *, Occurrence *>
 Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                           std::optional<EventIdInfo> eventIdInfo) {
+                           std::optional<EventIdInfo> eventIdInfo, bool sinkSyncIntoCVLoops) {
   // - get setOcc waitOcc where:
   // setOcc->op->parent = waitOcc->op->parent = lca(occ1, occ2)->op
   auto [setOcc, waitOcc] = getSetWaitLCAPairOcc(occ1, occ2);
@@ -1356,7 +1372,7 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   //   waitOcc
   //   op2
   // } {unroll=x}
-  if (options.isCrossCoreMode() && eventIdInfo.has_value()) {
+  if (sinkSyncIntoCVLoops && options.isCrossCoreMode() && eventIdInfo.has_value()) {
     assert(setOcc->op != nullptr && waitOcc->op != nullptr);
     auto *loopOp1 = llvm::dyn_cast_if_present<Loop>(setOcc->op);
     auto *loopOp2 = llvm::dyn_cast_if_present<Loop>(waitOcc->op);
@@ -1481,14 +1497,14 @@ Solver::getUnlikelyCondSetWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 
 std::pair<Occurrence *, Occurrence *>
 Solver::getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                      std::optional<EventIdInfo> eventIdInfo) {
+                      std::optional<EventIdInfo> eventIdInfo, bool sinkSyncIntoCVLoops) {
   if (auto functionBlockOpt = getFunctionBlockSetWaitOcc(occ1, occ2)) {
     std::tie(occ1, occ2) = functionBlockOpt.value();
   }
   if (auto unlikelyOpt = getUnlikelyCondSetWaitOcc(occ1, occ2)) {
     std::tie(occ1, occ2) = unlikelyOpt.value();
   }
-  return getFixedSetWaitOcc(occ1, occ2, eventIdInfo);
+  return getFixedSetWaitOcc(occ1, occ2, eventIdInfo, sinkSyncIntoCVLoops);
 }
 
 Occurrence *Solver::getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2) {
@@ -1512,11 +1528,9 @@ Occurrence *Solver::getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2) {
 
 void Solver::insertBarrierAllBeforeOcc(Occurrence *occ, bool isUseless,
                                        bool isPersistent) {
-  assert(occ != nullptr);
-  auto *rwOp = llvm::dyn_cast_if_present<RWOperation>(occ->op);
-  assert(rwOp != nullptr);
+  assert(occ != nullptr && occ->op != nullptr);
   auto conflictPair = std::make_unique<ConflictPair>(
-      nullptr, nullptr, rwOp, rwOp, occ, occ,
+      nullptr, nullptr, occ->op, occ->op, occ, occ,
       CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
       CorePipeInfo(hivm::TCoreType::CUBE_OR_VECTOR, hivm::PIPE::PIPE_ALL),
       occ->startIndex, occ->startIndex);
@@ -1777,8 +1791,11 @@ Solver::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
   return eventIdSolver[key];
 }
 
-bool Solver::checkReuseMultiBufferFlagId(ConflictPair *conflictPair) {
+bool Solver::checkRepeatMultiBufferFlagId(ConflictPair *conflictPair) {
   if (options.useDifferentMultiBufferFlagIds) {
+    return false;
+  }
+  if (conflictPair->eventIdInfo.cannotRepeatFlagId) {
     return false;
   }
   if (!conflictPair->isInnerBackward ||
@@ -1817,8 +1834,8 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
   Occurrence *parentLCALoopOcc{nullptr};
   Occurrence *parentLCALoopBeforePHOcc{nullptr};
   Occurrence *parentLCALoopAfterPHOcc{nullptr};
-  auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2, eventIdInfo);
-
+  auto [setOcc, waitOcc] = getSetWaitOcc(occ1, occ2, eventIdInfo, true);
+  
   auto [lcaSetOp, lcaWaitOp] =
       OperationBase::getLCAPair(setOcc->op, waitOcc->op);
   auto *normScopeOcc1 = setOcc->getParentWithOp(lcaSetOp->parentOp);
@@ -1875,14 +1892,15 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
     conflictPair->updateSetWaitOccs(setOcc, waitOcc);
   }
 
+  bool keepMultiEventId = conflictPair->eventIdInfo.isCVPipeline ||
+                          conflictPair->eventIdInfo.isCVPreload;
   if (!conflictPair->isInnerBackward ||
-      disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst})) {
+      (!keepMultiEventId &&
+       disabledMultiEventIdPairs.contains({corePipeSrc, corePipeDst}))) {
     conflictPair->eventIdInfo = EventIdInfo(1);
   }
-  if (checkReuseMultiBufferFlagId(conflictPair.get())) {
-    conflictPair->eventIdInfo.eventIdRepeatNum =
-        conflictPair->eventIdInfo.eventIdNum;
-    conflictPair->eventIdInfo.eventIdNum = 1;
+  if (checkRepeatMultiBufferFlagId(conflictPair.get())) {
+    conflictPair->eventIdInfo.useRepeatFlagId();
   }
 
   auto &curEventIdSolver = getEventIdSolverRef(
@@ -1895,7 +1913,8 @@ void Solver::handleSetWaitConflict(Occurrence *occ1, Occurrence *occ2,
     }
     LLVM_DEBUG(llvm::dbgs() << "will-be-converted-to-barrier-all "
                             << conflictPair->str() << '\n';);
-    insertBarrierAllBeforeOp(occ2->op, conflictPair->isUseless,
+    auto *barrierWaitOcc = getBarrierWaitOcc(occ1, occ2);
+    insertBarrierAllBeforeOp(barrierWaitOcc->op, conflictPair->isUseless,
                              /*isPersistent=*/false);
     barrierAllPairs.insert({corePipeSrc, corePipeDst});
     curEventIdSolver->undoActions();
