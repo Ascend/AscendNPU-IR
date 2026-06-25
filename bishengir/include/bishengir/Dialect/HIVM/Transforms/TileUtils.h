@@ -67,6 +67,8 @@ bool hasBatchMatmulLoopInAicFuncs(ArrayRef<func::FuncOp> aicFunctions);
 bool hasImplicitTransposeWithLastAxisInAiv(
     ArrayRef<func::FuncOp> aivFunctions);
 
+bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions);
+
 LogicalResult tileAicFixpipeFuncsIfNeeded(
     ArrayRef<func::FuncOp> aicFunctions,
     const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim);

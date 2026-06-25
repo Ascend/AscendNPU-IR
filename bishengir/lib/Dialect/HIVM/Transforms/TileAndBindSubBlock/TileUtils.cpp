@@ -33,6 +33,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -380,6 +381,33 @@ bool hasImplicitTransposeWithLastAxisInAiv(
           return markOp.isAnnotatedBy(kMayImplicitTransposeWithLastAxis)
                      ? WalkResult::interrupt()
                      : WalkResult::advance();
+        })
+        .wasInterrupted();
+  });
+}
+
+bool areLoadAndStoreSameAddress(ArrayRef<func::FuncOp> aivFunctions) {
+  return llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+    llvm::SmallDenseSet<BlockArgument, 16> funcArgs;
+    aivFunc.walk([&](hivm::LoadOp op) {
+      auto maybeSrc = traceDefOp<memref::ReinterpretCastOp>(op.getSrc());
+      if (!maybeSrc)
+        return;
+      auto src = cast<memref::ReinterpretCastOp>(maybeSrc.value());
+      if (auto arg = dyn_cast<BlockArgument>(src.getSource());
+          arg && arg.getOwner()->getParentOp() == aivFunc.getOperation())
+        funcArgs.insert(arg);
+    });
+    return aivFunc
+        .walk([&](hivm::StoreOp op) {
+          auto maybeDst = traceDefOp<memref::ReinterpretCastOp>(op.getDst());
+          if (!maybeDst)
+            return WalkResult::advance();
+          auto dst = cast<memref::ReinterpretCastOp>(maybeDst.value());
+          if (auto arg = dyn_cast<BlockArgument>(dst.getSource());
+              arg && funcArgs.contains(arg))
+            return WalkResult::interrupt();
+          return WalkResult::advance();
         })
         .wasInterrupted();
   });
