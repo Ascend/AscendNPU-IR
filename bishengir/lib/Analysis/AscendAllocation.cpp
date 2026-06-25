@@ -57,7 +57,7 @@ void AscendAllocationSharedMemCheckFn(Operation* op, int allocatedSharedMemorySi
   int superBlockFactor = 1;
   if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
           triton::gpu::AttrSuperBlockFactor))
-    superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+    superBlockFactor = superBlockFactorAttr.getUInt();
 
   if (superBlockFactor * allocatedSharedMemorySize > sharedMemoryCapacity)
     llvm::report_fatal_error("UB overflow, requires at least "

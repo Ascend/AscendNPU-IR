@@ -578,9 +578,10 @@ def EnableAutoBlockifyLoop : HIVMOptimizationControlOptions<
 >;
 
 def SuperBlockFactor : HIVMOptimizationControlOptions<
-  "The factor of super-blocking.",
+  "The factor of super-blocking (must be a power of 2, >= 1). "
+  "1 means no super-blocking.",
   "unsigned",
-  "0"
+  "1"
 >;
 
 def SuperBlockBarrier : HIVMOptimizationControlOptions<

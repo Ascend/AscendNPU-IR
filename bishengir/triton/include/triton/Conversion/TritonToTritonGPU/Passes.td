@@ -44,8 +44,8 @@ def ConvertTritonToTritonGPU: Pass<"convert-triton-to-tritongpu", "mlir::ModuleO
              "int32_t", /*default*/"122880",
              "shared memory size for simt">,
        Option<"superBlockFactor", "super-block-factor",
-              "uint32_t", /*default*/"0",
-              "super blocking factor">,
+              "uint32_t", /*default*/"1",
+              "super blocking factor (must be a power of 2, >= 1)">,
 #endif
    ];
 }

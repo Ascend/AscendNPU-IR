@@ -50,6 +50,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
 
 #include <set>
@@ -363,6 +364,10 @@ void setupLowerTritonPipelineOptions(
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
   options.superBlockFactor = config.getSuperBlockFactor();
+  if (!llvm::isPowerOf2_32(options.superBlockFactor))
+    llvm::report_fatal_error(
+        "super-block-factor must be a power of 2 and >= 1, got " +
+        Twine(options.superBlockFactor));
   options.superBlockBarrier = config.getSuperBlockBarrier();
 #if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedMemDynamicSize() < 122880 ||

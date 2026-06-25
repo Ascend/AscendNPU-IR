@@ -859,10 +859,10 @@ static LogicalResult lowerBarrierBySoft(ModuleOp moduleOp) {
     return success();
   }
 
-  int32_t superBlockFactor = 1;
-  if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
-          triton::gpu::AttrSuperBlockFactor))
-    superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+  auto superBlockFactorAttr =
+      moduleOp->getAttrOfType<IntegerAttr>(triton::gpu::AttrSuperBlockFactor);
+  int32_t superBlockFactor =
+      superBlockFactorAttr ? superBlockFactorAttr.getUInt() : 1;
 
   int32_t numWarps = triton::gpu::lookupNumWarps(moduleOp);
 
