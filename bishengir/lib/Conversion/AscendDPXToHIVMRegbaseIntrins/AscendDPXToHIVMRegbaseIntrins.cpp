@@ -561,44 +561,21 @@ private:
       Type inType = input.getType();
 
       Type V2F32Type = VectorType::get({2}, rewriter.getF32Type());
-      Type V2F16Type = VectorType::get({2}, rewriter.getF16Type());
       Type V2BF16Type = VectorType::get({2}, rewriter.getBF16Type());
       auto idx0 =
           rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(), 0);
 
       result = input;
-      SmallVector<Value> args = {input, idx0, idx0};
       if (inType == V2BF16Type) {
+        SmallVector<Value> args = {input, idx0, idx0};
         result = rewriter
                      .create<LLVM::CallIntrinsicOp>(loc, TypeRange{V2F32Type},
                                                     "llvm.hivm.bf16x2.to.f32x2",
                                                     args)
                      .getResult(0);
-        if (outType == V2F32Type)
-          break;
-      } else if (inType == V2F16Type && outType == V2F32Type) {
-        result = rewriter
-                     .create<LLVM::CallIntrinsicOp>(loc, TypeRange{V2F32Type},
-                                                    "llvm.hivm.f16x2.to.f32x2",
-                                                    args)
-                     .getResult(0);
-        break;
-      } else if (inType == V2F32Type && outType == V2F16Type) {
-        result = rewriter
-                     .create<LLVM::CallIntrinsicOp>(loc, TypeRange{V2F16Type},
-                                                    "llvm.hivm.f32x2.to.f16x2",
-                                                    args)
-                     .getResult(0);
-        break;
-      } else if (inType == V2F32Type && outType == V2BF16Type) {
-        result = rewriter
-                     .create<LLVM::CallIntrinsicOp>(loc, TypeRange{V2BF16Type},
-                                                    "llvm.hivm.f32x2.to.bf16x2",
-                                                    args)
-                     .getResult(0);
-        break;
       }
 
+      SmallVector<Value> args = {result, idx0, idx0};
       StringRef opStr;
       auto outVecTy = dyn_cast<mlir::VectorType>(outType);
       auto inVecTy = dyn_cast<mlir::VectorType>(inType);

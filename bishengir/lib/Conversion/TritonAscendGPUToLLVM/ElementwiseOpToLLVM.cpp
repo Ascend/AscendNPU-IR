@@ -1671,19 +1671,18 @@ struct MapElementwiseOpConversion
 };
 
 /// Lowering tt.fp_to_fp to ascend_dpx.cast
-template <typename F2FCastOpTy>
-struct F2FCastOpConversion
-    : public ConvertOpToLLVMPattern<F2FCastOpTy> {
-  using Base = ConvertOpToLLVMPattern<F2FCastOpTy>;
+struct TritonFpToFpConversion
+    : public ConvertOpToLLVMPattern<triton::FpToFpOp> {
+  using Base = ConvertOpToLLVMPattern<triton::FpToFpOp>;
   using Adaptor = typename Base::OpAdaptor;
   using Base::Base;
 
   LogicalResult
-  matchAndRewrite(F2FCastOpTy op, typename F2FCastOpTy::Adaptor adaptor,
+  matchAndRewrite(triton::FpToFpOp op, OpAdaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
     auto b = TritonLLVMOpBuilder(loc, rewriter);
-    auto typeConverter = Base::getTypeConverter();
+    auto typeConverter = getTypeConverter();
 
     SmallVector<SmallVector<Value>> unpackedOperands;
     for (auto operand : adaptor.getOperands()) {
@@ -1697,41 +1696,21 @@ struct F2FCastOpConversion
 
     /// Determine the target LLVM element type for the result.
     /// No need to using typeConverter to cast result type.
-    Type inputElemTy = getElementType(op.getOperand());
     Type resElemTy = getElementType(op.getResult());
 
-    bool isArithOp = std::is_same_v<F2FCastOpTy, arith::ExtFOp> ||
-                     std::is_same_v<F2FCastOpTy, arith::TruncFOp>;
-
-    // Since there are only v2-intrinsics, the distinction between
-    // triton::FpToFpOp and arith::ExtFOp/TruncFOp is not needed,
-    // but made anyways for future convenience.
-    int packedElement;
-    if (isArithOp) {
-      packedElement = 2;
-    } else {
-      packedElement = 2;
-    }
-
-    bool addLLVMFpOp = false;
-    int numElemsPerThreadToDPXCast = numElemsPerThread;
-
+    /// There are only v2-intrinsics.
+    const int packedElement = 2;
     if (numElemsPerThread % packedElement != 0) {
-      if (isArithOp) {
-        addLLVMFpOp = true;
-        numElemsPerThreadToDPXCast -= 1;
-      } else {
-        /// Pad with the undef for v2 operands.
-        int numPaddedValue = packedElement - numElemsPerThread % packedElement;
-        for (auto &operands : unpackedOperands) {
-          operands.append(numPaddedValue, b.undef(operands[0].getType()));
-        }
+      /// Pad with the undef for v2 operands.
+      int numPaddedValue = packedElement - numElemsPerThread % packedElement;
+      for (auto &operands : unpackedOperands) {
+        operands.append(numPaddedValue, b.undef(operands[0].getType()));
       }
     }
 
     Type packedResTy = vec_ty(resElemTy, packedElement);
     SmallVector<Value> unpackedResults;
-    for (int i = 0; i < numElemsPerThreadToDPXCast; i += packedElement) {
+    for (int i = 0; i < numElemsPerThread; i += packedElement) {
       SmallVector<Value> block;
       for (auto &operands : unpackedOperands) {
         Type elemTy = getElementType(operands[i]);
@@ -1759,17 +1738,6 @@ struct F2FCastOpConversion
       for (int k = 0; k < numElem; ++k) {
         unpackedResults.push_back(b.extract_element(res, b.i32_val(k)));
       }
-    }
-
-    if (addLLVMFpOp) {
-      Value res;
-      Value llvmValue = unpackedOperands[0][unpackedOperands.size() - 1];
-      if (inputElemTy == rewriter.getF32Type()) {
-        res = rewriter.create<LLVM::FPTruncOp>(loc, resElemTy, llvmValue)->getResult(0);
-      } else {
-        res = rewriter.create<LLVM::FPExtOp>(loc, resElemTy, llvmValue)->getResult(0);
-      }
-      unpackedResults.push_back(res);
     }
 
     auto ret = packLLElements(loc, typeConverter, unpackedResults, rewriter,
@@ -1875,7 +1843,5 @@ void mlir::triton::ascend::populateAscendElementwiseOpToLLVMPatterns(
   // custom pattern
   patterns.add<AscendSIToFPOpConversion>(typeConverter, axisInfoAnalysis,
                                          benefit);
-  patterns.add<F2FCastOpConversion<triton::FpToFpOp>>(typeConverter, benefit);
-  patterns.add<F2FCastOpConversion<arith::ExtFOp>>(typeConverter, benefit);
-  patterns.add<F2FCastOpConversion<arith::TruncFOp>>(typeConverter, benefit);
+  patterns.add<TritonFpToFpConversion>(typeConverter, benefit);
 }
