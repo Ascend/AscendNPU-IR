@@ -620,6 +620,7 @@ static void ensureAllocInUbAddressSpaceIfNeeded(PatternRewriter &rewriter,
 
 
 LogicalResult insertConvertLayout(PatternRewriter &rewriter,
+      hivm::MmadL1Op mmadOp,
       const llvm::SmallVector<OpOperand *> &consumerOperands) {
   if (consumerOperands.empty()) {
     return failure();
@@ -640,12 +641,15 @@ LogicalResult insertConvertLayout(PatternRewriter &rewriter,
     // TODO: Consider encapsulating it as an nd2dz function
     int64_t M = tensorType.getDimSize(0);
     int64_t N = tensorType.getDimSize(1);
-    static constexpr int32_t alignM = 16;
-    static constexpr int32_t alignN = 32;
+    bool isA = (origTensor == mmadOp.getA());
+    bool isTranspose = isA ? mmadOp.getATranspose().has_value()
+                           : mmadOp.getBTranspose().has_value();
+    auto blockSizes = mmadOp.getBlockSizesTile(origTensor, isTranspose, isA);
+    int32_t alignM = static_cast<int32_t>(blockSizes[0]);
+    int32_t alignN = static_cast<int32_t>(blockSizes[1]);
     auto elemType = tensorType.getElementType();
-    uint64_t elemTypeSize = getElemBytesForAlign(elemType);
-    int64_t newN = static_cast<int64_t>(AlignUp(static_cast<uint64_t>(elemTypeSize) * N,
-                            static_cast<uint64_t>(alignN)) / elemTypeSize);
+    int64_t newN = static_cast<int64_t>(AlignUp(static_cast<uint64_t>(N),
+                            static_cast<uint64_t>(alignN)));
     if ((M != ShapedType::kDynamic && (M % alignM)) || (newN != N)) {
       int64_t newM = static_cast<int64_t>(
         AlignUp(static_cast<uint64_t>(M), static_cast<uint64_t>(alignM)));
@@ -689,7 +693,7 @@ LogicalResult insertConvertLayout(PatternRewriter &rewriter,
     auto transposed = rewriter.create<hivm::VTransposeOp>(
         loc, emptyTransposed->getResultTypes(), expandOp.getResult(),
         emptyTransposed.getResult(), rewriter.getDenseI64ArrayAttr(premVec));
-    auto nzTy = RankedTensorType::get({N1, M1, 16, blk}, elemType);
+    auto nzTy = RankedTensorType::get({N1, M1, alignM, blk}, elemType);
     SmallVector<ReassociationIndices> nzReassoc = {{0}, {1, 2}, {3}};
     auto nzOp = rewriter.create<tensor::ExpandShapeOp>(
         loc, nzTy, transposed->getResult(0), nzReassoc);
@@ -777,7 +781,7 @@ struct AddConvertLayoutUBToL1
     bool needTransposed = (tensorType.getRank() == 2);
     if (isBiasOperand || !needTransposed)
       continue;
-    LogicalResult result = insertConvertLayout(rewriter, consumerOperands);
+    LogicalResult result = insertConvertLayout(rewriter, op, consumerOperands);
     if (failed(result))
       continue;
     insertToIntegerAttrOfArrayAttr(op, insertedConvertLayout, operandIdx, rewriter);
@@ -828,7 +832,7 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
       bool isBiasOperand = (operand.get() == op.getPerChannelBias());
       if (isBiasOperand)
         continue;
-      LogicalResult l1Result = insertConvertLayout(rewriter, consumerOperands);
+      LogicalResult l1Result = insertConvertLayout(rewriter, op, consumerOperands);
       if (failed(l1Result))
         continue;
       insertToIntegerAttrOfArrayAttr(op.getOperation(), insertedConvertLayout, operand.getOperandNumber(), rewriter);

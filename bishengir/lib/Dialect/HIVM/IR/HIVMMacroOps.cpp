@@ -750,9 +750,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
 
   auto operA = getA();
   bool isATranspose = getATranspose().has_value();
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
-  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true, isA5);
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
@@ -760,7 +758,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
 
   auto operB = getB();
   bool isBTranspose = getBTranspose().has_value();
-  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false, isA5);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
@@ -787,16 +785,14 @@ FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
 
   auto operA = getA();
   bool isATranspose = getATranspose().has_value();
-  bool isA5 = hacc::utils::isAscend950(
-      this->getOperation()->getParentOfType<ModuleOp>());
-  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true, isA5);
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
   layouts.a = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
 
   auto operB = getB();
   bool isBTranspose = getBTranspose().has_value();
-  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false, isA5);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
   layouts.b = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
@@ -967,6 +963,13 @@ bool MmadL1Op::isInitConstant(std::optional<bool> cst) {
 
 void MmadL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
+}
+
+llvm::SmallVector<int64_t>
+MmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
 MatmulBiasMode MmadL1Op::getMatmulBiasMode() {
@@ -1176,7 +1179,7 @@ MmadMxL1Op::getOperandsTargetLayout() {
 
   auto operB = getB();
   bool isBTranspose = false;
-  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false, true);
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
@@ -1408,6 +1411,11 @@ bool MmadMxL1Op::shouldDecomposeBiasByElementAdd() {
   if (isSingleChainMmadToMmad<MmadMxL1Op>(*this))
     return false;
   return true;
+}
+
+llvm::SmallVector<int64_t>
+MmadMxL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) const {
+  return ::getBlockSizesTile(oper, isTranspose, isA, true);
 }
 
 MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {
