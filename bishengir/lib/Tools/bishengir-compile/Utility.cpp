@@ -240,6 +240,9 @@ inferMixedCV(ModuleOp &module, bishengir::BiShengIRCompileMainConfig &config) {
     if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type");
         vectorType && vectorType.getValue() == "simt")
       return mlir::WalkResult::advance();
+      
+    if (scopeOp->hasAttr("sub_block"))
+      return mlir::WalkResult::advance();
     return mlir::WalkResult::interrupt();
   });
   if (status.wasInterrupted()) {
