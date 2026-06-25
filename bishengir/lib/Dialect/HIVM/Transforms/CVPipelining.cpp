@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -1893,6 +1894,11 @@ void CVPipeliningPass::runOnOperation() {
 
   // Disabled via options
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
+    return;
+
+  // Disable CVP once batchmatmul is found
+  SmallVector<func::FuncOp> funcOps{func};
+  if (hasBatchMatmulLoopInAicFuncs(funcOps))
     return;
 
   // We want to work on the innermost loop first, so post order walk
