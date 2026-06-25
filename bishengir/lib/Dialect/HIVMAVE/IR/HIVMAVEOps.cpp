@@ -15,10 +15,10 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
+#include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -409,65 +409,14 @@ SmallVector<Value> VFBroadcastVectorOp::getOpLibraryCallInputs(OpBuilder &b) {
   return inputs;
 }
 
-// Helper function to compute linear offset from indices and strides
-Value computeLinearOffset(OpBuilder &b, Value memref,
-                          mlir::OperandRange indices) {
-  Location loc = b.getUnknownLoc();
-  Type i64Type = b.getI64Type();
-  auto memrefType = mlir::cast<MemRefType>(memref.getType());
-  int64_t rank = memrefType.getRank();
-
-  // extract strides from memref type
-  SmallVector<Value, 4> strides(rank);
-  if (auto stridedLayout =
-          mlir::dyn_cast<StridedLayoutAttr>(memrefType.getLayout())) {
-    // use strides from the memref layout
-    ArrayRef<int64_t> layoutStrides = stridedLayout.getStrides();
-    for (int64_t i = 0; i < rank; ++i) {
-      strides[i] = b.create<LLVM::ConstantOp>(
-          loc, i64Type, b.getI64IntegerAttr(layoutStrides[i]));
-    }
-  } else {
-    // fallback: Compute strides assuming row-major layout
-    Value strideVal =
-        b.create<LLVM::ConstantOp>(loc, i64Type, b.getI64IntegerAttr(1));
-    for (int64_t i = rank - 1; i >= 0; --i) {
-      strides[i] = strideVal;
-      if (i > 0) {
-        // get dimension size for next stride calculation
-        Value dimSize;
-        if (memrefType.isDynamicDim(i)) {
-          dimSize = b.create<memref::DimOp>(loc, memref, i);
-          dimSize = b.create<arith::IndexCastOp>(loc, i64Type, dimSize);
-        } else {
-          int64_t staticSize = memrefType.getDimSize(i);
-          dimSize = b.create<LLVM::ConstantOp>(loc, i64Type,
-                                               b.getI64IntegerAttr(staticSize));
-        }
-        strideVal = b.create<arith::MulIOp>(loc, strideVal, dimSize);
-      }
-    }
-  }
-
-  // calculate linear offset: sum(indices[i] * strides[i])
-  Value offset =
-      b.create<LLVM::ConstantOp>(loc, i64Type, b.getI64IntegerAttr(0));
-  for (int64_t i = 0; i < rank; ++i) {
-    Value index = indices[i];
-    Value indexI64 = b.create<arith::IndexCastOp>(loc, i64Type, index);
-    Value product = b.create<arith::MulIOp>(loc, indexI64, strides[i]);
-    offset = b.create<arith::AddIOp>(loc, offset, product);
-  }
-
-  return offset;
-}
-
 SmallVector<Value> VFLoadOp::getOpLibraryCallInputs(OpBuilder &b) {
   SmallVector<Value> inputs;
   Value base = getBase();
   inputs.push_back(base);
   // compute linear offset from indices and strides
-  Value offset = computeLinearOffset(b, base, getIndices());
+  Value offset =
+      hivmave::computeLinearMemRefOffset(b, getLoc(), base, getIndices(),
+                                         b.getI64Type());
   inputs.push_back(offset);
 
   return inputs;
@@ -478,7 +427,9 @@ SmallVector<Value> VFMaskedStoreOp::getOpLibraryCallInputs(OpBuilder &b) {
   Value base = getBase();
   inputs.push_back(base);
   // compute linear offset from indices and strides
-  Value offset = computeLinearOffset(b, base, getIndices());
+  Value offset =
+      hivmave::computeLinearMemRefOffset(b, getLoc(), base, getIndices(),
+                                         b.getI64Type());
   inputs.push_back(offset);
   if (getPattern() == StoreDist::ONEPT_B64 || !(*this)->hasAttr("ave.unaligned_ub_access")) {
     inputs.push_back(getMask());
@@ -490,7 +441,9 @@ SmallVector<Value> VFMaskedStoreOp::getOpLibraryCallInputs(OpBuilder &b) {
 SmallVector<Value> VFGatherOp::getOpLibraryCallInputs(OpBuilder &b) {
   SmallVector<Value> inputs;
   inputs.push_back(getBase());
-  Value offset = computeLinearOffset(b, getBase(), getIndices());
+  Value offset =
+      hivmave::computeLinearMemRefOffset(b, getLoc(), getBase(), getIndices(),
+                                         b.getI64Type());
   inputs.push_back(offset);
   inputs.push_back(getIndexVec());
   inputs.push_back(getMask());
