@@ -1770,12 +1770,14 @@ def VConcatOp : HIVM_VectorOp<"vconcat",
 
 def VGatherOp : HIVM_VectorOp<"vgather",
     [HIVMOpSameOperandsAndResultRank,
-     StaticMaxRankTrait<1>,
+     InferMaxRankTrait,
      OperElemTypeConstraints<[0], [I1, I8, I16, UI16, I32, UI32, F16, BF16, F32, F8E4M3FN, F8E5M2]>,
      OperElemTypeConstraints<[1], [I16, I32]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
+     DeclareOpInterfaceMethods<LibraryFunctionOpInterface,
+       ["inferOpLibraryMaxRank"]>,
      // Will automatically use the default uniform reassociation impl
      UniformReassociationFlattenTrait,
      DeclareOpInterfaceMethods<FlattenInterface,
@@ -1785,18 +1787,22 @@ def VGatherOp : HIVM_VectorOp<"vgather",
   let description = [{
     Retrieve elements from a tensor/memref according to given indices,
     and store these elements in another tensor/memref.
-    The gather axis is the last dimension.
+
+    All gather operations are dispatched to the SIMT template regardless
+    of whether the gather axis is the last dimension or not.
 
     Arguments:
       * `src`: the tensor/memref from which to gather elements
       * `indices`: the indices of elements to gather from src
       * `dst`: the tensor/memref to store elements
       * `temp_buffer`: extra memory required by gather op
+      * `gather_axis`: the axis along which to gather; -1 means last dim
   }];
   let arguments = (ins TensorOrMemref:$src,
                        TensorOrMemref:$indices,
                        TensorOrMemref:$dst,
-                       Optional<AnyMemRef>:$temp_buffer
+                       Optional<AnyMemRef>:$temp_buffer,
+                       OptionalAttr<I64Attr>:$gather_axis
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
   let assemblyFormat = [{
@@ -1804,10 +1810,12 @@ def VGatherOp : HIVM_VectorOp<"vgather",
     `indices` `(` $indices `:` type($indices) `)`
     `outs` `(` $dst `:` type($dst) `)`
     (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+    (`gather_axis` `=` $gather_axis^)?
     (`->` type($result)^)?
   }];
   let builders = [
-    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$indices, "Value":$dst)>
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$indices, "Value":$dst)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$indices, "Value":$dst, "int64_t":$axis)>
   ];
   let extraClassDeclaration = vectorOpBaseDecls # [{
     static StringRef getOpName() { return "gather"; }

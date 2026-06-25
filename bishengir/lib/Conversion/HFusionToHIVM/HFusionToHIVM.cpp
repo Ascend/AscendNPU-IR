@@ -762,17 +762,16 @@ struct HFusionToHIVMGatherOp : public OpRewritePattern<hfusion::GatherOp> {
           "hfusion::GatherOp should have pure buffer or tensor Semantics!");
     }
 
-    const auto rank = op.getSrc().getType().getRank();
-    if (rank - 1 != static_cast<int64_t>(op.getAxis())) {
-      return op.emitOpError(
-          "can only lower hfusion.gather to hivm gather if axis is last dim");
-    }
-
     auto resultTypeRange = op.hasPureBufferSemantics()
-                               ? TypeRange()
-                               : TypeRange(op->getResultTypes());
-    rewriter.replaceOpWithNewOp<hivm::VGatherOp>(
-        op, resultTypeRange, op.getSrc(), op.getIndex(), op.getInit());
+                                 ? TypeRange()
+                                 : TypeRange(op->getResultTypes());
+
+    const auto axis = static_cast<int64_t>(op.getAxis());
+    auto newOp = rewriter.create<hivm::VGatherOp>(op.getLoc(), resultTypeRange,
+      op.getSrc(), op.getIndex(), op.getInit(), axis);
+    newOp->setAttr(VFModeAttr::name,
+                   VFModeAttr::get(op->getContext(), VFMode::SIMT));
+    rewriter.replaceOp(op, newOp);
     return success();
   }
 };

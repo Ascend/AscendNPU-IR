@@ -2569,6 +2569,12 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
   if (gatherAxis == rank - 1 && !srcElmTy.isInteger(64))
     return failure();
 
+  if (gatherAxis != rank - 1) {
+    ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    if (moduleOp && hacc::utils::isRegBasedArch(moduleOp))
+      return failure();
+  }
+
   Value cst0 = b.create<arith::ConstantIndexOp>(loc, 0);
   Value cst1 = b.create<arith::ConstantIndexOp>(loc, 1);
   Value idxGatherDimSize = b.create<tensor::DimOp>(loc, idx, gatherAxis);

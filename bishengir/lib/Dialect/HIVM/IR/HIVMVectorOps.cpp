@@ -1384,18 +1384,39 @@ SmallVector<OpFoldResult> VPadOp::getMixedHighPad() {
 void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value indices, Value dst) {
   build(odsBuilder, odsState, result, src, indices, dst,
-        /*temp_buffer=*/nullptr);
+        /*temp_buffer=*/nullptr, /*gather_axis=*/IntegerAttr());
+}
+
+void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value indices, Value dst, int64_t axis) {
+  build(odsBuilder, odsState, result, src, indices, dst,
+        /*temp_buffer=*/nullptr, odsBuilder.getI64IntegerAttr(axis));
 }
 
 std::string VGatherOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
-  StringRef baseName = this->getOpName();
   ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
   Type elemType = srcVecType.getElementType();
+  int64_t rank = srcVecType.getRank();
+  std::string baseName = this->getOpName().str();
+  std::string elemTypeName = hivm::detail::getTypeName(this->getLoc(), elemType);
 
-  std::stringstream ss;
-  ss << baseName.data() << "_1d_"
-     << hivm::detail::getTypeName(this->getLoc(), elemType);
-  return ss.str();
+  // SIMT path: all gather operations use the SIMT template.
+  // Generates: gather_simt_<dim>d_<dtype>_<itype>
+  int libCallRank = getOpLibraryCallRank(static_cast<int>(rank));
+  ShapedType idxVecType = cast<ShapedType>(getIndices().getType());
+  Type idxElemType = idxVecType.getElementType();
+  std::string idxElemTypeName = hivm::detail::getTypeName(this->getLoc(), idxElemType);
+  return concatVectorOpLibraryCallName(baseName + "_simt", libCallRank,
+                                       elemTypeName + "_" + idxElemTypeName);
+}
+
+int VGatherOp::inferOpLibraryMaxRank() {
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (moduleOp && hacc::utils::isAscend950(moduleOp)) {
+    // All gather operations use the SIMT template which supports up to 5D.
+    return 5;
+  }
+  return 1;
 }
 
 //===----------------------------------------------------------------------===//

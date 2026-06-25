@@ -11,7 +11,8 @@ func.func @triton_gather_mapfor_not_to_forall(%arg0: memref<?xi8> {hacc.arg_type
   memref.copy %reinterpret_cast_0, %alloc_1 : memref<7x11xi32, strided<[11, 1]>> to memref<7x11xi32>
   %1 = bufferization.to_tensor %alloc_1 restrict writable : memref<7x11xi32>
   %2 = tensor.empty() : tensor<7x11xf16>
-  // CHECK:scf.for
+  // CHECK: hfusion.gather
+  // CHECK-NOT: scf.for
   // CHECK-NOT:map_for_to_forall
   %3 = hfusion.gather {operandSegmentSizes = array<i32: 2, 1>} ins(%0, %1 : tensor<5x11xf16>, tensor<7x11xi32>) outs(%2 : tensor<7x11xf16>) axis = 0 -> tensor<7x11xf16>
   %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [7, 11], strides: [11, 1] : memref<?xf16> to memref<7x11xf16, strided<[11, 1]>>
