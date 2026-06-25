@@ -26,6 +26,12 @@ public:
   // and we need to know how many for storage purposes if we end up using shared
   // memory space to do this.
   unsigned getAccumulatorCount();
+
+  // Compute thread offset on reduction axis using the v3.7 removeStandardDim
+  // approach, which correctly preserves lane basis ordering for SliceEncodingAttr.
+  // This fixes the interleave calculation that v3.5's compose(transform) approach
+  // can produce incorrectly.
+  unsigned getCorrectedThreadOffsetOnReductionAxis();
 };
 } // namespace ascend
 } // namespace triton
