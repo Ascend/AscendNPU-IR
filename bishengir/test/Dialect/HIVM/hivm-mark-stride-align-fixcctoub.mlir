@@ -405,3 +405,31 @@ func.func @test_fixpipe_3d_trailing_unit_3x1x1() attributes {hivm.func_core_type
   return
 }
 }
+
+// -----//
+
+// Test 25: Tiled fixpipe generated from 3d dot
+// AIC-LABEL: func.func @test_fixpipe_3d_tiled_aligned
+// AIC-NOT: annotation.mark %alloc
+// AIC: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+func.func @test_fixpipe_3d_tiled_aligned() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+
+  %alloc = memref.alloc() : memref<2x1x32xf32, #hivm.address_space<ub>>
+  %alloc_0 = memref.alloc() {alignment = 64 : i64}
+    : memref<1x32xf32, #hivm.address_space<cc>>
+
+  %subview = memref.subview %alloc[0, 0, 0] [1, 1, 32] [1, 1, 1]
+    : memref<2x1x32xf32, #hivm.address_space<ub>>
+      to memref<1x32xf32, strided<[32, 1]>, #hivm.address_space<ub>>
+
+  hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+    ins(%alloc_0 : memref<1x32xf32, #hivm.address_space<cc>>)
+    outs(%subview : memref<1x32xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+
+  return
+}
+}

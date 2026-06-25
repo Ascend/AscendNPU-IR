@@ -869,9 +869,13 @@ void MarkStrideAlignPass::runOnOperation() {
           auto allocVal = allocOp.getResult();
 
           if (allocShape.size() == 3 && allocShape[0] > 1) {
-            if (failed(markAlignedDimForFixcctoub(
-                    builder, allocOp, allocVal, 1,
-                    getHWAlignBytes(allocType).value())))
+            auto [alignDims, alignBytes] = adjustAlignInfo(
+                allocOp, allocVal, {1}, getHWAlignBytes(allocType).value());
+            if (alignDims.empty())
+              return WalkResult::advance();
+
+            if (failed(markAlignedDimForFixcctoub(builder, allocOp, allocVal,
+                                                  alignDims[0], alignBytes[0])))
               return WalkResult::interrupt();
           }
         }
