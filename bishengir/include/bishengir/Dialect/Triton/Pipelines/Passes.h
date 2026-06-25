@@ -71,10 +71,10 @@ struct LowerTritonPipelineOptions
       llvm::cl::init(false)};
   PassOptions::Option<unsigned> superBlockFactor{
       *this, "super-block-factor", llvm::cl::desc("Factor of super blocking"),
-      llvm::cl::init(0)};
+      llvm::cl::init(1)};
   PassOptions::Option<bool> superBlockBarrier{
-      *this, "super-block-barrier", 
-      llvm::cl::desc("Enable/disable super-block barrier lowering"), 
+      *this, "super-block-barrier",
+      llvm::cl::desc("Enable/disable super-block barrier lowering"),
       llvm::cl::init(false)};
   mlir::triton::proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
 };

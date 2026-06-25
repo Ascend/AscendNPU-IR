@@ -202,9 +202,9 @@ struct HIVMAVEPipelineOptions
 
   PassOptions::Option<unsigned> superBlockFactor{
       *this, "super-block-factor",
-      llvm::cl::desc("The factor of super-blocking, Default is 0, i.e. "
-                     "super-blocking is disabled."),
-      llvm::cl::init(0)};
+      llvm::cl::desc("The factor of super-blocking (must be a power of 2, "
+                     ">= 1). Default is 1, i.e. super-blocking is disabled."),
+      llvm::cl::init(1)};
 };
 
 struct ConvertToHIVMAVEPipelineOptions

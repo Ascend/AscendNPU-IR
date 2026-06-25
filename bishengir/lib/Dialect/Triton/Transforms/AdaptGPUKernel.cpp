@@ -150,7 +150,7 @@ struct AdaptGPUKernelPass
     unsigned superBlockFactor = 1;
     if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
             triton::gpu::AttrSuperBlockFactor))
-      superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+      superBlockFactor = superBlockFactorAttr.getUInt();
 
     if (numWarp <= 0 || numThreadPerWarp <= 0)
       llvm::report_fatal_error(
@@ -339,7 +339,7 @@ struct AdaptGPUKernelPass
     int64_t superBlockFactor = 1;
     if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
             triton::gpu::AttrSuperBlockFactor))
-      superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+      superBlockFactor = superBlockFactorAttr.getUInt();
 
     // superBlockFactor = 1 indicates superblocking is disabled
     if (superBlockFactor > 1) {

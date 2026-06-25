@@ -221,7 +221,7 @@ struct AllocateAscendSharedMemory
     unsigned superBlockFactor = 1;
     if (auto superBlockFactorAttr = mod->getAttrOfType<IntegerAttr>(
             triton::gpu::AttrSuperBlockFactor))
-      superBlockFactor = (1 << superBlockFactorAttr.getUInt());
+      superBlockFactor = superBlockFactorAttr.getUInt();
     mod->setAttr("ttg.shared",
                  mlir::IntegerAttr::get(mlir::IntegerType::get(&getContext(), 32),
                                         allocation.getSharedMemorySize() *

@@ -36,6 +36,7 @@
 #include "mlir/Pass/Pass.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 
 #define DEBUG_TYPE "simt-auto-blockify"
 
@@ -112,6 +113,14 @@ struct SIMTAutoBlockifyPass
 
   void runOnOperation() override {
     mlir::triton::FuncOp ttFunc = getOperation();
+
+    unsigned factor = superBlockFactor;
+    if (!llvm::isPowerOf2_32(factor)) {
+      ttFunc.emitError("super-block-factor must be a power of 2 and >= 1, got ")
+          << factor;
+      return signalPassFailure();
+    }
+
     // FIXME: Canonicalize the checking on entry functions.
     // Skip non-kernel functions.
     if (!ttFunc.isPublic() || !ttFunc.getResultTypes().empty())
@@ -176,9 +185,6 @@ struct SIMTAutoBlockifyPass
     //   populated, and
     // - 'bodyBlock' is the beginning of the original function body.
     auto *bodyBlock = entryBlock->splitBlock(entryBlock->begin());
-
-    // Get the super-blocking factor.
-    unsigned factor = 1 << superBlockFactor;
 
     // Generate the prologue to prepare the loop over blocks.
     Location loc = ttFunc.getLoc();

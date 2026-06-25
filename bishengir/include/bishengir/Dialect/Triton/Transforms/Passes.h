@@ -41,7 +41,7 @@ std::unique_ptr<mlir::Pass> createAdaptTritonIRKernelPass(
 
 /// Create a pass to batch logical Triton programs onto a limited number of
 /// physical SIMT cores.
-std::unique_ptr<mlir::Pass> createSIMTAutoBlockifyPass(unsigned factor = 0);
+std::unique_ptr<mlir::Pass> createSIMTAutoBlockifyPass(unsigned factor = 1);
 
 std::unique_ptr<mlir::Pass> createEnableAscendDPXMMAPass();
 
