@@ -931,24 +931,30 @@ Solver::checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair, Occurrence *occ1,
   if (!options.decomposeMmadl1Op) {
     return {};
   }
-  if (occ1->parentOcc != nullptr && occ1->parentOcc->parentOcc != nullptr &&
-      occ1->parentOcc->parentOcc->parentOcc == parOcc1 &&
-      llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
-          occ1->op) &&
-      llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
-          occ1->parentOcc->parentOcc->op)) {
-    conflictPair->setOnLastIterOnly = true;
-    return std::make_pair(occ1, parOcc2);
+  if (conflictPair->setCorePipeInfo.pipe == PIPE::PIPE_MTE1 &&
+      conflictPair->waitCorePipeInfo.pipe == PIPE::PIPE_MTE2) {
+    if (occ1->parentOcc != nullptr && occ1->parentOcc->parentOcc != nullptr &&
+        occ1->parentOcc->parentOcc->parentOcc == parOcc1 &&
+        llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
+            occ1->op) &&
+        llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
+            occ1->parentOcc->parentOcc->op)) {
+      conflictPair->setOnLastIterOnly = true;
+      return std::make_pair(occ1, parOcc2);
+    }
   }
-  if (!conflictPair->isInnerBackward && occ2->parentOcc != nullptr &&
-      occ2->parentOcc->parentOcc != nullptr &&
-      occ2->parentOcc->parentOcc->parentOcc == parOcc2 &&
-      llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
-          occ2->op) &&
-      llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
-          occ2->parentOcc->parentOcc->op)) {
-    conflictPair->waitOnFirstIterOnly = true;
-    return std::make_pair(parOcc1, occ2);
+  if (conflictPair->setCorePipeInfo.pipe == PIPE::PIPE_MTE2 &&
+      conflictPair->waitCorePipeInfo.pipe == PIPE::PIPE_MTE1) {
+    if (!conflictPair->isInnerBackward && occ2->parentOcc != nullptr &&
+        occ2->parentOcc->parentOcc != nullptr &&
+        occ2->parentOcc->parentOcc->parentOcc == parOcc2 &&
+        llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
+            occ2->op) &&
+        llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
+            occ2->parentOcc->parentOcc->op)) {
+      conflictPair->waitOnFirstIterOnly = true;
+      return std::make_pair(parOcc1, occ2);
+    }
   }
   return {};
 }
