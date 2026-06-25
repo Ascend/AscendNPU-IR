@@ -4,7 +4,8 @@
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi16>
-// CHECK: %[[RES:.*]] = hivm.hir.vor ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%{{.*}} : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi16>
+// CHECK: %[[RES:.*]] = hivm.hir.vor ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {

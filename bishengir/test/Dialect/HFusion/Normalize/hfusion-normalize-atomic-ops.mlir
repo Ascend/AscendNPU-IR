@@ -24,7 +24,8 @@ func.func @test_NormalizeCumOpF16ToF32Type_cumprod_f16(%arg0: tensor<4x64xf16>, 
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi16>
-// CHECK: %[[RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%{{.*}} : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi16>
+// CHECK: %[[RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -44,7 +45,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi16>
-// CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>} ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%{{.*}} : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi16>
+// CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>} ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -64,7 +66,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi64>
-// CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%[[LHS]], %{{.*}} : tensor<256xi64>, tensor<256xi64>) outs(%{{.*}} : tensor<256xi64>) -> tensor<256xi64>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi64>
+// CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%[[LHS]], %{{.*}} : tensor<256xi64>, tensor<256xi64>) outs(%[[DST]] : tensor<256xi64>) -> tensor<256xi64>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi64>, memref<256xi64, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -101,7 +104,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xi16, strided<[1], offset: ?>> to memref<256xi16>
 // CHECK: %[[VAL_10:.*]] = bufferization.to_tensor %[[VAL_6]] restrict writable : memref<256xi16>
-// CHECK: %[[VAL_11:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[VAL_10]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%{{.*}} : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi16>
+// CHECK: %[[VAL_11:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[VAL_10]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[VAL_11]] in writable %[[VAL_4]] : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -122,7 +126,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xi64, strided<[1], offset: ?>> to memref<256xi64>
 // CHECK: %[[VAL_10:.*]] = bufferization.to_tensor %[[VAL_6]] restrict writable : memref<256xi64>
-// CHECK: %[[VAL_11:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_10]], %{{.*}} : tensor<256xi64>, tensor<256xi64>) outs(%{{.*}} : tensor<256xi64>) -> tensor<256xi64>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi64>
+// CHECK: %[[VAL_11:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_10]], %{{.*}} : tensor<256xi64>, tensor<256xi64>) outs(%[[DST]] : tensor<256xi64>) -> tensor<256xi64>
 // CHECK: bufferization.materialize_in_destination %[[VAL_11]] in writable %[[VAL_4]] : (tensor<256xi64>, memref<256xi64, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -143,7 +148,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xf8E4M3FN, strided<[1], offset: ?>> to memref<256xf8E4M3FN>
 // CHECK: %[[VAL_11:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%{{.*}} : tensor<256xf8E4M3FN>) outs(%{{.*}} : tensor<256xf32>) -> tensor<256xf32>
-// CHECK: %[[VAL_12:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_11]], %{{.*}} : tensor<256xf32>, tensor<256xf32>) outs(%{{.*}} : tensor<256xf32>) -> tensor<256xf32>
+// CHECK: %[[BIN_DST:.*]] = tensor.empty() : tensor<256xf32>
+// CHECK: %[[VAL_12:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_11]], %{{.*}} : tensor<256xf32>, tensor<256xf32>) outs(%[[BIN_DST]] : tensor<256xf32>) -> tensor<256xf32>
 // CHECK: %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[VAL_12]] : tensor<256xf32>) outs(%{{.*}} : tensor<256xf8E4M3FN>) -> tensor<256xf8E4M3FN>
 // CHECK: bufferization.materialize_in_destination %[[VAL_13]] in writable %[[VAL_4]] : (tensor<256xf8E4M3FN>, memref<256xf8E4M3FN, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
@@ -164,7 +170,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[VAL_9:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<?x?xi16, strided<[512, 1], offset: ?>> to memref<?x?xi16, strided<[256, 1]>>
-// CHECK: %[[VAL_11:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%{{.*}}, %{{.*}} : tensor<12x256xi16>, tensor<12x256xi16>) outs(%{{.*}} : tensor<12x256xi16>) -> tensor<12x256xi16>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<12x256xi16>
+// CHECK: %[[VAL_11:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%{{.*}}, %{{.*}} : tensor<12x256xi16>, tensor<12x256xi16>) outs(%[[DST]] : tensor<12x256xi16>) -> tensor<12x256xi16>
 // CHECK: %[[VAL_12:.*]] = tensor.extract_slice %[[VAL_11:.*]][0, 0] [%{{.*}}, %{{.*}}] [1, 1] : tensor<12x256xi16> to tensor<?x?xi16>
 // CHECK: bufferization.materialize_in_destination %[[VAL_12]] in writable %[[VAL_4]] : (tensor<?x?xi16>, memref<?x?xi16, strided<[512, 1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
