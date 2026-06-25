@@ -1,3 +1,4 @@
+// REQUIRES: enable-lir-compile	
 // RUN: bishengir-compile -enable-hfusion-compile=true -enable-legacy-insert-load-store-for-mix-cv=true  -block-dim=1 %s
 
 module {
