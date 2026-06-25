@@ -49,7 +49,6 @@ add_bishengir_dialect_library(MLIRHFusionTransforms
   FlattenOps.cpp
   FoldUnitDims.cpp
   FoldSymbolicDim.cpp
-  PostVectorizationNormalization.cpp
   GenericUnroller.cpp
   HoistTensorEmpty.cpp
   InlineBrc.cpp
