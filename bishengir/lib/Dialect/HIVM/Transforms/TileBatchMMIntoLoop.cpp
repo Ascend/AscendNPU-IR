@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -277,9 +278,15 @@ std::pair<TensorChainInfo, MemrefChainInfo> collectTensorChainInitArgs(
     if (isa<TensorType>(fixpipe.getDst().getType())) {
       tensorInfo.indices.push_back(i);
       tensorInfo.initArgs.push_back(fixpipe.getDst());
-    } else if (auto rootMemref = traceDefOp<memref::AllocOp>(fixpipe.getDst())) {
+
+      continue;
+    }
+
+    Operation *rootMemrefAlloc = getRootAlloc(fixpipe.getDst());    
+
+    if (rootMemrefAlloc) {
       memrefInfo.indices.push_back(i);
-      memrefInfo.rootMemrefs.push_back(rootMemref.value()->getResult(0));
+      memrefInfo.rootMemrefs.push_back(rootMemrefAlloc->getResult(0));
     }
   }
   return std::make_pair(tensorInfo, memrefInfo);
@@ -318,18 +325,17 @@ SmallVector<Operation *> collectDownstreamOpsToMove(
   for (Value rootMemref : memrefInfo.rootMemrefs) {
     // TODO: Add more operations which can be moved with memref semantics
     rootMemref.getParentBlock()->walk([&](DebugOp debugOp) {
-      if (auto debugRootMemref =
-              traceDefOp<memref::AllocOp>(debugOp.getArg())) {
-        if (debugRootMemref.value()->getResult(0) == rootMemref) {
-          Operation *sameBlockOp = debugOp;
-          while (sameBlockOp &&
-                 sameBlockOp->getBlock() != lastChainOp->getBlock()) {
-            sameBlockOp = sameBlockOp->getParentOp();
-          }
+      Operation *memrefRootAlloc = getRootAlloc(debugOp.getArg());
 
-          if (sameBlockOp && !lastChainOp->isBeforeInBlock(sameBlockOp)) {
-            worklist.push_back(sameBlockOp);
-          }
+      if (memrefRootAlloc && memrefRootAlloc->getResult(0) == rootMemref) {
+        Operation *sameBlockOp = debugOp;
+        while (sameBlockOp &&
+               sameBlockOp->getBlock() != lastChainOp->getBlock()) {
+          sameBlockOp = sameBlockOp->getParentOp();
+        }
+
+        if (sameBlockOp && !lastChainOp->isBeforeInBlock(sameBlockOp)) {
+          worklist.push_back(sameBlockOp);
         }
       }
     });

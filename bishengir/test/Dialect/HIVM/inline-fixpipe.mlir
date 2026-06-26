@@ -1465,3 +1465,22 @@ module {
     return
   }
 }
+
+// -----
+// CHECK: func.func @test_insert_print_fixpipe
+// CHECK: %[[MMAD_RES:.*]] = hivm.hir.mmadL1
+// CHECK: %[[GM_MEM:.*]] = memref_ext.alloc_workspace
+// CHECK: %[[TO_TENSOR:.*]] = bufferization.to_tensor %[[GM_MEM]]
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%[[MMAD_RES]] : tensor<1x1xi32>) outs(%[[GM_MEM]] : memref<1x1xi32>)
+// CHECK: hivm.hir.debug {debugtype = "print", hex = false, prefix = " ret : \0A: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %[[TO_TENSOR]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_insert_print_fixpipe(%arg0 : tensor<1x1xi8>, %arg1 : tensor<1x1xi8>) {
+    %true = arith.constant true
+    %c1 = arith.constant 1 : index
+    %4 = tensor.empty() : tensor<1x1xi32>
+    %5 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true, normalized_in_L0C} ins(%arg0, %arg1, %true, %c1, %c1, %c1 :  tensor<1x1xi8>,  tensor<1x1xi8>, i1, index, index, index) outs(%4 :  tensor<1x1xi32>) ->  tensor<1x1xi32>
+    hivm.hir.debug {debugtype = "print", hex = false, prefix = " ret : \0A: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %5 : tensor<1x1xi32>
+    return
+  }
+}
+

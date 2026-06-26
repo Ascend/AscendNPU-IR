@@ -10,6 +10,7 @@
 #define BISHENGIR_DIALECT_HIVM_IR_HIVMIMPL_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -450,6 +451,19 @@ traceDefOps(Value v, bool isSingleChain = false,
   if (traceDefState == TraceDefState::Failed)
     results.clear();
   return results;
+}
+
+inline Operation *getRootAlloc(Value value) {
+  if (auto rootMemref = traceDefOp<memref::AllocOp>(value)) {
+    return rootMemref.value();
+  }
+
+  if (auto rootGMMemref =
+          traceDefOp<bishengir::memref_ext::AllocWorkspaceOp>(value)) {
+    return rootGMMemref.value();
+  }
+
+  return nullptr;
 }
 
 /// Returns whether the mmadlike operand traces back to the same mmad-like op
