@@ -11,10 +11,10 @@
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
-#include "llvm/Support/ErrorHandling.h"
 
 #define DEBUG_TYPE "ave-i1op-soft-impl"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -30,40 +30,126 @@ using namespace mlir::hivmave;
 
 static constexpr llvm::StringLiteral i1ProcessedAttr = "1xi1 processed";
 
-std::pair<Value, Value> getBaseMemrefAndOffset(PatternRewriter &rewriter,
-                                               Location &loc, Value srcMem,
-                                               Value currOffset) {
-  // TODO: Supports offset calculation in complex scenarios. #ISSUE#84
-  Operation *defOp = nullptr;
-  if (auto blockArg = dyn_cast<BlockArgument>(srcMem)) {
-    defOp = blockArg.getOwner()->getParentOp();
-  } else {
-    defOp = srcMem.getDefiningOp();
+namespace {
+struct LinearizedI1Access {
+  Value rootMemref;
+  Value linearBitOffset;
+};
+} // namespace
+
+static SmallVector<int64_t> getStaticStrides(MemRefType memRefTy) {
+  SmallVector<int64_t> strides(memRefTy.getRank());
+  int64_t offset = 0;
+  if (succeeded(getStridesAndOffset(memRefTy, strides, offset)))
+    return strides;
+
+  int64_t runningStride = 1;
+  for (int64_t i = memRefTy.getRank() - 1; i >= 0; --i) {
+    strides[i] = runningStride;
+    runningStride *= memRefTy.getDimSize(i);
   }
-  if (dyn_cast<func::FuncOp>(defOp)) {
-    // Check whether the memref object is a function parameter.
-    // The memref object address in the parameters is aligned.
-    return {srcMem, currOffset};
-  } else if (auto subViewOp = dyn_cast<memref::SubViewOp>(defOp)) {
-    auto srcValue = subViewOp.getSource();
-    auto offsetOperands = subViewOp.getMixedOffsets();
+  return strides;
+}
 
-    if (srcValue.getType().getRank() != 1)
-      llvm::report_fatal_error(
-          "process i1 load error: can not process vector with multi dim");
+static FailureOr<LinearizedI1Access>
+linearizeSingleElementI1Access(PatternRewriter &rewriter, Location loc,
+                               Value baseMemref, ValueRange indices) {
+  auto memRefTy = dyn_cast<MemRefType>(baseMemref.getType());
+  if (!memRefTy || !memRefTy.hasStaticShape() ||
+      indices.size() != static_cast<size_t>(memRefTy.getRank()))
+    return failure();
 
-    Value newOffset;
-    if (auto v = dyn_cast<Value>(offsetOperands[0])) {
-      newOffset = rewriter.create<arith::AddIOp>(loc, v, currOffset);
-    } else if (Attribute attr = dyn_cast<Attribute>(offsetOperands[0])) {
-      int64_t offset = dyn_cast<IntegerAttr>(attr).getSInt();
-      Value cstVal = rewriter.create<arith::ConstantIndexOp>(loc, offset);
-      newOffset = rewriter.create<arith::AddIOp>(loc, cstVal, currOffset);
+  Operation *defOp = baseMemref.getDefiningOp();
+  if (!defOp) {
+    return LinearizedI1Access{baseMemref,
+                              computeLinearMemRefOffset(
+                                  rewriter, loc, baseMemref, indices,
+                                  rewriter.getIndexType())};
+  }
+
+  if (auto subViewOp = dyn_cast<memref::SubViewOp>(defOp)) {
+    SmallVector<Value> sourceIndices;
+    sourceIndices.reserve(subViewOp.getSourceType().getRank());
+
+    auto mixedOffsets = subViewOp.getMixedOffsets();
+    auto mixedStrides = subViewOp.getMixedStrides();
+    llvm::SmallBitVector droppedDims = subViewOp.getDroppedDims();
+    size_t resultIdx = 0;
+    for (int64_t dim = 0, e = subViewOp.getSourceType().getRank(); dim < e;
+         ++dim) {
+      Value offset =
+          getValueOrCreateConstantIndexOp(rewriter, loc, mixedOffsets[dim]);
+      if (droppedDims[dim]) {
+        sourceIndices.push_back(offset);
+        continue;
+      }
+
+      Value stride =
+          getValueOrCreateConstantIndexOp(rewriter, loc, mixedStrides[dim]);
+      Value scaledIndex =
+          rewriter.create<arith::MulIOp>(loc, indices[resultIdx++], stride);
+      sourceIndices.push_back(
+          rewriter.create<arith::AddIOp>(loc, offset, scaledIndex));
     }
-
-    return getBaseMemrefAndOffset(rewriter, loc, srcValue, newOffset);
+    return linearizeSingleElementI1Access(rewriter, loc, subViewOp.getSource(),
+                                          sourceIndices);
   }
-  return {srcMem, currOffset};
+
+  if (auto castOp = dyn_cast<memref::CastOp>(defOp))
+    return linearizeSingleElementI1Access(rewriter, loc, castOp.getSource(),
+                                          indices);
+
+  return LinearizedI1Access{baseMemref,
+                            computeLinearMemRefOffset(
+                                rewriter, loc, baseMemref, indices,
+                                rewriter.getIndexType())};
+}
+
+static FailureOr<Value> buildRawLinearI1View(PatternRewriter &rewriter,
+                                             Location loc, Value rootMemref) {
+  auto rootTy = dyn_cast<MemRefType>(rootMemref.getType());
+  if (!rootTy || !rootTy.hasStaticShape())
+    return failure();
+
+  SmallVector<int64_t> strides = getStaticStrides(rootTy);
+  bool hasDynamicStride = false;
+  for (int64_t stride : strides) {
+    if (ShapedType::isDynamic(stride)) {
+      hasDynamicStride = true;
+      break;
+    }
+  }
+
+  int64_t staticSpan = ShapedType::kDynamic;
+  SmallVector<OpFoldResult> linearSizes;
+  if (!hasDynamicStride) {
+    staticSpan = 1;
+    for (auto [dim, stride] : llvm::zip(rootTy.getShape(), strides))
+      staticSpan += (dim - 1) * stride;
+    linearSizes.push_back(rewriter.getIndexAttr(staticSpan));
+  }
+  auto linearTy = MemRefType::get(
+      {staticSpan}, rootTy.getElementType(),
+      StridedLayoutAttr::get(rewriter.getContext(), ShapedType::kDynamic, {1}),
+      rootTy.getMemorySpace());
+  auto metadata =
+      rewriter.create<memref::ExtractStridedMetadataOp>(loc, rootMemref);
+  if (linearSizes.empty()) {
+    Value one = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value span = one;
+    for (auto [size, stride] :
+         llvm::zip(metadata.getSizes(), metadata.getStrides())) {
+      Value dimMinusOne = rewriter.create<arith::SubIOp>(loc, size, one);
+      Value dimSpan = rewriter.create<arith::MulIOp>(loc, dimMinusOne, stride);
+      span = rewriter.create<arith::AddIOp>(loc, span, dimSpan);
+    }
+    linearSizes.push_back(span);
+  }
+  auto rawView = rewriter.create<memref::ReinterpretCastOp>(
+      loc, linearTy, metadata.getBaseBuffer(), getAsOpFoldResult(metadata.getOffset()),
+      linearSizes,
+      SmallVector<OpFoldResult>{rewriter.getIndexAttr(1)});
+  return rawView.getResult();
 }
 
 // Decompose a memory offset into a VL-aligned base and an intra-VL offset.
@@ -184,28 +270,31 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
     loadOp->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
   }
 
-  void rewriteLoadI1Unaligned(mlir::hivmave::VFLoadOp loadOp,
-                              PatternRewriter &rewriter) const {
+  LogicalResult rewriteLoadI1Linearized(mlir::hivmave::VFLoadOp loadOp,
+                                        PatternRewriter &rewriter) const {
     Location loc = loadOp.getLoc();
     rewriter.setInsertionPointAfter(loadOp);
-    // Find base memref and accumulated offset through the SubViewOp chain.
-    Value srcMemref = loadOp.getBase();
-    Value srcOffset = loadOp.getIndices()[0];
-    auto [baseMemref, baseOffset] =
-        getBaseMemrefAndOffset(rewriter, loc, srcMemref, srcOffset);
-    // Decompose offset into a VL-aligned base and an intra-VL offset.
+    auto linearized =
+        linearizeSingleElementI1Access(rewriter, loc, loadOp.getBase(),
+                                       loadOp.getIndices());
+    if (failed(linearized))
+      return failure();
+    auto rawLinearView =
+        buildRawLinearI1View(rewriter, loc, linearized->rootMemref);
+    if (failed(rawLinearView))
+      return failure();
+
     auto [baseIndices, offsetInVL] =
-        getBaseAndOffetInVL(rewriter, loc, baseOffset);
-    // Create a new aligned load from the computed base address.
+        getBaseAndOffetInVL(rewriter, loc, linearized->linearBitOffset);
     VectorType orgVectorTy = loadOp.getVectorType();
     VFLoadOp newLoad = rewriter.create<hivmave::VFLoadOp>(
-        loc, orgVectorTy, baseMemref, baseIndices);
-    // Convert i1 → preg, with PregXor+Reduction shift for unalignment.
+        loc, orgVectorTy, *rawLinearView, baseIndices);
     Value newPreg = convertI1ToPreg(orgVectorTy, newLoad.getResult(0),
                                     offsetInVL, rewriter, loc);
     rewriter.replaceAllUsesWith(loadOp.getResult(0), newPreg);
     rewriter.eraseOp(loadOp);
     newLoad->setAttr(i1ProcessedAttr, rewriter.getUnitAttr());
+    return success();
   }
 
   LogicalResult matchAndRewrite(mlir::hivmave::VFLoadOp loadOp,
@@ -216,14 +305,15 @@ struct loadBroadcastPattern : public OpRewritePattern<hivmave::VFLoadOp> {
     if (loadOp->hasAttr(i1ProcessedAttr))
       return failure();
     if (!vecElemTy.isInteger(1) || !memRefTy.hasStaticShape() ||
-        memRefTy.getNumElements() != 1 || memRefTy.getRank() != 1)
+        memRefTy.getNumElements() != 1)
       return failure();
     LDBG("Process operation : " << loadOp);
 
-    if (!loadOp->hasAttr(UnalignedAttr::name)) {
+    if (!loadOp->hasAttr(UnalignedAttr::name) && memRefTy.getRank() == 1) {
       rewriteLoadI1(loadOp, rewriter);
     } else {
-      rewriteLoadI1Unaligned(loadOp, rewriter);
+      if (failed(rewriteLoadI1Linearized(loadOp, rewriter)))
+        return failure();
     }
     return success();
   }

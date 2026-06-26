@@ -4,7 +4,8 @@
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi16>
-// CHECK: %[[RES:.*]] = hivm.hir.vor ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%{{.*}} : tensor<256xi16>) -> tensor<256xi16>
+// CHECK: %[[DST:.*]] = tensor.empty() : tensor<256xi16>
+// CHECK: %[[RES:.*]] = hivm.hir.vor ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -41,12 +42,15 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_XCHG_atomic_xchg_i16
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16, strided<[1]>> to memref<256xi16>
 // CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16> to memref<256xi16, strided<[1]>>
 // CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16> to memref<256xi16>
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_atomic_xchg_i16(%arg0: memref<?xi16>) {
     %alloc = memref.alloc() : memref<256xi16>

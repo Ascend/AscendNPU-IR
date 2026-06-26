@@ -287,9 +287,10 @@ func.func @concat_lowering(%a: tensor<5x?x10xf32>, %b: tensor<?x?x10xf32>, %c: t
 }
  
 // -----
-func.func @vcat_lowering() {
+func.func @vcast_lowering() {
     %f16 = memref.alloc() : memref<2x16xf16>
     %f32 = memref.alloc() : memref<2x16xf32>
+    %s8 = memref.alloc() : memref<2x16xi8>
     %s16 = memref.alloc() : memref<2x16xi16>
     %s32 = memref.alloc() : memref<2x16xi32>
     %s64 = memref.alloc() : memref<2x16xi64>
@@ -307,6 +308,8 @@ func.func @vcat_lowering() {
     // COMMON: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, round_mode = #hfusion.round_mode<floor>}
     hivm.hir.vcast ins(%bf16 : memref<2x16xbf16>) outs(%s32 : memref<2x16xi32>)
                    round_mode = #hivm.round_mode<floor>
+    // COMMON: hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = false, enable_saturate = true, hfusion.unsigned_mode = #hfusion.unsigned_mode<si2si>, round_mode = #hfusion.round_mode<trunc>}
+    hivm.hir.vcast {enable_overflow = false, enable_saturate = true, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>} ins(%f16 : memref<2x16xf16>) outs(%s8 : memref<2x16xi8>) round_mode = <trunc>
     return
 }
 
@@ -601,5 +604,16 @@ func.func @vdiv_float_lowering(%a: tensor<64xf32>, %c: f32, %d: tensor<64xf32>) 
   // CHECK-TRUE: linalg.elemwise_binary {fun = #linalg.binary_fn<div>}
   // CHECK-FALSE: linalg.div
   %0 = hivm.hir.vdiv ins(%a, %c : tensor<64xf32>, f32) outs(%d : tensor<64xf32>) -> tensor<64xf32>
+  return %0 : tensor<64xf32>
+}
+
+// -----
+
+// COMMON-LABEL: @vdiv_hp_float_lowering
+func.func @vdiv_hp_float_lowering(%a: tensor<64xf32>, %b: tensor<64xf32>, %d: tensor<64xf32>) -> tensor<64xf32> {
+  // CHECK-TRUE: hfusion.elemwise_binary {fun = #hfusion.binary_fn<divfhp>}
+  // CHECK-FALSE: linalg.map
+  // CHECK-FALSE: mathExt.divfhp
+  %0 = hivm.hir.vdiv ins(%a, %b : tensor<64xf32>, tensor<64xf32>) outs(%d : tensor<64xf32>) isHP = true -> tensor<64xf32>
   return %0 : tensor<64xf32>
 }

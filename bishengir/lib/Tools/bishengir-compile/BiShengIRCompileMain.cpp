@@ -167,13 +167,36 @@ runExternalHIVMC(ModuleOp &module,
   TempDirectoriesStore tempDirsStore;
   std::string inputFile = "module.hivm.opt.mlir";
   std::string outputFile = config.getOutputFile();
+  std::unique_ptr<llvm::ToolOutputFile> inputFileHandler;
 
-  auto inputFileHandler = getTempFile(inputFile, tempDirsStore);
-  if (!inputFileHandler) {
-    llvm::dbgs()
-        << "[ERROR] Failed to create temporary input file needed to run "
-           "hivmc compile.\n";
-    return failure();
+  // Handle --save-temps=<directory> option to store module.hivm.opt.mlir
+  if (!config.getSaveTemps().empty()) {
+    llvm::SmallString<256> saveTempsDir(config.getSaveTemps());
+    if (llvm::sys::fs::make_absolute(saveTempsDir)) {
+      llvm::errs() << "[ERROR] Failed to get absolute path for save-temps.\n";
+      return failure();
+    }
+    if (!llvm::sys::fs::exists(saveTempsDir))
+      if (auto ec = llvm::sys::fs::create_directories(saveTempsDir)) {
+        llvm::errs() << "[ERROR] Failed to create save-temps directory: " << saveTempsDir << "\n";
+        return failure();
+      }
+    llvm::sys::path::append(saveTempsDir, inputFile);
+    std::string errorMessage;
+    inputFileHandler = mlir::openOutputFile(saveTempsDir, &errorMessage);
+    if (!inputFileHandler) {
+      llvm::errs() << "[ERROR] Failed to open save-temps file: " << errorMessage << "\n";
+      return failure();
+    }
+    // Make sure module.hivm.opt.mlir will not be deleted.
+    inputFileHandler->keep();
+  // If --save-temps is not set, use a temporary directory for module.hivm.opt.mlir
+  } else {
+    inputFileHandler = getTempFile(inputFile, tempDirsStore);
+    if (!inputFileHandler) {
+      llvm::dbgs() << "[ERROR] Failed to create temporary input file needed to run hivmc compile.\n";
+      return failure();
+    }
   }
   inputFile = inputFileHandler->outputFilename();
 

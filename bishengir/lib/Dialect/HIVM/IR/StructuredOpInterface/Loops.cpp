@@ -168,8 +168,14 @@ SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray() {
   int64_t rank = getRankFromShapedTypeValue(getDst());
   auto iteratorTypes =
       SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
-  // hivm gather op only support last gather axis now
-  iteratorTypes.back() = hivm::IteratorType::kGather;
+  // Set the actual gather axis based on gather_axis attribute.
+  // Default to last axis if attribute is not set or is -1.
+  int64_t gatherAxis = rank - 1;
+  auto axisAttr = getGatherAxis();
+  if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1) {
+    gatherAxis = static_cast<int64_t>(*axisAttr);
+  }
+  iteratorTypes[gatherAxis] = hivm::IteratorType::kGather;
   return iteratorTypes;
 }
 

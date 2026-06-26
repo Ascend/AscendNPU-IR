@@ -168,6 +168,8 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     FailureOr<DataLayoutAttr> getOperandBLayout();
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
+    llvm::SmallVector<int64_t> getBlockSizesTile(
+        Value oper, bool isTranspose, bool isA);
   }];
 }
 
@@ -278,6 +280,8 @@ def MmadMxL1Op
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
+    llvm::SmallVector<int64_t> getBlockSizesTile(
+        Value oper, bool isTranspose, bool isA) const;
   }];
 }
 

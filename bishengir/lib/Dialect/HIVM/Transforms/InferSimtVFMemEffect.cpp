@@ -45,12 +45,17 @@ struct InferSimtVFMemEffectPass
 
 void InferSimtVFMemEffectPass::setFuncArgMemEffect(
     func::FuncOp funcOp, Value blockArg, hivm::MemoryEffect memEffect) {
-  auto argList = funcOp.getArguments();
-  auto actualArg = llvm::find(argList, blockArg);
+  auto actualArg = dyn_cast<BlockArgument>(blockArg);
   if (!actualArg) {
     return;
   }
-  auto idx = std::distance(argList.begin(), actualArg);
+  // Only function entry block arguments should participate in function
+  // argument memory-effect inference. Traceback may also stop at local allocs
+  // or nested-region block arguments, which must be ignored here.
+  if (actualArg.getOwner() != &funcOp.getBody().front()) {
+    return;
+  }
+  auto idx = actualArg.getArgNumber();
   if (auto existMemEffectAttr = funcOp.getArgAttrOfType<hivm::MemoryEffectAttr>(
           idx, hivm::MemoryEffectAttr::name)) {
     if (existMemEffectAttr.getEffect() == memEffect) {

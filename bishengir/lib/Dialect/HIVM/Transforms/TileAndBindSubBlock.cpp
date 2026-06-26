@@ -73,6 +73,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -1202,6 +1203,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   if (failed(pm.run((newFunc))) ||
       failed(tileAndSliceOp(newFunc, tightlyCoupledBufferToTilingDim,
                             isBroadcastAxisCase))) {
+    llvm::errs() << "[hivm-bind-sub-block] revert " << newFunc.getSymName()
+                 << ": tile-and-slice preparation failed\n";
     failAndRevert(newFunc);
     return failure();
   }
@@ -1253,6 +1256,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   }
 
   if (isFailed) {
+    llvm::errs() << "[hivm-bind-sub-block] revert " << newFunc.getSymName()
+                 << ": no store/copy op was tiled\n";
     failAndRevert(newFunc);
     return failure();
   }
@@ -1265,6 +1270,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   LogicalResult bubbleUpResult = pm2.run(newFunc);
   if (bubbleUpResult.failed() || newFunc.verify().failed() ||
       newFunc.verifyBody().failed() || newFunc.verifyRegions().failed()) {
+    llvm::errs() << "[hivm-bind-sub-block] revert " << newFunc.getSymName()
+                 << ": bubble-up or verification failed\n";
     failAndRevert(newFunc);
     return failure();
   }
@@ -1273,6 +1280,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   /// fixpipe op is ready to fixpipe full data into two aivs defautly.
   if (failed(pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
           newFunc, tightlyCoupledBufferToTilingDim))) {
+    llvm::errs() << "[hivm-bind-sub-block] revert " << newFunc.getSymName()
+                 << ": tightly-coupled UB was not tiled\n";
     failAndRevert(newFunc);
     return failure();
   }
@@ -1290,6 +1299,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   patternsPost.add<mlir::hivm::detail::BubbleUpSubviewFromTiling>(
       &getContext());
   if (failed(applyPatternsGreedily(newFunc, std::move(patternsPost)))) {
+    llvm::errs() << "[hivm-bind-sub-block] revert " << newFunc.getSymName()
+                 << ": post tiling cleanup failed\n";
     failAndRevert(newFunc);
     return failure();
   }
@@ -1309,6 +1320,25 @@ static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
   // limitUniqueSubBlockToStore vector function and skip this pass if
   // BatchMatmul is found.
   if (hasBatchMatmulLoopInAicFuncs(aicFunctions))
+    return true;
+
+  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
+        bool hasSingleElementTensor = false;
+        bool hasSyncBlockOperations = false;
+        aivFunc.walk([&](Operation *op) {
+          if (isa<hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
+              hivm::SyncBlockUnlockOp>(op)) {
+            hasSyncBlockOperations = true;
+          }
+          for (Value operand : op->getOperands()) {
+            if (isTensorSingleElement(operand)) {
+              hasSingleElementTensor = true;
+            }
+          }
+          return WalkResult::advance();
+        });
+        return hasSingleElementTensor && hasSyncBlockOperations;
+      }))
     return true;
 
   // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully

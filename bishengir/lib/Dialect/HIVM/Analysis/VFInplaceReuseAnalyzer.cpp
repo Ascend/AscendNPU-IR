@@ -243,12 +243,24 @@ bool hasSameIteration(vector::TransferReadOp read,
   return hasSameIteration(readV, writeV);
 }
 
+bool isNoWideningWrite(vector::TransferReadOp read,
+                       vector::TransferWriteOp write) {
+  Type readElemType = read.getVectorType().getElementType();
+  Type writeElemType = write.getVectorType().getElementType();
+  if (!readElemType.isIntOrFloat() || !writeElemType.isIntOrFloat()) {
+    return false;
+  }
+  return writeElemType.getIntOrFloatBitWidth() <=
+         readElemType.getIntOrFloatBitWidth();
+}
+
 // `read` arg is inplace resuable for `write` arg if
 // 1. `write` arg is only written once
 // 2. `read` arg is only read once
 // 3. `read` op is in the same block as `write` op
 // 4. `read` op must precedes `write` op
 // 5. `read` op should have same subview iterations as `write` op
+// 6. `write` element width should not be wider than `read` element width
 void VFInplaceReuseAnalysis::buildVFCalleeFunc(func::FuncOp vfCalleeFunc) {
   ReadMapT arg2reads;
   WriteMapT arg2writes;
@@ -272,6 +284,7 @@ void VFInplaceReuseAnalysis::buildVFCalleeFunc(func::FuncOp vfCalleeFunc) {
         getPrevReadsInSameBlock(write), [&](vector::TransferReadOp read) {
           auto readArg = getReadArg(read, arg2reads);
           if (!readArg.has_value() || !onlyReadOnce(readArg.value()) ||
+              !isNoWideningWrite(read, write) ||
               !hasSameIteration(read, write)) {
             return;
           }

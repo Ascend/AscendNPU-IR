@@ -263,7 +263,7 @@ public:
     if (auto *iter = llvm::find(parentFor.getRegionIterArgs(), castSrc);
         iter != parentFor.getRegionIterArgs().end())
       iterArgIdx = static_cast<unsigned>(
-          std::distance(iter, parentFor.getRegionIterArgs().begin()));
+          std::distance(parentFor.getRegionIterArgs().begin(), iter));
     else
       return failure();
 

@@ -25,6 +25,8 @@ public:
     Parallel,
     RankReduced,
     Reduce,
+    InvalidColumnSplit,
+    NotAligned,
   };
   explicit DimensionAnalyzer(Operation *op, int64_t tilingSize = 2);
   LogicalResult initialize() override;
@@ -143,6 +145,7 @@ protected:
   void markDimensions();
 
   void markTransposedDim(hivm::VTransposeOp op);
+  void markUnalignedDim(hivm::CopyOp op);
 
   /// transfer marked information through the dimensions merged by
   /// structuralDsu_

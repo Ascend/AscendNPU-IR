@@ -61,8 +61,6 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   InsertLoadStoreForMixCVOptions options;
   options.enableLegacy =
       hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
-  if (!hivmPipelineOptions.enableMixedCV)
-    options.enableLegacy = true;
   options.target = hivmPipelineOptions.target;
   options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
   options.disableTightCoupledBuffer =
@@ -214,6 +212,9 @@ bufferizationPipeline(OpPassManager &pm,
     pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
   }
   pm.addPass(hfusion::createSimplifyVFArgsPass());
+  // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
+  // before bufferization to avoid unnecessary memref operations
+  pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(

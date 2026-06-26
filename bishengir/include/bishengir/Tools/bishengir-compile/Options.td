@@ -301,6 +301,12 @@ def InjectIRFromFile : DFXControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def SaveTemps : DFXControlOptions<
+  "Save intermediate compilation results to specified directory.",
+  "std::string",
+  "\"\""
+>;
+
 //===----------------------------------------------------------------------===//
 // General Optimization Control Options
 //===----------------------------------------------------------------------===//
@@ -572,9 +578,16 @@ def EnableAutoBlockifyLoop : HIVMOptimizationControlOptions<
 >;
 
 def SuperBlockFactor : HIVMOptimizationControlOptions<
-  "The factor of super-blocking.",
+  "The factor of super-blocking (must be a power of 2, >= 1). "
+  "1 means no super-blocking.",
   "unsigned",
-  "0"
+  "1"
+>;
+
+def SuperBlockBarrier : HIVMOptimizationControlOptions<
+  "Enable/disable super-block barrier lowering.",
+  "bool",
+  "false"
 >;
 
 def TileMixVectorLoop : HIVMOptimizationControlOptions<
@@ -1023,6 +1036,20 @@ def PrintPassId : DFXControlOptions<
   "false"
 >;
 
+def VerifyEach : DFXControlOptions<
+  "Verify the IR after every pass. When disabled (default), the IR is only "
+  "verified once after the last pass of each pipeline.",
+  "bool",
+  "false"
+>;
+
+def EnableLibCallNoInline : DFXControlOptions<
+  "Mark the library-call function declarations generated during HIVM-to-"
+  "Standard conversion as hacc.noinline instead of hacc.always_inline.",
+  "bool",
+  "true"
+>;
+
 def InjectIrBefore : DFXControlOptions<
   "Inject IR from file before a specific pass. Format: pass_id@file_path",
   "std::string",
@@ -1158,7 +1185,7 @@ def DisableReorderInstruction : SIMTOptimizationControlOptions<
 def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
   "Enable post-lowering instruction scheduling that reduces register pressure by interleaving load-compute-store chains",
   "bool",
-  "false"
+  "true"
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }

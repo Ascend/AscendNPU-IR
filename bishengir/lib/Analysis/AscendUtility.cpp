@@ -21,6 +21,8 @@
 #include "triton/Analysis/Utility.h"
 #include "llvm/ADT/SmallSet.h"
 
+#include <algorithm>
+
 namespace mlir {
 
 using namespace triton::gpu;
@@ -28,6 +30,78 @@ using namespace triton::gpu;
 namespace triton::ascend {
 
 #define str_attr(str) ::mlir::StringAttr::get(ctx, (str))
+
+// "Given a layout mapping onto dim0..dimn, remove a dimension `dim` and rename
+// the rest as dim0..dimn-1".  Newer SliceEncodingAttr::toLinearLayout uses this
+// helper instead of building a transform and composing it with the parent
+// layout.
+static LinearLayout removeStandardDim(const LinearLayout &layout, int dim) {
+  auto rank = layout.getNumOutDims();
+  assert(rank > 0);
+  assert(dim < static_cast<int>(rank));
+  auto *ctx = layout.getOutDimNames().begin()->getContext();
+  auto dims = llvm::to_vector(layout.getOutDimNames());
+  auto standardDims = standardOutDimNames(ctx, rank);
+  assert(dims == standardDims);
+  dims.erase(dims.begin() + dim);
+  auto newLayout = layout.sublayout(llvm::to_vector(layout.getInDimNames()), dims);
+  auto dimSizes = newLayout.getOutDims();
+  auto newDims = standardOutDimNames(ctx, rank - 1);
+  for (auto [i, newDim] : llvm::enumerate(newDims)) {
+    dimSizes[i].first = newDim;
+  }
+  return LinearLayout(newLayout.getBases(), dimSizes,
+                      /*isSurjective=*/false);
+}
+
+unsigned AscendReduceOpHelper::getCorrectedThreadOffsetOnReductionAxis() {
+  auto srcLayout = getSrcLayout();
+  auto srcShape = getSrcShape();
+  unsigned reduceAxis = getOperation().getAxis();
+  auto *ctx = srcLayout.getContext();
+  auto srcTy = RankedTensorType::get(srcShape,
+                                      getOperation().getElementTypes()[0],
+                                      srcLayout);
+  LinearLayout linearLayout;
+
+  if (auto sliceEnc = dyn_cast<SliceEncodingAttr>(srcLayout)) {
+    // Align with newer community SliceEncodingAttr::toLinearLayout: build the
+    // sliced LinearLayout through parent-layout + removeStandardDim, then use
+    // that layout to derive the reduce shuffle offset from lane bases.
+
+    // First compute the linear layout for this layout's parent.
+    SmallVector<int64_t> parentShape(srcShape);
+    parentShape.insert(parentShape.begin() + sliceEnc.getDim(), 1);
+    LinearLayout parentLL =
+        triton::gpu::toLinearLayout(parentShape, sliceEnc.getParent());
+    auto sliceLL = removeStandardDim(parentLL, sliceEnc.getDim());
+
+    // Step 3: Along the "register" dim, remove any all-zero bases.
+    auto bases = sliceLL.getBases();
+    std::vector<std::vector<int>> newRegBases;
+    for (const auto &basis : bases[str_attr("register")]) {
+      if (llvm::any_of(basis, [](int b) { return b != 0; })) {
+        newRegBases.push_back(basis);
+      }
+    }
+    bases[str_attr("register")] = newRegBases;
+    linearLayout =
+        LinearLayout(std::move(bases), llvm::to_vector(sliceLL.getOutDimNames()));
+  } else {
+    linearLayout = triton::gpu::toLinearLayout(srcTy);
+  }
+
+  auto kLane = StringAttr::get(ctx, "lane");
+  const auto &bases = linearLayout.getBases();
+  const auto &lanes = bases.find(kLane)->second;
+  auto offset = 1;
+  for (const auto &lane : lanes) {
+    if (lane[reduceAxis] != 0)
+      break;
+    offset *= 2;
+  }
+  return offset;
+}
 
 SmallVector<SmallVector<unsigned>> emitOffsetForLayout(Attribute layout,
                                                        RankedTensorType type) {

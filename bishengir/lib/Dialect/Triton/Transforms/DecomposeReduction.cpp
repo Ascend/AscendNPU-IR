@@ -486,6 +486,19 @@ public:
         if (hasWarpSynchronousInput(srcType, gReductionAxis))
           return WalkResult::advance();
       }
+      // TODO: this guard is temp fix, remove when real fix is implemented
+
+      // A reduction whose (non-trivial) axis already fits entirely within a
+      // single warp does not benefit from the warp-synchronous decomposition.
+      // Forcing it builds a cross-warp convert_layout that round-trips the
+      // partials through shared memory across warps. At high warp counts (e.g.
+      // num-warps=32) the surplus warps spill onto the small reduction axis
+      // (making it non-warp-synchronous) and that cross-warp round-trip
+      // miscompiles.  Leave these to the default reduce lowering.  Large
+      // reductions and trivial 1-element reductions are untouched.
+      if (srcShape[gReductionAxis] > 1 &&
+ 	        srcShape[gReductionAxis] < gNumThreads)
+ 	      return WalkResult::advance();
 
       // Enable for limited configurations as per required.
       if ((gReductionAxis == 0 && rank == 2) ||

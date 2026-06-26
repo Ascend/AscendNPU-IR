@@ -1106,7 +1106,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       - inputs : input parameters.
       - outputs : output results, designated "init" operands, which act as initial values for the results
                   of the operation or the init locations to which the results of the op will be written.
-      - temp_buffer : temporary buffers used by the custom implementation.
+      - temp_buffers : temporary buffers used by the custom implementation.
   }];
 
   string customOpAttrsDescription = [{
@@ -1133,7 +1133,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   }];
 
   dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
-      Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffer, UnitAttr:$no_side_effect);
+      Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffers, UnitAttr:$no_side_effect);
   dag res = (outs Variadic<AnyType>:$results);
 
   code customOpBaseDecl = [{
@@ -1309,9 +1309,6 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
 
 def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
   let summary = customOpSummary;
-
-  let description =
-      customOpDescription#customOpAttrsDescription#customOpTODODescription;
 
   let description = customOpDescription#customOpAttrsDescription#[{
       - InPipe   : which input pipe to execute on, refer to PipeAttr.

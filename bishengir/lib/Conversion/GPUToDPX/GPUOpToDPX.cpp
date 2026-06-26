@@ -163,7 +163,7 @@ public:
     auto mod = op->getParentOfType<ModuleOp>();
     auto superBlockFactor = mod->getAttrOfType<IntegerAttr>(
         mlir::triton::gpu::AttrSuperBlockFactor);
-    unsigned factor = superBlockFactor ? (1 << superBlockFactor.getUInt()) : 1;
+    unsigned factor = superBlockFactor ? superBlockFactor.getUInt() : 1;
 
     auto context = rewriter.getContext();
     const LLVMTypeConverter *converter =

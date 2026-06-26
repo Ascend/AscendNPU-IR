@@ -289,12 +289,12 @@ ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VRecOp)
 //===----------------------------------------------------------------------===//
 void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   bool isSigned, ArrayRef<int64_t> transpose,
+                   bool isSigned, bool isHP, ArrayRef<int64_t> transpose,
                    ArrayRef<int64_t> broadcast) {
   auto transposeAttr = odsBuilder.getDenseI64ArrayAttr(transpose);
   auto broadcastAttr = odsBuilder.getDenseI64ArrayAttr(broadcast);
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
-        isSigned, transposeAttr, broadcastAttr);
+        isSigned, isHP, transposeAttr, broadcastAttr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -1384,18 +1384,39 @@ SmallVector<OpFoldResult> VPadOp::getMixedHighPad() {
 void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value indices, Value dst) {
   build(odsBuilder, odsState, result, src, indices, dst,
-        /*temp_buffer=*/nullptr);
+        /*temp_buffer=*/nullptr, /*gather_axis=*/IntegerAttr());
+}
+
+void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value indices, Value dst, int64_t axis) {
+  build(odsBuilder, odsState, result, src, indices, dst,
+        /*temp_buffer=*/nullptr, odsBuilder.getI64IntegerAttr(axis));
 }
 
 std::string VGatherOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
-  StringRef baseName = this->getOpName();
   ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
   Type elemType = srcVecType.getElementType();
+  int64_t rank = srcVecType.getRank();
+  std::string baseName = this->getOpName().str();
+  std::string elemTypeName = hivm::detail::getTypeName(this->getLoc(), elemType);
 
-  std::stringstream ss;
-  ss << baseName.data() << "_1d_"
-     << hivm::detail::getTypeName(this->getLoc(), elemType);
-  return ss.str();
+  // SIMT path: all gather operations use the SIMT template.
+  // Generates: gather_simt_<dim>d_<dtype>_<itype>
+  int libCallRank = getOpLibraryCallRank(static_cast<int>(rank));
+  ShapedType idxVecType = cast<ShapedType>(getIndices().getType());
+  Type idxElemType = idxVecType.getElementType();
+  std::string idxElemTypeName = hivm::detail::getTypeName(this->getLoc(), idxElemType);
+  return concatVectorOpLibraryCallName(baseName + "_simt", libCallRank,
+                                       elemTypeName + "_" + idxElemTypeName);
+}
+
+int VGatherOp::inferOpLibraryMaxRank() {
+  auto moduleOp = (*this)->getParentOfType<ModuleOp>();
+  if (moduleOp && hacc::utils::isAscend950(moduleOp)) {
+    // All gather operations use the SIMT template which supports up to 5D.
+    return 5;
+  }
+  return 1;
 }
 
 //===----------------------------------------------------------------------===//

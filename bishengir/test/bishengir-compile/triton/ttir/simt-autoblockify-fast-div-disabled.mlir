@@ -1,5 +1,5 @@
 // REQUIRES: enable-lir-compile
-// RUN: bishengir-compile %s --target=Ascend910_9589 --enable-triton-ir-compile --pure-simt --enable-auto-blockify-loop --num-warps=1 --threads-per-warp=32 --enable-simt-fast-div=false -o %t.o --mlir-print-ir-after=convert-ascend-dpx-to-hivmregbaseintrins 2>&1 | FileCheck %s --implicit-check-not=_mlir_ciface_simt_div_magic_shift_uint32_t --implicit-check-not=_mlir_ciface_simt_div_magic_mul_uint32_t --implicit-check-not=_mlir_ciface_simt_umulhi_uint32_t
+// RUN: bishengir-compile %s --target=Ascend910_9589 --enable-triton-ir-compile --pure-simt --enable-sink-dpx-load=false --enable-auto-blockify-loop --num-warps=1 --threads-per-warp=32 --enable-simt-fast-div=false -o %t.o --mlir-print-ir-after=convert-ascend-dpx-to-hivmregbaseintrins 2>&1 | FileCheck %s --implicit-check-not=_mlir_ciface_simt_div_magic_shift_uint32_t --implicit-check-not=_mlir_ciface_simt_div_magic_mul_uint32_t --implicit-check-not=_mlir_ciface_simt_umulhi_uint32_t
 
 // The kernel uses tt.get_program_id so SIMTAutoBlockify introduces div/rem to
 // reconstruct logical program ids. With --enable-simt-fast-div=false, the later

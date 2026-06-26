@@ -107,6 +107,8 @@ createTypeCanonicalizedMemRefOperands(OpBuilder &b, Location loc,
   return res;
 }
 
+static bool gMarkLibCallNoInline = false;
+
 static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
                                   ModuleOp mod, const std::string &libCallName,
                                   const SmallVector<Value> &inputOperands,
@@ -127,31 +129,24 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     funcOp->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                     UnitAttr::get(ctx));
 
-    auto haccAlwaysInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
-        hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
-    funcOp->setAttr(haccAlwaysInlineAttr, rewriter.getUnitAttr());
-
     funcOp.setPrivate();
 
-    // label a func core type attribute to the lib call decl, based on either
+    // Determine the func core type of the lib call decl, based on either
     // special cases such as debug helper functions or the core
     // type of original op.
+    std::optional<hivm::TFuncCoreType> funcCoreType;
     if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
         llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
-      funcOp->setAttr(
-          mlir::hivm::TFuncCoreTypeAttr::name,
-          hivm::TFuncCoreTypeAttr::get(funcOp->getContext(),
-                                       hivm::TFuncCoreType::AIC_OR_AIV));
+      funcCoreType = hivm::TFuncCoreType::AIC_OR_AIV;
     } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
       auto coreTypeMaybe = infer.getCoreType();
       if (coreTypeMaybe) {
-        hivm::TFuncCoreType fc{};
         switch (coreTypeMaybe.value()) {
         case hivm::TCoreType::CUBE:
-          fc = hivm::TFuncCoreType::AIC;
+          funcCoreType = hivm::TFuncCoreType::AIC;
           break;
         case hivm::TCoreType::VECTOR:
-          fc = hivm::TFuncCoreType::AIV;
+          funcCoreType = hivm::TFuncCoreType::AIV;
           break;
         case hivm::TCoreType::CUBE_OR_VECTOR:
         case hivm::TCoreType::CUBE_AND_VECTOR:
@@ -159,11 +154,28 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
               "standard library call shouldn't have mix core type!");
           break;
         }
-
-        funcOp->setAttr(mlir::hivm::TFuncCoreTypeAttr::name,
-                        hivm::TFuncCoreTypeAttr::get(op->getContext(), fc));
       }
     }
+
+    if (funcCoreType)
+      funcOp->setAttr(
+          mlir::hivm::TFuncCoreTypeAttr::name,
+          hivm::TFuncCoreTypeAttr::get(op->getContext(), *funcCoreType));
+
+    // Only mark AIV (cube) lib calls as noinline; AIC (vector) lib calls are
+    // always inlined.
+    bool markNoInline =
+        gMarkLibCallNoInline && funcCoreType == hivm::TFuncCoreType::AIV;
+
+    auto haccInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
+        markNoInline ? hacc::HACCToLLVMIRTranslateAttr::NOINLINE
+                     : hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
+    funcOp->setAttr(haccInlineAttr, rewriter.getUnitAttr());
+
+    if (markNoInline)
+      funcOp->setAttr(
+          hacc::HACCFuncTypeAttr::name,
+          hacc::HACCFuncTypeAttr::get(ctx, hacc::HACCFuncType::DEVICE));
   }
 
   return rewriter.create<func::CallOp>(
@@ -1030,7 +1042,7 @@ public:
                                                      generatedNames) {}
 
   LogicalResult matchAndRewrite(HIVMVectorOp op,
-                                PatternRewriter &rewriter) const final {
+                                PatternRewriter &rewriter) const override {
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     int64_t rank = op.getNumLoops();
@@ -1071,8 +1083,7 @@ public:
     return success();
   }
 
-private:
-  // TODO: Whitelist needs to be unified and rectified
+protected:
   static constexpr bool isElementwiseOp() {
     if constexpr (std::is_same<HIVMVectorOp, hivm::VAddOp>::value ||
                   std::is_same<HIVMVectorOp, hivm::VMulOp>::value ||
@@ -1115,6 +1126,31 @@ private:
       }
     }
     return inputOperands;
+  }
+};
+
+class VGatherOpToLibraryCallPattern
+    : public VectorOpToLibraryCallPattern<hivm::VGatherOp> {
+public:
+  using VectorOpToLibraryCallPattern::VectorOpToLibraryCallPattern;
+
+private:
+  SmallVector<Value>
+  getLibraryCallOperands(PatternRewriter &rewriter, Operation *op,
+                         bool includeExtraBuffer = true) const override {
+    auto gatherOp = cast<hivm::VGatherOp>(op);
+    SmallVector<Value> operands =
+        VectorOpToLibraryCallPattern<hivm::VGatherOp>::getLibraryCallOperands(
+            rewriter, op, includeExtraBuffer);
+    // All gather operations pass the axis as a runtime operand for the SIMT template.
+    int64_t axis = cast<ShapedType>(gatherOp.getSrc().getType()).getRank() - 1;
+    auto axisAttr = gatherOp.getGatherAxis();
+    if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1) {
+      axis = static_cast<int64_t>(*axisAttr);
+    }
+    Value axisVal = rewriter.create<arith::ConstantIntOp>(op->getLoc(), axis, 32);
+    operands.push_back(axisVal);
+    return operands;
   }
 };
 
@@ -1827,7 +1863,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                VectorOpToLibraryCallPattern<hivm::VDeinterleaveOp>,
                VectorOpToLibraryCallPattern<hivm::VMulextendedOp>,
                VectorOpToLibraryCallPattern<hivm::VPowOp>,
-               VectorOpToLibraryCallPattern<hivm::VGatherOp>,
+               VGatherOpToLibraryCallPattern,
                VArangeOpToLibraryCallPattern,
                VCastOpToLibraryCallPattern,
                ReduceOpToLibraryCallPattern,
@@ -1874,6 +1910,7 @@ struct ConvertHIVMToStandardPass
 
 void ConvertHIVMToStandardPass::runOnOperation() {
   auto module = getOperation();
+  gMarkLibCallNoInline = markLibCallNoInline;
   ConversionTarget target(getContext());
   target.addLegalDialect<func::FuncDialect, memref::MemRefDialect,
                          arith::ArithDialect, scf::SCFDialect,

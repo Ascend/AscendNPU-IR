@@ -892,3 +892,62 @@ module{
     return
   }
 }
+
+// -----
+#map = affine_map<(d0, d1, d2) -> (d1, d0, d2)>
+module attributes {hacc.target = #hacc.target<"Ascend910_9589"> } {
+  func.func @dotdot_mix_aic(%arg0: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, false, false, false]> : vector<9xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+    %c6336_i64 = arith.constant 6336 : i64
+    %c3072_i64 = arith.constant 3072 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c0_i64 = arith.constant 0 : i64
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    hivm.hir.set_ctrl false at ctrl[60]
+    hivm.hir.set_ctrl true at ctrl[48]
+    %0 = arith.muli %arg6, %arg7 : i32
+    %1 = arith.muli %0, %arg8 : i32
+    annotation.mark %1 {logical_block_num} : i32
+    %2 = hivm.hir.pointer_cast(%c0_i64) : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    annotation.mark %2 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    %3 = hivm.hir.pointer_cast(%c1024_i64) : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    annotation.mark %3 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    %4 = hivm.hir.pointer_cast(%c2048_i64) : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    annotation.mark %4 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    %5 = hivm.hir.pointer_cast(%c0_i64) : memref<1x1x16x16xf32, #hivm.address_space<cc>>
+    hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_MTE1>] flag = 0
+
+    // CHECK: hivm.hir.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    // CHECK-NEXT: hivm.hir.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+    // CHECK-NEXT: hivm.hir.mmadL1
+    hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%4, %2, %true, %c16, %c16, %c16 : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%5 : memref<1x1x16x16xf32, #hivm.address_space<cc>>)
+    // CHECK-NEXT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+
+    %6 = hivm.hir.pointer_cast(%c3072_i64) : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    annotation.mark %6 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<3>} : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    // CHECK-NEXT: hivm.hir.fixpipe
+    hivm.hir.fixpipe {channel_split = true} ins(%5 : memref<1x1x16x16xf32, #hivm.address_space<cc>>) outs(%6 : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>)
+    // CHECK-NEXT: hivm.hir.set_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID0>]
+
+    %7 = hivm.hir.pointer_cast(%c1024_i64) : memref<1x1x16x16xf32, #hivm.address_space<cc>>
+    
+    // CHECK: hivm.hir.wait_flag[<PIPE_FIX>, <PIPE_MTE1>, <EVENT_ID0>]
+    // CHECK-NEXT: hivm.hir.mmadL1
+    hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%6, %3, %true, %c16, %c16, %c16 : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, memref<2x1x16x8xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%7 : memref<1x1x16x16xf32, #hivm.address_space<cc>>)
+    // CHECK-NEXT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    // CHECK-NEXT: hivm.hir.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID1>]
+    // CHECK-NEXT: hivm.hir.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+
+    %8 = hivm.hir.pointer_cast(%c6336_i64) : memref<16x16xf32, #hivm.address_space<ub>>
+    annotation.mark %8 {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<4>} : memref<16x16xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    // CHECK-NEXT: hivm.hir.fixpipe
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%7 : memref<1x1x16x16xf32, #hivm.address_space<cc>>) outs(%8 : memref<16x16xf32, #hivm.address_space<ub>>)
+    hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE3>] flag = 1
+    hivm.hir.set_ctrl true at ctrl[60]
+    // hivm.hir.pipe_barrier[<PIPE_ALL>]
+    return
+  }
+}

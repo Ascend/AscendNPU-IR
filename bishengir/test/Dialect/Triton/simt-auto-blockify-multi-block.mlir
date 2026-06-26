@@ -1,6 +1,6 @@
 // RUN: bishengir-opt %s -simt-auto-blockify | FileCheck %s
-// RUN: bishengir-opt %s -simt-auto-blockify="superblock-factor=0" | FileCheck %s
-// RUN: bishengir-opt %s -simt-auto-blockify="superblock-factor=1" | FileCheck %s --check-prefix=SUPERBLOCK
+// RUN: bishengir-opt %s -simt-auto-blockify="superblock-factor=1" | FileCheck %s
+// RUN: bishengir-opt %s -simt-auto-blockify="superblock-factor=2" | FileCheck %s --check-prefix=SUPERBLOCK
 
 // CHECK-LABEL: tt.func public @blockify_existing_grid(
 // CHECK-SAME: %[[GRID_X:arg[0-9]+]]: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}

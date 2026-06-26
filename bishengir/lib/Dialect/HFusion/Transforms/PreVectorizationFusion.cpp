@@ -467,14 +467,26 @@ struct HFusionMatmulDecomposePatterns : public OpRewritePattern<MatmulOpTy> {
                        ->getResult(0);
     auto newAddEmpty =
         mlir::utils::createEmptyOp(rewriter, op->getLoc(), op->getResult(0));
-    auto newAddOp =
-        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
-                                linalg::BinaryFnAttr>(
-            rewriter, op->getLoc(), linalg::BinaryFn::add,
-            ValueRange{newMmad, op.getDpsInitOperand(0)->get()},
-            ValueRange(newAddEmpty))
-            ->getResult(0);
-    rewriter.replaceOp(op, newAddOp);
+    Location addLoc = op->getLoc();
+    auto tensorType = cast<RankedTensorType>(newMmad.getType());
+    int64_t rank = tensorType.getRank();
+    bool isFloat = isa<FloatType>(getElementTypeOrSelf(tensorType));
+    SmallVector<AffineMap> addMaps(3, rewriter.getMultiDimIdentityMap(rank));
+    SmallVector<utils::IteratorType> addIterators(rank,
+                                                  utils::IteratorType::parallel);
+    auto newAddGeneric = rewriter.create<linalg::GenericOp>(
+        addLoc, newAddEmpty.getType(),
+        ValueRange{newMmad, op.getDpsInitOperand(0)->get()},
+        ValueRange{newAddEmpty}, addMaps, addIterators,
+        [&](OpBuilder &b, Location nestedLoc, ValueRange args) {
+          Value addResult;
+          if (isFloat)
+            addResult = b.create<arith::AddFOp>(nestedLoc, args[0], args[1]);
+          else
+            addResult = b.create<arith::AddIOp>(nestedLoc, args[0], args[1]);
+          b.create<linalg::YieldOp>(nestedLoc, addResult);
+        });
+    rewriter.replaceOp(op, newAddGeneric->getResult(0));
     return success();
   }
 };

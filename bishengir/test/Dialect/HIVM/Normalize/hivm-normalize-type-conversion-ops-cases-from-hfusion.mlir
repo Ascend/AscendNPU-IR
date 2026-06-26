@@ -146,7 +146,7 @@ func.func @test_NormalizeToTargetType_reduce_with_index_i8(%arg0: tensor<4x64xi8
 // CHECK-LABEL: func.func @test_NormalizeToTargetType_gather_i8
 // CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<4x64xi8>) outs(%{{.*}} : tensor<4x64xf16>) -> tensor<4x64xf16>
 // CHECK: %[[DST_F16:.*]] = hivm.hir.vcast ins(%{{.*}} : tensor<4x32xi8>) outs(%{{.*}} : tensor<4x32xf16>) -> tensor<4x32xf16>
-// CHECK: %[[GATHER:.*]] = hivm.hir.vgather ins(%[[SRC_F16]] : tensor<4x64xf16>) indices(%arg1 : tensor<4x32xi32>) outs(%[[DST_F16]] : tensor<4x32xf16>) -> tensor<4x32xf16>
+// CHECK: %[[GATHER:.*]] = hivm.hir.vgather {hivm.vf_mode = #hivm.vf_mode<SIMT>} ins(%[[SRC_F16]] : tensor<4x64xf16>) indices(%arg1 : tensor<4x32xi32>) outs(%[[DST_F16]] : tensor<4x32xf16>) gather_axis = 1 -> tensor<4x32xf16>
 // CHECK: hivm.hir.vcast ins(%[[GATHER]] : tensor<4x32xf16>) outs(%{{.*}} : tensor<4x32xi8>) round_mode = <trunc> -> tensor<4x32xi8>
 func.func @test_NormalizeToTargetType_gather_i8(%arg0: tensor<4x64xi8>, %arg1: tensor<4x32xi32>) -> tensor<4x32xi8> {
   %0 = tensor.empty() : tensor<4x32xi8>

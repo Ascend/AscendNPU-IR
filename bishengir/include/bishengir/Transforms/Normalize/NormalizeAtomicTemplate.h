@@ -19,6 +19,7 @@
 #define BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZEATOMICTEMPLATE_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -225,9 +226,10 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
     Value lhsTensor =
         castAtomicOpToF32IfFp8<Traits>(rewriter, loc, lhsBuffer.toStaticTensor(),
                              gmMemref.getType(), /*isForward=*/true);
-    FailureOr<Value> maybeResult =
-        Traits::createStoreBinary(rewriter, loc, op, lhsTensor, rhsTensor,
-                                  lhsTensor);
+    Value binOpResultBuffer = rewriter.create<tensor::EmptyOp>(
+        loc, lhsTensor.getType(), ValueRange({}));
+    FailureOr<Value> maybeResult = Traits::createStoreBinary(
+        rewriter, loc, op, lhsTensor, rhsTensor, binOpResultBuffer);
     if (failed(maybeResult))
       return failure();
 
@@ -329,14 +331,28 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
     if (!ubMemref || !gmMemref)
       return rewriter.notifyMatchFailure(op, "expected memref XCHG operands");
 
+    auto scopeOp = rewriter.create<scope::ScopeOp>(loc, TypeRange{});
+    scopeOp->setAttr(
+        hivm::TCoreTypeAttr::name,
+        hivm::TCoreTypeAttr::get(rewriter.getContext(), hivm::TCoreType::VECTOR));
+    rewriter.createBlock(&scopeOp.getRegion());
+    OpBuilder::InsertionGuard scopeGuard(rewriter);
+    rewriter.setInsertionPointToStart(scopeOp.getBody());
+
     StaticSizedBuffer tmpBuffer(rewriter, loc, gmMemref);
     if (!tmpBuffer.isValid())
       return rewriter.notifyMatchFailure(
           op, "expected dynamic GM memref to be a static subview");
-    SyncBlockLockGuard lock(rewriter, loc);
+
+    Type memrefI64 = MemRefType::get({1}, rewriter.getI64Type());
+    auto createdLock =
+        rewriter.create<hivm::CreateSyncBlockLockOp>(loc, memrefI64, Value());
+    rewriter.create<hivm::SyncBlockLockOp>(loc, createdLock.getResult());
     rewriter.create<memref::CopyOp>(loc, gmMemref, tmpBuffer.dBuffer);
     rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
     rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, createdLock);
+    rewriter.create<scope::ReturnOp>(loc);
     rewriter.eraseOp(op);
     return success();
   }

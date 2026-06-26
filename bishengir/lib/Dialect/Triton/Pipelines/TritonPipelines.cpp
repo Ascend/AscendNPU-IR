@@ -97,8 +97,10 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       options.enableBishengirSimtOptimization;
   pm.addPass(
       bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));
+  AdaptTritonIRKernelOptions adaptOpt;
+  adaptOpt.superBlockBarrier = options.superBlockBarrier;
   pm.addNestedPass<mlir::triton::FuncOp>(
-      bishengir::triton::createAdaptTritonIRKernelPass());
+      bishengir::triton::createAdaptTritonIRKernelPass(adaptOpt));
   if (options.enableSIMTAutoBlockify)
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createSIMTAutoBlockifyPass(
@@ -161,8 +163,10 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(createCSEPass());
   pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
   pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
-  if (options.enableSinkDPXLoad)
+  if (options.enableSinkDPXLoad) {
+    pm.addPass(createCSEPass());
     pm.addPass(mlir::triton::ascend::createSinkDPXLoad());
+  }
   pm.addPass(bishengir::triton::createFlattenMemDescArgsPass());
   pm.addPass(createCSEPass());
   pm.addPass(bishengir::triton::proton::gpu::createAllocateProtonAscendGlobalScratchBufferPass());

@@ -121,7 +121,11 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
   let options = [
       Option<"isOpsAligned", "is-ops-aligned", "bool", /*default*/"false",
              "Regard All Ops already dims aligned except last axis of "
-             "brc and reduce">
+             "brc and reduce">,
+      Option<"markLibCallNoInline", "mark-libcall-noinline", "bool",
+             /*default*/"false",
+             "Mark generated library-call declarations as hacc.noinline "
+             "instead of hacc.always_inline.">
   ];
 }
 
@@ -362,6 +366,16 @@ def ConvertHIVMAVEToStandard : Pass<"convert-hivmave-to-std", "ModuleOp"> {
   let summary = "Convert the operations from the hivmave dialect into the Standard dialect";
   let constructor = "mlir::createConvertHIVMAVEToStandardPass()";
   let dependentDialects = ["func::FuncDialect", "memref::MemRefDialect", "scf::SCFDialect", "LLVM::LLVMDialect"];
+}
+
+//===----------------------------------------------------------------------===//
+// FixCallUnknownLoc
+//===----------------------------------------------------------------------===//
+
+def FixCallUnknownLoc : Pass<"fix-call-unknown-loc", "func::FuncOp"> {
+  let summary = "Fix UnknownLoc on call ops by inheriting location from users or parent ops";
+  let constructor = "mlir::createFixCallUnknownLocPass()";
+  let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect"];
 }
 
 #ifdef BISHENGIR_ENABLE_TORCH_CONVERSIONS

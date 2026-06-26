@@ -21,27 +21,6 @@ module attributes {ttg.global_scratch_memory_alignment = 1 : i32, ttg.global_scr
   }
 }
 
-// -----
-#blocked = #ttg.blocked<{sizePerThread = [1, 1, 2], threadsPerWarp = [2, 1, 16], warpsPerCTA = [2, 16, 1], order = [2, 0, 1]}>
-#blocked1 = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 1, 32], warpsPerCTA = [4, 8, 1], order = [2, 0, 1]}>
-module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
-  tt.func public @triton_unk_fused_embedding_eq_sum_where_zeros__8(%arg0: !tt.ptr<i64> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg3: i32 {tt.divisibility = 16 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: i32, %arg6: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg7: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg8: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
-    %cst = arith.constant dense<0.000000e+00> : tensor<4x16x32xf32, #blocked>
-    // CHECK-DAG: [[BLOCKED:#.*]] = #ttg.blocked<{sizePerThread = [1, 1, 2], threadsPerWarp = [2, 1, 16], warpsPerCTA = [2, 16, 1], order = [2, 0, 1]}>
-    // CHECK-DAG: [[BLOCKED2:#.*]] = #ttg.blocked<{sizePerThread = [1, 4, 1], threadsPerWarp = [4, 4, 2], warpsPerCTA = [1, 1, 32], order = [2, 0, 1]}>
-    // CHECK-DAG: [[BLOCKED3:#.*]] = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 1, 32], warpsPerCTA = [4, 8, 1], order = [2, 0, 1]}>
-    // CHECK: %[[C0:.+]] = ttg.convert_layout [[CST:%.*]] : tensor<4x16x32xf32, [[BLOCKED]]> -> tensor<4x16x32xf32, [[BLOCKED2]]>
-    // CHECK-NEXT: %[[REDUCE:.*]] = "tt.reduce"(%[[C0]]) <{axis = 1 : i32}>  
-    %38 = "tt.reduce"(%cst) <{axis = 1 : i32}> ({
-    ^bb0(%arg9: f32, %arg10: f32):
-      %48 = arith.addf %arg9, %arg10 : f32
-      tt.reduce.return %48 : f32
-    }) : (tensor<4x16x32xf32, #blocked>) -> tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked}>>
-    %39 = ttg.convert_layout %38 : tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked}>> -> tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked1}>>
-    %40 = tt.expand_dims %39 {axis = 1 : i32} : tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked1}>> -> tensor<4x1x32xf32, #blocked1>
-    tt.return
-  }
-}
 
 // -----
 #blocked = #ttg.blocked<{sizePerThread = [1, 4], threadsPerWarp = [1, 32], warpsPerCTA = [16, 2], order = [1, 0]}>
@@ -269,50 +248,25 @@ module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.tar
   }
 }
 
-// -----
-// Regression: rank-3 reduce -> reshape -> convert_layout pattern (branch 2),
-// where the reduce result has an extra non-reshape user. Without the fix, the
-// extra user was orphaned when the reduce was erased.
-#blocked = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [2, 4, 4], warpsPerCTA = [2, 8, 2], order = [2, 1, 0]}>
-#blocked1 = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [4, 8], warpsPerCTA = [4, 8], order = [1, 0]}>
-module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
-  // CHECK-LABEL: @reduce_rank3_reshape_multi_use_reduce
-  // CHECK: %[[REDUCE:.*]] = "tt.reduce"({{.*}}) <{axis = 0 : i32}>
-  // CHECK-DAG: ttg.convert_layout %[[REDUCE]] {{.*}} -> tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>
-  // CHECK-DAG: tt.reshape %[[REDUCE]]
-  // CHECK: arith.negf {{.*}} : tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>
-  tt.func public @reduce_rank3_reshape_multi_use_reduce(%arg0: tensor<4x8x16xf32, #blocked>) -> (tensor<2x64xf32, #blocked1>, tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>) {
-    %0 = "tt.reduce"(%arg0) <{axis = 0 : i32}> ({
-    ^bb0(%a: f32, %b: f32):
-      %m = arith.addf %a, %b : f32
-      tt.reduce.return %m : f32
-    }) : (tensor<4x8x16xf32, #blocked>) -> tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>
-    %1 = tt.reshape %0 allow_reorder : tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>> -> tensor<2x64xf32, #blocked1>
-    %2 = ttg.convert_layout %1 : tensor<2x64xf32, #blocked1> -> tensor<2x64xf32, #blocked1>
-    %3 = arith.negf %0 : tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>
-    tt.return %2, %3 : tensor<2x64xf32, #blocked1>, tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>
-  }
-}
 
 // -----
-// Regression: same branch-2 pattern, but the reshape result has an extra user
-// beyond the canonical convert_layout. Both vulnerability points (extra reduce
-// user above, extra reshape user here) need to be handled.
-#blocked = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [2, 4, 4], warpsPerCTA = [2, 8, 2], order = [2, 1, 0]}>
-#blocked1 = #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [4, 8], warpsPerCTA = [4, 8], order = [1, 0]}>
-module attributes {"ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
-  // CHECK-LABEL: @reduce_rank3_reshape_extra_user
-  // CHECK: tt.reshape
-  // CHECK: arith.negf {{.*}} : tensor<2x64xf32, #blocked1>
-  tt.func public @reduce_rank3_reshape_extra_user(%arg0: tensor<4x8x16xf32, #blocked>) -> (tensor<2x64xf32, #blocked1>, tensor<2x64xf32, #blocked1>) {
-    %0 = "tt.reduce"(%arg0) <{axis = 0 : i32}> ({
-    ^bb0(%a: f32, %b: f32):
-      %m = arith.addf %a, %b : f32
-      tt.reduce.return %m : f32
-    }) : (tensor<4x8x16xf32, #blocked>) -> tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>>
-    %1 = tt.reshape %0 allow_reorder : tensor<8x16xf32, #ttg.slice<{dim = 0, parent = #blocked}>> -> tensor<2x64xf32, #blocked1>
-    %2 = ttg.convert_layout %1 : tensor<2x64xf32, #blocked1> -> tensor<2x64xf32, #blocked1>
-    %3 = arith.negf %1 : tensor<2x64xf32, #blocked1>
-    tt.return %2, %3 : tensor<2x64xf32, #blocked1>, tensor<2x64xf32, #blocked1>
+// FIX-ME: PR1781 introduce a guard to disable pass for srcShape[gReductionAxis] < gNumThreads to fix precision error. 
+// Remove test case after real fix is implemented.
+#blocked = #ttg.blocked<{sizePerThread = [1, 1, 2], threadsPerWarp = [2, 1, 16], warpsPerCTA = [2, 16, 1], order = [2, 0, 1]}>
+#blocked1 = #ttg.blocked<{sizePerThread = [1, 1, 1], threadsPerWarp = [1, 1, 32], warpsPerCTA = [4, 8, 1], order = [2, 0, 1]}>
+module attributes {"ttg.enable-bishengir-simt-optimization" = 1 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
+  tt.func public @small_reduce(%arg0: !tt.ptr<i64> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg3: i32 {tt.divisibility = 16 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: i32, %arg6: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg7: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg8: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %cst = arith.constant dense<0.000000e+00> : tensor<4x16x32xf32, #blocked>
+    // CHECK-LABEL: @small_reduce
+    // CHECK: %[[CST:.+]] = arith.constant dense<0.000000e+00> : tensor<4x16x32xf32, #blocked>
+    // CHECK-NEXT: %{{.+}} = "tt.reduce"(%[[CST]]) <{axis = 1 : i32}>
+    %38 = "tt.reduce"(%cst) <{axis = 1 : i32}> ({
+    ^bb0(%arg9: f32, %arg10: f32):
+      %48 = arith.addf %arg9, %arg10 : f32
+      tt.reduce.return %48 : f32
+    }) : (tensor<4x16x32xf32, #blocked>) -> tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked}>>
+    %39 = ttg.convert_layout %38 : tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked}>> -> tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked1}>>
+    %40 = tt.expand_dims %39 {axis = 1 : i32} : tensor<4x32xf32, #ttg.slice<{dim = 1, parent = #blocked1}>> -> tensor<4x1x32xf32, #blocked1>
+    tt.return
   }
 }

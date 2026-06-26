@@ -42,6 +42,21 @@ namespace hivm {
 
 using namespace mlir;
 
+ bool isTensorSingleElement(Value tensorValue) {
+  auto shapedType = dyn_cast<ShapedType>(tensorValue.getType());
+  if (!shapedType)
+    return false;
+  
+  int64_t totalSize = 1;
+  for (int64_t dim : shapedType.getShape()) {
+    if (ShapedType::isDynamic(dim)) {
+      return false;
+    }
+    totalSize *= dim;
+  }
+  return totalSize == 1;
+}
+
 LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
                                       Value allocVal,
                                       FixpipeDualDstMode &splitMode,
@@ -63,8 +78,8 @@ LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
 
   if (op.getDmaMode() == FixpipeDMAMode::NZ2DN) {
     /// FIXME: please double checkout the constraint of nz2dn.
-    constexpr int64_t nz2dnRowSplitConstraint = 8;
-    constexpr int64_t nz2dnColSplitConstraint = 8;
+    constexpr int64_t nz2dnRowSplitConstraint = 2;
+    constexpr int64_t nz2dnColSplitConstraint = 32;
     if (tilingDim == rank - 2) {
       splitMode = FixpipeDualDstMode::COLUMN_SPLIT;
       constraints = nz2dnColSplitConstraint;
@@ -430,6 +445,20 @@ bool hasImplicitTransposeWithLastAxisInAiv(
   });
 }
 
+// Scalar or single-element UB tightly-coupled buffers may stay untiled.
+static bool canSkipTilingForTrivialUbAlloc(annotation::MarkOp markOp) {
+  auto memrefType = dyn_cast<MemRefType>(markOp.getSrc().getType());
+  if (!memrefType)
+    return false;
+
+  auto maybeSpace = getOptionalHIVMAddressSpace(memrefType);
+  if (!maybeSpace || *maybeSpace != AddressSpace::UB)
+    return false;
+
+  return memrefType.getRank() < 1 ||
+         (memrefType.hasStaticShape() && memrefType.getNumElements() == 1);
+}
+
 LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
     func::FuncOp newFunc,
     llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
@@ -441,6 +470,7 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
       return;
     int32_t id = attr.getId().value();
     if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc) &&
+        !canSkipTilingForTrivialUbAlloc(markOp) &&
         tightlyCoupledBufferToTilingDim.erase(id))
       erasedAny = true;
     auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);

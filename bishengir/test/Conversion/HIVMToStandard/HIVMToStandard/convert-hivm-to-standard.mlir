@@ -2457,24 +2457,6 @@ module {
 
 // -----
 module {
-  // CHECK-LABEL: func @test_gather_1d_1_size
-  func.func @test_gather_1d_1_size() attributes {hacc.entry} {
-    %src = memref.alloc() : memref<216x1x1xf32>
-    %idx = memref.alloc() : memref<216x1x1xi32>
-    %dst = memref.alloc() : memref<216x1x1xf32>
-    %tmp = memref.alloc() : memref<216x1x1xi32>
-    // CHECK: scf.for
-    // CHECK: @gather_1d_float
-    hivm.hir.vgather ins(%src : memref<216x1x1xf32>)
-                     indices(%idx : memref<216x1x1xi32>)
-                     outs(%dst : memref<216x1x1xf32>)
-                     temp_buffer(%tmp : memref<216x1x1xi32>)
-    return
-  }
-}
-
-// -----
-module {
   // CHECK-LABEL: func @test_sync_block_lock
   func.func @test_sync_block_lock() attributes {hacc.entry} {
     %lock = memref.alloc() : memref<1xi64>

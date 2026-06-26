@@ -9,6 +9,10 @@
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
+#include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
+#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
 #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
@@ -46,6 +50,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
 
 #include <set>
@@ -256,10 +261,12 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
       hivm::createInsertInitAndFinishForDebugPass());
   ConvertHIVMToStandardOptions hivmToStdOptions;
   hivmToStdOptions.isOpsAligned = config.getEnableHIVMAutoStorageAlign();
+  hivmToStdOptions.markLibCallNoInline = config.getEnableLibCallNoInline();
   pm.addPass(hivm::createMarkDisableLoadPass());
   hivm::addSyncBlockLockFinalizePasses(pm);
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
   pm.addPass(createConvertHIVMAVEToStandardPass());
+  pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
   pm.addPass(memref::createExpandStridedMetadataPass());
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
   pm.addPass(hivmave::createHoistVstasPass());
@@ -357,6 +364,11 @@ void setupLowerTritonPipelineOptions(
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
   options.superBlockFactor = config.getSuperBlockFactor();
+  if (!llvm::isPowerOf2_32(options.superBlockFactor))
+    llvm::report_fatal_error(
+        "super-block-factor must be a power of 2 and >= 1, got " +
+        Twine(options.superBlockFactor));
+  options.superBlockBarrier = config.getSuperBlockBarrier();
 #if BSPUB_DAVINCI_BISHENGIR
   if (config.getSharedMemDynamicSize() < 122880 ||
       config.getSharedMemDynamicSize() > 221184)

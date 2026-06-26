@@ -283,7 +283,7 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
 def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize Hfusion";
   let constructor = "mlir::hfusion::createHFusionNormalizeOpsPass()";
-  let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect", "bufferization::BufferizationDialect"];
+  let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect", "bufferization::BufferizationDialect", "scope::ScopeDialect"];
   let options = [
     Option<
       "enableHighPrecision", "enable-high-precision", "bool",
@@ -721,4 +721,5 @@ def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::Func
   let summary = "Fold Extract Insert Pair.";
   let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
 }
+
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES

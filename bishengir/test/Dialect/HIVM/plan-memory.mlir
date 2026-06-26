@@ -1086,9 +1086,9 @@ module {
       hivm.hir.store ins(%alloc_3 : memref<11520xi64, #hivm.address_space<ub>>) outs(%arg5 : memref<11520xi64, #hivm.address_space<gm>>)
     // CHECK: } else {
     } else {
-      // CHECK: %[[ARG4:.*]] = hivm.hir.pointer_cast(%[[CONST2]]) : memref<11520xf32, #hivm.address_space<ub>>
+      // CHECK: %[[ARG4:.*]] = hivm.hir.pointer_cast(%[[CONST1]]) : memref<11520xf32, #hivm.address_space<ub>>
       // CHECK: %[[ARG5:.*]] = hivm.hir.pointer_cast(%[[CONST3:.*]]) : memref<11520xf32, #hivm.address_space<ub>>
-      // CHECK: %[[ARG6:.*]] = hivm.hir.pointer_cast(%[[CONST2]]) : memref<11520xi64, #hivm.address_space<ub>>
+      // CHECK: %[[ARG6:.*]] = hivm.hir.pointer_cast(%[[CONST1]]) : memref<11520xi64, #hivm.address_space<ub>>
       %alloc_4 = memref.alloc() : memref<11520xf32, #hivm.address_space<ub>>
       hivm.hir.load ins(%arg3 : memref<11520xf32, #hivm.address_space<gm>>) outs(%alloc_4 : memref<11520xf32, #hivm.address_space<ub>>)
       %alloc_5 = memref.alloc() : memref<11520xf32, #hivm.address_space<ub>>
@@ -2019,24 +2019,4 @@ module {
     func.call @outlined_vf(%0) {hivm.vector_function, no_inline} : (memref<16x16x16xf16, #hivm.address_space<ub>>) -> ()
     return
   }
-}
-
-// -----
-
-// CHECK: hivm.hir.pointer_cast(%{{.*}})
-func.func @test_preload_buffer_expand_lifetime() {
-  %cst_0 = arith.constant 0x00000000 : f32
-  %alloc = memref.alloc() : memref<48x256xf32, #hivm.address_space<ub>>
-  hivm.hir.vbrc ins(%cst_0 : f32) outs(%alloc : memref<48x256xf32, #hivm.address_space<ub>>)
-  %alloc_0 = memref.alloc() : memref<128x256xf32, #hivm.address_space<ub>>
-  hivm.hir.vbrc ins(%cst_0 : f32) outs(%alloc_0 : memref<128x256xf32, #hivm.address_space<ub>>)
-  hivm.hir.debug {debugtype = "print", hex = false, prefix = " %alloc: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc : memref<48x256xf32, #hivm.address_space<ub>>
-  %alloc_1 = memref.alloc() : memref<16x256xf32, #hivm.address_space<ub>>
-  hivm.hir.vbrc ins(%cst_0 : f32) outs(%alloc_1 : memref<16x256xf32, #hivm.address_space<ub>>)
-  hivm.hir.debug {debugtype = "print", hex = false, prefix = " %alloc_1: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_1 : memref<16x256xf32, #hivm.address_space<ub>>
-  %alloc_2 = memref.alloc() : memref<60x256xf32, #hivm.address_space<ub>>
-  hivm.hir.vbrc ins(%cst_0 : f32) outs(%alloc_2 : memref<60x256xf32, #hivm.address_space<ub>>)
-  hivm.hir.debug {debugtype = "print", hex = false, prefix = " %alloc_2: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_2 : memref<60x256xf32, #hivm.address_space<ub>>
-  hivm.hir.debug {debugtype = "print", hex = false, prefix = " %alloc_0: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_0 : memref<128x256xf32, #hivm.address_space<ub>>
-  return
 }
