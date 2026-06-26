@@ -473,3 +473,14 @@ func.func @store_with_dropped_dims(%arg0: tensor<1x64xf32>, %arg1: memref<?x?xf3
   hivm.hir.store ins(%extracted_slice : tensor<?x?xf32>) outs(%subview : memref<?x?xf32, strided<[64, 1], offset: ?>>) atomic = <add>
   return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_fold_print_op
+// CHECK: %[[TENSOR:.*]] = tensor.empty() : tensor<49152xf8E4M3FN>
+// CHECK: hfusion.print " x0: " {hex = false} %[[TENSOR]] : tensor<49152xf8E4M3FN>
+func.func @test_fold_print_op() {
+  %t = tensor.empty() : tensor<49152x1xf8E4M3FN>
+  hfusion.print " x0: " {hex = false} %t : tensor<49152x1xf8E4M3FN>
+  return
+}
