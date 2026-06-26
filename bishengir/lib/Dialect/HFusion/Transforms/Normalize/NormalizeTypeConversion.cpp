@@ -657,8 +657,8 @@ static Value createScalarFillOp(PatternRewriter &rewriter, Location loc,
 /// Convert reduce i1 and/or operations to i16 reduce with min/max operations.
 ///
 /// The conversion leverages the following equivalence:
-///   - i1 and operation: 0/1 values -> min over i16 (0/1 values)
-///   - i1 or operation: 0/1 values -> max over i16 (0/1 values)
+///   - i1 and operation: 0/-1 values -> max over i16 (0/-1 values)
+///   - i1 or operation: 0/-1 values -> min over i16 (0/-1 values)
 ///
 /// Before conversion (and):
 /// ```mlir
@@ -722,9 +722,9 @@ struct HFusionReduceI1AndOrToI16Traits : public NormalizeTraitsBase {
         [&](OpBuilder &builder, Location loc, ValueRange operands) {
           Value result;
           if (isAndReduce) {
-            result = builder.create<arith::MinSIOp>(loc, operands[0], operands[1]);
-          } else {
             result = builder.create<arith::MaxSIOp>(loc, operands[0], operands[1]);
+          } else {
+            result = builder.create<arith::MinSIOp>(loc, operands[0], operands[1]);
           }
           builder.create<linalg::YieldOp>(loc, ValueRange{result});
         });
