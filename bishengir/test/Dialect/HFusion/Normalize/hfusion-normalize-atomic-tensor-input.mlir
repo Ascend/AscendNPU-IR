@@ -80,14 +80,23 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_CAS_tensor_ins
-// CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
-// CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
+// CHECK: scope.scope : () -> () {
+// stageInput tensors are staged via to_memref + memref.copy (UB scratch),
+// not materialize_in_destination, so they lower to hivm.copy (has pipe) and
+// do not trip CrossCoreGSS's pipe assertion.
+// CHECK: bufferization.to_memref %{{.*}} : memref<4xi16>
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<4xi16> to memref<4xi16>
+// CHECK: bufferization.to_memref %{{.*}} : memref<4xi16>
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<4xi16> to memref<4xi16>
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%{{.*}}, %{{.*}} : tensor<4xi16>, tensor<4xi16>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
 // CHECK: %[[SEL:.*]] = hfusion.select ins(%[[CMP]], %{{.*}}, %{{.*}} : tensor<4xi1>, tensor<4xi16>, tensor<4xi16>) outs(%{{.*}} : tensor<4xi16>) -> tensor<4xi16>
+// storeBack to GM destination stays as materialize_in_destination (lowered to hivm.store, has pipe).
 // CHECK: bufferization.materialize_in_destination %[[SEL]] in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_CAS_tensor_ins(%arg0: memref<4xi16>, %arg1: tensor<4xi16>, %arg2: tensor<4xi16>) {
     hfusion.atomic_cas ins(%arg1, %arg2 : tensor<4xi16>, tensor<4xi16>) outs(%arg0 : memref<4xi16>)
@@ -145,9 +154,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_CAS_fold_to_memref
-// CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
-// CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<4xi16>, memref<4xi16>) -> ()
-// CHECK-NOT: bufferization.to_memref
+// CHECK: bufferization.to_memref %{{.*}} : memref<4xi16>
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<4xi16> to memref<4xi16>
+// CHECK: bufferization.to_memref %{{.*}} : memref<4xi16>
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<4xi16> to memref<4xi16>
 // CHECK-NOT: hfusion.atomic_cas
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_CAS_fold_to_memref(%arg0: memref<4xi16>, %arg1: tensor<4xi16>, %arg2: tensor<4xi16>) {

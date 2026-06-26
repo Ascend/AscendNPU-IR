@@ -53,6 +53,37 @@
 using namespace mlir;
 using namespace hivm::syncsolver;
 
+namespace {
+/// Resolve an op's core type via its enclosing tagged scope when getCoreType
+/// returns CUBE_OR_VECTOR (interior scope ops that have no
+/// InferCoreTypeInterface). Returns nullopt if no tagged scope is found.
+std::optional<hivm::TCoreType>
+resolveCoreTypeViaParentScope(Operation *op) {
+  if (auto scopeOp = op->getParentOfType<scope::ScopeOp>()) {
+    auto scopeCoreType = hivm::getCoreType(scopeOp);
+    if (succeeded(scopeCoreType) &&
+        scopeCoreType.value() != hivm::TCoreType::CUBE_OR_VECTOR) {
+      return scopeCoreType.value();
+    }
+  }
+  return std::nullopt;
+}
+
+/// Resolve an op's core type, falling back to the enclosing tagged scope when
+/// getCoreType fails or returns CUBE_OR_VECTOR.
+FailureOr<hivm::TCoreType>
+getCoreTypeResolvingScope(Operation *op) {
+  auto coreType = hivm::getCoreType(op);
+  if (failed(coreType) ||
+      coreType.value() == hivm::TCoreType::CUBE_OR_VECTOR) {
+    if (auto inherited = resolveCoreTypeViaParentScope(op)) {
+      coreType = *inherited;
+    }
+  }
+  return coreType;
+}
+} // namespace
+
 // Resolve a Value into the underlying pointer-like Values used for memory
 // conflict analysis (handles block args, selects, scf::If, scf::For/While
 // results etc.).
@@ -260,7 +291,7 @@ IRTranslator::getLoadStoreOp(OP loadStoreOp, OperationBase *parentOp) {
     }
   }
   if (options.isCrossCoreMode()) {
-    auto coreType = hivm::getCoreType(op);
+    auto coreType = getCoreTypeResolvingScope(op);
     assert(llvm::succeeded(coreType));
     assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
     coreTypeVal = coreType.value();
@@ -286,7 +317,7 @@ IRTranslator::getDebugOp(DebugOp debugOp, OperationBase *parentOp) {
   auto pipe = hivm::PIPE::PIPE_S;
   auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;
   if (options.isCrossCoreMode()) {
-    auto coreType = hivm::getCoreType(op);
+    auto coreType = getCoreTypeResolvingScope(op);
     assert(llvm::succeeded(coreType));
     assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
     coreTypeVal = coreType.value();
@@ -502,7 +533,7 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   }
   auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;
   if (options.isCrossCoreMode()) {
-    auto coreType = hivm::getCoreType(op);
+    auto coreType = getCoreTypeResolvingScope(op);
     assert(llvm::succeeded(coreType));
     assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
     coreTypeVal = coreType.value();
