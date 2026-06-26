@@ -278,6 +278,79 @@ func.func @not_gather(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: m
   return
 }
 
+// Test: i1 broadcast transfer_read → decomposed into non-broadcast read +
+//       select to f16 + vector.broadcast + arith.cmpf une with zero.
+// CHECK-LABEL: func.func @fix_i1_broadcast_transfer_read
+// CHECK: %[[READ:.*]] = vector.transfer_read {{.*}} tensor<1xi1>, vector<1xi1>
+// CHECK: arith.select
+// CHECK: vector.broadcast {{.*}} to vector<64xf16>
+// CHECK: arith.cmpf une
+func.func @fix_i1_broadcast_transfer_read(%arg0: tensor<1xi1>, %arg1: tensor<64xi1>) -> tensor<64xi1> {
+  %c0 = arith.constant 0 : index
+  %false = arith.constant false
+  %0 = vector.transfer_read %arg0[%c0], %false {in_bounds = [true], permutation_map = affine_map<(d0) -> (0)>} : tensor<1xi1>, vector<64xi1>
+  %1 = vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xi1>, tensor<64xi1>
+  return %1 : tensor<64xi1>
+}
+
+// -----
+// Non-bit type (i8) with broadcast — should NOT be rewritten.
+// CHECK-LABEL: func.func @skip_i8
+// CHECK: vector.transfer_read {{.*}} vector<64xi8>
+// CHECK-NOT: arith.select
+func.func @skip_i8(%arg0: tensor<1xi8>, %arg1: tensor<64xi8>) -> tensor<64xi8> {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0 : i8
+  %0 = vector.transfer_read %arg0[%c0], %cst {in_bounds = [true], permutation_map = affine_map<(d0) -> (0)>} : tensor<1xi8>, vector<64xi8>
+  %1 = vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xi8>, tensor<64xi8>
+  return %1 : tensor<64xi8>
+}
+
+// -----
+// Broadcast dim has size 1 (no actual expansion), while a non-broadcast dim
+// has size > 1 — should NOT be rewritten.
+// CHECK-LABEL: func.func @skip_no_actual_broadcast
+// CHECK: vector.transfer_read {{.*}} tensor<64xi1>, vector<1x64xi1>
+// CHECK-NOT: arith.select
+func.func @skip_no_actual_broadcast(%arg0: tensor<64xi1>) -> vector<1x64xi1> {
+  %c0 = arith.constant 0 : index
+  %false = arith.constant false
+  %0 = vector.transfer_read %arg0[%c0], %false {in_bounds = [true, false], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<64xi1>, vector<1x64xi1>
+  return %0 : vector<1x64xi1>
+}
+
+// -----
+// Real broadcast (broadcast dim size 64 > 1) where the non-broadcast dim is
+// at output position 1 — requires output-index-based broadcast detection.
+// CHECK-LABEL: func.func @fix_i1_broadcast_dim0
+// CHECK: %[[READ:.*]] = vector.transfer_read {{.*}} tensor<1xi1>, vector<1x1xi1>
+// CHECK: arith.select
+// CHECK: vector.broadcast {{.*}} to vector<64x1xf16>
+// CHECK: arith.cmpf une
+func.func @fix_i1_broadcast_dim0(%arg0: tensor<1xi1>) -> vector<64x1xi1> {
+  %c0 = arith.constant 0 : index
+  %false = arith.constant false
+  %0 = vector.transfer_read %arg0[%c0], %false {in_bounds = [true, true], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<1xi1>, vector<64x1xi1>
+  return %0 : vector<64x1xi1>
+}
+
+// -----
+// Preserve the original in_bounds on non-broadcast dims of the collapsed read.
+// Uses a runtime index so folds cannot statically refine in_bounds; broadcast
+// dims are always in-bounds (verifier-enforced), non-broadcast dim 1 keeps the
+// original in_bounds = false.
+// CHECK-LABEL: func.func @preserve_in_bounds
+// CHECK: %[[READ:.*]] = vector.transfer_read {{.*}} {in_bounds = [true, false],
+// CHECK-SAME: } : tensor<4xi1>, vector<1x4xi1>
+// CHECK: arith.select
+// CHECK: vector.broadcast {{.*}} to vector<16x4xf16>
+// CHECK: arith.cmpf une
+func.func @preserve_in_bounds(%arg0: tensor<4xi1>, %idx: index) -> vector<16x4xi1> {
+  %false = arith.constant false
+  %0 = vector.transfer_read %arg0[%idx], %false {in_bounds = [true, false], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<4xi1>, vector<16x4xi1>
+  return %0 : vector<16x4xi1>
+}
+
 // CHECK-LABEL: func.func @triton_max_1d_dim0
 func.func @triton_max_1d_dim0(%arg0: memref<2xi32, #hivm.address_space<ub>>, %arg1: memref<i32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
   %c0_i32 = arith.constant 0 : i32
