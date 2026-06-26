@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include <bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h>
@@ -83,6 +84,20 @@ ND2NZOp createND2NZFromLoad(PatternRewriter &rewriter, Location loc,
       loc, resultTypes, src, dst, rewriter.getUnitAttr(), hasInitOutBuffer,
       hasInitOutBuffer ? loadOp.getPadValue() : Value{},
       loadOp.getInitCondition());
+}
+
+LogicalResult verifyLoadDominatesConvertLayout(LoadOp loadOp,
+                                               ConvertLayoutOp op,
+                                               PatternRewriter &rewriter) {
+  Operation *loadOperation = loadOp.getOperation();
+  Operation *convertLayoutOperation = op.getOperation();
+  DominanceInfo dominance;
+  if (!dominance.properlyDominates(loadOperation, convertLayoutOperation,
+                                   /*enclosingOpOk=*/false))
+    return rewriter.notifyMatchFailure(
+        op, "load op does not dominate convert_layout");
+
+  return success();
 }
 
 } // namespace
@@ -187,6 +202,9 @@ struct FoldToTensorConvertLayoutPattern
     // convert_layout and annotation.mark ops.
     ConvertLayoutProducerUseInfo useInfo =
         getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
+
+    if (failed(verifyLoadDominatesConvertLayout(loadOp, op, rewriter)))
+      return failure();
 
     rewriter.setInsertionPointAfter(loadOp);
     // Get the result tensor type (fractal shape)
@@ -352,6 +370,9 @@ struct FoldToTensorConvertLayoutSubviewPattern
     if (!loadOp)
       return rewriter.notifyMatchFailure(
           op, "no LoadOp found using subview_out as destination");
+
+    if (failed(verifyLoadDominatesConvertLayout(loadOp, op, rewriter)))
+      return failure();
 
     auto srcLayout = op.getSrcLayout();
     auto dstLayout = op.getDstLayout();
