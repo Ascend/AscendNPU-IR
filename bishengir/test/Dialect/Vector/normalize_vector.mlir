@@ -436,3 +436,32 @@ func.func @test_drop_unit_dim_mului_extended(%arg0: vector<1x4xi32>, %arg1: vect
   %low, %high = arith.mului_extended %arg0, %arg1 : vector<1x4xi32>
   return %high : vector<1x4xi32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_multi_reduction
+// CHECK: %[[CST_F16:.*]] = arith.constant dense<0.000000e+00> : vector<64xf16>
+// CHECK: %[[CST_I32:.*]] = arith.constant dense<0> : vector<64xi32>
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[MASK:.*]] = vector.constant_mask [32] : vector<64xi1>
+// CHECK: %[[LOAD:.*]] = vector.maskedload %arg0[%[[C0]]], %[[MASK]], %[[CST_F16]] : memref<32xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16> into vector<64xf16>
+// CHECK: %[[SCALAR:.*]] = memref.load %arg1[] : memref<i32, #hivm.address_space<ub>>
+// CHECK: %[[EXTF:.*]] = arith.extf %[[LOAD]] {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf16> to vector<64xf32>
+// CHECK: %[[FPTOSI:.*]] = arith.fptosi %[[EXTF]] {enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf32> to vector<64xi32>
+// CHECK: %[[SELECT:.*]] = arith.select %[[MASK]], %[[FPTOSI]], %[[CST_I32]] : vector<64xi1>, vector<64xi32>
+// CHECK: %[[RED:.*]] = vector.reduction <xor>, %[[SELECT]], %{{.*}} : vector<64xi32> into i32
+// CHECK: memref.store %{{.*}}, %arg1[] : memref<i32, #hivm.address_space<ub>>
+func.func @test_multi_reduction(%arg0: memref<32xf16, #hivm.address_space<ub>>, %arg1: memref<i32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0_i32 = arith.constant 0 : i32
+  %cst = arith.constant 0.000000e+00 : f16
+  %c0 = arith.constant 0 : index
+  %0 = vector.constant_mask [32] : vector<64xi1>
+  %1 = vector.transfer_read %arg0[%c0], %cst, %0 {in_bounds = [true]} : memref<32xf16, #hivm.address_space<ub>>, vector<64xf16>
+  %2 = vector.transfer_read %arg1[], %c0_i32 : memref<i32, #hivm.address_space<ub>>, vector<i32>
+  %3 = vector.extractelement %2[] : vector<i32>
+  %4 = arith.extf %1 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf16> to vector<64xf32>
+  %5 = arith.fptosi %4 {enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf32> to vector<64xi32>
+  %6 = vector.mask %0 { vector.multi_reduction <xor>, %5, %3 [0] : vector<64xi32> to i32 } : vector<64xi1> -> i32
+  %7 = vector.broadcast %6 : i32 to vector<i32>
+  vector.transfer_write %7, %arg1[] : vector<i32>, memref<i32, #hivm.address_space<ub>>
+  return
+}
