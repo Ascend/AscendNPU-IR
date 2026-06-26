@@ -11,10 +11,13 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Dialect/Vector/Transforms/Passes.h"
 #include "bishengir/Dialect/Vector/Transforms/Transforms.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Vector/Transforms/LoweringPatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorRewritePatterns.h"
 #include "mlir/Dialect/Vector/Transforms/VectorTransforms.h"
+#include "mlir/IR/AffineExpr.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -880,6 +883,103 @@ struct ConvertConstantMaskTo1D
   }
 };
 
+struct FixBitTypeBroadcastTransferReadPattern
+    : public OpRewritePattern<vector::TransferReadOp> {
+  using OpRewritePattern<vector::TransferReadOp>::OpRewritePattern;
+
+  // Rewrites:
+  //   %r = vector.transfer_read %src[...], %pad
+  //       {permutation_map = <with broadcast>}
+  //       : tensor<...xi1>, vector<...xi1>
+  // into:
+  //   %read   = vector.transfer_read %src[...], %pad
+  //             {in_bounds = <preserved from source>}
+  //             : tensor<...xi1>, vector<...xi1>  // broadcast dims -> 1
+  //   %one    = arith.constant dense<1.0> : vector<...xf16>
+  //   %zero0  = arith.constant dense<0.0> : vector<...xf16>
+  //   %sel    = arith.select %read, %one, %zero0 : vector<...xf16>
+  //   %bcast  = vector.broadcast %sel : vector<...xf16> to vector<...xf16>
+  //   %zero   = arith.constant dense<0.0> : vector<...xf16>
+  //   %r      = arith.cmpf une %bcast, %zero : vector<...xf16> -> vector<...xi1>
+  LogicalResult matchAndRewrite(vector::TransferReadOp op,
+                                PatternRewriter &rewriter) const override {
+    // Skip transfer_reads inside vector.mask — replacing a single op with
+    // a chain would break the mask (which requires exactly one body op).
+    if (isa<vector::MaskOp>(op->getParentOp()))
+      return failure();
+    auto resultVecType = op.getVectorType();
+    auto elemType = resultVecType.getElementType();
+    auto intTy = dyn_cast<IntegerType>(elemType);
+    if (!intTy || intTy.getIntOrFloatBitWidth() > 1)
+      return failure();
+
+    auto map = op.getPermutationMap();
+    if (map.isEmpty())
+      return failure();
+
+    auto rank = resultVecType.getRank();
+
+    SmallVector<bool> isNonBroadcastDim(rank, false);
+    for (auto [idx, expr] : llvm::enumerate(map.getResults()))
+      if (isa<AffineDimExpr>(expr))
+        isNonBroadcastDim[idx] = true;
+
+    // Only match if a broadcast dim has actual size > 1.
+    auto hasActualBroadcast = llvm::any_of(
+        llvm::seq<int>(0, rank), [&isNonBroadcastDim, &resultVecType](auto i) {
+          return !isNonBroadcastDim[i] && resultVecType.getDimSize(i) > 1;
+        });
+    if (!hasActualBroadcast)
+      return failure();
+
+    // Don't transform if the target f16 vector exceeds the hardware
+    // broadcast limit (VL_BITS / 16 bits per element).
+    if (!ShapedType::isDynamic(resultVecType.getNumElements()) &&
+        resultVecType.getNumElements() * 16 > hivm::util::VL_BITS)
+      return failure();
+
+    SmallVector<int64_t> intermediateShape(rank, 1);
+    for (int64_t i = 0; i < rank; i++)
+      if (isNonBroadcastDim[i])
+        intermediateShape[i] = resultVecType.getDimSize(i);
+
+    auto intermediateVecType =
+        VectorType::get(intermediateShape, elemType);
+    auto intermediateVecTypeF16 =
+        VectorType::get(intermediateShape, rewriter.getF16Type());
+    auto targetVecTypeF16 =
+        VectorType::get(resultVecType.getShape(), rewriter.getF16Type());
+
+    auto read = rewriter.create<vector::TransferReadOp>(
+        op.getLoc(), intermediateVecType, op.getSource(),
+        op.getIndices(), map, op.getPadding(),
+        /*mask=*/Value(), op.getInBoundsAttr());
+
+    auto oneVec = rewriter.create<arith::ConstantOp>(
+        op.getLoc(), intermediateVecTypeF16,
+        DenseElementsAttr::get(intermediateVecTypeF16,
+                               rewriter.getFloatAttr(rewriter.getF16Type(), 1.0)));
+    auto zeroVec = rewriter.create<arith::ConstantOp>(
+        op.getLoc(), intermediateVecTypeF16,
+        rewriter.getZeroAttr(intermediateVecTypeF16));
+
+    auto sel = rewriter.create<arith::SelectOp>(op.getLoc(), read, oneVec, zeroVec);
+
+    auto bcast = rewriter.create<vector::BroadcastOp>(
+        op.getLoc(), targetVecTypeF16, sel);
+
+    auto zero = rewriter.create<arith::ConstantOp>(
+        op.getLoc(), targetVecTypeF16,
+        rewriter.getZeroAttr(targetVecTypeF16));
+
+    auto cmp = rewriter.create<arith::CmpFOp>(
+        op.getLoc(), arith::CmpFPredicate::UNE, bcast, zero);
+
+    rewriter.replaceOp(op, cmp);
+    return success();
+  }
+};
+
 class TransferReadToGatheringLoadPattern
     : public OpRewritePattern<vector::TransferReadOp> {
   using OpRewritePattern::OpRewritePattern;
@@ -1590,7 +1690,8 @@ void NormalizeVectorPass::runOnOperation() {
            ShapeCastDropUnitDimsForMultiDimVectorPattern,
            UnitDimMultiReductionToReduction, utils::ForOpLegalization<true>,
            ShapeCastUnitDimsForBrc, UnitDimsVecTransposeNormalize,
-           ConvertCreateMaskTo1D, ConvertConstantMaskTo1D, TruncfScalarToVector>(
+           ConvertCreateMaskTo1D, ConvertConstantMaskTo1D, TruncfScalarToVector,
+           FixBitTypeBroadcastTransferReadPattern>(
           patterns.getContext());
   if (funcOp->hasAttr(hivm::VectorFunctionAttr::name))
     patterns.add<UnaryScalarOpToVectorPattern<math::AbsFOp>,
