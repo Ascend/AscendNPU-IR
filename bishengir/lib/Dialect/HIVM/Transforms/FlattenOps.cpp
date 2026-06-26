@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
 
@@ -49,6 +50,36 @@ class FlattenOpsRewritePattern
 
   LogicalResult matchAndRewrite(HIVMStructuredOp op,
                                 PatternRewriter &rewriter) const override {
+    // Skip flattening for LoadOp with non-zero left_padding_num.
+    // LoadOps with non-zero left_padding_num are padded loads whose
+    // collapsed shape may lose the padding offset info.
+    if (isa<hivm::LoadOp>(op.getOperation())) {
+      auto loadOp = cast<hivm::LoadOp>(op.getOperation());
+      auto leftPad = loadOp.getLeftPaddingNum();
+      if (leftPad) {
+        auto constIdx = leftPad.getDefiningOp<arith::ConstantIndexOp>();
+        if (!constIdx || constIdx.value() != 0) {
+          // Exception: if dst comes from a subview whose last offset is 0,
+          // the padding offset is already captured by the subview, so
+          // flattening is safe.
+          bool shouldSkip = true;
+          if (auto subviewOp =
+                  loadOp.getDst().getDefiningOp<memref::SubViewOp>()) {
+            auto offsets = subviewOp.getMixedOffsets();
+            if (!offsets.empty()) {
+              if (auto constOff = getConstantIntValue(offsets.back())) {
+                shouldSkip = (*constOff != 0);
+              }
+            }
+          }
+          if (shouldSkip) {
+            return rewriter.notifyMatchFailure(
+                op, "LoadOp with non-zero left_padding_num");
+          }
+        }
+      }
+    }
+
     // Cast to flatten interface so it calls the implementation for it
     auto res = cast<FlattenInterface>(op.getOperation())
                    .getFlattened(FlattenOptions());
