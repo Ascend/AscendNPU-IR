@@ -121,16 +121,22 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       // CHECK-NEXT: scf.yield
       scf.yield %7 : tensor<7x9xf32>
     }
-    %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [7, 8], strides: [8, 1] : memref<?xf32> to memref<7x8xf32, strided<[8, 1]>>
     // CHECK: hivm.hir.anchor {id = 30 : i64}
-    // CHECK-NEXT: hivm.hir.store
-    hivm.hir.store ins(%6#0 : tensor<7x8xf32>) outs(%reinterpret_cast_2 : memref<7x8xf32, strided<[8, 1]>>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+    // CHECK-NEXT: scope.scope
+    scope.scope : () -> () {
+      scope.return
+    } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+    // CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
     // CHECK-NEXT: hivm.hir.anchor {id = 31 : i64}
+    %reinterpret_cast_2 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [7, 8], strides: [8, 1] : memref<?xf32> to memref<7x8xf32, strided<[8, 1]>>
+    // CHECK: hivm.hir.store
+    hivm.hir.store ins(%6#0 : tensor<7x8xf32>) outs(%reinterpret_cast_2 : memref<7x8xf32, strided<[8, 1]>>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+    // CHECK-NEXT: hivm.hir.anchor {id = 32 : i64}
     %reinterpret_cast_3 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [7, 9], strides: [9, 1] : memref<?xf32> to memref<7x9xf32, strided<[9, 1]>>
     hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE3>] flag = 0
     // CHECK: hivm.hir.store
     hivm.hir.store ins(%10 : tensor<7x9xf32>) outs(%reinterpret_cast_3 : memref<7x9xf32, strided<[9, 1]>>) {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
-    // CHECK-NEXT: hivm.hir.anchor {id = 32 : i64}
+    // CHECK-NEXT: hivm.hir.anchor {id = 33 : i64}
     hivm.hir.set_ctrl true at ctrl[60]
     return
   }
