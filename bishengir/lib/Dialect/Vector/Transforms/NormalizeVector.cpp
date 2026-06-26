@@ -87,6 +87,7 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
     switch (reduceKind) {
     case vector::CombiningKind::ADD:
     case vector::CombiningKind::OR:
+    case vector::CombiningKind::XOR:
       initVal = llvm::APInt::getZero(width);
       break;
     case vector::CombiningKind::MUL:
