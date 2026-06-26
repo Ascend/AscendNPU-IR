@@ -70,20 +70,4 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     hivm.hir.store ins(%8 : tensor<16x16xf32>) outs(%reinterpret_cast_5 : memref<16x16xf32, strided<[16, 1]>>)
     return
   }
-
-  // CHECK-LABEL:   func.func @check_single_element_input_aiv(
-  // CHECK: scf.if
-  // CHECK: hivm.hir.store
-  // CHECK: limit_sub_block_id0
-  func.func @check_single_element_input_aiv(%arg0: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 2 : i32}) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
-    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [1, 1, 1, 1, 1, 1, 1], strides: [1, 1, 1, 1, 1, 1, 1] : memref<?xi64> to memref<1x1x1x1x1x1x1xi64, strided<[1, 1, 1, 1, 1, 1, 1]>>
-    %lock = hivm.hir.create_sync_block_lock : memref<1xi64>
-    hivm.hir.sync_block_lock lock_var(%lock : memref<1xi64>)
-    %input1 = tensor.empty() : tensor<1x1x1x1x1x1x1xi64>
-    %input2 = tensor.empty() : tensor<1x1x1x1x1x1x1xi64>
-    %output = hivm.hir.vadd ins(%input1, %input2 : tensor<1x1x1x1x1x1x1xi64>, tensor<1x1x1x1x1x1x1xi64>) outs(%input1 : tensor<1x1x1x1x1x1x1xi64>) -> tensor<1x1x1x1x1x1x1xi64>
-    hivm.hir.store ins(%output : tensor<1x1x1x1x1x1x1xi64>) outs(%reinterpret_cast : memref<1x1x1x1x1x1x1xi64, strided<[1, 1, 1, 1, 1, 1, 1]>>)
-    hivm.hir.sync_block_unlock lock_var(%lock : memref<1xi64>)
-    return
-  }
 }
