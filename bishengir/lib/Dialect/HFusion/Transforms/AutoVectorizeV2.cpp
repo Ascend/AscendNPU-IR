@@ -131,6 +131,7 @@ bool isNonVectorizableOp(Operation *op) {
       tensor::CollapseShapeOp, tensor::ExpandShapeOp, tensor::ConcatOp,
       hivm::CopyOp, hivm::CustomOp, hivm::CustomMacroOp, hivm::DebugOp,
       hivm::StoreOp, hivm::BitcastOp, hivm::VGatherOp, hivm::SyncBlockOp,
+      hivm::VSortOp,
       hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
       hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::WhileOp, scf::ForOp,
       scf::IfOp, func::CallOp, memref::CopyOp,
