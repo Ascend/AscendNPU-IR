@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
@@ -39,6 +40,9 @@ struct InferSimtVFMemEffectPass
   template <typename OpTy, typename GetMemRefFn>
   void handleMemOp(OpTy op, func::FuncOp funcOp, GetMemRefFn &&getMemRefFn,
                    hivm::MemoryEffect memEffect);
+
+  void markReadOnlyInputToMemrefs(Operation &mod) const;
+  void markWritableOutputToTensors(Operation &mod) const;
 };
 
 } // namespace
@@ -138,6 +142,73 @@ void InferSimtVFMemEffectPass::inferFuncArgMemEffect(func::FuncOp funcOp) {
 }
 
 
+void InferSimtVFMemEffectPass::markReadOnlyInputToMemrefs(Operation &mod) const {
+  // A `bufferization.to_memref` created to feed a value into a SIMT-VF scope is
+  // a load source: it is only read. Once every SIMT-VF callee arg effect has
+  // been inferred, mark such a to_memref `read_only` iff EVERY use is a
+  // read-only SIMT-VF call operand.
+  mod.walk([](bufferization::ToMemrefOp toMemref) {
+    if (toMemref.getReadOnly())
+      return;
+    Value memref = toMemref.getMemref();
+    if (memref.use_empty())
+      return;
+    auto isReadOnlyCallUse = [](OpOperand &use) {
+      auto call = dyn_cast<func::CallOp>(use.getOwner());
+      if (!call)
+        return false;
+      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+          call, call.getCalleeAttr());
+      if (!callee)
+        return false;
+      auto eff = callee.getArgAttrOfType<hivm::MemoryEffectAttr>(
+          use.getOperandNumber(), hivm::MemoryEffectAttr::name);
+      return eff && eff.getEffect() == hivm::MemoryEffect::READ;
+    };
+    if (llvm::all_of(memref.getUses(), isReadOnlyCallUse))
+      toMemref.setReadOnly(true);
+  });
+}
+
+void InferSimtVFMemEffectPass::markWritableOutputToTensors(Operation &mod) const {
+  // Dual of markReadOnlyInputToMemrefs: a `bufferization.to_tensor` that reads
+  // back a buffer WRITTEN by a SIMT-VF scope can be marked `writable`, so a
+  // downstream in-place use need not copy.
+
+  DominanceInfo dom;
+  mod.walk([&dom](bufferization::ToTensorOp toTensor) {
+    if (toTensor.getWritable())
+      return;
+    Value memref = toTensor.getMemref();
+    Operation *readBack = toTensor.getOperation();
+    auto isSimtWriteUse = [](OpOperand &use) {
+      auto call = dyn_cast<func::CallOp>(use.getOwner());
+      if (!call)
+        return false;
+      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+          call, call.getCalleeAttr());
+      if (!callee)
+        return false;
+      auto eff = callee.getArgAttrOfType<hivm::MemoryEffectAttr>(
+          use.getOperandNumber(), hivm::MemoryEffectAttr::name);
+      return eff && (eff.getEffect() == hivm::MemoryEffect::WRITE ||
+                     eff.getEffect() == hivm::MemoryEffect::READ_WRITE);
+    };
+    bool hasDominatingWrite = false;
+    for (OpOperand &use : memref.getUses()) {
+      if (!isSimtWriteUse(use))
+        continue;
+      // A SIMT-VF write that does not dominate the read-back means the tensor
+      // captures the buffer state before that write
+      if (!dom.properlyDominates(use.getOwner(), readBack))
+        return;
+      hasDominatingWrite = true;
+    }
+    if (hasDominatingWrite)
+      toTensor.setWritable(true);
+  });
+}
+
 void InferSimtVFMemEffectPass::runOnOperation() {
   auto mod = getOperation();
   mod->walk([this](func::FuncOp funcOp) {
@@ -146,6 +217,10 @@ void InferSimtVFMemEffectPass::runOnOperation() {
     }
     inferFuncArgMemEffect(funcOp);
   });
+  // All SIMT-VF callee arg effects are now inferred. Propagate them onto the
+  // caller-side materializations: read-only inputs and writable outputs.
+  markReadOnlyInputToMemrefs(*mod);
+  markWritableOutputToTensors(*mod);
 }
 
 std::unique_ptr<Pass> mlir::hivm::createInferSimtVFMemEffectPass() {

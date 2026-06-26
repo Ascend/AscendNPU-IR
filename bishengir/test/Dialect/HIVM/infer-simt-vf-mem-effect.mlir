@@ -44,3 +44,95 @@ module {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func private @kernel_scope_0(
+//  CHECK-SAME:     %arg0: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<read>}
+//  CHECK-SAME:     %arg1: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<write>}
+// CHECK-LABEL: func.func @caller(
+//       CHECK:   bufferization.to_memref %{{.+}} read_only : memref<8xf32>
+//  CHECK-NEXT:   bufferization.to_memref %{{[a-z0-9_]+}} : memref<8xf32>
+module {
+  func.func private @kernel_scope_0(%arg0: memref<8xf32>, %arg1: memref<8xf32>) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %0 = bufferization.to_tensor %arg0 restrict : memref<8xf32>
+    hivm.hir.local_store ins(%arg1 : memref<8xf32>, %0 : tensor<8xf32>)
+    return
+  }
+  func.func @caller(%t0: tensor<8xf32>, %t1: tensor<8xf32>) {
+    %m0 = bufferization.to_memref %t0 : memref<8xf32>
+    %m1 = bufferization.to_memref %t1 : memref<8xf32>
+    func.call @kernel_scope_0(%m0, %m1) : (memref<8xf32>, memref<8xf32>) -> ()
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func private @kernel_scope_w(
+//  CHECK-SAME:     %arg0: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<read>}
+//  CHECK-SAME:     %arg1: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<write>}
+// CHECK-LABEL: func.func @caller_out(
+//       CHECK:   bufferization.to_memref %{{.+}} read_only : memref<8xf32>
+//       CHECK:   bufferization.to_tensor %{{.+}} restrict writable : memref<8xf32>
+module {
+  func.func private @kernel_scope_w(%arg0: memref<8xf32>, %arg1: memref<8xf32>) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %0 = bufferization.to_tensor %arg0 restrict : memref<8xf32>
+    hivm.hir.local_store ins(%arg1 : memref<8xf32>, %0 : tensor<8xf32>)
+    return
+  }
+  func.func @caller_out(%t0: tensor<8xf32>) -> tensor<8xf32> {
+    %m0 = bufferization.to_memref %t0 : memref<8xf32>
+    %out = memref.alloc() : memref<8xf32>
+    func.call @kernel_scope_w(%m0, %out) : (memref<8xf32>, memref<8xf32>) -> ()
+    %r = bufferization.to_tensor %out restrict : memref<8xf32>
+    return %r : tensor<8xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func private @simt_vf(
+//  CHECK-SAME:     %arg1: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<write>}
+// CHECK-LABEL: func.func @caller_snapshot(
+//       CHECK:   call @simt_vf
+//       CHECK:   bufferization.to_tensor %{{.+}} restrict : memref<8xf32>
+//       CHECK:   call @simt_vf
+module {
+  func.func private @simt_vf(%arg0: memref<8xf32>, %arg1: memref<8xf32>) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %0 = bufferization.to_tensor %arg0 restrict : memref<8xf32>
+    hivm.hir.local_store ins(%arg1 : memref<8xf32>, %0 : tensor<8xf32>)
+    return
+  }
+  func.func @caller_snapshot(%t0: tensor<8xf32>) -> tensor<8xf32> {
+    %m0 = bufferization.to_memref %t0 : memref<8xf32>
+    %buf = memref.alloc() : memref<8xf32>
+    func.call @simt_vf(%m0, %buf) : (memref<8xf32>, memref<8xf32>) -> ()
+    %snap = bufferization.to_tensor %buf restrict : memref<8xf32>
+    func.call @simt_vf(%m0, %buf) : (memref<8xf32>, memref<8xf32>) -> ()
+    return %snap : tensor<8xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func private @kernel_rw(
+//  CHECK-SAME:     %arg1: memref<8xf32> {hivm.memory_effect = #hivm.memory_effect<read_write>}
+// CHECK-LABEL: func.func @caller_rw(
+//       CHECK:   bufferization.to_tensor %{{.+}} restrict writable : memref<8xf32>
+module {
+  func.func private @kernel_rw(%arg0: memref<8xf32>, %arg1: memref<8xf32>) attributes {no_inline, outline, hivm.vf_mode = #hivm.vf_mode<SIMT>} {
+    %0 = bufferization.to_tensor %arg0 restrict : memref<8xf32>
+    hivm.hir.local_store ins(%arg1 : memref<8xf32>, %0 : tensor<8xf32>)
+    %1 = bufferization.to_tensor %arg1 restrict : memref<8xf32>
+    hivm.hir.local_store ins(%arg1 : memref<8xf32>, %1 : tensor<8xf32>)
+    return
+  }
+  func.func @caller_rw(%t0: tensor<8xf32>) -> tensor<8xf32> {
+    %m0 = bufferization.to_memref %t0 : memref<8xf32>
+    %out = memref.alloc() : memref<8xf32>
+    func.call @kernel_rw(%m0, %out) : (memref<8xf32>, memref<8xf32>) -> ()
+    %r = bufferization.to_tensor %out restrict : memref<8xf32>
+    return %r : tensor<8xf32>
+  }
+}
