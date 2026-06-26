@@ -897,6 +897,9 @@ public:
         return failure();
     }
 
+    if (op->template hasAttrOfType<UnitAttr>(tiledOp))
+      return failure();
+
     // Copy operations on A2/A3 represent ub-to-ub transfers, whereas on A5 they
     // can be either ub-to-ub or ub-to-l1, with only ub-to-l1 used for CV1:1.
     if constexpr (std::is_same_v<hivm::CopyOp, OpType>) {
@@ -1322,25 +1325,6 @@ static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
   if (hasBatchMatmulLoopInAicFuncs(aicFunctions))
     return true;
 
-  if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
-        bool hasSingleElementTensor = false;
-        bool hasSyncBlockOperations = false;
-        aivFunc.walk([&](Operation *op) {
-          if (isa<hivm::CreateSyncBlockLockOp, hivm::SyncBlockLockOp,
-              hivm::SyncBlockUnlockOp>(op)) {
-            hasSyncBlockOperations = true;
-          }
-          for (Value operand : op->getOperands()) {
-            if (isTensorSingleElement(operand)) {
-              hasSingleElementTensor = true;
-            }
-          }
-          return WalkResult::advance();
-        });
-        return hasSingleElementTensor && hasSyncBlockOperations;
-      }))
-    return true;
-
   // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully
   // loaded and extracted to use. In some cases, the extract slice is not fused
   // into the vector function, which will lead to precision error because of the
@@ -1405,7 +1389,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
 
   // Step 1: Tile AIV functions
   bool aivSuccessFlag = false;
-  auto tileAivFuncs = [this, &aivFunctions, &aivSuccessFlag
+  SmallVector<func::FuncOp> tiledAivFunctions;
+  auto tileAivFuncs = [this, &aivFunctions, &aivSuccessFlag, &tiledAivFunctions
 #ifndef NDEBUG
                        ,
                        &tiledFunctionCount
@@ -1432,6 +1417,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
       // Success: Remove original and rename clone
       originalFunc.erase();
       processedFunc.setName(symNameStr);
+      tiledAivFunctions.push_back(processedFunc);
 #ifndef NDEBUG
       tiledFunctionCount++;
       LLVM_DEBUG(DBGS() << "Successfully transformed function #"
@@ -1441,7 +1427,25 @@ void TileAndBindSubBlockPass::runOnOperation() {
     return success();
   };
 
+  auto limitTiledAivFuncsToSubBlock0 = [this, &tiledAivFunctions]() {
+    for (func::FuncOp tiledAivFunc : tiledAivFunctions) {
+      auto symNameStr = tiledAivFunc.getSymNameAttr().str();
+      if (failed(limitUniqueSubBlockToStore(tiledAivFunc))) {
+        LLVM_DEBUG(DBGS() << "Failed to limit unique subblock: " << symNameStr
+                          << "\n");
+        signalPassFailure();
+        return failure();
+      }
+    }
+    return success();
+  };
+
   if (failed(tileAivFuncs())) {
+    destroyAllBackups();
+    return;
+  }
+
+  if (failed(limitTiledAivFuncsToSubBlock0())) {
     destroyAllBackups();
     return;
   }
