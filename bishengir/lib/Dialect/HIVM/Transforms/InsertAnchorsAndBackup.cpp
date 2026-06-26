@@ -309,15 +309,24 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(
       continue;
     }
 
+    if (onlyInsertFrontBack) {
+      if (!anchorWasInsertedBeforeLastOp) {
+        if (isBlockFrontOp(op) || isBlockBackOp(op)) {
+          insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
+        }
+      }
+      continue;
+    }
+
     if (!anchorWasInsertedBeforeLastOp) {
       if (isBlockFrontOp(op) || isBlockBackOp(op) ||
-          (!onlyInsertFrontBack && (isOpToBeAnchored(op, /*isBefore=*/true) ||
-                                    isRegionsToBeAnchored(op)))) {
+          isOpToBeAnchored(op, /*isBefore=*/true) ||
+          isRegionsToBeAnchored(op)) {
         insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
       }
     }
 
-    if (!onlyInsertFrontBack) {
+    if (isRegionsToBeAnchored(op)) {
       for (Region &region : op->getRegions()) {
         for (Block &nestedBlock : region) {
           insertAnchorsInBlock(
@@ -325,12 +334,13 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(
               /*onlyInsertFrontBack=*/!isBlockToBeAnchored(op, nestedBlock));
         }
       }
-      if (!isBlockBackOp(op) && isOpToBeAnchored(op, /*isBefore=*/false)) {
-        insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/false);
-        anchorWasInsertedBeforeLastOp = true;
-      } else {
-        anchorWasInsertedBeforeLastOp = false;
-      }
+    }
+
+    if (!isBlockBackOp(op) && isOpToBeAnchored(op, /*isBefore=*/false)) {
+      insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/false);
+      anchorWasInsertedBeforeLastOp = true;
+    } else {
+      anchorWasInsertedBeforeLastOp = false;
     }
   }
 }
@@ -378,8 +388,7 @@ func::FuncOp InsertAnchorsAndBackupPass::backupFunc(func::FuncOp src) {
   auto delayedCrossCoreGSSPass = createDelayedCrossCoreGSSPass();
   std::string delayedCrossCoreGSSPassName =
       delayedCrossCoreGSSPass->getArgument().str();
-  // TODO: Tempory fix should be simt
-  auto splitSimtModulePass = createSplitMixKernelPass();
+  auto splitSimtModulePass = createSplitSimtModulePass();
   std::string splitSimtModulePassName =
       splitSimtModulePass->getArgument().str();
   std::string allPassesNames = insertAnchorsAndBackupPassName + "," +
@@ -410,6 +419,7 @@ func::FuncOp InsertAnchorsAndBackupPass::getOrCreateBackupFunc(
 
   func::FuncOp backupFuncOp = backupFunc(funcOp);
   backupFuncs.try_emplace(funcOp.getOperation(), backupFuncOp);
+  retargetCallsToBackupFuncs(backupFuncOp, backupFuncs);
   return backupFuncOp;
 }
 
