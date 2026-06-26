@@ -332,6 +332,49 @@ public:
                   insertAfterOp->getResult(resultIndx));
     op->setAttr(mmadFixpipeForResultAlreadyInserted,
                 rewriter.getBoolAttr(true));
+
+    // When the mmad-like op is an accumulation, the fixpipe above only serves
+    // external consumers of the loop's final accumulated value. If the mmad
+    // result is also consumed by a Vector op *inside* the same loop (a Cube->
+    // Vector cross-core junction), that consumer reads the raw L1 result and
+    // no downstream pass can trace it back to a FixpipeOp/StoreOp. Insert a
+    // fixpipe right after the mmad-like op inside the loop and redirect only
+    // those in-loop Vector consumers to it; the accumulation yield is left on
+    // the raw result so the iter_arg chain stays in L1.
+    if (isAccumulation(op)) {
+      scf::ForOp forOp = op->template getParentOfType<scf::ForOp>();
+      SmallVector<OpOperand *, 4> inLoopVecOperands;
+      for (OpOperand &use : mmadLikeOpRes.getUses()) {
+        Operation *user = use.getOwner();
+        if (isa<scf::YieldOp>(user))
+          continue;
+        if (user->getParentOfType<scf::ForOp>() != forOp)
+          continue;
+        FailureOr<TCoreType> coreType = getCoreType(user);
+        if (failed(coreType) || *coreType != TCoreType::VECTOR)
+          continue;
+        inLoopVecOperands.push_back(&use);
+      }
+      if (!inLoopVecOperands.empty()) {
+        rewriter.setInsertionPointAfter(op);
+        MLIRContext *ctx = rewriter.getContext();
+        FixpipeDMAModeAttr dmaModeAttr =
+            FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+        Value innerInit =
+            utils::createEmptyOp(rewriter, op.getLoc(), mmadLikeOpRes);
+        auto innerFixpipe = rewriter.create<FixpipeOp>(
+            op.getLoc(), /*result_tensor=*/innerInit.getType(),
+            /*src=*/mmadLikeOpRes,
+            /*dst=*/innerInit, dmaModeAttr, FixpipeDualDstModeAttr{},
+            /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
+            /*channel_split=*/nullptr);
+        for (OpOperand *operand : inLoopVecOperands) {
+          rewriter.modifyOpInPlace(operand->getOwner(),
+              [&]() { operand->set(innerFixpipe.getResultTensor()); });
+        }
+        LDBG("Insert in-loop fixpipe for Vector consumer of accumulation mmad");
+      }
+    }
     return success();
   }
 };
