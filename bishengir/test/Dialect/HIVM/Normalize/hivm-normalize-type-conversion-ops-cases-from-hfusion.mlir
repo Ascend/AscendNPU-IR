@@ -441,7 +441,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<1x1024xi1>) outs(%{{.*}} : tensor<1x1024xf16>) round_mode = <trunc> -> tensor<1x1024xf16>
 // CHECK: %[[SRC_I16:.*]] = hivm.hir.vcast ins(%[[SRC_F16]] : tensor<1x1024xf16>) outs(%{{.*}} : tensor<1x1024xi16>) round_mode = <trunc> -> tensor<1x1024xi16>
 // CHECK: %[[INIT_I16:.*]] = linalg.fill
-// CHECK: %[[RED:.*]] = hivm.hir.vreduce <max> ins(%[[SRC_I16]] : tensor<1x1024xi16>) outs(%[[INIT_I16]] : tensor<1x1xi16>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xi16>
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <min> ins(%[[SRC_I16]] : tensor<1x1024xi16>) outs(%[[INIT_I16]] : tensor<1x1xi16>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xi16>
 // CHECK: %[[RED_F16:.*]] = hivm.hir.vcast ins(%[[RED]] : tensor<1x1xi16>) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
 // CHECK: %[[ZERO_F16:.*]] = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
 // CHECK: hivm.hir.vcmp ins(%[[RED_F16]], %[[ZERO_F16]] : tensor<1x1xf16>, tensor<1x1xf16>) outs(%{{.*}} : tensor<1x1xi1>) compare_mode = <ne> -> tensor<1x1xi1>
@@ -463,7 +463,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[SRC_F16:.*]] = hivm.hir.vcast ins(%arg0 : tensor<1x1024xi1>) outs(%{{.*}} : tensor<1x1024xf16>) round_mode = <trunc> -> tensor<1x1024xf16>
 // CHECK: %[[SRC_I16:.*]] = hivm.hir.vcast ins(%[[SRC_F16]] : tensor<1x1024xf16>) outs(%{{.*}} : tensor<1x1024xi16>) round_mode = <trunc> -> tensor<1x1024xi16>
 // CHECK: %[[INIT_I16:.*]] = linalg.fill
-// CHECK: %[[RED:.*]] = hivm.hir.vreduce <min> ins(%[[SRC_I16]] : tensor<1x1024xi16>) outs(%[[INIT_I16]] : tensor<1x1xi16>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xi16>
+// CHECK: %[[RED:.*]] = hivm.hir.vreduce <max> ins(%[[SRC_I16]] : tensor<1x1024xi16>) outs(%[[INIT_I16]] : tensor<1x1xi16>) unsigned_src = false reduce_dims = [1] -> tensor<1x1xi16>
 // CHECK: %[[RED_F16:.*]] = hivm.hir.vcast ins(%[[RED]] : tensor<1x1xi16>) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
 // CHECK: %[[ZERO_F16:.*]] = hivm.hir.vbrc ins(%{{.*}} : f16) outs(%{{.*}} : tensor<1x1xf16>) -> tensor<1x1xf16>
 // CHECK: hivm.hir.vcmp ins(%[[RED_F16]], %[[ZERO_F16]] : tensor<1x1xf16>, tensor<1x1xf16>) outs(%{{.*}} : tensor<1x1xi1>) compare_mode = <ne> -> tensor<1x1xi1>

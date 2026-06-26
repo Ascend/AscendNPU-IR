@@ -302,8 +302,8 @@ struct HIVMReduceI1AndOrToI16Traits : public hivm::NormalizeTraitsBase {
     auto newOp = rewriter.create<hivm::VReduceOp>(
         loc, TypeRange{init.getType()}, input, ValueRange{init},
         hivm::ReduceOpAttr::get(rewriter.getContext(),
-                                isAndReduce ? hivm::ReduceOperation::min
-                                            : hivm::ReduceOperation::max),
+                                isAndReduce ? hivm::ReduceOperation::max
+                                            : hivm::ReduceOperation::min),
         op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
         op.getReduceDimsAttr());
     return newOp.getResult().front();
