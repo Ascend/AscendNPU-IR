@@ -29,35 +29,66 @@ using namespace mlir;
 using namespace mlir::hivm;
 using namespace mlir::hivmave;
 
-// From one op find source back to the load op, each intermediate usage point
-// cannot be in multiple branches.
-static void findLoadOp(Operation *op, SmallVector<Operation *> &opList,
+// Trace backward from a starting op (typically VFTruncFOp) through the data
+// path to find source VFLoadOp(s). The data path consists exclusively of
+// VFLoadOp and AVEElementwiseOp operations.
+//
+// Non-data operands — masks (VFPgeOp, VFPltOp, VFPltMOp), broadcasts
+// (VFBroadcastScalarOp, VFBroadcastScalarMaskOp, VFScalarBroadcastOp),
+// constants, block arguments, and any other non-elementwise op — are
+// automatically skipped: deinterleaving the source load does not affect them.
+//
+// Safety invariant: every intermediate value on the data path (results of
+// elementwise ops between the load and the starting op) must only be consumed
+// by AVEElementwiseOp users. If a non-elementwise op consumes an intermediate
+// value, deinterleaving the source load would corrupt that consumer's input,
+// so the search fails.
+//
+// Returns true if all data paths reached valid NORM loads with single use.
+// Returns false if any path is unsafe or reached an invalid load.
+static bool findLoadOp(Operation *op, SmallVector<Operation *> &opList,
                        SmallVector<VFLoadOp> &loadList) {
   if (!op)
-    return;
-  if (VFLoadOp loadOp = dyn_cast<VFLoadOp>(op)) {
-    if (loadOp.getPattern() == hivmave::LoadDist::NORM && loadOp->hasOneUse()) {
-      loadList.push_back(loadOp);
-    }
-  } else {
-    if (!isa<hivmave::AVEElementwiseOp>(op)) {
-      return;
-    }
-    opList.push_back(op);
-    for (auto oprand : op->getOperands()) {
-      Operation *srcOp = oprand.getDefiningOp();
-      // If exist non-elementwise op, must keep origin vector sequence,
-      // can not merge load with dintlv.
-      bool keepSequence = false;
-      for (auto u : oprand.getUsers()) {
-        if (!isa<hivmave::AVEElementwiseOp>(u)) {
-          keepSequence = true;
-        }
-      }
-      if (!keepSequence)
-        findLoadOp(srcOp, opList, loadList);
-    }
+    return false;
+
+  // Base case: reached a load op.
+  if (auto loadOp = dyn_cast<VFLoadOp>(op)) {
+    if (loadOp.getPattern() != hivmave::LoadDist::NORM)
+      return false;
+    if (!loadOp->hasOneUse())
+      return false;
+    loadList.push_back(loadOp);
+    return true;
   }
+
+  opList.push_back(op);
+
+  // Trace each operand's defining op backward through the data path.
+  for (Value operand : op->getOperands()) {
+    Operation *srcOp = operand.getDefiningOp();
+    if (!srcOp)
+      continue; // block argument — not on the data path, skip
+
+    // Only trace data-path operands: loads and elementwise ops.
+    // All other operands (masks, broadcasts, constants, etc.) are not on the
+    // data path and are safely skipped.
+    if (!isa<VFLoadOp>(srcOp) && !isa<hivmave::AVEElementwiseOp>(srcOp))
+      continue;
+
+    // Safety: this intermediate value must not be consumed by any non-
+    // elementwise op. If it is, deinterleaving the source load would corrupt
+    // that consumer's input.
+    for (Operation *user : operand.getUsers()) {
+      if (!isa<hivmave::AVEElementwiseOp>(user)) {
+        return false;
+      }
+    }
+
+    if (!findLoadOp(srcOp, opList, loadList))
+      return false;
+  }
+
+  return true;
 }
 
 // Check the two ub address of load ops can be combined with DINTLV_B32.
@@ -66,27 +97,30 @@ static bool checkTwoLoadCanCombine(SmallVector<Operation *> &opList1,
                                    SmallVector<Operation *> &opList2,
                                    SmallVector<VFLoadOp> &loadList2,
                                    VFLoadOp &op1, VFLoadOp &op2) {
-  // the operations from laod to truncf must equal
+  // Each chain must find exactly one load.
+  if (loadList1.size() != 1 || loadList2.size() != 1)
+    return false;
+  op1 = loadList1[0];
+  op2 = loadList2[0];
+  // The two loads must be different operations.
+  if (op1.getOperation() == op2.getOperation())
+    return false;
+  // The operation chains from load to truncf must have the same structure.
   if (opList1.size() != opList2.size())
     return false;
   for (size_t i = 0; i < opList1.size(); i++) {
     if (opList1[i]->getName() != opList2[i]->getName())
       return false;
   }
-  // only merge one loadop
-  if (loadList1.size() != 1)
-    return false;
-  op1 = loadList1[0];
-  op2 = loadList2[0];
-  if (!op1 || !op2)
-    return false;
+  // The two loads must have the same indices and vector type.
   if (op1.getIndices() != op2.getIndices())
     return false;
   if (op1.getVectorType() != op2.getVectorType())
     return false;
+  // DINTLV_B32 operates on 32-bit elements.
   if (op1.getVectorType().getElementTypeBitWidth() != 32)
     return false;
-  // todo: check the two ub address of load ops are continue.
+  // TODO: check the two ub address of load ops are contiguous.
   return true;
 }
 
@@ -219,12 +253,15 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
       SmallVector<VFLoadOp> loadList1, loadList2;
       SmallVector<Operation *> opList1, opList2;
       VFLoadOp oldLoad1, oldLoad2;
-      findLoadOp(vtruncfOps[0], opList1, loadList1);
-      findLoadOp(vtruncfOps[1], opList2, loadList2);
+      bool loadSearch1Ok = findLoadOp(vtruncfOps[0], opList1, loadList1);
+      bool loadSearch2Ok = findLoadOp(vtruncfOps[1], opList2, loadList2);
       // If two load-op merged, the two trunc-op will change by even/odd mod.
       // To avoid affecting other users, this code requires that trunc-op has
       // only one user.
-      if (checkTwoLoadCanCombine(opList1, loadList1, opList2, loadList2,
+      // Both searches must succeed completely; otherwise some loads were missed
+      // due to hitting non-elementwise ops, and merging would be incorrect.
+      if (loadSearch1Ok && loadSearch2Ok &&
+          checkTwoLoadCanCombine(opList1, loadList1, opList2, loadList2,
                                  oldLoad1, oldLoad2) &&
           vtruncfOps[0]->hasOneUse() && vtruncfOps[1]->hasOneUse()) {
         // change two norm load to one intlv load

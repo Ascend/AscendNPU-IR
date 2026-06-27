@@ -283,7 +283,7 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
 def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize Hfusion";
   let constructor = "mlir::hfusion::createHFusionNormalizeOpsPass()";
-  let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect", "bufferization::BufferizationDialect", "scope::ScopeDialect"];
+  let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect", "bufferization::BufferizationDialect"];
   let options = [
     Option<
       "enableHighPrecision", "enable-high-precision", "bool",

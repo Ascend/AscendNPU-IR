@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Utils/WorkItem.h"
 #include "bishengir/Dialect/HIVM/Utils/WorklistBuilder.h"
@@ -927,6 +928,8 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
 /// Expand the localOutputs of each work item by number of multibuffer/pipeline
 /// stages.
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem &item) {
+  OpBuilder::InsertionGuard g(builder);
+  builder.setInsertionPointToStart(newLoop.getBody());
   for (auto &[output, expanded] : item.localOutputs) {
     Operation *defining = output.getDefiningOp();
     if (!defining)
@@ -1126,23 +1129,11 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       loc, cappedUBExpr, ValueRange({ub, iv, originStep}));
   Value actualUB = builder.create<arith::MinUIOp>(loc, cappedUB, pipelineIters);
 
-  // Opposite-core loops run concurrently, so an expanded alloc must be
-  // placed above them to keep its linear live range valid for PlanMemory;
-  // it may only skip preceding same-core (sequential) loops.
-  DenseMap<TCoreType, scf::ForOp> lastForOpByCore;
-  scf::ForOp lastForOp = nullptr;
   for (auto &item : worklist) {
-    if (auto lastSameCore = lastForOpByCore.lookup(item->core))
-      builder.setInsertionPointAfter(lastSameCore);
-    else
-      builder.setInsertionPointToStart(newLoop.getBody());
+    // Reset insertion point after we're done with this item
+    OpBuilder::InsertionGuard g(builder);
     if (failed(expandOutputInits(*item.get())))
       return failure();
-    // Loops themselves keep program order.
-    if (lastForOp)
-      builder.setInsertionPointAfter(lastForOp);
-    else
-      builder.setInsertionPointAfter(actualUB.getDefiningOp());
 
     // Create iter arg inits in order: yieldOutputs followed by localOutputs
     SmallVector<Value> inits;
@@ -1190,11 +1181,6 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       item->irMap.map(pipelineLoop.getRegionIterArg(opNumber),
                       item->forOp.getRegionIterArg(yieldArg++));
     }
-
-    builder.setInsertionPointAfter(item->forOp);
-    lastForOpByCore[item->core] = item->forOp;
-    lastForOp = item->forOp;
-
 
     // If inits are empty, the default builder creates a yield by default, we
     // don't want that right now so we remove it
@@ -1893,6 +1879,11 @@ void CVPipeliningPass::runOnOperation() {
 
   // Disabled via options
   if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
+    return;
+
+  // Disable CVP once batchmatmul is found
+  SmallVector<func::FuncOp> funcOps{func};
+  if (hasBatchMatmulLoopInAicFuncs(funcOps))
     return;
 
   // We want to work on the innermost loop first, so post order walk

@@ -297,3 +297,30 @@ func.func @softmax_kernel_non_inner(%arg0: memref<?xi8> {hacc.arg_type = #hacc.a
   bufferization.materialize_in_destination %extracted_slice in writable %collapse_shape_4 : (tensor<?xf16>, memref<?xf16, strided<[1], offset: ?>>) -> ()
   return
 }
+
+// -----
+
+// Test that autovectorize-v2 finished with success,
+// otherwise we will fall to legacy vectorizer which
+// will choose (0, 32, 4) constants for third loop
+// CHECK-LABEL: func @test_vsort_user_outlined_vf_0
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: %c0
+// CHECK: %c32
+// CHECK: %c1
+// CHECK: scf.for
+func.func @test_vsort_user(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: memref<?xi16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: memref<?xi16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg8: i32, %arg9: i32, %arg10: i32) -> tensor<4x5x32x16xf32> attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, true, true, true, true, true, false, false, false]> : vector<11xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, hivm.vf_mode = #hivm.vf_mode<SIMD>, mix_mode = "mix", parallel_mode = "simd"} {
+  %alloc = memref.alloc() : memref<4x5x32x16xi16>
+  %2 = bufferization.to_tensor %alloc restrict writable : memref<4x5x32x16xi16>
+  %3 = tensor.empty() : tensor<4x5x32x16xf32>
+  %4 = linalg.generic {indexing_maps = [affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>, affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>], iterator_types = ["parallel", "parallel", "parallel", "parallel"]} ins(%2 : tensor<4x5x32x16xi16>) outs(%3 : tensor<4x5x32x16xf32>) {
+  ^bb0(%in: i16, %out: f32):
+    %11 = arith.sitofp %in {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : i16 to f32
+    linalg.yield %11 : f32
+  } -> tensor<4x5x32x16xf32>
+  %5 = hivm.hir.vsort ins(%4 : tensor<4x5x32x16xf32>) outs(%3 : tensor<4x5x32x16xf32>) descending = false sort_axis = 3 -> tensor<4x5x32x16xf32>
+  return %5 : tensor<4x5x32x16xf32>
+}
+

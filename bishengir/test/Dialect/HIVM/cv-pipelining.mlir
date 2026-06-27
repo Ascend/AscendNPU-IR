@@ -3,14 +3,8 @@
 
 // CHECK-LABEL: func.func @test_pipeline
 // CHECK: scf.for
-// Expanded multibuffer allocs consumed across CUBE/VECTOR must stay above
-// the concurrent loops so PlanMemory's linear live ranges cover them
-// (DTS2606100019350); they may only sink below same-core loops.
-// CHECK-DAG: memref.alloc() : memref<2x16x16xf16, #hivm.address_space<cbuf>>
-// CHECK-DAG: memref.alloc() : memref<2x16x16xf16, #hivm.address_space<ub>>
 // CHECK: scf.for
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<CUBE>
-// CHECK-NOT: memref.alloc() : memref<2x16x16xf16, #hivm.address_space<ub>>
 // CHECK: scf.for
 // CHECK: hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 // CHECK: scf.for

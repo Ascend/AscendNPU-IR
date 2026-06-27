@@ -480,7 +480,7 @@ public:
     Value inputI16 = Traits::castInputToI16(rewriter, loc, input, i16Type);
     bool isAndReduce = Traits::isAndReduce(op);
     Value reduceInit = Traits::createReduceInit(rewriter, loc, op, i16Type,
-                                                isAndReduce ? 1 : 0);
+                                                isAndReduce ? -1 : 0);
     Value reduced = Traits::createReducedOp(rewriter, loc, op, inputI16,
                                             reduceInit, isAndReduce);
     if (!reduced)

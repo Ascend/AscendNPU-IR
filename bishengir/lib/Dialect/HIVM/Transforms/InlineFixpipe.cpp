@@ -1011,19 +1011,27 @@ public:
     Operation *definingOp = maybeMmadRes.getDefiningOp();
     rewriter.setInsertionPointAfter(definingOp);
 
-    Value emptyBuf =
-        utils::createEmptyOp(rewriter, definingOp->getLoc(), maybeMmadRes);
+    TensorType tensorType = cast<TensorType>(maybeMmadRes.getType());
+    Value localWorkSpace = createAllocLocalWorkSpace(
+        rewriter, definingOp->getLoc(), tensorType.getShape(),
+        getElementTypeOrSelf(tensorType));
+
+    // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+    auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+        definingOp->getLoc(), localWorkSpace, /*restrict=*/true,
+        /*writable=*/true);
+
     MLIRContext *ctx = rewriter.getContext();
     FixpipeDMAModeAttr dmaModeAttr =
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
-    auto fixpipeOp = rewriter.create<FixpipeOp>(
-        op.getLoc(), /*result_tensor=*/emptyBuf.getType(),
+    rewriter.create<FixpipeOp>(
+        op.getLoc(), /*result_tensor=*/TypeRange{},
         /*src=*/maybeMmadRes,
-        /*dst=*/emptyBuf, dmaModeAttr, /*dual_dst_mode=*/nullptr,
+        /*dst=*/localWorkSpace, dmaModeAttr, /*dual_dst_mode=*/nullptr,
         /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
     rewriter.modifyOpInPlace(op, [&]() {
       OpOperand &arg = op.getArgMutable();
-      arg.assign(fixpipeOp.getResultTensor());
+      arg.assign(toTensor.getResult());
     });
 
     return success();

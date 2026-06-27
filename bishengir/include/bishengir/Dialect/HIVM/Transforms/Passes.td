@@ -51,7 +51,6 @@ def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
     "tensor::TensorDialect",
     "bufferization::BufferizationDialect",
     "memref::MemRefDialect",
-    "scope::ScopeDialect",
   ];
   let options = [
     Option<
@@ -697,7 +696,8 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let summary = "Convert ops to HIVM Fixpipe op";
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
+       "bufferization::BufferizationDialect"];
   let options = [
     Option<"inlineQuantScale", "inline-quant-scale", "bool",
            /*default=*/"false",
@@ -709,7 +709,8 @@ def InsertFixpipe : Pass<"hivm-insert-fixpipe"> {
   let summary = "Insert HIVM Fixpipe op";
   let constructor = "mlir::hivm::createInsertFixpipePass()";
   let dependentDialects =
-      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect"];
+      ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect",
+       "bufferization::BufferizationDialect"];
   let options = [
     Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
            /*default=*/"false",

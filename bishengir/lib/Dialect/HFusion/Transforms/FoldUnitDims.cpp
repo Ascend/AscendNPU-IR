@@ -1235,6 +1235,29 @@ struct DropUnitDimsInsertSlicePattern
   }
 };
 
+struct DropUnitDimsPrintOpPattern
+    : public OpRewritePattern<hfusion::PrintOp> {
+  using OpRewritePattern<hfusion::PrintOp>::OpRewritePattern;
+
+  LogicalResult
+  matchAndRewrite(hfusion::PrintOp op,
+                  mlir::PatternRewriter &rewriter) const override {
+    auto loc = op.getLoc();
+    auto arg = op.getArg();
+
+    auto maybeCollapsedArg = tryCollapseValue(arg, rewriter, loc);
+    if (!succeeded(maybeCollapsedArg)) {
+      return failure();
+    }
+
+    auto collapsedArg = maybeCollapsedArg.value();
+    rewriter.replaceOpWithNewOp<hfusion::PrintOp>(
+        op, op.getPrefix(), op.getHex(), collapsedArg);
+
+    return success();
+  }
+};
+
 struct DropUnitDimsSCFForPattern : public OpRewritePattern<scf::ForOp> {
   using OpRewritePattern<scf::ForOp>::OpRewritePattern;
 
@@ -1817,6 +1840,8 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
     options.enableExperimentalDropping = true;
     options.avoidZeroRanks = true;
     patterns.add<DropUnitDimsLinalgOp>(context, shouldSkip, options);
+    patterns.add<FilteredPattern<DropUnitDimsPrintOpPattern,
+                                 hfusion::PrintOp>>(context, shouldSkip);
     patterns.add<FilteredPattern<DropUnitDimsSCFForPattern, scf::ForOp>>(
         context, shouldSkip);
     patterns.add<RankReducedExtractSliceOp,

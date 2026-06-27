@@ -134,3 +134,43 @@ func.func @fold_tensor_load_convert_layout(%src: tensor<64x64xf32>, %l1_init: te
   %conv = hivm.hir.convert_layout %load output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
   return %conv : tensor<8x4x16x8xf32>
 }
+
+// -----
+
+// Regression for the row-wise A operand gather shape from err-kernel.ttadapter:
+// the load writes %alloc through a subview inside the inner scf.for, while
+// to_tensor/convert_layout are outside that loop. Folding this convert_layout
+// after the nested load would create a tensor value inside the loop and use it
+// outside the loop.
+// CHECK-LABEL: func.func @do_not_fold_nested_row_load_from_case
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<64x32xf32>
+// CHECK: scf.for
+// CHECK: hivm.hir.load
+// CHECK-NOT: hivm.hir.nd2nz
+// CHECK: %[[A_TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable : memref<64x32xf32>
+// CHECK: %[[A_FRACTAL:.*]] = hivm.hir.convert_layout %[[A_TENSOR]] output_shape [4, 4, 16, 8]
+// CHECK-SAME: (tensor<64x32xf32>) -> tensor<4x4x16x8xf32>
+// CHECK: hivm.hir.copy ins(%[[A_FRACTAL]] : tensor<4x4x16x8xf32>)
+func.func @do_not_fold_nested_row_load_from_case(%arg2: memref<?xf32>, %arg5: i32, %arg13: i32, %base_m: i32, %base_k: i32) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %alloc = memref.alloc() : memref<64x32xf32>
+  scf.for %arg25 = %c0 to %c64 step %c1 {
+    %row_i32 = arith.index_cast %arg25 : index to i32
+    %row = arith.addi %base_m, %row_i32 : i32
+    %wrapped_row = arith.remsi %row, %arg5 : i32
+    %row_offset_i32 = arith.muli %wrapped_row, %arg13 : i32
+    %row_offset = arith.index_cast %row_offset_i32 : i32 to index
+    %base_k_index = arith.index_cast %base_k : i32 to index
+    %src_offset = arith.addi %row_offset, %base_k_index : index
+    %reinterpret_cast = memref.reinterpret_cast %arg2 to offset: [%src_offset], sizes: [1, 32], strides: [32, 1] : memref<?xf32> to memref<1x32xf32, strided<[32, 1], offset: ?>>
+    %subview = memref.subview %alloc[%arg25, 0] [1, 32] [1, 1] : memref<64x32xf32> to memref<1x32xf32, strided<[32, 1], offset: ?>>
+    hivm.hir.load ins(%reinterpret_cast : memref<1x32xf32, strided<[32, 1], offset: ?>>) outs(%subview : memref<1x32xf32, strided<[32, 1], offset: ?>>) left_padding_num = %c0 : index eviction_policy = <EvictFirst> core_type = <VECTOR>
+  } {ExtractedLoadOrStore, hivm.parallel_loop}
+  %a_tensor = bufferization.to_tensor %alloc restrict writable : memref<64x32xf32>
+  %a_fractal = hivm.hir.convert_layout %a_tensor output_shape [4, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, not_to_propagate_up = true, srcLayout = #hivm.data_layout<ND>} : (tensor<64x32xf32>) -> tensor<4x4x16x8xf32>
+  %cbuf = memref.alloc() : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>
+  hivm.hir.copy ins(%a_fractal : tensor<4x4x16x8xf32>) outs(%cbuf : memref<4x4x16x8xf32, #hivm.address_space<cbuf>>) {"inserted-copy"}
+  return
+}

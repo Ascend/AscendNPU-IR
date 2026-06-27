@@ -91,8 +91,6 @@ LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
                                       bool &invalidTilingDim);
 
 
-bool isTensorSingleElement(Value tensorValue);
-
 } // namespace hivm
 } // namespace mlir
 

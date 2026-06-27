@@ -80,7 +80,8 @@ private:
                     bool insertBefore = false);
 
   void insertAnchorsInBlock(Block &block, OpBuilder &builder,
-                            int64_t &nextAnchorId);
+                            int64_t &nextAnchorId,
+                            bool onlyInsertFrontBack = false);
 
   func::FuncOp backupFunc(func::FuncOp funcOp);
   func::FuncOp
@@ -293,9 +294,9 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
                            builder.getI64IntegerAttr(nextAnchorId++), nullptr);
 }
 
-void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
-                                                      OpBuilder &builder,
-                                                      int64_t &nextAnchorId) {
+void InsertAnchorsAndBackupPass::insertAnchorsInBlock(
+    Block &block, OpBuilder &builder, int64_t &nextAnchorId,
+    bool onlyInsertFrontBack) {
   // Snapshot the block ops first so the iteration is not perturbed by the
   // anchors we are about to splice in.
   SmallVector<Operation *> blockOps;
@@ -308,6 +309,15 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
       continue;
     }
 
+    if (onlyInsertFrontBack) {
+      if (!anchorWasInsertedBeforeLastOp) {
+        if (isBlockFrontOp(op) || isBlockBackOp(op)) {
+          insertAnchor(op, builder, nextAnchorId, /*insertBefore=*/true);
+        }
+      }
+      continue;
+    }
+
     if (!anchorWasInsertedBeforeLastOp) {
       if (isBlockFrontOp(op) || isBlockBackOp(op) ||
           isOpToBeAnchored(op, /*isBefore=*/true) ||
@@ -316,10 +326,12 @@ void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,
       }
     }
 
-    for (Region &region : op->getRegions()) {
-      for (Block &nestedBlock : region) {
-        if (isBlockToBeAnchored(op, nestedBlock)) {
-          insertAnchorsInBlock(nestedBlock, builder, nextAnchorId);
+    if (isRegionsToBeAnchored(op)) {
+      for (Region &region : op->getRegions()) {
+        for (Block &nestedBlock : region) {
+          insertAnchorsInBlock(
+              nestedBlock, builder, nextAnchorId,
+              /*onlyInsertFrontBack=*/!isBlockToBeAnchored(op, nestedBlock));
         }
       }
     }

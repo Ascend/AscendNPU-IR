@@ -42,20 +42,6 @@ namespace hivm {
 
 using namespace mlir;
 
- bool isTensorSingleElement(Value tensorValue) {
-  auto shapedType = dyn_cast<ShapedType>(tensorValue.getType());
-  if (!shapedType)
-    return false;
-  
-  int64_t totalSize = 1;
-  for (int64_t dim : shapedType.getShape()) {
-    if (ShapedType::isDynamic(dim)) {
-      return false;
-    }
-    totalSize *= dim;
-  }
-  return totalSize == 1;
-}
 
 LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
                                       Value allocVal,
