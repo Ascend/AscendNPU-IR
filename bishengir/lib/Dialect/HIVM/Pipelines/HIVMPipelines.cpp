@@ -432,6 +432,7 @@ alignStoragePipeline(OpPassManager &pm,
                      const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.addPass(createAlignAllocSizePass());
   if (hivmPipelineOptions.enableHIVMAutoStorageAlign) {
+    pm.nest<func::FuncOp>().addPass(createPreMarkStrideAlignPass());
     pm.nest<func::FuncOp>().addPass(createMarkStrideAlignPass());
   }
   pm.nest<func::FuncOp>().addPass(memref::createFoldAllocReshapePass());
