@@ -821,6 +821,33 @@ struct HIVM2VLLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
   }
 };
 
+int getMaxDataTypeWidths(Operation *op) {
+  int elementWidth = 0;
+  int opElementWidth = getParentOpElementAlignmentBitWidth(op);
+  if (opElementWidth != -1 && opElementWidth != 1) {
+    return opElementWidth;
+  }
+  opElementWidth = getOpElementAlignmentBitWidth(op);
+  if (opElementWidth != -1 && opElementWidth != 1) {
+    return opElementWidth;
+  }
+  for (size_t i = 0; i < op->getNumOperands(); ++i) {
+    Value operand = op->getOperand(i);
+    Type optype = operand.getType();
+    if (auto vectorType = mlir::dyn_cast<VectorType>(optype)) {
+      Type elementType = vectorType.getElementType();
+      elementWidth =
+        elementWidth > static_cast<int>(elementType.getIntOrFloatBitWidth())
+            ? elementWidth
+            : static_cast<int>(elementType.getIntOrFloatBitWidth());
+    }
+  }
+  elementWidth = (elementWidth == 8 || elementWidth == 16 || elementWidth == 32)
+                     ? elementWidth
+                     : -1;
+  return elementWidth;
+}
+
 static Value castToTypeIfNeeded(ConversionPatternRewriter &rewriter,
                                 Location loc, Value v, Type dstType) {
   if (v.getType() == dstType)
@@ -878,6 +905,20 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       // use vldus + movvp to support i1 unaligned address
       if (elementType.isInteger(1)) {
         elementAlignment = getBitWidthFromAttr(load);
+        if (elementAlignment == -1) {
+          for (auto *userOp : load->getUsers()) {
+            // Skip UnrealizedConversionCastOp and look for its users instead
+            while (isa<UnrealizedConversionCastOp>(userOp)) {
+              if (userOp->getUsers().empty()) {
+                break;
+              }
+              userOp = *userOp->getUsers().begin();
+            }
+            elementAlignment = getMaxDataTypeWidths(userOp);
+            break;
+          }
+        }
+        assert(elementAlignment != -1);
         auto result = createLoadOpFori1Type(dataPtr, rewriter, elementAlignment);
         if (!result) {
           llvm_unreachable("unsupported elementAlignment!");
