@@ -245,15 +245,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_XCHG_atomic_xchg_2d_i16
-// CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: memref.copy %[[GM:.*]], %[[TMP:.*]] : memref<2x4xi16> to memref<2x4xi16>
 // CHECK: memref.copy %[[UB:.*]], %[[GM]] : memref<2x4xi16> to memref<2x4xi16>
 // CHECK: memref.copy %[[TMP]], %[[UB]] : memref<2x4xi16> to memref<2x4xi16>
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
-// CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_atomic_xchg_2d_i16(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<2x4xi16>, %arg3: memref<2x4xi16>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {
     hfusion.atomic_xchg ins(%arg3 : memref<2x4xi16>) outs(%arg2 : memref<2x4xi16>)
@@ -264,15 +261,12 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL:   func.func @test_NormalizeAtomicOps_XCHG_triton_atomic_xchg_1D
-// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_10:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_10]] : memref<1xi64>)
 // CHECK: memref.copy %[[GM_SRC:.*]], %[[TMP_BUF:.*]] : memref<1xi64> to memref<1xi64>
 // CHECK: memref.copy %[[UB_SRC:.*]], %[[GM_SRC]] : memref<1xi64> to memref<1xi64>
 // CHECK: memref.copy %[[TMP_BUF]], %[[UB_SRC]] : memref<1xi64> to memref<1xi64>
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_10]] : memref<1xi64>)
-// CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK: return
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_triton_atomic_xchg_1D(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: memref<1xi64>, %arg3: memref<1xi64>, %arg4: memref<1xi64>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, global_kernel = "local", mix_mode = "aiv", parallel_mode = "simd"} {

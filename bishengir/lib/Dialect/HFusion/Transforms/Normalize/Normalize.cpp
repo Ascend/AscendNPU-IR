@@ -16,7 +16,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/NormalizePatterns.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_NORMALIZE
