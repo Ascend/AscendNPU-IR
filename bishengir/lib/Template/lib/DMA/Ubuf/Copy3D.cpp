@@ -22,9 +22,12 @@ check_3d_ubuf_stride_align(memref_t<__ubuf__ T, 3> *ub) {
   auto stride0_ub = ub->strides[0];
   auto stride1_ub = ub->strides[1];
   auto stride2_ub = ub->strides[2];
-  return (((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1) &&
-           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1) &&
-           (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1)));
+  auto size0_ub = ub->sizes[0];
+  auto size1_ub = ub->sizes[1];
+  auto size2_ub = ub->sizes[2];
+  return (((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1 || size0_ub == 1) &&
+           (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1 || size1_ub == 1) &&
+           (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1 || size2_ub == 1)));
 }
 
 // Constraints: padding_num should be contained in memref.sizes.
@@ -63,7 +66,11 @@ padding_value_3d(T padding_value, memref_t<__ubuf__ T, 3> *dst) {
         {dst->sizes[1], dst->sizes[2]},
         {dst->strides[1], dst->strides[2]}
       };
-    broadcast_scalar<T, 2>(padding_value, &dst_padding_memref);
+    if constexpr (sizeof(T) == 1) {
+        brc_scalar_2d_by_scalar(padding_value, &dst_padding_memref);
+    } else {
+        broadcast_scalar<T, 2>(padding_value, &dst_padding_memref);
+    }
   }
 }
 
@@ -101,7 +108,7 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
   // the starting address of dst is not 32byte aligned
   if (!isAddress32ByteAligned(dst_ptr)) {
     // Use scalar to load first block and use dma to load others
-    int64_t distance = (UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(dst_ptr) & 0x1F)) / sizeof(T);
+    int64_t distance = ((UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(dst_ptr) & 0x1F)) % UB_ALIGN_BYTES) / sizeof(T);
     memref_t<__gm__ T, 3> src_memref_unaligned_head = copy_memref<__gm__ T, 3>(src);
     memref_t<__ubuf__ T, 3> dst_memref_unaligned_head = copy_memref<__ubuf__ T, 3>(dst);
 
@@ -151,6 +158,7 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
         {dst->sizes[0], dst->sizes[1], left_padding_num_main},
         {dst->strides[0], dst->strides[1], dst->strides[2]}
       };
+      INTRINSIC(pipe_barrier, PIPE_V);
       padding_value_3d<T>(pad_value, &dst_padding_memref);
 
       int64_t span_2 = (dst->sizes[2] + left_padding_num - 1) * dst->strides[2] + 1;
@@ -191,15 +199,26 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
     if (sizeof(T) == 8 && pad_mode == PadMode::Value) {
       INTRINSIC(set_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
       INTRINSIC(wait_flag, PIPE_MTE2, PIPE_V, LIB_EVENT_ID0);
-      // repadding value for B64. 
-      memref_t<__ubuf__ T, 3> dst_padding_b64_memref = {
+      memref_t<__ubuf__ T, 3> dst_padding_b64_memref_lp = {
         dst->allocated,
         dst->aligned,
         dst->offset - left_padding_num, // findal stride always 1
         {dst->sizes[0], dst->sizes[1], left_padding_num},
         {dst->strides[0], dst->strides[1], dst->strides[2]}
       };
-      padding_value_3d<T>(pad_value, &dst_padding_b64_memref);
+      padding_value_3d<T>(pad_value, &dst_padding_b64_memref_lp);
+
+      auto load_end_ptr = (dst->aligned + dst->offset + dst->sizes[2]);
+      int64_t right_padding_num = ((UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(load_end_ptr) & 0x1F)) % UB_ALIGN_BYTES) / sizeof(T);
+      // repadding value for B64. 
+      memref_t<__ubuf__ T, 3> dst_padding_b64_memref_rp = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset + dst->sizes[2], // final stride always 1
+        {dst->sizes[0], dst->sizes[1], right_padding_num},
+        {dst->strides[0], dst->strides[1], dst->strides[2]}
+      };
+      padding_value_3d<T>(pad_value, &dst_padding_b64_memref_rp);
     }
     return;
   }

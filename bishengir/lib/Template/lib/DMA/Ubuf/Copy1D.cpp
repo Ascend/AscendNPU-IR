@@ -105,7 +105,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
   memref_t<__ubuf__ T, 1> dst_memref_aligned = copy_memref<__ubuf__ T, 1>(dst);
   if (!isAddress32ByteAligned(dst_ptr)) {
     // use scalar to load first block and use dma to load others
-    int64_t distance = (UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(dst_ptr) & 0x1F)) / sizeof(T);
+    int64_t distance = ((UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(dst_ptr) & 0x1F)) % UB_ALIGN_BYTES) / sizeof(T);
     memref_t<__gm__ T, 1> src_memref_unaligned_head = copy_memref<__gm__ T, 1>(src);
     memref_t<__ubuf__ T, 1> dst_memref_unaligned_head = copy_memref<__ubuf__ T, 1>(dst);
 
@@ -145,7 +145,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
   if (left_padding_num > num_per_block) {
     int padding_remainder = left_padding_num % num_per_block;
     int toBroadcast = left_padding_num - padding_remainder;
-    if (pad_mode == PadMode::Value) {
+    if (pad_mode == PadMode::Value || pad_mode == PadMode::Null) {
       memref_t<__ubuf__ T, 1> dst_padding_memref = {
         dst->allocated,
         dst->aligned,
@@ -154,6 +154,7 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
         {stride0_ub, }
       };
       if (stride0_ub == 1) [[likely]] {
+        INTRINSIC(pipe_barrier, PIPE_V);
         broadcast_scalar<T, 1>(pad_value, &dst_padding_memref);
       } else {
         padding_value_1d_by_scalar_on_load<T>(pad_value, &dst_padding_memref);
@@ -182,14 +183,27 @@ load_gm_to_ubuf_1d_core(memref_t<__gm__ T, 1> *src,
       int64_t scalar = static_cast<int64_t>(pad_value);
 #endif
     //   Use brc padding for last dimension of dst. 
-      memref_t<__ubuf__ T, 1> dst_padding_b64_memref = {
+      memref_t<__ubuf__ T, 1> dst_padding_b64_memref_lp = {
         dst->allocated,
         dst->aligned,
         dst->offset - left_padding_num, // findal stride always 1
         {left_padding_num},
         {stride0_ub}
       };
-      broadcast_scalar<T, 1>(pad_value, &dst_padding_b64_memref);
+      broadcast_scalar<T, 1>(pad_value, &dst_padding_b64_memref_lp);
+
+    //   Use brc padding for last dimension of dst, right padding only.
+    auto load_end_ptr = (dst->aligned + dst->offset + dst->sizes[0]);
+    int64_t right_padding_num = ((UB_ALIGN_BYTES - (reinterpret_cast<uintptr_t>(load_end_ptr) & 0x1F)) % UB_ALIGN_BYTES) / sizeof(T);
+
+      memref_t<__ubuf__ T, 1> dst_padding_b64_memref_rp = {
+        dst->allocated,
+        dst->aligned,
+        dst->offset + dst->sizes[0], // final stride always 1
+        {right_padding_num},
+        {stride0_ub}
+      };
+      broadcast_scalar<T, 1>(pad_value, &dst_padding_b64_memref_rp);
     }
     return;
   }
