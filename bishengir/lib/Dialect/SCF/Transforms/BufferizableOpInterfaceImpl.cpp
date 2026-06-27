@@ -7,9 +7,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
-#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -124,7 +124,7 @@ AliasingOpOperandList getAliasingOpOperands(Operation *op, Value value,
 // We believe there should not be conflict casued by forOp. Conlict in VF should
 // be caused by read or write ops.
 bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
-                             const AnalysisState &state) {
+                      const AnalysisState &state) {
   return hivm::isVF(op->getParentOfType<func::FuncOp>());
 }
 } // namespace ForOpInterfaceForOpReuseInPlanMemory
@@ -184,7 +184,7 @@ bool mustBufferizeInPlace(Operation *op, OpOperand &opOperand,
 /// Without this interface, all opOperands of "scf.yield %4, %4, %4" will
 /// bufferize out-of-place. And now, the last opOperand will bufferize in-place.
 bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
-                             const AnalysisState &state) {
+                      const AnalysisState &state) {
   return uRead->get() == uWrite->get() &&
          uRead->getOwner() == uWrite->getOwner() &&
          uRead->getOperandNumber() < uWrite->getOperandNumber() &&
@@ -195,7 +195,7 @@ bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
 /// scf.for ... {
 ///     %0 = scope.scope ... {
 ///         ...
-///         scope.return %2  
+///         scope.return %2
 ///     }
 ///     ...
 ///     memref.copy %0, %1
@@ -205,7 +205,7 @@ bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
 /// After change insertion point, the IR will be like the following:
 
 /// scf.for ... {
-///     %0 = scope.scope ... {  
+///     %0 = scope.scope ... {
 ///         ...
 ///         memref.copy %2, %3
 ///         scope.return %3
@@ -214,7 +214,7 @@ bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
 ///     scf.yield %0
 /// }
 LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
-                              const AnalysisState &state) {
+                               const AnalysisState &state) {
   auto bufferizableOp = cast<BufferizableOpInterface>(op);
   if (failed(bufferizableOp.resolveTensorOpOperandConflicts(rewriter, state)))
     return failure();
@@ -224,41 +224,31 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
   OpBuilder::InsertionGuard g(rewriter);
   auto yieldOp = cast<scf::YieldOp>(op);
   for (const auto &pair : llvm::enumerate(yieldOp->getOperands())) {
-    auto idx = pair.index();
-    auto value = pair.value();
-    scope::ScopeOp scopeOp;
-    if (!value.getDefiningOp()) {
+    auto defOp = pair.value().getDefiningOp();
+    if (!isa_and_nonnull<bufferization::AllocTensorOp>(defOp)) {
       continue;
-    } else if (isa<bufferization::AllocTensorOp>(value.getDefiningOp())) {
-      value = value.getDefiningOp()->getOperand(0);
-      scopeOp = dyn_cast_if_present<scope::ScopeOp>(value.getDefiningOp());
-      if (scopeOp) {
-        rewriter.setInsertionPoint(yieldOp);
-        rewriter.modifyOpInPlace(
-            yieldOp, [&]() { yieldOp.getResultsMutable()[idx].assign(value); });
-      }
-    } else if (isa<scope::ScopeOp>(value.getDefiningOp())) {
-      if (!state.isInPlace(yieldOp->getOpOperand(idx))) {
-        scopeOp = dyn_cast<scope::ScopeOp>(value.getDefiningOp());
-      }
     }
-    
-    if (scopeOp) {
-      auto *returnOp = &scopeOp.getBody()->back();
-      auto returnOpIdx = cast<OpResult>(value).getResultNumber();
-      auto returnValue = returnOp->getOperand(returnOpIdx);
-      // Only shaped values need tensor-copy insertion. Scalar loop-carried
-      // values, e.g. i32 counters, are not bufferized and thus don't need to be copied.
-      if (!isa<TensorType>(returnValue.getType()))
-        continue;
-      rewriter.setInsertionPoint(returnOp);
-      FailureOr<Value> alloc = allocateTensorForShapedValue(
-          rewriter, returnOp->getLoc(), returnValue, state.getOptions());
-      if (failed(alloc))
-        return failure();
-      rewriter.modifyOpInPlace(
-          returnOp, [&]() { returnOp->setOperand(returnOpIdx, *alloc); });
+    auto scopeResult = defOp->getOperand(0);
+    if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp())) {
+      continue;
     }
+    // Remove old copy out of scopeOp
+    rewriter.setInsertionPoint(yieldOp);
+    rewriter.modifyOpInPlace(
+        yieldOp, [&]() { yieldOp.setOperand(pair.index(), scopeResult); });
+    rewriter.eraseOp(defOp);
+    // Add new copy in scopeOp
+    auto scopeOp = cast<scope::ScopeOp>(scopeResult.getDefiningOp());
+    auto *returnOp = &scopeOp.getBody()->back();
+    auto returnOpIdx = cast<OpResult>(scopeResult).getResultNumber();
+    auto returnValue = returnOp->getOperand(returnOpIdx);
+    rewriter.setInsertionPoint(returnOp);
+    FailureOr<Value> alloc = allocateTensorForShapedValue(
+        rewriter, returnOp->getLoc(), returnValue, state.getOptions());
+    if (failed(alloc))
+      return failure();
+    rewriter.modifyOpInPlace(
+        returnOp, [&]() { returnOp->setOperand(returnOpIdx, *alloc); });
   }
   return success();
 }
