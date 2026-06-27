@@ -316,10 +316,12 @@ protected:
   // Utilities to map an occurrence pair to their set/wait occurrences.
   std::pair<Occurrence *, Occurrence *> getSetWaitLCAPairOcc(Occurrence *occ1,
                                                              Occurrence *occ2);
-  std::pair<Occurrence *, Occurrence *> getSetWaitOcc(Occurrence *occ1,
-                                                      Occurrence *occ2);
-  std::pair<Occurrence *, Occurrence *> getFixedSetWaitOcc(Occurrence *occ1,
-                                                           Occurrence *occ2);
+  std::pair<Occurrence *, Occurrence *>
+  getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                bool sinkSyncIntoCVLoops = false);
+  std::pair<Occurrence *, Occurrence *>
+  getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                     bool sinkSyncIntoCVLoops = false);
 
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
 
@@ -352,7 +354,7 @@ protected:
   std::unique_ptr<EventIdSolver> &getEventIdSolverRef(hivm::PIPE pipeSrc,
                                                       hivm::PIPE pipeDst);
 
-  bool checkReuseMultiBufferFlagId(ConflictPair *conflictPair);
+  bool checkRepeatMultiBufferFlagId(ConflictPair *conflictPair);
 
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,
