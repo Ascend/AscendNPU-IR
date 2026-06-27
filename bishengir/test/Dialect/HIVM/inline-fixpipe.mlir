@@ -1321,6 +1321,119 @@ func.func @test_mmad_accumulation_merged(%A: tensor<64x64xf16>, %B: tensor<64x64
 }
 
 // -----
+// CHECK-LABEL: func.func @test_mmad_accumulation_with_inloop_vec_consumer
+// This test verifies that when an accumulation mmadL1 has both:
+// 1. its result flowing to scf.yield (accumulation in L1), and
+// 2. a Vector consumer inside the same loop reading the raw result,
+// an in-loop fixpipe is inserted for the Vector consumer while the
+// accumulation yield stays on the raw L1 result.
+func.func @test_mmad_accumulation_with_inloop_vec_consumer(%A: tensor<64x64xf16>, %B: tensor<64x64xf16>, %C_init: tensor<64x64xf32>) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c10 = arith.constant 10 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %true = arith.constant true
+  // CHECK: %[[LOOP_RES:.*]]:2 = scf.for
+  %loop_res:2 = scf.for %i = %c0 to %c10 step %c1
+    iter_args(%C_curr = %C_init, %V_curr = %C_init) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+    // CHECK-SAME: outs(%{{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %mmad = hivm.hir.mmadL1 ins(%A, %B, %true, %c64, %c64, %c64
+      : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+      outs(%C_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+    // In-loop fixpipe inserted for the Vector consumer
+    // CHECK-NEXT: %[[INNER_INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+    // CHECK-NEXT: %[[INNER_FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD]] : tensor<64x64xf32>) outs(%[[INNER_INIT]]
+    // Vector consumer reads the fixpipe result, not raw mmad
+    // CHECK-NEXT: %[[VADD:.*]] = hivm.hir.vadd ins(%[[INNER_FIX]], %[[INNER_FIX]]
+    %vec_use = hivm.hir.vadd ins(%mmad, %mmad : tensor<64x64xf32>, tensor<64x64xf32>)
+      outs(%V_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+    // Yield: raw mmad for accumulation (iter_arg #0), vadd result for Vector chain (iter_arg #1)
+    // CHECK: scf.yield %[[MMAD]], %[[VADD]]
+    scf.yield %mmad, %vec_use : tensor<64x64xf32>, tensor<64x64xf32>
+  }
+  // Outer fixpipe for loop result #0 (mmad accumulation path)
+  // CHECK: %[[OUTER_INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+  // CHECK-NEXT: %[[OUTER_FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[LOOP_RES]]#0 : tensor<64x64xf32>) outs(%[[OUTER_INIT]]
+  // CHECK-NEXT: return %[[OUTER_FIX]], %[[LOOP_RES]]#1
+  return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_mmad_accumulation_multi_vec_consumers
+// Boundary: multiple Vector consumers of the same accumulation mmad result
+// inside the same loop. All Vector consumers should be redirected to the
+// inner fixpipe, while the yield stays on the raw result.
+func.func @test_mmad_accumulation_multi_vec_consumers(%A: tensor<64x64xf16>, %B: tensor<64x64xf16>, %C_init: tensor<64x64xf32>) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c10 = arith.constant 10 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %true = arith.constant true
+  // CHECK: %[[LOOP_RES:.*]]:2 = scf.for
+  %loop_res:2 = scf.for %i = %c0 to %c10 step %c1
+    iter_args(%C_curr = %C_init, %V_curr = %C_init) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+    // CHECK-SAME: outs(%{{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %mmad = hivm.hir.mmadL1 ins(%A, %B, %true, %c64, %c64, %c64
+      : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+      outs(%C_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+    // One inner fixpipe for both Vector consumers
+    // CHECK-NEXT: %[[INNER_INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+    // CHECK-NEXT: %[[INNER_FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[MMAD]] : tensor<64x64xf32>) outs(%[[INNER_INIT]]
+    // vabs (consumer #1) and vadd (consumer #2) both originally read %mmad.
+    // After inner fixpipe, vabs redirected to fixpipe result.
+    // CHECK-NEXT: %[[VABS:.*]] = hivm.hir.vabs ins(%[[INNER_FIX]]
+    // vadd's first operand (%abs_val) is also redirected.
+    // CHECK-NEXT: %[[VADD:.*]] = hivm.hir.vadd ins(%[[VABS]]
+    %abs_val = hivm.hir.vabs ins(%mmad : tensor<64x64xf32>) outs(%C_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %vec_use = hivm.hir.vadd ins(%abs_val, %mmad : tensor<64x64xf32>, tensor<64x64xf32>)
+      outs(%V_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+    // Yield raw mmad for accumulation
+    // CHECK: scf.yield %[[MMAD]]
+    scf.yield %mmad, %vec_use : tensor<64x64xf32>, tensor<64x64xf32>
+  }
+  // CHECK: %[[OUTER_INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+  // CHECK-NEXT: %[[OUTER_FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[LOOP_RES]]#0 : tensor<64x64xf32>) outs(%[[OUTER_INIT]]
+  return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_mmad_accumulation_nested_for_no_redirect
+// Boundary: Vector consumer inside a nested scf.for within the accumulation
+// loop. Its nearest ForOp is the nested one, not the accumulation loop,
+// so it should NOT be redirected to the inner fixpipe.
+func.func @test_mmad_accumulation_nested_for_no_redirect(%A: tensor<64x64xf16>, %B: tensor<64x64xf16>, %C_init: tensor<64x64xf32>) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c10 = arith.constant 10 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %true = arith.constant true
+  // CHECK: %[[LOOP_RES:.*]]:2 = scf.for
+  %loop_res:2 = scf.for %i = %c0 to %c10 step %c1
+    iter_args(%C_curr = %C_init, %V_curr = %C_init) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
+    // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+    // CHECK-SAME: outs(%{{.*}} : tensor<64x64xf32>) -> tensor<64x64xf32>
+    %mmad = hivm.hir.mmadL1 ins(%A, %B, %true, %c64, %c64, %c64
+      : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index)
+      outs(%C_curr : tensor<64x64xf32>) -> tensor<64x64xf32>
+    // CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+    // Nested scf.for with a Vector consumer — its nearest ForOp is the nested
+    // one, not the accumulation loop, so it reads raw %mmad directly.
+    %nested_res = scf.for %j = %c0 to %c1 step %c1 iter_args(%v = %V_curr) -> (tensor<64x64xf32>) {
+      // CHECK: hivm.hir.vabs ins(%[[MMAD]]
+      %inner = hivm.hir.vabs ins(%mmad : tensor<64x64xf32>) outs(%v : tensor<64x64xf32>) -> tensor<64x64xf32>
+      scf.yield %inner : tensor<64x64xf32>
+    }
+    // CHECK: scf.yield %[[MMAD]]
+    scf.yield %mmad, %nested_res : tensor<64x64xf32>, tensor<64x64xf32>
+  }
+  // CHECK: %[[OUTER_INIT:.*]] = tensor.empty() : tensor<64x64xf32>
+  // CHECK-NEXT: %[[OUTER_FIX:.*]] = hivm.hir.fixpipe {{.*}} ins(%[[LOOP_RES]]#0 : tensor<64x64xf32>) outs(%[[OUTER_INIT]]
+  return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
+}
+
+// -----
 // CHECK-LABEL: func.func @test_conv1d
 func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
   %true = arith.constant true
