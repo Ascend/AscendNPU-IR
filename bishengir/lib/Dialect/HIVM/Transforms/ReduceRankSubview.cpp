@@ -224,6 +224,35 @@ struct HIVMElemReduceRankSuvbviewPattern
       return failure();
     }
 
+    // Skip for LoadOp with non-zero left_padding_num to avoid
+    // inserting additional subview on padded loads.
+    if (isa<hivm::LoadOp>(op.getOperation())) {
+      auto loadOp = cast<hivm::LoadOp>(op.getOperation());
+      auto leftPad = loadOp.getLeftPaddingNum();
+      if (leftPad) {
+        auto constIdx = leftPad.getDefiningOp<arith::ConstantIndexOp>();
+        if (!constIdx || constIdx.value() != 0) {
+          // Exception: if dst comes from a subview whose last offset is 0,
+          // the padding offset is already captured by the subview, so rank
+          // reduction is safe.
+          bool shouldSkip = true;
+          if (auto subviewOp =
+                  loadOp.getDst().getDefiningOp<memref::SubViewOp>()) {
+            auto offsets = subviewOp.getMixedOffsets();
+            if (!offsets.empty()) {
+              if (auto constOff = getConstantIntValue(offsets.back())) {
+                shouldSkip = (*constOff != 0);
+              }
+            }
+          }
+          if (shouldSkip) {
+            return rewriter.notifyMatchFailure(
+                op, "LoadOp with non-zero left_padding_num");
+          }
+        }
+      }
+    }
+
     if (op.getDpsInits().empty()) {
       return failure();
     }
