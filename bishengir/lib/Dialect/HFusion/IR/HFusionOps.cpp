@@ -1750,6 +1750,9 @@ LogicalResult InterleaveOp::reifyResultShapes(
 
 LogicalResult DeinterleaveOp::verify() {
   auto inputType = llvm::dyn_cast<ShapedType>(getInput().getType());
+  if (inputType.getRank() < 1) {
+    return emitOpError() << "requires input rank to be at least 1";
+  }
   int64_t deinterleaveAxis = inputType.getRank() - 1;
   if (inputType.isDynamicDim(deinterleaveAxis)) {
     // not check deinterleave axis with dynamic size

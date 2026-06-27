@@ -30,3 +30,11 @@ func.func @histogram_1d_output(%arg0: tensor<8xi32>, %mask: tensor<8xi32>)
          : tensor<8xi32>, tensor<8xi32> -> tensor<4xi32>
   return %res : tensor<4xi32>
 }
+
+// -----
+// CHECK-LABEL: func.func @deinterleave_rank0
+func.func @deinterleave_rank0(%arg0: tensor<f32>) -> tensor<f32> {
+  // expected-error@+1 {{'hfusion.deinterleave' op requires input rank to be at least 1}}
+  %res = hfusion.deinterleave %arg0 channel<0> : tensor<f32> -> tensor<f32>
+  return %res : tensor<f32>
+}
