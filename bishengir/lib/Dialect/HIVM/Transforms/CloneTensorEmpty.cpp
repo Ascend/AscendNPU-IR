@@ -192,6 +192,8 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::StoreOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::MmadL1Op>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::FixpipeOp>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::CustomOp>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::CustomMacroOp>,
                CloneTensorEmptySCFForPattern>(patterns.getContext());
   // only 950 requires empty tensor of this two type of op sinking.
   if (isSupportExtra) {
