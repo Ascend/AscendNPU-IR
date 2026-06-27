@@ -1101,6 +1101,15 @@ def HIVM_StrideAlignValueInByteAttr :
   }];
 }
 
+def HIVM_SkipStrideAlignForVLoadAttr
+    : HIVM_Attr<"SkipStrideAlignForVLoad", "skip_stride_align_for_vload"> {
+  let description = [{
+    Marks an alloc whose downstream vload'd buffers must skip stride
+    alignment because the resulting inter-row gaps would break vldsx1
+    (128-element consecutive flat-pointer load).
+  }];
+}
+
 def HIVM_AllocAlignValueAttr : HIVM_Attr<"AllocAlignDims", "alloc_align_dims"> {
   let description = [{
     HIVM alloc align dims.

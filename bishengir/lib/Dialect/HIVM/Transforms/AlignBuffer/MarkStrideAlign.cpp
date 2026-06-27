@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Transforms/Passes.h"
@@ -448,19 +449,35 @@ static int findArgNeedMark(vector::TransferWriteOp writeOp) {
   return res;
 }
 
-// calculate align size to avoid bank conflict
-// Davinci recommend the vsstb stride align to (512*N + 32) Byte
+// Davinci recommends the vsstb stride align to (512*N + 32) Byte.
 // In isTransferWriteSuitForStoreWithStride, the memref last dim has been
-// guaranteed always 32Byte.
-// So the align size of sub tail dim is (16*N + 1)
+// guaranteed always 32 Byte (256 bit / element bit width).
+// So the alignment of the sub-tail dim is derived as (16*N + 1) elements,
+// where 16 = 512 Byte / 32 Byte (the ratio of alignment to last-dim size).
+static constexpr int32_t kVsstbBankConflictAlignUnit = 16;
+static constexpr int32_t kVsstbSubTailDimOffset = 2;
+
+// calculate align size to avoid bank conflict
 static int32_t alignSizeForBankConflict(MemRefType memrefTy) {
   ArrayRef<int64_t> shape = memrefTy.getShape();
-  int32_t alignDim = (int32_t)memrefTy.getRank() - 2;
-  int32_t alignSize = shape[alignDim] * 16 / std::gcd(shape[alignDim], 16) + 1;
+  int32_t alignDim =
+      static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
+  int32_t alignSize = shape[alignDim] * kVsstbBankConflictAlignUnit /
+                          std::gcd(shape[alignDim],
+                                   kVsstbBankConflictAlignUnit) +
+                      1;
   // In enable-stride-align, the alignSize will be divided by type width.
   // So the marked align size will be multiplied by type width.
   int64_t dataWidth = memrefTy.getElementTypeBitWidth() / utils::kBitsToByte;
-  return alignSize * dataWidth;
+  return alignSize * static_cast<int32_t>(dataWidth);
+}
+
+// Check if the operand's root alloc has a SkipStrideAlignForVLoad
+// annotation (placed by PreMarkStrideAlign).
+static bool shouldSkipStrideAlignForVLoad(Value oper) {
+  Value root = traceToRoot(oper);
+  return utils::getAnnotateOpWithAttr(
+      root, hivm::SkipStrideAlignForVLoadAttr::name).has_value();
 }
 
 // if vf function has vsstb, mark the related input arg with a higher size
@@ -473,7 +490,8 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       if (!utils::isTransferWriteSuitForStoreWithStride(writeOp))
         return WalkResult::skip();
       int argIdx = findArgNeedMark(writeOp);
-      if (argIdx == -1)
+      static constexpr int kNotFoundArgIdx = -1;
+      if (argIdx == kNotFoundArgIdx)
         return WalkResult::skip();
       Value operand = callOp.getOperand(argIdx);
       if (isMarked(operand))
@@ -488,11 +506,13 @@ static void markForVsstb(OpBuilder &builder, func::CallOp &callOp,
       // would bring compilation errors. This conflict may be solved afterwards.
       for (auto use : operand.getUsers()) {
         if (llvm::isa_and_nonnull<memref::CollapseShapeOp>(use) ||
-            llvm::isa_and_nonnull<memref::ReshapeOp>(use))
+            llvm::isa_and_nonnull<memref::ReshapeOp>(use)) {
           return WalkResult::skip();
+        }
       }
       builder.setInsertionPoint(callOp);
-      int32_t alignDim = (int32_t)memrefTy.getRank() - 2;
+      int32_t alignDim =
+          static_cast<int32_t>(memrefTy.getRank()) - kVsstbSubTailDimOffset;
       createAlignMarkOp(builder, callOp->getLoc(), operand, {alignDim},
                         {alignSizeForBankConflict(memrefTy)});
       return WalkResult::advance();
@@ -777,7 +797,8 @@ void MarkStrideAlignPass::runOnOperation() {
   auto moduleOp = funcOp->getParentOfType<ModuleOp>();
   bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   bool archIs950 = hacc::utils::isAscend950(moduleOp);
-  WalkResult result = funcOp->walk([&builder, archIsRegbased, archIs950](Operation *op) {
+  WalkResult result = funcOp->walk([&builder, archIsRegbased,
+                                    archIs950](Operation *op) {
     LDBG("Walk operation : " << *op);
     if (!isa<HIVMStructuredOp>(op)) {
       return WalkResult::advance();
@@ -808,12 +829,10 @@ void MarkStrideAlignPass::runOnOperation() {
     }
     auto types = hivmOp.getHIVMOperandTypes(/*includeExtraBuffer=*/false);
     auto memrefTypes = util::getMemRefTypes(types);
-    if (isAllRank0(memrefTypes)) {
+    if (isAllRank0(memrefTypes))
       return WalkResult::advance();
-    }
-    if (!isAnyOfLocalBuffer(memrefTypes)) {
+    if (!isAnyOfLocalBuffer(memrefTypes))
       return WalkResult::advance();
-    }
 
     bool isUBDMAOp = isa<hivm::LoadOp>(op) || isa<hivm::StoreOp>(op) ||
                      isa<hivm::CopyOp>(op);
@@ -941,6 +960,12 @@ void MarkStrideAlignPass::runOnOperation() {
 
     for (const auto &oper : ubOperands) {
       Value markTarget = useSingleUbMarkDecision ? singleUbMarkTarget : oper;
+      // Skip stride-alignment for allocs pre-marked by PreMarkStrideAlign
+      // (DMA-loaded buffers that will be vload'd in a vf).
+      if (alignDim.has_value() && isa<hivm::LoadOp>(op) &&
+          shouldSkipStrideAlignForVLoad(markTarget)) {
+        continue;
+      }
       auto adjustedAlignDim =
           adjustAlignDim(op, markTarget,
                          useSingleUbMarkDecision ? singleUbAlignDim : alignDim);
@@ -968,8 +993,9 @@ void MarkStrideAlignPass::runOnOperation() {
           if (llvm::any_of(memrefTypes, [](MemRefType mtype) {
                 auto elemWidth = mtype.getElementType().getIntOrFloatBitWidth();
                 return elemWidth != 1;
-              }))
+              })) {
             continue;
+          }
         }
 
         SmallVector<int64_t> reshapeDims{};
@@ -982,6 +1008,13 @@ void MarkStrideAlignPass::runOnOperation() {
                                                 continuousAssociations, false,
                                                 archIsRegbased, archIs950);
         LDBG("getLastDiscontinuousDim " << alignDim.value_or(-1) << "\n");
+
+        // Skip stride-alignment for allocs pre-marked by PreMarkStrideAlign
+        // (DMA-loaded buffers that will be vload'd in a vf).
+        if (alignDim.has_value() &&
+            shouldSkipStrideAlignForVLoad(operand)) {
+          continue;
+        }
 
         auto adjustedAlignDim = adjustAlignDim(callOp, operand, alignDim);
         LDBG("adjustedAlignDim " << adjustedAlignDim.value_or(-1) << "\n");

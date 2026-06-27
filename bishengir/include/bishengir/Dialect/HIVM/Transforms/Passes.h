@@ -182,6 +182,10 @@ std::unique_ptr<Pass> createFlattenOpsPass();
 // has to access aligned size.
 std::unique_ptr<Pass> createAlignAllocSizePass();
 
+// Create a pass to pre-analyze which allocs must skip stride alignment
+// (e.g., DMA-loaded buffers that will be vload'd in VFs).
+std::unique_ptr<Pass> createPreMarkStrideAlignPass();
+
 // Create a pass to annoate storage_align marks for HIVM ops.
 std::unique_ptr<Pass> createMarkStrideAlignPass();
 
