@@ -521,6 +521,8 @@ static tensor::InsertSliceOp createInsertSlice(OpBuilder &builder, Location loc,
   auto const0 = builder.getIndexAttr(0);
   auto originalType = cast<TensorType>(src.getType());
   SmallVector<OpFoldResult> offsets, sizes, strides;
+  if (!iv.getType().isIndex())
+    iv = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), iv);
   offsets.push_back(iv);
   offsets.append(originalType.getRank(), const0);
 
@@ -546,6 +548,8 @@ static tensor::ExtractSliceOp createExtractSlice(OpBuilder &builder,
   SmallVector<OpFoldResult> offsets, sizes, strides;
   auto newType = cast<TensorType>(from.getType());
 
+  if (!iv.getType().isIndex())
+    iv = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), iv);
   offsets.push_back(iv);
   offsets.append(newType.getRank() - 1, const0);
   sizes.push_back(const1);
@@ -575,6 +579,8 @@ static Value createWorkspaceSubview(OpBuilder &builder, Location loc,
   auto newType = cast<MemRefType>(from.getType());
 
   // Set up offsets
+  if (!iv.getType().isIndex())
+    iv = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), iv);
   offsets.push_back(iv);
   offsets.append(newType.getRank() - 1, const0);
   // Set up sizes
@@ -701,6 +707,8 @@ Value CVPipelineImpl::createSubview(OpBuilder &builder, Location loc,
   auto const0 = builder.getIndexAttr(0);
   SmallVector<OpFoldResult> offsets, sizes, strides;
   auto targetTy = cast<MemRefType>(to);
+  if (!iv.getType().isIndex())
+    iv = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), iv);
   offsets.push_back(iv);
   offsets.append(targetTy.getRank(), const0);
   sizes.push_back(const1);
@@ -1713,6 +1721,8 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
   }
   SmallVector<OpFoldResult> offsets, sizes, strides;
   Attribute cst1Attr = builder.getI64IntegerAttr(1);
+  if (!iv.getType().isIndex())
+    iv = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), iv);
   offsets.push_back(iv);
   offsets.append(subview.getMixedOffsets());
   sizes.push_back(cst1Attr);
