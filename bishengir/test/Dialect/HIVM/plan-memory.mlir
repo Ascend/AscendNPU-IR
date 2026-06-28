@@ -1596,10 +1596,15 @@ module {
       hivm.hir.load ins(%arg3 : memref<32xf32, #hivm.address_space<gm>>) outs(%alloc_2 : memref<32xf32, #hivm.address_space<ub>>)
       %2 = arith.select %arg2, %alloc_2, %arg5 : memref<32xf32, #hivm.address_space<ub>>
       %3 = arith.select %arg2, %arg6, %alloc_2 : memref<32xf32, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.pointer_cast(%[[CONST1]])
+      // %alloc_3/%alloc_4 are yielded as iter args and form conditional alias
+      // chains with %alloc_0/%alloc_1 via the selects above. With the
+      // FindBufferCondPair dangling-pointer fix, the condition flag is now
+      // correctly preserved, so InitializeInplacePairList does not inplace-
+      // reuse them with %alloc_0/%alloc_1; each gets a distinct address.
+      // CHECK: hivm.hir.pointer_cast(%[[CONST3:.*]])
       %alloc_3 = memref.alloc() {alignment = 64 : i64} : memref<32xf32, #hivm.address_space<ub>>
       hivm.hir.copy ins(%2 : memref<32xf32, #hivm.address_space<ub>>) outs(%alloc_3 : memref<32xf32, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.pointer_cast(%[[CONST2]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST4:.*]])
       %alloc_4 = memref.alloc() {alignment = 64 : i64} : memref<32xf32, #hivm.address_space<ub>>
       hivm.hir.copy ins(%3 : memref<32xf32, #hivm.address_space<ub>>) outs(%alloc_4 : memref<32xf32, #hivm.address_space<ub>>)
       scf.yield %alloc_3, %alloc_4 : memref<32xf32, #hivm.address_space<ub>>, memref<32xf32, #hivm.address_space<ub>>
