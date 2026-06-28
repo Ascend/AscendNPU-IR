@@ -802,7 +802,7 @@ void MemLivenessAnalysis::UpdateBufferAlias(Value buffer, Value aliasBuffer,
 
 std::optional<BufferCondPair *>
 MemLivenessAnalysis::FindBufferCondPair(Value buffer, Value aliasValue) {
-  for (BufferCondPair bufferCondPair : buffer2AliasVec[buffer]) {
+  for (BufferCondPair &bufferCondPair : buffer2AliasVec[buffer]) {
     if (bufferCondPair.first == aliasValue) {
       return &bufferCondPair;
     }
