@@ -839,3 +839,25 @@ func.func @test_cumprod_i32_3d_dim1_extra_buffer(%src: memref<3x1024x2xi32>,
   hivm.hir.vcumprod ins(%src : memref<3x1024x2xi32>) outs(%dst : memref<3x1024x2xi32>) cum_dims = [1] reverse = false
   return
 }
+
+// -----
+
+func.func @test_cumsum_i1_2d_dim1_extra_buffer(%src: memref<3x256xi1>,
+                                               %dst: memref<3x256xi1>) {
+  // CHECK-LABEL: func.func @test_cumsum_i1_2d_dim1_extra_buffer
+  // CHECK: memref.alloc() : memref<256x256xi1>
+  // CHECK: hivm.hir.vcumsum{{.*}}temp_buffer({{.*}}memref<256x256xi1>)
+  hivm.hir.vcumsum ins(%src : memref<3x256xi1>) outs(%dst : memref<3x256xi1>) cum_dims = [1] reverse = false
+  return
+}
+
+// -----
+
+func.func @test_cumsum_i1_3d_dim1_extra_buffer(%src: memref<3x1024x2xi1>,
+                                               %dst: memref<3x1024x2xi1>) {
+  // CHECK-LABEL: func.func @test_cumsum_i1_3d_dim1_extra_buffer
+  // CHECK: memref.alloc() : memref<3x1024x256xi1>
+  // CHECK: hivm.hir.vcumsum{{.*}}temp_buffer({{.*}}memref<3x1024x256xi1>)
+  hivm.hir.vcumsum ins(%src : memref<3x1024x2xi1>) outs(%dst : memref<3x1024x2xi1>) cum_dims = [1] reverse = false
+  return
+}
