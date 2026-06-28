@@ -563,7 +563,7 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
     SmallVector<int64_t> extraBufSizes(srcVecType.getShape().begin(),
                                        srcVecType.getShape().end());
     unsigned elemBitWidth = srcVecType.getElementTypeBitWidth();
-    int64_t alignElements = 32 / (elemBitWidth / 8);
+    int64_t alignElements = util::vectorBlockSizeBit / elemBitWidth;
     extraBufSizes[2] =
       (extraBufSizes[2] + alignElements - 1) / alignElements * alignElements;
     Value extraBuf = allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
@@ -574,7 +574,7 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
     SmallVector<int64_t> extraBufSizes(srcVecType.getShape().rbegin(),
                                        srcVecType.getShape().rend());
     unsigned elemBitWidth = srcVecType.getElementTypeBitWidth();
-    int64_t alignElements = 32 / (elemBitWidth / 8);
+    int64_t alignElements = util::vectorBlockSizeBit / elemBitWidth;
     extraBufSizes[1] =
         (extraBufSizes[1] + alignElements - 1) / alignElements * alignElements;
     Value extraBuf = allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
