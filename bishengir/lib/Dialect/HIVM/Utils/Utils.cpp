@@ -540,20 +540,21 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
   // present, then will by default be ascending order from outter loops to inner
   std::sort(worklist.begin(), worklist.end(),
             [](scf::ForallOp left, scf::ForallOp right) {
-              int leftOrder = -1;
-              for (Attribute mapping : left.getMappingAttr()) {
-                if (auto blkMapping = dyn_cast<HIVMBlockMappingAttr>(mapping)) {
-                  leftOrder = blkMapping.getOrder().value_or(0);
-                  break;
+              // Extract the block mapping order symmetrically from both
+              // operands. Foralls without a block mapping (i.e. subblock-only)
+              // have no dictated order and are treated as equivalent so that
+              // the comparator satisfies strict weak ordering: the previous
+              // implementation returned ``true`` whenever the right operand had
+              // no block mapping, which made both comp(a, b) and comp(b, a)
+              // return true and yielded undefined behaviour in std::sort.
+              auto getBlockOrder = [](scf::ForallOp op) -> int {
+                for (Attribute mapping : op.getMappingAttr()) {
+                  if (auto blkMapping = dyn_cast<HIVMBlockMappingAttr>(mapping))
+                    return blkMapping.getOrder().value_or(0);
                 }
-              }
-              for (Attribute mapping : right.getMappingAttr()) {
-                if (auto blkMapping = dyn_cast<HIVMBlockMappingAttr>(mapping))
-                  return leftOrder < blkMapping.getOrder().value_or(0);
-              }
-              // Expecting subblock mapping here, where the order is not
-              // dictated
-              return true;
+                return -1;
+              };
+              return getBlockOrder(left) < getBlockOrder(right);
             });
 
   return rewriteNestedForallImpl(rewriter, forallOp, worklist, result,
