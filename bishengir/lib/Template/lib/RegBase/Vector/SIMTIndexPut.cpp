@@ -209,7 +209,7 @@ __aiv__ __attribute__((always_inline)) static void simt_index_put_core_5d(
   IDXTY index;
   int32_t vidx[5] = {}, tmp;
   int32_t didx[5] = {};
-  const int32_t endOffsets[4] = {endOffset0, endOffset1, endOffset2, endOffset3};
+  const int32_t endOffsets[5] = {endOffset0, endOffset1, endOffset2, endOffset3, endOffset4};
   const int32_t val_strides[5] = {val_stride0, val_stride1, val_stride2, val_stride3, val_stride4};
   const int32_t dst_strides[5] = {dst_stride0, dst_stride1, dst_stride2, dst_stride3, dst_stride4};
 
