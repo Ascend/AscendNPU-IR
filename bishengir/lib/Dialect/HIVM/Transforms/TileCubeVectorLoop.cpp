@@ -384,48 +384,6 @@ LogicalResult shrinkAlloc(ModuleOp module) {
   return applyPatternsGreedily(module, std::move(patterns));
 }
 
-/// Pattern to remove the dummy store.
-class RemoveDummyStore : public OpRewritePattern<hivm::StoreOp> {
-public:
-  using OpRewritePattern<hivm::StoreOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(hivm::StoreOp storeOp,
-                                PatternRewriter &rewriter) const override {
-    if (!storeOp->hasAttr(kDummyStore))
-      return failure();
-
-    Value source = storeOp.getSource();
-    auto hivmSource =
-        dyn_cast_if_present<HIVMStructuredOp>(source.getDefiningOp());
-    if (!hivmSource)
-      return storeOp->emitError("Dummy store's source is not a HIVM op");
-
-    // Clone the source op right before the store op because we want to
-    // replace its init with the dummy store's init. But the defining op of
-    // the init operand might come after the source op.
-    //
-    // We can do this easily because it's guaranteed that there is no other
-    // users of the stored op because we already replaced all of its users by
-    // the dummy store. So the IR looks like:
-    // ```mlir
-    //   %a = hivm.hir.op
-    //   ..                                 // there is no other users of %a
-    //   %store = hivm.hir.store ins(%a)
-    //   ...
-    //   other_users(%store)
-    // ```
-    rewriter.setInsertionPoint(storeOp);
-    IRMapping mapping;
-    mapping.map(hivmSource.getDpsInitOperand(0)->get(),
-                storeOp.getDpsInitOperand(0)->get());
-    Operation *newOp = rewriter.clone(*hivmSource.getOperation(), mapping);
-    rewriter.replaceOp(hivmSource, newOp);
-    rewriter.replaceAllUsesWith(storeOp.getResult(0), storeOp.getSrc());
-    rewriter.eraseOp(storeOp);
-    return success();
-  }
-};
-
 //===----------------------------------------------------------------------===//
 // OpToTile
 //===----------------------------------------------------------------------===//
@@ -796,6 +754,61 @@ private:
 // Vector Loop Information.
 //===----------------------------------------------------------------------===//
 
+/// Pattern to remove the dummy store.
+class RemoveDummyStore : public OpRewritePattern<hivm::StoreOp> {
+public:
+  using OpRewritePattern<hivm::StoreOp>::OpRewritePattern;
+
+  RemoveDummyStore(MLIRContext *ctx, ArrayRef<OpToTile> maybeDummyStore)
+      : OpRewritePattern<hivm::StoreOp>(ctx), maybeDummyStore(maybeDummyStore) {}
+
+  LogicalResult matchAndRewrite(hivm::StoreOp storeOp,
+                                PatternRewriter &rewriter) const override {
+    if (!storeOp->hasAttr(kDummyStore))
+      return failure();
+
+    // This is a module-level rewrite pattern, but we only want to erase the 
+    // dummy store in the current vector loop.
+    if (llvm::none_of(maybeDummyStore, [&storeOp](const OpToTile &opInfo) {
+          return storeOp->hasAttr(opInfo.tag);
+        }))
+      return failure();
+
+    Value source = storeOp.getSource();
+    auto hivmSource =
+        dyn_cast_if_present<HIVMStructuredOp>(source.getDefiningOp());
+    if (!hivmSource)
+      return storeOp->emitError("Dummy store's source is not a HIVM op");
+
+    // Clone the source op right before the store op because we want to
+    // replace its init with the dummy store's init. But the defining op of
+    // the init operand might come after the source op.
+    //
+    // We can do this easily because it's guaranteed that there is no other
+    // users of the stored op because we already replaced all of its users by
+    // the dummy store. So the IR looks like:
+    // ```mlir
+    //   %a = hivm.hir.op
+    //   ..                                 // there is no other users of %a
+    //   %store = hivm.hir.store ins(%a)
+    //   ...
+    //   other_users(%store)
+    // ```
+    rewriter.setInsertionPoint(storeOp);
+    IRMapping mapping;
+    mapping.map(hivmSource.getDpsInitOperand(0)->get(),
+                storeOp.getDpsInitOperand(0)->get());
+    Operation *newOp = rewriter.clone(*hivmSource.getOperation(), mapping);
+    rewriter.replaceOp(hivmSource, newOp);
+    rewriter.replaceAllUsesWith(storeOp.getResult(0), storeOp.getSrc());
+    rewriter.eraseOp(storeOp);
+    return success();
+  }
+
+private:
+  ArrayRef<OpToTile> maybeDummyStore;
+};
+
 class VectorLoopInfo : public LoopInfo {
 public:
   VectorLoopInfo(size_t idx, int64_t targetTripCount)
@@ -809,7 +822,7 @@ public:
   performPostTransformationAction(ModuleOp module) const override {
     MLIRContext *ctx = module.getContext();
     RewritePatternSet patterns(ctx);
-    patterns.add<RemoveDummyStore>(ctx);
+    patterns.add<RemoveDummyStore>(ctx, this->getOpTileInfo());
     return applyPatternsGreedily(module, std::move(patterns));
   }
 
