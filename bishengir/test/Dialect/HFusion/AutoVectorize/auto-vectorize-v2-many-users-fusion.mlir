@@ -5,10 +5,17 @@
 // loops (scf.for barrier). 
 // producer stays standalone loop(no fusion opportunity).
 // CHECK-LABEL: func.func @many_users_no_fusion_opportunity
-// CHECK: "outlined-loop-target-3"
-// CHECK: "outlined-loop-target-1"
+
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK-COUNT-2: arith.mulf
+// CHECK: {reductionLoop}
 // CHECK: "outlined-loop-target-2"
-// CHECK-NOT: "outlined-loop-target-4"
+
+// CHECK: scf.for
+// CHECK-COUNT-2: arith.addf
+// CHECK: "outlined-loop-target-1"
+// CHECK-NOT: "outlined-loop-target-3"
 
 #map = affine_map<(d0, d1) -> (d0, d1)>
 #map1 = affine_map<(d0, d1) -> (d0)>
@@ -24,8 +31,8 @@ module {
     %producer = linalg.generic {indexing_maps = [#map, #map1, #map1], iterator_types = ["parallel", "reduction"]} ins(%arg0, %arg1 : tensor<1x16xi32>, tensor<1xf32>) outs(%1 : tensor<1xf32>) {
     ^bb0(%in: i32, %in_0: f32, %out: f32):
       %7 = arith.sitofp %in : i32 to f32
-      %8 = arith.addf %7, %in_0 : f32
-      %9 = arith.addf %8, %out : f32
+      %8 = arith.mulf %7, %in_0 : f32
+      %9 = arith.mulf %8, %out : f32
       linalg.yield %9 : f32
     } -> tensor<1xf32>
     %3 = tensor.empty() : tensor<1xf32>
