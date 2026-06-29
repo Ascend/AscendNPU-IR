@@ -959,6 +959,18 @@ func.func @test_vflip_op_memref() {
 
 // -----
 
+// CHECK: @test_vsort_op_memref
+// CHECK-SAME: (%[[IN:.*]]: memref<3x4x5xi8>, %[[OUT:.*]]: memref<3x4x5xi8>)
+// CHECK-DAG:  %[[COLLAPSED_IN:.*]] = memref.collapse_shape %[[IN]] {{.*}} into memref<12x5xi8>
+// CHECK-DAG:  %[[COLLAPSED_OUT:.*]] = memref.collapse_shape %[[OUT]] {{.*}} into memref<12x5xi8>
+// CHECK-DAG:  hivm.hir.vsort ins(%[[COLLAPSED_IN]] : {{.*}}) outs(%[[COLLAPSED_OUT]] : {{.*}}) descending = true sort_axis = 1
+func.func @test_vsort_op_memref(%arg0: memref<3x4x5xi8>, %arg1: memref<3x4x5xi8>) {
+  hivm.hir.vsort ins(%arg0 : memref<3x4x5xi8>) outs(%arg1: memref<3x4x5xi8>) descending = true sort_axis = 2
+  return
+}
+
+// -----
+
 // CHECK: @test_vpad_op_memref(%[[ARG:.*]]: f16
 // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<2x1x3x1x1xf16>
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<2x2x4x2x1xf16>
