@@ -116,7 +116,7 @@ bool InsertLoadStoreForMixCVPass::isA5Target() {
 }
 
 bool InsertLoadStoreForMixCVPass::isEnabledTightCoupledBuffer()  {
-  if (disableTightCoupledBuffer || enableDotScaledCompile) return false;
+  if (disableTightCoupledBuffer) return false;
   return isA5Target();
 }
 

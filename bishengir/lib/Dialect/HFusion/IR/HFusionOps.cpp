@@ -3515,23 +3515,24 @@ LogicalResult MatMulMxOp::verify() {
 /// %37 = linalg.matmul ins(%35, %36 : tensor<64x64xf16>, tensor<64x64xf16>)
 ///   outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
 FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder) {
+  Value a = getInputA();
+  auto aType = cast<RankedTensorType>(a.getType());
+
+  // Software emulation only used to support K = 32
+  const auto K = aType.getShape()[1];
+  if (K != 32)
+    return failure();
+
   OpBuilder::InsertionGuard guard(builder);
   builder.setInsertionPoint(getOperation());
   Location location = getLoc();
 
-  Value a = getInputA();
   Value b = getInputB();
   Value c = getAcc();
   Value scaleA = getScaleA();
   Value scaleB = getScaleB();
 
-  auto aType = cast<RankedTensorType>(a.getType());
   auto bType = cast<RankedTensorType>(b.getType());
-
-  // Software emulation only used to support K = 32
-  auto K = aType.getShape()[1];
-  if (K != 32)
-    return failure();
 
   auto scaleAType = cast<RankedTensorType>(scaleA.getType());
   auto scaleBType = cast<RankedTensorType>(scaleB.getType());

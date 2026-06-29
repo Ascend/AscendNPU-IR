@@ -770,10 +770,6 @@ def InsertLoadStoreForMixCV
       /*default=*/"\"Ascend910B1\"",
       "Target device name">,
     Option<
-      "enableDotScaledCompile", "enable-dot-scaled-compile", "bool",
-      /*default=*/"false",
-      "Enable dot scaled compile">,
-    Option<
       "disableTightCoupledBuffer", "disable-tight-coupled-buffer", "bool",
       /*default=*/"false",
       "Disable Tight Coupled Buffer Allocation">];
