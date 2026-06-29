@@ -598,34 +598,3 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
   this->getTempBufferMutable().assign(extraBuf);
   return success();
 }
-
-//===----------------------------------------------------------------------===//
-// CustomOp
-//===----------------------------------------------------------------------===//
-
-namespace {
-template <typename CustomOpT>
-LogicalResult allocExtraBuffersForCustomOp(CustomOpT op) {
-  if (!llvm::to_vector(op.getTempBuffers()).empty()) {
-    op.emitWarning("already has extra temp buffers");
-    return success();
-  }
-
-  SmallVector<Value> buffs;
-  for (const auto &[type, size] : op.getExtraBuffersInfo()) {
-    Value extraBuf = allocExtraBuffer(op.getOperation(), {size}, type);
-    buffs.push_back(extraBuf);
-  }
-
-  op.getTempBuffersMutable().assign(buffs);
-  return success();
-}
-} // namespace
-
-LogicalResult CustomOp::allocExtraBuffersIfPossible() {
-  return allocExtraBuffersForCustomOp(*this);
-}
-
-LogicalResult CustomMacroOp::allocExtraBuffersIfPossible() {
-  return allocExtraBuffersForCustomOp(*this);
-}

@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -37,33 +38,6 @@
 namespace mlir::hivm {
 
 namespace PropagatorUtil {
-namespace {
-
-bool isCustomLikeTempBuffer(Operation *op, OpOperand *operand) {
-  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
-    for (auto &tempBuffer : customOp.getTempBuffersMutable())
-      if (&tempBuffer == operand)
-        return true;
-  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
-    for (auto &tempBuffer : macroOp.getTempBuffersMutable())
-      if (&tempBuffer == operand)
-        return true;
-  }
-  return false;
-}
-
-void forEachCustomLikeTempBuffer(Operation *op,
-                                 llvm::function_ref<void(OpOperand &)> fn) {
-  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
-    for (auto &tempBuffer : customOp.getTempBuffersMutable())
-      fn(tempBuffer);
-  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
-    for (auto &tempBuffer : macroOp.getTempBuffersMutable())
-      fn(tempBuffer);
-  }
-}
-
-} // namespace
 
 std::pair<TCoreType, hivm::AddressSpace>
 getPropagationInfoForPipe(hivm::PIPE pipe) {

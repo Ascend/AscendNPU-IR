@@ -17,7 +17,6 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/DenseSet.h"
@@ -118,66 +117,6 @@ inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp) {
 //===----------------------------------------------------------------------===//
 // HIVM Ops
 //===----------------------------------------------------------------------===//
-
-// Helper to get preCoreType by walking func body in pre-order
-static TCoreType getPreCoreTypeForNotifyOp(Operation *notifyOp) {
-  TCoreType preCoreType = TCoreType::VECTOR;
-  func::FuncOp funcOp = notifyOp->getParentOfType<func::FuncOp>();
-  if (!funcOp) {
-    return preCoreType;
-  }
-
-  funcOp.walk([&](Operation *op) {
-    if (op == notifyOp) {
-      return WalkResult::interrupt();
-    }
-    if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
-      if (shmemIntp.contains(customOp.getName())) {
-        // Skip other notify ops
-        return WalkResult::advance();
-      }
-    }
-    // Update preCoreType based on current op
-    std::optional<TCoreType> tmpCoreType =
-        hivm::detail::queryCoreTypeHelper(op);
-    if (tmpCoreType != std::nullopt &&
-        tmpCoreType != TCoreType::CUBE_AND_VECTOR &&
-        tmpCoreType != TCoreType::CUBE_OR_VECTOR) {
-      preCoreType = tmpCoreType.value();
-    }
-    return WalkResult::advance();
-  });
-  return preCoreType;
-}
-
-namespace {
-template <typename CustomOpT>
-std::optional<TCoreType> inferCustomOpCoreTypeFromAttr(CustomOpT op) {
-  if (auto coreTypeAttr =
-          static_cast<Operation *>(op)->template getAttrOfType<TCoreTypeAttr>(
-              TCoreTypeAttr::name)) {
-    return coreTypeAttr.getTcoretype();
-  }
-  return {};
-}
-} // namespace
-
-std::optional<TCoreType> CustomOp::inferCoreType() {
-  // Handle shmemIntp notify ops: infer coreType based on preceding ops
-  if (shmemIntp.contains(this->getName())) {
-    TCoreType preCoreType = getPreCoreTypeForNotifyOp(getOperation());
-    if (preCoreType == TCoreType::CUBE_OR_VECTOR) {
-      // If no preceding CUBE/VECTOR ops, default to VECTOR
-      return TCoreType::VECTOR;
-    }
-    return preCoreType;
-  }
-  return inferCustomOpCoreTypeFromAttr(*this);
-}
-
-std::optional<TCoreType> CustomMacroOp::inferCoreType() {
-  return inferCustomOpCoreTypeFromAttr(*this);
-}
 
 std::optional<TCoreType> ConvertLayoutOp::inferCoreType() {
   TCoreType result = TCoreType::CUBE_OR_VECTOR;

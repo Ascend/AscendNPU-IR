@@ -1,4 +1,4 @@
-//===- DistributedTransformUtils.h - Utilities for Distributed HIVM Ops ---===//
+//===- DistributedTransformUtils.cpp - Distributed HIVM op utilities ------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,17 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef BISHENGIR_DIALECT_HIVM_DISTRIBUTED_TRANSFORM_UTILS_H
-#define BISHENGIR_DIALECT_HIVM_DISTRIBUTED_TRANSFORM_UTILS_H
-
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 
-#endif // BISHENGIR_DIALECT_HIVM_DISTRIBUTED_TRANSFORM_UTILS_H
+namespace mlir {
+namespace hivm {
+
+const llvm::StringSet<> shmemIntp = {
+    "dist.aclshmem_int64_p", "dist.aclshmem_int32_p", "dist.aclshmem_int16_p",
+    "dist.aclshmem_int8_p"};
+
+const std::string kShmemPtr = "aclshmem_ptr";
+const std::string kShmemConsumeToken = "aclshmem_consume_token";
+
+} // namespace hivm
+} // namespace mlir
