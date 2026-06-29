@@ -134,7 +134,7 @@ bool isNonVectorizableOp(Operation *op) {
       hivm::VSortOp,
       hivm::SyncBlockSetOp, hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
       hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::WhileOp, scf::ForOp,
-      scf::IfOp, func::CallOp, memref::CopyOp,
+      scf::IfOp, scope::ScopeOp, func::CallOp, memref::CopyOp,
       bufferization::MaterializeInDestinationOp>(op);
 }
 
@@ -342,7 +342,8 @@ findDownstreamFusableOpOf(Operation *op, Block *block,
       downstreamFusableOps.insert(user);
     }
     if (!isOpInBlock(user, block) &&
-        isa<scf::ForOp, scf::IfOp>(user->getParentOp())) {
+        isa<scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
+            user->getParentOp())) {
       user = user->getParentOp();
     }
     findDownstreamFusableOpOf(user, block, downstreamFusableOps, visitedOps);
@@ -379,6 +380,17 @@ static void findUpstreamFusableOpOf(Operation *op, Block *block,
   }
   if (auto forOp = dyn_cast<scf::ForOp>(op)) {
     for (auto &childOp : forOp.getBody()->getOperations()) {
+      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
+    }
+  } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+    for (auto &childOp : whileOp.getBeforeBody()->getOperations()) {
+      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
+    }
+    for (auto &childOp : whileOp.getAfterBody()->getOperations()) {
+      findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
+    }
+  } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+    for (auto &childOp : scopeOp.getBody()->getOperations()) {
       findUpstreamFusableOpOf(&childOp, block, upstreamFusableOps, visitedOps);
     }
   } else if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
@@ -501,7 +513,7 @@ static void computeConflictLists(
           if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
                   hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
                   hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::ForOp,
-                  scf::WhileOp, scf::IfOp>(op)) {
+                  scf::WhileOp, scf::IfOp, scope::ScopeOp>(op)) {
             DenseSet<Operation *> previousOps;
             DenseSet<Operation *> followingOps;
             findPreviousAndFollowingFusableOpOf(op, block, previousOps,
@@ -532,7 +544,7 @@ static bool isFusableOutputNode(Operation *op, Block *block) {
     if (isa<annotation::MarkOp>(user))
       continue;
     if (!(isNonVectorizableOp(user) || !isOpInBlock(user, block) ||
-          isa<scf::YieldOp, func::ReturnOp>(user) ||
+          isa<scf::YieldOp, func::ReturnOp, scope::ReturnOp>(user) ||
           isa<bufferization::BufferizationDialect>(user->getDialect())))
       return false;
   }
@@ -1690,7 +1702,8 @@ LogicalResult AutoVectorizeV2::vectorize(VectorizeContext &context,
 
 void AutoVectorizeV2::sortFunc(func::FuncOp func) {
   func.walk([&](Block *block) {
-    if (isa<func::FuncOp, scf::ForOp, scf::IfOp>(block->getParentOp()))
+    if (isa<func::FuncOp, scf::ForOp, scf::WhileOp, scf::IfOp, scope::ScopeOp>(
+            block->getParentOp()))
       sortTopologically(block);
   });
 }
