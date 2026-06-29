@@ -130,12 +130,15 @@ struct ElementwiseOpToHFusionBinary : public OpRewritePattern<BinaryOp> {
 template <typename BinaryOp>
 struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
   using OpRewritePattern<BinaryOp>::OpRewritePattern;
-  
-  Operation* createMulExtOp(PatternRewriter &rewriter, Location loc, Type resultType,
-                            Value lhs, Value rhs, bool isUnsigned) const {
-    return isUnsigned ?
-            rewriter.create<hfusion::MulExtUiOp>(loc, resultType, resultType, lhs, rhs) :
-            rewriter.create<hfusion::MulExtOp>(loc, resultType, resultType, lhs, rhs);
+
+  Operation *createMulExtOp(PatternRewriter &rewriter, Location loc,
+                            Type resultType, Value lhs, Value rhs,
+                            bool isUnsigned) const {
+    return isUnsigned
+               ? rewriter.create<hfusion::MulExtUiOp>(loc, resultType,
+                                                      resultType, lhs, rhs)
+               : rewriter.create<hfusion::MulExtOp>(loc, resultType, resultType,
+                                                    lhs, rhs);
   }
 
   LogicalResult matchAndRewrite(BinaryOp op,
@@ -145,8 +148,10 @@ struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
     auto resultType = op.getLow().getType();
-    constexpr bool isUnsigned = std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
-    auto mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType, lhs, rhs, isUnsigned);
+    constexpr bool isUnsigned =
+        std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
+    auto mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType, lhs, rhs,
+                                   isUnsigned);
     rewriter.replaceOp(op, mulExtOp);
     return success();
   }
@@ -204,13 +209,15 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       if (inType.isF32() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      llvm::report_fatal_error("unsupported datatype for arith::TruncFOp to hfusion");
+      llvm::report_fatal_error(
+          "unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
       if (inType.isBF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      llvm::report_fatal_error("unsupported datatype for arith::ExtFOp to hfusion");
+      llvm::report_fatal_error(
+          "unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -389,7 +396,7 @@ struct ConstantSplatOpToLinalgFillPattern
       return failure();
 
     auto denseAttr = dyn_cast<DenseIntOrFPElementsAttr>(op.getValue());
-    if (!denseAttr && !denseAttr.isSplat())
+    if (!denseAttr || !denseAttr.isSplat())
       return failure();
 
     auto elemType = denseAttr.getElementType();
