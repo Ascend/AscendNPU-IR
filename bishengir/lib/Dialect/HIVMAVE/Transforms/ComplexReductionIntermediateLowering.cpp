@@ -142,8 +142,8 @@ struct LowerAveXorReduction : public OpRewritePattern<hivmave::ReductionOp> {
           createConstantBroadcastOp(vecTy, elemType, denseAttr, loc, rewriter);
     }
     // zero out the non active elements
-    Value normalizeInput = rewriter.create<hivmave::VFOrOp>(
-        loc, vecTy, inputVec, vecZero, mask, nullptr);
+    Value normalizeInput =
+        rewriter.create<hivmave::VFOrOp>(loc, vecTy, inputVec, vecZero, mask);
 
     Value reduced = normalizeInput;
 
@@ -162,8 +162,8 @@ struct LowerAveXorReduction : public OpRewritePattern<hivmave::ReductionOp> {
       Value inter0 = interOp.getResult(0);
       Value inter1 = interOp.getResult(1);
 
-      Value xorRes = rewriter.create<hivmave::VFXorOp>(
-          loc, vecTy, inter0, inter1, newMask, nullptr);
+      Value xorRes = rewriter.create<hivmave::VFXorOp>(loc, vecTy, inter0,
+                                                       inter1, newMask);
 
       reduced = xorRes;
       curSize = halfSize;

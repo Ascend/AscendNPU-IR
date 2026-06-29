@@ -50,12 +50,10 @@ class AVE_UnaryOp<string mnemonic, list<Trait> traits = []> :
   let summary = "AVE regbase unary op " # mnemonic # ".";
   let arguments = (ins
     AveExtValidVector:$src,
-    AveMaskType:$mask,
-    Optional<AveExtValidVector>:$pass_thru);
+    AveMaskType:$mask);
   let results = (outs AveExtValidVector:$res);
   let assemblyFormat = [{
-    $src `,` $mask (`,` $pass_thru^)? attr-dict `:` type($src) `,` type($mask)
-    (`,` type($pass_thru)^)?
+    $src `,` $mask attr-dict `:` type($src) `,` type($mask)
   }];
 }
 
@@ -66,14 +64,12 @@ class AVE_BinaryOp<string mnemonic, list<Trait> traits = []> :
   let summary = "Ave binary op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$lhs,
                        AveExtValidVector:$rhs,
-                       AveMaskType:$mask,
-                       Optional<AveExtValidVector>:$pass_thru);
+                       AveMaskType:$mask);
   let results = (outs AveExtValidVector:$out);
 
-  // TODO: remove type($pass_thru) from assemblyFormat with InferTypeOpInterface.
   let assemblyFormat = [{
-    $lhs `,` $rhs `,` $mask ( `,` $pass_thru^)? attr-dict `:` type($lhs) `,`
-    type($mask) ( `,` type($pass_thru)^)?
+    $lhs `,` $rhs `,` $mask attr-dict `:` type($lhs) `,`
+    type($mask)
   }];
 }
 
@@ -83,15 +79,13 @@ class AVE_VmullBinaryOp<string mnemonic, list<Trait> traits = []> :
   let summary = "Ave binary op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$src1,
                        AveExtValidVector:$src2,
-                       AveMaskType:$mask,
-                       Optional<AveExtValidVector>:$pass_thru);
+                       AveMaskType:$mask);
   let results = (outs AveExtValidVector:$res1,
                       AveExtValidVector:$res2);
 
-  // TODO: remove type($pass_thru) from assemblyFormat with InferTypeOpInterface.
   let assemblyFormat = [{
-    $src1 `,` $src2 `,` $mask ( `,` $pass_thru^)? attr-dict `:` type($src1) `,`
-    type($mask) ( `,` type($pass_thru)^)?
+    $src1 `,` $src2 `,` $mask attr-dict `:` type($src1) `,`
+    type($mask)
   }];
 }
 
@@ -103,14 +97,12 @@ class AVE_TenaryOp<string mnemonic, list<Trait> traits = []> :
   let arguments = (ins AveValidVector:$src1,
                        AveValidVector:$src2,
                        AveValidVector:$src3,
-                       AveMaskType:$mask,
-                       Optional<AveValidVector>:$pass_thru);
+                       AveMaskType:$mask);
   let results = (outs AveValidVector:$out);
 
-  //TODO: remove type($pass_thru) from assemblyFormat with InferTypeOpInterface.
   let assemblyFormat = [{
-    $src1 `,` $src2 `,` $src3 `,` $mask ( `,` $pass_thru^)? attr-dict `:`
-    type($src1) `,` type($mask) ( `,` type($pass_thru)^)?
+    $src1 `,` $src2 `,` $src3 `,` $mask attr-dict `:`
+    type($src1) `,` type($mask)
   }];
 }
 
@@ -124,14 +116,12 @@ class AVE_VecScalarOp<string mnemonic, list<Trait> traits = []> :
   let summary = "Ave vector-scalar op " # mnemonic # ".";
   let arguments = (ins AveExtValidVector:$vec,
                        AnyTypeOf<[ I8, I16, I32, I64, F16, F32 ]>:$scalar,
-                       AveMaskType:$mask,
-                       Optional<AveExtValidVector>:$pass_thru);
+                       AveMaskType:$mask);
   let results = (outs AveExtValidVector:$out);
 
-  // TODO: remove type($pass_thru) from assemblyFormat with InferTypeOpInterface.
   let assemblyFormat = [{
-    $vec `,` $scalar `,` $mask ( `,` $pass_thru^ )? attr-dict `:` type($vec)
-    `,` type($scalar) `,` type($mask) ( `,` type($pass_thru)^ )?
+    $vec `,` $scalar `,` $mask attr-dict `:` type($vec)
+    `,` type($scalar) `,` type($mask)
   }];
 }
 
@@ -147,14 +137,12 @@ class AVE_ShiftVecScalarOp<string mnemonic, list<Trait> traits = []> :
   let arguments = (ins AveExtValidVector:$vec,
                        AnyTypeOf<[ I8, I16, I32, I64, F16, F32]>:$scalar,
                        AveMaskType:$mask,
-                       I1:$sign,
-                       Optional<AveValidVector>:$pass_thru);
+                       I1:$sign);
   let results = (outs AveExtValidVector:$out);
 
-  // TODO: remove type($pass_thru) from assemblyFormat with InferTypeOpInterface.
   let assemblyFormat = [{
-    $vec `,` $scalar `,` $mask `,` $sign ( `,` $pass_thru^)? attr-dict`:` type($vec)
-    `,` type($scalar) `,` type($mask) ( `,` type($pass_thru)^ )?
+    $vec `,` $scalar `,` $mask `,` $sign attr-dict`:` type($vec)
+    `,` type($scalar) `,` type($mask)
   }];
 }
 
@@ -698,13 +686,11 @@ class AVE_ShiftOp<string mnemonic, list<Trait> traits = []> :
   let arguments = (ins AveVector<[I8, I16, I32, I64]>:$lhs,
                        AveVector<[I8, I16, I32, I64]>:$rhs,
                        AveMaskType:$mask,
-                       I1:$sign,
-                       Optional<AveValidVector>:$pass_thru);
+                       I1:$sign);
   let results = (outs AveVector<[I8, I16, I32, I64]>:$out);
 
   let assemblyFormat = [{
-    $lhs `,` $rhs `,` $mask `,` $sign ( `,` $pass_thru^)? attr-dict `:` type($lhs) `,`
-    type($mask) ( `,` type($pass_thru)^)?
+    $lhs `,` $rhs `,` $mask `,` $sign attr-dict `:` type($lhs) `,` type($mask)
   }];
 }
 
@@ -771,8 +757,7 @@ def AVE_VFDivOp : AVE_BinaryOp<"vdiv",[DeclareOpInterfaceMethods<AVELibraryFunct
   let arguments = (ins AveVector<[I16, I32, F16, F32, I64, UI64]>:$lhs,
                        AveVector<[I16, I32, F16, F32, I64, UI64]>:$rhs,
                        AveMaskType:$mask,
-                       DefaultValuedAttr<HIVM_TypeFnAttr, "hivm::TypeFn::cast_signed">:$cast,
-                       Optional<AveExtValidVector>:$pass_thru);
+                       DefaultValuedAttr<HIVM_TypeFnAttr, "hivm::TypeFn::cast_signed">:$cast);
   let extraClassDeclaration = opNameDeclaration;
 }
 
