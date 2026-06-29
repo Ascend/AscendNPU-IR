@@ -458,13 +458,13 @@ struct NormalizeSortOpTemplate : public OpRewritePattern<SortOpTy> {
       return failure();
 
     Type f32Type = rewriter.getF32Type();
-    Value castToF32 =
-        Traits::createCastOp(rewriter, op.getLoc(), input, f32Type);
+    Value castToF32 = Traits::createCastOp(rewriter, op.getLoc(), input,
+                                           f32Type, CastRoundKind::Default);
     Value sortResult = Traits::createSortOp(rewriter, op, castToF32);
     if (!sortResult)
       return failure();
-    Value castBack =
-        Traits::createCastOp(rewriter, op.getLoc(), sortResult, elemType);
+    Value castBack = Traits::createCastOp(rewriter, op.getLoc(), sortResult,
+                                          elemType, CastRoundKind::Default);
 
     rewriter.replaceOp(op, castBack);
     return success();
