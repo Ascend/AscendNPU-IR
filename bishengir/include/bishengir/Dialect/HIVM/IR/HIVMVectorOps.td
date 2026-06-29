@@ -2118,7 +2118,11 @@ def VSortOp : HIVM_VectorOp<"vsort",
      // Expanded element types via hivm sort normalize pattern
      OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
-       ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>
+       ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>,
+     // Will automatically use the default uniform reassociation impl
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+                               ["getLimitedAxes", "adjustTargetDimensions"]>
     ]> {
   let summary = "Vector Sort Op";
   let description = [{
