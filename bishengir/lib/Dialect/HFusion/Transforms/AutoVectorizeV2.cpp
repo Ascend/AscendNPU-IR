@@ -501,23 +501,44 @@ static void computeConflictLists(
             }
           }
 
-          if (isa<hivm::CopyOp, memref::CopyOp>(op)) {
-            auto copyOp = cast<CopyOpInterface>(op);
-            DenseSet<Operation *> previousOps;
-            DenseSet<Operation *> followingOps;
-            findPreviousAndFollowingFusableOpOf(op, block, previousOps, followingOps);
-            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getTarget());
-            computeConflictListsForCopyOpOperand(fusableOpInfoMap, previousOps, followingOps, copyOp.getSource());
-          }
+          // Only region-bearing ops or explicit sync/copy ops need the
+          // previous/following scan and the body walk below.
+          if (op->getNumRegions() == 0 &&
+              !isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                   hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
+                   hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op) &&
+              !isa<hivm::CopyOp, memref::CopyOp>(op))
+            return;
 
-          if (isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
-                  hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
-                  hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp, scf::ForOp,
-                  scf::WhileOp, scf::IfOp, scope::ScopeOp>(op)) {
-            DenseSet<Operation *> previousOps;
-            DenseSet<Operation *> followingOps;
-            findPreviousAndFollowingFusableOpOf(op, block, previousOps,
-                                                followingOps);
+          DenseSet<Operation *> previousOps;
+          DenseSet<Operation *> followingOps;
+          findPreviousAndFollowingFusableOpOf(op, block, previousOps,
+                                              followingOps);
+
+          // Walk the op body: CopyOps create operand-specific conflicts;
+          // sync ops trigger a full barrier between all previous and
+          // following fusable ops.
+          auto walker = [&fusableOpInfoMap, &previousOps,
+                         &followingOps](Operation *op) {
+            if (isa<hivm::CopyOp, memref::CopyOp>(op)) {
+              auto copyOp = cast<CopyOpInterface>(op);
+              computeConflictListsForCopyOpOperand(fusableOpInfoMap,
+                                                   previousOps, followingOps,
+                                                   copyOp.getTarget());
+              computeConflictListsForCopyOpOperand(fusableOpInfoMap,
+                                                   previousOps, followingOps,
+                                                   copyOp.getSource());
+              return WalkResult::advance();
+            }
+            if (isa<hivm::AnchorOp>(op))
+              return WalkResult::interrupt();
+            return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                       hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
+                       hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op)
+                       ? WalkResult::interrupt()
+                       : WalkResult::advance();
+          };
+          if (op->walk(walker).wasInterrupted()) {
             for (auto previousOp : previousOps) {
               for (auto followingOp : followingOps) {
                 fusableOpInfoMap[previousOp].conflictList.insert(followingOp);
