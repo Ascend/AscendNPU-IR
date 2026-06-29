@@ -445,10 +445,10 @@ struct HFusionMatmulDecomposePatterns : public OpRewritePattern<MatmulOpTy> {
         }
       }
     }
-    if (Operation *emptyOp = mmadOutput.getDefiningOp<tensor::EmptyOp>()) {
+    if (mmadOutput.getDefiningOp<tensor::EmptyOp>()) {
       return failure();
     }
-    if (Operation *fillOp = mmadOutput.getDefiningOp<linalg::FillOp>()) {
+    if (mmadOutput.getDefiningOp<linalg::FillOp>()) {
       return failure();
     }
     auto elementType = getElementTypeOrSelf(op->getResult(0));

@@ -1747,7 +1747,7 @@ mlir::LogicalResult PropagateAlignUpToRootAllocationPattern::matchAndRewrite(
     return markOp.emitError() << "Cannot align unranked memref " << markSrc;
 
   LogicalResult result = success();
-  if (auto defOp = markSrc.getDefiningOp()) {
+  if (markSrc.getDefiningOp()) {
     result = propagateAlignUpFromResult(rewriter, cast<OpResult>(markSrc),
                                         markOp, alignDims, alignBytes,
                                         alignDimAttrName_, alignBytesAttrName_);
