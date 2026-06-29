@@ -182,14 +182,6 @@ public:
 };
 
 void CanonicalizeTensorReshape::runOnOperation() {
-  bool isDotScaled = false;
-  auto funcOp = getOperation();
-  funcOp.walk([&](hfusion::MatMulMxOp op) {
-    isDotScaled = false;
-    return WalkResult::interrupt();
-  });
-  if (isDotScaled) 
-    return;
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   patterns.insert<CanonicalizeTensorReshapeOpPattern>(patterns.getContext());

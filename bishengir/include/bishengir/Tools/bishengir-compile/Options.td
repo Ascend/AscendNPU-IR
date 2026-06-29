@@ -817,16 +817,6 @@ def DisableVFReachableCheck : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
-#ifdef BISHENGIR_ENABLE_TRITON_COMPILE
-def EnableDotScaledCompile : FeatureControlOptions<
-  "Enable dot scaled compile",
-  "bool",
-  "false"
-> {
-  let passGroup = ["HIVM"];
-}
-#endif
-
 def DisableFFTS : FeatureControlOptions<
   "Force disabling FFTS.",
   "bool",

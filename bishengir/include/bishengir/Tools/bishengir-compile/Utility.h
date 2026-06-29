@@ -95,9 +95,6 @@ llvm::LogicalResult
 inferLayoutOptimization(mlir::ModuleOp &module,
                         bishengir::BiShengIRCompileMainConfig &config);
 
-llvm::LogicalResult inferDotScale(mlir::ModuleOp &module,
-                                  bishengir::BiShengIRCompileMainConfig &config);
-
 /// Get the absolute path of the current executable. Resolves symlinks and
 /// handles invocation via PATH. \p argv0 is argv[0] from main, \p mainAddr
 /// is reinterpret_cast<void*>(main). Returns empty string on failure.
