@@ -176,6 +176,19 @@ adjustAlignInfo(Operation *op, Value operand,
 
 void dump(const ArrayRef<int32_t> &alignDims,
           const ArrayRef<int32_t> &alignBytes, StringRef debugType = "");
+
+inline Value traceToRoot(Value val) {
+  while (val) {
+    if (auto *defOp = val.getDefiningOp()) {
+      if (isa<ViewLikeOpInterface, memref::CastOp>(defOp)) {
+        val = defOp->getOperand(0);
+        continue;
+      }
+    }
+    break;
+  }
+  return val;
+}
 } // namespace hivm
 } // namespace mlir
 

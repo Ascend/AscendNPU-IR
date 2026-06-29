@@ -67,7 +67,7 @@ func.func @test_sink_empty() -> tensor<16xf32>{
     // CLONE-NOT: memref.copy
     scf.yield %res : tensor<16xf32>
   }
-  
+
   return %ret : tensor<16xf32>
 }
 
@@ -103,4 +103,56 @@ func.func @test_clone_tensor_empty_mark(%arg0: f32, %arg1: tensor<16xf32>) -> te
   %1 = hivm.hir.vrec ins(%0 : tensor<16xf32>) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
   %2 = hivm.hir.vadd ins(%1, %arg1 : tensor<16xf32>, tensor<16xf32>) outs(%empty : tensor<16xf32>) -> tensor<16xf32>
   return %2 : tensor<16xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_clone_custom_op_empty
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<3x3xf32>
+// CHECK: hivm.hir.custom {{.*}} outs(%[[EMPTY0]] : tensor<3x3xf32>) -> tensor<3x3xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<3x3xf32>
+// CHECK: hivm.hir.custom {{.*}} outs(%[[EMPTY1]] : tensor<3x3xf32>) -> tensor<3x3xf32>
+func.func @test_clone_custom_op_empty(%arg0: memref<?xf32>, %arg1: tensor<3x3xi64>) -> tensor<3x3xf32> {
+  %c4_i64 = arith.constant 4 : i64
+  %c0_i32 = arith.constant 0 : i32
+  %empty = tensor.empty() : tensor<3x3xf32>
+  %0 = hivm.hir.custom
+       { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "my_custom_op" }
+       "my_custom_op"
+       ins(%arg0, %arg1, %c4_i64, %c0_i32
+           : memref<?xf32>, tensor<3x3xi64>, i64, i32)
+       outs(%empty : tensor<3x3xf32>) -> tensor<3x3xf32>
+  %1 = hivm.hir.custom
+       { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.pipe = #hivm.pipe<PIPE_V>, hivm.vf_mode = #hivm.vf_mode<SIMD>, symbol = "my_custom_op" }
+       "my_custom_op"
+       ins(%arg0, %arg1, %c4_i64, %c0_i32
+           : memref<?xf32>, tensor<3x3xi64>, i64, i32)
+       outs(%empty : tensor<3x3xf32>) -> tensor<3x3xf32>
+  return %1 : tensor<3x3xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @test_clone_custom_macro_op_empty
+// CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<3x3xf32>
+// CHECK: hivm.hir.custom_macro {{.*}} outs(%[[EMPTY0]] : tensor<3x3xf32>) -> tensor<3x3xf32>
+// CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<3x3xf32>
+// CHECK: hivm.hir.custom_macro {{.*}} outs(%[[EMPTY1]] : tensor<3x3xf32>) -> tensor<3x3xf32>
+func.func @test_clone_custom_macro_op_empty(%arg0: memref<?xf32>, %arg1: tensor<3x3xi64>) -> tensor<3x3xf32> {
+  %c4_i64 = arith.constant 4 : i64
+  %c0_i32 = arith.constant 0 : i32
+  %empty = tensor.empty() : tensor<3x3xf32>
+  %0 = hivm.hir.custom_macro
+       { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>,
+         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>, symbol = "my_custom_op" }
+       "my_custom_op"
+       ins(%arg0, %arg1, %c4_i64, %c0_i32
+           : memref<?xf32>, tensor<3x3xi64>, i64, i32)
+       outs(%empty : tensor<3x3xf32>) -> tensor<3x3xf32>
+  %1 = hivm.hir.custom_macro
+       { hivm.tcore_type = #hivm.tcore_type<VECTOR>, hivm.vf_mode = #hivm.vf_mode<SIMD>,
+         hivm.pipe_in = #hivm.pipe<PIPE_MTE2>, hivm.pipe_out = #hivm.pipe<PIPE_V>, symbol = "my_custom_op" }
+       "my_custom_op"
+       ins(%arg0, %arg1, %c4_i64, %c0_i32
+           : memref<?xf32>, tensor<3x3xi64>, i64, i32)
+       outs(%empty : tensor<3x3xf32>) -> tensor<3x3xf32>
+  return %1 : tensor<3x3xf32>
 }

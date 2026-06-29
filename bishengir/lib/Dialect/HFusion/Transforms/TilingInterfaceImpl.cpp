@@ -518,6 +518,13 @@ FailureOr<MergeResult> mergeReductions(Operation *op, OpBuilder &b,
   auto linalgOp = cast<LinalgOp>(op);
   SmallVector<int64_t> reductionDimsInt64(reductionDims.begin(),
                                           reductionDims.end());
+  int64_t numInits = linalgOp.getNumDpsInits();
+  for (int idx : llvm::seq<int>(0, numInits)) {
+    SmallVector<Operation *, 4> combinerOps;
+    if (!matchReduction(linalgOp.getRegionOutputArgs(), idx, combinerOps) ||
+        combinerOps.size() != 1)
+      return op->emitOpError("Failed to analysis the reduction operation.");
+  }
   auto reduction = b.create<linalg::ReduceOp>(
       loc, partialReduce, linalgOp.getDpsInits(), reductionDimsInt64,
       [&linalgOp](OpBuilder &b, Location loc, ValueRange inputs) {

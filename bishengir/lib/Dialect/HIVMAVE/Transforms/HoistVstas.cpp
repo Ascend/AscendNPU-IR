@@ -44,11 +44,14 @@ namespace {
 // The hardware spec limit is 4, leaving one for use inside a for loop
 // TODO: Need to do registers pressure analysis.
 static constexpr int64_t kMaxInitAlignDataForHoist = 3;
-static int64_t initAlignDataCount = 0;
 
 struct HoistVstasPattern : public OpRewritePattern<hivm_regbaseintrins::VstasInstrOp> {
   using OpRewritePattern::OpRewritePattern;
- 
+
+  // Per-func hoist count. Keyed by FuncOp's underlying Operation*.
+  // Fresh DenseMap is created each time runOnOperation constructs a new pattern.
+  mutable DenseMap<Operation *, int64_t> funcHoistedCount;
+
   LogicalResult matchAndRewrite(hivm_regbaseintrins::VstasInstrOp vstasOp,
                                 PatternRewriter &rewriter) const override {
     // 1. Validate Scope: Ensure operation is within an SCF loop.
@@ -87,11 +90,13 @@ struct HoistVstasPattern : public OpRewritePattern<hivm_regbaseintrins::VstasIns
  
     if (extractVecOp.getOperand().getDefiningOp() != vstusResult) return failure();
  
-    // Count init.vector.align.data ops in the loop body. If the count
-    // exceeds the threshold, skip hoisting to avoid excessive loop-carried
+    // Count hoisted init.vector.align.data ops per-func. If the count
+    // reaches the threshold, skip hoisting to avoid excessive loop-carried
     // variables.
-    ++initAlignDataCount;
-    if (initAlignDataCount > kMaxInitAlignDataForHoist) return failure();
+    auto funcOp = vstasOp->getParentOfType<func::FuncOp>();
+    if (funcHoistedCount[funcOp] >= kMaxInitAlignDataForHoist)
+      return failure();
+    ++funcHoistedCount[funcOp];
 
     // 6. Perform Hoisting Transformation
     rewriter.setInsertionPoint(forOp);

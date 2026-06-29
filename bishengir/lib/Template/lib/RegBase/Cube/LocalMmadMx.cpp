@@ -186,7 +186,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Now it's a temporary solution to move wait of both A and B earlier.
     if (kL0Idx == 0 && l1AMTE2MTE1EventId != -1) {
       AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
-          l1BMTE2MTE1EventId);
+          l1AMTE2MTE1EventId);
     }
     if (kL0Idx == 0 && l1BMTE2MTE1EventId != -1) {
       AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
@@ -397,7 +397,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Now it's a temporary solution to move wait of both A and B earlier.
     if (kL0Idx == 0 && l1AMTE2MTE1EventId != -1) {
       AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
-          l1BMTE2MTE1EventId);
+          l1AMTE2MTE1EventId);
     }
     if (kL0Idx == 0 && l1BMTE2MTE1EventId != -1) {
       AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
