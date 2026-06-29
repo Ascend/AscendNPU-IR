@@ -47,6 +47,7 @@ sort_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
       (std::is_same<T, half>::value || std::is_same<T, float>::value ||
        std::is_same<T, int32_t>::value || std::is_same<T, int64_t>::value) &&
       "Sort unsupport this type");
+  int32_t saved_offset = tmp_buf->offset;
   for (int i = 0; i < src->sizes[0]; i++) {
     memref_t<__ubuf__ T, 1> src_row{src->aligned,
                                     src->allocated,
@@ -66,6 +67,14 @@ sort_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst,
       _mlir_ciface_sort_1d_int32_t(&src_row, &dst_row, tmp_buf, descending);
     else if constexpr (std::is_same<T, int64_t>::value)
       _mlir_ciface_sort_1d_int64_t(&src_row, &dst_row, tmp_buf, descending);
+
+    // We can't start next iteration of 1d sort slice
+    // because they use tmp_buffer
+    INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    // Inside sort 1d operation offset is modified
+    // so we need to reset it
+    tmp_buf->offset = saved_offset;
   }
 }
 
