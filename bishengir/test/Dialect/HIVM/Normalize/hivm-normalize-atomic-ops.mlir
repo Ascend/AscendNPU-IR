@@ -8,6 +8,8 @@
 // CHECK: %[[RES:.*]] = hivm.hir.vor ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK-NOT: bufferization.to_memref
+// CHECK-NOT: hivm.hir.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_or_i16(%arg0 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi16>) {
     %c256_i32 = arith.constant 256 : i32
@@ -28,13 +30,19 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[SEL:.*]] = hivm.hir.vsel ins(%[[CMP]], %{{.*}}, %{{.*}} : tensor<256xi1>, tensor<256xi16>, tensor<256xi16>) outs(%{{.*}} : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[SEL]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1]>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK-NOT: bufferization.to_memref
+// CHECK-NOT: hivm.hir.atomic_cas
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_CAS_atomic_cas_i16(%arg0: memref<?xi16>) {
     %alloc = memref.alloc() : memref<256xi16>
     %alloc_0 = memref.alloc() : memref<256xi16>
+    %cmp_tensor = bufferization.to_tensor %alloc restrict writable : memref<256xi16>
+    %store_tensor = bufferization.to_tensor %alloc_0 restrict writable : memref<256xi16>
+    %cmp = bufferization.to_memref %cmp_tensor : memref<256xi16>
+    %store = bufferization.to_memref %store_tensor : memref<256xi16>
     %c0 = arith.constant 0 : index
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
-    hivm.hir.atomic_cas ins(%alloc, %alloc_0 : memref<256xi16>, memref<256xi16>) outs(%reinterpret_cast : memref<256xi16, strided<[1]>>)
+    hivm.hir.atomic_cas ins(%cmp, %store : memref<256xi16>, memref<256xi16>) outs(%reinterpret_cast : memref<256xi16, strided<[1]>>)
     return
   }
 }
@@ -46,17 +54,20 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16, strided<[1]>> to memref<256xi16>
-// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16> to memref<256xi16, strided<[1]>>
-// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16> to memref<256xi16>
+// CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1]>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: scope.return
 // CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK-NOT: bufferization.to_memref
+// CHECK-NOT: hivm.hir.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_atomic_xchg_i16(%arg0: memref<?xi16>) {
     %alloc = memref.alloc() : memref<256xi16>
+    %ub_tensor = bufferization.to_tensor %alloc restrict writable : memref<256xi16>
+    %ub = bufferization.to_memref %ub_tensor : memref<256xi16>
     %c0 = arith.constant 0 : index
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%c0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
-    hivm.hir.atomic_xchg ins(%alloc : memref<256xi16>) outs(%reinterpret_cast : memref<256xi16, strided<[1]>>)
+    hivm.hir.atomic_xchg ins(%ub : memref<256xi16>) outs(%reinterpret_cast : memref<256xi16, strided<[1]>>)
     return
   }
 }
