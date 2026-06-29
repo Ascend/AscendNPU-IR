@@ -149,13 +149,6 @@ struct HIVMNormalizeSortTraits : public hivm::NormalizeTraitsBase {
     return intType && (intType.isInteger(32) || intType.isInteger(64));
   }
 
-  static Value createCastOp(PatternRewriter &rewriter, Location loc,
-                            Value input, Type targetElemType) {
-    return NormalizeTraitsBase::createCastOp(rewriter, loc, input,
-                                             targetElemType,
-                                             CastRoundKind::Round);
-  }
-
   static Value createSortOp(PatternRewriter &rewriter, hivm::VSortOp op,
                             Value input) {
     Value dst = utils::createEmptyOpWithTargetElemType(
