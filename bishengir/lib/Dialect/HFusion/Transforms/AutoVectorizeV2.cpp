@@ -1548,11 +1548,13 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         loc, containingLoopHandle, [](OpBuilder &innerBuilder, Location loc) {
           innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
         });
+    builder.create<transform::MergeProducerExtractUsesOp>(
+        loc, producerHandle, containingLoopHandle);
     transform::FuseIntoContainingOp fuseIntoOp =
         builder.create<transform::FuseIntoContainingOp>(
             loc, builder.getType<transform::AnyOpType>(),
             builder.getType<transform::AnyOpType>(), producerHandle,
-            containingLoopHandle, /*merge_multiple_extract_uses*/ true);
+            containingLoopHandle);
     Value fusedOp = fuseIntoOp.getFusedOp();
     Value newContainingLoopHandle = fuseIntoOp.getNewContainingOp();
     builder.create<transform::ApplyPatternsOp>(
