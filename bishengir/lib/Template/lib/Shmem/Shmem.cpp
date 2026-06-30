@@ -37,10 +37,41 @@ _mlir_ciface_aclshmem_n_pes(void) {
   return aclshmem_n_pes();
 }
 
+// Wrapper for aclshmem_team_my_pe
+__aicore__ __attribute__((always_inline)) int
+_mlir_ciface_aclshmem_team_my_pe(aclshmem_team_t team) {
+  return aclshmem_team_my_pe(team);
+}
+
+// Wrapper for aclshmem_team_n_pes
+__aicore__ __attribute__((always_inline)) int
+_mlir_ciface_aclshmem_team_n_pes(aclshmem_team_t team) {
+  return aclshmem_team_n_pes(team);
+}
+
+// Wrapper for aclshmem_team_translate_pe
+__aicore__ __attribute__((always_inline)) int
+_mlir_ciface_aclshmem_team_translate_pe(aclshmem_team_t src_team, int src_pe,
+                                        aclshmem_team_t dest_team) {
+  return aclshmem_team_translate_pe(src_team, src_pe, dest_team);
+}
+
+// Wrapper for aclshmem_barrier
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmem_barrier(aclshmem_team_t team) {
+  aclshmem_barrier(team);
+}
+
 // Wrapper for aclshmem_barrier_all
 __aicore__ __attribute__((always_inline)) void
 _mlir_ciface_aclshmem_barrier_all(void) {
   aclshmem_barrier_all();
+}
+
+// Wrapper for aclshmemx_barrier_vec
+__aicore__ __attribute__((always_inline)) void
+_mlir_ciface_aclshmemx_barrier_vec(aclshmem_team_t team) {
+  aclshmemx_barrier_vec(team);
 }
 
 // Wrapper for aclshmemx_barrier_all_vec
