@@ -335,6 +335,148 @@ struct RewriteHFusionDeinterleaveOp
   }
 };
 
+// =======================================================================
+// CumprodOp Lowering (SCF Scalar Loop)
+// =======================================================================
+static SmallVector<Value> getShapeDims(OpBuilder &builder, Location loc,
+                                       Value tensor,
+                                       RankedTensorType tensorType) {
+  SmallVector<Value> dims;
+  dims.reserve(tensorType.getRank());
+  for (int64_t dim = 0; dim < tensorType.getRank(); ++dim) {
+    if (tensorType.isDynamicDim(dim)) {
+      dims.push_back(builder.create<tensor::DimOp>(loc, tensor, dim));
+      continue;
+    }
+    dims.push_back(builder.create<arith::ConstantIndexOp>(
+        loc, tensorType.getDimSize(dim)));
+  }
+  return dims;
+}
+
+static SmallVector<Value> getDynamicDims(OpBuilder &builder, Location loc,
+                                         Value tensor,
+                                         RankedTensorType tensorType) {
+  SmallVector<Value> dynamicDims;
+  dynamicDims.reserve(tensorType.getNumDynamicDims());
+  for (int64_t dim = 0; dim < tensorType.getRank(); ++dim)
+    if (tensorType.isDynamicDim(dim))
+      dynamicDims.push_back(builder.create<tensor::DimOp>(loc, tensor, dim));
+  return dynamicDims;
+}
+
+static Value createOneConstant(OpBuilder &builder, Location loc,
+                               Type elemType) {
+  if (auto floatType = dyn_cast<FloatType>(elemType))
+    return builder.create<arith::ConstantOp>(
+        loc, builder.getFloatAttr(floatType, 1.0));
+  if (auto intType = dyn_cast<IntegerType>(elemType))
+    return builder.create<arith::ConstantOp>(
+        loc, builder.getIntegerAttr(intType, 1));
+  llvm_unreachable("unsupported element type for HFusion cumprod lowering");
+}
+
+static Value createAccumulatedValue(OpBuilder &builder, Location loc, Value lhs,
+                                    Value rhs) {
+  Type elemType = lhs.getType();
+  if (isa<FloatType>(elemType))
+    return builder.create<arith::MulFOp>(loc, lhs, rhs);
+  if (isa<IntegerType>(elemType))
+    return builder.create<arith::MulIOp>(loc, lhs, rhs);
+  llvm_unreachable("unsupported element type for HFusion cumprod lowering");
+}
+
+static Value buildCumLoop(OpBuilder &builder, Location loc, Value input,
+                          Value resultTensor, ArrayRef<Value> shapeDims,
+                          int64_t cumDim, Value c0, Value c1, Value oneVal,
+                          bool reverse, SmallVectorImpl<Value> &indices) {
+  auto forOp = builder.create<scf::ForOp>(loc, c0, shapeDims[cumDim], c1,
+                                          ValueRange{oneVal, resultTensor});
+
+  OpBuilder bodyBuilder = OpBuilder::atBlockBegin(forOp.getBody());
+  Value cumIndex = forOp.getInductionVar();
+  if (reverse) {
+    Value lastIndex = bodyBuilder.create<arith::SubIOp>(
+        loc, shapeDims[cumDim],
+        bodyBuilder.create<arith::ConstantIndexOp>(loc, 1));
+    cumIndex = bodyBuilder.create<arith::SubIOp>(loc, lastIndex, cumIndex);
+  }
+  indices[cumDim] = cumIndex;
+
+  Value inputElem = bodyBuilder.create<tensor::ExtractOp>(loc, input, indices);
+  Value accumulated = createAccumulatedValue(
+      bodyBuilder, loc, forOp.getRegionIterArgs()[0], inputElem);
+  Value updatedTensor = bodyBuilder.create<tensor::InsertOp>(
+      loc, accumulated, forOp.getRegionIterArgs()[1], indices);
+  bodyBuilder.create<scf::YieldOp>(loc, ValueRange{accumulated, updatedTensor});
+
+  indices[cumDim] = Value();
+  return forOp.getResult(1);
+}
+
+static Value buildOuterLoops(OpBuilder &builder, Location loc, Value input,
+                             Value resultTensor, ArrayRef<Value> shapeDims,
+                             int64_t dim, int64_t cumDim, Value c0, Value c1,
+                             Value oneVal, bool reverse,
+                             SmallVectorImpl<Value> &indices) {
+  if (dim == static_cast<int64_t>(shapeDims.size()))
+    return buildCumLoop(builder, loc, input, resultTensor, shapeDims, cumDim,
+                        c0, c1, oneVal, reverse, indices);
+
+  if (dim == cumDim)
+    return buildOuterLoops(builder, loc, input, resultTensor, shapeDims,
+                           dim + 1, cumDim, c0, c1, oneVal, reverse, indices);
+
+  auto forOp = builder.create<scf::ForOp>(loc, c0, shapeDims[dim], c1,
+                                          ValueRange{resultTensor});
+
+  OpBuilder bodyBuilder = OpBuilder::atBlockBegin(forOp.getBody());
+  indices[dim] = forOp.getInductionVar();
+
+  Value updatedTensor = buildOuterLoops(
+      bodyBuilder, loc, input, forOp.getRegionIterArgs()[0], shapeDims, dim + 1,
+      cumDim, c0, c1, oneVal, reverse, indices);
+  bodyBuilder.create<scf::YieldOp>(loc, updatedTensor);
+
+  indices[dim] = Value();
+  return forOp.getResult(0);
+}
+
+struct RewriteHFusionCumprodOp : public OpRewritePattern<hfusion::CumprodOp> {
+  using OpRewritePattern<hfusion::CumprodOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::CumprodOp op,
+                                PatternRewriter &rewriter) const final {
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto resultType = dyn_cast<RankedTensorType>(op.getResult().getType());
+    if (!inputType || !resultType) return failure();
+
+    Type elemType = inputType.getElementType();
+    if (!isa<FloatType, IntegerType>(elemType)) return failure();
+
+    Location loc = op.getLoc();
+    int64_t cumDim = op.getCumDims()[0];
+    bool reverse = op.getReverse();
+    SmallVector<Value> shapeDims =
+        getShapeDims(rewriter, loc, op.getInput(), inputType);
+    SmallVector<Value> dynamicDims =
+        getDynamicDims(rewriter, loc, op.getInput(), resultType);
+
+    Value initTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultType.getShape(), resultType.getElementType(), dynamicDims);
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value oneVal = createOneConstant(rewriter, loc, elemType);
+
+    SmallVector<Value> indices(resultType.getRank());
+    Value result =
+        buildOuterLoops(rewriter, loc, op.getInput(), initTensor, shapeDims, 0,
+                        cumDim, c0, c1, oneVal, reverse, indices);
+
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
 // -----------------------------------------------------------------------
 // Pass Definition
 // -----------------------------------------------------------------------
@@ -353,6 +495,7 @@ struct ConvertHFusionToUpstream
     patterns.add<RewriteHFusionIsNanOp>(&ctx);
     patterns.add<RewriteHFusionIsFiniteOp>(&ctx);
     patterns.add<RewriteHFusionDeinterleaveOp>(&ctx);
+    patterns.add<RewriteHFusionCumprodOp>(&ctx);
 
     // Future operations like CumprodOp, AtomicXchgOp, etc., should be added below.
     //
