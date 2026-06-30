@@ -33,6 +33,7 @@ namespace mlir {
 namespace hivm {
 
 static constexpr llvm::StringLiteral toBeBubbleUpSlice = "to_be_bubbled_slice";
+static constexpr llvm::StringLiteral toBeCancelOutInsertSlice = "to_be_canceled_out_insert_slice";
 inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
 inline constexpr llvm::StringLiteral tileAndSliceFailure =
     "tile_and_slice_failure";
@@ -44,6 +45,12 @@ void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op);
 
 // Return true if this op is intented to be bubbled up.
 bool isMarkedExtractSliceOp(Operation *op);
+
+// Mark this op, so it will be considered as must be canceled out insert slice.
+void markCreatedInsertSliceOp(RewriterBase &rewriter, Operation *op);
+
+// Return true if this op is intented to be canceled out
+bool isMarkedInsertSliceOp(Operation *op);
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,

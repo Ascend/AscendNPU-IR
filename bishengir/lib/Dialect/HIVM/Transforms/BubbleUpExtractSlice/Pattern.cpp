@@ -1314,6 +1314,7 @@ static void sliceRegionIterArg(BlockArgument regionIterArg,
       sliceOp.getMixedSizes(), sliceOp.getMixedStrides());
   rewriter.replaceAllUsesExcept(regionIterArg, argumentInsert.getResult(),
                                 argumentInsert);
+  markCreatedInsertSliceOp(rewriter, argumentInsert);
 }
 
 LogicalResult LoopBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,

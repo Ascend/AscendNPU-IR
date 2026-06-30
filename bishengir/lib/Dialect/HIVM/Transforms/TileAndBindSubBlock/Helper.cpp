@@ -44,8 +44,18 @@ void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op) {
   });
 }
 
+void markCreatedInsertSliceOp(RewriterBase &rewriter, Operation *op) {
+  rewriter.modifyOpInPlace(op, [&]() {
+    op->setAttr(toBeCancelOutInsertSlice, UnitAttr::get(rewriter.getContext()));
+  });
+}
+
 bool isMarkedExtractSliceOp(Operation *op) {
   return op->hasAttrOfType<UnitAttr>(toBeBubbleUpSlice);
+}
+
+bool isMarkedInsertSliceOp(Operation *op) {
+  return op->hasAttrOfType<UnitAttr>(toBeCancelOutInsertSlice);
 }
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
