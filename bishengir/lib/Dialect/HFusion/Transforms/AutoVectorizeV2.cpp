@@ -1548,12 +1548,8 @@ void AutoVectorizeV2::fuseProducersIntoConsumers(
         loc, containingLoopHandle, [](OpBuilder &innerBuilder, Location loc) {
           innerBuilder.create<transform::ApplyCanonicalizationPatternsOp>(loc);
         });
-    // NOTE(A3 migration): upstream passes `/*merge_multiple_extract_uses*/
-    // true` here, an attribute A5's third-party/llvm-project fork adds to
-    // transform::FuseIntoContainingOp. Not porting that LLVM-level patch
-    // (tracked separately, avoids colliding with that migration); producers
-    // with multiple extract-slice uses just get tiled/cloned once per use,
-    // which is correct but less efficient.
+    builder.create<transform::MergeProducerExtractUsesOp>(
+        loc, producerHandle, containingLoopHandle);
     transform::FuseIntoContainingOp fuseIntoOp =
         builder.create<transform::FuseIntoContainingOp>(
             loc, builder.getType<transform::AnyOpType>(),
