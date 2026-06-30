@@ -1079,3 +1079,71 @@ func.func @test_arange(%in : memref<16x16x16xi32>, %offset : index, %s0:index, %
   hivm.hir.varange strides[%s0,%s1,%s2] outs(%in: memref<16x16x16xi32>)
   return
 }
+
+// -----
+
+// LoadOp with no left_padding_num should be flattened normally.
+// CHECK-LABEL: func.func @load_no_padding
+// CHECK: memref.collapse_shape
+// CHECK: hivm.hir.load
+func.func @load_no_padding(%src: memref<1x1x8xf16, #hivm.address_space<gm>>) {
+  %dst = memref.alloc() : memref<1x1x8xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16, #hivm.address_space<gm>>) outs(%dst : memref<1x1x8xf16, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+
+// LoadOp with left_padding_num = 0 should be flattened normally.
+// CHECK-LABEL: func.func @load_zero_padding
+// CHECK: memref.collapse_shape
+// CHECK: hivm.hir.load
+func.func @load_zero_padding(%src: memref<1x1x8xf16, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %dst = memref.alloc() : memref<1x1x8xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16, #hivm.address_space<gm>>) outs(%dst : memref<1x1x8xf16, #hivm.address_space<ub>>) left_padding_num = %c0 : index
+  return
+}
+
+// -----
+
+// LoadOp with non-zero left_padding_num should NOT be flattened.
+// CHECK-LABEL: func.func @load_nonzero_padding_no_subview
+// CHECK-NOT: memref.collapse_shape
+// CHECK: hivm.hir.load
+func.func @load_nonzero_padding_no_subview(%src: memref<1x1x8xf16, #hivm.address_space<gm>>) {
+  %c4 = arith.constant 4 : index
+  %dst = memref.alloc() : memref<1x1x8xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16, #hivm.address_space<gm>>) outs(%dst : memref<1x1x8xf16, #hivm.address_space<ub>>) left_padding_num = %c4 : index
+  return
+}
+
+// -----
+
+// LoadOp with non-zero left_padding_num but dst from subview with last offset = 0
+// should be flattened (exception case).
+// CHECK-LABEL: func.func @load_nonzero_padding_subview_offset_zero
+// CHECK: memref.collapse_shape
+// CHECK: hivm.hir.load
+func.func @load_nonzero_padding_subview_offset_zero(%src: memref<1x1x8xf16, #hivm.address_space<gm>>) {
+  %c4 = arith.constant 4 : index
+  %alloc = memref.alloc() : memref<1x1x16xf16, #hivm.address_space<ub>>
+  %dst = memref.subview %alloc[0, 0, 0] [1, 1, 8] [1, 1, 1] : memref<1x1x16xf16, #hivm.address_space<ub>> to memref<1x1x8xf16, strided<[16, 16, 1]>, #hivm.address_space<ub>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16, #hivm.address_space<gm>>) outs(%dst : memref<1x1x8xf16, strided<[16, 16, 1]>, #hivm.address_space<ub>>) left_padding_num = %c4 : index
+  return
+}
+
+// -----
+
+// LoadOp with non-zero left_padding_num and dst from subview with last offset != 0
+// should NOT be flattened.
+// CHECK-LABEL: func.func @load_nonzero_padding_subview_offset_nonzero
+// CHECK-NOT: memref.collapse_shape
+// CHECK: hivm.hir.load
+func.func @load_nonzero_padding_subview_offset_nonzero(%src: memref<1x1x8xf16, #hivm.address_space<gm>>) {
+  %c4 = arith.constant 4 : index
+  %alloc = memref.alloc() : memref<1x1x16xf16, #hivm.address_space<ub>>
+  %dst = memref.subview %alloc[0, 0, 4] [1, 1, 8] [1, 1, 1] : memref<1x1x16xf16, #hivm.address_space<ub>> to memref<1x1x8xf16, strided<[16, 16, 1], offset: 4>, #hivm.address_space<ub>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16, #hivm.address_space<gm>>) outs(%dst : memref<1x1x8xf16, strided<[16, 16, 1], offset: 4>, #hivm.address_space<ub>>) left_padding_num = %c4 : index
+  return
+}

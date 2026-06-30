@@ -97,3 +97,74 @@ func.func @simple_elem_copy(%src: memref<1x1xf32>) {
                 outs(%dst : memref<1x1xf32>)
   return
 }
+
+// -----
+
+// LoadOp with no left_padding_num should be reduced normally.
+// CHECK-LABEL: func.func @load_no_padding_reduce_rank
+// CHECK: memref.subview
+// CHECK: hivm.hir.load
+func.func @load_no_padding_reduce_rank(%src: memref<1x1x8xf16>) {
+  %dst = memref.alloc() : memref<1x1x8xf16>
+  hivm.hir.load ins(%src : memref<1x1x8xf16>) outs(%dst : memref<1x1x8xf16>)
+  return
+}
+
+// -----
+
+// LoadOp with left_padding_num = 0 should be reduced normally.
+// CHECK-LABEL: func.func @load_zero_padding_reduce_rank
+// CHECK: memref.subview
+// CHECK: hivm.hir.load
+func.func @load_zero_padding_reduce_rank(%src: memref<1x1x8xf16>) {
+  %c0 = arith.constant 0 : index
+  %dst = memref.alloc() : memref<1x1x8xf16>
+  hivm.hir.load ins(%src : memref<1x1x8xf16>) outs(%dst : memref<1x1x8xf16>) left_padding_num = %c0 : index
+  return
+}
+
+// -----
+
+// LoadOp with non-zero left_padding_num should NOT be reduced.
+// CHECK-LABEL: func.func @load_nonzero_padding_no_subview_reduce_rank
+// CHECK-NOT: memref.subview
+// CHECK: hivm.hir.load
+func.func @load_nonzero_padding_no_subview_reduce_rank(%src: memref<1x1x8xf16>) {
+  %c4 = arith.constant 4 : index
+  %dst = memref.alloc() : memref<1x1x8xf16>
+  hivm.hir.load ins(%src : memref<1x1x8xf16>) outs(%dst : memref<1x1x8xf16>) left_padding_num = %c4 : index
+  return
+}
+
+// -----
+
+// LoadOp with non-zero left_padding_num but dst from subview with last offset = 0
+// should be reduced (exception case).
+// CHECK-LABEL: func.func @load_nonzero_padding_subview_offset_zero_reduce_rank
+// CHECK: memref.subview
+// CHECK: hivm.hir.load
+func.func @load_nonzero_padding_subview_offset_zero_reduce_rank(%src: memref<1x1x8xf16>) {
+  %c4 = arith.constant 4 : index
+  %alloc = memref.alloc() : memref<1x1x16xf16>
+  %dst = memref.subview %alloc[0, 0, 0] [1, 1, 8] [1, 1, 1] : memref<1x1x16xf16> to memref<1x1x8xf16, strided<[16, 16, 1]>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16>) outs(%dst : memref<1x1x8xf16, strided<[16, 16, 1]>>) left_padding_num = %c4 : index
+  return
+}
+
+// -----
+
+// LoadOp with non-zero left_padding_num and dst from subview with last offset != 0
+// should NOT be reduced. The input already contains one subview (for %dst);
+// verify no additional subview is inserted by the pass.
+// CHECK-LABEL: func.func @load_nonzero_padding_subview_offset_nonzero_reduce_rank
+// CHECK: memref.subview
+// CHECK-NOT: memref.subview
+// CHECK: hivm.hir.load
+func.func @load_nonzero_padding_subview_offset_nonzero_reduce_rank(%src: memref<1x1x8xf16>) {
+  %c4 = arith.constant 4 : index
+  %alloc = memref.alloc() : memref<1x1x16xf16>
+  %dst = memref.subview %alloc[0, 0, 4] [1, 1, 8] [1, 1, 1] : memref<1x1x16xf16> to memref<1x1x8xf16, strided<[16, 16, 1], offset: 4>>
+  hivm.hir.load ins(%src : memref<1x1x8xf16>) outs(%dst : memref<1x1x8xf16, strided<[16, 16, 1], offset: 4>>) left_padding_num = %c4 : index
+  return
+}
+
