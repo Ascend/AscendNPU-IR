@@ -94,13 +94,18 @@ static bool flowsToVLoadInVF(Value val, ModuleOp moduleOp) {
         continue;
       }
       if (auto callOp = dyn_cast<func::CallOp>(user)) {
+        auto callee = moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
+        // After SplitSimtModule, the main module may keep only a private
+        // declaration for outlined callees. Declarations have no entry block
+        // arguments to query.
+        if (!callee || callee.isDeclaration()) {
+          continue;
+        }
         for (auto [idx, operand] :
              llvm::enumerate(callOp.getArgOperands())) {
           if (operand != cur) {
             continue;
           }
-          auto callee =
-              moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
           if (callee && isArgUsedByVLoad(callee, static_cast<int>(idx))) {
             return true;
           }
