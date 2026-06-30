@@ -212,12 +212,11 @@ __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_with_trans(
   if (isk1n1Contiguous) {
     // for case that n_ceil is smaller than bn,  only valid data will be
     // loaded to l0
-    auto k1 = mb->sizes[0];
     auto l0_n1 = n_ceil / FRACTAL_BLOCK_NUM;
     auto l0_k1 = k_part_ceil / elem_num_per_block;
-    bool is_repeat_n1 = k1 <= l0_n1;
+    bool is_repeat_n1 = l0_k1 <= l0_n1;
     int64_t repeat_time = is_repeat_n1 ? l0_n1 : l0_k1;
-    int64_t loop_num = is_repeat_n1 ? k1 : l0_n1;
+    int64_t loop_num = is_repeat_n1 ? l0_k1 : l0_n1;
     auto n1 = mb->sizes[1];
     int64_t src_repeat_stride = is_repeat_n1 ? 1 : n1;
     int64_t dst_repeat_gap = is_repeat_n1 ? 0 : l0_n1 - 1;
