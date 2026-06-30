@@ -135,6 +135,7 @@ print_scalar_core(char *prefix, const int64_t len, T arg, const int8_t hex) {
   } else {
     cce::printf(last_elem_fmt, arg);
   }
+  cce::printf("\n");
 }
 
 template <typename T, typename MEM_T>
