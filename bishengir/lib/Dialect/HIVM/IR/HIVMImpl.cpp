@@ -689,5 +689,103 @@ Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
   return rewriter.create<memref::AllocOp>(op->getLoc(),
                                           MemRefType::get(bufSize, elemType));
 }
+
+namespace {
+mlir::FailureOr<EventAttr> parseOptionalEventAttr(AsmParser &parser) {
+  if (Attribute stripped = EventAttr::parse(parser, Type{}))
+    return llvm::cast<EventAttr>(stripped);
+  return failure();
+}
+
+std::optional<SyncEventSlotMacroSync>
+tryParseMacroSyncKeyword(AsmParser &parser) {
+  for (StringRef keyword : {"wait", "set", "internal"}) {
+    if (succeeded(parser.parseOptionalKeyword(keyword)))
+      return symbolizeSyncEventSlotMacroSync(keyword);
+  }
+  return std::nullopt;
+}
+} // namespace
+
+Attribute SyncEventSlotAttr::parse(AsmParser &parser, Type) {
+  PipeAttr setPipe;
+  PipeAttr waitPipe;
+  SyncEventSlotMacroSync macroSync = SyncEventSlotMacroSync::internal;
+  EventAttr event;
+
+  if (parser.parseLess())
+    return {};
+
+  if (auto parsedMacroSync = tryParseMacroSyncKeyword(parser)) {
+    if (*parsedMacroSync != SyncEventSlotMacroSync::internal) {
+      parser.emitError(parser.getCurrentLocation(),
+                       "macro_sync without pipes is only supported for "
+                       "`internal`");
+      return {};
+    }
+    macroSync = *parsedMacroSync;
+    if (parser.parseOptionalComma().succeeded()) {
+      auto parsedEvent = parseOptionalEventAttr(parser);
+      if (failed(parsedEvent))
+        return {};
+      event = *parsedEvent;
+    }
+    if (parser.parseGreater())
+      return {};
+    return SyncEventSlotAttr::get(parser.getContext(), setPipe, waitPipe,
+                                  macroSync, event);
+  }
+
+  if (parser.parseAttribute(setPipe) || parser.parseComma() ||
+      parser.parseAttribute(waitPipe))
+    return {};
+
+  if (parser.parseOptionalComma().succeeded()) {
+    auto loc = parser.getCurrentLocation();
+    if (auto parsedMacroSync = tryParseMacroSyncKeyword(parser)) {
+      macroSync = *parsedMacroSync;
+      if (parser.parseOptionalComma().succeeded()) {
+        auto parsedEvent = parseOptionalEventAttr(parser);
+        if (failed(parsedEvent))
+          return {};
+        event = *parsedEvent;
+      }
+    } else {
+      auto parsedEvent = parseOptionalEventAttr(parser);
+      if (failed(parsedEvent)) {
+        parser.emitError(loc, "expected `wait`, `set`, `internal`, or an event "
+                              "attribute");
+        return {};
+      }
+      event = *parsedEvent;
+    }
+  }
+
+  if (parser.parseGreater())
+    return {};
+
+  return SyncEventSlotAttr::get(parser.getContext(), setPipe, waitPipe,
+                                macroSync, event);
+}
+
+void SyncEventSlotAttr::print(AsmPrinter &printer) const {
+  printer << "<";
+  if (!getSetPipe()) {
+    printer << stringifySyncEventSlotMacroSync(getMacroSync());
+  } else {
+    printer << getSetPipe();
+    printer << ", ";
+    printer << getWaitPipe();
+    if (getMacroSync() != SyncEventSlotMacroSync::internal)
+      printer << ", " << stringifySyncEventSlotMacroSync(getMacroSync());
+    else if (getEvent())
+      printer << ", internal";
+  }
+  if (getEvent()) {
+    printer << ", ";
+    printer.printStrippedAttrOrType(getEvent());
+  }
+  printer << ">";
+}
 } // namespace hivm
 } // namespace mlir

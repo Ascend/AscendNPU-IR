@@ -1074,9 +1074,15 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
     : HIVM_StructuredOp<mnemonic,
                         !listconcat([AttrSizedOperandSegments,
                                      MemoryEffectsOpInterface,
-                                     HIVMInferCoreTypeInterface,
                                      DeclareOpInterfaceMethods<
-                                         ExtraBufferOpInterface>],
+                                         ExtraBufferOpInterface>,
+                                     DeclareOpInterfaceMethods<
+                                         HIVMStructuredOpInterface,
+                                         ["getIteratorTypesArray",
+                                          "getIndexingMaps"]>,
+                                     DeclareOpInterfaceMethods<
+                                         HIVMInferCoreTypeInterface,
+                                         ["inferCoreType"]>],
                                     traits)> {
   string customOpSummary = [{
     Custom operation is a generic op interface for users to write their own custom implementation.
@@ -1134,6 +1140,13 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
 
   dag args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
       Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffers, UnitAttr:$no_side_effect);
+  dag macro_args = (ins StrAttr:$name, Variadic<AnyType>:$inputs,
+      Variadic<AnyType>:$outputs, Variadic<AnyMemRef>:$temp_buffers,
+      Arg<Variadic<I64>, [{
+        i64 operands passed to the custom macro kernel for synchronization.
+        GraphSyncSolver fills one operand per sync_event_slots entry.
+      }]>:$sync_related_args,
+      UnitAttr:$no_side_effect);
   dag res = (outs Variadic<AnyType>:$results);
 
   code customOpBaseDecl = [{
@@ -1146,21 +1159,27 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
       static constexpr StringLiteral kBuiltinHistogramName = "__builtin_histogram";
 
-      // TODO: Enable user provided customization
-      static int getOpLibraryMaxRankImpl() { return 5; }
+      static constexpr StringLiteral kIteratorTypesName = "iterator_types";
+      static constexpr StringLiteral kIndexingMapName = "indexing_map";
+      static constexpr StringLiteral kArgAttrsName = "arg_attrs";
+      static constexpr StringLiteral kAlignDimName = "align_dim";
+      static constexpr StringLiteral kMaxRankAttrName = "max_rank";
 
-      std::optional<TCoreType> inferCoreType() {
-        if (auto coreTypeAttr = getOperation()->template getAttrOfType<TCoreTypeAttr>(
-                TCoreTypeAttr::name)) {
-          return coreTypeAttr.getTcoretype();
-        }
+      int getMaxRank() const {
+        if (auto maxRankAttr =
+                (*this)->template getAttrOfType<IntegerAttr>(
+                    kMaxRankAttrName))
+          return static_cast<int>(maxRankAttr.getValue().getSExtValue());
 
-        return {};
+        static constexpr int defaultMaxRank = 5;
+        return defaultMaxRank;
       }
 
-      PIPE getPipe() {
+      int inferOpLibraryMaxRank() const { return getMaxRank(); }
+
+      PIPE getPipe() const {
         if (auto pipAttr =
-            getOperation()->template getAttrOfType<PipeAttr>(PipeAttr::name))
+            (*this)->template getAttrOfType<PipeAttr>(PipeAttr::name))
           return pipAttr.getPipe();
 
         return PIPE::PIPE_UNASSIGNED;
@@ -1171,9 +1190,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       }
 
       // Helper functions
-      std::optional<TCoreType> getCoreType() {
+      std::optional<TCoreType> getCoreType() const {
         if (const auto coreTypeAttr =
-            getOperation()->template getAttrOfType<TCoreTypeAttr>(
+            (*this)->template getAttrOfType<TCoreTypeAttr>(
               TCoreTypeAttr::name)) {
           return coreTypeAttr.getTcoretype();
         }
@@ -1186,9 +1205,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
             TCoreTypeAttr::get(getContext(), coreType));
       }
 
-      std::optional<VFMode> getVFMode() {
+      std::optional<VFMode> getVFMode() const {
         if (const auto vfModeAttr =
-            getOperation()->template getAttrOfType<VFModeAttr>(
+            (*this)->template getAttrOfType<VFModeAttr>(
               VFModeAttr::name)) {
           return vfModeAttr.getValue();
         }
@@ -1203,9 +1222,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
 
       static constexpr StringLiteral kGMAddrArgIndicesAttrName = "gm_addr_args_indices";
 
-      std::optional<SmallVector<size_t>> getGMAddrArgsIndices() {
+      std::optional<SmallVector<size_t>> getGMAddrArgsIndices() const {
         if (const auto indicesAttr =
-            getOperation()->getAttrOfType<DenseI32ArrayAttr>(
+            (*this)->getAttrOfType<DenseI32ArrayAttr>(
               kGMAddrArgIndicesAttrName)) {
           SmallVector<size_t> res;
           for (int32_t i : indicesAttr.asArrayRef())
@@ -1225,28 +1244,39 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       }
 
       static constexpr StringLiteral kSymbolAttrName = "symbol";
-      std::optional<std::string> getSymbol() {
-        auto op = getOperation();
-        if (auto symbol = op->template getAttrOfType<StringAttr>(kSymbolAttrName)) {
+      std::optional<std::string> getSymbol() const {
+        if (auto symbol =
+            (*this)->template getAttrOfType<StringAttr>(kSymbolAttrName)) {
           return symbol.getValue().str();
         }
         return std::nullopt;
       }
 
-      StringAttr getExtraAttr() {
-        return getOperation()->template getAttrOfType<StringAttr>(kExtraAttrName);
+      StringAttr getExtraAttr() const {
+        return (*this)->template getAttrOfType<StringAttr>(kExtraAttrName);
       }
 
-      bool isBuiltin() { return kBuiltins.contains(getName()); }
+      bool isBuiltin() const {
+        if (auto nameAttr = (*this)->template getAttrOfType<StringAttr>("name"))
+          return kBuiltins.contains(nameAttr.getValue());
+        return false;
+      }
 
-      void getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-        if (!getNoSideEffect()) {
+      bool hasSideEffect() const {
+        return !llvm::isa_and_present<UnitAttr>(
+            (*this)->getAttr("no_side_effect"));
+      }
+
+      void getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) const {
+        if (hasSideEffect()) {
           effects.emplace_back(MemoryEffects::Write::get(),
                                SideEffects::DefaultResource::get());
           effects.emplace_back(MemoryEffects::Read::get(),
                                SideEffects::DefaultResource::get());
         }
       }
+
+      bool requiresVFMode() const;
 
       // Builtins helpers
       template<typename CustomOpT>
@@ -1269,7 +1299,9 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
   }];
 }
 
-def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
+def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait, InferMaxRankTrait,
+    DeclareOpInterfaceMethods<LibraryFunctionOpInterface,
+                              ["getOpLibraryCallName"]>]> {
   let summary = customOpSummary;
 
   let description = customOpDescription#customOpAttrsDescription#[{
@@ -1299,7 +1331,7 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
     // Map <builtin in name> <-> {CORE_TYPE, PIPE, VF_MODE, getOpLibraryCallName}
     static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
 
-    SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo();
+    SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo() const;
   }];
 
   let hasVerifier = 1;
@@ -1307,38 +1339,51 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
   let hasCanonicalizer = 1;
 }
 
-def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
+def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, InferMaxRankTrait,
+    DeclareOpInterfaceMethods<LibraryFunctionOpInterface,
+                              ["getOpLibraryCallName"]>]> {
   let summary = customOpSummary;
 
   let description = customOpDescription#customOpAttrsDescription#[{
       - InPipe   : which input pipe to execute on, refer to PipeAttr.
       - OutPipe  : which output pipe to execute on, refer to PipeAttr.
+      - sync_event_slots : optional (set_pipe, wait_pipe, macro_sync) slots for
+                           synchronization. macro_sync is `internal` when the
+                           macro only needs a GraphSyncSolver-allocated event id
+                           without boundary set_flag/wait_flag injection
+                           (default), `wait` when the kernel calls wait_flag on
+                           the slot, or `set` when it calls set_flag. set_pipe
+                           and wait_pipe are required for `wait`/`set` and
+                           optional for `internal`. An optional event field pins
+                           a static event id.
+      - sync_related_args : i64 operands filled by GraphSyncSolver, one per
+                            sync_event_slots entry.
   }]#customOpOptionalAttrsDescription#customOpTODODescription;
 
-  let arguments = args;
+  let arguments = macro_args;
   let results = res;
 
   let extraClassDeclaration = customOpBaseDecl#[{
     static constexpr StringLiteral inPipeName = "hivm.pipe_in";
     static constexpr StringLiteral outPipeName = "hivm.pipe_out";
+    static constexpr StringLiteral kSyncEventSlotsName = "sync_event_slots";
 
-    PIPE getInPipe() {
+    PIPE getInPipe() const {
       if (auto pipAttr =
-          getOperation()->template getAttrOfType<PipeAttr>(inPipeName))
+          (*this)->template getAttrOfType<PipeAttr>(inPipeName))
         return pipAttr.getPipe();
 
       return PIPE::PIPE_UNASSIGNED;
     }
 
-    PIPE getOutPipe() {
+    PIPE getOutPipe() const {
       if (auto pipAttr =
-          getOperation()->template getAttrOfType<PipeAttr>(outPipeName))
+          (*this)->template getAttrOfType<PipeAttr>(outPipeName))
         return pipAttr.getPipe();
 
       return PIPE::PIPE_UNASSIGNED;
     }
 
-    // Helper functions
     void setInPipe(PIPE pipe) {
       getOperation()->setAttr(inPipeName, PipeAttr::get(getContext(), pipe));
     }
@@ -1347,7 +1392,13 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
       getOperation()->setAttr(outPipeName, PipeAttr::get(getContext(), pipe));
     }
 
-    // Builtins helpers
+    int getNumSyncRelatedArgs() const;
+    SmallVector<SyncEventSlotAttr> getUserSyncEventSlots() const;
+    SmallVector<SyncEventSlotAttr> getSyncEventSlots() const;
+    std::optional<int64_t> getUserPinnedEventId(PIPE setPipe, PIPE waitPipe) const;
+    void ensureSyncRelatedArgsFilled(PatternRewriter &rewriter);
+    SmallVector<Value> getLibraryCallOperands(PatternRewriter &rewriter);
+
     struct BuiltinInfo : public BuiltinInfoBase<CustomMacroOp> {
       const PIPE inPipe;
       const PIPE outPipe;
@@ -1359,8 +1410,9 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
         inPipe(_inPipe), outPipe(_outPipe) {}
     };
 
-    // Map <builtin in name> <-> {CORE_TYPE, IN_PIPE, OUT_PIPE VF_MODE, getOpLibraryCallName}
     static const DenseMap<StringRef, BuiltinInfo> kBuiltins;
+
+    SmallVector<std::pair<Type, int64_t>> getExtraBuffersInfo() const;
   }];
 
   let hasVerifier = 1;

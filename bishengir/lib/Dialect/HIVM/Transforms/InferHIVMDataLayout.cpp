@@ -9,6 +9,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
+#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -679,6 +680,8 @@ DataLayoutInferAndPropagateHelper::propagateDataLayoutToUsers(
             [&](bishengir::memref_ext::AllocWorkspaceOp op) {
               updateLayout(op->getResults(), info, changed);
             })
+        .Case<hivm::CustomOp>(
+            [&](hivm::CustomOp op) { populateLayoutToHIVMCustom(op, changed); })
         .Case<scf::YieldOp>([&](scf::YieldOp op) {
           Operation *parentOp = op->getParentOp();
           if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
@@ -739,6 +742,27 @@ void DataLayoutInferAndPropagateHelper::updateLayout(
       continue;
     if (updateLayoutIfChanged(value, info))
       changed.push_back(value);
+  }
+}
+
+void DataLayoutInferAndPropagateHelper::populateLayoutToHIVMCustom(
+    hivm::CustomOp op, SmallVector<Value> &changed) {
+  if (!llvm::any_of(op->getResultTypes(),
+                    [](Type v) { return llvm::isa<BaseMemRefType>(v); }))
+    return;
+
+  auto results = op->getResults();
+  auto symbol = op.getSymbol();
+  if (!symbol.has_value()) {
+    op.emitWarning("unsupport hivm.custom symbol for infer results layout");
+    return;
+  }
+  llvm::StringRef symbolRef = *symbol;
+  if (symbolRef.starts_with(kShmemConsumeToken) ||
+      symbolRef.starts_with(kShmemPtr)) {
+    updateLayout(results, layout_info_[op->getOperand(0)], changed);
+  } else {
+    op.emitWarning("unsupport hivm.custom symbol for infer results layout");
   }
 }
 
