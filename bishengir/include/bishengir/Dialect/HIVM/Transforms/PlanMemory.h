@@ -294,7 +294,10 @@ public:
   SmallVector<ValuePair> inplacePairList;
 
   /// record marked buffer used in multi scope operations.
-  SmallVector<Value> preloadBuffers;
+  SetVector<Value> preloadBuffers;
+
+  /// record preload buffers by their enclosing preload loop.
+  DenseMap<Operation *, SetVector<Value>> preloadLoop2Buffers;
 
   /// now plan mode is LOCAL_MEM_PLAN.
   bool isLocalMemPlan() const;
@@ -445,11 +448,13 @@ private:
 
   /// Update Gen information for multi scope used buffers and their alias
   /// buffers.
-  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo,
+                                   const SetVector<Value> &preloadBufferValues);
 
   /// Update Kill information for multi scope used buffers and their alias
   /// buffers.
-  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
+                                    const SetVector<Value> &preloadBufferValues);
 
   /// Process mark op and update buffer's gen and kill.
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
