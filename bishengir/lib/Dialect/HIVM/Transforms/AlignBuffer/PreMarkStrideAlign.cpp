@@ -112,11 +112,12 @@ static bool flowsToVLoadInVF(Value val, ModuleOp moduleOp) {
         if (!callee || callee.isDeclaration()) {
           continue;
         }
-        for (auto [idx, operand] : llvm::enumerate(callOp.getArgOperands())) {
+        for (auto [idx, operand] :
+             llvm::enumerate(callOp.getArgOperands())) {
           if (operand != cur) {
             continue;
           }
-          if (isArgUsedByVLoad(callee, static_cast<int>(idx))) {
+          if (callee && isArgUsedByVLoad(callee, static_cast<int>(idx))) {
             return true;
           }
         }
