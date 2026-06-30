@@ -77,6 +77,13 @@ def HIVM_IteratorTypeEnum : HIVM_I32Enum<
     HIVM_IteratorType_Opaque
   ]>;
 
+def HIVM_IteratorTypeAttr
+    : HIVM_I32EnumAttr<"iterator_type", HIVM_IteratorTypeEnum> {
+  let description = [{
+    HIVM iterator_type attribute.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Data Layout
 //===----------------------------------------------------------------------===//
@@ -544,6 +551,42 @@ def HIVM_EventAttr : HIVM_Attr<"Event", "event"> {
     HIVM event attribute for synchronization.
   }];
 }
+
+def HIVM_SYNC_EVENT_SLOT_WAIT : I32EnumAttrCase<"wait", 0>;
+def HIVM_SYNC_EVENT_SLOT_SET : I32EnumAttrCase<"set", 1>;
+def HIVM_SYNC_EVENT_SLOT_INTERNAL : I32EnumAttrCase<"internal", 2>;
+
+def HIVM_SyncEventSlotMacroSyncEnum : HIVM_I32Enum<
+  "SyncEventSlotMacroSync",
+  "Whether the custom macro kernel waits, sets, or only needs an event id", [
+    HIVM_SYNC_EVENT_SLOT_WAIT,
+    HIVM_SYNC_EVENT_SLOT_SET,
+    HIVM_SYNC_EVENT_SLOT_INTERNAL
+  ]>;
+
+def HIVM_SyncEventSlotAttr : HIVM_Attr<"SyncEventSlot", "sync_event_slot"> {
+  let parameters = (ins OptionalParameter<"PipeAttr">:$set_pipe,
+      OptionalParameter<"PipeAttr">:$wait_pipe,
+      DefaultValuedParameter<"SyncEventSlotMacroSync",
+          "SyncEventSlotMacroSync::internal">:$macro_sync,
+      OptionalParameter<"EventAttr">:$event);
+  let hasCustomAssemblyFormat = 1;
+  let description = [{
+    One sync_event_slots entry for CustomMacroOp. macro_sync is `internal`
+    (default) when the macro only needs an allocated event id passed via
+    sync_related_args, without GraphSyncSolver inserting boundary
+    set_flag/wait_flag ops; `wait` when the macro kernel calls wait_flag on
+    (set_pipe, wait_pipe) and GraphSyncSolver injects set_flag before the macro;
+    `set` when the macro sets internally and GraphSyncSolver injects wait_flag
+    after the macro. set_pipe and wait_pipe are required for `wait`/`set` and
+    optional for `internal`. The optional event attribute pins a static hardware
+    event id for this slot.
+  }];
+}
+
+def SyncEventSlotArrayAttr
+    : TypedArrayAttrBase<HIVM_SyncEventSlotAttr,
+                         "sync-event-slot array attribute">;
 
 //===----------------------------------------------------------------------===//
 // Unit Flag Mode
@@ -1253,6 +1296,16 @@ def HIVM_MatmulLimitedInCubeAttr
       [{Indicates that the matmul operation can be executed in the AIC alone
             .It will bypass compiler analysis that might decompose matmul into
                 vector addition because of hardware constraints.}];
+}
+
+//===----------------------------------------------------------------------===//
+// Distributed
+//===----------------------------------------------------------------------===//
+
+def HIVM_IsDistributedAttr : HIVM_Attr<"IsDistributed", "is_distributed"> {
+  let description = [{
+    Specifies an op is about distributed.
+  }];
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD

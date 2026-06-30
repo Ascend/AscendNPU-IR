@@ -82,6 +82,9 @@ private:
   /// Update the layout info for all the values.
   void updateLayout(ValueRange values, const LayoutInfo &info,
                     SmallVector<Value> &changed);
+  /// Populate layout info for distributed hivm.custom results.
+  void populateLayoutToHIVMCustom(hivm::CustomOp op,
+                                  SmallVector<Value> &changed);
   /// Update the layout info for the input value. Return true if the layout
   /// is different than before.
   bool updateLayoutIfChanged(Value value, const LayoutInfo &info);

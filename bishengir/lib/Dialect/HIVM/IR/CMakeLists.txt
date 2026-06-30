@@ -8,6 +8,7 @@ file(GLOB HIVM_INFER_CORE_TYPE ${CMAKE_CURRENT_SOURCE_DIR}/InferCoreTypeInterfac
 file(GLOB HIVM_IMPL_SCALAR ${CMAKE_CURRENT_SOURCE_DIR}/ImplByScalarOpInterface/*.cpp)
 file(GLOB HIVM_INFER_CORE_TYPE ${CMAKE_CURRENT_SOURCE_DIR}/InferCoreTypeInterface/*.cpp)
 file(GLOB HIVM_CANONICALIZATIONS ${CMAKE_CURRENT_SOURCE_DIR}/Canonicalizations/*.cpp)
+file(GLOB HIVM_CUSTOM_OP ${CMAKE_CURRENT_SOURCE_DIR}/CustomOp/*.cpp)
 
 add_bishengir_dialect_library(MLIRHIVMDialect
   ${HIVM_FLATTEN}
@@ -17,6 +18,7 @@ add_bishengir_dialect_library(MLIRHIVMDialect
   ${HIVM_IMPL_SCALAR}
   ${HIVM_INFER_CORE_TYPE}
   ${HIVM_CANONICALIZATIONS}
+  ${HIVM_CUSTOM_OP}
   HIVM.cpp
   HIVMCanonicalizations.cpp
   HIVMDMAOps.cpp
@@ -33,6 +35,7 @@ add_bishengir_dialect_library(MLIRHIVMDialect
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
+  ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/IR/CustomOp
 
   DEPENDS
   MLIRHIVMIncGen

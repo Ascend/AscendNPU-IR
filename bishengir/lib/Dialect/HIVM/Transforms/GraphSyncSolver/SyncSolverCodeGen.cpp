@@ -207,6 +207,10 @@ void CodeGenerator::insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
   if (llvm::succeeded(handleMmadL1SyncOps(rewriter, opBase, setFlagOp))) {
     return;
   }
+  customMacroCodegen.recordBoundaryArgIfNeeded(
+      opBase, setFlagOp, rewriter, [&](SetWaitOp *setWaitOp, Location loc) {
+        return getEventIdValue(rewriter, setWaitOp, loc);
+      });
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
   auto *ctx = funcOp->getContext();
   Location loc = getProperLoc(opBase);
@@ -253,6 +257,10 @@ void CodeGenerator::insertWaitFlagOp(IRRewriter &rewriter,
   if (llvm::succeeded(handleMmadL1SyncOps(rewriter, opBase, waitFlagOp))) {
     return;
   }
+  customMacroCodegen.recordBoundaryArgIfNeeded(
+      opBase, waitFlagOp, rewriter, [&](SetWaitOp *setWaitOp, Location loc) {
+        return getEventIdValue(rewriter, setWaitOp, loc);
+      });
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
   auto *ctx = funcOp->getContext();
   Location loc = getProperLoc(opBase);
@@ -762,6 +770,7 @@ void CodeGenerator::generateResultOps() {
 
   if (options.isIntraCoreMode()) {
     insertMmadL1SyncArgs(rewriter);
+    customMacroCodegen.populateSyncRelatedArgs(funcOp, rewriter);
     insertPipeMPipeMte1OuterBwdPairs(rewriter);
     handleUnitFlagEnabledOps(rewriter);
     insertBarrierAllBeforeReturn(rewriter);

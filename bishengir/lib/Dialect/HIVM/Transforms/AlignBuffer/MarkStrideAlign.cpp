@@ -804,9 +804,7 @@ void MarkStrideAlignPass::runOnOperation() {
       return WalkResult::advance();
     }
 
-    // TODO: Relax when enable user provided optimization hints
-    if (isa<CustomOp>(op) || isa<CustomMacroOp>(op) ||
-        isa<hivm::MmadMxL1Op>(op)) {
+    if (isa<hivm::MmadMxL1Op>(op)) {
       return WalkResult::advance();
     }
 
@@ -814,6 +812,30 @@ void MarkStrideAlignPass::runOnOperation() {
     if (!hivmOp.hasPureBufferSemantics()) {
       hivmOp->emitError("Not bufferized.");
       return WalkResult::interrupt();
+    }
+
+    if (isa<CustomOp, CustomMacroOp>(op)) {
+      ArrayAttr argAttrs =
+          op->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
+      if (!argAttrs)
+        return WalkResult::advance();
+
+      for (const auto &[idx, dictAttrs] : llvm::enumerate(argAttrs)) {
+        auto dict = dyn_cast_or_null<DictionaryAttr>(dictAttrs);
+        if (!dict)
+          continue;
+
+        auto intAttr =
+            dyn_cast_or_null<IntegerAttr>(dict.get(CustomOp::kAlignDimName));
+        if (!intAttr)
+          continue;
+
+        const int alignDim = intAttr.getInt();
+        if (failed(markAlignedDim(builder, op, op->getOperand(idx), alignDim)))
+          return WalkResult::interrupt();
+      }
+
+      return WalkResult::advance();
     }
 
     if (isa<hivm::VTransposeOp>(op) &&

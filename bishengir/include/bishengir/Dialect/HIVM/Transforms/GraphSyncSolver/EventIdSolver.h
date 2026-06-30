@@ -1,5 +1,4 @@
-//===------------- EventIdSolver.h ---- Graph Sync Solver
-//-------------------===//
+//===- EventIdSolver.h - Graph Sync Solver --------------------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -167,6 +166,7 @@ private:
   llvm::DenseMap<EventIdNode *, int64_t> sumAdjListSizes;
   llvm::DenseMap<ConflictPair *, EventIdNode *> conflictPair2Node;
   std::stack<std::unique_ptr<Action>> actionsStack;
+  llvm::DenseSet<int64_t> reservedEventIds;
 
 public:
   EventIdSolver(int64_t eventIdNumMax, bool preferNewEventIds = false)
@@ -198,6 +198,10 @@ public:
   void undoActions();
 
   void debugPrint();
+
+  std::optional<int64_t> allocateUnusedEventId(int64_t eventIdMax);
+
+  void reserveEventId(int64_t eventId) { reservedEventIds.insert(eventId); }
 
 private:
   int64_t getEventIdsNum(bool dontCalcEventIds = false);

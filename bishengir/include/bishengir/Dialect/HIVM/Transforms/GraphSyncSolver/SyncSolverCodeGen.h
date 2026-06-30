@@ -73,6 +73,8 @@ private:
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
 
+  CustomMacroSyncCodegenState customMacroCodegen;
+
 public:
   CodeGenerator(const SyncSolverOptions &options) : options(options) {}
 
@@ -87,6 +89,8 @@ public:
     funcOp = solver->funcOp;
     funcIr = std::move(solver->funcIr);
     unitFlagFeaturedOps = std::move(solver->unitFlagFeaturedOps);
+    customMacroCodegen.setResolvedSlotEventIds(
+        std::move(solver->customMacroSync.resolvedSlotEventIds()));
   }
 
   // Insert sync ops into func-ir.
