@@ -87,14 +87,14 @@ def SetAtomicOp : HIVM_Op<"set_atomic"> {
 
     For example:
 
-    ``` 
+    ```
     hivm.hir.set_atomic kind= #hivm.atomic_kind<ADD> type = i32
     // all subsequent store-like operations will enable atomic store with addition
     hivm.hir.store ins(...) outs(...)
     ...
     hivm.hir.set_atomic kind= #hivm.atomic_kind<NONE>
     hivm.hir.fixpipe ins(...) outs(...)
-    ``` 
+    ```
   }];
   let arguments = (ins HIVM_AtomicKindAttr:$kind,
                        OptionalAttr<TypeAttr>:$type);
@@ -1153,7 +1153,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kBuiltinGatherLoadName = "__builtin_gather_load";
       static constexpr StringLiteral kBuiltinIndexSelectName = "__builtin_index_select";
       static constexpr StringLiteral kBuiltinIndirectAtomicName = "__builtin_indirect_atomic";
-      
+
       static constexpr StringLiteral kExtraAttrName = "extra_attr";
       static constexpr StringLiteral kExtraBuffersTypesName = "extra_buffers_types";
       static constexpr StringLiteral kExtraBuffersSizesName = "extra_buffers_sizes";
@@ -1164,6 +1164,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kArgAttrsName = "arg_attrs";
       static constexpr StringLiteral kAlignDimName = "align_dim";
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
+      static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
 
       int getMaxRank() const {
         if (auto maxRankAttr =
