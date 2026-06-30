@@ -514,25 +514,34 @@ void MemLivenessAnalysis::UpdatePreloadBuffers(annotation::MarkOp markOp,
   if (!attr) {
     return;
   }
+  auto loopOp = markOp->getParentOfType<LoopLikeOpInterface>();
+  if (!loopOp) {
+    loopOp = allocOp->getParentOfType<LoopLikeOpInterface>();
+  }
+  if (!loopOp) {
+    llvm::report_fatal_error(
+        "preload local buffer must be inside a loop-like op");
+  }
+
   auto allocBuffer = allocOp.getResult();
-  preloadBuffers.push_back(allocBuffer);
+  preloadBuffers.insert(allocBuffer);
+  preloadLoop2Buffers[loopOp.getOperation()].insert(allocBuffer);
 }
 
 bool MemLivenessAnalysis::IsPreloadBuffer(Value operand) {
   auto aliasBuffers = GetAliasBuffers(operand);
   aliasBuffers.insert(operand);
   for (auto buffer : aliasBuffers) {
-    auto *iter =
-        std::find(preloadBuffers.begin(), preloadBuffers.end(), buffer);
-    if (iter != preloadBuffers.end()) {
+    if (preloadBuffers.count(buffer)) {
       return true;
     }
   }
   return false;
 }
 
-void MemLivenessAnalysis::UpdatePreloadBuffersGenInfo(OpInfo *opInfo) {
-  for (auto &preloadBuffer : preloadBuffers) {
+void MemLivenessAnalysis::UpdatePreloadBuffersGenInfo(
+    OpInfo *opInfo, const SetVector<Value> &preloadBufferValues) {
+  for (auto preloadBuffer : preloadBufferValues) {
     auto aliasBuffers = GetAliasBuffers(preloadBuffer);
     aliasBuffers.insert(preloadBuffer);
     for (auto buffer : aliasBuffers) {
@@ -547,8 +556,9 @@ void MemLivenessAnalysis::UpdatePreloadBuffersGenInfo(OpInfo *opInfo) {
   }
 }
 
-void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(OpInfo *opInfo) {
-  for (auto &preloadBuffer : preloadBuffers) {
+void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(
+    OpInfo *opInfo, const SetVector<Value> &preloadBufferValues) {
+  for (auto preloadBuffer : preloadBufferValues) {
     auto aliasBuffers = GetAliasBuffers(preloadBuffer);
     aliasBuffers.insert(preloadBuffer);
     for (auto buffer : aliasBuffers) {
@@ -564,31 +574,25 @@ void MemLivenessAnalysis::UpdatePreloadBuffersKillInfo(OpInfo *opInfo) {
 }
 
 void MemLivenessAnalysis::UpdatePreloadBuffersGenKillMap() {
-  // Find `scope` op and its parent `for` op.
-  Operation *parentForOp = nullptr;
-  for (size_t i = 0; i < linearOperation.size(); ++i) {
-    auto *opInfo = linearOperation[i].get();
-    assert(opInfo && "linearOperation should not be null.");
-    if (auto scopeOp = dyn_cast<scope::ScopeOp>(opInfo->operation)) {
-      parentForOp = scopeOp->getParentOp();
-      break;
-    }
-  }
-  if (!parentForOp) {
+  if (preloadLoop2Buffers.empty()) {
     return;
   }
-  // Update genKillMap from origin op in scope to `for` op of scope's parent.
-  size_t count = 0;
+
+  DenseMap<Operation *, unsigned> loopVisitCount;
   for (size_t i = 0; i < linearOperation.size(); ++i) {
     auto *opInfo = linearOperation[i].get();
     assert(opInfo && "linearOperation should not be null.");
-    if ((parentForOp == opInfo->operation) && (count == 0)) {
-      UpdatePreloadBuffersGenInfo(opInfo);
-      count++;
-    } else if ((parentForOp == opInfo->operation) && (count == 1)) {
-      UpdatePreloadBuffersKillInfo(opInfo);
-      break;
+    auto loopIt = preloadLoop2Buffers.find(opInfo->operation);
+    if (loopIt == preloadLoop2Buffers.end()) {
+      continue;
     }
+    unsigned &count = loopVisitCount[opInfo->operation];
+    if (count == 0) {
+      UpdatePreloadBuffersGenInfo(opInfo, loopIt->second);
+    } else if (count == 1) {
+      UpdatePreloadBuffersKillInfo(opInfo, loopIt->second);
+    }
+    count++;
   }
 }
 
