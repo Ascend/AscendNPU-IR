@@ -126,69 +126,68 @@ __aiv__ __attribute__((always_inline)) void
 vector_eltwise_2d_intrin(intrin_args<2, T> args) {
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
 
-  if (args.repeat >= INTR_MAX_REPEAT_CNTS)
-    [[unlikely]] { vector_eltwise_2d_intrin_main<OP, T>(args); }
+  if (args.repeat >= INTR_MAX_REPEAT_CNTS) [[unlikely]] {
+    vector_eltwise_2d_intrin_main<OP, T>(args);
+  }
 
-  if (args.repeat % INTR_MAX_REPEAT_CNTS != 0)
-    [[likely]] {
-      __ubuf__ T *dst_addr =
-          args.dst + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
-                         args.dst_repeat_stride * num_per_block;
-      __ubuf__ T *src0_addr =
-          args.src[0] + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
-                            args.src_repeat_stride[0] * num_per_block;
-      const uint64_t repeat_num = args.repeat % INTR_MAX_REPEAT_CNTS;
-      const uint16_t dst_block_stride = args.dst_block_stride;
-      const uint16_t src0_block_stride = args.src_block_stride[0];
-      const uint16_t dst_repeat_stride = args.dst_repeat_stride;
-      const uint16_t src0_repeat_stride = args.src_repeat_stride[0];
+  if (args.repeat % INTR_MAX_REPEAT_CNTS != 0) [[likely]] {
+    __ubuf__ T *dst_addr =
+        args.dst + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
+                       args.dst_repeat_stride * num_per_block;
+    __ubuf__ T *src0_addr =
+        args.src[0] + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
+                          args.src_repeat_stride[0] * num_per_block;
+    const uint64_t repeat_num = args.repeat % INTR_MAX_REPEAT_CNTS;
+    const uint16_t dst_block_stride = args.dst_block_stride;
+    const uint16_t src0_block_stride = args.src_block_stride[0];
+    const uint16_t dst_repeat_stride = args.dst_repeat_stride;
+    const uint16_t src0_repeat_stride = args.src_repeat_stride[0];
 
-      if constexpr (OP > VectorOpTy::BINARY_VV_BEGIN &&
-                    OP < VectorOpTy::BINARY_VV_END) {
-        __ubuf__ T *src1_addr =
-            args.src[1] + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
-                              args.src_repeat_stride[1] * num_per_block;
-        const uint16_t src1_block_stride = args.src_block_stride[1];
-        const uint16_t src1_repeat_stride = args.src_repeat_stride[1];
-        vector_eltwise_vv_intrin<OP, T>(
-            intrin_args<2, T>{dst_addr,
-                              {src0_addr, src1_addr},
-                              0, /* scalar */
-                              repeat_num,
-                              dst_block_stride,
-                              {src0_block_stride, src1_block_stride},
-                              dst_repeat_stride,
-                              {src0_repeat_stride, src1_repeat_stride}});
-      } else if constexpr (OP > VectorOpTy::BINARY_VS_BEGIN &&
-                           OP < VectorOpTy::BINARY_VS_END) {
-        vector_eltwise_vs_intrin<OP, T>(
-            intrin_args<1, T>{dst_addr,
-                              {src0_addr},
-                              args.scalar,
-                              repeat_num,
-                              dst_block_stride,
-                              {src0_block_stride},
-                              dst_repeat_stride,
-                              {src0_repeat_stride}});
-      } else if constexpr (OP > VectorOpTy::UNARY_BEGIN &&
-                           OP < VectorOpTy::UNARY_END) {
-        vector_eltwise_v_intrin<OP, T>(intrin_args<1, T>{dst_addr,
-                                                         {src0_addr},
-                                                         0, /* scalar */
-                                                         repeat_num,
-                                                         dst_block_stride,
-                                                         {src0_block_stride},
-                                                         dst_repeat_stride,
-                                                         {src0_repeat_stride}});
-      }
+    if constexpr (OP > VectorOpTy::BINARY_VV_BEGIN &&
+                  OP < VectorOpTy::BINARY_VV_END) {
+      __ubuf__ T *src1_addr =
+          args.src[1] + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
+                            args.src_repeat_stride[1] * num_per_block;
+      const uint16_t src1_block_stride = args.src_block_stride[1];
+      const uint16_t src1_repeat_stride = args.src_repeat_stride[1];
+      vector_eltwise_vv_intrin<OP, T>(
+          intrin_args<2, T>{dst_addr,
+                            {src0_addr, src1_addr},
+                            0, /* scalar */
+                            repeat_num,
+                            dst_block_stride,
+                            {src0_block_stride, src1_block_stride},
+                            dst_repeat_stride,
+                            {src0_repeat_stride, src1_repeat_stride}});
+    } else if constexpr (OP > VectorOpTy::BINARY_VS_BEGIN &&
+                         OP < VectorOpTy::BINARY_VS_END) {
+      vector_eltwise_vs_intrin<OP, T>(intrin_args<1, T>{dst_addr,
+                                                        {src0_addr},
+                                                        args.scalar,
+                                                        repeat_num,
+                                                        dst_block_stride,
+                                                        {src0_block_stride},
+                                                        dst_repeat_stride,
+                                                        {src0_repeat_stride}});
+    } else if constexpr (OP > VectorOpTy::UNARY_BEGIN &&
+                         OP < VectorOpTy::UNARY_END) {
+      vector_eltwise_v_intrin<OP, T>(intrin_args<1, T>{dst_addr,
+                                                       {src0_addr},
+                                                       0, /* scalar */
+                                                       repeat_num,
+                                                       dst_block_stride,
+                                                       {src0_block_stride},
+                                                       dst_repeat_stride,
+                                                       {src0_repeat_stride}});
     }
+  }
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void scalar_eltwise_2d(
-    memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *src1,
-    memref_t<__ubuf__ T, 2> *dst, int64_t size0, int64_t size1,
-    VectorLastAxisMode mode, T scalar) {
+__aiv__ __attribute__((always_inline)) void
+scalar_eltwise_2d(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *src1,
+                  memref_t<__ubuf__ T, 2> *dst, int64_t size0, int64_t size1,
+                  VectorLastAxisMode mode, T scalar) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
   WARN_SCALAR_IMPL("eltwise 2d");
 #endif
@@ -201,17 +200,18 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_2d(
   int64_t src1_stride0 = 0;
   int64_t src0_stride1 = 0;
   int64_t src1_stride1 = 0;
-  // In some cases, planmemory may cause dst to reuse the address of src. 
-  // If dst->offset > src->offset, the result will overwrite src, which causes precision failure.
-  // Therefore, reverse calculation is required.
+  // In some cases, planmemory may cause dst to reuse the address of src.
+  // If dst->offset > src->offset, the result will overwrite src, which causes
+  // precision failure. Therefore, reverse calculation is required.
   bool reverse = false;
-  if (mode == VectorLastAxisMode::VV){
+  if (mode == VectorLastAxisMode::VV) {
     src0_stride0 = src0->sizes[0] == 1 ? 0 : src0->strides[0];
     src1_stride0 = src1->sizes[0] == 1 ? 0 : src1->strides[0];
     src0_stride1 = src0->sizes[1] == 1 ? 0 : src0->strides[1];
     src1_stride1 = src1->sizes[1] == 1 ? 0 : src1->strides[1];
-    reverse = (dst->allocated == src0->allocated && dst->offset > src0->offset) ||
-              (dst->allocated == src1->allocated && dst->offset > src1->offset);
+    reverse =
+        (dst->allocated == src0->allocated && dst->offset > src0->offset) ||
+        (dst->allocated == src1->allocated && dst->offset > src1->offset);
   }
   if (mode == VectorLastAxisMode::VS || mode == VectorLastAxisMode::V) {
     src0_stride0 = src0->sizes[0] == 1 ? 0 : src0->strides[0];
@@ -225,23 +225,26 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_2d(
   }
 
   for (int i = 0; i < size0; ++i) {
-    int index0 = reverse ? size0 -1 - i : i;
+    int index0 = reverse ? size0 - 1 - i : i;
     for (int j = 0; j < size1; ++j) {
-      int index1 = reverse ? size1 -1 - j : j;
+      int index1 = reverse ? size1 - 1 - j : j;
       T src0_oprand = T();
       T src1_oprand = T();
-      if (mode == VectorLastAxisMode::VV || mode == VectorLastAxisMode::VS || mode == VectorLastAxisMode::V) {
-        src0_oprand = *(src0_ptr + index0 * src0_stride0 + index1 * src0_stride1);
+      if (mode == VectorLastAxisMode::VV || mode == VectorLastAxisMode::VS ||
+          mode == VectorLastAxisMode::V) {
+        src0_oprand =
+            *(src0_ptr + index0 * src0_stride0 + index1 * src0_stride1);
       } else {
         src0_oprand = scalar;
       }
       if (mode == VectorLastAxisMode::VV || mode == VectorLastAxisMode::SV) {
-        src1_oprand = *(src1_ptr + index0 * src1_stride0 + index1 * src1_stride1);
+        src1_oprand =
+            *(src1_ptr + index0 * src1_stride0 + index1 * src1_stride1);
       } else {
         src1_oprand = scalar;
       }
       *(dst_ptr + index0 * dst->strides[0] + index1 * dst->strides[1]) =
-        handle_vector_operation<OP, T>(src0_oprand, src1_oprand, mode);
+          handle_vector_operation<OP, T>(src0_oprand, src1_oprand, mode);
     }
   }
 
@@ -250,89 +253,106 @@ __aiv__ __attribute__((always_inline)) void scalar_eltwise_2d(
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_vv_2d(
-    memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *src1,
-    memref_t<__ubuf__ T, 2> *dst, memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
+__aiv__ __attribute__((always_inline)) void
+eltwise_vv_2d(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *src1,
+              memref_t<__ubuf__ T, 2> *dst, memref_t<__ubuf__ T, 1> *tmp_buf,
+              VectorLastAxisMode mode) {
   auto scalar_num = eltwise_get_element_nums_on_scalar<T, 2>(src0, src1, dst);
   memref_t<__ubuf__ T, 2> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 2> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 2> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[1]) {
-      scalar_eltwise_2d<OP, T>(src0, src1, dst, dst->sizes[0], dst->sizes[1], mode, {0});
+      scalar_eltwise_2d<OP, T>(src0, src1, dst, dst->sizes[0], dst->sizes[1],
+                               mode, {0});
       return;
     }
-    scalar_eltwise_2d<OP, T>(src0, src1, dst, dst->sizes[0], scalar_num, mode, {0});
+    scalar_eltwise_2d<OP, T>(src0, src1, dst, dst->sizes[0], scalar_num, mode,
+                             {0});
     move_memref_to_aligned_2d(&aligned_src0, scalar_num);
     move_memref_to_aligned_2d(&aligned_src1, scalar_num);
     move_memref_to_aligned_2d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[1] <= 0) {
+    if (aligned_dst.sizes[1] <= 0) {
       return;
     }
   }
-  vector_eltwise_vv_2d<OP, T>(&aligned_src0, &aligned_src1, &aligned_dst, tmp_buf, mode);
+  vector_eltwise_vv_2d<OP, T>(&aligned_src0, &aligned_src1, &aligned_dst,
+                              tmp_buf, mode);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_vs_2d(
-    memref_t<__ubuf__ T, 2> *src0, T scalar, memref_t<__ubuf__ T, 2> *dst,
-    memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
-  auto scalar_num = eltwise_get_element_nums_on_scalar<T, 2>(src0, nullptr, dst);
+__aiv__ __attribute__((always_inline)) void
+eltwise_vs_2d(memref_t<__ubuf__ T, 2> *src0, T scalar,
+              memref_t<__ubuf__ T, 2> *dst, memref_t<__ubuf__ T, 1> *tmp_buf,
+              VectorLastAxisMode mode) {
+  auto scalar_num =
+      eltwise_get_element_nums_on_scalar<T, 2>(src0, nullptr, dst);
   memref_t<__ubuf__ T, 2> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 2> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[1]) {
-      scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], dst->sizes[1], mode, scalar);
+      scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], dst->sizes[1],
+                               mode, scalar);
       return;
     }
-    scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], scalar_num, mode, scalar);
+    scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], scalar_num,
+                             mode, scalar);
     move_memref_to_aligned_2d(&aligned_src0, scalar_num);
     move_memref_to_aligned_2d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[1] <= 0) {
+    if (aligned_dst.sizes[1] <= 0) {
       return;
     }
   }
-  vector_eltwise_vs_2d<OP, T>(&aligned_src0, scalar, &aligned_dst, tmp_buf, mode);
+  vector_eltwise_vs_2d<OP, T>(&aligned_src0, scalar, &aligned_dst, tmp_buf,
+                              mode);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_sv_2d(
-    T scalar, memref_t<__ubuf__ T, 2> *src1,
-    memref_t<__ubuf__ T, 2> *dst, memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
-  auto scalar_num = eltwise_get_element_nums_on_scalar<T, 2>(nullptr, src1, dst);
+__aiv__ __attribute__((always_inline)) void
+eltwise_sv_2d(T scalar, memref_t<__ubuf__ T, 2> *src1,
+              memref_t<__ubuf__ T, 2> *dst, memref_t<__ubuf__ T, 1> *tmp_buf,
+              VectorLastAxisMode mode) {
+  auto scalar_num =
+      eltwise_get_element_nums_on_scalar<T, 2>(nullptr, src1, dst);
   memref_t<__ubuf__ T, 2> aligned_src1 = *src1;
   memref_t<__ubuf__ T, 2> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[1]) {
-      scalar_eltwise_2d<OP, T>(nullptr, src1, dst, dst->sizes[0], dst->sizes[1], mode, scalar);
+      scalar_eltwise_2d<OP, T>(nullptr, src1, dst, dst->sizes[0], dst->sizes[1],
+                               mode, scalar);
       return;
     }
-    scalar_eltwise_2d<OP, T>(nullptr, src1, dst, dst->sizes[0], scalar_num, mode, scalar);
+    scalar_eltwise_2d<OP, T>(nullptr, src1, dst, dst->sizes[0], scalar_num,
+                             mode, scalar);
     move_memref_to_aligned_2d(&aligned_src1, scalar_num);
     move_memref_to_aligned_2d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[1] <= 0) {
+    if (aligned_dst.sizes[1] <= 0) {
       return;
     }
   }
-  vector_eltwise_sv_2d<OP, T>(scalar, &aligned_src1, &aligned_dst, tmp_buf, mode);
+  vector_eltwise_sv_2d<OP, T>(scalar, &aligned_src1, &aligned_dst, tmp_buf,
+                              mode);
 }
 
 template <VectorOpTy OP, typename T>
-__aiv__ __attribute__((always_inline)) void eltwise_v_2d(
-    memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
-    memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
-  auto scalar_num = eltwise_get_element_nums_on_scalar<T, 2>(src0, nullptr, dst);
+__aiv__ __attribute__((always_inline)) void
+eltwise_v_2d(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
+             memref_t<__ubuf__ T, 1> *tmp_buf, VectorLastAxisMode mode) {
+  auto scalar_num =
+      eltwise_get_element_nums_on_scalar<T, 2>(src0, nullptr, dst);
   memref_t<__ubuf__ T, 2> aligned_src0 = *src0;
   memref_t<__ubuf__ T, 2> aligned_dst = *dst;
-  if (scalar_num != 0)[[unlikely]] {
+  if (scalar_num != 0) [[unlikely]] {
     if (scalar_num >= dst->sizes[1]) {
-      scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], dst->sizes[1], mode, {0});
+      scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], dst->sizes[1],
+                               mode, {0});
       return;
     }
-    scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], scalar_num, mode, {0});
+    scalar_eltwise_2d<OP, T>(src0, nullptr, dst, dst->sizes[0], scalar_num,
+                             mode, {0});
     move_memref_to_aligned_2d(&aligned_src0, scalar_num);
     move_memref_to_aligned_2d(&aligned_dst, scalar_num);
-    if(aligned_dst.sizes[1] <= 0) {
+    if (aligned_dst.sizes[1] <= 0) {
       return;
     }
   }
@@ -562,15 +582,17 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_2d(
     if (is_src0_brc_dim1) {
       vector_last_axis_brc_2d<SRC_T, DST_T>(src0, new_src0, tmp_buf);
       base_tmp_buf_offset =
-          base_tmp_buf_offset + src0->sizes[0] == 1
-              ? num_per_block
-              : num_per_block *
-                    CEIL_FACTOR(src0->sizes[0], kSrcNumPerRepeatOfVBRCB);
+          base_tmp_buf_offset +
+          (src0->sizes[0] == 1
+               ? num_per_block
+               : num_per_block *
+                     CEIL_FACTOR(src0->sizes[0], kSrcNumPerRepeatOfVBRCB));
       tmp_buf_as_dst_t.offset =
-          tmp_buf_as_dst_t.offset + src0->sizes[0] == 1
-              ? new_num_per_block
-              : new_num_per_block *
-                    CEIL_FACTOR(src0->sizes[0], kSrcNumPerRepeatOfVBRCB);
+          tmp_buf_as_dst_t.offset +
+          (src0->sizes[0] == 1
+               ? new_num_per_block
+               : new_num_per_block *
+                     CEIL_FACTOR(src0->sizes[0], kSrcNumPerRepeatOfVBRCB));
     }
   }
 
