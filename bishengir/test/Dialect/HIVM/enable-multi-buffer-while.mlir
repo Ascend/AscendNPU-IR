@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-enable-multi-buffer -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-enable-multi-buffer -hivm-lower-multi-buffer-counter -split-input-file | FileCheck %s
 
 // -----
 // Verify the alloca-based counter scheme for scf.while.

@@ -3,7 +3,7 @@
 // RUN:     hacc-append-device-spec{target=Ascend910B1},                       \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true}),               \
 // RUN:     hivm-plan-memory,                                                  \
-// RUN:     func.func(hivm-graph-sync-solver,hivm-enable-multi-buffer))"       \
+// RUN:     func.func(hivm-graph-sync-solver,hivm-enable-multi-buffer,hivm-lower-multi-buffer-counter))" \
 // RUN:   -split-input-file -verify-diagnostics                                \
 // RUN:   | FileCheck %s
 

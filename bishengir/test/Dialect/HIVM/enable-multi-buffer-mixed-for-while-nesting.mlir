@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-enable-multi-buffer -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-enable-multi-buffer -hivm-lower-multi-buffer-counter -split-input-file | FileCheck %s
 
 // Coverage for mixed scf.for / scf.while nesting under the unified
 // alloca-based MultiBufferLoopAdapter counter. The four cases below pin

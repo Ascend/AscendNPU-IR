@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
 
 // -----
 // GraphSyncSolver should drive its event-id rotation off the alloca-based

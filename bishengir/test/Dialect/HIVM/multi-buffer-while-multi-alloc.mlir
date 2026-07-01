@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -hivm-enable-multi-buffer -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-enable-multi-buffer -hivm-lower-multi-buffer-counter -split-input-file | FileCheck %s
 
 // -----
 // Multiple multi-address pointer_casts in the same scf.while body must share
@@ -53,7 +53,7 @@ module {
       // alloca. The CHECK-NOT after the store rules out any second
       // increment-store before the yield.
       // CHECK: arith.addi
-      // CHECK-NEXT: memref.store %{{.*}}, %[[CTR]]
+      // CHECK: memref.store %{{.*}}, %[[CTR]]
       // CHECK-NOT: memref.store %{{.*}}, %[[CTR]]
       // CHECK: scf.yield
       scf.yield %cin : i1

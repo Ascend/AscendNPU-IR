@@ -46,6 +46,20 @@ def GetBlockNumOp : HIVM_Op<"get_block_num", [Pure, CubeVectorCoreTypeTrait]> {
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
+def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
+  let summary = "Materialized multi-buffer loop counter anchor.";
+  let description = [{
+    This op anchors the per-iteration multi-buffer counter for an scf.for or
+    scf.while loop. It is introduced by MultiBufferLoopAdapter and shared by
+    all consumers that need slot rotation. A later lowering pass rewrites it to
+    a function-scoped memref.alloca counter plus a body-head load and body-tail
+    increment/store.
+  }];
+  let arguments = (ins I64Attr:$loop_id);
+  let results = (outs I64:$counter);
+  let assemblyFormat = "`loop_id` `=` $loop_id attr-dict `->` type($counter)";
+}
+
 def GetSubBlockIdxOp : HIVM_Op<"get_sub_block_idx", [Pure, CubeVectorCoreTypeTrait]> {
   let summary = "Get sub block idx of the current device thread used for parallelization.";
   let description = [{

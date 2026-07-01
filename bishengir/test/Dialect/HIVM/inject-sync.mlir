@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-inject-sync -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-inject-sync -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
 
 // -----
 module {
