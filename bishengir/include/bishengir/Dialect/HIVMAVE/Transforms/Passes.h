@@ -44,6 +44,9 @@ std::unique_ptr<Pass> createI1opSoftImplPass();
 std::unique_ptr<Pass>
 createCombineAVEOPsPass(const CombineAVEOPsOptions &options = {});
 
+/// Convert PLT to PGE op when true_shape is constant
+std::unique_ptr<Pass> createPLTToPGEPass();
+
 /// Convert PLT to PLTM op
 std::unique_ptr<Pass> createPLTToPLTMPass();
 

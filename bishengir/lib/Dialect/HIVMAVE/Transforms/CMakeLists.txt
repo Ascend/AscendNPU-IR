@@ -3,6 +3,7 @@ add_bishengir_dialect_library(MLIRHIVMAVETransforms
   ComplexReductionIntermediateLowering.cpp
   I1opSoftImpl.cpp
   LegalizeOptHIVMAVE.cpp
+  PLTToPGE.cpp
   PLTToPLTM.cpp
   ProcessVsstb.cpp
   ProcessMembar.cpp

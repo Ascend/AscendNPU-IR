@@ -23,6 +23,16 @@ def ReplaceWithVectorScalar : Pass<"ave-replace-with-vector-scalar", "func::Func
   let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect","hivmave::AVEDialect"];
 }
 
+def PLTToPGE : Pass<"ave-plt-to-pge", "func::FuncOp"> {
+  let summary = "Convert PLT op with constant true_shape to PGE.";
+  let description = [{
+    This pass converts VFPltOp whose true_shape operand is a constant
+    into VFPgeOp with the corresponding PgePattern (VL1, VL2, ..., ALL, ALLF).
+  }];
+  let constructor = "mlir::hivmave::createPLTToPGEPass()";
+  let dependentDialects = ["arith::ArithDialect","hivmave::AVEDialect"];
+}
+
 def PLTToPLTM : Pass<"ave-plt-to-pltm", "func::FuncOp"> {
   let summary = "Convert PLT op on tail block to PLTM.";
   let constructor = "mlir::hivmave::createPLTToPLTMPass()";
