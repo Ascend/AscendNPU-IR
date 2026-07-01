@@ -43,13 +43,14 @@ def ProcessVsstb : Pass<"ave-process-vsstb", "func::FuncOp"> {
   ];
 }
 
-def ProcessWideVextf : Pass<"ave-process-wide-vextf", "func::FuncOp"> {
-  let summary = "Process wide vextf related SCF For loops (unroll 64F16 loops and rewrite vextf)";
+def AveLoopOptimize : Pass<"ave-loop-optimize", "func::FuncOp"> {
+  let summary = "Optimize AVE SCF For loops (unroll wide vextf loops, peel epilogues, canonicalize)";
   let description = [{
     This pass matches specific SCF For loops with vextf,
-    unrolls them by factor 2, and rewrites the vector load logic with VfInterleaveOp.
+    unrolls them by factor 2, peels epilogue loops, and applies
+    scf::ForOp / AffineApplyOp canonicalization.
   }];
-  let constructor = "mlir::hivmave::createProcessWideVextfPass()";
+  let constructor = "mlir::hivmave::createAveLoopOptimizePass()";
     let dependentDialects = [
     "hivmave::AVEDialect",
     "arith::ArithDialect",
