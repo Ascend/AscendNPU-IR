@@ -411,6 +411,7 @@ def ScatterStoreOp
     : HIVM_Op<
           "scatter_store", [DestinationStyleOpInterface,
                             DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+                            DeclareOpInterfaceMethods<StoreLikeOpInterface>,
                             SameVariadicOperandSize,
                             AllElementTypesMatch<["base", "data"]>,
                             AllRanksMatch<["indices", "data"]>,

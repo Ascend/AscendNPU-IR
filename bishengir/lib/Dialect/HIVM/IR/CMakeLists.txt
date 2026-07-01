@@ -35,6 +35,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMSynchronizationOps.cpp
   HIVMTraits.cpp
   HIVMVectorOps.cpp
+  StoreLikeOpInterface.cpp
   ../Utils/Utils.cpp
 
   ADDITIONAL_HEADER_DIRS

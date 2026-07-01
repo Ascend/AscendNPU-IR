@@ -153,6 +153,7 @@ def StoreOp : HIVM_DmaOp<"store", [
   OperElemTypeConstraints<[0], [F8E4M3FN, F8E5M2, I1, I8, UI8,
     I16, UI16, F16, BF16, I32, UI32, F32, UI64, I64]>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  DeclareOpInterfaceMethods<StoreLikeOpInterface>,
 ]> {
   let summary = "HIVM data store operation";
   let description = [{
@@ -186,16 +187,7 @@ def StoreOp : HIVM_DmaOp<"store", [
   }];
   let hasFolder = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
-  let extraClassDeclaration = DmaOpBaseDecl # [{
-    // Return whether atomic store is enabled.
-    bool isAtomic();
-
-    // Return whether block-sync atomic store enabled is implemented by hardware.
-    bool isHWAtomic();
-
-    // Return whether block-sync atomic store enabled is implemented by software.
-    bool isSWAtomic();
-  }];
+  let extraClassDeclaration = DmaOpBaseDecl;
 }
 
 def CopyOp : HIVM_DmaOp<"copy", [
@@ -275,7 +267,8 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_FIX">,
   HIVMCoreTypeInterface, CubeCoreTypeTrait,
   HIVMUnitFlagEnabledInterface,
-  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>
+  DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
+  DeclareOpInterfaceMethods<StoreLikeOpInterface>
 ]> {
   let summary = "HIVM data copy operation from L0C to other memory hierarchies.";
   let description = [{

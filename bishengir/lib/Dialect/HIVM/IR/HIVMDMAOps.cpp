@@ -373,24 +373,6 @@ LogicalResult StoreOp::verify() {
   return success();
 }
 
-bool StoreOp::isAtomic() {
-  auto atomicKind = getAtomicKind();
-  return atomicKind.has_value() && atomicKind.value() != hivm::AtomicKind::NONE;
-}
-
-bool StoreOp::isHWAtomic() {
-  if (getAtomicKind().has_value()) {
-    auto atomicKind = getAtomicKind().value();
-    return (atomicKind == hivm::AtomicKind::ADD) ||
-           (atomicKind == hivm::AtomicKind::MAX) ||
-           (atomicKind == hivm::AtomicKind::MIN);
-  }
-
-  return false;
-}
-
-bool StoreOp::isSWAtomic() { return isAtomic() && (!isHWAtomic()); }
-
 //===----------------------------------------------------------------------===//
 // CopyOp
 //===----------------------------------------------------------------------===//

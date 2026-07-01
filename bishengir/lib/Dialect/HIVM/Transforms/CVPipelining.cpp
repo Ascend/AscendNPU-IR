@@ -1436,7 +1436,7 @@ LogicalResult CVPipelineImpl::createWorkItems() {
 void CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
-      if (isa<StoreOp, FixpipeOp>(op) &&
+      if (isa<StoreLikeOpInterface>(op) &&
           getAllocWorkspace(cast<DestinationStyleOpInterface>(op)
                                 .getDpsInitOperand(0)
                                 ->get())) {

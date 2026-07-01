@@ -796,4 +796,36 @@ def HIVMUnitFlagEnabledInterface : OpInterface<"UnitFlagEnabledInterface"> {
       [{ return detail::verifyUnitFlagEnabledInterface(cast<UnitFlagEnabledInterface>($_op)); }];
 }
 
+def StoreLikeOpInterface : OpInterface<"StoreLikeOpInterface", [DestinationStyleOpInterface]> {
+  let description = [{
+
+  }];
+  let cppNamespace = "::mlir::hivm";
+
+  let methods = [
+    InterfaceMethod<
+      /*desc=*/[{
+        Return whether atomic store is enabled.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isAtomic"
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Return whether block-sync atomic store enabled is implemented by hardware.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isHWAtomic"
+    >,
+    InterfaceMethod<
+      /*desc=*/[{
+        Return whether block-sync atomic store enabled is implemented by software.
+      }],
+      /*retTy=*/"bool",
+      /*methodName=*/"isSWAtomic"
+    >
+  ];
+
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMINTERFACES_TD
