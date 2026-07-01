@@ -38,10 +38,6 @@ def NormalizeVector
     "memref::MemRefDialect",
     "vector::VectorDialect",
   ];
-  let options = [
-    Option<"enableDotScaledCompile", "enable-dot-scaled-compile", "bool",
-           /*default=*/"false", "Enable dot scaled compile.">,
-  ];
 }
 
 def PeelLoopsContainingTranspose

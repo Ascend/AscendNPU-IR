@@ -290,6 +290,19 @@ func.func @test_NormalizeSort_sort_i8(%arg0 : tensor<8xi8>) -> tensor<8xi8> {
 
 // -----
 
+// CHECK-LABEL: func.func @test_NormalizeSort_sort_f8E5M2
+// CHECK-SAME: (%[[IN_F8EM2:.*]]: tensor<1xf8E5M2>)
+// CHECK: %[[IN_F8EM2_F32:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[IN_F8EM2]] : tensor<1xf8E5M2>) {{.*}} -> tensor<1xf32>
+// CHECK: %[[SORTED_F32:.*]] = hfusion.sort ins(%[[IN_F8EM2_F32]] : {{.*}}) descending = true sort_axis = 0 -> tensor<1xf32>
+// CHECK: %[[SORTED_F8EM2:.*]] = hfusion.cast {{.*}}round_mode = #hfusion.round_mode<rint>{{.*}} ins(%[[SORTED_F32]] : tensor<1xf32>) {{.*}} -> tensor<1xf8E5M2>
+// CHECK: return %[[SORTED_F8EM2]]
+func.func @test_NormalizeSort_sort_f8E5M2(%arg0 : tensor<1xf8E5M2>) -> tensor<1xf8E5M2> {
+  %0 = hfusion.sort ins(%arg0 : tensor<1xf8E5M2>) descending = true sort_axis = 0 -> tensor<1xf8E5M2>
+  return %0 : tensor<1xf8E5M2>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @test_NormalizeSort_sort_f16_keep_original
 // CHECK: %[[SORT:.*]] = hfusion.sort ins(%arg0 : tensor<8xf16>) descending = false sort_axis = 0 -> tensor<8xf16>
 // CHECK-NOT: hfusion.cast

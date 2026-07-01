@@ -79,7 +79,7 @@ struct UnaryOpPattern : public OpConversionPattern<ArithUnaryOp> {
     Value mask =
         hivmave::findReuseableMaskOrCreateOne(op, resVecType, rewriter);
 
-    auto res = rewriter.create<HivmVFUnaryOp>(loc, resType, src, mask, nullptr);
+    auto res = rewriter.create<HivmVFUnaryOp>(loc, resType, src, mask);
     rewriter.replaceOp(op, res);
     return success();
   }
@@ -116,15 +116,14 @@ struct BinaryOpPattern : public OpConversionPattern<ArithBinaryOp> {
     if constexpr (std::is_same_v<ArithBinaryOp, arith::DivUIOp>) {
       res = rewriter.create<HivmVFBinaryOp>(
           loc, resType, lhs, rhs, mask,
-          TypeFnAttr::get(op->getContext(), TypeFn::cast_unsigned), nullptr);
+          TypeFnAttr::get(op->getContext(), TypeFn::cast_unsigned));
     } else if constexpr (std::is_same_v<ArithBinaryOp, arith::DivSIOp> ||
                          std::is_same_v<ArithBinaryOp, arith::DivFOp>) {
       res = rewriter.create<HivmVFBinaryOp>(
           loc, resType, lhs, rhs, mask,
-          TypeFnAttr::get(op->getContext(), TypeFn::cast_signed), nullptr);
+          TypeFnAttr::get(op->getContext(), TypeFn::cast_signed));
     } else {
-      res = rewriter.create<HivmVFBinaryOp>(loc, resType, lhs, rhs, mask,
-                                            nullptr);
+      res = rewriter.create<HivmVFBinaryOp>(loc, resType, lhs, rhs, mask);
     }
 
     // Set this attribute for later use in reduceInitElimination.
@@ -165,7 +164,7 @@ struct ArithMulExtendOpPattern : public OpConversionPattern<ArithMulExtendOp> {
         hivmave::findReuseableMaskOrCreateOne(op, lowResVecType, rewriter);
 
     HivmVFVMULLOp res =
-        rewriter.create<HivmVFVMULLOp>(loc, resType, lhs, rhs, mask, nullptr);
+        rewriter.create<HivmVFVMULLOp>(loc, resType, lhs, rhs, mask);
     rewriter.replaceOp(op, {res->getResult(0), res->getResult(1)});
     return success();
   }
@@ -1239,8 +1238,8 @@ struct ConstantOpToHivmVCIVCPLowering
       if (!mulValueOp)
         return nullptr;
       auto vmulOp = rewriter.create<hivmave::VFMulsOp>(
-          loc, resultType, defineOp->getResult(0), mulValueOp.getResult(), mask,
-          nullptr);
+          loc, resultType, defineOp->getResult(0), mulValueOp.getResult(),
+          mask);
       defineOp = vmulOp;
     }
     if (addValue != 0) {
@@ -1249,8 +1248,8 @@ struct ConstantOpToHivmVCIVCPLowering
       if (!addValueOp)
         return nullptr;
       auto vaddOp = rewriter.create<hivmave::VFAddsOp>(
-          loc, resultType, defineOp->getResult(0), addValueOp.getResult(), mask,
-          nullptr);
+          loc, resultType, defineOp->getResult(0), addValueOp.getResult(),
+          mask);
       defineOp = vaddOp;
     }
     return defineOp;
@@ -1810,11 +1809,9 @@ struct XOrIOpLowering : public OpConversionPattern<arith::XOrIOp> {
       notOperand = isAllNegOnesVector(lhs) ? rhs : notOperand;
       notOperand = isAllNegOnesVector(rhs) ? lhs : notOperand;
       if (notOperand)
-        res = rewriter.create<hivmave::VFNotOp>(loc, resType, notOperand, mask,
-                                                nullptr);
+        res = rewriter.create<hivmave::VFNotOp>(loc, resType, notOperand, mask);
       else
-        res = rewriter.create<hivmave::VFXorOp>(loc, resType, lhs, rhs, mask,
-                                                nullptr);
+        res = rewriter.create<hivmave::VFXorOp>(loc, resType, lhs, rhs, mask);
     }
     rewriter.replaceOp(op, res);
     return success();
@@ -1872,19 +1869,19 @@ struct ShiftOpLowering : public OpConversionPattern<SourceOp> {
       Value boolConst =
           rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
       auto shlOp = rewriter.create<hivmave::VFShlOp>(loc, resType, lhs, rhs,
-                                                     mask, boolConst, nullptr);
+                                                     mask, boolConst);
       rewriter.replaceOp(op, shlOp.getResult());
     } else if constexpr (std::is_same_v<SourceOp, arith::ShRSIOp>) {
       Value boolConst =
           rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(true));
       auto shrOp = rewriter.create<hivmave::VFShrOp>(loc, resType, lhs, rhs,
-                                                     mask, boolConst, nullptr);
+                                                     mask, boolConst);
       rewriter.replaceOp(op, shrOp.getResult());
     } else if constexpr (std::is_same_v<SourceOp, arith::ShRUIOp>) {
       Value boolConst =
           rewriter.create<arith::ConstantOp>(loc, rewriter.getBoolAttr(false));
       auto shrOp = rewriter.create<hivmave::VFShrOp>(loc, resType, lhs, rhs,
-                                                     mask, boolConst, nullptr);
+                                                     mask, boolConst);
       rewriter.replaceOp(op, shrOp.getResult());
     }
 
@@ -1932,11 +1929,11 @@ struct LogicOpLowering : public OpConversionPattern<SourceOp> {
     } else {
       if (std::is_same<SourceOp, arith::AndIOp>::value) {
         rewriter.replaceOpWithNewOp<hivmave::VFAndOp>(op, resType, lhs, rhs,
-                                                      mask, nullptr);
+                                                      mask);
         return success();
       } else if (std::is_same<SourceOp, arith::OrIOp>::value) {
         rewriter.replaceOpWithNewOp<hivmave::VFOrOp>(op, resType, lhs, rhs,
-                                                     mask, nullptr);
+                                                     mask);
         return success();
       }
     }
@@ -1967,8 +1964,7 @@ struct FmaOpLowering : public OpConversionPattern<math::FmaOp> {
     Value mask =
         hivmave::findReuseableMaskOrCreateOne(op, resVecType, rewriter);
 
-    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, a, b, c, mask,
-                                                  nullptr);
+    auto res = rewriter.create<hivmave::VFMulaOp>(loc, resType, a, b, c, mask);
     rewriter.replaceOp(op, res);
     return success();
   }

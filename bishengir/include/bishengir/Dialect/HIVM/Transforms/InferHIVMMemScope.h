@@ -49,6 +49,9 @@ LogicalResult inferAndPropagateMemScopeForFunc(func::FuncOp op);
 /// Infer, propagate, and set memory scope information to GPUFuncOp.
 LogicalResult inferAndPropagateMemScopeForGpuFunc(gpu::GPUFuncOp op);
 
+/// Infer, propagate, and set memory scope for distributed custom ops.
+LogicalResult inferAndPropagateMemScopeForDistributed(hivm::CustomOp op);
+
 } // namespace hivm
 } // namespace mlir
 

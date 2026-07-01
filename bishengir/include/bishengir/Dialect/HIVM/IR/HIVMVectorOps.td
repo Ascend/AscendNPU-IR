@@ -538,36 +538,60 @@ def VCastOp : HIVM_ElementwiseUnaryOp<"vcast",
      Additional constraints:
        1. Supports the following conversions:
 
-        | src  | dst  | roundingmode                                      |
-        |------|------|---------------------------------------------------|
-        | f32  | f32  | round, rint, floor, ceil, trunc                   |
-        | f32  | f16  | round, rint, floor, ceil, trunc, odd              |
-        | f32  | i64  | round, rint, floor, ceil, trunc                   |
-        | f32  | i32  | round, rint, floor, ceil, trunc                   |
-        | f32  | i16  | round, rint, floor, ceil, trunc                   |
-        | f32  | s64  | round, rint, floor, ceil, trunc                   |
-        | f32  | bf16 | round, rint, floor, ceil, trunc                   |
-        | f16  | f32  | rint                                              |
-        | f16  | i32  | round, rint, floor, ceil, trunc                   |
-        | f16  | i16  | round, rint, floor, ceil, trunc                   |
-        | f16  | i8   | round, rint, floor, ceil, trunc                   |
-        | f16  | ui8  | round, rint, floor, ceil, trunc                   |
-        | f16  | i4   | round, rint, floor, ceil, trunc                   |
-        | bf16 | f32  | rint                                              |
-        | bf16 | i32  | round, rint, floor, ceil, trunc                   |
-        | ui8  | f16  | rint                                              |
-        | i8   | f16  | rint                                              |
-        | i8   | i1   | rint                                              |
-        | i16  | f16  | round, rint, floor, ceil, trunc                   |
-        | i16  | f32  | rint                                              |
-        | i32  | f32  | round, rint, floor, ceil, trunc                   |
-        | i32  | i64  | rint                                              |
-        | i32  | i16  | rint                                              |
-        | i64  | i32  | rint                                              |
-        | i64  | f32  | round, rint, floor, ceil, trunc                   |
-        | i4   | f16  | rint                                              |
-        | i1   | f16  | rint                                              |
-        | i1   | f32  | rint                                              |
+        | src    | dst    | roundingmode                                  |
+        |--------|--------|-----------------------------------------------|
+        | f32    | i1     | trunc, rint                                   |
+        | f32    | i8     | round, rint, floor, ceil, trunc               |
+        | f32    | i16    | truncwithoverflow                             |
+        | f32    | i32    | truncwithoverflow                             |
+        | f32    | ui64   | trunc                                         |
+        | f32    | f8e5m2 | rint                                          |
+        | f32    | f8e4m3 | rint                                          |
+        | f16    | i1     | rint                                          |
+        | f16    | f16    | ceil, floor                                   |
+        | bf16   | i1     | rint                                          |
+        | bf16   | bf16   | ceil, floor                                   |
+        | i1     | i8     | rint                                          |
+        | i1     | i16    | rint                                          |
+        | i1     | i32    | rint                                          |
+        | i1     | i64    | rint                                          |
+        | i1     | ui16   | rint                                          |
+        | i1     | ui32   | rint                                          |
+        | i1     | f16    | rint, trunc                                   |
+        | i1     | f32    | rint, trunc                                   |
+        | i1     | bf16   | rint, trunc                                   |
+        | i4     | i8     | rint                                          |
+        | i8     | i1     | rint                                          |
+        | i8     | i16    | rint, round                                   |
+        | i8     | i32    | rint                                          |
+        | i8     | f16    | round                                         |
+        | i8     | f32    | trunc                                         |
+        | i8     | bf16   | rint                                          |
+        | i16    | i1     | rint                                          |
+        | i16    | i8     | truncwithoverflow, trunc                      |
+        | i16    | i32    | rint                                          |
+        | i32    | i1     | rint                                          |
+        | i32    | i8     | truncwithoverflow, trunc                      |
+        | i32    | i16    | truncwithoverflow, trunc                      |
+        | i32    | i64    | round                                         |
+        | i64    | i1     | rint                                          |
+        | i64    | i8     | rint                                          |
+        | i64    | i16    | rint                                          |
+        | i64    | i32    | truncwithoverflow                             |
+        | i64    | f16    | trunc                                         |
+        | ui8    | ui16   | rint                                          |
+        | ui8    | ui32   | rint                                          |
+        | ui16   | ui8    | truncwithoverflow                             |
+        | ui16   | f32    | rint                                          |
+        | ui16   | ui32   | rint                                          |
+        | ui32   | ui8    | trunc                                         |
+        | ui32   | ui16   | trunc                                         |
+        | ui32   | ui64   | rint                                          |
+        | ui32   | f32    | rint                                          |
+        | ui32   | bf16   | rint                                          |
+        | ui64   | f32    | rint                                          |
+        | f8e4m3 | f32    | rint                                          |
+        | f8e5m2 | f32    | rint                                          |
   }];
   let arguments = (ins Variadic<AnyShaped>:$src,
                        Variadic<AnyShaped>:$dst,
@@ -2118,7 +2142,11 @@ def VSortOp : HIVM_VectorOp<"vsort",
      // Expanded element types via hivm sort normalize pattern
      OperElemTypeConstraints<[0, 1], [F16, F32, I8, I16, I32, I64]>,
      DeclareOpInterfaceMethods<ExtraBufferOpInterface,
-       ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>
+       ["getExtraBufferSize", "shouldAllocExtraBufferForScalarOrOTFBrc"]>,
+     // Will automatically use the default uniform reassociation impl
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+                               ["getLimitedAxes", "adjustTargetDimensions"]>
     ]> {
   let summary = "Vector Sort Op";
   let description = [{

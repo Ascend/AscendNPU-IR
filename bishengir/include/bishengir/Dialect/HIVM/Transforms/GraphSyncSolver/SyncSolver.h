@@ -17,6 +17,7 @@
 #ifndef BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 #define BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_SYNCSOLVER_H
 
+#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/CustomMacroSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/EventIdSolver.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIRTranslator.h"
@@ -159,6 +160,8 @@ protected:
       setWaitFlagOpsIndex;
 
 public:
+  CustomMacroSyncState customMacroSync;
+
   Solver() = delete;
   virtual ~Solver() = default;
 
@@ -169,6 +172,14 @@ public:
 
   // Orchestrate the solving process (entry point).
   void solve();
+
+  bool hasCustomMacroEventIdConflict() const {
+    return customMacroSync.hasConflict();
+  }
+
+  StringRef getCustomMacroEventIdConflictMsg() const {
+    return customMacroSync.conflictMessage();
+  }
 
   // Build before/after maps of sync ops computed from chosen conflicts.
   SyncBeforeAfterMap getBeforeAfterSyncMaps();
@@ -181,6 +192,7 @@ protected:
     unitFlagFeaturedOps = std::move(irTranslator->unitFlagFeaturedOps);
     opAllOccurrences = std::move(irTranslator->opAllOccurrences);
     processingOrders = std::move(irTranslator->processingOrders);
+    customMacroSync.collectReservedEventIds(funcOp, options);
   }
 
   // Run solver in block-all mode.

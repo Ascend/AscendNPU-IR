@@ -1,4 +1,4 @@
-//===------------- GraphSyncSolver.cpp ---- Graph Sync Solver -----===//
+//===- GraphSyncSolver.cpp - Graph Sync Solver ----------------------------===//
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,7 +94,17 @@ void GraphSyncSolverPass::runOnOperation() {
     }
   });
 
+  if (solver->hasCustomMacroEventIdConflict()) {
+    funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
+    return signalPassFailure();
+  }
+
   solver->solve();
+
+  if (solver->hasCustomMacroEventIdConflict()) {
+    funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
+    return signalPassFailure();
+  }
 
   CodeGenerator codeGen(std::move(solver));
   codeGen.generateResultOps();

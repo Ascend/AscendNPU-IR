@@ -94,15 +94,22 @@ void VConcatOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
   setDim(adjustedDims[0]);
 }
 
-void VFlipOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
+static uint64_t getAdjustedTargetDim(uint64_t originalDim,
                                      const FlattenResult &result) {
-  for (size_t i = 0; i < result.adjustedTargetDims.size(); ++i) {
-    auto &originalDim = result.originalTargetDims[i];
-    if (originalDim == ssize_t(getFlipAxis())) {
-      setFlipAxis(result.adjustedTargetDims[i]);
-      break;
-    }
-  }
+  auto it =
+      llvm::find(result.originalTargetDims, static_cast<int64_t>(originalDim));
+  assert(it != result.originalTargetDims.end() &&
+         "array of original dims must contain the original dim");
+  return result
+      .adjustedTargetDims[std::distance(result.originalTargetDims.begin(), it)];
+}
+
+void VFlipOp::adjustTargetDimensions(OpBuilder &, const FlattenResult &result) {
+  setFlipAxis(getAdjustedTargetDim(getFlipAxis(), result));
+}
+
+void VSortOp::adjustTargetDimensions(OpBuilder &, const FlattenResult &result) {
+  setSortAxis(getAdjustedTargetDim(getSortAxis(), result));
 }
 
 namespace mlir::hivm::detail {

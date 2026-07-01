@@ -10,6 +10,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
+#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -376,12 +377,37 @@ static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
          coreType == inferredCoreType.value();
 }
 
+static void inferDistributedCoreType(func::FuncOp mixedFunc) {
+  auto rectifyCoreType = [mixedFunc](hivm::TCoreType &cur) {
+    auto funcCoreType = mixedFunc
+                            ->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+                                hivm::TFuncCoreTypeAttr::name)
+                            .getFuncCoreType();
+    if (cur == TCoreType::CUBE_AND_VECTOR) {
+      return kTFuncCoreType2TCoreType.at(funcCoreType);
+    }
+    return cur;
+  };
+  mixedFunc->walk([&rectifyCoreType](Operation *op) {
+    if (isDistributedTypeCustomOp(op)) {
+      if (auto res = hivm::detail::queryCoreTypeHelper(op)) {
+        auto coreType = rectifyCoreType(res.value());
+        auto coreTypeAttr =
+            hivm::TCoreTypeAttr::get(op->getContext(), coreType);
+        op->setAttr(hivm::TCoreTypeAttr::name, coreTypeAttr);
+      }
+    }
+  });
+}
+
 // erase ops of given core type from function
 void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
                                        func::FuncOp mixedFunc,
                                        enum TCoreType filterCoreType) {
   const enum TCoreType coreType =
       filterCoreType == TCoreType::CUBE ? TCoreType::VECTOR : TCoreType::CUBE;
+
+  inferDistributedCoreType(mixedFunc);
 
   // Do a first walk to erase scope in pre-order
   mixedFunc.walk<WalkOrder::PreOrder>([&](Operation *op) {

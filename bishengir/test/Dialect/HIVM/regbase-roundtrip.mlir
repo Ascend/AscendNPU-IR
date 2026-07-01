@@ -41,12 +41,11 @@ func.func @hivm_binary_test(%arg0: vector<64xf32>, %arg1: vector<64xf32>) -> vec
 // CHECK-LABEL: @hivm_merging_add_test
 func.func @hivm_merging_add_test(%arg0: vector<64xf32>, %arg1: vector<64xf32>) -> vector<64xf32> {
   %mask = arith.constant dense<1> : vector<256xi1>
-  %pass_thru = arith.constant dense<0.0> : vector<64xf32>
   // %{{.*}} = ave.hir.vadd
-  %0 = ave.hir.vadd %arg0, %arg1, %mask, %pass_thru : vector<64xf32>, vector<256xi1>, vector<64xf32>
-  %1 = ave.hir.vsub %arg0, %0, %mask, %pass_thru : vector<64xf32>, vector<256xi1>, vector<64xf32>
-  %2 = ave.hir.vmul %arg0, %1, %mask, %pass_thru : vector<64xf32>, vector<256xi1>, vector<64xf32>
-  %3 = ave.hir.vdiv %arg0, %2, %mask, %pass_thru {cast = #hivm.cast<cast_signed>} : vector<64xf32>, vector<256xi1>, vector<64xf32>
+  %0 = ave.hir.vadd %arg0, %arg1, %mask : vector<64xf32>, vector<256xi1>
+  %1 = ave.hir.vsub %arg0, %0, %mask : vector<64xf32>, vector<256xi1>
+  %2 = ave.hir.vmul %arg0, %1, %mask : vector<64xf32>, vector<256xi1>
+  %3 = ave.hir.vdiv %arg0, %2, %mask {cast = #hivm.cast<cast_signed>} : vector<64xf32>, vector<256xi1>
   return %3 : vector<64xf32>
 }
 

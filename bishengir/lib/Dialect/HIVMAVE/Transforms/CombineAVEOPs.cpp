@@ -65,17 +65,17 @@ struct TenaryOpPattern : public OpRewritePattern<HivmVFSucOp> {
     // The left operand comes from PreOp.
     if (HivmVFPreOp preOp =
             dyn_cast_or_null<HivmVFPreOp>(op.getLhs().getDefiningOp())) {
-      rewriter.replaceOpWithNewOp<HivmVFTenaryOp>(
-          op, op.getResult().getType(), op.getRhs(), preOp.getLhs(),
-          preOp.getRhs(), op.getMask(), nullptr);
+      rewriter.replaceOpWithNewOp<HivmVFTenaryOp>(op, op.getResult().getType(),
+                                                  op.getRhs(), preOp.getLhs(),
+                                                  preOp.getRhs(), op.getMask());
       return success();
     }
     // The right operand comes from PreOp.
     if (HivmVFPreOp preOp =
             dyn_cast_or_null<HivmVFPreOp>(op.getRhs().getDefiningOp())) {
-      rewriter.replaceOpWithNewOp<HivmVFTenaryOp>(
-          op, op.getResult().getType(), op.getLhs(), preOp.getLhs(),
-          preOp.getRhs(), op.getMask(), nullptr);
+      rewriter.replaceOpWithNewOp<HivmVFTenaryOp>(op, op.getResult().getType(),
+                                                  op.getLhs(), preOp.getLhs(),
+                                                  preOp.getRhs(), op.getMask());
       return success();
     }
     return failure();
@@ -109,7 +109,7 @@ public:
     if (hivmave::VFSubOp subOp = dyn_cast<hivmave::VFSubOp>(expSrc)) {
       rewriter.replaceOpWithNewOp<hivmave::VFExpdifOp>(
           op, op.getResult().getType(), subOp.getLhs(), subOp.getRhs(),
-          op.getMask(), nullptr);
+          op.getMask());
       return success();
     }
     return failure();
