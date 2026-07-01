@@ -38,10 +38,11 @@ func.func @test_i8_cast_i16(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1:
 // CHECK-NEXT:   %[[cvt0:.+]] =  "hivm_regbaseintrins.intr.hivm.vcvtii.s82s16.x"(%[[LOAD0]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<128xi16>
 // CHECK-NEXT:   %[[div:.+]] = "hivm_regbaseintrins.intr.hivm.vdiv.s.x"(%[[cvt0]], %[[cvt1]], %[[EXTRACT_PLT]]) : (vector<128xi16>, vector<128xi16>, vector<256xi1>) -> vector<128xi16>
 // CHECK-NEXT:   %[[cvt2:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s162u8.x"(%[[div]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<128xi16>, vector<256xi1>, i32, i32) -> vector<256xi8>
+// CHECK-NEXT:   %[[bitcast:.+]] = llvm.bitcast %[[cvt2:.+]]
 // CHECK-NEXT:   %[[EXTRACT_UCC2:.+]] = llvm.extractvalue %[[UCC2]][1] : !llvm.struct<(ptr<6>, ptr<6>, i64, array<1 x i64>, array<1 x i64>)>
 // CHECK-NEXT:   %[[GET_UCC2:.+]] = llvm.getelementptr %[[EXTRACT_UCC2]]
 // CHECK-NEXT:   %[[c6:.+]] = llvm.mlir.constant(6 : i32) : i32
-// CHECK-NEXT:   "hivm_regbaseintrins.intr.hivm.vstsx1.v256s8"(%[[cvt2]], %[[GET_UCC2]], %{{.*}}, %[[c6]], %{{.*}}, %[[EXTRACT_PLT]]) : (vector<256xi8>, !llvm.ptr<6>, i32, i32, i32, vector<256xi1>) -> ()
+// CHECK-NEXT:   "hivm_regbaseintrins.intr.hivm.vstsx1.v128s16"(%[[bitcast]], %[[GET_UCC2]], %{{.*}}, %[[c6]], %{{.*}}, %[[EXTRACT_PLT]]) : (vector<128xi16>, !llvm.ptr<6>, i32, i32, i32, vector<256xi1>) -> ()
 
 func.func @test_i8_cast_i32(%arg0: memref<5xi8, #hivm.address_space<ub>>, %arg1: memref<5xi8, #hivm.address_space<ub>>, %arg2: memref<5xi8, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
   %c0_i8 = arith.constant 0 : i8

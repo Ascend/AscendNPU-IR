@@ -324,9 +324,45 @@ struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
 struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
   explicit AVEStorePattern(MLIRContext *context)
       : OpRewritePattern<VFMaskedStoreOp>(context) {}
+
+  static void changeStoreVectorType(VFMaskedStoreOp store,
+                                    PatternRewriter &rewriter, int factor,
+                                    int targetWidth) {
+    if (store->hasAttr(UnalignedAttr::name))
+      return;
+    Value data = store.getVal();
+    auto orgAligmentAttr =
+        data.getDefiningOp()->getAttr(utils::elementAlignmentBitWidth);
+    Location loc = store->getLoc();
+    VectorType orgVectorTy = store.getVectorType();
+    Type dElemType = orgVectorTy.getElementType();
+    int64_t vecSize = orgVectorTy.getNumElements();
+    int64_t regSize = util::VL_BITS / dElemType.getIntOrFloatBitWidth();
+    int64_t targetRegSize = regSize / factor;
+    Type targetRegType = rewriter.getIntegerType(targetWidth);
+    if (llvm::isa<FloatType>(dElemType))
+      targetRegType =
+          targetWidth == 16 ? rewriter.getF16Type() : rewriter.getF32Type();
+    if (vecSize != regSize) {
+      VectorType castRegType =
+          VectorType::get(SmallVector<int64_t>{regSize}, dElemType);
+      UnrealizedConversionCastOp ucc =
+          rewriter.create<UnrealizedConversionCastOp>(loc, castRegType, data);
+      ucc->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
+      data = ucc->getResult(0);
+    }
+    VectorType targetVectorTy = VectorType::get(targetRegSize, targetRegType);
+    LLVM::BitcastOp bitcast =
+        rewriter.create<LLVM::BitcastOp>(loc, targetVectorTy, data);
+    bitcast->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
+    store->setOperand(store->getNumOperands() - 1, bitcast);
+  }
+
   LogicalResult matchAndRewrite(VFMaskedStoreOp store,
                                 PatternRewriter &rewriter) const override {
     LDBG("process operation : " << store);
+    auto moduleOp = store->getParentOfType<ModuleOp>();
+    bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
     VectorType vectorTy = store.getVectorType();
     auto vecElemTy = vectorTy.getElementType();
     auto elemWidth = vecElemTy.getIntOrFloatBitWidth();
@@ -343,19 +379,23 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
       if (elemWidth == 8 && elementAlignment == 16) {
         store.setPattern(hivmave::StoreDist::PK_B16);
         LDBG("set store dist from NORM to PK_B16");
+        changeStoreVectorType(store, rewriter, 2, 16);
         return success();
       } else if (elemWidth == 16 && elementAlignment == 32) {
         store.setPattern(hivmave::StoreDist::PK_B32);
         LDBG("set store dist from NORM to PK_B32");
+        changeStoreVectorType(store, rewriter, 2, 32);
         return success();
       } else if (elemWidth == 8 && elementAlignment == 32) {
         store.setPattern(hivmave::StoreDist::PK4_B32);
         LDBG("set store dist from NORM to PK4_B32");
+        if (archIs910_95)
+          changeStoreVectorType(store, rewriter, 4, 32);
         return success();
       }
     }
 
-    auto maskType = store.getVal().getType().dyn_cast<VectorType>();
+    auto maskType = dyn_cast<VectorType>(store.getVal().getType());
     bool isMaskI1Type = maskType && maskType.getElementType().isInteger(1);
     if (!isMaskI1Type || !store->hasAttr(UnalignedAttr::name)) {
       return failure();
@@ -586,6 +626,47 @@ struct AVEFpToUIntPattern : public OpRewritePattern<VFFpToUIntOp> {
   }
 };
 
+struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
+  explicit AVEPgePattern(MLIRContext *context)
+      : OpRewritePattern<VFPgeOp>(context) {}
+  LogicalResult matchAndRewrite(VFPgeOp pge,
+                                PatternRewriter &rewriter) const override {
+    VectorType dstType = cast<VectorType>(pge.getRes().getType());
+    auto dstTyNumElems = cast<VectorType>(dstType).getNumElements();
+    int elementAlignment = getBitWidthFromAttr(pge);
+    if (elementAlignment == -1)
+      elementAlignment = util::VL_BITS / dstTyNumElems;
+    PgePattern pattern = pge.getPattern();
+    PgePattern normPattern = pattern;
+    // Use pattern all/half instead of const int
+    switch (elementAlignment) {
+    case 8:
+      if (pattern == PgePattern::VL128)
+        normPattern = PgePattern::H;
+      break;
+      break;
+    case 16:
+      if (pattern == PgePattern::VL128)
+        normPattern = PgePattern::ALL;
+      else if (pattern == PgePattern::VL64)
+        normPattern = PgePattern::H;
+      break;
+    case 32:
+      if (pattern == PgePattern::VL64)
+        normPattern = PgePattern::ALL;
+      else if (pattern == PgePattern::VL32)
+        normPattern = PgePattern::H;
+      break;
+    default:
+      llvm_unreachable("Invalid element bit width for a predicate vector.");
+    }
+    if (normPattern == pattern)
+      return failure();
+    pge.setPattern(normPattern);
+    return success();
+  }
+};
+
 static void adaptBitWidthForLoad(IRRewriter &rewriter,
                                  mlir::func::FuncOp &funcOp,
                                  bool archIs910_95) {
@@ -750,6 +831,9 @@ public:
     patterns.add<AVEVectorLayoutCastPattern>(ctx);
     patterns.add<AVEIntlvFuncDistPattern<VFGatherOp>>(ctx);
     patterns.add<AVEIntlvFuncDistPattern<VFVCIOp>>(ctx);
+    // norm pge pattern to all/half, used during bisheng memory analysis
+    // TODO: After bisheng memory analysis is complete, it can be deleted
+    patterns.add<AVEPgePattern>(ctx);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       signalPassFailure();
