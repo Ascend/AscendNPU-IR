@@ -35,6 +35,7 @@
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h"
 #include "bishengir/Dialect/LLVMIR/Transforms/Passes.h"
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
@@ -78,6 +79,7 @@ inline void registerAllPasses() {
   mlir::ascend_dpx::registerBishengIRTransformsPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
+  mlir::hivmave::registerAveLoopOptimize();
   mlir::memref::registerBiShengIRMemRefPasses();
   mlir::tensor::registerBiShengIRTensorPasses();
   mlir::scf::registerBiShengIRSCFPasses();
