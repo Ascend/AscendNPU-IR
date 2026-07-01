@@ -50,7 +50,6 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         hivmave::createComplexReductionIntermediateLoweringPass());
     pm.addPass(createCanonicalizerPass());
-    pm.nest<func::FuncOp>().addPass(hivmave::createPLTToPLTMPass());
     OptimizeReductionLoopHIVMAVEOptions optimizeReductionLoopOptions;
     optimizeReductionLoopOptions.maxSplit =
         hivmAVEPipelineOptions.maxReductionSplitNum;
@@ -60,7 +59,7 @@ static void hivmAVEOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         hivmave::createOptimizeReductionLoopHIVMAVEPass(
             optimizeReductionLoopOptions));
-    pm.nest<func::FuncOp>().addPass(hivmave::createProcessWideVextfPass());
+    pm.nest<func::FuncOp>().addPass(hivmave::createAveLoopOptimizePass());
     pm.nest<func::FuncOp>().addPass(hivmave::createLegalizeOptHIVMAVEPass());
     pm.nest<func::FuncOp>().addPass(
         hivmave::createReplaceWithVectorScalarPass());

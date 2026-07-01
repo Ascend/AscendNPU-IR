@@ -29,7 +29,7 @@ std::unique_ptr<Pass> createAVENormalizeOpsPass();
 std::unique_ptr<Pass> createReplaceWithVectorScalarPass();
 
 /// Unroll and add deintlv for vextf
-std::unique_ptr<Pass> createProcessWideVextfPass();
+std::unique_ptr<Pass> createAveLoopOptimizePass();
 
 /// Unroll and add deintlv for vsstb
 std::unique_ptr<Pass> createProcessVsstbPass();
