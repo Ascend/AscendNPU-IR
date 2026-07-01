@@ -75,7 +75,11 @@ public:
     auto perOffset = CEIL_DIV(lockResTypeWith, bindArgTypeWith);
     // To avoid more than 1 lock_vars in 1 cache-line, every lock_var will use a
     // whole cache-line(64B, which is 8xi64), so the gap of offset should be 8
-    localOffset += perOffset * 8;
+    size_t cacheLinesPerLock =
+        op->hasAttr(SyncBlockLockUnorderedAttr::name)
+            ? hivm::kUnorderedSyncBlockLockCacheLines
+            : 1;
+    localOffset += perOffset * 8 * cacheLinesPerLock;
 
     rewriter.replaceOp(op, viewOp);
     return success();
@@ -95,6 +99,7 @@ void LowerCreateSyncBlockLockPass::runOnOperation() {
 
   RewritePatternSet patterns(&getContext());
 
+  LowerCreateSyncBlockLock::localOffset = 0;
   patterns.add<LowerCreateSyncBlockLock>(&getContext());
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }

@@ -1221,6 +1221,15 @@ def HIVM_SyncBlockLockWithSubblockAttr
   }];
 }
 
+def HIVM_SyncBlockLockUnorderedAttr
+    : HIVM_Attr<"SyncBlockLockUnordered", "sync_block_lock_unordered"> {
+  let description = [{
+    Marks create_sync_block_lock / sync_block_lock / sync_block_unlock /
+    free_lock_var ops that should use the unordered (Lamport bakery,
+    arrival-order) lock instead of the ordered token ring.
+  }];
+}
+
 def HIVM_TileMixCubeNumAttr
     : HIVM_Attr<"TileMixCubeNum", "tile_mix_cube_num"> {
   let description = [{
