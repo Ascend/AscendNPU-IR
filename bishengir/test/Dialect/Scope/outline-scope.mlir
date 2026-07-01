@@ -117,3 +117,87 @@ module {
     return %0 : tensor<8xi32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_memref_with_offset_scope_0(
+// CHECK-SAME: %[[REINTERPRET:.*]]: memref<8xf32, strided<[1], offset: ?>>) attributes {memref_attr = array<i32: 1>
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: memref.store %[[CST]], %[[REINTERPRET]][%[[C0]]]
+// CHECK: return
+
+// CHECK-LABEL: func.func @test_memref_with_offset(
+// CHECK: %[[C4:.*]] = arith.constant 4 : index
+// CHECK: %[[REINTERPRET:.*]] = memref.reinterpret_cast %[[ARG0:.*]] to offset: [%[[C4]]]
+// CHECK: call @test_memref_with_offset_scope_0(%[[REINTERPRET]])
+module {
+  func.func @test_memref_with_offset(%arg0: memref<?xf32>) {
+    %c4 = arith.constant 4 : index
+    %reinterpret = memref.reinterpret_cast %arg0 to offset: [%c4], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1], offset: ?>>
+    %cst = arith.constant 1.0 : f32
+    %c0 = arith.constant 0 : index
+    scope.scope : () -> () {
+      memref.store %cst, %reinterpret[%c0] : memref<8xf32, strided<[1], offset: ?>>
+      scope.return
+    } {outline = true}
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_memref_without_offset_scope_0(
+// CHECK-SAME: %[[REINTERPRET:.*]]: memref<8xf32, strided<[1]>>) attributes {memref_attr = array<i32: 0>
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: memref.store %[[CST]], %[[REINTERPRET]][%[[C0]]]
+// CHECK: return
+
+// CHECK-LABEL: func.func @test_memref_without_offset(
+// CHECK: %[[REINTERPRET:.*]] = memref.reinterpret_cast %[[ARG0:.*]] to offset: [0]
+// CHECK: call @test_memref_without_offset_scope_0(%[[REINTERPRET]])
+module {
+  func.func @test_memref_without_offset(%arg0: memref<?xf32>) {
+    %reinterpret = memref.reinterpret_cast %arg0 to offset: [0], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1]>>
+    %cst = arith.constant 1.0 : f32
+    %c0 = arith.constant 0 : index
+    scope.scope : () -> () {
+      memref.store %cst, %reinterpret[%c0] : memref<8xf32, strided<[1]>>
+      scope.return
+    } {outline = true}
+    return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_mixed_inputs_scope_0(
+// CHECK-SAME: %[[REINTERPRET1:.*]]: memref<8xf32, strided<[1], offset: ?>>,
+// CHECK-SAME: %[[REINTERPRET2:.*]]: memref<8xf32, strided<[1], offset: 2>>) attributes {memref_attr = array<i32: 1, 1>
+// CHECK: %[[CST:.*]] = arith.constant 1.000000e+00 : f32
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: memref.store %[[CST]], %[[REINTERPRET1]][%[[C0]]]
+// CHECK: memref.store %[[CST]], %[[REINTERPRET2]][%[[C0]]] : memref<8xf32, strided<[1], offset: 2>>
+// CHECK: return
+
+// CHECK-LABEL: func.func @test_mixed_inputs(
+// CHECK: %[[C4:.*]] = arith.constant 4 : index
+// CHECK: %[[REINTERPRET1:.*]] = memref.reinterpret_cast %[[ARG0:.*]] to offset: [%[[C4]]]
+// CHECK: %[[REINTERPRET2:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [2]
+// CHECK: call @test_mixed_inputs_scope_0(%[[REINTERPRET1]], %[[REINTERPRET2]])
+module {
+  func.func @test_mixed_inputs(%arg0: memref<?xf32>, %arg1: memref<?xf32>) {
+    %c4 = arith.constant 4 : index
+    %reinterpret1 = memref.reinterpret_cast %arg0 to offset: [%c4], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1], offset: ?>>
+    %reinterpret2 = memref.reinterpret_cast %arg1 to offset: [2], sizes: [8], strides: [1] : memref<?xf32> to memref<8xf32, strided<[1], offset: 2>>
+    %cst = arith.constant 1.0 : f32
+    %c0 = arith.constant 0 : index
+    scope.scope : () -> () {
+      memref.store %cst, %reinterpret1[%c0] : memref<8xf32, strided<[1], offset: ?>>
+      memref.store %cst, %reinterpret2[%c0] : memref<8xf32, strided<[1], offset: 2>>
+      scope.return
+    } {outline = true}
+    return
+  }
+}
