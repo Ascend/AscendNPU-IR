@@ -24,6 +24,7 @@
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/WithColor.h"
 #include <algorithm>
 
 #define DEBUG_TYPE "hivm-plan-memory"
@@ -1768,19 +1769,6 @@ void MemPlan::ExpandMultiBufferStorageEntry() {
   }
 }
 
-bool MemPlan::IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
-                                        size_t restBufferSize,
-                                        size_t alignUnit) {
-  auto iter =
-      bufferScope2RequiredSize.find(rootStorageEntry->bufInfo->bufferScope);
-  assert(iter != bufferScope2RequiredSize.end());
-  if (iter->second <= restBufferSize) {
-    PlanBuffersWithoutReuse(rootStorageEntry, alignUnit);
-    return true;
-  }
-  return false;
-}
-
 void MemPlan::PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
                                       size_t alignUnit) {
   uint offset = 0;
@@ -1808,21 +1796,21 @@ void MemPlan::MergeSameScopeSE() {
   }
 
   // set bufferScope2RequiredSize for all StorageEntry
-  for (auto &rootStorageEntry : memscope2rootStorageEntry) {
-    auto bufferSpaceInfo = GetBufferSpaceInfo(rootStorageEntry.first);
-    size_t accumulateSize = AlignUp(rootStorageEntry.second->bufInfo->constBits,
-                                    bufferSpaceInfo.first);
-    for (auto &childrenStorageEntry : rootStorageEntry.second->mergedChildren) {
+  for (auto [memScope, rootStorageEntry] : memscope2rootStorageEntry) {
+    auto bufferSpaceInfo = GetBufferSpaceInfo(memScope);
+    size_t accumulateSize =
+        AlignUp(rootStorageEntry->bufInfo->constBits, bufferSpaceInfo.first);
+    for (auto &childrenStorageEntry : rootStorageEntry->mergedChildren) {
       size_t curStorageSize = AlignUp(childrenStorageEntry->bufInfo->constBits,
                                       bufferSpaceInfo.first);
       accumulateSize = accumulateSize + curStorageSize;
     }
-    bufferScope2RequiredSize[rootStorageEntry.first] = accumulateSize;
+    bufferScope2RequiredSize[memScope] = accumulateSize;
   }
 }
 
-void mlir::hivm::MemPlan::PlanMemAddressForLevel0(
-    StorageEntry *rootStorageEntry) {
+uint64_t MemPlan::PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
+                                               int specLevel) {
   // get the buffer info for a given scope.
   auto bufferSpaceInfo =
       GetBufferSpaceInfo(rootStorageEntry->bufInfo->bufferScope);
@@ -1833,8 +1821,9 @@ void mlir::hivm::MemPlan::PlanMemAddressForLevel0(
   MemBoundList outline;
   PlanRecHis history;
   SpecInfo si;
-  si.specLevel = SPEC_LEVEL_0;
-  si.maxLevel = SPEC_LEVEL_0;
+  si.specLevel = specLevel;
+  si.maxLevel = specLevel;
+  si.minLevel = specLevel;
   int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
   outline.push_back(
       std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
@@ -1859,44 +1848,47 @@ void mlir::hivm::MemPlan::PlanMemAddressForLevel0(
     maxAllocBits =
         std::max(maxAllocBits, child->bitsOffset + child->alignedConstBits);
   }
-  failApplyBufferInfo[rootStorageEntry->bufInfo->bufferScope] = maxAllocBits;
+  return maxAllocBits;
 }
 
 PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
   // Start plan
-  for (auto &it : memscope2rootStorageEntry) {
-    StorageEntry *rootStorageEntry = it.second;
+  for (auto [memScope, rootStorageEntry] : memscope2rootStorageEntry) {
     assert(rootStorageEntry && "Root StorageEntry should not be null");
     // get the buffer info for a given scope.
-    auto bufferSpaceInfo =
-        GetBufferSpaceInfo(rootStorageEntry->bufInfo->bufferScope);
+    auto bufferSpaceInfo = GetBufferSpaceInfo(memScope);
     size_t align = bufferSpaceInfo.first;
     size_t maxBits = bufferSpaceInfo.second;
-    if (rootStorageEntry->mergedChildren.empty()) {
-      // Only one buffer needs to be allocated within the same scope, allocate
-      // directly.
-      uint64_t needAlignedBits =
-          AlignUp(rootStorageEntry->bufInfo->constBits, align);
-      if (needAlignedBits > maxBits) {
-        failApplyBufferInfo[rootStorageEntry->bufInfo->bufferScope] =
-            needAlignedBits;
-        return PlanStatus::PLAN_FAILED;
-      }
-      rootStorageEntry->bitsOffset = 0;
-      rootStorageEntry->alignedConstBits = needAlignedBits;
-      continue;
-    }
-    if (IsEnoughForBuffersNoReuse(rootStorageEntry, maxBits, align)) {
+    // No reuse plan
+    auto iter = bufferScope2RequiredSize.find(memScope);
+    assert(iter != bufferScope2RequiredSize.end());
+    if (iter->second <= maxBits) {
       ReportMemLifeDebugInfo(rootStorageEntry);
+      PlanBuffersWithoutReuse(rootStorageEntry, align);
+      LDBG("\nApply no reuse plan strategy for " << memScope << " memScope\n");
       continue;
+    } else if (rootStorageEntry->mergedChildren.empty()) {
+      failApplyBufferInfo[memScope] = iter->second;
+      return PlanStatus::PLAN_FAILED;
     }
-    rootStorageEntry = GetReorderRootStorageEntry(rootStorageEntry);
-    ReportMemLifeDebugInfo(rootStorageEntry);
-    // memory outline in a given buffer scope.
+
     MemBoundList outline;
     PlanRecHis history;
     SpecInfo si;
     si.specLevel = si.maxLevel;
+    // No reuse dma buffer plan
+    rootStorageEntry = GetReorderRootStorageEntry(rootStorageEntry);
+    ReportMemLifeDebugInfo(rootStorageEntry);
+    LDBG("\nTry no pipe stall plan strategy for " << memScope << " memScope\n");
+    auto maxAllocBits =
+        PlanMemAddressForSingleLevel(rootStorageEntry, si.maxLevel);
+    if (maxAllocBits <= maxBits) {
+      ReportAllocatedEntryDebugInfo(rootStorageEntry, false);
+      continue;
+    }
+    memscope2allocatedEntry.erase(memScope);
+    // memory outline in a given buffer scope.
+    LDBG("\nTry multi level plan strategy for " << memScope << " memScope\n");
     int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
     outline.push_back(
         std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
@@ -1929,7 +1921,8 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
         }
         if (as == PlanStatus::PLAN_FAILED) {
           ReportAllocatedEntryDebugInfo(rootStorageEntry, true);
-          PlanMemAddressForLevel0(rootStorageEntry);
+          failApplyBufferInfo[memScope] =
+              PlanMemAddressForSingleLevel(rootStorageEntry, SPEC_LEVEL_0);
           return as;
         }
       }
@@ -1939,6 +1932,10 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
       curEntry = rootStorageEntry->mergedChildren[si.childIdx];
     }
     ReportAllocatedEntryDebugInfo(rootStorageEntry, false);
+    llvm::WithColor::warning(llvm::outs())
+        << "[hivm-plan-memory] There reused some dma buffers in " << memScope
+        << " address space, which may stall pipe. Not reusing dma buffer needs "
+        << maxAllocBits << " bits while " << maxBits << " bits available!\n";
   }
   planStatus = PlanStatus::PLAN_SUCCESS;
   return planStatus;
@@ -2831,6 +2828,7 @@ LogicalResult MemPlan::DynamicSetUbSpaceSize(
         return failure();
       }
       ubSpaceSize = simtVFUbSize;
+      LDBG("Simt mode dynamically set ub space size: " << ubSpaceSize << "\n");
       return success();
     }
   }
