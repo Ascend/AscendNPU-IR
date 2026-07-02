@@ -631,7 +631,7 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
           item->ops.insert(inc);
           opToWorkItemMap[inc].push_back(item.get());
           LLVM_DEBUG(dbgs() << "[absorbMergerOps] absorbed counter addi: ";
-                    inc->print(dbgs()); dbgs() << '\n');
+                     inc->print(dbgs()); dbgs() << '\n');
         }
       }
       item->ops.insert(&op);
@@ -760,9 +760,10 @@ LogicalResult CVPipelineImpl::markOutputs() {
             continue;
           Operation *usrTop = getContainedParent(pipelineLoop, usr);
           if (opToWorkItemMap.contains(usrTop) &&
-              llvm::any_of(opToWorkItemMap[usrTop], [op](WorkItem *usrWI) {
-                return !usrWI->ops.contains(op);
-              })) {
+              llvm::any_of(opToWorkItemMap[usrTop],
+                           [op](const WorkItem *usrWI) {
+                             return !usrWI->ops.contains(op);
+                           })) {
             item->localOutputs.push_back(std::make_pair(result, nullptr));
             break;
           } // End loop over result.users
@@ -1486,8 +1487,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
         // below is the only one any consumer should read from.
         auto clonedStore = dyn_cast<hivm::StoreOp>(dps.getOperation());
         Operation *backingAlloc =
-            innerToTensor ? traceAllocLike(innerToTensor.getMemref())
-                          : nullptr;
+            innerToTensor ? traceAllocLike(innerToTensor.getMemref()) : nullptr;
         if (clonedStore && innerToTensor &&
             isa_and_present<bishengir::memref_ext::AllocWorkspaceOp>(
                 backingAlloc)) {
@@ -1516,54 +1516,55 @@ LogicalResult CVPipelineImpl::migrateOps() {
           if (!newResult)
             return failure();
         } else {
-        // If there are masking subviews, update those first
-        FailureOr<Value> updatedSubviewOr =
-            updateMaskingSubview(builder, loc, expanded, *initOperand, iv);
-        if (failed(updatedSubviewOr))
-          return failure();
-        Value updatedSubview = *updatedSubviewOr;
-        // Then replace the toTensor operand if it is not updated
-        if (!innerToTensor)
-          return dps->emitWarning("[cv-pipelining] expected memref outputs to "
-                                  "be passed as tensors");
-        OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
-        if (memrefOperand->get() != updatedSubview) {
-          // Always build the subview against a memref type — `initOperand`
-          // may itself be a tensor when the writer's DPS init is a
-          // `to_tensor` of an alloc (e.g. cross-core `hivm.hir.copy`, whose
-          // L1 destination is presented as a tensor). Driving createSubview
-          // off `initOperand`'s type would crash there.
-          builder.setInsertionPointToStart(item->forOp.getBody());
-          Value toTensorSubview = createSubview(
-              builder, loc, expanded, memrefOperand->get().getType(), iv);
-          if (!toTensorSubview)
+          // If there are masking subviews, update those first
+          FailureOr<Value> updatedSubviewOr =
+              updateMaskingSubview(builder, loc, expanded, *initOperand, iv);
+          if (failed(updatedSubviewOr))
             return failure();
-          // If the DPS init is itself a memref (e.g. fixpipe writing
-          // directly to an alloc), redirect it onto the multibuffered slot.
-          // If it is a tensor backed by a `to_tensor` (e.g. the cross-core
-          // copy case), leave it alone — rewriting the inner toTensor's
-          // memref operand below is enough to redirect the writer.
-          //
-          // The fixpipe writes to a UB-typed memref but `toTensorSubview`
-          // has been address-space-stripped to match the to_tensor's memref
-          // operand. Recover the pre-cast UB-typed subview for the writer
-          // so the fixpipe verifier and downstream codegen see the correct
-          // address space; otherwise the writer is treated as an
-          // unspecified-aspace store and the staged result is corrupted.
-          if (!updatedSubview &&
-              isa<MemRefType>(initOperand->get().getType())) {
-            Value writerSubview = toTensorSubview;
-            if (auto cast =
-                    toTensorSubview.getDefiningOp<memref::MemorySpaceCastOp>())
-              writerSubview = cast.getSource();
-            initOperand->set(writerSubview);
+          Value updatedSubview = *updatedSubviewOr;
+          // Then replace the toTensor operand if it is not updated
+          if (!innerToTensor)
+            return dps->emitWarning(
+                "[cv-pipelining] expected memref outputs to "
+                "be passed as tensors");
+          OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
+          if (memrefOperand->get() != updatedSubview) {
+            // Always build the subview against a memref type — `initOperand`
+            // may itself be a tensor when the writer's DPS init is a
+            // `to_tensor` of an alloc (e.g. cross-core `hivm.hir.copy`, whose
+            // L1 destination is presented as a tensor). Driving createSubview
+            // off `initOperand`'s type would crash there.
+            builder.setInsertionPointToStart(item->forOp.getBody());
+            Value toTensorSubview = createSubview(
+                builder, loc, expanded, memrefOperand->get().getType(), iv);
+            if (!toTensorSubview)
+              return failure();
+            // If the DPS init is itself a memref (e.g. fixpipe writing
+            // directly to an alloc), redirect it onto the multibuffered slot.
+            // If it is a tensor backed by a `to_tensor` (e.g. the cross-core
+            // copy case), leave it alone — rewriting the inner toTensor's
+            // memref operand below is enough to redirect the writer.
+            //
+            // The fixpipe writes to a UB-typed memref but `toTensorSubview`
+            // has been address-space-stripped to match the to_tensor's memref
+            // operand. Recover the pre-cast UB-typed subview for the writer
+            // so the fixpipe verifier and downstream codegen see the correct
+            // address space; otherwise the writer is treated as an
+            // unspecified-aspace store and the staged result is corrupted.
+            if (!updatedSubview &&
+                isa<MemRefType>(initOperand->get().getType())) {
+              Value writerSubview = toTensorSubview;
+              if (auto cast = toTensorSubview
+                                  .getDefiningOp<memref::MemorySpaceCastOp>())
+                writerSubview = cast.getSource();
+              initOperand->set(writerSubview);
+            }
+            memrefOperand->set(toTensorSubview);
           }
-          memrefOperand->set(toTensorSubview);
-        }
-        builder.setInsertionPointAfter(item->forOp);
-        newResult = createToTensor(builder, loc, expanded);
-        if (!newResult)
-          return failure();
+          builder.setInsertionPointAfter(item->forOp);
+          newResult = createToTensor(builder, loc, expanded);
+          if (!newResult)
+            return failure();
         }
       } else
         return dps->emitWarning("[cv-pipelining] unexpected output type that "
@@ -1946,7 +1947,7 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
 namespace {
 // Return the ancestor of `op` that lives directly inside `block`, or nullptr
 // if `op` is not nested within `block`.
-Operation *ancestorInBlock(Operation *op, Block *block) {
+Operation *ancestorInBlock(Operation *op, const Block *block) {
   Operation *cur = op;
   while (cur) {
     if (cur->getBlock() == block)
