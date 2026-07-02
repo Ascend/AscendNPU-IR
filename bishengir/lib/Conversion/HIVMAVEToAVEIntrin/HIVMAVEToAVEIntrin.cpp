@@ -1466,11 +1466,6 @@ struct HIVMPgeOpLowering : public ConvertOpToLLVMPattern<VFPgeOp> {
       return failure();
     auto loc = pge->getLoc();
     PgePattern realPattern = pge.getPattern();
-    if (realPattern == PgePattern::ALL)
-      realPattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
-                                               util::PREDICATE_BITS)
-                        .value()
-                        .getValue();
     Value pattern = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(),
         rewriter.getI32IntegerAttr(static_cast<uint32_t>(realPattern)));
