@@ -637,6 +637,12 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
     if (elementAlignment == -1)
       elementAlignment = util::VL_BITS / dstTyNumElems;
     PgePattern pattern = pge.getPattern();
+    if (pattern == PgePattern::ALL &&
+        dstTyNumElems != util::VL_BITS / elementAlignment)
+      pattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
+                                           util::PREDICATE_BITS)
+                    .value()
+                    .getValue();
     PgePattern normPattern = pattern;
     // Use pattern all/half instead of const int
     switch (elementAlignment) {

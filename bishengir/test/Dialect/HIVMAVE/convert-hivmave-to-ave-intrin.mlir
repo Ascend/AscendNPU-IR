@@ -78,4 +78,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     }
     return
   }
+
+  // CHECK-LABEL: func.func @pge_normalize_all_to_half_pb16
+  // CHECK: %[[PAT:.*]] = llvm.mlir.constant(12 : i32) : i32
+  // CHECK: "hivm_regbaseintrins.intr.hivm.pge.b16"(%[[PAT]], %{{.*}}) {mask_bit_width = 16 : i32} : (i32, i32) -> vector<256xi1>
+  func.func @pge_normalize_all_to_half_pb16(%arg0: memref<64xf16, #hivm.address_space<ub>>, %arg1: f16) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %mask = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb16>} : vector<64xi1>
+    %val = ave.hir.scalar_broadcast %arg1 : f16 -> vector<64xf16>
+    ave.hir.masked_store <NORM_B16> %arg0[%c0], %mask, %val : memref<64xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
+    return
+  }
 }
