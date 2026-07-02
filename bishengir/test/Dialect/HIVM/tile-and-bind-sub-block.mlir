@@ -3187,3 +3187,18 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 }
 
 // -----
+ 	 
+// CHECK-LABEL:   func.func @copy_last_dim_width_unaligned_aiv(
+// CHECK:           hivm.hir.copy
+// CHECK-NOT:       tiled_op
+// CHECK:           scf.if
+// CHECK:             hivm.hir.store
+// CHECK:           } {limit_sub_block_id0}
+// CHECK-NOT:       map_for_to_forall
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @copy_last_dim_width_unaligned_aiv(%arg0: tensor<1x1x1x8xf32>, %arg1: memref<1x1x1x8xf32>, %arg2: memref<1x1x1x8xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    hivm.hir.copy ins(%arg0 : tensor<1x1x1x8xf32>) outs(%arg1 : memref<1x1x1x8xf32>) {"inserted-copy"}
+    hivm.hir.store ins(%arg0 : tensor<1x1x1x8xf32>) outs(%arg2 : memref<1x1x1x8xf32>)
+    return
+  }
+}
