@@ -1150,7 +1150,7 @@ static Value getOrCreateCounterPrevious(PatternRewriter &rewriter,
     return counterPrevOut;
   }
 
-  if (defOp && isa<hivm::MmadL1Op>(defOp))
+  if (defOp && isa<LocalMatmulLikeOpInterface>(defOp))
     return rewriter.create<arith::ConstantIntOp>(loc, 0, 1);
   return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
 }
@@ -1466,7 +1466,8 @@ class NoBiasStrategy : public DecomposeStrategyBase {
   void handleTailFallback(PatternRewriter &rewriter,
                           NormalizeCtx &ctx) override {
     if (ctx.mayNotExec)
-      ctx.op->setAttr(kDeferredTailFallback, rewriter.getUnitAttr());
+      ctx.tmpNewMmad.getOperation()->setAttr(kDeferredTailFallback,
+                                            rewriter.getUnitAttr());
   }
 };
 
@@ -1478,7 +1479,8 @@ class ZeroInitStrategy : public DecomposeStrategyBase {
       return;
     }
     if (ctx.mayNotExec)
-      ctx.op->setAttr(kDeferredTailFallback, rewriter.getUnitAttr());
+      ctx.tmpNewMmad.getOperation()->setAttr(kDeferredTailFallback,
+                                            rewriter.getUnitAttr());
   }
 };
 
@@ -1618,6 +1620,7 @@ struct NormalizeMmadCCFPattern
     // create new mmad op
     ctx.newInit = mlir::utils::createEmptyOp(rewriter, ctx.insertPointOp->getLoc(),
                                              ctx.ccfInVal);
+    rewriter.setInsertionPointAfter(op);
     ctx.tmpNewMmad = cloneLocalMatmulLikeOp(rewriter, op);
 
     static ReuseL0CStrategy sReuseL0C;
@@ -1738,10 +1741,17 @@ public:
     if (ccfOutVal.hasOneUse()) {
       Operation *user = *ccfOutVal.getUsers().begin();
       if (auto nextForOp = dyn_cast<scf::ForOp>(user)) {
-        op->removeAttr(kDeferredTailFallback);
-        return success();  // next CCF (mayNotExec or not) handles it
+        // Check if the init arg corresponding to ccfOutVal is in L0C
+        // (kNormalizedInL0C records which result indices are in L0C)
+        for (unsigned i = 0; i < nextForOp.getInitArgs().size(); ++i) {
+          if (nextForOp.getInitArgs()[i] == ccfOutVal &&
+              isCCFOpResultInL0C(user, nextForOp.getResult(i))) {
+            op->removeAttr(kDeferredTailFallback);
+            return success();  // confirmed: next CCF handles it
+          }
+        }
       }
-      if (isa<hivm::MmadL1Op>(user)) {
+      if (isa<LocalMatmulLikeOpInterface>(user)) {
         op->removeAttr(kDeferredTailFallback);
         return success();  // next bare mmad handles dirty L0C
       }
@@ -1828,15 +1838,18 @@ public:
   }
 };
 
-
 void populateSetRealMKNPattern(RewritePatternSet &patterns) {
   patterns.add<SetRealMKNPattern>(patterns.getContext());
 }
 
 
 void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
-  patterns.add<NormalizeMmadCCFPattern, ReuseL0CAddIfPattern, DecomposeMatmulWithBiasPattern>(
+  patterns.add<NormalizeMmadCCFPattern, DecomposeMatmulWithBiasPattern>(
       patterns.getContext());
+}
+
+void populateAddIfPattern(RewritePatternSet &patterns) {
+  patterns.add<ReuseL0CAddIfPattern>(patterns.getContext());
 }
 
 void NormalizeMatmulPass::runOnOperation() {
@@ -1882,6 +1895,15 @@ void NormalizeMatmulPass::runOnOperation() {
     // But if it is BottomUpTraversal, the second mad will be decompose to
     // 'mad + add' and lose 'mad + mad' optimization.
     config.useTopDownTraversal = true;
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config)))
+      signalPassFailure();
+  }
+  // Block 3: AddIfPattern — all CCFs are normalized (kNormalizedInL0C set),
+  // so isCCFOpResultInL0C will succeed. No timing issue.
+  {
+    RewritePatternSet patterns(context);
+    populateAddIfPattern(patterns);
+    GreedyRewriteConfig config = GreedyRewriteConfig();
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config)))
       signalPassFailure();
   }
