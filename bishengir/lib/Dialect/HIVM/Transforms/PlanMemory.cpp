@@ -8,12 +8,12 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/PlanMemory.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/AllocToPointerCast.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExtImpl.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -196,7 +196,7 @@ void MemLivenessAnalysis::RecursionIR(Region *region, Liveness live) {
       return WalkResult::skip();
     } else if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
       RecursiveScopeOp(scopeOp, live);
-      return WalkResult::skip(); 
+      return WalkResult::skip();
     }
 
     // process operation
@@ -1947,8 +1947,9 @@ void MemPlan::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
   }
 #ifndef NDEBUG
   for (auto &bufferLife : storageEntry->bufferLifeVec) {
-    LDBG("bufferLife : " << "allocTime : " << bufferLife->allocTime
-                         << " , freeTime : " << bufferLife->freeTime << "\n");
+    LDBG("bufferLife : "
+         << "allocTime : " << bufferLife->allocTime
+         << " , freeTime : " << bufferLife->freeTime << "\n");
   }
   LDBG("\n");
 #endif
@@ -2255,10 +2256,14 @@ bool MemPlan::VerifyConflictStage1(
   // Multi-buffer reuse multi buffer
 
   // Multi-buffer case: require enough multibuffer entries for all buffer
-  // instances.
-  if (e->multiBufferNum > 1 && otherBufferEntries.size() < e->multiBufferNum) {
+  // instances, and only first buffer(not other relation entries) can reuse in
+  // level1.
+  auto otherBufferEntriesSize = otherBufferEntries.size();
+  if (e->multiBufferNum > 1 &&
+      (otherBufferEntriesSize < e->multiBufferNum - 1 ||
+       e->otherBufferRelationEntries.empty())) {
     // Not enough historical multibuffer entries to match current multi-buffer
-    // requirement.
+    // requirement, or current entry is not first buffer.
     return true;
   }
 
@@ -2266,7 +2271,7 @@ bool MemPlan::VerifyConflictStage1(
   // entry conflicts with historical records at its offset, the whole
   // multi-buffer reuse fails. Only when all required multibuffer entries are
   // conflict-free can we reuse (return false).
-  for (uint32_t i = 0; i < e->multiBufferNum; ++i) {
+  for (uint32_t i = 0; i < otherBufferEntriesSize; ++i) {
     StorageEntry *multiRelationMultiBufferEntry = otherBufferEntries[i];
     if (!multiRelationMultiBufferEntry) {
       return true;
@@ -2373,6 +2378,8 @@ void MemPlan::PlanRelationOtherBufferEntryAddress(
       if (StorageEntry *re = e->otherBufferRelationEntries[i])
         re->bitsOffset = otherBufferOffsets[i];
     }
+  } else {
+    llvm_unreachable("Does not support other buffer entries reuse in level1!");
   }
 }
 
@@ -3024,7 +3031,7 @@ PlanMemoryPass::PlanMemoryForFuncOp(
         vfInplaceReuseAnalysis.getVFCallInplaceReuseInfo(funcOp));
     memPlan.SetSyncBlockPositions(memLiveness.syncBlockPositions);
     memPlan.SetCVMixIdReuseAllowedPairs(cvMixIdReuseAllowedPairs_);
-    
+
     const bool isLastAttempt = attempt == kPlanRetryCount - 1;
     if (succeeded(memPlan.plan(/*emitErrors=*/isLastAttempt))) {
       return make_optional(memPlan.GetBuffer2Offsets());
@@ -3125,9 +3132,8 @@ PlanMemoryPass::BuildCVReuseAllowedPairs(ModuleOp moduleOp) {
     // First pass: assign opIndex to every op.
     DenseMap<Operation *, int64_t> opIndex;
     int64_t idx = 0;
-    funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
-      opIndex[op] = idx++;
-    });
+    funcOp->walk<WalkOrder::PreOrder>(
+        [&](Operation *op) { opIndex[op] = idx++; });
     // Second pass: for each cvMixId markOp, compute use range.
     auto &ranges = perFuncRanges[funcOp];
     funcOp->walk<WalkOrder::PreOrder>([&](annotation::MarkOp markOp) {
@@ -3205,7 +3211,7 @@ PlanMemoryPass::BuildCVReuseAllowedPairs(ModuleOp moduleOp) {
     }
   }
   LDBG("cross-scope CV-buffer reuse: " << allowed.size() / 2
-                  << " pair(s) allowed\n");
+                                       << " pair(s) allowed\n");
   return allowed;
 }
 
