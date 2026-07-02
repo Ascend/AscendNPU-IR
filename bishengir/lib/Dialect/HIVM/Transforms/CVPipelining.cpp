@@ -216,8 +216,8 @@ private:
 
   DenseSet<Operation *> toErase;
 
-  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs_;
-  DenseMap<Value, Value> expandedWorkspaceMap_;
+  DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  DenseMap<Value, Value> expandedWorkspaceMap;
   // annotation.mark ops we've already emitted a "hint overrides kernel
   // switch" warning on, to avoid duplicate diagnostics for the same tensor.
   DenseSet<Operation *> warnedOverrideMarks;
@@ -284,16 +284,6 @@ filterMarkOpsValuesInsideLoop(ArrayRef<annotation::MarkOp> markOps,
   if (hasIlligalMarkOp)
     return failure();
   return success();
-}
-
-static int getMultibufferCount(annotation::MarkOp marker) {
-  auto attrDict = marker->getAttrDictionary();
-  hivm::util::validateMultiBufferAttr(attrDict);
-  auto multibufferAttr = llvm::dyn_cast_if_present<IntegerAttr>(
-      marker->getAttr(MultiBufferAttr::name));
-  if (!multibufferAttr)
-    return -1;
-  return multibufferAttr.getInt();
 }
 
 static void removeWorkspaceMultiBufferMarks(Operation *root) {
@@ -625,8 +615,8 @@ static void processWorkspaceOutputUsers(
       builder.setInsertionPoint(owner);
       Value sliceIdx;
       if (isa<scf::YieldOp>(owner)) {
-        sliceIdx = builder.create<arith::ConstantIndexOp>(
-            owner->getLoc(), numMultibuffer - 1);
+        sliceIdx = builder.create<arith::ConstantIndexOp>(owner->getLoc(),
+                                                          numMultibuffer - 1);
       } else {
         sliceIdx = owner->getParentOfType<scf::ForOp>().getInductionVar();
       }
@@ -816,30 +806,6 @@ LogicalResult CVPipelineImpl::absorbMergerOpsIntoWorkItems() {
   return success();
 }
 
-// Given memref value, populate users with all operations that uses any aliasing
-// memrefs as `memrefVal`
-static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
-  SmallVector<Operation *> traceStack;
-  DenseSet<Operation *> visited;
-  Value rootVal = traceValueDef(memrefVal);
-  if (!rootVal)
-    return;
-  traceStack.append(rootVal.user_begin(), rootVal.user_end());
-  while (!traceStack.empty()) {
-    Operation *op = traceStack.pop_back_val();
-    if (visited.contains(op))
-      continue;
-    visited.insert(op);
-    users.push_back(op);
-
-    // If not memref result, dont need to trace any more
-    if (op->getNumResults() == 1 &&
-        !isa<MemRefType>(op->getResult(0).getType()))
-      continue;
-    traceStack.append(op->user_begin(), op->user_end());
-  }
-}
-
 /// Walk the pipeline loop body and record which store-like ops (FixpipeOp,
 /// StoreOp) are under an active atomic effect.
 void CVPipelineImpl::collectAtomicEffects() {
@@ -868,7 +834,7 @@ void CVPipelineImpl::collectAtomicEffects() {
   });
 }
 LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
-  workspaceAllocs_.clear();
+  workspaceAllocs.clear();
   if (worklist.empty())
     return success();
 
@@ -877,7 +843,7 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
   for (Operation &op : pipelineLoop.getBody()->getOperations()) {
     if (auto mark = dyn_cast<annotation::MarkOp>(&op)) {
       if (auto alloc = traceAllocWorkspace(mark.getSrc())) {
-        auto &info = workspaceAllocs_[alloc];
+        auto &info = workspaceAllocs[alloc];
         info.multibuffer = preloadSlots;
         info.marker = mark;
       }
@@ -888,14 +854,14 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
       auto alloc = traceAllocWorkspace(toTensor.getMemref());
       if (!alloc)
         continue;
-      auto &info = workspaceAllocs_[alloc];
+      auto &info = workspaceAllocs[alloc];
       info.multibuffer = preloadSlots;
       info.toTensor = toTensor;
     }
   }
 
   SmallVector<AllocWorkspaceOp> incompleteAllocs;
-  for (auto &[alloc, info] : workspaceAllocs_) {
+  for (auto &[alloc, info] : workspaceAllocs) {
     if (!info.marker || !info.toTensor) {
       incompleteAllocs.push_back(alloc);
       continue;
@@ -905,14 +871,14 @@ LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
           "[cv-pipelining] expected preload workspace tensor to have one use");
   }
   for (AllocWorkspaceOp alloc : incompleteAllocs)
-    workspaceAllocs_.erase(alloc);
+    workspaceAllocs.erase(alloc);
   return success();
 }
 
 void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPoint(pipelineLoop);
-  for (auto &[alloc, info] : workspaceAllocs_) {
+  for (auto &[alloc, info] : workspaceAllocs) {
     Location loc = alloc.getLoc();
     MemRefType origType = alloc.getType();
     ArrayRef<int64_t> origShape = origType.getShape();
@@ -924,7 +890,7 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
         loc, newType, alloc.getWorkspaceArg(), alloc.getDynamicSize(),
         alloc.getOffset());
 
-    expandedWorkspaceMap_[alloc] = newAlloc;
+    expandedWorkspaceMap[alloc] = newAlloc;
 
     info.marker.getSrcMutable().set(newAlloc);
     info.marker->removeAttr(MultiBufferAttr::name);
@@ -941,7 +907,7 @@ LogicalResult CVPipelineImpl::markOutputs() {
       auto dps = dyn_cast<DestinationStyleOpInterface>(op);
       if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
         auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
-        if (alloc && workspaceAllocs_.contains(alloc)) {
+        if (alloc && workspaceAllocs.contains(alloc)) {
           item->workspaceOutputs.push_back(op);
           continue;
         }
@@ -979,9 +945,10 @@ LogicalResult CVPipelineImpl::markOutputs() {
             continue;
           Operation *usrTop = getContainedParent(pipelineLoop, usr);
           if (opToWorkItemMap.contains(usrTop) &&
-              llvm::any_of(opToWorkItemMap[usrTop], [op](WorkItem *usrWI) {
-                return !usrWI->ops.contains(op);
-              })) {
+              llvm::any_of(opToWorkItemMap[usrTop],
+                           [op](const WorkItem *usrWI) {
+                             return !usrWI->ops.contains(op);
+                           })) {
             item->localOutputs.push_back(std::make_pair(result, nullptr));
             break;
           }
@@ -1515,11 +1482,11 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
   int64_t offset;
   auto targetTy = cast<MemRefType>(initOperand->get().getType());
   SmallVector<int64_t> layoutStrides;
-  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
-  #else
+#else
   if (targetTy.getStridesAndOffset(layoutStrides, offset).failed()) {
-  #endif
+#endif
     subview->emitWarning("[cv-pipelining] unexpected memref layout");
     return failure();
   }
@@ -1565,7 +1532,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
     }
 
     // Replace workspace stores in c220
-    processWorkspaceOutputs(builder, item.get(), expandedWorkspaceMap_,
+    processWorkspaceOutputs(builder, item.get(), expandedWorkspaceMap,
                             item->irMap);
 
     auto *argIt =
@@ -1749,6 +1716,11 @@ LogicalResult CVPipelineImpl::migrateOps() {
                 "be passed as tensors");
           OpOperand *memrefOperand = &innerToTensor.getMemrefMutable();
           if (memrefOperand->get() != updatedSubview) {
+            // Always build the subview against a memref type — `initOperand`
+            // may itself be a tensor when the writer's DPS init is a
+            // `to_tensor` of an alloc (e.g. cross-core `hivm.hir.copy`, whose
+            // L1 destination is presented as a tensor). Driving createSubview
+            // off `initOperand`'s type would crash there.
             builder.setInsertionPointToStart(item->forOp.getBody());
             Value toTensorSubview = createSubview(
                 builder, loc, expanded, memrefOperand->get().getType(), iv);
@@ -1819,7 +1791,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
   // original loop result. Redirect them to the corresponding expanded slot
   // after all work-item loops and workspace tensors have been materialized.
   processWorkspaceOutputUsers(builder, worklist, opToWorkItemMap,
-                              expandedWorkspaceMap_, newLoop, numMultibuffer);
+                              expandedWorkspaceMap, newLoop, numMultibuffer);
 
   builder.setInsertionPointToEnd(newLoop.getBody());
   if (trailingAtomicEffect) {
@@ -1839,8 +1811,8 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
       if (!wsAlloc)
         continue;
 
-      auto expandedIt = expandedWorkspaceMap_.find(wsAlloc);
-      if (expandedIt == expandedWorkspaceMap_.end())
+      auto expandedIt = expandedWorkspaceMap.find(wsAlloc);
+      if (expandedIt == expandedWorkspaceMap.end())
         return output->emitWarning(
             "[cv-pipelining] missing expanded preload workspace");
 
@@ -2203,7 +2175,7 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
 namespace {
 // Return the ancestor of `op` that lives directly inside `block`, or nullptr
 // if `op` is not nested within `block`.
-Operation *ancestorInBlock(Operation *op, Block *block) {
+Operation *ancestorInBlock(Operation *op, const Block *block) {
   Operation *cur = op;
   while (cur) {
     if (cur->getBlock() == block)
@@ -2392,7 +2364,7 @@ LogicalResult CVPipelineImpl::run() {
   opToWorkItemMap = buildResult->opToWorkItemMap;
   outputMemrefMap = buildResult->outputMemrefMap;
   numMultibuffer = buildResult->resolvedMultibuffer;
-  workspaceAllocs_ = buildResult->workspaceAllocs;
+  workspaceAllocs = buildResult->workspaceAllocs;
 
   if (failed(absorbMergerOpsIntoWorkItems())) {
     revert();
