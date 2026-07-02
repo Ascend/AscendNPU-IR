@@ -128,6 +128,7 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
            "Enable multiple consumer fusion in AutoVectorizeV2.">,
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
            "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,
+    Option<"treeReduce", "tree-reduce", "bool", "false", "use tree reduce">,
   ];
 }
 
