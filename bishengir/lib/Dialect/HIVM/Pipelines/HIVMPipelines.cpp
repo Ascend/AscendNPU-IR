@@ -126,6 +126,17 @@ bufferizationPipeline(OpPassManager &pm,
       bufferization::LayoutMapOption::IdentityLayoutMap);
   oneShotOptions.allowReturnAllocsFromLoops = true;
   oneShotOptions.allowUnknownOps = true;
+  // We don't expect dynamic shape beacuse LiftLowestStride pass will generate
+  // extract_strided_metadata op, which can't be lowered in planMemory pass. So
+  // static identity layout for unknown type conversion should be used to avoid
+  // dynamic layout map in the generated memref type.
+  oneShotOptions.unknownTypeConverterFn =
+      [=](Value value, Attribute memorySpace,
+          const bufferization::BufferizationOptions &options) {
+        auto tensorType = cast<TensorType>(value.getType());
+        return bufferization::getMemRefTypeWithStaticIdentityLayout(
+            tensorType, memorySpace);
+      };
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableTritonKernelCompile) {
