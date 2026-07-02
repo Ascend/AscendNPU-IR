@@ -75,6 +75,19 @@ struct TestHIVMDimensionAnalyzerPass
         }
       });
     });
+
+    moduleOp.walk([&](hivm::DebugOp op) {
+      auto *parentOp = op->getParentOp();
+      hivm::detail::DimensionAnalyzer analyzer(parentOp);
+      auto res = analyzer.initialize();
+      if (failed(res)) {
+        LDBG("Failed initializing res");
+        llvm::report_fatal_error("Analyzer failed");
+      }
+      analyzer.computeTilingDim(true);
+      llvm::outs() << "Tiling dim for " << op << " is "
+                   << analyzer.getTilingDim(op.getArg()) << '\n';
+    });
   }
 
   void getDependentDialects(DialectRegistry &registry) const override {
