@@ -138,7 +138,7 @@ struct ConvertTritonAscendGPUToLLVMPass
     triton::ascend::populateTritonOpToDPXPatterns(typeConverter, patterns,
                                                   kDefaultPatternBenefit);
     // Compute capability 61 means devices do not support MMA
-    NVIDIA::populateDotOpToLLVMPatterns(typeConverter, patterns, 61,
+    triton::ascend::populateDotOpToLLVMPatterns(typeConverter, patterns,
                                         kDefaultPatternBenefit);
     triton::ascend::populateLoadStoreOpToLLVMPatterns(
         typeConverter, targetInfo, patterns, axisInfoAnalysis,

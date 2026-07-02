@@ -1180,6 +1180,14 @@ def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def EnableOptimizeMath : SIMTOptimizationControlOptions<
+  "Enable optimize math pass",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
 def EnableSimtReorderInstruction : SIMTOptimizationControlOptions<
   "Enable SIMT reorder instruction pass",
   "bool",

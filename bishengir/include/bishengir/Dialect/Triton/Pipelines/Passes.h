@@ -49,6 +49,10 @@ struct LowerTritonPipelineOptions
                      "reduces register pressure by interleaving "
                      "load-compute-store chains"),
       llvm::cl::init(false)};
+  PassOptions::Option<bool> enableOptimizeMath{
+      *this, "enable-optimize-math",
+      llvm::cl::desc("enable optimize math pass"),
+      llvm::cl::init(false)};
   PassOptions::Option<bool> enableSimtReorderInstruction{
       *this, "enable-simt-reorder-instruction",
       llvm::cl::desc("enable simt reorder instruction pattern"),

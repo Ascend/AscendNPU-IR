@@ -6,17 +6,15 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Promotes DotOp operands and result to f32 where necessary, enabling the
-// Ascend DPX hardware MMA path which requires f32 types.
+// Validates that DotOps do not exceed size limits for the Ascend DPX MMA path.
+// DotOps with M > 32, N > 32, or K > 64 will emit an error since the
+// tt.dot lowering is still experimental.
 //
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 
 namespace bishengir {
@@ -35,70 +33,38 @@ namespace triton {
 
 namespace {
 
-/// Cast a ranked-tensor value's element type to f32 via arith::ExtFOp.
-/// Returns the value unchanged if its element type is already f32.
-static Value castToF32(PatternRewriter &rewriter, Location loc, Value v) {
-  auto tensorTy = cast<RankedTensorType>(v.getType());
-  if (tensorTy.getElementType().isF32())
-    return v;
-  auto f32Ty = cast<RankedTensorType>(tensorTy.clone(rewriter.getF32Type()));
-  return rewriter.create<arith::ExtFOp>(loc, f32Ty, v);
-}
-
-/// Truncate a ranked-tensor value from f32 down to targetElemTy via
-/// arith::TruncFOp.  Returns the value unchanged when the types already match.
-static Value castFromF32(PatternRewriter &rewriter, Location loc, Value v,
-                         Type targetElemTy) {
-  auto tensorTy = cast<RankedTensorType>(v.getType());
-  if (tensorTy.getElementType() == targetElemTy)
-    return v;
-  auto dstTy = cast<RankedTensorType>(tensorTy.clone(targetElemTy));
-  return rewriter.create<arith::TruncFOp>(loc, dstTy, v);
-}
-
-/// If any operand (A, B, or accumulator C) of a DotOp is not f32, cast all
-/// operands to f32, create a new f32 DotOp, then truncate the result back to
-/// the original output element type if needed.
-class PromoteDotOperandsToF32 : public OpRewritePattern<DotOp> {
-public:
-  using OpRewritePattern::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(DotOp dotOp,
-                                PatternRewriter &rewriter) const override {
-    auto elemTy = [](Value v) {
-      return cast<RankedTensorType>(v.getType()).getElementType();
-    };
-
-    if (elemTy(dotOp.getA()).isF32() && elemTy(dotOp.getB()).isF32() &&
-        elemTy(dotOp.getC()).isF32())
-      return failure();
-
-    Location loc = dotOp.getLoc();
-    Value a = castToF32(rewriter, loc, dotOp.getA());
-    Value b = castToF32(rewriter, loc, dotOp.getB());
-    Value c = castToF32(rewriter, loc, dotOp.getC());
-    auto origResultTy = cast<RankedTensorType>(dotOp.getType());
-    auto f32ResultTy =
-        cast<RankedTensorType>(origResultTy.clone(rewriter.getF32Type()));
-    Value newDot = rewriter.create<DotOp>(loc, f32ResultTy, ValueRange{a, b, c},
-                                          dotOp->getAttrs());
-
-    Value result =
-        castFromF32(rewriter, loc, newDot, origResultTy.getElementType());
-
-    rewriter.replaceOp(dotOp, result);
-    return success();
-  }
-};
-
 class EnableAscendDPXMMAPass
     : public impl::EnableAscendDPXMMABase<EnableAscendDPXMMAPass> {
 public:
   void runOnOperation() override {
-    MLIRContext *ctx = &getContext();
-    RewritePatternSet patterns(ctx);
-    patterns.add<PromoteDotOperandsToF32>(ctx);
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
+    // Validate all DotOps - fail if any exceed size limits
+    WalkResult result = getOperation()->walk([](DotOp dotOp) -> WalkResult {
+      auto aType = cast<RankedTensorType>(dotOp.getA().getType());
+      auto bType = cast<RankedTensorType>(dotOp.getB().getType());
+
+      int64_t m = aType.getShape()[0];
+      int64_t k = aType.getShape()[1];
+      int64_t n = bType.getShape()[1];
+
+      int64_t maxM = 64;
+      int64_t maxN = 64;
+      int64_t maxK = 32;
+      int64_t total = maxM * maxN * maxK; 
+
+      int64_t product = m * n * k;
+      if (product > total) {
+        return dotOp.emitError()
+               << "tt.dot lowering is still experimental and in the works. "
+               << "The current dot is too large (MxNxK=" << m << "x" << n << "x"
+               << k << "). "
+               << "Try to minimize it such that M <= " << maxM
+               << ", N <= " << maxN << ", K <= " << maxK
+               << " and preferably M,N,K <= 32";
+      }
+      return WalkResult::advance();
+    });
+
+    if (result.wasInterrupted())
       signalPassFailure();
   }
 };

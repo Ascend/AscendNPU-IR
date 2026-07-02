@@ -26,12 +26,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
+#include "llvm/Support/Debug.h"
+
+#define DEBUG_TYPE "convert-shared-ptr-to-memdesc"
 
 #define GEN_PASS_DEF_CONVERTSHAREDPTRTOMEMDESC
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
@@ -133,6 +137,237 @@ buildMemDescType(MLIRContext *ctx, ArrayRef<int64_t> shape, Type elemType,
                                        /*mutableMemory=*/true);
 }
 
+/// Bank-aware swizzle picker for Ascend SHM (16 banks × 8 B vs 32 threads).
+/// (1) `vec * elemBytes * numThreads ≤ numBanks * bankWidthBytes` makes one
+///     contiguous-row read conflict-free.
+/// (2) `vec * maxPhase ≤ rowElems` keeps the XOR swizzle's column term in row.
+/// (1) sets vec; (2) caps maxPhase to the largest power-of-two fit.
+/// Shared by every encoding builder so memdesc_reinterpret stays byte-
+/// equivalent.  perPhase = 1.
+struct ScratchSwizzle {
+  unsigned vec;
+  unsigned perPhase;
+  unsigned maxPhase;
+};
+static ScratchSwizzle pickScratchSwizzle(Type elemTy, int64_t rowElems) {
+  constexpr unsigned kNumBanks = 16;
+  constexpr unsigned kBankWidthBytes = 8;
+  constexpr unsigned kNumThreads = 32;
+
+  unsigned elemBytes = static_cast<unsigned>(std::max<unsigned>(
+       1u, (elemTy.getIntOrFloatBitWidth() + 7) / 8));
+  unsigned bankBytesPerCycle = kNumBanks * kBankWidthBytes; // 128
+  unsigned warpBytesPerThreadCap = bankBytesPerCycle / kNumThreads; // 4
+  unsigned vec = std::max<unsigned>(1u, warpBytesPerThreadCap / elemBytes);
+  if (static_cast<int64_t>(vec) > rowElems)
+    vec = static_cast<unsigned>(std::max<int64_t>(1, rowElems));
+
+  unsigned numChunksPerRow = static_cast<unsigned>(std::max<int64_t>(1, rowElems / vec));
+  unsigned cap = std::min<unsigned>(kNumBanks, numChunksPerRow);
+  unsigned maxPhase = 1u;
+  while ((maxPhase << 1) <= cap)
+    maxPhase <<= 1;
+  return {vec, /*perPhase=*/1u, maxPhase};
+}
+
+/// Build the rank-2 envelope MemDescType used for staged-operand SHM.
+/// Per-tile views come from `ttg.memdesc_subslice` (preserves allocShape so
+/// `toLinearLayout` keeps using the full envelope's LL).
+///   col-tile (kAxis=1): <dimOther, envSize>; row-tile (kAxis=0): swapped.
+static triton::gpu::MemDescType
+buildScratchEnvMemDescType2D(MLIRContext *ctx, int64_t dimOther,
+                              int64_t envSize, int kAxis, int64_t tileSize,
+                              Type elemType) {
+  auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
+  SmallVector<unsigned> ones2D(2, 1u);
+  SmallVector<unsigned> order2D = {1u, 0u};
+  auto ctaLayout = triton::gpu::CTALayoutAttr::get(ctx, ones2D, ones2D, order2D);
+  // Pick swizzle from the per-tile row width so subslices of width tileSize
+  // get a non-degenerate maxPhase.
+  int64_t pickRow = (kAxis == 1) ? tileSize : dimOther;
+  ScratchSwizzle sw = pickScratchSwizzle(elemType, pickRow);
+  // Row-tile splits along the swizzle row, so the per-tile subslice's
+  // verifier requires maxPhase ≤ tileSize (else the swizzle XOR crosses
+  // tile boundaries). Needed by FA bwd_q (B-staged kAxis=0).
+  if (static_cast<int64_t>(sw.maxPhase) > tileSize) {
+    sw.maxPhase = static_cast<unsigned>(std::max<int64_t>(1, tileSize));
+  }
+  auto encoding = triton::gpu::SwizzledSharedEncodingAttr::get(
+      ctx, sw.vec, sw.perPhase, sw.maxPhase, order2D, ctaLayout);
+  SmallVector<int64_t, 2> shape =
+      (kAxis == 1) ? SmallVector<int64_t, 2>{dimOther, envSize}
+                   : SmallVector<int64_t, 2>{envSize, dimOther};
+  return triton::gpu::MemDescType::get(shape, elemType, encoding, smem,
+                                       /*mutableMemory=*/true);
+}
+
+/// Strip leading `ttg.convert_layout` ops.
+static Value stripConvertLayouts(Value v) {
+  while (auto cvt = v.getDefiningOp<triton::gpu::ConvertLayoutOp>())
+    v = cvt.getSrc();
+  return v;
+}
+
+/// Read-only classifier for the tile-offset structure of a scratch-acc
+/// load/store's pointer chain. Two forms:
+///   col-tile (kAxis=1): shape <dimOther, tileSize>, varying side innermost.
+///   row-tile (kAxis=0): shape <tileSize, dimOther>, varying side outermost.
+/// Covers both A:[M,K] (col-tile) and B:[K,N] (row-tile) without a tt.trans.
+struct ScratchAccess {
+  enum Kind { STATIC, DYNAMIC };
+  static_assert(static_cast<int>(Kind::STATIC) == 0, "STATIC must be 0");
+  static_assert(static_cast<int>(Kind::DYNAMIC) == 1, "DYNAMIC must be 1");
+  Kind kind;
+  int64_t dimOther = 0;
+  int64_t tileSize = 0;
+  int64_t startConst = 0;   // STATIC: element offset on tile axis
+  Value tileIdx;            // DYNAMIC: i32 tile index
+  int kAxis = 1;            // 1 = col-tile, 0 = row-tile
+  // Element offset on the OTHER axis.  Non-zero when the access is a
+  // row-stripe of a larger envelope (MStripeDotPattern: `otherStart =
+  // s * stripeM`).  When non-zero, the access's `dimOther` describes
+  // the stripe width (< envelope's `dimOther`) and we emit an extra
+  // memdesc_subslice along the other axis.
+  int64_t otherStart = 0;
+};
+
+static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
+  auto addptr = ptrTensor.getDefiningOp<triton::AddPtrOp>();
+  if (!addptr)
+    return std::nullopt;
+  Value offsets = stripConvertLayouts(addptr.getOffset());
+  auto offsetsTy = dyn_cast<RankedTensorType>(offsets.getType());
+  if (!offsetsTy || offsetsTy.getRank() != 2)
+    return std::nullopt;
+
+  auto addi = offsets.getDefiningOp<arith::AddIOp>();
+  if (!addi)
+    return std::nullopt;
+
+  // Classify `side` as the tile-axis offset by matching the K-1D index
+  // inside `expand_dims(_, axis=expectAxis)`. expectAxis=0 -> col-tile;
+  // expectAxis=1 -> row-tile.
+  auto classifyTileSide = [&](ScratchAccess &acc, Value side,
+                              int expectAxis) -> bool {
+    Value sideStripped = stripConvertLayouts(side);
+    auto bcast = sideStripped.getDefiningOp<triton::BroadcastOp>();
+    if (!bcast) return false;
+    Value bcastSrc = stripConvertLayouts(bcast.getSrc());
+    auto exp = bcastSrc.getDefiningOp<triton::ExpandDimsOp>();
+    if (!exp || exp.getAxis() != static_cast<uint32_t>(expectAxis)) return false;
+    Value expSrc = stripConvertLayouts(exp.getSrc());
+
+    // Tile axis is the OTHER axis from `expectAxis`.
+    int kAxis = 1 - expectAxis;
+    int otherAxis = expectAxis;
+    acc.kAxis = kAxis;
+    acc.tileSize = offsetsTy.getDimSize(kAxis);
+    acc.dimOther = offsetsTy.getDimSize(otherAxis);
+
+    // (a) bare make_range -> start = 0; caller reclassifies envelope vs tile.
+    if (auto rng = expSrc.getDefiningOp<triton::MakeRangeOp>()) {
+      acc.kind = ScratchAccess::STATIC;
+      acc.startConst = 0;
+      return true;
+    }
+
+    auto innerAdd = expSrc.getDefiningOp<arith::AddIOp>();
+    if (!innerAdd) return false;
+
+    for (Value v : {innerAdd.getLhs(), innerAdd.getRhs()}) {
+      Value vStripped = stripConvertLayouts(v);
+
+      // Static splat-of-constant via tt.splat (`splat(arith.constant N)`).
+      if (auto splat = vStripped.getDefiningOp<triton::SplatOp>()) {
+        Value src = splat.getSrc();
+        // DYNAMIC: src = arith.muli(tile_idx, const(tileSize))
+        if (auto mul = src.getDefiningOp<arith::MulIOp>()) {
+          for (auto [a, b] :
+               {std::pair{mul.getLhs(), mul.getRhs()},
+                std::pair{mul.getRhs(), mul.getLhs()}}) {
+            if (auto cst = b.getDefiningOp<arith::ConstantOp>()) {
+              if (auto ia = dyn_cast<IntegerAttr>(cst.getValue())) {
+                if (ia.getValue().getSExtValue() == acc.tileSize) {
+                  acc.kind = ScratchAccess::DYNAMIC;
+                  acc.tileIdx = a;
+                  return true;
+                }
+              }
+            }
+          }
+        }
+        // STATIC: src is a plain constant.
+        if (auto cst = src.getDefiningOp<arith::ConstantOp>()) {
+          if (auto ia = dyn_cast<IntegerAttr>(cst.getValue())) {
+            acc.kind = ScratchAccess::STATIC;
+            acc.startConst = ia.getValue().getSExtValue();
+            return true;
+          }
+        }
+        continue;
+      }
+
+      // Static dense<N> constant tensor.
+      if (auto cst = vStripped.getDefiningOp<arith::ConstantOp>()) {
+        if (auto da = dyn_cast<DenseElementsAttr>(cst.getValue());
+            da && da.isSplat()) {
+          acc.kind = ScratchAccess::STATIC;
+          acc.startConst =
+              static_cast<int64_t>(da.getSplatValue<APInt>().getSExtValue());
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // Walk the OTHER axis chain (broadcast → expand_dims → muli (or splat) →
+  // make_range) to recover its starting index.  Stripe accesses from
+  // MStripeDotPattern set `otherStart = s * stripeM`; full-width accesses
+  // start at 0.  Returns -1 on parse failure.
+  auto extractOtherStart = [&](Value otherSide) -> int64_t {
+    Value v = stripConvertLayouts(otherSide);
+    auto bcast = v.getDefiningOp<triton::BroadcastOp>();
+    if (!bcast) return -1;
+    v = stripConvertLayouts(bcast.getSrc());
+    auto exp = v.getDefiningOp<triton::ExpandDimsOp>();
+    if (!exp) return -1;
+    v = stripConvertLayouts(exp.getSrc());
+    // Skip the envSize multiplication: `muli(makeRange, envSplat-or-const)`.
+    if (auto mul = v.getDefiningOp<arith::MulIOp>()) {
+      // pick the make_range operand
+      Value mrSide;
+      for (Value o : mul.getOperands())
+        if (o.getDefiningOp<triton::MakeRangeOp>()) { mrSide = o; break; }
+      if (!mrSide) return -1;
+      v = mrSide;
+    }
+    if (auto mr = v.getDefiningOp<triton::MakeRangeOp>())
+      return static_cast<int64_t>(mr.getStart());
+    return -1;
+  };
+
+  // Try col-tile, then row-tile; each tries both addi sides.
+  ScratchAccess acc;
+  for (int expectAxis : {0, 1}) {
+    Value lhs = addi.getLhs();
+    Value rhs = addi.getRhs();
+    if (classifyTileSide(acc, lhs, expectAxis)) {
+      int64_t os = extractOtherStart(rhs);
+      if (os < 0) return std::nullopt;
+      acc.otherStart = os;
+      return acc;
+    }
+    if (classifyTileSide(acc, rhs, expectAxis)) {
+      int64_t os = extractOtherStart(lhs);
+      if (os < 0) return std::nullopt;
+      acc.otherStart = os;
+      return acc;
+    }
+  }
+  return std::nullopt;
+}
+
 /// Information gathered for a single shared-memory base pointer.
 struct BasePtrInfo {
   unsigned argIndex = 0;
@@ -161,6 +396,23 @@ private:
   LogicalResult convertFunction(triton::FuncOp func) {
     MLIRContext *ctx = func.getContext();
 
+    // --- Step 0: Identify scratch-acc-marked args and handle them
+    //             separately (multi-shape, per-access subview).
+    // The marker is set by TileDotLoads when it spills the dot-2-style
+    // accumulator into SHM (kScratchShmAttr = "bishengir.scratch_shm").
+    constexpr llvm::StringLiteral kScratchShmAttr = "bishengir.scratch_shm";
+    SmallVector<unsigned> scratchAccArgs;
+    for (unsigned i = 0; i < func.getNumArguments(); ++i)
+      if (func.getArgAttr(i, kScratchShmAttr))
+        scratchAccArgs.push_back(i);
+    for (unsigned argIdx : scratchAccArgs) {
+      if (failed(handleScratchAccArg(func, argIdx)))
+        return failure();
+    }
+    // Drop the now-converted scratch-acc args from the function signature.
+    if (!scratchAccArgs.empty())
+      removeFunctionArgs(func, scratchAccArgs);
+
     // --- Step 1: Gather all shared-memory load/store ops ----------------
     DenseMap<Value, BasePtrInfo> baseMap;
 
@@ -172,6 +424,9 @@ private:
       Value basePtr = traceToBasePtr(ptrTensor);
       auto blockArg = dyn_cast<BlockArgument>(basePtr);
       if (!blockArg)
+        return;
+      // Skip scratch-acc args we already handled above.
+      if (func.getArgAttr(blockArg.getArgNumber(), kScratchShmAttr))
         return;
 
       auto &info = baseMap[basePtr];
@@ -253,6 +508,604 @@ private:
         FunctionType::get(ctx, newArgTypes, oldFuncTy.getResults()));
 
     return success();
+  }
+
+  /// Convert a single scratch-acc-marked function arg into an in-kernel
+  /// `ttg.local_alloc` + per-access `ttg.memdesc_index` + local_load/store.
+  ///
+  /// Two-phase design (no IR mutation in phase 1, so failure can bail
+  /// without leaving the function half-rewritten):
+  ///
+  /// Phase 1 (read-only): walk every tt.load / tt.store rooted at this
+  /// marker arg, classify each via matchScratchAccess, and collect:
+  ///   - envM        = max access M
+  ///   - tileN       = single per-tile column count (every access is M x tileN)
+  ///   - per-access (kind, M, tileN, colStartConst, tileIdx)
+  /// Bail with `failure()` on any unrecognised pattern (or any envelope-shape
+  /// access — TileDotLoads only emits per-tile SHM accesses), leaving IR
+  /// untouched.
+  ///
+  /// Phase 2 (mutation):
+  ///   - allocate ttg.local_alloc of type
+  ///       !ttg.memdesc<numTiles x envM x tileN xT, swizzled[2,0,1]>
+  ///     where numTiles = envN / tileN.  Order [2,0,1] makes the linearised
+  ///     layout byte-equivalent to a row-major <envM, envN> tensor (see
+  ///     buildScratchEnvMemDescType3D for the offset-equivalence proof),
+  ///     so each tile k covers columns [k*tileN, (k+1)*tileN) of the 2D view.
+  ///   - For STATIC tile access (init zero stores at function entry):
+  ///       k = colStartConst / tileN; emit memdesc_index[const(k)] +
+  ///       local_load/store on the per-tile <envM, tileN> view.
+  ///   - For DYNAMIC tile access (inner-loop iv-driven case):
+  ///       memdesc_index[tileIdx] + local_load/store on per-tile view.
+  LogicalResult handleScratchAccArg(triton::FuncOp func, unsigned argIdx) {
+    MLIRContext *ctx = func.getContext();
+    BlockArgument arg = func.getArgument(argIdx);
+    auto ptrTy = dyn_cast<triton::PointerType>(arg.getType());
+    if (!ptrTy)
+      return func.emitError("scratch_shm arg ")
+             << argIdx << " is not !tt.ptr";
+
+    Type elemTy = ptrTy.getPointeeType();
+    if (!isa<FloatType, IntegerType>(elemTy))
+      return func.emitError("scratch_shm arg ")
+             << argIdx << " element type not scalar";
+
+    // ---- Collect every tt.load / tt.store rooted at this arg ----
+    SmallVector<triton::LoadOp> loads;
+    SmallVector<triton::StoreOp> stores;
+    SmallVector<Operation *> deadChain;
+    auto rootedAt = [&](Value ptrTensor) -> bool {
+      Value base = traceToBasePtr(ptrTensor);
+      auto ba = dyn_cast<BlockArgument>(base);
+      return ba && ba.getOwner() == &func.getBody().front() &&
+             ba.getArgNumber() == argIdx;
+    };
+    func.walk([&](triton::LoadOp ld) {
+      if (rootedAt(ld.getPtr())) {
+        loads.push_back(ld);
+        collectPtrChain(ld.getPtr(), deadChain);
+      }
+    });
+    func.walk([&](triton::StoreOp st) {
+      if (rootedAt(st.getPtr())) {
+        stores.push_back(st);
+        collectPtrChain(st.getPtr(), deadChain);
+      }
+    });
+
+    if (loads.empty() && stores.empty())
+      return success(); // arg already unused — nothing to do
+
+    // ---- Phase 1: read-only classification ----
+    struct ClassifiedAccess {
+      Operation *op;       // tt.load or tt.store
+      ScratchAccess acc;   // matched offset structure
+    };
+    SmallVector<ClassifiedAccess> classified;
+    int64_t envDimOther = 0;
+    int64_t maxTileSize = 0;
+    int64_t minTileSize = std::numeric_limits<int64_t>::max();
+    int kAxis = -1; // determined by the first matched access; all must agree
+
+    auto classify = [&](Operation *op, Value ptrTensor) -> LogicalResult {
+      auto acc = matchScratchAccess(ptrTensor);
+      if (!acc) {
+        LLVM_DEBUG({
+          llvm::dbgs() << "[ConvertSharedPtrToMemDesc] FAILED match on op:\n";
+          op->print(llvm::dbgs());
+          llvm::dbgs() << "\n  ptr defining op:\n";
+          if (auto def = ptrTensor.getDefiningOp())
+            def->print(llvm::dbgs());
+          llvm::dbgs() << "\n";
+        });
+        return op->emitError("scratch-acc access doesn't match expected "
+                             "row*N + (col_start + range) pattern");
+      }
+      if (kAxis < 0) {
+        kAxis = acc->kAxis;
+      } else if (kAxis != acc->kAxis) {
+        return op->emitError("scratch-acc accesses disagree on tile axis "
+                              "(prior=")
+               << kAxis << " here=" << acc->kAxis << ")";
+      }
+      envDimOther = std::max(envDimOther, acc->dimOther);
+      maxTileSize = std::max(maxTileSize, acc->tileSize);
+      minTileSize = std::min(minTileSize, acc->tileSize);
+      classified.push_back({op, *acc});
+      return success();
+    };
+    for (auto ld : loads)
+      if (failed(classify(ld, ld.getPtr())))
+        return failure();
+    for (auto st : stores)
+      if (failed(classify(st, st.getPtr())))
+        return failure();
+
+    int64_t envSize = maxTileSize;
+    int64_t tileSize = minTileSize;
+    if (envDimOther == 0 || envSize == 0 || tileSize == 0)
+      return func.emitError("scratch-acc envelope shape unrecognized");
+    if (envSize % tileSize != 0)
+      return func.emitError("scratch-acc envelope size (")
+             << envSize << ") not a multiple of tile size (" << tileSize << ")";
+
+    // Identify any envelope-shape access.  TileDotLoads emits a single
+    // full-envelope STORE at function entry; envelope-shape LOADs are not
+    // expected (post-loop is tile-wise via per-tile tt.make_tensor_ptr).
+    for (auto &c : classified) {
+      bool isEnvelope = (c.acc.tileSize == envSize) && (envSize > tileSize);
+      if (!isEnvelope)
+        continue;
+      if (!isa<triton::StoreOp>(c.op))
+        return c.op->emitError(
+            "scratch-acc envelope-shape LOAD encountered; only the init-zero "
+            "STORE may use the full envelope shape");
+    }
+
+    // ---- Phase 2: allocate the 2D envelope and rewrite every access ----
+    //
+    // We allocate the scratch buffer DIRECTLY as a 2D memdesc whose shape
+    // and encoding match the data tensor written by the init store.  Per-
+    // tile accesses use `memdesc_subslice` with STATIC offsets — which
+    // requires the K-tile loop to be unrolled in `StageNonLoadOperand-
+    // Pattern`, so we only ever see STATIC tile starts here.
+    //
+    // Why we do NOT allocate a 3D ringbuffer + `memdesc_index` per tile:
+    // `MemDescIndexOpConversion` lowers the per-index advance as
+    // `index * product(dst.shape)`, i.e. `dimOther * tileSize` bytes per
+    // tile.  That's only correct when the leading (tile) axis is the
+    // SLOWEST in the encoding — `order=[2,1,0]`-style.  An order
+    // `[2,0,1]`-style 3D (which we previously used to claim byte-
+    // equivalence with the 2D `<dimOther, numTiles*tileSize>` data
+    // layout) puts the tile axis at stride `tileSize` (8 elts), so
+    // `memdesc_index`'s stride is off by a factor of `dimOther`, AND the
+    // swizzle XOR axis sits on the tile dim instead of the row dim — both
+    // of which cause the LOAD address to disagree with the STORE address
+    // for the same logical (m, k, j).  The 2D-direct + memdesc_subslice
+    // path here gives addresses computed by ONE shared linear layout for
+    // both store and load, so they always agree.
+    OpBuilder builder(&func.getBody().front(), func.getBody().front().begin());
+    Location loc = func.getLoc();
+
+    // If any access is DYNAMIC, allocate a 3D envelope whose byte layout
+    // matches the 2D row-major layout AND whose dim 0 indexes tiles.
+    // The STORE (envelope, tileSize==envSize, STATIC) is satisfied by
+    // reinterpreting the 3D as 2D; the per-tile DYNAMIC LOADs use
+    // `ttg.memdesc_index(env_3D, dyn_tile_idx)` which advances the SMEM
+    // base by `tile_idx * (tileSize-stride * elemBytes)`.
+    //
+    // The encoding uses NO swizzle (vec=1, perPhase=1, maxPhase=1) — the
+    // 2D-swizzle-vs-3D-swizzle phase-axis mismatch would otherwise break
+    // byte agreement.  We lose the bank-conflict reduction the static
+    // path gets from swizzling, but in exchange the dynamic per-tile
+    // load doesn't pin all numTiles tiles in registers (the win the
+    // bwd kernel needs).
+    //
+    // For col-tile (kAxis=1): 3D = [numTiles, dimOther, tileSize] with
+    //   order=[2,0,1] → stride[0]=tileSize.  Default
+    //   `MemDescIndexOpConversion` would use `product(dst.shape) =
+    //   dimOther*tileSize`, which is dimOther× too large; the
+    //   `bishengir.use_dim_stride` attribute we stamp on the
+    //   memdesc_index tells our override conversion to use the
+    //   encoding's actual stride.
+    // For row-tile (kAxis=0): 3D = [numTiles, tileSize, dimOther] with
+    //   order=[2,1,0] → stride[0]=tileSize*dimOther, which matches the
+    //   default `product(dst.shape)`. No override needed.
+    bool anyDynamic = false;
+    for (auto &c : classified)
+      if (c.acc.kind == ScratchAccess::DYNAMIC) { anyDynamic = true; break; }
+
+    triton::gpu::MemDescType envMd3DTy;     // only built when anyDynamic
+    triton::gpu::MemDescType tileMd3DTy;   // shape after memdesc_index
+    if (anyDynamic) {
+      int64_t numTiles = envSize / tileSize;
+      SmallVector<int64_t, 3> envShape3D;
+      SmallVector<unsigned, 3> order3D;
+      SmallVector<int64_t, 2> perTileShape;
+      if (kAxis == 1) {
+        envShape3D = {numTiles, envDimOther, tileSize};
+        order3D = {2u, 0u, 1u};
+        perTileShape = {envDimOther, tileSize};
+      } else {
+        envShape3D = {numTiles, tileSize, envDimOther};
+        order3D = {2u, 1u, 0u};
+        perTileShape = {tileSize, envDimOther};
+      }
+      // Bank-conflict swizzle for the DYNAMIC per-tile load path.
+      //
+      // Both phase axes (2D order=[1,0] and 3D order=[2,0,1]/[2,1,0])
+      // end up using row r as the swizzle phase axis (= dim 0 in the
+      // 2D view; = dim 1 in the 3D col-tile view; = dim 0 in the 3D
+      // row-tile view).  The 2D STORE-via-reinterpret and the per-tile
+      // LOAD both use the SAME 2D `enc2D` (see below) so they agree on
+      // the phase XOR for any (r, c).  The 3D `enc3D` is only used by
+      // `ttg.local_alloc` for sizing/layout-attr identity; the actual
+      // byte addresses never go through 3D's phase math.
+      //
+      // The dynamic LOAD's base advance is `iv * tileSize` elements
+      // (col-tile) or `iv * tileSize * dimOther` elements (row-tile),
+      // each producing an `iv * tileSize` shift along the swizzle's
+      // "row" position.  For the per-tile LOAD's `getShmemAffineBase +
+      // per-lane offset` to equal the STORE's swizzled byte for the
+      // SAME logical (r, c), the advance's bit pattern must be
+      // disjoint from the phase XOR's bit pattern:
+      //   `iv * tileSize / vec` bits ⊥ `log2(maxPhase)` bits
+      //   ⇔ `vec * maxPhase ≤ tileSize` (and `vec | tileSize`).
+      // We use the largest (vec, maxPhase) satisfying that, with vec
+      // capped at the Ascend bank width (8 B) so SMEM ops stay
+      // vectorised.
+  unsigned elemBytes = std::max<unsigned>(
+      1u, (elemTy.getIntOrFloatBitWidth() + 7) / 8);
+  // Pick vec = min(8B/elem, tileSize), then snap down to a power
+  // of two that divides tileSize.
+  unsigned vec = std::max<unsigned>(1u, 8u / elemBytes);
+  if (static_cast<int64_t>(vec) > tileSize)
+    vec = static_cast<unsigned>(std::max<int64_t>(1, tileSize));
+  while (vec > 1u && static_cast<int64_t>(tileSize % vec) != 0)
+    vec >>= 1;
+  // maxPhase ≤ tileSize / vec (and ≤ numBanks for HW utility).
+  unsigned maxPhaseCap =
+      static_cast<unsigned>(std::max<int64_t>(1, tileSize / static_cast<int64_t>(vec)));
+      maxPhaseCap = std::min<unsigned>(maxPhaseCap, /*kNumBanks=*/16u);
+      unsigned maxPhase = 1u;
+      while ((maxPhase << 1) <= maxPhaseCap)
+        maxPhase <<= 1;
+      // perPhase chooses the row-group size that shares one swizzle
+      // phase.  The FA `#linear` (CDITL-assigned) LOAD layout has
+      // `lane[4] = [4, 0]` — lane bit 4 contributes +4 to the row,
+      // so within one `ascend_dpx.load` lanes 0–15 read row R and
+      // lanes 16–31 read row R+4 simultaneously.  With perPhase=1
+      // (phase = R % maxPhase), R and R+4 collapse to the SAME phase
+      // for maxPhase∈{1,2,4} (since 4 mod maxPhase = 0 for those),
+      // putting both row halves on the SAME bank — a 2-way
+      // within-warp conflict every cycle.  Picking perPhase=4 shifts
+      // the phase derivation to `(R/4) % maxPhase`, so R∈[0,4) and
+      // R+4∈[4,8) get OPPOSITE phases, splitting the two row halves
+      // onto different banks.  Correctness constraint for row-tile
+      // (kAxis=0): perPhase × maxPhase | tileSize (so the LOAD's
+      // phase(t) matches the STORE's phase(iv*tileSize+t)).
+      unsigned perPhase = 1u;
+      if (maxPhase >= 2u &&
+          (tileSize % static_cast<int64_t>(4u * maxPhase)) == 0)
+        perPhase = 4u;
+      // For the 3D envelope's innermost dim, the encoding's `vec`
+      // can't overrun the innermost dim's size (Triton verifier).
+      int64_t innermost3D = envShape3D[order3D[0]];
+      unsigned vec3D = vec;
+      if (static_cast<int64_t>(vec3D) > innermost3D)
+        vec3D = static_cast<unsigned>(std::max<int64_t>(1, innermost3D));
+      SmallVector<unsigned, 3> ones3D(3, 1u);
+      auto ctaLayout3D =
+          triton::gpu::CTALayoutAttr::get(ctx, ones3D, ones3D, order3D);
+      auto enc3D = triton::gpu::SwizzledSharedEncodingAttr::get(
+          ctx, /*vec=*/vec3D, /*perPhase=*/perPhase, /*maxPhase=*/maxPhase,
+          order3D, ctaLayout3D);
+      auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
+      envMd3DTy = triton::gpu::MemDescType::get(envShape3D, elemTy, enc3D, smem,
+                                                 /*mutableMemory=*/true);
+
+      // Per-tile sub-memdesc: rank 2 (after memdesc_index drops dim 0).
+      // Same (vec, perPhase, maxPhase) so per-lane byte addresses match
+      // the 2D envelope STORE's swizzled byte addresses.
+      SmallVector<unsigned, 2> ones2D(2, 1u);
+      SmallVector<unsigned, 2> order2D = {1u, 0u};
+      auto ctaLayout2D =
+          triton::gpu::CTALayoutAttr::get(ctx, ones2D, ones2D, order2D);
+      auto enc2D = triton::gpu::SwizzledSharedEncodingAttr::get(
+          ctx, /*vec=*/vec, /*perPhase=*/perPhase, /*maxPhase=*/maxPhase,
+          order2D, ctaLayout2D);
+      // CRITICAL: allocShape of the per-tile sub-memdesc must match the
+      // ENCODING's RANK (2D) and describe the FULL ENVELOPE's 2D shape.
+      // The per-lane address inside the sub-memdesc is computed from the
+      // linear-layout, which uses (allocShape, encoding) to compute
+      // strides.  If allocShape is the 2D envelope [dimOther, envSize],
+      // the row stride is envSize — matching the actual byte layout of
+      // the underlying 2D row-major envelope.  If we instead carry the
+      // 3D allocShape, the linear-layout falls back to using the per-
+      // tile shape's row stride (= tileSize), which is too small by a
+      // factor of dimOther/tileSize and gives wrong addresses for r > 0.
+      SmallVector<int64_t, 2> envShape2D;
+      if (kAxis == 1)
+        envShape2D = {envDimOther, envSize};
+      else
+        envShape2D = {envSize, envDimOther};
+      tileMd3DTy = triton::gpu::MemDescType::get(perTileShape, elemTy, enc2D,
+                                                   smem,
+                                                   /*mutableMemory=*/true,
+                                                   /*allocShape=*/envShape2D);
+    }
+
+    // For STATIC-only: use the swizzled `buildScratchEnvMemDescType2D`.
+    // For DYNAMIC: build a 2D-view envelope memdesc with the SAME
+    // (no-swizzle) encoding as the 3D parent, so the STORE side's
+    // per-lane address arithmetic agrees byte-for-byte with the
+    // per-tile LOAD's.  The 2D-view is a `memdesc_reinterpret` of the
+    // 3D parent — same physical bytes, different shape.
+    triton::gpu::MemDescType envMd2DTy;
+    if (anyDynamic) {
+      SmallVector<int64_t, 2> envShape2D;
+      if (kAxis == 1)
+        envShape2D = {envDimOther, envSize};
+      else
+        envShape2D = {envSize, envDimOther};
+      auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
+      // The 2D encoding for the reinterpret view: same vec, no swizzle,
+      // order=[1,0].  Reuse the per-tile encoding (built above in the
+      // anyDynamic branch — same vec/perPhase/maxPhase parameters).
+      envMd2DTy = triton::gpu::MemDescType::get(
+          envShape2D, elemTy, tileMd3DTy.getEncoding(), smem,
+          /*mutableMemory=*/true,
+          /*allocShape=*/envShape2D);
+    } else {
+      envMd2DTy = buildScratchEnvMemDescType2D(ctx, envDimOther, envSize,
+                                                 kAxis, tileSize, elemTy);
+    }
+    // Allocate either the 3D envelope (DYNAMIC path) or the 2D envelope
+    // (legacy STATIC-only path).  The STORE side reinterprets the 3D
+    // back to a byte-equivalent 2D so existing `ttg.local_store` from a
+    // 2D source still typechecks.
+    Value shm;
+    Value shm2D;  // 2D view (== shm for STATIC, == reinterpret(shm) for DYNAMIC)
+    if (anyDynamic) {
+      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+          loc, envMd3DTy, /*src=*/Value{});
+      shm = allocOp.getResult();
+      shm2D = builder.create<triton::gpu::MemDescReinterpretOp>(loc, envMd2DTy,
+                                                                  shm);
+    } else {
+      auto allocOp = builder.create<triton::gpu::LocalAllocOp>(
+          loc, envMd2DTy, /*src=*/Value{});
+      shm = allocOp.getResult();
+      shm2D = shm;
+    }
+
+    // Per-tile view encoding/allocShape (shared across accesses).  The
+    // per-access SHAPE varies because M-stripe accesses use
+    // `acc.dimOther < envDimOther` — we build a per-access tileMdTy in
+    // the loop below using these shared components.  Crucially,
+    // `allocShape` is kept at the PARENT envelope's shape so
+    // `toLinearLayout(memDescType)` (which uses allocShape) gives the
+    // full envelope's LL — `getShmemOffset` inverts that to compute the
+    // subslice's affine offset (e.g. col 8 for tile 1, or row 32 for M-
+    // stripe s=1) into a physical bit pattern that's then XOR-combined
+    // with each thread's per-element offset.
+    auto smem = triton::gpu::SharedMemorySpaceAttr::get(ctx);
+    auto tileMdEnc = envMd2DTy.getEncoding();
+    auto tileMdAllocShape = envMd2DTy.getAllocShape();
+    auto makeTileMdTy = [&](int64_t accDimOther) {
+      SmallVector<int64_t, 2> tileShape =
+          (kAxis == 1) ? SmallVector<int64_t, 2>{accDimOther, tileSize}
+                       : SmallVector<int64_t, 2>{tileSize, accDimOther};
+      return triton::gpu::MemDescType::get(
+          tileShape, elemTy, tileMdEnc, smem,
+          /*mutableMemory=*/true, /*allocShape=*/tileMdAllocShape);
+    };
+
+    for (auto &c : classified) {
+      Operation *op = c.op;
+      const ScratchAccess &acc = c.acc;
+      OpBuilder::InsertionGuard guard(builder);
+      builder.setInsertionPoint(op);
+
+      // Envelope-shape STORE (init store of the full operand): single
+      // ttg.local_store directly into the 2D view of the envelope — no
+      // reinterpret needed because `shm2D` is already 2D (either the
+      // raw 2D alloc for STATIC-only, or a memdesc_reinterpret of the
+      // 3D alloc for the DYNAMIC path).
+      // Recognised when STATIC and tileSize == envSize.
+      if (acc.kind == ScratchAccess::STATIC && acc.tileSize == envSize &&
+          envSize > tileSize) {
+        auto st = cast<triton::StoreOp>(op);
+        builder.create<triton::gpu::LocalStoreOp>(op->getLoc(), st.getValue(),
+                                                    shm2D);
+        st.erase();
+        continue;
+      }
+
+      // ----- Per-tile DYNAMIC access ----------------------------------
+      // emitScratchShmAccessPtr with tileIdxI32 = dynamic IV.  Emit
+      // `ttg.memdesc_index(env_3D, dyn_idx)` + `ttg.local_load`.  For
+      // kAxis=1 we stamp `bishengir.use_dim_stride` so the Bishengir
+      // override conversion uses the encoding's actual dim-0 stride
+      // (= tileSize) instead of upstream's `product(dst.shape)`.  For
+      // kAxis=0 the natural product matches; no marker needed.
+      //
+      // M-stripe (acc.dimOther < envDimOther OR acc.otherStart != 0):
+      // after memdesc_index returns a `[envDimOther, tileSize]` per-
+      // tile view, apply an additional memdesc_subslice along the
+      // other (M) axis to narrow to `[acc.dimOther, tileSize]` at the
+      // stripe's M offset.
+      if (acc.kind == ScratchAccess::DYNAMIC) {
+        // Cast tile-index Value to i32 (ttg.memdesc_index needs i32).
+        Value tileIdxVal = acc.tileIdx;
+        Type i32Ty = builder.getI32Type();
+        if (tileIdxVal.getType() != i32Ty) {
+          if (auto intTy = dyn_cast<IntegerType>(tileIdxVal.getType())) {
+            if (intTy.getWidth() > 32)
+              tileIdxVal = builder.create<arith::TruncIOp>(
+                  op->getLoc(), i32Ty, tileIdxVal);
+            else if (intTy.getWidth() < 32)
+              tileIdxVal = builder.create<arith::ExtSIOp>(
+                  op->getLoc(), i32Ty, tileIdxVal);
+          } else {
+            tileIdxVal = builder.create<arith::IndexCastOp>(
+                op->getLoc(), i32Ty, tileIdxVal);
+          }
+        }
+        auto idxOp = builder.create<triton::gpu::MemDescIndexOp>(
+            op->getLoc(), tileMd3DTy, shm, tileIdxVal);
+        if (kAxis == 1) {
+          idxOp->setAttr("bishengir.use_dim_stride",
+                          UnitAttr::get(ctx));
+        }
+        Value subMd = idxOp.getResult();
+        // M-stripe narrowing along the other axis.
+        if (acc.dimOther != envDimOther || acc.otherStart != 0) {
+          SmallVector<int32_t, 2> stripeOffs(2, 0);
+          int otherAxis = 1 - kAxis;
+          stripeOffs[otherAxis] = static_cast<int32_t>(acc.otherStart);
+          auto stripeOffsAttr =
+              builder.getDenseI32ArrayAttr(stripeOffs);
+          auto stripeTy = makeTileMdTy(acc.dimOther);
+          subMd = builder.create<triton::gpu::MemDescSubsliceOp>(
+              op->getLoc(), stripeTy, subMd, stripeOffsAttr);
+        }
+
+        if (auto ld = dyn_cast<triton::LoadOp>(op)) {
+          Type targetTy = ld.getResult().getType();
+          triton::gpu::ConvertLayoutOp foldedCvt;
+          if (ld.getResult().hasOneUse()) {
+            if (auto cvt = dyn_cast<triton::gpu::ConvertLayoutOp>(
+                    *ld.getResult().getUsers().begin())) {
+              targetTy = cvt.getResult().getType();
+              foldedCvt = cvt;
+            }
+          }
+          auto newLoad = builder.create<triton::gpu::LocalLoadOp>(
+              ld.getLoc(), targetTy, subMd);
+          if (foldedCvt) {
+            foldedCvt.getResult().replaceAllUsesWith(newLoad.getResult());
+            foldedCvt.erase();
+          } else {
+            ld.getResult().replaceAllUsesWith(newLoad.getResult());
+          }
+          ld.erase();
+        } else if (auto st = dyn_cast<triton::StoreOp>(op)) {
+          builder.create<triton::gpu::LocalStoreOp>(
+              st.getLoc(), st.getValue(), subMd);
+          st.erase();
+        }
+        continue;
+      }
+      // ---------------------------------------------------------------
+
+      if (acc.startConst % tileSize != 0)
+        return op->emitError("STATIC scratch-acc start (")
+               << acc.startConst << ") not a multiple of tile size ("
+               << tileSize << ")";
+
+      // memdesc_subslice with static offsets along both axes:
+      //   * tile axis: `startConst` (the original per-tile offset).
+      //   * other axis: `otherStart` (zero for full-width access; non-zero
+      //     for M-stripe access where this is `s * stripeM`).
+      // The destination memdesc shape uses `acc.dimOther` on the other
+      // axis — equals envDimOther for full-width and stripeM for
+      // M-stripe.  The encoding and allocShape stay the parent
+      // envelope's, so the underlying LL still maps absolute
+      // (envelope-coordinate) positions correctly.
+      int otherAxis = 1 - kAxis;
+      SmallVector<int32_t, 2> subOffs(2, 0);
+      subOffs[kAxis] = static_cast<int32_t>(acc.startConst);
+      subOffs[otherAxis] = static_cast<int32_t>(acc.otherStart);
+      auto offsetsAttr = builder.getDenseI32ArrayAttr(subOffs);
+      auto perAccTileMdTy = makeTileMdTy(acc.dimOther);
+      Value subMd = builder.create<triton::gpu::MemDescSubsliceOp>(
+          op->getLoc(), perAccTileMdTy, shm2D, offsetsAttr);
+
+      if (auto ld = dyn_cast<triton::LoadOp>(op)) {
+        // Pre-CDITL the load lands in a blocked layout and CDITL inserts
+        // `ttg.convert_layout(load, target=LinearEncoding)` between the
+        // load and the dot.  Running this pass *after* CDITL means we can
+        // see that convert_layout: when the load has exactly one use that
+        // is a `ttg.convert_layout`, fold it into the local_load's result
+        // type — eliminate the explicit conversion and let the smem->
+        // register lowering walk straight from the smem swizzle to the
+        // FMA-friendly target encoding.
+        Type targetTy = ld.getResult().getType();
+        triton::gpu::ConvertLayoutOp foldedCvt;
+        if (ld.getResult().hasOneUse()) {
+          if (auto cvt =
+                  dyn_cast<triton::gpu::ConvertLayoutOp>(*ld.getResult().getUsers().begin())) {
+            targetTy = cvt.getResult().getType();
+            foldedCvt = cvt;
+          }
+        }
+        auto newLoad = builder.create<triton::gpu::LocalLoadOp>(
+            ld.getLoc(), targetTy, subMd);
+        if (foldedCvt) {
+          foldedCvt.getResult().replaceAllUsesWith(newLoad.getResult());
+          foldedCvt.erase();
+        } else {
+          ld.getResult().replaceAllUsesWith(newLoad.getResult());
+        }
+        ld.erase();
+      } else if (auto st = dyn_cast<triton::StoreOp>(op)) {
+        builder.create<triton::gpu::LocalStoreOp>(st.getLoc(), st.getValue(),
+                                                    subMd);
+        st.erase();
+      }
+    }
+
+    // ---- DCE the splat / addptr chains (now unused) ----
+    // CSE often shares one tt.splat across many tt.addptr users (init-zero
+    // stores all reuse the same splat-of-arg pointer), so a single pass can
+    // miss the splat: the splat still has live addptr-users at the moment we
+    // visit it.  Fixpoint until no more deletions are possible.  Dedup first
+    // since each access pushes the splat to the chain.
+    llvm::SmallPtrSet<Operation *, 16> seen;
+    SmallVector<Operation *> remaining;
+    for (auto *op : deadChain)
+      if (seen.insert(op).second)
+        remaining.push_back(op);
+    bool changed = true;
+    while (changed) {
+      changed = false;
+      SmallVector<Operation *> next;
+      for (auto *op : remaining) {
+        if (op->use_empty()) {
+          op->erase();
+          changed = true;
+        } else {
+          next.push_back(op);
+        }
+      }
+      remaining = std::move(next);
+    }
+
+    return success();
+  }
+
+  /// Drop a set of arguments from a triton::FuncOp's signature and entry
+  /// block.  Argument indices in `argsToRemove` must be sorted ascending.
+  /// Defensive: skips out-of-range indices and only removes args that
+  /// actually have no remaining uses.
+  void removeFunctionArgs(triton::FuncOp func,
+                           ArrayRef<unsigned> argsToRemove) {
+    if (argsToRemove.empty()) return;
+    auto &entryBlock = func.getBody().front();
+    // Filter to safe-to-remove indices.
+    SmallVector<unsigned> safeRemove;
+    for (unsigned idx : argsToRemove) {
+      if (idx >= entryBlock.getNumArguments()) continue;
+      if (!entryBlock.getArgument(idx).use_empty()) continue;
+      safeRemove.push_back(idx);
+    }
+    if (safeRemove.empty()) return;
+    // Erase block args from the highest index downward to keep earlier
+    // indices valid.
+    llvm::sort(safeRemove);
+    for (auto it = safeRemove.rbegin(); it != safeRemove.rend(); ++it)
+      entryBlock.eraseArgument(*it);
+    // Note: eraseArgument takes a non-const iterator for index-based access,
+    // but rbegin() returns a reverse_iterator which is the correct type for
+    // eraseArgument when iterating backwards. No const_iterator conversion needed.
+    // Rebuild the function type without those input slots.
+    SmallVector<Type> newInputs;
+    auto oldInputs = func.getFunctionType().getInputs();
+    llvm::DenseSet<unsigned> toRemove(safeRemove.begin(), safeRemove.end());
+    for (unsigned i = 0; i < oldInputs.size(); ++i)
+      if (!toRemove.count(i))
+        newInputs.push_back(oldInputs[i]);
+    func.setFunctionType(FunctionType::get(func.getContext(), newInputs,
+                                            func.getFunctionType().getResults()));
+    // Trim arg attrs.
+    if (auto curr = func.getAllArgAttrs()) {
+      SmallVector<Attribute> newArgAttrs;
+      for (unsigned i = 0; i < curr.size(); ++i)
+        if (!toRemove.count(i))
+          newArgAttrs.push_back(curr[i]);
+      func.setAllArgAttrs(ArrayAttr::get(func.getContext(), newArgAttrs));
+    }
   }
 };
 

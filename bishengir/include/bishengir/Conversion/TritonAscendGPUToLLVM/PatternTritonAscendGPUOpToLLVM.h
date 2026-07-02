@@ -10,6 +10,10 @@ using namespace mlir::triton;
 
 namespace mlir::triton::ascend {
 
+void populateDotOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
+                                 RewritePatternSet &patterns,
+                                 PatternBenefit benefit);
+
 void populateAscendReduceOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
                                           RewritePatternSet &patterns,
                                           const TargetInfoBase &targetInfo,

@@ -9,6 +9,10 @@
 #include "bishengir/Config/bishengir-config.h"
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "Conversion/ProtonGPUToLLVM/Passes.h"
+#include "Conversion/ProtonToProtonGPU/Passes.h"
+#include "NVGPUToLLVM/NVGPUToLLVMPass.h"
+#include "NVGPUToLLVM/Passes.h"
 #include "TritonNVIDIAGPUToLLVM/Passes.h"
 #include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
 #include "triton/Conversion/TritonGPUToLLVM/Passes.h"
@@ -16,8 +20,6 @@
 #include "triton/Dialect/Triton/Transforms/Passes.h"
 #include "triton/Dialect/TritonGPU/Transforms/Passes.h"
 #include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
-#include "Conversion/ProtonGPUToLLVM/Passes.h"
-#include "Conversion/ProtonToProtonGPU/Passes.h"
 #endif
 
 #include "bishengir/Conversion/Passes.h"
@@ -25,6 +27,7 @@
 #include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "mlir/Conversion/Passes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
@@ -43,12 +46,15 @@ using namespace mlir;
 #define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS                             \
   pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
 
+
 namespace {
 #if BISHENGIR_ENABLE_TRITON_COMPILE
+
 void buildTritonGPUOptimizationPipeline(
     OpPassManager &pm,
     const bishengir::triton::LowerTritonPipelineOptions &tritonOptions) {
   pm.addPass(triton::gpu::createTritonGPUCoalesce());
+  pm.addPass(bishengir::triton::createConvertDotInputToLinearLayoutPass());
   pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
   pm.addPass(mlir::triton::gpu::createTritonGPUOptimizeThreadLocality());
   pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
@@ -107,10 +113,30 @@ void buildLowerTritonPipeline(OpPassManager &pm,
             options.superBlockFactor));
   pm.addPass(bishengir::triton::createOptimizeLoadsPass());
   pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
+  // Thread the launch-time SHM size into TileDotLoads so its cost-model
+  // gate (StageNonLoadOperandPattern) can reject staging plans that would
+  // overflow the kernel's SHM budget.  Same value `ConvertTritonToTriton-
+  // GPU` receives via `shared` below.
+  bishengir::TileDotLoadsOptions tileDotLoadsOpts;
+  tileDotLoadsOpts.smemBudgetBytes = options.sharedDynamicSize;
   pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createTileDotLoadsPass(tileDotLoadsOpts));
+  pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
+  // Hoist loop-invariant tt.trans out of K-tile loops, then fuse any
+  // adjacent K-tile loops with identical bounds whose chains are
+  // independent.
+  bishengir::HoistAndFuseDotChainsOptions hoistFuseOpts;
+  hoistFuseOpts.smemBudgetBytes = options.sharedDynamicSize;
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createHoistAndFuseDotChainsPass(hoistFuseOpts));
+  if (options.enableOptimizeMath) {
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createOptimizeMathPass());
+  }
+  pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      
       bishengir::triton::createLegalizeF16ForTritonPass());
-  pm.addNestedPass<mlir::triton::FuncOp>(
-      bishengir::triton::createEnableAscendDPXMMAPass());
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
   {
@@ -134,36 +160,44 @@ void buildLowerTritonPipeline(OpPassManager &pm,
 #endif
   pm.addPass(mlir::triton::createConvertTritonToTritonGPU(
       convertTritonToTritonGPUOpt));
-  // Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store
-  pm.addPass(bishengir::triton::createConvertSharedPtrToMemDescPass());
-  // Optimize TTGIR
+  // Optimize TTGIR — runs ConvertDotInputToLinearLayout (CDITL) which assigns
+  // FMA-friendly LinearEncoding to each dot's operands.  We deliberately
+  // schedule ConvertSharedPtrToMemDesc AFTER this pipeline so the SHM-staging
+  // local_load can produce the dot's chosen LinearEncoding directly (no
+  // extra `ttg.convert_layout` from blocked → linear), and the SHM swizzle
+  // can be picked knowing the load-side target layout.
   buildTritonGPUOptimizationPipeline(pm, options);
+  // Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store.
+  // Runs post-CDITL on purpose: see comment above.
+  pm.addPass(bishengir::triton::createConvertSharedPtrToMemDescPass());
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
+      
         bishengir::triton::createSIMTFastDivPass());
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
+      
         bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass());
   pm.addPass(createConvertIndexToLLVMPass());
   pm.addPass(mlir::triton::proton::createConvertProtonToProtonGPUPass(
-    options.protonGPUCompileConfig.metricType,
-    options.protonGPUCompileConfig.samplingStrategy,
-    options.protonGPUCompileConfig.samplingOptions,
-    options.protonGPUCompileConfig.granularity,
-    options.protonGPUCompileConfig.bufferStrategy,
-    options.protonGPUCompileConfig.bufferType,
-    options.protonGPUCompileConfig.bufferSize,
-    options.protonGPUCompileConfig.maxSharedMemSize,
-    options.protonGPUCompileConfig.profileScratchSize,
-    options.protonGPUCompileConfig.profileScratchAlignment,
-    options.protonGPUCompileConfig.clockExtension
-  ));
+      options.protonGPUCompileConfig.metricType,
+      options.protonGPUCompileConfig.samplingStrategy,
+      options.protonGPUCompileConfig.samplingOptions,
+      options.protonGPUCompileConfig.granularity,
+      options.protonGPUCompileConfig.bufferStrategy,
+      options.protonGPUCompileConfig.bufferType,
+      options.protonGPUCompileConfig.bufferSize,
+      options.protonGPUCompileConfig.maxSharedMemSize,
+      options.protonGPUCompileConfig.profileScratchSize,
+      options.protonGPUCompileConfig.profileScratchAlignment,
+      options.protonGPUCompileConfig.clockExtension));
   pm.addPass(createCSEPass());
   pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
   pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
-  if (options.enableSinkDPXLoad) {
+  pm.addPass(createConvertSCFToCFPass());
+  if (options.enableSinkDPXLoad) {	 
     pm.addPass(createCSEPass());
     pm.addPass(mlir::triton::ascend::createSinkDPXLoad());
   }

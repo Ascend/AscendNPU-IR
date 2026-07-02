@@ -2,6 +2,9 @@ add_bishengir_conversion_library(TritonAscendGPUToLLVM
   PARTIAL_SOURCES_INTENDED
   TritonOpToDPX.cpp
   LoadStoreOpToLLVM.cpp
+  DotOpToLLVM.cpp
+  DotOpToLLVM/FMA.cpp
+  DotOpToLLVM/FMADotUtility.cpp
   ReduceOpToLLVM.cpp
   TargetInfo.cpp
   TritonAscendGPUToLLVMPass.cpp
