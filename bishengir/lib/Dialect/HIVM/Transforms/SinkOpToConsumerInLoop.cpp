@@ -36,29 +36,34 @@ public:
     if (op.getOperation()->getNumResults() != 1)
       return rewriter.notifyMatchFailure(op, "doesn't only have one result");
 
-    auto users = op.getOperation()->getResult(0).getUsers();
-    if (!llvm::hasSingleElement(users))
-      return rewriter.notifyMatchFailure(op, "has more than one user");
+    auto opResult = op.getOperation()->getResult(0);
+    SmallVector<OpOperand *> uses;
+    for (auto &use : opResult.getUses()) {
+      uses.push_back(&use);
+      auto user = use.getOwner();
+      if (op->getBlock() == user->getBlock())
+        return rewriter.notifyMatchFailure(
+            op, "and its user are in the same block, so that we can't sink it");
 
-    Operation *singleUser = *users.begin();
-    auto loopParent = singleUser->getParentOfType<scf::ForOp>();
-    if (!loopParent)
-      return rewriter.notifyMatchFailure(op, "the user is not in a loop");
+      auto loopParent = user->template getParentOfType<scf::ForOp>();
+      if (!loopParent)
+        return rewriter.notifyMatchFailure(op, "the user is not in a loop");
 
-    // For manual VF case, wo will first outline scopeOp into VF, and we don't
-    // support vectorize ops(fillOp, vbrcOp) in VF function, so we can't sink
-    // them into scopeOp. See more details in issue !1199.
-    auto scopeParent = singleUser->getParentOfType<scope::ScopeOp>();
-    if (scopeParent)
-      return rewriter.notifyMatchFailure(op, "can't sink op into scope");
-
-    if (op->getBlock() == singleUser->getBlock())
-      return rewriter.notifyMatchFailure(op, "already in the same block");
-
-    rewriter.setInsertionPoint(singleUser);
-    IRMapping map;
-    Operation *newBrcOp = rewriter.clone(*op.getOperation(), map);
-    rewriter.replaceOp(op, newBrcOp);
+      // For manual VF case, scopeOp will be outlined into VF before ops(fillOp,
+      // vbrcOp) are vectorized, so we can't sink these ops into scopeOp. See
+      // more details in issue !1199.
+      auto scopeParent = user->template getParentOfType<scope::ScopeOp>();
+      if (scopeParent && scopeParent->hasAttr("outline"))
+        return rewriter.notifyMatchFailure(op, "can't sink op into manual VF");
+    }
+    for_each(uses, [&](OpOperand *use) {
+      auto user = use->getOwner();
+      rewriter.setInsertionPoint(user);
+      IRMapping map;
+      Operation *newOp = rewriter.clone(*op.getOperation(), map);
+      rewriter.modifyOpInPlace(user, [&]() { use->set(newOp->getResult(0)); });
+    });
+    rewriter.eraseOp(op);
     return success();
   }
 };
