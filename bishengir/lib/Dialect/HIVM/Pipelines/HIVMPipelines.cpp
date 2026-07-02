@@ -118,6 +118,7 @@ bufferizationPipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   }
   if (hivmPipelineOptions.enableUbufSaving) {
+    pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
   bufferization::OneShotBufferizationOptions oneShotOptions;
@@ -234,6 +235,11 @@ static void hivmPreBufferizationOptimizationPipeline(
     pipelineOptions.enableSkewMode =
         hivmPipelineOptions.enablePreload;
     pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+  }
+
+  if (hivmPipelineOptions.enableUbufSaving) {
+    pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
+    pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
 
   if (hivmPipelineOptions.tileMixCubeLoop != 1 ||
