@@ -141,6 +141,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
+  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
 
   mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
   SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
@@ -333,6 +334,12 @@ bool DimensionAnalyzer::checkTileableMaskedStore(StoreOpTy storeOp,
 
 template <>
 bool DimensionAnalyzer::checkTileableMaskedStore(scf::YieldOp storeOp,
+                                                 size_t i) const {
+  return false;
+}
+
+template <>
+bool DimensionAnalyzer::checkTileableMaskedStore(hivm::DebugOp storeOp,
                                                  size_t i) const {
   return false;
 }

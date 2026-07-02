@@ -1788,7 +1788,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>] tvector_pipe = <PIPE_ALL>
 // CHECK: %[[FINAL:.*]] = hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2xf32>)
 // CHECK: scope.return %[[FINAL]] : tensor<1xf32>
-// CHECK: hivm.hir.debug
+// CHECK: annotation.mark
 module attributes {
   hacc.target = #hacc.target<"Ascend950PR_9589">,
   hivm.module_core_type = #hivm.module_core_type<MIX>
@@ -1810,13 +1810,7 @@ module attributes {
         ins(%arg0 : tensor<4096xf32>)
         outs(%empty : tensor<1xf32>)
         reduce_dims = [0] -> tensor<1xf32>
-    hivm.hir.debug {
-      debugtype = "print",
-      hex = false,
-      prefix = "",
-      tcoretype = #hivm.tcore_type<VECTOR>,
-      tiled_op
-    } %reduced : tensor<1xf32>
+    annotation.mark %reduced : tensor<1xf32>
     return
   }
 }
