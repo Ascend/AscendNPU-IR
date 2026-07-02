@@ -117,6 +117,94 @@ def OptimizeLayouts
   ];
 }
 
+def ConvertDotInputToLinearLayout
+   : Pass<"convert-dot-input-to-linear-layout", "mlir::triton::FuncOp"> {
+  let constructor = "bishengir::triton::createConvertDotInputToLinearLayoutPass()";
+  let dependentDialects = [
+    "mlir::gpu::GPUDialect",
+  ];
+}
+
+
+def TileDotLoads
+   : Pass<"tile-dot-loads", "mlir::triton::FuncOp"> {
+  let summary = "Tile tt.dot loads to reduce register spill";
+  let description = [{
+    Finds tt.dot ops whose A and/or B operands come directly from tt.load
+    and tiles the load dimension to reduce peak live registers.
+    Fires when M*K*N > 32*32*32 = 32768 and tiles so each sub-dot satisfies
+    the same bound.  Both block-pointer (!tt.ptr<tensor<...>>) and
+    tensor-of-pointers styles are supported.
+
+    The non-load-operand staging path (StageNonLoadOperandPattern) is
+    self-gated by `SharedMemConflictModel::decideStaging`, but it also
+    respects the `smem-budget-bytes` ceiling: dots whose predicted staged
+    buffer size exceeds the budget bail without touching IR.  Pass the
+    launch-time SHM size (the same value threaded into
+    ConvertTritonToTritonGPU's `shared`) to keep the gate honest.
+  }];
+  let constructor = "bishengir::triton::createTileDotLoadsPass()";
+  let options = [
+    Option<"smemBudgetBytes", "smem-budget-bytes", "int64_t",
+           /*default*/"0",
+           "SRAM budget (bytes) the StageNonLoadOperandPattern may spend "
+           "per dot.  0 disables the budget check (cost model still gates).">,
+  ];
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::arith::ArithDialect",
+    "mlir::tensor::TensorDialect",
+    "mlir::triton::TritonDialect",
+  ];
+}
+
+def OptimizeMath
+   : Pass<"optimize-math", "mlir::triton::FuncOp"> {
+  let summary = "exp -> exp2 ";
+  let description = [{
+    Two ISA-agnostic rewrites:
+      (1) `math.exp(x)` becomes `math.exp2(mulf(x, splat(log2e)))`; the
+          downstream Canonicalizer folds the new splat with any existing
+          constant-splat scale.
+  }];
+  let constructor = "bishengir::triton::createOptimizeMathPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::math::MathDialect",
+  ];
+}
+
+
+def HoistAndFuseDotChains
+   : Pass<"hoist-and-fuse-dot-chains", "mlir::triton::FuncOp"> {
+  let options = [
+    Option<"smemBudgetBytes", "smem-budget-bytes", "int64_t",
+           /*default*/"0",
+           "Total SMEM budget (bytes) available for staging buffers in "
+           "this kernel.  The fuse step skips a fusion when the combined "
+           "SMEM footprint of the two loops being fused would exceed 70% "
+           "of this budget — fusing two chains forces both chains' "
+           "scratch buffers to be live simultaneously inside the merged "
+           "body, vs. sequential loops which can reuse the same SMEM "
+           "across phases.  0 disables the gate (always fuse, legacy "
+           "behavior).">,
+  ];
+  let summary = "Hoist loop-invariant tt.trans out of K-tile loops, then "
+                "fuse independent adjacent scf.for chains";
+  let description = [{
+    One pass, two complementary transformations on the K-tile chain
+    loops produced by TileDotLoads:
+    Pattern 1 -- Hoist tt.trans
+    Pattern 2 -- Fuse adjacent dot chains
+  }];
+  let constructor = "bishengir::triton::createHoistAndFuseDotChainsPass()";
+  let dependentDialects = [
+    "mlir::scf::SCFDialect",
+    "mlir::triton::TritonDialect",
+  ];
+}
+
+
 def DumpFractalLayout : Pass<"dump-fractal-layout", "mlir::ModuleOp"> {
   let summary = "Print a fractal shared memory layout for a given shape and offset";
   let description = [{

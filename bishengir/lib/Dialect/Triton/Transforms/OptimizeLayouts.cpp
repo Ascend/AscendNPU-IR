@@ -461,8 +461,8 @@ static bool isLayoutCompatibleToOp(Operation *op, Attribute newEnc) {
   // disallow propagation through split and join because these ops change how
   // multiple inputs/outputs mao to logical axes and are generally
   // layout-sensitive
-  if (isa<triton::SplitOp, triton::JoinOp, triton::TransOp>(op)) {
-    LLVM_DEBUG(llvm::dbgs() << "Split/Join/TransOp are layout-sensitive");
+  if (isa<triton::SplitOp, triton::JoinOp, triton::TransOp, triton::DotOp>(op)) {
+    LLVM_DEBUG(llvm::dbgs() << "Split/Join/TransOp/DotOp are layout-sensitive");
     return false;
   }
   return true;
@@ -534,7 +534,7 @@ struct RemoveConvertLayoutByPropagatingDownPattern
     Attribute dstEnc = dstType ? dstType.getEncoding() : Attribute();
 
     // Don't propagate linear layout for now
-    if (isa<LinearEncodingAttr>(srcEnc))
+    if (isa<LinearEncodingAttr>(srcEnc) || isa<LinearEncodingAttr>(dstEnc))
       return failure();
 
     if (action != "propagate_down")
@@ -596,10 +596,25 @@ struct RemoveConvertLayoutByPropagatingDownPattern
         }
       }
     }
-    SmallVector<Operation *> orderedOps(affectedOps.begin(), affectedOps.end());
+    // Only sort ops that share dstVal's block.  Users may live in nested
+    // regions (e.g. when a loop-invariant op was hoisted while its consumer
+    // sits in an inner scf.for body); isBeforeInBlock asserts same-block, so
+    // filter first to avoid the assertion.  Cross-block users are added back
+    // (unsorted) at the end — the downstream rewrite logic checks each op's
+    // block independently, so order only matters for ops in the dstVal block.
+    Block *dstBlock = dstVal.getParentBlock();
+    SmallVector<Operation *> orderedOps;
+    SmallVector<Operation *> otherBlockOps;
+    for (Operation *op : affectedOps) {
+      if (op->getBlock() == dstBlock)
+        orderedOps.push_back(op);
+      else
+        otherBlockOps.push_back(op);
+    }
     llvm::sort(orderedOps, [](Operation *a, Operation *b) {
       return a->isBeforeInBlock(b);
     });
+    orderedOps.append(otherBlockOps.begin(), otherBlockOps.end());
 
     // build srcChainValues set (values derived from the reduce's src/dst).
     // We treat srcVal and dstVal as chain roots.
@@ -747,7 +762,7 @@ struct RemoveConvertLayoutByPropagatingUpPattern
     Attribute dstEnc = getEncodingAttr(dstRT);
 
     // Don't propagate linear layout for now
-    if (isa<LinearEncodingAttr>(srcEnc))
+    if (isa<LinearEncodingAttr>(srcEnc) || isa<LinearEncodingAttr>(dstEnc))
       return failure();
 
     if (!srcEnc || !dstEnc)
@@ -775,7 +790,23 @@ struct RemoveConvertLayoutByPropagatingUpPattern
       if (!defOp) {
         continue;
       }
-      if (dyn_cast<ConvertLayoutOp>(defOp)) {
+      if (auto innerConv = dyn_cast<ConvertLayoutOp>(defOp)) {
+        // Check if this convert involves the source encoding we're propagating.
+        // If neither src nor dst equals srcEnc, it's unrelated - we can continue.
+        // If it DOES have srcEnc on either side, we'd need to also update that
+        // convert, so we stop here.
+        auto innerSrcType = dyn_cast<RankedTensorType>(innerConv.getSrc().getType());
+        auto innerDstType = dyn_cast<RankedTensorType>(innerConv.getResult().getType());
+        Attribute innerSrcEnc = innerSrcType ? innerSrcType.getEncoding() : Attribute();
+        Attribute innerDstEnc = innerDstType ? innerDstType.getEncoding() : Attribute();
+
+        // If the upstream convert is unrelated to srcEnc, continue propagating.
+        // If it involves srcEnc, we need to stop as we'd need to update it too.
+        if (innerSrcEnc != srcEnc && innerDstEnc != srcEnc) {
+          // Unrelated convert - safe to continue
+          continue;
+        }
+        // This convert involves srcEnc - can't propagate through it
         return failure();
       }
 

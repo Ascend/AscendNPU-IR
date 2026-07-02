@@ -361,6 +361,7 @@ void setupLowerTritonPipelineOptions(
   options.disableDecomposeReduction = config.getDisableDecomposeReduction();
   options.disableReorderInstruction = config.getDisableReorderInstruction();
   options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
+  options.enableOptimizeMath = config.getEnableOptimizeMath();
   options.tritonMetadataOutput = config.getTritonMetadataOutput();
   options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
   options.superBlockFactor = config.getSuperBlockFactor();

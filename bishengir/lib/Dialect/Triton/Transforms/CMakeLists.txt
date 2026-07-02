@@ -22,6 +22,11 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     EnableAscendDPXMMA.cpp
     ConvertSharedPtrToMemDesc.cpp
     FlattenMemDescArgs.cpp
+    ConvertDotInputToLinearLayout.cpp
+    TileDotLoads.cpp
+    SharedMemConflictModel.cpp
+    OptimizeMath.cpp
+    HoistAndFuseDotChains.cpp
   )
 endif()
 

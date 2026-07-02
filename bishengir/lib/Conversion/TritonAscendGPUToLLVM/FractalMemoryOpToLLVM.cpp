@@ -220,6 +220,75 @@ private:
   const TargetInfoBase &targetInfo;
 };
 
+//===----------------------------------------------------------------------===//
+// MemDescIndexOpOverride
+//===----------------------------------------------------------------------===//
+// Upstream `MemDescIndexOpConversion` (triton/lib/Conversion/TritonGPUToLLVM/
+// ViewOpToLLVM.cpp) computes the per-index advance as
+//   `index * product(getAllocationShapePerCTA(dst.encoding, dst.shape)) *
+//    elemBytes`.
+// That's correct only when dim 0 of the source memdesc is the SLOWEST in
+// linear-traversal order — i.e., its actual byte-stride equals the product
+// of all inner dims.
+//
+// `ConvertSharedPtrToMemDesc` emits 3D scratch envelopes with shape
+// `[numTiles, dimOther, tileSize]` and `order=[2,0,1]` so the 3D byte
+// layout matches the 2D row-major envelope STORE.  With that order, dim 0
+// (numTiles) is NOT the slowest — its actual byte-stride is `tileSize`,
+// not `dimOther * tileSize`.  This override fires when the op carries the
+// `bishengir.use_dim_stride` UnitAttr and computes the stride from the
+// source encoding's traversal order, walking through `order` until we hit
+// dim 0 and multiplying by the inner dims' shape.  Registered with higher
+// benefit than upstream so it intercepts first.
+struct MemDescIndexOpOverride
+    : public ConvertOpToLLVMPattern<triton::gpu::MemDescIndexOp> {
+  using ConvertOpToLLVMPattern<
+      triton::gpu::MemDescIndexOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(triton::gpu::MemDescIndexOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override {
+    if (!op->hasAttrOfType<UnitAttr>("bishengir.use_dim_stride"))
+      return failure();
+
+    Location loc = op->getLoc();
+    auto b = TritonLLVMOpBuilder(loc, rewriter);
+    auto srcTy = op.getSrc().getType();
+    auto dstTy = op.getResult().getType();
+    auto llvmElemTy = getTypeConverter()->convertType(srcTy.getElementType());
+
+    // Compute dim 0's byte stride from the source encoding's order.
+    auto srcEnc = srcTy.getEncoding();
+    auto swizzled = dyn_cast<SwizzledSharedEncodingAttr>(srcEnc);
+    if (!swizzled)
+      return op->emitError(
+          "bishengir.use_dim_stride: src must use SwizzledSharedEncoding");
+    auto order = swizzled.getOrder();
+    auto srcShape = srcTy.getShape();
+    int64_t strideElems = 1;
+    for (unsigned axis : order) {
+      if (axis == 0)
+        break;
+      strideElems *= srcShape[axis];
+    }
+
+     Value offset =
+         b.mul(op.getIndex(), b.i32_val(static_cast<int32_t>(strideElems)));
+    auto smemObj = LLVM::getSharedMemoryObjectFromStruct(
+        loc, adaptor.getSrc(), llvmElemTy, rewriter);
+    Value base = smemObj.getBase();
+    auto elemPtrTy = base.getType();
+    auto prevOffsets = smemObj.getOffsets();
+    SmallVector<Value> offsetVals(prevOffsets.end() - dstTy.getRank(),
+                                   prevOffsets.end());
+    smemObj = SharedMemoryObject(b.gep(elemPtrTy, llvmElemTy, base, offset),
+                                  llvmElemTy, offsetVals);
+    auto retVal = getStructFromSharedMemoryObject(loc, smemObj, rewriter);
+    rewriter.replaceOp(op, retVal);
+    return success();
+  }
+};
+
 } // anonymous namespace
 
 namespace mlir::triton::ascend {
@@ -234,6 +303,11 @@ void populateFractalMemoryOpToLLVMPatterns(LLVMTypeConverter &typeConverter,
                                              benefit);
   patterns.add<FractalLocalAllocOpConversion>(typeConverter, targetInfo,
                                               benefit);
+  // Override the upstream MemDescIndexOpConversion for ops carrying the
+  // `bishengir.use_dim_stride` attribute.  Higher benefit ensures we
+  // match first; non-attributed ops fall through to upstream.
+  patterns.add<MemDescIndexOpOverride>(typeConverter,
+                                        PatternBenefit(benefit.getBenefit() + 1));
 }
 
 } // namespace mlir::triton::ascend
