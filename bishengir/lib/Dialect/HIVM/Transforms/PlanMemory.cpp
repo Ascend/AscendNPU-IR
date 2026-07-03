@@ -2022,6 +2022,17 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
       otherStorageEntryVec.push_back(storageEntry);
     }
   }
+  if (planMemoryStrategy == PlanMemoryStrategy::LARGEST_FIRST) {
+    auto storageEntryVecOrderCmp = [](StorageEntry *a, StorageEntry *b) {
+      return a->bufInfo->constBits > b->bufInfo->constBits;
+    };
+    llvm::sort(touchDmaStorageEntryVec.begin(), touchDmaStorageEntryVec.end(),
+               storageEntryVecOrderCmp);
+    llvm::sort(touchPipeScalarStorageEntryVec.begin(),
+               touchPipeScalarStorageEntryVec.end(), storageEntryVecOrderCmp);
+    llvm::sort(otherStorageEntryVec.begin(), otherStorageEntryVec.end(),
+               storageEntryVecOrderCmp);
+  }
   // reorder storage entrys: mem unique buffers + dma touched buffers + other
   // buffers + scalar touched buffers. Dma touched buffers and scalar touched
   // buffers will only exist in UB.
@@ -3072,7 +3083,7 @@ PlanMemoryPass::PlanMemoryForFuncOp(
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enablePrintMemoryAllocatedSize,
                     this->restrictInplaceAsISA, this->simtVFDynamicSize,
-                    this->disableVFReachableCheck);
+                    this->disableVFReachableCheck, this->planMemoryStrategy);
     if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
       return std::nullopt;
     }
