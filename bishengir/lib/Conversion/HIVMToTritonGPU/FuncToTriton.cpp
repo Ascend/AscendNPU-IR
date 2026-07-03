@@ -58,6 +58,9 @@ public:
     SmallVector<std::pair<int, Attribute>> fractalArgAttrs;
     int newArgCounter = 0;
     static constexpr int FixCount = 3;
+    // Get memref_attr from func attributes
+    auto memrefAttr = dyn_cast_or_null<DenseI32ArrayAttr>(
+        op->getAttr("memref_attr"));
     for (auto [idx, inputTy] : llvm::enumerate(oldFuncTy.getInputs())) {
       if (auto memrefTy = dyn_cast<MemRefType>(inputTy)) {
         // The following conversion logic should be consistent with
@@ -126,13 +129,35 @@ public:
     for (auto [idx, oldArg] : llvm::enumerate(oldEntryBlock.getArguments())) {
       if (auto memrefTy = mlir::dyn_cast<MemRefType>(oldArg.getType())) {
         auto dataPtr1 = newArgs[argIdx];
+        auto offset = newArgs[argIdx + 2];
+        bool hasOffset = memrefAttr && (int64_t)idx < memrefAttr.size() &&
+                         memrefAttr[idx] != 0;
+        Value newPtr = dataPtr1;
+        // Map the old memref data pointer to new tt.ptr
+        if (hasOffset) {
+          // Try to get static offset from memref type
+          int64_t staticOffset;
+          SmallVector<int64_t> strides;
+          if (succeeded(getStridesAndOffset(memrefTy, strides, staticOffset)) &&
+              staticOffset != ShapedType::kDynamic && staticOffset != 0) {
+            // Static non-zero offset: create a constant and add to pointer
+            auto constOffset = rewriter.create<arith::ConstantIntOp>(op.getLoc(), staticOffset, 64);
+            newPtr = rewriter.create<triton::AddPtrOp>(
+              op.getLoc(), dataPtr1.getType(), newPtr, constOffset);
+          } else {
+            // Dynamic offset: use the runtime offset argument
+            newPtr = rewriter.create<triton::AddPtrOp>(
+              op.getLoc(), dataPtr1.getType(), newPtr, offset);
+          }
+        }
+
         auto rank = memrefTy.getRank();
         // Skip over the full rank-aware descriptor emitted above; the cloned
         // body still models the original memref value through its data pointer.
         argIdx += FixCount;
         argIdx += rank;
         argIdx += rank;
-        argMapper.map(oldArg, dataPtr1);
+        argMapper.map(oldArg, newPtr);
       } else if (isa<IndexType>(oldArg.getType())) {
         auto narrowedArg = narrowABIIndexArg(
             rewriter, op.getLoc(), newArgs[argIdx++], oldArg.getType());

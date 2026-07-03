@@ -1863,6 +1863,12 @@ void AutoVectorizeV2::runOnOperation() {
 
   if (fallback) {
     PassManager pm(op->getContext());
+    AutoVectorizeOptions vecOptions;
+    // Set maxVectorizeAxes to be 1 for compatiblity.
+    // TODO: Remove this constraint after e2e support for multi axes
+    // vectorization.
+    vecOptions.maxVectorizeAxes = 2;
+    vecOptions.treeReduce = treeReduce;
     pm.addPass(hfusion::createHFusionAutoVectorizePass());
     std::ignore = pm.run(op);
   }

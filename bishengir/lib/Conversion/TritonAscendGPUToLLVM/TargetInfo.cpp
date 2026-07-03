@@ -133,12 +133,9 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
   }
 
   if (!elemTy.isInteger()) {
-    SmallVector<Value> vals = unpackLLVector(loc, val, rewriter);
-    for (Value &v : vals) {
-      v = b.bitcast(v, int_ty(elemBitwidth));
-    }
-    storeDShared(rewriter, loc, ptr, ctaId, packLLVector(loc, vals, rewriter),
-                 pred);
+    Type intVecTy = vec_ty(int_ty(elemBitwidth), vec);
+    Value asInt = b.bitcast(val, intVecTy);
+    storeDShared(rewriter, loc, ptr, ctaId, asInt, pred);
     return;
   }
 
@@ -146,17 +143,9 @@ void TargetInfo::storeDShared(RewriterBase &rewriter, Location loc, Value ptr,
   if (vec > kMaxVectorSize && elemBitwidth < kMinWordWidthBits) {
     assert(llvm::isPowerOf2_32(vec));
     unsigned int elemsPerPack = kMinWordWidthBits / elemBitwidth;
-    SmallVector<Value> oldVals = unpackLLVector(loc, val, rewriter);
-
-    SmallVector<Value> newVals;
-    for (unsigned int i = 0; i < vec / elemsPerPack; i++) {
-      Value v = packLLVector(
-          loc, ArrayRef(oldVals).slice(i * elemsPerPack, elemsPerPack),
-          rewriter);
-      newVals.push_back(b.bitcast(v, i32_ty));
-    }
-    storeDShared(rewriter, loc, ptr, ctaId,
-                 packLLVector(loc, newVals, rewriter), pred);
+    Type i32VecTy = vec_ty(i32_ty, vec / elemsPerPack);
+    Value asI32Vec = b.bitcast(val, i32VecTy);
+    storeDShared(rewriter, loc, ptr, ctaId, asI32Vec, pred);
     return;
   }
 
@@ -226,29 +215,16 @@ Value TargetInfo::loadDShared(RewriterBase &rewriter, Location loc, Value ptr,
   // We only know how to load integers
   if (!elemTy.isInteger()) {
     Type newLoadTy = vec_ty(int_ty(elemBitwidth), vec);
-    SmallVector<Value> vals = unpackLLVector(
-        loc, loadDShared(rewriter, loc, ptr, ctaId, newLoadTy, pred), rewriter);
-    for (Value &v : vals) {
-      v = b.bitcast(v, elemTy);
-    }
-    return packLLVector(loc, vals, rewriter);
+    Value loaded = loadDShared(rewriter, loc, ptr, ctaId, newLoadTy, pred);
+    return b.bitcast(loaded, vecTy);
   }
 
   // If vec > 4 and elemBitwidth < 32, load b32's instead
   if (vec > kMaxVectorSize && elemBitwidth < kMinWordWidthBits) {
     auto newVec = vec / (int64_t)(kMinWordWidthBits / elemBitwidth);
     auto newVecTy = vec_ty(i32_ty, newVec);
-    auto res = loadDShared(rewriter, loc, ptr, ctaId, newVecTy, pred);
-
-    // Unpack the b32's into the original vector type
-    SmallVector<Value> vals;
-    for (Value v : unpackLLVector(loc, res, rewriter)) {
-      Value vv = b.bitcast(v, vec_ty(elemTy, kMinWordWidthBits / elemBitwidth));
-      for (Value vvv : unpackLLVector(loc, vv, rewriter)) {
-        vals.push_back(vvv);
-      }
-    }
-    return packLLVector(loc, vals, rewriter);
+    Value res = loadDShared(rewriter, loc, ptr, ctaId, newVecTy, pred);
+    return b.bitcast(res, vecTy);
   }
 
   // If total width > 128, split into multiple loads

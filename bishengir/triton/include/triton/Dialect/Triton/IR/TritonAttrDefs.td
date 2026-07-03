@@ -129,7 +129,10 @@ def TT_InputPrecisionAttr : I32EnumAttr<
     [
       I32EnumAttrCase<"TF32", 0, "tf32">,
       I32EnumAttrCase<"TF32x3", 1, "tf32x3">,
-      I32EnumAttrCase<"IEEE", 2, "ieee">
+      I32EnumAttrCase<"IEEE", 2, "ieee">,
+#ifdef BSPUB_DAVINCI_BISHENGIR
+      I32EnumAttrCase<"HF32", 3, "hf32">
+#endif
     ]>{
   let cppNamespace = "::mlir::triton";
 }

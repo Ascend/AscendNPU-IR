@@ -40,10 +40,11 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {
 // CHECK-NEXT:   %[[cvt0:.+]] =  "hivm_regbaseintrins.intr.hivm.vcvtii.s82s32.x"(%[[LOAD0]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<256xi8>, vector<256xi1>, i32) -> vector<64xi32>
 // CHECK-NEXT:   %[[div:.+]] = "hivm_regbaseintrins.intr.hivm.vdiv.s.x"(%[[cvt0]], %[[cvt1]], %[[EXTRACT_PLT]]) : (vector<64xi32>, vector<64xi32>, vector<256xi1>) -> vector<64xi32>
 // CHECK-NEXT:   %[[cvt2:.+]] = "hivm_regbaseintrins.intr.hivm.vcvtii.s322u8.x"(%[[div]], %[[EXTRACT_PLT]], %{{.*}}) : (vector<64xi32>, vector<256xi1>, i32, i32) -> vector<256xi8>
+// CHECK-NEXT:   %[[bitcast:.+]] = llvm.bitcast %[[cvt2:.+]]
 // CHECK-NEXT:   %[[EXTRACT_UCC2:.+]] = llvm.extractvalue %[[UCC2]][1] : !llvm.struct<(ptr<6>, ptr<6>, i64, array<1 x i64>, array<1 x i64>)>
 // CHECK-NEXT:   %[[GET_UCC2:.+]] = llvm.getelementptr %[[EXTRACT_UCC2]]
 // CHECK-NEXT:   %[[c12:.+]] = llvm.mlir.constant(12 : i32) : i32
-// CHECK-NEXT:   "hivm_regbaseintrins.intr.hivm.vstsx1.v256s8"(%[[cvt2]], %[[GET_UCC2]], %{{.*}}, %[[c12]], %{{.*}}, %[[EXTRACT_PLT]]) : (vector<256xi8>, !llvm.ptr<6>, i32, i32, i32, vector<256xi1>) -> ()
+// CHECK-NEXT:   "hivm_regbaseintrins.intr.hivm.vstsx1.v64s32"(%[[bitcast]], %[[GET_UCC2]], %{{.*}}, %[[c12]], %{{.*}}, %[[EXTRACT_PLT]]) : (vector<64xi32>, !llvm.ptr<6>, i32, i32, i32, vector<256xi1>) -> ()
 
 // -----
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>} {

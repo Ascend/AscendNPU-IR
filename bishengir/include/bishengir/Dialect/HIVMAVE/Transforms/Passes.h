@@ -29,7 +29,7 @@ std::unique_ptr<Pass> createAVENormalizeOpsPass();
 std::unique_ptr<Pass> createReplaceWithVectorScalarPass();
 
 /// Unroll and add deintlv for vextf
-std::unique_ptr<Pass> createProcessWideVextfPass();
+std::unique_ptr<Pass> createAveLoopOptimizePass();
 
 /// Unroll and add deintlv for vsstb
 std::unique_ptr<Pass> createProcessVsstbPass();
@@ -43,6 +43,9 @@ std::unique_ptr<Pass> createI1opSoftImplPass();
 /// Combine multiple AVE ops into more efficient fused ops.
 std::unique_ptr<Pass>
 createCombineAVEOPsPass(const CombineAVEOPsOptions &options = {});
+
+/// Convert PLT to PGE op when true_shape is constant
+std::unique_ptr<Pass> createPLTToPGEPass();
 
 /// Convert PLT to PLTM op
 std::unique_ptr<Pass> createPLTToPLTMPass();

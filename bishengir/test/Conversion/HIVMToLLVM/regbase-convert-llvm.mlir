@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -split-input-file -convert-hivmave-to-ave-intrin | FileCheck %s
+// RUN: bishengir-opt %s -split-input-file -ave-normalize-ops -convert-hivmave-to-ave-intrin | FileCheck %s
 
 // Test VaddV128F16XInstrOp
 // CHECK-LABEL: test_vadd_v128_f16
@@ -846,7 +846,7 @@ func.func @test_vshrs$i16$subvl(%arg0: vector<64xi16>) -> vector<64xi16> {
 // CHECK-NOT:     ave.hir.vshls
 // CHECK:         %[[VAL_0:.*]] = llvm.mlir.constant(false) : i1
 // CHECK:         %[[VAL_1:.*]] = llvm.mlir.constant(7 : i32) : i32
-// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(7 : i32) : i32
+// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(12 : i32) : i32
 // CHECK:         %[[VAL_3:.*]] = llvm.mlir.constant(0 : i32) : i32
 // CHECK:         %[[VAL_4:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%[[VAL_2]], %[[VAL_3]]) {mask_bit_width = 32 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
 // CHECK:         %[[VAL_4_1:.*]] = builtin.unrealized_conversion_cast %[[VAL_4:.*]] : vector<256xi1> to vector<32xi1>
@@ -870,7 +870,7 @@ func.func @test_vshls$i32$subvl(%arg0: vector<32xi32>) -> vector<32xi32> {
 // CHECK-NOT:     ave.hir.vshrs
 // CHECK:         %[[VAL_0:.*]] = llvm.mlir.constant(false) : i1
 // CHECK:         %[[VAL_1:.*]] = llvm.mlir.constant(7 : i32) : i32
-// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(7 : i32) : i32
+// CHECK:         %[[VAL_2:.*]] = llvm.mlir.constant(12 : i32) : i32
 // CHECK:         %[[VAL_3:.*]] = llvm.mlir.constant(0 : i32) : i32
 // CHECK:         %[[VAL_4:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32"(%[[VAL_2]], %[[VAL_3]]) {mask_bit_width = 32 : i32, mask_op_idx = 0 : i32} : (i32, i32) -> vector<256xi1>
 // CHECK:         %[[VAL_4_1:.*]] = builtin.unrealized_conversion_cast %[[VAL_4:.*]] : vector<256xi1> to vector<32xi1>

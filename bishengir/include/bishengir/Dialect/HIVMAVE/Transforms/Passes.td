@@ -23,6 +23,16 @@ def ReplaceWithVectorScalar : Pass<"ave-replace-with-vector-scalar", "func::Func
   let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect","hivmave::AVEDialect"];
 }
 
+def PLTToPGE : Pass<"ave-plt-to-pge", "func::FuncOp"> {
+  let summary = "Convert PLT op with constant true_shape to PGE.";
+  let description = [{
+    This pass converts VFPltOp whose true_shape operand is a constant
+    into VFPgeOp with the corresponding PgePattern (VL1, VL2, ..., ALL, ALLF).
+  }];
+  let constructor = "mlir::hivmave::createPLTToPGEPass()";
+  let dependentDialects = ["arith::ArithDialect","hivmave::AVEDialect"];
+}
+
 def PLTToPLTM : Pass<"ave-plt-to-pltm", "func::FuncOp"> {
   let summary = "Convert PLT op on tail block to PLTM.";
   let constructor = "mlir::hivmave::createPLTToPLTMPass()";
@@ -43,13 +53,14 @@ def ProcessVsstb : Pass<"ave-process-vsstb", "func::FuncOp"> {
   ];
 }
 
-def ProcessWideVextf : Pass<"ave-process-wide-vextf", "func::FuncOp"> {
-  let summary = "Process wide vextf related SCF For loops (unroll 64F16 loops and rewrite vextf)";
+def AveLoopOptimize : Pass<"ave-loop-optimize", "func::FuncOp"> {
+  let summary = "Optimize AVE SCF For loops (unroll wide vextf loops, peel epilogues, canonicalize)";
   let description = [{
     This pass matches specific SCF For loops with vextf,
-    unrolls them by factor 2, and rewrites the vector load logic with VfInterleaveOp.
+    unrolls them by factor 2, peels epilogue loops, and applies
+    scf::ForOp / AffineApplyOp canonicalization.
   }];
-  let constructor = "mlir::hivmave::createProcessWideVextfPass()";
+  let constructor = "mlir::hivmave::createAveLoopOptimizePass()";
     let dependentDialects = [
     "hivmave::AVEDialect",
     "arith::ArithDialect",

@@ -1,4 +1,4 @@
-//===------------- ProcessWideVextf.cpp - process vextf op
+//===------------- AveLoopOptimize.cpp - optimize AVE loops
 //--------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
@@ -6,7 +6,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
-
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
@@ -28,11 +28,11 @@
 #include "llvm/Support/Debug.h"
 #include <optional>
 
-#define DEBUG_TYPE "ave-process-wide-vextf"
+#define DEBUG_TYPE "ave-loop-optimize"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 
 namespace mlir {
-#define GEN_PASS_DEF_PROCESSWIDEVEXTF
+#define GEN_PASS_DEF_AVELOOPOPTIMIZE
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h.inc"
 } // namespace mlir
 
@@ -47,7 +47,7 @@ using namespace mlir::annotation;
 
 // Unroll and interleave for loops with widening casts
 struct WideVextfUnrollInterleavePattern : public OpRewritePattern<scf::ForOp> {
-  WideVextfUnrollInterleavePattern(MLIRContext *context)
+  explicit WideVextfUnrollInterleavePattern(MLIRContext *context)
       : OpRewritePattern<scf::ForOp>(context) {}
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
@@ -157,24 +157,52 @@ private:
   }
 };
 
+// Peel the epilogue iteration
+struct PeelEpiloguePattern : public OpRewritePattern<scf::ForOp> {
+  PeelEpiloguePattern(MLIRContext *context)
+      : OpRewritePattern<scf::ForOp>(context) {}
+
+  LogicalResult matchAndRewrite(scf::ForOp forOp,
+                                PatternRewriter &rewriter) const override {
+    if (forOp->hasAttr("__peeled_loop__"))
+      return failure();
+    scf::ForOp partialIteration;
+    if (failed(scf::peelForLoopAndSimplifyBounds(rewriter, forOp,
+                                                 partialIteration)))
+      return failure();
+    partialIteration->setAttr("__peeled_loop__", rewriter.getUnitAttr());
+    return success();
+  }
+};
+
 namespace {
-struct processWideVextfPass
-    : public impl::ProcessWideVextfBase<processWideVextfPass> {
+struct aveLoopOptimizePass
+    : public impl::AveLoopOptimizeBase<aveLoopOptimizePass> {
 
   void runOnOperation() override {
     auto funcOp = getOperation();
+    if (!hivm::isVF(funcOp))
+      return;
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
     patterns.add<WideVextfUnrollInterleavePattern>(context);
+    patterns.add<PeelEpiloguePattern>(context);
 
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
       signalPassFailure();
+    }
+
+    RewritePatternSet canonPatterns(context);
+    scf::ForOp::getCanonicalizationPatterns(canonPatterns, context);
+    AffineApplyOp::getCanonicalizationPatterns(canonPatterns, context);
+    if (failed(applyPatternsGreedily(funcOp, std::move(canonPatterns)))) {
+      return signalPassFailure();
     }
   }
 };
 } // namespace
 
-std::unique_ptr<Pass> hivmave::createProcessWideVextfPass() {
-  return std::make_unique<processWideVextfPass>();
+std::unique_ptr<Pass> hivmave::createAveLoopOptimizePass() {
+  return std::make_unique<aveLoopOptimizePass>();
 }

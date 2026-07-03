@@ -14,9 +14,10 @@ func.func @test_store_in_nested_for(%arg0: vector<64xf32>, %arg1: memref<128xf16
     // CHECK: %[[MASK:.*]] = "hivm_regbaseintrins.intr.hivm.pge.b32
     // CHECK: %[[CASTED_MASK_1:.*]] = builtin.unrealized_conversion_cast %[[MASK]]
     // CHECK: %[[CASTED_VAL_2:.*]] = builtin.unrealized_conversion_cast %[[CASTED_VAL_1]]
+    // CHECK: %[[BIT_CAST:.*]] = llvm.bitcast
     // CHECK: %[[DIST:.*]] = llvm.mlir.constant(7 : i32) : i32
     // CHECK: %[[CASTED_MASK_2:.*]] = builtin.unrealized_conversion_cast %[[CASTED_MASK_1]]
-    // CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1.v128f16"(%[[CASTED_VAL_2]], {{.*}}, %[[DIST]], {{.*}}, %[[CASTED_MASK_2]]
+    // CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1.v64f32"(%[[BIT_CAST]], {{.*}}, %[[DIST]], {{.*}}, %[[CASTED_MASK_2]]
     %2 = ave.hir.pge <ALL> : vector<64xi1>
     ave.hir.masked_store <NORM_B16> %arg1[%arg2], %2, %1 {element_alignment_bit_width = 32 : i32} : memref<128xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
   }

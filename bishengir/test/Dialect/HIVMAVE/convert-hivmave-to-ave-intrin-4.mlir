@@ -121,11 +121,11 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     // CHECK: "hivm_regbaseintrins.intr.hivm.vgather2_v300.v128f16"
     // CHECK: builtin.unrealized_conversion_cast
     // CHECK: builtin.unrealized_conversion_cast
-    // CHECK: llvm.extractvalue %0[1]
-    // CHECK: llvm.getelementptr %17[%4]
+    // CHECK: llvm.extractvalue
+    // CHECK: llvm.getelementptr
     // CHECK: llvm.mlir.constant(0 : i32)
     // CHECK: llvm.mlir.constant(7 : i32)
-    // CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1.v128f16"
+    // CHECK: "hivm_regbaseintrins.intr.hivm.vstsx1.v64f32"
     ave.hir.masked_store <NORM_B16> %arg2[%c0], %res, %4 : memref<23xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
     return
   }

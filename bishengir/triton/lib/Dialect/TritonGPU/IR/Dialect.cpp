@@ -2340,6 +2340,12 @@ struct TritonGPUInferLayoutInterface
   inferDotOpEncoding(Attribute operandEncoding, unsigned opIdx,
                      Attribute retEncoding,
                      std::optional<Location> location) const override {
+#if BSPUB_DAVINCI_BISHENGIR
+    if (mlir::isa<BlockedEncodingAttr>(operandEncoding) ||
+        mlir::isa<LinearEncodingAttr>(operandEncoding)) {
+      return success();
+    }
+#endif
     auto mmaRetEncoding = mlir::dyn_cast<NvidiaMmaEncodingAttr>(retEncoding);
     if (mmaRetEncoding && mmaRetEncoding.isHopper()) {
       auto dotOpEnc = mlir::dyn_cast<DotOperandEncodingAttr>(operandEncoding);

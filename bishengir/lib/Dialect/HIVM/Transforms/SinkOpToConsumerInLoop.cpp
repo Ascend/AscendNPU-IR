@@ -45,9 +45,9 @@ public:
     if (!loopParent)
       return rewriter.notifyMatchFailure(op, "the user is not in a loop");
 
-    // For manual VF case, wo will first outline scopeOp into VF, and we don't
-    // support vectorize ops(fillOp, vbrcOp) in VF function, so we can't sink
-    // them into scopeOp. See more details in issue !1199.
+    // For manual VF case, scopeOp will be outlined into VF before ops(fillOp,
+    // vbrcOp) are vectorized, so we can't sink these ops into scopeOp. See
+    // more details in issue !1199.
     auto scopeParent = singleUser->getParentOfType<scope::ScopeOp>();
     if (scopeParent)
       return rewriter.notifyMatchFailure(op, "can't sink op into scope");

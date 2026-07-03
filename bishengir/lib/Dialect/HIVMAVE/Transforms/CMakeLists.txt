@@ -3,6 +3,7 @@ add_bishengir_dialect_library(MLIRHIVMAVETransforms
   ComplexReductionIntermediateLowering.cpp
   I1opSoftImpl.cpp
   LegalizeOptHIVMAVE.cpp
+  PLTToPGE.cpp
   PLTToPLTM.cpp
   ProcessVsstb.cpp
   ProcessMembar.cpp
@@ -13,7 +14,7 @@ add_bishengir_dialect_library(MLIRHIVMAVETransforms
   SIMTLoopNestsScheduling.cpp
   CombineAVEOPs.cpp
   HoistVstas.cpp
-  ProcessWideVextf.cpp
+  AveLoopOptimize.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVMAVE/Transforms

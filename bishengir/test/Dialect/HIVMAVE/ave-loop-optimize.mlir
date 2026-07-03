@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -ave-process-wide-vextf %s -o %t.mlir
+// RUN: bishengir-opt -ave-loop-optimize %s -o %t.mlir
 // RUN: cat %t.mlir | FileCheck %s
 
 // CHECK-LABEL: func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3
@@ -43,6 +43,42 @@ func.func @causal_conv1d_update_kernel_bdt_fwd_outlined_vf_3(
       %9 = ave.hir.pge <ALL> : vector<64xi1>
       ave.hir.masked_store <NORM_B32> %subview_7[%c0], %9, %8 {hivm.is_continuous} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
     }
+  }
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @peel_epilogue_canon_test
+// split bound folded to constant by AffineApplyOp canonicalization
+// CHECK-DAG: %[[C192:.*]] = arith.constant 192 : index
+// affine.apply in promoted epilogue body folded to constant
+// CHECK-DAG: %[[C256:.*]] = arith.constant 256 : index
+// main loop uses folded split bound as upper bound
+// CHECK: scf.for {{.*}} = %c0 to %[[C192]] step %c64
+// no second scf.for — epilogue promoted by scf::ForOp canonicalization
+// CHECK-NOT: scf.for
+// epilogue body inlined: src subview uses folded %c256, dst subview uses %c192
+// CHECK: memref.subview %{{.*}}[0, %[[C256]]]
+// CHECK: memref.subview %{{.*}}[0, %[[C192]]]
+
+func.func @peel_epilogue_canon_test(
+    %arg0: memref<32x320xf16, #hivm.address_space<ub>>,
+    %arg1: memref<32x320xf32, #hivm.address_space<ub>>)
+    attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %c64 = arith.constant 64 : index
+  %c200 = arith.constant 200 : index
+  scf.for %iv = %c0 to %c200 step %c64 {
+    %offset = affine.apply affine_map<()[s0] -> (s0 + 64)>()[%iv]
+    %sub = memref.subview %arg0[0, %offset] [1, 64] [1, 1] : memref<32x320xf16, #hivm.address_space<ub>> to memref<1x64xf16, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>
+    %sub_flat = memref.subview %sub[0, 0] [1, 64] [1, 1] : memref<1x64xf16, strided<[320, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf16, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    %vload = ave.hir.vload <NORM> %sub_flat[%c0] : memref<64xf16, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf16>
+    %pge = ave.hir.pge <ALL> : vector<64xi1>
+    %vextf = ave.hir.vextf %vload, <part_even>, %pge : vector<64xf16>, vector<64xf32>, vector<64xi1>
+    %sub_dst = memref.subview %arg1[0, %iv] [1, 64] [1, 1] : memref<32x320xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[320, 1], offset: ?>, #hivm.address_space<ub>>
+    %sub_dst_flat = memref.subview %sub_dst[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[320, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    ave.hir.masked_store <NORM_B32> %sub_dst_flat[%c0], %pge, %vextf {hivm.is_continuous} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
   }
   return
 }

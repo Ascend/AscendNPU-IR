@@ -45,6 +45,9 @@ std::unique_ptr<mlir::Pass> createSIMTAutoBlockifyPass(unsigned factor = 1);
 
 std::unique_ptr<mlir::Pass> createEnableAscendDPXMMAPass();
 
+std::unique_ptr<mlir::Pass> createConvertDotInputToLinearLayoutPass();
+
+
 /// Create a pass to convert f16 operations to f32 operations
 std::unique_ptr<mlir::Pass> createLegalizeF16ForTritonPass();
 
@@ -92,6 +95,27 @@ std::unique_ptr<mlir::Pass> createFlattenMemDescArgsPass();
 /// Create a pass that propagates shared memory offsets from local_alloc to
 /// call_scalar and removes ordering-only local_load ops.
 std::unique_ptr<mlir::Pass> createPopulateSharedMemoryOffsetToDPXPass();
+
+/// Create a pass to tile tt.dot load inputs to reduce register spill.
+
+std::unique_ptr<mlir::Pass>
+createTileDotLoadsPass(const TileDotLoadsOptions &options = {});
+
+/// Create a pass that performs cheap math rewrites: math.exp -> math.exp2
+/// with a log2(e) factor (downstream canonicalize folds it into any
+/// adjacent constant-splat scale)
+std::unique_ptr<mlir::Pass> createOptimizeMathPass();
+
+/// Run two complementary transformations on K-tile chain loops:
+///   1. Hoist any tt.trans whose source is loop-invariant out of every
+///      scf.for (targeted LICM specialization).
+///   2. Fuse adjacent scf.for ops with identical bounds when their
+///      chains are independent AND their combined SMEM footprint stays
+///      under 70% of the kernel's SMEM budget, so the instruction
+///      scheduler sees both chains in one body and can interleave their
+///      issue.
+std::unique_ptr<mlir::Pass>
+createHoistAndFuseDotChainsPass(const HoistAndFuseDotChainsOptions &options = {});
 
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Triton/Transforms/Passes.h.inc"
