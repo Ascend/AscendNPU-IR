@@ -512,13 +512,22 @@ public:
 };
 
 void MarkMultiBufferPass::runOnOperation() {
+  auto funcOp = getOperation();
   if (!enableAuto) {
     LLVM_DEBUG(
         DBGS() << "enableAuto is false, no need to mark automatically.\n");
+    if (enablePreload) {
+      RewritePatternSet patterns(&getContext());
+      patterns.insert<MarkScopeTightlyMultiBuffer>(patterns.getContext());
+      patterns.insert<MarkScopeMultiBuffer>(
+          patterns.getContext());
+
+      if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
+        signalPassFailure();
+    }
+
     return;
   }
-
-  auto funcOp = getOperation();
   if (hacc::utils::isHost(funcOp))
     return;
 
