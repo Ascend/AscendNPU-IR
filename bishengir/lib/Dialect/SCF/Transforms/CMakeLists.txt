@@ -10,7 +10,9 @@ add_bishengir_dialect_library(BiShengIRSCFTransforms
   BiShengIRSCFTransformsIncGen
 
   LINK_LIBS PUBLIC
+  BiShengIRHIVMDialect
   BiShengIRSCFUtils
+  BiShengIRScopeDialect
   MLIRSCFDialect
   MLIRIR
   MLIRDialect
