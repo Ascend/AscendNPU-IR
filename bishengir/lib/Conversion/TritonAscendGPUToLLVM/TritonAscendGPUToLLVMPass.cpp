@@ -222,10 +222,15 @@ struct AllocateAscendSharedMemory
     if (auto superBlockFactorAttr = mod->getAttrOfType<IntegerAttr>(
             triton::gpu::AttrSuperBlockFactor))
       superBlockFactor = superBlockFactorAttr.getUInt();
+    
+    size_t newSharedMemAmount = allocation.getSharedMemorySize();
+    
+    if (superBlockFactor > 1) {
+      // Pad memory for each block up to the nearest multiple of 16
+      newSharedMemAmount = ((newSharedMemAmount + 15) / 16 * 16) * superBlockFactor;
+    }
     mod->setAttr("ttg.shared",
-                 mlir::IntegerAttr::get(mlir::IntegerType::get(&getContext(), 32),
-                                        allocation.getSharedMemorySize() *
-                                            superBlockFactor));
+                  mlir::IntegerAttr::get(mlir::IntegerType::get(&getContext(), 32), newSharedMemAmount));
 
     if (triton::util::getPassColumnDigit(mod, "convert-triton-gpu-to-llvm")) {
       ModuleMembarOrFenceAnalysis<MembarAnalysis> analyzer(&allocation);
