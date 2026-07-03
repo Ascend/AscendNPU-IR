@@ -162,10 +162,28 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
           mlir::hivm::TFuncCoreTypeAttr::name,
           hivm::TFuncCoreTypeAttr::get(op->getContext(), *funcCoreType));
 
-    // Only mark AIV (cube) lib calls as noinline; AIC (vector) lib calls are
-    // always inlined.
+    // Only mark AIV lib calls as noinline by default; other lib calls are
+    // always inlined. HIVM custom ops default to noinline unless explicitly
+    // marked always_inline with hivm.inline_mode.
     bool markNoInline =
         gMarkLibCallNoInline && funcCoreType == hivm::TFuncCoreType::AIV;
+    std::optional<hivm::InlineMode> inlineMode;
+    if (auto customOp = dyn_cast<hivm::CustomOp>(op))
+      inlineMode =
+          customOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
+    else if (auto customMacroOp = dyn_cast<hivm::CustomMacroOp>(op))
+      inlineMode =
+          customMacroOp.getInlineMode().value_or(hivm::InlineMode::NoInline);
+    if (inlineMode) {
+      switch (*inlineMode) {
+      case hivm::InlineMode::AlwaysInline:
+        markNoInline = false;
+        break;
+      case hivm::InlineMode::NoInline:
+        markNoInline = true;
+        break;
+      }
+    }
 
     auto haccInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
         markNoInline ? hacc::HACCToLLVMIRTranslateAttr::NOINLINE
@@ -526,9 +544,8 @@ private:
     additionalArgs.push_back(preQuant);
     if (quantScale) {
       if (quantScale.getType() != rewriter.getF32Type())
-        quantScale = rewriter.create<arith::ExtFOp>(op->getLoc(),
-                                                     rewriter.getF32Type(),
-                                                     quantScale);
+        quantScale = rewriter.create<arith::ExtFOp>(
+            op->getLoc(), rewriter.getF32Type(), quantScale);
       additionalArgs.push_back(quantScale);
     } else
       additionalArgs.push_back(rewriter.create<arith::ConstantOp>(
@@ -607,7 +624,8 @@ public:
 
   LogicalResult matchAndRewrite(CumOpWithTemp op,
                                 PatternRewriter &rewriter) const final {
-    assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
+    assert(op.hasPureBufferSemantics() &&
+           "Operating on tensor, please bufferize.");
 
     auto src = op.getSrc();
     auto dst = op.getDst();
@@ -620,7 +638,7 @@ public:
     } else {
       operands.push_back(dst);
     }
-    
+
     rewriter.setInsertionPoint(op);
 
     bool isReverse = op.getReverse();
@@ -1142,13 +1160,15 @@ private:
     SmallVector<Value> operands =
         VectorOpToLibraryCallPattern<hivm::VGatherOp>::getLibraryCallOperands(
             rewriter, op, includeExtraBuffer);
-    // All gather operations pass the axis as a runtime operand for the SIMT template.
+    // All gather operations pass the axis as a runtime operand for the SIMT
+    // template.
     int64_t axis = cast<ShapedType>(gatherOp.getSrc().getType()).getRank() - 1;
     auto axisAttr = gatherOp.getGatherAxis();
     if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1) {
       axis = static_cast<int64_t>(*axisAttr);
     }
-    Value axisVal = rewriter.create<arith::ConstantIntOp>(op->getLoc(), axis, 32);
+    Value axisVal =
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), axis, 32);
     operands.push_back(axisVal);
     return operands;
   }

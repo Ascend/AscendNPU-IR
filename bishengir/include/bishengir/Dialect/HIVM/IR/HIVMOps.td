@@ -1165,6 +1165,7 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kAlignDimName = "align_dim";
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
       static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
+      static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
 
       int getMaxRank() const {
         if (auto maxRankAttr =
@@ -1219,6 +1220,21 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       void setVFMode(const VFMode& vfMode) {
         getOperation()->setAttr(VFModeAttr::name,
             VFModeAttr::get(getContext(), vfMode));
+      }
+
+      std::optional<InlineMode> getInlineMode() const {
+        if (const auto inlineModeAttr =
+            (*this)->template getAttrOfType<InlineModeAttr>(
+              InlineModeAttr::name)) {
+          return inlineModeAttr.getValue();
+        }
+
+        return {};
+      }
+
+      void setInlineMode(const InlineMode& inlineMode) {
+        getOperation()->setAttr(InlineModeAttr::name,
+            InlineModeAttr::get(getContext(), inlineMode));
       }
 
       static constexpr StringLiteral kGMAddrArgIndicesAttrName = "gm_addr_args_indices";

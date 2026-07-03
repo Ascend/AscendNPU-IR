@@ -1104,6 +1104,21 @@ def HIVM_VFModeAttr : HIVM_I32EnumAttr<"vf_mode", HIVM_VFModeEnum> {
   }];
 }
 
+def HIVM_InlineModeAlwaysInline
+    : I32EnumAttrCase<"AlwaysInline", 0, "always_inline">;
+def HIVM_InlineModeNoInline
+    : I32EnumAttrCase<"NoInline", 1, "no_inline">;
+def HIVM_InlineModeEnum
+    : HIVM_I32Enum<"InlineMode", "HIVM Custom Op Inline Mode",
+                   [HIVM_InlineModeAlwaysInline, HIVM_InlineModeNoInline]>;
+
+def HIVM_InlineModeAttr
+    : HIVM_I32EnumAttr<"inline_mode", HIVM_InlineModeEnum> {
+  let description = [{
+    HIVM custom op inline mode attribute.
+  }];
+}
+
 def HIVM_MultiBufferAttr : HIVM_Attr<"MultiBuffer", "multi_buffer"> {
   let description = [{
     HIVM multi-buffer attribute.
