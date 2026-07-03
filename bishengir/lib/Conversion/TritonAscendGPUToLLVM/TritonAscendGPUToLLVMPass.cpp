@@ -127,6 +127,8 @@ struct ConvertTritonAscendGPUToLLVMPass
         typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
     mlir::triton::populateGatherOpToLLVMPatterns(
         typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
+    mlir::triton::populateHistogramOpToLLVMPatterns(
+        typeConverter, patterns, targetInfo, kDefaultPatternBenefit);
     mlir::triton::populateViewOpToLLVMPatterns(typeConverter, patterns,
                                                kDefaultPatternBenefit);
     mlir::triton::populateAssertOpToLLVMPattern(
