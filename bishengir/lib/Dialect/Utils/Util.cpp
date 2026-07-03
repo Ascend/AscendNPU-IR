@@ -173,6 +173,15 @@ std::string getPrettyOpName(Operation *op) {
 }
 } // namespace debugger
 
+/*
+* @param[in] alignTargets - target axes which need to be aligned
+* @param[out] alignUnits - vector of multipliers which make memref/tensor aligned by applying them to shape
+* @param[in] shapes - shapes of tensor/memref which needs to be aligned
+* @param[in, out] innerAlignedUnits - inner axis which are already aligned.
+* @param[in, out] shapeAccumulation - total number of elements of inner axes
+* @param[in] alignTargetDim - axis which need to be aligned
+* @param[in] alignUnitsDim - axis of alignUnits which contain multiplier to make axis aligned
+*/
 void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
                    SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
                    int &innerAlignedUnits, int &shapeAccumulation,
@@ -194,7 +203,7 @@ void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
     }
     alignUnits[alignUnitsDim] = newAlignedUnits / innerAlignedUnits;
   }
-  innerAlignedUnits = newAlignedUnits;
+  innerAlignedUnits = std::max(innerAlignedUnits, std::lcm(shapeAccumulation, innerAlignedUnits));
   if (!ShapedType::isDynamic(shapes[alignTargetDim])) {
     shapeAccumulation = shapeAccumulation * std::lcm(shapes[alignTargetDim],
                                                      alignUnits[alignUnitsDim]);

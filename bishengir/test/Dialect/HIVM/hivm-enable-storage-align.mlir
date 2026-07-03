@@ -336,3 +336,18 @@ func.func @test_collapse_borrow_unit_align_dim_multi_nonunit() {
   hivm.hir.vexp ins(%collapse : memref<2x4xf32, #hivm.address_space<ub>>) outs(%dst : memref<2x4xf32, #hivm.address_space<ub>>)
   return
 }
+
+// -----
+
+// CHECK-LABEL: @test
+// CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<256x4x2x3x4x1xi8, #hivm.address_space<ub>>
+// CHECK: %[[ALLOC2:.*]] = memref.alloc() : memref<256x4x2x3x4x1xi8, #hivm.address_space<ub>>
+func.func @test() {
+  %alloc = memref.alloc() : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>
+  annotation.mark %alloc {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>
+  %alloc1 = memref.alloc() : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>
+  annotation.mark %alloc1 {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>
+  %dst = memref.alloc() : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>
+  hivm.hir.vadd ins(%alloc, %alloc1 : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>, memref<256x1x2x3x4xi8, #hivm.address_space<ub>>) outs(%dst : memref<256x1x2x3x4xi8, #hivm.address_space<ub>>)
+  return
+}
