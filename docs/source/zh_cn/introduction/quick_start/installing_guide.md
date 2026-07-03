@@ -29,11 +29,11 @@
 
 2. 初始化并更新子模块（`Submodules`）。
 
-   本项目依赖`LLVM`、`Torch-MLIR`等三方库，需要拉取并更新到对应分支的最新代码。
+   本项目依赖`LLVM`、`Torch-MLIR`等三方库，需要拉取并更新到指定的`commit id`。
 
    ```bash
-   # 递归地拉取所有子模块，并跟踪各子模块配置的分支最新代码
-   git submodule update --init --recursive --remote
+   # 递归地拉取所有子模块
+   git submodule update --init --recursive
    ```
 
 ### 运行依赖

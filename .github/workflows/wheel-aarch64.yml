@@ -46,8 +46,8 @@ jobs:
 
       - name: Initialize submodules
         run: |
-          git submodule update --init --remote --depth 1 third-party/llvm-project
-          git submodule update --init --remote --depth 1 third-party/torch-mlir
+          git submodule update --init --depth 1 third-party/llvm-project
+          git submodule update --init --depth 1 third-party/torch-mlir
 
       - name: Restore LLVM build directory cache
         uses: actions/cache/restore@v4

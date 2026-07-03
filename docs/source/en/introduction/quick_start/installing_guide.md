@@ -132,7 +132,7 @@ Run `./build-tools/build.sh` from the repo root to configure, build, and install
 
 For full manual control, follow these steps.
 
-**Prerequisites**: submodule init (`git submodule update --init --recursive --remote`).
+**Prerequisites**: submodule init (`git submodule update --init --recursive`).
 
 ```bash
 # From the repo root
