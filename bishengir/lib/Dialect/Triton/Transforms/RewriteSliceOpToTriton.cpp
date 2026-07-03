@@ -302,24 +302,13 @@ planSliceRewrite(Operation *op, RankedTensorType large, RankedTensorType small,
       return failure();
     }
 
-    if (plan.r % plan.S != 0) {
-      op->emitError("offset at indexed axis ")
-          << plan.axis << " must be a multiple of size " << plan.S << "; got "
-          << plan.r;
-      return failure();
+    if (plan.isOffsetStatic && plan.r % plan.S != 0) {
+      OpBuilder builder(op);
+      plan.isOffsetStatic = false;
+      plan.dynamicR = builder.create<arith::ConstantOp>(op->getLoc(), builder.getIndexAttr(plan.r));
     }
 
     plan.m = plan.r / plan.S;
-  }
-
-  // If we have a `tensor.insert_slice` op, we must check that N is divisible by
-  // S as we are not guaranteed N and S are multiples of 2
-  bool isInsertSliceOp = isa<tensor::InsertSliceOp>(op);
-  if (isInsertSliceOp && plan.N % plan.S != 0) {
-    op->emitError(
-        "dynamic insert_slice rewrite requires slice size of small tensor ")
-        << plan.S << " to divide the dest dim " << plan.N;
-    return failure();
   }
 
   plan.k = log2Pow2(plan.N / plan.S);
@@ -447,35 +436,68 @@ static Value useMaskToInsert(OpBuilder &builder, Location loc, Value large,
                              Value mask, Value tensorToInsert,
                              const SlicePlan &plan) {
   RankedTensorType largeType = cast<RankedTensorType>(large.getType());
+  ArrayRef<int64_t> largeShape = largeType.getShape();
   ArrayRef<int64_t> smallShape =
       cast<RankedTensorType>(tensorToInsert.getType()).getShape();
   Type elementType = largeType.getElementType();
+  Type i32Type = builder.getI32Type();
   const int64_t S = plan.S;
   const int64_t N = plan.N;
-  const int axis = plan.axis;
+  const size_t axis = plan.axis;
+  const Value offset = plan.dynamicR;
+  const size_t rank = largeShape.size();
 
-  // Calculate shape after expanding by inserting 1 before dimension S
-  SmallVector<int64_t> curShape(smallShape.begin(), smallShape.end());
-  curShape.insert(curShape.begin() + axis, 1);
+  
+  // Make range
+  SmallVector<int64_t> curShape;
+  curShape.reserve(rank);
+  curShape.push_back(N);
+  RankedTensorType rangeType = RankedTensorType::get(curShape, i32Type);
+  RankedTensorType finalIndicesType = RankedTensorType::get(largeShape, i32Type);
+  Value indices = builder.create<triton::MakeRangeOp>(loc, rangeType, 0, N);
+  Value indexToIntCast = builder.create<arith::IndexCastOp>(loc, i32Type, offset);
+  Value splatOffset = builder.create<triton::SplatOp>(loc, rangeType, indexToIntCast);
 
-  // Expand
-  auto expandedTensor = builder.create<triton::ExpandDimsOp>(
-      loc, RankedTensorType::get(curShape, elementType), tensorToInsert, axis);
+  indices = builder.create<arith::SubIOp>(loc, indices, splatOffset);
 
-  // Calculate shape after broadcasting (the 1 we inserted will turn into N/S)
-  curShape[axis] = N / S;
+  DenseElementsAttr shiftConstAttr = DenseElementsAttr::get(rangeType, builder.getI32IntegerAttr(N));
+  Value shiftConst = builder.create<arith::ConstantOp>(loc, shiftConstAttr);
+  Value maskIndices = builder.create<arith::AddIOp>(loc, indices, shiftConst);
 
-  // Perform broadcast
-  auto broadcastedTensor = builder.create<triton::BroadcastOp>(
-      loc, RankedTensorType::get(curShape, elementType), expandedTensor);
+  DenseElementsAttr lowerBoundAttr = DenseElementsAttr::get(rangeType, builder.getI32IntegerAttr(0));
+  Value lowerBound = builder.create<arith::ConstantOp>(loc, lowerBoundAttr);
+  Value indexMask = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, indices, lowerBound);
 
-  // Reshape to collapse the N/S and S dimensions to a dimension of size N
-  auto reshapedTensor =
-      builder.create<triton::ReshapeOp>(loc, largeType, broadcastedTensor);
+  indices = builder.create<arith::SelectOp>(loc, indexMask, indices, maskIndices);
 
-  // Select reshaped insert tensor when true, original tensor when false
+  // We now expand our tensor cur to be tensor<1x1x...xNx1x...x1xT>
+  size_t dimensionInsertLoc = 0;
+  for (size_t i = 0; i < rank; i++) {
+    if (i == axis) {
+      dimensionInsertLoc = i + 1;
+      continue;
+    }
+    if (dimensionInsertLoc == 0) {
+      curShape.insert(curShape.begin(), 1);
+    } else {
+      curShape.push_back(1);
+    }
+
+    RankedTensorType curType = RankedTensorType::get(curShape, i32Type);
+    indices = builder.create<triton::ExpandDimsOp>(loc, curType, indices,
+                                               dimensionInsertLoc);
+  }
+  indices = builder.create<triton::BroadcastOp>(loc, finalIndicesType, indices);
+  Value expandedInsertTensor = builder.create<triton::ExpandDimsOp>(loc, tensorToInsert, axis);
+  SmallVector<int64_t> intermediateShape(smallShape);
+  intermediateShape.insert(intermediateShape.begin() + axis, N / S);
+  RankedTensorType intermediateType = RankedTensorType::get(intermediateShape, elementType);
+  expandedInsertTensor = builder.create<triton::BroadcastOp>(loc, intermediateType, expandedInsertTensor);
+  expandedInsertTensor = builder.create<triton::ReshapeOp>(loc, largeType, expandedInsertTensor);
+
+  Value name = builder.create<triton::GatherOp>(loc, expandedInsertTensor, indices, axis);
   Value res = builder.create<arith::SelectOp>(loc, largeType, mask,
-                                              reshapedTensor, large);
+                                              name, large);
   return res;
 }
 
