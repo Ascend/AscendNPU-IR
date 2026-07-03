@@ -555,7 +555,7 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
 
 void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
                    SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
-                   int innerAlignedUnits, int shapeAccumulation,
+                   int &innerAlignedUnits, int &shapeAccumulation,
                    int alignTargetDim, int alignUnitsDim);
 
 template <typename TensorOrMemRefType,
