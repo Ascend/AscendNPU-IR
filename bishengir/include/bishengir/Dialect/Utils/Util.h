@@ -689,6 +689,9 @@ bool isValidTwoDimVectorType(VectorType vType);
 
 bool isUnstructuredMemAccLoop(Operation *op);
 
+void collectAllEffects(Operation *op,
+ 	  	                 SmallVectorImpl<MemoryEffects::EffectInstance> &effects);
+
 } // namespace utils
 
 namespace reshape_utils {

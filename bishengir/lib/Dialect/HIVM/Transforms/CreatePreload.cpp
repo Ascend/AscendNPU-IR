@@ -90,13 +90,30 @@ static std::optional<hivm::PointerCastOp> getLocalBuffer(Value v) {
   return std::nullopt;
 }
 
+static std::optional<size_t> getMultiBufferNum(Value value) {
+  for (Operation *user : value.getUsers()) {
+    if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
+      if (auto attr =
+              markOp->getAttrOfType<IntegerAttr>(hivm::MultiBufferAttr::name)) {
+        if (attr.getInt() != 0) {
+          return attr.getInt();
+        } else {
+          return std::nullopt;
+        }
+      }
+    }
+  }
+}
+
 static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
-                              size_t preloadNum, PreloadInfo &info,
-                              OpBuilder &b) {
-  SmallVector<Value> addrs(info.maxPreloadNum);
+ 	  	                        size_t preloadNum, PreloadInfo &info,
+ 	  	                        OpBuilder &b) {
+  size_t bufferNum = getMultiBufferNum(op).value_or(info.maxPreloadNum);
+  SmallVector<Value> addrs(bufferNum);
+
+  size_t preloadIdx = preloadNum % bufferNum;
   for (auto [i, addr] : llvm::enumerate(op.getAddrs())) {
-    auto shiftedIdx =
-        (info.maxPreloadNum - preloadNum - 1 + i) % info.maxPreloadNum;
+    auto shiftedIdx = (bufferNum - preloadIdx - 1 + i) % bufferNum;
     addrs[shiftedIdx] = addr;
   }
   auto newPointerCastOp =

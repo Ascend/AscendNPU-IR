@@ -168,31 +168,29 @@ module {
 }
 
 // -----
-module {
-  func.func @test_for_scope_markmultibuffer_for_preload(
-      %arg0: memref<1x2048xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32})
-      attributes {global_kernel = "local", hacc.entry = "", hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func @test_for_scope_markmultibuffer_for_preload(%arg0: i32, %arg1: tensor<128xf32>, %arg2: tensor<128x128xf32>, %arg3 : tensor<8x8x16x16xf32>) -> tensor<128x128xf32> {
+    %c128_i32 = arith.constant 128 : i32
+    %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+    %0 = tensor.empty() : tensor<128x128xf32>
+    %1 = scope.scope : () -> i32 {
+      // CHECK: annotation.mark
+      // CHECK-SAME: hivm.multi_buffer = 2 : i32
+      // CHECK-SAME: hivm.preload_local_buffer = 1 : i32
+      annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<128x128xf32, #hivm.address_space<ub>>
+      hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg3 : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
+      %2 = arith.addi %arg0, %c128_i32 : i32
+      scope.return %2 : i32
+    } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 1 : i32, no_inline}
+    %memspacecast = memref.memory_space_cast %alloc : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
+    %3 = bufferization.to_tensor %memspacecast restrict writable : memref<128x128xf32>
+    %4 = scope.scope : () -> tensor<128x128xf32> {
+      %expanded = tensor.expand_shape %arg1 [[0, 1]] output_shape [128, 1] : tensor<128xf32> into tensor<128x1xf32>
+      %5 = hivm.hir.vmul ins(%arg2, %expanded : tensor<128x128xf32>, tensor<128x1xf32>) outs(%0 : tensor<128x128xf32>) broadcast = [1] -> tensor<128x128xf32>
+      %6 = hivm.hir.vadd ins(%3, %5 : tensor<128x128xf32>, tensor<128x128xf32>) outs(%0 : tensor<128x128xf32>) -> tensor<128x128xf32>
+      scope.return %6 : tensor<128x128xf32>
+    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
 
-    %c0_i32 = arith.constant 0 : i32
-    %c1_i32 = arith.constant 1 : i32
-    %c16_i32 = arith.constant 16 : i32
-    %c2048_i32 = arith.constant 2048 : i32
-    %c49152_i32 = arith.constant 49152 : i32
-
-    %29 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
-    %40 = scope.scope : () -> memref<1x2048xf16, #hivm.address_space<ub>> {
-      %39 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
-      // CHECK: annotation.mark %{{.*}} {hivm.multi_buffer = 4 : i32, hivm.preload_local_buffer = 1 : i32}
-      hivm.hir.load ins(%arg0 : memref<1x2048xf16, #hivm.address_space<gm>>) outs(%39 : memref<1x2048xf16, #hivm.address_space<ub>>)
-
-      scope.return %39 : memref<1x2048xf16, #hivm.address_space<ub>>
-    } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 2 : i32, no_inline}
-
-%41 = scope.scope : () -> memref<1x2048xf16, #hivm.address_space<ub>> {
-  %42 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
-      hivm.hir.vexp {vector_producer_to_fuse_1} ins(%40#0 : memref<1x2048xf16, #hivm.address_space<ub>>) outs(%42 : memref<1x2048xf16, #hivm.address_space<ub>>)
-      scope.return %42 : memref<1x2048xf16, #hivm.address_space<ub>>
-} {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 4 : i32, hivm.preload_num = 0 : i32, no_inline}
-    return
+    return %4 : tensor<128x128xf32>
   }
 }

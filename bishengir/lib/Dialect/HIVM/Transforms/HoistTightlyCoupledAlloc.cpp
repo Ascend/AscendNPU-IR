@@ -329,6 +329,13 @@ void HoistTightlyCoupledAllocPass::runOnOperation() {
   });
 
   for (memref::AllocOp allocOp : worklist) {
+    auto maybeMark = utils::getAnnotateOpWithAttr(
+        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
+    if (maybeMark.has_value())
+      (*maybeMark)->moveAfter(allocOp);
+  }
+
+  for (memref::AllocOp allocOp : worklist) {
     Block *target = findHoistTargetBlock(allocOp);
     if (!target || target == allocOp->getBlock())
       continue;
