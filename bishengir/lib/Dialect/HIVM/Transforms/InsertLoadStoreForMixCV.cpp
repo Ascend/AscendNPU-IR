@@ -62,7 +62,8 @@ using namespace mlir::hivm;
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace {
-static const llvm::StringLiteral insertedConvertLayout = "inserted-convert-layout";
+static const llvm::StringLiteral kConvertLayoutOperand =
+    "converted-layout-operand";
 
 llvm::SmallVector<size_t> getIntegersOfArrayAttr(Operation *op, llvm::StringLiteral attrName) {
   ArrayAttr arr = op->getAttrOfType<ArrayAttr>(attrName);
@@ -107,7 +108,6 @@ private:
   LogicalResult propagateAndResolve(func::FuncOp funcOp);
   LogicalResult runPropagateOpPatterns(func::FuncOp funcOp,
     PropagationStep step);
-  LogicalResult ensureAllocInUbAddressSpace(func::FuncOp funcOp);
   LogicalResult addConvertLayoutUBToL1(func::FuncOp funcOp);
 };
 
@@ -429,6 +429,7 @@ LogicalResult InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp f
   if (isEnabledTightCoupledBuffer()) {
     patterns.add<TightCoupledBufferResolvePropagationPattern>(patterns.getContext());
   }
+  
 
   if (failed(
           applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
@@ -468,8 +469,18 @@ LogicalResult InsertLoadStoreForMixCVPass::insertPropagationOp(func::FuncOp func
 }
 
 LogicalResult InsertLoadStoreForMixCVPass::propagateAndResolve(func::FuncOp funcOp) {
+  /// prioritize L0C to resolve propagation after the scf.if. so, only 1 fixpipe
+  /// is required.
+  /// %mmad = hivm.hir.mmadL1
+  ///  %if = scf.if ... {
+  ///    %another_mmad = hivm.hir.mmadL1
+  ///    scf.yield %another_mmad
+  ///  } else {
+  ///    scf.yield %mmad
+  ///  }
+  ///  hivm.hir.vadd ins(%mmad, %mmad)
   SmallVector<PropagationStep> propagations = {
-      PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
+      PropagationStep::L0C, PropagationStep::LOCAL, PropagationStep::UB, PropagationStep::L1,
       PropagationStep::ALL};
   for (auto step : propagations) {
     if (failed(runPropagateOpPatterns(funcOp, step))) {
@@ -490,59 +501,6 @@ LogicalResult InsertLoadStoreForMixCVPass::propagateAndResolve(func::FuncOp func
   }
   return success();
 }
-
-// TODO: use this pattern to ensure alloc in UB for tight coupled buffer
-struct EnsureAllocInUbAddressSpace
-    : public OpRewritePattern<memref::AllocOp> {
-  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
-  ~EnsureAllocInUbAddressSpace() override = default;
-  LogicalResult matchAndRewrite(memref::AllocOp allocOp,
-                                PatternRewriter &rewriter) const override {
-    MLIRContext *ctx = rewriter.getContext();
-    auto oldType = dyn_cast<MemRefType>(allocOp.getMemref().getType());
-    if (!oldType)
-      return failure();
-    auto maybeSpace = mlir::hivm::getOptionalHIVMAddressSpace(oldType);
-    if (maybeSpace.has_value())
-      return failure();
-    if (!any_of(allocOp->getUsers(), [](Operation *op) -> bool {
-      return isa<bufferization::ToTensorOp>(op);
-    }))
-      return failure();
-    auto ubSpaceAttr = hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::UB);
-    auto newType = mlir::MemRefType::get(oldType.getShape(),
-                                        oldType.getElementType(),
-                                        oldType.getLayout(),
-                                        ubSpaceAttr);
-    if (newType == oldType)
-      return failure();
-
-    OpBuilder::InsertionGuard guard(rewriter);
-    rewriter.modifyOpInPlace(allocOp,
-                            [&]() { allocOp.getMemref().setType(newType); });
-
-    rewriter.setInsertionPointAfter(allocOp);
-    auto memSpaceCastOp = rewriter.create<memref::MemorySpaceCastOp>(
-        allocOp.getLoc(), oldType, allocOp);
-    rewriter.replaceOpUsesWithIf(allocOp, memSpaceCastOp.getResult(), [](OpOperand &opr) {
-      return !isa<memref::MemorySpaceCastOp>(opr.getOwner());
-    });
-    return success();
-  }
-};
-
-LogicalResult InsertLoadStoreForMixCVPass::ensureAllocInUbAddressSpace(func::FuncOp funcOp) {
-  RewritePatternSet patterns(funcOp.getContext());
-  GreedyRewriteConfig rewriteConfig;
-  patterns.add<EnsureAllocInUbAddressSpace>(patterns.getContext());
-  rewriteConfig.fold = false;
-  if (failed(
-          applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
-    return failure();
-  }
-  return success();
-}
-
 
 namespace mlir::hivm {
 
@@ -734,7 +692,7 @@ struct AddConvertLayoutUBToL1
   for (OpOperand *operand : op.getDpsInputOperands()) {
     Value beforeValue = operand->get();
     auto operandIdx = operand->getOperandNumber();
-    auto inserted = getIntegersOfArrayAttr(op, insertedConvertLayout);
+    auto inserted = getIntegersOfArrayAttr(op, kConvertLayoutOperand);
     if (std::find(inserted.begin(), inserted.end(), operandIdx) != inserted.end()) continue;
     auto producerOps = traceDefOps<OpType>(beforeValue);
     if (std::is_same_v<OpType, hivm::VBrcOp>)
@@ -815,7 +773,8 @@ struct AddConvertLayoutUBToL1
     LogicalResult result = insertConvertLayout(rewriter, op, consumerOperands);
     if (failed(result))
       continue;
-    insertToIntegerAttrOfArrayAttr(op, insertedConvertLayout, operandIdx, rewriter);
+    insertToIntegerAttrOfArrayAttr(op, kConvertLayoutOperand, operandIdx,
+                                   rewriter);
 
     // Handle case where multiple operands of `op` are same SSA value.
     // e.g., `hivm.hir.mmadL1 ins(%vec, %vec, ...)` where both operands are the same vector.
@@ -823,12 +782,13 @@ struct AddConvertLayoutUBToL1
     // is updated with the new value as well.
     Value converted = operand->get();
     rewriter.modifyOpInPlace(op, [&beforeValue, &converted, &op, &rewriter]() {
-      // Use for loop to insert operand index for `insertedConvertLayout`
+      // Use for loop to insert operand index for `kConvertLayoutOperand`
       for (OpOperand *operand : op.getDpsInputOperands()) {
         if(operand->get() != beforeValue)
           continue;
         op->setOperand(operand->getOperandNumber(), converted);
-        insertToIntegerAttrOfArrayAttr(op, insertedConvertLayout, operand->getOperandNumber(), rewriter);
+        insertToIntegerAttrOfArrayAttr(op, kConvertLayoutOperand,
+                                       operand->getOperandNumber(), rewriter);
       }
     });
 
@@ -851,7 +811,7 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
 
     for (OpOperand &operand : op->getOpOperands()) {
       auto operandIdx = operand.getOperandNumber();
-      auto inserted = getIntegersOfArrayAttr(op, insertedConvertLayout);
+      auto inserted = getIntegersOfArrayAttr(op, kConvertLayoutOperand);
       if (std::find(inserted.begin(), inserted.end(), operandIdx) != inserted.end()) continue;
       auto maybeFixpipe = traceDefOp<hivm::FixpipeOp>(operand.get());
       if (!maybeFixpipe)
@@ -866,7 +826,8 @@ struct AddConvertLayoutUBToL1<hivm::FixpipeOp>
       LogicalResult l1Result = insertConvertLayout(rewriter, op, consumerOperands);
       if (failed(l1Result))
         continue;
-      insertToIntegerAttrOfArrayAttr(op.getOperation(), insertedConvertLayout, operand.getOperandNumber(), rewriter);
+      insertToIntegerAttrOfArrayAttr(op.getOperation(), kConvertLayoutOperand,
+                                     operand.getOperandNumber(), rewriter);
 
       Value convertedToL1 = operand.get();
       if (valueAfterUb != convertedToL1) {
@@ -916,9 +877,8 @@ LogicalResult InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp f
     return failure();
   }
 
-  funcOp->walk([](hivm::MmadL1Op op) -> void {
-    op->removeAttr(insertedConvertLayout);
-  });
+  funcOp->walk(
+      [](hivm::MmadL1Op op) -> void { op->removeAttr(kConvertLayoutOperand); });
   return success();
 }
 

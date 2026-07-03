@@ -829,6 +829,10 @@ def InsertCVTightCoupledBuffer
   let dependentDialects = ["hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "annotation::AnnotationDialect"];
+  let options = [Option<
+    "onlyInsertTightlyCoupledBuffer", "only-insert-tightly-coupled-buffer", "bool",
+    /*default=*/"false",
+    "only insert tightly coupled buffer">];
 }
 
 def InsertLoadStoreForScalar

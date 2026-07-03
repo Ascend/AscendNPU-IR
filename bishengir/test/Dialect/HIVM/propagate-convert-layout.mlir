@@ -348,7 +348,7 @@ func.func @propagate_down_from_if_yields_mmad_dependency(
 // CHECK:      %[[ALLOC:.*]] = memref.alloc() : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
 // CHECK:      %[[TO_TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]] restrict writable :  memref<2x1x16x8xf32, #hivm.address_space<cbuf>>
 // CHECK:      %[[CONVERT_LAYOUT:.*]] = hivm.hir.convert_layout %[[ITER_ARG]] output_shape [2, 1, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, not_to_propagate_up = true, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
-// CHECK:      hivm.hir.copy ins(%[[CONVERT_LAYOUT]] : tensor<2x1x16x8xf32>) outs(%[[ALLOC]] : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>) {"inserted-copy"}
+// CHECK:      hivm.hir.copy ins(%[[CONVERT_LAYOUT]] : tensor<2x1x16x8xf32>) outs(%[[ALLOC]] : memref<2x1x16x8xf32, #hivm.address_space<cbuf>>) {"hivm.inserted-copy"}
 // CHECK:      %{{.*}} = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%[[TO_TENSOR]],
 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -380,7 +380,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
       %alloc_3 = memref.alloc() : memref<16x16xf32, #hivm.address_space<cbuf>>
       %memspacecast = memref.memory_space_cast %alloc_3 : memref<16x16xf32, #hivm.address_space<cbuf>> to memref<16x16xf32>
       %5 = bufferization.to_tensor %memspacecast restrict writable : memref<16x16xf32>
-      hivm.hir.copy ins(%arg9 : tensor<16x16xf32>) outs(%memspacecast : memref<16x16xf32>) {"inserted-copy"}
+      hivm.hir.copy ins(%arg9 : tensor<16x16xf32>) outs(%memspacecast : memref<16x16xf32>) {"hivm.inserted-copy"}
       %6 = tensor.empty() : tensor<16x16xf32>
       %7 = hivm.hir.convert_layout %5 output_shape [2, 1, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
       %8 = hivm.hir.convert_layout %3 output_shape [2, 1, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
@@ -446,7 +446,7 @@ func.func @propagate_up_through_insert_slice(
 // CHECK-SAME:      not_to_propagate_up = true
 // CHECK-SAME:      (tensor<16x16xf32>) -> tensor<2x1x16x8xf32>
 // CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<2x1x16x8xf32>
-// CHECK:           %[[COPY:.*]] = hivm.hir.copy ins(%[[CONVERT]] : tensor<2x1x16x8xf32>) outs(%[[EMPTY]] : tensor<2x1x16x8xf32>) {"inserted-copy"} -> tensor<2x1x16x8xf32>
+// CHECK:           %[[COPY:.*]] = hivm.hir.copy ins(%[[CONVERT]] : tensor<2x1x16x8xf32>) outs(%[[EMPTY]] : tensor<2x1x16x8xf32>) {"hivm.inserted-copy"} -> tensor<2x1x16x8xf32>
 // CHECK:           %[[RHS:.*]] = hivm.hir.convert_layout %[[ARG1]] output_shape [2, 1, 16, 8]
 // CHECK:           hivm.hir.mmadL1
 // CHECK-SAME:      ins(%[[COPY]], %[[RHS]]
@@ -457,7 +457,7 @@ func.func @move_convert_layout_before_tensor_copy(
   %c16 = arith.constant 16 : index
   %copy_dst = tensor.empty() : tensor<16x16xf32>
   %copied = hivm.hir.copy ins(%arg0 : tensor<16x16xf32>)
-      outs(%copy_dst : tensor<16x16xf32>) {"inserted-copy"}
+      outs(%copy_dst : tensor<16x16xf32>) {"hivm.inserted-copy"}
       -> tensor<16x16xf32>
   %lhs = hivm.hir.convert_layout %copied output_shape [2, 1, 16, 8]
       {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>,
