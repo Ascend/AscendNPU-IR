@@ -4,7 +4,7 @@
 //   `ttg.local_load` / `ttg.local_store` (shared memory ops) do not carry a
 //   `cacheModifier` attribute by design — the Ascend hardware has no L2
 //   cache on shared memory, so the modifier is silently dropped during
-//   `ConvertSharedPtrToMemDescPass`. After lowering, the resulting
+//   `LowerDotBuffersAndSharedMemPass`. After lowering, the resulting
 //   `ascend_dpx.load` / `ascend_dpx.store` targets `!llvm.ptr<3>` (shared)
 //   and contains no `cacheOption` attribute. This is the regression guard
 //   for that contract: even when other loads in the same kernel set

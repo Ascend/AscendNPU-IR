@@ -1,4 +1,4 @@
-//===- SharedMemConflictModel.cpp - Ascend SRAM bank-conflict analysis ---===//
+//===- DotTilingCostModel.cpp - Ascend SRAM bank-conflict analysis ---===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -7,7 +7,7 @@
 //===----------------------------------------------------------------------===//
 //
 // Models bank-conflict cost for the Ascend SRAM geometry.  The header
-// SharedMemConflictModel.h documents the API; this file is the
+// DotTilingCostModel.h documents the API; this file is the
 // implementation.
 //
 // Bank computation
@@ -18,7 +18,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/Triton/Transforms/SharedMemConflictModel.h"
+#include "bishengir/Dialect/Triton/Transforms/DotTilingCostModel.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -29,7 +29,7 @@ namespace triton {
 
 ConflictReport
 analyzeWarpAccessCycle(llvm::ArrayRef<ThreadAccess> accesses,
-                       const AscendSmemGeometry &geom) {
+                       const AscendMemGeometry &geom) {
   // Per bank: distinct word IDs (multicast collapses same-word hits).
   llvm::DenseMap<unsigned, llvm::DenseSet<uint64_t>> bankToWordIds;
   uint64_t totalBytesRequested = 0;
@@ -61,9 +61,9 @@ analyzeWarpAccessCycle(llvm::ArrayRef<ThreadAccess> accesses,
   rep.conflictFactor = maxConflict;
   rep.distinctBanksHit = distinctBanks;
   // Peak BW utilisation = idealCycles(totalBytes/peak) / maxConflict.
-  if (maxConflict > 0 && geom.peakBandwidthBytesPerCycle() > 0) {
+  if (maxConflict > 0 && geom.peakBandwidthBytesPerCycleSmem() > 0) {
     double idealCycles =
-        static_cast<double>(totalBytesRequested) / geom.peakBandwidthBytesPerCycle();
+        static_cast<double>(totalBytesRequested) / geom.peakBandwidthBytesPerCycleSmem();
     if (idealCycles < 1.0)
       idealCycles = 1.0;
     rep.peakBandwidthUtilization = idealCycles / static_cast<double>(maxConflict);
@@ -76,7 +76,7 @@ analyzeWarpAccessCycle(llvm::ArrayRef<ThreadAccess> accesses,
 ConflictReport analyzeStridedAccess(uint64_t baseByteOffset,
                                      unsigned strideBytes, unsigned accessBytes,
                                      unsigned numThreads,
-                                     const AscendSmemGeometry &geom) {
+                                     const AscendMemGeometry &geom) {
   llvm::SmallVector<ThreadAccess, 32> accesses;
   accesses.reserve(numThreads);
   for (unsigned i = 0; i < numThreads; ++i) {
@@ -89,21 +89,42 @@ ConflictReport analyzeStridedAccess(uint64_t baseByteOffset,
 }
 
 StagingDecision decideStaging(const StagingDecisionInputs &inputs,
-                               const AscendSmemGeometry &geom) {
+                               const AscendMemGeometry &geom) {
   StagingDecision dec{};
   dec.directCostCycles =
       static_cast<double>(inputs.spillElementsIfNoStaging) * inputs.cyclesPerSpillElement;
 
   // Staged path: fixed overhead + conflict-scaled bandwidth charge.
-  double bytesPerCycle = static_cast<double>(geom.peakBandwidthBytesPerCycle());
-  if (bytesPerCycle <= 0)
-    bytesPerCycle = 1.0;
-  double bandwidthCycles =
-      (static_cast<double>(inputs.roundTripBytes) / bytesPerCycle) * inputs.conflictFactor;
-  dec.stagedCostCycles =
-      static_cast<double>(inputs.stagingFixedOverheadCycles) + bandwidthCycles;
+  double bytesPerCycleSmem = static_cast<double>(geom.peakBandwidthBytesPerCycleSmem());
+  double bytesPerCycleGmem = static_cast<double>(geom.peakBandwidthBytesPerCycleGmem());
+  if (bytesPerCycleSmem <= 0)
+    bytesPerCycleSmem = 1.0;
+  if (bytesPerCycleGmem <= 0)
+    bytesPerCycleGmem = 1.0;
 
-  dec.stageThroughSmem = dec.stagedCostCycles < dec.directCostCycles;
+  double bandWidthCycles = 0;
+  double fixedOverhead = 0;
+
+  if (inputs.smemStageA) {
+    bandWidthCycles += (static_cast<double>(inputs.roundTripBytesA) / bytesPerCycleSmem) * inputs.conflictFactor;
+    fixedOverhead += static_cast<double>(inputs.stagingFixedOverheadCyclesSmem);
+  } else {
+    bandWidthCycles += (static_cast<double>(inputs.roundTripBytesA) / bytesPerCycleGmem);
+    fixedOverhead += static_cast<double>(inputs.stagingFixedOverheadCyclesGmem);
+  }
+
+  if (inputs.smemStageB) {
+    bandWidthCycles += (static_cast<double>(inputs.roundTripBytesB) / bytesPerCycleSmem) * inputs.conflictFactor;
+    fixedOverhead += static_cast<double>(inputs.stagingFixedOverheadCyclesSmem);
+  } else {
+    bandWidthCycles += (static_cast<double>(inputs.roundTripBytesB) / bytesPerCycleGmem);
+    fixedOverhead += static_cast<double>(inputs.stagingFixedOverheadCyclesGmem);
+  }
+
+  dec.stagedCostCycles =
+      fixedOverhead + bandWidthCycles;
+
+  dec.stageThroughMem = dec.stagedCostCycles < dec.directCostCycles;
   return dec;
 }
 

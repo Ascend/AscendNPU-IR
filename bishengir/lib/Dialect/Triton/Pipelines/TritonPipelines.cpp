@@ -166,19 +166,20 @@ void buildLowerTritonPipeline(OpPassManager &pm,
       convertTritonToTritonGPUOpt));
   // Optimize TTGIR — runs ConvertDotInputToLinearLayout (CDITL) which assigns
   // FMA-friendly LinearEncoding to each dot's operands.  We deliberately
-  // schedule ConvertSharedPtrToMemDesc AFTER this pipeline so the SHM-staging
+  // schedule LowerDotBuffersAndSharedMem AFTER this pipeline so the SHM-staging
   // local_load can produce the dot's chosen LinearEncoding directly (no
   // extra `ttg.convert_layout` from blocked → linear), and the SHM swizzle
   // can be picked knowing the load-side target layout.
   buildTritonGPUOptimizationPipeline(pm, options);
   // Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store.
   // Runs post-CDITL on purpose: see comment above.
-  pm.addPass(bishengir::triton::createConvertSharedPtrToMemDescPass());
+  pm.addPass(bishengir::triton::createLowerDotBuffersAndSharedMemPass());
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createSIMTFastDivPass());
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
+  pm.addPass(mlir::triton::gpu::createTritonGPUGlobalScratchAllocationPass());
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
         bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass());

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -convert-shared-ptr-to-memdesc %s -split-input-file | FileCheck %s
+// RUN: bishengir-opt -lower-dot-buffers-and-shared-mem %s -split-input-file | FileCheck %s
 
 // Test 1: Store without fractal → local_store with swizzled_shared encoding.
 

@@ -96,7 +96,7 @@ std::unique_ptr<mlir::Pass> createSIMTFastDivPass();
 
 /// Create a pass that converts tt.load/tt.store with ptr<6> to
 /// ttg.local_load/ttg.local_store with memdesc types.
-std::unique_ptr<mlir::Pass> createConvertSharedPtrToMemDescPass();
+std::unique_ptr<mlir::Pass> createLowerDotBuffersAndSharedMemPass();
 
 /// Create a pass to flatten memdesc struct args to bare pointers.
 std::unique_ptr<mlir::Pass> createFlattenMemDescArgsPass();

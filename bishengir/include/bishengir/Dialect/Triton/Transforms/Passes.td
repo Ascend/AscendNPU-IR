@@ -148,7 +148,7 @@ def TileDotLoads
     tensor-of-pointers styles are supported.
 
     The non-load-operand staging path (StageNonLoadOperandPattern) is
-    self-gated by `SharedMemConflictModel::decideStaging`, but it also
+    self-gated by `DotTilingCostModel::decideStaging`, but it also
     respects the `smem-budget-bytes` ceiling: dots whose predicted staged
     buffer size exceeds the budget bail without touching IR.  Pass the
     launch-time SHM size (the same value threaded into
@@ -330,8 +330,8 @@ def SIMTFastDiv : Pass<"simt-fast-div", "mlir::triton::FuncOp"> {
                            "mlir::triton::gpu::TritonGPUDialect"];
 }
 
-def ConvertSharedPtrToMemDesc
-    : Pass<"convert-shared-ptr-to-memdesc", "mlir::ModuleOp"> {
+def LowerDotBuffersAndSharedMem
+    : Pass<"lower-dot-buffers-and-shared-mem", "mlir::ModuleOp"> {
   let summary = "Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store with memdesc";
   let description = [{
     Runs after ConvertTritonToTritonGPU.  Finds tt.load / tt.store operations
@@ -340,7 +340,7 @@ def ConvertSharedPtrToMemDesc
     corresponding function arguments are changed from !tt.ptr<T, 6> to
     !ttg.memdesc<...>.
   }];
-  let constructor = "bishengir::triton::createConvertSharedPtrToMemDescPass()";
+  let constructor = "bishengir::triton::createLowerDotBuffersAndSharedMemPass()";
   let dependentDialects = [
     "mlir::triton::gpu::TritonGPUDialect",
     "mlir::triton::TritonDialect",
