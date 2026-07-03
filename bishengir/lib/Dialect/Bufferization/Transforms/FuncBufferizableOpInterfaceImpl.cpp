@@ -170,7 +170,36 @@ static LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
 
   return success();
 }
+
+static FailureOr<BaseMemRefType>
+getBufferType(Operation *op, Value value, const BufferizationOptions &options,
+              const SmallVector<Value> &invocationStack) {
+  (void)invocationStack;
+  auto callop = cast<func::CallOp>(op);
+  FuncOp funcOp = getCalledFunction(callop);
+  assert(funcOp && "expected CallOp to a FuncOp");
+
+  FunctionType funcType = funcOp.getFunctionType();
+  Type resultType =
+      funcType.getResult(cast<OpResult>(value).getResultNumber());
+  if (auto memRefType = dyn_cast<BaseMemRefType>(resultType))
+      return memRefType;
+
+  // Outlined callees may still have tensor signatures when one-shot
+  // bufferization resolves tensor copy conflicts inside enclosing loops.
+  assert(isa<TensorType>(resultType) && "expected tensor result type");
+  auto memSpace = options.defaultMemorySpaceFn(cast<TensorType>(resultType));
+  if (!memSpace.has_value())
+      return op->emitError("could not infer memory space");
+  return getMemRefType(value, options, /*layout=*/{}, *memSpace);
+}
 } // namespace CallOpInterfaceOverwriter
+
+RegisterOpInterfaceOverride(
+    /*Op=*/func::CallOp, /*Interface=*/BufferizableOpInterface,
+    /*InterfaceMethod=*/getBufferType,
+    /*Impl=*/
+    &CallOpInterfaceOverwriter::getBufferType);
 
 RegisterOpInterfaceOverride(
     /*Op=*/func::CallOp, /*Interface=*/BufferizableOpInterface,
