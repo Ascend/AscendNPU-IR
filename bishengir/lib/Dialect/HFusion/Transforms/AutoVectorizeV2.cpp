@@ -1258,6 +1258,10 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
           hasRankReducingIndexingMap(leafNode))
         continue;
+      // Don't fuse vsstb leaf into a group with rank-reducing indexing_map.
+      if (llvm::any_of(leafNodeGroup, hasRankReducingIndexingMap) &&
+          isVsstbPatternTransposeOp(leafNode))
+        continue;
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
       auto leafNodeInfo = fusableOpInfoMap[leafNode];
