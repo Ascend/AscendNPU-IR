@@ -5,5 +5,6 @@ add_bishengir_dialect_library(MLIRAVEUtils
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVMAVE
 
   LINK_LIBS PUBLIC
+  MLIRAffineDialect
   MLIRAVEDialect
 )

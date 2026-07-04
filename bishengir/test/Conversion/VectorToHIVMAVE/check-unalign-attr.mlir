@@ -48,4 +48,255 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     }
     return
   }
+
+  // CHECK-LABEL: func.func @aligned_for_iv_offset
+  func.func @aligned_for_iv_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c128 step %c64 {
+        %subview = memref.subview %arg0[%i, %j] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %0 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_constant_offset
+  func.func @aligned_affine_constant_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      %0 = affine.apply affine_map<() -> (64)>()
+      %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+      %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+      // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+      %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+      vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_dim_offset
+  func.func @aligned_affine_dim_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c128 step %c64 {
+        %0 = affine.apply affine_map<(d0) -> (d0)>(%j)
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_symbol_offset
+  func.func @aligned_affine_symbol_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c128 step %c64 {
+        %0 = affine.apply affine_map<()[s0] -> (s0)>()[%j]
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_add_offset
+  func.func @aligned_affine_add_offset(%arg0: memref<64x256xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c128 step %c64 {
+        %0 = affine.apply affine_map<(d0)[s0] -> (d0 + s0)>(%j)[%c64]
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x256xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[256, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_sub_offset
+  func.func @aligned_affine_sub_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c64 to %c128 step %c64 {
+        %0 = affine.apply affine_map<(d0)[s0] -> (d0 - s0)>(%j)[%c64]
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_mul_offset
+  func.func @aligned_affine_mul_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c8 step %c4 {
+        %0 = affine.apply affine_map<(d0) -> (d0 * 16)>(%j)
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_floordiv_offset
+  func.func @aligned_affine_floordiv_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c256 step %c128 {
+        %0 = affine.apply affine_map<(d0) -> (d0 floordiv 2)>(%j)
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_ceildiv_offset
+  func.func @aligned_affine_ceildiv_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c256 step %c128 {
+        %0 = affine.apply affine_map<(d0) -> (d0 ceildiv 2)>(%j)
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_affine_mod_offset
+  func.func @aligned_affine_mod_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c128 step %c64 {
+        %0 = affine.apply affine_map<(d0) -> (d0 mod 64)>(%j)
+        %subview = memref.subview %arg0[%i, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @aligned_nested_affine_apply_offset
+  func.func @aligned_nested_affine_apply_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c0 = arith.constant 0 : index
+    scf.for %i = %c0 to %c64 step %c1 {
+      scf.for %j = %c0 to %c8 step %c4 {
+        %0 = affine.apply affine_map<(d0) -> (d0 * 16)>(%j)
+        %1 = affine.apply affine_map<(d0) -> (d0)>(%0)
+        %subview = memref.subview %arg0[%i, %1] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+        %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+        // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] : memref<64xf32
+        %2 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+        vector.transfer_write %2, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @unaligned_view_byte_shift
+  func.func @unaligned_view_byte_shift(%arg0: memref<512xi8, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c8 = arith.constant 8 : index
+    %c0 = arith.constant 0 : index
+    %view = memref.view %arg0[%c8][] : memref<512xi8, #hivm.address_space<ub>> to memref<64xf32, #hivm.address_space<ub>>
+    // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xf32
+    %0 = vector.transfer_read %view[%c0], %cst {in_bounds = [true]} : memref<64xf32, #hivm.address_space<ub>>, vector<64xf32>
+    vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+    return
+  }
+
+  // CHECK-LABEL: func.func @unaligned_affine_iter_arg_offset
+  func.func @unaligned_affine_iter_arg_offset(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst = arith.constant 0.000000e+00 : f32
+    %c2 = arith.constant 2 : index
+    %c1 = arith.constant 1 : index
+    %c0 = arith.constant 0 : index
+    %res = scf.for %i = %c0 to %c2 step %c1 iter_args(%off = %c1) -> (index) {
+      %0 = affine.apply affine_map<(d0) -> (d0)>(%off)
+      %subview = memref.subview %arg0[0, %0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+      %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+      // CHECK: ave.hir.vload <NORM> %{{[[:alnum:]_]+}}[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xf32
+      %1 = vector.transfer_read %subview_0[%c0], %cst {in_bounds = [true]} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<64xf32>
+      vector.transfer_write %1, %arg1[%c0] {in_bounds = [true]} : vector<64xf32>, memref<64xf32, #hivm.address_space<ub>>
+      scf.yield %off : index
+    }
+    return
+  }
 }
