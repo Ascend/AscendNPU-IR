@@ -3456,7 +3456,7 @@ func.func @test_hfusion_hypot_2_inputs_f16(%arg0: tensor<1024xf16>, %arg1: tenso
 // CHECK-NEXT: }
 // CHECK-EMPTY:
 
-func.func @test_hfusion_hypot_2_inputs(%arg0: tensor<1024xf32>, %arg1: tensor<1024xf32>) -> tensor<1024xf32> {
+func.func @test_hfusion_hypot_2_inputs_f32(%arg0: tensor<1024xf32>, %arg1: tensor<1024xf32>) -> tensor<1024xf32> {
     %ret = hfusion.hypot %arg0, %arg1 : tensor<1024xf32>, tensor<1024xf32> -> tensor<1024xf32>
     return %ret : tensor<1024xf32>
   }
