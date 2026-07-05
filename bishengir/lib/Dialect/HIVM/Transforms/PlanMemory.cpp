@@ -1758,7 +1758,7 @@ bool MemPlan::IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
   auto iter =
       bufferScope2RequiredSize.find(rootStorageEntry->bufInfo->bufferScope);
   assert(iter != bufferScope2RequiredSize.end());
-  if (iter->second < restBufferSize) {
+  if (iter->second <= restBufferSize) {
     PlanBuffersWithoutReuse(rootStorageEntry, alignUnit);
     return true;
   }
@@ -2117,6 +2117,10 @@ LogicalResult MemPlan::SpecAlloc(MemBoundList &outline, PlanRecHis &his,
     return success();
   }
   assert(e && "StorageEntry should not be null");
+  if (e->alignedConstBits == 0) {
+    e->bitsOffset = 0;
+    return success();
+  }
   for (MemBoundListConstIter start = outline.begin(); start != outline.end();
        ++start) {
     uint64_t size = 0;
