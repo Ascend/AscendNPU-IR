@@ -544,6 +544,17 @@ public:
     });
   }
 
+  /// Record & rollback while failed with vector loop info collecting.
+  void recordUndoAction(std::function<void()> action) {
+    undoActions.push_back(std::move(action));
+  }
+
+  void rollback() {
+    for (auto &action : llvm::reverse(undoActions))
+      action();
+    undoActions.clear();
+  }
+
   /// Commit all recorded lazy actions at once.
   ///
   /// During info collection, it's possible that we're uncertain whether we
@@ -636,6 +647,9 @@ private:
 
   /// A collection of lazy actions to be applied.
   std::vector<std::function<void()>> lazyActions;
+
+  /// A collection of undo actions for rollback.
+  std::vector<std::function<void()>> undoActions;
 };
 
 //===----------------------------------------------------------------------===//
@@ -1014,12 +1028,33 @@ tryCollectTilingInfoForTerminate(TerminateType terminateOp, Value yieldedVal,
   // user1(%val)
   // scf.yield %val                     (only replace this!)
   // ```
+  Value storeResult = dummyStore.getResult(0);
   SetVector<Operation *> chainOfUsersToYield = {trace.begin(), trace.end()};
   singleResult.replaceUsesWithIf(
-      dummyStore.getResult(0),
-      /*shouldReplace=*/[&chainOfUsersToYield](OpOperand &operand) -> bool {
+      storeResult,
+      /*shouldReplace=*/[chainOfUsersToYield](OpOperand &operand) -> bool {
         return chainOfUsersToYield.contains(operand.getOwner());
       });
+
+  // Record undo: erase the new init op.
+  Operation *newInitOp = newInit.getDefiningOp();
+  info.recordUndoAction([newInitOp]() { newInitOp->erase(); });
+  // Record undo: erase the dummy store node.
+  Operation *dummyStoreOp = dummyStore.getOperation();
+  info.recordUndoAction([dummyStoreOp]() { dummyStoreOp->erase(); });
+  // Record undo: restore the original init operand.
+  Operation *hivmOpOp = hivmOp.getOperation();
+  info.recordUndoAction([hivmOpOp, originalInit]() {
+    cast<HIVMStructuredOp>(hivmOpOp).setDpsInitOperand(0, originalInit);
+  });
+  // Record undo: restore the replaced uses.
+  info.recordUndoAction([storeResult, singleResult, chainOfUsersToYield]() {
+    const_cast<Value &>(storeResult).replaceUsesWithIf(
+        singleResult,
+        /*shouldReplace=*/[chainOfUsersToYield](OpOperand &operand) -> bool {
+          return chainOfUsersToYield.contains(operand.getOwner());
+    });
+  });
 
   ShapedType dstType = dummyStore.getDstOperandType();
   info.recordOpToTile(dummyStore, getVectorTiling(dstType, maybeTilingDim,
@@ -1160,6 +1195,7 @@ LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
     return vectorLoop.emitOpError("Failed to collect vector loop tiling info");
 
   // Visit yield op next because it will generate dummy store op
+  VectorLoopInfo tempInfo(info);
   if (!isa<scf::ForOp>(vectorLoop) && !isa<scope::ScopeOp>(vectorLoop)) {
     return vectorLoop.emitOpError(
         "Collect vector loop tiling info only support ForOp and ScopeOp.");
@@ -1167,16 +1203,21 @@ LogicalResult TileCubeVectorLoopPass::collectVectorLoopInfo(OpType vectorLoop) {
     auto terminateOp = vectorLoop.getBody()->getTerminator();
     for (auto terminateOpVal : terminateOp->getOperands()) {
       if (failed(tryCollectTilingInfoForTerminate(terminateOp, terminateOpVal,
-                                                  info, analyzer)))
+                                                  tempInfo, analyzer))) {
+        tempInfo.rollback();
         return vectorLoop.emitOpError(
             "Failed to collect vector loop tiling info");
+      }
     }
   }
 
-  if (info.getOpTileInfo().empty())
+  if (tempInfo.getOpTileInfo().empty()) {
+    tempInfo.rollback();
     return failure();
+  }
 
   // Finish collecting all info
+  info = std::move(tempInfo);
   info.commitLazyActions();
   loopsToTile.emplace_back(std::make_unique<VectorLoopInfo>(info));
   return success();
