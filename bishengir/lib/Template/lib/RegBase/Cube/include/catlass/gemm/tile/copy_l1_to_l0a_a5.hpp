@@ -514,6 +514,37 @@ struct TileCopyTla<
             }
         }
     }
+
+    template <class TensorDst, class TensorMxScale>
+    CATLASS_DEVICE void copyScaleTensor(TensorDst const &dstTensor,
+                                        TensorMxScale const &scaleTensor) {
+        auto scaleCoord = scaleTensor.coord();
+        AscendCBisheng::LoadData2DMxParams loadDataMxParams;
+        loadDataMxParams.xStartPosition =
+            CeilDiv<C0_NUM_PER_FRACTAL, uint64_t>(tla::get<0>(scaleCoord));
+        loadDataMxParams.yStartPosition =
+            CeilDiv<MX_SCALE_COPY_GROUP_NUM, uint64_t>(tla::get<1>(scaleCoord));
+        loadDataMxParams.xStep = tla::get<0, 1>(scaleTensor.shape());
+        loadDataMxParams.yStep = tla::get<1, 1>(scaleTensor.shape());
+        loadDataMxParams.srcStride =
+            CeilDiv<BYTE_PER_C0, uint64_t>(tla::get<0, 1>(scaleTensor.stride()));
+        loadDataMxParams.dstStride = tla::get<1, 1>(scaleTensor.shape());
+
+        auto dstOffset = dstTensor.layout()(dstTensor.coord());
+        uint64_t mxDstAddr =
+            static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                (__ca__ typename TensorDst::Element *)dstTensor.data()[dstOffset]
+                    .GetPhyAddr())) /
+            16;
+        load_cbuf_to_ca_mx(
+            mxDstAddr,
+            static_cast<__cbuf__ void *>(
+                (__cbuf__ typename TensorMxScale::Element *)scaleTensor.data()
+                    .GetPhyAddr()),
+            loadDataMxParams.xStartPosition, loadDataMxParams.yStartPosition,
+            loadDataMxParams.xStep, loadDataMxParams.yStep,
+            loadDataMxParams.srcStride, loadDataMxParams.dstStride);
+    }
 };
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////
