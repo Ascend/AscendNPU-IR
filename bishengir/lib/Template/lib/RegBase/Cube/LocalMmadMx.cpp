@@ -209,9 +209,15 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Wait for mmad finished
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
 
-    // Load current tile from L1 to L0A
-    copyL1ToL0A(tensorL0A, tensorTileL1A);
-    copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    // Load current tile from L1 to L0A.  The transposed A path needs the
+    // scale metadata copied with the data copy so the MX scale address follows
+    // the same transpose/tail handling as the data tile.
+    if constexpr (TA) {
+      copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+    } else {
+      copyL1ToL0A(tensorL0A, tensorTileL1A);
+      copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    }
     if (kL0Idx == kL0Loop - 1 && l1AMTE1MTE2EventId != -1) {
       AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
           l1AMTE1MTE2EventId);
@@ -223,15 +229,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto layoutBInL0 =
         tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, actualN);
     auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
-    // Locate the current tile of matrix B on L1
     auto tensorTileL1B = GetTile(tensorL1B, tla::MakeCoord(kL0Idx * l0K, 0),
                                  tla::MakeShape(kL0Actual, actualN));
-    // Locate the current tile of matrix mxScaleB on L1
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
-
-    // Load current tile from L1 to L0B
     copyL1ToL0B(tensorL0B, tensorTileL1B);
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
     if (kL0Idx == kL0Loop - 1 && l1BMTE1MTE2EventId != -1) {
@@ -420,9 +422,15 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Wait for mmad finished
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
 
-    // Load current tile from L1 to L0A
-    copyL1ToL0A(tensorL0A, tensorTileL1A);
-    copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    // Load current tile from L1 to L0A.  The transposed A path needs the
+    // scale metadata copied with the data copy so the MX scale address follows
+    // the same transpose/tail handling as the data tile.
+    if constexpr (TA) {
+      copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+    } else {
+      copyL1ToL0A(tensorL0A, tensorTileL1A);
+      copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    }
     if (kL0Idx == kL0Loop - 1 && l1AMTE1MTE2EventId != -1) {
       AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
           l1AMTE1MTE2EventId);
@@ -434,15 +442,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto layoutBInL0 =
         tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, actualN);
     auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
-    // Locate the current tile of matrix B on L1
     auto tensorTileL1B = GetTile(tensorL1B, tla::MakeCoord(kL0Idx * l0K, 0),
                                  tla::MakeShape(kL0Actual, actualN));
-    // Locate the current tile of matrix mxScaleB on L1
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
-
-    // Load current tile from L1 to L0B
     copyL1ToL0B(tensorL0B, tensorTileL1B);
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
     if (kL0Idx == kL0Loop - 1 && l1BMTE1MTE2EventId != -1) {
@@ -520,9 +524,10 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
-      (ma->sizes[1] * ma->sizes[2]), (ma->sizes[0] * ma->sizes[3]),
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      (ma->sizes[1] * ma->sizes[2]), k, n,
+      m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
       l1b_wait_mmad_l1_event, true, true, false);
 }
@@ -543,9 +548,10 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
-      (ma->sizes[1] * ma->sizes[2]), (ma->sizes[0] * ma->sizes[3]),
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      (ma->sizes[1] * ma->sizes[2]), k, n,
+      m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
       l1b_wait_mmad_l1_event, true, true, false, isFp4);
 }

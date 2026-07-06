@@ -462,6 +462,108 @@ struct TileCopyTla<
         }
     }
 
+    template <class TensorDst, class TensorSrc, class TensorMxScale>
+    CATLASS_DEVICE void operator()(TensorDst const &dstTensor,
+                                   TensorSrc const &srcTensor,
+                                   TensorMxScale const &scaleTensor) {
+        const uint32_t L0M = tla::get<0, 0>(dstTensor.shape()) * tla::get<0, 1>(dstTensor.shape());
+        const uint32_t L0K = tla::get<1, 0>(dstTensor.shape()) * tla::get<1, 1>(dstTensor.shape());
+        const uint32_t srcOuterStrideRow = tla::get<0, 1>(srcTensor.stride());
+        const uint32_t dstOuterStrideCol = tla::get<1, 1>(dstTensor.stride());
+        auto srcCoord = srcTensor.coord();
+        auto dstOffset = dstTensor.layout()(dstTensor.coord());
+
+        auto scaleCoord = scaleTensor.coord();
+        AscendCBisheng::LoadData2DMxParams loadDataMxParams;
+        loadDataMxParams.xStartPosition =
+            CeilDiv<C0_NUM_PER_FRACTAL, uint64_t>(tla::get<0>(scaleCoord));
+        loadDataMxParams.yStartPosition =
+            CeilDiv<MX_SCALE_COPY_GROUP_NUM, uint64_t>(tla::get<1>(scaleCoord));
+        loadDataMxParams.xStep = tla::get<0, 1>(scaleTensor.shape());
+        loadDataMxParams.yStep = tla::get<1, 1>(scaleTensor.shape());
+        loadDataMxParams.srcStride =
+            CeilDiv<BYTE_PER_C0, uint64_t>(tla::get<0, 1>(scaleTensor.stride()));
+        loadDataMxParams.dstStride = tla::get<1, 1>(scaleTensor.shape());
+
+        AscendCBisheng::LoadData2DParamsV2 loadDataParams;
+        if (L0M % ELE_NUM_PER_C0 == 0) {
+            loadDataParams.mStartPosition = CeilDiv<C0_NUM_PER_FRACTAL>(tla::get<1>(srcCoord));
+            loadDataParams.kStartPosition = CeilDiv<ELE_NUM_PER_C0>(tla::get<0>(srcCoord));
+            loadDataParams.mStep = CeilDiv<C0_NUM_PER_FRACTAL>(L0K);
+            loadDataParams.kStep = CeilDiv<ELE_NUM_PER_C0>(L0M);
+            loadDataParams.srcStride = CeilDiv<ELE_NUM_PER_FRACTAL>(srcOuterStrideRow);
+            loadDataParams.dstStride = CeilDiv<ELE_NUM_PER_FRACTAL>(dstOuterStrideCol);
+            loadDataParams.ifTranspose = true;
+
+            if constexpr (AscendCBisheng::Std::is_one_of_v<
+                              typename TensorSrc::Element, float8_e4m3_t,
+                              float8_e5m2_t>) {
+                load_cbuf_to_ca(
+                    reinterpret_cast<__ca__ typename TensorSrc::Element *>(
+                        dstTensor.data()[dstOffset].GetPhyAddr()),
+                    (__cbuf__ typename TensorSrc::Element *)srcTensor.data()
+                        .GetPhyAddr(),
+                    loadDataParams.mStartPosition,
+                    loadDataParams.kStartPosition, loadDataParams.mStep,
+                    loadDataParams.kStep, loadDataParams.srcStride,
+                    loadDataParams.dstStride, 1);
+            } else {
+                load_cbuf_to_ca_s4(
+                    (__ca__ typename TensorSrc::Element *)dstTensor
+                        .data()[dstOffset]
+                        .GetPhyAddr(),
+                    (__cbuf__ typename TensorSrc::Element *)srcTensor.data()
+                        .GetPhyAddr(),
+                    loadDataParams.mStartPosition,
+                    loadDataParams.kStartPosition, loadDataParams.mStep,
+                    loadDataParams.kStep, loadDataParams.srcStride,
+                    loadDataParams.dstStride, 1);
+            }
+
+            uint64_t mxDstAddr =
+                static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                    (__ca__ typename TensorDst::Element *)dstTensor.data()[dstOffset]
+                        .GetPhyAddr())) /
+                16;
+            load_cbuf_to_ca_mx(
+                mxDstAddr,
+                static_cast<__cbuf__ void *>(
+                    (__cbuf__ typename TensorMxScale::Element *)scaleTensor.data()
+                        .GetPhyAddr()),
+                loadDataMxParams.xStartPosition, loadDataMxParams.yStartPosition,
+                loadDataMxParams.xStep, loadDataMxParams.yStep,
+                loadDataMxParams.srcStride, loadDataMxParams.dstStride);
+        } else {
+            for (uint32_t kIdx = 0; kIdx < L0K / ELE_NUM_PER_C0; kIdx++) {
+                loadDataParams.mStartPosition = CeilDiv<C0_NUM_PER_FRACTAL>(tla::get<1>(srcCoord)) + kIdx * 2;
+                loadDataParams.kStartPosition = CeilDiv<ELE_NUM_PER_C0>(tla::get<0>(srcCoord));
+                loadDataParams.mStep = 2;
+                loadDataParams.kStep = CeilDiv<ELE_NUM_PER_C0>(L0M);
+                loadDataParams.srcStride = CeilDiv<ELE_NUM_PER_FRACTAL>(srcOuterStrideRow);
+                loadDataParams.dstStride = CeilDiv<ELE_NUM_PER_FRACTAL>(dstOuterStrideCol);
+                loadDataParams.ifTranspose = true;
+
+                AscendCBisheng::LoadData(
+                    dstTensor.data()[dstOffset + kIdx * L0M * ELE_NUM_PER_C0],
+                    srcTensor.data(), loadDataParams);
+            }
+
+            uint64_t mxDstAddr =
+                static_cast<uint64_t>(reinterpret_cast<uintptr_t>(
+                    (__ca__ typename TensorDst::Element *)dstTensor.data()[dstOffset]
+                        .GetPhyAddr())) /
+                16;
+            load_cbuf_to_ca_mx(
+                mxDstAddr,
+                static_cast<__cbuf__ void *>(
+                    (__cbuf__ typename TensorMxScale::Element *)scaleTensor.data()
+                        .GetPhyAddr()),
+                loadDataMxParams.xStartPosition, loadDataMxParams.yStartPosition,
+                loadDataMxParams.xStep, loadDataMxParams.yStep,
+                loadDataMxParams.srcStride, loadDataMxParams.dstStride);
+        }
+    }
+
     template <class TensorDst, class TensorSrc>
     CATLASS_DEVICE void operator()(TensorDst const &dstTensor, TensorSrc const &srcTensor, uint32_t l0Batch)
     {
