@@ -418,6 +418,90 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         unit_flag);                                                            \
   }
 
+#define DECLARE_MMA_MX(src_type, dst_type, bias_type)                          \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_mmadmxL1_##src_type##_to_##dst_type(                            \
+      memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,  \
+      memref_t<__cbuf__ src_type, 4> *l1B,                                     \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                               \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,       \
+      uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,    \
+      uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_TRANS(src_type, dst_type, bias_type, suffix)            \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_mmadmxL1_##src_type##_to_##dst_type##suffix(                    \
+      memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,  \
+      memref_t<__cbuf__ src_type, 4> *l1B,                                     \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                               \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,       \
+      uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,    \
+      uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format,                              \
+                              b_format)                                                             \
+  __aicore__ __attribute__((always_inline)) void                                                    \
+  _mlir_ciface_mmadmxL1_##src_type##_to_##dst_type##_lhs_format_##a_format##_rhs_format_##b_format( \
+      memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,                       \
+      memref_t<__cbuf__ src_type, 4> *l1B,                                                          \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                    \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,                            \
+      uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                         \
+      uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
+
+#define DECLARE_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,   \
+                                    b_format, suffix)                         \
+  __aicore__ __attribute__((always_inline)) void                               \
+  _mlir_ciface_mmadmxL1_##src_type##_to_##dst_type##suffix##_lhs_format_##a_format##_rhs_format_##b_format( \
+      memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,  \
+      memref_t<__cbuf__ src_type, 4> *l1B,                                     \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                               \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,       \
+      uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,    \
+      uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
+
+#define REGISTER_MMA_MX(src_type, dst_type, bias_type)                         \
+  DECLARE_MMA_MX(src_type, dst_type, bias_type) {                              \
+    mmamx_tile_core<src_type, dst_type, bias_type>(                            \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
+        l1BMTE1MTE2EventId);                                                   \
+  }
+
+#define REGISTER_MMA_MX_TRANS(src_type, dst_type, bias_type, suffix, ta, tb)   \
+  DECLARE_MMA_MX_TRANS(src_type, dst_type, bias_type, suffix) {                \
+    mmamx_tile_core<src_type, dst_type, bias_type, ta, tb>(                    \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
+        l1BMTE2MTE1EventId, l1BMTE1MTE2EventId);                              \
+  }
+
+#define REGISTER_MMA_MX_FP4(src_type, dst_type, bias_type, a_format, b_format) \
+  DECLARE_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format, b_format) {   \
+    mmamx_tile_core<src_type, dst_type, bias_type>(                            \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
+        l1BMTE1MTE2EventId, true);                                             \
+  }
+
+#define REGISTER_MMA_MX_FP4_TRANS(src_type, dst_type, bias_type, a_format,     \
+                                  b_format, suffix, ta, tb)                   \
+  DECLARE_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,         \
+                              b_format, suffix) {                             \
+    mmamx_tile_core<src_type, dst_type, bias_type, ta, tb>(                    \
+        l0C, l1A, l1B,                                                         \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
+        reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
+        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
+        l1BMTE2MTE1EventId, l1BMTE1MTE2EventId, true);                        \
+  }
+
 extern "C" {
 DECLARE_MMA_TILE(cbuf, cc, 4, half, float, float);
 DECLARE_MMA_TILE(cbuf, cc, 4, bfloat16_t, float, float);
@@ -449,5 +533,22 @@ DECLARE_MMA_TILE_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_TB_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_TB_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
+#if defined(__DAV_C310__)
+DECLARE_MMA_MX(float8_e5m2_t, float, float);
+DECLARE_MMA_MX(float8_e4m3_t, float, float);
+DECLARE_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta);
+DECLARE_MMA_MX_TRANS(float8_e5m2_t, float, float, _tb);
+DECLARE_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta_tb);
+DECLARE_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta);
+DECLARE_MMA_MX_TRANS(float8_e4m3_t, float, float, _tb);
+DECLARE_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta_tb);
+DECLARE_MMA_MX_FORMAT(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                            fp4x2_e2m1_t, _ta);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                            fp4x2_e2m1_t, _tb);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                            fp4x2_e2m1_t, _ta_tb);
+#endif
 }
 #endif // HIVM_MLIR_TEMPLATE_MMA_TILE_UTILS_H

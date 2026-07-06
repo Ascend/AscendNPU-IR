@@ -145,6 +145,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     `,` type($real_n)
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
+    (`a_transpose` $a_transpose^)?
+    (`b_transpose` $b_transpose^)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?

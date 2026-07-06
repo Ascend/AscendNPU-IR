@@ -794,13 +794,30 @@ mlir::hivm::HIVMMatmulDataformat convertDataformat(mlir::hfusion::Dataformat fmt
   llvm::report_fatal_error("unsupported Dataformat");
 }
 
+struct FoldedTransposeInput {
+  Value input;
+  UnitAttr transposeAttr;
+  linalg::TransposeOp transposeOp;
+};
+
+FoldedTransposeInput foldTransposeInput(Value input, PatternRewriter &rewriter) {
+  auto transposeOp = input.getDefiningOp<linalg::TransposeOp>();
+  if (!transposeOp)
+    return {input, UnitAttr(), linalg::TransposeOp()};
+
+  ArrayRef<int64_t> permutation = transposeOp.getPermutation();
+  if (permutation.size() != 2 || permutation[0] != 1 || permutation[1] != 0)
+    return {input, UnitAttr(), linalg::TransposeOp()};
+
+  return {transposeOp.getInput(), rewriter.getUnitAttr(), transposeOp};
+}
 
 template <>
-struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> : 
+struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     public OpRewritePattern<hfusion::MatMulMxOp> {
 
   using OpRewritePattern<hfusion::MatMulMxOp>::OpRewritePattern;
- 
+
   LogicalResult matchAndRewrite(hfusion::MatMulMxOp op,
                                 PatternRewriter &rewriter) const override {
     // convert hfusion::MatMulMxOp to hivm::MmadMxL1Op
@@ -812,8 +829,14 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     Operation *newResult;
     auto lhsFmt = op.getLhsFormat();
     auto rhsFmt = op.getRhsFormat();
-    auto lhsAttr = lhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*lhsFmt)) : nullptr;
-    auto rhsAttr = rhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*rhsFmt)) : nullptr;
+    auto lhsAttr =
+        lhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*lhsFmt))
+               : nullptr;
+    auto rhsAttr =
+        rhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*rhsFmt))
+               : nullptr;
+    FoldedTransposeInput inputA = foldTransposeInput(op.getInputA(), rewriter);
+    FoldedTransposeInput inputB = foldTransposeInput(op.getInputB(), rewriter);
     if (!isa<BlockArgument>(acc) &&
         (isa<tensor::EmptyOp>(acc.getDefiningOp()) ||
          isa<linalg::FillOp>(acc.getDefiningOp()))) {
@@ -827,19 +850,28 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
       initCondition = rewriter.create<arith::ConstantOp>(
           op->getLoc(), rewriter.getBoolAttr(true));
       newResult = rewriter.create<hivm::MmadMxL1Op>(
-          op->getLoc(), op->getResultTypes(), op.getInputA(), op.getInputB(),
+          op->getLoc(), op->getResultTypes(), inputA.input, inputB.input,
           op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst,
-          zeroCst, zeroCst, empty->getResults()[0], lhsAttr, rhsAttr, nullptr, nullptr, ValueRange{});
+          zeroCst, zeroCst, empty->getResults()[0], lhsAttr, rhsAttr,
+          inputA.transposeAttr, inputB.transposeAttr, ValueRange{});
     } else {
       initCondition = rewriter.create<arith::ConstantOp>(
           op->getLoc(), rewriter.getBoolAttr(false));
       newResult = rewriter.create<hivm::MmadMxL1Op>(
-          op->getLoc(), op->getResultTypes(), op.getInputA(), op.getInputB(),
-          op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst, zeroCst,
-          zeroCst, acc, lhsAttr, rhsAttr,  nullptr, nullptr, ValueRange{});
+          op->getLoc(), op->getResultTypes(), inputA.input, inputB.input,
+          op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst,
+          zeroCst, zeroCst, acc, lhsAttr, rhsAttr, inputA.transposeAttr,
+          inputB.transposeAttr, ValueRange{});
     }
- 
+
     rewriter.replaceOp(op, newResult);
+    bool sameTransposeOp =
+        inputA.transposeOp && inputA.transposeOp == inputB.transposeOp;
+    if (inputA.transposeOp && inputA.transposeOp->use_empty())
+      rewriter.eraseOp(inputA.transposeOp);
+    if (inputB.transposeOp && !sameTransposeOp &&
+        inputB.transposeOp->use_empty())
+      rewriter.eraseOp(inputB.transposeOp);
     return success();
   }
 };

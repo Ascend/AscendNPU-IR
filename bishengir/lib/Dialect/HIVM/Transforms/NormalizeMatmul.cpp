@@ -1511,6 +1511,11 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
 
 // Add counter and if block in the tail for the case that mmad is probably not
 // executed
+template <typename T> constexpr bool isUnsupportedOpForNormalizeMmadCCF() {
+  // TODO: remove when MmadMxL1Op is supported with bias.
+  return std::is_same_v<T, hivm::MmadMxL1Op>;
+}
+
 template <typename T>
 struct NormalizeMmadCCFPattern : public OpRewritePattern<T> {
 public:
@@ -1518,6 +1523,8 @@ public:
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
     // TODO: need to be reverted when Affinity GMM supported
+    if constexpr (isUnsupportedOpForNormalizeMmadCCF<T>())
+      return failure();
     auto moduleOp = op->template getParentOfType<ModuleOp>();
     bool isDisableHfusionVectorize = false;
     if (moduleOp) {
