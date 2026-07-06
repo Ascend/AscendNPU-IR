@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -47,7 +48,8 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
 
       if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
           it != tilingDimKindMapForShape.end()) {
-        LDBG("Checking parallelDim for broadcast two dims case: " << static_cast<int>(it->getSecond()));
+        LDBG("Checking parallelDim for broadcast two dims case: "
+             << static_cast<int>(it->getSecond()));
         return it->getSecond() == TilingDimensionKind::Parallel;
       }
       return true;
@@ -77,6 +79,8 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
+    if (isa<scf::ForOp>(op_))
+      computeTilingDimImpl<scf::YieldOp>(parallelDimMaps, numStoreOps);
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
@@ -197,6 +201,10 @@ static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
          srcOrigDim == dstOrigDim;
 }
 
+template <> bool checkTileableMaskedStore(scf::YieldOp storeOp, size_t i) {
+  return false;
+}
+
 /// Walks every \c StoreOpTy under the analyzed op. For each source axis that
 /// is parallel, appends that \c Dimension to \p parallelDimMap (keyed by solver
 /// group and parent index) unless the axis is dynamic or size 1; for
@@ -222,45 +230,53 @@ void DimensionAnalyzer::computeTilingDimImpl(
         &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
-    auto src = op.getSrc();
-    auto rank = utils::getShapeRank(src.getType()).value_or(0);
-    auto args = getArgumentRefOrCreateDummy(src);
-    // See that each tiling dimension differs for each \c groupIndex.
-    // Each operation in a group is independent, horizontal, and totally
-    // separated to other operations in a different group. In common kernels,
-    // there will only be 1 group.
-    auto groupIndex = solverGroup_->find(argumentsRefPointer_.at(src));
-    numStoreOps[groupIndex]++;
-    LDBG("Checking operation: " << op << " in group " << groupIndex);
-    if (rank == 0)
-      return;
-    auto shape = utils::getShape(src.getType());
-    DenseSet<int> usedParentIdx;
-    for (size_t i = 0; i < rank; i++) {
-      auto parentIndex = solverCollapserElem_->find(args[i]);
-      if (!usedParentIdx.insert(parentIndex).second) {
-        op->emitWarning() << "Detected dimensions are in the same group in one "
-                             "storeOp. It is recommended to try with "
-                             "strict-mode=false if TileAndBindSubBlock fails";
-        broadcastAxisCaseCandidate.insert(parentIndex);
-      }
+    SmallVector<Value> sources;
+    if constexpr (std::is_same_v<StoreOpTy, scf::YieldOp>) {
+      sources = llvm::to_vector(op.getResults());
+    } else {
+      sources.push_back(op.getSrc());
     }
-    usedParentIdx.clear();
-    std::optional<size_t> forcedDim = inferForcedTilingDim<StoreOpTy>(op);
-    for (size_t i = 0; i < rank; i++) {
-      if (forcedDim.has_value() && i != forcedDim.value()) {
-        continue;
-      }
-      Dimension dim(src, i);
-      if (isParallelDim(dim)) {
-        if (ShapedType::isDynamic(shape[i]) || shape[i] == 1) {
-          if (!checkTileableMaskedStore(op, i))
-            continue;
-        }
-        LDBG("Dim " << i << " is selected in group " << groupIndex);
+    for (auto src : sources) {
+      auto rank = utils::getShapeRank(src.getType()).value_or(0);
+      auto args = getArgumentRefOrCreateDummy(src);
+      // See that each tiling dimension differs for each \c groupIndex.
+      // Each operation in a group is independent, horizontal, and totally
+      // separated to other operations in a different group. In common kernels,
+      // there will only be 1 group.
+      auto groupIndex = solverGroup_->find(argumentsRefPointer_.at(src));
+      numStoreOps[groupIndex]++;
+      LDBG("Checking operation: " << op << " in group " << groupIndex);
+      if (rank == 0)
+        return;
+      auto shape = utils::getShape(src.getType());
+      DenseSet<int> usedParentIdx;
+      for (size_t i = 0; i < rank; i++) {
         auto parentIndex = solverCollapserElem_->find(args[i]);
-        if (usedParentIdx.insert(parentIndex).second) {
-          parallelDimMap[groupIndex][parentIndex].push_back(dim);
+        if (!usedParentIdx.insert(parentIndex).second) {
+          op->emitWarning()
+              << "Detected dimensions are in the same group in one "
+                 "storeOp. It is recommended to try with "
+                 "strict-mode=false if TileAndBindSubBlock fails";
+          broadcastAxisCaseCandidate.insert(parentIndex);
+        }
+      }
+      usedParentIdx.clear();
+      std::optional<size_t> forcedDim = inferForcedTilingDim<StoreOpTy>(op);
+      for (size_t i = 0; i < rank; i++) {
+        if (forcedDim.has_value() && i != forcedDim.value()) {
+          continue;
+        }
+        Dimension dim(src, i);
+        if (isParallelDim(dim)) {
+          if (ShapedType::isDynamic(shape[i]) || shape[i] == 1) {
+            if (!checkTileableMaskedStore(op, i))
+              continue;
+          }
+          LDBG("Dim " << i << " is selected in group " << groupIndex);
+          auto parentIndex = solverCollapserElem_->find(args[i]);
+          if (usedParentIdx.insert(parentIndex).second) {
+            parallelDimMap[groupIndex][parentIndex].push_back(dim);
+          }
         }
       }
     }
