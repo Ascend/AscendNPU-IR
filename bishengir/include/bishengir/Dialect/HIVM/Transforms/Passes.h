@@ -238,7 +238,8 @@ std::unique_ptr<Pass> createNormalizeLoopIteratorPass();
 std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 
 /// Create a pass to tile and bind sub block for mix cv function.
-std::unique_ptr<Pass> createTileAndBindSubBlockPass();
+std::unique_ptr<Pass>
+createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
 
 /// Create a pass to bubble up extract slice for hivm ops.
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
