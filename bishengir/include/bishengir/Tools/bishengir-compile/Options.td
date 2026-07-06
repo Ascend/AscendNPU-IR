@@ -949,6 +949,14 @@ llvm::cl::values(
   }];
 }
 
+def HfusionEnableCrossIfFusion : FeatureControlOptions<
+  "Enable fusion op cross region-bearing op in AutoVectorizeV2",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",
   "bool",
