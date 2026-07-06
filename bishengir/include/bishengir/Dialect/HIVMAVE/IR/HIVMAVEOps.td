@@ -861,6 +861,7 @@ def AVE_VFMulaOp : AVE_TenaryOp<"vmula">;
 //
 //  vadds/vmuls/vlrelu/vmaxs/vmins/vshls/vshrs/vrnds/vsadds
 def AVE_VFAddsOp : AVE_VecScalarOp<"vadds", [DeclareOpInterfaceMethods<AVELibraryFunctionOpInterface,["getOpLibraryCallName"]>]>{
+  let hasCanonicalizer = 1;
   let extraClassDeclaration = opNameDeclaration;
 }
 
