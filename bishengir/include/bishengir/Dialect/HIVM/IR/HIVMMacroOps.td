@@ -125,6 +125,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     `,` type($real_n)
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
+    (`a_transpose` $a_transpose^)?
+    (`b_transpose` $b_transpose^)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
@@ -208,6 +210,8 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
                        Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
                        OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
                        OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat,
+                       OptionalAttr<UnitAttr>:$aTranspose,
+                       OptionalAttr<UnitAttr>:$bTranspose,
                        Arg<Variadic<I64>, [{
                         Arguments required by mma_tile to insert 
                         synchronization instructions, they are 
@@ -232,7 +236,10 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     ```
   }];
   let assemblyFormat = [{
-    attr-dict `ins` `(`
+    attr-dict
+    (`a_transpose` $aTranspose^)?
+    (`b_transpose` $bTranspose^)?
+    `ins` `(`
     $a
     `,` $b
     `,` $scaleA

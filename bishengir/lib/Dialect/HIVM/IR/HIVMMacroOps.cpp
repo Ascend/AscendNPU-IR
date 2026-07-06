@@ -1165,15 +1165,15 @@ MmadMxL1Op::getOperandsTargetLayout() {
   llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
 
   auto operA = getA();
-  bool isATranspose = false;
-  auto aBlockSizes = getBlockSizes(operA);
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
   auto mALayoutAttr = DataLayoutAttr::get(
       getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
 
   auto operB = getB();
-  bool isBTranspose = false;
+  bool isBTranspose = getBTranspose().has_value();
   auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
   auto mBLayoutAttr = DataLayoutAttr::get(
       getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
@@ -1209,15 +1209,22 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() {
   if (failed(rank)) {
     return failure();
   }
+  bool isTranspose = getATranspose().has_value();
   switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND, false);
+  case kDimTwo: {
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose && !sourceCarriesFractalLayoutHint(getA(), expected);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND,
+                               effectiveTranspose);
+  }
   case kDimFour: {
     auto shape = cast<MemRefType>(getA().getType()).getShape();
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), DataLayout::zN, BoolAttr(),
+        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
+        BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -1231,15 +1238,22 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBLayout() {
   if (failed(rank)) {
     return failure();
   }
+  bool isTranspose = getBTranspose().has_value();
   switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND, false);
+  case kDimTwo: {
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose && !sourceCarriesFractalLayoutHint(getB(), expected);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND,
+                               effectiveTranspose);
+  }
   case kDimFour: {
     auto shape = cast<MemRefType>(getB().getType()).getShape();
     // When the alloc is four-dimensional, the last two dims should be the
     // fractal block sizes.
     return DataLayoutAttr::get(
-        getContext(), DataLayout::zN, BoolAttr(),
+        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
+        BoolAttr(),
         mlir::DenseI64ArrayAttr::get(getContext(),
                                      ArrayRef({shape[2], shape[3]})));
   }
@@ -1354,6 +1368,10 @@ std::string MmadMxL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
       this->getLoc(), getElementTypeOrSelf(this->getDpsInits()[0].getType()));
 
   auto finalName = baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+  if (getATranspose().has_value())
+    finalName += "_ta";
+  if (getBTranspose().has_value())
+    finalName += "_tb";
 
   auto i8Type = IntegerType::get(getContext(), 8);
 

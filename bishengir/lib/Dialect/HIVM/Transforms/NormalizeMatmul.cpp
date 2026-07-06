@@ -30,6 +30,7 @@
 #include "llvm/Support/LogicalResult.h"
 
 #include <cassert>
+#include <type_traits>
 
 namespace mlir {
 #define GEN_PASS_DEF_NORMALIZEMATMUL
@@ -278,8 +279,11 @@ FailureOr<SmallVector<Value>> extractRealMKN(hivm::MmadMxL1Op op,
     return failure();
   }
 
-  // set m,k,n
-  return SmallVector<Value>{(*realMK)[0], (*realMK)[1], (*realKN)[1]};
+  // set m, k, n
+  Value realM = op.getATranspose().has_value() ? (*realMK)[1] : (*realMK)[0];
+  Value realK = op.getATranspose().has_value() ? (*realMK)[0] : (*realMK)[1];
+  Value realN = op.getBTranspose().has_value() ? (*realKN)[0] : (*realKN)[1];
+  return SmallVector<Value>{realM, realK, realN};
 }
 
 template <typename T>
@@ -1004,6 +1008,11 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
 
 // Add counter and if block in the tail for the case that mmad is probably not
 // executed
+template <typename T> constexpr bool isUnsupportedOpForNormalizeMmadCCF() {
+  // TODO: remove when MmadMxL1Op is supported with bias.
+  return std::is_same_v<T, hivm::MmadMxL1Op>;
+}
+
 template <typename T>
 struct NormalizeMmadCCFPattern : public OpRewritePattern<T> {
 public:
@@ -1011,6 +1020,8 @@ public:
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
     // TODO: need to be reverted when Affinity GMM supported
+    if constexpr (isUnsupportedOpForNormalizeMmadCCF<T>())
+      return failure();
     auto moduleOp = op->template getParentOfType<ModuleOp>();
     bool isDisableHfusionVectorize = false;
     if (moduleOp) {

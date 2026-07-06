@@ -506,7 +506,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
 } // namespace Catlass::Gemm
 
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE>
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
 __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
     memref_t<__cbuf__ SRC_TYPE, 4> *mb,
@@ -514,7 +515,7 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, int64_t m, int64_t k,
     int64_t n, int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
     int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, false, false,
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
@@ -525,7 +526,8 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       l1b_wait_mmad_l1_event, true, true, false);
 }
 
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE>
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
 __aicore__ __attribute__((always_inline)) void
 mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ SRC_TYPE, 4> *ma,
@@ -535,7 +537,7 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
                 int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
                 int64_t l1b_wait_mmad_l1_event, bool isFp4) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, false, false,
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
@@ -551,5 +553,17 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
 extern "C" {
 REGISTER_MMA_MX(float8_e5m2_t, float, float);
 REGISTER_MMA_MX(float8_e4m3_t, float, float);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta_tb, true, true);
 REGISTER_MMA_MX_FP4(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                          fp4x2_e2m1_t, _ta, true, false);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                          fp4x2_e2m1_t, _tb, false, true);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                          fp4x2_e2m1_t, _ta_tb, true, true);
 }
