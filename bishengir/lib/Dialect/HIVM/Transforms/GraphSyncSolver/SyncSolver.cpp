@@ -636,7 +636,7 @@ Solver::checkMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
 std::optional<EventIdInfo>
 Solver::checkCVPipeliningEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.isCrossCoreMode()) {
+  if (!options.isCrossCoreMode() || !options.enableCVPatterns) {
     return {};
   }
   if (!checkCVPipeliningMemConflict(rwOp1, rwOp2)) {
@@ -705,7 +705,7 @@ std::optional<EventIdInfo>
 Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                      RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.isCrossCoreMode()) {
+  if (!options.isCrossCoreMode() || !options.enableCVPatterns) {
     return {};
   }
   if (!checkCVPreloadingMemConflict(rwOp1, rwOp2)) {

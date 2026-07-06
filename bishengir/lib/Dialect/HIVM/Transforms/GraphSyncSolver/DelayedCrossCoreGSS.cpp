@@ -734,6 +734,9 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
   }
+  if (this->enableCVPatterns) {
+    options.enableCVPatterns = true;
+  }
   if (this->blockAllSync) {
     options.enableBlockAllMode = true;
   }

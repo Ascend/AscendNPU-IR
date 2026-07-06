@@ -163,7 +163,9 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     // delayed cross-core autosync flow. Remove this once auto-vectorize no
     // longer depends on the presence of sync ops to preserve those boundaries.
     pm.addPass(createMarkRealCoreTypePass());
-    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    CrossCoreGSSOptions options;
+    options.enableCVPatterns = false;
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass(options));
     InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
     insertAnchorsAndBackupOptions.insertAnchorOnlyBeforeCubeOps = false;
     insertAnchorsAndBackupOptions.insertAnchorBeforeCubeAndVectorOps = true;
