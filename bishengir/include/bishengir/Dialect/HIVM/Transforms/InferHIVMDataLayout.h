@@ -155,6 +155,7 @@ private:
   Operation *rewriteCollapseShapeOp(memref::CollapseShapeOp op);
   Operation *rewriteMemrefCastOp(memref::CastOp op);
   void rewriteCopyOp(mlir::Operation *op);
+  Operation *rewriteIfOp(scf::IfOp op);
   /// Try to fold ConvertLayoutOp + CopyOp to HIVM Data Copy Ops with
   /// on-the-fly data layout conversion.
   LogicalResult tryFoldLayoutConversionIntoCopy(Value src, Value dst,

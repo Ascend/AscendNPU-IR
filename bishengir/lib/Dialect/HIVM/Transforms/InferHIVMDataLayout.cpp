@@ -493,17 +493,19 @@ void DataLayoutInferAndPropagateHelper::initAnchorLayout() {
         auto currentLayout = currentLayoutMap[operand];
         auto targetLayout = targetLayoutMap[operand];
         LLVM_DEBUG(llvm::dbgs() << targetLayout << "\n";);
-        // Layout Information is appended on to the root alloc.
-        FailureOr<memref::AllocOp> status = getMemRefAlloc(operand);
-        if (failed(status)) {
+          // // Layout Information is appended on to the root alloc.
+        SmallVector<Value> allocs = getMemRefAllocs(operand);
+        if (allocs.empty()) {
           LLVM_DEBUG(llvm::dbgs() << "  Cannot find root alloc for operand: "
                                   << operand << "\n";);
           continue;
         }
-        (void)updateLayoutIfChanged(*status, {currentLayout, targetLayout});
+        for (Value alloc : allocs) {
+          (void)updateLayoutIfChanged(alloc, {currentLayout, targetLayout});
+        }
+        }
+        return WalkResult::advance();
       }
-      return WalkResult::advance();
-    }
     // If a value is marked with a layout through annotation::MarkOp, we
     // consider it as an anchor and initialize its layout info accordingly.
     if (auto markOp = dyn_cast<annotation::MarkOp>(op)) {
@@ -870,6 +872,7 @@ Operation *DataLayoutInferAndPropagateHelper::rewriteOp(Operation *op) {
           [&](auto op) { return rewriteCollapseShapeOp(op); })
       .Case<scf::ForOp>([&](auto op) { return rewriteForOp(op); })
       .Case<memref::CastOp>([&](auto op) { return rewriteMemrefCastOp(op); })
+      .Case<scf::IfOp>([&](auto op) { return rewriteIfOp(op); })
       .Default([](auto) {
         llvm::report_fatal_error("unexpected op in rewrite");
         return nullptr;
@@ -1039,6 +1042,63 @@ Operation *DataLayoutInferAndPropagateHelper::rewriteForOp(scf::ForOp op) {
   op.getInductionVar().replaceAllUsesWith(newForOp.getInductionVar());
   return newForOp.getOperation();
 }
+
+Operation *DataLayoutInferAndPropagateHelper::rewriteIfOp(scf::IfOp op) {
+    SmallVector<DataLayoutAttr> newLayouts;
+    OpBuilder builder(op);
+  
+    // 1) Pre-compute 4D type from then branch yield operands
+    SmallVector<Type> newResultTypes;
+    auto yieldOp = cast<scf::YieldOp>(op.thenBlock()->back());
+    for (auto result : yieldOp->getOperands()) {
+      DataLayoutAttr layout;
+      Type newResType = result.getType();
+      if (layout_info_.contains(result)) {
+        layout = getTargetLayout(result);
+        auto shape = getValueFromShape(result, builder);
+        auto layoutInfo = layout_info_.lookup(result);
+        auto newShape =
+            computeTargetLayoutShape(*shape, layoutInfo, builder, op->getLoc());
+        if (failed(newShape)) {
+          LLVM_DEBUG(llvm::dbgs() << "  Cannot compute new shape.\n";);
+          return nullptr;
+        }
+        auto srcType = cast<MemRefType>(result.getType());
+        auto newRank = (*newShape).size();
+        newResType = MemRefType::get(
+            SmallVector<int64_t>(newRank, ShapedType::kDynamic),
+            srcType.getElementType(), builder.getMultiDimIdentityMap(newRank),
+            srcType.getMemorySpace());
+      }
+      newResultTypes.push_back(newResType);
+      newLayouts.push_back(layout);
+    }
+  
+    // 2) Create new IfOp with correct type, splice body
+    OpBuilder rewriter(op);
+    bool hasElseRegion = !op.getElseRegion().empty();
+    auto newIfOp = rewriter.create<scf::IfOp>(
+        op.getLoc(), newResultTypes, op.getCondition(), hasElseRegion);
+  
+    newIfOp.thenBlock()->getOperations().splice(
+        newIfOp.thenBlock()->begin(), op.thenBlock()->getOperations());
+    if (hasElseRegion && op.elseBlock() && newIfOp.elseBlock()) {
+      newIfOp.elseBlock()->getOperations().splice(
+          newIfOp.elseBlock()->begin(), op.elseBlock()->getOperations());
+    }
+  
+    // 3) Map old results to new results
+    for (auto [oldResult, newResult, newLayout] :
+        llvm::zip(op.getResults(), newIfOp.getResults(), newLayouts)) {
+      if (oldResult.getType() == newResult.getType()) {
+        oldResult.replaceAllUsesWith(newResult);
+      }
+      if (!newLayout)
+        continue;
+      map(oldResult, newResult, newLayout);
+    }
+    return newIfOp.getOperation();
+  }
 
 Operation *DataLayoutInferAndPropagateHelper::rewriteCollapseShapeOp(
     memref::CollapseShapeOp op) {

@@ -107,6 +107,7 @@ void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
 /// is unsupported Ops on the search path or if the defining op is not a MemRef
 /// AllocOp.
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand);
+SmallVector<Value> getMemRefAllocs(Value operand);
 
 SmallVector<Value>
 getValueListFromMixedTypeLists(SmallVector<Value> dynamicValues,

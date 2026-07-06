@@ -241,6 +241,45 @@ FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
   return getMemRefForOpResult(result);
 }
 
+/// Return all root memref allocs feeding into a value.
+  /// Recursively traces through scf::IfOp branches and falls back
+/// to getMemRefAlloc for simple def-use chains.
+
+SmallVector<Value> getMemRefAllocs(Value operand) {
+  // -- if operand comes from scf.if, collect allocs from all branches --
+  if (auto ifOp = operand.getDefiningOp<scf::IfOp>()) {
+    auto resultNum = cast<OpResult>(operand).getResultNumber(); // which result?
+    SmallVector<Value> results;
+
+    for (Region &region : ifOp->getRegions()) {    // then, else
+      if (region.empty()) continue;                 // skip absent else
+      auto yieldOp = cast<scf::YieldOp>(
+          region.front().getTerminator());          // branch's exit point
+
+      // Recurse through the yield operand (handles nested IfOp→IfOp→alloc)
+      SmallVector<Value> branchAllocs =
+          getMemRefAllocs(yieldOp.getOperand(resultNum));
+      if (branchAllocs.empty()) return {};          // any branch fails → bail
+      results.append(branchAllocs);
+    }
+
+    // All branches must contribute exactly one alloc each
+    if (results.size() != ifOp->getRegions().size()) return {};
+
+    // All branches' allocs must have the same type
+    Type firstType = results.front().getType();
+    for (Value alloc : results)
+      if (alloc.getType() != firstType) return {};
+
+    return results;
+  }
+
+  // -- fallback: single user case (alloc, subview, for, etc.) --
+  FailureOr<memref::AllocOp> alloc = getMemRefAlloc(operand);
+  if (failed(alloc)) return {};
+  return {Value(*alloc)};                          // wrap in vector
+}
+
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
   Type type = val.getType();
   if (!isa<BaseMemRefType>(type)) {

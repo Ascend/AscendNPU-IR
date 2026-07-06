@@ -660,3 +660,165 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
   annotation.mark %arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_ifop_memref_layout
+// CHECK-SAME:                                        %arg0: i1,
+// CHECK-SAME:                                        %arg1: memref<64x32xf16, #hivm.address_space<gm>>)
+// CHECK:         %c32 = arith.constant 32 : index
+// CHECK:         %c64 = arith.constant 64 : index
+// CHECK:         %true = arith.constant true
+// CHECK:         %c64_0 = arith.constant 64 : index
+// CHECK:         %c32_1 = arith.constant 32 : index
+// CHECK:         %[[APPLY0:.*]] = affine.apply #map()[%c64_0, %c32_1]
+// CHECK:         %[[APPLY1:.*]] = affine.apply #map1()[%c64_0, %c32_1]
+// CHECK:         %c16 = arith.constant 16 : index
+// CHECK:         %c16_2 = arith.constant 16 : index
+// CHECK:         %[[IF_RES:.*]] = scf.if %arg0 -> (memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) {
+// CHECK:           %c64_12 = arith.constant 64 : index
+// CHECK:           %c32_13 = arith.constant 32 : index
+// CHECK:           %[[APPLY2:.*]] = affine.apply #map()[%c64_12, %c32_13]
+// CHECK:           %[[APPLY3:.*]] = affine.apply #map1()[%c64_12, %c32_13]
+// CHECK:           %c16_14 = arith.constant 16 : index
+// CHECK:           %c16_15 = arith.constant 16 : index
+// CHECK:           %[[ALLOC_IF:.*]] = memref.alloc(%[[APPLY3]], %[[APPLY2]], %c16_14, %c16_15) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:           hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<64x32xf16, #hivm.address_space<gm>>) outs(%[[ALLOC_IF]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
+// CHECK:           scf.yield %[[ALLOC_IF]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:         } else {
+// CHECK:           %c64_12 = arith.constant 64 : index
+// CHECK:           %c32_13 = arith.constant 32 : index
+// CHECK:           %[[APPLY4:.*]] = affine.apply #map()[%c64_12, %c32_13]
+// CHECK:           %[[APPLY5:.*]] = affine.apply #map1()[%c64_12, %c32_13]
+// CHECK:           %c16_14 = arith.constant 16 : index
+// CHECK:           %c16_15 = arith.constant 16 : index
+// CHECK:           %[[ALLOC_ELSE:.*]] = memref.alloc(%[[APPLY5]], %[[APPLY4]], %c16_14, %c16_15) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:           hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<64x32xf16, #hivm.address_space<gm>>) outs(%[[ALLOC_ELSE]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
+// CHECK:           scf.yield %[[ALLOC_ELSE]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:         }
+// CHECK:         %c32_3 = arith.constant 32 : index
+// CHECK:         %c64_4 = arith.constant 64 : index
+// CHECK:         %[[APPLY6:.*]] = affine.apply #map()[%c32_3, %c64_4]
+// CHECK:         %[[APPLY7:.*]] = affine.apply #map1()[%c32_3, %c64_4]
+// CHECK:         %c16_5 = arith.constant 16 : index
+// CHECK:         %c16_6 = arith.constant 16 : index
+// CHECK:         %[[ALLOC_A:.*]] = memref.alloc(%[[APPLY7]], %[[APPLY6]], %c16_5, %c16_6) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:         %c32_7 = arith.constant 32 : index
+// CHECK:         %c32_8 = arith.constant 32 : index
+// CHECK:         %[[APPLY8:.*]] = affine.apply #map()[%c32_7, %c32_8]
+// CHECK:         %[[APPLY9:.*]] = affine.apply #map1()[%c32_7, %c32_8]
+// CHECK:         %c16_9 = arith.constant 16 : index
+// CHECK:         %c16_10 = arith.constant 16 : index
+// CHECK:         %[[ALLOC_C:.*]] = memref.alloc(%[[APPLY9]], %[[APPLY8]], %c16_9, %c16_10) {alignment = 64 : i64} : memref<?x?x?x?xf32, #hivm.address_space<cc>>
+// CHECK:         hivm.hir.mmadL1 ins(%[[ALLOC_A]], %[[IF_RES]], %true, %c32, %c64, %c32 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[ALLOC_C]] : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+// CHECK:         return
+  module {
+    func.func @test_ifop_memref_layout(%cond : i1,
+        %gm_buf : memref<64x32xf16, #hivm.address_space<gm>>)
+        attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+      %c32 = arith.constant 32 : index
+      %c64 = arith.constant 64 : index
+      %true = arith.constant true
+      %b_buf = scf.if %cond -> (memref<64x32xf16, #hivm.address_space<cbuf>>) {
+        %alloc = memref.alloc() {alignment = 64 : i64} : memref<64x32xf16, #hivm.address_space<cbuf>>
+        hivm.hir.load ins(%gm_buf : memref<64x32xf16, #hivm.address_space<gm>>)
+                      outs(%alloc : memref<64x32xf16, #hivm.address_space<cbuf>>)
+                      init_out_buffer = false may_implicit_transpose_with_last_axis = false
+        scf.yield %alloc : memref<64x32xf16, #hivm.address_space<cbuf>>
+      } else {
+        %alloc = memref.alloc() {alignment = 64 : i64} : memref<64x32xf16, #hivm.address_space<cbuf>>
+        hivm.hir.load ins(%gm_buf : memref<64x32xf16, #hivm.address_space<gm>>)
+                      outs(%alloc : memref<64x32xf16, #hivm.address_space<cbuf>>)
+                      init_out_buffer = false may_implicit_transpose_with_last_axis = false
+        scf.yield %alloc : memref<64x32xf16, #hivm.address_space<cbuf>>
+      }
+      %a_buf = memref.alloc() {alignment = 64 : i64} : memref<32x64xf16, #hivm.address_space<cbuf>>
+      %c_buf = memref.alloc() {alignment = 64 : i64} : memref<32x32xf32, #hivm.address_space<cc>>
+      hivm.hir.mmadL1 ins(%a_buf, %b_buf, %true, %c32, %c64, %c32 :
+                              memref<32x64xf16, #hivm.address_space<cbuf>>,
+                              memref<64x32xf16, #hivm.address_space<cbuf>>,
+                              i1, index, index, index)
+                      outs(%c_buf : memref<32x32xf32, #hivm.address_space<cc>>)
+      return
+    }
+  }
+  
+  // -----
+// CHECK-LABEL: func.func @test_ifop_in_for
+// CHECK-SAME:                                %arg0: i1, %arg1: i32, %arg2: i32)
+// CHECK:         %c32 = arith.constant 32 : index
+// CHECK:         %c64 = arith.constant 64 : index
+// CHECK:         %true = arith.constant true
+// CHECK:         %c0_i32 = arith.constant 0 : i32
+// CHECK:         %c32_0 = arith.constant 32 : index
+// CHECK:         %c32_1 = arith.constant 32 : index
+// CHECK:         %[[APPLY0:.*]] = affine.apply #map()[%c32_0, %c32_1]
+// CHECK:         %[[APPLY1:.*]] = affine.apply #map1()[%c32_0, %c32_1]
+// CHECK:         %c16 = arith.constant 16 : index
+// CHECK:         %c16_2 = arith.constant 16 : index
+// CHECK:         %alloc = memref.alloc(%[[APPLY1]], %[[APPLY0]], %c16, %c16_2) {alignment = 64 : i64} : memref<?x?x?x?xf32, #hivm.address_space<cc>>
+// CHECK:         %[[FOR:.*]] = scf.for %arg3 = %c0_i32 to %arg1 step %arg2 iter_args(%arg4 = %alloc) -> (memref<?x?x?x?xf32, #hivm.address_space<cc>>)  : i32 {
+// CHECK:           %c64_3 = arith.constant 64 : index
+// CHECK:           %c32_4 = arith.constant 32 : index
+// CHECK:           %[[APPLY2:.*]] = affine.apply #map()[%c64_3, %c32_4]
+// CHECK:           %[[APPLY3:.*]] = affine.apply #map1()[%c64_3, %c32_4]
+// CHECK:           %c16_5 = arith.constant 16 : index
+// CHECK:           %c16_6 = arith.constant 16 : index
+// CHECK:           %[[IF_RES:.*]] = scf.if %arg0 -> (memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) {
+// CHECK:             %c64_12 = arith.constant 64 : index
+// CHECK:             %c32_13 = arith.constant 32 : index
+// CHECK:             %[[APPLY4:.*]] = affine.apply #map()[%c64_12, %c32_13]
+// CHECK:             %[[APPLY5:.*]] = affine.apply #map1()[%c64_12, %c32_13]
+// CHECK:             %c16_14 = arith.constant 16 : index
+// CHECK:             %c16_15 = arith.constant 16 : index
+// CHECK:             %alloc_16 = memref.alloc(%[[APPLY5]], %[[APPLY4]], %c16_14, %c16_15) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:             scf.yield %alloc_16 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:           } else {
+// CHECK:             %c64_12 = arith.constant 64 : index
+// CHECK:             %c32_13 = arith.constant 32 : index
+// CHECK:             %[[APPLY6:.*]] = affine.apply #map()[%c64_12, %c32_13]
+// CHECK:             %[[APPLY7:.*]] = affine.apply #map1()[%c64_12, %c32_13]
+// CHECK:             %c16_14 = arith.constant 16 : index
+// CHECK:             %c16_15 = arith.constant 16 : index
+// CHECK:             %alloc_16 = memref.alloc(%[[APPLY7]], %[[APPLY6]], %c16_14, %c16_15) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:             scf.yield %alloc_16 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:           }
+// CHECK:           %c32_7 = arith.constant 32 : index
+// CHECK:           %c64_8 = arith.constant 64 : index
+// CHECK:           %[[APPLY8:.*]] = affine.apply #map()[%c32_7, %c64_8]
+// CHECK:           %[[APPLY9:.*]] = affine.apply #map1()[%c32_7, %c64_8]
+// CHECK:           %c16_9 = arith.constant 16 : index
+// CHECK:           %c16_10 = arith.constant 16 : index
+// CHECK:           %alloc_11 = memref.alloc(%[[APPLY9]], %[[APPLY8]], %c16_9, %c16_10) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK:           hivm.hir.mmadL1 ins(%alloc_11, %[[IF_RES]], %true, %c32, %c64, %c32 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%arg4 : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
+// CHECK:           scf.yield %arg4 : memref<?x?x?x?xf32, #hivm.address_space<cc>>
+// CHECK:         }
+// CHECK:         return
+// CHECK:       }
+  module {
+    func.func @test_ifop_in_for(%cond : i1, %ub : i32, %step : i32)
+        attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+      %c32 = arith.constant 32 : index
+      %c64 = arith.constant 64 : index
+      %true = arith.constant true
+      %c0_i32 = arith.constant 0 : i32
+      %init = memref.alloc() {alignment = 64 : i64} : memref<32x32xf32, #hivm.address_space<cc>>
+      scf.for %i = %c0_i32 to %ub step %step
+          iter_args(%cc = %init) -> (memref<32x32xf32, #hivm.address_space<cc>>) : i32 {
+        %b_buf = scf.if %cond -> (memref<64x32xf16, #hivm.address_space<cbuf>>) {
+          %alloc = memref.alloc() {alignment = 64 : i64} : memref<64x32xf16, #hivm.address_space<cbuf>>
+          scf.yield %alloc : memref<64x32xf16, #hivm.address_space<cbuf>>
+        } else {
+          %alloc = memref.alloc() {alignment = 64 : i64} : memref<64x32xf16, #hivm.address_space<cbuf>>
+          scf.yield %alloc : memref<64x32xf16, #hivm.address_space<cbuf>>
+        }
+        %a_buf = memref.alloc() {alignment = 64 : i64} : memref<32x64xf16, #hivm.address_space<cbuf>>
+        hivm.hir.mmadL1 ins(%a_buf, %b_buf, %true, %c32, %c64, %c32 :
+                                memref<32x64xf16, #hivm.address_space<cbuf>>,
+                                memref<64x32xf16, #hivm.address_space<cbuf>>,
+                                i1, index, index, index)
+                        outs(%cc : memref<32x32xf32, #hivm.address_space<cc>>)
+        scf.yield %cc : memref<32x32xf32, #hivm.address_space<cc>>
+      }
+      return
+    }
+  }
