@@ -383,3 +383,53 @@ func.func @test_bitcast_bf16_to_f16(%arg0: tensor<16xbf16>, %dst: tensor<16xf16>
     -> tensor<16xf16>
   return %res : tensor<16xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_950_keep_bf16_vmul_vsub_vsel
+// On Ascend 950, BF16 elementwise mul/sub and select are kept as BF16 (no
+// legalization to FP32), so no hfusion.cast should appear.
+// CHECK-NOT: hfusion.cast
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins({{.*}}, {{.*}} : tensor<128x128xbf16>, tensor<128x128xbf16>) outs({{.*}} : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins({{.*}}, {{.*}} : tensor<128x128xbf16>, tensor<128x128xbf16>) outs({{.*}} : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+// CHECK: hfusion.select ins({{.*}}, {{.*}}, {{.*}} : tensor<128x128xi1>, tensor<128x128xbf16>, tensor<128x128xbf16>) outs({{.*}} : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957c">} {
+  func.func @test_950_keep_bf16_vmul_vsub_vsel(
+    %a : tensor<128x128xbf16>, %b : tensor<128x128xbf16>,
+    %cond : tensor<128x128xi1>, %dst : tensor<128x128xbf16>)
+      -> tensor<128x128xbf16> {
+    %sub = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+      ins(%a, %b : tensor<128x128xbf16>, tensor<128x128xbf16>)
+      outs(%dst : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %mul = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+      ins(%a, %sub : tensor<128x128xbf16>, tensor<128x128xbf16>)
+      outs(%dst : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %sel = hfusion.select ins(%cond, %mul, %b : tensor<128x128xi1>, tensor<128x128xbf16>, tensor<128x128xbf16>)
+      outs(%dst : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    return %sel : tensor<128x128xbf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_non950_legalize_vmul_vsub_vsel
+// On non-950 (default 910B), BF16 mul/sub/select are still legalized to FP32,
+// so hfusion.cast and FP32 ops are expected.
+// CHECK: hfusion.cast
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins({{.*}}, {{.*}} : tensor<128x128xf32>, tensor<128x128xf32>)
+// CHECK: linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins({{.*}}, {{.*}} : tensor<128x128xf32>, tensor<128x128xf32>)
+// CHECK: hfusion.select ins({{.*}}, {{.*}}, {{.*}} : tensor<128x128xi1>, tensor<128x128xf32>, tensor<128x128xf32>)
+func.func @test_non950_legalize_vmul_vsub_vsel(
+  %a : tensor<128x128xbf16>, %b : tensor<128x128xbf16>,
+  %cond : tensor<128x128xi1>, %dst : tensor<128x128xbf16>)
+    -> tensor<128x128xbf16> {
+  %sub = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>}
+    ins(%a, %b : tensor<128x128xbf16>, tensor<128x128xbf16>)
+    outs(%dst : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+  %mul = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+    ins(%a, %sub : tensor<128x128xbf16>, tensor<128x128xbf16>)
+    outs(%dst : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+  %sel = hfusion.select ins(%cond, %mul, %b : tensor<128x128xi1>, tensor<128x128xbf16>, tensor<128x128xbf16>)
+    outs(%dst : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+  return %sel : tensor<128x128xbf16>
+}

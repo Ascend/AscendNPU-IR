@@ -92,6 +92,18 @@ struct FoldBroadcastInBinaryOp : public OpRewritePattern<HivmVFVVOp> {
 public:
   using OpRewritePattern<HivmVFVVOp>::OpRewritePattern;
 
+  /// Whether the scalar-form op supports the given element type. This mirrors
+  /// the $scalar type constraint of AVE_VecScalarOp (AnyTypeOf<[I8, I16, I32,
+  /// I64, F16, F32]>), so the fold only fires when the resulting scalar-form
+  /// op is legal. Element types accepted by the vector form but not by the
+  /// scalar form (e.g. BF16, F8, i1) stay in vector form, which has the
+  /// matching intrinsic.
+  static bool isSupportedByScalarOp(Type elemType) {
+    return elemType.isSignlessInteger(8) || elemType.isSignlessInteger(16) ||
+           elemType.isSignlessInteger(32) || elemType.isSignlessInteger(64) ||
+           elemType.isF16() || elemType.isF32();
+  }
+
   LogicalResult matchAndRewrite(HivmVFVVOp op,
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
@@ -103,6 +115,10 @@ public:
     // The result should be a vector
     VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
     if (!resVecType || resVecType.getRank() != 1) {
+      return failure();
+    }
+    // Skip folding when the scalar-form op does not support this element type.
+    if (!isSupportedByScalarOp(resVecType.getElementType())) {
       return failure();
     }
     auto new_operands = foldBroadcastInOperands(op, rewriter);
