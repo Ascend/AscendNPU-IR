@@ -1310,3 +1310,255 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %0 : tensor<16x16xf32>
   }
 }
+
+// -----
+
+// CHECK-LABEL: @vbrc_mmad_rhs_no_convert_layout(
+// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_mmad_rhs_no_convert_layout(%lhs: tensor<16x128xbf16>, %rhs: tensor<16x16xf16>) -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %vbrc = hivm.hir.vbrc ins(%zero : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %out = tensor.empty() : tensor<16x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %vbrc, %true, %c16, %c128, %c128
+            : tensor<16x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mmad : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vbrc_broadcast_between_fixpipe_and_vector(
+// CHECK: hivm.hir.fixpipe
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.load ins(%[[VBRC]]
+// CHECK: hivm.hir.vmul ins(%{{.*}}, %[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_broadcast_between_fixpipe_and_vector(%scale: tensor<16x1xf32>, %vec: tensor<16x128xf32>)
+      -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %out = tensor.empty() : tensor<16x128xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%vec : tensor<16x128xf32>) outs(%out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    %bcast_out = tensor.empty() : tensor<16x128xf32>
+    %bcast = hivm.hir.vbrc ins(%scale : tensor<16x1xf32>) outs(%bcast_out : tensor<16x128xf32>) broadcast_dims = [1] -> tensor<16x128xf32>
+    %mul_out = tensor.empty() : tensor<16x128xf32>
+    %mul = hivm.hir.vmul ins(%fix, %bcast : tensor<16x128xf32>, tensor<16x128xf32>) outs(%mul_out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mul : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vbrc_init_for_insert_slice_mmad_rhs(
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: %[[FOR:.*]]:2 = scf.for
+// CHECK-SAME: iter_args(%{{.*}} = %[[VBRC]]
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[FOR]]#
+// CHECK-NOT: hivm.hir.copy ins(%[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_init_for_insert_slice_mmad_rhs(%lhs: tensor<16x128xbf16>, %tile: tensor<32x128xbf16>)
+      -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %vbrc = hivm.hir.vbrc ins(%zero : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %for:2 = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc0 = %vbrc, %acc1 = %vbrc) -> (tensor<128x128xbf16>, tensor<128x128xbf16>) : i32 {
+      %off = arith.muli %i, %c32_i32 : i32
+      %off_idx = arith.index_cast %off : i32 to index
+      %ins0 = tensor.insert_slice %tile into %acc0[%off_idx, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+      %ins1 = tensor.insert_slice %tile into %acc1[%off_idx, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+      scf.yield %ins0, %ins1 : tensor<128x128xbf16>, tensor<128x128xbf16>
+    }
+    %out = tensor.empty() : tensor<16x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %for#1, %true, %c16, %c128, %c128
+            : tensor<16x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mmad : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vcast_mmad_lhs_convert_layout_vbrc_init_for_rhs(
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: %[[FOR:.*]] = scf.for
+// CHECK-SAME: iter_args(%{{.*}} = %[[VBRC]]
+// CHECK: hivm.hir.vcast
+// CHECK: {"inserted-copy"}
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[FOR]]
+// CHECK-NOT: hivm.hir.copy ins(%[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vcast_mmad_lhs_convert_layout_vbrc_init_for_rhs(%vec: tensor<16x128xf32>, %tile: tensor<32x128xbf16>)
+      -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %vbrc = hivm.hir.vbrc ins(%zero : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %for = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc = %vbrc) -> (tensor<128x128xbf16>) : i32 {
+      %off = arith.muli %i, %c32_i32 : i32
+      %off_idx = arith.index_cast %off : i32 to index
+      %ins = tensor.insert_slice %tile into %acc[%off_idx, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+      scf.yield %ins : tensor<128x128xbf16>
+    }
+    %bf16_out = tensor.empty() : tensor<16x128xbf16>
+    %vcast = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+        ins(%vec : tensor<16x128xf32>) outs(%bf16_out : tensor<16x128xbf16>) -> tensor<16x128xbf16>
+    %mmad_out = tensor.empty() : tensor<16x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%vcast, %for, %true, %c16, %c128, %c128
+            : tensor<16x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%mmad_out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mmad : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vbrc_mmad_rhs_no_convert_layout(
+// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: hivm.hir.vtranspose
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_mmad_rhs_no_convert_layout(%lhs: tensor<16x128xbf16>, %rhs: tensor<16x16xf16>) -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %vbrc = hivm.hir.vbrc ins(%zero : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %out = tensor.empty() : tensor<16x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %vbrc, %true, %c16, %c128, %c128
+            : tensor<16x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mmad : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vbrc_broadcast_between_fixpipe_and_vector(
+// CHECK: hivm.hir.fixpipe
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK-NOT: hivm.hir.load ins(%[[VBRC]]
+// CHECK: hivm.hir.vmul ins(%{{.*}}, %[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_broadcast_between_fixpipe_and_vector(%scale: tensor<16x1xf32>, %vec: tensor<16x128xf32>)
+      -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %out = tensor.empty() : tensor<16x128xf32>
+    %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%vec : tensor<16x128xf32>) outs(%out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    %bcast_out = tensor.empty() : tensor<16x128xf32>
+    %bcast = hivm.hir.vbrc ins(%scale : tensor<16x1xf32>) outs(%bcast_out : tensor<16x128xf32>) broadcast_dims = [1] -> tensor<16x128xf32>
+    %mul_out = tensor.empty() : tensor<16x128xf32>
+    %mul = hivm.hir.vmul ins(%fix, %bcast : tensor<16x128xf32>, tensor<16x128xf32>) outs(%mul_out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mul : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vbrc_init_for_insert_slice_mmad_rhs(
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: %[[FOR:.*]]:2 = scf.for
+// CHECK-SAME: iter_args(%{{.*}} = %[[VBRC]]
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[FOR]]#
+// CHECK-NOT: hivm.hir.copy ins(%[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vbrc_init_for_insert_slice_mmad_rhs(%lhs: tensor<16x128xbf16>, %tile: tensor<32x128xbf16>)
+      -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %vbrc = hivm.hir.vbrc ins(%zero : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %for:2 = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc0 = %vbrc, %acc1 = %vbrc) -> (tensor<128x128xbf16>, tensor<128x128xbf16>) : i32 {
+      %off = arith.muli %i, %c32_i32 : i32
+      %off_idx = arith.index_cast %off : i32 to index
+      %ins0 = tensor.insert_slice %tile into %acc0[%off_idx, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+      %ins1 = tensor.insert_slice %tile into %acc1[%off_idx, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+      scf.yield %ins0, %ins1 : tensor<128x128xbf16>, tensor<128x128xbf16>
+    }
+    %out = tensor.empty() : tensor<16x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs, %for#1, %true, %c16, %c128, %c128
+            : tensor<16x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mmad : tensor<16x128xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @vcast_mmad_lhs_convert_layout_vbrc_init_for_rhs(
+// CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
+// CHECK: %[[FOR:.*]] = scf.for
+// CHECK-SAME: iter_args(%{{.*}} = %[[VBRC]]
+// CHECK: hivm.hir.vcast
+// CHECK: {"inserted-copy"}
+// CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[FOR]]
+// CHECK-NOT: hivm.hir.copy ins(%[[VBRC]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @vcast_mmad_lhs_convert_layout_vbrc_init_for_rhs(%vec: tensor<16x128xf32>, %tile: tensor<32x128xbf16>)
+      -> tensor<16x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c4_i32 = arith.constant 4 : i32
+    %c1_i32 = arith.constant 1 : i32
+    %c32_i32 = arith.constant 32 : i32
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %vbrc = hivm.hir.vbrc ins(%zero : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
+    %for = scf.for %i = %c0_i32 to %c4_i32 step %c1_i32 iter_args(%acc = %vbrc) -> (tensor<128x128xbf16>) : i32 {
+      %off = arith.muli %i, %c32_i32 : i32
+      %off_idx = arith.index_cast %off : i32 to index
+      %ins = tensor.insert_slice %tile into %acc[%off_idx, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+      scf.yield %ins : tensor<128x128xbf16>
+    }
+    %bf16_out = tensor.empty() : tensor<16x128xbf16>
+    %vcast = hivm.hir.vcast {enable_overflow = true, enable_saturate = false, hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+        ins(%vec : tensor<16x128xf32>) outs(%bf16_out : tensor<16x128xbf16>) -> tensor<16x128xbf16>
+    %mmad_out = tensor.empty() : tensor<16x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%vcast, %for, %true, %c16, %c128, %c128
+            : tensor<16x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%mmad_out : tensor<16x128xf32>) -> tensor<16x128xf32>
+    return %mmad : tensor<16x128xf32>
+  }
+}
