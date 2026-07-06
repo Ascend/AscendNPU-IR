@@ -54,8 +54,8 @@ static bool findLoadOp(Operation *op, SmallVector<Operation *> &opList,
   // Base case: reached a load op.
   if (auto loadOp = dyn_cast<VFLoadOp>(op)) {
     if (loadOp.getPattern() != hivmave::LoadDist::NORM)
-      return false;
-    if (!loadOp->hasOneUse())
+      return true;
+    if (!loadOp->hasOneUse() || loadOp->hasAttr(UnalignedAttr::name))
       return false;
     loadList.push_back(loadOp);
     return true;
