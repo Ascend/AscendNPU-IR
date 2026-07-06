@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -93,6 +94,15 @@ void DimensionAnalyzer::handleValueGroupForUse(Operation *user, Value current,
       }
       if (idx < whileOp.getNumResults())
         joinValueGroup(current, whileOp->getResult(idx));
+    }
+  } else if (isParallelOp(user)) {
+    for (auto opr : user->getOperands()) {
+      if (isa<ShapedType>(opr.getType()))
+        joinValueGroup(current, opr);
+    }
+    for (auto res : user->getResults()) {
+      if (isa<ShapedType>(res.getType()))
+        joinValueGroup(current, res);
     }
   } else {
     for (auto res : user->getResults()) {
@@ -321,11 +331,7 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             return false;
           })
           .Default([&](Operation *op) {
-            if (isElemwiseNaryOpImpl(op) ||
-                isa_and_nonnull<CopyOpInterface>(op) ||
-                utils::isAllocLikeOp(op) ||
-                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-                    bufferization::ToMemrefOp>(op)) {
+            if (isParallelOp(op)) {
               processParallelOp(op, current);
               return true;
             }
@@ -853,6 +859,13 @@ bool DimensionAnalyzer::finalizeTransaction() {
   equivalentUpdates.clear();
   structuralUpdates.clear();
   return true;
+}
+
+bool DimensionAnalyzer::isParallelOp(Operation *op) const {
+  return op && (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
+                utils::isAllocLikeOp(op) ||
+                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
+                    bufferization::ToMemrefOp>(op));
 }
 
 void DimensionAnalyzer::combineInferable() {
