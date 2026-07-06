@@ -75,8 +75,9 @@ FailureOr<Operation *> tracebackForWorkspace(Value val) {
 static Value traceToRootMemref(Value v) {
   auto isRoot = [](Value v) {
     Operation *op = v.getDefiningOp();
-    if (!op)
+    if (!op) {
       return true;
+    }
 
     return !isa<memref::MemorySpaceCastOp,
                 bufferization::ToTensorOp,
@@ -85,13 +86,13 @@ static Value traceToRootMemref(Value v) {
 
   auto vals = utils::tracebackMemRefVecByTargetFn(v, isRoot);
 
-  if (vals.size() == 1)
+  if (vals.size() == 1) {
     return vals.front();
+  }
 
   return Value();
 }
 
-// 判断 op 是否对 targetMemref 有写入操作
 bool hasWrite(Operation *op, Value targetMemref) {
   if (isa<scope::ScopeOp>(op)) {
     return false;
@@ -105,9 +106,9 @@ bool hasWrite(Operation *op, Value targetMemref) {
 
   for (auto &eff : effects) {
     Value v = eff.getValue();
-    if (!v || !isa<MemRefType>(v.getType()))
+    if (!v) {
       continue;
-    // 判断：Effect 是 Write，且操作的 Value 就是目标 MemRef
+    }
     Value rootV = traceToRootMemref(v);
     Value rootT = traceToRootMemref(targetMemref);
     if (isa<MemoryEffects::Write>(eff.getEffect()) && rootV == rootT) {
@@ -117,7 +118,6 @@ bool hasWrite(Operation *op, Value targetMemref) {
   return false;
 }
 
-// 判断 op 是否对 targetMemref 有写入操作
 bool hasRead(Operation *op, Value targetMemref) {
   if (isa<scope::ScopeOp>(op)) {
     return false;
@@ -131,9 +131,9 @@ bool hasRead(Operation *op, Value targetMemref) {
 
   for (auto &eff : effects) {
     Value v = eff.getValue();
-    if (!v)
+    if (!v) {
       continue;
-    // 判断：Effect 是 Write，且操作的 Value 就是目标 MemRef
+    }
     Value rootV = traceToRootMemref(v);
     Value rootT = traceToRootMemref(targetMemref);
     if (isa<MemoryEffects::Read>(eff.getEffect()) && rootV == rootT) {
@@ -149,7 +149,7 @@ static bool isPassthroughOpForTrace(Operation *op) {
          isa<ViewLikeOpInterface>(op);
 }
 
-void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, DenseSet<Operation *> visited) {
+void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, DenseSet<Operation *>& visited) {
   if (!visited.insert(op).second)
     return;
   if (auto scopeOp = dyn_cast<scope::ScopeOp>(op->getParentOp())) {

@@ -103,6 +103,7 @@ static std::optional<size_t> getMultiBufferNum(Value value) {
       }
     }
   }
+  return std::nullopt;
 }
 
 static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
