@@ -69,11 +69,11 @@
 
 在项目根目录下执行`./build-tools/build.sh`即可完成配置、构建和安装。脚本会自动处理`CMake`配置、`Ninja`编译及安装步骤。
 
-**首次构建**（需先初始化子模块并应用补丁）：
+**首次构建**（需先初始化子模块）：
 
 ```bash
 # 在项目根目录下
-./build-tools/build.sh -o ./build --build-type Release --apply-patches
+./build-tools/build.sh -o ./build --build-type Release
 ```
 
 **后续构建**（已存在构建目录时）：
@@ -94,7 +94,6 @@
 |------|------|--------|
 | `-o`, `--build PATH` | 构建产物输出目录 | `./build` |
 | `--build-type TYPE` | 构建类型 | `Release` |
-| `--apply-patches` | 对三方子模块应用补丁，**首次构建必须启用** | 关闭 |
 | `-r`, `--rebuild` | 清空构建目录并重新配置 | 关闭 |
 | `-j`, `--jobs N` | 并行编译线程数 | `CPU`核心数的`3/4` |
 | `--install-prefix PATH` | 安装路径 | `BUILD_DIR/install` |
@@ -117,7 +116,7 @@
 
 ```bash
 # Debug 构建并运行测试
-./build-tools/build.sh -o ./build --build-type Debug --apply-patches --build-test
+./build-tools/build.sh -o ./build --build-type Debug --build-test
 
 # 指定编译器与线程数
 ./build-tools/build.sh -o ./build --c-compiler /usr/bin/clang-15 --cxx-compiler /usr/bin/clang++-15 -j 256
@@ -133,7 +132,7 @@
 
 若需完全手动控制构建流程，可参考以下步骤。
 
-**前置条件**：已完成子模块初始化（`git submodule update --init --recursive`）及补丁应用（可执行`source build-tools/apply_patches.sh`）。
+**前置条件**：已完成子模块初始化（`git submodule update --init --recursive`）。
 
 ```bash
 # 在项目根目录下

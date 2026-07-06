@@ -79,8 +79,7 @@ jobs:
             --build-torch-mlir \
             --safety-options \
             --safety-ld-options \
-            --skip-rpath \
-            --apply-patches
+            --skip-rpath
 
       - name: Save LLVM build directory cache
         uses: actions/cache/save@v4

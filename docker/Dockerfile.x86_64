@@ -31,8 +31,7 @@ RUN chmod +x build-tools/build.sh && \
       --build-torch-mlir \
       --safety-options \
       --safety-ld-options \
-      --skip-rpath \
-      --apply-patches
+      --skip-rpath
 
 RUN mkdir -p /workspace/output/bin && \
     cp build/install/bin/bishengir-compile /workspace/output/bin/ && \

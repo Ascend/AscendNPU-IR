@@ -20,9 +20,9 @@
 ulimit -n 65535
 ```
 
-**Q1.3**首次构建为什么要加`--apply-patches`？
+**Q1.3** 还需要使用 `--apply-patches` 吗？
 
-`--apply-patches`用于使能AscendNPU IR对LLVM/MLIR等三方仓库的扩展（patch），首次编译时必须启用；非首次增量构建可不再加该参数。
+不需要。当前三方子模块（LLVM、Torch-MLIR）已切换为内置补丁的仓库分支，构建时无需再手动应用补丁。`--apply-patches` 选项已废弃，将在下个版本删除。
 
 ## 运行与调试
 

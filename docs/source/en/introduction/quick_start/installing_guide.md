@@ -69,11 +69,11 @@ End-to-end runs depend on the CANN environment.
 
 Run `./build-tools/build.sh` from the repo root to configure, build, and install. The script handles CMake configuration, Ninja build, and installation.
 
-**First build** (requires submodule init and patch application):
+**First build** (requires submodule init):
 
 ```bash
 # From the repo root
-./build-tools/build.sh -o ./build --build-type Release --apply-patches
+./build-tools/build.sh -o ./build --build-type Release
 ```
 
 **Subsequent builds** (when build directory already exists):
@@ -94,7 +94,6 @@ Run `./build-tools/build.sh` from the repo root to configure, build, and install
 |--------|-------------|---------|
 | `-o`, `--build PATH` | Build output directory | `./build` |
 | `--build-type TYPE` | Build type | `Release` |
-| `--apply-patches` | Apply patches to third-party submodules; **required on first build** | Off |
 | `-r`, `--rebuild` | Clean build directory and reconfigure | Off |
 | `-j`, `--jobs N` | Parallel build threads | 3/4 of CPU cores |
 | `--install-prefix PATH` | Install path | `BUILD_DIR/install` |
@@ -117,7 +116,7 @@ Run `./build-tools/build.sh` from the repo root to configure, build, and install
 
 ```bash
 # Debug build with tests
-./build-tools/build.sh -o ./build --build-type Debug --apply-patches --build-test
+./build-tools/build.sh -o ./build --build-type Debug --build-test
 
 # Specify compiler and thread count
 ./build-tools/build.sh -o ./build --c-compiler /usr/bin/clang-15 --cxx-compiler /usr/bin/clang++-15 -j 256
@@ -133,7 +132,7 @@ Run `./build-tools/build.sh` from the repo root to configure, build, and install
 
 For full manual control, follow these steps.
 
-**Prerequisites**: submodule init (`git submodule update --init --recursive`) and patch application (`source build-tools/apply_patches.sh`).
+**Prerequisites**: submodule init (`git submodule update --init --recursive`).
 
 ```bash
 # From the repo root

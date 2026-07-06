@@ -70,7 +70,6 @@ init_variables() {
   readonly SCRIPT_NAME="$(basename "$0")"
 
   export BISHENG_INSTALL_PATH
-  export PATCH_CMD
 
   OS_TYPE=$(uname -s)
   GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -116,7 +115,6 @@ init_variables() {
   LLVM_BUILD_TARGETS="host"
   BISHENGIR_BUILD_TEMPLATE="OFF"
   BISHENG_COMPILER=""
-  APPLY_PATCHES=""
   BUILD_TEST=""
   NO_INSTALL=""
   REBUILD=""
@@ -153,7 +151,6 @@ usage() {
     SYNOPSIS:
       ${SCRIPT_NAME}
                 [--add-cmake-options CMAKE_OPTIONS]
-                [--apply-patches]
                 [--bisheng-compiler BISHENG_COMPILER]
                 [--bishengir-publish VALUE]
                 [-o | --build PATH]
@@ -182,7 +179,6 @@ usage() {
 
     Options:
       --add-cmake-options CMAKE_OPTIONS    Add options to CMake; use quotes for multiple, e.g. --add-cmake-options '-DFOO=ON -DBAR=1'. (Default: null)
-      --apply-patches                      Apply patches to third-party submodules. (Default: disabled)
       --bisheng-compiler BISHENG_COMPILER   Path to bisheng compiler. (Default: null)
       --bishengir-publish VALUE            Whether to disable features is currently unpublished. (Default: ON)
       -o, --build PATH                      Path to directory which CMake will use as the root of build directory
@@ -235,7 +231,8 @@ parse_arguments() {
                 shift
                 ;;
             --apply-patches)
-                APPLY_PATCHES="1"
+                echo "Warning: --apply-patches is deprecated and will be removed in the next version." >&2
+                echo "         Patches are now pre-applied in the submodule repositories." >&2
                 shift
                 ;;
             --bisheng-compiler)
@@ -485,11 +482,6 @@ check_dependencies() {
         if ! xcode-select -p >/dev/null 2>&1; then
             echo "Xcode Command Line Tools not found. Please install with: xcode-select --install"
             exit 1
-        fi
-        
-        # GNU patch (gpatch) needed for --merge on macOS
-        if [[ -n "$APPLY_PATCHES" ]] && ! command -v gpatch >/dev/null 2>&1; then
-            echo "Warning: gpatch not found. If applying patches fails, install with: brew install gpatch"
         fi
     fi
     
@@ -757,22 +749,6 @@ main() {
   fi
 
   check_dependencies
-
-  if [[ -n "$APPLY_PATCHES" ]]; then
-    echo "Applying patches..."
-    if [[ -f "${SCRIPT_ROOT}/apply_patches.sh" ]]; then
-      if [[ "$OS_TYPE" == "Darwin" ]] && command -v gpatch >/dev/null 2>&1; then
-        PATCH_CMD="gpatch"
-        echo "Using gpatch for patching"
-      fi
-      # Invoke in subshell so apply_patches.sh does not receive build.sh arguments
-      bash "${SCRIPT_ROOT}/apply_patches.sh"
-    else
-      echo "Warning: apply_patches.sh not found at ${SCRIPT_ROOT}/apply_patches.sh"
-    fi
-  else
-    echo "APPLY_PATCHES is not set, skipping patches"
-  fi
 
   if [[ -n "$REBUILD" ]]; then
     echo "Cleaning build directory for rebuild..."
