@@ -608,11 +608,11 @@ def CustomOp : HIVM_CustomOp<"custom", [SinglePipeOpTrait]> {
 
   let builders = [
       // Convenience builder with empty temp_buffers.
-      OpBuilder<(ins "StringRef":$name, "TypeRange":$resultTypes,
-          "ValueRange":$inputs, "ValueRange":$outputs)>,
-      OpBuilder<(ins "ValueRange":$inputs, "ValueRange":$outputs), [{
-      build($_builder, $_state, /*result=*/ TypeRange{},
-            /*name=*/ StringAttr(), inputs, outputs,
+      OpBuilder<(ins "StringRef":$name, "ValueRange":$inputs,
+          "ValueRange":$outputs), [{
+      build($_builder, $_state, /*result=*/ outputs.getTypes(),
+            StringAttr::get($_builder.getContext(), name),
+            inputs, outputs,
             /*temp_buffers=*/ ValueRange{}, /*no_side_effect=*/ UnitAttr{});
     }]>];
 }
@@ -752,10 +752,11 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait]> {
   let hasCustomAssemblyFormat = 1;
   let hasCanonicalizer = 1;
 
-  let builders = [OpBuilder<(ins "ValueRange":$inputs, "ValueRange":$outputs),
-                            [{
-      build($_builder, $_state, /*result=*/ TypeRange{},
-            /*name=*/ StringAttr(), inputs, outputs,
+  let builders = [OpBuilder<(ins "StringRef":$name, "ValueRange":$inputs,
+                            "ValueRange":$outputs), [{
+      build($_builder, $_state, /*result=*/ outputs.getTypes(),
+            StringAttr::get($_builder.getContext(), name),
+            inputs, outputs,
             /*temp_buffers=*/ ValueRange{},
             /*sync_related_args=*/ ValueRange{},
             /*no_side_effect=*/ UnitAttr());
