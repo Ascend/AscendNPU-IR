@@ -23,6 +23,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -93,6 +94,15 @@ void DimensionAnalyzer::handleValueGroupForUse(Operation *user, Value current,
       }
       if (idx < whileOp.getNumResults())
         joinValueGroup(current, whileOp->getResult(idx));
+    }
+  } else if (isParallelOp(user)) {
+    for (auto opr : user->getOperands()) {
+      if (isa<ShapedType>(opr.getType()))
+        joinValueGroup(current, opr);
+    }
+    for (auto res : user->getResults()) {
+      if (isa<ShapedType>(res.getType()))
+        joinValueGroup(current, res);
     }
   } else {
     for (auto res : user->getResults()) {
@@ -313,16 +323,7 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             return false;
           })
           .Default([&](Operation *op) {
-            if (isElemwiseNaryOpImpl(op) ||
-                isa_and_nonnull<CopyOpInterface>(op) ||
-                utils::isAllocLikeOp(op) ||
-                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-                    bufferization::ToMemrefOp
-#else
-                    bufferization::ToBufferOp
-#endif
-                    >(op)) {
+            if (isParallelOp(op)) {
               processParallelOp(op, current);
               return true;
             }
@@ -553,8 +554,8 @@ void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
 
 void DimensionAnalyzer::processForOp(scf::ForOp op) {
   LDBG("Processing ForOp " << op);
-  for (const auto &[regionArg, initArg, yield] :
-       zip_equal(op.getRegionIterArgs(), op.getInitArgs(), op.getYieldedValues())) {
+  for (const auto &[regionArg, initArg, yield] : zip_equal(
+           op.getRegionIterArgs(), op.getInitArgs(), op.getYieldedValues())) {
     createDummyRefIfNotExist({regionArg, initArg, yield});
     processValue(regionArg, initArg);
     processValue(regionArg, yield);
@@ -892,6 +893,18 @@ bool DimensionAnalyzer::finalizeTransaction() {
   return true;
 }
 
+bool DimensionAnalyzer::isParallelOp(Operation *op) const {
+  return op && (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
+                utils::isAllocLikeOp(op) ||
+                isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+                    bufferization::ToMemrefOp
+#else
+                    bufferization::ToBufferOp
+#endif
+                    >(op));
+}
+
 void DimensionAnalyzer::combineInferable() {
   DimensionAnalyzerBase::combineInferable();
   for (const auto &arg : argumentList_) {
@@ -982,7 +995,8 @@ void DimensionAnalyzer::markDimensions() {
             [&](auto op) { processSlice(op); })
         .Case<hivm::VTransposeOp>([&](auto op) { markTransposedDim(op); })
         .Case<memref::AllocOp>([&](auto op) {
-          if (!hacc::utils::isRegBasedArch(op->template getParentOfType<ModuleOp>()))
+          if (!hacc::utils::isRegBasedArch(
+                  op->template getParentOfType<ModuleOp>()))
             return;
           // FIXME: FIXPIPE intrinsic has the constraint that N has to be
           // multiples of 32 for COL_SPLIT. For compiler to lift this
