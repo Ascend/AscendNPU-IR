@@ -42,22 +42,17 @@
 
 ## 代码架构
 
-`AscendNPU IR`是基于`MLIR`生态构建的，`MLIR`原生社区代码是作为第三方引入，代码结构如下所示，`bishengir`（即`AscendNPU IR`）目录下是`AscendNPU IR`相关实现，`build-tools`目录下是`AscendNPU IR`构建所需脚本和`patches`。`AscendNPU IR`对于`MLIR`原生社区的增强会优先在`bishengir/Dialect`独立目录下创建对应方言目录，通过独立目录新增文件扩展能力来避免对社区侵入式修改；对于无法隔离的修改会通过单独`patch`文件来进行，每个`patch`有单独`commit`相关信息方便之后回合`MLIR`社区。
+`AscendNPU IR`是基于`MLIR`生态构建的，`MLIR`原生社区代码是作为第三方引入，代码结构如下所示，`bishengir`（即`AscendNPU IR`）目录下是`AscendNPU IR`相关实现，`build-tools`目录下是`AscendNPU IR`构建所需脚本。`AscendNPU IR`对于`MLIR`原生社区的增强会优先在`bishengir/Dialect`独立目录下创建对应方言目录，通过独立目录新增文件扩展能力来避免对社区侵入式修改；对于无法隔离的修改，已直接提交到`third-party`下对应的 Ascend 维护分支中（如 `llvm-project` 的 `Ascend/AscendNPU-IR/llvmorg-19.1.7` 分支、`torch-mlir` 的 `Ascend/AscendNPU-IR/main-20250716` 分支），每个修改均有单独`commit`信息方便之后回合`MLIR`社区。历史版本中通过 `build-tools/patches` 目录下的 patch 文件在构建时应用的方式已废弃。
 
 ```text
 .
 ├── bishengir // AscendNPU IR 相关实现
 ├── build-tools // AscendNPU IR 构建脚本所在目录
-│   ├── patches // 存放对 third-party 生态项目的侵入式修改 patches
-│   │   ├── llvm-project
-│   │   │   ├── 0001-[Huawei][MLIR]-xxx.patch
-│   │   │   └── ...
-│   │   └── torch-mlir
-│   ├── apply_patches.sh
 │   └── build.sh
 └── third-party
-    ├── llvm-project
-    └── torch-mlir
+    ├── llvm-project // Ascend 维护分支：Ascend/AscendNPU-IR/llvmorg-19.1.7
+    ├── shmem
+    └── torch-mlir   // Ascend 维护分支：Ascend/AscendNPU-IR/main-20250716
 ```
 
 `bishengir`目录结构和`mlir`目录结构保持一致：`include`下存放声明文件，包括`C++`头文件（`.h`、`.hpp`）和`TableGen`定义文件（`.td`），构建目录`build/include`中包含`TableGen`自动生成的文件（`.h.inc`、`.cpp.inc`）；`lib`目录存放实现代码（`.cpp`），其目录结构与`include`基本保持一致。
