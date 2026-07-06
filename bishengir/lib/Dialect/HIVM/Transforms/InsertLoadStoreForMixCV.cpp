@@ -43,6 +43,8 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
+#include <type_traits>
+
 namespace mlir {
 #define GEN_PASS_DEF_INSERTLOADSTOREFORMIXCV
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -712,6 +714,12 @@ static bool isVFCall(Operation *op) {
   return false;
 }
 
+template <typename... OpTypes> static bool traceVector(Value v) {
+  return ((!std::is_same_v<OpTypes, hivm::VBrcOp> &&
+           traceDefOp<OpTypes>(v) != std::nullopt) ||
+          ...);
+}
+
 template<typename OpType>
 struct AddConvertLayoutUBToL1
     : public OpRewritePattern<hivm::MmadL1Op> {
@@ -726,6 +734,8 @@ struct AddConvertLayoutUBToL1
     auto inserted = getIntegersOfArrayAttr(op, insertedConvertLayout);
     if (std::find(inserted.begin(), inserted.end(), operandIdx) != inserted.end()) continue;
     auto producerOps = traceDefOps<OpType>(beforeValue);
+    if (std::is_same_v<OpType, hivm::VBrcOp>)
+      continue;
     if (producerOps.empty())
       continue;
 
@@ -736,6 +746,15 @@ struct AddConvertLayoutUBToL1
         if (!scfForOp->hasAttr(ExtractLoadStoreAttr)) {
           continue;
         }
+        auto res = cast<OpResult>(beforeValue);
+        auto yieldOp = scfForOp.getBody()->getTerminator();
+        auto yieldOpOperand = yieldOp->getOperand(res.getResultNumber());
+        auto vectorOp = traceVector<
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
+            >(yieldOpOperand);
+        if (!vectorOp)
+          continue;
       }
       if constexpr (std::is_same_v<OpType, func::CallOp>) {
         if (!isVFCall(producer))
