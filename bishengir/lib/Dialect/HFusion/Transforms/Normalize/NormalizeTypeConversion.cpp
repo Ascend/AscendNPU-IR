@@ -642,18 +642,6 @@ struct HFusionReduceI1AddToSelectMaxCompareTraits : public NormalizeTraitsBase {
   }
 };
 
-static Value createScalarFillOp(PatternRewriter &rewriter, Location loc,
-                                Type elemType, int64_t initValue) {
-  Value initConstant = rewriter.create<arith::ConstantOp>(
-      loc, elemType, rewriter.getIntegerAttr(elemType, initValue));
-  auto scalarTensorType = RankedTensorType::get({}, elemType);
-  auto allocOp = rewriter.create<bufferization::AllocTensorOp>(
-      loc, scalarTensorType, ValueRange{});
-  auto fillOp =
-      rewriter.create<linalg::FillOp>(loc, initConstant, allocOp.getResult());
-  return fillOp.getResult(0);
-}
-
 /// Convert reduce i1 and/or operations to i16 reduce with min/max operations.
 ///
 /// The conversion leverages the following equivalence:
@@ -710,7 +698,11 @@ struct HFusionReduceI1AndOrToI16Traits : public NormalizeTraitsBase {
   static Value createReduceInit(PatternRewriter &rewriter, Location loc,
                                 linalg::ReduceOp op, Type elemType,
                                 int64_t initValue) {
-    return createScalarFillOp(rewriter, loc, elemType, initValue);
+    Value empty = utils::createEmptyOpWithTargetElemType(
+        rewriter, loc, op.getInits()[0], elemType);
+    Value scalar = rewriter.create<arith::ConstantOp>(
+        loc, elemType, rewriter.getIntegerAttr(elemType, initValue));
+    return rewriter.create<linalg::FillOp>(loc, scalar, empty).getResult(0);
   }
 
   static Value createReducedOp(PatternRewriter &rewriter, Location loc,
