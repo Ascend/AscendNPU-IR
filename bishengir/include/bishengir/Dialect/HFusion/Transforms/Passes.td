@@ -129,6 +129,8 @@ def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
     Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
            "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,
     Option<"treeReduce", "tree-reduce", "bool", "false", "use tree reduce">,
+    Option<"enableCrossIfFusion", "enable-cross-if-fusion", "bool", "false",
+           "Enable fusion op cross region-bearing op in AutoVectorizeV2">,
   ];
 }
 
