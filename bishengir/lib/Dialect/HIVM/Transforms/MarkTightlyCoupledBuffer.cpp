@@ -45,12 +45,6 @@ namespace {
 
 struct MarkTightlyCoupledBufferPass
     : public impl::MarkTightlyCoupledBufferBase<MarkTightlyCoupledBufferPass> {
-  using MarkTightlyCoupledBufferBase<
-      MarkTightlyCoupledBufferPass>::MarkTightlyCoupledBufferBase;
-
-  explicit MarkTightlyCoupledBufferPass(
-      const MarkTightlyCoupledBufferOptions &options)
-      : MarkTightlyCoupledBufferBase(options) {}
   void runOnOperation() override;
 };
 
@@ -139,9 +133,4 @@ void MarkTightlyCoupledBufferPass::runOnOperation() {
 
 std::unique_ptr<Pass> mlir::hivm::createMarkTightlyCoupledBufferPass() {
   return std::make_unique<MarkTightlyCoupledBufferPass>();
-}
-
-std::unique_ptr<Pass> mlir::hivm::createMarkTightlyCoupledBufferPass(
- 	  const MarkTightlyCoupledBufferOptions &options) {
-  return std::make_unique<MarkTightlyCoupledBufferPass>(options);
 }
