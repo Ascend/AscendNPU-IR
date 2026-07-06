@@ -1,4 +1,5 @@
-// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2="enable-cross-if-fusion=false" -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s --hfusion-auto-vectorize-v2="enable-cross-if-fusion=true" -split-input-file | FileCheck %s --check-prefix=MORE
 
 // -----
 // many_users_no_fusion_opportunity: producer's two consumers fuse into different
@@ -10,12 +11,26 @@
 // CHECK: scf.for
 // CHECK-COUNT-2: arith.mulf
 // CHECK: {reductionLoop}
-// CHECK: "outlined-loop-target-2"
+// CHECK: "outlined-loop-target-3"
 
 // CHECK: scf.for
-// CHECK-COUNT-2: arith.addf
+// CHECK: arith.addf
 // CHECK: "outlined-loop-target-1"
-// CHECK-NOT: "outlined-loop-target-3"
+
+// CHECK: scf.for
+// CHECK: arith.addf
+// CHECK: "outlined-loop-target-2"
+
+// MORE: scf.for
+// MORE: scf.for
+// MORE-COUNT-2: arith.mulf
+// MORE: {reductionLoop}
+// MORE: "outlined-loop-target-2"
+
+// MORE: scf.for
+// MORE-COUNT-2: arith.addf
+// MORE: "outlined-loop-target-1"
+// MORE-NOT: "outlined-loop-target-3"
 
 #map = affine_map<(d0, d1) -> (d0, d1)>
 #map1 = affine_map<(d0, d1) -> (d0)>
