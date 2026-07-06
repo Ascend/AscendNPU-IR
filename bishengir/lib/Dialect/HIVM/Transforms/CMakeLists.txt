@@ -100,6 +100,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   MarkDisableLoad.cpp
   MarkSyncBlockLockWithSubblock.cpp
   MarkMultiBuffer.cpp
+  HIVMCanonicalizationPipeline.cpp
   MarkRealCoreType.cpp
   MarkTightlyCoupledBuffer.cpp
   NormalizeMatmul.cpp

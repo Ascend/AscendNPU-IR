@@ -54,6 +54,7 @@ void canonicalizationHIVMPipeline(OpPassManager &pm) {
   pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
   ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
   pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
 }
 
 static void hivmAutoInsertLdStForMixCVPipeline(

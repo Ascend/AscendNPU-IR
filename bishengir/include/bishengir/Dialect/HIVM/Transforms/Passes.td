@@ -596,6 +596,15 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
                         "pass becomes a cleanup pass.">];
 }
 
+def HIVMCanonicalizationPipeline
+    : Pass<"hivm-canonicalization-pipeline", "func::FuncOp"> {
+  let summary = "Run HIVM canonicalization pass pipeline on one function";
+  let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "scf::SCFDialect"];
+}
+
 def SetBufferSize : Pass<"hivm-set-buffer-size", "func::FuncOp"> {
   let constructor = "mlir::hivm::createSetBufferSizePass()";
   let dependentDialects = ["arith::ArithDialect", "memref::MemRefDialect"];

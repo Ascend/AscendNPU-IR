@@ -169,6 +169,9 @@ std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
 
+// Create a pass to run the HIVM canonicalization pass pipeline on a function.
+std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
+
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
 
