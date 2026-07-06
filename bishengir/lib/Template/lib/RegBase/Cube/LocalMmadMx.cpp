@@ -521,7 +521,8 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
       (ma->sizes[1] * ma->sizes[2]), (ma->sizes[0] * ma->sizes[3]),
-      (mb->sizes[0] * mb->sizes[3]), (ma->sizes[1] * ma->sizes[2]), k, n,
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
+      (ma->sizes[1] * ma->sizes[2]), k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
       l1b_wait_mmad_l1_event, true, true, false);
 }
@@ -543,7 +544,8 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
       (ma->sizes[1] * ma->sizes[2]), (ma->sizes[0] * ma->sizes[3]),
-      (mb->sizes[0] * mb->sizes[3]), (ma->sizes[1] * ma->sizes[2]), k, n,
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
+      (ma->sizes[1] * ma->sizes[2]), k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
       l1b_wait_mmad_l1_event, true, true, false, isFp4);
 }
