@@ -46,6 +46,19 @@ public:
                        pred);
   }
 
+#ifdef BSPUB_DAVINCI_BISHENGIR
+  virtual void storeDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
+                            std::optional<Value> ctaId, Value val,
+                            Value pred) const {
+    llvm_unreachable("not implemented");
+  };
+  virtual Value loadDGlobal(RewriterBase &rewriter, Location loc, Value ptr,
+                            std::optional<Value> ctaId, Type elemTy, Value pred,
+                            Operation *localLoadOp = nullptr) const {
+    llvm_unreachable("not implemented");
+  };
+#endif
+  
   virtual Value shuffleXor(RewriterBase &rewriter, Location loc, Value val,
                            int i) const = 0;
   virtual Value shuffleUp(RewriterBase &rewriter, Location loc, Value val,

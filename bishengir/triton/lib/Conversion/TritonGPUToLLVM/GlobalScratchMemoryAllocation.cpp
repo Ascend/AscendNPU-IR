@@ -55,6 +55,16 @@ static void allocateGMem(Operation *parentOp,
       nbytes = nbytes_attr.getValue().getZExtValue();
       align = align_attr.getValue().getZExtValue();
     }
+#ifdef BSPUB_DAVINCI_BISHENGIR
+    else if (auto cvtlytOp = dyn_cast<triton::gpu::ConvertLayoutOp>(op)) {
+      if (cvtlytOp->hasAttr("store_to_gmem")) {
+        nbytes = cvtlytOp->getAttrOfType<IntegerAttr>("bytes").getInt();
+        align = 1;
+        auto cvtOffset = builder.getI64IntegerAttr(offset);
+        cvtlytOp->setAttr("allocation.offset", cvtOffset);
+      }
+    }
+#endif
     if (nbytes > 0) {
       offset = roundUp(offset, align);
       op->setAttr("ttg.global_scratch_memory_offset",
