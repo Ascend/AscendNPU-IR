@@ -318,9 +318,8 @@ getLocalMatmulOperandALayoutImpl(Operation *operation) {
   switch (*rank) {
   case kDimTwo: {
     DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
-    bool effectiveTranspose =
-        isTranspose &&
-        !sourceCarriesFractalLayoutHint(op.getMatmulA(), expected);
+    bool effectiveTranspose = isTranspose && !sourceCarriesFractalLayoutHint(
+                                                 op.getMatmulA(), expected);
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTA_ND,
                                effectiveTranspose);
   }
@@ -348,9 +347,8 @@ getLocalMatmulOperandBLayoutImpl(Operation *operation) {
   switch (*rank) {
   case kDimTwo: {
     DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
-    bool effectiveTranspose =
-        isTranspose &&
-        !sourceCarriesFractalLayoutHint(op.getMatmulB(), expected);
+    bool effectiveTranspose = isTranspose && !sourceCarriesFractalLayoutHint(
+                                                 op.getMatmulB(), expected);
     return DataLayoutAttr::get(op->getContext(), DataLayout::DOTB_ND,
                                effectiveTranspose);
   }
@@ -451,8 +449,7 @@ bool isInitConstantForLocalMmadOp(LocalMmadTy *localMatmulOp,
                                   std::optional<bool> cst = std::nullopt) {
   Value initCond = localMatmulOp->getInitCondition();
   // Block arguments / non-SSA-defined values have a null defining op.
-  auto cstOp =
-      dyn_cast_or_null<arith::ConstantOp>(initCond.getDefiningOp());
+  auto cstOp = dyn_cast_or_null<arith::ConstantOp>(initCond.getDefiningOp());
   if (!cstOp)
     return false;
   std::optional<int64_t> cstInt = getConstantIntValue(cstOp.getValue());
@@ -1077,8 +1074,7 @@ MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
 }
 
 llvm::SmallVector<int64_t>
-BatchMmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose,
-                                       bool isA) {
+BatchMmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose, bool isA) {
   bool isA5 = hacc::utils::isAscend950(
       this->getOperation()->getParentOfType<ModuleOp>());
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
@@ -1406,9 +1402,9 @@ MmadMxL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) const {
   return ::getBlockSizesTile(oper, isTranspose, isA, true);
 }
 
-llvm::SmallVector<int64_t>
-MmadMxL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose,
-                                    bool isA) const {
+llvm::SmallVector<int64_t> MmadMxL1Op::getMatmulBlockSizesTile(Value oper,
+                                                               bool isTranspose,
+                                                               bool isA) const {
   return getBlockSizesTile(oper, isTranspose, isA);
 }
 

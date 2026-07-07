@@ -142,6 +142,192 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         unit_flag);                                                            \
   }
 
+// BIAS + TRANSPOSE variants (ported from A5 ea03c4b9)
+
+#define DECLARE_MMA_TILE_BIAS_TA(src_scope, dst_scope, dim, src_type, dst_type, \
+                                 bias_type)                                     \
+  __aicore__ __attribute__((always_inline)) void                                \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_ta( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                      \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,           \
+          int64_t m, int64_t k, int64_t n,                                      \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                     \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                         \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_TA(src_scope, dst_scope, dim, src_type, dst_type, \
+                                  bias_type)                                     \
+  DECLARE_MMA_TILE_BIAS_TA(src_scope, dst_scope, dim, src_type, dst_type,        \
+                           bias_type) {                                          \
+    mma_tile_bias<src_type, dst_type, bias_type, true, false, false, false>(     \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
+#define DECLARE_MMA_TILE_BIAS_TB(src_scope, dst_scope, dim, src_type, dst_type, \
+                                 bias_type)                                     \
+  __aicore__ __attribute__((always_inline)) void                                \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_tb( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                      \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,           \
+          int64_t m, int64_t k, int64_t n,                                      \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                     \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                         \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_TB(src_scope, dst_scope, dim, src_type, dst_type, \
+                                  bias_type)                                     \
+  DECLARE_MMA_TILE_BIAS_TB(src_scope, dst_scope, dim, src_type, dst_type,        \
+                           bias_type) {                                          \
+    mma_tile_bias<src_type, dst_type, bias_type, false, true, false, false>(     \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
+#define DECLARE_MMA_TILE_BIAS_TA_TB(src_scope, dst_scope, dim, src_type,         \
+                                    dst_type, bias_type)                         \
+  __aicore__ __attribute__((always_inline)) void                                 \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_ta_tb( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                       \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,            \
+          int64_t m, int64_t k, int64_t n,                                       \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                      \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                          \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,        \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,        \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,        \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_TA_TB(src_scope, dst_scope, dim, src_type,        \
+                                     dst_type, bias_type)                        \
+  DECLARE_MMA_TILE_BIAS_TA_TB(src_scope, dst_scope, dim, src_type, dst_type,     \
+                              bias_type) {                                       \
+    mma_tile_bias<src_type, dst_type, bias_type, true, true, false, false>(      \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
+// BIAS + HF32 variants
+
+#define DECLARE_MMA_TILE_BIAS_HF32(src_scope, dst_scope, dim, src_type,          \
+                                   dst_type, bias_type)                          \
+  __aicore__ __attribute__((always_inline)) void                                 \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_hf32( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                       \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,            \
+          int64_t m, int64_t k, int64_t n,                                       \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                      \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                          \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,        \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,        \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,        \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_HF32(src_scope, dst_scope, dim, src_type,         \
+                                    dst_type, bias_type)                         \
+  DECLARE_MMA_TILE_BIAS_HF32(src_scope, dst_scope, dim, src_type, dst_type,      \
+                             bias_type) {                                        \
+    mma_tile_bias<src_type, dst_type, bias_type, false, false, true, false>(     \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
+#define DECLARE_MMA_TILE_BIAS_TA_HF32(src_scope, dst_scope, dim, src_type,       \
+                                      dst_type, bias_type)                       \
+  __aicore__ __attribute__((always_inline)) void                                 \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_ta_hf32( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                       \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,            \
+          int64_t m, int64_t k, int64_t n,                                       \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                      \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                          \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,        \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,        \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,        \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_TA_HF32(src_scope, dst_scope, dim, src_type,      \
+                                       dst_type, bias_type)                      \
+  DECLARE_MMA_TILE_BIAS_TA_HF32(src_scope, dst_scope, dim, src_type, dst_type,   \
+                                bias_type) {                                     \
+    mma_tile_bias<src_type, dst_type, bias_type, true, false, true, false>(      \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
+#define DECLARE_MMA_TILE_BIAS_TB_HF32(src_scope, dst_scope, dim, src_type,       \
+                                      dst_type, bias_type)                       \
+  __aicore__ __attribute__((always_inline)) void                                 \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_tb_hf32( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                       \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,            \
+          int64_t m, int64_t k, int64_t n,                                       \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                      \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                          \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,        \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,        \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,        \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_TB_HF32(src_scope, dst_scope, dim, src_type,      \
+                                       dst_type, bias_type)                      \
+  DECLARE_MMA_TILE_BIAS_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type,   \
+                                bias_type) {                                     \
+    mma_tile_bias<src_type, dst_type, bias_type, false, true, true, false>(      \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
+#define DECLARE_MMA_TILE_BIAS_TA_TB_HF32(src_scope, dst_scope, dim, src_type,    \
+                                         dst_type, bias_type)                    \
+  __aicore__ __attribute__((always_inline)) void                                 \
+      _mlir_ciface_mma_tile_with_##bias_type##_bias_##src_type##_to_##dst_type##_ta_tb_hf32( \
+          memref_t<__##src_scope##__ src_type, dim> *src0,                       \
+          memref_t<__##src_scope##__ src_type, dim> *src1, bool init,            \
+          int64_t m, int64_t k, int64_t n,                                       \
+          memref_t<__##src_scope##__ bias_type, dim> *bias,                      \
+          memref_t<__##dst_scope##__ dst_type, 4> *dst,                          \
+          int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,        \
+          int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,        \
+          int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,        \
+          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+
+#define REGISTER_MMA_TILE_BIAS_TA_TB_HF32(src_scope, dst_scope, dim, src_type,   \
+                                          dst_type, bias_type)                   \
+  DECLARE_MMA_TILE_BIAS_TA_TB_HF32(src_scope, dst_scope, dim, src_type,          \
+                                   dst_type, bias_type) {                        \
+    mma_tile_bias<src_type, dst_type, bias_type, true, true, true, false>(       \
+        src0, src1, init, m, k, n, bias, dst, mmad_l1_wait_l1a_event,           \
+        mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
+        l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
+        back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
+        unit_flag);                                                             \
+  }
+
 #define DECLARE_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,     \
                             bias_type)                                         \
   __aicore__ __attribute__((always_inline)) void                               \
@@ -650,6 +836,18 @@ DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, half, float, float);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, float, float, float);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, bfloat16_t, float, float);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, int8_t, int32_t, int32_t);
+DECLARE_MMA_TILE_BIAS_TA(cbuf, cc, 4, half, float, float);
+DECLARE_MMA_TILE_BIAS_TA(cbuf, cc, 4, bfloat16_t, float, float);
+DECLARE_MMA_TILE_BIAS_TA(cbuf, cc, 4, float, float, float);
+DECLARE_MMA_TILE_BIAS_TA(cbuf, cc, 4, int8_t, int32_t, int32_t);
+DECLARE_MMA_TILE_BIAS_TB(cbuf, cc, 4, half, float, float);
+DECLARE_MMA_TILE_BIAS_TB(cbuf, cc, 4, bfloat16_t, float, float);
+DECLARE_MMA_TILE_BIAS_TB(cbuf, cc, 4, float, float, float);
+DECLARE_MMA_TILE_BIAS_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
+DECLARE_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, half, float, float);
+DECLARE_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, bfloat16_t, float, float);
+DECLARE_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, float, float, float);
+DECLARE_MMA_TILE_BIAS_TA_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
 DECLARE_MMA_TILE_TA(cbuf, cc, 4, half, float, float);
 DECLARE_MMA_TILE_TA(cbuf, cc, 4, bfloat16_t, float, float);
 DECLARE_MMA_TILE_TA(cbuf, cc, 4, float, float, float);
@@ -667,6 +865,10 @@ DECLARE_MMA_TILE_TA_TB_HF32(cbuf, cc, 4, float, float, float);
 DECLARE_MMA_TILE_TA_TB(cbuf, cc, 4, int8_t, int32_t, int32_t);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, half, float, half);
 DECLARE_MMA_TILE_BIAS(cbuf, cc, 4, float, float, half);
+DECLARE_MMA_TILE_BIAS_HF32(cbuf, cc, 4, float, float, float);
+DECLARE_MMA_TILE_BIAS_TA_HF32(cbuf, cc, 4, float, float, float);
+DECLARE_MMA_TILE_BIAS_TB_HF32(cbuf, cc, 4, float, float, float);
+DECLARE_MMA_TILE_BIAS_TA_TB_HF32(cbuf, cc, 4, float, float, float);
 DECLARE_MMA_TILE_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_TB_I4(cbuf, cc, 4, int8_t, int32_t, float);
 DECLARE_MMA_TILE_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
