@@ -174,9 +174,8 @@ static LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
 static FailureOr<BaseMemRefType>
 getBufferType(Operation *op, Value value, const BufferizationOptions &options,
               const SmallVector<Value> &invocationStack) {
-  (void)invocationStack;
-  auto callop = cast<func::CallOp>(op);
-  FuncOp funcOp = getCalledFunction(callop);
+  auto callOp = cast<func::CallOp>(op);
+  FuncOp funcOp = getCalledFunction(callOp);
   assert(funcOp && "expected CallOp to a FuncOp");
 
   FunctionType funcType = funcOp.getFunctionType();
@@ -187,6 +186,26 @@ getBufferType(Operation *op, Value value, const BufferizationOptions &options,
 
   // Outlined callees may still have tensor signatures when one-shot
   // bufferization resolves tensor copy conflicts inside enclosing loops.
+  // Resolve the buffer type by following the equivalence chain through the
+  // callee's body via the return operand.
+  if (funcOp && !funcOp.isExternal()) {
+    func::ReturnOp returnOp;
+    for (Block &block : funcOp.getBody()) {
+      if (auto candidate = dyn_cast<func::ReturnOp>(block.getTerminator())) {
+        returnOp = candidate;
+        break;
+      }
+    }
+    if (returnOp) {
+      Value returnVal =
+          returnOp.getOperand(cast<OpResult>(value).getResultNumber());
+      if (isa<TensorType>(returnVal.getType())) {
+        SmallVector<Value> mutableStack(invocationStack);
+        return bufferization::getBufferType(returnVal, options, mutableStack);
+      }
+    }
+  }
+
   assert(isa<TensorType>(resultType) && "expected tensor result type");
   auto memSpace = options.defaultMemorySpaceFn(cast<TensorType>(resultType));
   if (!memSpace.has_value())
