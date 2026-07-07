@@ -149,8 +149,25 @@ template <typename CustomOpT>
 static std::string getCustomOpsLibraryCallName(CustomOpT op) {
   if (op.isBuiltin())
     return CustomOpT::kBuiltins.at(op.getName()).getOpLibraryCallName(op);
-
-  return op.getSymbol().value();
+  // For custom op's symbol, we implement template func with _mlir_ciface_
+  // prefix. If no memref in op's operands and values, llvm.emit_c_interface
+  // won't add _mlir_ciface_ prefix, so we manually add it.
+  auto hasMemrefInArgOrRet = [&op]() {
+    auto isMemref = [](Value v) {
+      return ::llvm::isa<::mlir::BaseMemRefType>(v.getType());
+    };
+    if (::llvm::any_of(op->getOperands(), isMemref))
+      return true;
+    if (::llvm::any_of(op.getResults(), isMemref))
+      return true;
+    return false;
+  };
+  assert(op.getSymbol() && "custom op should have symbol");
+  std::string prefix = op.getSymbol().value();
+  if (!hasMemrefInArgOrRet()) {
+    prefix = "_mlir_ciface_" + prefix;
+  }
+  return prefix + callNameMangleSuffix(op);
 }
 
 ParseResult parseForCustomOps(OpAsmParser &parser, OperationState &result) {

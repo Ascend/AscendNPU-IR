@@ -1818,7 +1818,7 @@ public:
                                 PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
                        op.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
+                       op->getOperands(), op->getResultTypes());
     return success();
   }
 };

@@ -167,6 +167,8 @@ template <typename GlobalMixMatmulTy>
 std::optional<TCoreType>
 inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp);
 
+std::string callNameMangleSuffix(Operation *op);
+
 constexpr llvm::StringLiteral kCVUnrolledLoopName =
     "cv_unrolled_loop";
 constexpr llvm::StringLiteral kMultibufferUnrollAttrName =
