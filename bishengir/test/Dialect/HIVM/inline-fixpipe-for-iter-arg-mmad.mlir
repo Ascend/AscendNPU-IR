@@ -1,5 +1,52 @@
 // RUN: bishengir-opt -hivm-insert-fixpipe %s -split-input-file | FileCheck %s
 
+// -----
+// Test that InsertFixpipe does not insert a redundant fixpipe when the mmad
+// result flows through extract_slice to fixpipes inside scf.if branches.
+// Without the allUsersReachFixpipe check, traceSingleChainUser fails because
+// the extract_slice result has multiple users (one fixpipe per branch).
+
+// CHECK-LABEL: func.func @no_redundant_fixpipe_for_extract_slice_to_scf_if
+// CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
+// CHECK-NOT: hivm.hir.fixpipe {{.*}} ins(%[[MMAD]]
+// CHECK: tensor.extract_slice %[[MMAD]]
+func.func @no_redundant_fixpipe_for_extract_slice_to_scf_if(
+    %arg0: memref<1x128xbf16>,
+    %arg1: memref<128x128xbf16>,
+    %arg2: memref<1x128xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %c16 = arith.constant 16 : index
+  %true = arith.constant true
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %a = bufferization.to_tensor %arg0 restrict writable : memref<1x128xbf16>
+  %b = bufferization.to_tensor %arg1 restrict writable : memref<128x128xbf16>
+  %c = tensor.empty() : tensor<16x128xf32>
+  %mmad = hivm.hir.mmadL1
+      ins(%a, %b, %true, %c16, %c128, %c128 : tensor<1x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+      outs(%c : tensor<16x128xf32>) -> tensor<16x128xf32>
+  %extracted = tensor.extract_slice %mmad[0, 0] [1, 128] [1, 1]
+      : tensor<16x128xf32> to tensor<1x128xf32>
+  %dst0 = tensor.empty() : tensor<1x128xf32>
+  %dst1 = tensor.empty() : tensor<1x128xf32>
+  %cond = arith.cmpi eq, %c0_i32, %c1_i32 : i32
+  %result = scf.if %cond -> tensor<1x128xf32> {
+    %fix0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%extracted : tensor<1x128xf32>) outs(%dst0 : tensor<1x128xf32>) -> tensor<1x128xf32>
+    scf.yield %fix0 : tensor<1x128xf32>
+  } else {
+    %fix1 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%extracted : tensor<1x128xf32>) outs(%dst1 : tensor<1x128xf32>) -> tensor<1x128xf32>
+    scf.yield %fix1 : tensor<1x128xf32>
+  }
+  hivm.hir.store ins(%result : tensor<1x128xf32>) outs(%arg2 : memref<1x128xf32>)
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @inline_fixpipe_for_iter_arg_mmad
 // CHECK: hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
 // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, do_not_move_out_of_scffor = true}
