@@ -189,37 +189,6 @@ void setupHIVMAVEPipelineOptions(
   hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
 }
 
-void buildSIMTPipeline(OpPassManager &pm,
-                       const BiShengIRCompileMainConfig &config) {
-  pm.addPass(createCSEPass());
-  pm.addPass(createSCCPPass());
-  auto tritonGridDim = config.getSimtTritonGrid();
-  bishengir::TritonRemapOptions options;
-  if (!tritonGridDim.empty()) {
-    options.gridDimX = static_cast<int>(tritonGridDim[0]);
-    options.useGridFlag = true;
-  }
-  if (tritonGridDim.size() > 1)
-    options.gridDimY = static_cast<int>(tritonGridDim[1]);
-
-  if (tritonGridDim.size() > 2)
-    options.gridDimZ = static_cast<int>(tritonGridDim[2]);
-
-  // TODO: When DPX covers all remapper features correctly, remove
-  // createTritonRemapPass completely.
-  if (!config.getUseDPX())
-    pm.addPass(bishengir::triton::createTritonRemapPass(options));
-  CanonicalizerOptions canonicalizerOptions;
-  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
-  pm.addPass(createCSEPass());
-  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
-  pm.addPass(createConvertSCFToCFPass());
-  pm.addPass(createConvertControlFlowToLLVMPass());
-  pm.addPass(createArithToLLVMConversionPass());
-
-  buildLowerToLLVMPipeline(pm, config);
-}
-
 void buildBiShengHIRAVEToLLVMPipeline(
     OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
   if (config.getCompileHost()) {
@@ -405,6 +374,40 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
   triton::LowerTritonPipelineOptions lowerTritonPipelineOptions;
   setupLowerTritonPipelineOptions(lowerTritonPipelineOptions, config);
   bishengir::triton::buildLowerTritonPipeline(pm, lowerTritonPipelineOptions);
+
+  // SIMT modules now always continue through the backend lowering tail
+  // immediately after TTIR lowering, so keep the full SIMT path in one
+  // builder instead of orchestrating it in two separate runPipeline calls.
+  BiShengIRCompileMainConfig simtConfig = config;
+  simtConfig.setPureSimt(true);
+
+  pm.addPass(createCSEPass());
+  pm.addPass(createSCCPPass());
+  auto tritonGridDim = simtConfig.getSimtTritonGrid();
+  bishengir::TritonRemapOptions options;
+  if (!tritonGridDim.empty()) {
+    options.gridDimX = static_cast<int>(tritonGridDim[0]);
+    options.useGridFlag = true;
+  }
+  if (tritonGridDim.size() > 1)
+    options.gridDimY = static_cast<int>(tritonGridDim[1]);
+
+  if (tritonGridDim.size() > 2)
+    options.gridDimZ = static_cast<int>(tritonGridDim[2]);
+
+  // TODO: When DPX covers all remapper features correctly, remove
+  // createTritonRemapPass completely.
+  if (!simtConfig.getUseDPX())
+    pm.addPass(bishengir::triton::createTritonRemapPass(options));
+  CanonicalizerOptions canonicalizerOptions;
+  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  pm.addPass(createCSEPass());
+  pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  pm.addPass(createConvertSCFToCFPass());
+  pm.addPass(createConvertControlFlowToLLVMPass());
+  pm.addPass(createArithToLLVMConversionPass());
+
+  buildLowerToLLVMPipeline(pm, simtConfig);
 }
 #endif
 
