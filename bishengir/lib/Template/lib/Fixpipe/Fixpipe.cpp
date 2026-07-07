@@ -15,6 +15,7 @@
  */
 
 #include "Fixpipe/FixpipeUtils.h"
+#include "Synchronization/SyncUtils.h"
 
 __aicore__ __attribute__((always_inline)) void
 set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
@@ -25,13 +26,25 @@ set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
 #endif
 }
 
+__aicore__ __attribute__((always_inline)) UNIT_FLAG
+resolveUnitFlagMode(UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+  if (unit_flag_mode != UNIT_FLAG::DISABLED) {
+    if (getUnitFlagIsBadRef(unit_flag_group_id)) {
+      INTRINSIC(set_flag, PIPE_M, PIPE_FIX, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_M, PIPE_FIX, LIB_EVENT_ID0);
+      return UNIT_FLAG::DISABLED;
+    }
+  }
+  return unit_flag_mode;
+}
+
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                           memref_t<__gm__ DST_TYPE, 2> *gm,
                                           int64_t pre_quant, int64_t pre_relu,
                                           bool channel_split,
-                                          uint8_t unit_flag) {
+                                          UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -43,6 +56,9 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
   uint16_t n_size = l0c->sizes[0];
   // burst length
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
+
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -66,7 +82,7 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          memref_t<__gm__ DST_TYPE, 2> *gm,
                                          int64_t pre_quant, int64_t pre_relu,
                                          bool channel_split,
-                                         uint8_t unit_flag) {
+                                         UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -76,6 +92,9 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint32_t dst_D = gm->strides[0];
 
   set_nd_para(1, 1, 1);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
+
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
       copy_matrix_cc_to_gm_intrin_args<SRC_TYPE, DST_TYPE>{
@@ -97,10 +116,10 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                    memref_t<__gm__ DST_TYPE, 2> *gm,
                                    int64_t pre_quant, int64_t pre_relu,
-                                   bool channel_split, uint8_t unit_flag) {
+                                   bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NZ_2_ND) {
     copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag);
+        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode, unit_flag_group_id);
     return;
   }
 
@@ -112,10 +131,10 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                    memref_t<__gm__ DST_TYPE, 2> *gm,
                                    int64_t pre_quant, int64_t pre_relu,
-                                   bool channel_split, uint8_t unit_flag) {
+                                   bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_gm_normal_2d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag);
+        l0c, gm, pre_quant, pre_relu, channel_split, unit_flag_mode, unit_flag_group_id);
     return;
   }
 

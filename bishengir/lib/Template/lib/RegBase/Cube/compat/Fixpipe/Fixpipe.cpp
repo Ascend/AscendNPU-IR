@@ -15,6 +15,7 @@
  */
 
 #include "Fixpipe/FixpipeUtils.h"
+#include "Synchronization/SyncUtils.h"
 
 template <typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
@@ -52,6 +53,18 @@ set_nd_para(uint64_t nd_num, uint64_t src_nd_stride, uint64_t dst_nd_stride) {
 #endif
 }
 
+__aicore__ __attribute__((always_inline)) UNIT_FLAG
+resolveUnitFlagMode(UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+  if (unit_flag_mode != UNIT_FLAG::DISABLED) {
+    if (getUnitFlagIsBadRef(unit_flag_group_id)) {
+      INTRINSIC(set_flag, PIPE_M, PIPE_FIX, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_M, PIPE_FIX, LIB_EVENT_ID0);
+      return UNIT_FLAG::DISABLED;
+    }
+  }
+  return unit_flag_mode;
+}
+
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
@@ -59,7 +72,8 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                           int64_t pre_quant,
                                           float32_t quant_scale,
                                           int64_t pre_relu, bool channel_split,
-                                          uint8_t unit_flag) {
+                                          UNIT_FLAG unit_flag_mode,
+                                          int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -71,6 +85,8 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -81,7 +97,7 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
           src_stride,                     // dstStride_dst_D
           src_stride,                     // srcStride
           FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                      // UnitFlagMode
+          unit_flag,                     // UnitFlagMode
           quant_mode,                     // QuantPRE
           static_cast<uint8_t>(pre_relu), // ReLUPRE
           channel_split,
@@ -97,7 +113,8 @@ copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                           int64_t pre_quant,
                                           float32_t quant_scale,
                                           int64_t pre_relu, bool channel_split,
-                                          uint8_t unit_flag) {
+                                          UNIT_FLAG unit_flag_mode,
+                                          int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -111,6 +128,8 @@ copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -121,7 +140,7 @@ copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           dst_stride,                     // dstStride_dst_D
           src_stride,                     // srcStride
           FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                      // UnitFlagMode
+          unit_flag,                     // UnitFlagMode
           quant_mode,                     // QuantPRE
           static_cast<uint8_t>(pre_relu), // ReLUPRE
           channel_split,
@@ -134,8 +153,11 @@ template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
     __ubuf__ DST_TYPE *ubuf_ptr, __cc__ SRC_TYPE *l0c_ptr, uint16_t n_size,
     uint16_t m_size, uint32_t dst_d, uint16_t src_stride, bool nz2nd_en,
-    bool nz2dn_xt2, uint8_t unit_flag, QuantMode_t quant_mode, uint8_t pre_relu,
-    bool channel_split, uint8_t dual_dst) {
+    bool nz2dn_xt2, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    QuantMode_t quant_mode, uint8_t pre_relu, bool channel_split,
+    uint8_t dual_dst) {
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   if (dual_dst == DualDstMode::ROW_SPLIT) {
     uint16_t m_size_half1 = (m_size + 1) / 2;
@@ -198,7 +220,7 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -210,6 +232,8 @@ copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   if ((DualDst != DualDstMode::NO_DUAL) &&
@@ -217,8 +241,8 @@ copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
                           channel_split, l0c->sizes[0], l0c->sizes[1], true)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, n_size, m_size, src_stride, src_stride,
-        /*nz2nd*/ false, /*nz2dn*/ false, unit_flag, quant_mode,
-        static_cast<uint8_t>(pre_relu), channel_split,
+        /*nz2nd*/ false, /*nz2dn*/ false, unit_flag_mode, unit_flag_group_id,
+        quant_mode, static_cast<uint8_t>(pre_relu), channel_split,
         static_cast<uint8_t>(DualDst));
     return;
   }
@@ -246,7 +270,7 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 4> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -260,6 +284,8 @@ copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   if ((DualDst != DualDstMode::NO_DUAL) &&
@@ -267,8 +293,8 @@ copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
                           channel_split, src_m_size, src_n_size, true)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, src_n_size, src_m_size, dst_stride, src_stride,
-        /*nz2nd*/ false, /*nz2dn*/ false, unit_flag, quant_mode,
-        static_cast<uint8_t>(pre_relu), channel_split,
+        /*nz2nd*/ false, /*nz2dn*/ false, unit_flag_mode, unit_flag_group_id,
+        quant_mode, static_cast<uint8_t>(pre_relu), channel_split,
         static_cast<uint8_t>(DualDst));
     return;
   }
@@ -296,7 +322,7 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_cbuf_normal_2d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
   __cbuf__ DST_TYPE *cbuf_ptr = cbuf->aligned + cbuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -308,6 +334,8 @@ copy_matrix_cc_to_cbuf_normal_2d_to_2d_core(
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
@@ -316,7 +344,8 @@ copy_matrix_cc_to_cbuf_normal_2d_to_2d_core(
           0, // sid
           n_size, m_size, src_stride,
           src_stride,                              // srcStride
-          FIXPIPE_ARGS_XT1_VALUES_TO_L1 unit_flag, // UnitFlagMode
+          FIXPIPE_ARGS_XT1_VALUES_TO_L1
+          unit_flag,                               // UnitFlagMode
           quant_mode,                              // QuantPRE
           static_cast<uint8_t>(pre_relu),          // ReLUPRE
           channel_split,
@@ -330,7 +359,8 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__cbuf__ DST_TYPE, 4> *cbuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool c0_pad_en = true) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    bool c0_pad_en = true) {
   __cbuf__ DST_TYPE *cbuf_ptr = cbuf->aligned + cbuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -354,6 +384,8 @@ copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
   uint16_t dst_stride = dst_m_size * C0; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
@@ -381,7 +413,8 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          int64_t pre_quant,
                                          float32_t quant_scale,
                                          int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag) {
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -392,6 +425,8 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
 
   set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -402,7 +437,7 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           dst_D,                          // dstStride_dst_D
           m_tile_ceil,                    // srcStride
           FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                      // UnitFlagMode
+          unit_flag,                     // UnitFlagMode
           quant_mode,                     // QuantPRE
           static_cast<uint8_t>(pre_relu), // ReLUPRE
           channel_split,
@@ -416,7 +451,7 @@ __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid) {
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -434,6 +469,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
 
   set_nd_para(1,1,1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
 
@@ -442,8 +479,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
                           channel_split, m_size, n_size, true)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, n_size, m_size, dst_D, m_tile_ceil,
-        /*nz2nd*/ true, /*nz2dn*/ false, unit_flag, quant_mode,
-        static_cast<uint8_t>(pre_relu), channel_split,
+        /*nz2nd*/ true, /*nz2dn*/ false, unit_flag_mode, unit_flag_group_id,
+        quant_mode, static_cast<uint8_t>(pre_relu), channel_split,
         static_cast<uint8_t>(DualDst));
     return;
   }
@@ -473,7 +510,8 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          int64_t pre_quant,
                                          float32_t quant_scale,
                                          int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag) {
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id) {
   __cbuf__ DST_TYPE *cbuf_ptr = cbuf->aligned + cbuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -486,6 +524,8 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
 
   set_nd_para(1, 1, 1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
@@ -496,7 +536,7 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           dst_D,                          // dstStride_dst_D
           m_tile_ceil,                    // srcStride
           FIXPIPE_ARGS_XT1_VALUES_TO_L1
-          unit_flag,                      // UnitFlagMode
+          unit_flag,                     // UnitFlagMode
           quant_mode,                     // QuantPRE
           static_cast<uint8_t>(pre_relu), // ReLUPRE
           channel_split,
@@ -512,7 +552,8 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          int64_t pre_quant,
                                          float32_t quant_scale,
                                          int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag) {
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id) {
   __gm__ DST_TYPE *gm_ptr = gm->aligned + gm->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -523,6 +564,8 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
 
   set_nd_para(1,1,1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   uint64_t src_dn_stride = 1;
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
@@ -537,7 +580,7 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
           dst_D,                          // dstStride_dst_D
           m_tile_ceil,                    // srcStride
           FIXPIPE_ARGS_XT1_VALUES_TO_GM
-          unit_flag,                      // UnitFlagMode
+          unit_flag,                     // UnitFlagMode
           quant_mode,                     // QuantPRE
           static_cast<uint8_t>(pre_relu), // ReLUPRE
           channel_split, 
@@ -553,7 +596,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                            int64_t pre_quant,
                                            float32_t quant_scale,
                                            int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag,
+                                           UNIT_FLAG unit_flag_mode,
+                                           int64_t unit_flag_group_id,
                                            bool sub_blockid) {
   __ubuf__ DST_TYPE *ubuf_ptr = ubuf->aligned + ubuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
@@ -573,6 +617,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   
   set_nd_para(1,1,1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   uint64_t src_dn_stride = 1;
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
@@ -585,8 +631,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                           channel_split, m_size, n_size, false)) {
     copy_matrix_cc_to_ubuf_split<SRC_TYPE, DST_TYPE>(
         ubuf_ptr, l0c_ptr, n_size, m_size, dst_D, m_tile_ceil,
-        /*nz2nd*/ false, /*nz2dn*/ true, unit_flag, quant_mode,
-        static_cast<uint8_t>(pre_relu), channel_split,
+        /*nz2nd*/ false, /*nz2dn*/ true, unit_flag_mode, unit_flag_group_id,
+        quant_mode, static_cast<uint8_t>(pre_relu), channel_split,
         static_cast<uint8_t>(DualDst));
     return;
   }
@@ -615,7 +661,8 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                            int64_t pre_quant,
                                            float32_t quant_scale,
                                            int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag) {
+                                           UNIT_FLAG unit_flag_mode,
+                                           int64_t unit_flag_group_id) {
   __cbuf__ DST_TYPE *cbuf_ptr = cbuf->aligned + cbuf->offset;
   __cc__ SRC_TYPE *l0c_ptr = l0c->aligned + l0c->offset;
 
@@ -628,6 +675,8 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   
   set_nd_para(1,1,1);
   set_pre_quant_scale<DST_TYPE>(quant_scale);
+  unit_flag_mode = resolveUnitFlagMode(unit_flag_mode, unit_flag_group_id);
+  uint8_t unit_flag = static_cast<uint8_t>(unit_flag_mode);
 
   uint64_t src_dn_stride = 1;    
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
@@ -642,7 +691,7 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
              dst_D,        // dstStride_dst_D
              m_tile_ceil,  // srcStride
              FIXPIPE_ARGS_XT1_VALUES_TO_L1
-             unit_flag,                      // unitFlagMode
+             unit_flag,                    // UnitFlagMode
              quant_mode,                     // QuantPRE
              static_cast<uint8_t>(pre_relu), // ReLUPRE
              channel_split, 
@@ -657,16 +706,19 @@ copy_matrix_cc_to_gm_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                    memref_t<__gm__ DST_TYPE, 2> *gm,
                                    int64_t pre_quant, float32_t quant_scale,
                                    int64_t pre_relu, bool channel_split,
-                                   uint8_t unit_flag) {
+                                   UNIT_FLAG unit_flag_mode,
+                                   int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NZ_2_ND) {
     copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
     return;
   }
   
   if constexpr (MODE == TransformMode::NZ_2_DN) {
     copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
     return;
   }
 
@@ -680,18 +732,20 @@ copy_matrix_cc_to_ubuf_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                      memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
                                      int64_t pre_quant, float32_t quant_scale,
                                      int64_t pre_relu, bool channel_split,
-                                     uint8_t unit_flag, bool sub_blockid = false) {
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
+                                     bool sub_blockid = false) {
   if constexpr (MODE == TransformMode::NZ_2_ND) {
     copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core<SRC_TYPE, DST_TYPE, DualDst>(
-        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag,
-        sub_blockid);
+        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id, sub_blockid);
     return;
   }
 
   if constexpr (MODE == TransformMode::NZ_2_DN) {
     copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core<SRC_TYPE, DST_TYPE, DualDst>(
-        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag,
-        sub_blockid);
+        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id, sub_blockid);
   }
 
   static_assert("fixpipe 4d unsupports this transform mode");
@@ -703,18 +757,21 @@ copy_matrix_cc_to_cbuf_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                      memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
                                      int64_t pre_quant, float32_t quant_scale,
                                      int64_t pre_relu, bool channel_split,
-                                     uint8_t unit_flag,
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
                                      bool c0_pad_en = true) {
   (void)c0_pad_en;
   if constexpr (MODE == TransformMode::NZ_2_ND) {
     copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
     return;
   }
 
   if constexpr (MODE == TransformMode::NZ_2_DN) {
     copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
   }
 
   static_assert("fixpipe 4d unsupports this transform mode");
@@ -726,10 +783,12 @@ copy_matrix_cc_to_gm_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                    memref_t<__gm__ DST_TYPE, 2> *gm,
                                    int64_t pre_quant, float32_t quant_scale,
                                    int64_t pre_relu, bool channel_split,
-                                   uint8_t unit_flag) {
+                                   UNIT_FLAG unit_flag_mode,
+                                   int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_gm_normal_2d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
     return;
   }
 
@@ -743,12 +802,13 @@ copy_matrix_cc_to_ubuf_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                      memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
                                      int64_t pre_quant, float32_t quant_scale,
                                      int64_t pre_relu, bool channel_split,
-                                     uint8_t unit_flag,
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
                                      bool sub_blockid = false) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_ubuf_normal_2d_to_2d_core<SRC_TYPE, DST_TYPE, DualDst>(
-        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag,
-        sub_blockid);
+        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id, sub_blockid);
     return;
   }
 
@@ -761,12 +821,14 @@ copy_matrix_cc_to_cbuf_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                      memref_t<__cbuf__ DST_TYPE, 2> *cbuf,
                                      int64_t pre_quant, float32_t quant_scale,
                                      int64_t pre_relu, bool channel_split,
-                                     uint8_t unit_flag,
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
                                      bool c0_pad_en = true) {
   (void)c0_pad_en;
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_cbuf_normal_2d_to_2d_core<SRC_TYPE, DST_TYPE>(
-        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
     return;
   }
     
@@ -779,10 +841,12 @@ copy_matrix_cc_to_gm_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                    memref_t<__gm__ DST_TYPE, 4> *gm,
                                    int64_t pre_quant, float32_t quant_scale,
                                    int64_t pre_relu, bool channel_split,
-                                   uint8_t unit_flag) {
+                                   UNIT_FLAG unit_flag_mode,
+                                   int64_t unit_flag_group_id) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_gm_normal_4d_to_4d_core<SRC_TYPE, DST_TYPE>(
-        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);
+        l0c, gm, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id);
     return;
   }
 }
@@ -794,12 +858,13 @@ copy_matrix_cc_to_ubuf_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                      memref_t<__ubuf__ DST_TYPE, 4> *ubuf,
                                      int64_t pre_quant, float32_t quant_scale,
                                      int64_t pre_relu, bool channel_split,
-                                     uint8_t unit_flag,
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
                                      bool sub_blockid = false) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_ubuf_normal_4d_to_4d_core<SRC_TYPE, DST_TYPE, DualDst>(
-        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag,
-        sub_blockid);
+        l0c, ubuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id, sub_blockid);
     return;
   }
 }
@@ -810,12 +875,13 @@ copy_matrix_cc_to_cbuf_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                      memref_t<__cbuf__ DST_TYPE, 4> *cbuf,
                                      int64_t pre_quant, float32_t quant_scale,
                                      int64_t pre_relu, bool channel_split,
-                                     uint8_t unit_flag,
+                                     UNIT_FLAG unit_flag_mode,
+                                     int64_t unit_flag_group_id,
                                      bool c0_pad_en = true) {
   if constexpr (MODE == TransformMode::NORMAL) {
     copy_matrix_cc_to_cbuf_normal_4d_to_4d_core<SRC_TYPE, DST_TYPE>(
-        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split, unit_flag,
-        c0_pad_en);
+        l0c, cbuf, pre_quant, quant_scale, pre_relu, channel_split,
+        unit_flag_mode, unit_flag_group_id, c0_pad_en);
     return;
   }
 }

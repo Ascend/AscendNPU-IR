@@ -103,7 +103,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE(src_scope, dst_scope, dim, src_type, dst_type,       \
                           bias_type)                                           \
@@ -113,7 +113,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_BIAS(src_scope, dst_scope, dim, src_type, dst_type,    \
@@ -128,7 +128,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS(src_scope, dst_scope, dim, src_type, dst_type,  \
                                bias_type)                                      \
@@ -139,7 +139,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,     \
@@ -153,7 +153,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,    \
                              bias_type)                                        \
@@ -164,7 +164,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TB(src_scope, dst_scope, dim, src_type, dst_type,     \
@@ -178,7 +178,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TB(src_scope, dst_scope, dim, src_type, dst_type,    \
                              bias_type)                                        \
@@ -189,7 +189,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TA_TB(src_scope, dst_scope, dim, src_type, dst_type,  \
@@ -203,7 +203,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA_TB(src_scope, dst_scope, dim, src_type, dst_type, \
                                 bias_type)                                     \
@@ -214,7 +214,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_HF32(src_scope, dst_scope, dim, src_type, dst_type,   \
@@ -228,7 +228,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_HF32(src_scope, dst_scope, dim, src_type, dst_type,  \
                                bias_type)                                      \
@@ -239,7 +239,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TA_HF32(src_scope, dst_scope, dim, src_type,          \
@@ -253,7 +253,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA_HF32(src_scope, dst_scope, dim, src_type,         \
                                   dst_type, bias_type)                         \
@@ -264,7 +264,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TB_HF32(src_scope, dst_scope, dim, src_type,          \
@@ -278,7 +278,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TB_HF32(src_scope, dst_scope, dim, src_type,         \
                                   dst_type, bias_type)                         \
@@ -289,7 +289,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TA_TB_HF32(src_scope, dst_scope, dim, src_type,       \
@@ -303,7 +303,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA_TB_HF32(src_scope, dst_scope, dim, src_type,      \
                                      dst_type, bias_type)                      \
@@ -314,7 +314,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_I4(src_scope, dst_scope, dim, src_type,               \
@@ -328,7 +328,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_I4(src_scope, dst_scope, dim, src_type,              \
                              dst_type, bias_type)                              \
@@ -339,7 +339,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 
@@ -354,7 +354,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TB_I4(src_scope, dst_scope, dim, src_type,           \
                                 dst_type, bias_type)                           \
@@ -365,7 +365,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_HF32_I4(src_scope, dst_scope, dim, src_type,          \
@@ -379,7 +379,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_HF32_I4(src_scope, dst_scope, dim, src_type,         \
                                      dst_type, bias_type)                      \
@@ -390,7 +390,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_TILE_TB_HF32_I4(src_scope, dst_scope, dim, src_type,       \
@@ -404,7 +404,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TB_HF32_I4(src_scope, dst_scope, dim, src_type,      \
                                      dst_type, bias_type)                      \
@@ -415,7 +415,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                               \
   }
 
 #define DECLARE_MMA_MX(src_type, dst_type, bias_type)                          \

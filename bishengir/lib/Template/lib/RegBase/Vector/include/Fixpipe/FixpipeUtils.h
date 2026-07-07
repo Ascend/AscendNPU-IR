@@ -240,7 +240,8 @@ template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
     __ubuf__ DST_TYPE *ubuf_ptr, __cc__ SRC_TYPE *l0c_ptr, uint16_t n_size,
     uint16_t m_size, uint32_t dst_d, uint16_t src_stride, bool nz2nd_en,
-    bool nz2dn_xt2, uint8_t unit_flag, QuantMode_t quant_mode, uint8_t pre_relu,
+    bool nz2dn_xt2, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id,
+    QuantMode_t quant_mode, uint8_t pre_relu,
     bool channel_split, uint8_t dual_dst);
 
 template <typename SRC_TYPE, typename DST_TYPE>
@@ -250,7 +251,8 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
                                           int64_t pre_quant,
                                           float32_t quant_scale,
                                           int64_t pre_relu, bool channel_split,
-                                          uint8_t unit_flag);
+                                          UNIT_FLAG unit_flag_mode,
+                                          int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
@@ -259,7 +261,8 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          int64_t pre_quant,
                                          float32_t quant_scale,
                                          int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag);
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
@@ -268,7 +271,8 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                            int64_t pre_quant,
                                            float32_t quant_scale,
                                            int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag);
+                                           UNIT_FLAG unit_flag_mode,
+                                           int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
@@ -277,7 +281,8 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                          int64_t pre_quant,
                                          float32_t quant_scale,
                                          int64_t pre_relu, bool channel_split,
-                                         uint8_t unit_flag);
+                                         UNIT_FLAG unit_flag_mode,
+                                         int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
@@ -286,7 +291,8 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                            int64_t pre_quant,
                                            float32_t quant_scale,
                                            int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag,
+                                           UNIT_FLAG unit_flag_mode,
+                                           int64_t unit_flag_group_id,
                                            bool sub_blockid);
 
 template <typename SRC_TYPE, typename DST_TYPE>
@@ -296,21 +302,22 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
                                            int64_t pre_quant,
                                            float32_t quant_scale,
                                            int64_t pre_relu, bool channel_split,
-                                           uint8_t unit_flag);
+                                           UNIT_FLAG unit_flag_mode,
+                                           int64_t unit_flag_group_id);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 2> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid);
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid);
 
 template <typename SRC_TYPE, typename DST_TYPE, DualDstMode DualDst>
 __aicore__ __attribute__((always_inline)) void
 copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     memref_t<__cc__ SRC_TYPE, 4> *l0c, memref_t<__ubuf__ DST_TYPE, 2> *ubuf,
     int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,
-    bool channel_split, uint8_t unit_flag, bool sub_blockid);
+    bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, bool sub_blockid);
 
 #define FIXPIPE_SBPARAM_gm
 #define FIXPIPE_SBPARAM_cbuf
@@ -329,7 +336,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                     \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                     \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                             \
-          bool channel_split, uint8_t unit_flag FIXPIPE_SBPARAM(dst_scope))
+          bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id FIXPIPE_SBPARAM(dst_scope))
 
 #define REGISTE_FIXPIPE(src_scope, dst_scope, src_dim, dst_dim, src_type,         \
                         dst_type, mode_name, transform_mode)                      \
@@ -337,8 +344,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
                   mode_name, transform_mode) {                                    \
     copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d_core< \
         src_type, dst_type, transform_mode>(                                      \
-        src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
-        unit_flag FIXPIPE_SBARG(dst_scope));                                     \
+        src, dst, pre_quant, quant_scale, pre_relu, channel_split,                \
+        unit_flag_mode, unit_flag_group_id FIXPIPE_SBARG(dst_scope));              \
   }
 
 #define DECLARE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                            \
@@ -349,7 +356,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                       \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                       \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                               \
-          bool channel_split, uint8_t unit_flag, uint8_t dual_dst)
+          bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, uint8_t dual_dst)
 
 #define REGISTE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim,                                        \
                                  src_type, dst_type, mode_name,                                                 \
@@ -357,7 +364,8 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
   DECLARE_FIXPIPE_NOSUFFIX(src_scope, dst_scope, src_dim, dst_dim, src_type,                                    \
                            dst_type, mode_name, transform_mode) {                                               \
     _mlir_ciface_fixpipe_##mode_name##_##src_type##_to_##dst_type##_##src_dim##d_to_##dst_dim##d##_##dst_scope( \
-        src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);                                  \
+        src, dst, pre_quant, quant_scale, pre_relu, channel_split,                                              \
+        unit_flag_mode, unit_flag_group_id);                                                                    \
   }
 
 #define DECLARE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,                                         \
@@ -367,7 +375,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
           memref_t<__##src_scope##__ src_type, src_dim> *src,                                                          \
           memref_t<__##dst_scope##__ dst_type, dst_dim> *dst,                                                          \
           int64_t pre_quant, float32_t quant_scale, int64_t pre_relu,                                                  \
-          bool channel_split, uint8_t unit_flag, uint8_t dual_dst)
+          bool channel_split, UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id, uint8_t dual_dst)
 
 #define REGISTE_FIXPIPE_DUAL(src_scope, dst_scope, src_dim, dst_dim, src_type,      \
                              dst_type, mode_name, transform_mode)                   \
@@ -376,15 +384,18 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
     if (dual_dst == static_cast<uint8_t>(DualDstMode::NO_DUAL)) {                   \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
           src_type, dst_type, transform_mode, DualDstMode::NO_DUAL>(               \
-          src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);   \
+          src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
+          unit_flag_mode, unit_flag_group_id);                                     \
     } else if (dual_dst == static_cast<uint8_t>(DualDstMode::ROW_SPLIT)) {         \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
           src_type, dst_type, transform_mode, DualDstMode::ROW_SPLIT>(             \
-          src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);   \
+          src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
+          unit_flag_mode, unit_flag_group_id);                                     \
     } else {                                                                       \
       copy_matrix_##src_scope##_to_##dst_scope##_##src_dim##d_to_##dst_dim##d##_core< \
           src_type, dst_type, transform_mode, DualDstMode::COLUMN_SPLIT>(          \
-          src, dst, pre_quant, quant_scale, pre_relu, channel_split, unit_flag);     \
+          src, dst, pre_quant, quant_scale, pre_relu, channel_split,               \
+          unit_flag_mode, unit_flag_group_id);                                     \
     }                                                                              \
   }
 

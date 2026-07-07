@@ -20,6 +20,17 @@
 #include "Utils.h"
 #include <type_traits>
 
+//===----------------------------------------------------------------------===//
+// Constants
+//===----------------------------------------------------------------------===//
+constexpr int32_t MAX_BLOCK_NUM = 36;
+constexpr int32_t MAX_UNIT_FLAG_GROUP_ID = 100;
+
+//===----------------------------------------------------------------------===//
+// MmadL1/Fixpipe sync utils
+//===----------------------------------------------------------------------===//
+__aicore__ uint8_t &getUnitFlagIsBadRef(int64_t unit_flag_group_id);
+
 __aiv__ __attribute__((always_inline)) void
 sync_block_lock(memref_t<__gm__ int64_t, 1> *lock_var);
 

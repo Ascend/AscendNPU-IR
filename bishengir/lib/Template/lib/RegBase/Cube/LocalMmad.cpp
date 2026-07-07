@@ -21,6 +21,7 @@
 #include "catlass/gemm/tile/tile_mmad.hpp"
 #include "tla/tensor.hpp"
 #include "ascendc_bisheng/ascendc_bisheng.hpp"
+#include "Synchronization/SyncUtils.h"
 
 template <typename T, size_t Dim> struct memref_t {
   T *allocated;
@@ -69,7 +70,7 @@ CATLASS_DEVICE void L1Mmad(
     uint32_t l1BMTE1MTE2EventId,
     bool isL1FirstK,
     bool isL1LastK,
-    bool enable_unit_flag,
+    UNIT_FLAG unit_flag_mode,
     bool hasBias
 )
 {
@@ -223,14 +224,15 @@ CATLASS_DEVICE void L1Mmad(
         AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
 
         // If the unit flag is enabled, the unit flag is set according to the calculation progress
-        uint8_t unitFlag = 0b00;
-        if (enable_unit_flag) {
+        UNIT_FLAG curUnitFlagMode = UNIT_FLAG::DISABLED;
+        if (unit_flag_mode != UNIT_FLAG::DISABLED) {
             if (isL1LastK && (kL0Idx == kL0Loop - 1)) {
-                unitFlag = 0b11;
+                curUnitFlagMode = unit_flag_mode;
             } else {
-                unitFlag = 0b10;
+                curUnitFlagMode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
             }
         }
+        auto unitFlag = static_cast<uint8_t>(curUnitFlagMode);
 
         if (hasBias) {
             if (initC) {
@@ -266,25 +268,56 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               int64_t kloop_db_cond,
               int64_t back_pipe_m_pipe_mte1_db_event0,
               int64_t back_pipe_m_pipe_mte1_db_event1,
-              uint8_t unit_flag) {
+              UNIT_FLAG unit_flag_mode,
+              int64_t unit_flag_group_id) {
+  uint32_t l1M = TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]);
+  uint32_t l1K = TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3]);
+  uint32_t l1N = TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]);
+  uint32_t actualM = m;
+  uint32_t actualK = k;
+  uint32_t actualN = n;
+
+  int64_t l0c_n_size = mc->sizes[0] * mc->sizes[3];
+  int64_t l0c_m_size = mc->sizes[1] * mc->sizes[2];
+
+  if (unit_flag_mode != UNIT_FLAG::DISABLED) {
+    auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
+      if (unit_flag_is_bad) {
+        unit_flag_is_bad = false;
+        unit_flag_mode = UNIT_FLAG::DISABLED;
+      }
+    } else if (unit_flag_mode == UNIT_FLAG::ENABLED_WITH_UPDATE) {
+      unit_flag_is_bad = false;
+      if ((actualN != l0c_n_size) || (actualM != l0c_m_size)) {
+        unit_flag_is_bad = true;
+        unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
+      }
+    }
+    if (unit_flag_is_bad) {
+      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+    }
+  }
+
   Catlass::Gemm::L1Mmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, HF32>(
       mc->aligned + mc->offset, // l0C
       ma->aligned + ma->offset, // l1A
       mb->aligned + mb->offset, // l1B
       nullptr,                  // l1Bias
-      TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]), // l1M
-      TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3]), // l1K
-      TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]), // l1N
-      m,                                  // actualM
-      k,                                  // actualK
-      n,                                  // actualN
+      l1M,                                 // l1M
+      l1K,                                 // l1K
+      l1N,                                 // l1N
+      actualM,                             // actualM
+      actualK,                             // actualK
+      actualN,                             // actualN
       mmad_l1_wait_l1a_event,             // l1AMTE2MTE1EventId
       l1a_wait_mmad_l1_event,             // l1AMTE1MTE2EventId
       mmad_l1_wait_l1b_event,             // l1BMTE2MTE1EventId
       l1b_wait_mmad_l1_event,             // l1BMTE1MTE2EventId
       init,                               // isL1FirstK
       true,                               // isL1LastK
-      unit_flag != 0,                     // enable_unit_flag
+      unit_flag_mode,                     // unit_flag_mode
       false                               // hasBias
   );
 }
@@ -299,25 +332,56 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
               int64_t l1b_wait_mmad_l1_event, int64_t kloop_db_cond,
               int64_t back_pipe_m_pipe_mte1_db_event0,
-              int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag) {
+              int64_t back_pipe_m_pipe_mte1_db_event1,
+              UNIT_FLAG unit_flag_mode, int64_t unit_flag_group_id) {
+  uint32_t l1M = TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]);
+  uint32_t l1K = TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3]);
+  uint32_t l1N = TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]);
+  uint32_t actualM = m;
+  uint32_t actualK = k;
+  uint32_t actualN = n;
+
+  int64_t l0c_n_size = mc->sizes[0] * mc->sizes[3];
+  int64_t l0c_m_size = mc->sizes[1] * mc->sizes[2];
+
+  if (unit_flag_mode != UNIT_FLAG::DISABLED) {
+    auto &unit_flag_is_bad = getUnitFlagIsBadRef(unit_flag_group_id);
+    if (unit_flag_mode == UNIT_FLAG::ENABLED_WITHOUT_UPDATE) {
+      if (unit_flag_is_bad) {
+        unit_flag_is_bad = false;
+        unit_flag_mode = UNIT_FLAG::DISABLED;
+      }
+    } else if (unit_flag_mode == UNIT_FLAG::ENABLED_WITH_UPDATE) {
+      unit_flag_is_bad = false;
+      if ((actualN != l0c_n_size) || (actualM != l0c_m_size)) {
+        unit_flag_is_bad = true;
+        unit_flag_mode = UNIT_FLAG::ENABLED_WITHOUT_UPDATE;
+      }
+    }
+    if (unit_flag_is_bad) {
+      INTRINSIC(set_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_FIX, PIPE_M, LIB_EVENT_ID0);
+    }
+  }
+
   Catlass::Gemm::L1Mmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB, HF32>(
       mc->aligned + mc->offset,     // l0C
       ma->aligned + ma->offset,     // l1A
       mb->aligned + mb->offset,     // l1B
       bias->aligned + bias->offset, // l1Bias
-      TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]), // l1M
-      TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3]), // l1K
-      TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]), // l1N
-      m,                                  // actualM
-      k,                                  // actualK
-      n,                                  // actualN
+      l1M,                                // l1M
+      l1K,                                // l1K
+      l1N,                                // l1N
+      actualM,                            // actualM
+      actualK,                            // actualK
+      actualN,                            // actualN
       mmad_l1_wait_l1a_event,             // l1AMTE2MTE1EventId
       l1a_wait_mmad_l1_event,             // l1AMTE1MTE2EventId
       mmad_l1_wait_l1b_event,             // l1BMTE2MTE1EventId
       l1b_wait_mmad_l1_event,             // l1BMTE1MTE2EventId
       init,                               // isL1FirstK
       true,                               // isL1LastK
-      unit_flag != 0,                     // enable_unit_flag
+      unit_flag_mode,                     // unit_flag_mode
       true                                // hasBias
   );
 }
@@ -333,7 +397,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE(src_scope, dst_scope, dim, src_type, dst_type,       \
                           bias_type)                                           \
@@ -343,7 +408,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_BIAS(src_scope, dst_scope, dim, src_type, dst_type,    \
@@ -358,7 +423,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,    \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS(src_scope, dst_scope, dim, src_type, dst_type,  \
                                bias_type)                                      \
@@ -369,7 +435,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_BIAS_TA(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -384,7 +450,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,    \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_TA(src_scope, dst_scope, dim, src_type, dst_type, \
                                   bias_type)                                     \
@@ -395,7 +462,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
-        unit_flag);                                                             \
+        unit_flag_mode, unit_flag_group_id);                                    \
   }
 
 #define DECLARE_MMA_TILE_BIAS_TB(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -410,7 +477,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,       \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,       \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,       \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,    \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_TB(src_scope, dst_scope, dim, src_type, dst_type, \
                                   bias_type)                                     \
@@ -421,7 +489,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                         \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                  \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,       \
-        unit_flag);                                                             \
+        unit_flag_mode, unit_flag_group_id);                                    \
   }
 
 #define DECLARE_MMA_TILE_BIAS_TA_TB(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -436,7 +504,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,        \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,        \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,        \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,     \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_TA_TB(src_scope, dst_scope, dim, src_type, dst_type, \
                                      bias_type)                                     \
@@ -447,7 +516,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                            \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                     \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,          \
-        unit_flag);                                                                \
+        unit_flag_mode, unit_flag_group_id);                                       \
   }
 
 #define DECLARE_MMA_TILE_BIAS_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -462,7 +531,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,            \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,            \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,            \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,         \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
                                        bias_type)                                     \
@@ -473,7 +543,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                              \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                       \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,            \
-        unit_flag);                                                                  \
+        unit_flag_mode, unit_flag_group_id);                                         \
   }
 
 #define DECLARE_MMA_TILE_BIAS_TA_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -488,7 +558,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,            \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,            \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,            \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,         \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_TA_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
                                        bias_type)                                     \
@@ -499,7 +570,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                              \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                       \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,            \
-        unit_flag);                                                                  \
+        unit_flag_mode, unit_flag_group_id);                                         \
   }
 
 #define DECLARE_MMA_TILE_BIAS_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -514,7 +585,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,            \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,            \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,            \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,         \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
                                        bias_type)                                     \
@@ -525,7 +597,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                              \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                       \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,            \
-        unit_flag);                                                                  \
+        unit_flag_mode, unit_flag_group_id);                                         \
   }
 
 #define DECLARE_MMA_TILE_BIAS_TA_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
@@ -540,7 +612,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,               \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,               \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,               \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,            \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_BIAS_TA_TB_HF32(src_scope, dst_scope, dim, src_type, dst_type, \
                                           bias_type)                                     \
@@ -551,7 +624,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                                 \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                          \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,               \
-        unit_flag);                                                                     \
+        unit_flag_mode, unit_flag_group_id);                                            \
   }
 
 #define DECLARE_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,     \
@@ -565,7 +638,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA(src_scope, dst_scope, dim, src_type, dst_type,    \
                              bias_type)                                        \
@@ -576,7 +650,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_TB(src_scope, dst_scope, dim, src_type, dst_type,     \
@@ -590,7 +664,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TB(src_scope, dst_scope, dim, src_type, dst_type,    \
                              bias_type)                                        \
@@ -601,7 +676,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_TA_TB(src_scope, dst_scope, dim, src_type, dst_type,  \
@@ -615,7 +690,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA_TB(src_scope, dst_scope, dim, src_type, dst_type, \
                                 bias_type)                                     \
@@ -626,7 +702,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_HF32(src_scope, dst_scope, dim, src_type, dst_type,   \
@@ -640,7 +716,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_HF32(src_scope, dst_scope, dim, src_type, dst_type,  \
                                bias_type)                                      \
@@ -651,7 +728,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_TA_HF32(src_scope, dst_scope, dim, src_type,          \
@@ -665,7 +742,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA_HF32(src_scope, dst_scope, dim, src_type,         \
                                   dst_type, bias_type)                         \
@@ -676,7 +754,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_TB_HF32(src_scope, dst_scope, dim, src_type,          \
@@ -690,7 +768,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TB_HF32(src_scope, dst_scope, dim, src_type,         \
                                   dst_type, bias_type)                         \
@@ -701,7 +780,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 #define DECLARE_MMA_TILE_TA_TB_HF32(src_scope, dst_scope, dim, src_type,       \
@@ -715,7 +794,8 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
           int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,      \
           int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,      \
           int64_t kloop_db_cond, int64_t back_pipe_m_pipe_mte1_db_event0,      \
-          int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag)
+          int64_t back_pipe_m_pipe_mte1_db_event1, UNIT_FLAG unit_flag_mode,   \
+          int64_t unit_flag_group_id)
 
 #define REGISTER_MMA_TILE_TA_TB_HF32(src_scope, dst_scope, dim, src_type,      \
                                      dst_type, bias_type)                      \
@@ -726,7 +806,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
         mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event,                        \
         l1b_wait_mmad_l1_event, kloop_db_cond,                                 \
         back_pipe_m_pipe_mte1_db_event0, back_pipe_m_pipe_mte1_db_event1,      \
-        unit_flag);                                                            \
+        unit_flag_mode, unit_flag_group_id);                                   \
   }
 
 extern "C" {

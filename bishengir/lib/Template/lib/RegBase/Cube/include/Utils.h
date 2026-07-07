@@ -86,7 +86,16 @@ template <typename T, size_t Dim> struct memref_t {
   int64_t strides[Dim];
 };
 
+
 template <typename IntType> struct FpTraits;
+
+// Unit Flag Mode for Synchronization
+enum class UNIT_FLAG : uint8_t {
+  DISABLED = 0,
+  RESERVED = 1,
+  ENABLED_WITHOUT_UPDATE = 2,
+  ENABLED_WITH_UPDATE = 3,
+};
 
 // Calculate the bit width of the current type.
 template <typename T>
