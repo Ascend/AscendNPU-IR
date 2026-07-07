@@ -76,6 +76,7 @@ def HACC_ToLLVMIRTranslateAttr : HACC_I32Enum<"HACCToLLVMIRTranslateAttr", "", [
   // For Mix Device Entry Functions
   I32EnumAttrCase<"MIX_ENTRY", 1, "hacc.mix_entry">,
   I32EnumAttrCase<"ALWAYS_INLINE", 2, "hacc.always_inline">,
+  I32EnumAttrCase<"NOINLINE", 3, "hacc.noinline">,
 ]> {
   let cppNamespace = "::mlir::hacc";
 }
@@ -95,19 +96,15 @@ def HACC_kTilingData : I32EnumAttrCase<"kTilingData", 7, "tiling_data">;
 def HACC_kTilingStruct : I32EnumAttrCase<"kTilingStruct", 8, "tiling_struct">;
 def HACC_kMeshArg : I32EnumAttrCase<"kMeshArg", 9, "mesh_arg">;
 def HACC_kSanitizerAddr : I32EnumAttrCase<"kSanitizerAddr", 10, "sanitizer_addr">;
+def HACC_kGMAddr : I32EnumAttrCase<"kGMAddr", 11, "gm_addr">;
+def HACC_kSubWorkspace : I32EnumAttrCase<"kSubWorkspace", 12, "sub_workspace">;
 
-def HACC_KernelArgTypeEnum : HACC_I32Enum<"KernelArgType", "HACC Kernel Arg Category", [
-  HACC_kFFTSBaseAddr,
-  HACC_kInput,
-  HACC_kOutput,
-  HACC_kInputAndOutput,
-  HACC_kWorkspace,
-  HACC_kSyncBlockLock,
-  HACC_kTilingKey,
-  HACC_kTilingData,
-  HACC_kTilingStruct,
-  HACC_kMeshArg,
-  HACC_kSanitizerAddr,
+def HACC_KernelArgTypeEnum
+    : HACC_I32Enum<"KernelArgType", "HACC Kernel Arg Category",
+                   [HACC_kFFTSBaseAddr, HACC_kInput, HACC_kOutput,
+                    HACC_kInputAndOutput, HACC_kWorkspace, HACC_kSyncBlockLock,
+                    HACC_kTilingKey, HACC_kTilingData, HACC_kTilingStruct,
+                    HACC_kMeshArg, HACC_kSanitizerAddr, HACC_kGMAddr, HACC_kSubWorkspace,
 ]> {}
 
 def HACC_KernelArgTypeAttr : HACC_Attr<"KernelArgType", "arg_type"> {
@@ -129,17 +126,21 @@ def HACC_kInferOutputShapeFunction : I32EnumAttrCase<"kInferOutputShapeFunction"
 def HACC_kInferWorkspaceShapeFunction : I32EnumAttrCase<"kInferWorkspaceShapeFunction", 4, "infer_workspace_shape_function">;
 def HACC_kInferSyncBlockLockNumFunction : I32EnumAttrCase<"kInferSyncBlockLockNumFunction", 5, "infer_sync_block_lock_num_function">;
 def HACC_kInferSyncBlockLockInitFunction : I32EnumAttrCase<"kInferSyncBlockLockInitFunction", 6, "infer_sync_block_lock_init_function">;
-def HACC_kGetTilingStructSizeFunction : I32EnumAttrCase<"kGetTilingStructSizeFunction", 7, "get_tiling_struct_size_function">;
-def HACC_kInferTaskTypeFunction : I32EnumAttrCase<"kInferTaskTypeFunction", 8, "infer_task_type_function">;
-def HACC_HostFuncTypeEnum : HACC_I32Enum<"HostFuncType", "HACC Host function type", [
-  HACC_kEntry,
-  HACC_kTilingFunction,
-  HACC_kInferOutputShapeFunction,
-  HACC_kInferWorkspaceShapeFunction,
-  HACC_kInferSyncBlockLockNumFunction,
-  HACC_kInferSyncBlockLockInitFunction,
-  HACC_kGetTilingStructSizeFunction,
-  HACC_kInferTaskTypeFunction,
+def HACC_kInferVFModeFunction
+    : I32EnumAttrCase<"kInferVFModeFunction", 7, "infer_vf_mode_function">;
+def HACC_kGetTilingStructSizeFunction
+    : I32EnumAttrCase<"kGetTilingStructSizeFunction", 8,
+                      "get_tiling_struct_size_function">;
+def HACC_kInferTaskTypeFunction : I32EnumAttrCase<"kInferTaskTypeFunction", 9, "infer_task_type_function">;
+def HACC_HostFuncTypeEnum
+    : HACC_I32Enum<
+          "HostFuncType", "HACC Host function type",
+          [HACC_kEntry, HACC_kTilingFunction, HACC_kInferOutputShapeFunction,
+           HACC_kInferWorkspaceShapeFunction,
+           HACC_kInferSyncBlockLockNumFunction,
+           HACC_kInferSyncBlockLockInitFunction, HACC_kInferVFModeFunction,
+           HACC_kGetTilingStructSizeFunction,
+           HACC_kInferTaskTypeFunction,
 ]> {}
 
 def HACC_HostFuncTypeAttr : HACC_Attr<"HostFuncType", "host_func_type"> {
@@ -220,6 +221,14 @@ def HACC_InferSyncBlockLockInitFunctionAttr
   }];
 }
 
+def HACC_InferVFModeFunctionAttr
+    : HACC_FuncRefAttr<"InferVFModeFunction", "infer_vf_mode_function"> {
+  let description = [{
+    HACC infer vf mode function attribute. This is used to indicate the host
+    get vf mode function of the device function.
+  }];
+}
+
 def HACC_GetTilingStructSizeFunctionAttr
     : HACC_FuncRefAttr<"GetTilingStructSizeFunction",
                        "get_tiling_struct_size_function"> {
@@ -263,7 +272,10 @@ def HACC_DeviceSpecEnum :
   I32EnumAttrCase<"L0C_SIZE", 7>,
   I32EnumAttrCase<"UB_ALIGN_SIZE", 8>,
   I32EnumAttrCase<"L1_ALIGN_SIZE", 9>,
-  I32EnumAttrCase<"L0C_ALIGN_SIZE", 10>
+  I32EnumAttrCase<"L0C_ALIGN_SIZE", 10>,
+  I32EnumAttrCase<"MINIMAL_D_CACHE_SIZE", 11>,
+  I32EnumAttrCase<"MAXIMUM_D_CACHE_SIZE", 12>,
+  I32EnumAttrCase<"ARCH", 13>
 ]> {
   let description = [{
     HACC `DeviceSpec` enum class defines the list of hardware specification
@@ -271,9 +283,14 @@ def HACC_DeviceSpecEnum :
   }];
 }
 
+def HACCTargetDeviceSpecTrait
+    : NativeAttrTrait<"HACCTargetDeviceSpecInterface::Trait"> {
+  let cppNamespace = "::mlir::hacc";
+}
+
 def HACC_TargetDeviceSpecAttr :
     HACC_Attr<"TargetDeviceSpec", "target_device_spec",
-              [TargetDeviceSpecInterface, HACCTargetDeviceSpecInterface]> {
+              [TargetDeviceSpecTrait, HACCTargetDeviceSpecTrait]> {
   let summary = "An attribute to represent NPU target device specification.";
   let description = [{
     Each device specification describes a single device and its
@@ -291,55 +308,6 @@ def HACC_TargetDeviceSpecAttr :
   );
   let genVerifyDecl = 1;
   let assemblyFormat = "`<` $entries `>`";
-  let extraClassDeclaration = [{
-    /// In older MLIR versions, TargetDeviceSpecInterface does not inherit from
-    /// DLTIQueryInterface, and queryHelper() is not available.
-    /// By using a template member function, we leverage "Lazy Instantiation":
-    /// the function body is only parsed when query() is explicitly called.
-    /// This allows the same code to compile against both old and new MLIR
-    /// versions without requiring explicit preprocessor macros.
-    template <typename T = ::mlir::TargetDeviceSpecInterface>
-    ::mlir::FailureOr<::mlir::Attribute> query(::mlir::DataLayoutEntryKey key) const {
-      return ::llvm::cast<T>(*this).queryHelper(key);
-    }
-  }];
-}
-
-def HACC_HIVMCCompatiblePrintAttr
-    : HACC_Attr<"HIVMCCompatiblePrint", "hivmc_compatible_print"> {
-  let description = [{
-    If it is true, it will generate MLIR according to the HIVMC version.
-  }];
-}
-
-def HACCVersionTrait
-    : NativeAttrTrait<"HACCVersionInterface::Trait"> {
-  let cppNamespace = "::mlir::hacc";
-}
-
-def HACC_HIVMCVersionAttr :
-    HACC_Attr<"HIVMCVersion", "hivmc_version",
-              [HACCVersionTrait]> {
-  let summary = "An attribute to represent hivmc version information.";
-  let parameters = (ins
-    AttrParameter<"StringAttr", "version">:$version
-  );
-  let builders = [TypeBuilder<(ins "llvm::VersionTuple":$llvmVersion), [{
-      return Base::get($_ctxt,
-        ::mlir::StringAttr::get($_ctxt, llvmVersion.getAsString()));
-  }]>];
-  let assemblyFormat = "`<` $version `>`";
-  let extraClassDeclaration = [{
-  std::optional<llvm::VersionTuple> getParsedVersion() {
-    StringAttr version = this->getVersion();
-    if (!version)
-      return std::nullopt;
-    auto hivmcVersion = llvm::VersionTuple();
-    if (!hivmcVersion.tryParse(version))
-      return hivmcVersion;
-    return std::nullopt;
-  }
-}];
 }
 
 //===----------------------------------------------------------------------===//
@@ -411,6 +379,49 @@ def HACC_BlockDimAttr : HACC_Attr<"BlockDim", "block_dim"> {
   let description = [{
     HACC block dimension attribute for function.
   }];
+}
+
+def HACC_SIMTModuleAttr : HACC_Attr<"SIMTModule", "simt_module"> {
+  let description = [{
+    Attribute to indicate simt modules.
+  }];
+}
+
+def HACC_HIVMCCompatiblePrintAttr
+    : HACC_Attr<"HIVMCCompatiblePrint", "hivmc_compatible_print"> {
+  let description = [{
+    If it is true, it will generate MLIR according to the HIVMC version.
+  }];
+}
+
+def HACCVersionTrait
+    : NativeAttrTrait<"HACCVersionInterface::Trait"> {
+  let cppNamespace = "::mlir::hacc";
+}
+
+def HACC_HIVMCVersionAttr :
+    HACC_Attr<"HIVMCVersion", "hivmc_version",
+              [HACCVersionTrait]> {
+  let summary = "An attribute to represent hivmc version information.";
+  let parameters = (ins
+    AttrParameter<"StringAttr", "version">:$version
+  );
+  let builders = [TypeBuilder<(ins "llvm::VersionTuple":$llvmVersion), [{
+      return Base::get($_ctxt,
+        ::mlir::StringAttr::get($_ctxt, llvmVersion.getAsString()));
+  }]>];
+  let assemblyFormat = "`<` $version `>`";
+  let extraClassDeclaration = [{
+  std::optional<llvm::VersionTuple> getParsedVersion() {
+    StringAttr version = this->getVersion();
+    if (!version)
+      return std::nullopt;
+    auto hivmcVersion = llvm::VersionTuple();
+    if (!hivmcVersion.tryParse(version))
+      return hivmcVersion;
+    return std::nullopt;
+  }
+}];
 }
 
 #endif // BISHENGIR_DIALECT_HACC_IR_HACCATTRS_TD

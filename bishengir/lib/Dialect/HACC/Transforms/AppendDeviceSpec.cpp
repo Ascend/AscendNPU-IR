@@ -53,6 +53,7 @@ getNPUTargetSpecAttr(MLIRContext *context, TargetDevice target, Location loc) {
   if (!maybeSpec.has_value() ||
       maybeSpec.value()->device == TargetDevice::Unknown)
     llvm::report_fatal_error("Unknown target device");
+    llvm_unreachable("Unknown target device");
 
   ImplicitLocOpBuilder builder(loc, context);
   SmallVector<DataLayoutEntryInterface> entries;
@@ -96,6 +97,7 @@ void AppendDeviceSpec::runOnOperation() {
 
   // If data layout for NPU has already been populated... overwrite it
   auto maybeSpec = utils::getNPUTargetSpec(moduleOp);
+  auto maybeSpec = hacc::utils::getNPUTargetSpec(moduleOp);
   if (maybeSpec.has_value())
     moduleOp.emitWarning() << "Overwriting the device spec...";
 
@@ -113,6 +115,9 @@ void AppendDeviceSpec::runOnOperation() {
 
   // Remove attr if exists
   moduleOp->removeAttr(TargetAttr::name);
+  hacc::utils::setTargetDevice(moduleOp, finalTarget);
+  auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, moduleOp->getLoc());
+  hacc::utils::setNPUTargetSpec(moduleOp, targetSpec);
 }
 
 std::unique_ptr<Pass> mlir::hacc::createAppendDeviceSpecPass(

@@ -75,14 +75,18 @@ def ReduceWithIndexOp : HFusionStructuredBase_Op<"reduce_with_index",
     index (AnyShaped), produce resulting input and index;
     (2) take input, produce resulting input and index.
     Currently only one reduction dimension is supported.
-    `tie_break_left` shows whether find the leftmost index or
-    the rightmost index. 
+    unsigned_src flag is 'true' if source is of unsigned integer type,
+    otherwise - false;
+    `tie_break_left` if true, in case of a tie (i.e.,
+    multiple elements have the same maximum index value),
+    return the left-most index for values that aren't NaN.
   }];
 
   let arguments = (ins Variadic<AnyShaped>:$inputs,
                        Variadic<AnyShaped>:$inits,
                        HFusion_ReduceWithIndexOpAttr:$reduce_kind,
-                       BoolAttr:$tie_break_left,
+                       BoolAttr:$unsigned_src,
+                       OptionalAttr<BoolAttr>:$tie_break_left,
                        ConfinedAttr<DenseI64ArrayAttr,
                        [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$dimensions
   );
@@ -96,6 +100,25 @@ def ReduceWithIndexOp : HFusionStructuredBase_Op<"reduce_with_index",
         "ValueRange":$inputs,
         "ValueRange":$inits,
         "hfusion::ReduceWithIndexKindAttr":$reduce_kind,
+        "BoolAttr":$unsigned_src,
+        "DenseI64ArrayAttr":$dimensions)
+    >,
+    OpBuilder<
+      (ins
+        "TypeRange":$types,
+        "ValueRange":$inputs,
+        "ValueRange":$inits,
+        "hfusion::ReduceWithIndexKindAttr":$reduce_kind,
+        "BoolAttr":$unsigned_src,
+        "ArrayRef<int64_t>":$dimensions)
+    >,
+    OpBuilder<
+      (ins
+        "TypeRange":$types,
+        "ValueRange":$inputs,
+        "ValueRange":$inits,
+        "hfusion::ReduceWithIndexKindAttr":$reduce_kind,
+        "BoolAttr":$unsigned_src,
         "BoolAttr":$tie_break_left,
         "DenseI64ArrayAttr":$dimensions)
     >,
@@ -105,6 +128,7 @@ def ReduceWithIndexOp : HFusionStructuredBase_Op<"reduce_with_index",
         "ValueRange":$inputs,
         "ValueRange":$inits,
         "hfusion::ReduceWithIndexKindAttr":$reduce_kind,
+        "BoolAttr":$unsigned_src,
         "BoolAttr":$tie_break_left,
         "ArrayRef<int64_t>":$dimensions)
     >
@@ -119,6 +143,7 @@ def ReduceWithIndexOp : HFusionStructuredBase_Op<"reduce_with_index",
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+    std::string getLibraryCallName();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
@@ -180,6 +205,7 @@ def ArangeOp : HFusionStructuredBase_Op<"arange", [AttrSizedOperandSegments,
                                     SmallVectorImpl<Value> & strides);
     static void getOffsetFromValue(OpBuilder & builder, Location loc,
                                    Value & offset);
+    std::string getLibraryCallName();
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -230,6 +256,7 @@ def GatherOp
                          "int64_t":$gather_axis)>];
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
+  let hasCanonicalizer = 1;
   let extraClassDeclaration = structuredOpsBaseDecls#[{
     // Declare functions necessary for DestinationStyleOpInterface.
     ::mlir::MutableOperandRange getDpsInitsMutable();
@@ -243,6 +270,7 @@ def GatherOp
     // Declare functions necessary for LinalgStructuredInterface.
     SmallVector<utils::IteratorType> getIteratorTypesArray();
     ArrayAttr getIndexingMaps();
+    std::string getLibraryCallName();
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     static std::function<void(mlir::ImplicitLocOpBuilder &, mlir::Block &,
                               mlir::ArrayRef<mlir::NamedAttribute>)>
@@ -260,7 +288,7 @@ def GatherOp
 
 
 //===----------------------------------------------------------------------===//
-// GatherMaskOp 
+// GatherMaskOp
 //===----------------------------------------------------------------------===//
 def GatherMaskOp
     : HFusionStructuredBase_Op<
@@ -563,4 +591,5 @@ def Conv3DOp
 
   }];
 }
+
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONSTRUCTUREDOPS_TD

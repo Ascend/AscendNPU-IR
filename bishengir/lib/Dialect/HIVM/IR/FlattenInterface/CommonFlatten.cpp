@@ -24,6 +24,7 @@
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
+
 #define DEBUG_TYPE "flatten-common"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define DBGSNL() (llvm::dbgs() << "\n")
@@ -55,8 +56,9 @@ FlattenResult computeAnnotationMarkedOp(FlattenResult payload) {
   return payload;
 }
 
-FailureOr<FlattenResult> getFlattenedImpl(Operation *op,
-                                          FlattenOptions &options) {
+// Membase version of getFlattenedImpl
+FailureOr<FlattenResult> getFlattenedImpl_membase(Operation *op,
+                                                  FlattenOptions &options) {
   bool isUniformReassociation =
       op->hasTrait<OpTrait::UniformReassociationFlattenTrait>();
   if (isUniformReassociation) {
@@ -73,8 +75,31 @@ FailureOr<FlattenResult> getFlattenedImpl(Operation *op,
   return {};
 }
 
-FlattenResult getFlattenedElementwise(HIVMStructuredOp op,
-                                      FlattenOptions &options) {
+// Regbase version of getFlattenedImpl
+FailureOr<FlattenResult> getFlattenedImpl_regbase(Operation *op,
+                                                  FlattenOptions &options) {
+  if (isa<hivm::VTransposeOp>(op)) {
+    return getFlattenedTransposeLike(cast<HIVMStructuredOp>(op), options);
+  }
+  bool isUniformReassociation =
+      op->hasTrait<OpTrait::UniformReassociationFlattenTrait>();
+  if (isUniformReassociation) {
+    if (isa<hivm::VFlipOp>(op)) options.strictBarrierWithUnit = true;
+    return getFlattenedUniformReassociation(cast<HIVMStructuredOp>(op),
+                                            options);
+  }
+  LDBG(*op << " flatten is not implemented");
+  FlattenResult result(op);
+  if (auto hivmOp = dyn_cast<HIVMStructuredOp>(op)) {
+    result.fillWithIdentity();
+    return result;
+  }
+  LDBG(*op << "not HIVMStructuredOp and flatten is not implemented");
+  return {};
+}
+
+FlattenResult getFlattenedElementwise_membase(HIVMStructuredOp op,
+                                              FlattenOptions &options) {
   // This operation is asserted to be elementwise
   if (op.existInlineBroadcastLoopDims())
     return getFlattenedBroadcastableOTF(op, options);
@@ -83,9 +108,59 @@ FlattenResult getFlattenedElementwise(HIVMStructuredOp op,
   return collapseUniformReassociationPipeline(op, options, {});
 }
 
-FlattenResult composeFlattenResults(FlattenResult producer,
-                                    FlattenResult consumer,
-                                    MLIRContext *context) {
+FlattenResult getFlattenedElementwise_regbase(HIVMStructuredOp op,
+                                              FlattenOptions &options) {
+  // This operation is asserted to be elementwise
+  if (op.existInlineBroadcastLoopDims())
+    return getFlattenedBroadcastableOTF(op, options);
+  if (op.existInlineTransposeLoopDims())
+    return getFlattenedTransposeLike(op, options);
+  return collapseUniformReassociationPipeline(op, options, {});
+}
+
+static std::optional<SmallVector<ReassociationIndices>>
+composeCollapseReassociationIndices_regbase(
+    ArrayRef<ReassociationIndices> producerReassociations, // A -> B collapse
+    ArrayRef<ReassociationIndices> consumerReassociations // B -> C collapse
+    ) {
+  SmallVector<ReassociationIndices> composed;
+
+  // C is rank-0 => empty reassociation list is valid.
+  if (consumerReassociations.empty())
+    return composed;
+
+  // Validate consumer indexes exactly [0, 1, 2, ..., rank(B)-1] in order.
+  // For valid collapse reassociations, groups must be contiguous/ordered.
+  int64_t expectedB = 0;
+  for (ReassociationIndicesRef group : consumerReassociations) {
+    if (group.empty())
+      return std::nullopt;
+    for (int64_t idx : group) {
+      if (idx != expectedB)
+        return std::nullopt;
+      ++expectedB;
+    }
+  }
+
+  // Must consume exactly all B dims.
+  if (expectedB != static_cast<int64_t>(producerReassociations.size()))
+    return std::nullopt;
+
+  // Compose: each C-group picks one or more B-dims; each B-dim expands to A-group.
+  composed.reserve(consumerReassociations.size());
+  for (ReassociationIndicesRef cGroup : consumerReassociations) {
+    ReassociationIndices outGroup;
+    for (int64_t bDim : cGroup)
+      llvm::append_range(outGroup, producerReassociations[bDim]);
+    composed.push_back(std::move(outGroup));
+  }
+
+  return composed;
+}
+
+FlattenResult composeFlattenResults_membase(FlattenResult producer,
+                                            FlattenResult consumer,
+                                            MLIRContext *context) {
   LDBG(to_string(producer.getInputReassociation()));
   if (consumer.isIdentityCollapse())
     return producer;
@@ -111,6 +186,43 @@ FlattenResult composeFlattenResults(FlattenResult producer,
     auto initReassociation = mlir::composeReassociationIndices(
         producer.getInitReassociation(), consumer.getInitReassociation(),
         context);
+    if (!initReassociation.has_value()) {
+      llvm::report_fatal_error("HIVM flatten interface failed to compose");
+    }
+    composedFlattenResult.reassociation.push_back(initReassociation.value());
+  }
+  return composedFlattenResult;
+}
+
+FlattenResult composeFlattenResults_regbase(FlattenResult producer,
+                                            FlattenResult consumer,
+                                            MLIRContext *context) {
+  LDBG(to_string(producer.getInputReassociation()));
+  if (consumer.isIdentityCollapse())
+    return producer;
+  if (producer.isIdentityCollapse())
+    return consumer;
+  auto inputReassociation = composeCollapseReassociationIndices_regbase(
+      producer.getInputReassociation(), consumer.getInputReassociation());
+  LDBG("Value fails to compose? "
+       << to_string(producer.getInputReassociation()));
+  LDBG("Value fails to compose? "
+       << to_string(consumer.getInputReassociation()));
+  if (!inputReassociation.has_value()) {
+    llvm::report_fatal_error("HIVM flatten interface failed to compose");
+  }
+  FlattenResult composedFlattenResult = consumer;
+  composedFlattenResult.originalTargetDims = producer.originalTargetDims;
+  composedFlattenResult.reassociation = {inputReassociation.value()};
+  if (!consumer.uniformReassociation()) {
+    LDBG("This reassociation has init reassociation");
+    // if its not uniform meaning it has input and init reassociation
+    LDBG("Value fails to compose? "
+         << to_string(producer.getInitReassociation()));
+    LDBG("Value fails to compose? "
+         << to_string(consumer.getInitReassociation()));
+    auto initReassociation = composeCollapseReassociationIndices_regbase(
+        producer.getInitReassociation(), consumer.getInitReassociation());
     if (!initReassociation.has_value()) {
       llvm::report_fatal_error("HIVM flatten interface failed to compose");
     }

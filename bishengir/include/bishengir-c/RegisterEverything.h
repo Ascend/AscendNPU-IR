@@ -32,6 +32,8 @@ MLIR_CAPI_EXPORTED void bishengirRegisterAllDialects(MlirContext context);
 /// Registers all passes for symbolic access with the global registry.
 MLIR_CAPI_EXPORTED void bishengirRegisterAllPasses(void);
 
+MLIR_CAPI_EXPORTED void bishengirRegisterAllTranslations(MlirContext context);
+
 #ifdef __cplusplus
 }
 #endif

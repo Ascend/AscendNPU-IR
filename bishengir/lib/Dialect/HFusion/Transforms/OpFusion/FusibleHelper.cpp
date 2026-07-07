@@ -70,6 +70,7 @@ FusionKind FusibleHelper::getSingleFusionKind(Operation *op) {
     return FusionKind::AnyPB;
   default:
     llvm::report_fatal_error("Invalid operation pattern for outlining");
+    llvm_unreachable("Invalid operation pattern for outlining");
   }
 }
 
@@ -436,6 +437,10 @@ bool FusibleHelper::schedulable(Operation *op) const {
     break;
   }
   return false;
+    llvm_unreachable("Fusion kind unknown is not scheduling anything");
+  default:
+    return false;
+  }
 }
 
 namespace {
@@ -455,6 +460,9 @@ OpPattern classifyReduceOp(DestinationStyleOpInterface reduceOp) {
   return (static_cast<size_t>(reduceAxis) == lastAxis)
              ? OpPattern::kLastAxisReduce
              : OpPattern::kOtherReduce;
+  int64_t lastAxis = static_cast<int64_t>(init.getType().getShape().size());
+  return (reduceAxis == lastAxis) ? OpPattern::kLastAxisReduce
+                                  : OpPattern::kOtherReduce;
 }
 
 OpPattern classifyBroadcastOp(linalg::BroadcastOp broadcastOp) {
@@ -465,6 +473,8 @@ OpPattern classifyBroadcastOp(linalg::BroadcastOp broadcastOp) {
   const auto &broadcastAxis = dimensions[0];
   auto lastAxis = broadcastOp.getInput().getType().getShape().size();
   if (static_cast<size_t>(broadcastAxis) == lastAxis)
+  int64_t lastAxis = static_cast<int64_t>(broadcastOp.getInput().getType().getShape().size());
+  if (broadcastAxis == lastAxis)
     return OpPattern::kLastAxisBroadcast;
 
   LLVM_DEBUG(llvm::dbgs() << "infer kOtherBroadcast\n";);
@@ -578,6 +588,7 @@ bool FusibleHelper::isFusible(const OpPattern &patternA,
     return false;
   default:
     llvm::report_fatal_error("Invalid fusion mode");
+    llvm_unreachable("Invalid fusion mode");
   }
 } // namespace opfusion
 

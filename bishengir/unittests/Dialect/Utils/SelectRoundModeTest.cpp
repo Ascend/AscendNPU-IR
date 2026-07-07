@@ -18,6 +18,17 @@
 #include "gtest/gtest.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
+//===- SelectRoundModeTest.cpp - selectRoundMode unit tests --------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "gtest/gtest.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/MLIRContext.h"
 
@@ -59,6 +70,9 @@ TEST_F(SelectRoundModeTest, IntegerToIntegerDefaultsToRint) {
                   hivm::RoundMode::RINT);
   expectRoundMode(builder.getI64Type(), builder.getI32Type(),
                   hivm::RoundMode::RINT);
+TEST_F(SelectRoundModeTest, Int16ToInt8UsesTruncWithOverflow) {
+  expectRoundMode(builder.getI16Type(), builder.getI8Type(),
+                  hivm::RoundMode::TRUNCWITHOVERFLOW);
 }
 
 TEST_F(SelectRoundModeTest, FloatToIntegerUsesTrunc) {
@@ -72,6 +86,17 @@ TEST_F(SelectRoundModeTest, IntegerToFloatUsesRint) {
   expectRoundMode(builder.getI32Type(), builder.getF16Type(),
                   hivm::RoundMode::RINT);
   expectRoundMode(builder.getI64Type(), builder.getF32Type(),
+TEST_F(SelectRoundModeTest, IntegerToFloatUsesTrunc) {
+  expectRoundMode(builder.getI32Type(), builder.getF16Type(),
+                  hivm::RoundMode::TRUNC);
+  expectRoundMode(builder.getI64Type(), builder.getF32Type(),
+                  hivm::RoundMode::TRUNC);
+}
+
+TEST_F(SelectRoundModeTest, IntegerToIntegerDefaultsToRint) {
+  expectRoundMode(builder.getI32Type(), builder.getI16Type(),
+                  hivm::RoundMode::RINT);
+  expectRoundMode(builder.getI64Type(), builder.getI32Type(),
                   hivm::RoundMode::RINT);
 }
 

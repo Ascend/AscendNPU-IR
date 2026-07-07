@@ -50,6 +50,7 @@ inline SmallVector<int64_t> getStride(const Type &type) {
   auto memrefType = cast<MemRefType>(type);
   auto [strides, offset] = memrefType.getStridesAndOffset();
 #endif
+  auto [strides, offset] = getStridesAndOffset(cast<MemRefType>(type));
   return strides;
 }
 
@@ -293,6 +294,7 @@ LogicalResult OpTrait::impl::verifyVectorOnlyTrait(Operation *op, int idx) {
 }
 
 LogicalResult OpTrait::impl::verifyScalarOnlyHWTrait(Operation *op, int idx) {
+LogicalResult OpTrait::impl::verifyScalarOnlyTrait(Operation *op, int idx) {
   auto hivmOp = dyn_cast<HIVMStructuredOp>(op);
   if (!hivmOp)
     return op->emitOpError() << "ElementwiseNaryOpTrait expect op to follow "
@@ -300,6 +302,10 @@ LogicalResult OpTrait::impl::verifyScalarOnlyHWTrait(Operation *op, int idx) {
   if (!(hivmOp->getNumOperands() > static_cast<unsigned>(idx))) {
     return hivmOp.emitOpError()
            << "failed to verify that operand at index " << idx << " exists";
+  }
+  if (isa<ShapedType>(hivmOp->getOperand(idx).getType())) {
+    return hivmOp.emitOpError() << "failed to verify that operand at index "
+                                << idx << " is scalar-only";
   }
   return success();
 }
@@ -399,4 +405,5 @@ hivm::detail::getInlinedBroadcastableAxes(const Operation *op,
     if (operandType.getShape()[idx] == 1)
       ret.push_back(idx);
   return ret;
+}
 }

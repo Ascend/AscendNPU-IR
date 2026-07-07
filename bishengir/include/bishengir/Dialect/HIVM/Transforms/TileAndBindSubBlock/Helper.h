@@ -37,6 +37,7 @@ static constexpr llvm::StringLiteral toBeCancelOutInsertSlice = "to_be_canceled_
 inline constexpr llvm::StringLiteral batchMatmulAttr = "batch_matmul";
 inline constexpr llvm::StringLiteral tileAndSliceFailure =
     "tile_and_slice_failure";
+constexpr llvm::StringLiteral tiledOp = "tiled_op";
 static constexpr int kSubBlockDim = 2;
 static constexpr int kMaxIterations = 50;
 
@@ -55,6 +56,7 @@ bool isMarkedInsertSliceOp(Operation *op);
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
                                         OpFoldResult singleTileSize);
+                                        Value input, int64_t tileDimension);
 
 /// This function calculates the tile size by dividing the dimension size
 /// by kSubBlockDim (using ceiling division).
@@ -86,6 +88,13 @@ void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
                             OpFoldResult tiledOffset, OpFoldResult tiledSize,
                             Location loc, OpBuilder &builder);
 
+} // namespace hivm
+} // namespace mlir
+
+#endif // BISHENGIR_DIALECT_HIVM_TILEANDBINDSUBBLOCKHELPER_H
+int64_t calculateBufferSizeInBytes(ShapedType tiledType,
+                                   ArrayRef<int64_t> originShape,
+                                   int64_t tilingDim);
 } // namespace hivm
 } // namespace mlir
 

@@ -34,13 +34,15 @@ namespace mlir {
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
 } // namespace mlir
 
+using namespace mlir;
+using namespace mlir::hfusion;
 #define DEBUG_TYPE "hfusion-decompose"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace mlir::hfusion {
 namespace {
-
+namespace {
 struct HFusionDecomposePattern
     : public OpInterfaceRewritePattern<
           bishengir::BiShengIRAggregatedOpInterface> {
@@ -81,7 +83,6 @@ struct DecomposePass : public impl::DecomposeBase<DecomposePass> {
       : DecomposeBase(options) {}
   void runOnOperation() override;
 };
-
 } // namespace
 
 void DecomposePass::runOnOperation() {
@@ -106,3 +107,7 @@ namespace {
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
 } // namespace
 } // namespace mlir
+std::unique_ptr<Pass>
+mlir::hfusion::createDecomposePass(const DecomposeOptions &options) {
+  return std::make_unique<DecomposePass>(options);
+}

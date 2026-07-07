@@ -88,6 +88,7 @@ static int runBishengirOptA5(int argc, char **argv) {
   return EXIT_SUCCESS;
 }
 
+
 static void printVersion(llvm::raw_ostream &os) {
   os << bishengir::getBiShengIRToolFullVersion("bishengir-opt") << '\n';
 }
@@ -99,6 +100,7 @@ int main(int argc, char **argv) {
   // are merged.
   if (hasAscend910_95Target(argc, argv))
     return runBishengirOptA5(argc, argv);
+
 
   // Register dialects.
   mlir::DialectRegistry registry;

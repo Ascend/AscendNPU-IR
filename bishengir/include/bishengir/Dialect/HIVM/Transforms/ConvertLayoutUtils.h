@@ -1,8 +1,17 @@
 //===- ConvertLayoutUtils.h - Implementation of Utilities for Layouts -----===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 
@@ -38,6 +47,20 @@ FailureOr<SmallVector<int64_t>> computeNDToFractalShapeStatic(
     ArrayRef<int64_t> currentShape,
     DataLayoutAttr srcLayout,
     DataLayoutAttr dstLayout);
+FailureOr<SmallVector<OpFoldResult>>
+computeMixedNDToFractalShape(ArrayRef<OpFoldResult> currentShape,
+                             DataLayoutAttr srcLayout, DataLayoutAttr dstLayout,
+                             OpBuilder &builder, Location loc);
+
+FailureOr<SmallVector<OpFoldResult>>
+computeMixedFractalToNDShape(ArrayRef<OpFoldResult> currentShape,
+                             DataLayoutAttr srcLayout, DataLayoutAttr dstLayout,
+                             OpBuilder &builder, Location loc);
+
+FailureOr<SmallVector<int64_t>>
+computeNDToFractalShapeStatic(ArrayRef<int64_t> currentShape,
+                              DataLayoutAttr srcLayout,
+                              DataLayoutAttr dstLayout);
 
 /// Compute the mixed (static/dynamic) shape that a tensor will have after a
 /// layout conversion from srcLayout to dstLayout.
@@ -70,6 +93,8 @@ FailureOr<SmallVector<OpFoldResult>> computeMixedTargetLayoutShape(
     DataLayoutAttr dstLayout,
     OpBuilder &builder,
     Location loc);
+    ArrayRef<OpFoldResult> currentShape, DataLayoutAttr srcLayout,
+    DataLayoutAttr dstLayout, OpBuilder &builder, Location loc);
 
 int computeBatchIndexBias(size_t rank);
 
@@ -91,6 +116,7 @@ int computeBatchIndexBias(size_t rank);
 Value createConvertLayoutLike(PatternRewriter &rewriter,
                               ConvertLayoutOp templateOp,
                               Value input);
+                              ConvertLayoutOp templateOp, Value input);
 
 /// Create a new ConvertLayoutOp that is the inverse of templateOp,
 /// operating on input.
@@ -111,6 +137,8 @@ Value createConvertLayoutLike(PatternRewriter &rewriter,
 Value createInverseConvertLayout(PatternRewriter& rewriter,
                                  ConvertLayoutOp templateOp,
                                  Value input);
+Value createInverseConvertLayout(PatternRewriter &rewriter,
+                                 ConvertLayoutOp templateOp, Value input);
 
 /// Mark `op` with specific attribute preventing it to be propagated up.
 void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op);
@@ -147,6 +175,9 @@ void populateConvertLayoutScfFor(RewritePatternSet &patterns,
 
 void populateConvertLayoutScfWhile(RewritePatternSet &patterns,
                                       MLIRContext *context);
+void populateConvertLayoutElementwise(
+    RewritePatternSet &patterns, MLIRContext *context,
+    const PropagateConvertLayoutInternalOptions &options);
 
 void populateConvertLayoutExtractSlice(RewritePatternSet &patterns,
                                        MLIRContext *context);
@@ -154,5 +185,28 @@ void populateConvertLayoutExtractSlice(RewritePatternSet &patterns,
 void populateHoistConvertLayout(RewritePatternSet &patterns,
                                 MLIRContext *context);
 } // namespace mlir
+void populateConvertLayoutScfIf(RewritePatternSet &patterns,
+                                MLIRContext *context);
+
+void populateConvertLayoutScfFor(RewritePatternSet &patterns,
+                                 MLIRContext *context);
+
+void populateConvertLayoutScfWhile(RewritePatternSet &patterns,
+                                   MLIRContext *context);
+
+void populateFixpipeExtractSlice(RewritePatternSet &patterns,
+                                 MLIRContext *context);
+
+FailureOr<SmallVector<OpFoldResult>>
+computeTargetLayoutOffset(ArrayRef<OpFoldResult> currentOffset,
+                          DataLayoutAttr srcLayout, DataLayoutAttr dstLayout,
+                          PatternRewriter &rewriter, Location loc);
+
+void populateHoistConvertLayout(RewritePatternSet &patterns,
+                                MLIRContext *context);
+
+void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
+                                                   MLIRContext *context);
+} // namespace mlir::hivm
 
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_CONVERTLAYOUTUTILS_H

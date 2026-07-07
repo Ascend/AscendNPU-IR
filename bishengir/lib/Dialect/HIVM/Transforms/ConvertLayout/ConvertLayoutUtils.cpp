@@ -64,11 +64,13 @@ void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op) {
 bool isPropagatingUp(ConvertLayoutOp op) {
   return (op.getDstLayout().getDataLayout() == DataLayout::Fractal) &&
           !(op->getAttr(convertLayoutNotToPropagateUp));
+         !(op->getAttr(convertLayoutNotToPropagateUp));
 }
 
 bool isPropagatingDown(ConvertLayoutOp op) { return !isPropagatingUp(op); }
 
 bool isLayoutAgnosticOp(Operation *op) {
+  // TODO: When propagating is fixed, can remove this following line
   if (!op)
     return false;
   if (auto vbrcOp = dyn_cast<VBrcOp>(op)) {
@@ -91,6 +93,8 @@ Value createConvertLayoutLike(PatternRewriter &rewriter,
   auto newReplacedElementType =
     cast<ShapedType>(converted.getResult().getType())
         .clone(getElementTypeOrSelf(input));
+      cast<ShapedType>(converted.getResult().getType())
+          .clone(getElementTypeOrSelf(input));
   converted.getResult().setType(newReplacedElementType);
   return converted.getResult();
 }

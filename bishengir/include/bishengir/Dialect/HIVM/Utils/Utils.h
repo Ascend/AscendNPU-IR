@@ -66,6 +66,11 @@ static constexpr llvm::StringLiteral kMapForToForallAttrName =
 
 static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
     "hivm_data_layout";
+// Attribute names used by the hivm-mark-disable-load pass and consumed by the
+// MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
+static constexpr llvm::StringLiteral kDisableDCacheAttr = "disableDCache";
+static constexpr llvm::StringLiteral kMarkDCacheVisitedAttr =
+    "markDCacheInvalidatePatternVisited";
 
 /// TODO: add into hivm attrs
 static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
@@ -90,6 +95,20 @@ static constexpr llvm::StringLiteral kNormalizeMatmulCounterAttr =
 
 // The amount of data processed by the VBITSORT instruction in one repeat.
 constexpr const int VBITSORT_NUM_PER_REPEAT = 32;
+constexpr int VBITSORT_NUM_PER_REPEAT = 32;
+
+// CTRL[48] is for saturation control of FP8/Hif8/FP16/BF16 computation in
+// CUBE/FIXPIPE/VECTOR/SCALAR /AIPP/WAIPP.
+static constexpr unsigned int SaturationControlBit = 48;
+static constexpr unsigned int MaskControlBit = 56;
+
+// CTRL[60] is the control bit to override saturation behavior for Vector Thread
+// Extension Instructions SIMD.VCVTFI, SIMD.VCVTII, SIMD.VCVTFF and SIMT.F2F.
+static constexpr unsigned int OverrideSaturationBit = 60;
+
+const std::string Ascend910BCubeTriple = "ascend_910b_cube-unknown-cce-unknown";
+const std::string Ascend910BDataLayout =
+    "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
 
 const std::set<hivm::AddressSpace> LocalBufferSpace{
     hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C};
@@ -103,10 +122,35 @@ const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
 /// Set the input type's memory scope to the input HIVM Address Space.
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
 
+const std::map<std::string, int> membarType = {
+    {"VV_ALL", 0},  {"VST_VLD", 1}, {"VLD_VST", 2}, {"VST_VST", 3},
+    {"VS_ALL", 4},  {"VST_LD", 5},  {"VLD_ST", 6},  {"VST_ST", 7},
+    {"SV_ALL", 8},  {"ST_VLD", 9},  {"LD_VST", 10}, {"ST_VST", 11},
+    {"SS_ALL", 12}, {"ST_LD", 13},  {"LD_ST", 14},  {"ST_ST", 15},
+};
+
+/// Set the input type's memory scope to the input HIVM Address Space.
+void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
+
+/// Set the input type's memory scope to the input HIVM Address Space.
+void modifyBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope);
+
+// New helper function to get the updated BaseMemRefType
+BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
+                                             AddressSpaceAttr targetMemScope);
+
+// New helper function to get the updated BaseMemRefType
+BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
+                                             unsigned targetMemScope);
+
 /// Get the root MemRef AllocOp for the input operand, return failure if there
 /// is unsupported Ops on the search path or if the defining op is not a MemRef
 /// AllocOp.
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand);
+
+/// Collect all root memref allocs for the input operand.
+/// Unlike getMemRefAlloc which returns failure for arith::SelectOp, this
+/// function recursively collects allocs from both branches of a SelectOp.
 SmallVector<Value> getMemRefAllocs(Value operand);
 
 SmallVector<Value>
@@ -166,6 +210,9 @@ void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
 // Remove attr from markOp, but use rewriter
 void removeMarkOpAttr(annotation::MarkOp markOp, StringRef attrName,
                       RewriterBase &rewriter, bool removeOp = true);
+
+void removeMarkOpDynamicAttr(annotation::MarkOp markOp, StringRef attrName,
+                             PatternRewriter &rewriter);
 
 // Check whether current for loop is subblock binded.
 bool isSubBlockBindedFor(scf::ForOp op);
@@ -264,6 +311,14 @@ bool isAIVModule(ModuleOp mod);
 TModuleCoreTypeAttr getModuleCoreTypeAttr(ModuleOp mod);
 void setModuleCoreTypeAttr(ModuleOp mod, TModuleCoreType coreType);
 void removeModuleCoreTypeAttr(ModuleOp mod);
+// TODO: move to platform info
+uint32_t getHWAlignBytes(Attribute spaceAttr);
+std::optional<uint32_t> getHWAlignBytes(Type t);
+
+bool isMixModule(ModuleOp mod);
+
+/// Getter setter of the hivm.module_core_type attribute.
+TModuleCoreTypeAttr getModuleCoreTypeAttr(ModuleOp mod);
 
 /// Get user op of the 'op'
 /// Constraints: Skip tensor::CollapseShapeOp/ExpandShapeOp
@@ -281,6 +336,18 @@ Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 SmallVector<int64_t> targetShape,
                                 SmallVector<Value> dynamicSizes,
                                 Type elementType);
+Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
+                          MemRefType memrefType, ValueRange dynamicDims,
+                          ArrayRef<int64_t> staticAllocSize, Type elemType);
+
+bool isLastDimTranspose(hivm::VTransposeOp op);
+
+// Create local workspace of current block
+Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
+                                ArrayRef<int64_t> shape, Type elementType);
+
+Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<int64_t> targetShapes, Type elementType);
 
 // Create local workspace and to_tensor ops. When staticAllocShape is provided,
 // add annotation::MarkOp to mark the static buffer size in byte (for dynamic
@@ -296,6 +363,8 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
 
 /// get Operation alias pair.
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
+
+std::vector<std::pair<Value, Value>> getSCFOperationAliasInfo(Operation *op);
 
 /// Get buffer static size.
 std::optional<int64_t> GetBufferBitSize(Value buffer);
@@ -342,6 +411,26 @@ LogicalResult traceHIVMOpUntil(RewriterBase &rewriter, Operation *op,
   return failure();
 }
 
+// create alloc op with the same shape of source and target elemType,
+// and set buffer size with dynamic sizes
+Value createMemrefAllocOpWithBufferSizeWithTargetElemType(OpBuilder &builder,
+                                                          Location loc,
+                                                          Value source,
+                                                          Type targetElemType);
+
+// create alloc op with the same shape and elemType of source,
+// and set buffer size with dynamic sizes
+Value createMemrefAllocOpWithBufferSize(OpBuilder &builder, Location loc,
+                                        Value source);
+
+/// Infer, propagate, and set memory scope information to PointerCastOp.
+LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op);
+
+/// Infer, propagate, and set memory scope information to AllocOp.
+/// \note Set alloc memory scope to ub/l1.
+LogicalResult inferAndPropagateMemScopeForAlloc(memref::AllocOp op,
+                                                hivm::AddressSpace space);
+
 namespace util {
 enum class BitWidth : uint32_t {
   B1 = 1,
@@ -386,6 +475,29 @@ constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int VNCHWCONV_INTR_BYTES_PER_REPEAT = 512;
 
+constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
+constexpr static unsigned int BLOCK_NUM_PER_VL = 8;
+constexpr static unsigned int VL = BLOCK_NUM_PER_VL * INTR_BYTES_PER_BLOCK;
+constexpr static unsigned int BL = VL / BLOCK_NUM_PER_VL;
+const static int vectorBlockSizeBit = 256;
+const static int srcNumPerRepeatOfVBRCBIntrin = 8;
+
+constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
+constexpr static unsigned int VNCHWCONV_INTR_BYTES_PER_REPEAT = 512;
+
+constexpr static unsigned BITS_PER_BYTE = 8;
+constexpr static unsigned VL_BITS = VL * BITS_PER_BYTE;
+constexpr static unsigned PREDICATE_BITS = 256;
+
+constexpr static unsigned VL_B32 = VL / 4;
+constexpr static unsigned VL_B16 = VL / 2;
+constexpr static unsigned VL_B8 = VL;
+
+// ======= for sync operations =======
+constexpr static unsigned INTRA_BLOCK_FLAG_ID_OFFSET = 16;
+
+bool isFromFunctionArg(mlir::Value v);
+
 // Returns if the given source MemRef type is collapsible with the specified
 // reassociation indices. This function works as a strict extension based
 // on `memref::CollapseShapeOp::isGuaranteedCollapsible`, which has weak
@@ -407,9 +519,54 @@ inline int64_t ceilDiv(int64_t x, int64_t y) { return (x + y - 1) / y; }
 
 bool isLastDimContiguous(Value operand);
 
+/// Refine the reassociations into largest possible continuous parts,ensuring
+/// that all memrefTypes can be collapsed together.
+SmallVector<ReassociationIndices> getContinuousReassociation(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &reassociations);
+
+/// Refine the reassociations into continuous parts. Here reshape dim means
+/// reduce or broadcast dim which cannot be collapsed with non-reshape dim.
+SmallVector<ReassociationIndices>
+getContinuousReassociation(const SmallVectorImpl<MemRefType> &memrefTypes,
+                           ArrayRef<int64_t> reshapeDims = {},
+                           ArrayRef<int64_t> permutations = {});
+
+/// Combine reassociation index groups if the reassociation indices group is not
+/// transposed, and the shape of each memref type corresponding to each index in
+/// the reassociation indices group is 1
+SmallVector<ReassociationIndices> combineReassociationGroups(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &reassociations);
+
+inline int64_t ceilFactor(int64_t x, int64_t y) { return (x + y - 1) / y * y; }
+
+bool isLastDimContiguous(Value operand);
+
+/// Trims non-scalable one dimensions from `oldType` and returns the result
+/// type.
+VectorType trimNonScalableUnitDims(VectorType oldType);
+
+/// check if a vector type is of Vector<dtype> or Vector<1x...xdtype>
+bool isOneDimLikeVecType(VectorType vecType);
+/// Deduce Alignment information for DPS Op's init operand.
+///
+/// If operand has memref semantic, we try to deduce the information from the
+/// memref type. Otherwise, we look for annotations on the tied result value. If
+/// there is conflicting annotations, a warning is produced.
+AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand);
+AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
+
+/// check two operation's sequence
+bool isBefore(Operation *before, Operation *after);
+
 /// Check if the operation is hivm::PointerCastOp with GM space
 /// Used to check if it is lowered from triton::IntToPtrOp
 bool isGMPointerCastOp(Operation *op);
+
+bool isSIMTVF(Operation *op);
+
+BitVector arrayToMask(ArrayRef<int64_t> elements, int maskSize);
 
 bool isArgminOrArgmax(ReduceOperation op);
 
@@ -466,5 +623,10 @@ const std::set<std::string> HWSupportedCast{
     "int8_t_to_half_rintmode",        "int8_t_to_half_truncmode",
     "uint8_t_to_half_rintmode",       "half_to_int32_t_rintmode",
     "half_to_float_truncmode",        "bfloat16_t_to_float_roundmode"};
+    "half_to_float_truncmode",        "bfloat16_t_to_float_roundmode",
+    "uint64_t_to_uint32_t_truncmode",
+    "uint64_t_to_uint32_t_truncwithoverflowmode",
+    "uint32_t_to_int16_t_truncmode",
+    "int16_t_to_uint8_t_truncmode"};
 
 #endif // MLIR_DIALECT_HIVM_UTILS_UTILS_H

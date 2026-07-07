@@ -19,6 +19,9 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/DenseSet.h"
 
 #include <numeric>
@@ -148,6 +151,10 @@ std::optional<TCoreType> DebugOp::inferCoreType() {
   } else {
     mlir::Value arg = this->getArg();
     // first try the definingOp
+    // TODO: After insert load/store refactoring, revert this change and
+    // prioritize getting core type from debug op's info. After refactoring,
+    // debug op's core type will be derived directly from memscope. first try
+    // the definingOp
     Operation *definingOp = arg.getDefiningOp();
     FailureOr<hivm::TCoreType> res;
     if (definingOp) {
@@ -176,6 +183,7 @@ std::optional<TCoreType> DebugOp::inferCoreType() {
       auto srcOp = traceDefOp<HIVMStructuredOp>(definingOp->getResult(0));
       if (srcOp.has_value()) {
         res = getCoreType(srcOp.value());
+        auto res = getCoreType(srcOp.value());
         if (succeeded(res) && (res.value() != TCoreType::CUBE_OR_VECTOR)) {
           this->setTcoretypeAttr(
               hivm::TCoreTypeAttr::get(this->getContext(), res.value()));
@@ -275,6 +283,12 @@ std::optional<TCoreType> LoadOp::inferCoreType() {
 
   auto dstAllocVal =
       dstMemRefTy ? utils::tracebackMemRef(getDst()) : getResult(0);
+  if (auto dstAllocAddrSpace =
+          getOptionalHIVMAddressSpace(dstAllocVal.getType())) {
+    return dstAllocAddrSpace.value() == hivm::AddressSpace::UB
+               ? TCoreType::VECTOR
+               : TCoreType::CUBE;
+  }
   auto userAllCube = utils::checkUsersAllWithCondition(
       dstAllocVal, getOperation(),
       [](Operation *op) {
@@ -354,7 +368,6 @@ std::optional<TCoreType> CopyOp::inferCoreType() {
 std::optional<TCoreType> AtomicRMWOp::inferCoreType() {
   return TCoreType::VECTOR;
 }
-
 std::optional<TCoreType> MatmulOp::inferCoreType() { return TCoreType::CUBE; }
 
 std::optional<TCoreType> MixMatmulOp::inferCoreType() {
@@ -380,5 +393,6 @@ std::optional<TCoreType> VBrcOp::inferCoreType() {
     return TCoreType::VECTOR;
   } else {
     llvm::report_fatal_error("unsupport mem scope for vbrc");
+    llvm_unreachable("unsupport mem scope for vbrc");
   }
 }

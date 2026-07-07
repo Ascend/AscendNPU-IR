@@ -47,6 +47,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/LogicalResult.h"
 
 #include <cassert>
 #include <cstdint>
@@ -86,6 +87,7 @@ calculateWorkspaceByte(ArrayRef<Operation *> allocWorkspaceOps) {
     assert(!allocWorkspaceOp.getOffset().empty() &&
            (allocWorkspaceOp.getOffset().size() <= 2 ||
            allocWorkspaceOp.getOffset().size() == 4) &&
+           allocWorkspaceOp.getOffset().size() <= 2 &&
            "Offset could only be either single or double when infer size");
     std::optional<SmallVector<int64_t>> offsets = getConstantIntValues(
         SmallVector<OpFoldResult>{allocWorkspaceOp.getOffset()});
@@ -137,6 +139,32 @@ void insertInferWorkspaceSizeFunc(func::FuncOp funcOp, int64_t workspaceByte) {
   std::string callbackFuncName = hacc::constructHostFunctionName(
       funcOp.getSymName().str(),
       hacc::HostFuncType::kInferWorkspaceShapeFunction);
+static std::string getWorkspaceShapeFuncName(func::FuncOp funcOp) {
+  auto funcName = funcOp.getSymName();
+  if (funcOp->hasAttr(hivm::TPartOfMixAttr::name)) {
+    auto funcCoreType = funcOp
+                            ->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+                                hivm::TFuncCoreTypeAttr::name)
+                            .getFuncCoreType();
+    if (funcCoreType == hivm::TFuncCoreType::AIC) {
+      auto consumeResult = funcName.consume_back("_mix_aic");
+      assert(consumeResult && "Incorrect suffix of AIC kernel");
+    } else if (funcCoreType == hivm::TFuncCoreType::AIV) {
+      auto consumeResult = funcName.consume_back("_mix_aiv");
+      assert(consumeResult && "Incorrect suffix of AIV kernel");
+    } else {
+      llvm_unreachable(
+          "FuncCoreType must be either AIC or AIV for Splitted kernel");
+    }
+  }
+  return hacc::constructHostFunctionName(
+      funcName.str(), hacc::HostFuncType::kInferWorkspaceShapeFunction);
+}
+
+// ToDo: This function is just enable in triton compilation, and there may be
+// conflicts with `HoistTensorEmptyPass`
+void insertInferWorkspaceSizeFunc(func::FuncOp funcOp, int64_t workspaceByte) {
+  std::string callbackFuncName = getWorkspaceShapeFuncName(funcOp);
   func::FuncOp callbackFunc =
       insertInferWorkspaceSizeFuncImpl(funcOp, workspaceByte, callbackFuncName);
 
@@ -145,6 +173,58 @@ void insertInferWorkspaceSizeFunc(func::FuncOp funcOp, int64_t workspaceByte) {
       callbackFunc, hacc::HostFuncType::kInferWorkspaceShapeFunction);
 }
 
+static LogicalResult modifyInferWorkspaceSizeFunc(func::FuncOp funcOp,
+                                                  BlockArgument subWorkspaceArg,
+                                                  int64_t workspaceByte) {
+  IRRewriter rewriter(funcOp.getContext());
+  auto callbackFuncName =
+      rewriter.getStringAttr(getWorkspaceShapeFuncName(funcOp));
+  auto callbackFunc = llvm::dyn_cast_or_null<func::FuncOp>(
+      SymbolTable::lookupNearestSymbolFrom(funcOp, callbackFuncName));
+  if (!callbackFunc) {
+    callbackFunc =
+        insertInferWorkspaceSizeFuncImpl(funcOp, 0, callbackFuncName);
+    hacc::utils::setHost(callbackFunc);
+    hacc::utils::setHostFuncType(
+        callbackFunc, hacc::HostFuncType::kInferWorkspaceShapeFunction);
+  }
+
+  auto returnOp =
+      cast<func::ReturnOp>(callbackFunc.getBody().front().getTerminator());
+  auto origWorkspaceOp =
+      returnOp.getOperands()[0].getDefiningOp<arith::ConstantIndexOp>();
+  if (!origWorkspaceOp)
+    return callbackFunc->emitOpError()
+           << "WorkspaceShapeFunction does not have static shape";
+  auto origWorkspaceByte = origWorkspaceOp.value();
+  rewriter.setInsertionPoint(origWorkspaceOp);
+  rewriter.replaceOpWithNewOp<arith::ConstantIndexOp>(
+      origWorkspaceOp, origWorkspaceByte + workspaceByte);
+  auto workspaceArg =
+      hacc::utils::getBlockArgument(funcOp, hacc::KernelArgType::kWorkspace)
+          .value();
+
+  // Add offset to all Sub-Workspace
+  rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+  origWorkspaceOp = rewriter.create<arith::ConstantIndexOp>(
+      workspaceArg.getLoc(), origWorkspaceByte);
+  for (auto *op : subWorkspaceArg.getUsers()) {
+    auto allocWorkspaceOp =
+        dyn_cast<bishengir::memref_ext::AllocWorkspaceOp>(op);
+    if (!allocWorkspaceOp)
+      return op->emitOpError()
+             << "Workspace argument is not used by AllocWorkspaceOp";
+    rewriter.setInsertionPoint(op);
+    for (auto &offset : allocWorkspaceOp.getOffsetMutable()) {
+      auto offsetVal = offset.get();
+      offsetVal = rewriter.createOrFold<arith::AddIOp>(
+          offsetVal.getLoc(), origWorkspaceOp, offsetVal);
+      rewriter.modifyOpInPlace(op, [&]() { offset.set(offsetVal); });
+    }
+  }
+  rewriter.replaceAllUsesWith(subWorkspaceArg, workspaceArg);
+  return success();
+}
 } // anonymous namespace
 
 class InsertInferWorkSpaceSizeFuncPass
@@ -169,6 +249,32 @@ void InsertInferWorkSpaceSizeFuncPass::runOnOperation() {
 
   // 2. Insert host callback func to return workspace size
   insertInferWorkspaceSizeFunc(funcOp, *workspaceByte);
+  WalkResult walkResult = getOperation()->walk([&](func::FuncOp funcOp) {
+    SmallVector<Operation *> allocWorkspaceOps =
+        collectAllocWorkspaceOp(funcOp);
+    if (allocWorkspaceOps.empty()) {
+      return WalkResult::advance();
+    }
+
+    // 1. After plan-workspace, here calculate total workspace size
+    auto workspaceByte = calculateWorkspaceByte(allocWorkspaceOps);
+    if (failed(workspaceByte))
+      return WalkResult::interrupt();
+
+    auto subWorkspaceArg = hacc::utils::getBlockArgument(
+        funcOp, hacc::KernelArgType::kSubWorkspace);
+    if (subWorkspaceArg) {
+      if (failed(modifyInferWorkspaceSizeFunc(funcOp, *subWorkspaceArg,
+                                              *workspaceByte)))
+        return WalkResult::interrupt();
+    } else {
+      // 2. Insert host callback func to return workspace size
+      insertInferWorkspaceSizeFunc(funcOp, *workspaceByte);
+    }
+    return WalkResult::advance();
+  });
+  if (walkResult.wasInterrupted())
+    return signalPassFailure();
 }
 
 std::unique_ptr<Pass> mlir::hivm::createInsertInferWorkSpaceSizeFuncPass() {

@@ -16,14 +16,33 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
-#include "bishengir/Tools/bishengir-compile/Config.h"
-#include "mlir/Support/LLVM.h"
-#include "llvm/ADT/StringRef.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
+#include "bishengir/Tools/bishengir-compile/Utility.h"
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+#endif
+
+#include "llvm/ADT/STLExtras.h" // interleaveComma
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h" // report_fatal_error
 #include "llvm/Support/ManagedStatic.h"
 
 using namespace bishengir;
 using namespace llvm;
+using namespace mlir::triton;
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+static proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
+
+namespace bishengir {
+const proton::ConvertProtonToProtonGPUOptions &getProtonGPUCompileConfig() {
+  return protonGPUCompileConfig;
+}
+} // namespace bishengir
+#endif
 
 namespace {
 static cl::OptionCategory featCtrlCategory("BiShengIR Feature Control Options");
@@ -34,11 +53,13 @@ static cl::OptionCategory
     hfusionOptCategory("BiShengIR HFusion Optimization Options");
 static cl::OptionCategory
     hivmOptCategory("BiShengIR HIVM Optimization Options");
+static cl::OptionCategory protonCategory("BiShengIR Proton Options");
 static cl::OptionCategory targetCategory("BiShengIR Target Options");
-static llvm::cl::OptionCategory
-    enableCPURunnerCategory("BiShengIR CPU Runner Options");
+static cl::OptionCategory
+    simtOptCategory("BiShengIR SIMT Optimization Options");
 static cl::OptionCategory
     sharedWithDownstreamToolchainCategory("Options Shared with HIVMC");
+static cl::OptionCategory enableCPURunnerCategory("BiShengIR CPU Runner Options");
 
 /// This class is intended to manage the handling of command line options for
 /// creating bishengir-compile config. This is a singleton.
@@ -53,23 +74,12 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
 #define GEN_OPTION_REGISTRATIONS
 #include "bishengir/Tools/bishengir-compile/CompileOptions.cpp.inc"
 
-    // -------------------------------------------------------------------------//
-    //                        Input & Output setting options
-    // -------------------------------------------------------------------------//
-
-    static cl::opt<std::string, /*ExternalStorage=*/true> inputFilename(
-        cl::Positional, cl::desc("<input file>"), cl::location(inputFileFlag),
-        cl::init("-"));
-
     static cl::opt<std::string, /*ExternalStorage=*/true> outputFile(
         "o", cl::desc("Specify output bin name"), cl::location(outputFileFlag),
         cl::init("-"));
 
-    //===--------------------------------------------------------------------===//
-    //                          CPU Runner Options
-    //===--------------------------------------------------------------------===//
-
-#if MLIR_ENABLE_EXECUTION_ENGINE
+#if (defined(MLIR_ENABLE_EXECUTION_ENGINE) && MLIR_ENABLE_EXECUTION_ENGINE) || \
+    defined(BISHENGIR_ENABLE_EXECUTION_ENGINE)
     static llvm::cl::opt<CPURunnerMetadata<false>, /*ExternalStorage=*/true,
                          CPURunnerMetadataParser<false>>
         enableCPURunner{
@@ -97,10 +107,21 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
                 "and stop the execution."),
             llvm::cl::location(enableCPURunnerAfterFlag),
             llvm::cl::cat(enableCPURunnerCategory)};
-#endif // MLIR_ENABLE_EXECUTION_ENGINE
+#endif
 
-    // when enableSanitizer/enableMemoryDisplay is true, enable
-    // printDebugInfoOpt
+    static cl::opt<int32_t, /*ExternalStorage=*/true> simtStackLimitOpt(
+        "simt-stack-limit",
+        cl::desc("Per-thread stack size limit (bytes) for SIMT kernels. The "
+                 "compiler fails compilation if a kernel's per-thread stack "
+                 "usage exceeds this limit. If unset, the check is skipped "
+                 "— Triton-Ascend owns the policy (env var, default) and "
+                 "always forwards a resolved value. Set to a negative value "
+                 "to disable the check; 0 is a valid (strict) limit."),
+        cl::value_desc("bytes-per-thread"),
+        cl::location(simtStackLimitFlag),
+        cl::cat(sharedWithDownstreamToolchainCategory));
+
+    // when enableSanitizer is true, enable printDebugInfoOpt
     auto &opts = cl::getRegisteredOptions();
     if ((enableSanitizer || enableMemoryDisplay || enableDebugInfo) &&
         (opts.count("mlir-print-debuginfo") != 0)) {
@@ -114,47 +135,49 @@ struct BiShengIRCompileMainConfigCLOptions : public BiShengIRCompileMainConfig {
 ManagedStatic<BiShengIRCompileMainConfigCLOptions> clOptionsConfig;
 
 namespace option_handler {
-template <typename T, bool ExternalStorage>
-std::string handleOpt(const cl::opt<T, ExternalStorage> &opt) {
-  llvm::report_fatal_error("not handled");
-}
 
-template <bool ExternalStorage>
-std::string handleOpt(const cl::opt<bool, ExternalStorage> &opt) {
-  return opt.getValue() ? "true" : "false";
-}
-
-template <bool ExternalStorage>
-std::string handleOpt(const cl::opt<std::string, ExternalStorage> &opt) {
-  return opt.getValue();
-}
-
-#define HANDLE_OPT_INT_OR_FLOAT(TYPE)                                          \
-  template <bool ExternalStorage>                                              \
-  std::string handleOpt(const cl::opt<TYPE, ExternalStorage> &opt) {           \
-    return std::to_string(opt.getValue());                                     \
+template <typename T>
+std::string handleValue(const T &value) {
+  if constexpr (std::is_same_v<T, bool>) {
+    return value ? "true" : "false";
+  } else if constexpr (std::is_same_v<T, std::string>) {
+    return value;
+  } else if constexpr (std::is_integral_v<T>) {
+    return std::to_string(value);
+  } else {
+    llvm_unreachable("not handled");
   }
+}
 
-HANDLE_OPT_INT_OR_FLOAT(unsigned)
+template <typename T, typename ParserT>
+std::string handleGenericParserOpt(ParserT &parser, const T &value) {
+  const cl::OptionValue<T> optValue(value);
+  for (unsigned i = 0, e = parser.getNumOptions(); i != e; ++i)
+    if (optValue.compare(parser.getOptionValue(i)))
+      return parser.getOption(i).str();
+  llvm_unreachable("failed to stringify option value");
+}
 
-template <bool ExternalStorage>
-std::string
-handleOpt(const cl::opt<MultiBufferStrategy, ExternalStorage> &opt) {
-  const std::map<MultiBufferStrategy, std::string> keyMap = {
-      {MultiBufferStrategy::NO_LIMIT, "no-limit"},
-      {MultiBufferStrategy::ONLY_CUBE, "only-cube"},
-      {MultiBufferStrategy::ONLY_VECTOR, "only-vector"},
-      {MultiBufferStrategy::CUBE_NO_L0C, "no-l0c"},
-  };
-  return keyMap.at(opt.getValue());
+template <typename T, bool ExternalStorage>
+std::string handleOpt(cl::opt<T, ExternalStorage> &opt) {
+  if constexpr (std::is_base_of_v<
+                           cl::generic_parser_base,
+                           std::remove_reference_t<decltype(opt.getParser())>>) {
+    return handleGenericParserOpt(opt.getParser(), opt.getValue());
+  } else {
+    return handleValue(opt.getValue());
+  }
 }
 } // namespace option_handler
 
-void BiShengIRCompileMainConfig::collectHIVMCArgs() {
+void BiShengIRCompileMainConfig::collectHIVMCArgs(
+    BiShengIRCompileMainConfig &config) {
   std::vector<std::string> collectedArgs;
   auto &opts = cl::getRegisteredOptions();
-  // Warning: please do not modify this part unless you know what you're doing.
   for (auto &[optStr, opt] : opts) {
+    if (opt->getNumOccurrences() == 0)
+      continue;
+
     std::string optValue = "";
 
 #define GEN_OPTION_COLLECTION
@@ -166,15 +189,15 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
     collectedArgs.push_back(optStr.str() + "=" + optValue);
   }
 
-  for (auto &args : clOptionsConfig->getHIVMCArgs()) {
+  for (auto &args : config.getHIVMCArgs()) {
     if (args.empty())
       continue;
 
     for (auto arg : llvm::split(args, " "))
+      if (!arg.empty())
       collectedArgs.push_back(arg.str());
   }
 
-  // collect all --link-aicore-bitcode args and merge them
   std::vector<std::string> filteredArgs;
   for (const auto &arg : collectedArgs) {
     llvm::StringRef argRef(arg);
@@ -185,9 +208,8 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
   }
   collectedArgs = std::move(filteredArgs);
 
-  // Collect .bc paths from --link-aicore-bitcode only.
   std::vector<std::string> linkPaths;
-  for (const auto &path : clOptionsConfig->getLinkAicoreBitcode()) {
+  for (const auto &path : config.getLinkAicoreBitcode()) {
     if (!path.empty())
       linkPaths.push_back(path);
   }
@@ -201,7 +223,19 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
     collectedArgs.push_back(std::move(linkOpt));
   }
 
-  clOptionsConfig->setHIVMCArgs(collectedArgs);
+  config.setHIVMCArgs(collectedArgs);
+}
+
+bool BiShengIRCompileMainConfig::isSharedWithDownstreamToolchain(
+    llvm::StringRef argName) {
+  auto &opts = cl::getRegisteredOptions();
+  auto it = opts.find(argName);
+  if (it == opts.end())
+    return true;
+
+  return llvm::any_of(it->second->Categories, [](const cl::OptionCategory *cat) {
+    return cat == &sharedWithDownstreamToolchainCategory;
+  });
 }
 
 void BiShengIRCompileMainConfig::registerCLOptions() {
@@ -210,6 +244,15 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 }
 
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {
-  BiShengIRCompileMainConfig::collectHIVMCArgs();
+  BiShengIRCompileMainConfig::collectHIVMCArgs(*clOptionsConfig);
+  // Enforce <= 3 items
+  if (clOptionsConfig->getSimtTritonGrid().size() > 3) {
+    report_fatal_error(
+        "Invalid --simt-triton-grid: at most 3 elements allowed x,y,z.\n");
+  }
+  StringTmpPath path(clOptionsConfig->getOutputFile());
+  llvm::cantFail(llvm::errorCodeToError(canonicalizePath(path)),
+                 "failed to canonicalize output file path.");
+  clOptionsConfig->setOutputFile(path.str().str());
   return *clOptionsConfig;
 }

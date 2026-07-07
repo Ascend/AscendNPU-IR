@@ -19,6 +19,12 @@
 // Original Source:
 // https://github.com/llvm/torch-mlir/blob/main/lib/Conversion/TorchToLinalg/TensorConstructors.cpp
 //===----------------------------------------------------------------------===//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Also available under a BSD-style license. See LICENSE.
+//
+//===-----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/TorchToHFusion/PopulatePatterns.h"
 #include "bishengir/Conversion/TorchToHFusion/TorchToHFusion.h"
@@ -81,6 +87,7 @@ public:
         return failure();
       }
       extractedInt = static_cast<int>(constOp.getValue());
+      extractedInt = constOp.getValue();
       return success();
     };
 

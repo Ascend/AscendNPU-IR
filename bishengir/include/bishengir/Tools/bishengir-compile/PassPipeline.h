@@ -18,13 +18,36 @@
 #ifndef BISHENGIR_TOOLS_BISHENGIR_COMPILE_PASSPIPELINE_H
 #define BISHENGIR_TOOLS_BISHENGIR_COMPILE_PASSPIPELINE_H
 
+#include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Tools/bishengir-compile/Config.h"
+
+#include "mlir/Pass/PassOptions.h"
+
 
 namespace bishengir {
 
 /// Build the pipelines of BiShengHIR from config.
 void buildBiShengHIRPipeline(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config);
+
+/// Build the pipelines of lowering BiShengHIR to LLVM from config.
+void buildBiShengHIRAVEToLLVMPipeline(mlir::OpPassManager &pm,
+                                      const BiShengIRCompileMainConfig &config);
+void buildLowerToLLVMPipeline(mlir::OpPassManager &pm,
+                              const BiShengIRCompileMainConfig &config);
+void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
+                                   const BiShengIRCompileMainConfig &config);
+
+void buildBiShengTTIRPipeline(mlir::OpPassManager &pm,
+                              const BiShengIRCompileMainConfig &config);
+
+void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
+                             const BiShengIRCompileMainConfig &config);
+
+/// Build the SIMT pipeline.
+void buildSIMTPipeline(mlir::OpPassManager &pm,
+                       const BiShengIRCompileMainConfig &config);
+
 
 /// Register a pass that compiles module into binary.
 void registerBiShengIRCompilePass();

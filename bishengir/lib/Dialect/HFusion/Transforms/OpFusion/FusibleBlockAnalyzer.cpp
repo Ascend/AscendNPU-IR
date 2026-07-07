@@ -536,6 +536,8 @@ bool FusibleBlockAnalyzer::isRestrictedByShapePivot(int nodeA, int nodeB) {
     llvm::report_fatal_error("Fusion kind is not supported");
   }
   return true;
+    llvm_unreachable("Fusion kind is not supported");
+  }
 }
 
 void FusibleBlockAnalyzer::reinitTopoRank() {

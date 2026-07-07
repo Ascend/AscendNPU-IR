@@ -19,8 +19,10 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -45,7 +47,7 @@ constexpr static llvm::StringLiteral kPostVectorFuncArgsTagName =
     "post_vector_func_args";
 
 //===----------------------------------------------------------------------===//
-// Conversion to HIVM Local MatmulOp
+// Conversion to HIVM Local MatmulOp (membase version)
 //===----------------------------------------------------------------------===//
 
 template <typename T,
@@ -211,6 +213,10 @@ private:
   Value mmadL0C_;
   Value initCondition_;
 };
+
+//===----------------------------------------------------------------------===//
+// MmadL1InfoCollector method definitions (membase version)
+//===----------------------------------------------------------------------===//
 
 template <typename T, typename U>
 SmallVector<Type> MmadL1InfoCollector<T, U>::getMmadL1OpResultTypes() const {
@@ -456,6 +462,258 @@ Value MmadL1InfoCollector<T, U>::stripUnrealizedConversionCast(Value v) {
   return v;
 }
 
+//===----------------------------------------------------------------------===//
+// Conversion to HIVM Local MatmulOp (regbase version)
+//===----------------------------------------------------------------------===//
+
+template <typename T,
+          typename = std::enable_if_t<std::is_same_v<T, linalg::MatmulOp> ||
+                                      std::is_same_v<T, linalg::BatchMatmulOp>>>
+class MmadL1InfoCollector_regbase {
+public:
+  explicit MmadL1InfoCollector_regbase(const T op) : op_(op) {
+    mmadL1A_ = op_.getDpsInputOperand(0)->get();
+    if (auto l1ATransposeOp = mmadL1A_.getDefiningOp<linalg::TransposeOp>()) {
+      transposeA_ = true;
+      mmadL1A_ = l1ATransposeOp.getInput();
+    }
+    mmadL1B_ = op_.getDpsInputOperand(1)->get();
+    if (auto l1BTransposeOp = mmadL1B_.getDefiningOp<linalg::TransposeOp>()) {
+      transposeB_ = true;
+      mmadL1B_ = l1BTransposeOp.getInput();
+    }
+
+    std::string inputPrecisionStr{"input_precision"};
+    if (auto attr = op_->getAttr(inputPrecisionStr)) {
+      if (dyn_cast<StringAttr>(attr).getValue() == "hf32") {
+        enableHF32_ = true;
+      }
+    }
+
+    mmadL0C_ = op_.getDpsInitOperand(0)->get();
+  }
+
+  T getSourceMatmulOp() const { return op_; };
+
+  template <typename ReplaceOpTy>
+  Operation *getReplacementOp(PatternRewriter &rewriter) {
+    // Stub value 0 for mkn
+    auto constZero = rewriter.create<arith::ConstantIndexOp>(
+        getSourceMatmulOp().getLoc(), 0);
+    auto newOp = rewriter.template create<ReplaceOpTy>(
+        getSourceMatmulOp().getLoc(),
+        getMmadL1OpResultTypes(),          // result types
+        mmadL1A_,                          // Matrix A on L1
+        mmadL1B_,                          // Matrix B on L1
+        initCondition_,                    // L0C init condition
+        constZero,                         // MMAD Real M
+        constZero,                         // MMAD Real K
+        constZero,                         // MMAD Real N
+        mmadL0C_,                          // init operand
+        Value{},                           // per channel bias
+        getMmadL1TransposeAFlag(rewriter), // transpose A
+        getMmadL1TransposeBFlag(rewriter), // transpose B
+        getMmadL1EnableHF32Flag(rewriter)  // enable hf32 mode
+    );
+    return newOp.getOperation();
+  }
+
+  /// MMAD Init condition is inferred from the scf.for enclosing the matmul
+  /// operation.
+  void extractInitCondition(PatternRewriter &rewriter);
+
+private:
+  /// Information related to the init tensor.
+  struct InitTensorInfo {
+    /// Current value to inspect.
+    Value currentValue;
+    /// Init condition.
+    Value currentCondition;
+    /// Init tensor's argument index.
+    unsigned int initTensorIterArgIndex{0};
+    /// Pointer to the outermost scf::ForOp that uses the init tensor.
+    Operation *initTensorOutermostLoop{nullptr};
+  };
+
+  /// Helper function to set init flag to true when prove MmadL1 destination(c)
+  /// is empty space with `isZeroOrEmptyTensor` func
+  /// For loop state which outermost intialization of dst satisfies empty space,
+  /// here use recursion to gradually build up the init flag
+  LogicalResult buildInitCondition(InitTensorInfo &info,
+                                   PatternRewriter &rewriter) const;
+
+  /// Insert and use new init tensor in linalg::MatmulOp/BatchMatmulOp.
+  void insertAndUseNewInitTensor(InitTensorInfo info,
+                                 PatternRewriter &rewriter);
+
+  SmallVector<Type> getMmadL1OpResultTypes() const;
+  UnitAttr getMmadL1TransposeAFlag(OpBuilder &rewriter) const;
+  UnitAttr getMmadL1TransposeBFlag(OpBuilder &rewriter) const;
+  UnitAttr getMmadL1EnableHF32Flag(OpBuilder &rewriter) const;
+
+  /// Original Op
+  T op_;
+  /// Attributes for MmadL1Op
+  bool transposeA_{false};
+  bool transposeB_{false};
+  bool enableHF32_{false};
+
+  /// Operands for MmadL1Op
+  Value mmadL1A_;
+  Value mmadL1B_;
+  Value mmadL0C_;
+  Value initCondition_;
+};
+
+//===----------------------------------------------------------------------===//
+// MmadL1InfoCollector_regbase method definitions
+//===----------------------------------------------------------------------===//
+
+template <typename T, typename U>
+SmallVector<Type> MmadL1InfoCollector_regbase<T, U>::getMmadL1OpResultTypes() const {
+  return SmallVector<Type>{op_->getResultTypes()};
+}
+
+template <typename T, typename U>
+UnitAttr
+MmadL1InfoCollector_regbase<T, U>::getMmadL1TransposeAFlag(OpBuilder &rewriter) const {
+  return transposeA_ ? rewriter.getUnitAttr() : UnitAttr();
+}
+
+template <typename T, typename U>
+UnitAttr
+MmadL1InfoCollector_regbase<T, U>::getMmadL1TransposeBFlag(OpBuilder &rewriter) const {
+  return transposeB_ ? rewriter.getUnitAttr() : UnitAttr();
+}
+
+template <typename T, typename U>
+UnitAttr
+MmadL1InfoCollector_regbase<T, U>::getMmadL1EnableHF32Flag(OpBuilder &rewriter) const {
+  return enableHF32_ ? rewriter.getUnitAttr() : UnitAttr();
+}
+
+template <typename T, typename U>
+void MmadL1InfoCollector_regbase<T, U>::extractInitCondition(
+    PatternRewriter &rewriter) {
+  InitTensorInfo initInfo;
+  initInfo.currentValue = mmadL0C_;
+
+  // Defaultly create init flag as 'true' for state where MmadL1 destination
+  // could be inferred as zero data
+  // only applied for affinity pattern
+  // TODO: need to be reverted when Affinity GMM supported
+  auto moduleOp = op_->template getParentOfType<ModuleOp>();
+  bool isDisableHfusionVectorize = false;
+  if (moduleOp) {
+    isDisableHfusionVectorize = moduleOp->hasAttr("hfusion.disableHfusionVectorize");
+  }
+  auto scopeOp = op_->template getParentOfType<scope::ScopeOp>();
+  if ((scopeOp && !scopeOp->hasAttr(hivm::MatmulLimitedInCubeAttr::name)) ||
+      isDisableHfusionVectorize) {
+    initInfo.currentCondition = rewriter.create<arith::ConstantIntOp>(
+        op_->getLoc(), /*value*/ 1, /*width*/ 1);
+    // Get defining op for init tensor and build up condition
+    if (succeeded(buildInitCondition(initInfo, rewriter))) {
+      initCondition_ = initInfo.currentCondition;
+      insertAndUseNewInitTensor(initInfo, rewriter);
+      return;
+    }
+  }
+
+  // Move all init c matmul functions to normalize-matmul,
+  // init flag should be `false` as MmadL1 destination(c) has
+  // meaningful value
+  initCondition_ = rewriter.create<arith::ConstantIntOp>(
+      op_->getLoc(), /*value*/ 0, /*width*/ 1);
+}
+
+template <typename T, typename U>
+LogicalResult
+MmadL1InfoCollector_regbase<T, U>::buildInitCondition(InitTensorInfo &info,
+                                              PatternRewriter &rewriter) const {
+  // If current destination value satisfies empty space, return
+  if (hfusion::isZeroOrEmptyTensor(info.currentValue)) {
+    return success();
+  }
+  // Currently, we can only handle cases where the current value is an iter
+  // argument for a scf::ForOp.
+  // Then, consider case where current dst value is an iter argument of
+  // scf::ForOp and then trace for `ZeroOrEmptyTensor` continually
+  // Otherwise, we think MmadL1 dst has meaningful value for accumulation
+  auto blockArg = dyn_cast_if_present<BlockArgument>(info.currentValue);
+  if (!blockArg) {
+    return failure();
+  }
+  auto scfForOp =
+      dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
+  if (!scfForOp) {
+    return failure();
+  }
+  // Bail out if the iter_arg has any non-forwarding user other than op_:
+  // such a user would observe the un-filled tensor.empty on the first
+  // iteration once the fill is stripped.
+  for (Operation *user : blockArg.getUsers()) {
+    if (user == op_)
+      continue;
+    if (isa<scf::ForOp, scf::YieldOp>(user))
+      continue;
+    return failure();
+  }
+  OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg);
+  if (!iterArgOperand) {
+      return failure();
+  }
+  // Update information.
+  info.initTensorOutermostLoop = scfForOp.getOperation();
+  info.initTensorIterArgIndex = iterArgOperand->getOperandNumber();
+  info.currentValue = iterArgOperand->get();
+  auto loc = info.currentCondition.getLoc();
+  // Init condition for current loop is `(iv == lower_bound)`
+  auto additionalCondition = rewriter.create<arith::CmpIOp>(
+      loc, arith::CmpIPredicate::eq, scfForOp.getLowerBound(),
+      scfForOp.getInductionVar());
+  // Joint condition is `((iv == lower_bound) && currentCondition)`
+  info.currentCondition = rewriter.create<arith::AndIOp>(
+      loc, info.currentCondition, additionalCondition);
+  return buildInitCondition(info, rewriter);
+}
+
+template <typename T, typename U>
+void MmadL1InfoCollector_regbase<T, U>::insertAndUseNewInitTensor(
+    InitTensorInfo info, PatternRewriter &rewriter) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  bool usedInLoop = info.initTensorOutermostLoop != nullptr;
+  // If initTensorOutermostLoop is not defined, it means that there is no
+  // loop that uses current init tensor as iter arg. So we can insert the
+  // new tensor wherever we like. Otherwise, insert the new init tensor
+  // right before the loop.
+  if (usedInLoop) {
+    rewriter.setInsertionPoint(info.initTensorOutermostLoop);
+  }
+  Value newInitResult = info.currentValue;
+  auto linalgFill = info.currentValue.template getDefiningOp<linalg::FillOp>();
+  if (linalgFill) {
+    auto newInit = rewriter.clone(
+        *(linalgFill.getDpsInitOperand(0)->get().getDefiningOp()));
+    newInitResult = newInit->getResults().front();
+  }
+
+  if (usedInLoop) {
+    // If the init tensor is passed into the for loop as an iter arg,
+    // we only need to replace the block argument.
+    auto scfForOp = dyn_cast<scf::ForOp>(info.initTensorOutermostLoop);
+    assert(scfForOp);
+    rewriter.modifyOpInPlace(scfForOp, [&]() {
+      scfForOp->setOperand(info.initTensorIterArgIndex, newInitResult);
+    });
+
+    return;
+  }
+  Value oldInit = mmadL0C_;
+  op_->replaceUsesOfWith(oldInit, newInitResult);
+  mmadL0C_ = newInitResult;
+}
+
 template <typename T,
           typename = std::enable_if_t<std::is_same_v<T, linalg::MatmulOp> ||
                                       std::is_same_v<T, linalg::BatchMatmulOp>>>
@@ -490,6 +748,29 @@ public:
       return failure();
     }
     MmadL1InfoCollector<T, U> info(op);
+    // Get L0C init condition.
+    info.extractInitCondition(rewriter);
+
+    rewriter.replaceOp(info.getSourceMatmulOp(),
+                       info.template getReplacementOp<U>(rewriter));
+    return success();
+  }
+};
+
+/// Rewriting rule that combines Linalg Ops to create hivm mmadl1 like op
+/// (regbase version using MmadL1InfoCollector_regbase)
+template <typename T>
+class FuseOpsToMmadL1LikeOp_regbase : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+  using U = typename MadLikeMapping<T>::U;
+
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics()) {
+      return failure();
+    }
+    MmadL1InfoCollector_regbase<T, U> info(op);
     // Get L0C init condition.
     info.extractInitCondition(rewriter);
 
@@ -657,12 +938,74 @@ struct MatmulOpToHIVMMatmulOp : public OpRewritePattern<SrcOp> {
 
 } // namespace
 
+mlir::hivm::HIVMMatmulDataformat convertDataformat(mlir::hfusion::Dataformat fmt) {
+  switch (fmt) {
+    case mlir::hfusion::Dataformat::FP8E5M2_T:
+      return mlir::hivm::HIVMMatmulDataformat::FP8E5M2_T;
+    case mlir::hfusion::Dataformat::FP8E4M3_T:
+      return mlir::hivm::HIVMMatmulDataformat::FP8E4M3_T;
+    case mlir::hfusion::Dataformat::FP4E2M1_T:
+      return mlir::hivm::HIVMMatmulDataformat::FP4E2M1_T;
+  }
+  llvm_unreachable("unsupported Dataformat");
+}
+
+
+template <>
+struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
+    public OpRewritePattern<hfusion::MatMulMxOp> {
+
+  using OpRewritePattern<hfusion::MatMulMxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::MatMulMxOp op,
+                                PatternRewriter &rewriter) const override {
+    // convert hfusion::MatMulMxOp to hivm::MmadMxL1Op
+    OpBuilder::InsertionGuard guard(rewriter);
+    auto acc = op.getAcc();
+    auto zeroCst = rewriter.create<arith::ConstantOp>(op->getLoc(),
+                                                      rewriter.getIndexAttr(0));
+    Operation *initCondition;
+    Operation *newResult;
+    auto lhsFmt = op.getLhsFormat();
+    auto rhsFmt = op.getRhsFormat();
+    auto lhsAttr = lhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*lhsFmt)) : nullptr;
+    auto rhsAttr = rhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*rhsFmt)) : nullptr;
+    if (!isa<BlockArgument>(acc) &&
+        (isa<tensor::EmptyOp>(acc.getDefiningOp()) ||
+         isa<linalg::FillOp>(acc.getDefiningOp()))) {
+      // TODO:: we probably need a way to fill it with 0 in fp8 format. need
+      // many work to do that. Or maybe it's ok to just dont fill it. auto
+      // zeroCstAcc = rewriter.create<arith::ConstantOp>(op->getLoc(),
+      // rewriter.getFloatAttr(0)); rewriter.create<linalg::FillOp>(
+      //   op->getLoc(), ValueRange(zeroCstAcc), ValueRange(acc));
+      auto empty = rewriter.create<tensor::EmptyOp>(
+          op->getLoc(), cast<TensorType>(acc.getType()), ValueRange{});
+      initCondition = rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getBoolAttr(true));
+      newResult = rewriter.create<hivm::MmadMxL1Op>(
+          op->getLoc(), op->getResultTypes(), op.getInputA(), op.getInputB(),
+          op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst,
+          zeroCst, zeroCst, empty->getResults()[0], lhsAttr, rhsAttr, ValueRange{});
+    } else {
+      initCondition = rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getBoolAttr(false));
+      newResult = rewriter.create<hivm::MmadMxL1Op>(
+          op->getLoc(), op->getResultTypes(), op.getInputA(), op.getInputB(),
+          op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst, zeroCst,
+          zeroCst, acc, lhsAttr, rhsAttr, ValueRange{});
+    }
+
+    rewriter.replaceOp(op, newResult);
+    return success();
+  }
+};
+
 void mlir::populateMatmulPatternsAndLegality(
     RewritePatternSet &patterns, ConversionTarget &target,
     const ConvertHFusionToHIVMOptions &options) {
   target.addIllegalOp<linalg::MatmulOp, linalg::BatchMatmulOp,
                       linalg::MatmulTransposeAOp, linalg::MatmulTransposeBOp,
-                      hfusion::GroupMatmulOp>();
+                      hfusion::GroupMatmulOp, hfusion::MatMulMxOp>();
   if (options.mmMapMode == mlir::hfusion::MmMapMode::MacroInstr) {
     patterns.add<FuseOpsToMmadL1LikeOp<linalg::MatmulOp>>(
         patterns.getContext());
@@ -678,4 +1021,6 @@ void mlir::populateMatmulPatternsAndLegality(
     patterns.add<MatmulOpToHIVMMatmulOp<hfusion::GroupMatmulOp>>(
         patterns.getContext());
   }
+  patterns.add<MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp>>(
+      patterns.getContext());
 }

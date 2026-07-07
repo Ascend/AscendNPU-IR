@@ -41,6 +41,7 @@ using namespace mlir;
 
 LLVM_ATTRIBUTE_UNUSED static void printKeepMask(
     raw_ostream &os, const llvm::SmallBitVector &keep) {
+static void printKeepMask(raw_ostream &os, const llvm::SmallBitVector &keep) {
   os << '[';
   for (unsigned i = 0, e = keep.size(); i != e; ++i)
     os << (keep.test(i) ? '1' : '0');
@@ -1693,6 +1694,7 @@ struct CanonicalizeIterArgPass
       // simpler use-driven removal semantics, and the backward rebuild has
       // been observed to interact badly with vector-only rewrites.
       if (!funcOp->hasAttr("hivm.vector_function")) {
+      if (!funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
         patterns.insert<RemoveDeadIterArgBackwardForPattern,
                         RemoveDeadIterArgBackwardWhilePattern>(
             patterns.getContext());

@@ -97,6 +97,8 @@ static bool emitPassOptions(const RecordKeeper &records, raw_ostream &OS,
   StringMap<SmallVector<ConfigOption>> passGroup2Options;
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);
+    if (!cfgOpt.shouldEmitPassOption())
+      continue;
     std::vector<StringRef> groups = cfgOpt.getPassGroups();
     passGroup2Options["ALL"].emplace_back(R);
     if (groups.empty())

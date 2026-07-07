@@ -71,6 +71,10 @@ set_cbuf_to_2d_intrin_core(set2d_intrin_args<T> args) {
   }
 
 extern "C" {
+#if defined(__DAV_C310__)
+DECLARE_SET2D_FP8(cbuf, 1, float8_e4m3_t);
+DECLARE_SET2D_FP8(cbuf, 1, float8_e5m2_t);
+#endif
 DECLARE_SET2D(cbuf, 1, int8_t);
 DECLARE_SET2D(cbuf, 1, half);
 DECLARE_SET2D(cbuf, 1, float);

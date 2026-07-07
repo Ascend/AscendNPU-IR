@@ -24,12 +24,14 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_VECTOR_BASE}
   ${HIVM_CANONICALIZATIONS}
   ${HIVM_CUSTOM_OP}
+  HIVM.cpp
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
   HIVMDialectExtension.cpp
   HIVMDMAOps.cpp
   HIVMImpl.cpp
   HIVMInterfaces.cpp
+  HIVMIntrinOps.cpp
   HIVMMacroOps.cpp
   HIVMOps.cpp
   HIVMSynchronizationOps.cpp
@@ -37,6 +39,9 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   HIVMVectorOps.cpp
   StoreLikeOpInterface.cpp
   ../Utils/Utils.cpp
+  Vectorize/VectorizeElementwise.cpp
+  Vectorize/VectorizeReduce.cpp
+  Vectorize/Utils.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
@@ -48,6 +53,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   BiShengIRHIVMAttributesIncGen
   BiShengIRHIVMDMAOpsIncGen
   BiShengIRHIVMInterfacesIncGen
+  BiShengIRHIVMIntrinOpsIncGen
   BiShengIRHIVMMacroOpsIncGen
   BiShengIRHIVMVectorOpsIncGen
   BiShengIRHIVMSynchronizationOpsIncGen
@@ -56,6 +62,10 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   LINK_LIBS PUBLIC
   BiShengIRAnnotationDialect
   BiShengIRScopeDialect
+  BiShengIRDialectUtils
+  BiShengIRHACCDialect
+  BiShengIRHACCUtils
+  BiShengIRMemRefExtDialect
   MLIRBufferizationDialect
   MLIRArithDialect
   MLIRDestinationStyleOpInterface
@@ -63,13 +73,9 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
-  BiShengIRMemRefExtDialect
-  MLIRSideEffectInterfaces
   MLIRSCFDialect
-  MLIRTransformUtils
+  MLIRSideEffectInterfaces
   MLIRTensorDialect
+  MLIRTransformUtils
   MLIRViewLikeInterface
-  BiShengIRDialectUtils
-  BiShengIRHACCDialect
-  BiShengIRHACCUtils
 )

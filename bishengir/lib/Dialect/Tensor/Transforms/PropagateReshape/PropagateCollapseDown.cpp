@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
+#include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagatableOp.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -35,7 +36,9 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
+#include "llvm/ADT/SmallVector.h"
 
+#include <optional>
 #include <type_traits>
 
 #define DEBUG_TYPE "propagate-reshape-collapse-down"
@@ -53,7 +56,6 @@ using namespace mlir::hfusion::reshape_utils;
 using namespace mlir::utils::debugger;
 
 namespace {
-
 // %a = collapse_shape %arg0
 // %b = elemwise_binary(%a, %arg1), outs(%c);
 //
@@ -106,6 +108,57 @@ LogicalResult handleElementwiseOp(tensor::CollapseShapeOp collapseOp,
   updateDefiningOp(userOp, rewriter, newOperands);
   collapseAndReplace(rewriter, collapseOp, userOp->getResult(0), userOp);
   collapseAndReplace(rewriter, collapseOp, *oldDpsInits.begin(), userOp);
+  return success();
+}
+
+// %a = collapse_shape %arg0
+// %b = flip %a, axis
+//
+// |
+// v
+//
+// %a = collapse_shape %arg0
+// %newA = flip %arg0, newAxis
+// %newB = collapse_shape %newA
+// %newB replace %b
+LogicalResult handleFlipOp(tensor::CollapseShapeOp collapseOp,
+                           PatternRewriter &rewriter, Operation *userOp) {
+  auto flipOp = cast<hfusion::FlipOp>(userOp);
+
+  // Step 1: Acquire info
+  // Get original flipAxis and reassociation indices
+  auto flipAxis = flipOp.getFlipAxis();
+  auto reassociation = collapseOp.getReassociationIndices();
+
+  if (flipAxis >= reassociation.size() || reassociation[flipAxis].empty()) {
+    return collapseOp.emitOpError("invalid flipAxis for reassociation");
+  }
+  // if flipAxis is collapsed, collapseDown forbidden
+  if (reassociation[flipAxis].size() > 1U) {
+    return failure();
+  }
+
+  // Step 2: Calculate the new flip axis
+  uint64_t newFlipAxis = (uint64_t)reassociation[flipAxis][0];
+
+  LLVM_DEBUG(llvm::dbgs() << "Try to push " << collapseOp << " after a flip "
+                          << *userOp << ";\n Flip Axis: " << flipAxis << "\n";);
+
+  // Step 3: rewriter
+  auto collapseSrc = collapseOp.getSrc();
+  rewriter.setInsertionPointAfterValue(collapseSrc);
+
+  auto srcTy = cast<RankedTensorType>(collapseSrc.getType());
+  // add new flip operation
+  auto newFlipOp = rewriter.create<hfusion::FlipOp>(flipOp->getLoc(), srcTy,
+                                                    collapseSrc, newFlipAxis);
+  // add new collapse operation
+  auto newCollapseOutType = flipOp->getResultTypes()[0];
+  auto newCollapseOp = rewriter.create<tensor::CollapseShapeOp>(
+      collapseOp.getLoc(), newCollapseOutType, newFlipOp->getResult(0),
+      reassociation);
+  // old flip replaced by new collapse
+  rewriter.replaceOp(flipOp, newCollapseOp);
   return success();
 }
 
@@ -983,6 +1036,8 @@ LogicalResult handlePadOp(tensor::CollapseShapeOp collapseOp,
   auto collapseSrc = collapseOp.getSrc();
   // Rank and reassociation shall be the same
   assert(reassociation.size() == padOp.getSource().getType().getRank());
+  assert(ssize_t(reassociation.size()) ==
+         padOp.getSource().getType().getRank());
   // We need to expand them first, and then collapse them
   SmallVector<OpFoldResult> newPadLow;
   SmallVector<OpFoldResult> newPadHigh;
@@ -991,6 +1046,7 @@ LogicalResult handlePadOp(tensor::CollapseShapeOp collapseOp,
   // %b = pad %a
   auto dimensionResult = utils::getShape(collapseSrc.getType());
   assert(dimensionResult.size() == reassociation.back().back() + 1);
+  assert(ssize_t(dimensionResult.size()) == reassociation.back().back() + 1);
   auto oldExpandOutputShape =
       getMixedSizes(rewriter, collapseOp.getLoc(), collapseSrc);
 
@@ -1043,6 +1099,7 @@ LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
   SmallVector<OpFoldResult> newMixedSizes;
   SmallVector<OpFoldResult> newMixedStrides;
   SmallVector<OpFoldResult> dummyExpand;
+  SmallVector<ReassociationIndices> newReasso;
   auto res = getExtractSliceModifyingOp(
       rewriter, cast<ExtractSliceOp>(userOp), reassociation,
       getMixedSizesOrOutputShape(rewriter, collapseOp.getSrc()),
@@ -1057,6 +1114,22 @@ LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
   auto extractSliceOpResultShape =
       utils::getShape(extractSliceOp.getResult().getType());
   collapseAndReplace(rewriter, reassociation, extractSliceOpResultShape,
+      dummyExpand, newReasso);
+  if (res.failed())
+    return failure();
+  auto loc = userOp->getLoc();
+
+  // TODO: maybe more aggressively drop newly generated unit dims
+  auto rankReducedExpandedType = getRankReducingType(
+      newMixedSizes, reassociation, extractSliceOp.getDroppedDims(),
+      extractSliceOp.getType().getElementType());
+
+  auto newExtractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      loc, rankReducedExpandedType, collapseOp.getSrc(), newMixedOffsets,
+      newMixedSizes, newMixedStrides);
+  auto extractSliceOpResultShape =
+      utils::getShape(extractSliceOp.getResult().getType());
+  collapseAndReplace(rewriter, newReasso, extractSliceOpResultShape,
                      extractSliceOp.getResult(), newExtractSliceOp.getResult(),
                      userOp);
   rewriter.eraseOp(extractSliceOp);
@@ -1074,6 +1147,14 @@ LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
   SmallVector<OpFoldResult> newMixedStrides;
   SmallVector<OpFoldResult> expandSrcOutputShape;
   SmallVector<OpFoldResult> expandDestOutputShape;
+  SmallVector<ReassociationIndices> newReasso;
+  auto dropDims = insertSliceOp.getDroppedDims();
+  auto expandedShape =
+      getMixedSizesOrOutputShape(rewriter, collapseOp.getSrc());
+  if (isUnitDimReshape(convertToConstantValues(expandedShape), reassociation)) {
+    // skip collapseShape that only add unit dims
+    return failure();
+  }
   // will expand this both
   // Collapse <AxBxCxf32>
   //          <D  xCxf32>
@@ -1096,12 +1177,46 @@ LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
                                      reassociation, expandSrcOutputShape);
   auto expandedNewDest = createExpand(rewriter, loc, insertSliceOp.getDest(),
                                       reassociation, expandDestOutputShape);
+  // consider rank-reducing case
+  expandedShape =
+      isSrcCollapsed ? getUndroppedExpandedSubviewShape(rewriter, expandedShape,
+                                                        reassociation, dropDims)
+                     : expandedShape;
+  // If the collapsed one is the source, it means it is a subview,
+  // inserting [16] (source) -> [24] (dest)
+  LDBG("collapse src: " << collapseOp.getSrc());
+  LDBG("expandedShape " << to_string(convertToConstantValues(expandedShape)));
+  auto res = getInsertSliceModifyingOp(
+      rewriter, cast<InsertSliceOp>(userOp), reassociation, expandedShape,
+      isSrcCollapsed, newMixedOffsets, newMixedSizes, newMixedStrides,
+      expandSrcOutputShape, expandDestOutputShape, newReasso);
+  if (res.failed())
+    return failure();
+
+  SmallVector<ReassociationIndices> fullReasso;
+  SmallVector<ReassociationIndices> subReasso;
+  LDBG("opposite reassociation: " << to_string(newReasso));
+  fullReasso = isSrcCollapsed ? newReasso : llvm::to_vector(reassociation);
+  subReasso = isSrcCollapsed ? llvm::to_vector(reassociation) : newReasso;
+  LDBG("full Reassociation: " << to_string(fullReasso));
+  // get rank-reducing shape
+  LDBG("expandSrcOutputShape: "
+       << to_string(convertToConstantValues(expandSrcOutputShape)));
+  auto rankReducingShape =
+      getRankReducingShape(expandSrcOutputShape, fullReasso, dropDims);
+  auto loc = userOp->getLoc();
+  // TODO: maybe more aggressively drop newly generated unit dims
+  auto expandedNewSrc = createExpand(rewriter, loc, insertSliceOp.getSource(),
+                                     subReasso, rankReducingShape);
+  auto expandedNewDest = createExpand(rewriter, loc, insertSliceOp.getDest(),
+                                      fullReasso, expandDestOutputShape);
   auto newInsertSliceOp = rewriter.create<tensor::InsertSliceOp>(
       loc, expandedNewSrc, expandedNewDest, newMixedOffsets, newMixedSizes,
       newMixedStrides);
   auto insertSliceOpResultShape =
       utils::getShape(insertSliceOp.getResult().getType());
   collapseAndReplace(rewriter, reassociation, insertSliceOpResultShape,
+  collapseAndReplace(rewriter, fullReasso, insertSliceOpResultShape,
                      insertSliceOp.getResult(), newInsertSliceOp.getResult(),
                      userOp);
   rewriter.eraseOp(insertSliceOp);
@@ -1135,6 +1250,40 @@ LogicalResult handleHIVMStoreOp(tensor::CollapseShapeOp collapseOp,
   return success();
 }
 
+LogicalResult
+handleMaterializeInDestinationOp(tensor::CollapseShapeOp collapseOp,
+                                 PatternRewriter &rewriter, Operation *userOp) {
+  auto materializeOp = cast<bufferization::MaterializeInDestinationOp>(userOp);
+
+  Value dest = materializeOp.getDest();
+  auto destType = dyn_cast<MemRefType>(dest.getType());
+  if (!destType)
+    return rewriter.notifyMatchFailure(materializeOp,
+                                       "Destination not a memref type");
+
+  // Get the original shape before collapse
+  auto srcShape = utils::getShape(collapseOp.getSrc().getType());
+  auto reassociation = collapseOp.getReassociationIndices();
+
+  // Check if destination is strided and compute new strides
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(materializeOp);
+  Location loc = materializeOp.getLoc();
+
+  // Compute the expanded memref type
+  auto expandedDestType = memref::ExpandShapeOp::computeExpandedType(
+      destType, srcShape, reassociation);
+  if (failed(expandedDestType))
+    return rewriter.notifyMatchFailure(materializeOp, "Expansion fails");
+  LDBG(expandedDestType.value());
+  // Create expand_shape on the destination memref
+  rewriter.setInsertionPoint(materializeOp);
+  auto expandedDest = rewriter.create<memref::ExpandShapeOp>(
+      loc, expandedDestType.value(), dest, reassociation);
+  materializeOp->setOperands({collapseOp.getSrc(), expandedDest.getResult()});
+
+  return success();
+}
 } // namespace
 
 LogicalResult
@@ -1245,6 +1394,104 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
     if (isa<tensor::ExtractOp>(userOp)) {
       return handleExtractOp(collapseOp, rewriter, userOp);
     }
+  bool changed = false;
+  auto oneUse = collapseOp->hasOneUse();
+  // handle all users at once, otherwise may exceed max iter limit
+  for (Operation *userOp : users) {
+    std::optional<LogicalResult> handleResult;
+    LDBG("collapseOp's user is " << *userOp);
+    if ((collapseOp->getParentOp() != userOp->getParentOp()) && (!oneUse)) {
+      LDBG("collapseOp is NOT in the same region as user and has multiple "
+           "users");
+      LDBG("collapseOp is " << *collapseOp);
+      continue;
+    }
+    if (isa<hivm::StoreOp>(userOp)) {
+      handleResult = handleHIVMStoreOp(collapseOp, rewriter, userOp);
+    } else if (options.forRegbased &&
+               isa<bufferization::MaterializeInDestinationOp>(userOp)) {
+      handleResult =
+          handleMaterializeInDestinationOp(collapseOp, rewriter, userOp);
+    } else if (isa<hfusion::MulExtOp>(userOp)) {
+      PropagatableMulExt propagater;
+      handleResult =
+          propagater.matchAndRewriteCollapse(rewriter, userOp, collapseOp);
+    } else if (isa<annotation::MarkOp>(userOp)) {
+      PropagatableAnnotationMark propagater;
+      handleResult =
+          propagater.matchAndRewriteCollapse(rewriter, userOp, collapseOp);
+    }
+    if (handleResult.has_value()) {
+      changed |= succeeded(handleResult.value());
+      continue;
+    }
+
+    auto dsiOp = dyn_cast<DestinationStyleOpInterface>(userOp);
+    if (dsiOp && !dsiOp.hasPureTensorSemantics()) {
+      LDBG("Destination style interface and not tensor. " << *userOp);
+      continue;
+    }
+
+    if (auto arange = dyn_cast<ArangeOp>(userOp)) {
+      handleResult = handleArangeOp(collapseOp, rewriter, arange);
+    } else if (auto bitcastOp = dyn_cast<hivm::BitcastOp>(userOp)) {
+      handleResult = handleBitcastOp(collapseOp, rewriter, bitcastOp);
+    } else if (isa<tensor::ConcatOp>(userOp)) {
+      handleResult = handleConcatOp(collapseOp, rewriter, userOp);
+    } else if (isa<tensor::PadOp>(userOp)) {
+      handleResult = handlePadOp(collapseOp, rewriter, userOp);
+    } else if (isa<linalg::BroadcastOp>(userOp)) {
+      LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - Broadcast\n";);
+      handleResult = handleBroadcastOp(collapseOp, rewriter, userOp,
+                                       checkValueIsInit(userOp, result));
+    } else if (isa<hfusion::ReduceWithIndexOp>(userOp)) {
+      LLVM_DEBUG(llvm::dbgs()
+                     << "Propagate collapse down - ReduceWithIndex\n";);
+      handleResult = handleReduceLikeOp<hfusion::ReduceWithIndexOp>(
+          collapseOp, rewriter, userOp, checkValueIsInit(userOp, result));
+    } else if (isa<linalg::ReduceOp>(userOp)) {
+      LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - Reduce\n";);
+      handleResult = handleReduceLikeOp<linalg::ReduceOp>(
+          collapseOp, rewriter, userOp, checkValueIsInit(userOp, result));
+    } else if (!options.forHIVM && isa<tensor::ExtractSliceOp>(userOp)) {
+      handleResult = handleExtractSliceOp(collapseOp, rewriter, userOp);
+    } else if (!options.forHIVM && isa<tensor::InsertSliceOp>(userOp)) {
+      handleResult = handleInsertSliceOp(collapseOp, rewriter, userOp);
+    } else if (isMarkedAsElementwiseOp(userOp)) {
+      LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - Elemwise\n";);
+      handleResult = handleElementwiseOp(collapseOp, rewriter, userOp);
+    } else if (isa<hfusion::FlipOp>(userOp)) {
+      handleResult = handleFlipOp(collapseOp, rewriter, userOp);
+    } else if (isa<linalg::TransposeOp>(userOp)) {
+      handleResult =
+          handleTransposeOp<linalg::TransposeOp>(collapseOp, rewriter, userOp);
+    } else if (isa<hivm::VTransposeOp>(userOp)) {
+      // TODO: handle VTransposeOp to support more than one dimension transpose
+      continue;
+    } else if (isa<hfusion::InterleaveOp>(userOp)) {
+      LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - Interleave\n";);
+      handleResult = handleInterleaveOp(collapseOp, rewriter, userOp);
+    } else if (isa<hfusion::DeinterleaveOp>(userOp)) {
+      LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - Deinterleave\n";);
+      handleResult = handleDeinterleaveOp(collapseOp, rewriter, userOp);
+    } else if (mlir::hivm::detail::isElemwiseNaryOpImpl(userOp) ||
+               isa<hivm::CopyOp>(userOp) || isa<hivm::StoreOp>(userOp) ||
+               isa<hivm::LoadOp>(userOp)) {
+      LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - HIVM Elemwise\n";);
+      handleResult = handleElementwiseOp(collapseOp, rewriter, userOp);
+    } else if (isa<hivm::VBrcOp>(userOp)) {
+      handleResult = handleHIVMBroadcastOp(collapseOp, rewriter, userOp,
+                                           checkValueIsInit(userOp, result));
+    } else if (isa<hivm::VReduceOp>(userOp)) {
+      handleResult = handleHIVMReduceOp(collapseOp, rewriter, userOp,
+                                        checkValueIsInit(userOp, result));
+    } else if (isa<tensor::ExtractOp>(userOp)) {
+      handleResult = handleExtractOp(collapseOp, rewriter, userOp);
+    }
+    changed |= succeeded(handleResult.value_or(failure()));
+  }
+  if (changed) {
+    return success();
   }
   return failure();
 }
@@ -1287,6 +1534,5 @@ LogicalResult PropagateCollapseDownToI1Cast::matchAndRewrite(
 
   return handleElementwiseOp(collapseOp, rewriter, userOp);
 }
-
 } // namespace tensor
 } // namespace mlir

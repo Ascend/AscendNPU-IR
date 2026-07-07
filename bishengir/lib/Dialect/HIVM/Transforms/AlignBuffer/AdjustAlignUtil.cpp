@@ -21,6 +21,17 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/BuiltinTypes.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
+#include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #define DEBUG_TYPE "hivm-align-buffer-util"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -58,7 +69,10 @@ bool isAlreadyAligned(MemRefType memrefType, int32_t alignDim) {
       return true;
     }
   }
+                           flattenReassociations[flattenAlignDim - 1]);
+}
 
+bool isAlreadyAligned(MemRefType memrefType, int32_t alignDim) {
   assert(memrefType.hasRank());
   auto rank = memrefType.getRank();
   ReassociationIndices reassociationIndices =
@@ -76,6 +90,8 @@ bool isAlreadyAligned(MemRefType memrefType, int32_t alignDim) {
     }
   }
   // use bit considering bool type
+  auto ElemBits = getElementTypeOrSelf(memrefType).getIntOrFloatBitWidth();
+  auto hwAlignBits = getHWAlignBytes(memrefType.getMemorySpace()) * 8;
   return (collapsedSize * static_cast<int64_t>(ElemBits)) %
              static_cast<int64_t>(hwAlignBits) ==
          0;
@@ -93,6 +109,7 @@ bool isNoNeedAlign(Value operand, std::optional<int32_t> alignDim) {
   }
   auto memSpace = memRefType.getMemorySpace();
   auto hivmAddressSpace = dyn_cast_if_present<AddressSpaceAttr>(memSpace);
+  auto hivmAddressSpace = dyn_cast<AddressSpaceAttr>(memSpace);
   if (!hivmAddressSpace ||
       hivmAddressSpace.getAddressSpace() == hivm::AddressSpace::GM) {
     LDBG("no need to storage align for gm\n");
@@ -153,6 +170,16 @@ getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
       }
       return index;
     }
+std::optional<int>
+getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
+                  ReassociationIndices reassociations) {
+  for (auto index : llvm::reverse(reassociations)) {
+    if (llvm::all_of(memRefTypes, [&](MemRefType memRefType) {
+          return memRefType.getShape()[index] == 1;
+        })) {
+      continue;
+    }
+    return index;
   }
   return std::nullopt;
 }
@@ -166,7 +193,6 @@ bool isLastBrc(hivm::VBrcOp brcOp, FlattenResult &flattenResult) {
     LDBG("not last brc: last stride is not 1\n");
     return false;
   }
-
   auto brcDims = brcOp.getBroadcastDims();
   auto dstType = brcOp.getDst().getType();
   auto dstRank = cast<ShapedType>(dstType).getRank();
@@ -259,7 +285,6 @@ bool isLastReduce(hivm::VReduceOp reduceOp, FlattenResult &flattenResult) {
     LDBG("not last reduce: last stride is not 1\n");
     return false;
   }
-
   auto reduceDims = reduceOp.getReduceDims();
   auto lastReduceDim = reduceDims.back();
   auto flattenRank = flattenResult.getRankAfterFlatten();
@@ -276,7 +301,11 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   if (!alignDim.has_value()) {
     return alignDim;
   }
-
+  if (!alignDim.has_value()) 
+    return alignDim;
+  hivm::ReduceOperation arithOp = reduceOp.getArith().getReduceOp();
+  if (utils::isReduceWithIndex(arithOp)) 
+    return std::nullopt;
   auto hivmFlattenInterfaceOp =
       cast<hivm::FlattenInterface>(reduceOp.getOperation());
   FlattenOptions flattenOptions;
@@ -315,6 +344,7 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
           .succeeded();
   if (haveDstStrides && (flattenDstStrides[0] == 1) &&
       static_cast<unsigned int>(lastReduceDimSize) *
+  if (static_cast<unsigned int>(lastReduceDimSize) *
               elemType.getIntOrFloatBitWidth() / 8 <=
           util::BL &&
       isa<FloatType>(elemType) && llvm::isPowerOf2_64(lastReduceDimSize) &&
@@ -337,11 +367,13 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   // (flattenRank - 2) does not need strict alignment. Skip it and look
   // further back. For 3D this means no alignment at all; for 4D+ only
   // dims 0..flattenRank-3 need alignment.
+  // adjust to find previous uncontiguous dimension to do alignment
   auto operTypes = reduceOp.getHIVMOperandTypes(/*includeExtraBuffer=*/false);
   auto memrefTypes = util::getMemRefTypes(operTypes);
   auto flattenedAssociations = flattenResult->reassociation[0];
   auto adjustAlignDim = getPrevUncontiguousDim(
       flattenAlignDim.value() - 1, flattenedAssociations, memrefTypes);
+      flattenAlignDim.value(), flattenedAssociations, memrefTypes);
   if (isNoNeedAlign(operand, adjustAlignDim)) {
     return std::nullopt;
   }
@@ -386,6 +418,7 @@ adjustDeInterleaveAlignDim(hivm::VDeinterleaveOp deinterleaveOp, Value operand,
   assert(succeeded(successStrides));
   if (static_cast<uint64_t>(srcStrides.back()) !=
       deinterleaveOp.getChannelNum()) {
+  if (srcStrides.back() != ssize_t(deinterleaveOp.getChannelNum())) {
     return alignDim;
   }
 
@@ -433,7 +466,6 @@ std::optional<int32_t> adjustCopyAlignDim(hivm::CopyOp copyOp, Value operand,
 
   return alignDim;
 }
-
 std::optional<int32_t> adjustInlineBrcOp(HIVMStructuredOp hivmOp, Value operand,
                                          std::optional<int32_t> alignDim) {
   if (!hivmOp.isInlineBroadcastable()) {
@@ -490,6 +522,15 @@ std::optional<int32_t> adjustInlineBrcOp(HIVMStructuredOp hivmOp, Value operand,
 std::optional<int32_t> adjustAlignDim(Operation *op, Value operand,
                                       std::optional<int32_t> alignDim) {
   if (isNoNeedAlign(operand, alignDim)) {
+  auto moduleOp = op->getParentOfType<ModuleOp>();
+  if (isNoNeedAlign(operand, alignDim) &&
+      !hacc::utils::isRegBasedArch(moduleOp)) {
+    return std::nullopt;
+  }
+
+  if (isNoNeedAlign(operand, alignDim ? std::optional(alignDim.value() - 1)
+                                      : std::nullopt) &&
+      hacc::utils::isRegBasedArch(moduleOp)) {
     return std::nullopt;
   }
 

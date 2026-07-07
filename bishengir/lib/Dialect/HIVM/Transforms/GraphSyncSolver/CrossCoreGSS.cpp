@@ -99,6 +99,9 @@ void CrossCoreGSSPass::runOnOperation() {
 
   bool isMemBasedArch = true;
   bool isRegBasedArch = false;
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
+  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   assert(isMemBasedArch != isRegBasedArch);
 
   if (this->forceIsRegBased) {
@@ -129,6 +132,9 @@ void CrossCoreGSSPass::runOnOperation() {
   }
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
+  }
+  if (this->blockAllSync) {
+    options.enableBlockAllMode = true;
   }
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);

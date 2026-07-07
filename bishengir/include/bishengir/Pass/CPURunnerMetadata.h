@@ -20,7 +20,8 @@
 
 #include "bishengir/Config/bishengir-config.h"
 
-#if MLIR_ENABLE_EXECUTION_ENGINE
+#if (defined(MLIR_ENABLE_EXECUTION_ENGINE) && MLIR_ENABLE_EXECUTION_ENGINE) || \
+    defined(BISHENGIR_ENABLE_EXECUTION_ENGINE)
 #include "bishengir/ExecutionEngine/Passes.h"
 
 namespace bishengir {
@@ -57,5 +58,13 @@ struct CPURunnerMetadataParser
 } // namespace bishengir
 
 #endif // MLIR_ENABLE_EXECUTION_ENGINE
+  static bool parse(llvm::cl::Option &opt, llvm::StringRef argName,
+                    llvm::StringRef arg, parser_data_type &value);
+};
+
+} // namespace bishengir
+
+#endif
+
 
 #endif // BISHENGIR_PASS_CPURUNNERMETADATA_H

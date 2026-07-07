@@ -18,6 +18,10 @@
 // Original Copyright: NA
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.cpp
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/BufferizableOpInterfaceImpl.h"
@@ -29,6 +33,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StructuredOpsUtils.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
 
 using namespace mlir;
 using namespace hivm;
@@ -127,6 +132,11 @@ struct Conv2DL1OpInterface
 struct Conv3DL1OpInterface
     : public DstBufferizableOpInterfaceExternalModel<Conv3DL1OpInterface,
                                                      hivm::Conv3DL1Op> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
@@ -168,6 +178,12 @@ struct FixpipeOpInterface
     // Clone the op, but use the new operands.
     auto newOp = cast<DestinationStyleOpInterface>(clone(
         rewriter, op, /*newResultTypes=*/TypeRange{}, {*buffer, dstOp->get()}));
+    auto fixPipeOp = static_cast<FixpipeOp>(op);
+    SmallVector<Value> opr{*buffer, dstOp->get()};
+    if (fixPipeOp.getQuantScale())
+      opr.push_back(fixPipeOp.getQuantScale());
+    auto newOp = cast<DestinationStyleOpInterface>(
+        clone(rewriter, op, /*newResultTypes=*/TypeRange{}, opr));
     // We need to manually replace the old op because it has memory effects
     // and won't be deleted automatically.
     rewriter.replaceOp(op, newOp);
@@ -217,6 +233,18 @@ struct HIVMLoadOpInterface
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
         rewriter, cast<DestinationStyleOpInterface>(op), options);
+  }
+
+  FailureOr<BaseMemRefType>
+  getBufferType(Operation *op, Value value, const BufferizationOptions &options,
+                SmallVector<Value> &invocationStack) const {
+    auto loadOp = cast<hivm::LoadOp>(op);
+    auto dst = loadOp.getDst();
+    if (dst.getDefiningOp<tensor::EmptyOp>())
+      return getMemRefTypeWithStaticIdentityLayout(cast<TensorType>(dst.getType()));
+    auto dstMemrefType = bufferization::getBufferType(
+        loadOp.getDst(), options, invocationStack);
+    return dstMemrefType;
   }
 };
 
@@ -333,6 +361,29 @@ struct HIVMMixGroupMatmulOpInterface
   }
 };
 
+struct HIVMMatmulMxOpInterface
+    : public DstBufferizableOpInterfaceExternalModel<HIVMMatmulMxOpInterface,
+                                                     hivm::MmadMxL1Op> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
+ 
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInit(&opOperand);
+  }
+ 
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    // The `tilingParams` operand might be already bufferized.
+    return bufferizeDestinationStyleOpInterface(
+        rewriter, cast<DestinationStyleOpInterface>(op), options,
+        /*supportMixedTensorBufferMode=*/true);
+  }
+};
 template <typename OpTy>
 struct VectorOpInterface
     : public DstBufferizableOpInterfaceExternalModel<VectorOpInterface<OpTy>,
@@ -409,6 +460,8 @@ struct DebugOpInterface
     auto memscope = debugOp.getMemscopeAttr();
     replaceOpWithNewBufferizedOp<hivm::DebugOp>(
         rewriter, op, debugtype, prefix, hex, newArg, tcoretype, memscope);
+        rewriter, op, debugtype, prefix, hex, newArg,
+        tcoretype, memscope);
 
     return success();
   }
@@ -506,6 +559,255 @@ struct BitcastOpInterface
 struct IndirectStoreOpInterface
     : public BufferizableOpInterface::ExternalModel<IndirectStoreOpInterface,
                                                   hivm::IndirectStoreOp> {
+struct EmbeddingGatherOpInterface
+    : public BufferizableOpInterface::ExternalModel<EmbeddingGatherOpInterface,
+                                                    hivm::EmbeddingGatherOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() < 2;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 2; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    auto gatherOp = cast<EmbeddingGatherOp>(op);
+    AliasingValueList result;
+
+    if (opOperand.getOperandNumber() == 2) { // $dst
+      // dst is alias of the result
+      result.addAlias(
+          {AliasingValue(gatherOp->getResult(0), BufferRelation::Equivalent,
+                         /*isMustAlias=*/true)});
+    }
+
+    return result;
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto gatherOp = cast<hivm::EmbeddingGatherOp>(op);
+
+    auto srcBuffer = gatherOp.getSrc();
+
+    FailureOr<Value> indexBuffer =
+        getBuffer(rewriter, gatherOp.getIndex(), options);
+    if (failed(indexBuffer))
+      return failure();
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, gatherOp.getDst(), options);
+    if (failed(dstBuffer))
+      return failure();
+
+    Value bound = gatherOp.getBound();
+    auto offsets = gatherOp.getOffsets();
+    auto numels = gatherOp.getNumels();
+
+    rewriter.create<EmbeddingGatherOp>(gatherOp.getLoc(),
+                                       /*resultType*/ TypeRange{},
+                                       /*operands*/
+                                       srcBuffer, *indexBuffer, *dstBuffer,
+                                       bound, offsets, numels);
+
+    if (gatherOp->getNumResults() > 0) {
+      replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
+    }
+
+    return success();
+  }
+};
+
+struct IndirectLoadOpInterface
+    : public BufferizableOpInterface::ExternalModel<IndirectLoadOpInterface,
+                                                    hivm::IndirectLoadOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() < 2 ||
+           opOperand.getOperandNumber() == 3 ||
+           opOperand.getOperandNumber() == 4;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 2; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    auto indirectLoadOp = cast<IndirectLoadOp>(op);
+    AliasingValueList result;
+
+    if (opOperand.getOperandNumber() == 2) { // $dst
+      result.addAlias({AliasingValue(indirectLoadOp->getResult(0),
+                                     BufferRelation::Equivalent,
+                                     /*isMustAlias=*/true)});
+    }
+
+    return result;
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto indirectLoadOp = cast<hivm::IndirectLoadOp>(op);
+
+    auto srcBuffer = indirectLoadOp.getSrc();
+
+    FailureOr<Value> offsetBuffer =
+        getBuffer(rewriter, indirectLoadOp.getOffsets(), options);
+    if (failed(offsetBuffer))
+      return failure();
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, indirectLoadOp.getDst(), options);
+    if (failed(dstBuffer))
+      return failure();
+
+    FailureOr<Value> maskBuffer = failure();
+    if (indirectLoadOp.getMask()) {
+      maskBuffer = getBuffer(rewriter, indirectLoadOp.getMask(), options);
+      if (failed(maskBuffer))
+        return failure();
+    }
+
+    FailureOr<Value> otherBuffer = failure();
+    if (indirectLoadOp.getOther()) {
+      otherBuffer = getBuffer(rewriter, indirectLoadOp.getOther(), options);
+      if (failed(otherBuffer))
+        return failure();
+    }
+
+    auto mask = indirectLoadOp.getMask();
+    auto other = indirectLoadOp.getOther();
+
+    if (indirectLoadOp.getMask()) {
+      if (indirectLoadOp.getOther()) {
+        rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
+                                        /*resultType*/ TypeRange{},
+                                        /*operands*/
+                                        srcBuffer, *offsetBuffer, *dstBuffer,
+                                        *maskBuffer, *otherBuffer,
+                                        indirectLoadOp.getIsVolatileAttr());
+      } else {
+        rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
+                                        /*resultType*/ TypeRange{},
+                                        /*operands*/
+                                        srcBuffer, *offsetBuffer, *dstBuffer,
+                                        *maskBuffer, other,
+                                        indirectLoadOp.getIsVolatileAttr());
+      }
+    } else {
+      rewriter.create<IndirectLoadOp>(indirectLoadOp.getLoc(),
+                                      /*resultType*/ TypeRange{},
+                                      /*operands*/
+                                      srcBuffer, *offsetBuffer, *dstBuffer,
+                                      mask, other,
+                                      indirectLoadOp.getIsVolatileAttr());
+    }
+
+    if (indirectLoadOp->getNumResults() > 0) {
+      replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
+    }
+
+    return success();
+  }
+};
+
+struct StrideLoadOpInterface
+    : public BufferizableOpInterface::ExternalModel<StrideLoadOpInterface,
+                                                    hivm::StrideLoadOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0; // $src
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    auto strideLoadOp = cast<hivm::StrideLoadOp>(op);
+    return &opOperand == &strideLoadOp.getDstMutable(); // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    auto strideLoadOp = cast<StrideLoadOp>(op);
+    AliasingValueList result;
+    if (&opOperand == &strideLoadOp.getDstMutable()) { // $dst
+      result.addAlias({AliasingValue(strideLoadOp->getResult(0),
+                                     BufferRelation::Equivalent,
+                                     /*isMustAlias=*/true)});
+    }
+    return result;
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto strideLoadOp = cast<hivm::StrideLoadOp>(op);
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, strideLoadOp.getDst(), options);
+    if (failed(dstBuffer))
+      return failure();
+
+    rewriter.create<StrideLoadOp>(strideLoadOp.getLoc(),
+                                  /*resultType*/ TypeRange{},
+                                  strideLoadOp.getSrc(), *dstBuffer,
+                                  strideLoadOp.getOffset(),
+                                  strideLoadOp.getOther(),
+                                  strideLoadOp.getStride(),
+                                  strideLoadOp.getNumel());
+
+    if (strideLoadOp->getNumResults() > 0) {
+      replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
+    }
+
+    return success();
+  }
+};
+
+struct StrideStoreOpInterface
+    : public BufferizableOpInterface::ExternalModel<StrideStoreOpInterface,
+                                                    hivm::StrideStoreOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto strideStoreOp = cast<hivm::StrideStoreOp>(op);
+    return &opOperand == &strideStoreOp.getSrcMutable(); // $src
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto strideStoreOp = cast<hivm::StrideStoreOp>(op);
+
+    FailureOr<Value> srcBuffer =
+        getBuffer(rewriter, strideStoreOp.getSrc(), options);
+    if (failed(srcBuffer))
+      return failure();
+
+    rewriter.create<StrideStoreOp>(strideStoreOp.getLoc(), strideStoreOp.getDst(),
+                                   *srcBuffer, strideStoreOp.getOffset(),
+                                   strideStoreOp.getStride(),
+                                   strideStoreOp.getNumel());
+    rewriter.eraseOp(op);
+
+    return success();
+  }
+};
+
+struct IndirectStoreOpInterface
+    : public BufferizableOpInterface::ExternalModel<IndirectStoreOpInterface,
+                                                    hivm::IndirectStoreOp> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
                               const AnalysisState &state) const {
     return opOperand.getOperandNumber() > 0;
@@ -514,6 +816,7 @@ struct IndirectStoreOpInterface
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     return opOperand.getOperandNumber() == 0;
+    return opOperand.getOperandNumber() == 0; // $dst
   }
 
   AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
@@ -556,6 +859,17 @@ struct IndirectStoreOpInterface
           indirectStoreOp.getLoc(),
           /*operands*/
           dstBuffer, *offsetBuffer, *srcBuffer, mask);
+    IndirectStoreOp newOp;
+    if (mask) {
+      newOp = rewriter.create<IndirectStoreOp>(indirectStoreOp.getLoc(),
+                                               /*operands*/
+                                               dstBuffer, *offsetBuffer,
+                                               *srcBuffer, *maskBuffer);
+    } else {
+      newOp = rewriter.create<IndirectStoreOp>(indirectStoreOp.getLoc(),
+                                               /*operands*/
+                                               dstBuffer, *offsetBuffer,
+                                               *srcBuffer, mask);
     }
 
     rewriter.replaceOp(op, newOp);
@@ -564,6 +878,171 @@ struct IndirectStoreOpInterface
   }
 };
 
+struct GatherTOpInterface
+    : public BufferizableOpInterface::ExternalModel<GatherTOpInterface,
+                                                    hivm::GatherTOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0 ||
+           opOperand.getOperandNumber() == 1;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 2; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    auto gatherOp = cast<GatherTOp>(op);
+    AliasingValueList result;
+
+    if (opOperand.getOperandNumber() == 2) { // $dst
+      result.addAlias(
+          {AliasingValue(gatherOp->getResult(0), BufferRelation::Equivalent,
+                         /*isMustAlias=*/true)});
+    }
+
+    return result;
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto gatherOp = cast<hivm::GatherTOp>(op);
+
+    auto srcBuffer = gatherOp.getSrc();
+
+    FailureOr<Value> indexBuffer =
+        getBuffer(rewriter, gatherOp.getIndex(), options);
+    if (failed(indexBuffer))
+      return failure();
+
+    FailureOr<Value> dstBuffer =
+        getBuffer(rewriter, gatherOp.getDst(), options);
+    if (failed(dstBuffer))
+      return failure();
+
+    Value dim = gatherOp.getDim();
+    Value bound = gatherOp.getBound();
+    auto src_stride = gatherOp.getSrcStride();
+    auto index_shape = gatherOp.getIndexShape();
+    auto offsets = gatherOp.getOffsets();
+
+    rewriter.create<GatherTOp>(gatherOp.getLoc(),
+                               /*resultType*/ TypeRange{},
+                               /*operands*/
+                               srcBuffer, *indexBuffer, *dstBuffer, bound, dim,
+                               src_stride, index_shape, offsets);
+
+    if (gatherOp->getNumResults() > 0) {
+      replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
+    }
+
+    return success();
+  }
+};
+
+struct IndexPutOpInterface
+    : public BufferizableOpInterface::ExternalModel<IndexPutOpInterface,
+                                                    hivm::IndexPutOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 1 ||
+           opOperand.getOperandNumber() == 2;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto indexPutOp = cast<hivm::IndexPutOp>(op);
+
+    auto dstBuffer = indexPutOp.getDst();
+
+    FailureOr<Value> indexBuffer =
+        getBuffer(rewriter, indexPutOp.getIndex(), options);
+    if (failed(indexBuffer))
+      return failure();
+
+    FailureOr<Value> valueBuffer =
+        getBuffer(rewriter, indexPutOp.getValue(), options);
+    if (failed(valueBuffer))
+      return failure();
+
+    Value scatter_dim = indexPutOp.getScatterDim();
+    Value bound = indexPutOp.getBound();
+    auto end_offset = indexPutOp.getEndOffset();
+    auto start_offset = indexPutOp.getStartOffset();
+    auto dst_stride = indexPutOp.getDstStride();
+
+    IndexPutOp newOp = rewriter.create<IndexPutOp>(
+        indexPutOp.getLoc(),
+        /*resultType*/ TypeRange{},
+        /*operands*/
+        dstBuffer, *indexBuffer, *valueBuffer, scatter_dim, bound, end_offset,
+        start_offset, dst_stride);
+
+    rewriter.replaceOp(op, newOp);
+
+    return success();
+  }
+};
+
+struct ScatterTOpInterface
+    : public BufferizableOpInterface::ExternalModel<ScatterTOpInterface,
+                                                    hivm::ScatterTOp> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 1 ||
+           opOperand.getOperandNumber() == 2;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return opOperand.getOperandNumber() == 0; // $dst
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto scatterTOp = cast<hivm::ScatterTOp>(op);
+
+    FailureOr<Value> valueBuffer =
+        getBuffer(rewriter, scatterTOp.getValue(), options);
+    if (failed(valueBuffer))
+      return failure();
+
+    FailureOr<Value> indexTileBuffer =
+        getBuffer(rewriter, scatterTOp.getIndexTile(), options);
+    if (failed(indexTileBuffer))
+      return failure();
+
+    auto ret = rewriter.create<ScatterTOp>(
+        scatterTOp.getLoc(),
+        /*resultType*/ TypeRange{},
+        /*operands*/
+        scatterTOp.getDst(), *valueBuffer, *indexTileBuffer,
+        scatterTOp.getIndexBoundary(), scatterTOp.getDim(),
+        scatterTOp.getDstStride(), scatterTOp.getIndexShape(),
+        scatterTOp.getOffsets());
+
+    rewriter.replaceOp(op, ret);
+
+    return success();
+  }
+};
 } // namespace
 
 void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
@@ -576,6 +1055,9 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     Conv3DL1Op::attachInterface<Conv3DL1OpInterface>(*ctx);
     ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
     NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
+    ND2NZOp::attachInterface<NDNZConversionOpInterface<ND2NZOp>>(*ctx);
+    NZ2NDOp::attachInterface<NDNZConversionOpInterface<NZ2NDOp>>(*ctx);
+    L12UBOp::attachInterface<HIVMCopyOrStoreOpInterface<L12UBOp>>(*ctx);
     CopyOp::attachInterface<HIVMCopyOrStoreOpInterface<hivm::CopyOp>>(*ctx);
     CustomOp::attachInterface<HIVMCustomOpInterface<CustomOp>>(*ctx);
     CustomMacroOp::attachInterface<HIVMCustomOpInterface<CustomMacroOp>>(*ctx);
@@ -588,6 +1070,21 @@ void mlir::hivm::registerBufferizableOpInterfaceExternalModels(
     DebugOp::attachInterface<DebugOpInterface>(*ctx);
     VConcatOp::attachInterface<VConcatOpInterface>(*ctx);
     BitcastOp::attachInterface<BitcastOpInterface>(*ctx);
+    MatmulOp::attachInterface<HIVMMatmulOpInterface>(*ctx);
+    MixMatmulOp::attachInterface<HIVMMixMatmulOpInterface>(*ctx);
+    MixGroupMatmulOp::attachInterface<HIVMMixGroupMatmulOpInterface>(*ctx);
+    MmadMxL1Op::attachInterface<HIVMMatmulMxOpInterface>(*ctx);
+    DebugOp::attachInterface<DebugOpInterface>(*ctx);
+    VConcatOp::attachInterface<VConcatOpInterface>(*ctx);
+    BitcastOp::attachInterface<BitcastOpInterface>(*ctx);
+    EmbeddingGatherOp::attachInterface<EmbeddingGatherOpInterface>(*ctx);
+    IndirectLoadOp::attachInterface<IndirectLoadOpInterface>(*ctx);
+    StrideLoadOp::attachInterface<StrideLoadOpInterface>(*ctx);
+    StrideStoreOp::attachInterface<StrideStoreOpInterface>(*ctx);
+    IndirectStoreOp::attachInterface<IndirectStoreOpInterface>(*ctx);
+    GatherTOp::attachInterface<GatherTOpInterface>(*ctx);
+    IndexPutOp::attachInterface<IndexPutOpInterface>(*ctx);
+    ScatterTOp::attachInterface<ScatterTOpInterface>(*ctx);
     // Register all HIVM Vector Ops
     VectorOpInterfaceHelper<
 #define GET_OP_LIST

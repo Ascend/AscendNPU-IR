@@ -19,6 +19,8 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #define DEBUG_TYPE "hivm-extra-buffer"
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -249,6 +251,7 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
     } else {
       // TODO : support unalign
       llvm::report_fatal_error(
+      llvm_unreachable(
           "unsupport unalign and unknown align middle-axis broadcast");
     }
   }
@@ -376,6 +379,7 @@ std::optional<int64_t> getExtraBufferSizeForBroadcastOp(Operation *op,
     broadcastDims = vBrcOp.getBroadcastDims();
   } else {
     llvm::report_fatal_error("Not implemented!");
+    llvm_unreachable("Not implemented!");
   }
   for (auto broadcastDim : broadcastDims) {
     std::optional<int64_t> bufSizeMaybe =
@@ -409,6 +413,10 @@ refineReduceExtraBufferSize(ShapedType srcType, int64_t srcAllocTotalSize,
                             int64_t reductionDim, hivm::ReduceOperation arithOp,
                             bool saveUbUf,
                             ShapedType dstType = ShapedType()) {
+std::optional<int64_t>
+refineReduceExtraBufferSize(ShapedType srcType, int64_t srcAllocTotalSize,
+                            int64_t reductionDim,
+                            hivm::ReduceOperation arithOp) {
   auto eleType = srcType.getElementType();
   if (!srcType.hasStaticShape()) {
     if (eleType.isInteger() && (reductionDim == srcType.getRank() - 1)) {
@@ -431,6 +439,13 @@ refineReduceExtraBufferSize(ShapedType srcType, int64_t srcAllocTotalSize,
     aDim = getAARAdim(srcType, dstType);
   } else {
     aDim = srcType.getShape()[reductionDim - 1];
+  const int numPerBlock = mlir::utils::getNumPerBlock(eleType);
+  const int numPerRepeat = mlir::utils::getNumPerRepeat(eleType);
+
+  int64_t rDim = srcType.getShape()[reductionDim];
+  int64_t aDim = srcType.getShape()[0];
+  if (reductionDim == 0) {
+    aDim = 1;
   }
   int64_t extraBufferSize = 0;
   if (eleType.isInteger() || arithOp == hivm::ReduceOperation::prod ||
@@ -493,6 +508,8 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
   ShapedType dstType =
       dpsOp ? cast<ShapedType>(dpsOp.getDpsInitOperand(0)->get().getType())
             : ShapedType();
+                                       int64_t reductionDim) {
+  ShapedType srcType = cast<ShapedType>(op->getOpOperand(0).get().getType());
   auto vReduceOp = dyn_cast<hivm::VReduceOp>(op);
   hivm::ReduceOperation arithOp = vReduceOp.getArith().getReduceOp();
   auto eleType = srcType.getElementType();
@@ -510,6 +527,7 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       utils::traceToAllocMaxSize(op->getOpOperand(0).get());
   assert(srcAllocTotalSize);
   if (VReduceOp::isArgminOrArgmax(arithOp)) {
+  if (utils::isReduceWithIndex(arithOp)) {
     // * R/AR: 1 ub_block_unit
     // * RA: r * sizeof(Index) aligned to ub_block_unit + 1 extra ub_block_unit
     int64_t rank = srcType.getRank();
@@ -544,6 +562,22 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
     const int64_t alloc = srcAllocTotalSize.value();
     const int64_t scaledAlloc = static_cast<int64_t>(1.5 * alloc);
     return ceilFactor(scaledAlloc, numElemPerBlock);
+      // RA, static shape
+      // use r * sizeof(Index) aligned to ub_block_unit + 1 extra ub_block_unit
+      int64_t reductionDimLength = srcType.getShape()[reductionDim];
+      // TODO: library only supports 32 bit index; add verifier for
+      // ReduceWithIndexOp to check this
+      ShapedType indexType =
+          cast<ShapedType>(vReduceOp.getDpsInits()[1].getType());
+      int64_t indexBitWidth = indexType.getElementTypeBitWidth();
+      int64_t totalBitLength =
+          ceilFactor(reductionDimLength * indexBitWidth, vectorBlockSizeBit) +
+          vectorBlockSizeBit;
+      return totalBitLength / elementBitWidth;
+    }
+    // RA, dynamic shape
+    // use 1.5 * alloc_size aligned to ub_block_unit
+    return ceilFactor(1.5 * srcAllocTotalSize.value(), numElemPerBlock);
   }
   if (arithOp == hivm::ReduceOperation::sum ||
       arithOp == hivm::ReduceOperation::max ||
@@ -555,6 +589,10 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
       // reduce(RA/RA0A1) — not last axis.
       int64_t baseline = srcAllocTotalSize.value();
       return computeARAExtraBufferSize(srcType, baseline, /*isXor=*/false);
+      // reduce_sum/reduce_max/reduce_min/reduce_prod
+      // reduce_or/reduce_and not last axis
+      // reduce(RA/RA0A1).
+      return srcAllocTotalSize.value();
     }
     // reduce_sum/reduce_max/reduce_min/reduce_prod
     // reduce_or/reduce_and last axis
@@ -575,6 +613,23 @@ getExtraBufferSizeForReduceOpSingleDim(Operation *op, BufferSizeUnit unit,
                                        reductionDim, arithOp, saveUbUf, dstType);
   }
   llvm::report_fatal_error("unsupported reduce case");
+                                       reductionDim, arithOp);
+  }
+  if (arithOp == hivm::ReduceOperation::xori) {
+    if (reductionDim != srcType.getRank() - 1) {
+      // reduce_xor not last axis reduce(RA/RA0A1), requires additional tmp_buf
+      // space of src/2 to process the xor operation. Since src/2 will cause the
+      // instruction starting address to be misaligned by 32 bytes, an
+      // additional block is required.
+      int64_t elementPerBlock =
+          vectorBlockSizeBit / srcType.getElementTypeBitWidth();
+      return srcAllocTotalSize.value() + elementPerBlock;
+    }
+    // reduce_xor last axis reduce(R/AR)
+    return refineReduceExtraBufferSize(srcType, srcAllocTotalSize.value(),
+                                       reductionDim, arithOp);
+  }
+  llvm_unreachable("unsupported reduce case");
 }
 
 std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,
@@ -584,6 +639,9 @@ std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,
           hivm::EnableSavingUbAttr::name)) {
     saveUbUf = true;
   }
+  auto moduleOp = op->getParentOfType<ModuleOp>();
+  if (hacc::utils::isRegBasedArch(moduleOp))
+    return std::nullopt;
   assert(op && isa<hivm::VReduceOp>(op) && "Operation should be a reduce op!");
   auto dpsOp = dyn_cast<DestinationStyleOpInterface>(op);
   assert(dpsOp);
@@ -602,6 +660,8 @@ std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,
   for (auto reductionDim : reductionDims) {
     std::optional<int64_t> tmpBufSize = getExtraBufferSizeForReduceOpSingleDim(
         op, unit, reductionDim, saveUbUf);
+    std::optional<int64_t> tmpBufSize =
+        getExtraBufferSizeForReduceOpSingleDim(op, unit, reductionDim);
     if (tmpBufSize) {
       bufSize = std::max(bufSize, tmpBufSize);
       needTempBuffer = true;
@@ -610,6 +670,82 @@ std::optional<int64_t> getExtraBufferSizeForReduceOp(Operation *op,
   return needTempBuffer ? bufSize : std::nullopt;
 }
 
+AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand) {
+  Value operandValue = operand.get();
+  MemRefType maybeMemRefType = dyn_cast<MemRefType>(operandValue.getType());
+  if (maybeMemRefType)
+    return deduceAlignmentForMemRefType(maybeMemRefType);
+
+  // Try deduce alignment kind for tensor.
+  AlignKind alignKind{AlignKind::UNKNOWN};
+  auto owner = dyn_cast<DestinationStyleOpInterface>(operand.getOwner());
+  if (!owner)
+    return alignKind;
+
+  // If tied result is tagged with alignment info, return it as it is.
+  Value tiedResult = owner.getTiedOpResult(&operand);
+  auto markOpsWithAlignmentInfo =
+      llvm::make_filter_range(tiedResult.getUsers(), [](Operation *user) {
+        return isa<annotation::MarkOp>(user) &&
+               user->hasAttrOfType<AlignKindAttr>(AlignKindAttr::name);
+      });
+  if (markOpsWithAlignmentInfo.empty())
+    return alignKind;
+
+  auto alignmentInfo =
+      llvm::map_to_vector<1>(markOpsWithAlignmentInfo, [](Operation *markOp) {
+        return markOp->getAttrOfType<AlignKindAttr>(AlignKindAttr::name)
+            .getValue();
+      });
+  if (!llvm::all_equal(alignmentInfo)) {
+    LDBG("WARNING: Conflicting alignment annotation for operand #"
+         << operand.getOperandNumber() << " in " << *owner);
+    return AlignKind::UNKNOWN;
+  }
+  return alignmentInfo.front();
+}
+
+AlignKind deduceAlignmentForMemRefType(MemRefType vecType) {
+  Type eleType = vecType.getElementType();
+  int eleSize = static_cast<int>(eleType.getIntOrFloatBitWidth() / 8);
+
+  AlignKind alignKind{AlignKind::UNKNOWN};
+  int64_t toCheck{0};
+
+  StridedLayoutAttr dstLayout =
+      dyn_cast<StridedLayoutAttr>(vecType.getLayout());
+  if (dstLayout) {
+    ArrayRef<int64_t> strides = dstLayout.getStrides();
+    if (strides.size() <
+        2) { // if strides is less than 2, alignment is impossible
+      return AlignKind::UNKNOWN;
+    }
+
+    toCheck = strides[strides.size() - 2]; // get the 2nd last strides
+  } else {
+    int rank = vecType.getRank();
+    if (rank == 0) {
+      return AlignKind::UNKNOWN;
+    }
+
+    toCheck = vecType.getDimSize(rank - 1);
+  }
+
+  if (toCheck != ShapedType::kDynamic) {
+    auto isAlignedToBlock = [](int eleNum, int eleSize) {
+      return eleNum * eleSize % BL == 0;
+    };
+    if (isAlignedToBlock(toCheck, eleSize)) {
+      alignKind = AlignKind::ALIGN;
+    } else {
+      alignKind = AlignKind::UNALIGNED;
+    }
+  } else {
+    alignKind = AlignKind::UNKNOWN;
+  }
+
+  return alignKind;
+}
 } // namespace util
 } // namespace hivm
 } // namespace mlir

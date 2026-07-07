@@ -72,7 +72,6 @@ __aiv__ __attribute__((always_inline)) bool is_unaligned_mul_extended_1d(
 
   return !is_addr_aligned || !is_stride_continuous;
 }
-
 /// mul_extended op description:
 /// perform multiplication on src0(N-bits) and src1(N-bits),
 /// return dst0(N-bits) and dst1(N-bits),
@@ -107,7 +106,6 @@ __aiv__ __attribute__((always_inline)) void vector_mul_extended_1d(
     vector_mul_extended_1d_scalar_impl<T>(src0, src1, dst0, dst1);
     return;
   }
-
   const int64_t size0 = src0->sizes[0];
   constexpr int bytes = sizeof(T);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / bytes;

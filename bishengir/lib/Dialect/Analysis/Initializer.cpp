@@ -29,6 +29,14 @@ namespace mlir {
 namespace detail {
 
 DimensionAnalyzerBase::DimensionAnalyzerBase(Operation *op) : op_(op) {}
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
+namespace mlir {
+namespace detail {
+
+DimensionAnalyzerBase::DimensionAnalyzerBase(Operation *op,
+                                             DimensionAnalyzerOptions options)
+    : op_(op), options(options) {}
 
 LogicalResult DimensionAnalyzerBase::initialize() {
   // Check if tensor::ExpandShapeOp exists in the function
@@ -55,6 +63,11 @@ LogicalResult DimensionAnalyzerBase::initialize() {
   initializeStructures();
   processBFS();
   unifyGroups();
+  if (options.usePreOrderWalkTraversal)
+    processPreOrderWalk();
+  else
+    processBFS();
+  // markAttributes() can be called here to check the connections
   return success();
 }
 
@@ -75,6 +88,27 @@ DimensionAnalyzerBase::allocateArguments(int rank,
     int64_t currentIndex = startingIdx + i;
     solverShapeElem_->minParentIndex_[currentIndex] = {dimensionAllocation_, i};
     solverShapeElem_->shape_[currentIndex] = dimensionRef[i];
+  LLVM_DEBUG(
+    llvm::dbgs() << "Allocating new arguments with rank = " << rank << "\n";
+  );
+  auto startingIdx = argumentTotalLength_;
+  argumentTotalLength_ += rank + 1;
+  isConnected_.resize(argumentTotalLength_);
+  equivalentDsu_->allocateMinimum(argumentTotalLength_);
+  structuralDsu_->allocateMinimum(argumentTotalLength_);
+  dimIdxToArgIdx_.resize(argumentTotalLength_);
+  assert(rank == ssize_t(dimensionRef.size()));
+  LLVM_DEBUG(
+    llvm::dbgs() << "dimensionAllocation_ = " << dimensionAllocation_ << "\n";
+  );
+  for (int64_t i = 0; i < rank; ++i) {
+    LLVM_DEBUG(
+      llvm::dbgs() << "Allocating axis(" << i << ") with dimSiz = "
+                   << dimensionRef[i] << "\n";
+    );
+    int64_t currentIndex = startingIdx + i;
+    equivalentDsu_->minParentIndex_[currentIndex] = {dimensionAllocation_, i};
+    equivalentDsu_->shape_[currentIndex] = dimensionRef[i];
     isConnected_[currentIndex].elementKind =
         dimensionRef[i] == 1 ? tensor::reshape_utils::ElementKind::Unit
                              : tensor::reshape_utils::ElementKind::NoMutation;
@@ -95,6 +129,49 @@ void DimensionAnalyzerBase::initializeStructures() {
   solverCollapserElem_ = std::make_unique<SimpleUnionFind>();
   solverSegments_ = std::make_unique<SimpleUnionFind>();
 
+    dimIdxToArgIdx_[currentIndex] = static_cast<int64_t>(dimIndices_.size());
+  }
+  // barrier
+  isConnected_[startingIdx + rank].leftConnected = false;
+  isConnected_[startingIdx + rank].rightConnected = false;
+  dimensionAllocation_++;
+
+  return startingIdx;
+}
+
+bool DimensionAnalyzerBase::isAllowedType(Type type) {
+  if (options.registerBased) {
+    return isa_and_present<ShapedType>(type);
+  }
+  return isa_and_present<RankedTensorType>(type);
+}
+
+bool DimensionAnalyzerBase::isHeadOperation(Operation *op) {
+  if (options.registerBased) {
+    return reshape_utils::isReshapingOp(op) || reshape_utils::isInitOp(op) ||
+           isa_and_present<memref::AllocaOp, memref::AllocOp,
+                           memref::ReinterpretCastOp,
+                           arith::ConstantOp, memref::ExpandShapeOp,
+                           memref::CollapseShapeOp>(op);
+  }
+  return reshape_utils::isArgOp(op);
+}
+
+bool DimensionAnalyzerBase::isTailOperation(Operation *op) {
+  if (options.registerBased) {
+    return reshape_utils::isReshapingOp(op) ||
+           isa_and_present<memref::ExpandShapeOp, memref::CollapseShapeOp,
+                           func::ReturnOp>(op);
+  }
+  return reshape_utils::isOutOp(op);
+}
+
+// Step 1: Initializing arguments segments
+void DimensionAnalyzerBase::initializeStructures() {
+  equivalentDsu_ = std::make_unique<ExtendedUnionFind>();
+  structuralDsu_ = std::make_unique<SimpleUnionFind>();
+  valueGroupDSU_ = std::make_unique<SimpleUnionFind>();
+
   size_t sizeCount = 0;
   for (Block &block : op_->getRegion(0)) {
     LLVM_DEBUG(llvm::dbgs() << "Processing Block\n");
@@ -104,6 +181,7 @@ void DimensionAnalyzerBase::initializeStructures() {
     // Process block arguments
     for (BlockArgument arg : block.getArguments()) {
       if (isa<TensorType>(arg.getType())) {
+      if (DimensionAnalyzerBase::isAllowedType(arg.getType())) {
         processArgument(arg);
       }
     }
@@ -117,11 +195,19 @@ void DimensionAnalyzerBase::initializeStructures() {
           LLVM_DEBUG(llvm::dbgs() << "Putting " << result << " in arguments "
                                   << "\n";);
           processArgument(result);
+      if (DimensionAnalyzerBase::isHeadOperation(op)) {
+        for (auto result : op->getResults()) {
+          if (DimensionAnalyzerBase::isAllowedType(result.getType())) {
+            LLVM_DEBUG(llvm::dbgs() << "Putting " << result << " in arguments "
+                                    << "\n";);
+            processArgument(result);
+          }
         }
       }
     });
     block.walk([&](Operation *op) {
       if (reshape_utils::isOutOp(op)) {
+      if (DimensionAnalyzerBase::isTailOperation(op)) {
         outList_.push_back(op);
       }
     });
@@ -136,6 +222,22 @@ void DimensionAnalyzerBase::initializeStructures() {
 
 void DimensionAnalyzerBase::processArgument(Value arg) {
   OpBuilder builder(op_);
+  assert(dimensionAllocation_ == ssize_t(argumentList_.size()) &&
+         "Inconsistency in argumentList_");
+  LLVM_DEBUG(
+    llvm::dbgs() << DEBUG_LINE_BEG("Flatten-After-initializeStructures");
+    llvm::dbgs() << "equivalentDsu_:\n";
+    equivalentDsu_->dump();
+    llvm::dbgs() << "structuralDsu_:\n";
+    structuralDsu_->dump();
+    dumpArgumentsRefPointer();
+    dumpArgumentsRef();
+    dumpIsConnected();
+    llvm::dbgs() << DEBUG_LINE_END("Flatten-After-initializeStructures");
+  );
+}
+
+void DimensionAnalyzerBase::processArgument(Value arg) {
   argumentList_.push_back(arg);
 
   auto [rank, shape] = utils::getValueShapeInfo(arg).value_or(
@@ -148,6 +250,18 @@ void DimensionAnalyzerBase::processArgument(Value arg) {
   std::iota(argumentsRef_.back().begin(), argumentsRef_.back().end(),
             startingIdx);
   LLVM_DEBUG(llvm::dbgs() << utils::debugger::to_string(argumentsRef_.back())
+  LLVM_DEBUG(llvm::dbgs() << "Found value dims: " << arg << ' ' << rank
+                          << "\n");
+  auto startingIdx = allocateArguments(rank, shape);
+  dimIndices_.push_back(DimensionShape(shape));
+  std::iota(dimIndices_.back().begin(), dimIndices_.back().end(), startingIdx);
+  initCollapseOrVerify(arg, static_cast<int64_t>(dimIndices_.size() - 1));
+#ifndef NDEBUG
+  for (auto val : dimIndices_.back()) {
+    LDBG(val);
+  }
+#endif
+  LLVM_DEBUG(llvm::dbgs() << utils::debugger::to_string(dimIndices_.back())
                           << '\n');
 
   // args:
@@ -162,6 +276,43 @@ void DimensionAnalyzerBase::processArgument(Value arg) {
   //
   //  Broadcasting new elements will also increase the arguments ref,
   //  and create a new arguments ref pointer index
+  //  valueToDimIndicesIndex_ : {arg0 : 0, arg1 : 1, arg2 : 2}
+  //  dimIndices_ : {{0,1}, {3}, {5,6,7}}
+  //
+  //  Broadcasting new elements will also increase dimIndices_,
+  //  and create a new value-to-dim-indices map index.
+}
+
+void DimensionAnalyzerBase::markAttributes() {
+  LLVM_DEBUG(llvm::dbgs() << "Marking attributes\n");
+
+  op_->walk([&](Operation *op) {
+    // Process each result of the operation
+    for (auto result : op->getResults()) {
+      // Check if this result has an argument reference
+      if (!valueToDimIndicesIndex_.count(result))
+        continue;
+      auto argRef = getValueDimIndices(result);
+
+      // Build the attribute array with parent indices from structuralDsu_
+      SmallVector<int64_t> parentIndices;
+      for (int64_t idx : argRef) {
+        int64_t parentIdx = structuralDsu_->find(idx);
+        parentIndices.push_back(parentIdx);
+      }
+
+      // Set the attribute on the operation result
+      if (!parentIndices.empty()) {
+        auto attrName = ("result_" + Twine(result.getResultNumber())).str();
+        op->setAttr(attrName,
+                    Builder(op->getContext()).getI64ArrayAttr(parentIndices));
+      }
+    }
+
+    return WalkResult::advance();
+  });
+
+  LLVM_DEBUG(llvm::dbgs() << "Finished marking attributes\n");
 }
 } // namespace detail
 } // namespace mlir

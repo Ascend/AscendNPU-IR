@@ -20,7 +20,6 @@
 #include "Vector/VecUtils.h"
 #include <type_traits>
 
-
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
@@ -51,7 +50,6 @@ check_inputs_of_reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
          "The dst strides[0] must be aligned to block or 1.");
 #endif
 }
-
 
 template <ReduceOpTy OP, typename T,
           typename = typename std::enable_if<(std::is_same<half, T>() ||
@@ -149,6 +147,21 @@ __aiv__ void reduce_with_index_scalar_iml(memref_t<__ubuf__ T, 2> *src,
 }
 
 template <ReduceOpTy OP, ReduceWithIndexOpTy WITH_INDEX_TYPE, typename T,
+/// reduce src (a, r) with stride [n, 1] to dst (a, 1) and return the reduction
+/// value and index separately.
+///
+/// constraint:
+/// 1. dim of src/dst must be 2.
+/// 2. the start pointer address, namely aligned + offset, should be aligned
+/// to ub_block_unit.
+/// 3. 'n' is r aligned to ub_block_unit.
+/// 4. tmp buffer size is equal to 1 block.
+///
+/// \param initvalue: The initvalue value is as follows
+///                    float16             float32
+/// reduce_min:         HALF_INF            FLOAT_INF
+/// reduce_max:         -HALF_INF           -FLOAT_INF
+template <ReduceOpTy OP, typename T,
           typename = typename std::enable_if<(std::is_same<half, T>() ||
                                               std::is_same<float, T>())>::type,
           typename = typename std::enable_if<
@@ -163,7 +176,12 @@ vec_reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
                      memref_t<__ubuf__ T, 2> *dst_value,
                      memref_t<__ubuf__ int32_t, 2> *dst_index,
                      memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
-
+               OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX)>::type>
+__aiv__ __attribute__((always_inline)) void
+reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
+                     memref_t<__ubuf__ T, 2> *dst_value,
+                     memref_t<__ubuf__ int32_t, 2> *dst_index,
+                     memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
   // Input parameter constraints assert.
   check_inputs_of_reduce_ar_with_index(src0, dst_value, dst_index, tmp_buf,
                                        initvalue);
@@ -173,6 +191,9 @@ vec_reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
   const int64_t src_stride0 = src0->strides[0];
   const int64_t dst_value_stride0 = dst_value->strides[0];
   const int64_t dst_index_stride0 = dst_index->strides[0];
+  __ubuf__ T *src_ptr = src0->aligned + src0->offset;
+  __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
+  __ubuf__ int32_t *dst_index_ptr = dst_index->aligned + dst_index->offset;
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
 
   if (size1 > num_per_repeat) {
@@ -198,6 +219,8 @@ vec_reduce_ar_with_index(memref_t<__ubuf__ T, 2> *src0,
       reduce_r_with_index<OP, WITH_INDEX_TYPE, T>(
           &subview_src0, &subview_dst_value, &subview_dst_index, tmp_buf,
           initvalue);
+      reduce_r_with_index<OP, T>(&subview_src0, &subview_dst_value,
+                                 &subview_dst_index, tmp_buf, initvalue);
     }
   } else {
     // TODO: This scene is not supported later, and the upper layer converts it
@@ -322,8 +345,6 @@ reduce_ar_with_index_with_specified_index(memref_t<__ubuf__ T, 2> *src0,
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
-
-
 extern "C" {
 //===-------------------------------------------------------------------===//
 // reduce ar with index, 2 dim
@@ -382,4 +403,16 @@ REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(reduce_min_with_index_l
 REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX_WITH_SPECIFIED_INDEX(reduce_min_with_index_right_with_specified_index,
                                     ReduceOpTy::REDUCE_MIN_WITH_INDEX,
                                     ReduceWithIndexOpTy::RIGHT, 2, float);
+}
+REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX, 2, half);
+REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX, 2,
+                                    float);
+
+REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX, 2, half);
+REGISTE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX, 2,
+                                    float);
 }

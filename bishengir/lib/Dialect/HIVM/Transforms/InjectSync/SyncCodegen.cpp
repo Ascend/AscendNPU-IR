@@ -16,12 +16,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCodegen.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -56,11 +58,12 @@ void SyncCodegen::Build() {
   });
 
   if (syncAnalysisMode == SyncAnalysisMode::NORMALSYNC) {
-    UpdateMmadL1SyncTemplateInter(rewriter);
+    UpdateMmadL1SyncTemplateInter();
+    UpdateMmadMxL1SyncTemplateInter();
   }
 }
 
-void SyncCodegen::UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter) {
+void SyncCodegen::UpdateMmadL1SyncTemplateInter() {
   func_->walk<WalkOrder::PreOrder>([&](hivm::MmadL1Op mmadL1Op) {
     auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
     checkCondition(iter != mmadL12SyncTemplateInter.end(),
@@ -74,6 +77,21 @@ void SyncCodegen::UpdateMmadL1SyncTemplateInter(IRRewriter &rewriter) {
     newArgs.push_back(iter->second.BackPipeMPipeMTE1DBEvent0);
     newArgs.push_back(iter->second.BackPipeMPipeMTE1DBEvent1);
     auto syncArgs = mmadL1Op.getSyncRelatedArgsMutable();
+    syncArgs.assign(newArgs);
+  });
+}
+
+void SyncCodegen::UpdateMmadMxL1SyncTemplateInter() {
+  func_->walk<WalkOrder::PreOrder>([&](hivm::MmadMxL1Op mmadMxL1Op) {
+    auto iter = mmadMxL12SyncTemplateInter.find(mmadMxL1Op);
+    checkCondition(iter != mmadMxL12SyncTemplateInter.end(),
+                   "mmadL1 must has SyncTemplateInter");
+    SmallVector<Value> newArgs;
+    newArgs.push_back(iter->second.MmadMxL1WaitL1AEvent);
+    newArgs.push_back(iter->second.MmadMxL1WaitL1BEvent);
+    newArgs.push_back(iter->second.L1AWaitMmadMxL1Event);
+    newArgs.push_back(iter->second.L1B2WaitMmadMxL1Event);
+    auto syncArgs = mmadMxL1Op.getSyncRelatedArgsMutable();
     syncArgs.assign(newArgs);
   });
 }
@@ -92,6 +110,9 @@ void SyncCodegen::UpdateOpInsertSync(IRRewriter &rewriter) {
         InitDefaultSyncTemplateInterForMmadL1Op(mmadL1Op);
         UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(compoundElement,
                                                       mmadL1Op);
+      } else if (auto mmadMxL1Op =
+                     dyn_cast<MmadMxL1Op>(compoundElement->elementOp)) {
+        InitDefaultSyncTemplateInterForMmadMxL1Op(mmadMxL1Op);
       }
     } else if (auto *placeHolder =
                    dyn_cast<PlaceHolderInstanceElement>(nowElement.get())) {
@@ -139,6 +160,10 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(
   } else if (auto *loopOp = dyn_cast<LoopInstanceElement>(parentScope)) {
     if (auto forOp = dyn_cast<scf::ForOp>(loopOp->elementOp)) {
       terminatorOp = forOp.getRegion().front().getTerminator();
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp->elementOp)) {
+      // For scf.while the body lives in the after region; the before region
+      // only evaluates the condition predicate.
+      terminatorOp = whileOp.getAfter().front().getTerminator();
     }
   }
   assert(terminatorOp != nullptr);
@@ -177,6 +202,9 @@ void SyncCodegen::UpdateCompoundOpInsertSync(
 
 void SyncCodegen::UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(
     CompoundInstanceElement *nowCompound, hivm::MmadL1Op mmadL1Op) {
+  if (!checkMmadl1NeedsPipeMPipeMTE1SyncArg(mmadL1Op)) {
+    return;
+  }
   if (!nowCompound->BwdPipeMPipeMTE1SyncPtr ||
       nowCompound->BwdPipeMPipeMTE1SyncPtr->uselessSync) {
     // There is no reverse or EventId conflict, and the library implementation
@@ -210,9 +238,10 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
   rewriter.setInsertionPointToStart(&func_.getBody().front());
   auto defaultValue = rewriter.create<arith::ConstantIntOp>(
       mmadL1Op.getOperation()->getLoc(), -1, rewriter.getI64Type());
-  SyncTemplateInter syncTemplateInter(defaultValue);
+  SyncTemplateInter<hivm::MmadL1Op> syncTemplateInter(defaultValue);
   mmadL12SyncTemplateInter[mmadL1Op] = syncTemplateInter;
-  if (checkAllParentLoopsAreForLoops(mmadL1Op)) {
+  if (checkMmadl1NeedsPipeMPipeMTE1SyncArg(mmadL1Op) &&
+      checkAllParentLoopsAreForLoops(mmadL1Op)) {
     if (auto KLoopDBCondIndex =
             createNestedIndexForOp(rewriter, mmadL1Op.getOperation())) {
       Value KLoopDBCondIdx = rewriter.create<arith::IndexCastOp>(
@@ -220,6 +249,19 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
       mmadL12SyncTemplateInter[mmadL1Op].KLoopDBCond = KLoopDBCondIdx;
     }
   }
+}
+
+void SyncCodegen::InitDefaultSyncTemplateInterForMmadMxL1Op(
+    hivm::MmadMxL1Op mmadMxL1Op) {
+  if (mmadMxL12SyncTemplateInter.contains(mmadMxL1Op)) {
+    return;
+  }
+  IRRewriter rewriter(func_->getContext());
+  rewriter.setInsertionPointToStart(&func_.getBody().front());
+  auto defaultValue = rewriter.create<arith::ConstantIntOp>(
+      mmadMxL1Op.getOperation()->getLoc(), -1, rewriter.getI64Type());
+  SyncTemplateInter<hivm::MmadMxL1Op> syncTemplateInter(defaultValue);
+  mmadMxL12SyncTemplateInter[mmadMxL1Op] = syncTemplateInter;
 }
 
 void SyncCodegen::UpdateLoopOpInsertSync(LoopInstanceElement *nowElement) {
@@ -443,7 +485,7 @@ bool SyncCodegen::IsNeedLowerSyncToTemplate(Operation *op,
   if (!isVirtualMTE2) {
     return false;
   }
-  if (!isa<hivm::MmadL1Op>(op)) {
+  if (!isa<hivm::MmadL1Op, hivm::MmadMxL1Op>(op)) {
     return false;
   }
   return true;

@@ -29,6 +29,8 @@
 namespace mlir {
 namespace memref {
 
+constexpr llvm::StringLiteral kBindBufferAttrName = "bind_buffer";
+
 /// Create memref.alloc op with the same type as source
 Value createMemRefAllocOp(OpBuilder &builder, Location loc, Value source);
 

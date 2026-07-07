@@ -1,5 +1,7 @@
 add_bishengir_dialect_library(BiShengIRSCFTransforms
+  BufferizableOpInterfaceImpl.cpp
   CanonicalizeIterArg.cpp
+  LegalizeLoopIterArg.cpp
   MapForToForall.cpp
   RemoveRedundantLoopInit.cpp
 
@@ -17,4 +19,5 @@ add_bishengir_dialect_library(BiShengIRSCFTransforms
   MLIRIR
   MLIRDialect
   MLIRPass
+  MLIRBufferizationTransforms
 )

@@ -19,9 +19,19 @@
 #define BISHENGIR_TOOLS_BISHENGIR_COMPILE_CONFIG_H
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Tools/BiShengIRConfigBase/Config.h"
+#include "llvm/ADT/StringRef.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace bishengir {
 
@@ -46,8 +56,25 @@ public:
 
   /// Collect compile arguments that will be passed to hivmc.
   static void collectHIVMCArgs();
+  static void collectHIVMCArgs(BiShengIRCompileMainConfig &config);
+  static bool isSharedWithDownstreamToolchain(llvm::StringRef argName);
 
 #include "bishengir/Tools/bishengir-compile/CompileConfigs.cpp.inc"
+
+  bool isUBAwareVfFusion() const {
+    return getVfFusionMode() == mlir::analysis::FusionMode::UBAwareOp;
+  }
+  BiShengIRCompileMainConfig &updateMaxInputParamsSizeInBytes(size_t size) {
+    deviceMaxInputParamSizeInBytesFlag =
+        std::max(size, deviceMaxInputParamSizeInBytesFlag);
+    return *this;
+  }
+
+  BiShengIRCompileMainConfig &setClArgs(std::vector<std::string> args) {
+    clArgsFlag = std::move(args);
+    return *this;
+  }
+  std::vector<std::string> getClArgs() const { return clArgsFlag; }
 
   /// Update max buffer count tuning delta.
   BiShengIRCompileMainConfig &increaseMaxBufferCountTuning(int64_t delta) {
@@ -55,9 +82,31 @@ public:
     return *this;
   }
 
+  BiShengIRCompileMainConfig &increaseHfusionMaxBufferCountTuning(
+      int64_t delta) {
+    hfusionMaxBufferCountTuningFlag += delta;
+    return *this;
+  }
+
+  bool shouldEnableLayoutOptimization() const {
+    return getEnableLayoutOptimization() &&
+           mlir::hacc::utils::isAscend950(getTarget());
+  }
+
+  bool shouldEnableMixedCV() const {
+    return getEnableMixedCV() &&
+           mlir::hacc::utils::isAscend950(getTarget());
+  }
+
+  bool hasSimtStackLimit() const { return getSimtStackLimit() >= 0; }
+
   std::vector<std::string> getHIVMCArgsDashDash() const {
     std::vector<std::string> args;
     for (auto &arg : getHIVMCArgs()) {
+      if (llvm::StringRef(arg).starts_with("-")) {
+        args.push_back(arg);
+        continue;
+      }
       args.push_back("--" + arg);
     }
     return args;
@@ -70,6 +119,11 @@ public:
     return *this;
   }
   std::string getExecutablePath() const { return executablePath; }
+
+protected:
+  // Real option/config state lives in CompileConfigs.cpp.inc. Keep only
+  // tool-specific runtime bookkeeping here.
+  std::vector<std::string> clArgsFlag;
 
 private:
   std::string executablePath;

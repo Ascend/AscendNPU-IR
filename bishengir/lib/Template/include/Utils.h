@@ -54,6 +54,11 @@ using namespace cl::sycl;
 #define LIB_EVENT_ID0 EVENT_ID7
 #define LIB_EVENT_ID1 EVENT_ID6
 
+// Avoid including <cmath> when building ARM target
+#define INFINITY (__builtin_inff())
+// pi
+#define M_PI 3.14159265358979323846
+
 //===----------------------------------------------------------------------===//
 // Constants
 //===----------------------------------------------------------------------===//
@@ -71,6 +76,13 @@ constexpr int32_t L1_ALIGN_BYTES = 32;
 //===----------------------------------------------------------------------===//
 template <typename T, size_t Dim>
 struct memref_t {
+constexpr int32_t INTR_BITS_PER_BLOCK = 256;
+constexpr int32_t REG_REGISTER_SIZE = 256;
+constexpr uint8_t BIT_32_LEN = 32;
+constexpr uint8_t BIT_64_LEN = 64;
+constexpr uint64_t UINT_64_MAX = 0xFFFFFFFFFFFFFFFF;
+constexpr uint64_t UINT_64_HIGHEST_BIT_MASK = 0x8000000000000000;
+constexpr uint64_t INT_64_MAX = 0x7FFFFFFFFFFFFFFF;
   T *allocated;
   T *aligned;
   int64_t offset;
@@ -78,6 +90,7 @@ struct memref_t {
   int64_t strides[Dim];
 };
 
+template <typename IntType> struct FpTraits;
 // Calculate the bit width of the current type.
 template <typename T>
 __aiv__ __attribute__((always_inline)) constexpr int bitwidthOf() {
@@ -97,7 +110,8 @@ __aiv__ __attribute__((always_inline)) bool isSizeAlignedToBlock(int size) {
 
 // Determine whether the starting address is 32byte aligned.
 template <typename T>
-__aiv__ __attribute__((always_inline)) bool isAddress32ByteAligned(__ubuf__ T* ptr) {
+__aiv__ __attribute__((always_inline)) bool
+isAddress32ByteAligned(__ubuf__ T *ptr) {
   auto address = reinterpret_cast<uintptr_t>(ptr);
   return (address & 0x1F) == 0;
 }
@@ -150,4 +164,108 @@ __aiv__ __attribute__((always_inline)) bool is_memref_aligned(memref_t<__ubuf__ 
   }
   return true;
 }
+
+#if defined(__DAV_C310__)
+template <typename T>
+__simt_callee__ __aiv__ __attribute__((always_inline)) T
+UintDivImpl(T dividend, T magic, T shift) {
+  static_assert(std::is_same<T, uint32_t>::value ||
+                    std::is_same<T, uint64_t>::value,
+                "Input type T only supports uint32_t, uint64_t.");
+
+  T q = 0;
+  if constexpr (std::is_same<T, uint32_t>::value) {
+    q = __umulhi(dividend, magic);
+  } else if constexpr (std::is_same<T, uint64_t>::value) {
+    q = __umul64hi(dividend, magic);
+  }
+
+  T sum = dividend + q;
+  return sum >> shift;
+}
+
+template <int countValue>
+__aiv__ __attribute__((always_inline)) static int64_t
+ScalarGetCountOfValueImpl(uint64_t valueIn) {
+  if constexpr (countValue == 1) {
+    // This instruction counts the number of 1 in the number in Xn, and then
+    // writes the result to Xd.
+    return bcnt1(valueIn);
+  } else if constexpr (countValue == 0) {
+    // This instruction counts the number of 0 in the number in Xn, and then
+    // writes the result to Xd.
+    return bcnt0(valueIn);
+  } else {
+    static_assert(((countValue == 0) || (countValue == 1)) &&
+                  "countValue must be 1 or 0");
+    return 0;
+  }
+}
+
+__aiv__ __attribute__((always_inline)) static int64_t
+ScalarCountLeadingZeroImpl(uint64_t valueIn) {
+  // This instruction counts leading zero bits of number in Xn.
+  return clz(valueIn);
+}
+
+__aiv__ __attribute__((always_inline)) static uint64_t
+GetUintDivMagic(uint64_t dividend, uint64_t divisor) {
+  uint64_t quotient = 0;
+  uint64_t remainder = dividend;
+  uint64_t borrow = 0;
+  // handle low 64 bit
+  for (int i = 0; i < BIT_64_LEN; i++) {
+    quotient <<= 1;
+    borrow = (remainder & UINT_64_HIGHEST_BIT_MASK) > 0 ? 1 : 0;
+    remainder = (remainder << 1);
+
+    if (borrow == 1) {
+      remainder = UINT_64_MAX - divisor + 1 + remainder;
+      quotient |= 1;
+    } else if (remainder >= divisor) {
+      remainder -= divisor;
+      quotient |= 1;
+    }
+  }
+  return quotient + 1;
+}
+
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+GetUintDivMagicAndShiftImpl(T &magic, T &shift, T divisor) {
+  static_assert(std::is_same<T, uint32_t>::value ||
+                    std::is_same<T, uint64_t>::value,
+                "Input type T only supports uint32_t, uint64_t.");
+  int64_t pos = BIT_64_LEN - ScalarCountLeadingZeroImpl(divisor);
+  int64_t cnt1 = ScalarGetCountOfValueImpl<1>(divisor);
+  shift = cnt1 == 1 ? pos - 1 : pos;
+  if constexpr (std::is_same<T, uint32_t>::value) {
+    magic = (1l << BIT_32_LEN) * ((1l << shift) - divisor) / divisor + 1;
+  } else if constexpr (std::is_same<T, uint64_t>::value) {
+    uint64_t dividend = 0;
+    if (shift < BIT_64_LEN) {
+      dividend = (1l << shift) - divisor;
+    } else if (shift == BIT_64_LEN) {
+      // divisor must be greater than 0, so will not overflow
+      dividend = UINT_64_MAX - divisor + 1;
+    } else {
+      return;
+    }
+    magic = GetUintDivMagic(dividend, divisor);
+  }
+}
+
+template <typename DTYPE>
+__simt_callee__ __aiv__ __attribute__((always_inline))
+constexpr DTYPE MakeSentinelNegOne() {
+  if constexpr (std::is_same<DTYPE, half2>::value) {
+    return half2{static_cast<half>(-1), static_cast<half>(-1)};
+  } else if constexpr (std::is_same<DTYPE, bfloat16x2_t>::value) {
+    return bfloat16x2_t{static_cast<bfloat16_t>(-1),
+                        static_cast<bfloat16_t>(-1)};
+  } else {
+    return static_cast<DTYPE>(-1);
+  }
+}
+#endif
 #endif // HIVM_MLIR_TEMPLATE_UTILS_H

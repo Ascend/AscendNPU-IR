@@ -74,6 +74,7 @@ public:
 
   explicit PropagateDownPattern(MLIRContext *ctx, PropagationStep step)
       : OpRewritePattern(ctx, /*benefit=*/3), step(step) {}
+      : OpRewritePattern(ctx, /*benefit=*/4), step(step) {}
 
 private:
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
@@ -120,6 +121,7 @@ public:
 
   explicit PropagateUpPattern(MLIRContext *ctx, PropagationStep step)
       : OpRewritePattern(ctx, /*benefit=*/2), step(step) {}
+      : OpRewritePattern(ctx, /*benefit=*/3), step(step) {}
 
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
                                 PatternRewriter &rewriter) const override;

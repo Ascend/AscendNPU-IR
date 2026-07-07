@@ -1,4 +1,10 @@
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRHIVMDialect
+  )
+
 add_bishengir_conversion_library(BiShengIRHFusionToHIVM
+  IS_OPEN_SOURCE
+
   HFusionToHIVM.cpp
   Matmul.cpp
   Reduction.cpp
@@ -11,7 +17,7 @@ add_bishengir_conversion_library(BiShengIRHFusionToHIVM
   BiShengIRConversionPassIncGen
 
   LINK_LIBS PUBLIC
-  BiShengIRHIVMDialect
+  ${BISHENGIR_PRIVATE_LIBS}
   MLIRIR
   MLIRBufferizationTransforms
   MLIRLinalgDialect

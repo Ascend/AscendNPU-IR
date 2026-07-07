@@ -21,16 +21,21 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
 
+// --- membase version helper functions ---
+
 static hivm::ReduceOperation
-getReduceWithIndexOpAttr(hfusion::ReduceWithIndexOp reduceOp) {
+getReduceWithIndexOpAttr_membase(hfusion::ReduceWithIndexOp reduceOp) {
   auto reduceKind = reduceOp.getReduceKindAttr().getReduceWithIndexKind();
   auto tieBreakLeft = reduceOp.getTieBreakLeftAttr().getValue();
   if (reduceKind == hfusion::ReduceWithIndexKind::MAX) {
@@ -45,12 +50,57 @@ getReduceWithIndexOpAttr(hfusion::ReduceWithIndexOp reduceOp) {
   llvm::report_fatal_error("Not implemented");
 }
 
-static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
+// --- regbase version helper functions ---
+
+static BoolAttr getReduceTieBreakLeftAttr_regbase(Operation *op) {
+  if (auto reduceWithIndexOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
+    return reduceWithIndexOp.getTieBreakLeftAttr();
+  }
+  return {};
+}
+
+static BoolAttr getReduceUnsignedSourceAttr_regbase(Operation *op) {
+  auto *ctx = op->getContext();
+  if (auto reduceWithIndexOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
+    return reduceWithIndexOp.getUnsignedSrcAttr();
+  }
+  if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != 1)
+      return BoolAttr::get(ctx, false);
+
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (!bodyOp)
+      return BoolAttr::get(ctx, false);
+
+    Type elemType = getElementTypeOrSelf(reduceOp.getInputs()[0].getType());
+    if (elemType.isInteger() &&
+        (isa<arith::MaxUIOp>(bodyOp) || isa<arith::MinUIOp>(bodyOp)))
+      return BoolAttr::get(ctx, true);
+  }
+  return BoolAttr::get(ctx, false);
+}
+
+static hivm::ReduceOperation
+getReduceWithIndexKind_regbase(hfusion::ReduceWithIndexOp reduceOp) {
+  auto reduceKind = reduceOp.getReduceKindAttr().getReduceWithIndexKind();
+  if (reduceKind == hfusion::ReduceWithIndexKind::MAX) {
+    return hivm::ReduceOperation::max_with_index;
+  } else if (reduceKind == hfusion::ReduceWithIndexKind::MIN) {
+    return hivm::ReduceOperation::min_with_index;
+  } else {
+    reduceOp.emitOpError("unsupported reduce with index operation: ");
+    return hivm::ReduceOperation::none;
+  }
+}
+
+static hivm::ReduceOpAttr getReduceOpAttr_membase(Operation *op) {
   hivm::ReduceOperation kind;
   auto *ctx = op->getContext();
 
   if (auto reduceOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
-    kind = getReduceWithIndexOpAttr(reduceOp);
+    kind = getReduceWithIndexOpAttr_membase(reduceOp);
   } else if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
@@ -90,6 +140,57 @@ static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
   }
 
   return hivm::ReduceOpAttr::get(ctx, kind);
+}
+
+static hivm::ReduceOpAttr getReduceOpAttr_regbase(Operation *op) {
+  hivm::ReduceOperation kind;
+  auto ctx = op->getContext();
+
+  if (auto reduceOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
+    kind = getReduceWithIndexKind_regbase(reduceOp);
+  } else if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    auto bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    Type srcType = reduceOp.getInputs()[0].getType();
+    Type elemType = getElementTypeOrSelf(srcType);
+
+    if (isa<arith::AddFOp>(bodyOp) || isa<arith::AddIOp>(bodyOp)) {
+      kind = hivm::ReduceOperation::sum;
+    } else if (isa<arith::XOrIOp>(bodyOp)) {
+      kind = hivm::ReduceOperation::xori;
+    } else if (isa<arith::OrIOp>(bodyOp) && elemType.isInteger(1)) {
+      kind = hivm::ReduceOperation::any;
+    } else if (isa<arith::AndIOp>(bodyOp) && elemType.isInteger(1)) {
+      kind = hivm::ReduceOperation::all;
+    } else if (isa<arith::OrIOp>(bodyOp)) {
+      assert(!elemType.isInteger(1) && "reduce_or unsupport bool");
+      kind = hivm::ReduceOperation::ori;
+    } else if (isa<arith::AndIOp>(bodyOp)) {
+      assert(!elemType.isInteger(1) && "reduce_and unsupport bool");
+      kind = hivm::ReduceOperation::andi;
+    } else if (isa<arith::MulFOp>(bodyOp) || isa<arith::MulIOp>(bodyOp)) {
+      kind = hivm::ReduceOperation::prod;
+    } else if (isa<arith::MaximumFOp>(bodyOp) || isa<arith::MaxSIOp>(bodyOp) ||
+               isa<arith::MaxNumFOp>(bodyOp) || isa<arith::MaxUIOp>(bodyOp)) {
+      kind = hivm::ReduceOperation::max;
+    } else if (isa<arith::MinimumFOp>(bodyOp) || isa<arith::MinSIOp>(bodyOp) ||
+               isa<arith::MinNumFOp>(bodyOp) || isa<arith::MinUIOp>(bodyOp)) {
+      kind = hivm::ReduceOperation::min;
+    } else {
+      reduceOp.emitOpError("unsupported reduce operation: ");
+      llvm_unreachable("Not implemented");
+    }
+  } else {
+    op->emitOpError("unsupported reduce operation: ");
+    llvm_unreachable("Not implemented");
+  }
+
+  return hivm::ReduceOpAttr::get(ctx, kind);
+}
+
+static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
+  return getReduceOpAttr_membase(op);
 }
 
 namespace {

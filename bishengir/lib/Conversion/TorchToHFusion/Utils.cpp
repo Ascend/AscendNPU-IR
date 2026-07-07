@@ -1,5 +1,6 @@
 //===- Utils.cpp - Impl. of utilities for Torch to HFusion conversion -----===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -11,6 +12,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// Also available under a BSD-style license. See LICENSE.
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/TorchToHFusion/Utils.h"
@@ -63,6 +66,7 @@ void mlir::getElementwiseResultShape(OpBuilder &b, Location loc,
       // dimension of the result.
       auto resultDim =
           size.index() + static_cast<size_t>(resultRank - type.getRank());
+      auto resultDim = size.index() + (resultRank - type.getRank());
 
       // Now, we need to ensure that such iteration is not going to trigger
       // undefined behavior, by doing appropriate checks against the current
@@ -80,6 +84,8 @@ void mlir::getElementwiseResultShape(OpBuilder &b, Location loc,
       }
     }
   }
+
+  return;
 }
 
 static Value
@@ -165,6 +171,9 @@ FailureOr<Value> mlir::broadcastTensorToShape(PatternRewriter &rewriter,
   size_t inputRank = inputShape.size();
   auto outputShape = broadcastType.getShape();
   size_t outputRank = outputShape.size();
+  int64_t inputRank = inputShape.size();
+  auto outputShape = broadcastType.getShape();
+  int64_t outputRank = outputShape.size();
   if (outputRank < inputRank)
     return rewriter.notifyMatchFailure(loc,
                                        "Output's rank need larger than input.");
@@ -186,6 +195,7 @@ FailureOr<Value> mlir::broadcastTensorToShape(PatternRewriter &rewriter,
     size_t j = i - diff;
 
     if (dynDims.empty() && outputShape[i] == ShapedType::kDynamic) {
+    if (!dynDims.size() && outputShape[i] == ShapedType::kDynamic) {
       inputDynDims.push_back(rewriter.create<tensor::DimOp>(loc, input, j));
     }
 
@@ -207,6 +217,7 @@ FailureOr<Value> mlir::broadcastTensorToShape(PatternRewriter &rewriter,
   Value emptyTensor = rewriter.create<tensor::EmptyOp>(
       loc, outputShape, broadcastType.getElementType(),
       !dynDims.empty() ? dynDims : inputDynDims);
+      dynDims.size() > 0 ? dynDims : inputDynDims);
 
   // Squeeze first
   SmallVector<int64_t> squeezedims;
@@ -218,6 +229,7 @@ FailureOr<Value> mlir::broadcastTensorToShape(PatternRewriter &rewriter,
 
   Value arg = input;
   if (!squeezedims.empty()) {
+  if (squeezedims.size() > 0) {
     auto squeezed = squeezeDims(rewriter, loc, arg, squeezedims);
     if (failed(squeezed))
       return failure();
@@ -233,6 +245,7 @@ FailureOr<Value> mlir::broadcastTensorToShape(PatternRewriter &rewriter,
 FailureOr<Value> mlir::unsqueezeDims(PatternRewriter &rewriter, Location loc,
                                      Value operand,
                                      SmallVector<int64_t> &dimensions) {
+                                     SmallVector<int64_t> &dims) {
   auto operandType = cast<RankedTensorType>(operand.getType());
   if (!operandType)
     return failure();
@@ -245,6 +258,12 @@ FailureOr<Value> mlir::unsqueezeDims(PatternRewriter &rewriter, Location loc,
   int64_t idx = -1;
   if (!reassociation.empty()) {
     for (size_t i = 0; i < operandShape.size() + dimensions.size(); ++i) {
+  mlir::DenseSet<int64_t> dimSet(dims.begin(), dims.end());
+
+  SmallVector<ReassociationIndices> reassociation(operandShape.size());
+  int64_t idx = -1;
+  if (reassociation.size() > 0) {
+    for (size_t i = 0; i < operandShape.size() + dims.size(); ++i) {
       if (!dimSet.contains(i))
         ++idx;
       reassociation[std::max<int64_t>(idx, 0)].push_back(i);
@@ -253,6 +272,7 @@ FailureOr<Value> mlir::unsqueezeDims(PatternRewriter &rewriter, Location loc,
 
   SmallVector<int64_t> resultShape(operandType.getShape());
   for (size_t dim : dimensions) {
+  for (size_t dim : dims) {
     assert(resultShape.size() >= dim);
     resultShape.insert(resultShape.begin() + dim, 1);
   }
@@ -319,7 +339,6 @@ FailureOr<Value> mlir::createHFusionCastOp(PatternRewriter &rewriter,
 // Original Source:
 // https://github.com/llvm/torch-mlir/blob/main/lib/Conversion/TorchToLinalg/DataMovement.cpp
 //===----------------------------------------------------------------------===//
-
 FailureOr<Value> mlir::permuteTensor(Operation *op, PatternRewriter &rewriter,
                                      Location loc,
                                      SmallVector<int64_t> dimensions,
@@ -334,6 +353,11 @@ FailureOr<Value> mlir::permuteTensor(Operation *op, PatternRewriter &rewriter,
     return rewriter.notifyMatchFailure(
         op, "size of `dims` must be equal to the rank of the input");
   for (size_t i = 0; i < numDimensions; i++) {
+  int64_t numDimensions = dimensions.size();
+  if (inputRank != numDimensions)
+    return rewriter.notifyMatchFailure(
+        op, "size of `dims` must be equal to the rank of the input");
+  for (uint32_t i = 0; i < numDimensions; i++) {
     if (dimensions[i] < 0)
       dimensions[i] = toPositiveDim(dimensions[i], inputRank);
     if (!isValidDim(dimensions[i], inputRank))
@@ -343,6 +367,7 @@ FailureOr<Value> mlir::permuteTensor(Operation *op, PatternRewriter &rewriter,
   // Get output
   SmallVector<Value> outputDims;
   for (int64_t i = 0; i < inputRank; i++)
+  for (uint32_t i = 0; i < inputRank; i++)
     outputDims.push_back(getDimOp(rewriter, loc, input, dimensions[i]));
   Value empty = rewriter.create<tensor::EmptyOp>(
       loc, getAsOpFoldResult(outputDims), elementType);
@@ -431,6 +456,7 @@ mlir::broadcastToGivenShape(Operation *op, PatternRewriter &rewriter,
   RankedTensorType inputType = cast<RankedTensorType>(input.getType());
   int64_t inputRank = inputType.getRank();
   int64_t outputRank = static_cast<int64_t>(broadcastToShape.size());
+  int64_t outputRank = broadcastToShape.size();
   ArrayRef<int64_t> outputShape = broadcastType.getShape();
   SmallVector<int64_t> inputShape =
       makeShapeTorchCompatible(inputType.getShape());
@@ -453,6 +479,8 @@ mlir::broadcastToGivenShape(Operation *op, PatternRewriter &rewriter,
 
   size_t diff = static_cast<size_t>(outputRank - inputRank);
   for (size_t i = 0, e = static_cast<size_t>(outputRank); i < e; i++) {
+  size_t diff = outputRank - inputRank;
+  for (size_t i = 0, e = outputRank; i < e; i++) {
     Value shapeValue = broadcastToShape[i];
     size_t j = i - diff;
     bool isDynamic = i >= diff && inputShape[j] == kUnknownSize;
@@ -547,6 +575,9 @@ mlir::broadcastToGivenShape(Operation *op, PatternRewriter &rewriter,
       if (broadcastedStatus[i - static_cast<int64_t>(diff)]) {
         broadcastDims.push_back(i);
         squeezedims.push_back(i - static_cast<int64_t>(diff));
+      if (broadcastedStatus[i - diff]) {
+        broadcastDims.push_back(i);
+        squeezedims.push_back(i - diff);
       }
     }
   }

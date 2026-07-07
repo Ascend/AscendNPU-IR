@@ -40,4 +40,10 @@
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/Annotation/IR/AnnotationOps.h.inc"
 
+#include "bishengir/Dialect/Annotation/IR/AnnotationEnums.h.inc"
+
+#define GET_ATTRDEF_CLASSES
+#include "bishengir/Dialect/Annotation/IR/AnnotationAttrs.h.inc"
+
+
 #endif // BISHENGIR_DIALECT_ANNOTATION_IR_ANNOTATION_H

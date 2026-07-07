@@ -19,7 +19,11 @@
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "mlir/Transforms/DialectConversion.h"
 
+#define DEBUG_TYPE "annotation-lowering"
+#define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 namespace mlir {
 #define GEN_PASS_DEF_ANNOTATIONLOWERING
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h.inc"
@@ -52,7 +56,6 @@ struct AnnotationLoweringPass
     ConversionTarget target(*context);
 
     target.addIllegalDialect<annotation::AnnotationDialect>();
-
     patterns.add<MarkOpLowering>(context);
 
     if (failed(applyPartialConversion(func, target, std::move(patterns))))

@@ -142,6 +142,7 @@ FlattenResult collapseUniformReassociationPipeline(
       initializePayload(op, options, barrierDims, adjustedDims);
   LDBG("Done payload");
   FlattenResult unitResult = getFlattenedUnit(payload);
+  FlattenResult unitResult = getFlattenedUnit(payload, options);
   LDBG("Unit adjusted dims " << to_string(unitResult.adjustedTargetDims));
   FlattenResult collapseUniformResult =
       collapseUniformReassociation(unitResult, options);

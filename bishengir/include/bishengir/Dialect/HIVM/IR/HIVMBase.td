@@ -56,6 +56,12 @@ def HIVM_Dialect : Dialect {
 def TensorOrMemref :
   AnyTypeOf<[AnyMemRef, AnyRankedTensor], "Tensor or Memref">;
 
+class ShapedTypeOf<list<Type> allowedTypes, list<Pred> preds = [],
+                   string summary = "Shaped Type">
+    : ShapedContainerType<allowedTypes,
+                          And<!listconcat([IsShapedTypePred], preds)>, summary,
+                          "::mlir::ShapedType">;
+
 //===----------------------------------------------------------------------===//
 // HIVM Dialect operations.
 //===----------------------------------------------------------------------===//
@@ -69,12 +75,13 @@ class HIVM_Op<string mnemonic, list<Trait> traits = []>
 }
 
 class HIVM_StructuredOp<string mnemonic, list<Trait> traits = []>
-    : HIVM_Op<mnemonic, 
-      !listconcat([
-        HIVMStructuredOpInterface,
-        MemoryEffectsOpInterface,
-        DeclareOpInterfaceMethods<FlattenInterface>,
-        DeclareOpInterfaceMethods<HIVMStructuredOpInterface>
-      ], traits)>;
+    : HIVM_Op<
+          mnemonic,
+          !listconcat([HIVMStructuredOpInterface, MemoryEffectsOpInterface,
+                       DeclareOpInterfaceMethods<FlattenInterface>,
+                       DeclareOpInterfaceMethods<HIVMStructuredOpInterface>,
+                       DeclareOpInterfaceMethods<LibraryFunctionOpInterface>,
+],
+                      traits)>;
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMBASE_TD

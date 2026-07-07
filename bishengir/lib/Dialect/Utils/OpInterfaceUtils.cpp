@@ -1,5 +1,6 @@
 //===- OpInterfaceUtils.cpp --------------------------------------*- C++-*-===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -27,6 +28,11 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+// Original implementation is from:
+// https://github.com/bytedance/byteir/blob/0e83d42baff5842ddd433b8f1a04e0d783683536/compiler/lib/Utils/OpInterfaceUtils.cpp
+//
+//===----------------------------------------------------------------------===//
+
 #include "bishengir/Dialect/Utils/OpInterfaceUtils.h"
 
 #include "mlir/IR/BuiltinTypes.h"
@@ -102,3 +108,4 @@ void mlir::registerOpInterfaceExtensions(DialectRegistry &registry) {
 }
 
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
+}

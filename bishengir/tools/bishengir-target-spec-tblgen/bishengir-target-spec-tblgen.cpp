@@ -1,5 +1,6 @@
 //===- bishengir-target-spec-tblgen.cpp -----------------------------------===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -43,11 +44,8 @@ static mlir::GenRegistration
                    os << records;
                    return false;
                  });
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
-static bool bishengirTargetSpecGenMain(raw_ostream &os, const RecordKeeper &records) {
-#else
+
 static bool bishengirTargetSpecGenMain(raw_ostream &os, RecordKeeper &records) {
-#endif
   if (!generator) {
     os << records;
     return false;

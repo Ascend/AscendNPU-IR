@@ -57,6 +57,10 @@ Value ValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
 }
 
 Value ValueHandle::getImpl() { llvm::report_fatal_error("Not implemented!"); }
+  llvm_unreachable("Not implemented!");
+}
+
+Value ValueHandle::getImpl() { llvm_unreachable("Not implemented!"); }
 
 void ValueHandle::setStatus(HandleStatus s) { status_ = s; }
 
@@ -97,6 +101,7 @@ Value RegularValueHandle::getImpl() {
   if (this->status_ == HandleStatus::kValid)
     return handle_;
   llvm::report_fatal_error("Invalid handle!");
+  llvm_unreachable("Invalid handle!");
 }
 
 //===----------------------------------------------------------------------===//
@@ -109,6 +114,7 @@ Value NamedValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
 
   if (this->status_ != HandleStatus::kNeedsRematch) {
     llvm::report_fatal_error("Invalid handle!");
+    llvm_unreachable("Invalid handle!");
     return Value{};
   }
 
@@ -137,6 +143,7 @@ Value NamedValueHandle::getImpl(Value matchTarget, OpBuilder &opBuilder) {
     break;
   default:
     llvm::report_fatal_error("Not implemented!");
+    llvm_unreachable("Not implemented!");
     return Value();
   }
 
@@ -172,6 +179,7 @@ Value FuncArgHandle::getImpl(Value funcValue, OpBuilder &opBuilder) {
     return handle_;
   }
   llvm::report_fatal_error("Invalid handle!");
+  llvm_unreachable("Invalid handle!");
   return {};
 }
 
@@ -203,6 +211,7 @@ void HandleRecord::resetAllHandles() {
         .Case(
             [](FuncArgHandle *h) { h->setStatus(HandleStatus::kNeedsRematch); })
         .Default([](ValueHandle *) { llvm::report_fatal_error("Not implemented!"); });
+        .Default([](ValueHandle *) { llvm_unreachable("Not implemented!"); });
   }
 }
 

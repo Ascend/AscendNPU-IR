@@ -1,5 +1,6 @@
 //===- HFusionTransformOps.cpp - Implementation of HFusion transform ops --===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -26,6 +27,9 @@
 #include "mlir/Dialect/Linalg/TransformOps/Syntax.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -173,6 +177,7 @@ CacheReadOp::apply(TransformRewriter &rewriter,
           createCacheRead(rewriter, blockArgument, insertPoint->getLoc());
     } else {
       llvm::report_fatal_error("unsupported type");
+      llvm_unreachable("unsupported type");
     }
     cachedOps.push_back(cachedOp.getOperation());
   }
@@ -207,6 +212,11 @@ CacheWriteOp::apply(TransformRewriter &rewriter,
       maybeCachedOp = createCacheWrite(rewriter, opResult, options);
     } else {
       llvm::report_fatal_error("unsupported type");
+          /*cacheWriteToOutputInit=*/getCacheWriteToOutputInit(),
+          /*reshapeTrace=*/std::nullopt};
+      maybeCachedOp = createCacheWrite(rewriter, opResult, options);
+    } else {
+      llvm_unreachable("unsupported type");
     }
     if (failed(maybeCachedOp))
       return DiagnosedSilenceableFailure::definiteFailure();
@@ -521,11 +531,15 @@ calculateBufferSize(int64_t bufferSize, SetBufferSizeMode unitMode,
     llvm::report_fatal_error("Reference type's width should be positive");
     result.diag =
         emitDefiniteFailure(loc, "reference type's width should be positive");
+    llvm_unreachable("Reference type's width should be positive");
+    result.diag = emitDefiniteFailure(
+        loc, "reference type's width should be positive");
     return result;
   }
   auto factor = elementBitWidth / referenceTypeWidth;
   if (referenceTypeWidth == 0)
     llvm::report_fatal_error("Reference type's with should be positive");
+    llvm_unreachable("Reference type's with should be positive");
   if (elementBitWidth % referenceTypeWidth != 0)
     factor = (elementBitWidth + referenceTypeWidth - 1) / referenceTypeWidth;
   result.bufferSizeInBytes *= static_cast<int>(factor);
@@ -845,6 +859,329 @@ void transform::MatchAncestorOfOp::build(OpBuilder &builder,
   result.addTypes(transform::AnyOpType::get(builder.getContext()));
 }
 
+//===----------------------------------------------------------------------===//
+// ExtendedLoopOutlineOp
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+inline SmallVector<scf::ForOp> collectLoops(const SmallVector<Value> &targets,
+                                            transform::TransformState &state) {
+  SmallVector<scf::ForOp> loops;
+  DominanceInfo domInfo;
+  for (Value target : targets) {
+    if (state.getPayloadOps(target).empty()) {
+      assert(false && "payload op is empty.");
+    }
+    Operation *loop = *state.getPayloadOps(target).begin();
+    assert(llvm::hasSingleElement(state.getPayloadOps(target)) &&
+           "expect single element.");
+    loops.push_back(dyn_cast<scf::ForOp>(loop));
+  }
+  llvm::sort(loops, [&domInfo](scf::ForOp a, scf::ForOp b) {
+    return domInfo.properlyDominates(a, b, false);
+  });
+  return loops;
+}
+
+inline void getResultsUsedBelow(const SmallVector<Operation *> &ops,
+                                Operation *below, SmallVector<Value> &results) {
+  DominanceInfo domInfo;
+  for (Operation *op : ops) {
+    for (Value res : op->getResults()) {
+      for (OpOperand &use : res.getUses()) {
+        if (domInfo.properlyDominates(below, use.getOwner(), false)) {
+          results.push_back(res);
+          break;
+        }
+      }
+    }
+  }
+}
+
+static Operation *buildCopyOpForValue(Location loc, Value from,
+                                      transform::TransformRewriter &rewriter) {
+  auto rankedTy = dyn_cast<RankedTensorType>(from.getType());
+  if (!rankedTy)
+    return nullptr;
+  SmallVector<OpFoldResult> sizes = tensor::getMixedSizes(rewriter, loc, from);
+  Value empty = rewriter.create<tensor::EmptyOp>(loc, sizes,
+                                                 rankedTy.getElementType());
+  return rewriter.create<linalg::CopyOp>(loc, from, empty);
+}
+
+static void duplicateReusedValuesForSCFForOp(
+    SmallVector<scf::ForOp> loops, transform::TransformRewriter &rewriter) {
+  DenseSet<Value> set;
+  for (auto loop : loops) {
+    OpBuilder::InsertionGuard g(rewriter);
+    rewriter.setInsertionPoint(loop);
+    auto loc = loop.getLoc();
+    for (OpOperand &iterArg : loop.getInitArgsMutable()) {
+      auto value = iterArg.get();
+      if (!set.contains(value)) {
+        set.insert(value);
+      } else {
+        if (Operation *newOp = buildCopyOpForValue(loc, value, rewriter))
+          iterArg.assign(newOp->getResult(0));
+      }
+    }
+    loop.getBody()->walk([&](Operation *op) {
+      for (unsigned i = 0; i < op->getOperands().size(); i++) {
+        Value value = op->getOperand(i);
+        if (set.contains(value)) {
+          if (Operation *newOp = buildCopyOpForValue(loc, value, rewriter))
+            op->setOperand(i, newOp->getResult(0));
+        }
+      }
+    });
+  }
+}
+
+inline SmallVector<Operation *>
+collectAllDefiningOpsOfForOp(scf::ForOp consumer) {
+  SmallVector<Operation *> definingOps;
+  for (Value val : consumer.getInitArgs()) {
+    if (val.getDefiningOp())
+      definingOps.push_back(val.getDefiningOp());
+  }
+  for (Value val : consumer.getOperands()) {
+    if (val.getDefiningOp())
+      definingOps.push_back(val.getDefiningOp());
+  }
+  visitUsedValuesDefinedAbove(consumer->getRegion(0), consumer->getRegion(0),
+                              [&definingOps](OpOperand *operand) {
+                                definingOps.push_back(
+                                    operand->get().getDefiningOp());
+                              });
+  return definingOps;
+}
+
+// For pair of loops: {producer_loop, consumer_loop},
+// 1. recursivly collect users of producer_loop until meet consumer_loop,
+//    into prevUsers Set.
+// 2. recursivly collect consumer_loop definingOp, until meet producer_loop,
+//    if exists in prevUsers, push into intermediateOps vector.
+// 3. sort them with dominance order.
+inline void
+collectAndGroupProducerUsers(scf::ForOp producer, scf::ForOp consumer,
+                             SmallVector<Operation *> &intermediateOps,
+                             SmallVector<Operation *> &nonIntermediateOps) {
+  DominanceInfo domInfo;
+  if (!domInfo.properlyDominates(producer, consumer, false)) {
+    return;
+  }
+
+  SmallVector<Operation *> stack = {producer};
+  DenseSet<Operation *> users;
+  DenseSet<Operation *> definingOps;
+
+  while (!stack.empty()) {
+    Operation *cur = stack.pop_back_val();
+    for (Operation *curUser : cur->getUsers()) {
+      if (users.find(curUser) == users.end() &&
+          domInfo.properlyDominates(curUser, consumer, false)) {
+        users.insert(curUser);
+        stack.push_back(curUser);
+      }
+    }
+  }
+
+  stack.append(collectAllDefiningOpsOfForOp(consumer));
+
+  while (!stack.empty()) {
+    Operation *cur = stack.pop_back_val();
+    if (users.find(cur) != users.end()) {
+      definingOps.insert(cur);
+      for (Value operand : cur->getOperands()) {
+        if (Operation *defOp = operand.getDefiningOp()) {
+          stack.push_back(defOp);
+        }
+      }
+    }
+  }
+
+  intermediateOps = {definingOps.begin(), definingOps.end()};
+  llvm::stable_sort(intermediateOps, [&domInfo](Operation *a, Operation *b) {
+    return domInfo.properlyDominates(a, b, false);
+  });
+
+  for (Operation *item : users) {
+    if (definingOps.find(item) == definingOps.end()) {
+      nonIntermediateOps.push_back(item);
+    }
+  }
+  llvm::stable_sort(nonIntermediateOps, [&domInfo](Operation *a, Operation *b) {
+    return domInfo.properlyDominates(a, b, false);
+  });
+}
+
+inline void
+collectAndGroupOperations(const SmallVector<scf::ForOp> &loops,
+                          transform::TransformState &state,
+                          SmallVector<Operation *> &opsToOutline,
+                          SmallVector<Operation *> &opsToAdjustPositon) {
+  scf::ForOp prev = nullptr;
+  for (auto cur : loops) {
+    if (prev) {
+      SmallVector<Operation *> intermediateOps;
+      collectAndGroupProducerUsers(prev, cur, intermediateOps,
+                                   opsToAdjustPositon);
+      opsToOutline.append(intermediateOps);
+    }
+
+    opsToOutline.push_back(cur);
+    prev = cur;
+  }
+}
+
+inline void adjustOperationPositionsAfter(
+    const SmallVector<Operation *> &opsToAdjustPositon, Operation *after,
+    transform::TransformRewriter &rewriter) {
+  DominanceInfo domInfo;
+  OpBuilder::InsertionGuard g(rewriter);
+  for (Operation *op : llvm::reverse(opsToAdjustPositon)) {
+    rewriter.setInsertionPointAfter(after);
+    Operation *newOp = rewriter.clone(*op);
+    bool _;
+    rewriter.replaceUsesWithIf(
+        op->getResults(), newOp->getResults(),
+        [&after, &domInfo](OpOperand &operand) -> bool {
+          return domInfo.properlyDominates(after, operand.getOwner(), false);
+        },
+        &_);
+    rewriter.eraseOp(op);
+  }
+}
+
+inline void initAndOutlineOpsIntoRegion(
+    const SmallVector<Operation *> &ops, const SmallVector<Value> &origResults,
+    const SmallVector<Type> &yieldResultsTypes,
+    SmallVector<Value> &yieldResults, scf::ExecuteRegionOp &executeRegionOp,
+    Operation *&symbolTableOp, transform::TransformRewriter &rewriter) {
+  IRMapping mapper;
+  OpBuilder::InsertionGuard g(rewriter);
+  for (auto riter = ops.rbegin(); riter != ops.rend(); riter++) {
+    Operation *op = *riter;
+    if (!executeRegionOp) {
+      OpBuilder::InsertionGuard g(rewriter);
+      rewriter.setInsertionPointAfter(op);
+      executeRegionOp = rewriter.create<scf::ExecuteRegionOp>(
+          op->getLoc(), yieldResultsTypes);
+      symbolTableOp = SymbolTable::getNearestSymbolTable(op);
+      executeRegionOp.getRegion().emplaceBlock();
+    }
+
+    rewriter.setInsertionPointToStart(&executeRegionOp.getRegion().back());
+
+    Operation *clonedOp = nullptr;
+    if (isa<scf::ForOp>(op)) {
+      clonedOp = rewriter.cloneWithoutRegions(*op);
+      Region &clonedRegion = clonedOp->getRegions().front();
+      assert(clonedRegion.empty() && "expected empty region");
+
+      rewriter.inlineRegionBefore(op->getRegions().front(), clonedRegion,
+                                  clonedRegion.end());
+    } else {
+      clonedOp = rewriter.clone(*op);
+    }
+
+    mapper.map(op->getResults(), clonedOp->getResults());
+
+    bool _;
+    rewriter.replaceOpUsesWithIf(
+        op, clonedOp->getResults(),
+        [&](OpOperand &use) {
+          return executeRegionOp->isAncestor(use.getOwner());
+        },
+        &_);
+  }
+
+  for (auto item : origResults) {
+    yieldResults.push_back(mapper.lookup(item));
+  }
+
+  rewriter.setInsertionPointToEnd(&executeRegionOp.getRegion().back());
+  rewriter.create<scf::YieldOp>(executeRegionOp.getLoc(), yieldResults);
+
+  rewriter.replaceAllUsesWith(origResults, executeRegionOp->getResults());
+}
+
+} // namespace
+
+// Extract all result types for return.
+DiagnosedSilenceableFailure
+transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
+                                        transform::TransformResults &results,
+                                        transform::TransformState &state) {
+  SmallVector<Operation *> functions;
+  SmallVector<Operation *> calls;
+  DenseMap<Operation *, SymbolTable> symbolTables;
+
+  SmallVector<Value> targets = getTargets();
+  SmallVector<scf::ForOp> loops = collectLoops(targets, state);
+
+  // When outline loop as VF, some reused values inside this loop will cause
+  // memref.alloc and memref.copy which is illegal inside VF after bufferization.
+  // Here we duplicate these reused values to avoid this. See issue:
+  // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3395
+  duplicateReusedValuesForSCFForOp(loops, rewriter);
+
+  SmallVector<Operation *> ops;
+  SmallVector<Operation *> opsToAdjustPositon;
+  collectAndGroupOperations(loops, state, ops, opsToAdjustPositon);
+  adjustOperationPositionsAfter(opsToAdjustPositon, loops.back(), rewriter);
+
+  scf::ExecuteRegionOp executeRegionOp = nullptr;
+  Operation *symbolTableOp = nullptr;
+
+  SmallVector<Type> yieldResultsTypes;
+  SmallVector<Value> yieldResults;
+  SmallVector<Value> origResults;
+
+  getResultsUsedBelow(ops, loops.back(), origResults);
+  for (Value origResult : origResults) {
+    yieldResultsTypes.push_back(origResult.getType());
+  }
+
+  initAndOutlineOpsIntoRegion(ops, origResults, yieldResultsTypes, yieldResults,
+                              executeRegionOp, symbolTableOp, rewriter);
+
+  for (Operation *op : llvm::reverse(ops)) {
+    if (op->use_empty())
+      rewriter.eraseOp(op);
+  }
+
+  if (!executeRegionOp) {
+    DiagnosedSilenceableFailure diag = emitSilenceableError()
+                                       << "failed to outline";
+    return diag;
+  }
+
+  func::CallOp call;
+  FailureOr<func::FuncOp> outlined = outlineSingleBlockRegion(
+      rewriter, executeRegionOp->getLoc(), executeRegionOp.getRegion(),
+      getFuncName(), &call);
+
+  if (failed(outlined)) {
+    return emitDefaultDefiniteFailure(executeRegionOp);
+  }
+
+  if (symbolTableOp) {
+    SymbolTable &symbolTable =
+        symbolTables.try_emplace(symbolTableOp, symbolTableOp)
+            .first->getSecond();
+    symbolTable.insert(*outlined);
+    call.setCalleeAttr(FlatSymbolRefAttr::get(*outlined));
+  }
+
+  functions.push_back(*outlined);
+  calls.push_back(call);
+  results.set(cast<OpResult>(getFunction()), functions);
+  results.set(cast<OpResult>(getCall()), calls);
+
+  return DiagnosedSilenceableFailure::success();
+}
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOpsEnums.cpp.inc"
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.cpp.inc"

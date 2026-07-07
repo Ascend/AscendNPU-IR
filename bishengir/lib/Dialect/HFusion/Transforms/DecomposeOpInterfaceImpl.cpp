@@ -26,12 +26,21 @@
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
 #include "llvm/ADT/APFloat.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dialect.h"
+#include "mlir/IR/Operation.h"
 
 using namespace mlir;
 using namespace hfusion;
 
 namespace {
 
+// Convert multi-axis linalg.transpose to binary linalg.transpose
+// linalg.tranpose(tensor(2x16x8x4x3xf32)) -> tensor(2x3x4x8x16xf32)
+// permutation = [0,4,3,2,1] is normalized into
+// tensor(2x16x8x4x3xf32) -> tensor(2x3x8x4x16xf32)  perm = [0,4,2,3,1]
+// tensor(2x3x8x4x16xf32) -> tensor(2x3x4x8x16xf32)  perm = [0,1,3,2,4]
 struct TransposeDecomposeInterface
     : public bishengir::BiShengIRAggregatedOpInterface::ExternalModel<
           TransposeDecomposeInterface, linalg::TransposeOp> {
@@ -42,6 +51,28 @@ struct TransposeDecomposeInterface
         mismatch++;
     }
     return (mismatch > 2);
+    const int supportedTransposeAxisNum = 2;
+    auto permSize = static_cast<int>(arr.size());
+    for (int i = 0; i < permSize; ++i) {
+      if (arr[i] != i)
+        mismatch++;
+    }
+    if (mismatch != supportedTransposeAxisNum && permSize == 4) {
+      std::vector<int> moved;
+      if (arr[0] == 2 && arr[1] == 3 && arr[2] == 0 && arr[3] == 1)
+        return false;
+      for (int i = 0; i < permSize; ++i) {
+        if (arr[i] != i) {
+          moved.push_back(i);
+        }
+      }
+
+      std::set<int> s(moved.begin(), moved.end());
+      if (s == std::set<int>{0, 1, 2} || s == std::set<int>{1, 2, 3})
+        return false;
+      return true;
+    }
+    return (mismatch > supportedTransposeAxisNum);
   }
 
   void calculateMinSwaps(ArrayRef<int64_t> perm,
@@ -655,3 +686,11 @@ public:
           hfusion::AtomicXchgOp::attachInterface<AtomicXchgDecomposeInterface>(*ctx);
         });
   }
+} // namespace
+
+void mlir::hfusion::registerDecomposeInterfaceExternalModels(
+    DialectRegistry &registry) {
+  registry.addExtension(+[](MLIRContext *ctx, linalg::LinalgDialect *dialect) {
+    linalg::TransposeOp::attachInterface<TransposeDecomposeInterface>(*ctx);
+  });
+}

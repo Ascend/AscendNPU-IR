@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -68,6 +69,10 @@ Value createCollapseShapeOp(PatternRewriter &rewriter, Location loc,
                             Value collapseSrc, Type resultType,
                             SmallVector<SmallVector<int64_t, 2>> collapseDims,
                             bool isPureTensor);
+
+hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode);
+
+hivm::UnsignedMode mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode);
 
 } // namespace hfusion_conversion_utils
 } // namespace mlir

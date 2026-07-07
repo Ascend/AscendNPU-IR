@@ -12,6 +12,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// Also available under a BSD-style license. See LICENSE.
 //
 //===----------------------------------------------------------------------===//
 
@@ -66,6 +67,7 @@ void bishengir::createTorchBackendToNamedOpBackendPipeline(
   pm.addNestedPass<func::FuncOp>(createConvertTorchToTMTensorPass());
   pm.addNestedPass<func::FuncOp>(
       bishengir::createExtendedCanonicalizerPass(canonicalizerOpts));
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
 
   pm.addNestedPass<func::FuncOp>(createLiteralDataTypeCastPass());
   ConvertTorchToHFusionOptions torchToHFusionOption;
@@ -85,6 +87,7 @@ void bishengir::createTorchBackendToNamedOpBackendPipeline(
 
   pm.addNestedPass<func::FuncOp>(
       bishengir::createExtendedCanonicalizerPass(canonicalizerOpts));
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
 
   pm.addNestedPass<func::FuncOp>(createConvertTorchToSCFPass());
   pm.addNestedPass<func::FuncOp>(createConvertTorchToArithPass());
@@ -93,6 +96,7 @@ void bishengir::createTorchBackendToNamedOpBackendPipeline(
 
   pm.addNestedPass<func::FuncOp>(
       bishengir::createExtendedCanonicalizerPass(canonicalizerOpts));
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
   pm.addNestedPass<func::FuncOp>(
       memref::createResolveShapedTypeResultDimsPass());
   pm.addNestedPass<func::FuncOp>(createCSEPass());
@@ -100,6 +104,7 @@ void bishengir::createTorchBackendToNamedOpBackendPipeline(
   pm.addPass(TorchConversion::createFuncBackendTypeConversionPass());
   pm.addNestedPass<func::FuncOp>(
       bishengir::createExtendedCanonicalizerPass(canonicalizerOpts));
+  pm.addNestedPass<func::FuncOp>(createCanonicalizerPass());
   pm.addNestedPass<func::FuncOp>(
       TorchConversion::createFinalizingBackendTypeConversionPass());
 }

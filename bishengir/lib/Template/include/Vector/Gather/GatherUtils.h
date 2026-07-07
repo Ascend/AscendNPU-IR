@@ -41,7 +41,7 @@ gather_1d_scalar(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *in
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
-is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src, 
+is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src,
                        memref_t<__ubuf__ int32_t, 1> *indices,
                        memref_t<__ubuf__ T, 1> *dst);
 

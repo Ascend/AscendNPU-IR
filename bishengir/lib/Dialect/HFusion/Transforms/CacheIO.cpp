@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Analysis/ReshapeAnalyzer.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/CacheFuncIO.h"
@@ -82,11 +83,14 @@ void restoreOperands(Operation *op, const SmallVector<Value> &oldOperands,
 
 void cacheWriteFuncReturn(mlir::OpBuilder &builder, func::FuncOp funcOp,
                           bool annotate, bool writeUnique) {
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
   hfusion::detail::ReshapeAnalyzer reshapeAnalyzer(funcOp);
   func::ReturnOp returnOp = nullptr;
   funcOp->walk([&returnOp](func::ReturnOp op) { returnOp = op; });
   if (returnOp == nullptr)
     llvm::report_fatal_error("Return Op not found");
+    llvm_unreachable("Return Op not found");
   for (size_t i = 0; i < returnOp->getNumOperands(); ++i) {
     if (funcOp.getResultAttr(i, hacc::CachedIOAttr::name)) {
       // ignore already cached func result
@@ -104,6 +108,7 @@ void cacheWriteFuncReturn(mlir::OpBuilder &builder, func::FuncOp funcOp,
         currentStoreOp->setAttr(hfusion::ReturnOperandNumAttr::name,
                                 builder.getI64IntegerAttr(i));
       }
+               tracedRes.getDefiningOp())) {
       tracedRes = currentStoreOp.getDpsInputs()[0];
     }
 
@@ -117,6 +122,17 @@ void cacheWriteFuncReturn(mlir::OpBuilder &builder, func::FuncOp funcOp,
     hfusion::CacheWriteOptions options = {/*outputOnly=*/true,
                                           /*cacheWriteToOutputInit=*/true,
                                           /*reshapeTrace=*/tracedOp};
+    hfusion::CacheWriteOptions options;
+    if (archIsRegbased) {
+      options = {/*outputOnly=*/true,
+                 /*cacheWriteToOutputInit=*/
+                 !isa<linalg::ReduceOp>(tracedRes.getDefiningOp()),
+                 /*reshapeTrace=*/tracedOp};
+    } else {
+      options = {/*outputOnly=*/true,
+                 /*cacheWriteToOutputInit=*/true,
+                 /*reshapeTrace=*/tracedOp};
+    }
     auto cachedOp =
         hfusion::createCacheWrite(builder, cast<OpResult>(tracedRes), options);
 

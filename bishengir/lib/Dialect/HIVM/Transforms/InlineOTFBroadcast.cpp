@@ -47,6 +47,7 @@ bool isValidUser(Operation *user, AxisKind axisKind) {
   bool isInLastAxisWhitelist =
       llvm::isa<VAddOp, VMulOp, VMaxOp, VMinOp, VSubOp, VDivOp, VAndOp, VOrOp,
                 VNotOp, VAbsOp, VLnOp, VReluOp, VExpOp,
+                VShLOp, VShROp, VNotOp, VAbsOp, VLnOp, VReluOp, VExpOp,
                 VRsqrtOp, VSqrtOp>(user);
   if (llvm::isa<VAbsOp>(user)) {
     auto vabsOp = dyn_cast<VAbsOp>(user);

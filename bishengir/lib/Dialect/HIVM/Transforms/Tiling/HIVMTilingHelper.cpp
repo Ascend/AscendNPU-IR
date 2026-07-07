@@ -18,6 +18,10 @@
 // Original Copyright: NA
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
@@ -231,6 +235,7 @@ utils::IteratorType convertToLinalgIteratorType(hivm::IteratorType itType) {
     return utils::IteratorType::concat;
   default:
     llvm::report_fatal_error("Unhandled iterator types");
+    llvm_unreachable("Unhandled iterator types");
   };
 }
 

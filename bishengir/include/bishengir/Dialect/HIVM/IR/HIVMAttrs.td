@@ -181,6 +181,336 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
   let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";
 }
 
+
+def HIVM_DataLayoutScaleAND : I32EnumAttrCase<"SCALEA_ND", 8, "SCALEA_ND">;
+def HIVM_DataLayoutScaleBDN : I32EnumAttrCase<"SCALEB_DN", 9, "SCALEB_DN">;
+def HIVM_DataLayoutScaleAzZ : I32EnumAttrCase<"SCALEA_zZ", 10, "SCALEA_zZ">;
+def HIVM_DataLayoutScaleBnN : I32EnumAttrCase<"SCALEB_nN", 11, "SCALEB_nN">;
+
+def HIVM_DataLayoutEnum : HIVM_I32Enum<
+  "DataLayout", "HIVM data layout", [
+    HIVM_DataLayoutDotAND,
+    HIVM_DataLayoutDotBND,
+    HIVM_DataLayoutDotCND,
+    HIVM_DataLayoutnZ,
+    HIVM_DataLayoutzN,
+    HIVM_DataLayoutND,
+    HIVM_DataLayoutFractal,
+    HIVM_DataLayoutScaleAND,
+    HIVM_DataLayoutScaleBDN,
+    HIVM_DataLayoutScaleAzZ,
+    HIVM_DataLayoutScaleBnN,
+  ]>;
+
+def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
+  let parameters = (ins
+    EnumParameter<HIVM_DataLayoutEnum>:$data_layout,
+    OptionalParameter<"BoolAttr">:$transpose,
+    OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
+  );
+  let description = [{
+    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+      - `transpose`: Indicates that the layout is transposed.
+                     Only valid and must be present for DOTA_ND and DOTB_ND layout.
+  }];
+  let builders = [
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
+      return $_get($_ctxt, data_layout, BoolAttr(), DenseI64ArrayAttr());
+    }]>,
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout, "std::optional<bool>":$transpose), [{
+      BoolAttr transposeAttr = transpose.has_value()
+          ? BoolAttr::get($_ctxt, *transpose)
+          : BoolAttr();
+      return $_get($_ctxt, data_layout, transposeAttr, DenseI64ArrayAttr());
+    }]>
+  ];
+  let extraClassDeclaration = [{
+    /// Returns the fractal sizes as a SmallVector, or std::nullopt if not set.
+    std::optional<SmallVector<int64_t>> getFractalSizesArray() const {
+      if (auto attr = getFractalSizes())
+        return SmallVector<int64_t>(attr.asArrayRef());
+      return std::nullopt;
+    }
+
+    /// Returns the transpose value as std::optional<bool>.
+    std::optional<bool> getTransposeValue() const {
+      if (auto attr = getTranspose())
+        return attr.getValue();
+      return std::nullopt;
+    }
+
+    /// True if layout is one of the *_ND layouts.
+    bool isNDLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::DOTA_ND:
+        case hivm::DataLayout::DOTB_ND:
+        case hivm::DataLayout::DOTC_ND:
+        case hivm::DataLayout::ND:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    using FractalSize = std::pair<int32_t, int32_t>;
+
+    /// Extract exactly 2 fractal block sizes.
+    FailureOr<FractalSize> getFractalBlockSizes() const {
+      auto sizes = getFractalSizesArray();
+      if (!sizes || sizes->size() != 2)
+        return failure();
+      return FractalSize((*sizes)[0], (*sizes)[1]);
+    }
+  }];
+  let genVerifyDecl = 1;
+  let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";
+}
+
+def HIVM_DataLayoutScaleBDN : I32EnumAttrCase<"SCALEB_DN", 9, "SCALEB_DN">;
+def HIVM_DataLayoutScaleAzZ : I32EnumAttrCase<"SCALEA_zZ", 10, "SCALEA_zZ">;
+def HIVM_DataLayoutScaleBnN : I32EnumAttrCase<"SCALEB_nN", 11, "SCALEB_nN">;
+
+def HIVM_DataLayoutEnum : HIVM_I32Enum<
+  "DataLayout", "HIVM data layout", [
+    HIVM_DataLayoutDotAND,
+    HIVM_DataLayoutDotBND,
+    HIVM_DataLayoutDotCND,
+    HIVM_DataLayoutnZ,
+    HIVM_DataLayoutzN,
+    HIVM_DataLayoutND,
+    HIVM_DataLayoutFractal,
+    HIVM_DataLayoutScaleAND,
+    HIVM_DataLayoutScaleBDN,
+    HIVM_DataLayoutScaleAzZ,
+    HIVM_DataLayoutScaleBnN,
+  ]>;
+
+def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
+  let parameters = (ins
+    EnumParameter<HIVM_DataLayoutEnum>:$data_layout,
+    OptionalParameter<"BoolAttr">:$transpose,
+    OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
+  );
+  let description = [{
+    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+      - `transpose`: Indicates that the layout is transposed.
+                     Only valid and must be present for DOTA_ND and DOTB_ND layout.
+  }];
+  let builders = [
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
+      return $_get($_ctxt, data_layout, BoolAttr(), DenseI64ArrayAttr());
+    }]>,
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout, "std::optional<bool>":$transpose), [{
+      BoolAttr transposeAttr = transpose.has_value()
+          ? BoolAttr::get($_ctxt, *transpose)
+          : BoolAttr();
+      return $_get($_ctxt, data_layout, transposeAttr, DenseI64ArrayAttr());
+    }]>
+  ];
+  let extraClassDeclaration = [{
+    /// Returns the fractal sizes as a SmallVector, or std::nullopt if not set.
+    std::optional<SmallVector<int64_t>> getFractalSizesArray() const {
+      if (auto attr = getFractalSizes())
+        return SmallVector<int64_t>(attr.asArrayRef());
+      return std::nullopt;
+    }
+
+    /// Returns the transpose value as std::optional<bool>.
+    std::optional<bool> getTransposeValue() const {
+      if (auto attr = getTranspose())
+        return attr.getValue();
+      return std::nullopt;
+    }
+
+    /// True if layout is one of the *_ND layouts.
+    bool isNDLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::DOTA_ND:
+        case hivm::DataLayout::DOTB_ND:
+        case hivm::DataLayout::DOTC_ND:
+        case hivm::DataLayout::ND:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    using FractalSize = std::pair<int32_t, int32_t>;
+
+    /// Extract exactly 2 fractal block sizes.
+    FailureOr<FractalSize> getFractalBlockSizes() const {
+      auto sizes = getFractalSizesArray();
+      if (!sizes || sizes->size() != 2)
+        return failure();
+      return FractalSize((*sizes)[0], (*sizes)[1]);
+    }
+  }];
+  let genVerifyDecl = 1;
+  let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";
+}
+
+def HIVM_DataLayoutScaleAzZ : I32EnumAttrCase<"SCALEA_zZ", 10, "SCALEA_zZ">;
+def HIVM_DataLayoutScaleBnN : I32EnumAttrCase<"SCALEB_nN", 11, "SCALEB_nN">;
+
+def HIVM_DataLayoutEnum : HIVM_I32Enum<
+  "DataLayout", "HIVM data layout", [
+    HIVM_DataLayoutDotAND,
+    HIVM_DataLayoutDotBND,
+    HIVM_DataLayoutDotCND,
+    HIVM_DataLayoutnZ,
+    HIVM_DataLayoutzN,
+    HIVM_DataLayoutND,
+    HIVM_DataLayoutFractal,
+    HIVM_DataLayoutScaleAND,
+    HIVM_DataLayoutScaleBDN,
+    HIVM_DataLayoutScaleAzZ,
+    HIVM_DataLayoutScaleBnN,
+  ]>;
+
+def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
+  let parameters = (ins
+    EnumParameter<HIVM_DataLayoutEnum>:$data_layout,
+    OptionalParameter<"BoolAttr">:$transpose,
+    OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
+  );
+  let description = [{
+    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+      - `transpose`: Indicates that the layout is transposed.
+                     Only valid and must be present for DOTA_ND and DOTB_ND layout.
+  }];
+  let builders = [
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
+      return $_get($_ctxt, data_layout, BoolAttr(), DenseI64ArrayAttr());
+    }]>,
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout, "std::optional<bool>":$transpose), [{
+      BoolAttr transposeAttr = transpose.has_value()
+          ? BoolAttr::get($_ctxt, *transpose)
+          : BoolAttr();
+      return $_get($_ctxt, data_layout, transposeAttr, DenseI64ArrayAttr());
+    }]>
+  ];
+  let extraClassDeclaration = [{
+    /// Returns the fractal sizes as a SmallVector, or std::nullopt if not set.
+    std::optional<SmallVector<int64_t>> getFractalSizesArray() const {
+      if (auto attr = getFractalSizes())
+        return SmallVector<int64_t>(attr.asArrayRef());
+      return std::nullopt;
+    }
+
+    /// Returns the transpose value as std::optional<bool>.
+    std::optional<bool> getTransposeValue() const {
+      if (auto attr = getTranspose())
+        return attr.getValue();
+      return std::nullopt;
+    }
+
+    /// True if layout is one of the *_ND layouts.
+    bool isNDLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::DOTA_ND:
+        case hivm::DataLayout::DOTB_ND:
+        case hivm::DataLayout::DOTC_ND:
+        case hivm::DataLayout::ND:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    using FractalSize = std::pair<int32_t, int32_t>;
+
+    /// Extract exactly 2 fractal block sizes.
+    FailureOr<FractalSize> getFractalBlockSizes() const {
+      auto sizes = getFractalSizesArray();
+      if (!sizes || sizes->size() != 2)
+        return failure();
+      return FractalSize((*sizes)[0], (*sizes)[1]);
+    }
+  }];
+  let genVerifyDecl = 1;
+  let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";
+}
+
+def HIVM_DataLayoutScaleBnN : I32EnumAttrCase<"SCALEB_nN", 11, "SCALEB_nN">;
+
+def HIVM_DataLayoutEnum : HIVM_I32Enum<
+  "DataLayout", "HIVM data layout", [
+    HIVM_DataLayoutDotAND,
+    HIVM_DataLayoutDotBND,
+    HIVM_DataLayoutDotCND,
+    HIVM_DataLayoutnZ,
+    HIVM_DataLayoutzN,
+    HIVM_DataLayoutND,
+    HIVM_DataLayoutFractal,
+    HIVM_DataLayoutScaleAND,
+    HIVM_DataLayoutScaleBDN,
+    HIVM_DataLayoutScaleAzZ,
+    HIVM_DataLayoutScaleBnN,
+  ]>;
+
+def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
+  let parameters = (ins
+    EnumParameter<HIVM_DataLayoutEnum>:$data_layout,
+    OptionalParameter<"BoolAttr">:$transpose,
+    OptionalParameter<"DenseI64ArrayAttr">:$fractalSizes
+  );
+  let description = [{
+    HIVM data layout mapping attribute. Maps to DOTA_ND, DOTB_ND, DOTC_ND, zN, nZ and ND.
+      - `transpose`: Indicates that the layout is transposed.
+                     Only valid and must be present for DOTA_ND and DOTB_ND layout.
+  }];
+  let builders = [
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout), [{
+      return $_get($_ctxt, data_layout, BoolAttr(), DenseI64ArrayAttr());
+    }]>,
+    AttrBuilder<(ins "hivm::DataLayout":$data_layout, "std::optional<bool>":$transpose), [{
+      BoolAttr transposeAttr = transpose.has_value()
+          ? BoolAttr::get($_ctxt, *transpose)
+          : BoolAttr();
+      return $_get($_ctxt, data_layout, transposeAttr, DenseI64ArrayAttr());
+    }]>
+  ];
+  let extraClassDeclaration = [{
+    /// Returns the fractal sizes as a SmallVector, or std::nullopt if not set.
+    std::optional<SmallVector<int64_t>> getFractalSizesArray() const {
+      if (auto attr = getFractalSizes())
+        return SmallVector<int64_t>(attr.asArrayRef());
+      return std::nullopt;
+    }
+
+    /// Returns the transpose value as std::optional<bool>.
+    std::optional<bool> getTransposeValue() const {
+      if (auto attr = getTranspose())
+        return attr.getValue();
+      return std::nullopt;
+    }
+
+    /// True if layout is one of the *_ND layouts.
+    bool isNDLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::DOTA_ND:
+        case hivm::DataLayout::DOTB_ND:
+        case hivm::DataLayout::DOTC_ND:
+        case hivm::DataLayout::ND:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    using FractalSize = std::pair<int32_t, int32_t>;
+
+    /// Extract exactly 2 fractal block sizes.
+    FailureOr<FractalSize> getFractalBlockSizes() const {
+      auto sizes = getFractalSizesArray();
+      if (!sizes || sizes->size() != 2)
+        return failure();
+      return FractalSize((*sizes)[0], (*sizes)[1]);
+    }
+  }];
+  let genVerifyDecl = 1;
+  let assemblyFormat = "`<` $data_layout (`,` struct($transpose, $fractalSizes)^)? `>`";
+}
 //===----------------------------------------------------------------------===//
 // Address Space
 //===----------------------------------------------------------------------===//
@@ -410,6 +740,96 @@ def HIVM_RoundModeAttr : HIVM_I32EnumAttr<"round_mode", HIVM_RoundModeEnum> {
   }];
 }
 
+
+def HIVM_SI2SI : I32EnumAttrCase<"SI2SI", 0, "si2si">;
+def HIVM_SI2UI : I32EnumAttrCase<"SI2UI", 1, "si2ui">;
+def HIVM_UI2SI : I32EnumAttrCase<"UI2SI", 2, "ui2si">;
+def HIVM_UI2UI : I32EnumAttrCase<"UI2UI", 3, "ui2ui">;
+
+def HIVM_UnsignedModeEnum : HIVM_I32Enum<
+  "UnsignedMode", "Unsigned Mode for VCastOp", [
+    HIVM_SI2SI,
+    HIVM_SI2UI,
+    HIVM_UI2SI,
+    HIVM_UI2UI
+  ]>;
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
+
+def HIVM_SI2UI : I32EnumAttrCase<"SI2UI", 1, "si2ui">;
+def HIVM_UI2SI : I32EnumAttrCase<"UI2SI", 2, "ui2si">;
+def HIVM_UI2UI : I32EnumAttrCase<"UI2UI", 3, "ui2ui">;
+
+def HIVM_UnsignedModeEnum : HIVM_I32Enum<
+  "UnsignedMode", "Unsigned Mode for VCastOp", [
+    HIVM_SI2SI,
+    HIVM_SI2UI,
+    HIVM_UI2SI,
+    HIVM_UI2UI
+  ]>;
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
+
+def HIVM_UI2SI : I32EnumAttrCase<"UI2SI", 2, "ui2si">;
+def HIVM_UI2UI : I32EnumAttrCase<"UI2UI", 3, "ui2ui">;
+
+def HIVM_UnsignedModeEnum : HIVM_I32Enum<
+  "UnsignedMode", "Unsigned Mode for VCastOp", [
+    HIVM_SI2SI,
+    HIVM_SI2UI,
+    HIVM_UI2SI,
+    HIVM_UI2UI
+  ]>;
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
+
+def HIVM_UI2UI : I32EnumAttrCase<"UI2UI", 3, "ui2ui">;
+
+def HIVM_UnsignedModeEnum : HIVM_I32Enum<
+  "UnsignedMode", "Unsigned Mode for VCastOp", [
+    HIVM_SI2SI,
+    HIVM_SI2UI,
+    HIVM_UI2SI,
+    HIVM_UI2UI
+  ]>;
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
+
+def HIVM_UnsignedModeEnum : HIVM_I32Enum<
+  "UnsignedMode", "Unsigned Mode for VCastOp", [
+    HIVM_SI2SI,
+    HIVM_SI2UI,
+    HIVM_UI2SI,
+    HIVM_UI2UI
+  ]>;
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
+
+def HIVM_UnsignedModeAttr : HIVM_I32EnumAttr<"unsigned_mode", HIVM_UnsignedModeEnum> {
+  let description = [{
+    Represent unsigned/signed cast mode.
+  }];
+}
 //===----------------------------------------------------------------------===//
 // Cast for VCastOp
 //===----------------------------------------------------------------------===//
@@ -726,6 +1146,71 @@ def HIVM_ReduceOpAttr : HIVM_Attr<"ReduceOp", "reduce_op"> {
   }];
 }
 
+
+def HIVM_ReduceOp_MAX_WITH_INDEX : I32EnumAttrCase<"max_with_index", 5>;
+def HIVM_ReduceOp_MIN_WITH_INDEX : I32EnumAttrCase<"min_with_index", 6>;
+def HIVM_ReduceOp_ANY : I32EnumAttrCase<"any", 7>;
+def HIVM_ReduceOp_ALL : I32EnumAttrCase<"all", 8>;
+def HIVM_ReduceOp_XORI : I32EnumAttrCase<"xori", 9>;
+def HIVM_ReduceOp_ORI : I32EnumAttrCase<"ori", 10>;
+def HIVM_ReduceOp_ANDI : I32EnumAttrCase<"andi", 11>;
+def HIVM_ReduceOp_NONE : I32EnumAttrCase<"none", 0>;
+
+def HIVM_ReduceOpEnum : HIVM_I32Enum<
+  "ReduceOperation", "Reduction kind for VReduceOp", [
+    HIVM_ReduceOp_SUM,
+    HIVM_ReduceOp_PROD,
+    HIVM_ReduceOp_MAX,
+    HIVM_ReduceOp_MIN,
+    HIVM_ReduceOp_MAX_WITH_INDEX,
+    HIVM_ReduceOp_MIN_WITH_INDEX,
+    HIVM_ReduceOp_ANY,
+    HIVM_ReduceOp_ALL,
+    HIVM_ReduceOp_XORI,
+    HIVM_ReduceOp_ORI,
+    HIVM_ReduceOp_ANDI,
+    HIVM_ReduceOp_NONE
+  ]>;
+
+def HIVM_ReduceOpAttr : HIVM_Attr<"ReduceOp", "reduce_op"> {
+  let parameters = (ins EnumParameter<HIVM_ReduceOpEnum>:$reduce_op);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    HIVM reduction arithmetic operation attribute.
+  }];
+}
+
+def HIVM_ReduceOp_MIN_WITH_INDEX : I32EnumAttrCase<"min_with_index", 6>;
+def HIVM_ReduceOp_ANY : I32EnumAttrCase<"any", 7>;
+def HIVM_ReduceOp_ALL : I32EnumAttrCase<"all", 8>;
+def HIVM_ReduceOp_XORI : I32EnumAttrCase<"xori", 9>;
+def HIVM_ReduceOp_ORI : I32EnumAttrCase<"ori", 10>;
+def HIVM_ReduceOp_ANDI : I32EnumAttrCase<"andi", 11>;
+def HIVM_ReduceOp_NONE : I32EnumAttrCase<"none", 0>;
+
+def HIVM_ReduceOpEnum : HIVM_I32Enum<
+  "ReduceOperation", "Reduction kind for VReduceOp", [
+    HIVM_ReduceOp_SUM,
+    HIVM_ReduceOp_PROD,
+    HIVM_ReduceOp_MAX,
+    HIVM_ReduceOp_MIN,
+    HIVM_ReduceOp_MAX_WITH_INDEX,
+    HIVM_ReduceOp_MIN_WITH_INDEX,
+    HIVM_ReduceOp_ANY,
+    HIVM_ReduceOp_ALL,
+    HIVM_ReduceOp_XORI,
+    HIVM_ReduceOp_ORI,
+    HIVM_ReduceOp_ANDI,
+    HIVM_ReduceOp_NONE
+  ]>;
+
+def HIVM_ReduceOpAttr : HIVM_Attr<"ReduceOp", "reduce_op"> {
+  let parameters = (ins EnumParameter<HIVM_ReduceOpEnum>:$reduce_op);
+  let assemblyFormat = "`<` params `>`";
+  let description = [{
+    HIVM reduction arithmetic operation attribute.
+  }];
+}
 //===----------------------------------------------------------------------===//
 // Atomic Operation Kind for StoreOp
 //===----------------------------------------------------------------------===//
@@ -898,6 +1383,23 @@ def HIVM_FixpipePreQuantModeAttr : HIVM_I32EnumAttr<
   let description = "HIVM fixpipe pre_quant mode";
 }
 
+
+def HIVM_FIXPIPEPREQUANT_QF322F32_PRE : I32EnumAttrCase<"QF322F32_PRE", 15>;
+def HIVM_FIXPIPEPREQUANT_F322BF16 : I32EnumAttrCase<"F322BF16", 16>;
+
+def HIVM_FixpipePreQuantModeEnum : HIVM_I32Enum<
+  "FixpipePreQuantMode", "HIVM fixpipe pre_quant mode", [
+    HIVM_FIXPIPEPREQUANT_NO_QUANT,
+    HIVM_FIXPIPEPREQUANT_F322F16,
+    HIVM_FIXPIPEPREQUANT_S322I8,
+    HIVM_FIXPIPEPREQUANT_QF322F32_PRE,
+    HIVM_FIXPIPEPREQUANT_F322BF16
+  ]>;
+
+def HIVM_FixpipePreQuantModeAttr : HIVM_I32EnumAttr<
+  "fixpipe_pre_quant_mode", HIVM_FixpipePreQuantModeEnum> {
+  let description = "HIVM fixpipe pre_quant mode";
+}
 def HIVM_FIXPIPEPRERELU_NO_RELU : I32EnumAttrCase<"NO_RELU", 0>;
 def HIVM_FIXPIPEPRERELU_NORMAL_RELU : I32EnumAttrCase<"NORMAL_RELU", 1>;
 def HIVM_FIXPIPEPRERELU_LEAKY_RELU : I32EnumAttrCase<"LEAKY_RELU", 2>;
@@ -956,6 +1458,18 @@ def HIVM_FixpipeDMAModeAttr : HIVM_I32EnumAttr<
   let description = "HIVM Fixpipe DMA mode";
 }
 
+
+def HIVM_FIXPIPE_DMA_MODE_NORMAL : I32EnumAttrCase<"NZ2NZ", 2, "normal">;
+
+def HIVM_FixpipeDMAModeEnum : HIVM_I32Enum<
+  "FixpipeDMAMode", "HIVM FixpipeDMA mode with int32_t_storage", [
+    HIVM_FIXPIPE_DMA_MODE_NZ2ND, HIVM_FIXPIPE_DMA_MODE_NZ2DN, HIVM_FIXPIPE_DMA_MODE_NORMAL
+  ]>;
+
+def HIVM_FixpipeDMAModeAttr : HIVM_I32EnumAttr<
+  "dma_mode", HIVM_FixpipeDMAModeEnum> {
+  let description = "HIVM Fixpipe DMA mode";
+}
 //===----------------------------------------------------------------------===//
 // Deinterleave Mode for VDeinterleaveOp
 //===----------------------------------------------------------------------===//
@@ -1024,6 +1538,158 @@ def HIVM_StorageAligned : HIVM_Attr<"StorageAligned", "storage_aligned"> {
   }];
 }
 
+
+def HIVM_LocalMatmul_PostPerChannelAddWithSplitK : I32EnumAttrCase<"PostPerChannelAddWithSplitK", 2>;
+def HIVM_LocalMatmul_ElementwiseAdd : I32EnumAttrCase<"ElementwiseAdd", 3>;
+def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 4>;
+def HIVM_LocalMatmul_ZeroInitNoAccumulation : I32EnumAttrCase<"ZeroInitNoAccumulation", 5>;
+def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 6>;
+def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
+  HIVM_LocalMatmul_NoBias,
+  HIVM_LocalMatmul_PerChannelAdd,
+  HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ElementwiseAdd,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ZeroInitNoAccumulation,
+  HIVM_LocalMatmul_ReuseL0c,
+]>;
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+//===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
+
+def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 4>;
+def HIVM_LocalMatmul_ZeroInitNoAccumulation : I32EnumAttrCase<"ZeroInitNoAccumulation", 5>;
+def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 6>;
+def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
+  HIVM_LocalMatmul_NoBias,
+  HIVM_LocalMatmul_PerChannelAdd,
+  HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ElementwiseAdd,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ZeroInitNoAccumulation,
+  HIVM_LocalMatmul_ReuseL0c,
+]>;
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+//===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
+
+def HIVM_LocalMatmul_ZeroInitNoAccumulation : I32EnumAttrCase<"ZeroInitNoAccumulation", 5>;
+def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 6>;
+def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
+  HIVM_LocalMatmul_NoBias,
+  HIVM_LocalMatmul_PerChannelAdd,
+  HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ElementwiseAdd,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ZeroInitNoAccumulation,
+  HIVM_LocalMatmul_ReuseL0c,
+]>;
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+//===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
+
+def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 6>;
+def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
+  HIVM_LocalMatmul_NoBias,
+  HIVM_LocalMatmul_PerChannelAdd,
+  HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ElementwiseAdd,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ZeroInitNoAccumulation,
+  HIVM_LocalMatmul_ReuseL0c,
+]>;
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+//===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
+
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
+//===----------------------------------------------------------------------===//
+// Memory Access
+//===----------------------------------------------------------------------===//
+
+// Note: The enum value should be consistent with those defined in triton.
+
+def HIVM_PaddingZero : I32EnumAttrCase<"PAD_ZERO", 1, "zero">;
+// We can not set the string value to "NAN" because it is a keyword in C++
+def HIVM_PaddingNAN : I32EnumAttrCase<"PAD_NAN", 2, "nan">;
+def HIVM_PaddingOptionEnum : HIVM_I32Enum<
+    "PaddingOption", "", [
+      HIVM_PaddingZero,
+      HIVM_PaddingNAN
+    ]> {
+}
 def HIVM_EnableSavingUb : HIVM_Attr<"EnableSavingUb", "enable_saving_ub"> {
   let description = [{
     If a module is tagged with this attribute, it means the operations with less memory
@@ -1156,6 +1822,15 @@ def HIVM_StrideAlignValueInByteAttr :
   }];
 }
 
+
+def HIVM_SkipStrideAlignForVLoadAttr
+    : HIVM_Attr<"SkipStrideAlignForVLoad", "skip_stride_align_for_vload"> {
+  let description = [{
+    Marks an alloc whose downstream vload'd buffers must skip stride
+    alignment because the resulting inter-row gaps would break vldsx1
+    (128-element consecutive flat-pointer load).
+  }];
+}
 def HIVM_AllocAlignValueAttr : HIVM_Attr<"AllocAlignDims", "alloc_align_dims"> {
   let description = [{
     HIVM alloc align dims.
@@ -1177,6 +1852,19 @@ def HIVM_FuncDynMemrefArgsAttr
   }];
 }
 
+
+def HIVM_VFAttr : HIVM_Attr<"VectorFunction", "vector_function"> {
+  let description = [{HIVM vector function attribute}];
+}
+
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
+}
+
+def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
+  let description = [{HIVM has alias scopes attribute}];
+}
 def HIVM_TightlyCoupledBufferAttr
     : HIVM_Attr<"HIVMTightlyCoupledBuffer", "tightly_coupled_buffer"> {
   let parameters = (ins OptionalParameter<"std::optional<int32_t>">:$id);
@@ -1186,6 +1874,10 @@ def HIVM_TightlyCoupledBufferAttr
   }];
 }
 
+
+def HIVM_MemUniqueAttr : HIVM_Attr<"HIVMMemoryUnique", "mem_unique"> {
+  let description = [{HIVM plan unique memory}];
+}
 def HIVM_InsertSliceSourceIndexAttr
     : HIVM_Attr<"InsertSliceSourceIndex", "insert_slice_source_index"> {
   let description = [{
@@ -1206,6 +1898,22 @@ def HIVM_UnlikelyConditionAttr
   }];
 }
 
+
+def HIVM_SharedMemoryAttr : HIVM_Attr<"SharedMemory", "shared_memory"> {
+  let description = [{
+    Shared memory for simt vf.
+  }];
+}
+
+def HIVM_SimtMemScopeHintAttr
+    : HIVM_Attr<"SimtMemScopeHint", "simt_mem_scope_hint"> {
+  let parameters = (ins EnumParameter<HIVM_AddressSpaceEnum>:$addressSpace);
+  let assemblyFormat = "`<` $addressSpace `>`";
+  let description = [{
+    Memory scope hint for SIMT VF arguments before address space
+    materialization.
+  }];
+}
 def HIVM_DisableAutoInjectBlockSyncAttr
     : HIVM_Attr<"DisableAutoInjectBlockSync", "disable_auto_inject_block_sync"> {
   let description = [{
@@ -1242,6 +1950,21 @@ def HIVM_MaxPreloadNumAttr
   }];
 }
 
+
+def HIVM_RemainInL0CAttr : HIVM_Attr<"RemainInL0C", "remain_in_l0c"> {
+  let description = [{
+    Indicates that the operation's result should remain in L0C buffer.
+    Used by NormalizeMatmul pass for buffer reuse optimization.
+  }];
+}
+
+def HIVM_MatmulLimitedInCubeAttr
+    : HIVM_Attr<"MatmulLimitedInCube", "matmul_limited_in_cube"> {
+  let description =
+      [{Indicates that the matmul operation can be executed in the AIC alone
+            .It will bypass compiler analysis that might decompose matmul into
+                vector addition because of hardware constraints.}];
+}
 def HIVM_PreloadWorkspaceAttr
     : HIVM_Attr<"PreloadWorkspace", "preload_workspace"> {
   let description = [{
@@ -1256,6 +1979,83 @@ def HIVM_PreloadLocalBufferAttr
   }];
 }
 
+
+def HIVM_READ : I32EnumAttrCase<"READ", 0, "read">;
+def HIVM_WRITE : I32EnumAttrCase<"WRITE", 1, "write">;
+def HIVM_READ_WRITE : I32EnumAttrCase<"READ_WRITE", 2, "read_write">;
+
+def HIVM_MemoryEffectEnum : HIVM_I32Enum<
+  "MemoryEffect", "hivm memory effect", [
+    HIVM_READ,
+    HIVM_WRITE,
+    HIVM_READ_WRITE
+  ]>;
+
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
+  let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
+  let assemblyFormat = "`<` $effect `>`";
+  let description = [{
+    HIVM memory effect attribute for simt vf.
+  }];
+}
+
+def HIVM_WRITE : I32EnumAttrCase<"WRITE", 1, "write">;
+def HIVM_READ_WRITE : I32EnumAttrCase<"READ_WRITE", 2, "read_write">;
+
+def HIVM_MemoryEffectEnum : HIVM_I32Enum<
+  "MemoryEffect", "hivm memory effect", [
+    HIVM_READ,
+    HIVM_WRITE,
+    HIVM_READ_WRITE
+  ]>;
+
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
+  let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
+  let assemblyFormat = "`<` $effect `>`";
+  let description = [{
+    HIVM memory effect attribute for simt vf.
+  }];
+}
+
+def HIVM_READ_WRITE : I32EnumAttrCase<"READ_WRITE", 2, "read_write">;
+
+def HIVM_MemoryEffectEnum : HIVM_I32Enum<
+  "MemoryEffect", "hivm memory effect", [
+    HIVM_READ,
+    HIVM_WRITE,
+    HIVM_READ_WRITE
+  ]>;
+
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
+  let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
+  let assemblyFormat = "`<` $effect `>`";
+  let description = [{
+    HIVM memory effect attribute for simt vf.
+  }];
+}
+
+def HIVM_MemoryEffectEnum : HIVM_I32Enum<
+  "MemoryEffect", "hivm memory effect", [
+    HIVM_READ,
+    HIVM_WRITE,
+    HIVM_READ_WRITE
+  ]>;
+
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
+  let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
+  let assemblyFormat = "`<` $effect `>`";
+  let description = [{
+    HIVM memory effect attribute for simt vf.
+  }];
+}
+
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
+  let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
+  let assemblyFormat = "`<` $effect `>`";
+  let description = [{
+    HIVM memory effect attribute for simt vf.
+  }];
+}
 //===----------------------------------------------------------------------===//
 // Distributed
 //===----------------------------------------------------------------------===//

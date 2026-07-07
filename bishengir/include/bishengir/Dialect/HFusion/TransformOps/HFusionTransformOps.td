@@ -604,4 +604,52 @@ def MatchAncestorOfOp : Op<Transform_Dialect, "structured.match.ancestor_of",
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// ExtendedLoopOutlineOp
+//===----------------------------------------------------------------------===//
+
+def ExtendedLoopOutlineOp : Op<Transform_Dialect, "loop.extended_outline_op",
+    [FunctionalStyleTransformOpTrait, MemoryEffectsOpInterface,
+     DeclareOpInterfaceMethods<TransformOpInterface>]> {
+  let summary = "Extended Outlines loops into a single named function";
+  // TODO: change this.
+  let description = [{
+    Moves the loops into a separate function with the specified name and replaces
+    the loop in the Payload IR with a call to that function. Takes care of
+    forwarding values that are used in the loop as function arguments. The
+    provided name is used as a _base_ for forming actual function names following
+    `SymbolTable` auto-renaming scheme to avoid duplicate symbols. Expects that
+    all ops in the Payload IR have a `SymbolTable` ancestor (typically true because
+    of the top-level module).
+
+    Example:
+    ```c++
+    %function, %call = transform.loop.extended_outline_op
+                                 %loops_9, %loops_11, %loops_13, %loops_15
+                             {func_name = "_attn_fwd_outlined_vf_4"} :
+                             (!transform.any_op, !transform.any_op, !transform.any_op, !transform.any_op)
+                             -> (!transform.any_op, !transform.any_op)
+    ```
+
+    #### Return Modes
+
+    Returns a handle to the outlined function and a handle to the
+    corresponding function call operations in the same order as the operand
+    handle.
+
+    Produces a definite failure if outlining failed for any of the targets.
+  }];
+
+  // Note that despite the name of the transform operation and related utility
+  // functions, the actual implementation does not require the operation to be
+  // a loop.
+  let arguments = (ins Variadic<TransformHandleTypeInterface>:$targets,
+                   StrAttr:$func_name);
+  let results = (outs TransformHandleTypeInterface:$function,
+                      TransformHandleTypeInterface:$call);
+
+  let assemblyFormat =
+    "$targets attr-dict `:` functional-type(operands, results)";
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMOPS_HFUSIONTRANSFORMOPS

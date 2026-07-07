@@ -72,6 +72,11 @@ gather_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ int32_t, 1> *indices,
     for(int64_t i = 0; i < size_indices; ++i) {
       dst_ptr[i * stride_dst] = src_ptr[0];
     }
+    // dst: memref<1xT, strided[N]>
+    __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+    INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    dst_ptr[0] = src_ptr[0];
     INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
     INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
     return;
@@ -149,7 +154,6 @@ is_unaligned_gather_1d(memref_t<__ubuf__ T, 1> *src,
   
   return !is_offset_aligned || !is_stride_aligned;
 }
-
 extern "C" {
 //===-------------------------------------------------------------------===//
 // gather, 1 dim

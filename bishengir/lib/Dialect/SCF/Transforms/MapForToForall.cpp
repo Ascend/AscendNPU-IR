@@ -22,6 +22,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/SCF/Transforms/Passes.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -41,6 +42,14 @@ static constexpr llvm::StringLiteral kMapForToForallAttrName =
 struct ForToForallPass : public impl::MapForToForallBase<ForToForallPass> {
   using Base::Base;
   void runOnOperation() override;
+
+struct ForToForallPass : public impl::MapForToForallBase<ForToForallPass> {
+  explicit ForToForallPass(const MapForToForallOptions &other)
+      : MapForToForallBase(other) {
+    options.simtMode = other.simtMode;
+  }
+  void runOnOperation() override;
+  MapForToForallOptions options;
 };
 } // namespace
 
@@ -51,6 +60,7 @@ public:
   matchAndRewrite(scf::ForOp op,
                   mlir::PatternRewriter &rewriter) const override {
     if (!op->hasAttrOfType<UnitAttr>(kMapForToForallAttrName))
+    if (!op->hasAttrOfType<UnitAttr>(utils::kMapForToForallAttrName))
       return failure();
 
     std::optional<ArrayAttr> deviceMappingAttrs = std::nullopt;
@@ -66,6 +76,7 @@ public:
     scf::ForallOp maybeResult = nullptr;
     DiagnosedSilenceableFailure diag = scf::utils::mapForToForallImpl(
         rewriter, op, deviceMappingAttrs, maybeResult);
+        rewriter, op, deviceMappingAttrs, maybeResult, true);
     if (!diag.succeeded())
       return rewriter.notifyMatchFailure(op, diag.getMessage());
 
@@ -77,6 +88,35 @@ public:
 void ForToForallPass::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
+struct InsertToInsertSliceRewritePattern
+    : public OpRewritePattern<tensor::InsertOp> {
+public:
+  using OpRewritePattern<tensor::InsertOp>::OpRewritePattern;
+  LogicalResult
+  matchAndRewrite(tensor::InsertOp op,
+                  mlir::PatternRewriter &rewriter) const override {
+    Value splatOp = rewriter.create<tensor::SplatOp>(
+        op.getLoc(), op.getScalar(), ArrayRef<int64_t>{1});
+    SmallVector<OpFoldResult> offsets;
+    SmallVector<OpFoldResult> sizes;
+    SmallVector<OpFoldResult> strides;
+    for (auto v : op.getIndices()) {
+      offsets.push_back(v);
+      sizes.push_back(rewriter.getI64IntegerAttr(1));
+      strides.push_back(rewriter.getI64IntegerAttr(1));
+    }
+    auto insertSliceOp = rewriter.create<tensor::InsertSliceOp>(
+        op.getLoc(), splatOp, op.getDest(), offsets, sizes, strides);
+    rewriter.replaceOp(op, insertSliceOp);
+    return success();
+  }
+};
+
+void ForToForallPass::runOnOperation() {
+  MLIRContext *context = &getContext();
+  RewritePatternSet patterns(context);
+  if (options.simtMode)
+    patterns.insert<InsertToInsertSliceRewritePattern>(patterns.getContext());
   patterns.insert<ForToForallRewritePattern>(patterns.getContext());
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
     return signalPassFailure();
@@ -84,4 +124,7 @@ void ForToForallPass::runOnOperation() {
 
 std::unique_ptr<Pass> scf::createMapForToForallPass() {
   return std::make_unique<ForToForallPass>();
+std::unique_ptr<Pass>
+scf::createMapForToForallPass(const MapForToForallOptions &options) {
+  return std::make_unique<ForToForallPass>(options);
 }

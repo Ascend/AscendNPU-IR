@@ -31,6 +31,10 @@
 using namespace llvm;
 
 namespace {
+
+constexpr StringLiteral kName = "Name";
+constexpr StringLiteral kArch = "Arch";
+
 static const char *const startOfHeaderGuard = R"(
 #ifndef BISHENGIR_TARGET_SPEC_H
 #define BISHENGIR_TARGET_SPEC_H
@@ -60,6 +64,11 @@ template<>
 Attribute wrap(int rawVal, OpBuilder& builder) {
   return builder.getI32IntegerAttr(rawVal);
 }
+
+template<>
+Attribute wrap(std::string rawVal, OpBuilder& builder) {
+  return builder.getStringAttr(rawVal);
+}
 )";
 
 static const char *const getTargetSpecDef = R"(
@@ -80,7 +89,11 @@ static const char *const symbolizeEnumDeclStr = R"(
 )";
 
 static const char *const stringifyEnumDeclStr = R"(
-::llvm::StringRef stringify{0}Enum({0});
+std::string stringify{0}Enum({0} dev);
+)";
+
+static const char *const getArcDeclStr = R"(
+std::string getArch({0} dev);
 )";
 } // namespace
 
@@ -102,22 +115,11 @@ static const char *const stringifyEnumDeclStr = R"(
 ///  {int AiCoreCount = 24;},
 static SmallVector<RecordVal>
 getSpecSuperClassEntries(const Record *derivedClassRecord) {
-#if defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
-  // LLVM 22: return ArrayRef<std::pair<const Record *, SMRange>>
-  auto superClasses = derivedClassRecord->getDirectSuperClasses();
-  const Record *superClass = superClasses.front().first;
-#elif defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
-  // LLVM 20/21: input SmallVector<const Record *>
-  SmallVector<const Record *> superClasses;
-  derivedClassRecord->getDirectSuperClasses(superClasses);
-  const Record *superClass = superClasses.front();
-#else
-  // LLVM 19: input SmallVector<Record *>
   SmallVector<Record *> superClasses;
   derivedClassRecord->getDirectSuperClasses(superClasses);
-  Record *superClass = superClasses.front();
-#endif
-  return llvm::to_vector(superClass->getValues());
+  auto *superClass = superClasses.front();
+  SmallVector<RecordVal> result = llvm::to_vector(superClass->getValues());
+  return result;
 }
 
 /// Main entry to emit target spec decls.
@@ -130,20 +132,41 @@ static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
 
   // Emit start of namespace and header guard.
   OS << startOfHeaderGuard;
+  // Required by some var decls
+  OS << "#include <string>\n";
+  OS << "#include <array>\n";
   OS << startOfNameSpace;
 
   // Generate TargetDevice enum class.
   OS << "enum class TargetDevice {\n";
   for (auto *spec : specs) {
-    OS << "  " << spec->getValueAsString("Name") << ",\n";
+    OS << "  " << spec->getValueAsString(kName) << ",\n";
   }
   OS << "  Unknown\n";
   OS << "};\n\n";
 
-  // Generate function declarations to convert between string and TargetDevice
-  // type.
+  OS << formatv("constexpr std::array<TargetDevice, {0}> targetDevices = {{\n",
+                specs.size());
+  {
+    auto it = specs.begin();
+    OS << "  TargetDevice::" << (*it)->getValueAsString(kName);
+    for (++it; it != specs.end(); ++it) {
+      OS << ",\n  TargetDevice::" << (*it)->getValueAsString(kName);
+    }
+  }
+  OS << "\n};\n\n";
+
+  // Generate a function declaration to convert string to TargetDevice type.
   OS << formatv(symbolizeEnumDeclStr, "TargetDevice");
+  OS << "\n";
+
+  // Generate a function declaration to convert TargetDevice enum to string.
   OS << formatv(stringifyEnumDeclStr, "TargetDevice");
+  OS << "\n";
+
+  // Generate a function declaration to get the arch string by device target
+  // enum.
+  OS << formatv(getArcDeclStr, "TargetDevice");
   OS << "\n";
 
   auto superClassEntry = getSpecSuperClassEntries(specs.front());
@@ -152,7 +175,9 @@ static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
   OS << "  "
      << "TargetDevice device;\n";
   for (const RecordVal &specRecord : superClassEntry) {
-    if (specRecord.getName() == "Name")
+    auto name = specRecord.getName();
+    auto printType = specRecord.getPrintType();
+    if (name == kName)
       continue;
 
     // Here, we directly use the tablegen type as the c++ type. So only
@@ -164,11 +189,13 @@ static bool emitTargetSpecDecls(const llvm::RecordKeeper &records,
           recordKind != RecTy::StringRecTyKind) {
         PrintError(specRecord.getLoc(),
                    Twine("Unsupported spec type to map to c++ type: ") +
-                       specRecord.getPrintType());
+                       printType);
         return true;
       }
-      OS << "  " << specRecord.getPrintType() << " " << specRecord.getName()
-         << ";\n";
+      // Add std namespace for convenience
+      if (recordKind == RecTy::StringRecTyKind)
+        printType = "std::" + printType;
+      OS << "  " << printType << " " << name << ";\n";
     }
   }
   OS << "\n";
@@ -218,7 +245,7 @@ Attribute TargetSpec::getSpecEntry(DeviceSpec specEntry, OpBuilder& builder) con
 )";
 
   for (const RecordVal &specRecord : targetSpecClassRecord) {
-    if (specRecord.getName() == "Name")
+    if (specRecord.getName() == kName)
       continue;
 
     if (specRecord.isTemplateArg())
@@ -240,19 +267,14 @@ Attribute TargetSpec::getSpecEntry(DeviceSpec specEntry, OpBuilder& builder) con
 }
 
 /// Emit a function to map string to \c DeviceTarget enum.
-
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) 
-static void emitStrToSymFnForDeviceTarget(const std::vector<const Record *> &records,
-                                          raw_ostream &OS) {
-#else
 static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
                                           raw_ostream &OS) {
-#endif
   const auto *enumName = "TargetDevice";
   OS << formatv("{0} symbolize{0}Enum(::llvm::StringRef str){{\n", enumName);
   OS << formatv("  return ::llvm::StringSwitch<{0}>(str)\n", enumName);
   for (auto [idx, record] : llvm::enumerate(records)) {
-    auto deviceName = record->getValueAsString("Name");
+    auto deviceName = record->getValueAsString(kName);
+
     OS << formatv("      .Case(\"{1}\", {0}::{2})\n", enumName, deviceName,
                   deviceName);
   }
@@ -261,28 +283,40 @@ static void emitStrToSymFnForDeviceTarget(const std::vector<Record *> &records,
 }
 
 /// Emit a function to map \c DeviceTarget enum to string.
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) 
-static void emitSymToStrFnForDeviceTarget(const std::vector<const Record *> &records,
-                                          raw_ostream &OS) {
-#else
 static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
                                           raw_ostream &OS) {
-#endif
   const auto *enumName = "TargetDevice";
-  OS << formatv("::llvm::StringRef stringify{0}Enum({0} val){{\n", enumName);
-#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) || defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__)
-  OS << "  switch (val) {\n";
-#else
-  OS << formatv("  switch (val) {{\n", enumName);
-#endif
+  OS << formatv("std::string stringify{0}Enum({0} dev){{\n", enumName);
+  OS << formatv("  switch (dev) {{\n", enumName);
   for (auto [idx, record] : llvm::enumerate(records)) {
-    auto deviceName = record->getValueAsString("Name");
-    OS << formatv("    case {0}::{1}: return \"{2}\";\n", enumName, deviceName,
-                  deviceName);
+    auto deviceName = record->getValueAsString(kName);
+    OS << formatv("    case {0}::{1}: return \"{1}\";\n", enumName, deviceName);
   }
   OS << formatv("    case {0}::Unknown: return \"Unknown\";\n", enumName);
   OS << "  }\n";
-  OS << "  return \"\";\n";
+  OS << formatv("  llvm_unreachable(\"Unknown {0} value\");\n", enumName);
+  OS << "}\n\n";
+}
+
+/// Emit a function to map \c DeviceTarget enum to the Arch string.
+static void emitDeviceTargetToArch(const std::vector<Record *> &records,
+                                   raw_ostream &OS) {
+  const auto *enumName = "TargetDevice";
+  OS << formatv("std::string getArch({0} dev){{\n", enumName);
+  OS << formatv("  switch (dev) {{\n", enumName);
+  for (auto [idx, record] : llvm::enumerate(records)) {
+    auto deviceName = record->getValueAsString(kName);
+    auto archString = record->getValueAsOptionalString(kArch);
+    if (!archString.has_value())
+      continue;
+    OS << formatv("    case {0}::{1}: return \"{2}\";\n", enumName, deviceName,
+                  archString.value());
+  }
+  OS << formatv(
+      "    case {0}::Unknown: llvm_unreachable(\"Unknown {0} value\");\n",
+      enumName);
+  OS << "  }\n";
+  OS << formatv("  llvm_unreachable(\"Unknown {0} value\");\n", enumName);
   OS << "}\n\n";
 }
 
@@ -306,8 +340,8 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
   for (auto *spec : specs) {
     OS << "  {\n";
     for (const RecordVal &specRecord : superClassEntry) {
-      if (specRecord.getName() == "Name") {
-        OS << "    TargetDevice::" << spec->getValueAsString("Name");
+      if (specRecord.getName() == kName) {
+        OS << "    TargetDevice::" << spec->getValueAsString(kName);
         OS << ",\n";
         continue;
       }
@@ -341,9 +375,14 @@ static bool emitTargetSpecDefs(const llvm::RecordKeeper &records,
   OS << wrapAttrDefs;
   emitGetSpecEntryFnDef(OS, superClassEntry);
 
-  // Emit functions to convert between string device target and enum.
+  // Emit a function to convert string device target to enum.
   emitStrToSymFnForDeviceTarget(specs, OS);
+
+  // Emit a function to convert enum device target to string.
   emitSymToStrFnForDeviceTarget(specs, OS);
+
+  // Emit a function to get the arch string by device target enum.
+  emitDeviceTargetToArch(specs, OS);
 
   // Emit end of namespace.
   OS << endOfNameSpace;

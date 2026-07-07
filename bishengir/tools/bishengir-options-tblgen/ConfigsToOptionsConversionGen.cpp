@@ -42,10 +42,18 @@ std::string getPassGroupVarName(StringRef passGroup) {
 
 void genConfigToOptions(const ConfigOption &option, raw_ostream &OS) {
   OS << llvm::formatv(R"(
-options.{0} = config.get{1}();
+options.{0} = config.{1}();
 )",
                       option.getCppVariableName(),
-                      option.getCapitalizedCppVariableName());
+                      "get" + option.getCapitalizedCppVariableName().str());
+}
+
+void genPassOptionToConfig(const ConfigOption &option, raw_ostream &OS) {
+  OS << llvm::formatv(R"(
+config.{0}({1});
+)",
+                      "set" + option.getCapitalizedCppVariableName().str(),
+                      option.getCppVariableName());
 }
 
 void genConfigsAndOptionsConversionForGroup(StringRef group,
@@ -77,6 +85,8 @@ bool emitConfigsAndOptionsConversion(const RecordKeeper &records,
   StringMap<SmallVector<ConfigOption>> passGroup2Options;
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);
+    if (!cfgOpt.shouldEmitPassOption())
+      continue;
     std::vector<StringRef> groups = cfgOpt.getPassGroups();
     if (groups.empty())
       continue;
@@ -88,6 +98,22 @@ bool emitConfigsAndOptionsConversion(const RecordKeeper &records,
   return false;
 }
 
+bool emitPassOptionsToConfigConversion(const RecordKeeper &records,
+                                       raw_ostream &OS) {
+  std::vector<Record *> specs =
+      records.getAllDerivedDefinitions(kOptionClassName);
+  OS << "#ifdef GEN_PASS_OPTION_TO_CONFIG\n";
+  for (const Record *R : specs) {
+    ConfigOption cfgOpt(R);
+    if (!cfgOpt.shouldEmitPassOption())
+      continue;
+    genPassOptionToConfig(cfgOpt, OS);
+  }
+  OS << "#undef GEN_PASS_OPTION_TO_CONFIG\n";
+  OS << "#endif // GEN_PASS_OPTION_TO_CONFIG\n";
+  return false;
+}
+
 } // namespace
 
 // Registers the generator to bishengir-options-tblgen.
@@ -95,5 +121,6 @@ static mlir::GenRegistration genConfigsAndOptionsConversion(
     "gen-configs-and-options-conversion",
     "Generate conversions between config and pass pipeline options",
     [](const RecordKeeper &records, raw_ostream &os) {
-      return emitConfigsAndOptionsConversion(records, os);
+      return emitConfigsAndOptionsConversion(records, os) ||
+             emitPassOptionsToConfigConversion(records, os);
     });

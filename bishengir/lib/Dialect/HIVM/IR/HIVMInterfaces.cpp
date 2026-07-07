@@ -18,6 +18,13 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -43,6 +50,8 @@
 // Only compile the vendored CopyOpInterface trait when MLIR doesn't provide it.
 #include "bishengir/Interfaces/CopyOpInterface.cpp.inc"
 #endif
+#include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.cpp.inc"
+#include "bishengir/Interfaces/AggregatedOpInterface.cpp.inc"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -142,7 +151,6 @@ AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand) {
   }
   return alignmentInfo.front();
 }
-
 namespace detail {
 
 std::optional<TCoreType> queryCoreTypeHelper(Operation *op) {
@@ -282,6 +290,7 @@ bool isVectorOnlyOperandImpl(Operation *op, size_t idx) {
     return hivmOp->hasTrait<mlir::OpTrait::VectorOnlyTrait<0>::Impl>();
   default:
     llvm::report_fatal_error("index not supported yet");
+    llvm_unreachable("index not supported yet");
     break;
   }
   return false;

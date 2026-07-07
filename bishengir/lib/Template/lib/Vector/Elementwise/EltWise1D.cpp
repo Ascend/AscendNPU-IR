@@ -330,7 +330,6 @@ __aiv__ __attribute__((always_inline)) void eltwise_v_1d(
   }
   vector_eltwise_v_1d<OP, T>(&aligned_src0, &aligned_dst, tmp_buf, mode);
 }
-
 /// Elementwise operation between two 1D tensors.
 ///
 /// constraint:

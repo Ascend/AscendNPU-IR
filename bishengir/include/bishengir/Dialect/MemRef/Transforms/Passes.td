@@ -46,4 +46,12 @@ def RemoveRedundantCopy : Pass<"memref-remove-redundant-copy", "func::FuncOp"> {
   ];
 }
 
+def BindBuffer : Pass<"bind-buffer", "func::FuncOp"> {
+  let constructor = "mlir::memref::createBindBufferPass()";
+  let dependentDialects = [
+    "memref::MemRefDialect",
+    "annotation::AnnotationDialect",
+  ];
+}
+
 #endif // BISHENGIR_DIALECT_MEMREF_TRANSFORMS_PASSES_TD

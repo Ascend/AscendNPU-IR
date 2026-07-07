@@ -30,6 +30,19 @@ flip_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst) {
   }
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+__aiv__ __attribute__((always_inline)) void flip_1d(memref_t<__ubuf__ T, 1> *src, memref_t<__ubuf__ T, 1> *dst)
+{
+    const int64_t size0 = src->sizes[0];
+    __ubuf__ T *src_ptr = src->aligned + src->offset;
+    __ubuf__ T *dst_ptr = dst->aligned + dst->offset;
+    INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    const int64_t stride0 = src->strides[0];
+    for (int i = 0; i < size0; ++i) {
+        *(dst_ptr + stride0 * i) = *(src_ptr + stride0 * (size0 - 1 - i));
+    }
+    INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
 
 extern "C" {

@@ -104,6 +104,7 @@ int64_t findNthMaskedAxis(const BitVector &axisMask, int64_t n) {
     n--;
   }
   llvm::report_fatal_error("cannot find n-th masked axis");
+  llvm_unreachable("cannot find n-th masked axis");
 }
 
 static void dumpSizeAlignInfo(int64_t alignDim, int64_t alignUnit) {
@@ -153,6 +154,7 @@ KernelInfo::getSizeAlignmentsForTransposeOp() {
   for (const auto &[op, info] : transposeOp2Info) {
     if (!info.transposeLastDim) {
       // size alignment is only necessary for last dim transpose.
+      // size alignment is only necessary for last dim transpose。
       // e.g. [a, b, c] -> [b, a, c], c should be 32 byte strided aligned, no
       // need to do size align on a and b
       continue;
@@ -181,6 +183,7 @@ KernelInfo::getSizeAlignmentsForTransposeOp() {
     }
     default:
       llvm::report_fatal_error("Unexpected type for transpose op");
+      llvm_unreachable("Unexpected type for transpose op");
     }
   }
   return alignments;

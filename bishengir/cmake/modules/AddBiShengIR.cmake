@@ -26,32 +26,71 @@ endfunction()
 
 # Declare the bishengir library associated with a dialect.
 function(add_bishengir_library name)
-  set_property(GLOBAL APPEND PROPERTY BISHENGIR_LIBS ${name})
-  add_mlir_library(${ARGV} DEPENDS mlir-headers)
+  cmake_parse_arguments(ARG "IS_OPEN_SOURCE" "" "" ${ARGN})
+  if(ARG_IS_OPEN_SOURCE)
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_OPEN_SOURCE_LIBS ${name})
+    list(REMOVE_ITEM ARGV "IS_OPEN_SOURCE")
+    add_mlir_library(${ARGV} DEPENDS mlir-headers)
+  else()
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_LIBS ${name})
+    add_mlir_library(${ARGV} DEPENDS mlir-headers)
+  endif()
 endfunction(add_bishengir_library)
 
 # Declare the bishengir library associated with a dialect.
 function(add_bishengir_dialect_library name)
-  set_property(GLOBAL APPEND PROPERTY BISHENGIR_DIALECT_LIBS ${name})
-  add_mlir_dialect_library(${ARGV})
+  cmake_parse_arguments(ARG "IS_OPEN_SOURCE" "" "" ${ARGN})
+  if(ARG_IS_OPEN_SOURCE)
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_DIALECT_OPEN_SOURCE_LIBS
+                                        ${name})
+    list(REMOVE_ITEM ARGV "IS_OPEN_SOURCE")
+    add_mlir_dialect_library(${ARGV})
+  else()
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_DIALECT_LIBS ${name})
+    add_mlir_dialect_library(${ARGV})
+  endif()
 endfunction(add_bishengir_dialect_library)
 
 # Declare the bishengir library associated with a conversion.
 function(add_bishengir_conversion_library name)
-  set_property(GLOBAL APPEND PROPERTY BISHENGIR_CONVERSION_LIBS ${name})
-  add_mlir_conversion_library(${ARGV})
+  cmake_parse_arguments(ARG "IS_OPEN_SOURCE" "" "" ${ARGN})
+  if(ARG_IS_OPEN_SOURCE)
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_CONVERSION_OPEN_SOURCE_LIBS
+                                        ${name})
+    list(REMOVE_ITEM ARGV "IS_OPEN_SOURCE")
+    add_mlir_conversion_library(${ARGV})
+  else()
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_CONVERSION_LIBS ${name})
+    add_mlir_conversion_library(${ARGV})
+  endif()
 endfunction(add_bishengir_conversion_library)
 
 # Declare the bishengir library associated with a translation.
 function(add_bishengir_translation_library name)
-  set_property(GLOBAL APPEND PROPERTY BISHENGIR_TRANSLATION_LIBS ${name})
-  add_mlir_translation_library(${ARGV})
+  cmake_parse_arguments(ARG "IS_OPEN_SOURCE" "" "" ${ARGN})
+  if(ARG_IS_OPEN_SOURCE)
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_TRANSLATION_OPEN_SOURCE_LIBS
+                                        ${name})
+    list(REMOVE_ITEM ARGV "IS_OPEN_SOURCE")
+    add_mlir_translation_library(${ARGV})
+  else()
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_TRANSLATION_LIBS ${name})
+    add_mlir_translation_library(${ARGV})
+  endif()
 endfunction(add_bishengir_translation_library)
 
 # Declare the bishengir library associated with an extension.
 function(add_bishengir_extension_library name)
-  set_property(GLOBAL APPEND PROPERTY BISHENGIR_EXTENSION_LIBS ${name})
-  add_mlir_extension_library(${ARGV})
+  cmake_parse_arguments(ARG "IS_OPEN_SOURCE" "" "" ${ARGN})
+  if(ARG_IS_OPEN_SOURCE)
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_EXTENSION_OPEN_SOURCE_LIBS
+                                        ${name})
+    list(REMOVE_ITEM ARGV "IS_OPEN_SOURCE")
+    add_mlir_extension_library(${ARGV})
+  else()
+    set_property(GLOBAL APPEND PROPERTY BISHENGIR_EXTENSION_LIBS ${name})
+    add_mlir_extension_library(${ARGV})
+  endif()
 endfunction(add_bishengir_extension_library)
 
 # Declare the bishengir target spec tablegen target.

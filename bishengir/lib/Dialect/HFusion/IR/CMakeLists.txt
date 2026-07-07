@@ -1,9 +1,16 @@
-if(NOT BISHENGIR_BUILD_STANDALONE_IR_ONLY)
-  list(APPEND BS_FEAT_LINK_LIBS BiShengIRLinalgDialectExt)
-endif()
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRLinalgDialectExt
+  BiShengIRSymbolDialect
+  BiShengIRHACCDialect
+  BiShengIRHMAPDialect
+  BiShengIRMathExtDialect
+)
 
 add_bishengir_dialect_library(BiShengIRHFusionDialect
+  IS_OPEN_SOURCE
+
   HFusionDialect.cpp
+  HFusionImpl.cpp
   HFusionOps.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -17,12 +24,9 @@ add_bishengir_dialect_library(BiShengIRHFusionDialect
   BiShengIRHFusionStructuredOpsIncGen
 
   LINK_LIBS PUBLIC
-  ${BS_FEAT_LINK_LIBS}
-  BiShengIRHACCDialect
-  BiShengIRSymbolDialect
-  BiShengIRMathExtDialect
+  ${BISHENGIR_PRIVATE_LIBS}
   MLIRBufferizationDialect
   MLIRDestinationStyleOpInterface
   MLIRLinalgDialect
   MLIRSideEffectInterfaces
-  )
+)

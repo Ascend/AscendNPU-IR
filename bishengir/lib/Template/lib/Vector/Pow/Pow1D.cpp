@@ -409,7 +409,6 @@ vector_pow_1d(memref_t<__ubuf__ T, 1> *base, memref_t<__ubuf__ T, 1> *exp,
     pow_scalar_1d<T>(base, exp, res);
     return;
   }
-
   // step1: initialize result
   // 1. set every element in res to 1
   //    vbrc(1, res)

@@ -1,45 +1,91 @@
 file(GLOB AUTO_SCHEDULE ${CMAKE_CURRENT_SOURCE_DIR}/AutoSchedule/*.cpp)
 file(GLOB FLATTENER ${CMAKE_CURRENT_SOURCE_DIR}/Flattener/*.cpp)
 file(GLOB OP_FUSION ${CMAKE_CURRENT_SOURCE_DIR}/OpFusion/*.cpp)
+file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/*.cpp)
+file(GLOB NORMALIZE_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/Utils/*.cpp)
+
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRDialectUtils
+  BiShengIRVFFusion
+  BiShengIRSCFTransformOps
+  BiShengIRScopeDialect
+  BiShengIRTensorTransforms
+  BishengIRTransform
+  BiShengIRHIVMTransformOps
+  BiShengIRHACCDialect
+  BiShengIRHACCUtils
+  BiShengIRHFusionAnalysis
+  BiShengIRMathExtDialect
+  BiShengIRAnnotationDialect
+)
 
 add_bishengir_dialect_library(BiShengIRHFusionTransforms
+  IS_OPEN_SOURCE
+
   ${AUTO_SCHEDULE}
   ${FLATTENER}
   ${OP_FUSION}
+  ${NORMALIZE}
+  ${NORMALIZE_UTILS}
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
+  AutoVectorize.cpp
+  AutoVectorize/AutoVectorizeInterpreter.cpp
+  AutoVectorize/Verify.cpp
+  AutoVectorizeV2.cpp
+  AutoVectorizeVerifier.cpp
   BufferizableOpInterfaceImpl.cpp
   CacheIO.cpp
   CacheIOForReturnArg.cpp
   ComposeMultiReduce.cpp
   ConstantizeTilingData.cpp
   ConvertGenericToNamedOp.cpp
+  HFusionGeneralize.cpp
   Decompose.cpp
   DecomposeOpInterfaceImpl.cpp
   DecomposeMulti.cpp
   DropSymbols.cpp
   EliminateDuplicateFuncs.cpp
   FlattenOps.cpp
+  FoldUnitDims.cpp
   FoldSymbolicDim.cpp
+  GenericUnroller.cpp
   HoistTensorEmpty.cpp
   InlineBrc.cpp
   InferFuncFusionKind.cpp
   InferOutShapes.cpp
+  MeshShardingInterfaceImpl.cpp
   Normalize.cpp
   NormalizeSliceOps.cpp
   OpFusion.cpp
   OutlineSingleOp.cpp
+  OutlineVectorFunction.cpp
   PackTilingData.cpp
+  PrepareI1Nx1ForVectorization.cpp
+  PreVectorizationFusion.cpp
+  PullSliceIntoVectorFunction.cpp
   ReCacheIO.cpp
+  RemoveCacheIO.cpp
   ReorderOpsByBFS.cpp
   SimplifyOps.cpp
   TensorResToOutParams.cpp
   TilingInterfaceImpl.cpp
+  TreeReduce.cpp
   UnfoldSymbolicDim.cpp
+  UpliftWhileToFor.cpp
+  LegalizeScalar.cpp
   LegalizeBF16.cpp
   LegalizeBool.cpp
+  LegalizeFP8.cpp
   DowngradeFP64CstOp.cpp
+  VectorizeOps.cpp
   WrapHostFunc.cpp
+  RemoveMaskFromUnalignedReductionLoop.cpp
+  RemoveRedundantWriteAndReadPair.cpp
+  SimplifyVFArgs.cpp
+  MergeVecScope.cpp
+  TreeReduceV2.cpp
+  FoldExtractInsertPair.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HFusion
@@ -48,15 +94,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRHFusionTransformsIncGen
 
   LINK_LIBS PUBLIC
-  BiShengIRDialectUtils
-  BiShengIRSCFTransformOps
-  BiShengIRTensorTransforms
-  BiShengIRTransform
-  BiShengIRHACCDialect
-  BiShengIRHACCUtils
-  BiShengIRHFusionAnalysis
-  BiShengIRMathExtDialect
-  BiShengIRAnnotationDialect
+  ${BISHENGIR_PRIVATE_LIBS}
   MLIRAffineDialect
   MLIRArithDialect
   MLIRBufferizationDialect
@@ -71,7 +109,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   MLIRMemRefDialect
   MLIRMemRefTransformOps
   MLIRSCFTransformOps
+  MLIRSCFTransforms
   MLIRShapeDialect
+  MLIRShardingInterface
   MLIRTensorDialect
   MLIRTensorTransformOps
   MLIRTensorUtils

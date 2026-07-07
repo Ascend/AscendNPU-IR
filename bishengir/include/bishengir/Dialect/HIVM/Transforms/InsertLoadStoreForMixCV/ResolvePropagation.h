@@ -28,6 +28,13 @@
 namespace mlir {
 namespace hivm {
 
+enum PipePriority: uint8_t {
+  RemoveRedundant = 0,
+  DefaultResolve = 1,
+  RegbaseResolve = 2,
+  CloneMultipleAddressSpace = 8
+};
+
 /// Resolves a fully propagated boundary where an up-propagator consumes a
 /// down-propagator directly. At that point propagation has identified two
 /// incompatible requirements on the same value, so this pattern materializes
@@ -56,9 +63,26 @@ public:
 
   explicit ResolvePropagationPattern(MLIRContext *ctx)
       : OpRewritePattern(ctx, /*benefit=*/1) {}
+      : OpRewritePattern(ctx, /*benefit=*/PipePriority::DefaultResolve) {}
 
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropOp,
                                 PatternRewriter &rewriter) const override;
+};
+
+class TightCoupledBufferResolvePropagationPattern
+    : public OpRewritePattern<UnrealizedConversionCastOp> {
+public:
+  using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
+
+  explicit TightCoupledBufferResolvePropagationPattern(MLIRContext *ctx)
+      : OpRewritePattern(ctx, /*benefit=*/PipePriority::RegbaseResolve) {}
+
+  LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropOp,
+                                PatternRewriter &rewriter) const override;
+  
+  LogicalResult resolveUBToL1(UnrealizedConversionCastOp downPropOp,
+                                   UnrealizedConversionCastOp upPropOp,
+                                   PatternRewriter &rewriter) const;
 };
 
 /// Remove redundant propagation.
@@ -80,6 +104,7 @@ public:
 
   explicit RemoveRedundantPropagationPattern(MLIRContext *ctx)
       : OpRewritePattern(ctx, /*benefit=*/0) {}
+      : OpRewritePattern(ctx, /*benefit=*/PipePriority::RemoveRedundant) {}
 
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropOp,
                                 PatternRewriter &rewriter) const override;
@@ -89,6 +114,7 @@ class CloneMultipleAddressSpaceOperation : public RewritePattern {
 public:
   explicit CloneMultipleAddressSpaceOperation(MLIRContext *context)
       : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, context) {}
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/PipePriority::CloneMultipleAddressSpace, context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override;

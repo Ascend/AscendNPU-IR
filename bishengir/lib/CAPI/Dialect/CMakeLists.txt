@@ -18,6 +18,25 @@ add_mlir_public_c_api_library(BiShengIRCAPIHIVM
   MLIRPass
 )
 
+add_mlir_public_c_api_library(BiShengIRCAPIMesh
+  Mesh.cpp
+
+  ADDITIONAL_HEADER_DIRS
+  ${PROJECT_SOURCE_DIR}/include/bishengir-c/
+
+  ENABLE_AGGREGATION
+
+  PARTIAL_SOURCES_INTENDED
+  DEPENDS
+  BiShengIRHIVMTransformsIncGen
+
+  LINK_LIBS PUBLIC
+  MLIRCAPIIR
+  BiShengIRMeshDialect
+  BiShengIRMeshTransforms
+  MLIRPass
+)
+
 add_mlir_public_c_api_library(BiShengIRCAPIHFusion
   HFusion.cpp
   HFusionPasses.cpp

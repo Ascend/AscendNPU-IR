@@ -40,6 +40,7 @@ static LogicalResult verifyIfWithElseAndResults(scf::IfOp ifOp,
 static bool equivalentConvertMeta(ConvertLayoutOp a, ConvertLayoutOp b) {
   // Strict check: all attributes must match.
   return a->getAttrs() == b->getAttrs();
+  return a.getDstLayout() == b.getDstLayout();
 }
 
 static SmallVector<Value> buildYieldOperands(scf::YieldOp oldYield,
@@ -124,7 +125,10 @@ struct PropagateConvertLayoutScfIfYieldDown
 
     if (failed(verifyIfWithElseAndResults(ifOp, rewriter, convertOp)))
       return failure();
-
+      
+    if (!ifOp.thenBlock() || !ifOp.elseBlock()) {
+      return rewriter.notifyMatchFailure(convertOp, "scf.if block is null");
+    }
     auto thenYield = cast<scf::YieldOp>(ifOp.thenBlock()->getTerminator());
     auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
 
@@ -195,6 +199,9 @@ struct PropagateConvertLayoutScfIfYieldDown
     {
       IRMapping mapping;
       rewriter.setInsertionPointToStart(newIfOp.elseBlock());
+      if (!ifOp.elseBlock()) {
+        return rewriter.notifyMatchFailure(convertOp, "scf.if else block is null");
+      }
       cloneBlockWithoutTerminator(rewriter, *ifOp.elseBlock(), mapping,
                                   elseConv.getOperation());
       Value rawElseK = mapping.lookupOrDefault(elseConv.getSource());
@@ -267,6 +274,9 @@ struct PropagateConvertLayoutScfIfResultUp
       return failure();
 
     uint32_t k = ifRes.getResultNumber();
+    if (!ifOp.thenBlock() || !ifOp.elseBlock()) {
+      return rewriter.notifyMatchFailure(convertOp, "scf.if block is null");
+    }
     auto thenYield = cast<scf::YieldOp>(ifOp.thenBlock()->getTerminator());
     auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
 
@@ -286,6 +296,9 @@ struct PropagateConvertLayoutScfIfResultUp
     {
       IRMapping mapping;
       rewriter.setInsertionPointToStart(newIfOp.thenBlock());
+      if (!ifOp.thenBlock()) {
+        return rewriter.notifyMatchFailure(convertOp, "scf.if then block is null");
+      }
       cloneBlockWithoutTerminator(rewriter, *ifOp.thenBlock(), mapping);
       Value mappedThenK = mapping.lookupOrDefault(thenYield.getOperand(k));
       Value thenUp =

@@ -39,6 +39,10 @@ let summary = "Fold tensor empty";
 
 def NormalizeTensorOps : Pass<"normalize-tensor-ops", "func::FuncOp"> {
   let summary = "Optimization patterns for tensor ops";
+  let options = [
+    Option<"skipAlignedSlice", "skip-aligned-slice", "bool", "false",
+           "Skip FoldInsertSliceToConcat pattern for aligned slice.">,
+  ];
   let constructor = "mlir::tensor::createNormalizeTensorOpsPass()";
   let dependentDialects = [
     "tensor::TensorDialect",
@@ -73,7 +77,13 @@ def PropagateReshape : Pass<"propagate-reshape", "func::FuncOp"> {
   let options = [
       Option<"forHIVM", "for-hivm", "bool",
              /*default=*/"false",
-             "Do propagate reshape for HIVM, which has special behavior">
+             "Do propagate reshape for HIVM, which has special behavior">,
+      Option<"forRegbased", "for-regbased", "bool",
+             /*default=*/"false",
+             "Do propagate reshape for register based, which has special behavior">,
+      Option<"skipScope", "skip-scope", "bool",
+             /*default=*/"true",
+             "Whether to skip the current pass when scope exists">
   ];
   let constructor = "mlir::tensor::createPropagateReshapePass()";
   let dependentDialects = [
@@ -137,7 +147,7 @@ def NormalizeLastDimUnalignedTensorOp : Pass<"normalize-last-dim-unaligned-tenso
     %0 = tensor.empty() : tensor<27x16xf32>
     %transposed = linalg.transpose ins(%arg0 : tensor<16x27xf32>) outs(%0 : tensor<27x16xf32>) permutation = [1, 0]
     %padded = tensor.pad %transposed low[3, 0] high[2, 0] {...} : tensor<27x16xf32> to tensor<32x16xf32>
-    %1 = tensor.empty() : tensor<16x32xf32>
+    %1 = tensor.empty() : tensor<16x96xf32>
     %transposed_0 = linalg.transpose ins(%padded : tensor<32x16xf32>) outs(%1 : tensor<16x32xf32>) permutation = [1, 0]
     ```
   }];
@@ -162,7 +172,7 @@ def BubbleUpExtractSlice : Pass<"bubble-up-extract-slice", "func::FuncOp"> {
   ];
 }
 
-def MergeConsecutiveInsertExtractSlice 
+def MergeConsecutiveInsertExtractSlice
     : Pass<"merge-consecutive-insert-extract-slice", "func::FuncOp"> {
   let summary = "Merge consecutive insert extract slice";
   let description = [{Merge consecutive insert extract slice}];

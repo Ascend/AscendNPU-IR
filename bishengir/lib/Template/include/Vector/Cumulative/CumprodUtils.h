@@ -20,6 +20,7 @@
 #include "Utils.h"
 #include "Vector/VecUtils.h"
 
+#ifndef __DAV_C310__
 template <typename T, bool reverse = false>
 __aiv__ __attribute__((always_inline)) void
 vector_cumprod_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst);
@@ -74,5 +75,28 @@ DECLARE_REVERSE_CUMPROD(ara, 3, int32_t);
 DECLARE_REVERSE_CUMPROD(ara, 3, half);
 DECLARE_REVERSE_CUMPROD(ara, 3, float);
 }
+
+#else
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_cumprod_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst);
+
+#define DECLARE_CUMPROD(dim, dtype)                                            \
+  __aiv__ __attribute__((always_inline)) void _mlir_ciface_cumprod_ra_##dtype( \
+      memref_t<__ubuf__ dtype, dim> *src, memref_t<__ubuf__ dtype, dim> *dst)
+
+#define REGISTE_CUMPROD(dim, dtype)                                            \
+  DECLARE_CUMPROD(dim, dtype) { vector_cumprod_ra<dtype>(src, dst); }
+
+extern "C" {
+//===-------------------------------------------------------------------===//
+// cumprod ra, 2 dim
+//===-------------------------------------------------------------------===//
+DECLARE_CUMPROD(2, int16_t);
+DECLARE_CUMPROD(2, int32_t);
+DECLARE_CUMPROD(2, half);
+DECLARE_CUMPROD(2, float);
+}
+#endif
 
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_CUMPROD_UTILS_H

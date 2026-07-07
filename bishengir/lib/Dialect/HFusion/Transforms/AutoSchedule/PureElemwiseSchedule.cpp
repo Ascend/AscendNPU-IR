@@ -75,6 +75,7 @@ TilingComputeFn PureElemwiseScheduler::calculateTilingImpl() {
     Expr ubAvailableNumInSmallestTypeBits =
         ubMaxSizeInBits.floorDiv(smallestTypeBits).floorDiv(maxBufferCnt);
     // ub avaliable number align down to block size
+    // ub available number align down to block size
     Expr alignedBufferSizeInBits =
         (ubAvailableNumInSmallestTypeBits * smallestTypeBits)
             .alignDown(kUBAlignSizeInBytes * kNumBitsInByte);

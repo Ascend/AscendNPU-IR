@@ -123,6 +123,11 @@ FlattenResult getFlattenedTransposableOTF(HIVMStructuredOp op,
   //  First of all, remove all the unit operations
   FlattenResult unitResult =
       getFlattenedUnitTransposableOTF(op, options, op.getPermutationArray());
+FlattenResult getFlattenedTransposeLike(HIVMStructuredOp op,
+                                        FlattenOptions &options) {
+  //  First of all, remove all the unit operations
+  FlattenResult unitResult =
+      getFlattenedUnitTransposeLike(op, options, op.getPermutationArray());
   LDBG(to_string(unitResult.getInputReassociation()));
 
   PermutationBlocks permutationBlocks = getPermutationBlocks(unitResult);

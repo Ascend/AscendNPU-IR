@@ -175,6 +175,19 @@ int OperationBase::getDepth() const {
   return ret;
 }
 
+OperationBase *OperationBase::getParentWithOp(Operation *op,
+                                              bool assertExists) {
+  assert(op != nullptr);
+  OperationBase *opBase = this;
+  while (opBase != nullptr) {
+    if (opBase->op != nullptr && opBase->op == op) {
+      return opBase;
+    }
+    opBase = opBase->parentOp;
+  }
+  assert(!assertExists);
+  return nullptr;
+}
 OperationBase *OperationBase::getNthParent(int dist) {
   OperationBase *op = this;
   while (dist--) {
@@ -297,6 +310,7 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
     return eventIdNum;
   }
   llvm::report_fatal_error("getHWAvailableEventIdNum: unhandled SyncMode");
+  llvm_unreachable("getHWAvailableEventIdNum: unhandled SyncMode");
 }
 
 SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
@@ -354,6 +368,7 @@ std::optional<int64_t> getStaticLoopCount(LoopLikeOpInterface forOp) {
     return std::nullopt;
   }
   return constantTripCount(lb.value(), ub.value(), step.value());
+  llvm_unreachable("getHWAvailableEventIds: unhandled SyncMode");
 }
 
 // Build a Value that is true for the first iteration of the given scf::ForOp.
@@ -406,6 +421,14 @@ bool checkAllParentLoopsAreForLoops(Operation *op) {
   while (op != nullptr) {
     auto parLoop = op->getParentOfType<LoopLikeOpInterface>();
     if (parLoop != nullptr && !isa<scf::ForOp>(parLoop)) {
+// Despite the legacy name, accepts both scf::ForOp and scf::WhileOp ancestors.
+// scf.while is supported by the multi-buffer pipeline via the alloca-based
+// MultiBufferLoopAdapter (see HIVM/Utils/MultiBufferLoopAdapter.h). Other
+// LoopLike ops (scf.parallel, scf.forall, ...) still bail out.
+bool checkAllParentLoopsAreForLoops(Operation *op) {
+  while (op != nullptr) {
+    auto parLoop = op->getParentOfType<LoopLikeOpInterface>();
+    if (parLoop != nullptr && !isa<scf::ForOp, scf::WhileOp>(parLoop)) {
       return false;
     }
     op = parLoop;
@@ -426,6 +449,7 @@ Value getValueOrCreateCastToI64(IRRewriter &rewriter, Location loc, Value val) {
                                             val);
     } else {
       llvm::report_fatal_error("unhandled casting type");
+      llvm_unreachable("unhandled casting type");
     }
   }
   return val;

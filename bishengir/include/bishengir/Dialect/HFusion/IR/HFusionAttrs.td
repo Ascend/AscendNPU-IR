@@ -98,6 +98,7 @@ def HFusion_InsertSliceSourceIndexAttr : HFusion_Attr<"InsertSliceSourceIndex", 
   }];
 }
 
+
 def HFusion_PaddingOptionAttr : HFusion_Attr<"PaddingOption", "padding_option"> {
   let parameters = (ins
     EnumParameter<HFusion_PaddingOptionEnum>:$option

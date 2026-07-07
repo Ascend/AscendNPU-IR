@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 
 using namespace bishengir;
 using namespace mlir::hivm;
@@ -50,6 +51,7 @@ DecomposePhase VDeinterleaveOp::getDecomposePhase() {
 
 DecomposePhase LoadOp::getDecomposePhase() {
   return DecomposePhase::BEFORE_HIVM_STRIDE_ALIGNMENT;
+  return DecomposePhase::NO_CONSTRAINT;
 }
 
 //===----------------------------------------------------------------------===//

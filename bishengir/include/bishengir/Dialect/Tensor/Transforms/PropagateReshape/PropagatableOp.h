@@ -62,6 +62,23 @@ public:
                                       mlir::Operation *op,
                                       tensor::ExpandShapeOp expandOp) override;
 };
+
+class PropagatableMulExt : public PropagatableOp {
+public:
+  LogicalResult matchAndRewriteExpand(PatternRewriter &rewriter,
+                                      Operation *op,
+                                      tensor::ExpandShapeOp expandOp) override;
+  LogicalResult
+  matchAndRewriteCollapse(PatternRewriter &rewriter, Operation *op,
+                          tensor::CollapseShapeOp collapseOp) override;
+};
+
+class PropagatableAnnotationMark : public PropagatableOp {
+public:
+  LogicalResult
+  matchAndRewriteCollapse(PatternRewriter &rewriter, Operation *op,
+                          tensor::CollapseShapeOp collapseOp) override;
+};
 } // namespace mlir::tensor
 #define BISHENGIR_DIALECT_TENSOR_TRANSFORMS_PROPAGATERESHAPE_PROPAGATABLEOP_H
 

@@ -109,7 +109,6 @@ __aicore__ __attribute__((always_inline)) void
 copy_cbuf_to_gm_5d_to_3d_core(memref_t<__cbuf__ T, 5> *src,
                               memref_t<__gm__ T, 3> *dst) {
   check_inputs_of_copy_cbuf_to_gm_5d_to_3d_core(src, dst);
-
   int64_t size0 = src->sizes[0];
   int64_t size1 = src->sizes[1];
   int64_t size2 = src->sizes[2];
@@ -133,6 +132,37 @@ copy_cbuf_to_gm_5d_to_3d_core(memref_t<__cbuf__ T, 5> *src,
                                     {dst->strides[1], dst->strides[2]}};
     copy_cbuf_to_gm_4d_to_2d_core(&src_4d, &dst_2d);
   }
+
+  if (stride3 == 1) [[likely]] { // keep this because check is only on when
+                                 // ENABLE_CPU_TRACE_INTRINSIC
+    for (int64_t i = 0; i < size0; i++) {
+      for (int64_t j = 0; j < size1; j++) {
+        for (int64_t k = 0; k < size2; k++) {
+          int64_t src_offset = i * stride0 + j * stride1 + k * stride2;
+          __cbuf__ void *cur_src =
+              static_cast<__cbuf__ void *>(src_ptr + src_offset);
+          int64_t dst_m = j * size2 + k;
+          int64_t dst_n = i * size3;
+          int64_t dst_offset =
+              dst_m * dst->strides[0] + dst_n * dst->strides[1];
+          __gm__ void *cur_dst =
+              static_cast<__gm__ void *>(dst_ptr + dst_offset);
+          int64_t unit = 32; // assuming size3 * sizeof(T) is at least 32 and is
+                             // divisible by 32
+          // TODO: use nBurst to simplify the loop
+          INTRINSIC(copy_cbuf_to_gm, cur_dst, cur_src,
+                    0,                        // sid
+                    1,                        // nBurst
+                    size3 * sizeof(T) / unit, // lenBurst
+                    0,                        // srcGap
+                    0                         // dstGap
+          );
+        }
+      }
+    }
+  }
+  // in other cases, the destination will not be updated and will contain
+  // undefined contents
 }
 
 extern "C" {

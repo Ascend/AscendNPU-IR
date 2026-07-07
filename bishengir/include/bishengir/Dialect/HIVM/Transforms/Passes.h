@@ -34,6 +34,14 @@ enum class MultiBufferStrategy {
   CUBE_NO_L0C,
 };
 
+/// Cube-Vector pipelining mode
+enum class CVPipelineMode {
+  Off,     // disable CVPipelining
+  Unroll,  // standard unroll-mode pipelining
+  Skew,    // skew/preload-mode pipelining
+  Dynamic, // dynamic mode pipeling (developing)
+};
+
 namespace mlir {
 
 namespace hivm {
@@ -59,6 +67,14 @@ std::unique_ptr<Pass> createConvertToHIVMOpPass();
 
 /// Create a pass to enable HIVMC version-compatible IR print.
 std::unique_ptr<Pass> createEnableHIVMCCompatiblePrintPass();
+/// Create a pass to clone scf.if.yield operand for PlanMemory.
+std::unique_ptr<Pass> createCloneSCFIfYieldOperandPass();
+
+/// Create a pass to convert ops from other dialects to HIVM Ops.
+std::unique_ptr<Pass> createConvertToHIVMOpPass();
+
+/// Create a pass to normalize hivm ops.
+std::unique_ptr<Pass> createHIVMNormalizeOpsPass();
 
 /// Create a pass to normalize hivm matmul op.
 std::unique_ptr<Pass> createNormalizeMatmulPass();
@@ -82,6 +98,9 @@ std::unique_ptr<Pass> createCloneTensorEmptyPass();
 
 /// Create a pass to infer data layout information for HIVM Ops.
 std::unique_ptr<Pass> createInferHIVMDataLayoutPass();
+
+/// Create a pass to infer vf mode for Ops.
+std::unique_ptr<Pass> createInferVFModePass();
 
 /// Create a pass to mark multi buffer for HIVM Ops.
 /// If options is {}, enableAuto is false as default.
@@ -111,6 +130,14 @@ createGraphSyncSolverPass(const GraphSyncSolverOptions &options = {});
 /// Create a pass to cross-core graph-sync-solver.
 std::unique_ptr<Pass>
 createCrossCoreGSSPass(const CrossCoreGSSOptions &options = {});
+
+// Create a pass to run delayed cross-core GSS driven by anchors.
+std::unique_ptr<Pass>
+createDelayedCrossCoreGSSPass(const DelayedCrossCoreGSSOptions &options = {});
+
+// Create a pass to insert anchor operations and backup mixed kernels.
+std::unique_ptr<Pass> createInsertAnchorsAndBackupPass(
+    const InsertAnchorsAndBackupOptions &options = {});
 
 /// Create a pass to inject block sync
 std::unique_ptr<Pass>
@@ -147,6 +174,26 @@ std::unique_ptr<Pass> createInsertInferTaskTypeFuncPass();
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
 
+/// Create a pass to outline memref.alloc with static shape in VF
+std::unique_ptr<Pass> createOutlineAllocInVFPass();
+
+/// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
+std::unique_ptr<Pass> createOutlineCopyInVFPass();
+
+/// Create a pass to remove unnecessary buffer address return
+std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
+
+// Create a pass to split davinci aicore and aivector kernel
+std::unique_ptr<Pass> createSplitMixKernelPass();
+
+// Create a pass to mark L1/UB allocs with the tightly-coupled-buffer attribute
+// before SplitMixKernel clones the MIX function.
+std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass();
+
+// Create a pass to hoist yielded tightly-coupled allocs out of inner regions so
+// the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.
+std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
+
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
@@ -163,6 +210,10 @@ std::unique_ptr<Pass> createFlattenOpsPass();
 // Create a pass to align alloc size for some HIVM ops that
 // has to access aligned size.
 std::unique_ptr<Pass> createAlignAllocSizePass();
+
+// Create a pass to pre-analyze which allocs must skip stride alignment
+// (e.g., DMA-loaded buffers that will be vload'd in VFs).
+std::unique_ptr<Pass> createPreMarkStrideAlignPass();
 
 // Create a pass to annoate storage_align marks for HIVM ops.
 std::unique_ptr<Pass> createMarkStrideAlignPass();
@@ -187,6 +238,12 @@ std::unique_ptr<Pass> createInitEntryKernelPass();
 
 // Create a pass to convert ops to fixpipe
 std::unique_ptr<Pass> createInlineFixpipePass();
+std::unique_ptr<Pass>
+createInlineFixpipePass(const InlineFixpipeOptions &options = {});
+
+// Create a pass to insert fixpipe
+std::unique_ptr<Pass>
+createInsertFixpipePass(const InsertFixpipeOptions &options = {});
 
 // Create a pass to tile batch matmul into loop
 std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
@@ -194,17 +251,31 @@ std::unique_ptr<Pass> createTileBatchMMIntoLoopPass();
 // Create a pass to lift zero rank
 std::unique_ptr<Pass> createLiftZeroRankPass();
 
+// Create a pass to insert load/store op for scalar.
+std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
+
+// Create a pass to split if conditionals for mix cv function.
+std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
+
 // Create a pass to insert load/store op for mix cv function.
 std::unique_ptr<Pass> createInsertLoadStoreForMixCVPass(
     const InsertLoadStoreForMixCVOptions &options = {});
 
 std::unique_ptr<Pass> createInsertLoadStoreForScalarPass();
+// Create a pass to insert cv tight coupled buffer for mix cv function.
+std::unique_ptr<Pass> createInsertCVTightCoupledBufferPass();
 
 // Create a pass to insert infer-workspace callback func for host
 std::unique_ptr<Pass> createInsertInferWorkSpaceSizeFuncPass();
 
 // Create a pass to bind func augument with hacc.workspace to AllocWorkspaceOp
 std::unique_ptr<Pass> createBindWorkSpaceArgPass();
+// Create a pass to insert infer-vf-mode callback func for host
+std::unique_ptr<Pass> createInsertInferVFModeFuncPass();
+
+// Create a pass to bind func augument with hacc.workspace to AllocWorkspaceOp
+std::unique_ptr<Pass>
+createBindWorkSpaceArgPass(const BindWorkSpaceArgOptions &options = {});
 
 // Create a pass to bind func augument with hacc.syncblocklock to
 // CreateSyncBlockLockOp.
@@ -237,6 +308,18 @@ std::unique_ptr<Pass> createNormalizeLoopIteratorPass();
 /// Create a pass to Inline Load and Store operation on the fly.
 std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 
+/// Create a pass to Inline Load and Store operation on the fly.
+std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
+
+// Create a pass to annotate alias info within VF
+std::unique_ptr<Pass> createAnnotateVFAliasPass();
+
+/// Create a pass to remove CopyOps.
+std::unique_ptr<Pass> createRemoveCopyOpsPass();
+
+/// Create a pass to analyze arith/vector mask
+std::unique_ptr<Pass> createArithVectorMaskAnalysisPass();
+
 /// Create a pass to tile and bind sub block for mix cv function.
 std::unique_ptr<Pass>
 createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
@@ -244,6 +327,9 @@ createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
 /// Create a pass to bubble up extract slice for hivm ops.
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
     const HIVMBubbleUpExtractSliceOptions &options = {});
+
+/// Create a pass to vectorize hivm ops.
+std::unique_ptr<Pass> createHIVMVectorizeOpsPass();
 
 // Create a pass to insert init and finish for debug.
 std::unique_ptr<Pass> createInsertInitAndFinishForDebugPass();
@@ -258,6 +344,9 @@ std::unique_ptr<Pass> createMarkSyncBlockLockWithSubblockPass();
 
 // Create a pass to insert nz2nd for debug.
 std::unique_ptr<Pass> createInsertNZ2NDForDebugPass();
+
+// Create a pass to insert l12ub for debug.
+std::unique_ptr<Pass> createInsertL12UBForDebugPass();
 
 /// Create a pass to loop on blocks when logical blocknum is larger than
 /// physical one
@@ -295,6 +384,47 @@ std::unique_ptr<Pass> createCreatePreloadPass();
 /// Create a pass to remove HIVM data layout annotation.
 std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();
 
+/// Create a pass to create preload for CV pipelining.
+std::unique_ptr<Pass> createCreatePreloadPass();
+
+// Create a pass to compose expands and collapses ops
+std::unique_ptr<Pass> createComposeCollapseExpandPass();
+
+std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
+
+// Split simt module for every simt vf
+std::unique_ptr<Pass> createSplitSimtModulePass();
+
+// Create a pass to infer simt vf func args memory effect.
+std::unique_ptr<Pass> createInferSimtVFMemEffectPass();
+
+// Create a pass to infer simt vf func args memory scope hints.
+std::unique_ptr<Pass> createInferSimtVFMemScopeHintPass();
+
+// Create a pass to materialize explicit memory scopes inside split simt
+// modules.
+std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
+
+// Create a pass to insert convert layout operations for matmul ops
+std::unique_ptr<Pass> createInsertConvertLayoutPass();
+std::unique_ptr<Pass> createPropagateConvertLayoutPass(
+    const PropagateConvertLayoutOptions &options = {});
+std::unique_ptr<Pass> createConvertLayoutToTransposePass();
+std::unique_ptr<Pass> createInsertCVDataMovementPass();
+std::unique_ptr<Pass> createCombineOptimizedConvertLayoutPass();
+
+// Create a pass to insert memory semantic for simt vf.
+std::unique_ptr<Pass> createInsertMemSemanticForSimtVFPass();
+
+// Create scope for gather_load and scatter_store
+std::unique_ptr<Pass> createAutoScopePass();
+
+std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
+std::unique_ptr<Pass> createWriteBackSharedPass();
+
+/// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
+/// on-the-fly transpose.
+std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

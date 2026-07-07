@@ -260,7 +260,7 @@ void SyncAnalyzer::InsertSeqSync(CompoundInstanceElement *nowCompound,
           InsertLoopSync(i, nowCompound, begin, forInstance, syncElement,
                          syncRecordList, forEndIndex));
       assert(syncIR[frontIndex]->pipeBefore.empty());
-      i -= skipLoop;
+      i -= static_cast<int>(skipLoop);
     } else if (auto *branchElement =
                    dyn_cast<BranchInstanceElement>(frontPtr.get())) {
       assert(syncIR[frontIndex]->pipeBefore.empty());
@@ -294,12 +294,16 @@ void SyncAnalyzer::UpdateSyncRecord(const SyncOperation *sync,
   const hivm::PIPE setPipeValue = sync->GetSrcPipe();
   hivm::PIPE waitPipeValue = sync->GetDstPipe();
   if (syncAnalysisMode == SyncAnalysisMode::BLOCKSYNC) {
-    // Unlike normal-sync mode, in block-sync mode, there is no wait-pipe (or
-    // dst-pipe), all further instructions after the syncBlockWait instruction
-    // will be blocked, as if it is blocking the pipe-s pipeline.
+    // TODO: unlike a3, in a5 we have sync_block_wait(pipe), that allow us to
+    // specify the target pipe, in that case some set/wait pairs could conflict
+    // and needs to have different event-ids, even if their ranges doesn't
+    // conflict. For now we will set the waiting pipe to pipe_s just like how we
+    // had it in a3 until we develop a proper solution.
     nowPipeValue = hivm::PIPE::PIPE_S;
     waitPipeValue = hivm::PIPE::PIPE_S;
   }
+
+
   bool barrierFinder = (nowPipeValue == waitPipeValue) &&
                        (sync->GetType() == SyncOperation::TYPE::PIPE_BARRIER);
   if (barrierFinder) {
@@ -539,10 +543,9 @@ void SyncAnalyzer::MemAnalyze(CompoundInstanceElement *nowCompound,
     return;
   }
   if (forEndIndex.has_value()) {
-    const int eventIdNum = GetEventIdNum(depBaseMemInfosVec);
-    for (int i = 1; i < eventIdNum; ++i) {
-      if (isAlreadySync(nowCompound, frontCompound, syncRecordList,
-                        static_cast<unsigned>(i))) {
+    int eventIdNum = GetEventIdNum(depBaseMemInfosVec);
+    for (int i = 1; i < eventIdNum; i++) {
+      if (isAlreadySync(nowCompound, frontCompound, syncRecordList, i)) {
         // already sync by checking corresponding multi buffer records, no need
         // to insert sync any more
         return;
@@ -663,9 +666,15 @@ void SyncAnalyzer::InsertBlockSyncOperation(
     } else {
       // currently it is only expected to have cube-cube pipe-barrier-cube
       // sync-operations. as vecto-vector is not supported yet.
-      llvm::report_fatal_error("unsupported vector-vector sync mode");
+      llvm_unreachable("unsupported vector-vector sync mode");
     }
   } else {
+    // TODO: unlike a3, in a5 we have sync_block_wait(pipe), that allow us to
+    // specify the target pipe, in that case some set/wait pairs could conflict
+    // and needs to have different event-ids, even if their ranges doesn't
+    // conflict. For now we will set the waiting pipe to pipe_s just like how we
+    // had it in a3 until we develop a proper solution.
+
     std::unique_ptr<SyncOperation, std::default_delete<SyncOperation>>
         syncBlockSetOp = std::make_unique<SyncOperation>(SyncOperation{
             SyncOperation::TYPE::SYNC_BLOCK_SET, frontCompound->kPipeValue,
@@ -682,8 +691,10 @@ void SyncAnalyzer::InsertBlockSyncOperation(
       int eventIdNum = eventIdNumOpt.value();
       syncBlockSetOp->eventIdNum = eventIdNum;
       syncBlockWaitOp->eventIdNum = eventIdNum;
+      assert(frontParentLoop.getSingleInductionVar().has_value());
       syncBlockSetOp->block_sync_event_value =
           frontParentLoop.getSingleInductionVar().value();
+      assert(nowParentLoop.getSingleInductionVar().has_value());
       syncBlockWaitOp->block_sync_event_value =
           nowParentLoop.getSingleInductionVar().value();
     } else {
@@ -713,6 +724,24 @@ void SyncAnalyzer::InsertBlockSyncOperation(
   syncIndex++;
   assert(syncOperations.size() == syncIndex);
 }
+template <typename T>
+void SyncAnalyzer::ChangeNowPipeToVirtualMTE2_regbase(
+    hivm::PIPE &nowPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
+    T mmadL1LikeOp) const {
+  Value L1A = mmadL1LikeOp.getA();
+  Value L1B = mmadL1LikeOp.getB();
+  for (auto &depValue : depBaseMemInfosVec) {
+    // Check L1B before L1A: when A==B, the pattern is
+    // WAIT(MTE2, MTE1) -> LoadL1->L0A -> LoadL1->L0B -> SET(MTE1, MTE2),
+    // SET must fire after LoadL0B so MTE2 waits for the last load to finish.
+    if (depValue.second->baseBuffer == L1B) {
+      nowPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    } else if (depValue.second->baseBuffer == L1A) {
+      nowPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
+    }
+  }
+}
+
 
 void SyncAnalyzer::ChangeToVirtualMTE2IfNeed(
     CompoundInstanceElement *nowCompound,
@@ -720,15 +749,16 @@ void SyncAnalyzer::ChangeToVirtualMTE2IfNeed(
     hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec) {
   auto frontMmadL1Op = dyn_cast<hivm::MmadL1Op>(frontCompound->elementOp);
   auto nowMmadL1Op = dyn_cast<hivm::MmadL1Op>(nowCompound->elementOp);
-  if (nowPipe == hivm::PIPE::PIPE_MTE2 && frontPipe == hivm::PIPE::PIPE_MTE1 &&
-      frontMmadL1Op) {
+  if (nowPipe == hivm::PIPE::PIPE_MTE2 &&
+      frontPipe == hivm::PIPE::PIPE_MTE1 && frontMmadL1Op) {
     ChangeNowPipeToVirtualMTE2(nowPipe, depBaseMemInfosVec, frontMmadL1Op);
   }
-  if (nowPipe == hivm::PIPE::PIPE_MTE1 && frontPipe == hivm::PIPE::PIPE_MTE2 &&
-      nowMmadL1Op) {
+  if (nowPipe == hivm::PIPE::PIPE_MTE1 &&
+      frontPipe == hivm::PIPE::PIPE_MTE2 && nowMmadL1Op) {
     ChangeFrontPipeToVirtualMTE2(frontPipe, depBaseMemInfosVec, nowMmadL1Op);
   }
 }
+
 
 void SyncAnalyzer::ChangeNowPipeToVirtualMTE2(
     hivm::PIPE &nowPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
@@ -744,6 +774,7 @@ void SyncAnalyzer::ChangeNowPipeToVirtualMTE2(
   }
 }
 
+
 void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2(
     hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
     hivm::MmadL1Op mmadL1Op) const {
@@ -754,6 +785,75 @@ void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2(
       frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
     } else if (depValue.first->baseBuffer == L1B) {
       frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    }
+  }
+}
+
+
+template <typename T>
+void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2_regbase(
+    hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
+    T mmadL1LikeOp) const {
+  Value L1A = mmadL1LikeOp.getA();
+  Value L1B = mmadL1LikeOp.getB();
+  for (auto &depValue : depBaseMemInfosVec) {
+    if (depValue.first->baseBuffer == L1A) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
+    } else if (depValue.first->baseBuffer == L1B) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    }
+  }
+}
+
+
+template <>
+void SyncAnalyzer::ChangeFrontPipeToVirtualMTE2_regbase<hivm::MmadMxL1Op>(
+    hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec,
+    hivm::MmadMxL1Op mmadL1LikeOp) const {
+  Value L1A = mmadL1LikeOp.getA();
+  Value L1B = mmadL1LikeOp.getB();
+  Value L1ScaleA = mmadL1LikeOp.getScaleA();
+  Value L1ScaleB = mmadL1LikeOp.getScaleB();
+  for (auto &depValue : depBaseMemInfosVec) {
+    if (depValue.first->baseBuffer == L1A) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
+    } else if (depValue.first->baseBuffer == L1B) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    } else if (depValue.first->baseBuffer == L1ScaleA) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1A;
+    } else if (depValue.first->baseBuffer == L1ScaleB) {
+      frontPipe = hivm::PIPE::VIRTUAL_PIPE_MTE2_L1B;
+    }
+  }
+}
+
+
+void SyncAnalyzer::ChangeToVirtualMTE2IfNeed_regbase(
+    CompoundInstanceElement *nowCompound,
+    CompoundInstanceElement *frontCompound, hivm::PIPE &nowPipe,
+    hivm::PIPE &frontPipe, DepBaseMemInfoPairVec &depBaseMemInfosVec) {
+  {
+    auto frontMmadL1Op = dyn_cast<hivm::MmadL1Op>(frontCompound->elementOp);
+    auto nowMmadL1Op = dyn_cast<hivm::MmadL1Op>(nowCompound->elementOp);
+    if (nowPipe == hivm::PIPE::PIPE_MTE2 &&
+        frontPipe == hivm::PIPE::PIPE_MTE1 && frontMmadL1Op) {
+      ChangeNowPipeToVirtualMTE2_regbase(nowPipe, depBaseMemInfosVec, frontMmadL1Op);
+    }
+    if (nowPipe == hivm::PIPE::PIPE_MTE1 &&
+        frontPipe == hivm::PIPE::PIPE_MTE2 && nowMmadL1Op) {
+      ChangeFrontPipeToVirtualMTE2_regbase(frontPipe, depBaseMemInfosVec, nowMmadL1Op);
+    }
+  }
+  {
+    auto frontMmadMxL1Op = dyn_cast<hivm::MmadMxL1Op>(frontCompound->elementOp);
+    auto nowMmadMxL1Op = dyn_cast<hivm::MmadMxL1Op>(nowCompound->elementOp);
+    if (nowPipe == hivm::PIPE::PIPE_MTE2 &&
+        frontPipe == hivm::PIPE::PIPE_MTE1 && frontMmadMxL1Op) {
+      ChangeNowPipeToVirtualMTE2_regbase(nowPipe, depBaseMemInfosVec, frontMmadMxL1Op);
+    }
+    if (nowPipe == hivm::PIPE::PIPE_MTE1 &&
+        frontPipe == hivm::PIPE::PIPE_MTE2 && nowMmadMxL1Op) {
+      ChangeFrontPipeToVirtualMTE2_regbase(frontPipe, depBaseMemInfosVec, nowMmadMxL1Op);
     }
   }
 }
@@ -1173,11 +1273,15 @@ std::optional<std::pair<Value, scf::ForOp>> SyncAnalyzer::GetCommonParentLoop(
   if (eventIdNum == 1) {
     return {};
   }
+
+e
   // All touch dep buffers
   auto touchedBuffer = GetMemInfoBuffers(depBaseMemInfosVec);
   if (touchedBuffer.empty()) {
     return {};
   }
+
+e
   Value retBuffer = touchedBuffer.front();
   auto *allocOp = retBuffer.getDefiningOp();
   if (allocOp == nullptr) {
@@ -1186,10 +1290,14 @@ std::optional<std::pair<Value, scf::ForOp>> SyncAnalyzer::GetCommonParentLoop(
   if (!checkAllParentLoopsAreForLoops(allocOp)) {
     return {};
   }
+
+e
   auto retParentLoop = allocOp->getParentOfType<scf::ForOp>();
   if (retParentLoop == nullptr) {
     return {};
   }
+
+e
   for (auto &buffer : touchedBuffer) {
     auto *curAllocOp = buffer.getDefiningOp();
     assert(curAllocOp != nullptr);

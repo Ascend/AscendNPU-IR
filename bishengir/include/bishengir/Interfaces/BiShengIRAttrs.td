@@ -48,5 +48,3 @@ def BiShengIR_DecomposePhase_Enum : BiShengIR_I32Enum<
     I32EnumAttrCase<"AFTER_LIFT_LOWEST_STRIDE", 8>,
     I32EnumAttrCase<"BEFORE_LOWER_TO_LOOPS", 9>
 ]>;
-
-#endif //BISHENGIR_INTERFACES_BISHENGIRATTRS_TD

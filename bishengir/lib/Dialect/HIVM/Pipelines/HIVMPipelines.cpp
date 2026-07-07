@@ -18,6 +18,19 @@
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Conversion/ArithToAffine/ArithToAffine.h"
+#include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVMPass.h"
+#include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
+#include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
+#include "bishengir/Dialect/Annotation/Transforms/Passes.h"
+#include "bishengir/Dialect/Arith/Transforms/Passes.h"
+#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -31,6 +44,18 @@
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
 #include "mlir/Pass/PassManager.h"
+#include "bishengir/Dialect/Vector/Transforms/Passes.h"
+#include "bishengir/Transforms/Passes.h"
+
+#include "mlir/Conversion/SCFToGPU/SCFToGPUPass.h"
+#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
+#include "mlir/Dialect/Bufferization/Transforms/Passes.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/Transforms/Passes.h"
+#include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
 
 namespace mlir {
 namespace hivm {
@@ -61,6 +86,72 @@ hivmNormSyncPipeline(OpPassManager &pm,
     syncOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
     syncOptions.assumeAliveLoops =
         hivmPipelineOptions.enableHIVMAssumeAliveLoops;
+#define ADD_CANONICALIZER_PASS                                                 \
+  CanonicalizerOptions options;                                                \
+  options.enableExtendedPattern = true;                                        \
+  pm.addPass(createCanonicalizerPass(options))
+
+#define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS                             \
+  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
+
+void canonicalizationHIVMPipeline(OpPassManager &pm) {
+  pm.addPass(createArithToAffineConversionPass());
+  pm.nest<func::FuncOp>().addPass(scf::createCanonicalizeIterArgPass());
+  ADD_CANONICALIZER_PASS;
+  pm.addPass(createSCFForLoopCanonicalizationPass());
+  pm.addPass(createCSEPass());
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  pm.nest<func::FuncOp>().addPass(createHIVMOptSinglePointPass());
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  pm.nest<func::FuncOp>().addPass(memref::createDeadStoreEliminationPass());
+}
+
+static void hivmAutoInsertLdStForMixCVPipeline(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
+  InsertLoadStoreForMixCVOptions options;
+  options.enableLegacy =
+      hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  options.target = hivmPipelineOptions.target;
+  options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
+  options.disableTightCoupledBuffer =
+      hivmPipelineOptions.disableTightCoupledBuffer;
+  pm.nest<func::FuncOp>().addPass(
+      mlir::hivm::createInsertLoadStoreForMixCVPass(options));
+}
+
+static void
+hivmCVCommunicationPipeline(OpPassManager &pm,
+                            const HIVMPipelineOptions &hivmPipelineOptions) {
+  // TODO: Implement the transformation that splits a to_tensor on a
+  // space-specific memref into a pure to_tensor + memory_space_cast. It is
+  // recommended to do this in canonicalization pass
+
+  if (hivmPipelineOptions.enableTritonKernelCompile) {
+    hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
+  } else if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
+             !hivmPipelineOptions.enableDotScaledCompile) {
+    // New A5 convert layout pipeline
+    pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
+    pm.nest<func::FuncOp>().addPass(
+        mlir::hivm::createInsertLoadStoreForScalarPass());
+  } else {
+    hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
+    pm.nest<func::FuncOp>().addPass(
+        mlir::hivm::createInsertLoadStoreForScalarPass());
+  }
+}
+
+static void
+hivmIntraCoreSyncPipeline(OpPassManager &pm,
+                          const HIVMPipelineOptions &hivmPipelineOptions) {
+  if (hivmPipelineOptions.enableHIVMGraphSyncSolver &&
+      !hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
+    GraphSyncSolverOptions gssOptions;
+    gssOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
+    pm.nest<func::FuncOp>().addPass(createGraphSyncSolverPass(gssOptions));
+  } else {
+    InjectSyncOptions syncOptions;
+    syncOptions.enableUnitFlag = hivmPipelineOptions.enableHIVMUnitFlagSync;
     if (hivmPipelineOptions.enableHIVMInjectBarrierAllSync) {
       syncOptions.syncMode = SyncMode::BARRIERALL;
     }
@@ -107,6 +198,92 @@ static void inferAndSetBufferSizePipeline(OpPassManager &pm) {
   pm.addPass(createArithToAffineConversionPass());
   pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass());
   pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
+enum class CrossCoreAutoSyncMode {
+  // Always run the first-stage cross-core autosync work. In delayed-cross-core
+  // mode this prepares anchor/backup state for step 2; otherwise this is the
+  // only active stage and runs either cross-core-gss or inject-block-sync.
+  CCGSS_STEP_1,
+  // Only does work when delayed-cross-core GSS is enabled. Non-delayed modes
+  // ignore this stage because their autosync flow completes in step 1.
+  CCGSS_STEP_2
+};
+
+static void
+hivmCrossCoreAutoSyncINJPipeline(OpPassManager &pm,
+                                 const HIVMPipelineOptions &hivmPipelineOptions,
+                                 CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    InjectBlockSyncOptions blockSyncOption;
+    blockSyncOption.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    pm.nest<func::FuncOp>().addPass(createInjectBlockSyncPass(blockSyncOption));
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  }
+}
+
+static void
+hivmCrossCoreAutoSyncGSSPipeline(OpPassManager &pm,
+                                 const HIVMPipelineOptions &hivmPipelineOptions,
+                                 CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  }
+}
+
+static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions,
+    CrossCoreAutoSyncMode mode) {
+  if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_1) {
+    canonicalizationHIVMPipeline(pm);
+    // Temporary workaround: step 1 still injects sync ops so the auto-vectorize
+    // pipeline does not merge operations that must stay separated for the
+    // delayed cross-core autosync flow. Remove this once auto-vectorize no
+    // longer depends on the presence of sync ops to preserve those boundaries.
+    pm.addPass(createMarkRealCoreTypePass());
+    pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
+    pm.addPass(createInsertAnchorsAndBackupPass());
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+  } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
+    canonicalizationHIVMPipeline(pm);
+    pm.addPass(createMarkRealCoreTypePass());
+    DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
+    delayedcrossCoreGSSOptions.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
+    MarkRealCoreTypeOptions markRealCoreTypeOptions;
+    markRealCoreTypeOptions.removeCoreTypeAttrs = true;
+    pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
+    InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
+    insertAnchorsAndBackupOptions.cleanup = true;
+    pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
+  }
+}
+
+static void
+hivmCrossCoreAutoSyncPipeline(OpPassManager &pm,
+                              const HIVMPipelineOptions &hivmPipelineOptions,
+                              CrossCoreAutoSyncMode mode) {
+  if (hivmPipelineOptions.disableAutoInjectBlockSync) {
+    return;
+  }
+  if (!hivmPipelineOptions.enableHIVMCrossCoreGSS) {
+    hivmCrossCoreAutoSyncINJPipeline(pm, hivmPipelineOptions, mode);
+  } else if (hivmPipelineOptions.enableHIVMDelayedCrossCoreGSS) {
+    hivmDelayedCrossCoreAutoSyncGSSPipeline(pm, hivmPipelineOptions, mode);
+  } else {
+    hivmCrossCoreAutoSyncGSSPipeline(pm, hivmPipelineOptions, mode);
+  }
 }
 
 static void
@@ -120,6 +297,17 @@ bufferizationPipeline(OpPassManager &pm,
   if (hivmPipelineOptions.enableUbufSaving) {
     pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
   }
+    pm.nest<func::FuncOp>().addPass(createSinkOpToConsumerInLoopPass());
+  }
+  if (hivmPipelineOptions.enableVfMergeLevel == 1) {
+    MergeVecScopeOptions VfMergeOpsOpt;
+    VfMergeOpsOpt.mergeLevel = 1;
+    pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
+  }
+  pm.addPass(hfusion::createSimplifyVFArgsPass());
+  // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
+  // before bufferization to avoid unnecessary memref operations
+  pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(
@@ -138,6 +326,14 @@ bufferizationPipeline(OpPassManager &pm,
             tensorType, memorySpace);
       };
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
+  oneShotOptions.analysisHeuristic =
+      bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
+  pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
+  if (hivmPipelineOptions.enableVfMergeLevel == 2) {
+    MergeVecScopeOptions VfMergeOpsOpt;
+    VfMergeOpsOpt.mergeLevel = 2;
+    pm.addPass(hfusion::createMergeVecScopePass(VfMergeOpsOpt));
+  }
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     // For triton kernels, bufferization will generate `memref.copy` ops,
@@ -170,6 +366,40 @@ static void hivmAutoInsertLdStForMixCVPipeline(
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   }
+static void addOptimizedConvertLayoutFixpipePipeline(OpPassManager &pm) {
+  pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+
+  PropagateConvertLayoutOptions options;
+  options.allowAgnosticOps = false;
+  pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
+
+  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+
+  pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+  pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
+}
+
+static void
+hivmWorkspacePipeline(OpPassManager &pm,
+                      const HIVMPipelineOptions &hivmPipelineOptions) {
+  // keep this for the debug feature (device print, etc.)
+  BindWorkSpaceArgOptions options;
+  options.enableSubWorkspace = true;
+  pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass(options));
+  PlanMemoryOptions planMemoryOption;
+  planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
+  planMemoryOption.enableGlobalReuse =
+      hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
+  planMemoryOption.enablePrintMemoryAllocatedSize =
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
+  if (hivmPipelineOptions.enableTritonKernelCompile)
+    // Must place after plan-workspace-memory
+    pm.addPass(createInsertInferWorkSpaceSizeFuncPass());
+  pm.addPass(mlir::createMemrefExtLoweringPass());
 }
 
 static void hivmPreBufferizationOptimizationPipeline(
@@ -200,6 +430,56 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(createInsertWorkSpaceForMixCVPass());
     pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
   }
+  if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
+    // HIVM brc/reduce op's operands have the same rank, so after
+    // converting from Linalg/HFusion to HIVM, reshape ops will be
+    // inserted. Need to propagate them.
+    PropagateReshapeOptions propagateOption;
+    propagateOption.forHIVM = true;
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createPropagateReshapePass(propagateOption));
+  }
+
+  pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
+  pm.addPass(mlir::hivm::createNormalizeMatmulPass());
+
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  {
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+  }
+  hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
+  if (hivmPipelineOptions.enableLayoutOptimization &&
+      hivmPipelineOptions.enableMixedCV) {
+    // Combine optimized folds:
+    // - load + convert layout
+    // - convert layout + fixpipe
+    // For regbase convert layout optimization is done early in the pass
+    // Inserts convert layout before and after cube operations
+    addOptimizedConvertLayoutFixpipePipeline(pm);
+  }
+  pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
+  pm.addPass(mlir::hivm::createNormalizeMatmulPass());
+
+  if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
+    pm.addPass(createInsertL12UBForDebugPass());
+  } else {
+    pm.addPass(createInsertNZ2NDForDebugPass());
+  }
+  pm.addPass(mlir::hivm::createInsertFixpipePass());
+  {
+    InlineFixpipeOptions opts;
+    opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
+    pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
+  }
+  hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
+  // must run CloneTensorEmpty to resotre merged&hoisted tensor.empty caused by
+  // CSE
+  pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
+  pm.addPass(createInsertWorkSpaceForMixCVPass());
+  // keep this for the debug feature (device print, etc.)
+  pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
 
   pm.addPass(createInferFuncCoreTypePass());
   // AutoBlockifyParallelLoopPass needs to be after infer core type because
@@ -261,6 +541,68 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     pm.addPass(createInsertInferTaskTypeFuncPass());
   }
+  MarkMultiBufferOptions multiBufferOptions;
+  multiBufferOptions.enableAuto = hivmPipelineOptions.enableAutoMultiBuffer;
+  multiBufferOptions.limitAutoMultiBufferOnlyForLocalBuffer =
+      hivmPipelineOptions.limitAutoMultiBufferOnlyForLocalBuffer;
+  multiBufferOptions.limitAutoMultiBufferOfLocalBuffer =
+      hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
+  multiBufferOptions.limitMixAutoMultiBufferBuffer =
+      hivmPipelineOptions.limitAutoMultiBufferBuffer;
+  multiBufferOptions.workspaceMultiBufferNum =
+      hivmPipelineOptions.setWorkspaceMultibuffer;
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.disableMultiBufferOnL0C =
+      hivmPipelineOptions.disableMultiBufferOnL0C;
+  multiBufferOptions.disableMultiBufferOnL1 =
+      hivmPipelineOptions.disableMultiBufferOnL1;
+  pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
+  // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
+  // broadcasts.
+  canonicalizationHIVMPipeline(pm);
+  pm.nest<func::FuncOp>().addPass(createInlineOTFBroadcastPass());
+  if (hivmPipelineOptions.enableMixedCV) {
+    // Software pipelining Cube and Vector operations
+    if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
+      CVPipeliningOptions pipelineOptions;
+      pipelineOptions.pipelineDepth =
+          hivmPipelineOptions.setWorkspaceMultibuffer;
+      pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
+      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+    }
+  }
+
+  pm.nest<func::FuncOp>().addPass(createInferVFModePass());
+
+  PlanMemoryOptions planMemoryOption;
+  planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
+  planMemoryOption.enableGlobalReuse =
+      hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
+  planMemoryOption.enablePrintMemoryAllocatedSize =
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
+
+  // Cross-Core Auto-Sync passes STEP=1
+  hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
+                                CrossCoreAutoSyncMode::CCGSS_STEP_1);
+
+  if (hivmPipelineOptions.enableTritonKernelCompile)
+    // Must place after plan-workspace-memory
+    pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
+  // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
+  // function, then hoist any tightly-coupled alloc that is yielded out of an
+  // inner region up to the region the yielded value escapes to. Both run
+  // before SplitMixKernel so the AIC/AIV clones share consistent buffer ids and
+  // identical alloc placement; this keeps the auto-multi-buffer slot-rotation
+  // anchor consistent across cores for CV tightly-coupled buffers.
+  pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+  pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
@@ -268,6 +610,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   TileAndBindSubBlockOptions tileOptions;
   tileOptions.enableTile = hivmPipelineOptions.enableAutoBindSubBlock;
   pm.addPass(createTileAndBindSubBlockPass(tileOptions));
+  hivmWorkspacePipeline(pm, hivmPipelineOptions);
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableCodeMotion) {
@@ -276,7 +619,9 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(createLoopInvariantCodeMotionPass());
     pm.addPass(createLoopInvariantSubsetHoistingPass());
   }
-
+    canonicalizationHIVMPipeline(pm);
+  }
+  pm.addPass(hfusion::createSimplifyVFArgsPass());
   pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
   pm.nest<func::FuncOp>().addPass(createHIVMInlineOTFLoadStorePass());
 }
@@ -290,6 +635,13 @@ alignStoragePipeline(OpPassManager &pm,
   }
   pm.nest<func::FuncOp>().addPass(memref::createFoldAllocReshapePass());
   pm.nest<func::FuncOp>().addPass(createEnableStrideAlignPass());
+  pm.addPass(createAlignAllocSizePass());
+  if (hivmPipelineOptions.enableHIVMAutoStorageAlign) {
+    pm.nest<func::FuncOp>().addPass(createPreMarkStrideAlignPass());
+    pm.nest<func::FuncOp>().addPass(createMarkStrideAlignPass());
+  }
+  pm.nest<func::FuncOp>().addPass(memref::createFoldAllocReshapePass());
+  pm.addPass(createEnableStrideAlignPass());
 }
 
 static void syncBlockLockPipeline(OpPassManager &pm,
@@ -306,6 +658,9 @@ static void syncBlockLockPipeline(OpPassManager &pm,
   }
 }
 
+void addSyncBlockLockFinalizePasses(OpPassManager &pm) {
+  syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
+}
 static void hivmPostBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   pm.nest<func::FuncOp>().addPass(createLiftZeroRankPass());
@@ -318,6 +673,20 @@ static void hivmPostBufferizationOptimizationPipeline(
   // Call this before infer mem scope. Otherwise, there might be UB allocs in
   // AIC function.
   pm.addPass(createNonContiguousReshapeToCopyPass());
+  if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
+    // make sure no alloc within vf and no value returned by vf,
+    // so InferHIVMMemScope can work correctly
+    pm.addPass(createOutlineAllocInVFPass());
+    // Move VF entry DMA on argument buffers to the caller before VF cleanup.
+    pm.addPass(createOutlineCopyInVFPass());
+    pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
+    // make sure VFFusion function can be inlined
+    // so InferHIVMMemScope can work correctly
+    pm.addPass(scope::createInlineScopePass());
+  }
+  // Bind buffer should be done after outline alloc in vf because the source
+  // allocs might be inside the VF.
+  pm.nest<func::FuncOp>().addPass(memref::createBindBufferPass());
   pm.addPass(createInferHIVMMemScopePass());
   // Decompose copy_ub_to_ub after inferHIVMMemScope
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
@@ -332,6 +701,12 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDeinterleaveOpPass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_RECOGNIZE_DEINTERLEAVE;
+  if (!hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
+    // Transform uncontinuous access to deinterleave op
+    pm.nest<func::FuncOp>().addPass(createHIVMRecognizeDeinterleaveOpPass());
+    decomposeOption.decomposePhase =
+        bishengir::DecomposePhase::AFTER_RECOGNIZE_DEINTERLEAVE;
+  }
   pm.nest<func::FuncOp>().addPass(
       createHIVMAggregatedDecomposeOpPass(decomposeOption));
   decomposeOption.decomposePhase =
@@ -348,6 +723,9 @@ static void hivmPostBufferizationOptimizationPipeline(
   // convert copyOp to nd2nzOp
   pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
   pm.nest<func::FuncOp>().addPass(createRemoveHIVMDataLayoutAnnotationPass());
+  ADD_CANONICALIZER_PASS;
+  // convert copyOp to nd2nzOp
+  pm.nest<func::FuncOp>().addPass(createInferHIVMDataLayoutPass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT;
   pm.nest<func::FuncOp>().addPass(
@@ -359,6 +737,10 @@ static void hivmPostBufferizationOptimizationPipeline(
   // the memref type to find the dynamic allocs.
   pm.addPass(bishengir::createExtendedCanonicalizerPass());
   inferAndSetBufferSizePipeline(pm);
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  pm.nest<func::FuncOp>().addPass(createAutoInferBufferSizePass());
+  pm.nest<func::FuncOp>().addPass(createConstantizeBufferSizePass());
+  pm.nest<func::FuncOp>().addPass(createSetBufferSizePass());
   pm.nest<func::FuncOp>().addPass(createFlattenOpsPass());
   decomposeOption.decomposePhase =
       bishengir::DecomposePhase::AFTER_HIVM_FLATTEN_OPS;
@@ -375,6 +757,17 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.addPass(createInferHIVMMemScopePass());
   canonicalizationHIVMPipeline(pm);
   pm.nest<func::FuncOp>().addPass(createInlineLoadCopyPass());
+  pm.nest<func::FuncOp>().addPass(createAllocExtraBufferPass());
+  if (hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
+    // make sure no alloc within vf and no value returned by vf,
+    // so InferHIVMMemScope can work correctly
+    pm.addPass(createOutlineAllocInVFPass());
+    pm.addPass(createOutlineCopyInVFPass());
+    pm.addPass(bufferization::createDropEquivalentBufferResultsPass());
+  }
+  // Infer memory scope for newly allocated extra buffer
+  pm.addPass(createInferHIVMMemScopePass());
+  canonicalizationHIVMPipeline(pm);
 
   MarkMultiBufferOptions multiBufferOptions;
   multiBufferOptions.enableAuto = hivmPipelineOptions.enableAutoMultiBuffer;
@@ -390,6 +783,27 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.enableMemoryDisplay =
       hivmPipelineOptions.enableMemoryDisplay;
   pm.nest<func::FuncOp>().addPass(createPlanMemoryPass(planMemoryOption));
+  multiBufferOptions.disableMultiBufferOnUB =
+      hivmPipelineOptions.disableMultiBufferOnUB;
+  multiBufferOptions.disableMultiBufferOnL0C =
+      hivmPipelineOptions.disableMultiBufferOnL0C;
+  multiBufferOptions.disableMultiBufferOnL1 =
+      hivmPipelineOptions.disableMultiBufferOnL1;
+  pm.nest<func::FuncOp>().addPass(
+      createMarkMultiBufferPass(multiBufferOptions));
+  PlanMemoryOptions planMemoryOption;
+  planMemoryOption.enablePrintMemoryAllocatedSize =
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
+  pm.addPass(createPlanMemoryPass(planMemoryOption));
+
+  // Cross-Core Auto-Sync passes STEP=2
+  hivmCrossCoreAutoSyncPipeline(pm, hivmPipelineOptions,
+                                CrossCoreAutoSyncMode::CCGSS_STEP_2);
 
   // Lower hivm ops to loops
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
@@ -414,6 +828,70 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
     bufferizationPipeline(pm, options);
   }
   hivmPostBufferizationOptimizationPipeline(pm, options);
+  // Preload code transformation for CV pipelining
+  if (hivmPipelineOptions.enablePreload) {
+    pm.nest<func::FuncOp>().addPass(createCreatePreloadPass());
+  }
+  // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
+  hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
+  pm.addPass(mlir::createMemrefExtLoweringPass());
+  pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
+  pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
+  canonicalizationHIVMPipeline(pm);
+  if (!hivmPipelineOptions.enableDirectHIVMLowering &&
+      hacc::utils::isRegBasedArch(hivmPipelineOptions.target)) {
+    pm.nest<func::FuncOp>().addPass(arith::createNormalizeArithPass());
+    pm.nest<func::FuncOp>().addPass(arith::createLiftArithIndexCastPass());
+    pm.nest<func::FuncOp>().addPass(
+        vector::createPeelLoopsContainingTransposePass());
+    pm.addPass(createCanonicalizerPass());
+    NormalizeVectorOptions normalizeVectorOptions;
+    normalizeVectorOptions.enableDotScaledCompile =
+        hivmPipelineOptions.enableDotScaledCompile;
+    pm.nest<func::FuncOp>().addPass(
+        vector::createNormalizeVectorPass(normalizeVectorOptions));
+    pm.nest<func::FuncOp>().addPass(createCSEPass());
+    pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
+  }
+}
+
+void buildConvertToHIVMPipeline(OpPassManager &pm,
+                                const ConvertToHIVMPipelineOptions &options) {
+  ConvertHFusionToHIVMOptions hfs2hivmOptions;
+  hfs2hivmOptions.mmMapMode = options.enableTritonKernelCompile
+                                  ? hfusion::MmMapMode::MacroInstr
+                                  : hfusion::MmMapMode::CoreOp;
+
+  if (options.enableRegBaseHIVMPipe)
+    pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+  pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
+  if (options.enableTritonKernelCompile) {
+    pm.addPass(createTritonGlobalKernelArgsToHIVMOpPass());
+  }
+  pm.addPass(createTensorToHIVMConversionPass());
+  pm.addPass(createConvertToHIVMOpPass());
+  if (!options.enableRegBaseHIVMPipe) {
+    // HIVM brc/reduce op's operands have the same rank, so after converting
+    // from Linalg/HFusion to HIVM, reshape ops will be inserted. Need to
+    // propagate them.
+    PropagateReshapeOptions propagateOption;
+    propagateOption.forHIVM = true;
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createPropagateReshapePass(propagateOption));
+  }
+}
+
+void buildHIVMTensorOptimizations(
+    OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
+  pm.nest<func::FuncOp>().addPass(createInitEntryKernelPass());
+  pm.nest<func::FuncOp>().addPass(mlir::hivm::createHIVMNormalizeOpsPass());
+  hivmPreBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
+}
+
+void buildLowerHIVMPipelines(OpPassManager &pm,
+                             const HIVMPipelineOptions &hivmPipelineOptions) {
+  bufferizationPipeline(pm, hivmPipelineOptions);
+  hivmPostBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
   // Optimizations that relies on scope should be done after this point. Inline
   // all `scope.scope` ops.
   pm.addPass(
@@ -424,6 +902,8 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createMarkDisableLoadPass());
   syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);
   pm.addPass(createConvertHIVMToStandardPass());
+  pm.addPass(
+      bishengir::createInjectIRPass(hivmPipelineOptions.injectIRFromFile));
 }
 
 //===----------------------------------------------------------------------===//
@@ -435,6 +915,18 @@ void registerLowerHIVMPipelines() {
       "optimize-hivm-pipeline", "optimize hivm pipeline",
       [](OpPassManager &pm, const HIVMPipelineOptions &options) {
         buildOptimizeHIVMPipeline(pm, options);
+      "lower-hivm-pipeline", "lower hivm pipeline",
+      [](OpPassManager &pm, const HIVMPipelineOptions &options) {
+        buildHIVMTensorOptimizations(pm, options);
+        buildLowerHIVMPipelines(pm, options);
+      });
+}
+
+void registerConvertToHIVMPipelines() {
+  PassPipelineRegistration<ConvertToHIVMPipelineOptions>(
+      "convert-to-hivm-pipeline", "convert to hivm pipeline",
+      [](OpPassManager &pm, const ConvertToHIVMPipelineOptions &options) {
+        buildConvertToHIVMPipeline(pm, options);
       });
 }
 

@@ -19,6 +19,9 @@
 #include "Vector/Broadcast/BrcUtils.h"
 #include "Vector/VecUtils.h"
 #include <cstdint>
+#include "Utils.h"
+#include "Vector/Broadcast/BrcUtils.h"
+#include "Vector/VecUtils.h"
 #include <type_traits>
 
 /// Core func of vbrcb intrin : (m, 1) -> (n, p)
@@ -253,7 +256,6 @@ vector_broadcast_last_axis_align_2d(memref_t<__ubuf__ T, 2> *src,
     vector_broadcast_last_axis_by_scalar(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_vector_broadcast_last_axis_align_2d(src, dst, tmp);
 
@@ -546,7 +548,6 @@ vector_broadcast_last_axis_unalign_2d(memref_t<__ubuf__ T, 2> *src,
     vector_broadcast_last_axis_by_scalar(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_vector_broadcast_last_axis_unalign_2d(src, dst, tmp);
 
@@ -699,6 +700,11 @@ vector_broadcast_last_axis_unknown_align_2d(memref_t<__ubuf__ T, 2> *src,
                                             memref_t<__ubuf__ T, 2> *dst,
                                             memref_t<__ubuf__ T, 1> *tmp) {
   if (is_stride_aligned(dst)) {
+  int64_t stride0_dst = dst->strides[0];
+  int64_t stride0_dst_aligned =
+      CEIL_FACTOR(stride0_dst, UB_ALIGN_BYTES / sizeof(T));
+  const bool is_dst_aligned = stride0_dst == stride0_dst_aligned;
+  if (is_dst_aligned) {
     vector_broadcast_last_axis_align_2d<T>(src, dst, tmp);
     return;
   }
@@ -722,4 +728,5 @@ REGISTE_BROADCAST_LAST_AXIS_ALIGN(bool);
 
 REGISTE_BRC_LAST_AXIS_2D_UNALIGN(half);
 REGISTE_BRC_LAST_AXIS_2D_UNALIGN(float);
+}
 }

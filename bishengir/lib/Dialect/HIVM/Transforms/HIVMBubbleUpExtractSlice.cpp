@@ -26,6 +26,7 @@
 #include "bishengir/Transforms/Transforms.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "bishengir/Transforms/Transforms.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -65,6 +66,12 @@ public:
     return utils::getAnnotateOpWithAttr(
                allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name)
         .has_value();
+  explicit HIVMBubbleUpExtractSlicePass(
+      const HIVMBubbleUpExtractSliceOptions &options)
+      : Base(options) {}
+
+  static bool traceAndCheckIsGM(Value value) {
+    return !traceDefOp<memref::AllocOp>(value).has_value();
   }
 
   LogicalResult
@@ -75,6 +82,11 @@ public:
         // All marked insertslice is expected to be cancelled out
         // No matter strict mode or not.
         if (isMarkedInsertSliceOp(insertSliceOp))
+          return WalkResult::interrupt();
+      }
+      if (auto reduceOp = dyn_cast<hivm::VReduceOp>(op)) {
+        auto srcType = cast<ShapedType>(reduceOp.getSrc().getType());
+        if (ShapedType::isDynamicShape(srcType.getShape()))
           return WalkResult::interrupt();
       }
 
@@ -89,11 +101,15 @@ public:
           return WalkResult::advance();
         }
         if (failed(findContainingSubblockLoop(extractSrc.getDefiningOp()))) {
+        auto *srcDefOp = extractSrc.getDefiningOp();
+        if (failed(findContainingSubblockLoop(srcDefOp))) {
           return WalkResult::advance();
         }
         if (auto bufferizeToTensor = dyn_cast<bufferization::ToTensorOp>(
                 (extractSrc.getDefiningOp()))) {
           if (!traceAndCheckIsGMOrTightCoupledBuffer(bufferizeToTensor->getOperand(0)) &&
+          if (!traceAndCheckIsGM(
+                  bufferizeToTensor->getOperand(0)) &&
               strictMode) {
             return WalkResult::interrupt();
           } else {
@@ -105,6 +121,12 @@ public:
           return WalkResult::interrupt();
         }
         if (!isa<tensor::EmptyOp>(extractSrc.getDefiningOp())) {
+                dyn_cast<scf::WhileOp>((srcDefOp))) {
+          return WalkResult::interrupt();
+        }
+        if (!isa<tensor::EmptyOp>(srcDefOp) &&
+            !(isa<scf::ForOp>(srcDefOp) && srcDefOp->hasAttr("ExtractedLoadOrStore")) &&
+            !srcDefOp->hasAttr(tiledOp)) {
           if (strictMode) {
             return WalkResult::interrupt();
           }
@@ -129,6 +151,16 @@ public:
     affine::AffineApplyOp::getCanonicalizationPatterns(patterns, patterns.getContext());
     populateBubbleUpExtractSliceOpPatterns(patterns);
     populateCSEPattern(patterns);
+    // Apply bubble up patterns.
+    // MarkEmptySliceBufferSize runs after BubbleUpPattern (which
+    // may reject due to areOperandsUpperLevel) but before
+    // FoldTensorEmptyPatterns. This ensures the mark is on the extract_slice
+    // result before the fold moves it to tensor.empty.
+    RewritePatternSet patterns(funcOp.getContext());
+    populateHoistAffinePattern(patterns);
+    populateBubbleUpExtractSliceOpPatterns(patterns);
+    populateCSEPattern(patterns);
+    patterns.add<MarkEmptySliceBufferSize>(funcOp.getContext());
     tensor::populateFoldTensorEmptyPatterns(patterns, true);
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config))) {
       return signalPassFailure();
@@ -139,6 +171,7 @@ public:
         {"ReinterpretCastConstantArgumentFolder"});
     options.disabledPatterns = disabledPatterns;
     pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+    pm.addPass(createCanonicalizerPass());
     pm.addPass(createCSEPass());
     if (failed(pm.run(funcOp))) {
       return signalPassFailure();
@@ -150,6 +183,9 @@ public:
     affine::AffineApplyOp::getCanonicalizationPatterns(patterns2, patterns.getContext());
     populateBubbleUpExtractSliceOpPatterns(patterns2);
     populateCSEPattern(patterns2);
+    populateBubbleUpExtractSliceOpPatterns(patterns2);
+    populateCSEPattern(patterns2);
+    patterns2.add<MarkEmptySliceBufferSize>(funcOp.getContext());
     tensor::populateFoldTensorEmptyPatterns(patterns2, true);
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns2), config))) {
       return signalPassFailure();
@@ -159,6 +195,7 @@ public:
     }
   }
 
+  /// Pattern to add buffer_size_in_byte + buffer_static_shape marks on
 private:
   void
   populateBubbleUpExtractSliceOpPatterns(RewritePatternSet &patterns) const {
@@ -184,6 +221,10 @@ private:
     strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
     strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<GatherLoadBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<StrideLoadBubbleUpStrategy>());
+    
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));
   }

@@ -12,6 +12,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -872,6 +875,7 @@ private:
       func::CallOp oldTilingFuncCall = tilingCaseInfo.getTilingFuncCall();
       if (!oldTilingFuncCall) {
         llvm::report_fatal_error("oldTilingFuncCall doesn't exist");
+        llvm_unreachable("oldTilingFuncCall doesn't exist");
         return failure();
       }
       builder.setInsertionPoint(oldTilingFuncCall);
@@ -976,6 +980,7 @@ private:
     opBuilder.setInsertionPointToStart(entryBlock);
     auto tilingStructSizeV = opBuilder.create<arith::ConstantIntOp>(
         opBuilder.getUnknownLoc(), tilingStructSize, returnType);
+        opBuilder.getUnknownLoc(), returnType, tilingStructSize);
     opBuilder.create<func::ReturnOp>(opBuilder.getUnknownLoc(),
                                      SmallVector<Value>{tilingStructSizeV});
 

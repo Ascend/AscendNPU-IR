@@ -454,6 +454,17 @@ struct PropagateAdaptor : public OpRewritePattern<UnrealizedConversionCastOp> {
   }
 };
 
+// Membase version: cleanup pipeline with extended canonicalizer and inline scope
+static void setupPreloadCleanupPipeline_membase(PassManager &pm) {
+  pm.addPass(bishengir::createExtendedCanonicalizerPass());
+  pm.addPass(scope::createInlineScopePass());
+}
+
+// Regbase version: cleanup pipeline with plain canonicalizer
+static void setupPreloadCleanupPipeline_regbase(PassManager &pm) {
+  pm.addPass(createCanonicalizerPass());
+}
+
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
   DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
@@ -496,8 +507,7 @@ void CreatePreloadPass::runOnOperation() {
 
   PassManager pm(&getContext());
   pm.addPass(createCSEPass());
-  pm.addPass(bishengir::createExtendedCanonicalizerPass());
-  pm.addPass(scope::createInlineScopePass());
+  setupPreloadCleanupPipeline_membase(pm);
 
   if (failed(pm.run(moduleOp))) {
     signalPassFailure();

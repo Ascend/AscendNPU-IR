@@ -39,11 +39,62 @@ void DimensionAnalyzerBase::dumpModuleOP() const {
   LLVM_DEBUG(llvm::dbgs() << *op_ << "\n";);
 }
 
+void DimensionAnalyzerBase::dumpArgumentsRef() {
+  LLVM_DEBUG(
+      int numVal = static_cast<int>(dimIndices_.size()); if (numVal == 0) {
+        llvm::dbgs() << "dimIndices_.back(): [] (empty)\n";
+        return;
+      } llvm::dbgs() << "[Flatten] dimIndices_ of size "
+                     << numVal << " are:\n";
+      for (int vi = 0; vi < numVal; ++vi) {
+        auto &shapeIdx = dimIndices_[vi];
+        int rank = static_cast<int>(shapeIdx.size());
+        if (rank == 0) {
+          return;
+        }
+        llvm::dbgs() << "dimIndices_[" << vi << "] of rank " << rank << " = [";
+        for (int si = 0; si < rank - 1; ++si) {
+          llvm::dbgs() << shapeIdx[si] << ", ";
+        }
+        llvm::dbgs() << shapeIdx[rank - 1] << "]\n";
+      });
+}
+
+void DimensionAnalyzerBase::dumpIsConnected() {
+  LLVM_DEBUG(
+      int numDim = static_cast<int>(isConnected_.size());
+      llvm::dbgs() << "[Flatten] isConnected_ of size " << numDim << " are:\n";
+      llvm::dbgs()
+      << "                  \t[elmentKind, leftConnected, rightConnected]\n";
+      for (int di = 0; di < numDim; ++di) {
+        auto &connInfo = isConnected_[di];
+        llvm::dbgs() << "isConnected_[" << di << "] = \t["
+                     << connInfo.elementKind << ", "
+                     << (connInfo.leftConnected ? "true" : "false") << ", "
+                     << (connInfo.rightConnected ? "true" : "false") << "]\n";
+      });
+}
+
+void DimensionAnalyzerBase::dumpArgumentsRefPointer() {
+  LLVM_DEBUG(auto &map = valueToDimIndicesIndex_;
+             llvm::dbgs() << "[Flatten] valueToDimIndicesIndex_(" << map.size()
+                          << " entries):\n";
+             for (const auto &entry : map) {
+               llvm::dbgs() << "[" << entry.second << "]: ";
+               if (entry.first) {
+                 entry.first.print(llvm::dbgs());
+               } else {
+                 llvm::dbgs() << "(null)";
+               }
+               llvm::dbgs() << "\n";
+             });
+}
 bool ExtendedUnionFind::join(int a, int b) {
   assert(shape_[a] != kUndefinedShaped);
   assert(shape_[b] != kUndefinedShaped);
   assert(minParentIndex_.size() == parent_.size());
   assert(std::max(a, b) < parent_.size());
+  assert(std::max(a, b) < ssize_t(parent_.size()));
   a = find(a);
   b = find(b);
   if (a != b) {
@@ -102,6 +153,7 @@ void DimensionAnalyzerBase::combineEmptyOp(Value arg) {
 
   LDBG("Combining empty op " << emptyOp);
   auto emptyRef = getArgumentRef(emptyOp.getResult());
+  auto emptyRef = getValueDimIndices(emptyOp.getResult());
   auto mixEmptyShape = emptyOp.getMixedSizes();
 
   for (auto [emptyIdx, el] : llvm::enumerate(mixEmptyShape)) {
@@ -134,6 +186,8 @@ void DimensionAnalyzerBase::linkDimToEmpty(tensor::DimOp dimOp,
   }
   auto tensorSource = dimOp.getSource();
   auto tensorRef = getArgumentRefOrCreateDummy(tensorSource);
+  createDummyRefIfNotExist({tensorSource});
+  auto tensorRef = getValueDimIndices(tensorSource);
   joinShape(tensorRef[constantIndex.value()], emptyRefElement);
 }
 
@@ -144,6 +198,9 @@ void DimensionAnalyzerBase::createDummyRefIfNotExist(ArrayRef<Value> values) {
     if (argumentsRefPointer_.contains(curVal))
       continue;
     LDBG("Creating dummy for value: " << curVal);
+    if (valueToDimIndicesIndex_.contains(curVal))
+      continue;
+    LDBG("[Create] Creating dummy for value: " << curVal);
     // init elements
     auto [rank, shape] = utils::getValueShapeInfo(curVal).value_or(
         std::make_pair(0, DimensionShape{}));
@@ -153,11 +210,24 @@ void DimensionAnalyzerBase::createDummyRefIfNotExist(ArrayRef<Value> values) {
               startingIdx);
     initCollapseOrVerify(curVal,
                          static_cast<int64_t>(argumentsRef_.size() - 1));
+    dimIndices_.push_back(DimensionShape(shape));
+    std::iota(dimIndices_.back().begin(), dimIndices_.back().end(),
+              startingIdx);
+    LLVM_DEBUG(auto arg = dimIndices_.back(); auto argSize = arg.size();
+               if (arg.size() != 0) {
+                 llvm::dbgs() << "dimIndices_.back(): [";
+                 for (size_t j = 0; j < argSize - 1; ++j) {
+                   llvm::dbgs() << arg[j] << ", ";
+                 }
+                 llvm::dbgs() << arg[argSize - 1] << "]\n";
+               });
+    initCollapseOrVerify(curVal, static_cast<int64_t>(dimIndices_.size() - 1));
   }
 }
 
 void DimensionAnalyzerBase::updatePreviousType(const Value &val) {
   RankedTensorType curType = dyn_cast<RankedTensorType>(val.getType());
+  auto curType = dyn_cast<ShapedType>(val.getType());
   if (curType)
     updatePreviousType(val, curType);
   else {
@@ -167,6 +237,8 @@ void DimensionAnalyzerBase::updatePreviousType(const Value &val) {
 
 void DimensionAnalyzerBase::updatePreviousType(
     const Value &val, const RankedTensorType &curType) {
+void DimensionAnalyzerBase::updatePreviousType(const Value &val,
+                                               const ShapedType &curType) {
   if (previousType_.contains(val)) {
     assert(previousType_[val] == curType);
   }
@@ -185,6 +257,15 @@ void DimensionAnalyzerBase::collapsePropagateOrVerify(Operation *op,
       return;
     }
     argumentsRefPointer_[newVal] = tmpVal;
+  const auto tmpVal = valueToDimIndicesIndex_.at(refVal);
+  for (const Value newVal : op->getResults()) {
+    LLVM_DEBUG(llvm::dbgs()
+                   << "Propagating " << newVal << " " << tmpVal << "\n";);
+    if (valueToDimIndicesIndex_.contains(newVal)) {
+      mergeArgumentRefs(valueToDimIndicesIndex_.at(newVal), tmpVal);
+      return;
+    }
+    valueToDimIndicesIndex_[newVal] = tmpVal;
   }
 }
 
@@ -198,6 +279,15 @@ void DimensionAnalyzerBase::collapsePropagateOrVerify(const Value &newVal,
     return;
   }
   argumentsRefPointer_[newVal] = tmpVal;
+  const auto tmpVal = valueToDimIndicesIndex_.at(arg);
+  LLVM_DEBUG(llvm::dbgs() << "Propagating Value [" << newVal << "] with "
+                          << "the dimIndexVecId = " << tmpVal << ", same as "
+                          << "Value [" << arg << "]\n";);
+  if (valueToDimIndicesIndex_.contains(newVal)) {
+    mergeArgumentRefs(valueToDimIndicesIndex_.at(newVal), tmpVal);
+    return;
+  }
+  valueToDimIndicesIndex_[newVal] = tmpVal;
 }
 
 void DimensionAnalyzerBase::initCollapseOrVerify(const Value &val,
@@ -228,10 +318,53 @@ void DimensionAnalyzerBase::unifyGroups() {
                  << "Unifying " << u << " with " << par[idx] << "\n");
       joinShape(u, par[idx]);
     }
+  LLVM_DEBUG(llvm::dbgs() << "Assigning Value [" << val << "] with "
+                          << "the dimIndexVecId = " << refPtr << "\n";);
+  if (valueToDimIndicesIndex_.contains(val)) {
+    LLVM_DEBUG(llvm::dbgs() << "Init has been done previously\n";);
+    mergeArgumentRefs(valueToDimIndicesIndex_.at(val), refPtr);
+    return;
+  }
+  valueToDimIndicesIndex_[val] = refPtr;
+}
+
+void DimensionAnalyzerBase::mergeArgumentRefs(int64_t lhsRefPtr,
+                                              int64_t rhsRefPtr) {
+  if (lhsRefPtr == rhsRefPtr)
+    return;
+  assert(lhsRefPtr >= 0 &&
+         lhsRefPtr < static_cast<int64_t>(dimIndices_.size()));
+  assert(rhsRefPtr >= 0 &&
+         rhsRefPtr < static_cast<int64_t>(dimIndices_.size()));
+  const auto &lhsRef = dimIndices_[lhsRefPtr];
+  const auto &rhsRef = dimIndices_[rhsRefPtr];
+  LDBG("Merging dim-index vectors lhs(" << lhsRefPtr << "), rhs(" << rhsRefPtr
+                                        << ") with rank " << lhsRef.size());
+  assert(lhsRef.size() == rhsRef.size() &&
+         "Merged dim-index vectors must have the same rank");
+  for (const auto &[idx, lhsDim] : llvm::enumerate(lhsRef)) {
+    LLVM_DEBUG(llvm::dbgs() << "Unifying " << lhsDim << " with " << rhsRef[idx]
+                            << "\n");
+    joinShape(lhsDim, rhsRef[idx]);
   }
 }
 
 void DimensionAnalyzerBase::propagateConnection(int parent, int child) {
+#ifndef NDEBUG
+  auto fmt = [](ElementKind e, bool l, bool r) {
+    char k = "MNU"[static_cast<int>(e)];
+    return std::string(l ? "<-" : "") + k + std::string(r ? "->" : "");
+  };
+
+  LDBG("Child: " << child << " "
+                 << fmt(isConnected_[child].elementKind,
+                        isConnected_[child].leftConnected,
+                        isConnected_[child].rightConnected)
+                 << ", Parent: " << parent << " "
+                 << fmt(isConnected_[parent].elementKind,
+                        isConnected_[parent].leftConnected,
+                        isConnected_[parent].rightConnected));
+#endif
   isConnected_[parent].leftConnected =
       isConnected_[parent].leftConnected && isConnected_[child].leftConnected;
   isConnected_[parent].rightConnected =
@@ -240,12 +373,22 @@ void DimensionAnalyzerBase::propagateConnection(int parent, int child) {
        << " is propagated from " << child << " to " << parent);
   isConnected_[parent].elementKind = std::min(isConnected_[parent].elementKind,
                                               isConnected_[child].elementKind);
+  isConnected_[parent].elementKind = std::min(isConnected_[parent].elementKind,
+                                              isConnected_[child].elementKind);
+
+#ifndef NDEBUG
+  LDBG("  Result: " << parent << " "
+                    << fmt(isConnected_[parent].elementKind,
+                           isConnected_[parent].leftConnected,
+                           isConnected_[parent].rightConnected));
+#endif
 }
 
 void DimensionAnalyzerBase::propagateConnection() {
   for (int i = 0; i < argumentTotalLength_; ++i) {
     // Use collapser because the relationship is stronger
     int parent = solverCollapserElem_->find(i);
+    int parent = structuralDsu_->find(i);
     propagateConnection(parent, i);
   }
 }
@@ -260,6 +403,21 @@ void DimensionAnalyzerBase::spreadConnection() {
                    << " parent is " << solverShapeElem_->find(i) << " "
                    << isConnected_[i].leftConnected << " "
                    << isConnected_[i].rightConnected << "\n";);
+  LLVM_DEBUG(
+      llvm::dbgs() << "[spreadConnection] total number of shape entries = "
+                   << argumentTotalLength_ << "\n";
+      llvm::dbgs()
+      << "[ShapeIdx]: shape, parent, leftConnected, rightConnected\n";);
+  for (int i = 0; i < argumentTotalLength_; ++i) {
+    isConnected_[i] = isConnected_[structuralDsu_->find(i)];
+    auto [_, shape] = equivalentDsu_->getMinParentAndShapePair(i);
+    // check if this is available in the arguments
+    LLVM_DEBUG(llvm::dbgs()
+                   << "[" << i << "]: " << shape << ", "
+                   << structuralDsu_->find(i) << ", "
+                   << (isConnected_[i].leftConnected ? "true" : "false") << ","
+                   << (isConnected_[i].rightConnected ? "true" : "false")
+                   << "\n";);
   }
 }
 
@@ -273,6 +431,8 @@ void DimensionAnalyzerBase::joinShape(int a, int b) {
   LDBG("Joining shape bind " << a << " " << b);
   solverShapeElem_->join(a, b);
   solverCollapserElem_->join(a, b);
+  equivalentDsu_->join(a, b);
+  structuralDsu_->join(a, b);
 }
 
 void DimensionAnalyzerBase::joinCollapser(int a, int b) {
@@ -284,14 +444,126 @@ void DimensionAnalyzerBase::disconnect(int a, int b) {
   if (0 <= a && a < static_cast<int>(isConnected_.size())) {
     isConnected_[a].rightConnected = false;
     int parentOfA = solverCollapserElem_->find(a);
+  structuralDsu_->join(a, b);
+}
+
+void DimensionAnalyzerBase::disconnect(int a, int b) {
+  LDBG("Disconnecting " << a << " " << b);
+  if (0 <= a && a < static_cast<int>(isConnected_.size())) {
+    isConnected_[a].rightConnected = false;
+    int parentOfA = structuralDsu_->find(a);
     isConnected_[parentOfA].rightConnected = false;
   }
   if (0 <= b && b < static_cast<int>(isConnected_.size())) {
     isConnected_[b].leftConnected = false;
     int parentOfB = solverCollapserElem_->find(b);
+    int parentOfB = structuralDsu_->find(b);
     isConnected_[parentOfB].leftConnected = false;
   }
 }
 
+void DimensionAnalyzerBase::separateGroup(Value val, BitVector contiguousMask,
+                                          ArrayRef<int64_t> shape) {
+  struct Group {
+    bool isAllContiguous;
+    bool isAllUnit;
+    int leftIndex;
+    int rightIndex;
+  };
+  auto argRef = getValueDimIndices(val);
+  size_t rank = argRef.size();
+
+  if (rank <= 1)
+    return;
+
+  // Initialize groups - one group per dimension
+  SmallVector<Group> groups;
+  for (size_t i = 0; i < rank; ++i) {
+    groups.push_back({/* .isAllContiguous = */ true,
+                      /* .isAllUnit = */ (shape[i] == 1),
+                      /* .leftIndex = */ static_cast<int>(i),
+                      /* .rightIndex = */ static_cast<int>(i)});
+  }
+
+  // Helper to merge two groups
+  auto mergeGroups = [&contiguousMask](const Group &left,
+                                       const Group &right) -> Group {
+    bool boundary = contiguousMask[right.leftIndex];
+    return {/* .isAllContiguous = */ left.isAllContiguous &&
+                right.isAllContiguous && boundary,
+            /* .isAllUnit = */ left.isAllUnit && right.isAllUnit,
+            /* .leftIndex = */ left.leftIndex,
+            /* .rightIndex = */ right.rightIndex};
+  };
+
+  // First iteration: merge based on contiguity only
+  SmallVector<Group> contiguousGroups;
+  contiguousGroups.push_back(groups[0]);
+
+  for (size_t i = 1; i < rank; ++i) {
+    Group &lastGroup = contiguousGroups.back();
+    const Group &currentGroup = groups[i];
+
+    // Only check contiguity at boundary
+    bool boundary = contiguousMask[currentGroup.leftIndex];
+
+    if (boundary) {
+      lastGroup = mergeGroups(lastGroup, currentGroup);
+    } else {
+      contiguousGroups.push_back(currentGroup);
+    }
+  }
+
+  // Helper to check if two groups can be connected
+  auto canConnect = [&argRef, this](const Group &left,
+                                    const Group &right) -> bool {
+    assert(left.rightIndex + 1 == right.leftIndex && "Groups must be adjacent");
+    // Already disconnected, must disconnect
+    if (!isConnected(argRef[left.rightIndex], argRef[right.leftIndex])) {
+      return false;
+    }
+    // One is all units - can connect
+    if (left.isAllUnit || right.isAllUnit) {
+      return true;
+    }
+    return false;
+  };
+  // Second iteration: merge considering units and existing connections
+  SmallVector<Group> mergedGroups;
+  mergedGroups.push_back(contiguousGroups[0]);
+
+  LDBG("Second iteration: merging by units and connections");
+  for (size_t i = 1; i < contiguousGroups.size(); ++i) {
+    Group &lastGroup = mergedGroups.back();
+    const Group &currentGroup = contiguousGroups[i];
+
+    if (canConnect(lastGroup, currentGroup)) {
+      lastGroup = mergeGroups(lastGroup, currentGroup);
+    } else {
+      mergedGroups.push_back(currentGroup);
+    }
+  }
+
+  // Disconnect dimensions at group boundaries
+  for (size_t g = 1; g < mergedGroups.size(); ++g) {
+    int leftIdx = mergedGroups[g - 1].rightIndex;
+    int rightIdx = mergedGroups[g].leftIndex;
+    disconnect(argRef[leftIdx], argRef[rightIdx]);
+  }
+
+  LDBG("Finished: " << mergedGroups.size() << " groups total");
+}
+
+void DimensionAnalyzerBase::separateMemref(Value memrefVal) {
+  auto memrefType = dyn_cast<MemRefType>(memrefVal.getType());
+  if (!memrefType)
+    return;
+  LDBG("separate Memref");
+  createDummyRefIfNotExist({memrefVal});
+
+  auto contiguousMask = hivm::detail::getContiguousAxesImpl({memrefType});
+  auto shape = memrefType.getShape();
+  separateGroup(memrefVal, contiguousMask, shape);
+}
 } // namespace detail
 } // namespace mlir

@@ -65,6 +65,7 @@ LogicalResult verifyBroadcastableOTF(Operation *op);
 LogicalResult verifyTransposableOTF(Operation *op);
 LogicalResult verifyVectorOnlyTrait(Operation *op, int idx);
 LogicalResult verifyScalarOnlyHWTrait(Operation *op, int idx);
+LogicalResult verifyScalarOnlyTrait(Operation *op, int idx);
 } // namespace impl
 
 //===----------------------------------------------------------------------===//
@@ -191,6 +192,17 @@ public:
   public:
     static LogicalResult verifyTrait(Operation *op) {
       return impl::verifyScalarOnlyHWTrait(op, idx);
+    }
+  };
+};
+
+template <int idx> class ScalarOnlyTrait {
+public:
+  template <typename ConcreteType>
+  class Impl : public TraitBase<ConcreteType, ScalarOnlyTrait<idx>::Impl> {
+  public:
+    static LogicalResult verifyTrait(Operation *op) {
+      return impl::verifyScalarOnlyTrait(op, idx);
     }
   };
 };

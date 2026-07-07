@@ -19,6 +19,13 @@
 
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "mlir/Dialect/Linalg/IR/LinalgExtensions.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 

@@ -112,6 +112,7 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core(
 template <>
 __aiv__ __attribute__((always_inline)) void
 vector_interleave_1d_core<bfloat16_t>(memref_t<__ubuf__ bfloat16_t, 1> *src0,
+vector_interleave_1d<bfloat16_t>(memref_t<__ubuf__ bfloat16_t, 1> *src0,
                                  memref_t<__ubuf__ bfloat16_t, 1> *src1,
                                  memref_t<__ubuf__ bfloat16_t, 1> *dst,
                                  memref_t<__ubuf__ bfloat16_t, 1> *temp) {
@@ -125,11 +126,13 @@ vector_interleave_1d_core<bfloat16_t>(memref_t<__ubuf__ bfloat16_t, 1> *src0,
   view_as<bfloat16_t, half, 1>(dst, &dst_as_half);
   view_as<bfloat16_t, half, 1>(temp, &temp_as_half);
   vector_interleave_1d_core<half>(&src0_as_half, &src1_as_half, &dst_as_half,
+  vector_interleave_1d<half>(&src0_as_half, &src1_as_half, &dst_as_half,
                              &temp_as_half);
 }
 
 template <>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<int16_t>(
+__aiv__ __attribute__((always_inline)) void vector_interleave_1d<int16_t>(
     memref_t<__ubuf__ int16_t, 1> *src0, memref_t<__ubuf__ int16_t, 1> *src1,
     memref_t<__ubuf__ int16_t, 1> *dst, memref_t<__ubuf__ int16_t, 1> *temp) {
   // convert int16 memref to half memref
@@ -142,11 +145,13 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<int16_t>(
   view_as<int16_t, half, 1>(dst, &dst_as_half);
   view_as<int16_t, half, 1>(temp, &temp_as_half);
   vector_interleave_1d_core<half>(&src0_as_half, &src1_as_half, &dst_as_half,
+  vector_interleave_1d<half>(&src0_as_half, &src1_as_half, &dst_as_half,
                              &temp_as_half);
 }
 
 template <>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<uint16_t>(
+__aiv__ __attribute__((always_inline)) void vector_interleave_1d<uint16_t>(
     memref_t<__ubuf__ uint16_t, 1> *src0, memref_t<__ubuf__ uint16_t, 1> *src1,
     memref_t<__ubuf__ uint16_t, 1> *dst, memref_t<__ubuf__ uint16_t, 1> *temp) {
   // convert uint16 memref to half memref
@@ -159,11 +164,13 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<uint16_t>(
   view_as<uint16_t, half, 1>(dst, &dst_as_half);
   view_as<uint16_t, half, 1>(temp, &temp_as_half);
   vector_interleave_1d_core<half>(&src0_as_half, &src1_as_half, &dst_as_half,
+  vector_interleave_1d<half>(&src0_as_half, &src1_as_half, &dst_as_half,
                              &temp_as_half);
 }
 
 template <>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<int32_t>(
+__aiv__ __attribute__((always_inline)) void vector_interleave_1d<int32_t>(
     memref_t<__ubuf__ int32_t, 1> *src0, memref_t<__ubuf__ int32_t, 1> *src1,
     memref_t<__ubuf__ int32_t, 1> *dst, memref_t<__ubuf__ int32_t, 1> *temp) {
   // convert int32 memref to float32 memref
@@ -176,11 +183,13 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<int32_t>(
   view_as<int32_t, float, 1>(dst, &dst_as_float);
   view_as<int32_t, float, 1>(temp, &temp_as_float);
   vector_interleave_1d_core<float>(&src0_as_float, &src1_as_float, &dst_as_float,
+  vector_interleave_1d<float>(&src0_as_float, &src1_as_float, &dst_as_float,
                               &temp_as_float);
 }
 
 template <>
 __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<uint32_t>(
+__aiv__ __attribute__((always_inline)) void vector_interleave_1d<uint32_t>(
     memref_t<__ubuf__ uint32_t, 1> *src0, memref_t<__ubuf__ uint32_t, 1> *src1,
     memref_t<__ubuf__ uint32_t, 1> *dst, memref_t<__ubuf__ uint32_t, 1> *temp) {
   // convert uint32_t memref to float32 memref
@@ -193,6 +202,7 @@ __aiv__ __attribute__((always_inline)) void vector_interleave_1d_core<uint32_t>(
   view_as<uint32_t, float, 1>(dst, &dst_as_float);
   view_as<uint32_t, float, 1>(temp, &temp_as_float);
   vector_interleave_1d_core<float>(&src0_as_float, &src1_as_float, &dst_as_float,
+  vector_interleave_1d<float>(&src0_as_float, &src1_as_float, &dst_as_float,
                               &temp_as_float);
 }
 
@@ -281,7 +291,6 @@ is_unaligned_interleave_1d(memref_t<__ubuf__ T, 1> *src0,
   
   return !is_offset_aligned || !is_stride_aligned;
 }
-
 extern "C" {
 //===-------------------------------------------------------------------===//
 // interleave op, 1 dim

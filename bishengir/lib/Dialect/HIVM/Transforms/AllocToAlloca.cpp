@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
@@ -37,6 +38,13 @@ struct AllocToAllocaPattern : public OpRewritePattern<memref::AllocOp> {
   LogicalResult matchAndRewrite(memref::AllocOp op,
                                 PatternRewriter &rewriter) const override {
     const auto &currentMemRefType = cast<BaseMemRefType>(op.getType());
+    auto parentGpuOp = dyn_cast<gpu::GPUFuncOp>(op->getParentOp());
+    if (parentGpuOp) {
+      rewriter.replaceOpWithNewOp<memref::AllocaOp>(
+          op, currentMemRefType, op.getDynamicSizes(), op.getSymbolOperands(),
+          op.getAlignmentAttr());
+      return success();
+    }
     auto memorySpace = currentMemRefType.getMemorySpace();
     if (!memorySpace) {
       return failure();

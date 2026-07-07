@@ -54,7 +54,6 @@ is_unaligned_transpose_2d(memref_t<__ubuf__ T, 2> *src,
     return !is_addr_aligned || !is_stride_aligned;
   }
 }
-
 /// transpose 2d with last axis op description:
 /// transpose src (a, b) to dst (b, a),
 ///
@@ -310,7 +309,6 @@ vnchwconv_2d(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst) {
     transpose_2d_scalar_impl<T>(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_vnchwconv_2d(src, dst);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
@@ -461,7 +459,6 @@ vnchwconv_2d_with_tmp(memref_t<__ubuf__ T, 2> *src,
     transpose_2d_scalar_impl<T>(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_vnchwconv_2d(src, dst);
 

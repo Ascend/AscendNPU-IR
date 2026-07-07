@@ -369,6 +369,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
         assert(!waitFlagOp->eventIds.empty());
         auto eventId = waitFlagOp->eventIds[loopIdx % static_cast<int>(
             waitFlagOp->eventIds.size())];
+        auto eventId =
+            waitFlagOp->eventIds[loopIdx % (int)(waitFlagOp->eventIds.size())];
         auto it = triggeredOps.find(eventId);
         if (it != triggeredOps.end()) {
           assert((*it) == eventId);
@@ -561,6 +563,7 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
     triggeredSetFlagOps[getTriggeredGroup(setFlagOp)].insert(
         setFlagOp->eventIds[loopIndex %
                             static_cast<int>(setFlagOp->eventIds.size())]);
+        setFlagOp->eventIds[loopIndex % setFlagOp->eventIds.size()]);
     refreshPipeQue(corePipeDst);
   };
 
@@ -706,6 +709,9 @@ void SyncTester::runTestMode(const SmallVector<int64_t> &options) {
     llvm::report_fatal_error(("Expected size of sync-tester options to be equal to " +
                               std::to_string(SyncTester::getOptionsNum()))
                               .c_str());
+    llvm_unreachable(("Expected size of sync-tester options to be equal to " +
+                      std::to_string(SyncTester::getOptionsNum()))
+                         .c_str());
     return;
   }
 

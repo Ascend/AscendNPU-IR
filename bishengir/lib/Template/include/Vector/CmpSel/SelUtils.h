@@ -43,7 +43,6 @@ is_memref_aligned_select_vv_1d(memref_t<__ubuf__ COND_T, 1> *condition,
                                memref_t<__ubuf__ T, 1> *src0,
                                memref_t<__ubuf__ T, 1> *src1,
                                memref_t<__ubuf__ T, 1> *dst);
-
 #define DECLARE_VSEL_VV_WITHOUT_TMP(dim, condtype, dtype)                      \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vsel_vv_##dim##d_##condtype##_##dtype(                      \
@@ -70,7 +69,7 @@ is_memref_aligned_select_vv_1d(memref_t<__ubuf__ COND_T, 1> *condition,
     } else {                                                                   \
       vector_select_vv_##dim##d<dtype, condtype>(condition, src0, src1, dst,   \
                                                  condition_addr_buf);          \
-    }                                                                          \
+    }
   }
 
 //===----------------------------------------------------------------------===//
@@ -93,7 +92,6 @@ template <typename T>
 __aiv__ __attribute__((always_inline)) bool
 is_memref_aligned_select_ss_1d(memref_t<__ubuf__ bool, 1> *condition,
                                memref_t<__ubuf__ T, 1> *dst);
-
 #define DECLARE_VSEL_SS_WITHOUT_TMP(dim, dtype)                                \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vsel_ss_##dim##d_##dtype(                                   \
@@ -116,7 +114,7 @@ is_memref_aligned_select_ss_1d(memref_t<__ubuf__ bool, 1> *condition,
     } else {                                                                   \
       vector_select_ss_##dim##d<dtype>(condition, src0, src1, dst,             \
                                        condition_addr_buf);                    \
-    }                                                                          \
+    }
   }
 
 //===----------------------------------------------------------------------===//
@@ -141,7 +139,6 @@ __aiv__ __attribute__((always_inline)) bool
 is_memref_aligned_select_vs_1d(memref_t<__ubuf__ bool, 1> *condition,
                                memref_t<__ubuf__ T, 1> *src0,
                                memref_t<__ubuf__ T, 1> *dst);
-
 #define DECLARE_VSEL_VS_WITHOUT_TMP(dim, dtype)                                \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vsel_vs_##dim##d_##dtype(                                   \
@@ -166,7 +163,7 @@ is_memref_aligned_select_vs_1d(memref_t<__ubuf__ bool, 1> *condition,
     } else {                                                                   \
       vector_select_vs_##dim##d<dtype>(condition, src0, src1, dst,             \
                                        condition_addr_buf);                    \
-    }                                                                          \
+    }
   }
 
 //===----------------------------------------------------------------------===//
@@ -190,7 +187,6 @@ __aiv__ __attribute__((always_inline)) bool
 is_memref_aligned_select_sv_1d(memref_t<__ubuf__ bool, 1> *condition,
                                memref_t<__ubuf__ T, 1> *src1,
                                memref_t<__ubuf__ T, 1> *dst);
-
 #define DECLARE_VSEL_SV_WITHOUT_TMP(dim, dtype)                                \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vsel_sv_##dim##d_##dtype(                                   \
@@ -215,7 +211,7 @@ is_memref_aligned_select_sv_1d(memref_t<__ubuf__ bool, 1> *condition,
     } else {                                                                   \
       vector_select_sv_##dim##d<dtype>(condition, src0, src1, dst,             \
                                        condition_addr_buf);                    \
-    }                                                                          \
+    }
   }
 
 extern "C" {

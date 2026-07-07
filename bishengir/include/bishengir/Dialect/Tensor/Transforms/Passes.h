@@ -43,7 +43,8 @@ createPropagateReshapePass(const PropagateReshapeOptions &options = {});
 std::unique_ptr<Pass> createFoldTensorEmptyPass();
 
 /// Create a pass to normalize tensor ops.
-std::unique_ptr<Pass> createNormalizeTensorOpsPass();
+std::unique_ptr<Pass>
+createNormalizeTensorOpsPass(bool skipAlignedSlice = false);
 
 /// Create a pass to trickle tensor::concatOp down.
 std::unique_ptr<Pass> createTrickleConcatDownPass();

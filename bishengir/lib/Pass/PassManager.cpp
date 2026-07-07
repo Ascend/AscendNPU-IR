@@ -23,6 +23,10 @@
 #if MLIR_ENABLE_EXECUTION_ENGINE
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Pass/PassManager.h"
+
+#if (defined(MLIR_ENABLE_EXECUTION_ENGINE) && MLIR_ENABLE_EXECUTION_ENGINE) || \
+    defined(BISHENGIR_ENABLE_EXECUTION_ENGINE)
+#include "bishengir/ExecutionEngine/Passes.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -102,6 +106,8 @@ namespace {
 // access everything
 class BiShengIRPass : public Pass {
   BiShengIRPass() = delete; // should never be instantiated
+class BiShengIRPass : public Pass {
+  BiShengIRPass() = delete;
   friend bishengir::BiShengIRPassManager;
 };
 
@@ -112,6 +118,7 @@ static void verifyOptionUsage(const BiShengIRCompileConfigBase &config) {
       1)
     llvm::report_fatal_error(
         "Cannot combine any of multible cpu-runner options.");
+        "Cannot combine multiple cpu-runner options.");
 }
 
 [[maybe_unused]] static void
@@ -151,11 +158,14 @@ static void executeCPURunnerPasses(Operation *op,
 void bishengir::BiShengIRPassManager::filterCPURunnerPasses(
     OpPassManager &originalPM) {
   // only pick the CPU runner passes
+  assert(config && "CPU runner filtering requires a compile config");
+  const auto &cfg = *config;
   llvm::StringMap<decltype(CPURunnerMetadata<true>::passIndex)> passCnt;
   bool passHit = false;
   for (auto &pass : originalPM.getPasses()) {
     const auto passArg = pass.getArgument();
     llvm::dbgs() << passArg << '\n';
+    LLVM_DEBUG(llvm::dbgs() << passArg << '\n');
     auto wasPassReached = [passArg, &passCnt](const auto &option) {
       return (option.numOccurrences != 0) && passArg == option.passName &&
              passCnt.at(passArg) == option.passIndex;
@@ -164,6 +174,9 @@ void bishengir::BiShengIRPassManager::filterCPURunnerPasses(
     if (!passArg.empty()) {
       ++passCnt[passArg];
       if (wasPassReached(config.CPURunnerBeforeOpt())) {
+    if (!passArg.empty()) {
+      ++passCnt[passArg];
+      if (wasPassReached(cfg.CPURunnerBeforeOpt())) {
         passHit = true;
         break;
       }
@@ -181,6 +194,9 @@ void bishengir::BiShengIRPassManager::filterCPURunnerPasses(
 
     // filter the pass after
     if (!passArg.empty() && wasPassReached(config.CPURunnerAfterOpt())) {
+    nesting->addPass(static_cast<BiShengIRPass *>(&pass)->clone());
+
+    if (!passArg.empty() && wasPassReached(cfg.CPURunnerAfterOpt())) {
       passHit = true;
       break;
     }
@@ -190,6 +206,9 @@ void bishengir::BiShengIRPassManager::filterCPURunnerPasses(
     const auto &passInfo = (config.CPURunnerBeforeOpt().numOccurrences != 0)
                                ? config.CPURunnerBeforeOpt()
                                : config.CPURunnerAfterOpt();
+    const auto &passInfo = (cfg.CPURunnerBeforeOpt().numOccurrences != 0)
+                               ? cfg.CPURunnerBeforeOpt()
+                               : cfg.CPURunnerAfterOpt();
     llvm::report_fatal_error(
         ("[CPU Runner] Failed to find the specified pass: " +
          passInfo.passName +
@@ -211,6 +230,17 @@ LogicalResult bishengir::BiShengIRPassManager::run(Operation *op) {
       return failure();
 
     executeCPURunnerPasses(op, config);
+  if (!config || !config->shouldEnableCPURunner())
+    return PassManager::run(op);
+
+  const auto &cfg = *config;
+  verifyOptionUsage(cfg);
+
+  if (cfg.CPURunnerOpt().numOccurrences != 0) {
+    if (failed(PassManager::run(op)))
+      return failure();
+
+    executeCPURunnerPasses(op, cfg);
     return success();
   }
 
@@ -221,13 +251,14 @@ LogicalResult bishengir::BiShengIRPassManager::run(Operation *op) {
   OpPassManager originalPM(*this);
 
   // restore the original OpPassManager part on return
+  OpPassManager originalPM(*this);
   auto onReturn = llvm::make_scope_exit([this, &originalPM]() {
     *static_cast<OpPassManager *>(this) = std::move(originalPM);
   });
 
   // remove the existing passes
   clear();
-
+  clear();
   filterCPURunnerPasses(originalPM);
 
   LLVM_DEBUG(DBGS() << "After filtering passes: ");
@@ -241,3 +272,7 @@ LogicalResult bishengir::BiShengIRPassManager::run(Operation *op) {
 }
 
 #endif // MLIR_ENABLE_EXECUTION_ENGINE
+  executeCPURunnerPasses(op, cfg);
+  return success();
+}
+#endif

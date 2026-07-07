@@ -120,6 +120,12 @@ struct MarkScopeMultiBuffer : public OpRewritePattern<CopyOpType> {
 
   LogicalResult matchAndRewrite(CopyOpType copyLikeOp,
                                 PatternRewriter &rewriter) const override {
+  
+  explicit MarkScopeMultiBuffer(MLIRContext *ctx)
+      : OpRewritePattern<CopyOpType>(ctx) {}
+  
+  LogicalResult matchAndRewrite(CopyOpType copyLikeOp,
+                                  PatternRewriter &rewriter) const override {
     // Step 1: Get Return Op of Scope
     auto scopeOp = cast<scope::ScopeOp>(copyLikeOp);
     if (!scopeOp)
@@ -156,6 +162,7 @@ struct MarkScopeMultiBuffer : public OpRewritePattern<CopyOpType> {
             return failure();
           mark(allocOpPtr, rewriter, 4, true); // fixed value 4, need to be changed later
         }
+      }
       } else {
         continue;
       }
@@ -192,6 +199,15 @@ struct MarkMultiBuffer : public OpRewritePattern<CopyOpType> {
         if (!isa<scf::ForOp>(parentLoop)) {
           LLVM_DEBUG(DBGS()
                      << "Currently only scf.for is supported loop type.\n");
+      // Allow scf::ForOp and scf::WhileOp ancestors. scf.while is supported
+      // via the alloca-based counter scheme implemented in
+      // MultiBufferLoopAdapter; other LoopLike ops (scf.parallel,
+      // scf.forall, ...) are not yet supported because their semantics break
+      // the per-iteration slot rotation invariant.
+      while (parentLoop) {
+        if (!isa<scf::ForOp, scf::WhileOp>(parentLoop)) {
+          LLVM_DEBUG(DBGS() << "Unsupported loop type for multi-buffer: "
+                            << parentLoop->getName() << "\n");
           return failure();
         }
         parentLoop = parentLoop->getParentOfType<LoopLikeOpInterface>();
@@ -296,6 +312,33 @@ void MarkMultiBufferPass::runOnOperation() {
   }
   if (!isMixFuncCore ||
       !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_CUBE)) {
+  // Per-buffer fine-grained gates (used by BiShengIRCompileMain's compile-
+  // time fallback to surgically turn off the multi-buffer of just the
+  // overflowing address space):
+  //   ND2NZ   -> L1 (cbuf)         -> disableMultiBufferOnL1
+  //   Fixpipe -> L0C (cube acc)    -> disableMultiBufferOnL0C
+  //   Load    -> UB (Vector ingress)\
+  //   Store   -> UB (Vector egress) -> disableMultiBufferOnUB
+  // These AND-combine with the existing coarse Mix-core gates
+  // (limitMixAutoMultiBufferBuffer == ONLY_VECTOR/ONLY_CUBE) and with
+  // limitAutoMultiBufferOfLocalBuffer == CUBE_NO_L0C: any single switch can
+  // disable a given group; we never re-enable.
+  const bool allowCubeGroup =
+      !isMixFuncCore ||
+      !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_VECTOR);
+  if (allowCubeGroup) {
+    if (!disableMultiBufferOnL1)
+      patterns.insert<MarkMultiBuffer<hivm::ND2NZOp>>(patterns.getContext());
+    // TODO: DN2NZ
+    if (limitAutoMultiBufferOfLocalBuffer != MultiBufferStrategy::CUBE_NO_L0C &&
+        !disableMultiBufferOnL0C) {
+      patterns.insert<MarkMultiBuffer<hivm::FixpipeOp>>(patterns.getContext());
+    }
+  }
+  const bool allowVectorGroup =
+      !isMixFuncCore ||
+      !(limitMixAutoMultiBufferBuffer == MultiBufferStrategy::ONLY_CUBE);
+  if (allowVectorGroup && !disableMultiBufferOnUB) {
     patterns.insert<MarkMultiBuffer<hivm::LoadOp>>(patterns.getContext());
     patterns.insert<MarkMultiBuffer<hivm::StoreOp>>(patterns.getContext());
   }

@@ -12,6 +12,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// Also available under a BSD-style license. See LICENSE.
+//
 //===-----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/TorchToHFusion/PopulatePatterns.h"
@@ -101,6 +103,8 @@ public:
     for (size_t i = inShape.size() - static_cast<size_t>(inputRank),
                 e = inShape.size();
          i < e; ++i) {
+    for (size_t i = inShape.size() - inputRank, e = inShape.size(); i < e;
+         ++i) {
       int64_t dim;
       if (matchPattern(inShape[i], m_TorchConstantInt(&dim))) {
         if (dim < 0) {

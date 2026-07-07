@@ -57,6 +57,11 @@ std::optional<int64_t> refineReduceExtraBufferSize(ShapedType srcType,
                                                    int64_t srcAllocTotalSize,
                                                    int64_t reductionDim,
                                                    bool saveUbUf);
+                                       int64_t reductionDim);
+
+std::optional<int64_t> refineReduceExtraBufferSize(ShapedType srcType,
+                                                   int64_t srcAllocTotalSize,
+                                                   int64_t reductionDim);
 
 } // namespace util
 } // namespace hivm

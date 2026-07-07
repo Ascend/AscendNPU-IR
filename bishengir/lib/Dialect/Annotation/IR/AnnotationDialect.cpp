@@ -19,6 +19,18 @@
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/Transforms/InliningUtils.h"
 
+#include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/DLTI/DLTI.h"
+#include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/OpImplementation.h"
+#include "llvm/ADT/TypeSwitch.h"
+
+using namespace mlir;
+using namespace mlir::annotation;
+
+#include "bishengir/Dialect/Annotation/IR/AnnotationEnums.cpp.inc"
+#define GET_ATTRDEF_CLASSES
+#include "bishengir/Dialect/Annotation/IR/AnnotationAttrs.cpp.inc"
 #include "bishengir/Dialect/Annotation/IR/AnnotationOpsDialect.cpp.inc"
 
 #define GET_OP_CLASSES
@@ -50,7 +62,6 @@ struct AnnotationInlinerInterface : public mlir::DialectInlinerInterface {
 };
 
 } // namespace
-
 void mlir::annotation::AnnotationDialect::initialize() {
   addOperations<
 #define GET_OP_LIST
@@ -59,4 +70,8 @@ void mlir::annotation::AnnotationDialect::initialize() {
 
   // Add function inliner interfaces
   addInterfaces<AnnotationInlinerInterface>();
+  addAttributes<
+#define GET_ATTRDEF_LIST
+#include "bishengir/Dialect/Annotation/IR/AnnotationAttrs.cpp.inc"
+      >();
 }

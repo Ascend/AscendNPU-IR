@@ -41,7 +41,6 @@ namespace {
 struct AllocExtraBufferPass
     : public mlir::impl::AllocExtraBufferBase<AllocExtraBufferPass> {
   explicit AllocExtraBufferPass() : AllocExtraBufferBase() {}
-
 public:
   void runOnOperation() override;
 };
@@ -55,6 +54,13 @@ void AllocExtraBufferPass::runOnOperation() {
   auto walkResult = funcOp.walk([](ExtraBufferOpInterface op) {
     if (failed(op.allocExtraBuffersIfPossible()))
       return WalkResult::interrupt();
+  auto mod = funcOp->getParentOfType<ModuleOp>();
+  if (!mod)
+    return;
+  auto walkResult = funcOp.walk([](ExtraBufferOpInterface op) {
+    if (failed(op.allocExtraBuffersIfPossible())) {
+      return WalkResult::interrupt();
+    }
     return WalkResult::advance();
   });
   if (walkResult.wasInterrupted())

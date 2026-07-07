@@ -51,6 +51,10 @@ public:
   // handling.
   llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
 
+  // Map sync ops to before/after operations.
+  SyncMap syncMapBefore, syncMapAfter;
+
+
 private:
   bool resultFuncIrWasGenerated{false};
 
@@ -73,10 +77,9 @@ private:
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
 
-  SyncMap syncMapBefore, syncMapAfter;
-
 public:
   CodeGenerator() = delete;
+  CodeGenerator(const SyncSolverOptions &options) : options(options) {}
 
   CodeGenerator(std::unique_ptr<Solver> solver) : options(solver->options) {
     init(std::move(solver));
@@ -89,8 +92,6 @@ public:
     funcOp = solver->funcOp;
     funcIr = std::move(solver->funcIr);
     unitFlagFeaturedOps = std::move(solver->unitFlagFeaturedOps);
-    customMacroCodegen.setResolvedSlotEventIds(
-        std::move(solver->customMacroSync.resolvedSlotEventIds()));
   }
 
   // Insert sync ops into func-ir.
@@ -106,8 +107,10 @@ private:
   void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                                bool insertAfterOp);
 
-  void insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
+  void insertBlockOp_membase(IRRewriter &rewriter, OperationBase *opBase,
                      BarrierOp *barrierOp, bool insertAfterOp);
+  void insertBlockAllOp(IRRewriter &rewriter, OperationBase *opBase,
+                        BarrierOp *barrierOp, bool insertAfterOp);
 
   void insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                        BarrierOp *barrierOp, bool insertAfterOp);
@@ -148,6 +151,9 @@ private:
   Value getMultiBufferBlockSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
   Value getLoopDBCond(IRRewriter &rewriter, Operation *op);
+
+  void insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter);
+
 
   void insertMmadL1SyncArgs(IRRewriter &rewriter);
 

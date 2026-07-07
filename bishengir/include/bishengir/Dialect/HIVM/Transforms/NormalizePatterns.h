@@ -1,0 +1,67 @@
+//===-------- NormalizePatterns.h - Header for Normalize Patterns -*- C++ -*-===//
+//
+// Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+//
+// This file declares the populate functions for HIVM Normalize patterns.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H
+#define BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H
+
+#include "mlir/IR/PatternMatch.h"
+
+namespace mlir::hivm {
+
+extern thread_local bool archIsRegbased;
+extern thread_local bool archisAscend950;
+extern thread_local bool archisAscend310B;
+extern thread_local bool archisMembased;
+
+void populateNormalizeMulRecPatterns(RewritePatternSet &patterns);
+void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizeTrigPatterns(RewritePatternSet &patterns,
+                                   bool enableHighPrecision);
+void populateNormalizeModPatterns(RewritePatternSet &patterns);
+void populateNormalizePrimaryMathPatterns(RewritePatternSet &patterns);
+void populateNormalizeLateMathPatterns(RewritePatternSet &patterns);
+void populateNormalizeCastingPatterns(RewritePatternSet &patterns);
+void populateNormalizeFinalCastingPatterns(RewritePatternSet &patterns);
+void populateNormalizeI8I32CmpPatterns(RewritePatternSet &patterns);
+void populateNormalizeCmpToCastPatterns(RewritePatternSet &patterns);
+void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);
+void populateNormalizeBitwiseComparisonPatterns(RewritePatternSet &patterns);
+void populateNormalizeShiftI8ToI16(RewritePatternSet &patterns);
+void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
+void populateNormalizeScalarLikeHIVMPatterns(RewritePatternSet &patterns);
+void populateNormalizeNonDenseScalarLikeBroadcastPatterns(
+    RewritePatternSet &patterns, bool isRegbased);
+void populateNormalizePreReductionPatterns(RewritePatternSet &patterns);
+void populateNormalizeAtomicPatterns(RewritePatternSet &patterns);
+void populateNormalizeSortPatterns(RewritePatternSet &patterns);
+
+void populateNormalizeReductionPatterns(RewritePatternSet &patterns);
+void populateNormalizeFinalReductionPatterns(RewritePatternSet &patterns);
+
+void populateNormalizeF16ToF32Patterns(RewritePatternSet &patterns);
+void populateNormalizeI1ToTargetPatterns(RewritePatternSet &patterns);
+void populateNormalizeI8ToTargetPatterns(RewritePatternSet &patterns);
+void populateNormalizeGatherIndexPatterns(RewritePatternSet &patterns);
+
+} // namespace mlir::hivm
+#endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_NORMALIZEPATTERNS_H

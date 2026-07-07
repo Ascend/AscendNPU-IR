@@ -54,6 +54,10 @@ Operation *createNewExpandOpFromCollapseOp(memref::CollapseShapeOp &collapseOp,
                                                 reassociation);
 }
 
+namespace mlir::memref {
+
+namespace {
+
 LogicalResult handleCopyOp(memref::CollapseShapeOp collapseOp,
                            PatternRewriter &rewriter, Operation *userOp) {
   auto resultRank = collapseOp.getResult().getType().getRank();
@@ -89,6 +93,44 @@ LogicalResult handleLoadOp(memref::CollapseShapeOp collapseOp,
       newOperands.push_back(operand);
     }
   }
+LogicalResult handleSubviewOp(memref::CollapseShapeOp collapseOp,
+                           PatternRewriter &rewriter, Operation *userOp) {
+
+  auto reassociation = collapseOp.getReassociationIndices();
+  auto subviewOp = dyn_cast<memref::SubViewOp>(userOp);
+  SmallVector<OpFoldResult> newMixedOffsets;
+  SmallVector<OpFoldResult> newMixedSizes;
+  SmallVector<OpFoldResult> newMixedStrides;
+  SmallVector<OpFoldResult> dummyExpand;
+  auto res = tensor::reshape_utils::getSubviewModifyingOp(
+      rewriter, subviewOp, reassociation,
+      tensor::reshape_utils::getMixedSizesOrOutputShape(rewriter, collapseOp.getSrc()),
+      /*superview*/ false, newMixedOffsets, newMixedSizes, newMixedStrides,
+      dummyExpand);
+  if (res.failed())
+    return failure();
+  auto loc = userOp->getLoc();
+  auto newSubviewOp = rewriter.create<memref::SubViewOp>(
+      loc, collapseOp.getSrc(), newMixedOffsets, newMixedSizes,
+      newMixedStrides);
+  auto subviewOpResultShape =
+      utils::getShape(subviewOp.getResult().getType());
+
+  auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
+      newSubviewOp.getLoc(), subviewOp.getResult().getType(),
+      newSubviewOp.getResult(), reassociation);
+  rewriter.replaceAllUsesWith(subviewOp, newCollapse);
+  rewriter.eraseOp(subviewOp);
+  return success();
+}
+
+LogicalResult handleFillOp(memref::CollapseShapeOp collapseOp,
+                           PatternRewriter &rewriter, Operation *userOp) {
+  auto fillOp = cast<linalg::FillOp>(userOp);
+  auto resultRank = cast<ShapedType>(
+      fillOp.getDpsInitOperand(0)->get().getType()).getRank();
+  SmallVector<Value> newOperands = getNewOperands(
+      collapseOp, rewriter, userOp, resultRank);
   rewriter.modifyOpInPlace(userOp, [&]() { userOp->setOperands(newOperands); });
   return success();
 }
@@ -137,6 +179,17 @@ LogicalResult handleSubViewOp(memref::CollapseShapeOp collapseOp,
                                                        reassociation);
   return success();
 }
+LogicalResult handleMarkOp(memref::CollapseShapeOp collapseOp,
+                           PatternRewriter &rewriter, Operation *userOp) {
+  auto markOp = cast<annotation::MarkOp>(userOp);
+  auto resultRank = cast<ShapedType>(markOp.getSrc().getType()).getRank();
+  SmallVector<Value> newOperands = getNewOperands(
+      collapseOp, rewriter, userOp, resultRank);
+  rewriter.modifyOpInPlace(userOp, [&]() {
+    userOp->setOperands(newOperands);
+  });
+  return success();
+}
 } // namespace
 
 LogicalResult
@@ -163,9 +216,22 @@ PropagateMemrefCollapseDown::matchAndRewrite(memref::CollapseShapeOp collapseOp,
     }
     if (isa<memref::SubViewOp>(userOp)) {
       return handleSubViewOp(collapseOp, rewriter, userOp);
+  for (Operation *userOp : users) {
+    if (isa<memref::CopyOp>(userOp)) {
+      return handleCopyOp(collapseOp, rewriter, userOp);
+    }
+    if (isa<memref::SubViewOp>(userOp)) {
+      return handleSubviewOp(collapseOp, rewriter, userOp);
+    }
+    if (isa<linalg::FillOp>(userOp)) {
+      return handleFillOp(collapseOp, rewriter, userOp);
+    }
+    if (isa<annotation::MarkOp>(userOp)) {
+      return handleMarkOp(collapseOp, rewriter, userOp);
     }
   }
   return failure();
 }
 } // namespace memref
 } // namespace mlir
+} // namespace mlir::memref

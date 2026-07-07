@@ -15,6 +15,8 @@ add_bishengir_dialect_library(BiShengIRHIVMPipelines
   BiShengIRTensorToHIVM
   BiShengIRTensorTransforms
   BiShengIRTransform
+  BishengIRArithTransforms
+  BishengIRVectorTransforms
   MLIRArithDialect
   MLIRFuncDialect
   MLIRMathDialect
@@ -22,4 +24,5 @@ add_bishengir_dialect_library(BiShengIRHIVMPipelines
   MLIRMemRefTransforms
   MLIRPass
   MLIRTransforms
+  MLIRReconcileUnrealizedCasts
 )

@@ -39,6 +39,10 @@ public:
   /// Inject PIPE_ALL.
   void InjectSyncAll();
 
+  /// Inject set_flag/wait_flag operations before and after all MmadL1
+  /// operations. Is needed by reg-based template implementation.
+  void InjectSetWaitPipeMPipeMTE1ForAllMmadL1();
+
   /// Inject auto sync.
   void AutoInjectSync(bool enableUnitFlag, bool assumeAliveLoops);
 

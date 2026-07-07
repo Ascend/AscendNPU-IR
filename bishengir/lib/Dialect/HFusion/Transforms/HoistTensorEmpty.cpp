@@ -139,6 +139,9 @@ private:
     if (!ShapedType::isDynamicShape(shapes)) {
       auto totalStaticSize = getUnifiedStaticTotalSize(ops, unifiedType);
       assert(totalStaticSize.has_value());
+      if (!totalStaticSize.has_value()) {
+        return std::nullopt;
+      }
       return builder.create<arith::ConstantIndexOp>(loc,
                                                     totalStaticSize.value());
     }

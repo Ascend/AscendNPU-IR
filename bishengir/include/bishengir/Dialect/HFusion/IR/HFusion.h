@@ -21,6 +21,7 @@
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 #include "mlir/Dialect/Mesh/IR/MeshDialect.h"
 #endif
+#include "bishengir/Dialect/HMAP/IR/HMAP.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 #include "mlir/Bytecode/BytecodeOpInterface.h"
@@ -33,6 +34,12 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/VectorInterfaces.h"
+
+namespace mlir {
+namespace hfusion {
+std::string generateLibraryCallName(Operation *op);
+} // namespace hfusion
+} // namespace mlir
 
 //===----------------------------------------------------------------------===//
 // HFusion Dialect

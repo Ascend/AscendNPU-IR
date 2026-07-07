@@ -1,10 +1,12 @@
 add_bishengir_library(BiShengIRTensorTransforms
+  BufferizableOpInterfaceImpl.cpp
   BubblePadUp.cpp
   BubbleUpExtractSlice.cpp
   CanonicalizeTensorReshape.cpp
   DecomposeTensorConcat.cpp
   FoldTensorEmpty.cpp
   MergeConsecutiveInsertExtractSlice.cpp
+  MeshShardingInterfaceImpl.cpp
   NarrowTensorOp.cpp
   NormalizeLastDimUnalignedTensorOp.cpp
   NormalizeTensorOps.cpp
@@ -13,8 +15,10 @@ add_bishengir_library(BiShengIRTensorTransforms
   PropagateReshape/PropagateCollapseDown.cpp
   PropagateReshape/PropagateExpandUp.cpp
   PropagateReshape/PropagateNearEndExpandDown.cpp
+  PropagateReshape/PropagateOp/AnnotationMark.cpp
   PropagateReshape/PropagateOp/PropagatableOp.cpp
   PropagateReshape/PropagateOp/ScfForOp.cpp
+  PropagateReshape/PropagateOp/MulExt.cpp
   PropagateReshape/SwapCollapseExpand.cpp
   PropagateReshape/Utils.cpp
   PropagateReshape/Utils/ConcatUtils.cpp
@@ -32,6 +36,7 @@ add_bishengir_library(BiShengIRTensorTransforms
   BiShengIRDialectUtils
   BiShengIRMemRefTransforms
   BiShengIRTensorUtils
+  MLIRBufferizationTransforms
   MLIRControlFlowDialect
   MLIRTensorDialect
   MLIRLinalgDialect
@@ -43,4 +48,7 @@ add_bishengir_library(BiShengIRTensorTransforms
   BiShengIRHFusionUtils
   BiShengIRHIVMDialect
   MLIRLinalgTransforms
+  MLIRMeshDialect
+  MLIRMeshTransforms
+  MLIRShardingInterface
 )

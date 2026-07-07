@@ -18,14 +18,17 @@
 #ifndef BISHENGIR_DIALECT_HIVM_IR_HIVM_H
 #define BISHENGIR_DIALECT_HIVM_IR_HIVM_H
 
+#include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 #include "bishengir/Interfaces/CopyOpInterface.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMTypes.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/DeviceMappingInterface.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
@@ -45,6 +48,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/IR/HIVMEnums.h.inc"
+
+//===----------------------------------------------------------------------===//
+// HIVM Types
+//===----------------------------------------------------------------------===//
+
+// generated type declarations
+#define GET_TYPEDEF_CLASSES
+#include "bishengir/Dialect/HIVM/IR/HIVMTypes.h.inc"
 
 //===----------------------------------------------------------------------===//
 // HIVM Attributes
@@ -70,6 +81,9 @@
 
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.h.inc"
+
+#define GET_OP_CLASSES
+#include "bishengir/Dialect/HIVM/IR/HIVMIntrinOps.h.inc"
 
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.h.inc"
@@ -106,6 +120,18 @@ parseFlagID(OpAsmParser &parser, IntegerAttr &flagIDAttr,
 void printFlagID(OpAsmPrinter &printer, Operation *op, IntegerAttr flagIDAttr,
                  Value flagIDValue);
 
+//===----------------------------------------------------------------------===//
+// Printing/parsing for SyncID
+//===----------------------------------------------------------------------===//
+
+ParseResult
+parseSyncID(OpAsmParser &parser, IntegerAttr &syncIDAttr,
+            std::optional<OpAsmParser::UnresolvedOperand> &syncIDValue);
+
+void printSyncID(OpAsmPrinter &printer, Operation *op, IntegerAttr syncIDAttr,
+                 Value syncIDValue);
+
+
 namespace detail {
 
 //===----------------------------------------------------------------------===//
@@ -118,6 +144,11 @@ ParseResult parseHIVMStructuredDPSOp(OpAsmParser &parser,
                                      OperationState &result);
 void printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op, ValueRange inputs,
                               ValueRange outputs);
+
+/// Return the elementType as string for library call name.
+std::string getTypeName(Location loc, Type type,
+                        hivm::TypeFn casting = hivm::TypeFn::cast_signed);
+
 
 } // namespace detail
 
@@ -148,12 +179,33 @@ template <typename GlobalMixMatmulTy>
 std::optional<TCoreType>
 inferCoreTypeForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp);
 
+constexpr llvm::StringLiteral kCVUnrolledLoopName =
+    "cv_unrolled_loop";
 constexpr llvm::StringLiteral kMultibufferUnrollAttrName =
     "multibuffer_unroll_factor";
 constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =
     "hivm.loop_core_type";
 constexpr llvm::StringLiteral kPreLoadAttrName =
     "preload_num";
+
+
+/// Attribute placed on a memref.alloca holding the multi-buffer iteration
+/// counter for a particular scf.while loop. Its IntegerAttr value matches the
+/// kMultiBufferLoopIdAttr placed on the owning scf.while op so multiple
+/// passes (GraphSyncSolver, EnableMultiBuffer) can locate and reuse the same
+/// counter without sharing pass-level state.
+constexpr llvm::StringLiteral kMultiBufferCounterAttr =
+    "hivm.multi_buffer_counter_for";
+
+/// Attribute placed on an scf.while op once a counter alloca has been
+/// associated with it. The IntegerAttr value is unique within the parent
+/// FunctionOpInterface.
+constexpr llvm::StringLiteral kMultiBufferLoopIdAttr =
+    "hivm.multi_buffer_loop_id";
+
+constexpr llvm::StringLiteral kMixFuncAicSuffix = "_mix_aic";
+constexpr llvm::StringLiteral kMixFuncAivSuffix = "_mix_aiv";
+constexpr llvm::StringLiteral kFuncBackupSuffix = "_backup";
 } // namespace hivm
 } // namespace mlir
 

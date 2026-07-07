@@ -183,7 +183,6 @@ is_memref_aligned_select_sv_1d(memref_t<__ubuf__ bool, 1> *condition,
          is_memref_aligned<T, 1>(src1) &&
          is_memref_aligned<T, 1>(dst);
 }
-
 /// General Constraints:
 /// 1. src0 and src1 should be float or half -> hence all other types are
 ///    casted into float or half.
@@ -252,6 +251,8 @@ __aiv__ __attribute__((always_inline)) void vector_select_vv_1d(
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_select_vv_1d(memref_t<__ubuf__ bool, 1> *condition,
+__aiv__ __attribute__((always_inline)) void
+vector_select_vv_1d(memref_t<__ubuf__ COND_T, 1> *condition,
                     memref_t<__ubuf__ T, 1> *src0,
                     memref_t<__ubuf__ T, 1> *src1, memref_t<__ubuf__ T, 1> *dst,
                     memref_t<__ubuf__ T, 1> *condition_addr_buf) {
@@ -618,6 +619,19 @@ __aiv__ __attribute__((always_inline)) void vector_select_vs_1d<bfloat16_t>(
 
   vector_select_1d_intrin(args, condition, &cond_addr_buf_as_half,
                           dst_as_half.sizes[0]);
+  auto *src1_half = reinterpret_cast<half *>(&src1);
+
+  // convert bfloat16 memref to half memref
+  memref_t<__ubuf__ half, 1> dst_as_half;
+  memref_t<__ubuf__ half, 1> cond_addr_buf_as_half;
+  memref_t<__ubuf__ half, 1> src0_as_half;
+
+  view_as<bfloat16_t, half, 1>(dst, &dst_as_half);
+  view_as<bfloat16_t, half, 1>(condition_addr_buf, &cond_addr_buf_as_half);
+  view_as<bfloat16_t, half, 1>(src0, &src0_as_half);
+
+  vector_select_vs_1d(condition, &src0_as_half, *src1_half, &dst_as_half,
+                      &cond_addr_buf_as_half);
 }
 
 template <>
@@ -772,6 +786,19 @@ __aiv__ __attribute__((always_inline)) void vector_select_sv_1d<bfloat16_t>(
 
   vector_select_1d_intrin(args, condition, &cond_addr_buf_as_half,
                           dst_as_half.sizes[0]);
+  auto *src0_half = reinterpret_cast<half *>(&src0);
+
+  // convert bfloat16 memref to half memref
+  memref_t<__ubuf__ half, 1> dst_as_half;
+  memref_t<__ubuf__ half, 1> cond_addr_buf_as_half;
+  memref_t<__ubuf__ half, 1> src1_as_half;
+
+  view_as<bfloat16_t, half, 1>(dst, &dst_as_half);
+  view_as<bfloat16_t, half, 1>(condition_addr_buf, &cond_addr_buf_as_half);
+  view_as<bfloat16_t, half, 1>(src1, &src1_as_half);
+
+  vector_select_sv_1d(condition, *src0_half, &src1_as_half, &dst_as_half,
+                      &cond_addr_buf_as_half);
 }
 
 template <>
@@ -862,7 +889,6 @@ __aiv__ __attribute__((always_inline)) void vector_select_vv_1d(
   bitwise_view_as<int8_t, bool, 1>(condition, &cond_as_bool);
   vector_select_vv_1d<T>(&cond_as_bool, src0, src1, dst, condition_addr_buf);
 }
-
 template <typename T, typename COND_T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_vector_select_1d_with_temp(memref_t<__ubuf__ COND_T, 1> *cond,
@@ -974,6 +1000,7 @@ vector_select_vv_1d<int64_t, int8_t>(
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
   vector_compare_vs_1d<VectorOpTy::VCMPS_NE, half>(&vmul_as_half, {0},
                                                    &new_cond);
+  vector_compare_vs_1d<VectorOpTy::VCMPS_NE, half>(&vmul_as_half, {0}, &new_cond);
 #else
   vector_compare_vs_1d<VectorOpTy::VCMPS_NE, half>(&vmul_as_half, 0, &new_cond);
 #endif
@@ -1166,4 +1193,5 @@ REGISTE_VSEL_SV(1, uint16_t)
 REGISTE_VSEL_SV(1, uint32_t)
 REGISTE_VSEL_SV(1, bfloat16_t)
 REGISTE_VSEL_SV(1, int64_t)
+}
 }

@@ -46,6 +46,7 @@ public:
   ~FlattenOptions() = default;
   bool checkMarkStride = false;
   bool checkInputConsistency = false;
+  bool strictBarrierWithUnit = false;
 };
 
 /// Encapsulates the result of a shape-flattening analysis on an operation.
@@ -180,6 +181,8 @@ FlattenResult getFlattenedBroadcastableOTF(HIVMStructuredOp op,
 /// transposing.
 FlattenResult getFlattenedTransposableOTF(HIVMStructuredOp op,
                                           FlattenOptions &options);
+FlattenResult getFlattenedTransposeLike(HIVMStructuredOp op,
+                                        FlattenOptions &options);
 
 /// Computes the `FlattenResult` for any operation that is known to have a
 /// uniform reassociation map (e.g., rank-preserving ops).
@@ -192,6 +195,7 @@ FlattenResult getFlattenedUniformReassociation(HIVMStructuredOp op,
 /// @return A `FlattenResult` reflecting the collapsed unit dimensions and
 /// adjusted target dimensions.
 FlattenResult getFlattenedUnit(FlattenResult &payload);
+FlattenResult getFlattenedUnit(FlattenResult &payload, FlattenOptions &options);
 
 /// Computes a `FlattenResult` by collapsing unit dimensions independently for
 /// each operand. This is necessary for permutation-like ops where input/init
@@ -203,6 +207,9 @@ FlattenResult
 getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
                                 const FlattenOptions &options,
                                 ArrayRef<int64_t> permutationArray);
+FlattenResult getFlattenedUnitTransposeLike(HIVMStructuredOp op,
+                                            const FlattenOptions &options,
+                                            ArrayRef<int64_t> permutationArray);
 
 /// Computes the limited axes for a generic elementwise operation.
 SmallVector<int64_t> computeElementwiseLimitation(HIVMStructuredOp op);

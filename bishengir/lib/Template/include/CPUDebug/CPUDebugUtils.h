@@ -86,6 +86,7 @@ typedef enum {
   NoQuant = 0,
   F322F16 = 1,
   REQ8 = 9,
+  QF322F32_PRE = 15,
   F322BF16 = 16,
 } QuantMode_t;
 

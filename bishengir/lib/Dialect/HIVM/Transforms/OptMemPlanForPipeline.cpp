@@ -54,6 +54,7 @@ void OptMemPlanForDma::build(func::FuncOp func) {
   });
   if (result == WalkResult::interrupt()) {
     llvm::report_fatal_error("OptMemPlanForLoop Traverse IR Failed! ");
+    llvm_unreachable("OptMemPlanForLoop Traverse IR Failed! ");
   }
 }
 

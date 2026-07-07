@@ -37,6 +37,7 @@ namespace {
 bool isSharedWithDownstreamToolchain(const ConfigOption &option) {
   if (const RecordVal *sharedOption =
           option.getDef()->getValue("isSharedWithDownstreamToolchain")) {
+  if (option.getDef()->getValue("isSharedWithDownstreamToolchain")) {
     return option.getDef()->getValueAsBit("isSharedWithDownstreamToolchain");
   }
   return false;
@@ -57,6 +58,13 @@ std::string getCLOptionClass(const ConfigOption &option) {
   } else {
     // For list options, we need to specify the data storage type
     if (option.getExternalStorage())
+  if (!option.isListOption()) {
+    result += ", /*ExternalStorage=*/";
+    result += option.shouldUseCLIExternalStorage() ? "true" : "false";
+  } else {
+    // List options need to specify the externally stored data type when they
+    // register against external storage.
+    if (option.shouldUseCLIExternalStorage())
       result += ", " + getContainerType(option);
   }
 
@@ -84,6 +92,13 @@ bool emitCompileOption(const ConfigOption &option, raw_ostream &OS) {
                       "Has external storage but location was not specified");
       return true;
     }
+  if (std::optional<StringRef> externalStorageLocation =
+          option.getCLIExternalStorageLocation()) {
+    OS << "    ,llvm::cl::location(" << externalStorageLocation << ")\n";
+  } else if (option.shouldUseCLIExternalStorage()) {
+    PrintFatalError(option.getDef(),
+                    "External storage location was not specified");
+    return true;
   }
   // Default value
   if (!option.isListOption())
@@ -146,6 +161,7 @@ bool emitCompileOptions(const RecordKeeper &records, raw_ostream &OS) {
   for (const Record *R : specs) {
     ConfigOption cfgOpt(R);
     if (!cfgOpt.getEmitOptionRegistration())
+    if (!cfgOpt.shouldRegisterCLIOption())
       continue;
 
     if (emitCompileOption(cfgOpt, OS))

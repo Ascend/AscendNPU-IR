@@ -1,5 +1,6 @@
 //===- ComposeCollapseExpand.cpp ------------------------------------------===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,7 +24,6 @@
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/include/mlir/Dialect/Utils/ReshapeOpsUtils.h
 //===----------------------------------------------------------------------===//
-
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -167,6 +167,8 @@ private:
     auto resultSize =
         resultDynShapes[static_cast<size_t>(resDynamicIndex)]
             .getDefiningOp<memref::DimOp>();
+    auto resultSize = resultOp.getOutputShape()[resDynamicIndex]
+                          .getDefiningOp<memref::DimOp>();
     if (!resultSize) {
       return false;
     }

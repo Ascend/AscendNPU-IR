@@ -37,6 +37,9 @@
 /* If set, only build IR definitions. */
 #cmakedefine01 BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
+/* If set, enable conversion and compile from Triton Dialect. */
+#cmakedefine01 BISHENGIR_ENABLE_TRITON_COMPILE
+
 /* Specifies BiShengIR vendor information. */
 #cmakedefine BISHENGIR_VENDOR "${BISHENGIR_VENDOR}"
 
@@ -45,7 +48,7 @@
 
 /* Specifies BiShengIR build mode. */
 #if defined(__GNUC__)
-/* GCC and GCC-compatible compilers define __OPTIMIZE__ when optimizations are 
+/* GCC and GCC-compatible compilers define __OPTIMIZE__ when optimizations are
    enabled. */
 # if defined(__OPTIMIZE__)
 #  define BISHENGIR_IS_DEBUG_BUILD 0

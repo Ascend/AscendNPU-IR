@@ -108,6 +108,7 @@ OpOperand *traceReshapeAndRewriteInverse(PatternRewriter &rewriter,
       break;
     }
     LDBG(*outValue->getOwner()->getParentOp());
+    LDBG((outValue->getOwner()->getParentOp() ? *(outValue->getOwner()->getParentOp()) : *(outValue->getOwner())));
     if (!reshapePropagated)
       break;
   }

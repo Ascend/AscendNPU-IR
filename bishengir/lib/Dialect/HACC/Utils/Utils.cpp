@@ -26,7 +26,13 @@
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
 #include "llvm/Support/FormatVariadic.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
+#include "llvm/Support/FormatVariadic.h"
+#include <optional>
 #include <unordered_set>
 
 #define DEBUG_TYPE "bishengir-hacc-utils"
@@ -193,6 +199,8 @@ void setNPUTargetSpec(ModuleOp op, HACCTargetDeviceSpecInterface spec) {
   SmallVector<DataLayoutEntryInterface> entries;
   entries.push_back(DataLayoutEntryAttr::get(ctx, StringAttr::get(ctx, kNPUStr), spec));
 #endif
+  SmallVector<DeviceIDTargetDeviceSpecPair> entries;
+  entries.push_back({StringAttr::get(ctx, kNPUStr), spec});
   op->setAttr(TargetSystemSpecAttr::name,
               TargetSystemSpecAttr::get(ctx, entries));
 }
@@ -210,6 +218,9 @@ std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op) {
 
 std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
   if (auto targetAttr = op->getAttrOfType<TargetAttr>(TargetAttr::name))
+std::optional<TargetDevice> getTargetDevice(ModuleOp op) {
+  if (auto targetAttr =
+          op ? op->getAttrOfType<TargetAttr>(TargetAttr::name) : nullptr)
     return symbolizeTargetDeviceEnum(targetAttr.getTarget());
   return std::nullopt;
 }
@@ -249,6 +260,102 @@ bool isAscend910_95(TargetDevice targetDevice) {
 }
 
 bool isAscend910_95(ModuleOp op) {
+void setTargetDevice(ModuleOp op, TargetDevice targetDevice) {
+  MLIRContext *ctx = op->getContext();
+  op->setAttr(
+      TargetAttr::name,
+      TargetAttr::get(
+          ctx, StringAttr::get(ctx, stringifyTargetDeviceEnum(targetDevice))));
+  return;
+}
+
+// TODO: we should use td to check the arch automatically
+bool isAscend910B(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend910B1 ||
+         targetDevice == TargetDevice::Ascend910B2 ||
+         targetDevice == TargetDevice::Ascend910B3 ||
+         targetDevice == TargetDevice::Ascend910B4;
+}
+
+bool isAscend910_93(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend910_9362 ||
+         targetDevice == TargetDevice::Ascend910_9372 ||
+         targetDevice == TargetDevice::Ascend910_9381 ||
+         targetDevice == TargetDevice::Ascend910_9382 ||
+         targetDevice == TargetDevice::Ascend910_9391 ||
+         targetDevice == TargetDevice::Ascend910_9392;
+}
+
+bool isMemBasedArch(TargetDevice targetDevice) {
+  return isAscend910B(targetDevice) || isAscend910_93(targetDevice);
+}
+
+bool isAscend310B(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend310B1 ||
+         targetDevice == TargetDevice::Ascend310B2 ||
+         targetDevice == TargetDevice::Ascend310B3 ||
+         targetDevice == TargetDevice::Ascend310B4;
+}
+
+// use unordered_set to speedup because this func is frequently called
+bool isAscend950(TargetDevice targetDevice) {
+  static const std::unordered_set<TargetDevice> ascend950Devices = {
+      TargetDevice::Ascend910_950z,   TargetDevice::Ascend910_9579,
+      TargetDevice::Ascend910_957b,   TargetDevice::Ascend910_957d,
+      TargetDevice::Ascend910_9581,   TargetDevice::Ascend910_9589,
+      TargetDevice::Ascend910_958a,   TargetDevice::Ascend910_958b,
+      TargetDevice::Ascend910_9599,   TargetDevice::Ascend950PR_950z,
+      TargetDevice::Ascend950PR_9579, TargetDevice::Ascend950PR_957a,
+      TargetDevice::Ascend950PR_957b, TargetDevice::Ascend950PR_957c,
+      TargetDevice::Ascend950PR_957d, TargetDevice::Ascend950PR_9589,
+      TargetDevice::Ascend950PR_958a, TargetDevice::Ascend950PR_958b,
+      TargetDevice::Ascend950PR_958c, TargetDevice::Ascend950PR_958d,
+      TargetDevice::Ascend950PR_9599, TargetDevice::Ascend950PR_959a,
+      TargetDevice::Ascend950PR_959b, TargetDevice::Ascend950DT_950x,
+      TargetDevice::Ascend950DT_950y, TargetDevice::Ascend950DT_9571,
+      TargetDevice::Ascend950DT_9572, TargetDevice::Ascend950DT_9573,
+      TargetDevice::Ascend950DT_9574, TargetDevice::Ascend950DT_9575,
+      TargetDevice::Ascend950DT_9576, TargetDevice::Ascend950DT_9577,
+      TargetDevice::Ascend950DT_9578, TargetDevice::Ascend950DT_9581,
+      TargetDevice::Ascend950DT_9582, TargetDevice::Ascend950DT_9583,
+      TargetDevice::Ascend950DT_9584, TargetDevice::Ascend950DT_9585,
+      TargetDevice::Ascend950DT_9586, TargetDevice::Ascend950DT_9587,
+      TargetDevice::Ascend950DT_9588, TargetDevice::Ascend950DT_9591,
+      TargetDevice::Ascend950DT_9592, TargetDevice::Ascend950DT_9595,
+      TargetDevice::Ascend950DT_9596, TargetDevice::Ascend950DT_95A1,
+      TargetDevice::Ascend950DT_95A2};
+
+  return ascend950Devices.find(targetDevice) != ascend950Devices.end();
+}
+
+bool isAscend950(llvm::StringRef targetDevice) {
+  return isAscend950(symbolizeTargetDeviceEnum(targetDevice));
+}
+
+bool isRegBasedArch(TargetDevice targetDevice) {
+  return isAscend310B(targetDevice) || isAscend950(targetDevice);
+}
+
+bool isRegBasedArch(llvm::StringRef targetDevice) {
+  return isRegBasedArch(symbolizeTargetDeviceEnum(targetDevice));
+}
+
+bool isFFTSSupportedArch(TargetDevice targetDevice) {
+  return isAscend910B(targetDevice) || isAscend910_93(targetDevice) ||
+         isAscend950(targetDevice);
+}
+
+bool isAscend910B(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return true;
+  auto targetDevice = maybeTargetDevice.value();
+  return isAscend910B(targetDevice);
+}
+
+bool isAscend910_93(ModuleOp op) {
   auto maybeTargetDevice = getTargetDevice(op);
   if (!maybeTargetDevice.has_value())
     // Default is 910B. To ensure compatibility, return false
@@ -256,6 +363,47 @@ bool isAscend910_95(ModuleOp op) {
     return false;
   auto targetDevice = maybeTargetDevice.value();
   return isAscend910_95(targetDevice);
+  return isAscend910_93(targetDevice);
+}
+
+bool isMemBasedArch(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return true;
+  auto targetDevice = maybeTargetDevice.value();
+  return isAscend910B(targetDevice) || isAscend910_93(targetDevice);
+}
+
+bool isAscend310B(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  auto targetDevice = maybeTargetDevice.value();
+  return isAscend310B(targetDevice);
+}
+
+bool isAscend950(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  auto targetDevice = maybeTargetDevice.value();
+  return isAscend950(targetDevice);
+}
+
+bool isRegBasedArch(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  auto targetDevice = maybeTargetDevice.value();
+  return isAscend310B(targetDevice) || isAscend950(targetDevice);
 }
 
 } // namespace utils
@@ -288,6 +436,10 @@ resetDeclFuncLoc(LLVM::LLVMFuncOp /* don't need reference */ llvmFunc) {
         originalAttr.getLinkageName(), originalAttr.getFile(), unsigned(),
         unsigned(), LLVM::DISubprogramFlags::Optimized, originalAttr.getType(), {}, {});
 #else
+    if (!originalLoc.getMetadata()) {
+      return;
+    }
+    auto originalAttr = cast<LLVM::DISubprogramAttr>(originalLoc.getMetadata());
     auto newAttr = LLVM::DISubprogramAttr::get(
         llvmFunc->getContext(), DistinctAttr(), LLVM::DICompileUnitAttr(),
         originalAttr.getScope(), originalAttr.getName(),
@@ -347,6 +499,10 @@ bool existEntryHost(Operation *module) {
         auto calleeOp =
             dyn_cast<HACCFunction>(SymbolTable::lookupNearestSymbolFrom(
                 func, llvm::cast<SymbolRefAttr>(callee)));
+                                << callee.get<SymbolRefAttr>() << "\n";);
+        auto calleeOp =
+            dyn_cast<HACCFunction>(SymbolTable::lookupNearestSymbolFrom(
+                func, callee.get<SymbolRefAttr>()));
 
         LLVM_DEBUG(llvm::dbgs() << "got callee " << *calleeOp << "\n";);
         if (calleeOp.isDevice()) {
@@ -452,5 +608,144 @@ size_t countDeviceArgSizeInByte(ModuleOp modOp) {
   return maxArgSizeInBytes;
 }
 
+static bool isCombinerLikeRegion(Region &reg, unsigned expectedNumArgs = 2) {
+  if (!reg.hasOneBlock()) {
+    return false;
+  }
+  auto &block = reg.front();
+  if (block.getNumArguments() != expectedNumArgs) {
+    return false;
+  }
+  auto yield = dyn_cast<linalg::YieldOp>(block.getTerminator());
+  return yield && yield.getNumOperands() == 1;
+}
+
+static bool verifyReduceSupportedParams(linalg::ReduceOp op) {
+  if (op.hasIndexSemantics()) {
+    return false;
+  }
+  return isCombinerLikeRegion(op.getRegion());
+}
+
+static std::optional<std::pair<RankedTensorType, RankedTensorType>>
+getAndVerifyReduceInputs(linalg::ReduceOp op) {
+  if (op.getNumDpsInits() != 1 || op.getNumDpsInputs() != 1) {
+    return {};
+  }
+
+  Value input = op.getDpsInputOperand(0)->get();
+  Value outInit = op.getDpsInitOperand(0)->get();
+
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  auto outputType = dyn_cast<RankedTensorType>(outInit.getType());
+  if (!inputType || !outputType) {
+    return {};
+  }
+
+  return std::pair{inputType, outputType};
+}
+
+static std::optional<SmallVector<int64_t, 2>>
+verifyReduceGeometryAndGetReduceDims(linalg::ReduceOp op) {
+  auto reduceInputs = getAndVerifyReduceInputs(op);
+  if (!reduceInputs) {
+    return {};
+  }
+  auto [inputType, outputType] = *reduceInputs;
+
+  auto inputRank = inputType.getRank();
+  if (inputRank < 1) {
+    return {};
+  }
+
+  auto outRank = outputType.getRank();
+  if (outRank >= inputRank || outRank < 0) {
+    return {};
+  }
+
+  auto maps = op.getIndexingMapsArray();
+  if (maps.size() != 2) {
+    return {};
+  }
+
+  auto inMap = maps[0];
+  if (!inMap.isIdentity()) {
+    return {};
+  }
+  if (inMap.getNumDims() != inputRank) {
+    return {};
+  }
+
+  auto outMap = maps[1];
+  if (outMap.getNumDims() != inputRank) {
+    return {};
+  }
+  if (outMap.getNumResults() != outRank) {
+    return {};
+  }
+
+  auto iters = op.getIteratorTypesArray();
+  SmallVector<int64_t, 2> reduceDims;
+  for (auto [i, iterType] : llvm::enumerate(op.getIteratorTypesArray())) {
+    if (iterType == ::mlir::utils::IteratorType::reduction) {
+      reduceDims.push_back(i);
+    } else {
+      if (iterType != ::mlir::utils::IteratorType::parallel) {
+        return {};
+      }
+    }
+  }
+
+  if (inputRank - (int)reduceDims.size() != outRank) {
+    return {};
+  }
+  return reduceDims;
+}
+
+bool isSkippable(linalg::ReduceOp op) {
+  return op.getNumDpsInits() != 1 || op.getNumDpsInputs() != 1 ||
+         isCombinerLikeRegion(op.getRegion(), 4); // reduce with index
+}
+
+bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op) {
+  assert(isLegalReduceOp(op));
+  auto isComplexSingleOp = [](Operation *op) {
+    return op->getDialect()->getNamespace() ==
+           scf::SCFDialect::getDialectNamespace();
+  };
+  auto getSingleReduceOp =
+      [&isComplexSingleOp](linalg::ReduceOp op) -> std::optional<Operation *> {
+    auto &region = op.getRegion();
+    assert(isCombinerLikeRegion(region));
+
+    auto &ops = region.front().getOperations();
+    if (ops.size() > 2 && !isComplexSingleOp(&ops.front())) {
+      return {};
+    }
+    return &ops.front();
+  };
+
+  auto reduceOp = getSingleReduceOp(op);
+  if (!reduceOp) {
+    return false;
+  }
+
+  if (isa<arith::AndIOp, arith::OrIOp>(*reduceOp)) {
+    // reduce i1 andi/ori will be normalized to i16 min/max in
+    // hfusion-normalize-ops, so it's legal to vectorize
+    auto elemType = (*reduceOp)->getOperand(0).getType();
+    return elemType.isInteger(1);
+  }
+
+  return isa<linalg::YieldOp, arith::AddFOp, arith::AddIOp, arith::MaximumFOp,
+             arith::MaxNumFOp, arith::MinimumFOp, arith::MinNumFOp,
+             arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp, arith::MaxUIOp,
+             arith::XOrIOp>(*reduceOp);
+}
+
+bool isLegalReduceOp(linalg::ReduceOp op) {
+  return verifyReduceGeometryAndGetReduceDims(op) &&
+         verifyReduceSupportedParams(op);
+}
 } // namespace hacc
 } // namespace mlir

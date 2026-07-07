@@ -103,6 +103,16 @@ public:
   /// @param descendants SetVector to store the results in
   void getReshapeDescendants(Value val, SetVector<Value> &descendants);
 
+  /// Traces through a chain of reshape operations and creates inverse
+  /// operations for them. This allows transforming the IR by inserting inverse
+  /// operations where needed.
+  ///
+  /// @param rewriter The pattern rewriter to use for creating operations
+  /// @param outValue The operand to start tracing from
+  /// @return The updated operand after creating inverse operations
+  static OpOperand *traceReshapeAndRewriteInverse(PatternRewriter &rewriter,
+                                                  OpOperand *outValue);
+
 protected:
   /// Computes and tracks reshape operations that originate from function
   /// arguments. Builds a mapping between function arguments and their reshaped

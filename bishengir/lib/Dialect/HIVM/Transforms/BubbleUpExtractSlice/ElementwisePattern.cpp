@@ -14,6 +14,11 @@
 // limitations under the License.
 //
 //============================================================================//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//============================================================================//
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/Pattern.h"
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
@@ -58,6 +63,7 @@ struct SliceParameters {
 };
 
 // This function refer on the implementation of linalg bubbleUpExtractSlice.
+// This function refer on the implmentation of linalg bubbleUpExtractSlice.
 static SliceParameters
 computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
                        ArrayRef<OpFoldResult> tileSizes, AffineMap map,
@@ -169,6 +175,8 @@ computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
                                  .front();
       SmallVector<OpFoldResult> maxIndices = llvm::to_vector(
           llvm::map_range(ubs, [&rewriter, &loc, &minusOneMap](OpFoldResult ub) {
+      SmallVector<OpFoldResult> maxIndices = llvm::to_vector(llvm::map_range(
+          ubs, [&rewriter, &loc, &minusOneMap](OpFoldResult ub) {
             return mlir::affine::makeComposedFoldedAffineApply(
                 rewriter, loc, minusOneMap, {ub});
           }));
@@ -196,6 +204,7 @@ computeSliceParameters(OpBuilder &builder, Location loc, Value valueToTile,
 }
 
 // This function refer on the implementation of linalg bubbleUpExtractSlice.
+// This function refer on the implmentation of linalg bubbleUpExtractSlice.
 static SmallVector<std::optional<SliceParameters>> computeAllSliceParameters(
     OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
     ValueRange valuesToTile, ArrayRef<OpFoldResult> ivs,
@@ -248,6 +257,7 @@ static SmallVector<std::optional<SliceParameters>> computeAllSliceParameters(
 }
 
 // This function refer on the implementation of linalg bubbleUpExtractSlice.
+// This function refer on the implmentation of linalg bubbleUpExtractSlice.
 static Value materializeTiledShape(OpBuilder &builder, Location loc,
                                    Value valueToTile,
                                    const SliceParameters &sliceParams) {
@@ -268,6 +278,27 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
                       .Default([](ShapedType) -> Operation * {
                         llvm::report_fatal_error("Unexpected shaped type");
                       });
+  auto *sliceOp =
+      TypeSwitch<ShapedType, Operation *>(shapedType)
+          .Case([&builder, &loc, &valueToTile, &sliceParams](MemRefType) {
+            return builder.create<memref::SubViewOp>(
+                loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
+                sliceParams.strides);
+          })
+          .Case([&builder, &loc, &valueToTile, &sliceParams](RankedTensorType) {
+            if (auto defOp = valueToTile.getDefiningOp()) {
+              builder.setInsertionPointAfter(
+                  defOp); // Set the sliceOp right after sourceOp
+            } else {
+              builder.setInsertionPointToStart(valueToTile.getParentBlock());
+            }
+            return builder.create<tensor::ExtractSliceOp>(
+                loc, valueToTile, sliceParams.offsets, sliceParams.sizes,
+                sliceParams.strides);
+          })
+          .Default([](ShapedType) -> Operation * {
+            llvm_unreachable("Unexpected shaped type");
+          });
   if (isa<tensor::ExtractSliceOp>(sliceOp)) {
     sliceOp->setAttr(toBeBubbleUpSlice, UnitAttr::get(builder.getContext()));
   }
@@ -275,6 +306,7 @@ static Value materializeTiledShape(OpBuilder &builder, Location loc,
 }
 
 // This function refer on the implementation of linalg bubbleUpExtractSlice.
+// This function refer on the implmentation of linalg bubbleUpExtractSlice.
 SmallVector<Value>
 makeTiledShapes(OpBuilder &builder, Location loc, HIVMStructuredOp hivmOp,
                 ValueRange valuesToTile, ArrayRef<OpFoldResult> ivs,
@@ -363,6 +395,19 @@ ElementwiseBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   rewriter.setInsertionPointAfter(hivmOp);
   Operation *newOp = clone(rewriter, hivmOp, resultTensorTypes, tiledOperands);
   rewriter.replaceOp(sliceOp, newOp->getResults());
+  if (hivmOp->getResults().empty()) {
+    rewriter.eraseOp(hivmOp);
+    return success();
+  }
+  for (Operation *user :
+       llvm::make_early_inc_range(hivmOp->getResult(0).getUsers())) {
+    if (auto mark = dyn_cast<annotation::MarkOp>(user)) {
+      rewriter.modifyOpInPlace(
+          mark, [&]() { mark->setOperand(0, newOp->getResult(0)); });
+    }
+  }
+
+  rewriter.eraseOp(hivmOp);
   return success();
 }
 

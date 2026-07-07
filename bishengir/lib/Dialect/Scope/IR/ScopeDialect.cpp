@@ -16,12 +16,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 // For function inliner support
 #include "mlir/Transforms/InliningUtils.h"
 
+// For function inliner support
+#include "mlir/Transforms/InliningUtils.h"
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/Scope/IR/ScopeOps.cpp.inc"
 
@@ -58,6 +61,10 @@ void mlir::scope::ScopeDialect::initialize() {
 
   // Add function inliner interfaces
   addInterfaces<ScopeInlinerInterface>();
+
+  // Declare promised interfaces for bufferization
+  declarePromisedInterfaces<bufferization::BufferizableOpInterface, ScopeOp,
+                            ReturnOp>();
 }
 
 #include "bishengir/Dialect/Scope/IR/ScopeDialect.cpp.inc"

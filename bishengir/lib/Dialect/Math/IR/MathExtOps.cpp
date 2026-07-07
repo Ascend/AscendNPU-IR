@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/CommonFolders.h"
+#include "mlir/Dialect/Quant/QuantOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -78,6 +79,19 @@ OpFoldResult mathExt::LdexpOp::fold(FoldAdaptor adaptor) {
       });
 }
 
+//===----------------------------------------------------------------------===//
+// DivFHPOp folder
+//===----------------------------------------------------------------------===//
+OpFoldResult mathExt::DivFHPOp::fold(FoldAdaptor adaptor) {
+  return constFoldBinaryOpConditional<FloatAttr>(
+      adaptor.getOperands(),
+      /*calculate=*/
+      [](const APFloat &a, const APFloat &b) -> std::optional<APFloat> {
+        APFloat out = a; // IMPORTANT: make a mutable copy
+        out.divide(b, APFloat::rmNearestTiesToEven); // divide mutates 'out'
+        return out;
+      });
+}
 /// Materialize an integer or floating point constant.
 Operation *mathExt::MathExtDialect::materializeConstant(OpBuilder &builder,
                                                         Attribute value,

@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Utils/UnionFind.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 #include "bishengir/Dialect/Utils/ValueDependencyAnalyzer.h"
@@ -49,6 +50,7 @@ void ValueDependencyAnalyzer::reset() {
   // reset data
   valueList.clear();
   valueToIndexMap.clear();
+  OpsOfAlloc.clear();
 }
 
 void ValueDependencyAnalyzer::pushAllValues(Operation *parent) {
@@ -56,6 +58,7 @@ void ValueDependencyAnalyzer::pushAllValues(Operation *parent) {
     if (valueToIndexMap.contains(val))
       return;
     valueToIndexMap[val] = static_cast<int>(valueList.size());
+    OpsOfAlloc.push_back({});
     valueList.push_back(val);
   };
 
@@ -75,6 +78,15 @@ void ValueDependencyAnalyzer::pushAllValues(Operation *parent) {
       });
 }
 
+void ValueDependencyAnalyzer::pushRelatedOpsOfAlloc(Operation *const op) {
+  auto getAllocIdx = [this](Value val) -> int {
+    return this->valueToIndexMap.at(getAllocOf(val));
+  };
+  for (auto res : op->getResults())
+    OpsOfAlloc[getAllocIdx(res)].push_back(op);
+  for (auto opr : op->getOperands())
+    OpsOfAlloc[getAllocIdx(opr)].push_back(op);
+}
 void ValueDependencyAnalyzer::buildValueDependency(Operation *parent) {
   reset();
   pushAllValues(parent);
@@ -96,6 +108,28 @@ void ValueDependencyAnalyzer::buildValueDependency(Operation *parent) {
 
 Value ValueDependencyAnalyzer::getAllocOf(Value value) {
   return valueList[dsu.find(valueToIndexMap.at(value))];
+    pushRelatedOpsOfAlloc(op);
+
+    if (auto viewLikeOp = dyn_cast<ViewLikeOpInterface>(op)) {
+      auto srcIdx = valueToIndexMap.at(viewLikeOp.getViewSource());
+
+      for (OpResult result : viewLikeOp->getResults()) {
+        // handle for aliases operation
+        dsu.join(srcIdx, valueToIndexMap.at(result));
+      }
+    }
+    return WalkResult::advance();
+  });
+
+#ifndef NDEBUG
+  auto numOpsOfAlloc = OpsOfAlloc.size();
+  auto numValues = valueList.size();
+  assert(numOpsOfAlloc == numValues);
+#endif
+}
+
+Value ValueDependencyAnalyzer::getAllocOf(Value value) {
+  return valueList[dsu.minIndex[dsu.find(valueToIndexMap.at(value))]];
 }
 
 } // namespace utils

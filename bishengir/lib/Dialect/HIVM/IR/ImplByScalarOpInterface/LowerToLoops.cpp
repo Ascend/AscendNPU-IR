@@ -17,7 +17,6 @@
 
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
-
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/TypeUtilities.h"
 #include <algorithm>
@@ -40,10 +39,33 @@ Value getScalarResult(RewriterBase &rewriter, Location loc,
   return arithOp.getResult();
 }
 
+//===----------------------------------------------------------------------===//
+// regbase helpers: signless integer type conversion
+//===----------------------------------------------------------------------===//
+
+static Type getSignlessIntegerLikeType(Type type) {
+  auto intType = dyn_cast<IntegerType>(type);
+  if (!intType || (!intType.isSigned() && !intType.isUnsigned()))
+    return type;
+  return IntegerType::get(type.getContext(), intType.getWidth());
+}
+
+static Value bitcastIntegerLikeToSignless(RewriterBase &rewriter, Location loc,
+                                          Value value) {
+  Type signlessType = getSignlessIntegerLikeType(value.getType());
+  if (signlessType == value.getType())
+    return value;
+  return rewriter.create<arith::BitcastOp>(loc, signlessType, value);
+}
+
+//===----------------------------------------------------------------------===//
+// createScalarComputeOp — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
 template <typename HIVMOP>
 llvm::SmallVector<Value>
-createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
-                      llvm::SmallVector<Value, 4> scalarInputs) {
+createScalarComputeOp_membase(RewriterBase &rewriter, HIVMOP op,
+                              llvm::SmallVector<Value, 4> scalarInputs) {
   llvm::SmallVector<Value> resTensors;
   Value resTensor;
   if constexpr (std::is_same<hivm::VMulOp, HIVMOP>::value) {
@@ -129,8 +151,138 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
   return resTensors;
 }
 
+//===----------------------------------------------------------------------===//
+// createScalarComputeOp — regbase version
+//===----------------------------------------------------------------------===//
+
 template <typename HIVMOP>
-void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
+llvm::SmallVector<Value>
+createScalarComputeOp_regbase(RewriterBase &rewriter, HIVMOP op,
+                              llvm::SmallVector<Value, 4> scalarInputs) {
+  llvm::SmallVector<Value> resTensors;
+  Value resTensor;
+  if constexpr (std::is_same<hivm::VMulOp, HIVMOP>::value) {
+    if (getElementTypeOrSelf(op.getOperand(0)).isInteger())
+      resTensor = getScalarResult<hivm::VMulOp, arith::MulIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMulOp, arith::MulFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VMulExtOp, HIVMOP>::value) {
+    auto mulextOp = rewriter.create<arith::MulUIExtendedOp>(
+        op.getLoc(), scalarInputs[0], scalarInputs[1]);
+    resTensors.push_back(mulextOp.getLow());
+    resTensors.push_back(mulextOp.getHigh());
+  } else if constexpr (std::is_same<hivm::VAddOp, HIVMOP>::value) {
+    if (getElementTypeOrSelf(op.getOperand(0)).isInteger())
+      resTensor = getScalarResult<hivm::VAddOp, arith::AddIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VAddOp, arith::AddFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VSubOp, HIVMOP>::value) {
+    resTensor = getScalarResult<hivm::VSubOp, arith::SubIOp>(
+        rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VMinOp, HIVMOP>::value) {
+    Type elemType = getElementTypeOrSelf(op.getOperand(0));
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getIsSigned())
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VMaxOp, HIVMOP>::value) {
+    Type elemType = getElementTypeOrSelf(op.getOperand(0));
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getIsSigned())
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VAbsOp, HIVMOP>::value) {
+    resTensor = getScalarResult<hivm::VAbsOp, math::AbsIOp>(
+        rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VCmpOp, HIVMOP>::value) {
+    arith::CmpIPredicate predType;
+    bool isSigned = op.getIsSigned();
+    switch (op.getCompareMode()) {
+    case hivm::CompareMode::LT:
+      predType =
+          isSigned ? arith::CmpIPredicate::slt : arith::CmpIPredicate::ult;
+      break;
+    case hivm::CompareMode::GT:
+      predType =
+          isSigned ? arith::CmpIPredicate::sgt : arith::CmpIPredicate::ugt;
+      break;
+    case hivm::CompareMode::LE:
+      predType =
+          isSigned ? arith::CmpIPredicate::sle : arith::CmpIPredicate::ule;
+      break;
+    case hivm::CompareMode::GE:
+      predType =
+          isSigned ? arith::CmpIPredicate::sge : arith::CmpIPredicate::uge;
+      break;
+    case hivm::CompareMode::EQ:
+      predType = arith::CmpIPredicate::eq;
+      break;
+    case hivm::CompareMode::NE:
+      predType = arith::CmpIPredicate::ne;
+      break;
+    }
+    resTensor = rewriter
+                    .create<arith::CmpIOp>(op.getLoc(), predType,
+                                           bitcastIntegerLikeToSignless(
+                                               rewriter, op.getLoc(),
+                                               scalarInputs[0]),
+                                           bitcastIntegerLikeToSignless(
+                                               rewriter, op.getLoc(),
+                                               scalarInputs[1]))
+                    .getResult();
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VShLOp, HIVMOP>::value) {
+    resTensor = getScalarResult<hivm::VShLOp, arith::ShLIOp>(
+        rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else if constexpr (std::is_same<hivm::VShROp, HIVMOP>::value) {
+    resTensor = getScalarResult<hivm::VShROp, arith::ShRSIOp>(
+        rewriter, op.getLoc(), scalarInputs);
+    resTensors.push_back(resTensor);
+  } else {
+    llvm_unreachable("Unsupport op type.");
+  }
+  return resTensors;
+}
+
+//===----------------------------------------------------------------------===//
+// createScalarComputeOp — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+llvm::SmallVector<Value>
+createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
+                      llvm::SmallVector<Value, 4> scalarInputs) {
+  return createScalarComputeOp_membase(rewriter, op, scalarInputs);
+}
+
+
+//===----------------------------------------------------------------------===//
+// decomposeVectorOpToScalarOpImpl — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+void decomposeVectorOpToScalarOpImpl_membase(RewriterBase &rewriter, HIVMOP op) {
   auto buildLoopBody = [&rewriter,
                         &op](llvm::SmallVector<Value> indexes) -> void {
     llvm::SmallVector<Value, 4> scalarInputs;
@@ -155,9 +307,7 @@ void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
         std::back_inserter(scalarInputs), getScalarValueFunc);
 
     if constexpr (std::is_same<hivm::VDivOp, HIVMOP>::value) {
-      // === Safe handling: replace division by zero with 1 ===
-      // Logic modification: when the dividend is zero, replace the divisor
-      // with 1.
+      // Safe handling: replace division by zero with 1
       auto elemTySrc = scalarInputs[0].getType();
       if (elemTySrc.isInteger(64)) {
         auto DivLhs = scalarInputs[0];
@@ -179,7 +329,8 @@ void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
 
     llvm::SmallVector<Value> dstIndexes(indexes);
     llvm::SmallVector<Value> resTensors =
-        createScalarComputeOp(rewriter, op, scalarInputs);
+        createScalarComputeOp_membase(rewriter, op, scalarInputs);
+
     if constexpr (std::is_same<hivm::VCmpOp, HIVMOP>::value) {
       resTensors[0] = rewriter.create<arith::ExtUIOp>(
           op.getLoc(), rewriter.getIntegerType(8), resTensors[0]);
@@ -201,6 +352,65 @@ void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
   createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
 }
 
+//===----------------------------------------------------------------------===//
+// decomposeVectorOpToScalarOpImpl — regbase version
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+void decomposeVectorOpToScalarOpImpl_regbase(RewriterBase &rewriter, HIVMOP op) {
+  auto buildLoopBody = [&rewriter,
+                        &op](llvm::SmallVector<Value> indexes) -> void {
+    auto getScalarValueFunc = [&](OpOperand *operand) -> Value {
+      return mlir::utils::getScalarValue(rewriter, op->getLoc(), operand->get(),
+                                         &indexes);
+    };
+
+    llvm::SmallVector<Value, 4> scalarInputs;
+    auto hivmStructureOp = dyn_cast<hivm::HIVMStructuredOp>(op.getOperation());
+    assert(hivmStructureOp);
+    llvm::transform(
+        hivmStructureOp.getHIVMInputOperands(false /*includeExtraBuffer*/),
+        std::back_inserter(scalarInputs), getScalarValueFunc);
+
+    llvm::SmallVector<Value> dstIndexes(indexes);
+    llvm::SmallVector<Value> resTensors =
+        createScalarComputeOp_regbase(rewriter, op, scalarInputs);
+
+    if constexpr (std::is_same<hivm::VCmpOp, HIVMOP>::value) {
+      resTensors[0] = rewriter.create<arith::ExtUIOp>(
+          op.getLoc(), rewriter.getIntegerType(8), resTensors[0]);
+    }
+    for (size_t i = 0; i < resTensors.size(); ++i) {
+      size_t resIndex = i;
+      mlir::utils::createSinglePointStore(
+          rewriter, op.getLoc(), resTensors[resIndex],
+          op.getDpsInits()[resIndex], dstIndexes);
+    }
+  };
+
+  Value dst = op->getOperand(0);
+  MemRefType dstType = dyn_cast<MemRefType>(dst.getType());
+  std::set<int> loopDims;
+  for (int i = 0; i < dstType.getRank(); i++) {
+    loopDims.insert(i);
+  }
+  std::vector<scf::ForOp> loops =
+      createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
+
+  if (util::isSIMTVF(op.getOperation()))
+    for (scf::ForOp loop : loops)
+      loop->setAttr(utils::kMapForToForallAttrName, rewriter.getUnitAttr());
+}
+
+//===----------------------------------------------------------------------===//
+// decomposeVectorOpToScalarOpImpl — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
+  decomposeVectorOpToScalarOpImpl_membase(rewriter, op);
+}
+
 template <typename HIVMOP>
 FailureOr<SmallVector<Value>>
 decomposeVectorOpToScalarOp(RewriterBase &rewriter, HIVMOP op) {
@@ -214,10 +424,14 @@ decomposeVectorOpToScalarOp(RewriterBase &rewriter, HIVMOP op) {
   return SmallVector<Value>{};
 }
 
+//===----------------------------------------------------------------------===//
+// createScalarCumulativeComputeOp — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
 template <typename HIVMOP>
 llvm::SmallVector<Value>
-createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
-                                llvm::SmallVector<Value, 4> scalarInputs) {
+createScalarCumulativeComputeOp_membase(RewriterBase &rewriter, HIVMOP op,
+                                        llvm::SmallVector<Value, 4> scalarInputs) {
   Value resTensor;
   auto elemType = getElementTypeOrSelf(scalarInputs[0]);
   if constexpr (std::is_same<hivm::VCumsumOp, HIVMOP>::value) {
@@ -240,10 +454,78 @@ createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
   return resTensors;
 }
 
+//===----------------------------------------------------------------------===//
+// createScalarCumulativeComputeOp — regbase version
+//===----------------------------------------------------------------------===//
+
 template <typename HIVMOP>
-void storeFirstValueOfCumDim(RewriterBase &rewriter,
-                             llvm::SmallVector<Value> dstIndexes, HIVMOP op,
-                             int64_t cumDim) {
+llvm::SmallVector<Value>
+createScalarCumulativeComputeOp_regbase(RewriterBase &rewriter, HIVMOP op,
+                                        llvm::SmallVector<Value, 4> scalarInputs) {
+  Value resTensor;
+  auto elemType = getElementTypeOrSelf(scalarInputs[0]);
+  if constexpr (std::is_same<hivm::VCumsumOp, HIVMOP>::value) {
+    resTensor = elemType.isInteger()
+                    ? getScalarResult<hivm::VCumsumOp, arith::AddIOp>(
+                          rewriter, op.getLoc(), scalarInputs)
+                    : getScalarResult<hivm::VCumsumOp, arith::AddFOp>(
+                          rewriter, op.getLoc(), scalarInputs);
+  } else if constexpr (std::is_same<hivm::VCumprodOp, HIVMOP>::value) {
+    resTensor = elemType.isInteger()
+                    ? getScalarResult<hivm::VCumprodOp, arith::MulIOp>(
+                          rewriter, op.getLoc(), scalarInputs)
+                    : getScalarResult<hivm::VCumprodOp, arith::MulFOp>(
+                          rewriter, op.getLoc(), scalarInputs);
+  } else if constexpr (std::is_same<hivm::VCummaxOp, HIVMOP>::value) {
+    if (elemType.isInteger()) {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else if (op.getPropagateNan()) {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else {
+      resTensor = getScalarResult<hivm::VCummaxOp, arith::MaxNumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    }
+  } else if constexpr (std::is_same<hivm::VCumminOp, HIVMOP>::value) {
+    if (elemType.isInteger()) {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else if (op.getPropagateNan()) {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    } else {
+      resTensor = getScalarResult<hivm::VCumminOp, arith::MinNumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    }
+  } else {
+    llvm_unreachable("Unsupport op type.");
+  }
+  llvm::SmallVector<Value> resTensors;
+  resTensors.push_back(resTensor);
+  return resTensors;
+}
+
+//===----------------------------------------------------------------------===//
+// createScalarCumulativeComputeOp — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+llvm::SmallVector<Value>
+createScalarCumulativeComputeOp(RewriterBase &rewriter, HIVMOP op,
+                                llvm::SmallVector<Value, 4> scalarInputs) {
+  return createScalarCumulativeComputeOp_membase(rewriter, op, scalarInputs);
+}
+
+
+//===----------------------------------------------------------------------===//
+// storeFirstValueOfCumDim — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+void storeFirstValueOfCumDim_membase(RewriterBase &rewriter,
+                                     llvm::SmallVector<Value> dstIndexes, HIVMOP op,
+                                     int64_t cumDim) {
   auto startInd = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
 
   if (op.getReverse()) {
@@ -259,10 +541,63 @@ void storeFirstValueOfCumDim(RewriterBase &rewriter,
                                       op.getDpsInits()[0], dstIndexes);
 }
 
+//===----------------------------------------------------------------------===//
+// storeFirstValueOfCumDim — regbase version
+//===----------------------------------------------------------------------===//
+
 template <typename HIVMOP>
-Value getPreviousLoopCumulativeValue(RewriterBase &rewriter,
-                                     llvm::SmallVector<Value> indexes,
-                                     HIVMOP op, int64_t cumDim) {
+void storeFirstValueOfCumDim_regbase(RewriterBase &rewriter,
+                                     llvm::SmallVector<Value> dstIndexes, HIVMOP op,
+                                     int64_t cumDim) {
+  auto constZero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  auto *it = dstIndexes.begin() + cumDim;
+  dstIndexes.insert(it, constZero);
+  auto loadOp = mlir::utils::createSinglePointLoad(
+      rewriter, op.getLoc(), op.getDpsInputs()[0], dstIndexes);
+  mlir::utils::createSinglePointStore(rewriter, op.getLoc(), loadOp.getResult(),
+                                      op.getDpsInits()[0], dstIndexes);
+}
+
+//===----------------------------------------------------------------------===//
+// storeFirstValueOfCumDim — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+void storeFirstValueOfCumDim(RewriterBase &rewriter,
+                             llvm::SmallVector<Value> dstIndexes, HIVMOP op,
+                             int64_t cumDim) {
+  storeFirstValueOfCumDim_membase(rewriter, dstIndexes, op, cumDim);
+}
+
+//===----------------------------------------------------------------------===//
+// storeLastValueOfCumDim — regbase only (no suffix needed)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+void storeLastValueOfCumDim(RewriterBase &rewriter,
+                            llvm::SmallVector<Value> dstIndexes, HIVMOP op,
+                            int64_t cumDim) {
+  MemRefType dstType = cast<MemRefType>(op.getDst().getType());
+  int64_t dimSize = dstType.getDimSize(cumDim);
+  Location loc = op.getLoc();
+  auto lastIdx = rewriter.create<arith::ConstantIndexOp>(loc, dimSize - 1);
+
+  auto *itLast = dstIndexes.begin() + cumDim;
+  dstIndexes.insert(itLast, lastIdx);
+  auto loadOp = mlir::utils::createSinglePointLoad(
+      rewriter, loc, op.getDpsInputs()[0], dstIndexes);
+  mlir::utils::createSinglePointStore(rewriter, loc, loadOp.getResult(),
+                                      op.getDpsInits()[0], dstIndexes);
+}
+
+//===----------------------------------------------------------------------===//
+// getPreviousLoopCumulativeValue — membase version (HEAD, 4 params)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+Value getPreviousLoopCumulativeValue_membase(RewriterBase &rewriter,
+                                             llvm::SmallVector<Value> indexes,
+                                             HIVMOP op, int64_t cumDim) {
   // Get previous index
   llvm::SmallVector<Value> indexInputs;
   // Push back the cumulative calculate dimension loop index.
@@ -283,6 +618,48 @@ Value getPreviousLoopCumulativeValue(RewriterBase &rewriter,
   return previousLoadOp.getResult();
 }
 
+//===----------------------------------------------------------------------===//
+// getPreviousLoopCumulativeValue — regbase version (5 params with isReverse)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+Value getPreviousLoopCumulativeValue_regbase(RewriterBase &rewriter,
+                                             llvm::SmallVector<Value> indexes,
+                                             HIVMOP op, int64_t cumDim,
+                                             bool isReverse) {
+  // Get previous index
+  llvm::SmallVector<Value> indexInputs;
+  // Push back the cumulative calculate dimension loop index.
+  indexInputs.push_back(indexes[cumDim]);
+  auto constOne = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 1);
+  indexInputs.push_back(constOne.getResult());
+
+  Value arithOpResult;
+  if (isReverse) {
+    arithOpResult = rewriter.create<arith::AddIOp>(op.getLoc(), indexInputs).getResult();
+  } else {
+    arithOpResult = rewriter.create<arith::SubIOp>(op.getLoc(), indexInputs).getResult();
+  }
+
+  llvm::SmallVector<Value> loopInputs{indexes};
+  loopInputs[cumDim] = arithOpResult;
+  auto previousLoadOp = mlir::utils::createSinglePointLoad(
+      rewriter, op.getLoc(), op.getDpsInits()[0], loopInputs);
+  return previousLoadOp.getResult();
+}
+
+//===----------------------------------------------------------------------===//
+// getPreviousLoopCumulativeValue — default wrapper (membase, 4 params)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+Value getPreviousLoopCumulativeValue(RewriterBase &rewriter,
+                                     llvm::SmallVector<Value> indexes,
+                                     HIVMOP op, int64_t cumDim) {
+  return getPreviousLoopCumulativeValue_membase(rewriter, indexes, op, cumDim);
+}
+
+
 /// Decompose cumulative vector calculate to scalar loops.
 /// e.g.
 ///   vcumsum ins(%a : memref<?x?x?>) outs(%b : memref<?x?x?>) cum_dims = [2]
@@ -292,9 +669,14 @@ Value getPreviousLoopCumulativeValue(RewriterBase &rewriter,
 ///       %b[i,j,0] = %a[i,j,0]
 ///       for k 1 to K           -> cum dim
 ///         %b[i,j,k] = %b[i,j,k-1] + %a[i,j,k]
+
+//===----------------------------------------------------------------------===//
+// decomposeCumVectorOpToScalarOpImpl — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
 template <typename HIVMOP>
 FailureOr<SmallVector<Value>>
-decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
+decomposeCumVectorOpToScalarOpImpl_membase(RewriterBase &rewriter, HIVMOP op) {
   Value dst = op.getDst();
   int64_t cumDim = op.getCumDims()[0];
   auto buildLoopBody = [&rewriter, &dst, &cumDim,
@@ -330,11 +712,11 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
 
       // Push the previous value as another scalar input operand
       auto previousLoopValue =
-          getPreviousLoopCumulativeValue(rewriter, indexes, op, cumDim);
+          getPreviousLoopCumulativeValue_membase(rewriter, indexes, op, cumDim);
       scalarInputs.push_back(previousLoopValue);
 
       llvm::SmallVector<Value> resTensors =
-          createScalarCumulativeComputeOp(rewriter, op, scalarInputs);
+          createScalarCumulativeComputeOp_membase(rewriter, op, scalarInputs);
 
       for (size_t i = 0; i < resTensors.size(); ++i) {
         mlir::utils::createSinglePointStore(
@@ -342,16 +724,16 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
       }
     };
 
-    storeFirstValueOfCumDim(rewriter, indexes, op, cumDim);
+    storeFirstValueOfCumDim_membase(rewriter, indexes, op, cumDim);
     std::set<int> cumLoopDim;
     cumLoopDim.insert(cumDim);
     createNestedLoops(rewriter, op.getLoc(), dst, cumLoopDim, buildLastLoopBody,
                       1);
   };
 
-  std::set<int> loopDims;
   MemRefType dstType = cast<MemRefType>(dst.getType());
   auto rank = dstType.getRank();
+  std::set<int> loopDims;
   for (int i = 0; i < rank; i++) {
     if (i != cumDim) {
       loopDims.insert(i);
@@ -360,8 +742,123 @@ decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
   createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
   return SmallVector<Value>{};
 }
+
+//===----------------------------------------------------------------------===//
+// decomposeCumVectorOpToScalarOpImpl — regbase version
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+FailureOr<SmallVector<Value>>
+decomposeCumVectorOpToScalarOpImpl_regbase(RewriterBase &rewriter, HIVMOP op) {
+  Value dst = op.getDst();
+  int64_t cumDim = op.getCumDims()[0];
+  bool isReverse = op.getReverse();
+
+  auto buildLoopBody = [&rewriter, &dst, &cumDim,
+                        &op, &isReverse](llvm::SmallVector<Value> indexes) -> void {
+    llvm::SmallVector<Value> ReverseIndexes = indexes;
+    auto buildLastLoopBody =
+        [&rewriter, &indexes, &cumDim, &op, &isReverse,
+         &ReverseIndexes](llvm::SmallVector<Value> innerIndexes) -> void {
+      // Get loop's index
+      std::function<Value(OpOperand *)> getScalarValueFunc;
+      if (isReverse) {
+        // Obtains the size of the accumulated dimension
+        int64_t dimSize =
+            cast<ShapedType>(op.getDst().getType()).getShape()[cumDim];
+        // Obtains the value of the maximum valid index of the accumulated
+        // dimension
+        Value dimSizeMinusOne =
+            rewriter.create<arith::ConstantIndexOp>(op.getLoc(), dimSize - 1);
+        // Because the loop is forward, and the reverse operation needs to read
+        // data in reverse order The reversedIdx needs to be calculated based on
+        // the forward index.
+        Value reversedIdx = rewriter.create<arith::SubIOp>(
+            op.getLoc(), dimSizeMinusOne, innerIndexes[0]);
+        // ReverseIndexes used for reading data in reverse order
+        auto *itReverse = ReverseIndexes.begin() + cumDim;
+        ReverseIndexes.insert(itReverse, reversedIdx);
+        // Indexes used for forward data storage.
+        auto *it = indexes.begin() + cumDim;
+        indexes.insert(it, innerIndexes[0]);
+
+        getScalarValueFunc = [&](OpOperand *operand) -> Value {
+          return mlir::utils::getScalarValue(rewriter, op->getLoc(),
+                                             operand->get(), &ReverseIndexes);
+        };
+      } else {
+        auto *it = indexes.begin() + cumDim;
+        indexes.insert(it, innerIndexes[0]);
+
+        getScalarValueFunc = [&](OpOperand *operand) -> Value {
+          return mlir::utils::getScalarValue(rewriter, op->getLoc(),
+                                             operand->get(), &indexes);
+        };
+      }
+
+      llvm::SmallVector<Value, 4> scalarInputs;
+      auto hivmStructureOp = cast<hivm::HIVMStructuredOp>(op.getOperation());
+      llvm::transform(
+          hivmStructureOp.getHIVMInputOperands(false /*includeExtraBuffer*/),
+          std::back_inserter(scalarInputs), getScalarValueFunc);
+
+      Value previousLoopValue;
+      if (isReverse) {
+        previousLoopValue = getPreviousLoopCumulativeValue_regbase(
+            rewriter, ReverseIndexes, op, cumDim, isReverse);
+      } else {
+        previousLoopValue = getPreviousLoopCumulativeValue_regbase(
+            rewriter, indexes, op, cumDim, isReverse);
+      }
+      // Push the previous value as another scalar input operand
+      scalarInputs.push_back(previousLoopValue);
+
+      llvm::SmallVector<Value> resTensors =
+          createScalarCumulativeComputeOp_regbase(rewriter, op, scalarInputs);
+
+      for (size_t i = 0; i < resTensors.size(); ++i) {
+        mlir::utils::createSinglePointStore(
+            rewriter, op.getLoc(), resTensors[i], op.getDpsInits()[i],
+            isReverse ? ReverseIndexes : indexes);
+      }
+    };
+
+    if (isReverse) {
+      storeLastValueOfCumDim(rewriter, indexes, op, cumDim);
+    } else {
+      storeFirstValueOfCumDim_regbase(rewriter, indexes, op, cumDim);
+    }
+    std::set<int> cumLoopDim;
+    cumLoopDim.insert(cumDim);
+    createNestedLoops(rewriter, op.getLoc(), dst, cumLoopDim, buildLastLoopBody,
+                      1);
+  };
+
+  MemRefType dstType = cast<MemRefType>(dst.getType());
+  auto rank = dstType.getRank();
+  std::set<int> loopDims;
+  for (int i = 0; i < rank; i++) {
+    if (i != cumDim) {
+      loopDims.insert(i);
+    }
+  }
+  createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
+  return SmallVector<Value>{};
+}
+
+//===----------------------------------------------------------------------===//
+// decomposeCumVectorOpToScalarOpImpl — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+template <typename HIVMOP>
+FailureOr<SmallVector<Value>>
+decomposeCumVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
+  return decomposeCumVectorOpToScalarOpImpl_membase(rewriter, op);
+}
+
 } // namespace hivm
 } // namespace mlir
+
 
 //===----------------------------------------------------------------------===//
 // Macros to help generate `lowerToLoops`
@@ -391,6 +888,8 @@ ENABLE_DEFAULT_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VDivOp)
 
 ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCumprodOp)
 ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCumsumOp)
+ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCummaxOp)
+ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION(VCumminOp)
 #undef ENABLE_CUM_OP_LOWER_TO_LOOPS_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//
@@ -416,7 +915,7 @@ void decomposeVDeinterleaveB64ToScalarSingleChannel(
     return rewriter.create<arith::ConstantIndexOp>(loc, i);
   };
   llvm::SmallVector<Value> srcIndices;
-  auto getScalarValueFunc = [&rewriter, &loc, &srcIndices](Value v) -> Value {
+  auto getScalarValueFunc = [&](Value v) -> Value {
     return getScalarValue(rewriter, loc, v, &srcIndices);
   };
   // step1. calculate the index of every b64 value of CHANNEL_0/CHANNEL_1 result
@@ -511,7 +1010,7 @@ FailureOr<SmallVector<Value>>
 decomposeVInterleaveOpToScalarOpImpl(RewriterBase &rewriter, VInterleaveOp op) {
   auto buildLoopBody = [&rewriter,
                         &op](llvm::SmallVector<Value> indices) -> void {
-    auto getScalarValueFunc = [&rewriter, &op, &indices](Value v) -> Value {
+    auto getScalarValueFunc = [&](Value v) -> Value {
       return getScalarValue(rewriter, op->getLoc(), v, &indices);
     };
 
@@ -585,6 +1084,7 @@ FailureOr<SmallVector<Value>> VMulExtUiOp::lowerToLoops(RewriterBase &b) {
   return decomposeVectorOpToScalarOp<VMulExtUiOp>(b, *this);
 }
 
+
 //===----------------------------------------------------------------------===//
 // VReduceOp
 //===----------------------------------------------------------------------===//
@@ -652,8 +1152,12 @@ Value calculateResFloatArgMinArgMax(RewriterBase &rewriter, hivm::VReduceOp op,
   return res;
 }
 
+//===----------------------------------------------------------------------===//
+// getIndexTensorForArgmaxArgmin — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
 template <typename INTEGEROP, typename FLOATINGOP>
-std::pair<Value, Value> getIndexTensorForArgmaxArgmin(
+std::pair<Value, Value> getIndexTensorForArgmaxArgmin_membase(
     Type elemType, RewriterBase &rewriter, hivm::VReduceOp op,
     llvm::SmallVector<Value, 4> scalarInputs,
     llvm::SmallVector<Value, 4> scalarIndx, Value index,
@@ -677,11 +1181,62 @@ std::pair<Value, Value> getIndexTensorForArgmaxArgmin(
   return {resIndex, resTensor};
 }
 
+//===----------------------------------------------------------------------===//
+// getIndexTensorForArgmaxArgmin — regbase version
+//===----------------------------------------------------------------------===//
+
+template <typename SCALAROP>
+std::pair<Value, Value> getIndexTensorForArgmaxArgmin_regbase(
+    Type elemType, RewriterBase &rewriter, hivm::VReduceOp op,
+    llvm::SmallVector<Value, 4> scalarInputs,
+    llvm::SmallVector<Value, 4> scalarIndx, Value index,
+    arith::CmpIPredicate intPred, arith::CmpFPredicate floatPred) {
+  Value resTensor;
+  Value resIndex;
+  if (elemType.isInteger()) {
+    resIndex = calculateIndexIntegerArgMinArgMax(rewriter, op, scalarInputs,
+                                                 scalarIndx, intPred,
+                                                 scalarInputs[1], index);
+
+    resTensor = getScalarResult<hivm::VMinOp, SCALAROP>(rewriter, op.getLoc(),
+                                                        scalarInputs);
+  // TODO: refactor to use .isFloat() when MLIR version is bumped
+  } else if (llvm::isa<mlir::FloatType>(elemType)) {
+    resIndex =
+        calculateIndexFloatArgMinArgMax(rewriter, op, scalarInputs, scalarIndx,
+                                        floatPred, scalarInputs[1], index);
+    resTensor = calculateResFloatArgMinArgMax(rewriter, op, scalarInputs,
+                                              floatPred, scalarInputs[1]);
+  } else {
+    llvm_unreachable("unsupported dtype");
+  }
+  return {resIndex, resTensor};
+}
+
+//===----------------------------------------------------------------------===//
+// getIndexTensorForArgmaxArgmin — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+template <typename INTEGEROP, typename FLOATINGOP>
+std::pair<Value, Value> getIndexTensorForArgmaxArgmin(
+    Type elemType, RewriterBase &rewriter, hivm::VReduceOp op,
+    llvm::SmallVector<Value, 4> scalarInputs,
+    llvm::SmallVector<Value, 4> scalarIndx, Value index,
+    arith::CmpIPredicate intPred, arith::CmpFPredicate floatPred) {
+  return getIndexTensorForArgmaxArgmin_membase<INTEGEROP, FLOATINGOP>(
+      elemType, rewriter, op, scalarInputs, scalarIndx, index, intPred, floatPred);
+}
+
+
+//===----------------------------------------------------------------------===//
+// createScalarReduceComputeOp — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
 llvm::SmallVector<Value>
-createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
-                            llvm::SmallVector<Value, 4> scalarInputs,
-                            llvm::SmallVector<Value, 4> scalarIndx,
-                            Value index) {
+createScalarReduceComputeOp_membase(RewriterBase &rewriter, hivm::VReduceOp op,
+                                    llvm::SmallVector<Value, 4> scalarInputs,
+                                    llvm::SmallVector<Value, 4> scalarIndx,
+                                    Value index) {
   Value resTensor;
   Value resIndex;
   auto reduceOpArith = op.getArithAttr();
@@ -709,25 +1264,25 @@ createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
     break;
   case hivm::ReduceOperation::min_with_index_left:
     std::tie(resIndex, resTensor) =
-        getIndexTensorForArgmaxArgmin<arith::MinSIOp, arith::MinimumFOp>(
+        getIndexTensorForArgmaxArgmin_membase<arith::MinSIOp, arith::MinimumFOp>(
             elemType, rewriter, op, scalarInputs, scalarIndx, index,
             arith::CmpIPredicate::sgt, arith::CmpFPredicate::OGT);
     break;
   case hivm::ReduceOperation::min_with_index_right:
     std::tie(resIndex, resTensor) =
-        getIndexTensorForArgmaxArgmin<arith::MinSIOp, arith::MinimumFOp>(
+        getIndexTensorForArgmaxArgmin_membase<arith::MinSIOp, arith::MinimumFOp>(
             elemType, rewriter, op, scalarInputs, scalarIndx, index,
             arith::CmpIPredicate::sge, arith::CmpFPredicate::OGE);
     break;
   case hivm::ReduceOperation::max_with_index_left:
     std::tie(resIndex, resTensor) =
-        getIndexTensorForArgmaxArgmin<arith::MaxSIOp, arith::MaximumFOp>(
+        getIndexTensorForArgmaxArgmin_membase<arith::MaxSIOp, arith::MaximumFOp>(
             elemType, rewriter, op, scalarInputs, scalarIndx, index,
             arith::CmpIPredicate::slt, arith::CmpFPredicate::OLT);
     break;
   case hivm::ReduceOperation::max_with_index_right:
     std::tie(resIndex, resTensor) =
-        getIndexTensorForArgmaxArgmin<arith::MaxSIOp, arith::MaximumFOp>(
+        getIndexTensorForArgmaxArgmin_membase<arith::MaxSIOp, arith::MaximumFOp>(
             elemType, rewriter, op, scalarInputs, scalarIndx, index,
             arith::CmpIPredicate::sle, arith::CmpFPredicate::OLE);
     break;
@@ -746,8 +1301,129 @@ createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
   return resTensors;
 }
 
-void insertReduceInitialization(RewriterBase &rewriter, hivm::VReduceOp op,
-                                const llvm::SmallVector<Value> &indexes) {
+//===----------------------------------------------------------------------===//
+// createScalarReduceComputeOp — regbase version
+//===----------------------------------------------------------------------===//
+
+llvm::SmallVector<Value>
+createScalarReduceComputeOp_regbase(RewriterBase &rewriter, hivm::VReduceOp op,
+                                    llvm::SmallVector<Value, 4> scalarInputs,
+                                    llvm::SmallVector<Value, 4> scalarIndx,
+                                    Value index) {
+  Value resTensor;
+  Value resIndex;
+  auto reduceOpArith = op.getArithAttr();
+  auto reduceOpAttr = reduceOpArith.getReduceOp();
+  auto tieBreakLeft = op.getTieBreakLeft();
+  auto elemType = getElementTypeOrSelf(op.getOperandTypes()[0]);
+  switch (reduceOpAttr) {
+  case hivm::ReduceOperation::min:
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getUnsignedSrc())
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    break;
+  case hivm::ReduceOperation::max:
+    if (isa<FloatType>(elemType))
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else if (op.getUnsignedSrc())
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxUIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    break;
+  case hivm::ReduceOperation::sum:
+    resTensor = getScalarResult<hivm::VAddOp, arith::AddIOp>(
+        rewriter, op.getLoc(), scalarInputs);
+    break;
+  case hivm::ReduceOperation::prod:
+    resTensor = getScalarResult<hivm::VMulOp, arith::MulIOp>(
+        rewriter, op.getLoc(), scalarInputs);
+    break;
+  case hivm::ReduceOperation::xori:
+    resTensor = rewriter.create<arith::XOrIOp>(op.getLoc(), scalarInputs);
+    break;
+  case hivm::ReduceOperation::min_with_index:
+    if (op.getUnsignedSrc()) {
+      std::tie(resIndex, resTensor) =
+          getIndexTensorForArgmaxArgmin_regbase<arith::MinUIOp>(
+              elemType, rewriter, op, scalarInputs, scalarIndx, index,
+              /*intPred*/tieBreakLeft.value_or(true) ? arith::CmpIPredicate::ugt
+                                                     : arith::CmpIPredicate::uge,
+              /*floatPred*/tieBreakLeft.value_or(true) ? arith::CmpFPredicate::OGT
+                                                       : arith::CmpFPredicate::OGE);
+    } else {
+      std::tie(resIndex, resTensor) =
+          getIndexTensorForArgmaxArgmin_regbase<arith::MinSIOp>(
+              elemType, rewriter, op, scalarInputs, scalarIndx, index,
+              /*intPred*/tieBreakLeft.value_or(true) ? arith::CmpIPredicate::sgt
+                                                     : arith::CmpIPredicate::sge,
+              /*floatPred*/tieBreakLeft.value_or(true) ? arith::CmpFPredicate::OGT
+                                                       : arith::CmpFPredicate::OGE);
+    }
+
+    break;
+  case hivm::ReduceOperation::max_with_index:
+    if (op.getUnsignedSrc()) {
+      std::tie(resIndex, resTensor) =
+          getIndexTensorForArgmaxArgmin_regbase<arith::MaxUIOp>(
+              elemType, rewriter, op, scalarInputs, scalarIndx, index,
+              /*intPred*/tieBreakLeft.value_or(true) ? arith::CmpIPredicate::ult
+                                                     : arith::CmpIPredicate::ule,
+              /*floatPred*/tieBreakLeft.value_or(true) ? arith::CmpFPredicate::OLT
+                                                       : arith::CmpFPredicate::OLE);
+    } else {
+      std::tie(resIndex, resTensor) =
+          getIndexTensorForArgmaxArgmin_regbase<arith::MaxSIOp>(
+              elemType, rewriter, op, scalarInputs, scalarIndx, index,
+              /*intPred*/tieBreakLeft.value_or(true) ? arith::CmpIPredicate::slt
+                                                     : arith::CmpIPredicate::sle,
+              /*floatPred*/tieBreakLeft.value_or(true) ? arith::CmpFPredicate::OLT
+                                                       : arith::CmpFPredicate::OLE);
+    }
+    break;
+  default:
+    llvm_unreachable("Unsupport Reduction Arith Attr.");
+  }
+  llvm::SmallVector<Value> resTensors;
+  resTensors.push_back(resTensor);
+
+  // Order is important, so we only insert once we have inserted
+  // min/max value while running max_with_index/min_with_index.
+  if (utils::isReduceWithIndex(reduceOpAttr)) {
+    resTensors.push_back(resIndex);
+  }
+
+  return resTensors;
+}
+
+//===----------------------------------------------------------------------===//
+// createScalarReduceComputeOp — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+llvm::SmallVector<Value>
+createScalarReduceComputeOp(RewriterBase &rewriter, hivm::VReduceOp op,
+                            llvm::SmallVector<Value, 4> scalarInputs,
+                            llvm::SmallVector<Value, 4> scalarIndx,
+                            Value index) {
+  return createScalarReduceComputeOp_membase(rewriter, op, scalarInputs,
+                                            scalarIndx, index);
+}
+
+
+//===----------------------------------------------------------------------===//
+// insertReduceInitialization — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
+void insertReduceInitialization_membase(RewriterBase &rewriter, hivm::VReduceOp op,
+                                        const llvm::SmallVector<Value> &indexes) {
   // Get the dstIndexes by changing the index of the reduce axis to 0
   llvm::SmallVector<Value> dstIndexes(indexes);
   auto reduceDims = op.getReduceDims();
@@ -781,11 +1457,62 @@ void insertReduceInitialization(RewriterBase &rewriter, hivm::VReduceOp op,
   }
 }
 
-void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
+//===----------------------------------------------------------------------===//
+// insertReduceInitialization — regbase version
+//===----------------------------------------------------------------------===//
+
+void insertReduceInitialization_regbase(RewriterBase &rewriter, hivm::VReduceOp op,
+                                        const llvm::SmallVector<Value> &indexes) {
+  // Get the dstIndexes by changing the index of the reduce axis to 0
+  llvm::SmallVector<Value> dstIndexes(indexes);
+  auto reduceDims = op.getReduceDims();
+  auto constZero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+  for (size_t i = 0; i < indexes.size(); i++)
+    if (reduceDims[0] == (int)i)
+      dstIndexes[i] = constZero;
+
+  // Create an IfOp to check whether it is the first iteration
+  Value isReduceInitCond = rewriter.create<arith::CmpIOp>(
+      op.getLoc(), rewriter.getI1Type(), arith::CmpIPredicate::eq,
+      indexes[reduceDims[0]], constZero);
+  scf::IfOp scfIfOp = rewriter.create<scf::IfOp>(op.getLoc(), TypeRange(),
+                                                 isReduceInitCond, false);
+
+  // Initialize the dst value and index inside the IfOp
+  PatternRewriter::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointToStart(&scfIfOp.getThenRegion().front());
+
+  auto constValueInit = rewriter.create<arith::ConstantOp>(
+      op->getLoc(), cast<TypedAttr>(op.getInit()));
+  rewriter.create<memref::StoreOp>(op->getLoc(), constValueInit,
+                                   op.getDpsInits()[0], dstIndexes);
+
+  auto arith = op.getArithAttr().getReduceOp();
+  if (utils::isReduceWithIndex(arith)) {
+    auto constIndexInit = rewriter.create<arith::ConstantOp>(
+        op->getLoc(), IntegerAttr::get(rewriter.getI32Type(), 0));
+    rewriter.create<memref::StoreOp>(op->getLoc(), constIndexInit,
+                                     op.getDpsInits()[1], dstIndexes);
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// insertReduceInitialization — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+void insertReduceInitialization(RewriterBase &rewriter, hivm::VReduceOp op,
+                                const llvm::SmallVector<Value> &indexes) {
+  insertReduceInitialization_membase(rewriter, op, indexes);
+}
+
+//===----------------------------------------------------------------------===//
+// decomposeVReduceOpToScalarOpImpl — membase version (HEAD)
+//===----------------------------------------------------------------------===//
+
+void decomposeVReduceOpToScalarOpImpl_membase(RewriterBase &rewriter, VReduceOp op) {
   auto buildLoopBody = [&rewriter,
                         &op](llvm::SmallVector<Value> indexes) -> void {
-    auto getScalarValueFunc = [&rewriter, &op,
-                               &indexes](OpOperand *operand) -> Value {
+    auto getScalarValueFunc = [&](OpOperand *operand) -> Value {
       return getScalarValue(rewriter, op->getLoc(), operand->get(), &indexes);
     };
 
@@ -806,7 +1533,7 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
     dstIndexes[reduceDims[0]] = constZero;
 
     // Insert the value initialization operations
-    insertReduceInitialization(rewriter, op, indexes);
+    insertReduceInitialization_membase(rewriter, op, indexes);
 
     // push reduce init as another scalar input operand
     if (op.getIndices()) {
@@ -834,12 +1561,12 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
     // picked.
     auto indexVal = indexes.size() > 1 ? reduceDims[0] : 0;
 
-    llvm::SmallVector<Value> resTensors = createScalarReduceComputeOp(
+    llvm::SmallVector<Value> resTensors = createScalarReduceComputeOp_membase(
         rewriter, op, scalarInputs, scalarIndx, indexes[indexVal]);
 
-    for (size_t i = 0; i < resTensors.size(); ++i) {	
-      createSinglePointStore(rewriter, op.getLoc(), resTensors[i],	
-                             op.getDpsInits()[i], dstIndexes);	
+    for (size_t i = 0; i < resTensors.size(); ++i) {
+      createSinglePointStore(rewriter, op.getLoc(), resTensors[i],
+                             op.getDpsInits()[i], dstIndexes);
     }
   };
 
@@ -858,8 +1585,8 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
                                                   int64_t reduceDim) -> void {
       auto loadedIndex = createSinglePointLoad(rewriter, op.getLoc(),
                                                 op.getDpsInits()[1], dstIndexes).getResult();
-      auto idxIndex = rewriter.create<arith::IndexCastOp>(op.getLoc(), 
-                                                        TypeRange{rewriter.getIndexType()}, 
+      auto idxIndex = rewriter.create<arith::IndexCastOp>(op.getLoc(),
+                                                        TypeRange{rewriter.getIndexType()},
                                                         ValueRange{loadedIndex}).getResult();
       llvm::SmallVector<Value> idxIndexes(dstIndexes);
       idxIndexes[reduceDim] = idxIndex;
@@ -867,7 +1594,7 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
                                             op.getIndices(), idxIndexes).getResult();
       createSinglePointStore(rewriter, op.getLoc(), resIndex, op.getDpsInits()[1], dstIndexes);
     };
-    
+
     if (loopDims.size() == 1) {
       auto constZero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
       llvm::SmallVector<Value> dstIndexes = {constZero};
@@ -888,6 +1615,85 @@ void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
       createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildGatherLoopBody);
     }
   }
+}
+
+//===----------------------------------------------------------------------===//
+// decomposeVReduceOpToScalarOpImpl — regbase version
+//===----------------------------------------------------------------------===//
+
+void decomposeVReduceOpToScalarOpImpl_regbase(RewriterBase &rewriter, VReduceOp op) {
+  auto buildLoopBody = [&rewriter,
+                        &op](llvm::SmallVector<Value> indexes) -> void {
+    auto getScalarValueFunc = [&](OpOperand *operand) -> Value {
+      return getScalarValue(rewriter, op->getLoc(), operand->get(), &indexes);
+    };
+
+    llvm::SmallVector<Value, 4> scalarInputs;
+    llvm::SmallVector<Value, 4> scalarIndx;
+    auto hivmStructureOp = dyn_cast<hivm::HIVMStructuredOp>(op.getOperation());
+    assert(hivmStructureOp);
+    llvm::transform(
+        hivmStructureOp.getHIVMInputOperands(false /*includeExtraBuffer*/),
+        std::back_inserter(scalarInputs), getScalarValueFunc);
+
+    // Since the reduce operation src is different from the dst shape,
+    // additional indexes are required to obtain the dst value.
+    llvm::SmallVector<Value> dstIndexes(indexes);
+    auto reduceDims = op.getReduceDims();
+    auto constZero = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
+    // update dstIndexes: change index of reduce axis to 0
+    dstIndexes[reduceDims[0]] = constZero;
+
+    // Insert the value initialization operations
+    insertReduceInitialization_regbase(rewriter, op, indexes);
+
+    if (isa<MemRefType>(op.getDstValue().getType())) {
+      auto loadOp = createSinglePointLoad(rewriter, op.getLoc(),
+                                          op.getDpsInits()[0], dstIndexes);
+      scalarInputs.push_back(loadOp.getResult());
+    } else {
+      scalarInputs.push_back(op.getDpsInits()[0]);
+    }
+
+    auto reduceOpArith = op.getArithAttr();
+    auto reduceOpAttr = reduceOpArith.getReduceOp();
+    if (utils::isReduceWithIndex(reduceOpAttr)) {
+      // Load the Index value needed for update across iterations.
+      auto loadIndOp = createSinglePointLoad(rewriter, op.getLoc(),
+                                             op.getDpsInits()[1], dstIndexes);
+      scalarIndx.push_back(loadIndOp.getResult());
+    }
+
+    // Depending on reduce dimension axis selecting which index should be
+    // picked.
+    auto indexVal = 0;
+    if (indexes.size() > 1)
+      indexVal = reduceDims[0];
+
+    llvm::SmallVector<Value> resTensors = createScalarReduceComputeOp_regbase(
+        rewriter, op, scalarInputs, scalarIndx, indexes[indexVal]);
+
+    for (size_t i = 0; i < resTensors.size(); ++i) {
+      createSinglePointStore(rewriter, op.getLoc(), resTensors[i],
+                             op.getDpsInits()[i], dstIndexes);
+    }
+  };
+
+  Value dst = op->getOperand(0);
+  MemRefType dstType = dyn_cast<MemRefType>(dst.getType());
+  std::set<int> loopDims;
+  for (int i = 0; i < dstType.getRank(); i++) {
+    loopDims.insert(i);
+  }
+  createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
+}
+
+//===----------------------------------------------------------------------===//
+// decomposeVReduceOpToScalarOpImpl — default wrapper (membase)
+//===----------------------------------------------------------------------===//
+
+void decomposeVReduceOpToScalarOpImpl(RewriterBase &rewriter, VReduceOp op) {
+  decomposeVReduceOpToScalarOpImpl_membase(rewriter, op);
 }
 
 } // namespace mlir::hivm

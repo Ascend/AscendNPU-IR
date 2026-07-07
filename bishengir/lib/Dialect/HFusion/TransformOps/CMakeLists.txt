@@ -1,4 +1,10 @@
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRAnnotationDialect
+  BiShengIRMathExtDialect
+)
+
 add_bishengir_dialect_library(BiShengIRHFusionTransformOps
+  IS_OPEN_SOURCE
   DialectExtension.cpp
   HFusionTransformOps.cpp
 
@@ -11,8 +17,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransformOps
   MLIRLinalgTransformEnumsIncGen
 
   LINK_LIBS PUBLIC
-  BiShengIRAnnotationDialect
-  BiShengIRMathExtDialect
+  ${BISHENGIR_PRIVATE_LIBS}
   MLIRAffineDialect
   MLIRArithDialect
   MLIRFuncDialect
@@ -27,4 +32,4 @@ add_bishengir_dialect_library(BiShengIRHFusionTransformOps
   MLIRTensorDialect
   MLIRTransformDialect
   MLIRTransformDialectUtils
-  )
+)

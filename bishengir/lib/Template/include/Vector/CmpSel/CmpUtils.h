@@ -114,6 +114,12 @@ vector_scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
       memref_t<__ubuf__ dtype, dim> *src0, dtype scalar,                       \
       memref_t<__ubuf__ bool, dim> *dst)
 
+#if defined(__DAV_C310__)
+#define REGISTE_CMP_VV(op_name, op_type, dim, dtype)                           \
+  DECLARE_CMP_VV(op_name, op_type, dim, dtype) {                               \
+    vector_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);               \
+  }
+#else
 #define REGISTE_CMP_VV(op_name, op_type, dim, dtype)                           \
   DECLARE_CMP_VV(op_name, op_type, dim, dtype) {                               \
     if (!is_memref_aligned_compare_vv_##dim##d<dtype>(src0, src1, dst))        \
@@ -126,9 +132,13 @@ vector_scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
       vector_compare_vv_##dim##d<op_type, dtype>(src0, src1, dst);             \
     }                                                                          \
   }
+#endif
 
 #define REGISTE_CMP_VS(op_name, op_type, dim, dtype)                           \
   DECLARE_CMP_VS(op_name, op_type, dim, dtype) {                               \
+#if defined(__DAV_C310__)
+    vector_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);             \
+#else
     if (!is_memref_aligned_compare_vs_##dim##d<dtype>(src0, dst))              \
         [[unlikely]] {                                                         \
       scalar_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);           \
@@ -138,6 +148,7 @@ vector_scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
     } else {                                                                   \
       vector_compare_vs_##dim##d<op_type, dtype>(src0, scalar, dst);           \
     }                                                                          \
+#endif
   }
 
 extern "C" {
@@ -154,9 +165,11 @@ DECLARE_CMP_VV(ne, VectorOpTy::VCMP_NE, 1, int32_t);
 
 DECLARE_CMP_VV(lt, VectorOpTy::VCMP_LT, 1, half);
 DECLARE_CMP_VV(lt, VectorOpTy::VCMP_LT, 1, float);
+DECLARE_CMP_VV(lt, VectorOpTy::VCMP_LT, 1, int64_t);
 
 DECLARE_CMP_VV(gt, VectorOpTy::VCMP_GT, 1, half);
 DECLARE_CMP_VV(gt, VectorOpTy::VCMP_GT, 1, float);
+DECLARE_CMP_VV(gt, VectorOpTy::VCMP_GT, 1, int64_t);
 
 DECLARE_CMP_VV(ge, VectorOpTy::VCMP_GE, 1, half);
 DECLARE_CMP_VV(ge, VectorOpTy::VCMP_GE, 1, float);

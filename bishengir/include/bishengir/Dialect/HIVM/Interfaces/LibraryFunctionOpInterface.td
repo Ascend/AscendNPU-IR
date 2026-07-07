@@ -45,7 +45,13 @@ def LibraryFunctionOpInterface : OpInterface<"OpWithLibraryFunction"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm::report_fatal_error("getOpLibraryMaxRank not implemented");
+        if constexpr(ConcreteOp::template hasTrait<::mlir::OpTrait::InferMaxRankTrait::Impl>()) {
+          return $_op.inferOpLibraryMaxRank();
+        } else if constexpr(ConcreteOp::template hasTrait<::mlir::OpTrait::NoMaxRankTrait::Impl>()) {
+          return std::nullopt;
+        } else {
+          return $_op.getOpLibraryMaxRankImpl();
+        }
       }]
     >,
     InterfaceMethod<
@@ -72,7 +78,7 @@ def LibraryFunctionOpInterface : OpInterface<"OpWithLibraryFunction"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm::report_fatal_error("inferOpLibraryMaxRank not implemented");
+        llvm_unreachable("inferOpLibraryMaxRank not implemented");
       }]
     >,
   ];

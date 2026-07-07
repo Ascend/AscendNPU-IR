@@ -1,4 +1,10 @@
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRDialectUtils
+  )
+
 add_bishengir_conversion_library(BiShengIRGPUToHFusion
+  IS_OPEN_SOURCE
+
   GPUToHFusion.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -11,7 +17,7 @@ add_bishengir_conversion_library(BiShengIRGPUToHFusion
   Core
 
   LINK_LIBS PUBLIC
-  BiShengIRDialectUtils
+  ${BISHENGIR_PRIVATE_LIBS}
   MLIRArithDialect
   MLIRMathDialect
   MLIRFuncDialect

@@ -71,8 +71,16 @@ extern "C" {
 //===----------------------------------------------------------------------===//
 DECLARE_SORT(1, half);
 DECLARE_SORT(1, float);
+DECLARE_SORT(1, int32_t);
+DECLARE_SORT(1, int64_t);
 DECLARE_SORT_WITH_INDEX(1, half);
 DECLARE_SORT_WITH_INDEX(1, float);
+DECLARE_SORT(2, half);
+DECLARE_SORT(2, float);
+DECLARE_SORT(2, int32_t);
+DECLARE_SORT(2, int64_t);
+DECLARE_SORT_WITH_INDEX(2, half);
+DECLARE_SORT_WITH_INDEX(2, float);
 }
 
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_SORT_UTILS_H

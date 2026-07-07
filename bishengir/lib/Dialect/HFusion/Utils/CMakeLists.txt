@@ -1,4 +1,10 @@
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRHACCDialect
+  BiShengIRMathExtDialect
+)
+
 add_bishengir_dialect_library(BiShengIRHFusionUtils
+  IS_OPEN_SOURCE
   BufferUtils.cpp
   ExtraBuffer.cpp
   Utils.cpp
@@ -7,8 +13,8 @@ add_bishengir_dialect_library(BiShengIRHFusionUtils
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HFusion
 
   LINK_LIBS PUBLIC
-  BiShengIRHACCDialect
-  BiShengIRMathExtDialect
+  ${BISHENGIR_PRIVATE_LIBS}
+  BiShengIRScopeDialect
   MLIRArithDialect
   BiShengIRHFusionDialect
   MLIRMemRefDialect

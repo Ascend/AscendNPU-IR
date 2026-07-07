@@ -385,6 +385,48 @@ def NZ2NDOp : HIVM_DmaOp<"nz2nd",
   let extraClassDeclaration = DmaOpBaseDecl;
 }
 
+
+def L12UBOp : HIVM_DmaOp<"l12ub",
+    [StaticMaxRankTrait<2>,
+     SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE1">,
+     HIVMCoreTypeInterface, CubeCoreTypeTrait
+    ]> {
+  let summary = "HIVM data copy operation from L1 to UB Memory with NZ2ND conversion";
+  let description = [{ NZ2ND does data movement from L1 to UB with NZ2ND conversion. }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`->` type($result_tensor)^)?
+  }];
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
+def LoadMXScaleOp
+    : HIVM_DmaOp<
+          "load_scale", [SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
+                         HIVMCoreTypeInterface, CubeCoreTypeTrait,
+                         NoMaxRankTrait,
+                         DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+]> {
+  let summary =
+      "HIVM data copy operation for loading scale tensor for mmad mx op";
+  let description =
+      [{ loading scale tensor from OUT to L1 using special version of dn2nz . }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst,
+      DefaultValuedOptionalAttr<BoolAttr, "false">:$is_transposed);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`is_transposed` `=` $is_transposed^ )?
+    (`->` type($result_tensor)^)?
+  }];
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
   OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

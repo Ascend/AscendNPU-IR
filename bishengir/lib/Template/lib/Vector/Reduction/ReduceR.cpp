@@ -245,6 +245,14 @@ template <
          std::is_same<uint32_t, T>() || std::is_same<uint64_t, T>()) ||
         (OP == ReduceOpTy::REDUCE_PROD || OP == ReduceOpTy::REDUCE_XOR ||
          OP == ReduceOpTy::REDUCE_OR || OP == ReduceOpTy::REDUCE_AND)>::type>
+template <ReduceOpTy OP, typename T,
+          typename = typename std::enable_if<
+              (std::is_same<int8_t, T>() || std::is_same<int16_t, T>() ||
+               std::is_same<int32_t, T>() || std::is_same<int64_t, T>() ||
+               std::is_same<uint8_t, T>() || std::is_same<uint16_t, T>() ||
+               std::is_same<uint32_t, T>() || std::is_same<uint64_t, T>()) ||
+              (OP == ReduceOpTy::REDUCE_PROD || OP == ReduceOpTy::REDUCE_XOR ||
+               OP == ReduceOpTy::REDUCE_OR || OP == ReduceOpTy::REDUCE_AND)>::type>
 __aiv__ __attribute__((always_inline)) void
 reduce_r_core(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
               memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
@@ -415,7 +423,6 @@ reduce_r_vcg(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
     reduce_r_core_on_scalar<OP, T>(src0, dst, scalar_element_num, need_merge, tmp_buf);
   }
 }
-
 template <ReduceOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 reduce_r(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
@@ -439,6 +446,7 @@ reduce_r(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst,
     bool need_merge = (vector_element_num != 0);
     reduce_r_core_on_scalar<OP, T>(src0, dst, scalar_element_num, need_merge, tmp_buf);
   }
+  reduce_r_core<OP, T>(src0, dst, tmp_buf, initvalue);
 }
 
 extern "C" {

@@ -20,6 +20,18 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -81,6 +93,12 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
                        SmallVector<Operation *> &recursiveUseChain,
                        Block *fixedBlock) {
   if (op->getBlock() != fixedBlock)
+
+LogicalResult
+traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
+                         SmallVector<Operation *> &recursiveUseChain,
+                         Block *fixedBlock) {
+  if (op->isUsedOutsideOfBlock(fixedBlock))
     return failure();
 
   if (isa<hivm::FixpipeOp>(op)) {
@@ -102,6 +120,7 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
       Operation *userOp = *(op->user_begin());
       auto next = traceBatchChainToFixpipe(userOp, batchDim, recursiveUseChain,
                                          fixedBlock);
+                                           fixedBlock);
       if (succeeded(next)) {
         recursiveUseChain.push_back(op);
       }
@@ -115,6 +134,7 @@ traceBatchChainToFixpipe(Operation *op, int64_t batchDim,
 RankedTensorType extractNonBatchType(RankedTensorType originType) {
   if (originType.getRank() != 3)
     llvm::report_fatal_error("current RankedTensorType must be 3D");
+    llvm_unreachable("current RankedTensorType must be 3D");
 
   // Drop batch dimension
   return RankedTensorType::get(originType.getShape().drop_front(),
@@ -219,6 +239,7 @@ Value rewriteMatrixCShapeChange(ArrayRef<Operation *> useChain, Value matrixC,
       curVal = newOp.getResult();
     } else {
       llvm::report_fatal_error("unsupported operation which uses matmul's output");
+      llvm_unreachable("unsupported operation which uses matmul's output");
     }
   }
 
@@ -229,12 +250,13 @@ Value createTiledMmadL1(hivm::BatchMmadL1Op batchmmOp,
                         SmallVector<Value> indexes,
                         RankedTensorType matrixCType,
                         PatternRewriter &rewriter) {
+  // Adjust matrix A & matrix B
   assert(indexes.size() == 1);
   Value matrixA = extractTensorValueWithoutBatch(
       batchmmOp->getLoc(), batchmmOp.getA(), indexes[0], rewriter);
   Value matrixB = extractTensorValueWithoutBatch(
       batchmmOp->getLoc(), batchmmOp.getB(), indexes[0], rewriter);
-
+  // Get new matrix C
   SmallVector<Value> outputsDynSize;
   auto outputValShape = getValueFromShape(batchmmOp.getC(), rewriter);
   assert(succeeded(outputValShape));
@@ -254,6 +276,12 @@ Value createTiledMmadL1(hivm::BatchMmadL1Op batchmmOp,
     tiledMmad->setAttr(mmadFixpipeForResultAlreadyInserted,
                        batchmmOp->getAttr(mmadFixpipeForResultAlreadyInserted));
   }
+      batchmmOp.getBTransposeAttr(), batchmmOp.getEnable_HF32Attr());
+  // Set the batch_matmul attribute on the Mmad
+  rewriter.modifyOpInPlace(tiledMmad, [&]() -> void {
+    tiledMmad->setAttr(hivm::batchMatmulAttr,
+                       UnitAttr::get(rewriter.getContext()));
+  });
   return tiledMmad.getResultTensors()[0];
 }
 
@@ -304,6 +332,15 @@ std::pair<TensorChainInfo, MemrefChainInfo> collectTensorChainInitArgs(
                        fixpipe.getDst())) {
       memrefInfo.indices.push_back(i);
       memrefInfo.rootMemrefs.push_back(rootMemref.value()->getResult(0));
+
+      continue;
+    }
+
+    Operation *rootMemrefAlloc = getRootAlloc(fixpipe.getDst());    
+
+    if (rootMemrefAlloc) {
+      memrefInfo.indices.push_back(i);
+      memrefInfo.rootMemrefs.push_back(rootMemrefAlloc->getResult(0));
     }
   }
   return std::make_pair(tensorInfo, memrefInfo);
@@ -367,6 +404,17 @@ SmallVector<Operation *> collectDownstreamOpsToMove(
           if (sameBlockOp && !lastChainOp->isBeforeInBlock(sameBlockOp)) {
             worklist.push_back(sameBlockOp);
           }
+      Operation *memrefRootAlloc = getRootAlloc(debugOp.getArg());
+
+      if (memrefRootAlloc && memrefRootAlloc->getResult(0) == rootMemref) {
+        Operation *sameBlockOp = debugOp;
+        while (sameBlockOp &&
+               sameBlockOp->getBlock() != lastChainOp->getBlock()) {
+          sameBlockOp = sameBlockOp->getParentOp();
+        }
+
+        if (sameBlockOp && !lastChainOp->isBeforeInBlock(sameBlockOp)) {
+          worklist.push_back(sameBlockOp);
         }
       }
     });
@@ -452,7 +500,6 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
   assert(indexes.size() == 1);
   auto originFixpipe = dyn_cast<hivm::FixpipeOp>(useChain.front());
   Value oriFixpipeDst = originFixpipe.getDst();
-
   if (isa<mlir::MemRefType>(oriFixpipeDst.getType())) {
     Value fixpipeDst = subviewMemrefValueWithoutBatch(
         originFixpipe.getLoc(), oriFixpipeDst, indexes[0], rewriter);
@@ -462,6 +509,11 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
         /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
         originFixpipe.getDualDstModeAttr(), originFixpipe.getPreQuantAttr(),
         originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
+    SmallVector<Value> oprs({matrixToStore, fixpipeDst});
+    if (auto quantScale = originFixpipe.getQuantScale())
+      oprs.push_back(quantScale);
+    rewriter.create<hivm::FixpipeOp>(originFixpipe.getLoc(), TypeRange{}, oprs,
+                                     originFixpipe->getAttrs());
     return std::nullopt;
   }
 
@@ -481,6 +533,11 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
         /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
         originFixpipe.getDualDstModeAttr(), originFixpipe.getPreQuantAttr(),
         originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
+    SmallVector<Value> oprs({matrixToStore, fixpipeDst});
+    if (auto quantScale = originFixpipe.getQuantScale())
+      oprs.push_back(quantScale);
+    auto newfixpipe = rewriter.create<hivm::FixpipeOp>(
+        originFixpipe.getLoc(), resultType, oprs, originFixpipe->getAttrs());
 
     Value insert = insertTensorValueWithoutBatch(
         originFixpipe.getLoc(), newfixpipe.getResults()[0], forIterArg,
@@ -490,7 +547,8 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
 
   llvm::report_fatal_error("unsupported fixpipe dst type");
 }
-
+  llvm_unreachable("unsupported fixpipe dst type");
+}
 /// This pattern wanna convert all hivm::BatchMmadL1Op and releated fixpipe to
 /// loop of new hivm::MmadL1Op and hivm::FixpipeOp
 ///

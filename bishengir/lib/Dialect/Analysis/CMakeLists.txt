@@ -1,3 +1,5 @@
+add_subdirectory(VFFusion)
+
 add_bishengir_dialect_library(BiShengIRAnalysis
   DimensionAnalyzer.cpp
   DimensionMarker.cpp

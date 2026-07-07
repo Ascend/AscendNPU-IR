@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagateExpandUp.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h"
 
 #define DEBUG_TYPE "propagate-scf-for-op"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")

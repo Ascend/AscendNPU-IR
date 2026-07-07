@@ -71,6 +71,7 @@ bool compareFuncOps(func::FuncOp f1, func::FuncOp f2) {
                   hacc::InferSyncBlockLockNumFunctionAttr,
                   hacc::InferSyncBlockLockInitFunctionAttr,
                   hacc::InferTaskTypeFunctionAttr, mlir::StringAttr>(
+                  hacc::InferVFModeFunctionAttr, mlir::StringAttr>(
             attr2.getValue()))
       continue;
 
@@ -186,6 +187,8 @@ void eraseUnusedFuncs(SmallVector<func::FuncOp, 8> funcOps,
               attr.getValue(), funcToErase, funcOps);
           processAttribute<hacc::InferTaskTypeFunctionAttr>(
               attr.getValue(), funcToErase, funcOps);
+          processAttribute<hacc::InferVFModeFunctionAttr>(attr.getValue(),
+                                                          funcToErase, funcOps);
         }
       funcToErase.insert(f);
     }

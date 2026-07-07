@@ -39,6 +39,11 @@ public:
       : OpRewritePattern<tensor::ExpandShapeOp>(context, /*benefit=*/1) {
     options.forHIVM = forHIVM;
   }
+
+  explicit PropagateExpandUp(MLIRContext *context, PropagateReshapeOptions opts)
+      : OpRewritePattern<tensor::ExpandShapeOp>(context, /*benefit=*/1) {
+    options = opts;
+  }
   LogicalResult matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                 PatternRewriter &rewriter) const override;
 

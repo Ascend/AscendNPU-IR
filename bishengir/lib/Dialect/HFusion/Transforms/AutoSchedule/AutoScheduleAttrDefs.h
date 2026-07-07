@@ -35,6 +35,8 @@ inline char kFuncArgIdxFormat[] = "__arg{0}__";
 inline llvm::StringLiteral kIntermediateProducerTagName =
     "__intermediate_producer__";
 
+inline llvm::StringLiteral kTileSizesTagName = "__tile_sizes__";
+
 inline llvm::StringLiteral kTiledForAllTagName = "__tiled_forall__";
 
 inline llvm::StringLiteral kTiledForTagName = "__tiled_for__";

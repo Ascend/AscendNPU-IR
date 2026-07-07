@@ -35,6 +35,10 @@
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+namespace mlir {
+#define GEN_PASS_DEF_INLINESCOPE
+#include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
+} // namespace mlir
 using namespace mlir;
 using namespace mlir::impl;
 
@@ -43,6 +47,14 @@ namespace mlir {
 #include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
 
 namespace scope {
+namespace scope {
+
+static bool isSimtScope(Operation *op) {
+  if (auto vectorType = op->getAttrOfType<StringAttr>("vector_type")) {
+    return vectorType.getValue() == "simt";
+  }
+  return false;
+}
 template <typename OpTy>
 class ExtractOpsFromBodyPattern : public OpRewritePattern<OpTy> {
 public:
@@ -106,6 +118,10 @@ void InlineScopePass::runOnOperation() {
     moduleOp.walk([](scope::ScopeOp op) { op.setNoInline(false); });
   }
 
+  moduleOp.walk([](scope::ScopeOp op) {
+    if (isSimtScope(op))
+      op.setNoInline(true);
+  });
   pm.addPass(std::make_unique<ExtractScopeBodyPass>());
   pm.addPass(createInlinerPass());
 

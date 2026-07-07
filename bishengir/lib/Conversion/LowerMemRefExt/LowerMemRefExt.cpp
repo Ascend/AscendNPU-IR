@@ -80,6 +80,13 @@ public:
       auto loopOp = op->getParentOfType<LoopLikeOpInterface>();
       if (!loopOp)
         llvm::report_fatal_error("Illegal state where DB workspace is not in loop");
+    assert(offset.size() <= 2); // Making sure offset is not more than 2
+    Value localOffset = offset.back();
+    // Consider loop double buffer state
+    if (offset.size() == 2) { // loop of double buffer
+      auto loopOp = op->getParentOfType<LoopLikeOpInterface>();
+      if (!loopOp)
+        llvm_unreachable("Illegal state where DB workspace is not in loop");
 
       Value selectCounter;
       {
@@ -97,6 +104,14 @@ public:
         localOffset = rewriter.create<arith::SelectOp>(
           loc, selectCondition, offset[i], localOffset);
       }
+            rewriter, op, 2); // nested modular value is 2 for this case
+      }
+
+      assert(selectCounter);
+      Value selectCondition = rewriter.create<arith::IndexCastOp>(
+          loc, rewriter.getI1Type(), selectCounter);
+      localOffset = rewriter.create<arith::SelectOp>(
+          loc, rewriter.getIndexType(), selectCondition, offset[1], offset[0]);
     }
 
     // 2. For workspace of current block, here get start address offset from
@@ -166,6 +181,15 @@ std::optional<int64_t> getLocalWorkSpaceSize(ModuleOp moduleOp) {
 void MemrefExtLowering::runOnOperation() {
   ModuleOp moduleOp = cast<ModuleOp>(getOperation());
 
+  moduleOp->walk([&](func::FuncOp funcOp) {
+    auto subWorkspaceArg =
+      hacc::utils::getBlockArgument(funcOp, hacc::KernelArgType::kSubWorkspace);
+    if (subWorkspaceArg) {
+      if (!subWorkspaceArg->use_empty())
+        return signalPassFailure();
+      funcOp.eraseArgument(subWorkspaceArg->getArgNumber());
+    }
+  });
   auto localWorkSpaceSize = getLocalWorkSpaceSize(moduleOp);
   if (!localWorkSpaceSize.has_value())
     return;

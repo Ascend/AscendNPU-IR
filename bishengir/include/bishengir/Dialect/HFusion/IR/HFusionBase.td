@@ -35,6 +35,7 @@ def HFusion_Dialect : Dialect {
   let cppNamespace = "::mlir::hfusion";
   let dependentDialects = [
     "hacc::HACCDialect",
+    "hmap::HMAPDialect",
     "linalg::LinalgDialect",
     "mathExt::MathExtDialect",
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
@@ -63,6 +64,9 @@ def TypeFnAttr : EnumAttr<HFusion_Dialect, TypeFn, "type_fn"> {
   let assemblyFormat = "`<` $value `>`";
 }
 def RoundModeAttr : EnumAttr<HFusion_Dialect, RoundMode, "round_mode"> {
+  let assemblyFormat = "`<` $value `>`";
+}
+def UnsignedModeAttr : EnumAttr<HFusion_Dialect, UnsignedMode, "unsigned_mode"> {
   let assemblyFormat = "`<` $value `>`";
 }
 def AtomicKindAttr : EnumAttr<HFusion_Dialect, AtomicKind, "atomic_kind"> {

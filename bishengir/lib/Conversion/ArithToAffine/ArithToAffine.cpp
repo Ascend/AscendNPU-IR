@@ -88,7 +88,6 @@ struct ArithMinMaxToAffine : public OpRewritePattern<ArithOpTy> {
     return success();
   }
 };
-
 void mlir::arith::populateArithToAffineConversionPatterns(
     RewritePatternSet &patterns) {
   patterns.add<
@@ -104,6 +103,7 @@ void mlir::arith::populateArithToAffineConversionPatterns(
       ArithMinMaxToAffine<arith::MaxUIOp, affine::AffineMaxOp>,
       ArithMinMaxToAffine<arith::MinSIOp, affine::AffineMinOp>,
       ArithMinMaxToAffine<arith::MinUIOp, affine::AffineMinOp>>(
+      BinaryArithOpToAffineApply<arith::RemSIOp, AffineExprKind::Mod>>(
       patterns.getContext());
 }
 
@@ -116,6 +116,7 @@ struct ArithToAffineConversionPass
 
 void ArithToAffineConversionPass::runOnOperation() {
   auto *module = getOperation();
+  auto module = getOperation();
   ConversionTarget target(getContext());
   target.addLegalDialect<affine::AffineDialect>();
   target.addDynamicallyLegalOp<arith::AddIOp, arith::SubIOp, arith::MulIOp,
@@ -128,6 +129,12 @@ void ArithToAffineConversionPass::runOnOperation() {
         Value rhs = op->getOperand(1);
         return !lhs.getType().isIndex() || !rhs.getType().isIndex();
       });
+                               arith::RemSIOp>([](Operation *op) {
+    assert(op->getNumOperands() == 2); // candidate arith must have 2 operands
+    Value lhs = op->getOperand(0);
+    Value rhs = op->getOperand(1);
+    return !lhs.getType().isIndex() || !rhs.getType().isIndex();
+  });
   RewritePatternSet patterns(&getContext());
   arith::populateArithToAffineConversionPatterns(patterns);
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {

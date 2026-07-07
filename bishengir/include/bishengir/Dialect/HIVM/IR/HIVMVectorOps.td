@@ -147,6 +147,22 @@ def VExpOp : HIVM_ElementwiseUnaryOp<"vexp",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+
+def VExp2Op : HIVM_ElementwiseUnaryOp<"vexp2",
+    [SameOperandsElementType,
+     OperElemTypeConstraints<[0, 1], [F16, F32]>,
+     VectorOnlyTrait<0>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Base-2 Exponential Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. The supported element types are f16 and f32.
+      3. This op is a normalize-only source form and should be lowered by
+         HIVM normalize
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
 def VAbsOp : HIVM_ElementwiseUnaryOp<"vabs",
     [SameOperandsElementType,
      VectorOnlyTrait<0>,
@@ -214,6 +230,76 @@ def VLnOp : HIVM_ElementwiseUnaryOp<"vln",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+
+def VLog2Op : HIVM_ElementwiseUnaryOp<"vlog2",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Base-2 Logarithm Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VLog10Op : HIVM_ElementwiseUnaryOp<"vlog10",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Base-10 Logarithm Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VLog1pOp : HIVM_ElementwiseUnaryOp<"vlog1p",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector log(1 + x) Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VExpM1Op : HIVM_ElementwiseUnaryOp<"vexpm1",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector exp(x) - 1 Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VIlogbOp : HIVM_ElementwiseUnaryOp<"vilogb",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector ilogb Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
 def VReluOp : HIVM_ElementwiseUnaryOp<"vrelu",
     [SameOperandsElementType,
      VectorOnlyTrait<0>,
@@ -349,6 +435,30 @@ def VCosOp : HIVM_ElementwiseUnaryOp<"vcos",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+
+def VAtanOp : HIVM_ElementwiseUnaryOp<"vatan",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Arctangent Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VTanOp : HIVM_ElementwiseUnaryOp<"vtan",
+    [SameOperandsElementType,
+     VectorOnlyTrait<0>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Vector Tangent Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
 def VErfOp : HIVM_ElementwiseUnaryOp<"verf",
     [SameOperandsElementType, 
      VectorOnlyTrait<0>,
@@ -853,6 +963,23 @@ def VModOp : HIVM_ElementwiseBinaryOp<"vmod",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+
+def VModUIOp : HIVM_ElementwiseBinaryOp<"vmodui",
+    [SameOperandsElementType, StaticMaxRankTrait<1>,
+     VectorOnlyTrait<0>,
+     OperElemTypeConstraints<[0, 1],
+       [I1, I8, I16, I32, I64]>
+    ]> {
+  let summary = "Elementwise Vector Modui Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. For I1 (bool), normalization produces fill(0) since x % y is always 0 for booleans.
+      3. For I8, normalization widens both operands to I16, computes unsigned
+         remainder, then casts the result back to I8.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
 def VShLOp : HIVM_ElementwiseBinaryOp<"vshl",
    [SameOperandsElementType,
     OperElemTypeConstraints<[0, 1], [I16, I32, I64]>,
@@ -968,6 +1095,21 @@ def VPowOp : HIVM_ElementwiseBinaryOp<"vpow",
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
 
+
+def VLdexpOp : HIVM_ElementwiseNaryOp<"vldexp",
+    [ElementwiseNaryOpTrait<2>, SameOperandsElementType,
+     OperElemTypeConstraints<[0, 1], [F16, F32]>,
+     VectorOnlyTrait<0>, VectorOnlyTrait<1>, NoLibraryFunctionTrait
+    ]> {
+  let summary = "Elementwise Binary Vector ldexp Op";
+  let description = baseClassDescription # [{
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. This op is a normalize-only source form and should be lowered by
+         HIVM normalize before code generation.
+  }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
 //===----------------------------------------------------------------------===//
 // HIVM Elementwise Ternary Vector Ops
 //===----------------------------------------------------------------------===//
@@ -1780,6 +1922,142 @@ def VCumsumOp : HIVM_VectorOp<"vcumsum",
   }];
 }
 
+
+def VCummaxOp : HIVM_VectorOp<"vcummax",
+    [SameOperandsElementType,
+     StaticMaxRankTrait<2>,
+     OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
+     DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+       ["getIteratorTypesArray"]>,
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+       ["getLimitedAxes", "adjustTargetDimensions"]>,
+     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
+       ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+    ]> {
+  let summary = "Vector Cummax Op";
+  let description = [{
+    Calculate the cumulative maximum of each element along the specified axis
+    of `src`. Each element along the specified axis in the output of cummax
+    contains the maximum of all elements from the first element to the current
+    position in the original `src`.
+
+    Constraints:
+      1. The input vector and output vector must have the same rank
+         and the same element type.
+
+    Arguments:
+      * `src`: the tensor/memref from which to calculate the cumulative maximum
+      * `dst`: the tensor/memref to store elements
+      * `cum_dims`: specifies the dimension along which to calculate the
+                    cumulative maximum.
+
+    Examples:
+    ```mlir
+    hivm.hir.vcummax ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0]
+    %result = hivm.hir.vcummax ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] -> tensor<?xf32>
+    ```
+  }];
+  let arguments = (ins TensorOrMemref:$src,
+                       TensorOrMemref:$dst,
+                       Optional<AnyMemRef>:$temp_buffer,
+                       ConfinedAttr<DenseI64ArrayAttr,
+                       [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan
+  );
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "DenseI64ArrayAttr":$cum_dims,
+                   "bool":$reverse)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "ArrayRef<int64_t>":$cum_dims,
+                   "bool":$reverse)>
+  ];
+  let results = (outs Variadic<AnyRankedTensor>:$result);
+  let assemblyFormat = [{
+    attr-dict `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    (`->` type($result)^)?
+  }];
+  let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+  let extraClassDeclaration = vectorOpBaseDecls # [{
+    static StringRef getOpName() { return "cummax"; }
+  }];
+}
+
+def VCumminOp : HIVM_VectorOp<"vcummin",
+    [SameOperandsElementType,
+     StaticMaxRankTrait<2>,
+     OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
+     DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
+       ["getIteratorTypesArray"]>,
+     UniformReassociationFlattenTrait,
+     DeclareOpInterfaceMethods<FlattenInterface,
+       ["getLimitedAxes", "adjustTargetDimensions"]>,
+     DeclareOpInterfaceMethods<ExtraBufferOpInterface,
+       ["getExtraBufferSize"]>,
+     DeclareOpInterfaceMethods<ImplByScalarOpInterface>
+    ]> {
+  let summary = "Vector Cummin Op";
+  let description = [{
+    Calculate the cumulative minimum of each element along the specified axis
+    of `src`. Each element along the specified axis in the output of cummin
+    contains the minimum of all elements from the first element to the current
+    position in the original `src`.
+
+    Constraints:
+      1. The input vector and output vector must have the same rank
+         and the same element type.
+
+    Arguments:
+      * `src`: the tensor/memref from which to calculate the cumulative minimum
+      * `dst`: the tensor/memref to store elements
+      * `cum_dims`: specifies the dimension along which to calculate the
+                    cumulative minimum.
+
+    Examples:
+    ```mlir
+    hivm.hir.vcummin ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) cum_dims : [0]
+    %result = hivm.hir.vcummin ins(%src : tensor<?xf32>) outs(%dst : tensor<?xf32>) cum_dims : [0] -> tensor<?xf32>
+    ```
+  }];
+  let arguments = (ins TensorOrMemref:$src,
+                       TensorOrMemref:$dst,
+                       Optional<AnyMemRef>:$temp_buffer,
+                       ConfinedAttr<DenseI64ArrayAttr,
+                       [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan
+  );
+  let builders = [
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "DenseI64ArrayAttr":$cum_dims,
+                   "bool":$reverse)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src, "Value":$dst,
+                   "ArrayRef<int64_t>":$cum_dims,
+                   "bool":$reverse)>
+  ];
+  let results = (outs Variadic<AnyRankedTensor>:$result);
+  let assemblyFormat = [{
+    attr-dict `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    (`->` type($result)^)?
+  }];
+  let hasCanonicalizer = 1;
+  let hasVerifier = 1;
+  let extraClassDeclaration = vectorOpBaseDecls # [{
+    static StringRef getOpName() { return "cummin"; }
+  }];
+}
 //===----------------------------------------------------------------------===//
 // HIVM Vector Sort Op
 //===----------------------------------------------------------------------===//
@@ -1846,4 +2124,62 @@ def VSortOp : HIVM_VectorOp<"vsort",
   }];
 }
 
+
+def VIsInfOp : HIVM_ElementwiseUnaryOp<"visinf",
+    [VectorOnlyTrait<0>,
+     NoLibraryFunctionTrait,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     BroadcastableOTF
+    ]> {
+  let summary = "Elementwise Vector IsInfinity Op";
+  let description = baseClassDescription # [{
+    Returns 1 if the input element is positive or negative infinity, 0 otherwise.
+
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. The element type of `dst` must be bool (i1).
+  }];
+  let arguments = (ins Variadic<AnyShaped>:$src,
+                       Variadic<AnyShaped>:$dst,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
+  );
+  let assemblyFormat = [{
+      attr-dict `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst  `:` type($dst) `)`
+      (`broadcast` `=` $broadcast^)?
+      (`transpose` `=` $transpose^)?
+      (`->` type($result)^)?
+    }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
+
+def VIsNanOp : HIVM_ElementwiseUnaryOp<"visnan",
+    [VectorOnlyTrait<0>,
+     NoLibraryFunctionTrait,
+     OperElemTypeConstraints<[0], [F16, F32]>,
+     BroadcastableOTF
+    ]> {
+  let summary = "Elementwise Vector IsNaN Op";
+  let description = baseClassDescription # [{
+    Returns 1 if the input element is NaN (Not a Number), 0 otherwise.
+
+    Additional constraints:
+      1. The input/init operands and result have the same element type.
+      2. The element type of `dst` must be bool (i1).
+  }];
+  let arguments = (ins Variadic<AnyShaped>:$src,
+                       Variadic<AnyShaped>:$dst,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
+                       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast
+  );
+  let assemblyFormat = [{
+      attr-dict `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst  `:` type($dst) `)`
+      (`broadcast` `=` $broadcast^)?
+      (`transpose` `=` $transpose^)?
+      (`->` type($result)^)?
+    }];
+  let extraClassDeclaration = elemwiseOpBaseDecls;
+}
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMVECTOROPS_TD

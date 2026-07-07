@@ -233,6 +233,9 @@ protected:
   virtual LogicalResult createScheduleImpl(TilingKey key,
                                            OpBuilder &opBuilder) = 0;
 
+  /// Mark tiling data according to tiling info and op relations.
+  virtual LogicalResult markTilingData();
+
   /// Run pre-schedule procedure (e.g., kernel info collection and
   /// verification).
   virtual LogicalResult runPreScheduleProcedure(OpBuilder &opBuilder);
@@ -537,6 +540,11 @@ protected:
   /// \param opBuilder Reference to IRBuilder instance.
   void applyOneShotBufferization(OpBuilder &opBuilder);
 
+  /// Map `scf.forall` to HIVM Block ops.
+  ///
+  /// \param opBuilder Reference to IRBuilder instance.
+  void mapForallToHIVMBlocks(OpBuilder &opBuilder);
+
   /// Map `scf.for` to `scf.forall` op, with optional mapping.
   ///
   /// \param targetLoop Handle to `scf.for` op.
@@ -610,6 +618,9 @@ protected:
 
   /// Apply a pass to apply symbol analysis to \c target.
   LogicalResult applySymbolAnalysisPass(func::FuncOp target) const;
+
+  /// Apply a pass to remove cache io to \c target.
+  LogicalResult applyRemoveCacheIOPass(func::FuncOp target);
 
   /// Apply a pass to aggressively bubble up extract slice to \c target
   LogicalResult applyAggressiveBubbleUpExtractSlice(func::FuncOp target) const;

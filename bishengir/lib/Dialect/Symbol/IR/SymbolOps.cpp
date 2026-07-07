@@ -12,6 +12,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// Also available under a BSD-style license. See LICENSE.
 //
 //===----------------------------------------------------------------------===//
 
@@ -148,6 +149,11 @@ LogicalResult SymbolicIntOp::verify() {
     // symbolic_int as IntSymbols
     if (!isa_and_nonnull<SymbolicIntOp, tensor::DimOp>(defOp) &&
         !mlir::utils::isArithOp(defOp))
+    Operation *definingOp = symbol.getDefiningOp();
+    // TODO: add canonicalize-like pattern so that it doesn't accept
+    // symbolic_int as IntSymbols
+    if (!isa_and_nonnull<SymbolicIntOp, tensor::DimOp, arith::IndexCastOp>(
+            definingOp))
       return emitOpError() << "int symbol must be produced by valid operations";
   }
 
@@ -201,7 +207,6 @@ OpFoldResult SymbolicIntOp::fold(FoldAdaptor adaptor) {
   }
   return input;
 }
-
 //===----------------------------------------------------------------------===//
 // BindSymbolicShapeOp
 //===----------------------------------------------------------------------===//
@@ -255,6 +260,8 @@ LogicalResult BindSymbolicShapeOp::verify() {
     return emitOpError() << "number of results doesn't match the rank of "
                             "binded operand shape";
   }
+  if (getShapeSymbols().empty())
+    return emitOpError() << "requires non-empty shapeSymbols";
 
   if (getShapeExpressions().getAffineMap().getNumSymbols() !=
       getShapeSymbols().size())

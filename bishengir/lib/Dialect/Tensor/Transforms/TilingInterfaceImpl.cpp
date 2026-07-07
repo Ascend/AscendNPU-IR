@@ -18,6 +18,10 @@
 // Original Copyright: NA
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Tensor/IR/TensorTilingInterfaceImpl.cpp
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
@@ -323,6 +327,10 @@ struct ConcatOpTiling
   FailureOr<TilingResult> generateResultTileValue(
       Operation *op, OpBuilder &b, unsigned /*resultNumber*/,
       ArrayRef<OpFoldResult> offsets, ArrayRef<OpFoldResult> sizes) const {
+  FailureOr<TilingResult>
+  generateResultTileValue(Operation *op, OpBuilder &b, unsigned resultNumber,
+                          ArrayRef<OpFoldResult> offsets,
+                          ArrayRef<OpFoldResult> sizes) const {
     return getTiledImplementation(op, b, offsets, sizes);
   }
 };
@@ -333,6 +341,11 @@ struct ConcatOpTiling
 // Original Copyright: 2022 ByteDance Ltd. and/or its affiliates.
 // Original Source:
 // https://github.com/bytedance/byteir/blob/main/compiler/lib/Dialect/Tensor/IR/TilingInterfaceImpl.cpp
+//
+// ExpandShapeOp and CollapseShapeOp Tiling.
+// Original implementation is from:
+// https://github.com/bytedance/byteir/blob/3672e3b858a06b7603f7c48806702b108237ca4c/compiler/lib/Dialect/Tensor/IR/TilingInterfaceImpl.cpp
+//
 //===----------------------------------------------------------------------===//
 
 OpFoldResult canonicalizeOpFoldResult(OpFoldResult ofr, bool enableFold) {
@@ -383,6 +396,7 @@ static bool isNoTile(OpFoldResult tileSize, OpFoldResult offset,
 }
 
 static bool isUnitTile(OpFoldResult tileSize) {
+static bool isUnitTile(OpFoldResult tileSize, int64_t dim) {
   std::optional<int64_t> maybeIntTileSize = getConstantIntValue(tileSize);
   if (maybeIntTileSize.has_value()) {
     return maybeIntTileSize.value() == 1;
@@ -442,11 +456,13 @@ static FailureOr<TensorSliceParameters> getExpandedSliceParameters(
       }
       SmallVector<AffineExpr> offsetExprs;
       for (const auto &dim : llvm::reverse(expandedIndicesRef)) {
+      for (auto &&dim : llvm::reverse(expandedIndicesRef)) {
         offsetExprs.push_back({offsetExpr % expandedShape[dim]});
         offsetExpr = offsetExpr.floorDiv(expandedShape[dim]);
       }
 
       for (const auto &expr : llvm::reverse(offsetExprs)) {
+      for (auto &&expr : llvm::reverse(offsetExprs)) {
         if (auto constExpr = dyn_cast<AffineConstantExpr>(expr)) {
           resSliceParameters.offsets.push_back(
               b.getIndexAttr(constExpr.getValue()));
@@ -589,6 +605,7 @@ static FailureOr<TensorSliceParameters> getCollapsedSliceParameters(
     if (llvm::all_of(expandedIndicesRef.drop_back(1), [&](int64_t dim) {
           OpFoldResult expandedTileSize = expandedSliceParams.sizes[dim];
           return isUnitTile(expandedTileSize);
+          return isUnitTile(expandedTileSize, dim);
         })) {
       auto offsetExpr = getAffineConstantExpr(0, ctx);
       SmallVector<Value> offsetValues;
@@ -711,6 +728,9 @@ static FailureOr<TilingResult>
 commonGenerateResultTileValue(Operation *op, OpBuilder &b,
                               ArrayRef<OpFoldResult> offsets,
                               ArrayRef<OpFoldResult> sizes) {
+static FailureOr<TilingResult> commonGenerateResultTileValue(
+    Operation *op, OpBuilder &b, unsigned resultNumber,
+    ArrayRef<OpFoldResult> offsets, ArrayRef<OpFoldResult> sizes) {
   auto tilingInterfaceOp = cast<TilingInterface>(op);
   FailureOr<TilingResult> tilingResult =
       tilingInterfaceOp.getTiledImplementation(b, offsets, sizes);
@@ -839,6 +859,9 @@ struct ExpandShapeOpTiling
     auto tiledSizes = canonicalizeOpFoldResult((*collapsedSliceParam).sizes);
     Value tiledSrc = utils::getSlice(b, loc, expandShapeOp.getSrc(),
                                      tiledOffsets, tiledSizes, srcStrides);
+    Value tiledSrc = utils::getSlice(b, loc, expandShapeOp.getSrc(),
+                                     (*collapsedSliceParam).offsets,
+                                     (*collapsedSliceParam).sizes, srcStrides);
 
     // create result type
     SmallVector<int64_t> resShape =
@@ -853,6 +876,12 @@ struct ExpandShapeOpTiling
         loc, resultType, /*src=*/tiledSrc,
         /*reassociation=*/expandShapeOp.getReassociationIndices(),
         /*outputShape=*/canonSizes);
+    auto resType = expandShapeOp.getResultType().clone(resShape);
+
+    Operation *tiledExpandShapeOp = b.create<tensor::ExpandShapeOp>(
+        loc, resType, tiledSrc, expandShapeOp.getReassociation(),
+        ValueRange(expandShapeOp.getOutputShape()),
+        expandShapeOp.getStaticOutputShapeAttr());
     return TilingResult{{tiledExpandShapeOp},
                         SmallVector<Value>(tiledExpandShapeOp->getResults())};
   }
@@ -862,6 +891,7 @@ struct ExpandShapeOpTiling
                           ArrayRef<OpFoldResult> offsets,
                           ArrayRef<OpFoldResult> sizes) const {
     return commonGenerateResultTileValue(op, b, offsets, sizes);
+    return commonGenerateResultTileValue(op, b, resultNumber, offsets, sizes);
   }
 };
 
@@ -996,6 +1026,11 @@ struct CollapseShapeOpTiling
       Operation *op, OpBuilder &b, unsigned /*resultNumber*/,
       ArrayRef<OpFoldResult> offsets, ArrayRef<OpFoldResult> sizes) const {
     return commonGenerateResultTileValue(op, b, offsets, sizes);
+  FailureOr<TilingResult>
+  generateResultTileValue(Operation *op, OpBuilder &b, unsigned resultNumber,
+                          ArrayRef<OpFoldResult> offsets,
+                          ArrayRef<OpFoldResult> sizes) const {
+    return commonGenerateResultTileValue(op, b, resultNumber, offsets, sizes);
   }
 };
 

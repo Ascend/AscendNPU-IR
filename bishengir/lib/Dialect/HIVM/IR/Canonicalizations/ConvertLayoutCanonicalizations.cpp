@@ -54,7 +54,6 @@ struct EliminateRedundantConversionPattern : public OpRewritePattern<
     if (!sourceOp.getResult().hasOneUse())
       return rewriter.notifyMatchFailure(
           op, "source conversion has multiple uses");
-
     rewriter.replaceOp(op, sourceOp.getSource());
     return success();
   }
@@ -115,6 +114,77 @@ struct FoldCastConvertLayoutPattern : public OpRewritePattern<ConvertLayoutOp> {
   }
 };
 
+// Move convert_layout op out of scf.if region
+//
+// before:
+//   %1 = scf.if %0 -> (memref<128x128xbf16, #hivm.address_space<cbuf>>)
+//     %2 = hivm.hir.convert_layout %alloc
+//     scf.yield %2 : memref<128x128xbf16, #hivm.address_space<cbuf>>
+//   else:
+//     %2 = hivm.hir.convert_layout %alloc_0
+//     scf.yield %2 : memref<128x128xbf16, #hivm.address_space<cbuf>>
+//   where two branches have same convert_layout
+//
+// after:
+//   %1 = arith.select %0, %alloc, %alloc_0
+//   hivm.hir.convert_layout %1
+struct PropagateConvertLayoutDownIf : public OpRewritePattern<ConvertLayoutOp> {
+  explicit PropagateConvertLayoutDownIf(mlir::MLIRContext *context)
+      : OpRewritePattern<ConvertLayoutOp>(context) {}
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.hasPureTensorSemantics()) {
+      return rewriter.notifyMatchFailure(op, "is a pure tensor semantics");
+    }
+    if (!op->hasOneUse())
+      return rewriter.notifyMatchFailure(op, "More than one user");
+
+    auto singleUse = op->getUses().begin();
+    auto yieldOp = dyn_cast<scf::YieldOp>(singleUse->getOwner());
+    if (!yieldOp)
+      return rewriter.notifyMatchFailure(op, "Single user is not scf.yield");
+
+    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
+    if (!ifOp)
+      return rewriter.notifyMatchFailure(op, "Single user is not in scf.if");
+
+    auto yieldedIdx = singleUse->getOperandNumber();
+    // If there is else block, check if both branches are returning convert
+    // layout op.
+    if (!ifOp.getElseRegion().empty()) {
+      auto &maybeConvertLayoutOperand =
+          ifOp.elseYield()->getOpOperand(yieldedIdx);
+      auto maybeConvertLayoutOp = dyn_cast<ConvertLayoutOp>(
+          maybeConvertLayoutOperand.get().getDefiningOp());
+      if (!maybeConvertLayoutOp) {
+        return rewriter.notifyMatchFailure(op,
+                                           "Else branch is not convert layout");
+      }
+      // Replace else block's yield
+      rewriter.modifyOpInPlace(ifOp.elseYield(), [&maybeConvertLayoutOperand,
+                                                  &maybeConvertLayoutOp]() {
+        maybeConvertLayoutOperand.assign(maybeConvertLayoutOp.getSource());
+      });
+
+      rewriter.eraseOp(maybeConvertLayoutOp);
+    }
+
+    // Replace then block's yield
+    rewriter.modifyOpInPlace(ifOp.thenYield(), [&ifOp, &yieldedIdx, &op]() {
+      ifOp.thenYield()->getOpOperand(yieldedIdx).assign(op.getSource());
+    });
+
+    rewriter.setInsertionPointAfter(ifOp);
+    // Push convert layout down
+    auto newConvertLayoutOp = cast<ConvertLayoutOp>(rewriter.clone(*op));
+    newConvertLayoutOp.getSourceMutable().assign(ifOp.getResult(yieldedIdx));
+    rewriter.replaceAllUsesExcept(ifOp.getResult(yieldedIdx),
+                                  newConvertLayoutOp, newConvertLayoutOp);
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
 //===----------------------------------------------------------------------===//
 // ConvertLayoutOp Canonicalization
 //===----------------------------------------------------------------------===//
@@ -124,6 +194,7 @@ void ConvertLayoutOp::getCanonicalizationPatterns(RewritePatternSet &results,
   results.add<EliminateRedundantConversionPattern>(context);
   results.add<FoldEmptyConvertLayoutPattern>(context);
   results.add<FoldCastConvertLayoutPattern>(context);
+  results.add<PropagateConvertLayoutDownIf>(context);
 }
 
 } // namespace mlir::hivm

@@ -16,4 +16,4 @@ add_bishengir_dialect_library(BiShengIRAnnotationTransforms
   BiShengIRAnnotationDialect
   MLIRPass
   MLIRMemRefDialect
-  )
+)

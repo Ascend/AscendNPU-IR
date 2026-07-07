@@ -43,6 +43,9 @@ using namespace mlir::hfusion;
 using namespace mlir::utils;
 
 static std::optional<hfusion::AtomicKind>
+namespace {
+
+std::optional<hfusion::AtomicKind>
 tryMapReduceToAtomicKind(linalg::ReduceOp reduceOp) {
   // We only support these kind of atomic kind now
   Block &body = reduceOp.getCombiner().front();
@@ -63,7 +66,6 @@ tryMapReduceToAtomicKind(linalg::ReduceOp reduceOp) {
 }
 
 namespace {
-
 using ConsumerInfoPair =
     std::pair<Operation *, hfusion::detail::ConsumerWithReduction>;
 
@@ -144,6 +146,7 @@ BitVector generateTilingMaskForOutput(const hfusion::detail::StoreOpInfo &info,
     for (auto parallelDimsInOutput : info.strictlyParallelDims) {
       assert(parallelDimsInOutput <
              static_cast<int64_t>(currentInterchange.size()));
+      assert(parallelDimsInOutput < ssize_t(currentInterchange.size()));
       auto dimInAnchor = currentInterchange[parallelDimsInOutput];
       tilingMask[dimInAnchor] = true;
     }
@@ -153,6 +156,7 @@ BitVector generateTilingMaskForOutput(const hfusion::detail::StoreOpInfo &info,
   for (auto reduceDimsInOutput : info.looselyReductionDims) {
     assert(reduceDimsInOutput <
            static_cast<int64_t>(currentInterchange.size()));
+    assert(reduceDimsInOutput < ssize_t(currentInterchange.size()));
     auto dimInAnchor = currentInterchange[reduceDimsInOutput];
     tilingMask[dimInAnchor] = true;
   }
@@ -257,6 +261,7 @@ void collectTiledLoopsForEachDim(
 LogicalResult checkBoolElementType(func::FuncOp func) {
   // TODO: disable op with unsupported element type using a black list
   auto result = func->walk([](linalg::ReduceOp op) {
+  auto result = func->walk([&](linalg::ReduceOp op) {
     for (Type type : op->getOperandTypes()) {
       auto elemType = getElementTypeOrSelf(type);
       if (elemType.isIntOrFloat() && elemType.getIntOrFloatBitWidth() == 1) {
@@ -337,6 +342,7 @@ void AnyPBRKernelInfo::recordFusibleProducerAnalysisResult(
     auto [_, isInserted] = consumer2Producer_.try_emplace(key, value);
     if (!isInserted)
       llvm::report_fatal_error("duplicate consumer + axis pair");
+      llvm_unreachable("duplicate consumer + axis pair");
   }
   assert(consumer != nullptr);
   auto [_, isInserted] =
@@ -347,6 +353,12 @@ void AnyPBRKernelInfo::recordFusibleProducerAnalysisResult(
 
 SmallVector<NamedAttribute>
 AnyPBRKernelInfo::getReductionProducers(Operation *consumer, int64_t key) {
+    llvm_unreachable("duplicate consumer");
+}
+
+SmallVector<NamedAttribute>
+AnyPBRKernelInfo::getReductionProducers(Operation *consumer,
+                                        int64_t key) const {
   // If the pair {consumer, anchorDim} is recorded in the
   // `consumer2ProducerMap`, it means that:
   //    1) the anchorDim is a reduce axis
@@ -550,6 +562,12 @@ TilingComputeFn AnyPBRScheduler::calculateTilingImpl() {
         LDBG("Setting tiling data heuristic value: tilingKey="
              << tilingKey << " heuristic=" << constOne);
         tilingDataForDim.setHeuristicValueForKey(tilingKey, constOne);
+      for (int64_t currTilingKey = dimUpperBound; currTilingKey > dimIdx;
+           --currTilingKey) {
+        int64_t constOne = 1;
+        LDBG("Setting tiling data heuristic value: currTilingKey="
+             << currTilingKey << " heuristic=" << constOne);
+        tilingDataForDim.setHeuristicValueForKey(currTilingKey, constOne);
       }
       s[dimIdx + 1] = std::make_unique<TilingData>(std::move(tilingDataForDim));
       ubRemainingNum = ubRemainingNum.floorDiv(tileSize);
@@ -736,6 +754,13 @@ ValueHandle *AnyPBRScheduler::tileParallelAxesAndFuseProducers(
     assert(!outputInfo.inputsInterchange.empty());
     auto currentInterchange = outputInfo.inputsInterchange.front();
     LDBG("output: " << *outputOp);
+    LLVM_DEBUG({
+      if (outputOp) {
+        DBGS() << "output: " << *outputOp << "\n";
+      } else {
+        DBGS() << "output: No output!\n";
+      }
+    });
     LDBG("axis mask: " << utils::debugger::to_string(axisMask));
     LDBG("tiling mask: " << utils::debugger::to_string(tilingMask));
     LDBG("interchange: " << utils::debugger::to_string(currentInterchange));
@@ -819,11 +844,25 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
   applyCanonicalization(opBuilder);
 
   auto totalRank = anyPBRInfo->getAnalyzer()->getAnchorRank();
+void setBufferSizeForReductionTile(
+    ValueHandles targetsToSetBufferSize,
+    const hfusion::detail::ForReductionTilingResult &reductionTileResult) {
+  for (const auto &inits : reductionTileResult.reductionInitOp)
+    targetsToSetBufferSize.append(inits);
+  targetsToSetBufferSize.append(reductionTileResult.partialReductionOp);
+  targetsToSetBufferSize.append(reductionTileResult.finalReductionOp);
+}
+
+ValueHandle *AnyPBRScheduler::tileReduceAxesAndFuseProducers(
+    TilingKey key, TilingInfo &tilingInfo, const AnyPBRKernelInfo &anyPBRInfo,
+    OpBuilder &opBuilder, std::optional<ValueHandles> targetsToSetBufferSize) {
+  auto totalRank = anyPBRInfo.getAnalyzer()->getAnchorRank();
   SmallVector<ValueHandles> tiledReductionLoopsForOutputConsumer(totalRank);
   SmallVector<NamedAttribute> jointProducerIdentifier;
   ValueHandle *tiledReduceLoop = nullptr;
   // Tile the reduction axis in the reduce op and the store op.
   for (const auto &consumerAndInfo : anyPBRInfo->getConsumer2Info()) {
+  for (const auto &consumerAndInfo : anyPBRInfo.getConsumer2Info()) {
     auto [consumer, consumerInfo] = consumerAndInfo;
     LDBG("Consumer: " << *consumer);
     // Initialize axis mask and tiling mask.
@@ -831,6 +870,9 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
         generateAxisMaskForConsumer(*anyPBRInfo, consumerAndInfo);
     BitVector tilingMask =
         generateTilingMaskForConsumer(key, *anyPBRInfo, consumerAndInfo);
+        generateAxisMaskForConsumer(anyPBRInfo, consumerAndInfo);
+    BitVector tilingMask =
+        generateTilingMaskForConsumer(key, anyPBRInfo, consumerAndInfo);
     LDBG("axis mask: " << utils::debugger::to_string(axisMask));
     LDBG("tiling mask: " << utils::debugger::to_string(tilingMask));
     // Bail out conditions:
@@ -853,6 +895,13 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
       LDBG("interchange: " << utils::debugger::to_string(currentInterchange));
       ValueHandleFoldResults tileSizes =
           getTilingFactors(key, tilingInfo->getTilingStruct(), axisMask,
+        anyPBRInfo.getReductionProducers(consumer, key);
+    if (consumerInfo.getType() == detail::ConsumerType::kReduction) {
+      auto reductionInfo = anyPBRInfo.reduceOp2Info.at(consumer);
+      auto currentInterchange = reductionInfo.inputsInterchange.front();
+      LDBG("interchange: " << utils::debugger::to_string(currentInterchange));
+      ValueHandleFoldResults tileSizes =
+          getTilingFactors(key, tilingInfo.getTilingStruct(), axisMask,
                            tilingMask, currentInterchange);
       auto reduceHandles =
           ValueHandles{getOpsWithAttr(consumerIdentifier.getName(), opBuilder,
@@ -877,11 +926,18 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
       targetsToSetBufferSize.append(reductionTileResult.finalReductionOp);
     } else {
       auto opInfo = anyPBRInfo->storeOp2Info.at(consumer);
+      if (targetsToSetBufferSize.has_value()) {
+        setBufferSizeForReductionTile(targetsToSetBufferSize.value(),
+                                      reductionTileResult);
+      }
+    } else {
+      auto opInfo = anyPBRInfo.storeOp2Info.at(consumer);
       assert(!opInfo.inputsInterchange.empty());
       auto currentInterchange = opInfo.inputsInterchange.front();
       LDBG("interchange: " << utils::debugger::to_string(currentInterchange));
       ValueHandleFoldResults tileSizes =
           getTilingFactors(key, tilingInfo->getTilingStruct(), axisMask,
+          getTilingFactors(key, tilingInfo.getTilingStruct(), axisMask,
                            tilingMask, currentInterchange);
       auto cacheWriteHandles =
           ValueHandles{getOpsWithAttr(consumerIdentifier.getName(), opBuilder,
@@ -933,7 +989,50 @@ LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
                        /*duplicateProducers=*/false,
                        /*applyCanonicalizeAfterEachFusion=*/true);
   }
+  return tiledReduceLoop;
+}
 
+LogicalResult AnyPBRScheduler::createScheduleImpl(TilingKey key,
+                                                  OpBuilder &opBuilder) {
+  TilingInfo *tilingInfo = getTilingInfo();
+  assert(tilingInfo != nullptr);
+
+  auto *anyPBRInfo = dyn_cast_or_null<AnyPBRKernelInfo>(getKernelInfo());
+  assert(anyPBRInfo != nullptr);
+  if (anyPBRInfo == nullptr) {
+    return failure();
+  }
+
+  // Get handles to tiling data.
+  ValueHandles tilingDataHandles =
+      getTilingStructHandles(tilingInfo->getTilingStruct(), opBuilder);
+
+  // Tile cache writes' parallel axes.
+  ValueHandle *tiledParallelLoop = tileParallelAxesAndFuseProducers(
+      key, *tilingInfo, *anyPBRInfo, opBuilder);
+
+  // Bind parallel axis to multicore.
+  if (anyPBRInfo->enableMultiCoreReduce) {
+    bindLoopToMulticore(tiledParallelLoop, *anyPBRInfo, opBuilder,
+                        tilingInfo->getTilingData(
+                            anyPBRInfo->getParallelBlockDimTilingDataIdx()));
+  } else {
+    bindLoopToMulticore(tiledParallelLoop, *anyPBRInfo, opBuilder);
+  }
+
+  // Set buffer size.
+  ValueHandle *producerOps = getIntermediateProducers(opBuilder);
+  ValueHandles targetsToSetBufferSize = {producerOps};
+
+  if (!needToSplitReduction(key))
+    return setBufferSize(tilingInfo, targetsToSetBufferSize, opBuilder);
+
+  LDBG("Need to split condition is true");
+  // Apply canonicalization before tiling again.
+  applyCanonicalization(opBuilder);
+
+  ValueHandle *tiledReduceLoop = tileReduceAxesAndFuseProducers(
+      key, *tilingInfo, *anyPBRInfo, opBuilder, targetsToSetBufferSize);
   if (anyPBRInfo->enableMultiCoreReduce && tiledReduceLoop) {
     // Warning:: if this is bigger than 3, there might be precision lost
     TilingData *coreNumForReduceAxis =

@@ -52,7 +52,6 @@ using namespace mlir::hfusion::reshape_utils;
 using namespace mlir::utils::debugger;
 
 namespace {
-
 // %c = elemwise %a, %b
 // %d = expand %c
 // Folds into
@@ -113,6 +112,65 @@ LogicalResult handleElementwiseOp(tensor::ExpandShapeOp expandOp,
   return success();
 }
 
+// %b = hfusion.flip %a, axis
+// %c = expand %b
+// Folds into
+//
+// |
+// v
+//
+// %newA = expand %a
+// %newB = hfusion.flip %newA, newAxis
+// %newC = collapse %newB
+// %newB replace %c
+// %newC replace %b
+LogicalResult handleFlipOp(tensor::ExpandShapeOp expandOp,
+                           PatternRewriter &rewriter, Operation *definingOp) {
+  auto flipOp = cast<hfusion::FlipOp>(definingOp);
+
+  // Step 1: Acquire info
+  // Get original flipAxis and reassociation indices
+  auto flipAxis = flipOp.getFlipAxis();
+  auto reassociation = expandOp.getReassociationIndices();
+  auto expandInShape = expandOp.getSrcType().getShape();
+  if (flipAxis >= reassociation.size() || reassociation[flipAxis].empty()) {
+    return expandOp.emitOpError("invalid flipAxis for reassociation");
+  }
+  // if flipAxis is expanded, expandUp forbidden
+  if (reassociation[flipAxis].size() > 1U) {
+    return failure();
+  }
+  auto expandOutShape = expandOp.getResultType().getShape();
+  // Step 2: Calculate the new flip axis
+  uint64_t newFlipAxis = static_cast<uint64_t>(reassociation[flipAxis][0]);
+
+  LLVM_DEBUG(llvm::dbgs() << "Try to lift " << expandOp << " before a flip "
+                          << *definingOp << ";\n Flip Axis: " << flipAxis
+                          << "\n";);
+
+  // Step 3: rewriter
+  // Add New Expand operation
+  auto src = flipOp->getOperands()[0];
+  rewriter.setInsertionPointAfterValue(src);
+  auto resTy = RankedTensorType::get(expandOutShape, getElementTypeOrSelf(src));
+  tensor::ExpandShapeOp newSrcOp = rewriter.create<tensor::ExpandShapeOp>(
+      src.getLoc(), resTy, src, reassociation);
+  // Add new flip operation
+  rewriter.setInsertionPointAfter(flipOp);
+  auto newFlipOp = rewriter.create<hfusion::FlipOp>(flipOp->getLoc(), resTy,
+                                                    newSrcOp, newFlipAxis);
+  // Add new collapse operation (old flip replaced by collapse)
+  rewriter.setInsertionPointAfter(expandOp);
+  resTy = RankedTensorType::get(expandInShape, getElementTypeOrSelf(expandOp));
+  auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
+      flipOp.getLoc(), resTy, newFlipOp->getResult(0), reassociation);
+  rewriter.replaceAllUsesExcept(flipOp->getResult(0), collapseOp->getResult(0),
+                                expandOp);
+  // old expand replaced by new transpose
+  rewriter.replaceOp(expandOp, newFlipOp);
+  rewriter.eraseOp(flipOp);
+  return success();
+}
 // %c = transpose %a into %b
 // %d = expand %c
 // Folds into
@@ -182,6 +240,7 @@ LogicalResult handleTransposeOp(tensor::ExpandShapeOp expandOp,
         transposeOp->getLoc(), newSrcOp, newDstOp, newPermutation);
   } else {
     llvm::report_fatal_error("Transpose op unrecognized");
+    llvm_unreachable("Transpose op unrecognized");
   }
 
   // Add new collapse operation (old transpose replaced by collapse)
@@ -781,6 +840,15 @@ LogicalResult handleReduceLikeOp(tensor::ExpandShapeOp expandOp,
   SmallVector<ReassociationIndices> newReassociation;
   SmallVector<int64_t> newOutputShape; // output: the expanded input of reduce
   SmallVector<int64_t> newDimensions;
+  auto expandedShape =
+      getMixedSizesOrOutputShape(rewriter, expandOp.getResult());
+  auto expandInputRank = expandOp.getSrcType().getRank();
+  // skip add unitdim to rank 0 output of reduce
+  if (isUnitDimReshape(convertToConstantValues(expandedShape),
+                       reassociationIndices) &&
+      expandInputRank == 0) {
+    return failure();
+  }
   // Step 2: obtains dimensions and reassociations
   auto opResult = cast<OpResult>(expandOp.getSrc());
   auto oldReplaceIndex = opResult.getResultNumber();
@@ -909,6 +977,50 @@ LogicalResult handleHIVMReduceOp(tensor::ExpandShapeOp expandOp,
   return success();
 }
 
+LogicalResult handleExtractOp(tensor::ExpandShapeOp expandOp,
+                              PatternRewriter &rewriter,
+                              Operation *definingOp) {
+  auto extractOp = dyn_cast<tensor::ExtractOp>(definingOp);
+  if (!extractOp)
+    return failure();
+
+  auto expandedIndices = extractOp.getIndices();
+  auto curShape = expandOp.getResultType().getShape();
+
+  // Prepare dimension sizes as Values.
+  SmallVector<Value> dimensionSizes;
+  Location loc = expandOp.getLoc();
+  rewriter.setInsertionPoint(expandOp);
+  for (int64_t dim : curShape) {
+    Value dimSizeValue;
+    if (ShapedType::isDynamic(dim))
+      dimSizeValue = rewriter.create<tensor::DimOp>(loc, expandOp.getResult(),
+                                                    dimensionSizes.size());
+    else
+      dimSizeValue = rewriter.create<arith::ConstantIndexOp>(loc, dim);
+    dimensionSizes.push_back(dimSizeValue);
+  }
+
+  // Define getDimSize lambda function.
+  auto getDimSize = [&](int idx) -> Value { return dimensionSizes[idx]; };
+
+  // Compute collapsed indices using the utility function.
+  auto collapsedIndices = hfusion::computeExtractCollapsedIndices(
+      expandOp.getReassociationIndices(), expandedIndices, getDimSize, rewriter,
+      loc);
+
+  rewriter.setInsertionPointAfter(expandOp);
+  if (utils::getShapeRank(expandOp.getSrc()).value_or(0) == 1) {
+    if (collapsedIndices.empty()) {
+      collapsedIndices.push_back(
+          rewriter.create<arith::ConstantIndexOp>(loc, 0));
+    }
+  }
+  auto newExtract = rewriter.create<tensor::ExtractOp>(loc, expandOp.getSrc(),
+                                                       collapsedIndices);
+  rewriter.replaceOp(extractOp, newExtract.getResult());
+  return success();
+}
 LogicalResult handleConcatOp(tensor::ExpandShapeOp expandOp,
                              PatternRewriter &rewriter, Operation *definingOp) {
   auto reassociation = expandOp.getReassociationIndices();
@@ -919,6 +1031,9 @@ LogicalResult handleConcatOp(tensor::ExpandShapeOp expandOp,
   uint64_t newConcatDim = 0;
   assert(mixedDimensionResult.size() == reassociation.back().back() + 1);
   assert(reassociation.size() == concatOp.getType().getRank());
+  assert(ssize_t(mixedDimensionResult.size()) ==
+         reassociation.back().back() + 1);
+  assert(ssize_t(reassociation.size()) == concatOp.getType().getRank());
   SmallVector<OpFoldResult> newExpandOutputShape;
   SmallVector<OpFoldResult> operandsNewDimSize;
   auto res = computeExpandConcat(rewriter, concatOp, reassociation,
@@ -1013,6 +1128,22 @@ LogicalResult handleExtractSliceOp(tensor::ExpandShapeOp expandOp,
       getMixedSizesOrOutputShape(rewriter, expandOp.getResult()),
       /* subview */ true, newMixedOffsets, newMixedSizes, newMixedStrides,
       expandOutputShape);
+  SmallVector<OpFoldResult> expandOutputShape;
+  SmallVector<ReassociationIndices> newReasso;
+
+  auto dropDims = extractSliceOp.getDroppedDims();
+  auto expandedShape =
+      getMixedSizesOrOutputShape(rewriter, expandOp.getResult());
+  if (isUnitDimReshape(convertToConstantValues(expandedShape), reassociation)) {
+    // skip collapseShape that only add unit dims
+    return failure();
+  }
+  expandedShape = getUndroppedExpandedSubviewShape(rewriter, expandedShape,
+                                                   reassociation, dropDims);
+  auto res = getExtractSliceModifyingOp(
+      rewriter, cast<ExtractSliceOp>(definingOp), reassociation, expandedShape,
+      /* subview */ true, newMixedOffsets, newMixedSizes, newMixedStrides,
+      expandOutputShape, newReasso);
   if (res.failed())
     return failure();
   auto loc = definingOp->getLoc();
@@ -1020,6 +1151,10 @@ LogicalResult handleExtractSliceOp(tensor::ExpandShapeOp expandOp,
                                      reassociation, expandOutputShape);
   auto newExtractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
       loc, expandedNewSrc.getResult(), newMixedOffsets, newMixedSizes,
+                                     newReasso, expandOutputShape);
+  auto newExtractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+      loc, cast<RankedTensorType>(expandOp.getResult().getType()),
+      expandedNewSrc.getResult(), newMixedOffsets, newMixedSizes,
       newMixedStrides);
   auto extractSliceOpResultShape =
       utils::getShape(extractSliceOp.getResult().getType());
@@ -1041,6 +1176,7 @@ LogicalResult handleInsertSliceOp(tensor::ExpandShapeOp expandOp,
   SmallVector<OpFoldResult> newMixedStrides;
   SmallVector<OpFoldResult> expandSrcOutputShape;
   SmallVector<OpFoldResult> expandDestOutputShape;
+  SmallVector<ReassociationIndices> newReasso;
 
   // The source must be the result of the insert slice, meaning its always
   // the superview
@@ -1051,12 +1187,19 @@ LogicalResult handleInsertSliceOp(tensor::ExpandShapeOp expandOp,
       expandDestOutputShape);
   if (res.failed())
     return failure();
+      expandDestOutputShape, newReasso);
+  if (res.failed())
+    return failure();
 
+  // get new src shape
+  auto rankReducedShape = getRankReducingShape(
+      expandSrcOutputShape, reassociation, insertSliceOp.getDroppedDims());
   auto loc = definingOp->getLoc();
   // Gonna collapse the destination as well?
   // Expand result or expand source
   auto expandedNewSrc = createExpand(rewriter, loc, insertSliceOp.getSource(),
                                      reassociation, expandSrcOutputShape);
+                                     newReasso, rankReducedShape);
   auto expandedNewDest = createExpand(rewriter, loc, insertSliceOp.getDest(),
                                       reassociation, expandDestOutputShape);
   auto newInsertSliceOp = rewriter.create<tensor::InsertSliceOp>(
@@ -1082,6 +1225,13 @@ LogicalResult handleBufferizationToTensor(tensor::ExpandShapeOp expandOp,
   auto reassociation = expandOp.getReassociationIndices();
   auto memrefSrc = toTensorOp.getMemref();
 
+  // Refuse to cross the bufferization boundary when the underlying memref has
+  // a non-identity (strided) layout. 
+  auto memrefTy = cast<MemRefType>(memrefSrc.getType());
+  if (!memrefTy.getLayout().isIdentity())
+    return rewriter.notifyMatchFailure(
+        toTensorOp,
+        "non-identity memref layout; refusing to cross bufferization boundary");
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPoint(toTensorOp);
   auto expandOutputShape = getMixedValues(expandOp.getStaticOutputShape(),
@@ -1181,6 +1331,11 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   if (definingOp->getParentOp() != expandOp->getParentOp())
     return rewriter.notifyMatchFailure(definingOp->getParentOp(),
                                        "Defining op has different parent");
+  auto oneUse = definingOp->hasOneUse();
+  if ((definingOp->getParentOp() != expandOp->getParentOp()) && (!oneUse))
+    return rewriter.notifyMatchFailure(
+        definingOp->getParentOp(), "expandOp is NOT in the same region as "
+                                   "srcDefOp and srcDefOp has multiple users");
   if (llvm::all_of(expandOp->getUsers(),
                    [&](Operation *op) { return isOutOp(op); })) {
     return rewriter.notifyMatchFailure(expandOp, "All user of expand is out");
@@ -1193,10 +1348,15 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                      expandOp.getReassociationIndices()))
     return failure();
   LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
+  LLVM_DEBUG(llvm::dbgs() << (definingOp->getParentOp() ? *(definingOp->getParentOp()) : *definingOp) << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "-- Found definingOp: " << *definingOp << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
   if (auto bitcastOp = dyn_cast<hivm::BitcastOp>(definingOp)) {
     return handleBitcastOp(expandOp, rewriter, bitcastOp);
+  }
+  if (isa<hfusion::MulExtOp>(definingOp)) {
+    PropagatableMulExt propagater;
+    return propagater.matchAndRewriteExpand(rewriter, definingOp, expandOp);
   }
   if (isa<scf::ForOp>(definingOp)) {
     PropagatableScfFor propagater;
@@ -1217,6 +1377,9 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   }
   if (isa<linalg::ReduceOp>(definingOp)) {
     return handleReduceLikeOp<linalg::ReduceOp>(expandOp, rewriter, definingOp);
+  }
+  if (isa<hfusion::FlipOp>(definingOp)) {
+    return handleFlipOp(expandOp, rewriter, definingOp);
   }
   if (isa<linalg::TransposeOp>(definingOp)) {
     return handleTransposeOp<linalg::TransposeOp>(expandOp, rewriter,
@@ -1265,6 +1428,9 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   }
   if (isa<hivm::VReduceOp>(definingOp)) {
     return handleHIVMReduceOp(expandOp, rewriter, definingOp);
+  }
+  if (isa<tensor::ExtractOp>(definingOp)) {
+    return handleExtractOp(expandOp, rewriter, definingOp);
   }
   if (isa<tensor::ArangeOp>(definingOp)) {
     return handleArangeOp(expandOp, rewriter, definingOp);

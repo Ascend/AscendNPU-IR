@@ -49,6 +49,10 @@ mlir::Operation *cloneAndFuseFirstUse(mlir::RewriterBase &rewriter,
 
 void normalizeLoop(mlir::RewriterBase &rewriter, mlir::scf::ForOp op,
                    mlir::Value oldStep);
+
+void fuseNestedSiblingLoops(mlir::Operation *fusedOp,
+                             mlir::RewriterBase &rewriter, bool recursive);
+
 } // namespace bishengir
 
 #endif // BISHENGIR_TRANSFORMS_TRANSFORMS_H

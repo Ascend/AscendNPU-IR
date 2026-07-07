@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Tosa/Utils/ConversionUtils.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#define DEBUG_TYPE "hfusion-legalize-bf16"
 namespace mlir {
 #define GEN_PASS_DEF_LEGALIZEBF16PASS
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
@@ -34,6 +35,7 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hfusion;
 
+static thread_local bool isAscend950Arch{false};
 class LegalizeBF16Pass : public impl::LegalizeBF16PassBase<LegalizeBF16Pass> {
 public:
   void runOnOperation() override;
@@ -51,6 +53,19 @@ static bool isBF16ElemType(Operation *op) {
 static void setFastMathContractAtttr(Operation *castOp) {
   auto fastMathAttr = arith::FastMathFlagsAttr::get(
     castOp->getContext(), arith::FastMathFlags::contract);
+static bool isBF16ElemTypeSelect(Operation *op) {
+  if (!isa<arith::SelectOp>(op)) {
+    return false;
+  }
+  auto oper = op->getOperands()[1];
+  auto elemTy = getElementTypeOrSelf(oper.getType());
+  return isa<BFloat16Type>(elemTy);
+}
+
+static void setFastMathContractAttr(Operation *castOp) {
+  assert(isa<hfusion::CastOp>(castOp));
+  auto fastMathAttr = arith::FastMathFlagsAttr::get(
+      castOp->getContext(), arith::FastMathFlags::contract);
   castOp->setAttr(mlir::arith::FastMathFlagsAttr::name, fastMathAttr);
 }
 
@@ -63,11 +78,28 @@ static bool shouldLegalizeBF16Op(Operation *op) {
            isa<hfusion::BitcastOp>(op) || isa<hfusion::SelectOp>(op) ||
            isa<hfusion::Conv1DOp>(op) || isa<hfusion::Conv2DOp>(op) ||
            isa<hfusion::Conv3DOp>(op));
+  bool isExcluded = isa<hfusion::CastOp>(op) || isa<linalg::FillOp>(op) ||
+                    isa<linalg::CopyOp>(op) || isa<linalg::MatmulOp>(op) ||
+                    isa<linalg::BatchMatmulOp>(op) ||
+                    isa<linalg::TransposeOp>(op) || isa<hfusion::LoadOp>(op) ||
+                    isa<hfusion::StoreOp>(op) || isa<hfusion::BitcastOp>(op);
+
+  if (isAscend950Arch) {
+    // Ascend 950 supports hardware instructions for BF16 floor operations.
+    if (isa<linalg::ElemwiseUnaryOp>(op)) {
+      auto unaryOp = cast<linalg::ElemwiseUnaryOp>(op);
+      auto funAttr = unaryOp.getFun();
+      isExcluded |= funAttr == linalg::UnaryFn::floor;
+    }
+    isExcluded |= isa<hfusion::GatherOp>(op);
+  }
+  return utils::hasBF16Operand(op) && !isExcluded;
 }
 
 template <typename Op>
 static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
                               SmallVector<Value> &castedOperands) {
+  LLVM_DEBUG(llvm::dbgs() << "[createNewOp] Op: " << *bf16Op << "\n";);
   IRMapping mapper;
   Operation *op = bf16Op.getOperation();
   for (const auto &[idx, oper] : llvm::enumerate(op->getOperands()))
@@ -86,6 +118,12 @@ static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
       // Handle scalar BF16 types (e.g., from arith.addf with scalar operands)
       newOp->getResult(idx).setType(Float32Type::get(ctx));
     }
+    ShapedType shapedType = cast<ShapedType>(res.getType());
+    if (!(shapedType && getElementTypeOrSelf(shapedType).isBF16())) {
+      continue;
+    }
+    auto newResTy = shapedType.clone(Float32Type::get(ctx));
+    newOp->getResult(idx).setType(newResTy);
   }
 
   if (op->getNumRegions() <= 0)
@@ -111,6 +149,24 @@ static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
     if (!isa<linalg::YieldOp>(bodyOp) && !isa<arith::CmpFOp>(bodyOp) &&
         !isa<linalg::IndexOp>(bodyOp) && !isa<arith::IndexCastOp>(bodyOp) &&
         !isa<arith::CmpIOp>(bodyOp) && !isa<tensor::YieldOp>(bodyOp)) {
+
+  auto isForbiddenSetResultOp = [](Operation *op) -> bool {
+    return (isa<linalg::YieldOp>(op) || isa<tensor::YieldOp>(op) ||
+            isa<linalg::IndexOp>(op) || isa<arith::IndexCastOp>(op) ||
+            isa<arith::CmpFOp>(op) || isa<arith::CmpIOp>(op) ||
+            isa<arith::AndIOp>(op) || isa<arith::OrIOp>(op) ||
+            isa<arith::XOrIOp>(op) ||
+            // isBF16ElemTypeSelect checks if op is select [i1, bf16, bf16].
+            // now isBF16ElemTypeSelect returns false. But op may be select with
+            // i32. thus we disable replacing the result because it does not
+            // select bf16.
+            isa<arith::SelectOp>(op));
+  };
+
+  for (auto &bodyOp : *block) {
+    LLVM_DEBUG(llvm::dbgs() << "└─ bodyOp: " << bodyOp << "\n";);
+    auto *newBodyOp = rewriter.clone(bodyOp, mapper);
+    if ((isBF16ElemTypeSelect(&bodyOp)) || !isForbiddenSetResultOp(&bodyOp)) {
       newBodyOp->getResult(0).setType(Float32Type::get(ctx));
     }
   }
@@ -119,6 +175,8 @@ static Operation *createNewOp(PatternRewriter &rewriter, Op bf16Op,
 
 template <typename Op>
 static void createF32ElementTypeOpRegion(Op bf16Op, PatternRewriter &rewriter) {
+  LLVM_DEBUG(llvm::dbgs() << "[createF32ElementTypeOpRegion] Op: " << *bf16Op
+                          << "\n";);
   // Handle ops in region too
   for (size_t regionIndex = 0; regionIndex < bf16Op->getNumRegions();
        regionIndex++) {
@@ -148,6 +206,32 @@ static void createF32ElementTypeOpRegion(Op bf16Op, PatternRewriter &rewriter) {
                                          });
             }
           }
+          LLVM_DEBUG(llvm::dbgs() << "└─ walking Op: " << *opInRegion << "\n";);
+          for (auto operand : opInRegion->getOperands()) {
+            if (isa<BlockArgument>(operand))
+              continue;
+            LLVM_DEBUG(llvm::dbgs() << "  └─ operand: " << operand << "\n";);
+            if (operand.getDefiningOp()->getParentOp() !=
+                opInRegion->getParentOp()) {
+              if (getElementTypeOrSelf(operand.getType()).isBF16()) {
+                Value castedOperand =
+                    castTo(rewriter, operand,
+                           /*targetElemType=*/rewriter.getF32Type());
+                if (Operation *castOp =
+                        castedOperand.getDefiningOp<hfusion::CastOp>())
+                  setFastMathContractAttr(castOp);
+                // only replace operand used in this regionOp, rely on later
+                // CSE and DCE to eliminate duplicate value
+                rewriter.replaceUsesWithIf(operand, castedOperand,
+                                           [&](OpOperand &use) {
+                                             Operation *op = use.getOwner();
+                                             return op == opInRegion;
+                                           });
+              }
+            }
+          }
+          LLVM_DEBUG(llvm::dbgs()
+                         << "-> rewritten Op: " << *opInRegion << "\n";);
           return WalkResult::advance();
         });
   }
@@ -170,6 +254,7 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
             : oper;
     if (Operation *castOp = castedOperand.getDefiningOp<hfusion::CastOp>())
       setFastMathContractAtttr(castOp);
+      setFastMathContractAttr(castOp);
     castedOperands.push_back(castedOperand);
   }
 
@@ -185,6 +270,7 @@ static void createF32ElementTypeOp(Op bf16Op, PatternRewriter &rewriter) {
                         : res;
     if (Operation *castOp = castedResult.getDefiningOp<hfusion::CastOp>())
       setFastMathContractAtttr(castOp);
+      setFastMathContractAttr(castOp);
     castedResults.push_back(castedResult);
   }
 
@@ -239,6 +325,14 @@ void populateLegalizeBF16Pattern(RewritePatternSet &patterns) {
 }
 
 void LegalizeBF16Pass::runOnOperation() {
+  if (!isAscend950Arch) 
+    registerOne<tensor::ConcatOp>(patterns);
+  registerOne<tensor::PadOp>(patterns);
+}
+
+void LegalizeBF16Pass::runOnOperation() {
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  isAscend950Arch = hacc::utils::isAscend950(moduleOp);
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   populateLegalizeBF16Pattern(patterns);

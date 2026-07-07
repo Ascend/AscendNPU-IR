@@ -24,7 +24,9 @@
 #include "mlir/IR/Operation.h"
 
 #include <cstdint>
+#include <iostream>
 #include <optional>
+#include <string>
 
 #ifndef MLIR_DIALECT_TENSOR_UTILS_UTILS_H
 #define MLIR_DIALECT_TENSOR_UTILS_UTILS_H
@@ -34,6 +36,13 @@ namespace tensor {
 namespace reshape_utils {
 
 enum class ElementKind { HasMutation, NoMutation, Unit };
+
+// helper func: stringtify ElementKind
+std::string stringtifyElementKind(ElementKind kind);
+
+// overloaded << operator to support cout << ElementKind
+llvm::raw_ostream& operator<<(llvm::raw_ostream& os, ElementKind kind);
+
 
 using namespace llvm;
 // The structure to hold the mapping for each dimension.
@@ -50,6 +59,11 @@ using Hyperrectangle = SmallVector<HyperrectangularSlice>;
 
 std::optional<Hyperrectangle>
 getHyperrectangleFromArray(int64_t oldShape, int64_t offset, int64_t size,
+                           int64_t stride, ArrayRef<int64_t> staticNewShape);
+
+std::optional<Hyperrectangle>
+getExtendHyperrectangleFromArray(int64_t oldShape, int64_t offset, int64_t size,
+                           int64_t stride, ArrayRef<int64_t> staticNewShape);
                            int64_t stride, ArrayRef<int64_t> staticNewShape);
 
 /// Creates an inverse ExpandShapeOp for a given CollapseShapeOp.

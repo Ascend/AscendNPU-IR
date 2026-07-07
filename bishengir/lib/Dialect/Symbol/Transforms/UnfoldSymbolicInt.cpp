@@ -160,6 +160,7 @@ private:
     LDBG("Finish unfolding bind_symbolic_shape op");
     if (!replaceableInputIdx.empty()) {
       llvm::report_fatal_error(
+      llvm_unreachable(
           "all replaceable symbols should be unfolded on the first usage");
       return failure();
     }

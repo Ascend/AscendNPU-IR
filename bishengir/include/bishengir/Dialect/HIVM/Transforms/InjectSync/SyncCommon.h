@@ -21,6 +21,9 @@
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "llvm/ADT/STLExtras.h"
 #include <cstddef>
@@ -177,6 +180,7 @@ public:
       : eventIds({}), type_(type), srcPipe_(srcPipe), dstPipe_(dstPipe),
         kSyncIndex_(kSyncIndex), syncIRIndex_(syncIRIndex),
         forEndIndex_(forEndIndex) {};
+        forEndIndex_(forEndIndex){};
 
   ~SyncOperation() = default;
 
@@ -275,6 +279,7 @@ protected:
   // The parent class cannot directly initialize the instance.
   InstanceElement(KindTy kind, unsigned index)
       : kIndex(index), kKindTy(kind) {};
+  InstanceElement(KindTy kind, unsigned index) : kIndex(index), kKindTy(kind){};
 
 private:
   const KindTy kKindTy;
@@ -286,6 +291,7 @@ public:
   PlaceHolderInstanceElement(unsigned index, unsigned parentScopeId)
       : InstanceElement(KindTy::PLACE_HOLDER, index),
         parentScopeId(parentScopeId) {};
+        parentScopeId(parentScopeId){};
 
   std::unique_ptr<PlaceHolderInstanceElement> Clone() const;
 
@@ -415,8 +421,25 @@ using Buffer2MemInfoMap =
 bool isBackwardSync(const CompoundInstanceElement *nowCompound,
                     const CompoundInstanceElement *frontCompound);
 
+/// Check if an mmadl1 operation needs (pipe_m, pipe_mte1) sync related
+/// arguments.
+bool checkMmadl1NeedsPipeMPipeMTE1SyncArg(MmadL1Op mmadL1Op);
+
+bool isBackwardSync(const CompoundInstanceElement *nowCompound,
+                    const CompoundInstanceElement *frontCompound);
+
+bool isBackwardSyncUnderForLoop(const CompoundInstanceElement *nowCompound,
+                                const CompoundInstanceElement *frontCompound,
+                                const std::optional<unsigned> &forEndIndex);
+
 // Check all loop-like parents of `op` to be of class SCF::ForOps.
 bool checkAllParentLoopsAreForLoops(Operation *op);
+
+// check and assert that index is within the bounds of syncIR
+void checkSyncIRIndex(const SyncIRs &syncIR, int index);
+
+// check and assert given condition
+void checkCondition(bool condition, const std::string &message);
 
 // check and assert that index is within the bounds of syncIR
 void checkSyncIRIndex(const SyncIRs &syncIR, int index);

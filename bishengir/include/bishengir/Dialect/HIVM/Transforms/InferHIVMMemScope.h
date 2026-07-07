@@ -19,6 +19,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Support/LLVM.h"
@@ -34,6 +35,10 @@ private:
   /// Propagate the memory scope change to users of the value.
   LogicalResult propagateMemScopeToUsers(Value val);
 
+  /// Propagate the memory scope change to users of the value.
+  LogicalResult propagateMemScopeToUsers(Value val);
+
+private:
   /// Set memory scope for the root alloc op.
   void setMemRefAllocScope(memref::AllocOp op,
                            const AddressSpaceAttr &newScope);
@@ -50,6 +55,9 @@ LogicalResult inferAndPropagateMemScopeForMmadL1(MmadL1Op op);
 /// \note ConvOp should be bufferized beforehand.
 template<typename ConvOp>
 LogicalResult inferAndPropagateMemScopeForConvOp(ConvOp op);
+/// Infer, propagate, and set memory scope information to MmadMxL1Op.
+/// \note MmadMxL1Op should be bufferized beforehand.
+LogicalResult inferAndPropagateMemScopeForMmadMxL1(MmadMxL1Op op);
 
 /// Infer, propagate, and set memory scope information to FuncOp.
 /// \note FuncOp should be bufferized beforehand.
@@ -65,6 +73,8 @@ LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op);
 /// Infer, propagate, and set memory scope information to AllocOp.
 /// \note Set alloc on aic op memory scope to L1. And set aiv alloc memory scope to ub
 LogicalResult inferAndPropagateMemScopeForAlloc(memref::AllocOp op, hivm::AddressSpace space);
+/// Infer, propagate, and set memory scope information to GPUFuncOp.
+LogicalResult inferAndPropagateMemScopeForGpuFunc(gpu::GPUFuncOp op);
 
 } // namespace hivm
 } // namespace mlir

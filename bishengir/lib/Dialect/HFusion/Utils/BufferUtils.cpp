@@ -60,6 +60,7 @@ inline Value getAliasSource(Operation *op) {
       .Case([](tensor::InsertSliceOp insert) { return insert.getSource(); })
       .Default([](Operation *op) {
         llvm::report_fatal_error("Unsupported aliasing op");
+        llvm_unreachable("Unsupported aliasing op");
         return Value();
       });
 }
@@ -186,6 +187,7 @@ private:
       auto currentValOut = op->getResult(idx);
       auto rangesIndex = valToLiveRangeIdx.at(currentValOut);
       // magic ✿ looks for the stop of a live range if its over an op, it means
+      // magic ✿, looks for the stop of a live range if its over an op, it means
       // an inplace
       //
       // E.g:            a

@@ -28,8 +28,10 @@ include "mlir/Interfaces/DestinationStyleOpInterface.td"
 include "bishengir/Interfaces/AggregatedOpInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/ImplByScalarOpInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/ExtraBufferOpInterface.td"
+include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/OpPipeInterface.td"
+include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.td"
 
 def HIVMCoreTypeInterface : OpInterface<"CoreTypeInterface"> {
   let description = [{
@@ -75,7 +77,8 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
     [DestinationStyleOpInterface, // for buferization
      OpPipeInterface,             // for sync analysis
      HIVMCoreTypeInterface,       // for mix kernel related analysis
-     FlattenInterface             // for HIVM flattening
+     FlattenInterface,            // for HIVM flattening
+     LibraryFunctionOpInterface   // for lowering to std
     ]> {
   let cppNamespace = "::mlir::hivm";
   let description = [{
@@ -172,18 +175,6 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
           if (!$_op.isInlineTransposable())
             return false;
           return !$_op.getPermutationArray().empty();
-      }]
-    >,
-    InterfaceMethod<
-      /*desc=*/[{
-        Returns whether the op has a hardware-unsupported scalar operand.
-      }],
-      /*retTy=*/"bool",
-      /*methodName=*/"hasHWUnsupportedScalarOperand",
-      /*args=*/(ins),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-          return mlir::hivm::hasHWUnsupportedScalarOperandImpl($_op);
       }]
     >,
     //===------------------------------------------------------------------===//
@@ -329,19 +320,6 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
           mlir::hivm::IteratorType::kGather, res);
       }]
     >,
-    InterfaceMethod<
-      /*desc=*/[{
-        Return the dims that are gathermask loops.
-      }],
-      /*retTy=*/"void",
-      /*methodName=*/"getGatherMaskLoopDims",
-      /*args=*/(ins "SmallVectorImpl<int64_t> &":$res),
-      /*methodBody=*/"",
-      /*defaultImplementation=*/[{
-        return ::mlir::hivm::detail::findPositionsOfType($_op.getIteratorTypesArray(),
-          mlir::hivm::IteratorType::kParallel, res);
-      }]
-    >,
     //===------------------------------------------------------------------===//
     // Other interface methods.
     //===------------------------------------------------------------------===//
@@ -357,7 +335,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
         if ($_op.isElemwiseNaryOp())
           return hivm::detail::getIteratorTypesArrayForElemwiseOp($_op);
 
-        llvm::report_fatal_error("get iterator not implemented");
+        llvm_unreachable("get iterator not implemented");
       }]
     >,
     InterfaceMethod<
@@ -372,7 +350,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
         if ($_op.isElemwiseNaryOp())
            return hivm::detail::setIteratorTypesArrayForElemwiseOp($_op, iteratorType, arrayAttr);
 
-        llvm::report_fatal_error("set iterator not implemented");
+        llvm_unreachable("set iterator not implemented");
       }]
     >,
     InterfaceMethod<
@@ -497,7 +475,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm::report_fatal_error("getIndexingMaps not implemented");
+        llvm_unreachable("getIndexingMaps not implemented");
         return ::mlir::ArrayAttr();
       }]
     >,
@@ -535,12 +513,7 @@ def HIVMStructuredOpInterface : OpInterface<"HIVMStructuredOp",
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
         auto maps = $_op.getIndexingMapsArray();
-// TODO : release different version of ascendnpu ir and remove the macro
-#ifndef __LLVM_MAJOR_VERSION_21_COMPATIBLE__
         return concatAffineMaps(maps);
-#else
-        return concatAffineMaps(maps, $_op.getContext());
-#endif
       }]
     >,
     InterfaceMethod<

@@ -73,7 +73,6 @@ is_unaligned_transpose_01_axis_3d(memref_t<__ubuf__ T, 3> *src,
   return !is_addr_aligned || !is_stride0_aligned || !is_stride1_aligned ||
          !is_stride2_continuous;
 }
-
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
 check_inputs_of_transpose_nlast_3d(memref_t<__ubuf__ T, 3> *src,
@@ -116,7 +115,6 @@ transpose_nlast_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
     transpose_01_axis_3d_scalar_impl<T>(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_transpose_nlast_3d(src, dst);
 
@@ -155,6 +153,7 @@ transpose_nlast_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
 }
 
 /// transpose with last axis, src (a, b, c) to  dst (c, b, a)
+/// transpose with last axis, src (a, b, c) to  dst (c, b, c)
 /// \param src (type: memref<axbxcxT, stride[m0, n0, 1]>)
 /// \param dst (type: memref<cxbxaxT, stride[m1, n1, 1]>)
 /// 'm0' and 'm1' are stride of src and dst separately
@@ -200,6 +199,7 @@ vnchwconv_3d(memref_t<__ubuf__ T, 3> *src, memref_t<__ubuf__ T, 3> *dst) {
 }
 
 /// transpose with last axis, src (a, b, c) to  dst (c, b, a)
+/// transpose with last axis, src (a, b, c) to  dst (c, b, c)
 /// \param src (type: memref<axbxcxb64, stride[m0, n0, 1]>)
 /// \param dst (type: memref<cxbxaxb64, stride[m1, n1, 1]>)
 /// 'm0' and 'm1' are stride of src and dst separately

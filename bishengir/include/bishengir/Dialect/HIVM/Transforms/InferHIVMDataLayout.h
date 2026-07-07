@@ -34,6 +34,11 @@ enum class LayoutConversionKind : uint32_t {
   ND_TO_zN,
   nZ_TO_ND,
   zN_TO_ND
+  zN_TO_ND,
+  DOT_SCALE_ND_TO_zZ,     // scaleA no-trans
+  DOT_SCALE_ND_TO_nN,     // scaleB transed
+  DOT_SCALE_DN_TO_zZ,     // scaleA transed
+  DOT_SCALE_DN_TO_nN,     // scaleB no-trans
 };
 
 class DataLayoutInferAndPropagateHelper {
@@ -43,6 +48,7 @@ public:
     bool operator==(const LayoutInfo &other) const {
       return currentLayout == other.currentLayout &&
              targetLayout == other.currentLayout;
+             targetLayout == other.targetLayout;
     }
 
     bool operator!=(const LayoutInfo &other) const {
@@ -128,6 +134,12 @@ private:
                                 OpBuilder &builder, Location loc,
                                 SmallVector<int64_t> kBlockSizes) const;
 
+  /// Offset conversion pattern from DOT_SCALE_{A} to {zZ}.
+  FailureOr<SmallVector<Value>>
+  computeScaleNDToFractalzZOffset(SmallVector<Value> currentOffset,
+                               OpBuilder &builder, Location loc,
+                               SmallVector<int64_t> kBlockSizes) const;
+
   /// Shape conversion pattern from DOT_{A/B/C} to {zN}.
   FailureOr<SmallVector<Value>>
   computeDOTNDToFractalzNShape(SmallVector<Value> currentShape,
@@ -136,6 +148,12 @@ private:
   /// Shape conversion pattern from DOT_{A/B/C} to {nZ}.
   FailureOr<SmallVector<Value>>
   computeDOTNDToFractalnZShape(SmallVector<Value> currentShape,
+                               OpBuilder &builder, Location loc,
+                               SmallVector<int64_t> kBlockSizes) const;
+
+  /// Shape conversion pattern from DOT_SCALE_{A} to {zZ}.
+  FailureOr<SmallVector<Value>>
+  computeScaleNDToFractalzZShape(SmallVector<Value> currentShape,
                                OpBuilder &builder, Location loc,
                                SmallVector<int64_t> kBlockSizes) const;
 
@@ -151,6 +169,10 @@ private:
   /// Rewrite implementation for different ops.
   Operation *rewriteAllocOp(memref::AllocOp op);
   Operation *rewriteForOp(scf::ForOp op);
+  Operation *rewriteSelectOp(arith::SelectOp op);
+  Operation *rewriteAllocOp(memref::AllocOp op);
+  Operation *rewriteForOp(scf::ForOp op);
+  Operation *rewriteIfOp(scf::IfOp op);
   Operation *rewriteSubViewOp(memref::SubViewOp op);
   Operation *rewriteCollapseShapeOp(memref::CollapseShapeOp op);
   Operation *rewriteMemrefCastOp(memref::CastOp op);
@@ -160,6 +182,10 @@ private:
   /// on-the-fly data layout conversion.
   LogicalResult tryFoldLayoutConversionIntoCopy(Value src, Value dst,
                                                 Operation *originalOp,
+  /// Try to fold ConvertLayoutOp + CopyOp to HIVM Data Copy Ops with
+  /// on-the-fly data layout conversion.
+  LogicalResult tryFoldLayoutConversionIntoCopy(Value src, Value dst,
+                                                Operation &originalOp,
                                                 OpBuilder &builder);
 
 private:

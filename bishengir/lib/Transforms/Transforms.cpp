@@ -1,5 +1,6 @@
 //===------- Transforms.cpp - Transform Extend Fuse Into ContainingOp -----===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,10 +24,16 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
 
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/Dominance.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/MathExtras.h"
+#include <numeric>
 
 #include "bishengir/Transforms/Transforms.h"
 
@@ -190,6 +197,7 @@ static SmallVector<Value> createEqualZeroOp(const SmallVector<Value> &targets,
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), target);
     Value zero =
         rewriter.create<arith::ConstantIntOp>(loc, 0, rewriter.getI64Type());
+        rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(), 0);
     Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                 castResult, zero);
     results.push_back(cond);
@@ -461,6 +469,213 @@ Operation *replaceForAllWithNewSignature(
   return newforallOp;
 }
 
+/// Create new scf::ForOp and replace old ones.
+/// If producer op is fused into the inner ForOp of containing op, both inner
+/// ForOps and outermost ForOp should yield the result of producer op.
+/// For example:
+/// before replace:
+///   %0 = scf.for {      -> this is outmost containing op
+///     %1 = scf.for {    -> this is inner ForOp
+///       %2 = producerOp
+///       %3 = consumerOp
+///       yield %3
+///     }
+///     yield %1
+///   }
+/// after replace:
+///   %0:2 = scf.for {    -> this is outmost containing op
+///     %1:2 = scf.for {  -> this is inner ForOp
+///       %2 = producerOp
+///       %3 = consumerOp
+///       yield %2, %3
+///     }
+///     yield %1#0, %1#1
+///   }
+static void replaceInnerForWithNewSignature(
+    RewriterBase &rewriter, std::deque<scf::ForOp> &oldInnerForOps,
+    scf::ForOp oldForOp, scf::ForOp newForOp, TilingResult &tileAndFuseResult,
+    SmallVector<OpFoldResult> &offsets, SmallVector<OpFoldResult> &sizes) {
+  std::deque<std::pair<scf::ForOp, scf::ForOp>> oldAndNewForOpPairs;
+  oldAndNewForOpPairs.push_front(std::make_pair(oldForOp, newForOp));
+  // Create new nested scf::ForOp from outside to inside, because the args of
+  // inner scf::ForOp is from the args of its parent scf::ForOp.
+  scf::ForOp newParentForOpOfOldInnerForOp = newForOp;
+  for (scf::ForOp oldInnerForOp : oldInnerForOps) {
+    // Build new args
+    rewriter.setInsertionPoint(oldInnerForOp);
+    Location loc = oldInnerForOp.getLoc();
+    SmallVector<Value> newInitArgs(oldInnerForOp.getInitArgs());
+    newInitArgs.push_back(
+        newParentForOpOfOldInnerForOp.getRegionIterArgs().back());
+    // Create new scf.for op
+    auto newInnerForOp = rewriter.create<scf::ForOp>(
+        loc, oldInnerForOp.getLowerBound(), oldInnerForOp.getUpperBound(),
+        oldInnerForOp.getStep(), newInitArgs);
+    newInnerForOp->setAttrs(oldInnerForOp->getAttrs());
+    rewriter.eraseBlock(newInnerForOp.getBody());
+    // Build new body
+    newInnerForOp.getRegion().takeBody(oldInnerForOp.getRegion());
+    newInnerForOp.getBody()->addArgument(newInitArgs.back().getType(),
+                                         newInitArgs.back().getLoc());
+    auto bbArgs = newInnerForOp.getBody()->getArguments();
+    rewriter.replaceUsesWithIf(newInitArgs.back(), bbArgs.back(),
+                               [&](OpOperand &use) {
+                                 Operation *op = use.getOwner();
+                                 return newInnerForOp->isProperAncestor(op);
+                               });
+    oldAndNewForOpPairs.push_front(
+        std::make_pair(oldInnerForOp, newInnerForOp));
+    newParentForOpOfOldInnerForOp = newInnerForOp;
+  }
+  // Create new terminator for newForOps and replace uses of oldForOp results
+  // by newForOp results from inside to outside, because the yielded results of
+  // outer scf::ForOp is from the yielded results of its inner scf::ForOp.
+  scf::ForOp oldInnerForOp = oldAndNewForOpPairs.begin()->first;
+  scf::ForOp newInnerForOp = oldAndNewForOpPairs.begin()->second;
+  auto oldInnerYieldOp = newInnerForOp.getBody()->getTerminator();
+  rewriter.setInsertionPoint(oldInnerYieldOp);
+  Value src = tileAndFuseResult.tiledValues[0];
+  Value dst = newInnerForOp.getRegionIterArgs().back();
+  SmallVector<OpFoldResult> strides(offsets.size(), rewriter.getIndexAttr(1));
+  Value insertSlice = rewriter.create<tensor::InsertSliceOp>(
+      oldInnerYieldOp->getLoc(), src, dst, offsets, sizes, strides);
+  SmallVector<Value> newInnerYieldResults;
+  for (Value operand : oldInnerYieldOp->getOperands())
+    newInnerYieldResults.push_back(operand);
+  newInnerYieldResults.push_back(insertSlice);
+  auto newInnerYieldOp = rewriter.create<scf::YieldOp>(
+      oldInnerYieldOp->getLoc(), newInnerYieldResults);
+  rewriter.replaceOp(oldInnerYieldOp, newInnerYieldOp);
+  for (auto oldInnerForOpResult : llvm::enumerate(oldInnerForOp.getResults())) {
+    rewriter.replaceAllUsesWith(
+        oldInnerForOpResult.value(),
+        newInnerForOp->getResult(oldInnerForOpResult.index()));
+  }
+  for (auto oldAndNewForOpPair : llvm::drop_begin(oldAndNewForOpPairs)) {
+    scf::ForOp oldForOp = oldAndNewForOpPair.first;
+    scf::ForOp newForOp = oldAndNewForOpPair.second;
+    auto oldYieldOp = newForOp.getBody()->getTerminator();
+    rewriter.setInsertionPoint(oldYieldOp);
+    SmallVector<Value> newYieldResults;
+    for (Value operand : oldYieldOp->getOperands())
+      newYieldResults.push_back(operand);
+    newYieldResults.push_back(newInnerForOp.getResults().back());
+    auto newYieldOp =
+        rewriter.create<scf::YieldOp>(oldYieldOp->getLoc(), newYieldResults);
+    rewriter.replaceOp(oldYieldOp, newYieldOp);
+    for (auto oldForOpResult : llvm::enumerate(oldForOp.getResults())) {
+      rewriter.replaceAllUsesWith(oldForOpResult.value(),
+                                  newForOp->getResult(oldForOpResult.index()));
+    }
+    newInnerForOp = newForOp;
+  }
+  for (scf::ForOp oldInnerForOp : oldInnerForOps) {
+    rewriter.eraseOp(oldInnerForOp);
+  }
+}
+
+static Operation *replaceForWithNewSignature(
+    RewriterBase &rewriter, Diagnostic &diag, Operation *producerOp,
+    Operation *containingOp, TilingResult &tileAndFuseResult,
+    int64_t resultNumber, SmallVector<OpFoldResult> &offsets,
+    SmallVector<OpFoldResult> &sizes) {
+  // Count number of users not including the containing op
+  SetVector<Operation *> dominatedUsers;
+  DominanceInfo domInfo(containingOp);
+  for (Operation *user : producerOp->getResult(resultNumber).getUsers()) {
+    if (!containingOp->isAncestor(user) &&
+        (domInfo.dominates(containingOp, user))) {
+      dominatedUsers.insert(user);
+    }
+  }
+  if (dominatedUsers.empty())
+    return nullptr;
+
+  // If producer op has other users which are dominated by containing op, the
+  // result of producer op should be yielded from the containing op and used
+  // by those users, see issue:
+  // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/2705
+  auto forOp = cast<scf::ForOp>(containingOp);
+  OpBuilder::InsertionGuard g(rewriter);
+  rewriter.setInsertionPoint(forOp);
+
+  Location loc = forOp.getLoc();
+  auto genericOp = dyn_cast<linalg::GenericOp>(producerOp);
+  if (!genericOp)
+    return nullptr;
+
+  // If producer op is fused into inner ForOp of containing op, both inner ForOps
+  // and outermost ForOp should yield the result of producer op. Here we collect
+  // all ForOps which containing producer op and handle all inner ForOps in
+  // `replaceInnerForWithNewSignature`
+  std::deque<scf::ForOp> innerForOps;
+  Operation *fusedProducerOp = tileAndFuseResult.tiledOps[0];
+  while (auto parentForOp =
+             dyn_cast<scf::ForOp>(fusedProducerOp->getParentOp())) {
+    if (parentForOp != forOp) {
+      innerForOps.push_front(parentForOp);
+      fusedProducerOp = fusedProducerOp->getParentOp();
+    } else {
+      break;
+    }
+  }
+
+  // Build new init args
+  SmallVector<Value> outputs = genericOp.getOutputs();
+  SmallVector<Value> newInitArgs(forOp.getInitArgs());
+  newInitArgs.push_back(outputs[resultNumber]);
+
+  // Create new scf.for op
+  auto newForOp = rewriter.create<scf::ForOp>(loc, forOp.getLowerBound(),
+                                              forOp.getUpperBound(),
+                                              forOp.getStep(), newInitArgs);
+  newForOp->setAttrs(forOp->getAttrs());
+  rewriter.eraseBlock(newForOp.getBody());
+  newForOp.getRegion().takeBody(forOp.getRegion());
+
+  // Add additional block argument for new value being returned
+  // and replaces all uses of the new output with corresponding bbArg
+  // inside the scf.for to enable fusion into this new scf.for.
+  newForOp.getBody()->addArgument(newInitArgs.back().getType(),
+                                  newInitArgs.back().getLoc());
+  auto bbArgs = newForOp.getBody()->getArguments();
+  rewriter.replaceUsesWithIf(newInitArgs.back(), bbArgs.back(),
+                             [&](OpOperand &use) {
+                               Operation *op = use.getOwner();
+                               return newForOp->isProperAncestor(op);
+                             });
+
+  if (innerForOps.size() > 0) {
+    replaceInnerForWithNewSignature(rewriter, innerForOps, forOp, newForOp,
+                                    tileAndFuseResult, offsets, sizes);
+  } else {
+    auto yieldOp = newForOp.getBody()->getTerminator();
+    rewriter.setInsertionPoint(yieldOp);
+    Value src = tileAndFuseResult.tiledValues[0];
+    Value dst = newForOp.getRegionIterArgs().back();
+    SmallVector<OpFoldResult> strides(offsets.size(), rewriter.getIndexAttr(1));
+    Value insertSlice = rewriter.create<tensor::InsertSliceOp>(
+        yieldOp->getLoc(), src, dst, offsets, sizes, strides);
+    SmallVector<Value> yieldResults;
+    for (Value operand : yieldOp->getOperands())
+      yieldResults.push_back(operand);
+    yieldResults.push_back(insertSlice);
+    auto newYieldOp =
+        rewriter.create<scf::YieldOp>(yieldOp->getLoc(), yieldResults);
+    rewriter.replaceOp(yieldOp, newYieldOp);
+    for (auto result : llvm::enumerate(forOp.getResults())) {
+      rewriter.replaceAllUsesWith(result.value(),
+                                  newForOp->getResult(result.index()));
+    }
+  }
+  rewriter.replaceUsesWithIf(producerOp->getResult(resultNumber),
+                             newForOp->getResults().back(),
+                             [&](OpOperand &use) {
+                               Operation *user = use.getOwner();
+                               return dominatedUsers.contains(user);
+                             });
+  return newForOp;
+}
 /// Find the first "extract" user of `producerOp` and tile it right before its
 /// use. The tiled op is fused under the `containingOp`.
 /// Return this fused op on success or nullptr if anything fails.
@@ -545,6 +760,15 @@ bishengir::tileAndFuseFirstExtractUse(RewriterBase &rewriter, Diagnostic &diag,
   Operation *newContainingOp = replaceForAllWithNewSignature(
       rewriter, diag, producerOp, containingOp, *tileAndFuseResult,
       resultNumber, offsets, sizes);
+  Operation *newContainingOp = nullptr;
+  if (isa<scf::ForallOp>(containingOp))
+    newContainingOp = replaceForAllWithNewSignature(
+        rewriter, diag, producerOp, containingOp, *tileAndFuseResult,
+        resultNumber, offsets, sizes);
+  else if (isa<scf::ForOp>(containingOp))
+    newContainingOp = replaceForWithNewSignature(
+        rewriter, diag, producerOp, containingOp, *tileAndFuseResult,
+        resultNumber, offsets, sizes);
 
   return std::make_tuple(tileAndFuseResult->tiledOps, newContainingOp);
 }
@@ -706,6 +930,211 @@ Operation *bishengir::cloneAndFuseFirstUse(RewriterBase &rewriter,
   return fusedOp;
 }
 
+//===----------------------------------------------------------------------===//
+// fuseNestedSiblingLoops helpers
+//===----------------------------------------------------------------------===//
+
+static bool isProducerConsumed(Operation *producer, Operation *consumer) {
+  SmallPtrSet<Operation *, 8> visited{producer};
+  SmallVector<Operation *> worklist{producer};
+  while (!worklist.empty()) {
+    for (auto *user : worklist.pop_back_val()->getUsers()) {
+      if (!visited.insert(user).second)
+        continue;
+      if (consumer->isAncestor(user))
+        return true;
+      worklist.push_back(user);
+    }
+  }
+  return false;
+}
+
+static SmallVector<SmallVector<scf::ForOp>>
+groupInnerSiblingLoops(SmallVector<scf::ForOp> &loops) {
+  SmallVector<SmallVector<scf::ForOp>> result;
+  for (auto &loop : loops) {
+    bool added = false;
+    for (auto &group : result) {
+      if (llvm::all_of(group, [&](scf::ForOp other) {
+            return !isProducerConsumed(loop, other) &&
+                   !isProducerConsumed(other, loop);
+          })) {
+        group.push_back(loop);
+        added = true;
+        break;
+      }
+    }
+    if (!added)
+      result.push_back({loop});
+  }
+  return result;
+}
+
+// Groups sibling loops by iteration count. Each group is paired with an
+// optional iters value that signals whether normalization is needed:
+// - iters.has_value() — loops have the same count but differing bounds (cnt %
+//   step == 0); caller normalizes to uniform bounds before fusing.
+// - iters == nullopt  — loops share identical (lb, ub, step), so bounds are
+//   already uniform; normalization is skipped to preserve the tail-block signal
+//   (cnt % step != 0) for downstream passes.
+static SmallVector<std::pair<SmallVector<scf::ForOp>, std::optional<int64_t>>>
+groupByIterCount(SmallVector<scf::ForOp> &loops) {
+  enum CmpK { Signed, Unsigned };
+  llvm::MapVector<std::pair<int64_t, CmpK>, SmallVector<scf::ForOp>>
+      alignedGroups;
+  using BoundsKey = std::tuple<int64_t, int64_t, int64_t, int64_t>;
+  llvm::MapVector<BoundsKey, SmallVector<scf::ForOp>> tailGroups;
+  for (auto &loop : loops) {
+    auto lb = getConstantIntValue(loop.getLowerBound());
+    auto ub = getConstantIntValue(loop.getUpperBound());
+    auto st = getConstantIntValue(loop.getStep());
+    CmpK ucmp = loop.getUnsignedCmp() ? Unsigned : Signed;
+    if (!lb || !ub || !st)
+      continue;
+    int64_t cnt = *ub - *lb;
+    if (cnt == 0 || *st == 0 || (cnt > 0) != (*st > 0))
+      continue;
+    if (cnt % *st == 0)
+      alignedGroups[{llvm::divideCeilSigned(cnt, *st), ucmp}].push_back(loop);
+    else
+      tailGroups[{*lb, *ub, *st, ucmp}].push_back(loop);
+  }
+  SmallVector<std::pair<SmallVector<scf::ForOp>, std::optional<int64_t>>>
+      result;
+  for (auto &[k, v] : alignedGroups)
+    result.push_back({std::move(v), k.first});
+  for (auto &v : llvm::make_second_range(tailGroups))
+    result.push_back({std::move(v), std::nullopt});
+  return result;
+}
+
+// Normalize all loops in the group to shared GCD bounds so they can be fused.
+// See normalizeGroupBounds in SCFTransformOps for the full algorithm comment.
+static void normalizeGroupBounds(RewriterBase &rewriter,
+                                 SmallVector<scf::ForOp> &group,
+                                 int64_t iters) {
+  int64_t gcdStep = 0;
+  for (auto &l : group)
+    gcdStep = std::gcd(gcdStep, getConstantIntValue(l.getStep()).value());
+
+  Location loc = group.front().getLoc();
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(group.front().getOperation());
+  Value newLb = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+  Value newUb = rewriter.create<arith::ConstantIndexOp>(loc, iters * gcdStep);
+  Value newSt = rewriter.create<arith::ConstantIndexOp>(loc, gcdStep);
+
+  for (auto &loop : group) {
+    auto lb = getConstantIntValue(loop.getLowerBound()).value();
+    auto st = getConstantIntValue(loop.getStep()).value();
+    int64_t factor = st / gcdStep;
+
+    rewriter.modifyOpInPlace(loop, [&]() {
+      loop.setLowerBound(newLb);
+      loop.setUpperBound(newUb);
+      loop.setStep(newSt);
+    });
+
+    if (lb == 0 && factor == 1)
+      continue;
+
+    rewriter.setInsertionPointToStart(loop.getBody());
+
+    AffineExpr remap =
+        rewriter.getAffineConstantExpr(lb) +
+        rewriter.getAffineDimExpr(0) * rewriter.getAffineConstantExpr(factor);
+    auto map = AffineMap::get(1, 0, remap, rewriter.getContext());
+
+    Value inductionVar = loop.getInductionVar();
+    auto affineApplyOp = rewriter.create<affine::AffineApplyOp>(
+        loop.getLoc(), map, inductionVar);
+    rewriter.replaceUsesWithIf(
+        inductionVar, affineApplyOp,
+        [&](OpOperand &operand) { return operand.getOwner() != affineApplyOp; });
+  }
+}
+
+static void climbedForwardSlice(Operation *op,
+                                SetVector<Operation *> &forwardSlice,
+                                const DominanceInfo &domInfo,
+                                Operation *fusedLoop) {
+  while (op->getParentOp() != fusedLoop->getParentOp())
+    op = op->getParentOp();
+  if (forwardSlice.count(op) || domInfo.properlyDominates(fusedLoop, op))
+    return;
+  for (Operation *userOp : op->getUsers())
+    climbedForwardSlice(userOp, forwardSlice, domInfo, fusedLoop);
+  forwardSlice.insert(op);
+}
+
+static void adjustEarlierLoopUsers(Operation *source, Operation *target,
+                                   Operation *fusedLoop,
+                                   RewriterBase &rewriter) {
+  Operation *earlier = source->isBeforeInBlock(target) ? source : target;
+  DominanceInfo domInfo(fusedLoop);
+  SetVector<Operation *> forwardSlice;
+  climbedForwardSlice(earlier, forwardSlice, domInfo, fusedLoop);
+  for (auto *userOp : drop_end(forwardSlice))
+    rewriter.moveOpAfter(userOp, fusedLoop);
+}
+
+static scf::ForOp fuseSiblingForLoops(scf::ForOp target, scf::ForOp source,
+                                      RewriterBase &rewriter) {
+  unsigned numTargetOuts = target.getNumResults();
+  unsigned numSourceOuts = source.getNumResults();
+
+  SmallVector<Value> fusedInitArgs;
+  llvm::append_range(fusedInitArgs, target.getInitArgs());
+  llvm::append_range(fusedInitArgs, source.getInitArgs());
+
+  rewriter.setInsertionPointAfter(source->isBeforeInBlock(target) ? target
+                                                                  : source);
+
+  scf::ForOp fusedLoop = rewriter.create<scf::ForOp>(
+      source.getLoc(), source.getLowerBound(), source.getUpperBound(),
+      source.getStep(), fusedInitArgs, /*bodyBuilder=*/nullptr,
+      source.getUnsignedCmp());
+
+  IRMapping mapping;
+  mapping.map(target.getInductionVar(), fusedLoop.getInductionVar());
+  mapping.map(target.getRegionIterArgs(),
+              fusedLoop.getRegionIterArgs().take_front(numTargetOuts));
+  mapping.map(source.getInductionVar(), fusedLoop.getInductionVar());
+  mapping.map(source.getRegionIterArgs(),
+              fusedLoop.getRegionIterArgs().take_back(numSourceOuts));
+
+  rewriter.setInsertionPointToStart(fusedLoop.getBody());
+  for (Operation &op : target.getBody()->without_terminator())
+    rewriter.clone(op, mapping);
+  for (Operation &op : source.getBody()->without_terminator())
+    rewriter.clone(op, mapping);
+
+  SmallVector<Value> yieldResults;
+  for (Value operand : target.getBody()->getTerminator()->getOperands())
+    yieldResults.push_back(mapping.lookupOrDefault(operand));
+  for (Value operand : source.getBody()->getTerminator()->getOperands())
+    yieldResults.push_back(mapping.lookupOrDefault(operand));
+  if (!yieldResults.empty())
+    rewriter.create<scf::YieldOp>(source.getLoc(), yieldResults);
+
+  adjustEarlierLoopUsers(source, target, fusedLoop, rewriter);
+  fusedLoop->setAttrs(source->getAttrs());
+  for (auto &attr : target->getAttrs())
+    fusedLoop->setAttr(attr.getName(), attr.getValue());
+
+  rewriter.replaceOp(target, fusedLoop.getResults().take_front(numTargetOuts));
+  rewriter.replaceOp(source, fusedLoop.getResults().take_back(numSourceOuts));
+
+  return fusedLoop;
+}
+
+static scf::ForOp loopsFusion(SmallVector<scf::ForOp> &group, size_t lo,
+                              size_t hi, RewriterBase &rw) {
+  return lo + 1 < hi ? fuseSiblingForLoops(
+                           loopsFusion(group, lo, (lo + hi) / 2, rw),
+                           loopsFusion(group, (lo + hi) / 2, hi, rw), rw)
+                     : group[lo];
+}
 void bishengir::normalizeLoop(RewriterBase &rewriter, scf::ForOp op,
                               Value oldStep) {
   MLIRContext *ctx = rewriter.getContext();
@@ -731,4 +1160,29 @@ void bishengir::normalizeLoop(RewriterBase &rewriter, scf::ForOp op,
       loopLoc, newIVCalculation, ValueRange{op.getInductionVar(), oldStep});
   rewriter.replaceAllUsesExcept(op.getInductionVar(), newIV,
                                 newIV.getDefiningOp());
+}
+
+void bishengir::fuseNestedSiblingLoops(Operation *fusedOp,
+                                       RewriterBase &rewriter, bool recursive) {
+  auto outerForOp = dyn_cast<scf::ForOp>(fusedOp);
+  if (!outerForOp)
+    return;
+  auto innerForOps =
+      llvm::to_vector(outerForOp.getBody()->getOps<scf::ForOp>());
+  if (innerForOps.empty())
+    return;
+
+  for (auto &[sameItersGroup, iters] : groupByIterCount(innerForOps)) {
+    if (sameItersGroup.size() < 2)
+      continue;
+    for (auto &siblingGroup : groupInnerSiblingLoops(sameItersGroup)) {
+      if (siblingGroup.size() < 2)
+        continue;
+      if (iters)
+        normalizeGroupBounds(rewriter, siblingGroup, *iters);
+      auto fused = loopsFusion(siblingGroup, 0, siblingGroup.size(), rewriter);
+      if (recursive)
+        fuseNestedSiblingLoops(fused, rewriter, recursive);
+    }
+  }
 }

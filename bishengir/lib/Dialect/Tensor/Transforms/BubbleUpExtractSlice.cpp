@@ -15,6 +15,11 @@
 //
 //===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
@@ -85,7 +90,6 @@ struct AggressiveBubbleUpExtractSlice
     return success();
   }
 };
-
 struct BubbleUpExtractSlicePass
     : public impl::BubbleUpExtractSliceBase<BubbleUpExtractSlicePass> {
   explicit BubbleUpExtractSlicePass(
@@ -104,7 +108,6 @@ void populateAggressiveBubbleUpExtractSlicePatterns(
            AggressiveBubbleUpExtractSlice<linalg::ElemwiseUnaryOp>
            >(ctx);
 }
-
 void BubbleUpExtractSlicePass::runOnOperation() {
   func::FuncOp funcOp = getOperation();
   RewritePatternSet patterns(funcOp.getContext());

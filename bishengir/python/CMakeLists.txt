@@ -30,6 +30,7 @@ declare_mlir_python_sources(BiShengIRPythonSources.Core.Python
   ROOT_DIR "${BISHENGIR_PYTHON_ROOT_DIR}"
   ADD_TO_PARENT BiShengIRPythonSources.Core
   SOURCES
+    bishengtile.py
     helper.py
 )
 
@@ -50,6 +51,8 @@ declare_mlir_dialect_python_bindings(
   TD_FILE dialects/HIVMOps.td
   SOURCES_GLOB dialects/hivm.py
   DIALECT_NAME hivm
+  GEN_ENUM_BINDINGS_TD_FILE
+  "dialects/HIVMAttrs.td"
 )
 
 declare_mlir_dialect_python_bindings(
@@ -96,6 +99,20 @@ declare_mlir_python_extension(BiShengIRPythonExtensions.Main
     BiShengIRCAPIHIVM
     BiShengIRCAPIHFusion
     BiShengIRCAPIAnnotation
+    MLIRCAPIMesh
+)
+
+declare_mlir_python_extension(BiShengIRPythonExtensions.Dialects.HIVM.Pybind
+  MODULE_NAME _bishengirDialectsHIVM
+  ADD_TO_PARENT BiShengIRPythonSources.Dialects.hivm
+  ROOT_DIR "${PYTHON_SOURCE_DIR}"
+  SOURCES
+    DialectHIVM.cpp
+  PRIVATE_LINK_LIBS
+    LLVMSupport
+  EMBED_CAPI_LINK_LIBS
+  MLIRCAPIIR
+  BiShengIRCAPIHIVM
 )
 
 declare_mlir_python_extension(BiShengIRPythonExtensions.HIVMDialectPasses

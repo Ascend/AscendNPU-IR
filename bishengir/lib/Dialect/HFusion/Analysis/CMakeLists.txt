@@ -1,4 +1,15 @@
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRAnalysis
+  BiShengIRDialectUtils
+  BiShengIRSCFTransformOps
+  BiShengIRTensorTransforms
+  BishengIRTransform
+  BiShengIRHACCDialect
+  BiShengIRHACCUtils
+)
+
 add_bishengir_dialect_library(BiShengIRHFusionAnalysis
+  IS_OPEN_SOURCE
   ReshapeAnalyzer/ReshapeAnalyzer.cpp
   DimensionAnalyzer/DimensionAnalyzer.cpp
   DimensionAnalyzer/DimensionMarker.cpp
@@ -10,19 +21,14 @@ add_bishengir_dialect_library(BiShengIRHFusionAnalysis
   BiShengIRHFusionTransformsIncGen
 
   LINK_LIBS PUBLIC
-  BiShengIRAnalysis
-  BiShengIRDialectUtils
-  BiShengIRSCFTransformOps
-  BiShengIRTensorTransforms
-  BiShengIRTransform
-  BiShengIRHACCDialect
-  BiShengIRHACCUtils
+  ${BISHENGIR_PRIVATE_LIBS}
+  BiShengIRAnnotationDialect
+  BiShengIRHFusionDialect
+  BiShengIRHFusionUtils
   MLIRAffineDialect
   MLIRArithDialect
   MLIRDialectUtils
   MLIRFuncDialect
-  BiShengIRHFusionDialect
-  BiShengIRHFusionUtils
   MLIRLinalgDialect
   MLIRLinalgUtils
   MLIRMemRefDialect

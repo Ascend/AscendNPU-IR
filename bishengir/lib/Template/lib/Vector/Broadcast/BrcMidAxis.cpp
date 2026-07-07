@@ -21,6 +21,7 @@
 
 /// Core func of vcopy intrin : (a, 1, c) -> (a, b, c)
 /// \param src (type: memref<a x 1 x c xT, stride[M2*M1*c, M1*c, 1]>)
+/// \param src (type: memref<a x 1 x c xT, stride[c, c, 1]>)
 /// \param dst (type: memref<a x b x c xT, stride[b*c, c, 1]>)
 ///
 /// Constraints:
@@ -68,6 +69,7 @@ brc_mid_axis_3d_vcopy_specialization(memref_t<__ubuf__ T, 3> *src,
                   0,                                         // src blk stride
                   dst_repeat_stride,
                   src_repeat_stride); 
+                  1); // src rep stride
       }
       if constexpr (sizeof(T) == BYTES_B32) {
         INTRINSIC(vcopy,
@@ -78,6 +80,7 @@ brc_mid_axis_3d_vcopy_specialization(memref_t<__ubuf__ T, 3> *src,
                   0,                                         // src blk stride
                   dst_repeat_stride,
                   src_repeat_stride);
+                  1); // src rep stride
       }
 
       dst_offset = dst_offset + INTR_MAX_REPEAT_CNTS * dst->strides[0];
@@ -96,6 +99,8 @@ brc_mid_axis_3d_vcopy_specialization(memref_t<__ubuf__ T, 3> *src,
                 0,                                         // src blk stride
                 dst_repeat_stride,
                 src_repeat_stride);
+                dst_repeat_stride,                         // dst rep stride
+                1);                                        // src rep stride
     }
     if constexpr (sizeof(T) == BYTES_B32) {
       INTRINSIC(vcopy,
@@ -106,6 +111,8 @@ brc_mid_axis_3d_vcopy_specialization(memref_t<__ubuf__ T, 3> *src,
                 0,                                         // src blk stride
                 dst_repeat_stride,
                 src_repeat_stride);
+                dst_repeat_stride,                         // dst rep stride
+                1);                                        // src rep stride
     }
   }
 }
@@ -300,4 +307,5 @@ REGISTE_BROADCAST_MID_AXIS_ALIGN(int8_t);
 REGISTE_BROADCAST_MID_AXIS_ALIGN(uint8_t);
 REGISTE_BROADCAST_MID_AXIS_ALIGN(int64_t);
 REGISTE_BROADCAST_MID_AXIS_ALIGN(uint64_t);
+}
 }

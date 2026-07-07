@@ -120,12 +120,61 @@ public:
     ArrayRef<int64_t> shape = resultTensorType.getShape();
     assert(shape.size() == 2 || shape.size() == 3);
     return insertNZ2NDForOperand(rewriter, op);
+/// Insert nz2nd for the inputs of hivm::MmadL1Op.
+struct InsertNZ2NDForDebugPattern : public OpRewritePattern<hivm::MmadL1Op> {
+public:
+  using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::MmadL1Op op,
+                                PatternRewriter &rewriter) const override {
+    llvm::SmallVector<Value> l1values = {op.getA(), op.getB()};
+    bool allInserted = true;
+    for (Value val : l1values) {
+      if (!isa<TensorType>(val.getType())) {
+        // currently only support tensors
+        continue;
+      }
+      TensorType tensorType = cast<TensorType>(val.getType());
+      if (val.getDefiningOp() == nullptr) {
+        // currently only support MmadL1Op inputs with defining op
+        continue;
+      }
+      Operation *definingOp = val.getDefiningOp();
+      bool inserted = false;
+      for (Operation *user : val.getUsers()) {
+        if (isa<hivm::NZ2NDOp>(user)) {
+          inserted = true;
+          break;
+        }
+      }
+      if (inserted) {
+        continue;
+      }
+      allInserted = false;
+      for (Operation *user : val.getUsers()) {
+        if (isa<hivm::DebugOp>(user)) {
+          hivm::DebugOp debugOp = cast<hivm::DebugOp>(user);
+          rewriter.setInsertionPointAfter(definingOp);
+          Value workSpaceTensor = getLocalWorkSpaceTensor(
+              rewriter, definingOp->getLoc(), tensorType.getShape(),
+              getElementTypeOrSelf(tensorType));
+          auto res = rewriter.create<hivm::NZ2NDOp>(
+              definingOp->getLoc(), workSpaceTensor.getType(),
+              /*src=*/val, /*dst=*/workSpaceTensor);
+          rewriter.modifyOpInPlace(debugOp, [&]() {
+            OpOperand &arg = debugOp.getArgMutable();
+            arg.assign(res.getResultTensor());
+          });
+        }
+      }
+    }
+    return allInserted ? failure() : success();
   }
 };
 
 void InsertNZ2NDForDebug::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   patterns.add<InsertNZ2NDForDebugOpPattern>(patterns.getContext());
+  patterns.add<InsertNZ2NDForDebugPattern>(patterns.getContext());
   (void)applyPatternsGreedily(getOperation(), std::move(patterns));
 }
 
@@ -133,4 +182,5 @@ void InsertNZ2NDForDebug::runOnOperation() {
 
 std::unique_ptr<Pass> mlir::hivm::createInsertNZ2NDForDebugPass() {
   return std::make_unique<InsertNZ2NDForDebug>();
+}
 }

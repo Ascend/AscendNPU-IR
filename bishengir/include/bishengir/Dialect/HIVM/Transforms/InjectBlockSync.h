@@ -22,6 +22,14 @@
 namespace mlir {
 namespace hivm {
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include <optional>
+namespace mlir {
+namespace hivm {
+
+const int64_t blockAllFlagId1 = 8;
+const int64_t blockAllFlagId2 = 9;
+
 class InjectBlockSyncAnalysis {
 public:
   InjectBlockSyncAnalysis(func::FuncOp func) : func_(func) {}
@@ -31,6 +39,7 @@ public:
 
   /// Inject MixCV block sync.
   void InjectBlockMixSync(bool assumeAliveLoops);
+  void InjectBlockMixSync(bool assumeAliveLoops, bool preferUnusedBlockSyncIDs);
 
   /// Inject all block sync.
   void InjectAllBlockSync();
@@ -103,6 +112,15 @@ private:
 
   /// Collect information on load or store op.
   template <typename OP> void UpdateStoreOrLoadOpInfoBlockSync(OP op);
+
+  /// Collect information on alloc ops accessed cross-core.
+  void UpdateAllocOpMeminfo(memref::AllocOp allocOp);
+
+  bool isVectorOpResult(Value value);
+
+  std::optional<hivm::PIPE>
+  getInferredPipe(Operation *op, TCoreType coreType,
+                  const SmallVector<const BaseMemInfo *> &defVec);
 };
 
 } // namespace hivm

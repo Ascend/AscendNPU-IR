@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
@@ -73,6 +74,7 @@ public:
     declareDependentDialect<scf::SCFDialect>();
 
     declareGeneratedDialect<hivm::HIVMDialect>();
+    declareGeneratedDialect<scope::ScopeDialect>();
 
     registerTransformOps<
 #define GET_OP_LIST

@@ -12,6 +12,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -130,6 +133,8 @@ struct ConvertBindSymbolicShapeToTensorEncode
       } else {
         llvm::report_fatal_error("Propagate symbol pass must be called first to make "
                                  "sure no binary expression appears");
+        llvm_unreachable("Propagate symbol pass must be called first to make "
+                         "sure no binary expression appears");
       }
     }
 
@@ -149,6 +154,7 @@ struct ConvertBindSymbolicShapeToTensorEncode
               rewriter.getFunctionType(newInputs, funcType.getResults()));
         } else {
           llvm::report_fatal_error(
+          llvm_unreachable(
               "Unhandled block argument for symbol to encoding conversion.");
         }
       });

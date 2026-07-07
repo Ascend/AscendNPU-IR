@@ -100,6 +100,8 @@ func::FuncOp copyShapeFunction(MLIRContext *context, func::FuncOp srcFunc) {
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/srcFunc.getArgAttrsAttr(),
       /*res_attrs=*/ArrayAttr());
+      /*res_attrs=*/ArrayAttr(),
+      /*no_inline=*/UnitAttr());
   IRMapping mapper;
   srcFunc.cloneInto(newFunc, mapper);
   return newFunc;

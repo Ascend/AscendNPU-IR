@@ -185,6 +185,74 @@ void ReshapeAnalyzer::getReshapeDescendants(Value val,
     descendants.insert(el.endTarget->get());
   }
 }
+
+OpOperand *
+ReshapeAnalyzer::traceReshapeAndRewriteInverse(PatternRewriter &rewriter,
+                                               OpOperand *outValue) {
+  DenseSet<Operation *> createdOperations;
+  while (true) {
+    bool insideImportantRegion = true;
+    for (Operation *user : outValue->get().getUsers()) {
+      if (isReshapeOp(user)) {
+        insideImportantRegion = false;
+        break;
+      }
+    }
+    // Time to stop if
+    if (insideImportantRegion) {
+      break;
+    }
+    bool reshapePropagated = false;
+    // %arg
+    // %expanded = expand_shape %arg
+    // return %arg
+    //
+    // |
+    // V
+    //
+    // %arg
+    // %expanded = expand_shape %arg
+    // %inverse_expand = collapse_shape %expanded
+    // return %inverse_expand
+
+    auto outUsers = outValue->get().getUsers();
+    for (Operation *user : outUsers) {
+      if (createdOperations.contains(user))
+        continue;
+      Operation *inverseReshape = nullptr;
+      rewriter.setInsertionPoint(outValue->getOwner());
+      if (auto expandOp = dyn_cast<tensor::ExpandShapeOp>(user)) {
+        // Expand shape here
+        inverseReshape =
+            tensor::reshape_utils::createExpandInverse(rewriter, expandOp);
+      }
+      if (auto collapseOp = dyn_cast<tensor::CollapseShapeOp>(user)) {
+        inverseReshape =
+            tensor::reshape_utils::createCollapseInverse(rewriter, collapseOp);
+      }
+      if (!inverseReshape)
+        continue;
+      createdOperations.insert(inverseReshape);
+      // Set the opOperands with the result of expand
+      Value inverseRes = inverseReshape->getResult(0);
+      rewriter.modifyOpInPlace(outValue->getOwner(),
+                               [&]() { outValue->set(inverseRes); });
+      // Old out value, replace the value with the inverse
+
+      // %arg
+      // %expanded = expand_shape %arg
+      // %inverse_expand = collapse_shape %expanded
+      // return [Replace this from %arg to %inverse_expand]
+      outValue = &inverseReshape->getOpOperand(0);
+      reshapePropagated = true;
+      break;
+    }
+    LDBG((outValue->getOwner()->getParentOp() ? *(outValue->getOwner()->getParentOp()) : *(outValue->getOwner())));
+    if (!reshapePropagated)
+      break;
+  }
+  return outValue;
+}
 } // namespace detail
 } // namespace hfusion
 } // namespace mlir

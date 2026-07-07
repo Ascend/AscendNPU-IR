@@ -26,6 +26,7 @@
 #include "mlir/IR/Location.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/LogicalResult.h"
 #include <climits>
 #include <deque>
 #include <memory>
@@ -139,11 +140,27 @@ struct SyncSolverOptions {
   // Reuse existing sync pairs to save event ids.
   bool reuseSyncPairToSaveEventIds{false};
 
+  // In EventIdSolver, prefer allocating brand-new event ids (above the current
+  // global maximum) before falling back to reusing smaller unused ids.
+  bool preferNewEventIds{false};
+
   // Use different flag-ids for multibuffer backward sync pairs.
   bool useDifferentMultiBufferFlagIds{false};
 
   // Ignore workspace function arguments.
   bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
+
+  // Build unrolled sync IR.
+  bool buildUnrolledSyncIR{true};
+
+  // Ignore non-anchor ops when building sync IR.
+  bool ignoreNonAnchorOps{false};
+
+  // Skip unrolling anchor ops.
+  bool skipUnrollingAnchorOps{true};
+
+  // Enable block-all mode.
+  bool enableBlockAllMode{false};
 
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
@@ -153,6 +170,7 @@ struct SyncSolverOptions {
         !isTestMode() && isCrossCoreMode() && isMemBasedArch;
     reuseSyncPairToSaveEventIds = isIntraCoreMode();
     useDifferentMultiBufferFlagIds = !isCrossCoreMode();
+    preferNewEventIds = isCrossCoreMode();
   }
 
   bool isCrossCoreMode() const {
@@ -467,7 +485,7 @@ getHWAvailableEventIds(SyncMode syncMode,
                        hivm::PIPE setPipe = hivm::PIPE::PIPE_UNASSIGNED,
                        hivm::PIPE waitPipe = hivm::PIPE::PIPE_UNASSIGNED);
 
-std::optional<int64_t> getStaticLoopCount(LoopLikeOpInterface forOp);
+std::optional<int64_t> getStaticLoopCount_membase(LoopLikeOpInterface forOp);
 
 // Create a boolean Value that is true for the first iteration of `forOp`.
 Value getIsFirstIterationValue(scf::ForOp forOp, Location loc,

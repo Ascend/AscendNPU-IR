@@ -447,6 +447,89 @@ static bool adjustSubviewExpansion(int64_t totalSize, int64_t totalSrc,
 // Helper function to convert OpFoldResult to constants where possible
 static SmallVector<int64_t>
 convertToConstantValues(ArrayRef<OpFoldResult> values) {
+static bool adjustSubviewExpansion(int64_t totalSrc, int64_t innermostStride,
+                                   int64_t operandStride,
+                                   SmallVector<int64_t> &resultShape,
+                                   SmallVector<int64_t> &srcShape) {
+
+  int64_t k = (int64_t)resultShape.size();
+  if (k == 0)
+    return false;
+
+  // Step 1: Calculate the number of elements spanned by a unit increment along
+  // dimension i
+  SmallVector<int64_t> inner(k);
+  inner[k - 1] = 1;
+  for (int i = k - 2; i >= 0; --i) {
+    if (resultShape[i + 1] <= 0)
+      return false;
+    inner[i] = inner[i + 1] * resultShape[i + 1];
+  }
+
+  // Step 2: Calculate subview result strides
+  SmallVector<int64_t> resStrides(k);
+  for (int i = 0; i < k; ++i) {
+    resStrides[i] = operandStride * innermostStride * inner[i];
+  }
+
+  // Step 3: Calculate subview operand strides: [1, 1, ..., T]
+  SmallVector<int64_t> subStrides(k, 1);
+  subStrides[k - 1] = operandStride;
+
+  // Step 4: Calculate srcMemref strides
+  SmallVector<int64_t> srcStrides(k);
+  for (int i = 0; i < k; ++i) {
+    if (resStrides[i] % subStrides[i] != 0)
+      return false;
+    srcStrides[i] = resStrides[i] / subStrides[i];
+  }
+
+  if (srcStrides[k - 1] != innermostStride)
+    return false;
+
+  // Step 5: Calculate dimensions from last to first.
+  srcShape.resize(k);
+  srcShape[k - 1] = -1;
+  for (int i = k - 2; i >= 0; --i) {
+    if (srcStrides[i + 1] == 0 || srcStrides[i] % srcStrides[i + 1] != 0) {
+      return false;
+    }
+    srcShape[i + 1] = srcStrides[i] / srcStrides[i + 1];
+  }
+  int64_t runningProduct = 1;
+  for (int i = 1; i < k; ++i) {
+    if (srcShape[i] <= 0)
+      return false;
+    runningProduct *= srcShape[i];
+  }
+
+  if (runningProduct == 0 || totalSrc % runningProduct != 0) {
+    return false;
+  }
+  srcShape[0] = totalSrc / runningProduct;
+
+  // Verify result
+  int64_t total = std::accumulate(srcShape.begin(), srcShape.end(), 1LL,
+                                  std::multiplies<int64_t>());
+  if (total != totalSrc)
+    return false;
+  return true;
+}
+
+static std::optional<SmallVector<int64_t>>
+getConstantStrides(MemRefType memrefType) {
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  LogicalResult hasStaticInformation =
+      getStridesAndOffset(memrefType, strides, offset);
+  if (failed(hasStaticInformation)) {
+    return std::nullopt;
+  }
+  return strides;
+}
+
+// Helper function to convert OpFoldResult to constants where possible
+SmallVector<int64_t> convertToConstantValues(ArrayRef<OpFoldResult> values) {
   SmallVector<int64_t> constantValues;
   for (auto val : values) {
     constantValues.push_back(
@@ -455,6 +538,150 @@ convertToConstantValues(ArrayRef<OpFoldResult> values) {
   return constantValues;
 }
 
+SmallVector<int64_t>
+getRankReducingShape(const SmallVector<int64_t> &expandedShape,
+                     ArrayRef<ReassociationIndices> fullReassociation,
+                     const llvm::SmallBitVector &droppedDims) {
+
+  SmallVector<int64_t> newShape;
+  for (auto it : llvm::enumerate(fullReassociation)) {
+    unsigned srcDimIdx = it.index();
+    const ReassociationIndices &expandedGroup = it.value();
+    if (droppedDims.test(srcDimIdx)) {
+      continue;
+    }
+    for (int64_t dimIdx : expandedGroup) {
+      newShape.push_back(expandedShape[dimIdx]);
+    }
+  }
+  return newShape;
+}
+
+SmallVector<OpFoldResult>
+getRankReducingShape(const SmallVector<OpFoldResult> &expandedShape,
+                     ArrayRef<ReassociationIndices> reassociation,
+                     const llvm::SmallBitVector &droppedDims) {
+
+  SmallVector<OpFoldResult> newShape;
+  for (auto it : llvm::enumerate(reassociation)) {
+    unsigned srcDimIdx = it.index();
+    const ReassociationIndices &expandedGroup = it.value();
+    if (droppedDims.test(srcDimIdx)) {
+      continue;
+    }
+    LDBG("expandedShape size: " << expandedShape.size());
+    for (int64_t dimIdx : expandedGroup) {
+      LDBG("dimIdx: " << dimIdx);
+      newShape.push_back(expandedShape[dimIdx]);
+    }
+  }
+  return newShape;
+}
+
+RankedTensorType
+getRankReducingType(const SmallVector<OpFoldResult> &sizes,
+                    ArrayRef<ReassociationIndices> reassociation,
+                    const llvm::SmallBitVector &droppedDims, Type elementType) {
+  auto fullShape = convertToConstantValues(sizes);
+  auto newShape = getRankReducingShape(fullShape, reassociation, droppedDims);
+  return RankedTensorType::get(newShape, elementType);
+}
+
+SmallVector<ReassociationIndices>
+getFullReassociation(ArrayRef<ReassociationIndices> reassociation,
+                     const llvm::SmallBitVector &droppedDims) {
+  SmallVector<ReassociationIndices> result;
+  unsigned oldIdx = 0;
+  unsigned nextExpDim = 0;
+
+  for (unsigned i = 0; i < droppedDims.size(); ++i) {
+    if (droppedDims.test(i)) {
+      result.push_back({nextExpDim++});
+    } else {
+      ReassociationIndices adjustedGroup;
+      for (unsigned j = 0; j < reassociation[oldIdx].size(); ++j) {
+        adjustedGroup.push_back(nextExpDim++);
+      }
+      result.push_back(adjustedGroup);
+      oldIdx++;
+    }
+  }
+  return result;
+}
+
+static SmallVector<ReassociationIndices>
+getSubReassociation(ArrayRef<ReassociationIndices> reassociation,
+                    const llvm::SmallBitVector &droppedDims) {
+  SmallVector<ReassociationIndices> result;
+  unsigned oldIdx = 0;
+  unsigned nextExpDim = 0;
+
+  for (unsigned i = 0; i < droppedDims.size(); ++i) {
+    if (!droppedDims.test(i)) {
+      ReassociationIndices adjustedGroup;
+      for (unsigned j = 0; j < reassociation[oldIdx].size(); ++j) {
+        adjustedGroup.push_back(nextExpDim++);
+      }
+      result.push_back(adjustedGroup);
+    }
+    oldIdx++;
+  }
+  return result;
+}
+
+SmallVector<int64_t>
+getUndroppedSubviewShape(ArrayRef<int64_t> subview,
+                         const llvm::SmallBitVector &droppedDims) {
+  SmallVector<int64_t> result;
+  unsigned idx = 0;
+  for (unsigned i = 0; i < droppedDims.size(); ++i) {
+    if (droppedDims.test(i)) {
+      result.push_back(1);
+    } else {
+      result.push_back(subview[idx]);
+      ++idx;
+    }
+  }
+  return result;
+}
+
+SmallVector<OpFoldResult>
+getUndroppedSubviewShape(PatternRewriter &rewriter,
+                         ArrayRef<OpFoldResult> subview,
+                         const llvm::SmallBitVector &droppedDims) {
+  SmallVector<OpFoldResult> result;
+  unsigned idx = 0;
+  for (unsigned i = 0; i < droppedDims.size(); ++i) {
+    if (droppedDims.test(i)) {
+      result.push_back(rewriter.getI64IntegerAttr(1));
+    } else {
+      result.push_back(subview[idx]);
+      ++idx;
+    }
+  }
+  return result;
+}
+
+SmallVector<OpFoldResult>
+getUndroppedExpandedSubviewShape(PatternRewriter &rewriter,
+                                 ArrayRef<OpFoldResult> expandedSubview,
+                                 ArrayRef<ReassociationIndices> reassociation,
+                                 const llvm::SmallBitVector &droppedDims) {
+  SmallVector<OpFoldResult> result;
+  unsigned idx = 0;
+  for (unsigned i = 0; i < droppedDims.size(); ++i) {
+    if (droppedDims.test(i)) {
+      result.push_back(rewriter.getI64IntegerAttr(1));
+    } else {
+      const ReassociationIndices &expandedGroup = reassociation[idx];
+      for (int64_t dimIdx : expandedGroup) {
+        result.push_back(expandedSubview[dimIdx]);
+      }
+      ++idx;
+    }
+  }
+  return result;
+}
 // Helper function to handle dimensions with no mutation
 static void handleNoMutation(PatternRewriter &rewriter,
                              ArrayRef<OpFoldResult> fullExpandedRef,
@@ -478,6 +705,9 @@ handleHyperrectangleCase(PatternRewriter &rewriter, ArrayRef<int64_t> slicedRef,
                          SliceModifyingOpResult &result) {
   std::optional<Hyperrectangle> hyperrectangle = getHyperrectangleFromArray(
       superviewSize, staticOffset, staticSize, staticStride, slicedRef);
+  std::optional<Hyperrectangle> hyperrectangle =
+      getExtendHyperrectangleFromArray(superviewSize, staticOffset, staticSize,
+                                       staticStride, slicedRef);
   if (!hyperrectangle.has_value()) {
     LDBG("[failed] Can't compute hyperrectangle");
     return failure();
@@ -505,6 +735,7 @@ handleMutation(PatternRewriter &rewriter,
   int dimPushed = 0;
   // TODO: support other dynamic cases, this part assumes that it has only unit
   // mutations!
+  auto start = result.size();
   for (auto idx : reassociationIndices) {
     LDBG("Iterating reassociation " << idx);
     LDBG(constantFullExpandedRef[idx]);
@@ -513,6 +744,14 @@ handleMutation(PatternRewriter &rewriter,
       result.append(mixedOffset, mixedSize, mixedStride, mixedSize,
                     tensor::getMixedSize(rewriter, superview.getLoc(),
                                          superview, dimensionIndex));
+      auto superviewShape =
+          isa<RankedTensorType>(superview.getType())
+              ? tensor::getMixedSize(rewriter, superview.getLoc(), superview,
+                                     dimensionIndex)
+              : memref::getMixedSize(rewriter, superview.getLoc(), superview,
+                                     dimensionIndex);
+      result.append(mixedOffset, mixedSize, mixedStride, mixedSize,
+                    superviewShape);
       dimPushed++;
     } else {
       LDBG("find normal here");
@@ -531,6 +770,19 @@ handleMutation(PatternRewriter &rewriter,
     result.replaceBack(mixedOffset, mixedSize, mixedStride, mixedSize,
                        tensor::getMixedSize(rewriter, superview.getLoc(),
                                             superview, dimensionIndex));
+  // If no dimension was pushed, use the first one as the mutation point
+  if (dimPushed == 0) {
+    LDBG("Dimension pushed is empty");
+    dimPushed++;
+    auto superviewShape =
+        isa<RankedTensorType>(superview.getType())
+            ? tensor::getMixedSize(rewriter, superview.getLoc(), superview,
+                                   dimensionIndex)
+            : memref::getMixedSize(rewriter, superview.getLoc(), superview,
+                                   dimensionIndex);
+    // Replace the last entries with the mutation values
+    result.replaceAt(start, mixedOffset, mixedSize, mixedStride, mixedSize,
+                     superviewShape);
   }
 
   if (dimPushed != 1) {
@@ -561,10 +813,34 @@ checkHyperRectangle(PatternRewriter &rewriter,
     // Compute totalSize and check if all dimensions are static
     bool adjusted =
         adjustSubviewExpansion(totalSize, superviewShape, slicedRef);
+                    OpFoldResult mixedStride, int64_t laststride) {
+  SmallVector<int64_t> resSlicedRef;
+  SmallVector<int64_t> srcSlicedRef;
+  int64_t reassociationSize = (int64_t)reassociation.size();
+  resSlicedRef.reserve(reassociationSize);
+  srcSlicedRef.reserve(reassociationSize);
+  for (long j : reassociation) {
+    resSlicedRef.emplace_back(constantFullExpandedRef[j]);
+    if (ShapedType::isDynamic(resSlicedRef.back())) {
+      LDBG("[failed] Dynamic in the sliced ref");
+      return failure();
+    }
+  }
+  auto staticStride = getConstantIntValue(mixedStride);
+  if (isSubview) {
+    if (!staticStride) {
+      LDBG("[failed] staticStride can't be null");
+      return failure();
+    }
+    // Compute totalSize and check if all dimensions are static
+    bool adjusted =
+        adjustSubviewExpansion(superviewShape, laststride, staticStride.value(),
+                               resSlicedRef, srcSlicedRef);
     if (!adjusted) {
       LDBG("[failed] Hyperrectangle case can't be adjusted");
       return failure();
     }
+    resSlicedRef = srcSlicedRef;
   }
   // Handle dimensions with mutation
   auto staticOffset = getConstantIntValue(mixedOffset);
@@ -574,6 +850,10 @@ checkHyperRectangle(PatternRewriter &rewriter,
   if (staticOffset && staticSize && staticStride) {
     if (succeeded(handleHyperrectangleCase(
             rewriter, slicedRef, superviewShape, staticOffset.value(),
+  // Try to handle as hyperrectangle case if static values are available
+  if (staticOffset && staticSize && staticStride) {
+    if (succeeded(handleHyperrectangleCase(
+            rewriter, resSlicedRef, superviewShape, staticOffset.value(),
             staticSize.value(), staticStride.value(), result))) {
       return success();
     }
@@ -609,7 +889,8 @@ getSliceModifyingOp(PatternRewriter &rewriter, T slicingOp,
   auto srcShape = utils::getShape(src.getType());
   auto resShape = utils::getShape(res.getType());
   rewriter.setInsertionPoint(slicingOp);
-
+  int64_t lastStride = 1;
+  rewriter.setInsertionPoint(slicingOp);
   // Convert fullExpandedRef to constants where possible
   SmallVector<int64_t> constantFullExpandedRef =
       convertToConstantValues(expandedRef);
@@ -620,6 +901,58 @@ getSliceModifyingOp(PatternRewriter &rewriter, T slicingOp,
       LDBG("No Mutation " << i);
       // Handle dimensions with no mutation
       handleNoMutation(rewriter, expandedRef, reassociation[i], result);
+  Value superview;
+  if (auto insertOp = dyn_cast<InsertSliceOp>(slicingOp.getOperation())) {
+    superview = insertOp.getDest();
+  } else if (auto extractOp =
+                 dyn_cast<ExtractSliceOp>(slicingOp.getOperation())) {
+    superview = extractOp.getSource();
+  } else if (auto subviewOp =
+                 dyn_cast<memref::SubViewOp>(slicingOp.getOperation())) {
+    superview = subviewOp.getSource();
+  } else {
+    llvm_unreachable("Matcher is neither insert or extract");
+  }
+  auto droppedDims = slicingOp.getDroppedDims();
+
+  // rebuild no-drop-dims version reassociation and subview
+  SmallVector<ReassociationIndices> fullReasso;
+  SmallVector<ReassociationIndices> subReasso;
+  // if given subveiw reassociation, return superview reassociation, else return
+  // subview reassociation
+  if (isSubview) {
+    fullReasso = getFullReassociation(reassociation, droppedDims);
+    subReasso = llvm::to_vector(reassociation);
+    result.setReassociaion(fullReasso);
+  } else {
+    fullReasso.assign(reassociation.begin(), reassociation.end());
+    subReasso = getSubReassociation(reassociation, droppedDims);
+    result.setReassociaion(subReasso);
+  }
+  LDBG("full reassociation: " << to_string(fullReasso));
+  LDBG("sub reassociation: " << to_string(subReasso));
+  auto rank = fullReasso.size();
+
+  utils::DimensionShape subviewShape;
+  utils::DimensionShape superviewShape;
+  if (isInsert) {
+    superviewShape = resShape;
+    subviewShape = srcShape;
+  } else {
+    superviewShape = srcShape;
+    subviewShape = resShape;
+  }
+  subviewShape = getUndroppedSubviewShape(subviewShape, droppedDims);
+  LDBG("superview shape: " << to_string(superviewShape));
+  LDBG("subview shape: " << to_string(subviewShape));
+
+  // Process each dimension
+  for (unsigned i = 0; i < rank; i++) {
+    if (superviewShape[i] == subviewShape[i] &&
+        !ShapedType::isDynamic(superviewShape[i])) {
+      LDBG("No Mutation " << i);
+      // Handle dimensions with no mutation
+      handleNoMutation(rewriter, expandedRef, fullReasso[i], result);
     } else {
       LDBG("Has Mutation " << i);
 
@@ -669,6 +1002,39 @@ getSliceModifyingOp(PatternRewriter &rewriter, T slicingOp,
                                 reassociation[i], mixedOffsets[i],
                                 mixedSizes[i], mixedStrides[i], superview, i,
                                 result))) {
+      // Need to count how many units, fallback to non hyperrectangle for unit
+      // cases
+      auto unitCount = llvm::count_if(
+          fullReasso[i],
+          [&constantFullExpandedRef](const auto &reassoc) -> bool {
+            return constantFullExpandedRef[reassoc] == 1;
+          });
+      bool allowHyperrectangle = true;
+      if (static_cast<uint32_t>(unitCount + 1) >= fullReasso[i].size()) {
+        allowHyperrectangle = false;
+      }
+      LDBG("Hyperrectangle case");
+      if (auto subview = dyn_cast<memref::SubViewOp>(*slicingOp)) {
+        auto srcMemRefType = dyn_cast<MemRefType>(src.getType());
+        auto srcStride = getConstantStrides(srcMemRefType);
+        assert(srcStride.has_value() && "srcStride must be present");
+        lastStride = srcStride.value()[i];
+      }
+      if (allowHyperrectangle) {
+        // auto superviewShape = isInsert ? resShape[i] : srcShape[i];
+        // auto superviewShapei = superviewShape[i];
+        auto isHyperRectangle = checkHyperRectangle(
+            rewriter, fullReasso[i], constantFullExpandedRef, isSubview, result,
+            superviewShape[i], mixedOffsets[i], mixedSizes[i], mixedStrides[i],
+            lastStride);
+        if (succeeded(isHyperRectangle))
+          continue;
+      }
+
+      // Fall back to non-hyperrectangle case
+      if (failed(handleMutation(rewriter, constantFullExpandedRef,
+                                fullReasso[i], mixedOffsets[i], mixedSizes[i],
+                                mixedStrides[i], superview, i, result))) {
         return failure();
       }
     }
@@ -685,6 +1051,13 @@ getExtractSliceModifyingOp(PatternRewriter &rewriter, ExtractSliceOp slicingOp,
                            SmallVector<OpFoldResult> &newMixedSizes,
                            SmallVector<OpFoldResult> &newMixedStrides,
                            SmallVector<OpFoldResult> &expandOutputShape) {
+getSubviewModifyingOp(PatternRewriter &rewriter, memref::SubViewOp slicingOp,
+                      ArrayRef<ReassociationIndices> reassociation,
+                      ArrayRef<OpFoldResult> expandedRef, bool isSubview,
+                      SmallVector<OpFoldResult> &newMixedOffsets,
+                      SmallVector<OpFoldResult> &newMixedSizes,
+                      SmallVector<OpFoldResult> &newMixedStrides,
+                      SmallVector<OpFoldResult> &expandOutputShape) {
   SliceModifyingOpResult result;
   LogicalResult res = getSliceModifyingOp(rewriter, slicingOp, reassociation,
                                           expandedRef, isSubview, result);
@@ -702,6 +1075,32 @@ getExtractSliceModifyingOp(PatternRewriter &rewriter, ExtractSliceOp slicingOp,
 }
 
 LogicalResult
+getExtractSliceModifyingOp(PatternRewriter &rewriter, ExtractSliceOp slicingOp,
+                           ArrayRef<ReassociationIndices> reassociation,
+                           ArrayRef<OpFoldResult> expandedRef, bool isSubview,
+                           SmallVector<OpFoldResult> &newMixedOffsets,
+                           SmallVector<OpFoldResult> &newMixedSizes,
+                           SmallVector<OpFoldResult> &newMixedStrides,
+                           SmallVector<OpFoldResult> &expandOutputShape,
+                           SmallVector<ReassociationIndices> &newReasso) {
+  SliceModifyingOpResult result;
+  LogicalResult res = getSliceModifyingOp(rewriter, slicingOp, reassociation,
+                                          expandedRef, isSubview, result);
+  if (res.failed())
+    return res;
+
+  // Copy results to output parameters
+  newMixedOffsets = llvm::to_vector(result.getMixedOffsets());
+  newMixedSizes = llvm::to_vector(result.getMixedSizes());
+  newMixedStrides = llvm::to_vector(result.getMixedStrides());
+  // Only need superview
+  expandOutputShape = llvm::to_vector(result.getSuperviewOutputShape());
+  newReasso = llvm::to_vector(result.getReassociation());
+
+  return success();
+}
+
+LogicalResult
 getInsertSliceModifyingOp(PatternRewriter &rewriter, InsertSliceOp slicingOp,
                           ArrayRef<ReassociationIndices> reassociation,
                           ArrayRef<OpFoldResult> expandedRef, bool isSubview,
@@ -710,6 +1109,8 @@ getInsertSliceModifyingOp(PatternRewriter &rewriter, InsertSliceOp slicingOp,
                           SmallVector<OpFoldResult> &newMixedStrides,
                           SmallVector<OpFoldResult> &expandSrcOutputShape,
                           SmallVector<OpFoldResult> &expandDestOutputShape) {
+                          SmallVector<OpFoldResult> &expandDestOutputShape,
+                          SmallVector<ReassociationIndices> &newReasso) {
   SliceModifyingOpResult result;
   LogicalResult res = getSliceModifyingOp(rewriter, slicingOp, reassociation,
                                           expandedRef, isSubview, result);
@@ -722,6 +1123,7 @@ getInsertSliceModifyingOp(PatternRewriter &rewriter, InsertSliceOp slicingOp,
   newMixedStrides = llvm::to_vector(result.getMixedStrides());
   expandSrcOutputShape = llvm::to_vector(result.getSubviewOutputShape());
   expandDestOutputShape = llvm::to_vector(result.getSuperviewOutputShape());
+  newReasso = llvm::to_vector(result.getReassociation());
 
   return success();
 }
@@ -741,6 +1143,17 @@ SmallVector<OpFoldResult> getMixedSizesOrOutputShape(PatternRewriter &rewriter,
   }
   auto valMixed = tensor::getMixedSizes(rewriter, loc, val);
   return valMixed;
+  if (auto hasSizeOp = dyn_cast_or_null<memref::SubViewOp>(op)) {
+    return hasSizeOp.getMixedSizes();
+  }
+  // Consider returning reify?
+  if (isa<RankedTensorType>(val.getType())) {
+    auto valMixed = tensor::getMixedSizes(rewriter, loc, val);
+    return valMixed;
+  } else {
+    auto valMixed = memref::getMixedSizes(rewriter, loc, val);
+    return valMixed;
+  }
 }
 
 void updateHFusionReduceWithIndexDim(
@@ -759,6 +1172,7 @@ void updateHFusionReduceWithIndexDim(
     // dimension; if PropagateCollapseDown generates multi-reduction-dimension
     // cases, the following assertion will catch that
     assert(newDimensions.size() != 0);
+    assert(newDimensions.size() == 1);
     indexOp.setDim(newDimensions[0]);
   });
   // for robustness
@@ -766,6 +1180,21 @@ void updateHFusionReduceWithIndexDim(
       succeeded(cast<hfusion::ReduceWithIndexOp>(reduceWithIndexOp).verify()));
 }
 
+bool isUnitDimReshape(ArrayRef<int64_t> expandedShape,
+                      ArrayRef<mlir::ReassociationIndices> reassociation) {
+  for (const auto &group : reassociation) {
+    int nonUnitDimCount = 0;
+    for (int64_t dimIdx : group) {
+      if (expandedShape[dimIdx] != 1) {
+        nonUnitDimCount++;
+      }
+    }
+    if (nonUnitDimCount > 1) {
+      return false;
+    }
+  }
+  return true;
+}
 void createTransposedReassoc(
     SmallVector<ReassociationIndices, 4> &oldReassociation,
     ArrayRef<int64_t> expandedShape, ArrayRef<int64_t> permutation,
@@ -798,6 +1227,9 @@ void createTransposedReassoc(
     ReassociationIndices newIndices;
     for (size_t _ = 0; _ < vec.size(); ++_)
       newIndices.push_back(index++);
+    for (size_t i = 0; i < vec.size(); i++) {
+      newIndices.push_back(index++);
+    }
     newReassociation.push_back(newIndices);
   }
 }
@@ -958,5 +1390,4 @@ SmallVector<Value> getNewOperands(Operation *collapseOp,
   }
   return newOperands;
 }
-
 } // namespace mlir

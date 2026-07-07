@@ -35,6 +35,9 @@ public:
 public:
   std::vector<int> minIndex;
 
+  void dump();
+
+
 protected:
   std::vector<int> parent_;
 };

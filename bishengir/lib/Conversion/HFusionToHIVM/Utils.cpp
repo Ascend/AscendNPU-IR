@@ -12,6 +12,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// Also available under a BSD-style license. See LICENSE.
 //
 //===----------------------------------------------------------------------===//
 
@@ -61,6 +62,7 @@ Type getExpandShapeOpResType(ShapedType shapedType, ArrayRef<int64_t> dimsArr) {
     } else {
       if (static_cast<size_t>(dimsArr[i]) >= strides.size() + 1)
         llvm::report_fatal_error("strides accessed index out-of-bounds");
+        llvm_unreachable("strides accessed index out-of-bounds");
       strideVal = strides[dimsArr[i] - 1];
     }
     strides.insert(strides.begin() + dimsArr[i], strideVal);
@@ -81,5 +83,38 @@ Value createCollapseShapeOp(PatternRewriter &rewriter, Location loc,
                             loc, resultType, collapseSrc, collapseDims);
 }
 
+hivm::RoundMode mapRoundModeHFusionToHiVM(hfusion::RoundMode hsRndMode) {
+  switch (hsRndMode) {
+  case (hfusion::RoundMode::RINT):
+    return hivm::RoundMode::RINT;
+  case (hfusion::RoundMode::ROUND):
+    return hivm::RoundMode::ROUND;
+  case (hfusion::RoundMode::CEIL):
+    return hivm::RoundMode::CEIL;
+  case (hfusion::RoundMode::FLOOR):
+    return hivm::RoundMode::FLOOR;
+  case (hfusion::RoundMode::TRUNC):
+    return hivm::RoundMode::TRUNC;
+  case (hfusion::RoundMode::ODD):
+    return hivm::RoundMode::ODD;
+  case (hfusion::RoundMode::TRUNCWITHOVERFLOW):
+    return hivm::RoundMode::TRUNCWITHOVERFLOW;
+  }
+  llvm_unreachable("unsupported hfusion::RoundMode");
+}
+
+hivm::UnsignedMode mapUnsignedModeHFusionToHiVM(hfusion::UnsignedMode hsUniMode) {
+  switch (hsUniMode) {
+  case (hfusion::UnsignedMode::SI2SI):
+    return hivm::UnsignedMode::SI2SI;
+  case (hfusion::UnsignedMode::SI2UI):
+    return hivm::UnsignedMode::SI2UI;
+  case (hfusion::UnsignedMode::UI2SI):
+    return hivm::UnsignedMode::UI2SI;
+  case (hfusion::UnsignedMode::UI2UI):
+    return hivm::UnsignedMode::UI2UI;
+  }
+  llvm_unreachable("unsupported hfusion::UnsignedMode");
+}
 } // namespace hfusion_conversion_utils
 } // namespace mlir

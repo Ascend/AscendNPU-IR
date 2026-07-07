@@ -24,6 +24,7 @@
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/OpPipeInterface.h"
+#include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.h"
 #include "bishengir/Interfaces/AggregatedOpInterface.h"
 
 #include "mlir/IR/Operation.h"
@@ -80,6 +81,25 @@ SmallVector<Type> getHIVMOperandTypesImpl(Operation *op,
 // Return mask of continuous axes of an operation
 BitVector getContiguousAxesImpl(Operation *op);
 BitVector getContiguousAxesImpl(ArrayRef<Type> shapedTypes);
+/// Determines which axes are contiguous in memory across multiple shaped types.
+///
+/// This function analyzes an array of shaped types (specifically MemRefTypes) and
+/// returns a BitVector indicating which axes maintain contiguous memory layout
+/// across all provided types. index i is true if axis (i - 1) is contiguous with axis i
+///
+/// \param shapedTypes Array of types to analyze (all presumed to have same rank)
+/// \return BitVector where bit[i] is true if axis i is contiguous across all types
+///
+/// An axis is considered contiguous if elements along that dimension are packed
+/// tightly in memory such that: stride[axis] * shape[axis] == stride[axis-1]
+///
+/// Notes:
+/// - Axis 0 is always marked as contiguous (outermost dimension)
+/// - Dynamic dimensions are conservatively marked as non-contiguous
+/// - Identity layouts are skipped as they're naturally contiguous
+/// - Non-MemRef types are ignored
+BitVector getContiguousAxesImpl(ArrayRef<Type> shapedTypes);
+BitVector getContiguousAxesImpl(Operation *op);
 
 // Return mask of unit axes of an operation
 BitVector getUnitAxesMaskImpl(MemRefType type);

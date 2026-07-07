@@ -21,6 +21,7 @@
 #include "bishengir/Transforms/Passes.h"
 #include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Conversion/Passes.h"
 #include "mlir/Dialect/Bufferization/Pipelines/Passes.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -52,6 +53,11 @@ void execution_engine::buildCPURunnerPipeline(
   pm.addPass(bufferization::createEmptyTensorToAllocTensorPass());
 
   // Bufferization Passes
+  // Bufferization Passes
+  // decompose tensor.concat into slices before bufferization
+  pm.addNestedPass<func::FuncOp>(tensor::createDecomposeTensorConcatPass());
+  pm.addPass(bufferization::createEmptyTensorToAllocTensorPass());
+
   bufferization::OneShotBufferizationOptions bufferizationOpts;
   bufferizationOpts.bufferizeFunctionBoundaries = true;
   bufferizationOpts.setFunctionBoundaryTypeConversion(
@@ -77,6 +83,9 @@ void execution_engine::buildCPURunnerPipeline(
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(createLowerAffinePass());
   pm.addPass(arith::createArithExpandOpsPass());
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createLowerAffinePass());
+  pm.addPass(createConvertSCFToCFPass());
   pm.addPass(createConvertVectorToLLVMPass());
   pm.addPass(createConvertMathToLLVMPass());
   pm.addPass(createFinalizeMemRefToLLVMConversionPass());
@@ -84,6 +93,8 @@ void execution_engine::buildCPURunnerPipeline(
   pm.addPass(createConvertControlFlowToLLVMPass());
   pm.addPass(createConvertIndexToLLVMPass());
   pm.addPass(createArithToLLVMConversionPass());
+  pm.addPass(createArithToLLVMConversionPass());
+  pm.addPass(createConvertIndexToLLVMPass());
   pm.addPass(createReconcileUnrealizedCastsPass());
 }
 

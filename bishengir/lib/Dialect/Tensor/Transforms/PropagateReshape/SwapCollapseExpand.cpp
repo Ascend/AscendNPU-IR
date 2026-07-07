@@ -39,6 +39,58 @@ using namespace mlir::tensor::reshape_utils;
 using namespace mlir::hfusion::reshape_utils;
 using namespace mlir::utils::debugger;
 
+// %b = collapse %a
+// <AxBxCxDxExFxG> -> <AxBCDxExFG>
+// [[0], [1, 2, 3], [4], [5, 6]]
+// %c = expand %b
+// <AxBCDxExFG> -> <AxBCDxE1xE2xFG>
+// [[0], [1], [2, 3], [4]]
+//
+// |
+// v
+//
+// %tmp = expand %a
+// <AxBxCxDxExFxG> -> <AxBxCxDxE1xE2xFxG>
+// [[0], [1], [2], [3], [4, 5], [6], [7]]
+// %c = collapse %tmp
+// <AxBxCxDxE1xE2xFxG> -> <AxBCDxE1xE2xFG>
+// [[0], [1, 2, 3], [4], [5], [6, 7]]
+namespace {
+
+bool areReassociationsCompatible(
+    ArrayRef<ReassociationIndices> collapseReassoc,
+    ArrayRef<ReassociationIndices> expandReassoc,
+    SmallVector<ReassociationIndices> &supposedExpand,
+    SmallVector<ReassociationIndices> &supposedCollapse,
+    ArrayRef<int64_t> collapseSourceShape, ArrayRef<int64_t> expandShapeResult,
+    SmallVector<int64_t> &newExpandShape) {
+  // Check if collapse and expand reassociations are inverses of each other
+  if (collapseReassoc.size() != expandReassoc.size())
+    return false;
+  for (size_t i = 0; i < collapseReassoc.size(); ++i) {
+    bool isCollapsing = collapseReassoc[i].size() > 1;
+    bool isExpanding = expandReassoc[i].size() > 1;
+    if (isCollapsing && isExpanding) {
+      return false;
+    }
+    if (isExpanding) {
+      for (auto el : expandReassoc[i]) {
+        assert(el >= 0 && static_cast<size_t>(el) < expandShapeResult.size());
+        newExpandShape.push_back(expandShapeResult[el]);
+        supposedCollapse.push_back({-1});
+      }
+      supposedExpand.push_back(expandReassoc[i]);
+    } else {
+      for (auto el : collapseReassoc[i]) {
+        newExpandShape.push_back(collapseSourceShape[el]);
+        supposedExpand.push_back({-1});
+      }
+      supposedCollapse.push_back(collapseReassoc[i]);
+    }
+  }
+  return true;
+}
+} // namespace
 LogicalResult
 SwapCollapseExpand::matchAndRewrite(tensor::ExpandShapeOp expandOp,
                                     PatternRewriter &rewriter) const {
@@ -62,6 +114,7 @@ SwapCollapseExpand::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   SmallVector<int64_t> newExpandShape;
   bool reassociationsDone = false;
   if (!::mlir::reshape_utils::areReassociationsCompatible(
+  if (!areReassociationsCompatible(
           collapseReassoc, expandReassoc, newReassociationExpand,
           newReassociationCollapse, collapseSourceShape, expandShapeResult,
           newExpandShape)) {

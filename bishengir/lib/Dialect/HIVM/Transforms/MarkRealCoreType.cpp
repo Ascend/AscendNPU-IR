@@ -48,6 +48,10 @@ struct MarkRealCoreTypePass
   void runOnOperation() override;
 
   bool isOpTypeToBeMarked(Operation *op) {
+  ~MarkRealCoreTypePass() override = default;
+  void runOnOperation() override;
+
+  bool isOpTypeToBeMarked(Operation *op) const {
     // scalar-pipe operations.
     if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
             affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
@@ -88,6 +92,7 @@ void MarkRealCoreTypePass::runOnOperation() {
   }
 
   DenseMap<uint64_t, Operation *> opToInstructionCounterMap;
+  DenseMap<uint64_t, Operation *> instructionCounterToOpMap;
   DenseMap<Operation *, hivm::TCoreType> instructionCounterToCoreTypeMap;
   static constexpr StringLiteral kInstructionMarkerAttr = "instruction-marker";
 
@@ -100,6 +105,7 @@ void MarkRealCoreTypePass::runOnOperation() {
       return;
     }
     opToInstructionCounterMap[instructionCounter] = invClonedOpMap[op];
+    instructionCounterToOpMap[instructionCounter] = invClonedOpMap[op];
     op->setAttr(kInstructionMarkerAttr,
                 builder.getIndexAttr(instructionCounter));
     instructionCounter++;
@@ -114,6 +120,7 @@ void MarkRealCoreTypePass::runOnOperation() {
   }
 
   // get function with aic core type from moudleclone2
+  // get function with aic core type from cloned module.
   moduleClone->walk<WalkOrder::PreOrder>([&](func::FuncOp funcOp) {
     auto funcOpCoreTypeOpt = queryFuncCoreType(funcOp);
     if (!funcOpCoreTypeOpt.has_value()) {
@@ -136,6 +143,10 @@ void MarkRealCoreTypePass::runOnOperation() {
                "instructionCounter not found in map!");
         Operation *opInOriginalModule =
             opToInstructionCounterMap[instructionCounter];
+        assert(instructionCounterToOpMap.count(instructionCounter) &&
+               "instructionCounter not found in map!");
+        Operation *opInOriginalModule =
+            instructionCounterToOpMap[instructionCounter];
 
         auto [it, inserted] = instructionCounterToCoreTypeMap.insert(
             {opInOriginalModule, opCoreType});

@@ -33,7 +33,10 @@ namespace mlir {
 namespace hfusion {
 namespace detail {
 
-Flattener::Flattener(Operation *op) : DimensionAnalyzer(op) {
+// Flattener constructor
+Flattener::Flattener(Operation *op,
+                     mlir::detail::DimensionAnalyzerOptions options)
+    : DimensionAnalyzer(op, options) {
   // Step 1: Initialize invariant, each operations has its connection with
   // arguments Thus we know which one to flatten, each dimension in the
   // argument is assigned With a certain number
@@ -64,9 +67,10 @@ Flattener::Flattener(Operation *op) : DimensionAnalyzer(op) {
   // thus [0, 1] == [6, 7] will be a gang
   //
   // thus we're representing each shape element with a union find
-  // solverShapeElem_, solverShapeElem_.join(0, 6) later will be run
+  // solverShapeElem_ (equivalentDsu_), solverShapeElem_.join(0, 6) later
+  // will be run
   //
-  // solverShapeElem_ however represents the segments of joined segments
+  // equivalentDsu_ however represents the segments of joined segments
   // in this case, there are 4, op2 can inherit either from arg0 or op1
   // every reduce and broadcast will create new segments representation
   //
@@ -85,13 +89,17 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
   auto result = initialize();
   if (failed(result))
     return success();
-  for (size_t ref = 0; ref < argumentsRef_.size(); ++ref) {
-    markBroken(argumentsRef_[ref]);
+  for (const auto &ref : dimIndices_) {
+    markBroken(ref);
   }
+  dumpIsConnected();
   propagateBroken();
+  dumpIsConnected();
   if (!multiDynamicShape) {
     breakDynamicShapes();
+    dumpIsConnected();
     propagateBroken();
+    dumpIsConnected();
   }
   adjustOperations();
   return success();
@@ -101,7 +109,8 @@ LogicalResult Flattener::flatten(bool multiDynamicShape) {
 void Flattener::markBroken(const DimensionIndex &args) {
   int argSize = static_cast<int64_t>(args.size());
   for (int i = 0; i < argSize; ++i) {
-    if (i == 0 || (i > 0 && args[i - 1] != args[i] - 1)) {
+    if ((i == 0 && !options.registerBased) ||
+        (i > 0 && args[i - 1] != args[i] - 1)) {
       LLVM_DEBUG(llvm::dbgs() << "left of " << args[i] << " is disconnected\n");
       isConnected_[args[i]].leftConnected = false;
       if (i >= 1)
@@ -109,7 +118,7 @@ void Flattener::markBroken(const DimensionIndex &args) {
       if (args[i] >= 1)
         isConnected_[args[i] - 1].rightConnected = false;
     }
-    if (i + 1 == static_cast<int>(args.size()) ||
+    if ((i + 1 == static_cast<int>(args.size()) && !options.registerBased) ||
         (i + 1 < static_cast<int>(args.size()) && args[i + 1] != args[i] + 1)) {
       LLVM_DEBUG(llvm::dbgs()
                  << "right of " << args[i] << " is disconnected\n");
@@ -125,14 +134,15 @@ void Flattener::markBroken(const DimensionIndex &args) {
 bool Flattener::computeMutation(int pos, int dir) const {
   LDBG("Computing mutation " << pos << " " << dir);
   bool canConnect = true;
-  while (pos + dir >= 0 &&
-         pos + dir < static_cast<int64_t>(isConnected_.size())) {
+  while (pos + dir >= 0 && pos + dir < static_cast<int64_t>(isConnected_.size())) {
     // H U | U .. U U N
     // It checks for barrier stop or changing stop, if changing stop, it
     // will be merged with other mutation If all unit until end of barrier,
     // then its safe
     bool canProceed = isConnected_[std::min(pos + dir, pos)].rightConnected &&
                       isConnected_[std::max(pos + dir, pos)].leftConnected;
+    LDBG("Can proceed to " << pos << " " << pos + dir << " ?" << canProceed
+                           << "Can proceed");
     if (!canProceed)
       break;
     if (isConnected_[pos + dir].elementKind != ElementKind::Unit) {
@@ -154,7 +164,7 @@ void Flattener::propagateBroken() {
   spreadConnection();
   // Attack all left and right
   for (int i = 0; i < argumentTotalLength_; ++i) {
-    int parent = solverCollapserElem_->find(i);
+    int parent = structuralDsu_->find(i);
     if (parent != i)
       continue;
     if (isConnected_[i].elementKind != ElementKind::HasMutation)
@@ -174,7 +184,7 @@ void Flattener::propagateBroken() {
 void Flattener::breakDynamicShapes() {
   BitVector computed(argumentTotalLength_);
   auto markComputed = [&computed, this](int pos) -> void {
-    computed[solverCollapserElem_->find(pos)] = true;
+    computed[structuralDsu_->find(pos)] = true;
   };
 
   int rightBoundary;
@@ -186,7 +196,7 @@ void Flattener::breakDynamicShapes() {
     SmallVector<int> dynamicPosition;
     auto getAndAddIfDynamic = [&dynamicPosition, this](int pos) -> void {
       auto currentParShapePair =
-          solverShapeElem_->getMinParentAndShapePair(pos);
+          equivalentDsu_->getMinParentAndShapePair(pos);
       if (ShapedType::isDynamic(currentParShapePair.second)) {
         dynamicPosition.push_back(pos);
       }

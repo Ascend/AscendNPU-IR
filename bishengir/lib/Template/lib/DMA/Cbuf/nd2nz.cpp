@@ -45,6 +45,16 @@ copy_gm_to_cbuf_multi_nd2nz_core(memref_t<__gm__ T, 2> *gm,
       copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T>{
           l1_ptr + i * c0_size, gm_ptr + i * d_val, 0, 1, 1,
           static_cast<uint16_t>(d_tile_actual), 0, 0, static_cast<uint16_t>(n_tile_ceil), 0, 1});
+        static_cast<uint16_t>(d_tile_actual), 0, static_cast<uint16_t>(d_val),
+        static_cast<uint16_t>(n_tile_ceil), 1, 1,
+        static_cast<uint16_t>(c0_size)});
+  } else {
+    for (int64_t i = 0; i < n_tile_actual; i++) {
+      copy_gm_to_cbuf_intrin_core(
+          nd2nz_intrin_args<T>{l1_ptr + i * c0_size, gm_ptr + i * d_val, 0, 1,
+                               1, static_cast<uint16_t>(d_tile_actual), 0, 0,
+                               static_cast<uint16_t>(n_tile_ceil), 0, 1,
+                               static_cast<uint16_t>(c0_size)});
     }
   }
 }

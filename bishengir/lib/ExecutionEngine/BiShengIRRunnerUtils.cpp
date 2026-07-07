@@ -29,6 +29,8 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/ToolOutputFile.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Targets/NPUTargetSpec.cpp.inc"
 
 #include <random>
 
@@ -38,12 +40,14 @@ getFileHandle(const char *filePath) {
       !parentPath.empty() &&
       llvm::sys::fs::create_directories(parentPath).value() != 0) {
     llvm::report_fatal_error("Couldn't create directories!");
+    llvm_unreachable("Couldn't create directories!");
     return nullptr;
   }
 
   auto output = mlir::openOutputFile(filePath);
   if (!output) {
     llvm::report_fatal_error("Couldn't open output file!");
+    llvm_unreachable("Couldn't open output file!");
     return nullptr;
   }
   output->keep();
@@ -54,6 +58,7 @@ extern "C" void MLIR_RUNNERUTILS_EXPORT
 closeFileHandle(llvm::ToolOutputFile *output) {
   if (output == nullptr)
     llvm::report_fatal_error("Erasing non-existing pointer to a file");
+    llvm_unreachable("Erasing non-existing pointer to a file");
 
   delete output;
 }
@@ -94,6 +99,26 @@ void printData(llvm::raw_fd_ostream &out, DynamicMemRefType<T> data) {
   out << '\n';
 }
 
+// Expose API func getDefaultSimtDynamicSize so that external caller
+// is able to get the default UB size in SIMT/SIMD mix mode.
+extern "C" int MLIR_RUNNERUTILS_EXPORT
+getDefaultSimtDynamicSize(const char *archChar) {
+  if (!archChar) return 0;
+  std::string arch(archChar);
+
+  auto target = mlir::hacc::symbolizeTargetDeviceEnum(arch);
+  auto maybeSpec = mlir::hacc::getTargetSpec(target);
+  if (!maybeSpec.has_value()) {
+    llvm_unreachable("getTargetSpec failed");
+  }
+
+  auto ubSpaceSize = maybeSpec.value()->UbSize;
+  constexpr int numBitsInByte = 8;
+  constexpr int numByteInKB = 1024;
+  auto minimalDCacheSize = maybeSpec.value()->MinimalDCacheSize;
+  
+  return (ubSpaceSize - minimalDCacheSize) / numBitsInByte / numByteInKB;
+}
 } // namespace
 
 #define GENERATE_FOR_TYPE(SUFFIX, T, Distribution, ...)                        \

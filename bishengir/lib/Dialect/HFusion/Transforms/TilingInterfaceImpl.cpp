@@ -18,6 +18,10 @@
 // Original Copyright: NA
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/TilingInterfaceImpl.h"
@@ -89,6 +93,8 @@ static LogicalResult inlinePayload(OpBuilder &b, LinalgOp linalgOp,
   return success();
 }
 
+// This impl. is copied from
+// mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
 //===----------------------------------------------------------------------===//
 // External Model for implementing `TilingInterface` for `LinalgOp`s.
 //===----------------------------------------------------------------------===//
@@ -529,6 +535,13 @@ FailureOr<MergeResult> mergeReductions(Operation *op, OpBuilder &b,
   auto linalgOp = cast<LinalgOp>(op);
   SmallVector<int64_t> reductionDimsInt64(reductionDims.begin(),
                                           reductionDims.end());
+  int64_t numInits = linalgOp.getNumDpsInits();
+  for (int idx : llvm::seq<int>(0, numInits)) {
+    SmallVector<Operation *, 4> combinerOps;
+    if (!matchReduction(linalgOp.getRegionOutputArgs(), idx, combinerOps) ||
+        combinerOps.size() != 1)
+      return op->emitOpError("Failed to analysis the reduction operation.");
+  }
   auto reduction = b.create<linalg::ReduceOp>(
       loc, partialReduce, linalgOp.getDpsInits(), reductionDimsInt64,
       [&linalgOp](OpBuilder &b, Location loc, ValueRange inputs) {
@@ -591,13 +604,11 @@ struct DeinterleaveOpTiling
     Location loc = deinterleaveOp->getLoc();
     auto oldResultType =
         cast<ShapedType>(deinterleaveOp->getResult(0).getType());
-
     SmallVector<Value> dynResultShapes;
     SmallVector<int64_t> staticResultShapes;
     dispatchIndexOpFoldResults(sizes, dynResultShapes, staticResultShapes);
     RankedTensorType resultType = RankedTensorType::get(
         staticResultShapes, oldResultType.getElementType());
-
     // newSizes[i] = sizes[i]             if i != deinterleave_axis
     // newSizes[i] = sizes[i] * chan_num  if i == deinterleave_axis
     // TODO: current implementation assume deinterleave axis will not be tiled
@@ -625,7 +636,44 @@ struct DeinterleaveOpTiling
 
     newDeinterleaveOp->setAttrs(getPrunedAttributeList(
         deinterleaveOp, DeinterleaveOp::getAttributeNames()));
-
+    // Build normalized offsets (pad/truncate if needed). If offsets is empty,
+    // treat offsets as zeros.
+    OpFoldResult zero = b.getIndexAttr(0);
+    SmallVector<OpFoldResult> normalizedOffsets;
+    if (offsets.empty()) {
+      normalizedOffsets.assign(rank, zero);
+    } else {
+      normalizedOffsets.assign(offsets.begin(), offsets.end());
+      if ((int64_t)normalizedOffsets.size() < rank)
+        normalizedOffsets.resize(rank, zero);
+      else if ((int64_t)normalizedOffsets.size() > rank)
+        normalizedOffsets.resize(rank);
+    }
+    // Compute newOffsets: for last dim, offsets[last] * chanNum
+    SmallVector<OpFoldResult> newOffsets;
+    AffineExpr mulExprSym =
+        b.getAffineSymbolExpr(0) * b.getAffineSymbolExpr(1);
+    for (int64_t i = 0; i < rank; ++i) {
+      if (i == rank - 1) {
+        // multiply offset by chanNum
+        auto offsetMul = affine::makeComposedFoldedAffineApply(
+            b, loc, mulExprSym,
+            {normalizedOffsets[i], b.getIndexAttr(chanNum)});
+        newOffsets.push_back(offsetMul);
+      } else {
+        newOffsets.push_back(normalizedOffsets[i]);
+      }
+    }
+    // Use one-strides for the extract slice.
+    SmallVector<OpFoldResult> oneStrides(rank, b.getIndexAttr(1));
+    Value newSlice = b.create<tensor::ExtractSliceOp>(
+        loc, deinterleaveOp.getInput(), newOffsets, newSizes, oneStrides);
+    // Preserve the channel index attribute when creating new DeinterleaveOp.
+    auto indexAttr = deinterleaveOp.getChannelIndexAttr();
+    auto newDeinterleaveOp =
+        b.create<DeinterleaveOp>(loc, resultType, newSlice, indexAttr);
+    newDeinterleaveOp->setAttrs(getPrunedAttributeList(
+        deinterleaveOp, DeinterleaveOp::getAttributeNames()));
     return TilingResult{{newDeinterleaveOp}, {newDeinterleaveOp->getResult(0)}};
   }
 
@@ -693,13 +741,11 @@ struct InterleaveOpTiling
     auto interleaveOp = cast<InterleaveOp>(op);
     Location loc = interleaveOp->getLoc();
     auto oldResultType = cast<ShapedType>(interleaveOp.getOutput().getType());
-
     SmallVector<Value> dynResultShapes;
     SmallVector<int64_t> staticResultShapes;
     dispatchIndexOpFoldResults(sizes, dynResultShapes, staticResultShapes);
     RankedTensorType resultType = RankedTensorType::get(
         staticResultShapes, oldResultType.getElementType());
-
     // newSizes[i] = sizes[i]             if i != interleave_axis
     // newSizes[i] = sizes[i] / chan_num  if i == interleave_axis
     // TODO: current implementation assume interleave axis will not be tiled
@@ -723,6 +769,39 @@ struct InterleaveOpTiling
     SmallVector<Value> sliceInputs;
     for (Value input : inputs) {
       Value newSlice = b.create<tensor::ExtractSliceOp>(loc, input, offsets,
+    // Build newOffsets so that the last-dimension offset is offset / chanNum.
+    // If offsets is empty, treat offsets as zeros.
+    OpFoldResult zero = b.getIndexAttr(0);
+    SmallVector<OpFoldResult> normalizedOffsets;
+    if (offsets.empty()) {
+      normalizedOffsets.assign(rank, zero);
+    } else {
+      normalizedOffsets.assign(offsets.begin(), offsets.end());
+      // If offsets length mismatches rank, pad/truncate defensively:
+      if ((int64_t)normalizedOffsets.size() < rank)
+        normalizedOffsets.resize(rank, zero);
+      else if ((int64_t)normalizedOffsets.size() > rank)
+        normalizedOffsets.resize(rank);
+    }
+    SmallVector<OpFoldResult> newOffsets;
+    AffineExpr divExpr =
+        b.getAffineSymbolExpr(0).floorDiv(b.getAffineSymbolExpr(1));
+    for (int64_t i = 0; i < rank; ++i) {
+      if (i == rank - 1) {
+        // last dim -> divide offset by chanNum
+        auto offsetDiv = affine::makeComposedFoldedAffineApply(
+            b, loc, divExpr, {normalizedOffsets[i], b.getIndexAttr(chanNum)});
+        newOffsets.push_back(offsetDiv);
+      } else {
+        newOffsets.push_back(normalizedOffsets[i]);
+      }
+    }
+    SmallVector<OpFoldResult> oneStrides(offsets.size() ? offsets.size() : rank,
+                                         b.getIndexAttr(1));
+    SmallVector<Value> inputs = interleaveOp.getInput();
+    SmallVector<Value> sliceInputs;
+    for (Value input : inputs) {
+      Value newSlice = b.create<tensor::ExtractSliceOp>(loc, input, newOffsets,
                                                         newSizes, oneStrides);
       sliceInputs.push_back(newSlice);
     }
@@ -730,7 +809,8 @@ struct InterleaveOpTiling
 
     newInterleaveOp->setAttrs(getPrunedAttributeList(
         interleaveOp, InterleaveOp::getAttributeNames()));
-
+    newInterleaveOp->setAttrs(getPrunedAttributeList(
+        interleaveOp, InterleaveOp::getAttributeNames()));
     return TilingResult{{newInterleaveOp}, {newInterleaveOp.getOutput()}};
   }
 

@@ -74,6 +74,14 @@ Value castTo(OpBuilder &builder, Value src, Type targetElemType,
              bool enableOverflow,
              hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
+template <typename TernaryOp, typename OpFun, typename OpFunAttr>
+Operation *createTernaryOp(OpBuilder &builder, Location loc, OpFun opFn,
+                         ValueRange inputs, ValueRange outs) {
+  auto attr = builder.getAttr<OpFunAttr>(opFn);
+  auto fnAttr = builder.getNamedAttr("fun", attr);
+  return builder.create<TernaryOp>(loc, inputs, outs, fnAttr);
+}
+
 } // namespace hfusion
 } // namespace mlir
 

@@ -179,6 +179,8 @@ void SyncEventIdAllocation::SetBlockSyncAllEventID(SyncOperation *sync) {
   } else {
     llvm::report_fatal_error("auto-inserted sync all operation must be all cube "
                              "or all vector");
+    llvm_unreachable("auto-inserted sync all operation must be all cube "
+                     "or all vector");
   }
 }
 
@@ -208,6 +210,7 @@ void SyncEventIdAllocation::AllocateEventId(InstanceElement *e) {
       SetEventId(sync);
     } else {
       llvm::report_fatal_error("InjectSync does not support sync types!");
+      llvm_unreachable("InjectSync does not support sync types!");
     }
   }
 }
@@ -281,7 +284,6 @@ SmallVector<int> SyncEventIdAllocation::UpdateBlockAvailableEventId(
   }
   return canAllocaEventId;
 }
-
 SmallVector<int> SyncEventIdAllocation::GetAvailableEventId(
     SyncOperation *sync, SmallVector<bool> eventIdLifetimeAvailableStatus,
     SmallVector<bool> eventIdIdleStatus, size_t eventIdNum) {
@@ -300,6 +302,18 @@ SmallVector<int> SyncEventIdAllocation::GetAvailableEventId(
     if (eventIdLifetimeAvailableStatus[id] && eventIdIdleStatus[id]) {
       eventIdLifetimeAvailableStatus[id] = false;
       canAllocaEventId.push_back(id);
+  auto isBlockSync = sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_SET ||
+                     sync->GetType() == SyncOperation::TYPE::SYNC_BLOCK_WAIT;
+  if (!isBlockSync || options.preferUnusedBlockSyncIDs) {
+    for (unsigned id = 0; id < eventIdNum; id++) {
+      if (canAllocaEventId.size() == idSize) {
+        break;
+      }
+      // Prioritize using no use event ids.
+      if (eventIdLifetimeAvailableStatus[id] && eventIdIdleStatus[id]) {
+        eventIdLifetimeAvailableStatus[id] = false;
+        canAllocaEventId.push_back(id);
+      }
     }
   }
 
@@ -539,6 +553,7 @@ void SyncEventIdAllocation::SetUseEventID(unsigned int begin, unsigned int end,
   }
   if (!isInsert)
     llvm::report_fatal_error("Can't insert this sync cycle!");
+    llvm_unreachable("Can't insert this sync cycle!");
 }
 
 bool SyncEventIdAllocation::ExtendLifecycle(
@@ -820,6 +835,7 @@ bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
     widenSetSyncIR->pipeAfter = newPipeAfter;
     if (!removeSync)
       llvm::report_fatal_error("in widen fun, remove sync failed");
+      llvm_unreachable("in widen fun, remove sync failed");
   }
   return true;
 }
@@ -845,6 +861,13 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
     if (auto *loopInst = dyn_cast<LoopInstanceElement>(syncIR[loopId].get())) {
       if (loopInst->getLoopKind() == KindOfLoop::LOOP_END) {
         loopId = static_cast<int>(loopInst->beginId);
+  for (int id = static_cast<int>(setSync->GetSyncIRIndex()); id >= endIndex;
+       id--) {
+    auto *tmpIr = syncIR[id].get();
+    assert(tmpIr != nullptr);
+    if (auto *loopInst = dyn_cast<LoopInstanceElement>(syncIR[id].get())) {
+      if (loopInst->getLoopKind() == KindOfLoop::LOOP_END) {
+        id = static_cast<int>(loopInst->beginId);
       } else if (loopInst->getLoopKind() == KindOfLoop::LOOP_BEGIN) {
         break;
       }
@@ -852,6 +875,9 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
     if (auto *branchInst = dyn_cast<BranchInstanceElement>(syncIR[loopId].get())) {
       if (branchInst->getBranchKind() == KindOfBranch::IF_END) {
         loopId = static_cast<int>(branchInst->beginId);
+    if (auto *branchInst = dyn_cast<BranchInstanceElement>(syncIR[id].get())) {
+      if (branchInst->getBranchKind() == KindOfBranch::IF_END) {
+        id = static_cast<int>(branchInst->beginId);
       } else if (branchInst->getBranchKind() == KindOfBranch::IF_BEGIN ||
                  branchInst->getBranchKind() == KindOfBranch::ELSE_BEGIN) {
         break;

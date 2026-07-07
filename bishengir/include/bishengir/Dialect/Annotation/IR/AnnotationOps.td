@@ -19,9 +19,10 @@
 #define BISHENGIR_DIALECT_ANNOTATION_IR_ANNOTATIONOPS_TD
 
 include "bishengir/Dialect/Annotation/IR/AnnotationBase.td"
+include "bishengir/Dialect/Annotation/IR/AnnotationAttrs.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
-def MarkOp : Op<Annotation_Dialect, "mark", [Pure, MemoryEffects<[MemWrite]>]> {
+def MarkOp : Op<Annotation_Dialect, "mark", [Pure, MemoryEffects<[MemWrite]>, DeclareOpInterfaceMethods<MemoryEffectsOpInterface, ["getEffects"]>]> {
   let summary = "Annotate an IR value with key-value attribute pairs";
   let description = [{
     The `annotation.mark` operation can be used to annotated an IR value
@@ -29,6 +30,9 @@ def MarkOp : Op<Annotation_Dialect, "mark", [Pure, MemoryEffects<[MemWrite]>]> {
 
     The value can be both static (i.e. an attribute) or dynamic
     (a.k.a. an IR value).
+
+    The `effects` attribute is used to specify the memory effect that the `annotation.mark` op
+    has on the marked value. By default, it has a memory write effect.
 
     Example:
 
@@ -38,6 +42,8 @@ def MarkOp : Op<Annotation_Dialect, "mark", [Pure, MemoryEffects<[MemWrite]>]> {
     ```
   }];
   let arguments = (ins AnyType:$src,
+                       DefaultValuedAttr<StrArrayAttr,
+                       "llvm::ArrayRef<StringRef>{stringifyEffectMode(EffectMode::Write)}">:$effects,
                        Variadic<AnyType>:$values,
                        OptionalAttr<StrArrayAttr>:$keys);
   let assemblyFormat = [{
@@ -47,7 +53,8 @@ def MarkOp : Op<Annotation_Dialect, "mark", [Pure, MemoryEffects<[MemWrite]>]> {
     `:`type($src)
   }];
   let builders = [
-    OpBuilder<(ins "Value":$src)>
+    OpBuilder<(ins "Value":$src)>,
+    OpBuilder<(ins "Value":$src, "ValueRange":$values, "ArrayAttr":$key)>
   ];
   let hasCanonicalizer = 1;
   let hasFolder = 1;
@@ -64,6 +71,12 @@ def MarkOp : Op<Annotation_Dialect, "mark", [Pure, MemoryEffects<[MemWrite]>]> {
 
     Attribute getStaticAttrValue(StringRef key);
     Value getDynamicAttrValue(StringRef key);
+
+    // Return attribute number except attribute `effects`
+    int64_t getAttrNum();
+
+    // Return whether attribute number is empty except attribute `effects`
+    bool isAttrEmpty();
   }];
 }
 

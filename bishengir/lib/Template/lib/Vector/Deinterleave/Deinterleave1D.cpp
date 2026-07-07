@@ -106,7 +106,6 @@ is_unaligned_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
     return false;
   }
 }
-
 /// deinterleave op description:
 /// 1. deinterleave src (a,) to dst (a / 2) odd or even depending on mode,
 /// 'a' is size of src, and size of dst is always 'a' / 2
@@ -133,7 +132,6 @@ vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
     scalar_deinterleave_1d<MODE, T>(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_vector_eltwise_v_1d(src, dst);
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
@@ -150,6 +148,8 @@ vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
         return;
       }
 
+  if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_N_CHANNELS) {
+    if (src_stride0 % num_per_block == 0) {
       // src: memref<axT, strided<[n]>>
       // dst: memref<axT, strided<[1]>>
       int64_t repeat_times = src_size0;
@@ -180,6 +180,12 @@ vector_deinterleave_1d(memref_t<__ubuf__ T, 1> *src,
   } else if constexpr (MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
     vreducev2_1d_with_pattern_mode<T, PatternMode::INDEX_1_FROM_2_ELEMENTS>(
         &new_src, &new_dst);
+  if constexpr (MODE == DeinterleaveMode::CHANNEL_0_FROM_2_CHANNELS) {
+    vreducev2_1d_with_pattern_mode<T, PatternMode::INDEX_0_FROM_2_ELEMENTS>(
+        src, dst);
+  } else if constexpr (MODE == DeinterleaveMode::CHANNEL_1_FROM_2_CHANNELS) {
+    vreducev2_1d_with_pattern_mode<T, PatternMode::INDEX_1_FROM_2_ELEMENTS>(
+        src, dst);
   } else {
     static_assert("deinterleave op's unsupported mode");
   }
@@ -239,4 +245,5 @@ REGISTER_DEINTERLEAVE(channel_0_from_n_channels,
                       DeinterleaveMode::CHANNEL_0_FROM_N_CHANNELS, 1, uint16_t)
 REGISTER_DEINTERLEAVE(channel_0_from_n_channels,
                       DeinterleaveMode::CHANNEL_0_FROM_N_CHANNELS, 1, uint32_t)
+}
 }

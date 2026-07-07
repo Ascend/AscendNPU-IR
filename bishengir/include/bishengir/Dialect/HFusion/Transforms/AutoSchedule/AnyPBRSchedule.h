@@ -18,65 +18,22 @@
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_AUTOSCHEDULE_ANYPBRSCHEDULE_H
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AnyPBRKernelInfo.h"
+#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AnyPBRKernelInfoCollector.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
-#include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/KernelInfoCollector.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 
 #include <utility>
 
 namespace mlir {
-class Location;
 class OpBuilder;
 
 namespace hfusion {
 
-class AnyPBRKernelInfo final : public KernelInfo {
-public:
-  AnyPBRKernelInfo(MLIRContext *ctx) : KernelInfo(FusionKind::AnyPBR, ctx) {}
-
-  static bool classof(const KernelInfo *T) {
-    return T->getFusionKind() == FusionKind::AnyPBR;
-  }
-
-  /// Get the consumer and producer info.
-  const detail::Consumer2InfoMap &getConsumer2Info() const;
-
-  /// Record the consumer and its fusible producers.
-  void recordFusibleProducerAnalysisResult(
-      detail::FusibleProducerAnalysisResult &&result);
-
-  /// Get the set of fusible producer tags given a consumer and tiling key.
-  SmallVector<NamedAttribute> getReductionProducers(Operation *consumer,
-                                                    int64_t key);
-
-  /// Reduction dimension shared by all reduce op.
-  SetVector<int64_t> reduceDimsInAnchor;
-
-private:
-  /// Mapping from a pair of consumer op and the reduction dimension to the
-  /// fusible producers.
-  /// \note the reduction dimension is w.r.t. the global anchor.
-  detail::Consumer2ProducerMap consumer2Producer_{};
-
-  /// Consumers that have fusible producers.
-  detail::Consumer2InfoMap consumer2Info_{};
-};
-
-class AnyPBRKernelInfoCollector final : public KernelInfoCollector {
-public:
-  explicit AnyPBRKernelInfoCollector(KernelInfo *info,
-                                     AutoScheduleOptions options)
-      : KernelInfoCollector(info, std::move(options)) {}
-
-private:
-  LogicalResult visitLinalgOpImpl(Operation *op) override;
-  LogicalResult postVisitFuncImpl(func::FuncOp f) override;
-};
-
 /// Scheduler for kernels with any axis reduction operations and other
 /// elemwise/broadcast operations.
-class AnyPBRScheduler final : public SchedulerBase {
+class AnyPBRScheduler : public SchedulerBase {
 public:
   explicit AnyPBRScheduler(func::FuncOp funcOpIn)
       : SchedulerBase(
@@ -194,6 +151,16 @@ protected:
   tileParallelAxesAndFuseProducers(TilingKey tilingKey, TilingInfo &tilingInfo,
                                    const AnyPBRKernelInfo &kernelInfo,
                                    OpBuilder &opBuilder);
+
+  /// Tile reduction axes for `hfusion.store` or `linalg.reduce`, and fuse
+  /// producers into the tiled loop.
+  ///
+  /// \result the tiled and coalesed loop; nullptr if the number of reduction
+  /// axis is zero.
+  ValueHandle *tileReduceAxesAndFuseProducers(
+      TilingKey key, TilingInfo &tilingInfo, const AnyPBRKernelInfo &anyPBRInfo,
+      OpBuilder &opBuilder,
+      std::optional<ValueHandles> targetsToSetBufferSize = std::nullopt);
 
   /// Merge the producer handles and return an unique collection of producers to
   /// fuse into.

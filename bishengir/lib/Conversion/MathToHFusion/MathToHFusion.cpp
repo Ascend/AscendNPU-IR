@@ -185,6 +185,9 @@ void mlir::hfusion::populateMathToHFusionConversionPatterns(
       ElementwiseOpToHFusionUnary<math::AcosOp, hfusion::UnaryFn::acos>,
       ElementwiseOpToHFusionUnary<math::SinhOp, hfusion::UnaryFn::sinh>,
       ElementwiseOpToHFusionUnary<math::AcoshOp, hfusion::UnaryFn::acosh>,
+      ElementwiseOpToHFusionUnary<math::TanOp, hfusion::UnaryFn::tan>,
+      ElementwiseOpToHFusionUnary<math::SinOp, hfusion::UnaryFn::sin>,
+      ElementwiseOpToHFusionUnary<math::CosOp, hfusion::UnaryFn::cos>,
       ElementwiseOpToHFusionUnary<math::AbsIOp, hfusion::UnaryFn::absi>,
       ElementwiseOpToHFusionUnary<math::ErfOp, hfusion::UnaryFn::erf>,
       ElementwiseOpToHFusionUnary<math::Log2Op, hfusion::UnaryFn::log2>,
@@ -206,6 +209,16 @@ struct MathToHFusionConversionPass
 
 void MathToHFusionConversionPass::runOnOperation() {
   auto *module = getOperation();
+
+  // Normalize scalar math ops to tensor form first, so they can be converted
+  // to HFusion/Linalg ops by subsequent patterns.
+    RewritePatternSet scalarPatterns(&getContext());
+    populateScalarMathPromotionPatterns(scalarPatterns);
+    if (failed(
+            applyPatternsGreedily(module, std::move(scalarPatterns)))) {
+      signalPassFailure();
+      return;
+    }
   ConversionTarget target(getContext());
   target.addLegalDialect<linalg::LinalgDialect, tensor::TensorDialect,
                          hfusion::HFusionDialect>();

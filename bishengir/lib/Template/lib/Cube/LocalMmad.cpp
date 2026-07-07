@@ -20,6 +20,12 @@ template <typename TYPE> struct b16_converter {
   using type = TYPE;
 };
 template <> struct b16_converter<bfloat16_t> {
+template <typename TYPE>
+struct b16_converter {
+  using type = TYPE;
+};
+template <>
+struct b16_converter<bfloat16_t> {
   using type = half;
 };
 
@@ -35,6 +41,7 @@ __aicore__ __attribute__((always_inline)) void set_hf32_ctrl_none() {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
   INTRINSIC(set_ctrl, (get_ctrl() & (uint64_t)(0xFFFDFFFFFFFFFFFF)));
+  INTRINSIC(set_ctrl, (get_ctrl() & (uint64_t)(0xFFFFDFFFFFFFFFFF)));
 #endif
 }
 
@@ -55,6 +62,7 @@ load2d_transpose_b8(DST_QUALIFER *l0_buf, __cbuf__ int8_t *l1_ptr, int64_t k,
   for (uint64_t i = 0; i < l0_k1; i++) {
     for (uint64_t j = 0; j < l1_n1; j++) {
       if (std::is_same<DST_QUALIFER, __cb__ int8_t>::value) {
+      if constexpr (std::is_same<DST_QUALIFER, __cb__ int8_t>::value) {
         auto l0_loc = (l1_n1 * elem_num_per_block - n >= 16)
                           ? (l0_buf + i * (l1_n1 * 1024 - 512) + j * 1024)
                           : (l0_buf + i * l1_n1 * 1024 + j * 1024);
@@ -63,12 +71,17 @@ load2d_transpose_b8(DST_QUALIFER *l0_buf, __cbuf__ int8_t *l1_ptr, int64_t k,
                 l0_loc, l1_ptr + i * 1024 + j * k_total * 32, 0, 1, 1, 1,
                 Load2DTransposeMode::ADDADDR, 0});
       } else if (std::is_same<DST_QUALIFER, __ca__ int8_t>::value) {
+      } else if constexpr (std::is_same<DST_QUALIFER, __ca__ int8_t>::value) {
+#if defined(__DAV_C310__)
+        static_assert("c310 does not support LOAD_L1_TO_L0A_2D_TRANSPOSE");
+#else
         load2d_transpose_cbuf_to_ca_intrin_core(
             load2d_transpose_intrin_args<int8_t, DST_QUALIFER>{
                 l0_buf + j * l0_k1 * 1024 + i * 512,
                 l1_ptr + i * 1024 + j * k_total * 32, 0, 1, 1, 1,
                 Load2DTransposeMode::ADDADDR,
                 static_cast<uint16_t>(l0_k1 - 1)});
+#endif
       }
     }
   }
@@ -111,8 +124,6 @@ load2d_transpose_b4(DST_QUALIFER *l0_buf, __cbuf__ int8_t *l1_ptr, int64_t k,
     }
   }
 }
-
-
 /// move the L1 data to L0A data, where only tile k axis and no m axis
 /// k_part means that how much k can be put into L0, it is main block aligned
 /// tile size k_part_ceil means the aligned k tile size in L0 for k_part_idx
@@ -126,6 +137,7 @@ load2d_transpose_b4(DST_QUALIFER *l0_buf, __cbuf__ int8_t *l1_ptr, int64_t k,
 ///   L1 nZ data :  m1, k1, k0, m0
 ///   L0 zZ data :  am1, ak1, m0, k0
 template <typename SRC_TYPE, bool TA, bool I4>
+template <typename SRC_TYPE, bool TA>
 __aicore__ __attribute__((always_inline)) void
 load_l1_to_l0a(__ca__ SRC_TYPE *l0a_buf, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                int64_t k_part_idx, int64_t k_part, int64_t k_part_ceil,
@@ -145,6 +157,18 @@ load_l1_to_l0a(__ca__ SRC_TYPE *l0a_buf, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                 0, false, inc);
     }
   } else if (sizeof(SRC_TYPE) == 1) {
+#if defined(__DAV_C310__)
+  if constexpr (TA) {
+    INTRINSIC(load_cbuf_to_ca, l0a_buf, ma_ptr + src_part_offset_a, 0, 0,
+              k_part_ceil / 16, am / elem_num_per_block,
+              k_part_ceil * elem_num_per_block / fractal_num,
+              am * elem_num_per_block / fractal_num, true);
+  } else {
+    INTRINSIC(load_cbuf_to_ca, l0a_buf, ma_ptr + src_part_offset_a, 0, 0, 1,
+              k_part_ceil * am / fractal_num, 1, 1, false);
+  }
+#else
+  if (sizeof(SRC_TYPE) == 1) {
     if constexpr (TA) {
       load2d_transpose_b8<__ca__ int8_t>(
           reinterpret_cast<__ca__ int8_t *>(l0a_buf),
@@ -156,6 +180,10 @@ load_l1_to_l0a(__ca__ SRC_TYPE *l0a_buf, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                   ma_ptr + src_part_offset_a + i * ma->strides[1], 0,
                   k_part_ceil / ma->strides[2], ma->strides[0] / fractal_num, 0,
                   0, false, inc);
+#if !defined(__DAV_M300__)
+                  0,
+#endif
+                  false, inc);
       }
     }
   } else if (sizeof(SRC_TYPE) == 2 || sizeof(SRC_TYPE) == 4) {
@@ -200,6 +228,15 @@ template <typename SRC_TYPE>
 __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_with_trans(
     __cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     int64_t src_part_offset_b, int64_t k_part_ceil, int64_t n) {
+#endif
+}
+
+template <typename SRC_TYPE>
+__aicore__ __attribute__((always_inline)) void
+load_l1_to_l0b_with_trans(__cb__ SRC_TYPE *l0b_buf,
+                               memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+                               int64_t src_part_offset_b, int64_t k_part_ceil,
+                               int64_t n) {
   int64_t elem_num_per_block = L1_ALIGN_BYTES / sizeof(SRC_TYPE);
   int64_t fractal_num = FRACTAL_BLOCK_NUM * elem_num_per_block;
   auto bn = mb->sizes[1] * mb->sizes[2];
@@ -234,6 +271,19 @@ __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_with_trans(
   } else {
     INTRINSIC(load_cbuf_to_cb, l0b_buf, mb_ptr + src_part_offset_b, 0,
               k_part_ceil * bn / fractal_num, 1, 0, 0, false, inc);
+                src_repeat_stride, dst_repeat_gap,
+#if !defined(__DAV_M300__)
+                0,
+#endif
+                false, inc);
+    }
+  } else {
+    INTRINSIC(load_cbuf_to_cb, l0b_buf, mb_ptr + src_part_offset_b, 0,
+              k_part_ceil * bn / fractal_num, 1, 0,
+#if !defined(__DAV_M300__)
+              0,
+#endif
+              false, inc);
   }
 }
 
@@ -250,6 +300,7 @@ __aicore__ __attribute__((always_inline)) void load_l1_to_l0b_with_trans(
 ///   L1 nZ data :  k1, n1, n0, k0
 ///   L0 nZ data :  bk1, bn1, n0, k0
 template <typename SRC_TYPE, bool TB, bool I4>
+template <typename SRC_TYPE, bool TB>
 __aicore__ __attribute__((always_inline)) void
 load_l1_to_l0b(__cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                int64_t k_part_idx, int64_t k_part, int64_t k_part_ceil,
@@ -282,6 +333,26 @@ load_l1_to_l0b(__cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     } else {
       // L1: n1, k1, k0, n0, where k0 = 16, n0 = 32
       uint16_t n_ceil = CEIL_FACTOR(n, /*32*/ elem_num_per_block);
+#if defined(__DAV_C310__)
+  if constexpr(TB) {
+    INTRINSIC(load_cbuf_to_cb, l0b_buf, mb_ptr + src_part_offset_b, 0, 0, 1,
+              k_part_ceil * bn / fractal_num, 1, 1, false);
+  } else {
+    INTRINSIC(load_cbuf_to_cb, l0b_buf, mb_ptr + src_part_offset_b, 0, 0,
+              k_part_ceil / 16, bn / elem_num_per_block,
+              k_part_ceil * elem_num_per_block / fractal_num,
+              bn * elem_num_per_block / fractal_num, true);
+  }
+#else // !defined(__DAV_C310__)
+  if (sizeof(SRC_TYPE) == 1) {
+    uint16_t n_ceil =
+        (sizeof(SRC_TYPE) == 1 && n < 32) ? 32 : static_cast<uint16_t>(n);
+    if constexpr (TB) {
+      load_l1_to_l0b_with_trans<SRC_TYPE>(l0b_buf, mb, src_part_offset_b,
+                                          k_part_ceil, n_ceil);
+    } else {
+      // L1: n1, k1, k0, n0, where k0 = 16, n0 = 32
+      // L0B: k1',n1',n0', k0', where n0' = 16, k0' = 32
       load2d_transpose_b8<__cb__ int8_t>(
           reinterpret_cast<__cb__ int8_t *>(l0b_buf),
           reinterpret_cast<__cbuf__ int8_t *>(mb_ptr + src_part_offset_b),
@@ -314,6 +385,11 @@ load_l1_to_l0b(__cb__ SRC_TYPE *l0b_buf, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
           bool TB, bool HF32, bool I4>
+#endif // !defined(__DAV_C310__)
+}
+
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
+          bool TB, bool HF32>
 __aicore__ __attribute__((always_inline)) void
 mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
          bool init, int64_t m, int64_t k, int64_t n,
@@ -389,6 +465,13 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
   if (k_part == 0) {
     trap();
   }
+  auto k_actual = k;
+  auto m0 = TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2]);
+  auto n0 = TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3]);
+  auto k_ceil = CEIL_FACTOR(k, L1_ALIGN_BYTES / sizeof(SRC_TYPE));
+
+  bool kDirectionAlign = (sizeof(SRC_TYPE) == 4) && TA; // k alignment mode
+  k_ceil = kDirectionAlign ? CEIL_FACTOR(k_ceil, FRACTAL_BLOCK_NUM) : k_ceil;
 
   if (back_pipe_m_pipe_mte1_db_event0 == -1) {
     INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
@@ -402,7 +485,24 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     const bool is_outer_k_start = k_part_idx == 0;
     const bool is_outer_k_end = k_part_idx + 1 == k_part_loop;
     const bool init_c = init && is_outer_k_start;
+  __cc__ DST_TYPE *mc_ptr = mc->aligned + mc->offset;
+  __ca__ SRC_TYPE *l0a_base = reinterpret_cast<__ca__ SRC_TYPE *>((uintptr_t)0);
+  __cb__ SRC_TYPE *l0b_base = reinterpret_cast<__cb__ SRC_TYPE *>((uintptr_t)0);
 
+  int64_t mn_max = m0 > n0 ? m0 : n0;
+  int64_t L0AB_PINGPONG_BUFFER_LEN = L0AB_BUFFER_BYTES / 2 / sizeof(SRC_TYPE);
+  int64_t elem_num_per_block = L1_ALIGN_BYTES / sizeof(SRC_TYPE);
+
+  // compute k_part, namely how much k can be put into L0, it is main block
+  // aligned tile size
+  int64_t max_align_value = elem_num_per_block > 16 ? elem_num_per_block : 16;
+  int64_t k_part = L0AB_PINGPONG_BUFFER_LEN /
+                   CEIL_FACTOR(mn_max, max_align_value) / max_align_value *
+                   max_align_value;
+  int64_t k_part_loop = (k_actual + k_part - 1) / k_part;
+  int64_t fractal_num = FRACTAL_BLOCK_NUM * elem_num_per_block;
+  int64_t l0c_m_size = mc->sizes[1] * mc->sizes[2];
+  for (int64_t k_part_idx = 0; k_part_idx < k_part_loop; k_part_idx++) {
     // compute k_part_actual and k_part_ceil
     // k_part_ceil means the aligned k tile size in L0 for k_part_idx iteration
     // k_part_actual means that unaligned k tile size in L0 for k_part_idx
@@ -451,6 +551,36 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                                      k_part_loop, k_part_actual, l0c_m_size);
 
     if (is_outer_k_end && l1a_wait_mmad_l1_event != -1) {
+        (k_part_idx < k_part_loop - 1) ? k_part : k_ceil - k_part_idx * k_part;
+    int64_t k_part_actual = (k_part_idx < k_part_loop - 1)
+                                ? k_part
+                                : k_actual - k_part_idx * k_part;
+
+    auto mte1_mad_ping_flag =
+        (kloop_db_cond != -1)
+            ? (1 - (kloop_db_cond * k_part_loop + k_part_idx) % 2)
+            : (1 - k_part_idx % 2);
+    auto mte1_mad_event_id = mte1_mad_ping_flag
+                                 ? (back_pipe_m_pipe_mte1_db_event0 != -1
+                                        ? back_pipe_m_pipe_mte1_db_event0
+                                        : EVENT_ID0)
+                                 : (back_pipe_m_pipe_mte1_db_event1 != -1
+                                        ? back_pipe_m_pipe_mte1_db_event1
+                                        : EVENT_ID1);
+    __ca__ SRC_TYPE *l0a_buf =
+        l0a_base + (1 - mte1_mad_ping_flag) * L0AB_PINGPONG_BUFFER_LEN;
+    __cb__ SRC_TYPE *l0b_buf =
+        l0b_base + (1 - mte1_mad_ping_flag) * L0AB_PINGPONG_BUFFER_LEN;
+
+    if (k_part_idx == 0 && mmad_l1_wait_l1a_event != -1) {
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, mmad_l1_wait_l1a_event);
+    }
+    INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, mte1_mad_event_id);
+    // load matrix A from L1 to L0A
+    load_l1_to_l0a<SRC_TYPE, TA>(l0a_buf, ma, k_part_idx, k_part, k_part_ceil,
+                                 k_part_loop, k_part_actual, l0c_m_size);
+
+    if (k_part_idx == k_part_loop - 1 && l1a_wait_mmad_l1_event != -1) {
       INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1a_wait_mmad_l1_event);
     }
 
@@ -474,6 +604,18 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     // load matrix bias from L1 to BT
     if (bias) {
       const uint64_t btAddr = 0;
+    if (k_part_idx == 0 && mmad_l1_wait_l1b_event != -1) {
+      INTRINSIC(wait_flag, PIPE_MTE2, PIPE_MTE1, mmad_l1_wait_l1b_event);
+    }
+    load_l1_to_l0b<SRC_TYPE, TB>(l0b_buf, mb, k_part_idx, k_part, k_part_ceil,
+                                 k_part_loop, k_part_actual, n);
+
+    if (k_part_idx == k_part_loop - 1 && l1b_wait_mmad_l1_event != -1) {
+      INTRINSIC(set_flag, PIPE_MTE1, PIPE_MTE2, l1b_wait_mmad_l1_event);
+    }
+    // load matrix bias from L1 to BT
+    uint64_t btAddr = 0;
+    if (bias) {
       __cbuf__ BIAS_TYPE *bias_ptr = bias->aligned + bias->offset;
       int64_t bias_burst_len = CEIL_DIV(n0 * sizeof(BIAS_TYPE), 64);
       int16_t conv_control = (sizeof(BIAS_TYPE) == 2 && sizeof(DST_TYPE) == 4);
@@ -526,7 +668,39 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
             /*cmatrixInitVal=*/init_c});
       }
     }
+    INTRINSIC(set_flag, PIPE_MTE1, PIPE_M, mte1_mad_event_id);
 
+    // mmad
+    INTRINSIC(wait_flag, PIPE_MTE1, PIPE_M, mte1_mad_event_id);
+    if constexpr (HF32) {
+      set_hf32_ctrl();
+    }
+    uint16_t n_ceil =
+        (sizeof(SRC_TYPE) == 1 && n < 32) ? 32 : static_cast<uint16_t>(n);
+
+    bool is_outer_k_start = !k_part_idx;
+    bool init_c = init && is_outer_k_start;
+    bool is_outer_k_end = k_part_idx + 1 == k_part_loop;
+    uint8_t unit_flag_mode =
+        unit_flag ? (is_outer_k_end ? unit_flag : (uint8_t)0b10) : (uint8_t)0;
+    n_ceil = kDirectionAlign ? CEIL_FACTOR(n, 16) : n_ceil;
+
+    if (bias) {
+      bool isSourceFromBT = init_c;
+      mad_intrin_core(mmad_intrin_args<SRC_TYPE, DST_TYPE>{
+          mc_ptr, l0a_buf, l0b_buf, static_cast<uint16_t>(l0c_m_size),
+          static_cast<uint16_t>(k_part_actual), static_cast<uint16_t>(n_ceil),
+          unit_flag_mode, kDirectionAlign, isSourceFromBT, 0});
+    } else {
+      mad_intrin_core(mmad_intrin_args<SRC_TYPE, DST_TYPE>{
+          mc_ptr, l0a_buf, l0b_buf, static_cast<uint16_t>(l0c_m_size),
+          static_cast<uint16_t>(k_part_actual), n_ceil, unit_flag_mode,
+          kDirectionAlign, 0, init_c});
+    }
+
+    if constexpr (HF32) {
+      set_hf32_ctrl_none();
+    }
     // The same l0c address is used. When M/16 * N/16>=10,
     // it is not necessary to insert BAR. M is applicable
     // to V300 and C200 versions.
@@ -540,6 +714,7 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     if constexpr (HF32) {
       set_hf32_ctrl_none();
     }
+    INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, mte1_mad_event_id);
   }
   if (back_pipe_m_pipe_mte1_db_event0 == -1) {
     INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
@@ -551,6 +726,8 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
           bool TB, bool HF32, bool I4>
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
+          bool TB, bool HF32>
 __aicore__ __attribute__((always_inline)) void
 mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               memref_t<__cbuf__ SRC_TYPE, 4> *mb, bool init, int64_t m,
@@ -568,6 +745,15 @@ mma_tile_core(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
           bool TB, bool HF32, bool I4>
+  mma_tile<SRC_TYPE, DST_TYPE, BIAS_TYPE, TA, TB, HF32>(
+      ma, mb, init, m, k, n, nullptr, mc, mmad_l1_wait_l1a_event,
+      mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
+      kloop_db_cond, back_pipe_m_pipe_mte1_db_event0,
+      back_pipe_m_pipe_mte1_db_event1, unit_flag);
+}
+
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE, bool TA,
+          bool TB, bool HF32>
 __aicore__ __attribute__((always_inline)) void
 mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               memref_t<__cbuf__ SRC_TYPE, 4> *mb, bool init, int64_t m,
@@ -578,6 +764,7 @@ mma_tile_bias(memref_t<__cbuf__ SRC_TYPE, 4> *ma,
               int64_t back_pipe_m_pipe_mte1_db_event0,
               int64_t back_pipe_m_pipe_mte1_db_event1, uint8_t unit_flag) {
   mma_tile<SRC_TYPE, DST_TYPE, BIAS_TYPE, TA, TB, HF32, I4>(
+  mma_tile<SRC_TYPE, DST_TYPE, BIAS_TYPE, TA, TB, HF32>(
       ma, mb, init, m, k, n, bias, mc, mmad_l1_wait_l1a_event,
       mmad_l1_wait_l1b_event, l1a_wait_mmad_l1_event, l1b_wait_mmad_l1_event,
       kloop_db_cond, back_pipe_m_pipe_mte1_db_event0,
@@ -616,4 +803,5 @@ REGISTER_MMA_TILE_I4(cbuf, cc, 4, int8_t, int32_t, float);
 REGISTER_MMA_TILE_TB_I4(cbuf, cc, 4, int8_t, int32_t, float);
 REGISTER_MMA_TILE_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
 REGISTER_MMA_TILE_TB_HF32_I4(cbuf, cc, 4, int8_t, int32_t, float);
+}
 }

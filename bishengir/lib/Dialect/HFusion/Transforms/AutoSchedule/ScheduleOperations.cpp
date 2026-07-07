@@ -19,10 +19,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOps.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/TransformOps/HIVMTransformOps.h"
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 
 #include "mlir/Dialect/Bufferization/TransformOps/BufferizationTransformOps.h"
@@ -61,6 +63,8 @@ std::string stringifyCanonicalizationPatternKind(
       kFoldTransposeWithTranspose:
     return "FoldTransposeWithTranspose";
   }
+  llvm_unreachable("Unsupported transform pattern kind");
+  return "";
 }
 
 ArrayAttr getMatchOps(const hfusion::detail::Identifier &identifier,
@@ -102,6 +106,7 @@ Value SchedulerBase::getValue(ValueHandle *handle, OpBuilder &opBuilder) {
     return h->get(getFuncValue(opBuilder), opBuilder);
   }
   llvm::report_fatal_error("Not implemented!");
+  llvm_unreachable("Not implemented!");
 }
 
 SmallVector<Value> SchedulerBase::getValues(const ValueHandles &handle,
@@ -721,6 +726,17 @@ void SchedulerBase::applyOneShotBufferization(OpBuilder &opBuilder) {
   setTransformSeqHandle(matchTarget);
 }
 
+void SchedulerBase::mapForallToHIVMBlocks(OpBuilder &opBuilder) {
+  auto matchTarget = getTransformSeqHandle();
+  matchTarget = opBuilder.create<transform::MatchOp>(
+      matchTarget.getLoc(), matchTarget,
+      ArrayRef<StringRef>({scf::ForallOp::getOperationName()}));
+  opBuilder.create<transform::MapForallToHIVMBlocks>(
+      matchTarget.getLoc(),
+      /*result=*/
+      opBuilder.getType<transform::AnyOpType>(),
+      /*target=*/matchTarget);
+}
 ValueHandle *
 SchedulerBase::mapForToForall(ValueHandle *targetLoop, OpBuilder &opBuilder,
                               const MapForToForallOptions &options) {
@@ -784,6 +800,7 @@ Value SchedulerBase::matchByIdentifier(Value target,
       childValue = getValue(valHandle, opBuilder);
     } else {
       llvm::report_fatal_error("Not implemented!");
+      llvm_unreachable("Not implemented!");
     }
     matchResult =
         opBuilder
@@ -823,6 +840,7 @@ ValueHandles SchedulerBase::splitHandle(ValueHandle *handle, size_t splitSize,
   return llvm::map_to_vector(results, [this, &opBuilder](Value result) {
     auto ptr = record<RegularValueHandle>(result, opBuilder);
     return static_cast<ValueHandle *>(ptr);
+    return (ValueHandle *)record<RegularValueHandle>(result, opBuilder);
   });
 }
 
@@ -917,7 +935,11 @@ SchedulerBase::ForReductionTilingResult SchedulerBase::tileReductionUsingFor(
       unpackFoldResults(tileSizes, opBuilder);
 
   ForReductionTilingResult result;
-
+  ForReductionTilingResult result;
+  auto moduleOp = getModule();
+  bool archIsRegbased = hacc::utils::isRegBasedArch(moduleOp);
+  auto [staticTileSizes, dynamicTileSizes] =
+      unpackFoldResults(tileSizes, opBuilder);
   auto mapFnForInit = [this, &opBuilder](Value init) -> ValueHandle * {
     return record<NamedValueHandle>(
         init, opBuilder,
@@ -929,6 +951,20 @@ SchedulerBase::ForReductionTilingResult SchedulerBase::tileReductionUsingFor(
     auto targetValue = getValue(targetHandle, opBuilder);
     auto tileReductionOp = opBuilder.create<transform::TileReductionUsingForOp>(
         targetValue.getLoc(),
+
+    transform::TileReductionUsingForOp tileReductionOp;
+    Value target;
+    if (archIsRegbased) {
+      Value generalizedHandle = opBuilder.create<transform::GeneralizeOp>(
+          targetValue.getLoc(), opBuilder.getType<transform::AnyOpType>(),
+          targetValue);
+      target = generalizedHandle;
+    } else {
+      target = targetValue;
+    }
+
+    tileReductionOp = opBuilder.create<transform::TileReductionUsingForOp>(
+        target.getLoc(),
         /*fill_op=*/
         SmallVector<Type>(multiReduceNum,
                           opBuilder.getType<transform::AnyOpType>()),
@@ -938,6 +974,10 @@ SchedulerBase::ForReductionTilingResult SchedulerBase::tileReductionUsingFor(
         /*target=*/targetValue,
         /*tile_sizes=*/dynamicTileSizes,
         /*static_tile_sizes=*/opBuilder.getDenseI64ArrayAttr(staticTileSizes));
+        /*target=*/target,
+        /*tile_sizes=*/dynamicTileSizes,
+        /*static_tile_sizes=*/
+        opBuilder.getDenseI64ArrayAttr(staticTileSizes));
 
     LDBG("tileReductionUsingFor result");
     LDBG(tileReductionOp.getSplitLinalgOp());

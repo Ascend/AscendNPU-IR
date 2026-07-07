@@ -46,6 +46,7 @@ public:
                                 PatternRewriter &rewriter) const override;
 };
 
+
 // Pattern to swap collapse and expand shape operations when beneficial
 class SwapMemrefCollapseExpand
     : public mlir::OpRewritePattern<memref::ExpandShapeOp> {

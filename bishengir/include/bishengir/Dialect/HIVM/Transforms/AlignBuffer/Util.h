@@ -28,6 +28,53 @@
 namespace mlir {
 namespace hivm {
 
+// Attribute name used to mark operations that failed during unrealized
+// conversion cast propagation. These marked ops are handled later by
+// handlePropagateFailure.
+constexpr StringRef propagateFailureName = "PropagateFailure";
+
+struct AlignInfo {
+  llvm::SmallVector<int32_t> alignDims;
+  llvm::SmallVector<int32_t> alignBytes;
+
+  AlignInfo(ArrayRef<int32_t> alignDims_, ArrayRef<int32_t> alignBytes_) {
+    alignDims = SmallVector<int32_t>(alignDims_);
+    alignBytes = SmallVector<int32_t>(alignBytes_);
+  }
+
+  AlignInfo(llvm::SmallVector<int32_t> alignDims_,
+            llvm::SmallVector<int32_t> alignBytes_) {
+    alignDims = alignDims_;
+    alignBytes = alignBytes_;
+  }
+
+  AlignInfo(AlignInfo &&other) {
+    alignDims = other.alignDims;
+    alignBytes = other.alignBytes;
+  }
+
+  bool operator==(const AlignInfo &other);
+  bool operator!=(const AlignInfo &other);
+
+  void dump();
+};
+
+struct OperAlignInfo : public AlignInfo {
+  Value operand;
+
+  OperAlignInfo(Value operand_, ArrayRef<int32_t> alignDims_,
+                ArrayRef<int32_t> alignBytes_)
+      : AlignInfo(alignDims_, alignBytes_) {
+    operand = operand_;
+  }
+
+  OperAlignInfo(Value operand_, llvm::SmallVector<int32_t> alignDims_,
+                llvm::SmallVector<int32_t> alignBytes_)
+      : AlignInfo(alignDims_, alignBytes_) {
+    operand = operand_;
+  }
+};
+
 /// Recursively update annotation mark backward through view-like memref ops
 /// until allocation.
 ///
@@ -125,6 +172,17 @@ std::optional<int32_t>
 getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
                   llvm::ArrayRef<ReassociationIndices> continuousReassociations,
                   int64_t startIdx);
+/// Handle all operations marked with propagateFailureName after allocation
+/// processing is complete. This resolves failed unrealized conversion cast
+/// propagations by inserting CopyOps to maintain data consistency between
+/// the original and aligned memrefs.
+void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp);
+LogicalResult replaceAndPropagateMemRefType(RewriterBase &rewriter,
+                                            const Location loc, Value from,
+                                            Value to);
+std::optional<int>
+getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
+                  ReassociationIndices reassociations);
 std::optional<int32_t> adjustAlignDim(Operation *op, Value operand,
                                       std::optional<int32_t> alignDim);
 std::pair<llvm::SmallVector<int32_t>, llvm::SmallVector<int32_t>>
@@ -135,6 +193,18 @@ adjustAlignInfo(Operation *op, Value operand,
 void dump(const ArrayRef<int32_t> &alignDims,
           const ArrayRef<int32_t> &alignBytes, StringRef debugType = "");
 
+inline Value traceToRoot(Value val) {
+  while (val) {
+    if (auto *defOp = val.getDefiningOp()) {
+      if (isa<ViewLikeOpInterface, memref::CastOp>(defOp)) {
+        val = defOp->getOperand(0);
+        continue;
+      }
+    }
+    break;
+  }
+  return val;
+}
 } // namespace hivm
 } // namespace mlir
 

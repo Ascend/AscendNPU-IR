@@ -42,6 +42,12 @@ public:
     options.forHIVM = forHIVM;
   }
 
+  explicit PropagateCollapseDown(MLIRContext *context,
+                                 PropagateReshapeOptions opts)
+    : OpRewritePattern<tensor::CollapseShapeOp>(context, /*benefit=*/1) {
+    options = opts;
+  }
+
   LogicalResult matchAndRewrite(tensor::CollapseShapeOp collapseOp,
                                 PatternRewriter &rewriter) const override;
 
@@ -56,6 +62,7 @@ struct PropagateCollapseDownToI1Cast final
   LogicalResult matchAndRewrite(tensor::CollapseShapeOp collapseOp,
                                 PatternRewriter &rewriter) const override;
 };
+
 
 } // namespace tensor
 } // namespace mlir

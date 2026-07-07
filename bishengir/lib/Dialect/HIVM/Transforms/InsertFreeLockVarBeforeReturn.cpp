@@ -96,7 +96,6 @@ public:
         hacc::utils::getHIVMCVersion(module);
     if (!hivmcVersion || *hivmcVersion < llvm::VersionTuple(0, 2, 0))
       return;
-
     module.walk([&](func::FuncOp funcOp) {
       if (!hacc::utils::isDeviceEntry(funcOp)) {
         return;

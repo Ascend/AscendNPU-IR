@@ -15,4 +15,4 @@ add_bishengir_dialect_library(BiShengIRHACCTransforms
   MLIRFuncDialect
   MLIRIR
   MLIRPass
-  )
+)

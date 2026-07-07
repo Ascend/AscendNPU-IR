@@ -70,6 +70,7 @@ refineBroadcastExtraBufferSize(ShapedType dstType, int64_t srcMaxSizeMaybe,
     } else {
       // TODO : support unalign
       llvm::report_fatal_error(
+      llvm_unreachable(
           "unsupport unalign and unknown align middle-axis broadcast");
     }
   }
@@ -197,6 +198,7 @@ std::optional<int64_t> getExtraBufferSizeForBroadcastOp(Operation *op,
     broadcastDims = broadcastOp.getDimensions();
   } else {
     llvm::report_fatal_error("Not implemented!");
+    llvm_unreachable("Not implemented!");
   }
   for (auto broadcastDim : broadcastDims) {
     std::optional<int64_t> bufSizeMaybe =

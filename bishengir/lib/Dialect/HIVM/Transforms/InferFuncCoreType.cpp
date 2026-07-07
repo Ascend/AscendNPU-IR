@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Analysis/CallGraph.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -53,6 +54,25 @@ public:
   using ModuleCoreTypeMap = std::map<ModuleOp, hivm::TModuleCoreType>;
 
   void runOnOperation() override {
+    auto module = getOperation();
+    // For the V300 Arch, there is no need to go through mix kernel related
+    // analysis and processing.
+    // TODO: Refactor this later.
+    if (hacc::utils::isAscend310B(module)) {
+      module->setAttr(hivm::TModuleCoreTypeAttr::name,
+                      hivm::TModuleCoreTypeAttr::get(
+                          module->getContext(), hivm::TModuleCoreType::AIV));
+
+      module->walk([&](Operation *nestedOp) {
+        if (auto funcOp = llvm::dyn_cast<hivm::MmadL1Op>(nestedOp)) {
+          auto *func = funcOp->getParentOp();
+          func->setAttr(hivm::TFuncCoreTypeAttr::name,
+                        hivm::TFuncCoreTypeAttr::get(func->getContext(),
+                                                     hivm::TFuncCoreType::AIC));
+        }
+      });
+      return;
+    }
     const mlir::CallGraph callGraph(getOperation());
 
     // core type constraits for each function.
@@ -271,6 +291,7 @@ private:
       }
 
       // TODO: enhance the getCoreType of the debug op
+      // enhance the getCoreType of the debug op
       if (auto debugOp = dyn_cast<hivm::DebugOp>(op)) {
         auto coreTypeMaybe = debugOp.inferCoreType();
         if (!coreTypeMaybe) {

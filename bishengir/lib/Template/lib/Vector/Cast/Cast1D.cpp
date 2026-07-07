@@ -274,7 +274,6 @@ is_memref_aligned_cast_1d(memref_t<__ubuf__ SRC_T, 1> *src,
   return is_memref_aligned<SRC_T, 1>(src) &&
          is_memref_aligned<DST_T, 1>(dst);
 }
-
 template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 vconv(intrin_args<1, SRC_T, DST_T> args, CastMode cast_mode) {
@@ -454,6 +453,7 @@ vector_cast_1d_with_mode(memref_t<__ubuf__ SRC_T, 1> *src,
 }
 
 template <typename SRC_T, typename DST_T, bool DISABLE_SIZE_ALIGN>
+template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
                              memref_t<__ubuf__ DST_T, 1> *dst,
@@ -499,6 +499,7 @@ vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
   }
   vector_cast_with_overflow<SRC_T, DST_T, DISABLE_SIZE_ALIGN>(&src_2d, &dst_2d,
                                                              tmp);
+  vector_cast_with_overflow(&src_2d, &dst_2d, tmp);
 }
 
 template <typename SRC_T, typename DST_T>

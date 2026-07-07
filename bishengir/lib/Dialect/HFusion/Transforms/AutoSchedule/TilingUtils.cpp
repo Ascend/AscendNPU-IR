@@ -563,6 +563,10 @@ LogicalResult TilingInfo::trySimplifyTilingFunc() {
       {"ReinterpretCastConstantArgumentFolder"});
   options.disabledPatterns = disabledPatterns;
   pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
+  CanonicalizerOptions options;
+  options.enableExtendedPattern = true;
+  pm.addPass(memref::createResolveRankedShapeTypeResultDimsPass());
+  pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
 
   if (failed(pm.run(hostTilingFunc_)))
@@ -585,6 +589,7 @@ LogicalResult TilingInfo::trySimplifyTilingFunc() {
 
 void TilingInfo::pruneTilingExcept(int64_t keepKey) {
   caseKeys_.removeIf(keepKey);
+  caseKeys_.getRef().remove_if([&](int64_t key) { return key != keepKey; });
 }
 
 TilingData *TilingInfo::getTilingData(unsigned idx) const {

@@ -19,6 +19,9 @@
 #define PYTHON_BINDINGS_HIVM_OPS
 
 include "bishengir/Dialect/HIVM/IR/HIVMOps.td"
+include "bishengir/Dialect/HIVM/IR/HIVMIntrinOps.td"
 include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.td"
-
+include "bishengir/Dialect/HIVM/IR/HIVMSynchronizationOps.td"
+include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.td"
+include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.td"
 #endif

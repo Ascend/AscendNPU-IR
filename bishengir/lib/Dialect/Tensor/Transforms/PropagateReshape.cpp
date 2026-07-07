@@ -12,6 +12,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -24,11 +27,13 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagateCollapseDown.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagateExpandUp.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/PropagateNearEndExpandDown.h"
 #include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/SwapCollapseExpand.h"
+#include "bishengir/Dialect/Utils/Util.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
 
@@ -65,6 +70,33 @@ void PropagateReshapePass::runOnOperation() {
   patterns.add<PropagateExpandUp>(context, forHIVM);
   patterns.add<PropagateCollapseDown>(context, forHIVM);
   patterns.add<memref::SwapMemrefCollapseExpand>(context);
+  PropagateReshapeOptions opts;
+  opts.forHIVM = forHIVM;
+  opts.forRegbased = forRegbased;
+
+  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
+      mlir::hivm::queryFuncCoreType(f);
+  if (funcCoreType.has_value()) {
+    if (funcCoreType.value() == mlir::hivm::TFuncCoreType::AIC) {
+      return;
+    }
+  }
+
+  // Experimental propagate reshape, can remove this if
+  if (opts.forRegbased && util::hasUnpropagateableCase(f, this->skipScope)) {
+    return;
+  }
+
+  RewritePatternSet patterns(context);
+  if (!opts.forRegbased) {
+    patterns.add<PropagateNearEndExpandDown>(context);
+  }
+  tensor::CollapseShapeOp::getCanonicalizationPatterns(patterns, context);
+  tensor::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
+  ReduceWithIndexOp::getCanonicalizationPatterns(patterns, context);
+  patterns.add<SwapCollapseExpand>(context);
+  patterns.add<PropagateExpandUp>(context, opts);
+  patterns.add<PropagateCollapseDown>(context, opts);
   patterns.add<memref::PropagateMemrefExpandUp>(context);
   patterns.add<memref::PropagateMemrefCollapseDown>(context);
 
@@ -81,4 +113,5 @@ createPropagateReshapePass(const PropagateReshapeOptions &options) {
 }
 
 } // namespace tensor
+} // namespace mlir
 } // namespace mlir

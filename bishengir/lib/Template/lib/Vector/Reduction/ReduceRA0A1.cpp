@@ -159,7 +159,6 @@ reduce_ra0a1_core<ReduceOpTy::REDUCE_AND, uint8_t>(
   reduce_ra0a1_core<ReduceOpTy::REDUCE_AND, int16_t>(
       &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
 }
-
 /// Reduce src (r, a0, a1) with stride [n0, n1, 1] to dst (1, a0, a1) with
 /// stride [n0, n1, 1].
 ///
@@ -252,6 +251,69 @@ reduce_ra0a1(memref_t<__ubuf__ T, 3> *src0, memref_t<__ubuf__ T, 3> *dst,
 
   // In the remaining cases, reduction can only be performed through scalar operations.
   reduce_ra0a1_by_scalar<OP, T>(src0, dst, size2);
+
+  __ubuf__ T *src0_ptr = src0->aligned + src0->offset;
+  memref_t<__ubuf__ T, 2> subview_src0{src0->allocated,
+                                       src0->aligned,
+                                       src0->offset,
+                                       {size1, size2},
+                                       {src0_stride1, src0_stride2}};
+  memref_t<__ubuf__ T, 2> dst_2d{dst->allocated,
+                                 dst->aligned,
+                                 dst->offset,
+                                 {size1, size2},
+                                 {src0_stride1, src0_stride2}};
+  vector_eltwise_vv_2d<VectorOpTy::VOR, T>(&subview_src0, &subview_src0,
+                                           &dst_2d, tmp_buf);
+
+  constexpr VectorOpTy VECOP = GetVectorOpTy<OP, T>();
+  for (int64_t i = 1; i < size0; ++i) {
+    memref_t<__ubuf__ T, 2> subview_src0{src0->allocated,
+                                         src0->aligned,
+                                         src0->offset + i * src0_stride0,
+                                         {size1, size2},
+                                         {src0_stride1, src0_stride2}};
+    INTRINSIC(pipe_barrier, PIPE_V);
+    vector_eltwise_vv_2d<VECOP, T>(&subview_src0, &dst_2d, &dst_2d, tmp_buf);
+  }
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+reduce_ra0a1<ReduceOpTy::REDUCE_OR, uint8_t>(
+    memref_t<__ubuf__ uint8_t, 3> *src0, memref_t<__ubuf__ uint8_t, 3> *dst,
+    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
+  // convert uint8_t memref to int16 memref
+  memref_t<__ubuf__ int16_t, 3> src0_as_int16;
+  memref_t<__ubuf__ int16_t, 3> dst_as_int16;
+  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
+  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
+  // process.
+  view_as<uint8_t, int16_t, 3>(src0, &src0_as_int16);
+  view_as<uint8_t, int16_t, 3>(dst, &dst_as_int16);
+  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
+
+  reduce_ra0a1<ReduceOpTy::REDUCE_OR, int16_t>(
+      &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
+}
+
+template <>
+__aiv__ __attribute__((always_inline)) void
+reduce_ra0a1<ReduceOpTy::REDUCE_AND, uint8_t>(
+    memref_t<__ubuf__ uint8_t, 3> *src0, memref_t<__ubuf__ uint8_t, 3> *dst,
+    memref_t<__ubuf__ uint8_t, 1> *tmp_buf, uint8_t initvalue) {
+  // convert uint8_t memref to int16 memref
+  memref_t<__ubuf__ int16_t, 3> src0_as_int16;
+  memref_t<__ubuf__ int16_t, 3> dst_as_int16;
+  memref_t<__ubuf__ int16_t, 1> tmp_as_int16;
+  // vector_eltwise_vv_2d does not support uint8_t, so view src as int16 to
+  // process.
+  view_as<uint8_t, int16_t, 3>(src0, &src0_as_int16);
+  view_as<uint8_t, int16_t, 3>(dst, &dst_as_int16);
+  view_as<uint8_t, int16_t, 1>(tmp_buf, &tmp_as_int16);
+
+  reduce_ra0a1<ReduceOpTy::REDUCE_AND, int16_t>(
+      &src0_as_int16, &dst_as_int16, &tmp_as_int16, (int16_t)initvalue);
 }
 
 extern "C" {
@@ -300,4 +362,5 @@ REGISTE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int32_t)
 REGISTE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint32_t)
 REGISTE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, int64_t)
 REGISTE_ENTIRE_REDUCE_RA0A1(reduce_andi, ReduceOpTy::REDUCE_AND, 3, uint64_t)
+}
 }

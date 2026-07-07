@@ -314,12 +314,17 @@ def CumsumOp : HFusion_Op<"cumsum",
     tensor.  The reverse argument specifies the direction of the cumulative sum.
     Currently only support one cumulation dim.
   }];
-  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64, F8E4M3FN, F8E5M2]>:$input,
                        ConfinedAttr<DenseI64ArrayAttr,
                       [DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$reverse);
-  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
-  let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)";
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64, F8E4M3FN, F8E5M2]>:$output);
+  let assemblyFormat = [{
+      $input attr-dict `:` type($input)
+      `cum_dims` `=` $cum_dims
+      `reverse` `=` $reverse
+      `->` type($output)
+    }];
   let hasVerifier = 1;
 }
 
@@ -333,7 +338,7 @@ def CumprodOp : HFusion_Op<"cumprod",
     Calculate cumulative product on a certain dim of the input tensor
   }];
   let description = [{
-    The cumsum operation calculates cumulative product on a certain dim of
+    The cumprod operation calculates cumulative product on a certain dim of
     the input tensor. The reverse argument specifies the direction of the cumulative product.
     Currently only support one cumulation dim.
   }];
@@ -343,6 +348,62 @@ def CumprodOp : HFusion_Op<"cumprod",
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$reverse);
   let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
   let assemblyFormat = "$input attr-dict `:` type($input) `cum_dims` `=` $cum_dims `reverse` `=` $reverse `->` type($output)";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// CummaxOp
+//===----------------------------------------------------------------------===//
+
+def CummaxOp : HFusion_Op<"cummax",
+    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+  let summary = [{
+    Calculate cumulative maximum on a certain dim of the input tensor
+  }];
+  let description = [{
+    The cummax operation calculates cumulative maximum on a certain dim of
+    the input tensor.
+    Currently only support one cumulation dim.
+  }];
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+                       ConfinedAttr<DenseI64ArrayAttr,[DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan);
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    `->` type($output)
+  }];
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// CumminOp
+//===----------------------------------------------------------------------===//
+
+def CumminOp : HFusion_Op<"cummin",
+    [Pure, SameOperandsAndResultRank, AllTypesMatch<["output"]>]> {
+  let summary = [{
+    Calculate cumulative minimum on a certain dim of the input tensor
+  }];
+  let description = [{
+    The cummin operation calculates cumulative minimum on a certain dim of
+    the input tensor.
+    Currently only support one cumulation dim.
+  }];
+  let arguments = (ins RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$input,
+                       ConfinedAttr<DenseI64ArrayAttr,[DenseArrayStrictlySorted<DenseI64ArrayAttr>]>:$cum_dims,
+                       BoolAttr:$reverse,
+                       DefaultValuedAttr<BoolAttr, "true">:$propagate_nan);
+  let results = (outs RankedTensorOf<[BF16, F16, F32, I8, I16, I32, I64]>:$output);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input)
+    `cum_dims` `=` $cum_dims
+    `reverse` `=` $reverse
+    `->` type($output)
+  }];
   let hasVerifier = 1;
 }
 
@@ -549,6 +610,61 @@ def HistogramOp : HFusion_Op<"histogram", [
 }
 
 //===----------------------------------------------------------------------===//
+// EmbeddingGatherOp
+//===----------------------------------------------------------------------===//
+
+def EmbeddingGatherOp : HFusion_Op<"embedding_gather", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize,
+]> {
+  let summary = [{
+    Embedding lookup operation using gather semantics
+  }];
+
+  let description = [{
+    Performs embedding lookup (also known as embedding table lookup or embedding gather).
+    This operation takes a 2D embedding table in global memory and a 1D/2D index tensor,
+    and produces a 2D/3D output tensor by gathering embedding vectors corresponding to the indices.
+
+    Semantic equivalent:
+      result[b][i][d] = src[index[b][i]][d]   (with bounds checking)
+
+    Where:
+      - b: batch dimension
+      - i: sequence/position dimension
+      - d: embedding feature dimension
+  }];
+
+  let arguments = (ins AnyMemRef:$src,
+                       AnyRankedTensor:$index,
+                       AnyRankedTensor:$dst,
+                       // Vocabulary size for bounds checking
+                       AnyTypeOf<[I32, I64]>:$bound,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$offsets,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numels
+  );
+
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+    `ins` `(` $src `:` type($src) `,` $index `:` type($index) `,`
+    $bound `:` type($bound) `,`
+    `[` $offsets `:` type($offsets) `]` `,`
+    `[` $numels `:` type($numels) `]` `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    attr-dict
+    (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+    static StringRef getOpName() { return "embedding_gather"; }
+  }];
+
+  let hasVerifier = 1;
+}
+}
+
+//===----------------------------------------------------------------------===//
 // GatherLoadOp
 //===----------------------------------------------------------------------===//
 
@@ -670,7 +786,12 @@ def ScatterStoreOp : HFusion_Op<"scatter_store", [
 //===----------------------------------------------------------------------===//
 // MatMulMxOp
 //===----------------------------------------------------------------------===//
-def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
+def MatMulMxOp : HFusion_Op<"matmul_mx", [
+    Pure,
+    DestinationStyleOpInterface,
+    DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
+                              ["decomposeOperation"]>
+  ]> {
   let summary = "Performs a block-scaled matrix multiplication";
   let description = [{
   Performs matrix multiplication in microscaling format where the inputs are implicitly scaled using provided scale factors, which are often used in quantized data types like FP8/FP4. The operation computes C = (A * scale_a) dot (B * scale_b) directly in hardware (Tensor Cores).
@@ -678,8 +799,8 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
   }];
 
   let arguments = (ins
-    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputA,
-    ShapedTypeOf<[F8E4M3FN, F8E5M2]>:$inputB,
+    ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>:$inputA,
+    ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>:$inputB,
     ShapedTypeOf<[UI8, I8]>:$scaleA,
     ShapedTypeOf<[UI8, I8]>:$scaleB,
     ShapedTypeOf<[AnyFloat]>:$acc,
@@ -716,6 +837,15 @@ def MatMulMxOp : HFusion_Op<"matmul_mx", [Pure, DestinationStyleOpInterface]> {
     `outs` `(` $acc `:` type($acc) `)`
     `->` type($result)
   }];
+
+
+  let builders = [
+    OpBuilder<(ins "Value":$inputA,
+                   "Value":$inputB,
+                   "Value":$scaleA,
+                   "Value":$scaleB,
+                   "Value":$acc)>
+  ];
 }
 
 
@@ -733,6 +863,7 @@ def SignBitOp : HFusion_Op<"signbit", [
 
     let results = (outs RankedTensorOf<[I1, I8]>:$output);
 }
+
 def ErfInvOp : HFusion_Op<"erfinv", [Pure, SameOperandsAndResultType]> {
   let summary = [{
     Computes the element-wise inverse error function
@@ -831,4 +962,449 @@ def HypotOp : HFusion_Op<"hypot", [Pure]> {
 
 }
 
+//===----------------------------------------------------------------------===//
+// IndirectLoadOp
+//===----------------------------------------------------------------------===//
+
+def IndirectLoadOp : HFusion_Op<"indirect_load", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = [{
+    Performs indirect memory loading with masking and fallback values.
+  }];
+
+  let description = [{
+    This operation takes a source memory buffer and a tensor of offsets,
+    and produces an output tensor by gathering elements from the source
+    at the specified offset positions. The operation supports masking
+    and provides fallback values for masked-out positions.
+    This operation supports 1D-5D.
+
+    For each position in the output tensor:
+      1D:
+          dst[i] = mask[i] ? src[offsets[i]] : other[i]
+      2D:
+          dst[i][j] = mask[i][j] ? src[offsets[i][j]] : other[i][j]
+      3D:
+          dst[i][j][k] = mask[i][j][k] ? src[offsets[i][j][k]] : other[i][j][k]
+      4D:
+          dst[i][j][k][l] = mask[i][j][k][l] ? src[offsets[i][j][k][l]] : other[i][j][k][l]
+      5D:
+          dst[i][j][k][l][m] = mask[i][j][k][l][m] ? src[offsets[i][j][k][l][m]] : other[i][j][k][l][m]
+
+    Where:
+      - src: source memory buffer to load from
+      - offsets: indices specifying positions in the source buffer
+      - mask: boolean mask controlling which elements to load
+      - other: fallback values used when mask is false
+      - dst: destination tensor specifying output shape and type
+      - isVolatile: defaults to true. TODO: set it to false only when analysis
+        proves the indirect load's GM address cannot be written by any possible
+        op.
+
+    This operation is useful for sparse data access patterns and
+    gather operations with conditional loading semantics.
+  }];
+
+  let arguments = (ins AnyMemRef:$src,
+                       TensorOf<[I32, I64]>:$offsets,
+                       AnyRankedTensor:$dst,
+                       TensorOf<[I1, I8]>:$mask,
+                       TensorOf<[AnyInteger, AnyFloat]>:$other,
+                       DefaultValuedAttr<BoolAttr, "true">:$isVolatile
+  );
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `,` $offsets `:` type($offsets)
+      `,` $mask `:` type($mask)
+      `,` $other `:` type($other) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      attr-dict
+      (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "indirect_load"; }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// StrideLoadOp
+//===----------------------------------------------------------------------===//
+
+def StrideLoadOp : HFusion_Op<"stride_load", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize
+]> {
+  let summary = [{
+    Performs strided memory loading with scalar padding.
+  }];
+
+  let description = [{
+    This operation takes a source GM buffer, one linear base offset,
+    per-dimension physical strides, and logical valid element counts. It
+    produces the destination tensor/memref by loading:
+
+      dst[i, ...] = all(dim_index < numel[dim])
+          ? src[offset + sum(dim_index * stride[dim])]
+          : other
+
+    The operation is intended for SIMT Stride Load. The current
+    implementation supports 1D-3D.
+  }];
+
+  let arguments = (ins AnyMemRef:$src,
+                       AnyRankedTensor:$dst,
+                       AnyTypeOf<[I32, I64]>:$offset,
+                       AnyType:$other,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numel
+  );
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      `offset` `(` $offset `:` type($offset) `)`
+      `other` `(` $other `:` type($other) `)`
+      `strides` `(` `[` $stride `:` type($stride) `]` `)`
+      `numels` `(` `[` $numel `:` type($numel) `]` `)`
+      attr-dict
+      (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "stride_load"; }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+def StrideStoreOp : HFusion_Op<"stride_store", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize
+]> {
+  let summary = [{
+    Performs strided memory storing.
+  }];
+
+  let description = [{
+    This operation takes a destination GM buffer, a source tensor, one linear
+    base offset, per-dimension physical strides, and logical valid element
+    counts. It stores source elements into:
+
+      dst[offset + sum(dim_index * stride[dim])] = src[i, ...]
+
+    for positions where all(dim_index < numel[dim]). The operation is intended
+    for SIMT Stride Store. The current implementation supports 1D-3D.
+  }];
+
+  let arguments = (ins AnyMemRef:$dst,
+                       AnyRankedTensor:$src,
+                       AnyTypeOf<[I32, I64]>:$offset,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$numel
+  );
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      `offset` `(` $offset `:` type($offset) `)`
+      `strides` `(` `[` $stride `:` type($stride) `]` `)`
+      `numels` `(` `[` $numel `:` type($numel) `]` `)`
+      attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "stride_store"; }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// IndirectStoreOp
+//===----------------------------------------------------------------------===//
+
+def IndirectStoreOp : HFusion_Op<"indirect_store", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+
+  let summary = [{
+    Performs indirect memory storing with SIMT template.
+  }];
+
+  let description = [{
+    This operation takes a source tensor and a tensor of offsets from UB,
+    and stores elements from the source into the destination GM buffer
+    at the specified offset positions with SIMT template. The operation
+    supports masking to conditionally control which elements are stored.
+    This operation supports 1D-5D.
+
+    For each position in the source tensor:
+      1D:
+          if (mask[i]) dst[offsets[i]] = src[i]
+      2D:
+          if (mask[i][j]) dst[offsets[i][j]] = src[i][j]
+      3D:
+          if (mask[i][j][k]) dst[offsets[i][j][k]] = src[i][j][k]
+      4D:
+          if (mask[i][j][k][l]) dst[offsets[i][j][k][l]] = src[i][j][k][l]
+      5D:
+          if (mask[i][j][k][l][m]) dst[offsets[i][j][k][l][m]] = src[i][j][k][l][m]
+
+    Where:
+      - src: source tensor containing values to store from UB
+      - offsets: indices specifying positions in the destination buffer
+      - dst: destination memory buffer to store into GM
+      - mask: optional boolean mask controlling which elements to store
+
+    When no mask is provided, all elements from the source tensor are stored
+    to the corresponding offset positions in the destination buffer.
+  }];
+
+  let arguments = (ins AnyMemRef:$dst,
+                       TensorOf<[I32, I64]>:$offsets,
+                       AnyRankedTensor:$src,
+                       Optional<TensorOf<[I1, I8]>>:$mask
+  );
+
+  let assemblyFormat = [{
+      `ins` `(` $src `:` type($src) `,` $offsets `:` type($offsets)
+      (`,` $mask^ `:` type($mask))? `)`
+      `outs` `(` $dst `:` type($dst) `)`
+      attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "indirect_store"; }
+  }];
+
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// GatherTOp
+// The name conflicts with GatherOp so added T
+// GatherTOp is used for SIMT
+// TODO: Merge GatherOp and GatherTOp
+//===----------------------------------------------------------------------===//
+
+def GatherTOp : HFusion_Op<"gatherT", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize
+]> {
+  let summary = [{
+    Gather operation that selects elements from the input tensor based on index tensor along a specified axis.
+  }];
+
+  let description = [{
+    This operation takes a source memory GM buffer and a UB tensor of index,
+    and produces an output UB tensor by gathering elements from the source
+    at the index positions with offsets. This operation supports 1D-5D.
+
+    For each position in the output tensor:
+      1D:
+        dst[i] = src[index[i]]
+      2D:
+        dim=0:
+          dst[i][j] = src[index[i][j]][j]
+        dim=1:
+          dst[i][j] = src[i][index[i][j]]
+      3D:
+        dim=0:
+          dst[i][j][k] = src[index[i][j][k]][j][k]
+        dim=1:
+          dst[i][j][k] = src[i][index[i][j][k]][k]
+        dim=2:
+          dst[i][j][k] = src[i][j][index[i][j][k]]
+
+    Where:
+      - src : source memory GM buffer
+      - index: UB tensor specifying the position in the src
+      - dst : destination UB tensor specifying output shape and type
+      - bound : size of the gather dim
+      - dim : dimensions for the gather operation.
+      - src_stride : stride of the source tensor.
+      - index_shape : shape of the index tensor.
+      - offsets : offset in the dst buffer
+  }];
+
+  let arguments = (ins AnyMemRef:$src,
+                       AnyRankedTensor:$index,
+                       AnyRankedTensor:$dst,
+                       AnyTypeOf<[I32, I64]>:$bound,
+                       AnyTypeOf<[I32, I64]>:$dim,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$src_stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$index_shape,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$offsets
+  );
+  let results = (outs Optional<AnyRankedTensor>:$result);
+
+  let assemblyFormat = [{
+    `ins` `(` $src `:` type($src) `,`
+    $index `:` type($index) `,`
+    $bound `:` type($bound) `,`
+    $dim `:` type($dim) `,`
+    `[` $src_stride `:` type($src_stride) `]` `,`
+    `[` $index_shape `:` type($index_shape) `]` `,`
+    `[` $offsets `:` type($offsets) `]` `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    attr-dict
+    (`->` type($result)^)?
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "gatherT"; }
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// IndexPutOp
+//===----------------------------------------------------------------------===//
+
+def IndexPutOp : HFusion_Op<"index_put", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SameVariadicOperandSize
+]> {
+  let summary = [{
+    IndexPut operation that assigns values to specified positions in the destination tensor with SIMT template.
+  }];
+
+  let description = [{
+    This operation IndexPut assigns values from the value UB tensor
+    to the dst GM buffer at positions with offsets specified by the index UB tensor
+    along the specified scatter dimension with SIMT template. This operation supports 2D-5D.
+
+    For each position in the destination tensor:
+    2D:
+      for dim = 0:
+      dst[index[i]][offset[1] + j] = value[i][j]
+    3D:
+      for dim = 0:
+      dst[index[i]][offset[1] + j][offset[2] + k] = value[i][j][k]
+      for dim = 1:
+      dst[offset[0] + i][index[j]][offset[2] + k] = value[i][j][k]
+    4D:
+      for dim = 0:
+      dst[index[i]][offset[1] + j][offset[2] + k][offset[3] + l] = value[i][j][k][l]
+      for dim = 1:
+      dst[offset[0] + i][index[j]][offset[2] + k][offset[3] + l] = value[i][j][k][l]
+      for dim = 2:
+      dst[offset[0] + i][offset[1] + j][index[k]][offset[3] + l] = value[i][j][k][l]
+
+    Where:
+      - dst : the pointer of destination tensor on GM.
+      - index:  the index tensor tile pointer on UB specifying positions in the destination tensor.
+                must not be repeated.
+                must contain valid indices within the bounds of
+                the destination tensor along the specified scatter_dim.
+      - value : value tile pointer on UB.
+      - scatter_dim : the gather dimension on which index is applied.
+      - bound : upper bound of index value.
+      - end_offset : end offsets of the value tile, end offset of index tile is No.'dim' value in the tuple.
+      - dst_shape : start offsets of the value tile, end offset of index tile is No.'dim' value in the tuple.
+      - dst_offset : the stride of target global tensor.
+  }];
+
+  let arguments = (ins AnyMemRef:$dst,
+                       AnyRankedTensor:$index,
+                       AnyRankedTensor:$value,
+                       AnyTypeOf<[I32, I64]>:$scatter_dim,
+                       AnyTypeOf<[I32, I64]>:$bound,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$end_offset,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$start_offset,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$dst_stride
+  );
+
+  let assemblyFormat = [{
+    `ins` `(` $dst `:` type($dst) `,`
+    $index `:` type($index) `,`
+    $value `:` type($value) `,`
+    $scatter_dim `:` type($scatter_dim) `,`
+    $bound `:` type($bound) `,`
+    `[` $end_offset `:` type($end_offset) `]` `,`
+    `[` $start_offset `:` type($start_offset) `]` `,`
+    `[` $dst_stride `:` type($dst_stride) `]` `)`
+    attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "index_put"; }
+  }];
+}
+
+
+//===----------------------------------------------------------------------===//
+// ScatterTOp
+//===----------------------------------------------------------------------===//
+
+def ScatterTOp : HFusion_Op<"scatterT", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = [{
+    Scatter operation writes all values from the tensor value into dst at the indices specified in the index_tile
+    tensor with SIMT template.
+  }];
+
+  let description = [{
+    This operation Scatter assigns values from the UB tensor to the dst GM buffer at positions with offsets specified
+    by the index_tile UB tensor with SIMT template. This operation supports 2D-5D.
+
+    Using 3D as an example:
+    for dim = 0:
+    Dst[index_tile[i][j][k]][j][k] = value[i][j][k]
+    for dim = 1:
+    Dst[i][index_tile[i][j][k]][k] = value[i][j][k]
+    for dim = 2:
+    Dst[i][j][index_tile[i][j][k]] = value[i][j][k]
+
+    Where:
+      - dst : the base pointer of destination tensor GM memory buffer.
+      - value : value tensor from UB to store.
+      - index_tile: index tensor from UB specifying positions in the destination tensor.
+                    should not be repeated.
+      - index_boundary: upper bound of index
+      - dim: dimension along which the assignment operation is performed.
+      - dst_stride: tuple of destination strides
+      - index_shape: shape of the index tensor
+      - offsets: tuple of offsets on all dims of the index tile
+  }];
+
+  let arguments = (ins AnyMemRef:$dst,
+                       AnyRankedTensor:$value,
+                       AnyRankedTensor:$index_tile,
+                       AnyTypeOf<[I32, I64]>:$index_boundary,
+                       AnyTypeOf<[I32, I64]>:$dim,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$dst_stride,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$index_shape,
+                       Variadic<AnyTypeOf<[I32, I64]>>:$offsets
+  );
+
+  let assemblyFormat = [{
+      `ins` `(` $dst `:` type($dst) `,`
+      $value `:` type($value)`,`
+      $index_tile `:` type($index_tile)`,`
+      $index_boundary `:` type($index_boundary)`,`
+      $dim `:` type($dim)`,`
+      `[` $dst_stride `:` type($dst_stride) `]` `,`
+      `[` $index_shape `:` type($index_shape) `]` `,`
+      `[` $offsets `:` type($offsets) `]` `)`
+      attr-dict
+  }];
+
+  let extraClassDeclaration = [{
+      static StringRef getOpName() { return "scatterT"; }
+  }];
+
+  let hasVerifier = 1;
+}
 #endif // BISHENGIR_DIALECT_HFUSION_IR_HFUSIONOPS_TD

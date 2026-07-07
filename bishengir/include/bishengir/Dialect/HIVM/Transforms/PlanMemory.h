@@ -23,6 +23,13 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
+#include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -68,6 +75,9 @@ constexpr const int SPEC_LEVEL_2 = 2;
 /// do not reuse buffer when pipe conflicts.
 constexpr const int SPEC_LEVEL_3 = 3;
 
+/// pipe conflict opt.
+constexpr const int SPEC_LEVEL_2 = 2;
+
 /// plan information of alloc buffer.
 struct BufferInfo {
   /// Alloc operation of buffer.
@@ -93,6 +103,12 @@ struct BufferInfo {
   /// other buffer due to wrong lifetime.
   /// TODO: Modify the lifetime of A and C and allow them to be inplaced further
   bool ignoreInplace{false};
+  /// Buffer will use unique memory and will not share memory with other buffers
+  bool memoryUnique{false};
+  /// CV mix id from HIVMTightlyCoupledBufferAttr (-1 = not a tightly-coupled
+  /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
+  /// analysis to identify a sharing pair.
+  int32_t cvMixId{-1};
 };
 
 /// linear operation info.
@@ -211,6 +227,9 @@ struct SpecInfo {
   int maxLevel = SPEC_LEVEL_3;
   int minLevel = SPEC_LEVEL_0;
   int specLevel = SPEC_LEVEL_3;
+  int maxLevel = SPEC_LEVEL_2;
+  int minLevel = SPEC_LEVEL_0;
+  int specLevel = SPEC_LEVEL_2;
   int childIdx = -1;
   int specStartIdx = 0;
   int rollbackIdx = -1;
@@ -269,6 +288,11 @@ public:
                       uint32_t randomSeed = 0)
       : func_(func), planMode(planMode), randomSeed(randomSeed),
         randomGenerator(this->randomSeed) {}
+                      bool disableTightlyCoupledBufferReuse = false,
+                      uint32_t randomSeed = 0)
+      : func_(func), planMode(planMode),
+        disableTightlyCoupledBufferReuse(disableTightlyCoupledBufferReuse),
+        randomSeed(randomSeed), randomGenerator(this->randomSeed) {}
 
   void build();
 
@@ -295,6 +319,11 @@ public:
 
   /// record marked buffer used in multi scope operations.
   SmallVector<Value> preloadBuffers;
+
+  /// Sorted positions (in scope-time units, mirroring
+  /// GenerateBufferLife()'s scopeTime) of hivm sync ops in this func. Used
+  /// to verify CV-CV lifetime gaps are separated by an actual sync.
+  SmallVector<int64_t> syncBlockPositions;
 
   /// now plan mode is LOCAL_MEM_PLAN.
   bool isLocalMemPlan() const;
@@ -385,6 +414,10 @@ private:
   void UpdateBuffer2AliasVec(Value buffer, Value aliasBuffer,
                              const SetVector<Value> &aliasBuffersOfBuffer,
                              const SetVector<Value> &aliasBuffersOfAliasBuffer,
+  /// Update alias buffer and its condition.
+  void UpdateBuffer2AliasVec(Value originBuffer, Value originAliasBuffer,
+                             const SetVector<Value> &buffers,
+                             const SetVector<Value> &aliasBuffers,
                              bool hasCond);
 
   /// Update the relationship of buffer aliases.
@@ -394,6 +427,10 @@ private:
   /// Find buffer cond pair from aliasVec.
   std::optional<BufferCondPair *> FindBufferCondPair(Value buffer,
                                                      Value aliasValue);
+
+  /// Return the union of set1 and set2.
+  SetVector<Value> Union(const SetVector<Value> &set1,
+                         const SetVector<Value> &set2) const;
 
   /// Get alias buffer information.
   SmallVector<BufferCondPair> GetAliasBufferCondPairs(Value aliasBuffer);
@@ -410,6 +447,45 @@ private:
 
   /// Update multi buffer information.
   void UpdateMultiBufferInfo(annotation::MarkOp markOp);
+  /// Update multi buffer, unique memory and tightly coupled information. If
+  /// necessary, we will run UpdateOpGenInfo manually
+  void ProcessMarkOp(annotation::MarkOp markOp, Liveness live,
+                     OpInfo *curOpInfo);
+
+  /// Process AllocOp that don't need to plan memory and if return allocOp, we
+  /// need to run UpdateOpGenInfo manually.
+  bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
+                                        memref::AllocOp allocOp);
+
+  /// Recursive operation scope.
+  void RecursiveScopeOp(scope::ScopeOp scopeOp, Liveness live);
+
+  /// Update scope op result buffer/return op alias info.
+  void UpdateScopeOpBufferAlias(scope::ScopeOp scopeOp,
+                                scope::ReturnOp returnOp);
+
+  /// Update preload buffer info from mark op.
+  void UpdatePreloadBuffers(annotation::MarkOp markOp,
+                            memref::AllocOp allocOp);
+
+  /// Check if a buffer is a preload buffer.
+  bool IsPreloadBuffer(Value buffer);
+
+  /// Update gen info of preload buffer to parent for op.
+  void UpdatePreloadBuffersGenInfo(OpInfo *opInfo);
+
+  /// Update kill info of preload buffer to parent for op.
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo);
+
+  /// Extend preload buffer lifetime from scope to parent for.
+  void UpdatePreloadBuffersGenKillMap();
+
+  /// Update bufferInfos for AllocOp which need to plan unique memory.
+  void UpdateMemoryUniqueBufferInfo(annotation::MarkOp markOp,
+                                    memref::AllocOp allocOp);
+
+  /// Update multi buffer information.
+  void UpdateMultiBufferInfo(annotation::MarkOp markOp, Value memrefVal);
 
   /// Update store op information.
   void UpdateStoreOpInfo(OpInfo *opInfo, const Value storeValue, Liveness live);
@@ -482,6 +558,9 @@ private:
   /// different mode for mem plan.
   MemPlanMode planMode;
 
+  /// Disable tightly coupled buffer reuse. Default is false.
+  bool disableTightlyCoupledBufferReuse;
+
   /// Gen-kill status corresponding to buffer.
   DenseMap<Value, BufferStatus> buffer2status;
 
@@ -495,6 +574,10 @@ private:
 
   /// random generator for shuffle operation order in plan memory.
   std::mt19937 randomGenerator;
+
+  /// record AllocOp that don't need to plan memory. For example, in
+  /// CV-separated architectures, we don't need to plan UB address in AIC func.
+  DenseSet<Value> skipMemPlan;
 };
 
 /// Pair of StorageEntry.
@@ -507,6 +590,32 @@ public:
       : enableMemoryDisplay(enableMemoryDisplay), planMode(planMode),
         enableGlobalReuse(enableGlobalReuse),
         restrictInplaceAsISA(restrictInplaceAsISA) {}
+/// Memoization cache intended to prevent recomputation of
+/// MemPlan::IsInplaceReuseReachable when it called with the same value.
+class InplaceReuseReachableMap {
+public:
+  template <typename DstOpType>
+  void put(Value key, bool val);
+
+  template <typename DstOpType>
+  std::optional<bool> get(Value key);
+
+private:
+  DenseMap<Value, bool> storeReachable;
+  DenseMap<Value, bool> loadReachable;
+};
+
+class MemPlan {
+public:
+MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
+           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
+           int simtVFDynamicSize, bool disableVFReachableCheck)
+      : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
+        enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
+        restrictInplaceAsISA(restrictInplaceAsISA),
+        simtVFDynamicSize(simtVFDynamicSize),
+        disableVFReachableCheck(disableVFReachableCheck),
+        vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
 
@@ -566,6 +675,24 @@ public:
     return memscope2rootSuccessStorageEntry;
   }
 
+  inline void SetVFInplaceReuseInfo(VFCallInplaceReuseInfo *inplaceReuseInfo) {
+    vfInplaceReuseInfo = inplaceReuseInfo;
+  }
+
+  inline void SetSyncBlockPositions(SmallVector<int64_t> positions) {
+    syncBlockPositions = std::move(positions);
+  }
+
+  inline void SetCVMixIdReuseAllowedPairs(
+      DenseSet<std::pair<int32_t, int32_t>> pairs) {
+    cvMixIdReuseAllowedPairs = std::move(pairs);
+  }
+
+  /// Setup the device's storage specs
+  LogicalResult InitMemSpecsFromModule(func::FuncOp funcOp);
+
+  func::FuncOp func_;
+
 private:
   /// different mode for mem plan.
   MemPlanMode planMode;
@@ -578,6 +705,24 @@ private:
 
   /// StorageEntry generate.
   void GenerateStorageEntry();
+
+  /// Enable print memory allocated size.
+  bool enablePrintMemoryAllocatedSize;
+
+  /// enable HIVM op plan memory inplace
+  bool restrictInplaceAsISA;
+
+  // Dynamic ub size(KB) for simt VF. Default is 216
+  int simtVFDynamicSize;
+
+  /// Disable VF reachable check. Default is false
+  bool disableVFReachableCheck;
+
+  /// StorageEntry generate.
+  void GenerateStorageEntry();
+
+  /// Print successful memory alloc.
+  void PrintSuccessfulAllocatedMaxBits();
 
   /// Prepare the memref.alloc plan.
   PlanStatus PlanLocalMemAddress();
@@ -652,6 +797,7 @@ private:
 
   /// spec_level == SPEC_LEVEL_2, do not reuse the buffer in same loop when pipe
   /// conflicts between vector and dma.
+  /// spec_level == SPEC_LEVEL_2, mte2/3 do not reuse with vector.
   bool VerifyConflictStage2(PlanRecHis &his, const StorageEntry *e,
                             int specLevel, MemBoundListConstIter &start,
                             const MemBoundList &outline);
@@ -671,6 +817,7 @@ private:
   bool PipeConflictInSameLoop(const StorageEntry *e1, const StorageEntry *e2);
 
   /// spec_level == SPEC_LEVEL_3, MTE2/MTE3 is pipe conflict with all existing
+  /// spec_level == SPEC_LEVEL_2, MTE2/MTE3 is pipe conflict with all existing
   /// allocation. check if current entry has OptDmaPipe-conflict with buffers
   /// already allocate at current position. if conflict exists, continue loop
   /// until first not-conflict iter is found. Then update start as the first
@@ -694,6 +841,8 @@ private:
   bool
   IsInplacableBufferPairMatched(Value buffer, Value conflictBuffer,
                                 SmallVector<ValuePair> &matchedPairs) const;
+  inline bool VerifyConflictStage0(StorageEntry *e,
+                                   const std::shared_ptr<MemoryBound> &last);
 
   /// Update the outline information and record history
   void UpdateOutline(MemBoundList &outline, PlanRecHis &his, StorageEntry *e,
@@ -717,6 +866,12 @@ private:
   /// plan failed.
   PlanStatus ApplyFailStrategy(StatusWrapper &statusWrapper,
                                const size_t maxBits);
+
+  /// Dynamically set the UB space size based on VFModeAttr, which is set by the
+  /// InferVFModePass.
+  LogicalResult
+  DynamicSetUbSpaceSize(hacc::HACCTargetDeviceSpecInterface specInterface,
+                        func::FuncOp funcOp);
 
   void RollBackForAllocFail(StatusWrapper &statusWrapper, const size_t maxBits);
 
@@ -763,6 +918,17 @@ private:
   bool IsReuseHIVMOp(Operation *op, const Value &genBuffer,
                      const Value &killBuffer) const;
 
+  /// the vf call `op` that can reuse dst address `gen` and src address `kill`
+  /// in limited situation
+  bool IsReuseVFCall(Value gen, Value kill,
+                     InplaceReuseReachableMap &reachableMap) const;
+
+  /// Determines whether the value `src` is reachable to an operand of a
+  /// `DstOpType` operation.
+  template <typename DstOpType>
+  bool IsInplaceReuseReachable(Value src,
+                               InplaceReuseReachableMap &reachableMap) const;
+
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
   GetOverlapBufferLife(const BufferLifeVec &b1, const BufferLifeVec &b2) const;
@@ -780,6 +946,7 @@ private:
   /// Assign otherbuffer storage entry address(es). Assigns
   /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each
   /// i.
+  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each i.
   void PlanRelationOtherBufferEntryAddress(
       llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e);
 
@@ -887,6 +1054,46 @@ private:
   /// when plan memory success, map from each scope to its root StorageEntry.
   llvm::MapVector<hivm::AddressSpace, StorageEntry *>
       memscope2rootSuccessStorageEntry;
+  /// inplace-reuse info for the vf call.
+  VFCallInplaceReuseInfo *vfInplaceReuseInfo;
+
+  /// Sorted positions of cross-core sync ops in the current func's
+  /// linearOperation scope-time. Used to verify CV-CV lifetime gaps are
+  /// separated by an actual sync before relaxing memoryUnique.
+  SmallVector<int64_t> syncBlockPositions;
+
+  /// Pairs (X, Y) of cvMixIds whose markOp position ranges do NOT
+  /// overlap in any function that uses them (AIC and AIV). Built once per
+  /// module by PlanMemoryPass and passed in. (X,Y) and (Y,X) are both stored
+  /// for symmetric lookup.
+  DenseSet<std::pair<int32_t, int32_t>> cvMixIdReuseAllowedPairs;
+
+  /// The scope of the buffer applied memory fail and the max bits it applied.
+  llvm::MapVector<hivm::AddressSpace, uint64_t> failApplyBufferInfo;
+
+  /// The device's UB storage size
+  int ubSpaceSize{0};
+
+  /// The device's L1 storage size
+  int l1SpaceSize{0};
+
+  /// The device's L0A storage size
+  int l0aSpaceSize{0};
+
+  /// The device's L0B storage size
+  int l0bSpaceSize{0};
+
+  /// The device's L0C storage size
+  int l0cSpaceSize{0};
+
+  /// The device's UB align size
+  int ubAlignSize{0};
+
+  /// The device's L1 align size
+  int l1AlignSize{0};
+
+  /// The device's L0C align size
+  int l0cAlignSize{0};
 };
 
 } // namespace hivm

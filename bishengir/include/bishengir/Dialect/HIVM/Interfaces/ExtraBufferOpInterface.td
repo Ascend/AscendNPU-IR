@@ -37,8 +37,7 @@ def ExtraBufferOpInterface : OpInterface<"ExtraBufferOpInterface"> {
     >,
     InterfaceMethod<
       /*desc=*/[{
-        Get the size of the extra buffer. Returns std::nullopt if the op doesn't
-        require extra buffer.
+        Get the size of the extra buffer. Returns std::nullopt if the op doesn't require extra buffer.
       }],
       /*retTy=*/"std::optional<int64_t>",
       /*methodName=*/"getExtraBufferSize",

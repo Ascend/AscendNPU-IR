@@ -20,6 +20,12 @@
 
 include "mlir/Pass/PassBase.td"
 
+def LegalizeLoopIterArgs : Pass<"hivm-legalize-loop-iter-arg"> {
+  let summary = "Legalize vector typed iter args.";
+  let constructor = "mlir::scf::createLegalizeLoopIterArgsPass()";
+  let dependentDialects = ["LLVM::LLVMDialect", "scf::SCFDialect"];
+}
+
 def MapForToForall
     : Pass<"map-for-to-forall", "func::FuncOp"> {
   let constructor = "mlir::scf::createMapForToForallPass()";
@@ -27,6 +33,10 @@ def MapForToForall
     "hivm::HIVMDialect",
     "scf::SCFDialect",
     "tensor::TensorDialect"
+  ];
+  let options = [
+    Option<"simtMode", "simt-mode", "bool", "false",
+      "Activate for SIMT mode compilation">,
   ];
 }
 
@@ -39,15 +49,12 @@ def RemoveRedundantLoopInit
   ];
 }
 
-def CanonicalizeIterArg
-    : Pass<"scf-canonicalize-iter-arg", "func::FuncOp"> {
+def CanonicalizeIterArg : Pass<"scf-canonicalize-iter-arg", "func::FuncOp"> {
   let constructor = "mlir::scf::createCanonicalizeIterArgPass()";
   let options = [Option<"enableRemoveDeadIterArgBackwardPatterns",
                         "enable-remove-dead-iter-arg-bwd-patterns", "bool",
                         "true", "Enable RemoveDeadIterArgBackward patterns">];
-  let dependentDialects = [
-    "scf::SCFDialect"
-  ];
+  let dependentDialects = ["scf::SCFDialect"];
 }
 
 #endif // BISHENGIR_DIALECT_SCF_TRANSFORMS_PASSES_TD

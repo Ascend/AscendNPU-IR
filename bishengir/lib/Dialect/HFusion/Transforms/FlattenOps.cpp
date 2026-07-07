@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Transforms.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include <numeric>
@@ -99,6 +100,16 @@ void hfusion::populateFlattenOpsPattern(RewritePatternSet &patterns) {
 
 void FlattenOpsPass::runOnOperation() {
   auto funcOp = getOperation();
+
+  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
+      mlir::hivm::queryFuncCoreType(funcOp);
+  if (funcCoreType.has_value()) {
+    if (funcCoreType.value() == mlir::hivm::TFuncCoreType::AIC) {
+      return;
+    } else if (funcCoreType.value() == mlir::hivm::TFuncCoreType::AIV) {
+      return;
+    }
+  }
   if (this->flattenMode == FlattenMode::Greedy) {
     RewritePatternSet patterns(&getContext());
     populateFlattenOpsPattern(patterns);
@@ -113,6 +124,15 @@ void FlattenOpsPass::runOnOperation() {
     return;
 
   hfusion::detail::Flattener flattener(funcOp);
+  // Experimental Flatten, can remove this if
+  if (this->registerBased &&
+      util::hasUnpropagateableCase(funcOp, this->skipScope)) {
+    return;
+  }
+  mlir::detail::DimensionAnalyzerOptions options;
+  options.registerBased = this->registerBased;
+  options.usePreOrderWalkTraversal = this->usePreOrderWalkTraversal;
+  hfusion::detail::Flattener flattener(funcOp, options);
   if (failed(flattener.flatten(multiDynamicShape)))
     signalPassFailure();
 }

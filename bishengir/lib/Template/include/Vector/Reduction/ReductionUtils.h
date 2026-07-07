@@ -862,6 +862,13 @@ reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
                     memref_t<__ubuf__ int32_t, 1> *dst_index,
                     memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue);
 
+template <ReduceOpTy OP, typename T>
+__aiv__ __attribute__((always_inline)) void
+reduce_r_with_index(memref_t<__ubuf__ T, 1> *src0,
+                    memref_t<__ubuf__ T, 1> *dst_value,
+                    memref_t<__ubuf__ int32_t, 1> *dst_index,
+                    memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue);
+
 #define REGISTE_REDUCE_R_WITH_INDEX(op, with_index_type, type)                 \
   template __aiv__ __attribute__((always_inline)) void                         \
   reduce_r_with_index<op, with_index_type, type>(                              \
@@ -1402,11 +1409,11 @@ std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM), T>
 scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
                         BufPtr tmp_buffer) {
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  
+
   if (n == 1) {
     return *src_ptr;
   }
-  
+
   int64_t current_size;
   if (n > num_per_repeat) {
     current_size = scalar_reduce_dichotomy_to_target<OP, T>(
@@ -1414,11 +1421,11 @@ scalar_reduce_pairwise(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
   } else {
     current_size = pairwise_reduce_from_src<OP, T>(src_ptr, stride, n, tmp_buffer);
   }
-  
+
   while (current_size > 1) {
     current_size = pairwise_reduce_buffer<OP, T>(tmp_buffer, current_size);
   }
-  
+
   return tmp_buffer[0];
 }
 
@@ -1431,41 +1438,41 @@ std::enable_if_t<(OP == ReduceOpTy::REDUCE_SUM || OP == ReduceOpTy::REDUCE_PROD)
 scalar_reduce_two_phase(__ubuf__ T *src_ptr, int64_t stride, int64_t n,
                         __ubuf__ T *tmp_buffer) {
   constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
-  
+
   if (n == 1) {
     return *src_ptr;
   }
-  
+
   if (n <= num_per_repeat) {
     return scalar_reduce_dichotomy<OP, T, __ubuf__ T*>(src_ptr, stride, n, tmp_buffer);
   }
-  
+
   int64_t num_chunks = n / num_per_repeat;
   int64_t tail_size = n % num_per_repeat;
-  
+
   for (int64_t i = 0; i < num_per_repeat; ++i) {
     tmp_buffer[i] = *(src_ptr + i * stride);
   }
-  
+
   for (int64_t chunk = 1; chunk < num_chunks; ++chunk) {
     for (int64_t i = 0; i < num_per_repeat; ++i) {
       T val = *(src_ptr + (chunk * num_per_repeat + i) * stride);
       tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
     }
   }
-  
+
   if (tail_size > 0) {
     for (int64_t i = 0; i < tail_size; ++i) {
       T val = *(src_ptr + (num_chunks * num_per_repeat + i) * stride);
       tmp_buffer[i] = reduction_scalar_operation<OP, T>(tmp_buffer[i], val);
     }
   }
-  
+
   int64_t current_size = num_per_repeat;
   while (current_size > 1) {
     current_size = dichotomy_reduce_buffer<OP, T>(tmp_buffer, current_size);
   }
-  
+
   return tmp_buffer[0];
 }
 
@@ -1817,6 +1824,23 @@ DECLARE_ENTIRE_REDUCE_R_WITH_INDEX(reduce_min_with_index_right,
                                    ReduceWithIndexOpTy::RIGHT, 1, float);
 
 //===-------------------------------------------------------------------===//
+// reduce r with index, 1 dim
+//===-------------------------------------------------------------------===//
+DECLARE_ENTIRE_REDUCE_R_WITH_INDEX(reduce_max_with_index,
+                                   ReduceOpTy::REDUCE_MAX_WITH_INDEX,
+                                   ReduceWithIndexOpTy::LEFT, 1, half);
+DECLARE_ENTIRE_REDUCE_R_WITH_INDEX(reduce_max_with_index,
+                                   ReduceOpTy::REDUCE_MAX_WITH_INDEX,
+                                   ReduceWithIndexOpTy::LEFT, 1, float);
+
+DECLARE_ENTIRE_REDUCE_R_WITH_INDEX(reduce_min_with_index,
+                                   ReduceOpTy::REDUCE_MIN_WITH_INDEX,
+                                   ReduceWithIndexOpTy::LEFT, 1, half);
+DECLARE_ENTIRE_REDUCE_R_WITH_INDEX(reduce_min_with_index,
+                                   ReduceOpTy::REDUCE_MIN_WITH_INDEX,
+                                   ReduceWithIndexOpTy::LEFT, 1, float);
+
+//===-------------------------------------------------------------------===//
 // reduce ar with index, 2 dim
 //===-------------------------------------------------------------------===//
 DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_max_with_index_left,
@@ -1844,6 +1868,22 @@ DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_min_with_index_left,
 DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_min_with_index_right,
                                     ReduceOpTy::REDUCE_MIN_WITH_INDEX,
                                     ReduceWithIndexOpTy::RIGHT, 2, float);
+
+DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2, half);
+DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2,
+                                    float);
+
+DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2, half);
+DECLARE_ENTIRE_REDUCE_AR_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2,
+                                    float);
 
 //===-------------------------------------------------------------------===//
 // reduce ra with index, 2 dim
@@ -1873,6 +1913,22 @@ DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_min_with_index_left,
 DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_min_with_index_right,
                                     ReduceOpTy::REDUCE_MIN_WITH_INDEX,
                                     ReduceWithIndexOpTy::RIGHT, 2, float);
+
+DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2, half);
+DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2,
+                                    float);
+
+DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2, half);
+DECLARE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX,
+                                    ReduceWithIndexOpTy::LEFT, 2,
+                                    float);
 }
 
 #endif // HIVM_MLIR_TEMPLATE_VECTOR_REDUCTION_UTILS_H

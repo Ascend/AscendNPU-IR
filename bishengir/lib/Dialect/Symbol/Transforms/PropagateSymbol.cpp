@@ -12,6 +12,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -23,6 +26,10 @@
 #include "bishengir/Dialect/Symbol/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -166,6 +173,12 @@ struct BindReifyResultShape
         continue;
       }
       llvm::report_fatal_error("unsupported reify op type");
+      // TODO: support reify op of arith index type
+      llvm_unreachable("unsupported reify op type");
+    }
+
+    if (bindValues.empty()) {
+      return std::nullopt;
     }
 
     MLIRContext *ctx = getContext();
@@ -193,11 +206,14 @@ std::optional<int64_t> getIndexForDynamicDim(ArrayRef<int64_t> shapes,
                                              int64_t index) {
   int64_t size = static_cast<int64_t>(shapes.size());
   if (index >= size || !ShapedType::isDynamic(shapes[index])) {
+  if (index >= ssize_t(shapes.size()) ||
+      !ShapedType::isDynamic(shapes[index])) {
     return std::nullopt;
   }
 
   int64_t dynIndex = 0;
   for (int64_t i = 0; i < size && i < index; ++i) {
+  for (int64_t i = 0; i < ssize_t(shapes.size()) && i < index; ++i) {
     if (ShapedType::isDynamic(shapes[i])) {
       dynIndex++;
     }
@@ -206,6 +222,7 @@ std::optional<int64_t> getIndexForDynamicDim(ArrayRef<int64_t> shapes,
 }
 
 // propagate symbols by replacing tensor.dim with the symbol it binds to.
+// propagate symbols by replacing tensor.dim with the symbol it binds to
 // input:
 //   %S0 = symbol.symbolic_int @S0
 //   symbol.bind_symbolic_shape %arg0, [%S0], affine_map<()[s0] -> (s0, 640)>
@@ -603,6 +620,11 @@ public:
     auto newEmpty = rewriter.create<tensor::EmptyOp>(
         empty->getLoc(), empty->getResultTypes(), symbols);
     rewriter.replaceOp(empty, newEmpty);
+    auto dynIndex = getIndexForDynamicDim(shapedType.getShape(), index);
+    if (!dynIndex.has_value()) {
+      return failure();
+    }
+    rewriter.replaceOp(op, shapeSymbols[dynIndex.value()]);
     return success();
   }
 };
@@ -676,6 +698,8 @@ void PropagateSymbolPass::runOnOperation() {
   patterns.add<UnifyPartialEquivalentDims<linalg::BroadcastOp>>(ctx);
   patterns.add<UnifyPartialEquivalentDims<linalg::ReduceOp>>(ctx);
   patterns.add<UnifyPartialEquivalentDims<tensor::ConcatOp>>(ctx);
+  patterns.add<BindReifyResultShape>(ctx);
+  patterns.add<PropagateSymbolByTensorDim>(ctx);
 
   if (failed(applyPatternsGreedily(func, std::move(patterns)))) {
     signalPassFailure();

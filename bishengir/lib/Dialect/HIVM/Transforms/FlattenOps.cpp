@@ -79,7 +79,6 @@ class FlattenOpsRewritePattern
         }
       }
     }
-
     // Cast to flatten interface so it calls the implementation for it
     auto res = cast<FlattenInterface>(op.getOperation())
                    .getFlattened(FlattenOptions());
@@ -108,6 +107,7 @@ class FlattenOpsRewritePattern
     });
     rewriter.replaceOp(op, clonedOperation);
     LDBG(*clonedOperation->getParentOp());
+    LDBG((clonedOperation->getParentOp() ? *(clonedOperation->getParentOp()) : *clonedOperation));
     return failure();
   }
 };

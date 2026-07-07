@@ -292,6 +292,10 @@ private:
     for (auto &group : reduceGrouping) {
       if (group.size() > 1) {
         composeReduceOps(group);
+      const SmallVector<SmallVector<linalg::ReduceOp>> &reduceGrouping) const {
+    for (auto &group : reduceGrouping) {
+      if (group.size() > 1) {
+        composeReduceOps(const_cast<SmallVector<linalg::ReduceOp> &>(group));
       }
     }
   }
@@ -371,6 +375,7 @@ private:
         to_vector(basePivotInitShape), info.newExpandShapeInit);
     if (!can || !canInit) {
       llvm::report_fatal_error("Input and inits unexpectedly failed to collapse");
+      llvm_unreachable("Input and inits unexpectedly failed to collapse");
     }
 
     tensor::reshape_utils::renumberReassociation(info.supposedExpand);

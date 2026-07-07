@@ -27,6 +27,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/Support/Debug.h"
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTARITHTOHFUSION
@@ -140,7 +141,8 @@ struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
                : rewriter.create<hfusion::MulExtOp>(loc, resultType, resultType,
                                                     lhs, rhs);
   }
-
+struct MulIExtendedOpLowering : public OpRewritePattern<BinaryOp> {
+  using OpRewritePattern<BinaryOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(BinaryOp op,
                                 PatternRewriter &rewriter) const final {
     if (!operateOnTensors(op))
@@ -152,6 +154,9 @@ struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
         std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
     auto mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType, lhs, rhs,
                                    isUnsigned);
+
+    auto mulExtOp = rewriter.create<hfusion::MulExtOp>(op->getLoc(), resultType,
+                                                       resultType, lhs, rhs);
     rewriter.replaceOp(op, mulExtOp);
     return success();
   }
@@ -193,6 +198,10 @@ inline bool isOverFlowMode(Type inType, Type outType) {
   const bool isI64ToI32 = inType.isInteger(64) && outType.isInteger(32);
   return (isI16ToI8 || isI32ToI16 || isI32ToI8 || isF32ToI16 || isF32ToI8 ||
           isF16ToI8 || isI64ToI8 || isI64ToI16 || isI64ToI32);
+  const bool isI32ToI16 = inType.isInteger(32) && outType.isInteger(16);
+  const bool isI32ToI8 = inType.isInteger(32) && outType.isInteger(8);
+  return (isI16ToI8 || isI32ToI16 || isI32ToI8 || isF32ToI16 || isF32ToI8 ||
+          isF16ToI8);
 }
 
 template <typename CastOp>
@@ -211,6 +220,10 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       llvm::report_fatal_error(
           "unsupported datatype for arith::TruncFOp to hfusion");
+      if ((inType.isF32() || inType.isF16() || inType.isBF16()) 
+          && (outType.isFloat8E4M3FN() || outType.isFloat8E5M2()))
+        return hfusion::RoundMode::RINT;
+      llvm_unreachable("unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
@@ -218,6 +231,10 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       llvm::report_fatal_error(
           "unsupported datatype for arith::ExtFOp to hfusion");
+      if ((inType.isFloat8E4M3FN() || inType.isFloat8E5M2()) 
+          && (outType.isF32() || outType.isF16() || outType.isBF16()))
+        return hfusion::RoundMode::RINT;
+      llvm_unreachable("unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -233,6 +250,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       return hfusion::RoundMode::TRUNC;
     }
     llvm::report_fatal_error("unsupported arith op to hfusion");
+    llvm_unreachable("unsupported arith op to hfusion");
   }
 
   static hfusion::TypeFn selectCast(CastOp op) {
@@ -251,12 +269,32 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       // In future, we need to support both cast_from_sign, cast_to_sign
       // parameters
       if (isI8ToI16 || isI8ToI32 || isI8ToI64) {
+      const bool isI1ToI16 = inType.isInteger(1) && outType.isInteger(16);
+      const bool isI1ToI32 = inType.isInteger(1) && outType.isInteger(32);
+      const bool isI1ToI64 = inType.isInteger(1) && outType.isInteger(64);
+      const bool isI1ToFloat = inType.isInteger(1) && isa<FloatType>(outType);
+      const bool isI8ToI32 = inType.isInteger(8) && outType.isInteger(32);
+      const bool isI8ToI16 = inType.isInteger(8) && outType.isInteger(16);
+      const bool isI8ToI64 = inType.isInteger(8) && outType.isInteger(64);
+      const bool isI16ToI32 = inType.isInteger(16) && outType.isInteger(32);
+      const bool isI16ToI64 = inType.isInteger(16) && outType.isInteger(64);
+      const bool isInTypeI1 = isI1ToI16 || isI1ToI32 || isI1ToI64 || isI1ToFloat;
+      const bool isInTypeI8  = isI8ToI16 || isI8ToI32 || isI8ToI64;
+      const bool isInTypeI16 = isI16ToI32 || isI16ToI64;
+      const bool isInTypeI32 = inType.isInteger(32) && outType.isInteger(64);
+      // Now we support unsigned casts only from uint8
+      // All casts from uint8 are performed using intermediate float cast
+      // So now we just need to now that source is signed/unsigned
+      // In future, we need to support both cast_from_sign, cast_to_sign
+      // parameters
+      if (isInTypeI1 || isInTypeI8 || isInTypeI16 || isInTypeI32) {
         return hfusion::TypeFn::cast_unsigned;
       }
       return hfusion::TypeFn::cast_signed;
     }
 
     if (isa<arith::UIToFPOp, arith::FPToUIOp>(op.getOperation()))
+    if (isa<arith::FPToUIOp>(op) || isa<arith::UIToFPOp>(op))
       return hfusion::TypeFn::cast_unsigned;
     return hfusion::TypeFn::cast_signed;
   }
@@ -280,7 +318,10 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
     hfusion::TypeFn casting = selectCast(op);
     auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(casting);
     auto typeAttr = rewriter.getNamedAttr("cast", castAttr);
-
+    
+    hfusion::TypeFn casting = selectCast(op);
+    auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(casting);
+    auto typeAttr = rewriter.getNamedAttr("cast", castAttr);
     rewriter.replaceOpWithNewOp<hfusion::CastOp>(
         op, ValueRange{src}, ValueRange{dsts}, ArrayRef{modeAttr, typeAttr});
     return success();
@@ -313,6 +354,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
       return CompareFn::vgt;
     default:
       llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
+      llvm_unreachable("unsupported arith cmp predicate to hfusion");
     }
   }
 
@@ -338,6 +380,36 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
       return CompareFn::vge;
     case arith::CmpIPredicate::uge:
       return CompareFn::vuge;
+    case arith::CmpIPredicate::sgt:
+      return CompareFn::vgt;
+    case arith::CmpIPredicate::sle:
+      return CompareFn::vle;
+    case arith::CmpIPredicate::sge:
+      return CompareFn::vge;
+    case arith::CmpIPredicate::ule:
+      return CompareFn::vule;
+    case arith::CmpIPredicate::uge:
+      return CompareFn::vuge;
+    case arith::CmpIPredicate::ugt:
+      return CompareFn::vugt;
+    case arith::CmpIPredicate::ult:
+      return CompareFn::vult;
+    }
+    llvm_unreachable("unsupported arith cmp predicate to hfusion");
+  }
+
+  static hfusion::CompareFn selectI1Predicate(arith::CmpIOp op) {
+    switch (op.getPredicate()) {
+    case arith::CmpIPredicate::ult:
+      return CompareFn::vlt;
+    case arith::CmpIPredicate::ugt:
+      return CompareFn::vgt;
+    case arith::CmpIPredicate::ule:
+      return CompareFn::vle;
+    case arith::CmpIPredicate::uge:
+      return CompareFn::vge;
+    default:
+      llvm_unreachable("i1 type cannot have signness information");
     }
   }
 
@@ -351,6 +423,26 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
       return failure();
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
+    if constexpr (std::is_same_v<CompareOp, arith::CmpIOp>) {
+      auto tensorType = cast<RankedTensorType>(lhs.getType());
+      auto elemType = tensorType.getElementType();
+      auto width = elemType.getIntOrFloatBitWidth();
+      if (width == 1 && op.getPredicate() != arith::CmpIPredicate::eq &&
+          op.getPredicate() != arith::CmpIPredicate::ne) {
+        auto targetType =
+            RankedTensorType::get(tensorType.getShape(), rewriter.getI8Type());
+        lhs = rewriter.create<arith::ExtUIOp>(lhs.getLoc(), targetType, lhs);
+        rhs = rewriter.create<arith::ExtUIOp>(rhs.getLoc(), targetType, rhs);
+        hfusion::CompareFn predicate = selectI1Predicate(op);
+        auto predicateAttr =
+            rewriter.getAttr<hfusion::CompareFnAttr>(predicate);
+        auto modeAttr = rewriter.getNamedAttr(
+            hfusion::CompareFnAttr::getMnemonic(), predicateAttr);
+        rewriter.replaceOpWithNewOp<hfusion::CompareOp>(
+            op, ValueRange{lhs, rhs}, ValueRange{dsts}, ArrayRef{modeAttr});
+        return success();
+      }
+    }
     hfusion::CompareFn predicate = selectPredicate(op);
     auto predicateAttr = rewriter.getAttr<hfusion::CompareFnAttr>(predicate);
     auto modeAttr = rewriter.getNamedAttr(hfusion::CompareFnAttr::getMnemonic(),
@@ -397,6 +489,7 @@ struct ConstantSplatOpToLinalgFillPattern
 
     auto denseAttr = dyn_cast<DenseIntOrFPElementsAttr>(op.getValue());
     if (!denseAttr || !denseAttr.isSplat())
+    if (!denseAttr && !denseAttr.isSplat())
       return failure();
 
     auto elemType = denseAttr.getElementType();
@@ -458,6 +551,8 @@ void mlir::hfusion::populateArithToHFusionConversionPatterns(
       ElementwiseOpToHFusionBinary<arith::MaximumFOp, hfusion::BinaryFn::maxf>,
       ElementwiseOpToHFusionBinary<arith::RemFOp, hfusion::BinaryFn::mod>,
       ElementwiseOpToHFusionBinary<arith::RemSIOp, hfusion::BinaryFn::mod>,
+      ElementwiseOpToHFusionBinary<arith::RemSIOp, hfusion::BinaryFn::mod>,
+      ElementwiseOpToHFusionBinary<arith::RemFOp, hfusion::BinaryFn::mod>,
       ElementwiseOpToHFusionBinary<arith::RemUIOp, hfusion::BinaryFn::modui>,
       ElementwiseOpToHFusionBinary<arith::ShLIOp, hfusion::BinaryFn::shli>,
       ElementwiseOpToHFusionBinary<arith::ShRSIOp, hfusion::BinaryFn::shrsi>,
@@ -483,6 +578,8 @@ void mlir::hfusion::populateArithToHFusionConversionPatterns(
       ElementwiseOpToHFusionSelect<arith::SelectOp>,
       MulExtendedOpLowering<arith::MulSIExtendedOp>,
       MulExtendedOpLowering<arith::MulUIExtendedOp>,
+      MulIExtendedOpLowering<arith::MulSIExtendedOp>,
+      MulIExtendedOpLowering<arith::MulUIExtendedOp>,
       BitcastOpToHFusionBitcastOp>(patterns.getContext());
 }
 

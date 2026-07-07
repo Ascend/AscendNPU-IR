@@ -32,8 +32,29 @@ template <typename T> struct nd2nz_intrin_args {
   uint16_t dstNzC0Stride;
   uint16_t dstNzNStride;
   uint16_t dstNzMatrixStride;
+  uint16_t c0Size;
 };
 
+#if defined(__DAV_C310__)
+template <typename T>
+__aicore__ __attribute__((always_inline)) void
+copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {
+  uint64_t config =
+      ((uint64_t)args.ndNum) | ((uint64_t)args.dstNzNStride) << 16 |
+      ((uint64_t)args.dstNzC0Stride) << 32 |
+      ((uint64_t)(args.dstNzMatrixStride * sizeof(T) / args.c0Size)) << 48;
+  INTRINSIC(set_mte2_nz_para, config);
+  INTRINSIC(copy_gm_to_cbuf_multi_nd2nz, args.dst_ptr, args.src_ptr,
+            /*uint8_t sid*/ args.sid,
+            /*uint64_t loop1_src_stride*/ args.srcDValue * sizeof(T),
+            /*uint8_t l2_cache_ctrl_mode*/ 0,
+            args.nValue, args.dValue,
+            args.srcNdMatrixStride,
+            /*bool smallc0_en*/ false
+            /* args.srcDValue, args.dstNzC0Stride,
+              args.dstNzNStride, args.dstNzMatrixStride*/);
+}
+#else
 template <typename T>
 __aicore__ __attribute__((always_inline)) void
 copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {
@@ -56,6 +77,7 @@ copy_gm_to_cbuf_intrin_core(nd2nz_intrin_args<T> args) {
     static_assert("nd2nz unsupport this data type");
   }
 }
+#endif
 
 #define DECLARE_ND2NZ(src_scope, dst_scope, src_dim, dst_dim, type)            \
   __aicore__ __attribute__((always_inline)) void _mlir_ciface_nd2nz_##type(    \

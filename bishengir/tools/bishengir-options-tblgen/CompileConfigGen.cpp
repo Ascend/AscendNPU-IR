@@ -74,6 +74,24 @@ bool emitCompileConfigs(const RecordKeeper &records, raw_ostream &OS) {
     }
 
     if (!cfgOpt.getEmitGetterSetter())
+    if (cfgOpt.shouldEmitConfigField()) {
+      // Generate variable declaration (protected)
+      // Example:
+      // ```cpp
+      //   int64_t externalVar = 42;
+      // ```
+      OS << "protected:\n";
+      OS << "  " << getContainerType(cfgOpt);
+      OS << " " << cfgOpt.getExternalStorageLocation();
+
+      if (std::optional<StringRef> defaultVal = cfgOpt.getDefaultValue()) {
+        OS << " = " << defaultVal << ";\n";
+      } else {
+        OS << ";\n";
+      }
+    }
+
+    if (!cfgOpt.shouldEmitGetterSetter())
       continue;
 
     // Generate getter and setter methods (public)

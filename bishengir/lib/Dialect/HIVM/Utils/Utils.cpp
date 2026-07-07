@@ -1,5 +1,6 @@
 //===- Utils.cpp - Utilities to support the HIVM dialect ------------------===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -21,6 +22,10 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/InferHIVMMemScope.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -34,6 +39,11 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Transform/IR/TransformTypes.h"
+#include "mlir/Dialect/Tensor/Utils/Utils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
@@ -73,6 +83,7 @@ FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
   auto *bbOwner = bbArg.getOwner();
   if (!bbOwner) {
     llvm::report_fatal_error("parentOp doesn't exist");
+    llvm_unreachable("parentOp doesn't exist");
     return failure();
   }
   auto *bbParentOp = bbOwner->getParentOp();
@@ -80,6 +91,9 @@ FailureOr<memref::AllocOp> getMemRefForBlockArgument(BlockArgument bbArg) {
     return failure();
   if (auto loopOp = dyn_cast<LoopLikeOpInterface>(bbParentOp)) {
     auto *operand = loopOp.getTiedLoopInit(bbArg);
+    if (!operand) {
+      return failure();
+    }
     return getMemRefAlloc(operand->get());
   }
   return bbParentOp->emitError("Unsupported block op type");
@@ -105,6 +119,11 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
 #else
         return getMemRefAlloc(op.getBuffer());
 #endif
+          Value initSource = loopOp.getInits()[result.getResultNumber()];
+        return getMemRefAlloc(initSource);
+      })
+      .Case<bufferization::ToTensorOp>([&](bufferization::ToTensorOp op) {
+        return getMemRefAlloc(op.getMemref());
       })
       .Case<scope::ScopeOp>([&](scope::ScopeOp scopeOp) {
         auto returnOp =
@@ -231,7 +250,54 @@ Value createNestedIndexModularUsingLoopInfo(
 }
 
 } // namespace
+        op->emitOpError("Unsupported op for finding the root alloc.");
+        return failure();
+      });
+}
+} // namespace
 
+LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
+  LDBG("Begin infer and propagate memory scope for:" << op);
+
+  auto gmSpaceAttr =
+      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::GM);
+  MemScopeInferAndPropagateHelper helper;
+  auto res = op.getResult();
+
+  // Only pointer casts annotated as GM carry enough information to seed
+  // address space propagation.
+  if (util::isGMPointerCastOp(op)) {
+    if (failed(helper.Run(res, gmSpaceAttr))) {
+      return op->emitOpError(
+          "Failed to propagate memory scope for PointerCastOp");
+    }
+  }
+  return success();
+}
+
+// 1. Infer the allocation type based on memoryspace (ub/l1).
+// 2. If there is no memoryspace and the function is aic/aiv,
+// allocate the memory to the corresponding ub or l1;
+// otherwise, allocate the memory to ub by default.
+LogicalResult inferAndPropagateMemScopeForAlloc(memref::AllocOp op,
+                                                hivm::AddressSpace space) {
+  LDBG("Begin infer and propagate memory scope for: " << *op);
+  auto memorySpace = op.getType().getMemorySpace();
+  MemScopeInferAndPropagateHelper helper;
+  if (memorySpace) {
+    auto toAddrSpace =
+        cast<hivm::AddressSpaceAttr>(memorySpace).getAddressSpace();
+    if ((toAddrSpace != hivm::AddressSpace::UB) &&
+        (toAddrSpace != hivm::AddressSpace::L1))
+      return success();
+    return helper.propagateMemScopeToUsers(op->getResults()[0]);
+  }
+  auto spaceAttr = AddressSpaceAttr::get(op->getContext(), space);
+  if (failed(helper.Run(op, spaceAttr))) {
+    return op->emitOpError("Failed to propagate memory scope for allocOp");
+  }
+  return success();
+}
 FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
   if (auto bbArg = dyn_cast<BlockArgument>(operand)) {
     return getMemRefForBlockArgument(bbArg);
@@ -278,6 +344,46 @@ SmallVector<Value> getMemRefAllocs(Value operand) {
   FailureOr<memref::AllocOp> alloc = getMemRefAlloc(operand);
   if (failed(alloc)) return {};
   return {Value(*alloc)};                          // wrap in vector
+SmallVector<Value> getMemRefAllocs(Value operand) {
+  if (auto selectOp = operand.getDefiningOp<arith::SelectOp>()) {
+    SmallVector<Value> results = getMemRefAllocs(selectOp.getTrueValue());
+    SmallVector<Value> falseResults = getMemRefAllocs(selectOp.getFalseValue());
+    results.append(falseResults);
+    return results;
+  }
+  FailureOr<memref::AllocOp> alloc = getMemRefAlloc(operand);
+  if (failed(alloc))
+    return {};
+  return SmallVector<Value>{*alloc};
+}
+
+// New helper function to get the updated BaseMemRefType
+BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
+                                             AddressSpaceAttr targetMemScope) {
+  if (auto memRefType = dyn_cast<MemRefType>(type)) {
+    return MemRefType::Builder(memRefType).setMemorySpace(targetMemScope);
+  } else if (auto unrankedMemRefType = dyn_cast<UnrankedMemRefType>(type)) {
+    return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
+                                   targetMemScope);
+  }
+  llvm_unreachable("Unexpected BaseMemRefType");
+  return type;
+}
+
+// New helper function to get the updated BaseMemRefType
+BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
+                                             unsigned targetMemScope) {
+  if (auto memRefType = dyn_cast<MemRefType>(type)) {
+    auto targetMemScopeAttr = IntegerAttr::get(
+        IntegerType::get(type.getContext(), 64), targetMemScope);
+    return MemRefType::Builder(memRefType).setMemorySpace(targetMemScopeAttr);
+  }
+  if (auto unrankedMemRefType = dyn_cast<UnrankedMemRefType>(type)) {
+    return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
+                                   targetMemScope);
+  }
+  llvm_unreachable("Unexpected BaseMemRefType");
+  return type;
 }
 
 void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
@@ -295,6 +401,20 @@ void setBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
   auto memRefType = cast<BaseMemRefType>(type);
   auto newMemRefType =
       util::getBaseMemRefTypeWithNewScope(memRefType, targetMemScope);
+      getBaseMemRefTypeWithNewScope(memRefType, targetMemScope);
+  val.setType(newMemRefType);
+}
+
+void modifyBaseMemRefTypeScope(Value val, AddressSpaceAttr targetMemScope) {
+  Type type = val.getType();
+  if (!isa<BaseMemRefType>(type)) {
+    LDBG("type = " << type << " is not BaseMemRefType\n");
+    return;
+  }
+
+  auto memRefType = cast<BaseMemRefType>(type);
+  auto newMemRefType =
+      getBaseMemRefTypeWithNewScope(memRefType, targetMemScope);
   val.setType(newMemRefType);
 }
 
@@ -376,6 +496,16 @@ std::optional<AddressSpaceAttr> GetBufferSpaceAttr(Value operand) {
     return std::nullopt;
   }
   return memorySpaceAttr;
+  if (operand) {
+    if (auto memRefType =
+            llvm::dyn_cast_if_present<MemRefType>(operand.getType())) {
+      if (auto memorySpaceAttr = llvm::dyn_cast_if_present<AddressSpaceAttr>(
+              memRefType.getMemorySpace())) {
+        return memorySpaceAttr;
+      }
+    }
+  }
+  return std::optional<AddressSpaceAttr>();
 }
 
 bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
@@ -390,6 +520,7 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
     return true;
   }
   llvm::report_fatal_error("Currently only support (UB | L1 | L0C) allocation");
+  llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");
 }
 
 SmallVector<Value> getOpTouchBuffer(Operation *op) {
@@ -613,6 +744,21 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
                 return -1;
               };
               return getOrder(left) < getOrder(right);
+              // Extract the block mapping order symmetrically from both
+              // operands. Foralls without a block mapping (i.e. subblock-only)
+              // have no dictated order and are treated as equivalent so that
+              // the comparator satisfies strict weak ordering: the previous
+              // implementation returned ``true`` whenever the right operand had
+              // no block mapping, which made both comp(a, b) and comp(b, a)
+              // return true and yielded undefined behaviour in std::sort.
+              auto getBlockOrder = [](scf::ForallOp op) -> int {
+                for (Attribute mapping : op.getMappingAttr()) {
+                  if (auto blkMapping = dyn_cast<HIVMBlockMappingAttr>(mapping))
+                    return blkMapping.getOrder().value_or(0);
+                }
+                return -1;
+              };
+              return getBlockOrder(left) < getBlockOrder(right);
             });
 
   return rewriteNestedForallImpl(rewriter, forallOp, worklist, result,
@@ -621,6 +767,7 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
 
 bool isSubBlockBindedFor(scf::ForOp op) {
   if (!op->hasAttrOfType<UnitAttr>(kMapForToForallAttrName))
+  if (!op->hasAttrOfType<UnitAttr>(utils::kMapForToForallAttrName))
     return false;
 
   if (!op->hasAttrOfType<ArrayAttr>(kMappingAttrName))
@@ -661,6 +808,7 @@ void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
   }
 
   if (markOp->getAttrDictionary().empty() && removeOp) {
+  if (markOp.isAttrEmpty() && removeOp) {
     markOp.erase();
   }
 }
@@ -676,10 +824,62 @@ void removeMarkOpAttr(annotation::MarkOp markOp, StringRef attrName,
   }
 
   if (markOp->getAttrDictionary().empty() && removeOp) {
+  if (markOp.isAttrEmpty() && removeOp) {
     rewriter.eraseOp(markOp);
   }
 }
 
+void removeMarkOpDynamicAttr(annotation::MarkOp markOp, StringRef attrName,
+                             PatternRewriter &rewriter) {
+  assert(markOp && "markOp shouldn't be null.");
+  auto keys = markOp.getKeys();
+  auto values = markOp.getValues();
+
+  SmallVector<Attribute> newKeys;
+  SmallVector<Value> newValues;
+
+  auto keysArray = keys.value();
+
+  for (auto [key, value] : llvm::zip_equal(keysArray, values)) {
+    StringRef currentKey = mlir::cast<StringAttr>(key).getValue();
+    if (currentKey == attrName) {
+      LDBG("Removing dynamic annotation: " << attrName);
+    } else {
+      newKeys.push_back(key);
+      newValues.push_back(value);
+      LDBG("Keeping dynamic annotation: " << currentKey);
+    }
+  }
+
+  rewriter.modifyOpInPlace(markOp, [&]() {
+    markOp.setKeysAttr(rewriter.getArrayAttr(newKeys));
+    markOp.getValuesMutable().assign(newValues);
+  });
+  if (newKeys.empty()) {
+    removeMarkOpAttr(markOp, "keys", rewriter);
+  }
+}
+
+uint32_t getHWAlignBytes(Attribute spaceAttr) {
+  auto hivmSpace = dyn_cast<hivm::AddressSpaceAttr>(spaceAttr);
+  assert(hivmSpace && "Empty address space attr");
+  switch (hivmSpace.getAddressSpace()) {
+  case hivm::AddressSpace::UB:
+  case hivm::AddressSpace::L1:
+    return hivm::util::BL;
+  default:
+    llvm_unreachable("Unsupported address space");
+  }
+}
+
+std::optional<uint32_t> getHWAlignBytes(Type t) {
+  auto memrefType = dyn_cast<MemRefType>(t);
+  if (!memrefType) {
+    return std::nullopt;
+  }
+  auto hwAlignBytes = getHWAlignBytes(memrefType.getMemorySpace());
+  return hwAlignBytes;
+}
 Value createTmpBufferOrTensorWithShape(PatternRewriter &rewriter, Location loc,
                                        Value source,
                                        SmallVector<int64_t> targetShape) {
@@ -712,6 +912,7 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps) {
             bufferization::ToBufferOp,
 #endif
             bufferization::ToTensorOp>(userOp)) {
+            bufferization::ToMemrefOp, bufferization::ToTensorOp>(userOp)) {
       getOpUsers(userOp, userOps);
     } else {
       userOps.push_back(userOp);
@@ -751,7 +952,6 @@ void removeModuleCoreTypeAttr(ModuleOp mod) {
     op.removeAttr(TModuleCoreTypeAttr::name);
   }
 }
-
 FailureOr<SmallVector<Operation *>>
 traceForPotentialMatrixC(Value v, Block *storeBlock) {
   if (llvm::isa<hivm::MmadL1Op, hivm::BatchMmadL1Op>(v.getDefiningOp())) {
@@ -820,6 +1020,7 @@ SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
                                           Value src) {
   SmallVector<Value> dynamicSizes;
   if (auto reifiableOp = dyn_cast<tensor::EmptyOp>(src.getDefiningOp())) {
+  if (auto reifiableOp = llvm::dyn_cast_or_null<tensor::EmptyOp>(src.getDefiningOp())) {
     ReifiedRankedShapedTypeDims outputShapes;
     if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
       dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
@@ -837,6 +1038,69 @@ SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
   return dynamicSizes;
 }
 
+Value createAllocWithMark(PatternRewriter &rewriter,
+                          Location loc,
+                          MemRefType memrefType,
+                          ValueRange dynamicDims,
+                          ArrayRef<int64_t> staticAllocSize,
+                          Type elemType) {
+  Value alloc = rewriter.create<memref::AllocOp>(loc, memrefType, dynamicDims);
+  auto maybeStaticTotalSize = utils::getStaticTotalSizeInBits(staticAllocSize, elemType);
+  if (maybeStaticTotalSize.has_value()) {
+    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, alloc);
+    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+    rewriter.getI64IntegerAttr(allocSizeInByte));
+  } else {
+    llvm_unreachable("Warning: Cannot calculate static size from mmadL1 shape\n");
+  }
+  return alloc;
+}
+
+bool isLastDimTranspose(hivm::VTransposeOp op) {
+  SmallVector<int64_t> transposeLoopDims;
+  op.getTransposeLoopDims(transposeLoopDims);
+  auto dimSize = op.getNumLoops();
+  if (std::find(transposeLoopDims.begin(), transposeLoopDims.end(),
+                dimSize - 1) == transposeLoopDims.end()) {
+    return false;
+  }
+  return true;
+}
+
+Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
+                                ArrayRef<int64_t> shape, Type elementType) {
+  assert(!ShapedType::isDynamicShape(shape) &&
+         "AllocWorkspaceOp only supports static shape");
+  Type allocWorkspaceType = MemRefType::get(shape, elementType);
+
+  auto allocWorkspaceOp =
+      builder.create<bishengir::memref_ext::AllocWorkspaceOp>(
+          loc, allocWorkspaceType,
+          /*workspaceArg*/ Value(), ValueRange{},
+          /*offset*/ ValueRange{});
+  return allocWorkspaceOp.getMemref();
+}
+
+Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
+                              ArrayRef<int64_t> targetShapes,
+                              Type elementType) {
+#ifndef NDEBUG
+  std::optional<int64_t> totalStaticSize =
+      utils::getStaticTotalSize(targetShapes);
+  // TODO：support dynamic shape.
+  assert(totalStaticSize.has_value() && "Can only handle static shape");
+#endif
+
+  // 1. Get AllocWorkspaceOp of current block
+  Value localWorkSpace = createAllocLocalWorkSpace(
+      rewriter, loc, targetShapes, elementType);
+
+  // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, localWorkSpace, true, true);
+  return toTensor;
+}
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 SmallVector<int64_t> targetShape,
                                 SmallVector<Value> dynamicSizes,
@@ -903,7 +1167,6 @@ hivm::CreateSyncBlockLockOp createSyncBlockLockVar(OpBuilder &builder,
                                                   /*workspaceArg*/ Value());
   return createSyncBlockLockOp;
 }
-
 std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
   std::vector<std::pair<Value, Value>> result;
   TypeSwitch<Operation *, void>(op)
@@ -920,6 +1183,9 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
         result.emplace_back(op.getResult(), op.getOperand());
       })
 #endif
+      .Case([&](bufferization::ToMemrefOp op) {
+        result.emplace_back(op.getResult(), op.getOperand());
+      })
       .Case([&](bufferization::ToTensorOp op) {
         result.emplace_back(op.getResult(), op.getOperand());
       })
@@ -965,6 +1231,12 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
       .Case([&](tensor::ExtractSliceOp op) {
         result.emplace_back(op.getResult(), op.getSource());
       })
+      .Case([&](vector::TransferReadOp op) {
+        result.emplace_back(op.getResult(), op.getSource());
+      })
+      .Case([&](vector::TransferWriteOp op) {
+        result.emplace_back(op.getResult(), op.getSource());
+      })
       .Case([&](scope::ScopeOp scopeOp) {
         auto returnOp =
             cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
@@ -976,6 +1248,32 @@ std::vector<std::pair<Value, Value>> getOperationAliasInfo(Operation *op) {
   return result;
 }
 
+std::vector<std::pair<Value, Value>> getSCFOperationAliasInfo(Operation *op) {
+  std::vector<std::pair<Value, Value>> result;
+  if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+    for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
+      result.emplace_back(forOp.getRegionIterArgs()[i], arg);
+    }
+  } else if (auto whileOp = dyn_cast<scf::WhileOp>(op)) {
+    for (auto [initArg, blockArg] :
+         llvm::zip(whileOp.getInits(), whileOp.getBeforeArguments())) {
+      result.emplace_back(blockArg, initArg);
+    }
+    auto conditionOp = whileOp.getConditionOp();
+    for (auto [yieldedArg, blockArg] :
+         llvm::zip(conditionOp.getArgs(), whileOp.getAfterArguments())) {
+      result.emplace_back(blockArg, yieldedArg);
+    }
+  } else if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
+    if (auto *parentOp = yieldOp->getParentOp()) {
+      for (auto [yieldVal, resultVal] :
+           llvm::zip(yieldOp->getOpOperands(), parentOp->getResults())) {
+        result.emplace_back(resultVal, yieldVal.get());
+      }
+    }
+  }
+  return result;
+}
 std::optional<int64_t> GetBufferBitSize(Value buffer) {
   auto memRefType = cast<MemRefType>(buffer.getType());
   if (!memRefType) {
@@ -1019,6 +1317,17 @@ AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank) {
       return AlignKind::UNKNOWN;
     // Transforming the static memrefType to the alignment
     if (layout) {
+    if (layout && dim >= 0 &&
+        ShapedType::isDynamicShape(layout.getStrides().slice(dim, rank - dim)))
+      return AlignKind::UNKNOWN;
+    // Transforming the static memrefType to the alignment.
+    //
+    // `dim` may be -1 here when rank == 1 (axisKind == LAST sets
+    // dim = rank - 2). For a strided layout that would OOB at strides[-1];
+    // fall back to the shape-based path which is well-defined for the
+    // empty range `[dim+1 .. rank)` and preserves legacy behavior on
+    // rank-1 no-layout broadcasts.
+    if (layout && dim >= 0) {
       alignKindList.push_back(layout.getStrides()[dim] % alignment == 0
                                   ? AlignKind::ALIGN
                                   : AlignKind::UNALIGNED);
@@ -1042,6 +1351,8 @@ AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank) {
 void setSubBlockMapping(RewriterBase &rewriter, Operation *loop) {
   rewriter.modifyOpInPlace(loop, [&]() {
     loop->setAttr(kMapForToForallAttrName, UnitAttr::get(loop->getContext()));
+    loop->setAttr(utils::kMapForToForallAttrName,
+                  UnitAttr::get(loop->getContext()));
     SmallVector<Attribute> MappingNames;
     MappingNames.push_back(HIVMSubBlockMappingAttr::get(loop->getContext(),
                                                         hivm::MappingId::DimX));
@@ -1151,6 +1462,59 @@ namespace util {
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/MemRef/IR/MemRefOps.cpp
 //===----------------------------------------------------------------------===//
+Value createMemrefAllocOpWithBufferSizeWithTargetElemType(OpBuilder &builder,
+                                                          Location loc,
+                                                          Value source,
+                                                          Type targetElemType) {
+  auto srcShape = dyn_cast<ShapedType>(source.getType()).getShape();
+  SmallVector<OpFoldResult> srcSizes =
+      memref::getMixedSizes(builder, loc, source);
+  SmallVector<Value> dynamicSizes;
+  SmallVector<int64_t> staticSizes;
+  dispatchIndexOpFoldResults(srcSizes, dynamicSizes, staticSizes);
+  auto srcMemrefType = dyn_cast<MemRefType>(source.getType());
+  auto tmpMemrefType =
+      MemRefType::get(srcShape, targetElemType, mlir::AffineMap{},
+                      srcMemrefType.getMemorySpace());
+  auto tmpAllocOp =
+      builder.create<memref::AllocOp>(loc, tmpMemrefType, dynamicSizes);
+
+  if (!dynamicSizes.empty()) {
+    // for dynamic case, set buffer size by annotation.mark op
+    auto tmpMarkOp =
+        builder.create<annotation::MarkOp>(loc, tmpAllocOp->getResult(0));
+    auto srcAlloc = utils::tracebackMemRefToAlloc(source);
+    if (!srcAlloc.has_value())
+      llvm::report_fatal_error("alloc is not found");
+    auto srcAllocMemref = srcAlloc.value().getMemref();
+    auto elemType = getElementTypeOrSelf(srcAllocMemref.getType());
+    auto srcAllocShape = srcAllocMemref.getType().getShape();
+    auto i8TypeWidth = builder.getI8Type().getIntOrFloatBitWidth();
+    auto maybeStaticTotalSize =
+        utils::getStaticTotalSizeInBits(srcAllocShape, elemType);
+    if (!maybeStaticTotalSize.has_value())
+      llvm::report_fatal_error("shape has dynamic dimension");
+    int64_t allocSize =
+        maybeStaticTotalSize.value() / static_cast<int64_t>(i8TypeWidth);
+    tmpMarkOp->setAttr(hivm::kBufferSizeInByteAttr,
+                       builder.getI64IntegerAttr(allocSize));
+  }
+  return tmpAllocOp->getResult(0);
+}
+
+Value createMemrefAllocOpWithBufferSize(OpBuilder &builder, Location loc,
+                                        Value source) {
+  auto srcMemrefType = dyn_cast<MemRefType>(source.getType());
+  auto srcElemType = getElementTypeOrSelf(srcMemrefType);
+  return createMemrefAllocOpWithBufferSizeWithTargetElemType(
+      builder, loc, source, srcElemType);
+}
+
+namespace util {
+/// trace value and judge if it is function argument
+bool isFromFunctionArg(mlir::Value v) {
+  return utils::tracebackMemRef(v).getDefiningOp() == nullptr;
+}
 
 /// A more STRICT version of origin `computeCollapsedLayoutMap` in
 /// `MemRefOps.cpp`, which do not skip dimensions of size 1.
@@ -1168,6 +1532,7 @@ computeCollapsedLayoutMap(MemRefType srcType,
 #else
   if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)))
 #endif
+  if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)))
     return failure();
 
   // The result stride of a reassociation group is the stride of the last
@@ -1285,6 +1650,166 @@ bool isAllSameRank(const SmallVectorImpl<MemRefType> &memrefTypes) {
   });
 }
 
+SmallVector<ReassociationIndices> getContinuousReassociation(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &reassociations) {
+  // no more refine if all dims collapsible within origin reassociation groups
+  bool isCollapsedIntraGroup = llvm::all_of(memrefTypes, [&](MemRefType t) {
+    return util::isGuaranteedCollapsibleStrictly(t, reassociations);
+  });
+  if (isCollapsedIntraGroup) {
+    auto combinedReassociations =
+        util::combineReassociationGroups(memrefTypes, reassociations);
+    return combinedReassociations;
+  }
+
+  // refine reassociations into smaller parts for best effort collapse
+  SmallVector<ReassociationIndices> refinedReassociations;
+  for (const ReassociationIndices &group : reassociations) {
+    if (group.empty()) {
+      continue;
+    }
+    ReassociationIndices refinedGroup{group.front()};
+    const auto *prevIt = group.begin();
+    for (const auto *curIt = prevIt + 1; curIt < group.end();
+         ++curIt, ++prevIt) {
+      assert(*curIt > *prevIt &&
+             "reassociation indices must be ascending order");
+      // pairwise check for collapsible
+      SmallVector<ReassociationIndices> maybeCollapse{{*prevIt, *curIt}};
+      bool pairwiseCollapsed = llvm::all_of(memrefTypes, [&](MemRefType t) {
+        return util::isGuaranteedCollapsibleStrictly(t, maybeCollapse);
+      });
+      if (pairwiseCollapsed) {
+        // if prev and cur reasso indices can be collapsed, add to new group
+        refinedGroup.push_back(*curIt);
+      } else {
+        // if cannot collapse, split cur indice to another new group
+        refinedReassociations.push_back(refinedGroup);
+        refinedGroup.clear();
+        refinedGroup.push_back(*curIt);
+      }
+    }
+    if (!refinedGroup.empty()) {
+      refinedReassociations.push_back(refinedGroup);
+    }
+  }
+
+  // further combine inter-group reassociations
+  return util::combineReassociationGroups(memrefTypes, refinedReassociations);
+}
+
+SmallVector<ReassociationIndices>
+getContinuousReassociation(const SmallVectorImpl<MemRefType> &memrefTypes,
+                           ArrayRef<int64_t> reshapeDims,
+                           ArrayRef<int64_t> permutations) {
+  if (!isAllSameRank(memrefTypes)) {
+    LDBG("MemrefTypes of operands have different rank");
+    return {};
+  }
+
+  // get reassociations by dividing reshape group
+  SmallVector<ReassociationIndices> reassociations;
+  ReassociationIndices reassociation{0};
+  bool prevIsReshape = std::count(reshapeDims.begin(), reshapeDims.end(), 0);
+  auto rank = memrefTypes[0].getRank();
+  for (int64_t i = 1; i < rank; i++) {
+    bool curIsReshape = std::count(reshapeDims.begin(), reshapeDims.end(), i);
+    if (curIsReshape == prevIsReshape &&
+        (permutations.empty() || permutations[i] == permutations[i - 1] + 1)) {
+      reassociation.push_back(i);
+    } else {
+      reassociations.push_back(reassociation);
+      reassociation.clear();
+      reassociation.push_back(i);
+      prevIsReshape = curIsReshape;
+    }
+  }
+  if (!reassociation.empty()) {
+    reassociations.push_back(reassociation);
+  }
+
+  // cut the un-continuous ones into different group
+  auto continuousReassociations =
+      util::getContinuousReassociation(memrefTypes, reassociations);
+  assert(!continuousReassociations.empty());
+  return continuousReassociations;
+}
+
+/// check if current index group can be trivally combined to another
+bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,
+                       const ReassociationIndices &curIndexGroup,
+                       int indexStartPosition) {
+  return llvm::all_of(memrefTypes, [&](const MemRefType &curMemRef) {
+    ArrayRef<int64_t> curShapes = curMemRef.getShape();
+    int curIndexPosition = indexStartPosition;
+    for (int index : curIndexGroup) {
+      if (index != curIndexPosition) {
+        // do not combine transposed dims
+        return false;
+      }
+      curIndexPosition++;
+      if (curShapes[index] != 1) {
+        // do not combine dim with shape more than 1
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+/// if the given index group is not transpose reassociations, and the shape of
+/// each memref type corresponding to each index in the reassociation indices
+/// group is 1, the given index group can be combined.
+bool canCombine(const SmallVectorImpl<MemRefType> &memrefTypes,
+                const ReassociationIndices &lhs,
+                const ReassociationIndices &rhs, int64_t lhsStartIndex,
+                int64_t rhsStartIndex) {
+  // check whether one reassociation index group can be combined to another
+  bool anySideCombinable = canCombineOneSide(memrefTypes, rhs, rhsStartIndex) ||
+                           canCombineOneSide(memrefTypes, lhs, lhsStartIndex);
+  if (!anySideCombinable) {
+    return false;
+  }
+  // check continuous between index groups
+  ReassociationIndices combinedIndexGroup = lhs;
+  combinedIndexGroup.append(rhs);
+  return llvm::all_of(memrefTypes, [&](const MemRefType &curMemRef) {
+    return util::isGuaranteedCollapsibleStrictly(curMemRef,
+                                                 {combinedIndexGroup});
+  });
+}
+
+SmallVector<ReassociationIndices> combineReassociationGroups(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &oldReassociations) {
+  SmallVector<ReassociationIndices> reassociations(oldReassociations.begin(),
+                                                   oldReassociations.end());
+  SmallVector<ReassociationIndices> combinedReassociations;
+  auto *prevIt = reassociations.begin();
+  // used for checking whether contains transposed dim
+  int64_t size = static_cast<int64_t>(reassociations.front().size());
+
+  // combine continuous reassociation index groups
+  for (auto *curIt = reassociations.begin() + 1; curIt < reassociations.end();
+       ++curIt) {
+    if (canCombine(memrefTypes, *prevIt, *curIt, size - prevIt->size(), size)) {
+      // combine current reassociations into current combined group if
+      // possible
+      prevIt->append(*curIt);
+    } else {
+      // otherwise, save current combined group and create a new group
+      combinedReassociations.push_back(*prevIt);
+      prevIt = curIt;
+    }
+    size += static_cast<int64_t>(curIt->size());
+  }
+  // save remained reassociations
+  if (!prevIt->empty()) {
+    combinedReassociations.push_back(*prevIt);
+  }
+  return combinedReassociations;
+}
 bool isLastDimContiguous(Value operand) {
   auto operType = operand.getType();
   if (operType.isIntOrIndexOrFloat()) {
@@ -1298,11 +1823,49 @@ bool isLastDimContiguous(Value operand) {
 #else
   auto [strides, offset] = mem.getStridesAndOffset();
 #endif
+  auto [strides, offset] = getStridesAndOffset(mem);
   assert(!strides.empty() && "strides should not be empty.");
 
   return *shape.rbegin() == 1 || *strides.rbegin() == 1;
 }
 
+/// Trims non-scalable one dimensions from `oldType` and returns the result
+/// type. Copy from
+/// mlir/lib/Dialect/Vector/Transforms/VectorTransferOpTransforms.cpp
+VectorType trimNonScalableUnitDims(VectorType oldType) {
+  SmallVector<int64_t> newShape;
+  SmallVector<bool> newScalableDims;
+  for (auto [dimIdx, dimSize] : llvm::enumerate(oldType.getShape())) {
+    if (dimSize == 1 && !oldType.getScalableDims()[dimIdx])
+      continue;
+    newShape.push_back(dimSize);
+    newScalableDims.push_back(oldType.getScalableDims()[dimIdx]);
+  }
+  return VectorType::get(newShape, oldType.getElementType(), newScalableDims);
+}
+
+bool isOneDimLikeVecType(VectorType vecType) {
+  if (vecType.getRank() == 1)
+    return true;
+  auto shape = vecType.getShape();
+  for (int64_t i = 0, e = vecType.getRank() - 1; i < e; ++i) {
+    if (shape[i] != 1)
+      return false;
+  }
+  return true;
+}
+
+bool isBefore(Operation *before, Operation *after) {
+  if (before->getBlock() == after->getBlock()) {
+    return before->isBeforeInBlock(after);
+  }
+
+  auto afterParentOp = after->getParentOp();
+  if (afterParentOp == nullptr) {
+    return false;
+  }
+  return isBefore(before, afterParentOp);
+}
 bool isGMPointerCastOp(Operation *op) {
   auto pointerCastOp = dyn_cast_or_null<hivm::PointerCastOp>(op);
   if (!pointerCastOp)
@@ -1323,6 +1886,12 @@ bool isArgminOrArgmax(ReduceOperation op) {
          op == ReduceOperation::max_with_index_left ||
          op == ReduceOperation::min_with_index_right ||
          op == ReduceOperation::max_with_index_right;
+bool isSIMTVF(Operation *op) {
+  std::optional<VFMode> vfMode = std::nullopt;
+  if (const auto vfModeAttr = op->getAttrOfType<VFModeAttr>(VFModeAttr::name)) {
+    vfMode = vfModeAttr.getValue();
+  }
+  return vfMode == hivm::VFMode::SIMT;
 }
 
 void validateMultiBufferAttr(mlir::DictionaryAttr attrDict) {

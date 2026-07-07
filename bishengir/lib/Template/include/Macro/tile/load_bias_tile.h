@@ -49,11 +49,19 @@ struct IteratorTileBias<ArchType::ASCEND_V220, ElementBias, TileParams> {
     pipe_barrier(PIPE_MTE2);
     TileGm2L1(bufBias, refBias, 1, 1, 1, tp.tileSizeActual[2],
               tp.tileBSizeRound[1], tp.problemSize[2]);
+#if defined(__DAV_C310__)
+    set_flag(PIPE_MTE2, PIPE_MTE1, LIB_EVENT_ID0);
+#else
     set_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+#endif
 
     auto biasTable = buf_BiasTable + BTOffset::BIAS_BT_OFFSET;
 
+#if defined(__DAV_C310__)
+    wait_flag(PIPE_MTE2, PIPE_MTE1, LIB_EVENT_ID0);
+#else
     wait_flag(PIPE_MTE2, PIPE_MTE1, EVENT_ID0);
+#endif
     l1_to_bt<ArchType::ASCEND_V220, ElementBias>(biasTable, bufBias,
                                                  tp.tileSizeActual[2]);
     set_flag(PIPE_MTE1, PIPE_MTE2,

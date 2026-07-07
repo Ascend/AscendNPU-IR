@@ -25,6 +25,19 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 
@@ -222,6 +235,8 @@ struct RedudantVReduceOp : public OpRewritePattern<VReduceOp> {
         auto arith = reduceOp.getArithAttr().getReduceOp();
         if (VReduceOp::isArgminOrArgmax(arith)) {
           if (!reduceOp->getResult(1).getUsers().empty()) {
+        if (utils::isReduceWithIndex(arith)) {
+          if (!reduceOp->getResult(1).use_empty()) {
             return decomposeRedundantReduceWithIndex(reduceOp, rewriter,
                                                      isa<TensorType>(srcType));
           }
@@ -236,6 +251,7 @@ struct RedudantVReduceOp : public OpRewritePattern<VReduceOp> {
         }
         auto arith = reduceOp.getArithAttr().getReduceOp();
         if (VReduceOp::isArgminOrArgmax(arith)) {
+        if (utils::isReduceWithIndex(arith)) {
           return decomposeRedundantReduceWithIndex(reduceOp, rewriter,
                                                    isa<TensorType>(srcType));
         }
@@ -261,6 +277,7 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
       : OpRewritePattern<VReduceOp>(context, 2) {};
 
   bool isFillByConst(Value v, std::optional<Attribute> maybeCstAttr) const {
+  bool isFillByConst(Value v, Attribute cstAttr) const {
     if (isa<BlockArgument>(v)) {
       auto blockArg = cast<BlockArgument>(v);
       auto parentOp = blockArg.getOwner()->getParentOp();
@@ -268,6 +285,9 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
       if (auto loop = dyn_cast<LoopLikeOpInterface>(parentOp)) {
         auto loopInitVal = loop.getInits()[blockIndx];
         return isFillByConst(loopInitVal, maybeCstAttr);
+      if (auto forOp = dyn_cast<scf::ForOp>(parentOp)) {
+        auto forInitVal = forOp.getInitArgs()[blockIndx];
+        return isFillByConst(forInitVal, cstAttr);
       }
       return false;
     }
@@ -281,6 +301,8 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
         } else {
           return true;
         }
+        auto valAttr = cstOp.getValueAttr();
+        return valAttr == cstAttr;
       }
     }
 
@@ -288,6 +310,9 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
       return isFillByConst(expandOp.getSrc(), maybeCstAttr);
     } else if (auto collapseOp = v.getDefiningOp<tensor::CollapseShapeOp>()) {
       return isFillByConst(collapseOp.getSrc(), maybeCstAttr);
+      return isFillByConst(expandOp.getSrc(), cstAttr);
+    } else if (auto collapseOp = v.getDefiningOp<tensor::CollapseShapeOp>()) {
+      return isFillByConst(collapseOp.getSrc(), cstAttr);
     }
 
     return false;
@@ -323,6 +348,24 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
       return success();
     }
     return failure();
+  LogicalResult matchAndRewrite(VReduceOp reduceOp,
+                                PatternRewriter &rewriter) const final {
+    auto moduleOp = reduceOp->getParentOfType<mlir::ModuleOp>();
+    if (mlir::hacc::utils::isAscend950(moduleOp)) {
+      return failure();
+    }
+    auto reduceInitOperand = reduceOp.getDpsInitOperand(0);
+    auto initAttr = reduceOp.getInit();
+    if (!isFillByConst(reduceInitOperand->get(), initAttr)) {
+      return failure();
+    }
+    auto emptyValue = mlir::tensor::createTensorEmptyOp(
+        rewriter, reduceOp->getLoc(), reduceInitOperand->get());
+    rewriter.modifyOpInPlace(reduceOp, [&]() {
+      reduceOp.getDpsInitsMutable()[0].assign(emptyValue);
+    });
+
+    return success();
   }
 };
 
@@ -543,7 +586,7 @@ void DebugOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                           ::mlir::MLIRContext *context) {
   results.add<FoldTrivialAssertDebugOp>(context);
 }
-
+} // namespace
 void VPowOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
                                          ::mlir::MLIRContext *context) {
   results.add<RedudantVPowOp>(context);
@@ -562,6 +605,7 @@ void VReduceOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
               RedudantVReduceInitOp
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
               >(context);
+  results.add<RedudantVReduceOp, RedudantVReduceInitOp>(context);
 }
 
 void VCumsumOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
@@ -574,6 +618,15 @@ void VCumprodOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
   results.add<RedundantVCumOp<VCumprodOp>>(context);
 }
 
+void VCummaxOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<RedundantVCumOp<VCummaxOp>>(context);
+}
+
+void VCumminOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<RedundantVCumOp<VCumminOp>>(context);
+}
 void VTransposeOp::getCanonicalizationPatterns(
     ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
   results.add<RedudantVTransposeOpOp>(context);
@@ -609,4 +662,61 @@ LogicalResult StoreOp::fold(hivm::StoreOp::FoldAdaptor adaptor,
 void mlir::hivm::HIVMDialect::getCanonicalizationPatterns(
     ::mlir::RewritePatternSet &results) const {
   results.add<EliminateTrivialInlineBrc>(getContext());
+template <typename CustomOpT>
+struct CustomOpCanonicalizer : public OpRewritePattern<CustomOpT> {
+  using OpRewritePattern<CustomOpT>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CustomOpT customOp,
+                                PatternRewriter &rewriter) const final {
+    if (!customOp.isBuiltin())
+      return failure();
+
+    const auto &builtinInfo = CustomOpT::kBuiltins.at(customOp.getName());
+    const auto &coreType = customOp.getCoreType();
+    if (!coreType || *coreType != builtinInfo.coreType) {
+      customOp.setCoreType(builtinInfo.coreType);
+      return success();
+    }
+
+    if constexpr (std::is_same_v<CustomOpT, CustomOp>) {
+      if (customOp.getPipe() != builtinInfo.pipe) {
+        customOp.setPipe(builtinInfo.pipe);
+        return success();
+      }
+    } else if constexpr (std::is_same_v<CustomOpT, CustomMacroOp>) {
+      if (customOp.getInPipe() != builtinInfo.inPipe) {
+        customOp.setInPipe(builtinInfo.inPipe);
+        return success();
+      }
+      if (customOp.getOutPipe() != builtinInfo.outPipe) {
+        customOp.setOutPipe(builtinInfo.outPipe);
+        return success();
+      }
+    }
+
+    const auto &vfMode = customOp.getVFMode();
+    if (!vfMode || *vfMode != builtinInfo.vfMode) {
+      customOp.setVFMode(builtinInfo.vfMode);
+      return success();
+    }
+
+    const auto &gmAddrArgsIndices = customOp.getGMAddrArgsIndices();
+    if (!gmAddrArgsIndices ||
+        *gmAddrArgsIndices != builtinInfo.gmAddrArgsIndices) {
+      customOp.setGMAddrArgsIndices(builtinInfo.gmAddrArgsIndices);
+      return success();
+    }
+
+    return failure();
+  }
+};
+
+void CustomOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                           ::mlir::MLIRContext *context) {
+  results.add<CustomOpCanonicalizer<CustomOp>>(context);
+}
+
+void CustomMacroOp::getCanonicalizationPatterns(
+    ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
+  results.add<CustomOpCanonicalizer<CustomMacroOp>>(context);
 }

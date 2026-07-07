@@ -84,6 +84,11 @@ struct TensorToHIVMConcatOp : public OpRewritePattern<tensor::ConcatOp> {
     }
     return std::nullopt;
   }
+    rewriter.replaceOpWithNewOp<hivm::VConcatOp>(
+        concatOp, concatOp.getResult().getType(), concatOp.getDim(),
+        concatOp.getInputs(), emptyDest);
+    return success();
+  }
 };
 
 //===----------------------------------------------------------------------===//

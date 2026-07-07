@@ -24,6 +24,26 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Analysis/DataFlow/ConstantPropagationAnalysis.h"
+#include "mlir/Analysis/DataFlow/DeadCodeAnalysis.h"
+#include "mlir/Analysis/DataFlow/SparseAnalysis.h"
+#include "mlir/AsmParser/AsmParser.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/TypeUtilities.h"
+#include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "hivm-impl"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
@@ -37,6 +57,149 @@ using namespace mlir::utils::debugger;
 namespace mlir {
 using namespace utils;
 namespace hivm {
+
+static Value getOperandToPropagateFrom(Operation *operation) {
+  return TypeSwitch<Operation *, Value>(operation)
+      .Case([](tensor::CollapseShapeOp tensorCollapseShapeOp) {
+        return tensorCollapseShapeOp.getSrc();
+      })
+      .Case([](tensor::ExpandShapeOp tensorExpandShapeOp) {
+        return tensorExpandShapeOp.getSrc();
+      })
+      .Case([](tensor::ExtractSliceOp extractSliceOp) {
+        return extractSliceOp.getSource();
+      })
+      .Case([](tensor::InsertSliceOp insertSliceOp) {
+        return insertSliceOp.getSource();
+      })
+      .Case([](bufferization::ToMemrefOp toMemrefOp) {
+        return toMemrefOp.getOperand();
+      })
+      .Case([](bufferization::ToTensorOp toTensorOp) {
+        return toTensorOp.getOperand();
+      })
+      .Case([](ViewLikeOpInterface viewOp) { return viewOp.getViewSource(); })
+      .Default({});
+}
+
+struct PossibleDefinesValue {
+  using DefinesT = DenseSet<Operation *>;
+  DefinesT possibleDefines = {};
+
+  PossibleDefinesValue() = default;
+  explicit PossibleDefinesValue(DefinesT defs)
+      : possibleDefines(std::move(defs)) {}
+  explicit PossibleDefinesValue(Operation *def) : possibleDefines({def}) {}
+
+  const DefinesT &getDefines() const { return possibleDefines; }
+
+  bool isUnknown() const { return possibleDefines.empty(); }
+
+  static PossibleDefinesValue join(const PossibleDefinesValue &l,
+                                   const PossibleDefinesValue &r) {
+    if (l.isUnknown()) {
+      return r;
+    }
+    if (r.isUnknown()) {
+      return l;
+    }
+
+    auto a = l.getDefines();
+    auto b = r.getDefines();
+
+    DefinesT results;
+    results.insert(a.begin(), a.end());
+    results.insert(b.begin(), b.end());
+
+    return PossibleDefinesValue(std::move(results));
+  }
+
+  bool operator==(const PossibleDefinesValue &other) const {
+    return getDefines() == other.getDefines();
+  }
+
+  void print(llvm::raw_ostream &os) const {
+    os << "{\n";
+    for (auto *def : getDefines()) {
+      os << def << ", ";
+    }
+    os << "}\n";
+  }
+};
+
+using PossibleDefinesLattice = dataflow::Lattice<PossibleDefinesValue>;
+using PossibleDefinesAnalysisBase =
+    dataflow::SparseForwardDataFlowAnalysis<PossibleDefinesLattice>;
+
+struct PossibleDefinesAnalysis : public PossibleDefinesAnalysisBase {
+  explicit PossibleDefinesAnalysis(DataFlowSolver &solver)
+      : PossibleDefinesAnalysisBase(solver) {}
+
+  void setToEntryState(PossibleDefinesLattice *lattice) override {
+    this->propagateIfChanged(lattice, lattice->join(PossibleDefinesValue()));
+  }
+
+  LogicalResult
+  visitOperation(Operation *op,
+                 ArrayRef<const PossibleDefinesLattice *> operands,
+                 ArrayRef<PossibleDefinesLattice *> results) override {
+    if (results.empty()) {
+      return success();
+    }
+
+    PossibleDefinesValue newInfo(op);
+    if (Value propagateOperand = getOperandToPropagateFrom(op)) {
+      newInfo = PossibleDefinesValue::join(
+          newInfo, getLatticeElement(propagateOperand)->getValue());
+    }
+
+    for (auto *res : results) {
+      this->propagateIfChanged(res, res->join(newInfo));
+    }
+
+    return success();
+  }
+};
+
+mlir::func::FuncOp getParentFuncOp(mlir::Value value) {
+  mlir::Operation *definingOp = nullptr;
+
+  if (auto blockArg = mlir::dyn_cast<mlir::BlockArgument>(value)) {
+    mlir::Block *block = blockArg.getOwner();
+    if (!block)
+      return nullptr;
+    definingOp = block->getParentOp();
+  } else {
+    definingOp = value.getDefiningOp();
+  }
+
+  if (!definingOp)
+    return nullptr;
+
+  return definingOp->getParentOfType<mlir::func::FuncOp>();
+}
+
+DenseSet<Operation *> getPotentialDefiners(Value v) {
+  auto funcOp = getParentFuncOp(v);
+  if (!funcOp)
+    return {};
+
+  DataFlowSolver solver;
+  solver.load<dataflow::DeadCodeAnalysis>();
+  solver.load<dataflow::SparseConstantPropagation>();
+  solver.load<PossibleDefinesAnalysis>();
+
+  if (failed(solver.initializeAndRun(funcOp))) {
+    return {};
+  }
+
+  auto *state = solver.lookupState<PossibleDefinesLattice>(v);
+  if (!state || state->getValue().isUnknown()) {
+    return {};
+  }
+
+  return state->getValue().possibleDefines;
+}
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v) {
   auto it = std::find(valueVec.begin(), valueVec.end(), v);
   if (it != valueVec.end()) {
@@ -46,6 +209,9 @@ std::optional<int> findIdx(SmallVector<Value> valueVec, Value v) {
 }
 
 static bool isIgnoredOp(Operation *op) { return isa<tensor::DimOp>(op); }
+static bool isIgnoredOp(Operation *op) {
+  return isa<tensor::DimOp, annotation::MarkOp>(op);
+}
 
 template <typename Container>
 static Container filterNonIgnoredOps(const Container &container) {
@@ -69,6 +235,9 @@ int64_t getUsersNum(Value v) {
     }
   }
   return users.size();
+  return filterNonIgnoredOps(
+             DenseSet<Operation *>(v.getUsers().begin(), v.getUsers().end()))
+      .size();
 }
 
 bool isLocalMatmulInit(Operation *op, Value v) {
@@ -142,6 +311,27 @@ bool traceSingleChainUser(
     auto idx = findIdx(yieldValues, v);
     if (idx.has_value()) {
       auto forResult = loopLikeOp.getLoopResults().value()[idx.value()];
+  if (isa<scf::ForOp>(curOperation)) {
+    auto forOp = dyn_cast_if_present<scf::ForOp>(curOperation);
+    auto initArgs = forOp.getInitArgs();
+    auto it = std::find(initArgs.begin(), initArgs.end(), v);
+    int initIndx = it == initArgs.end() ? -1 : it - initArgs.begin();
+    if (initIndx >= 0) {
+      bool hasTraceMmad = traceSingleChainUser(
+          forOp.getRegionIterArgs()[initIndx], isMatchedOp);
+      return (getUsersNum(initArgs[initIndx]) == 1 && hasTraceMmad);
+    }
+  }
+
+  if (isa<scf::ForOp>(curOperation->getParentOp()) &&
+      isa<scf::YieldOp>(curOperation)) {
+    auto scfForOp =
+        dyn_cast_if_present<scf::ForOp>(curOperation->getParentOp());
+    SmallVector<Value> yieldValues =
+        llvm::to_vector(scfForOp.getYieldedValues());
+    auto idx = findIdx(yieldValues, v);
+    if (idx.has_value()) {
+      auto forResult = scfForOp.getLoopResults().value()[idx.value()];
       return traceSingleChainUser(forResult, isMatchedOp);
     }
   }
@@ -156,7 +346,6 @@ bool traceSingleChainUser(
       return traceSingleChainUser(
           whileOp.getAfter().front().getArgument(idx.value()), isMatchedOp);
   }
-
   if (isa<scf::IfOp>(curOperation->getParentOp()) &&
       isa<scf::YieldOp>(curOperation)) {
     auto scfIfOp = dyn_cast_if_present<scf::IfOp>(curOperation->getParentOp());
@@ -242,6 +431,8 @@ std::optional<TFuncCoreType> queryFuncCoreType(Operation *funcOp) {
     return std::nullopt;
   }
 
+  if (funcOp->hasAttr(hivm::VectorFunctionAttr::name))
+    return hivm::TFuncCoreType::AIV;
   auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
       hivm::TFuncCoreTypeAttr::name);
   if (tFuncCoreTypeAttr) {
@@ -268,6 +459,11 @@ bool isCopytoL1(Operation *op) {
 }
 
 FailureOr<TCoreType> getCoreType(Operation *op) {
+  // TODO: Refactor, move impl. to func.call op's InferCoreType interface
+  // external model
+  if (isVFCall(op) || isCopytoL1(op)) {
+    return TCoreType::VECTOR;
+  }
   // coretype attribute has the highest priority.
   if (auto coreTypeAttr =
           op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name)) {
@@ -304,9 +500,18 @@ FailureOr<TCoreType> getCoreType(Operation *op) {
   }
   if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
     if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
+  } else if (auto forOp = dyn_cast_or_null<scf::ForOp>(op)) {
+    if (Attribute attr = forOp->getAttr(kPipelinedLoopCoreTypeAttrName)) {
+      return cast<TCoreTypeAttr>(attr).getTcoretype();
+    } else if (auto attr = forOp->getAttr(ExtractLoadStoreAttr)) {
       // ExtractedLoadOrStore describes the process of discretely loading
       // scalars on ub.which should be split into aiv kernel
       return TCoreType::VECTOR;
+    }
+  } else if (isa<scope::ScopeOp>(op)) {
+    // For scope ops, loop_core_type overrides the tcore_type attribute.
+    if (Attribute attr = op->getAttr(kPipelinedLoopCoreTypeAttrName)) {
+      return cast<TCoreTypeAttr>(attr).getTcoretype();
     }
   }
   return TCoreType::CUBE_OR_VECTOR;
@@ -358,6 +563,7 @@ Type getAnnotationMarkByteAlignment(Value value) {
     }
     for (int i = 0; i < alignBytes.size(); ++i) {
       assert(alignBytes[i] * 8 % elemType.getIntOrFloatBitWidth() == 0);
+      assert(alignBytes[i] * 8 % static_cast<int>(elemType.getIntOrFloatBitWidth()) == 0);
       auto alignElemNum = alignBytes[i] * 8 /
                           static_cast<int>(elemType.getIntOrFloatBitWidth());
       strideAlignElems[alignDims[i]] =
@@ -380,6 +586,8 @@ Type getAnnotationMarkByteAlignment(Value value) {
 #else
   auto [strides, offset] = memrefType.getStridesAndOffset();
 #endif
+
+  auto [strides, offset] = getStridesAndOffset(memrefType);
   llvm::SmallVector<int64_t> alignedStrides(rank, 1);
   for (int64_t i = 0; i < rank; i++) {
     if (strideAlignElems[i] == 1) {
@@ -408,6 +616,7 @@ Type getAnnotationMarkByteAlignment(Value value) {
 VCastOp castTo(OpBuilder &builder, Location loc, Value src,
                hivm::RoundModeAttr roundMode, Type targetElemType,
                hivm::TypeFnAttr typeFnAttr) {
+               hivm::TypeFn casting) {
   // Create targetTensor
   Value targetTensor =
       createTmpBufferOrTensorWithTargetType(builder, loc, src, targetElemType);
@@ -429,7 +638,106 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
       loc, resultTypeRange, src, targetTensor, roundMode, typeFnAttr);
   return VCastOp;
 }
+    llvm_unreachable("Cast src is neither in tensor type nor in memref type");
+    return nullptr;
+  }
+  mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
+      loc, resultTypeRange, src, targetTensor,
+      roundMode, builder.getAttr<hivm::TypeFnAttr>(casting));
+  return VCastOp;
+}
 
+std::pair<bool, bool> analyzeCoreTypes(Block *block) {
+  bool hasC = false, hasV = false;
+  if (!block || block->empty()) {
+    LDBG("Empty block or nullptr");
+    return std::pair<bool, bool>(hasC, hasV);
+  }
+  for (Operation &op : *block) {
+    auto coreType = mlir::hivm::detail::queryCoreTypeHelper(&op);
+
+    if (coreType.has_value()) {
+      if (coreType.value() == TCoreType::CUBE) {
+        hasC = true;
+      } else if (coreType.value() == TCoreType::VECTOR) {
+        hasV = true;
+      }
+    }
+
+    if (op.getNumRegions() > 0) {
+      for (Region &region : op.getRegions()) {
+        for (Block &nestedBlock : region) {
+          auto [nestedHasC, nestedHasV] = analyzeCoreTypes(&nestedBlock);
+          hasC = hasC || nestedHasC;
+          hasV = hasV || nestedHasV;
+        }
+      }
+    }
+  }
+  return std::pair<bool, bool>(hasC, hasV);
+}
+
+bool hasOnlySplittableRegions(Block *block) {
+  if (!block) {
+    return true;
+  }
+  for (Operation &op : *block) {
+    if (op.getNumRegions() == 0) {
+      continue;
+    }
+    if (isa<scf::IfOp>(&op)) {
+      for (Region &region : op.getRegions()) {
+        for (Block &nestedBlock : region) {
+          if (!hasOnlySplittableRegions(&nestedBlock)) {
+            return false;
+          }
+        }
+      }
+      continue;
+    }
+    // Non-scf.if region ops (scf.for, scf.while, ...) are allowed only if
+    // their body is uniform-core. WorklistBuilder treats such ops atomically
+    // via pipeline.cubeonly / pipeline.veconly annotations. Mixed-core region
+    // ops need a different transformation (hoisting / unrolling) first.
+    bool hasC = false, hasV = false;
+    for (Region &region : op.getRegions()) {
+      for (Block &nestedBlock : region) {
+        auto [nc, nv] = analyzeCoreTypes(&nestedBlock);
+        hasC = hasC || nc;
+        hasV = hasV || nv;
+      }
+    }
+    if (hasC && hasV) {
+      return false;
+    }
+  }
+  return true;
+}
+
+//===----------------------------------------------------------------------===//
+// Termination Check
+//===----------------------------------------------------------------------===//
+bool needsSplit(scf::IfOp ifOp) {
+  if (!hasOnlySplittableRegions(ifOp.thenBlock()) ||
+      !hasOnlySplittableRegions(ifOp.elseBlock())) {
+    return false;
+  }
+
+  auto [thenHasC, thenHasV] = analyzeCoreTypes(ifOp.thenBlock());
+  auto [elseHasC, elseHasV] = ifOp.getElseRegion().empty()
+                                  ? std::pair<bool, bool>{false, false}
+                                  : analyzeCoreTypes(ifOp.elseBlock());
+
+  if ((thenHasC && thenHasV) || (elseHasC && elseHasV)) {
+    return true;
+  }
+
+  if ((thenHasC && elseHasV) || (thenHasV && elseHasC)) {
+    return true;
+  }
+
+  return false;
+}
 namespace util {
 bool isIdentityCollapse(ArrayRef<ReassociationIndices> reassociations) {
   return llvm::all_of(reassociations,
@@ -953,6 +1261,14 @@ void SyncEventSlotAttr::print(AsmPrinter &printer) const {
   }
   printer << ">";
 }
+} // namespace util
 
+Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
+                       Type elemType) {
+  mlir::IRRewriter rewriter(op->getContext());
+  rewriter.setInsertionPoint(op);
+  return rewriter.create<memref::AllocOp>(op->getLoc(),
+                                          MemRefType::get(bufSize, elemType));
+}
 } // namespace hivm
 } // namespace mlir

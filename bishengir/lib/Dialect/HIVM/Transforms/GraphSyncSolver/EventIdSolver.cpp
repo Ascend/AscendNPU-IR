@@ -164,6 +164,8 @@ EventIdNode *EventIdSolver::getNode(ConflictPair *conflictPair) {
 
 std::unique_ptr<EventIdSolver> EventIdSolver::clone() {
   auto clonedEventIdSolver = std::make_unique<EventIdSolver>(eventIdsNumMax);
+  auto clonedEventIdSolver =
+      std::make_unique<EventIdSolver>(eventIdsNumMax, preferNewEventIds);
   llvm::DenseMap<EventIdNode *, EventIdNode *> mp;
   for (auto &node : nodes) {
     auto clonedNode = node->clone();
@@ -266,6 +268,54 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
         chosenEventIds.push_back(curEventId);
       }
       curEventId++;
+  llvm::SmallVector<int64_t> chosenEventIds;
+  llvm::SmallVector<int64_t> usedEventIds = getAdjNodesUsedEventIds(node);
+  if (!node->reversePriority) {
+    if (preferNewEventIds) {
+      // Prefer brand-new event IDs above the current global maximum; only fall
+      // back to reusing smaller unused IDs once the
+      // [eventIdMax+1, eventIdsNumMax) range is exhausted.
+      llvm::SmallDenseSet<int64_t> usedSet(usedEventIds.begin(),
+                                           usedEventIds.end());
+      int64_t curEventId = eventIdMax + 1;
+      while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum &&
+             curEventId < this->eventIdsNumMax) {
+        if (!usedSet.contains(curEventId)) {
+          chosenEventIds.push_back(curEventId);
+        }
+        curEventId++;
+      }
+      if (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+        int64_t fillId = 0;
+        while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum &&
+               fillId <= eventIdMax) {
+          if (!usedSet.contains(fillId)) {
+            chosenEventIds.push_back(fillId);
+          }
+          fillId++;
+        }
+        while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+          if (!usedSet.contains(curEventId)) {
+            chosenEventIds.push_back(curEventId);
+          }
+          curEventId++;
+        }
+        llvm::sort(chosenEventIds);
+      }
+    } else {
+      int64_t curEventId = 0;
+      auto *it = usedEventIds.begin();
+      while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+        while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
+          it++;
+        }
+        if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
+          it++;
+        } else {
+          chosenEventIds.push_back(curEventId);
+        }
+        curEventId++;
+      }
     }
   } else {
     int64_t curEventId = std::max(eventIdMax, this->eventIdsNumMax - 1);
@@ -319,7 +369,6 @@ EventIdSolver::allocateUnusedEventId(int64_t eventIdMax) {
   }
   return std::nullopt;
 }
-
 void EventIdSolver::calcEventIds() {
   auto cmp = [](const std::pair<int64_t, EventIdNode *> &a,
                 const std::pair<int64_t, EventIdNode *> &b) {
@@ -405,6 +454,7 @@ void EventIdSolver::undoActions() {
         })
         .Default([](Action *action) {
           llvm::report_fatal_error("EventIdSolver: unhandled action_type.");
+          llvm_unreachable("EventIdSolver: unhandled action_type.");
         });
   }
   if (!actionsStack.empty()) {

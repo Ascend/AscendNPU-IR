@@ -20,8 +20,12 @@
 
 #include "bishengir/Config/bishengir-config.h"
 
-#if MLIR_ENABLE_EXECUTION_ENGINE
+#if (defined(MLIR_ENABLE_EXECUTION_ENGINE) && MLIR_ENABLE_EXECUTION_ENGINE) || \
+    defined(BISHENGIR_ENABLE_EXECUTION_ENGINE)
+#define BISHENGIR_HAS_EXECUTION_ENGINE 1
 #include "bishengir/Pass/CPURunnerMetadata.h"
+#else
+#define BISHENGIR_HAS_EXECUTION_ENGINE 0
 #endif
 
 #include <string>
@@ -35,6 +39,7 @@ public:
   // -------------------------------------------------------------------------//
   //                    Input & Output setting options
   // -------------------------------------------------------------------------//
+
 
   BiShengIRCompileConfigBase &setInputFile(const std::string &file) {
     inputFileFlag = file;
@@ -53,20 +58,20 @@ public:
   // -------------------------------------------------------------------------//
 
   bool shouldEnableCPURunner() const {
-#if MLIR_ENABLE_EXECUTION_ENGINE
+#if BISHENGIR_HAS_EXECUTION_ENGINE
     return enableCPURunnerFlag.numOccurrences != 0 ||
            enableCPURunnerBeforeFlag.numOccurrences != 0 ||
            enableCPURunnerAfterFlag.numOccurrences != 0;
 #else
     return false;
-#endif // MLIR_ENABLE_EXECUTION_ENGINE
+#endif
   }
 
   //===--------------------------------------------------------------------===//
   //                          CPU Runner Options
   //===--------------------------------------------------------------------===//
 
-#if MLIR_ENABLE_EXECUTION_ENGINE
+#if BISHENGIR_HAS_EXECUTION_ENGINE
   CPURunnerMetadata<false> CPURunnerOpt() const { return enableCPURunnerFlag; }
 
   CPURunnerMetadata<true> CPURunnerBeforeOpt() const {
@@ -76,22 +81,21 @@ public:
   CPURunnerMetadata<true> CPURunnerAfterOpt() const {
     return enableCPURunnerAfterFlag;
   }
-#endif // MLIR_ENABLE_EXECUTION_ENGINE
+#endif
 
 protected:
-  /// Output binary file path.
   std::string inputFileFlag{"-"};
-
-  /// Output binary file path.
   std::string outputFileFlag{"-"};
 
-#if MLIR_ENABLE_EXECUTION_ENGINE
+#if BISHENGIR_HAS_EXECUTION_ENGINE
   CPURunnerMetadata<false> enableCPURunnerFlag;
   CPURunnerMetadata<true> enableCPURunnerBeforeFlag;
   CPURunnerMetadata<true> enableCPURunnerAfterFlag;
-#endif // MLIR_ENABLE_EXECUTION_ENGINE
+#endif
 };
 
 } // namespace bishengir
+
+#undef BISHENGIR_HAS_EXECUTION_ENGINE
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_CONFIG_BASE_CONFIG_H

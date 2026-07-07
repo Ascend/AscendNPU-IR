@@ -104,7 +104,7 @@ def MathExt_LgammaOp : MathExt_FloatUnaryOp<"lgamma"> {
 
   }];
 }
- 	 
+
 //===----------------------------------------------------------------------===//
 // LdexpOp
 //===----------------------------------------------------------------------===//
@@ -118,6 +118,18 @@ def MathExt_LdexpOp : MathExt_FloatBinaryOp<"ldexp"> {
     scalar, tensor or vector) and returns one result of the same type. Operands
     must have the same type.
 
+  }];
+  let hasFolder = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// DivFHPOp
+//===----------------------------------------------------------------------===//
+
+def MathExt_DivFHPOp : MathExt_FloatBinaryOp<"divfhp"> {
+  let summary = "a a high precision division";
+  let description = [{
+    Computes division recovering last ULPs
   }];
   let hasFolder = 1;
 }

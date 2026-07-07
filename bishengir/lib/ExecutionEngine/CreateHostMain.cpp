@@ -232,6 +232,8 @@ struct CreateHostMainPass
       result = rewriter.create<bufferization::ToBufferOp>(loc, targetType,
                                                           result, nullptr);
 #endif
+      result = rewriter.create<bufferization::ToMemrefOp>(loc, targetType,
+                                                          result, nullptr);
     } else if (toTensor) {
       result = rewriter.create<bufferization::ToTensorOp>(
           loc, targetType, result, rewriter.getUnitAttr(),
@@ -375,6 +377,7 @@ struct CreateHostMainPass
         llvm::map_to_vector(
             kernelFunc.getFunctionType().getInputs(),
             [](const Type &t) { return cast<ShapedType>(t); }));
+            static_cast<ShapedType (*)(const Type &)>(cast<ShapedType>)));
     auto kernelCall = rewriter.create<func::CallOp>(
         loc, kernelFunc,
         SmallVector<Value>(kernelOperands.begin(), kernelOperands.end()));

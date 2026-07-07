@@ -23,6 +23,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectRegistry.h"
 
@@ -53,7 +54,6 @@ private:
   static LogicalResult downgradeToBufferOp(Operation *topLevelOp) {
     MLIRContext *ctx = topLevelOp->getContext();
     ctx->allowUnregisteredDialects();
-
     SmallVector<Operation *> toBufferOps;
     topLevelOp->walk([&](Operation *op) {
       if (op->getName().getStringRef() == "bufferization.to_buffer")
@@ -69,6 +69,35 @@ private:
       auto readOnlyAttr = op->getAttrOfType<UnitAttr>("read_only");
       auto toMemrefOp = builder.create<bufferization::ToMemrefOp>(
           op->getLoc(), memrefType, tensorInput, readOnlyAttr);
+    OpBuilder builder(topLevelOp->getContext());
+    for (Operation *op : toBufferOps) {
+      if (op->getNumOperands() != 1 || op->getNumResults() != 1)
+        return op->emitError(
+            "expected 1 operand and 1 result for bufferization.to_buffer "
+            "during bytecode downgrade");
+
+      Value tensorInput = op->getOperand(0);
+      Type resultType = op->getResult(0).getType();
+      if (!isa<TensorType>(tensorInput.getType()))
+        return op->emitError(
+            "expected tensor operand type for bufferization.to_buffer during "
+            "bytecode downgrade");
+      if (!isa<BaseMemRefType>(resultType))
+        return op->emitError(
+            "expected memref result type for bufferization.to_buffer during "
+            "bytecode downgrade");
+
+      Attribute readOnlyAttr = op->getAttr("read_only");
+      if (readOnlyAttr && !isa<UnitAttr>(readOnlyAttr))
+        return op->emitError(
+            "expected 'read_only' to be a unit attribute for "
+            "bufferization.to_buffer during bytecode downgrade");
+
+      builder.setInsertionPoint(op);
+      auto readOnlyUnitAttr =
+          readOnlyAttr ? cast<UnitAttr>(readOnlyAttr) : UnitAttr();
+      auto toMemrefOp = builder.create<bufferization::ToMemrefOp>(
+          op->getLoc(), resultType, tensorInput, readOnlyUnitAttr);
       op->replaceAllUsesWith(toMemrefOp);
       op->erase();
     }

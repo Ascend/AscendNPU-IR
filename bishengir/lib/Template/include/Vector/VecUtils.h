@@ -159,6 +159,7 @@ __aiv__ __attribute__((always_inline)) bool is_no_op(int64_t sizes[Dim]) {
 /// 1. num <= 64
 __aiv__ __attribute__((always_inline)) uint64_t getMaskOfNumber(int64_t num);
 
+#if !defined(__DAV_M300__)
 /// get max repeat times of vcmpv/vcmpvs intr
 /// for normal vector intr, max repeat time is fixed 255, but for cmp vec op,
 /// the max repeat time need guarantee dst operand alignment
@@ -333,6 +334,7 @@ select_channel0_from_block(memref_t<__ubuf__ T, DIM> *src,
 
   INTRINSIC_NO_ARGS(set_mask_norm);
 }
+#endif // !defined(__DAV_M300__)
 
 // view as new type. if sizeof(dst_type) is n multiple of size_of(src_type),
 // the size will be larger when size of src is not multiple of n.
@@ -416,6 +418,7 @@ throw_Nd_to_Md_args(memref_t<__ubuf__ T, N> *buf_Nd,
   }
 }
 
+#if !defined(__DAV_M300__)
 /// dst = vector_select(condition, src0, src1)
 /// here condition_addr_buf is the ub buffer which store the addr of condition
 template <typename T>
@@ -734,6 +737,19 @@ divisions_needed_by_pow2(int64_t S, int64_t T, int k) {
   return n;
 }
 
+/// Calculate the smallest n that 2^n >= value.
+///
+/// constraints:
+/// 1. max value <= ((int64_t)1 << 31) - 1.
+__aiv__ __attribute__((always_inline)) constexpr int CeilLog2(int64_t size) {
+  int64_t sum = 1;
+  int64_t i = 0;
+  for (i = 0; sum < size; ++i) {
+    sum = sum << 1;
+  }
+  return i;
+}
+
 /// Calculate n^m.
 ///
 /// constraints:
@@ -746,6 +762,12 @@ __aiv__ __attribute__((always_inline)) constexpr uint64_t pow(uint64_t n,
   }
   return sum;
 }
+
+/// mask of num = (1 << num) - 1.
+///
+/// constraints:
+/// 1. num <= 64
+__aiv__ __attribute__((always_inline)) uint64_t getMaskOfNumber(int64_t num);
 
 /// Take the r0 numbers sequentially starting from the low bit.
 /// This is a general way to set the mask by count.
@@ -813,7 +835,7 @@ vector_eltwise_vs_intrin(intrin_args<1, SRC_TYPE, DST_TYPE> args) {
   } else if constexpr (OP == VectorOpTy::VSHL) {
     INTRINSIC(vshl, ELTWISE_VS_ARGS);
   } else if constexpr (OP == VectorOpTy::VSHR) {
-    // TODO support arithmetic shit right (i16/i32)
+    // TODO support arithmetic shift right (i16/i32)
     // set round mode as 0 by default (logic shift right)
     INTRINSIC(vshr, ELTWISE_VS_ARGS, 0);
   } else if constexpr (OP == VectorOpTy::VCMPS_EQ) {
@@ -914,6 +936,7 @@ template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_cmp(memref_t<__ubuf__ T, 1> *src0, memref_t<__ubuf__ T, 1> *dst_value,
            __ubuf__ uint8_t *ub_mask_ptr) {
+
   __ubuf__ T *src_ptr = src0->aligned + src0->offset;
   __ubuf__ T *dst_value_ptr = dst_value->aligned + dst_value->offset;
 
@@ -1967,4 +1990,5 @@ DECLARE_ELTWISE_V(vnot, VectorOpTy::VNOT, 3, uint32_t);
 DECLARE_ELTWISE_V(vnot, VectorOpTy::VNOT, 3, int64_t);
 DECLARE_ELTWISE_V(vnot, VectorOpTy::VNOT, 3, uint64_t);
 }
+#endif // !defined(__DAV_M300__)
 #endif // HIVM_MLIR_TEMPLATE_VECTOR_UTILS_H

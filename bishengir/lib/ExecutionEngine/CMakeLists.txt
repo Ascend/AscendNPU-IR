@@ -44,6 +44,7 @@ if(LLVM_ENABLE_PIC)
 
     LINK_LIBS PUBLIC
     MLIRSupport
+    MLIRIR
     mlir_float16_utils
   )
   set_property(TARGET bishengir_runner_utils PROPERTY CXX_STANDARD 17)

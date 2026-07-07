@@ -51,6 +51,7 @@ inline void ReachabilityAnalyzer::getAndSetMemrefEdge(Operation *op,
       edge[lastOperationOnMemref[ref]].push_back(curIdx);
     else
       llvm::report_fatal_error("should be DAG");
+      llvm_unreachable("should be DAG");
   }
   lastOperationOnMemref[ref] = curIdx;
 }
@@ -165,6 +166,7 @@ void ReachabilityAnalyzer::computeReachabilityMatrix(size_t numOps) {
       posQueue.pop();
 
       assert(current >= 0 && current < static_cast<int>(numOps) &&
+      assert(current >= 0 && current < ssize_t(numOps) &&
              "Current index out of bounds");
       assert(reachabilityMatrix[start][current] != kMaxDistance &&
              "Unreachable node in queue");
@@ -174,6 +176,7 @@ void ReachabilityAnalyzer::computeReachabilityMatrix(size_t numOps) {
 
       for (int next : edge[current]) {
         assert(next >= 0 && next < static_cast<int>(numOps) &&
+        assert(next >= 0 && next < ssize_t(numOps) &&
                "Next index out of bounds");
 
         if (reachabilityMatrix[start][next] == kMaxDistance ||

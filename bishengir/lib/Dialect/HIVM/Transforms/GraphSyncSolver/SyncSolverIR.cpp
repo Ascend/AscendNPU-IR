@@ -19,6 +19,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/StringExtras.h"
 #include <string>
 
@@ -34,6 +36,7 @@ std::string getOpTypeStr(OpType opType) {
   const llvm::DenseMap<OpType, std::string> conv = {
       {OpType::OPERATION, "OperationBase"},
       {OpType::PLACE_HOLDER, "PlaceHolder"},
+      {OpType::ANCHOR, "Anchor"},
       {OpType::SCOPE, "Scope"},
       {OpType::FUNCTION, "Function"},
       {OpType::FUNCTION_BLOCK, "FunctionBlock"},
@@ -66,6 +69,7 @@ struct Comma {
   }
 };
 
+// HEAD/membase version: const member function
 std::string PointerLikeInfo::str() const {
   std::string ret = "PointerLikeInfo(";
   Comma comma;
@@ -91,6 +95,43 @@ std::string PointerLikeInfo::str() const {
   return ret;
 }
 
+// regbase version: non-const member function
+std::string PointerLikeInfo::str_regbase() {
+  std::string ret = "PointerLikeInfo(";
+  Comma comma;
+  if (addressSpace.has_value()) {
+    ret += comma.get();
+    ret += stringifyEnum(addressSpace.value());
+  }
+  ret += comma.get();
+  {
+    Comma comma;
+    ret += "[";
+    for (auto addr : addresses) {
+      ret += comma.get();
+      ret += std::to_string(addr);
+    }
+    ret += "]";
+  }
+  if (allocateSize.has_value()) {
+    ret += comma.get();
+    ret += std::to_string(allocateSize.value());
+  }
+  ret += ")";
+  return ret;
+}
+
+// regbase version
+std::string FuncArgInfo::str_regbase() {
+  std::string ret = "FuncArgInfo(";
+  ret += this->funcOp.getSymName();
+  ret += ", ";
+  ret += std::to_string(this->argNum);
+  ret += ")";
+  return ret;
+}
+
+// HEAD/membase version: const member function
 std::string MemInfo::str() const {
   std::string ret = "MemInfo(";
   Comma comma;
@@ -106,6 +147,30 @@ std::string MemInfo::str() const {
   return ret;
 }
 
+// regbase version
+std::string MemInfo::str_regbase() {
+  std::string ret = "MemInfo";
+  if (this->pipe) {
+    ret += "<" + stringifyPIPE(this->pipe.value()).str() + ">";
+  }
+  ret += "(";
+  Comma comma;
+  if (this->value) {
+    ret += comma.get();
+    ret += op2str(this->value);
+  }
+  if (this->funcArgInfo) {
+    ret += comma.get();
+    ret += this->funcArgInfo->str_regbase();
+  }
+  if (this->pointerLikeInfo) {
+    ret += comma.get();
+    ret += this->pointerLikeInfo->str_regbase();
+  }
+  ret += ")";
+  return ret;
+}
+
 // Provide readable string representations for IR nodes used in logs and dumps.
 // Each specialized .str implementation documents what it prints.
 std::string PlaceHolder::str(int indent, bool recursive) const {
@@ -115,6 +180,16 @@ std::string PlaceHolder::str(int indent, bool recursive) const {
            : llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType))) +
       std::to_string(this->id);
   return std::string(indent, ' ') + opStr;
+}
+
+// regbase version
+std::string Anchor::str_regbase(int indent, bool recursive) const {
+  std::string ret =
+      std::string(indent, ' ') +
+      llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
+      std::to_string(this->id);
+  ret += " (anchor-id=" + std::to_string(this->anchorId) + ")";
+  return ret;
 }
 
 std::string Scope::str(int indent, bool recursive) const {
@@ -197,7 +272,7 @@ std::string RWOperation::str(int indent, bool recursive) const {
   std::string pipesStr;
   if (this->pipeRead != this->pipeWrite) {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">, <" +
-               stringifyPIPE(this->pipeRead).str() + ">]";
+               stringifyPIPE(this->pipeWrite).str() + ">]";
   } else {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
@@ -305,6 +380,23 @@ std::string BarrierOp::str(int indent, bool recursive) const {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
   ret += " [<" + stringifyPIPE(this->pipe).str() + ">]";
+  return ret;
+}
+
+std::string BarrierOp::str_regbase(int indent, bool recursive) const {
+  std::string ret;
+  ret += std::string(indent, ' ') +
+         llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
+         std::to_string(this->id);
+  if (this->debugId.has_value()) {
+    ret += " [" + std::to_string(this->debugId.value()) + "]";
+  }
+  ret += " [";
+  ret += "<" + stringifyPIPE(this->pipe).str() + ">";
+  if (this->coreType.has_value()) {
+    ret += ", <" + stringifyTCoreType(this->coreType.value()).str() + ">";
+  }
+  ret += "]";
   return ret;
 }
 

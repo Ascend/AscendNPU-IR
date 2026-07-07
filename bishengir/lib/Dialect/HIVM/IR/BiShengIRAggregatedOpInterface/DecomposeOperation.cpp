@@ -36,7 +36,6 @@ using namespace mlir::hivm;
 #define DEBUG_TYPE "decompose-operation"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
-
 namespace mlir::hivm {
 
 inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
@@ -89,6 +88,9 @@ VBrcOp::decomposeOperation(mlir::OpBuilder &b) {
     b.create<hivm::VCmpOp>(
         getLoc(), TypeRange(), ValueRange({castedDst, floatZero}), getDst(),
         b.getAttr<hivm::CompareModeAttr>(hivm::CompareMode::NE));
+    b.create<hivm::VCmpOp>(getLoc(), TypeRange(),
+                            ValueRange({castedDst, floatZero}), getDst(),
+                            /*is_signed=*/true, hivm::CompareMode::NE);
   } else if (isI8) {
     // Convert F16 -> I8 by VCast
     b.create<hivm::VCastOp>(getLoc(), TypeRange(), castedDst, getDst(),
@@ -188,7 +190,6 @@ LogicalResult decomposeInsertSliceConcat(VConcatOp concatOp, OpBuilder &b) {
   rewriter.replaceAllUsesWith(concatOp.getDst(), dstSource);
   return success();
 }
-
 /// Here we specify VConcat's decompose behavior
 /// VConcat will get erased and become Copy ops
 /// from inputs of concat to subviews of it's output
@@ -220,7 +221,6 @@ FailureOr<SmallVector<Value>> VConcatOp::decomposeOperation(OpBuilder &b) {
   if (succeeded(decomposeInsertSliceConcat(*this, b))) {
     return SmallVector<Value>{};
   }
-
   for (size_t i = 0; i < srcNums; ++i) {
     auto src = getODSOperands(0)[i];
     SmallVector<OpFoldResult> sliceSizes =
@@ -430,6 +430,65 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
   auto allocMemRefType = dyn_cast<MemRefType>(allocOp.getType());
   if (!allocMemRefType)
     return failure();
+//===----------------------------------------------------------------------===//
+// LoadOp
+//===----------------------------------------------------------------------===//
+
+FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
+  if (!hasPureBufferSemantics())
+    return failure();
+  if (!getInitOutBuffer())
+    return failure();
+
+  // In Ascend950 arch, the load decompose will be completed before
+  // auto-vectorize, so that extract vbrc will not be introduced
+  auto funcOp = this->getOperation()->getParentOfType<func::FuncOp>();
+  std::optional<mlir::hivm::TFuncCoreType> funcCoreType =
+      mlir::hivm::queryFuncCoreType(funcOp);
+  auto coreType = getCoreType(*this);
+  bool isAiv =
+      funcCoreType.has_value() && funcCoreType.value() == TFuncCoreType::AIV;
+  bool isVector = succeeded(coreType) && coreType.value() == TCoreType::VECTOR;
+  if (!isAiv && !isVector) {
+    return failure();
+  }
+
+  auto maybeAlloc = traceDefOp<memref::AllocOp>(getDst());
+  assert(maybeAlloc.has_value());
+  auto padMemref = cast<memref::AllocOp>(maybeAlloc.value());
+  auto loc = getLoc();
+  if (getInitCondition()) {
+    scf::IfOp ifOp =
+        b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name,
+                  UnitAttr::get(b.getContext()));
+    OpBuilder::InsertionGuard insertionGuard(b);
+    b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
+                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
+  } else {
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), padMemref,
+                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
+  }
+  b.create<hivm::LoadOp>(loc, TypeRange{}, getSrc(), getDst(), getPadModeAttr(),
+                         getPadValue(), getRightPaddingNum(),
+                         getEvictionPolicyAttr());
+  return SmallVector<Value>{};
+}
+
+//===----------------------------------------------------------------------===//
+// ND2NZOp
+//===----------------------------------------------------------------------===//
+
+FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
+  if (!hasPureBufferSemantics())
+    return failure();
+  if (!getInitOutBuffer())
+    return failure();
+  auto maybeAlloc = traceDefOp<memref::AllocOp>(getDst());
+  assert(maybeAlloc.has_value());
+  auto padMemref = cast<memref::AllocOp>(maybeAlloc.value());
+  auto loc = getLoc();
   // The cv-pipelining pass marks multi-buffered allocs with an
   // `annotation.mark` carrying `hivm.cv_pipelined_multi_buffer`. In
   // that case `dst` is the current tile inside one slot of a multi-slot
@@ -463,6 +522,17 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
       auto subSizes = subview.getMixedSizes();
       if (!subSizes.empty()) {
         Location loc = alloc.getLoc();
+  Value vbrcTarget = padMemref.getResult();
+  auto maybeMarked = utils::getAnnotateOpWithAttr(
+      padMemref.getResult(), hivm::CVPipelinedMultiBufferAttr::name);
+  if (maybeMarked.has_value()) {
+    if (auto subview = getDst().getDefiningOp<memref::SubViewOp>();
+        subview && subview.getSource() == padMemref.getResult()) {
+      auto allocSizes =
+          memref::getMixedSizes(b, loc, padMemref.getResult());
+      auto subOffsets = subview.getMixedOffsets();
+      auto subSizes = subview.getMixedSizes();
+      if (!subSizes.empty()) {
         SmallVector<OpFoldResult> newOffsets;
         SmallVector<OpFoldResult> newSizes;
         newOffsets.reserve(subOffsets.size());
@@ -484,6 +554,9 @@ static FailureOr<Value> getVBrcPadBuffer(Value dst, OpBuilder &b) {
         // which now exactly covers the current slot.
         return b.create<memref::SubViewOp>(loc, alloc, newOffsets, newSizes,
                                            subview.getMixedStrides()).getResult();
+        vbrcTarget = b.create<memref::SubViewOp>(
+            loc, padMemref.getResult(), newOffsets, newSizes,
+            subview.getMixedStrides());
       }
     }
   }
@@ -555,6 +628,17 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   } else {
     b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), *padBuffer,
+  if (getInitCondition()) {
+    scf::IfOp ifOp =
+        b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
+    ifOp->setAttr(hivm::UnlikelyConditionAttr::name,
+                  UnitAttr::get(b.getContext()));
+    OpBuilder::InsertionGuard insertionGuard(b);
+    b.setInsertionPointToStart(&ifOp.getThenRegion().front());
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), vbrcTarget,
+                           b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
+  } else {
+    b.create<hivm::VBrcOp>(loc, TypeRange(), getPadValue(), vbrcTarget,
                            b.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
   }
   b.create<hivm::ND2NZOp>(loc, TypeRange{}, getSrc(), getDst(),
@@ -565,7 +649,6 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
 //===----------------------------------------------------------------------===//
 // VPadOp
 //===----------------------------------------------------------------------===//
-
 /// hivm.hir.vpad ins(%src) outs(%dst) low[%low] high[%high] pad_value %cst
 /// The result tensor dimensions are low[i] + dim[i] + high[i] for each
 /// dimension
@@ -979,6 +1062,10 @@ FailureOr<SmallVector<Value>> decomposeMultiAxesVReduceOp(hivm::VReduceOp op,
     tmpReduceOp =
         builder.create<hivm::VReduceOp>(op.getLoc(), resTypeRange, curSrc,
                                         curDst, op.getArith(), singleReduceDim);
+
+    tmpReduceOp = builder.create<hivm::VReduceOp>(
+        op.getLoc(), resTypeRange, curSrc, curDst, op.getArith(),
+        op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(), singleReduceDim);
 
     // Update curSrc for next use in loop
     curSrc =

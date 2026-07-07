@@ -36,12 +36,14 @@ namespace detail {
 BitVector DimensionAnalyzer::getCommonAxis(Value v) {
   // Nothing to do if an anchor has not yet been computed.
   if (anchor_.empty() || !argumentsRefPointer_.contains(v))
+  if (anchor_.empty() || !valueToDimIndicesIndex_.contains(v))
     return BitVector();
   LDBG("Computing common axis");
 #ifndef NDEBUG
   debugPrintAnchor();
 #endif
   auto vRef = getArgumentRef(v);
+  auto vRef = getValueDimIndices(v);
   LDBG("v: " << v);
   LDBG("vRef: " << utils::debugger::to_string(vRef));
   IndexSet vIndexSet;
@@ -67,6 +69,7 @@ SmallVector<Value> DimensionAnalyzer::getAnchorCandidate() {
         return;
       for (auto res : op->getResults()) {
         if (argumentsRefPointer_.contains(res)) {
+        if (valueToDimIndicesIndex_.contains(res)) {
           analyzedTensors.push_back(res);
         }
       }
@@ -86,6 +89,7 @@ DimensionAnalyzer::getAnchorShape() {
     for (auto dynamicShapeCurrentIndex : dynamicShapeIndices) {
       dynamicShapeCurrentIndex =
           solverShapeElem_->find(dynamicShapeCurrentIndex);
+          equivalentDsu_->find(dynamicShapeCurrentIndex);
       auto [dynamicShapeValue, dynamicShapeIndex] =
           getDimension(dynamicShapeCurrentIndex);
       LDBG(anchorDim.size() << "th dynamicShapeValue is " << dynamicShapeValue);
@@ -112,6 +116,7 @@ void DimensionAnalyzer::computeIndexSet(IndexSet &indexSet,
   DenseMap<int64_t, int64_t> indexCount;
   for (auto index : vRef) {
     index = solverShapeElem_->minIndex[solverCollapserElem_->find(index)];
+    index = equivalentDsu_->minIndex[structuralDsu_->find(index)];
     indexSet.insert({index, indexCount[index]++});
   }
 }
@@ -126,6 +131,13 @@ void DimensionAnalyzer::computeAnchorElement(
         solverShapeElem_->minIndex[solverCollapserElem_->find(anchorAxis)];
     auto anchorAxisShape =
         solverShapeElem_->getMinParentAndShapePair(anchorAxis).second;
+  auto anchorRef = getValueDimIndices(anchorCandidate);
+  computeIndexSet(anchorIndexSet_, anchorRef);
+  for (auto anchorAxis : anchorRef) {
+    auto currentAxisMinIndex =
+        equivalentDsu_->minIndex[structuralDsu_->find(anchorAxis)];
+    auto anchorAxisShape =
+        equivalentDsu_->getMinParentAndShapePair(anchorAxis).second;
 
     auto &[axisIndex, maxStaticShape, dynamicShapeIndices] =
         indexAncherElemMap[currentAxisMinIndex];
@@ -133,6 +145,7 @@ void DimensionAnalyzer::computeAnchorElement(
     if (ShapedType::isDynamic(anchorAxisShape)) {
       dynamicShapeIndices.push_back(
           solverShapeElem_->minIndex[solverShapeElem_->find(anchorAxis)]);
+          equivalentDsu_->minIndex[equivalentDsu_->find(anchorAxis)]);
     } else {
       maxStaticShape = std::max(maxStaticShape, anchorAxisShape);
     }
@@ -207,6 +220,11 @@ SmallVector<int64_t> DimensionAnalyzer::getInterchange(Value v) {
   DenseMap<int64_t, SmallVector<int64_t>> anchorPos;
   for (size_t i = 0; i < anchor_.size(); ++i) {
     auto currentAxis = solverCollapserElem_->find(anchor_[i].axisIndex);
+  if (anchor_.empty() || !valueToDimIndicesIndex_.contains(v))
+    return interchange;
+  DenseMap<int64_t, SmallVector<int64_t>> anchorPos;
+  for (size_t i = 0; i < anchor_.size(); ++i) {
+    auto currentAxis = structuralDsu_->find(anchor_[i].axisIndex);
     if (anchorPos.contains(currentAxis)) {
       LDBG("Two same aligned collapse in solver anchor "
            << i << " " << anchorPos[currentAxis].front());
@@ -214,6 +232,7 @@ SmallVector<int64_t> DimensionAnalyzer::getInterchange(Value v) {
     anchorPos[currentAxis].push_back(i);
   }
   auto vRef = getArgumentRef(v);
+  auto vRef = getValueDimIndices(v);
   assert(anchor_.size() >= vRef.size() &&
          "Anchor should represent all possible values");
   for (auto &val : anchorPos) {
@@ -221,6 +240,7 @@ SmallVector<int64_t> DimensionAnalyzer::getInterchange(Value v) {
   }
   for (size_t i = 0; i < vRef.size(); ++i) {
     auto currentAxis = solverCollapserElem_->find(vRef[i]);
+    auto currentAxis = structuralDsu_->find(vRef[i]);
     if (!anchorPos.contains(currentAxis))
       continue;
     interchange[i] = anchorPos[currentAxis].back();

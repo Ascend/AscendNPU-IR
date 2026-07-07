@@ -84,6 +84,7 @@ static void eraseMemRefTypeMemSpace(T &input) {
           UnrankedMemRefType::get(unrankedMemRefType.getElementType(), {});
     } else {
       llvm::report_fatal_error("Unexpected BaseMemRefType");
+      llvm_unreachable("Unexpected BaseMemRefType");
     }
 
     if constexpr (std::is_same_v<T, Value>)

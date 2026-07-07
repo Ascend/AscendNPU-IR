@@ -18,6 +18,10 @@
 // Original Copyright: NA
 // Original Source:
 // https://github.com/llvm/llvm-project/blob/main/mlir/lib/Dialect/Linalg/Transforms/TilingInterfaceImpl.cpp
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
@@ -233,6 +237,12 @@ generateResultTileValueImpl(Operation *op, OpBuilder &b, unsigned resultNumber,
   if (failed(domainTileResult)) {
     return failure();
   }
+  SmallVector<OpFoldResult> mappedOffsets, mappedSizes;
+  if (failed(getIterationDomainTileFromResultTileImpl(
+          op, b, resultNumber, offsets, sizes, mappedOffsets, mappedSizes))) {
+    return failure();
+  }
+  auto tilingInterfaceOp = cast<TilingInterface>(op);
   FailureOr<TilingResult> tilingResult =
       tilingInterfaceOp.getTiledImplementation(b, mappedOffsets, mappedSizes);
 
@@ -251,6 +261,7 @@ inline LogicalResult generateScalarImplementationImpl(
     [[maybe_unused]] Operation *op, [[maybe_unused]] OpBuilder &builder,
     [[maybe_unused]] Location loc, [[maybe_unused]] ValueRange ivs) {
   llvm::report_fatal_error("HIVM Op doesn't have body");
+  llvm_unreachable("HIVM Op doesn't have body");
 }
 
 //===----------------------------------------------------------------------===//
@@ -401,6 +412,7 @@ private:
                         ArrayRef<OpFoldResult> tileSizes) const {
     if (tileSizes.size() != tiledOp.getNumLoops())
       llvm::report_fatal_error("Invalid tiling");
+      llvm_unreachable("Invalid tiling");
 
     OpBuilder::InsertionGuard g(b);
     Location loc = tiledOp->getLoc();
@@ -562,7 +574,6 @@ private:
     return TilingResult{{tiledOp}, {newLoadOp.getResult(0)}};
   }
 };
-
 #undef DECLARE_DEFAULT_GET_LOOP_ITERATOR_TYPES
 #undef DECLARE_DEFAULT_GET_LOOP_ITERATION_DOMAIN
 #undef DECLARE_DEFAULT_GET_RESULT_TILE_POSITION
@@ -598,6 +609,10 @@ void hivm::registerTilingInterfaceExternalModels(DialectRegistry &registry) {
         registerOne<hivm::FixpipeOp>(ctx);
         registerOne<hivm::StoreOp>(ctx);
         hivm::LoadOp::attachInterface<LoadOpTilingInterface>(*ctx);
+        registerOne<hivm::LoadOp>(ctx);
+        registerOne<hivm::CopyOp>(ctx);
+        registerOne<hivm::FixpipeOp>(ctx);
+        registerOne<hivm::StoreOp>(ctx);
         hivm::MmadL1Op::attachInterface<MmadL1OpTilingInterface>(*ctx);
       });
 }

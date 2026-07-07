@@ -23,6 +23,7 @@ function(add_bishengir_unittest test_name)
 endfunction()
 
 add_subdirectory(Dialect)
+add_subdirectory(Pass)
 
 get_property(bishengir_unittest_run_targets GLOBAL PROPERTY BISHENGIR_UNITTEST_RUN_TARGETS)
 list(SORT bishengir_unittest_run_targets)

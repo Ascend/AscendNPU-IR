@@ -23,14 +23,32 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
+
+#include "mlir/Dialect/Arith/Utils/Utils.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/ValueRange.h"
+#include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -39,6 +57,10 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
 #include <array>
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -56,6 +78,7 @@ constexpr size_t kDimTwo = 2;
 constexpr size_t kDimThree = 3;
 constexpr size_t kDimFour = 4;
 constexpr size_t kDimFive = 5;
+constexpr size_t kDimFour = 4;
 
 FailureOr<size_t> getRankFromShapedTypeValue(Value val) {
   auto valType = dyn_cast<ShapedType>(val.getType());
@@ -122,6 +145,30 @@ FailureOr<std::array<int64_t, 3>>
 getConv3DIntTripleAttr(Attribute attr, StringRef attrName,
                        function_ref<InFlightDiagnostic()> emitError) {
   return getConvIntArrayAttr<3>(attr, attrName, emitError);
+// Returns true if walking back through view-like / to_tensor ops finds a
+// producer tagged with `hivm.fractal_layout` matching `layout`. Used to detect
+// data already laid out in the cube's expected fractal form by an upstream op
+// (e.g. the gather shortcut in InsertCVTightCoupledBuffer).
+bool sourceCarriesFractalLayoutHint(Value val, hivm::DataLayout layout) {
+  StringRef layoutName = hivm::stringifyDataLayout(layout);
+  Value cur = val;
+  while (cur) {
+    Operation *def = cur.getDefiningOp();
+    if (!def)
+      return false;
+    if (auto attr = def->getAttrOfType<StringAttr>("hivm.fractal_layout"))
+      return attr.getValue() == layoutName;
+    if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+      cur = toTensor.getMemref();
+      continue;
+    }
+    if (auto vlop = dyn_cast<ViewLikeOpInterface>(def)) {
+      cur = vlop.getViewSource();
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 //===----------------------------------------------------------------------===//
@@ -209,6 +256,237 @@ LogicalResult verifyBiasParamsForGlobalMmadOps(GlobalMmadTy op) {
   return success();
 }
 
+template <typename GlobalMmadTy>
+std::string getLibraryCallNameForGlobalMmadOps(GlobalMmadTy *mmadOp) {
+  std::stringstream ss;
+  ss << mmadOp->getOpName().data();
+
+  if (mmadOp->getBias()) {
+    ss << "_bias" << "_TBIAS"
+       << hivm::detail::getTypeName(
+              mmadOp->getLoc(), mmadOp->getBias().getType().getElementType());
+  } else {
+    ss << "_Xbias";
+  }
+
+  if (mmadOp->getDescale() && mmadOp->getDescaleMode() &&
+      mmadOp->getDescaleMode().value() != hivm::DescaleMode::DescaleNull) {
+    switch (mmadOp->getDescaleMode().value()) {
+    case hivm::DescaleMode::DescalePerChannel:
+      ss << "_descalePerChannel";
+      break;
+    case hivm::DescaleMode::DescalePerTensor:
+      ss << "_descalePerTensor";
+      break;
+    default:
+      llvm_unreachable("Unsupported descale mode");
+    }
+    ss << "_TDESCALE"
+       << hivm::detail::getTypeName(
+              mmadOp->getLoc(),
+              mmadOp->getDescale().getType().getElementType());
+  } else {
+    ss << "_Xdescale";
+  }
+
+  ss << (mmadOp->getATranspose() ? "_" : "_X") << "transposeA"
+     << (mmadOp->getBTranspose() ? "_" : "_X") << "transposeB";
+
+  ss << "_TA"
+     << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                  mmadOp->getA().getType().getElementType())
+     << "_TB"
+     << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                  mmadOp->getB().getType().getElementType())
+     << "_TC"
+     << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                  mmadOp->getC().getType().getElementType());
+
+  if constexpr (std::is_same_v<GlobalMmadTy, hivm::MixMatmulOp>) {
+    for (auto vecIn : mmadOp->getPostVecFuncIns()) {
+      ss << "_TV"
+         << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                      getElementTypeOrSelf(vecIn.getType()));
+    }
+
+    for (auto vecIn : mmadOp->getWorkspaceIns()) {
+      ss << "_TW"
+         << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                      getElementTypeOrSelf(vecIn.getType()));
+    }
+  } else if constexpr (std::is_same_v<GlobalMmadTy, hivm::MixGroupMatmulOp>) {
+    const auto &vecOuts = mmadOp->getPostVecFuncOuts();
+    assert(vecOuts.size() == 1);
+    ss << "_TM"
+       << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                    getElementTypeOrSelf(vecOuts[0].getType()));
+    const auto &vecIns = mmadOp->getPostVecFuncIns();
+    const size_t vecInsSizeConstraint = 3;
+    if (vecIns.size() != vecInsSizeConstraint)
+      llvm::report_fatal_error("internal error: vecInsSizeConstraint is not 3");
+
+    ss << "_TI"
+       << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                    getElementTypeOrSelf(vecIns[0].getType()));
+    ss << "_TO"
+       << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                    getElementTypeOrSelf(vecIns[1].getType()));
+    ss << "_TG"
+       << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                    getElementTypeOrSelf(vecIns[2].getType()));
+
+    ss << "_TT"
+       << hivm::detail::getTypeName(
+              mmadOp->getLoc(),
+              getElementTypeOrSelf(mmadOp->getTokensPerExpert().getType()));
+    for (auto vecIn : mmadOp->getWorkspaceIns()) {
+      ss << "_TW"
+         << hivm::detail::getTypeName(mmadOp->getLoc(),
+                                      getElementTypeOrSelf(vecIn.getType()));
+    }
+  }
+
+  if (mmadOp->getTilingParams()) {
+    ss << "_TT"
+       << hivm::detail::getTypeName(
+              mmadOp->getLoc(),
+              getElementTypeOrSelf(mmadOp->getTilingParams().getType()));
+    return ss.str();
+  }
+
+  for (auto blockSize : mmadOp->getBlockSizes()) {
+    auto str = hivm::util::stringfyConstantIntOpValue(blockSize);
+    assert(succeeded(str));
+    ss << *str;
+  }
+
+  for (auto processSize : mmadOp->getProcessSizes()) {
+    auto str = hivm::util::stringfyConstantIntOpValue(processSize);
+    assert(succeeded(str));
+    ss << *str;
+  }
+
+  if (mmadOp->getSwizzleOffset()) {
+    auto str =
+        hivm::util::stringfyConstantIntOpValue(mmadOp->getSwizzleOffset());
+    assert(succeeded(str));
+    ss << *str;
+  }
+
+  if (mmadOp->getSwizzleDirection()) {
+    auto str =
+        hivm::util::stringfyConstantIntOpValue(mmadOp->getSwizzleDirection());
+    assert(succeeded(str));
+    ss << *str;
+  }
+
+  if (mmadOp->getEpiloguePTiles()) {
+    auto str =
+        hivm::util::stringfyConstantIntOpValue(mmadOp->getEpiloguePTiles());
+    assert(succeeded(str));
+    ss << *str;
+  }
+  return ss.str();
+}
+
+template <typename GlobalMixMatmulTy>
+std::string
+getLibraryCallNameForGlobalMixMatmulOps(GlobalMixMatmulTy *mixMatmulOp) {
+  std::string baseCallName =
+      getLibraryCallNameForGlobalMmadOps<GlobalMixMatmulTy>(mixMatmulOp);
+  std::stringstream ss;
+  ss << baseCallName;
+  if (mixMatmulOp->getCommParams()) {
+    ss << "_TC"
+       << hivm::detail::getTypeName(
+              mixMatmulOp->getLoc(),
+              getElementTypeOrSelf(mixMatmulOp->getCommParams().getType()));
+  }
+
+  // Append core type at the end.
+  auto coreType = (*mixMatmulOp)
+                      ->template getParentOfType<func::FuncOp>()
+                      ->getAttr(TFuncCoreTypeAttr::name);
+  auto coreTypeAttr = dyn_cast<hivm::TFuncCoreTypeAttr>(coreType);
+  switch (coreTypeAttr.getFuncCoreType()) {
+  case hivm::TFuncCoreType::AIV:
+    ss << kMixFuncAivSuffix.str();
+    break;
+  case hivm::TFuncCoreType::AIC:
+    ss << kMixFuncAicSuffix.str();
+    break;
+  default:
+    llvm_unreachable("Unsupported CoreType");
+  }
+  return ss.str();
+}
+
+/// @brief Computes the block sizes for a given operand based on its element
+/// type.
+///
+/// Returns a vector containing the fractal block number and the block size,
+/// where the block size is determined by dividing the intrinsic bytes per block
+/// by the byte width of the operand's element type.
+///
+/// @param oper The MLIR value whose element type is used to compute block
+/// sizes.
+/// @return A SmallVector containing two elements: [FRACTAL_BLOCK_NUM,
+/// kBlockSize].
+llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
+  llvm::SmallVector<int64_t> kBlockSizes;
+  auto elementType = getElementTypeOrSelf(oper.getType());
+  size_t kBlockSize =
+      utils::INTR_BYTES_PER_BLOCK /
+      (elementType.getIntOrFloatBitWidth() / utils::kBitsToByte);
+  kBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  kBlockSizes.push_back(kBlockSize);
+  return kBlockSizes;
+}
+
+llvm::SmallVector<int64_t> getScaleBlockSizes(mlir::Value oper) {
+  llvm::SmallVector<int64_t> kBlockSizes;
+  auto elementType = getElementTypeOrSelf(oper.getType());
+  size_t kBlockSize =
+      2 * utils::kBitsToByte / elementType.getIntOrFloatBitWidth();
+  kBlockSizes.push_back(kBlockSize);
+  kBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  return kBlockSizes;
+}
+
+/// @brief Computes the block sizes for the A/B operands, with special handling
+///        for transpose and A5 configurations.
+///
+/// Currently, the B8 implementation is aligned with CATLASS constraints.
+///
+/// When `isA5` is true and the element size is 1 byte with `isTranspose`
+/// set to false, the fractal block number is overridden to 32 for B. Otherwise,
+/// the default `FRACTAL_BLOCK_NUM` is used. The scenario for A is opposite.
+/// A: 16 x 32  zN   A.T: 32 x 32  nZ
+/// B: 32 x 32  zN   B.T: 16 x 32  nZ
+///
+/// @param oper         The MLIR value whose element type is used to compute
+/// block sizes.
+/// @param isTranspose Whether the A/B operand is transposed.
+/// @param isA         Whether the A operand is used. If false, B is used.
+/// @param isA5         Whether the A5-specific block size logic should be
+/// applied.
+/// @return A SmallVector containing two elements: [factalBlockNum, kBlockSize].
+llvm::SmallVector<int64_t> getBlockSizesTile(mlir::Value oper, bool isTranspose,
+                                          bool isA, bool isA5) {
+  llvm::SmallVector<int64_t> kBlockSizes;
+  auto elementType = getElementTypeOrSelf(oper.getType());
+  size_t elementSize =
+      (elementType.getIntOrFloatBitWidth() / utils::kBitsToByte);
+  auto kBlockSize = utils::INTR_BYTES_PER_BLOCK / elementSize;
+  auto factalBlockNum = utils::FRACTAL_BLOCK_NUM;
+  if (isA5 && (elementSize == 1)) {
+    factalBlockNum =
+        (isA == isTranspose) ? 32 : utils::FRACTAL_BLOCK_NUM;
+  }
+  kBlockSizes.push_back(factalBlockNum);
+  kBlockSizes.push_back(kBlockSize);
+  return kBlockSizes;
+}
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -261,6 +539,25 @@ bool isInitFirstLoopIterForLocalMmadOp(LocalMmadTy *localMatmulOp) {
     }
   }
   return false;
+  Value initCond = localMatmulOp->getInitCondition();
+  if (!llvm::isa<arith::ConstantOp>(initCond.getDefiningOp()))
+    return false;
+
+  auto cstOp = cast<arith::ConstantOp>(initCond.getDefiningOp());
+  std::optional<int64_t> cstInt = getConstantIntValue(cstOp.getValue());
+  if (!cstInt)
+    return false;
+
+  // Fix 1-bit integer case: getConstantIntValue(true : i1) returns -1
+  if (auto intType = dyn_cast<IntegerType>(initCond.getType())) {
+    if (intType.getWidth() == 1)
+      cstInt = (*cstInt != 0) ? 1 : 0;
+  }
+
+  if (!cst.has_value())
+    return cstInt.has_value();
+
+  return *cstInt == static_cast<int64_t>(*cst);
 }
 
 Value mlir::hivm::extractMmadBiasFromPotentialUnitDimExpand(Value bias) {
@@ -298,6 +595,11 @@ void MmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
         /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
         enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
+                     UnitAttr enable_HF32) {
+  build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
+        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
+        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
+        b_transpose, enable_HF32, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int MmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -336,6 +638,10 @@ LogicalResult MmadL1Op::verify() {
 
 static bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
                                         Operation *hookOp = nullptr) {
+namespace mlir {
+namespace hivm {
+
+bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp, Operation *hookOp) {
   // TODO: modify for batch matmul later.
   ArrayRef<int64_t> brcDims = brcOp.getBroadcastDims();
   if (brcDims.empty()) {
@@ -353,6 +659,8 @@ static bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
         getElementTypeOrSelf(castOp.getSingleDst().getType()).isF32())
       src = castOp.getSingleSrc();
 
+  if (auto expandShapeOp = src.getDefiningOp<tensor::ExpandShapeOp>())
+    src = extractMmadBiasFromPotentialUnitDimExpand(src);
   // If hookOp is defined, it means that IR order of current candidate bias
   // tensor may be not declared before matmul, which would cause dominance
   // confusion. Here is to verify.
@@ -407,6 +715,34 @@ static bool isPerChannelPattern(OpOperand &mmOut) {
 }
 
 static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
+}
+}
+
+static bool isPerChannelPattern(OpOperand &mmOut, OpOperand &mmInitCond) {
+  // matmul init condition must be false.
+  Value v = mmInitCond.get();
+  if (!matchPattern(v, m_Zero()))
+    return false;
+
+  auto vbrcOp = mmOut.get().getDefiningOp<hivm::VBrcOp>();
+  if (vbrcOp) {
+    // For normal perChannel pattern, bias user has acted as outC of matmulOp,
+    // and there's no need to verify order of bias
+    if (isSatisfiedBrcForPerChannel(vbrcOp))
+      return true;
+  }
+
+  return false;
+}
+
+static bool isPostPerChannelSplitKPattern(OpOperand &mmOut,
+                                          OpOperand &mmInitCond) {
+  Value v = mmInitCond.get();
+  auto cmpOp = v.getDefiningOp<arith::CmpIOp>();
+  if (!cmpOp)
+    return false;
+  Value cmpLhs = cmpOp.getLhs();
+  Value cmpRhs = cmpOp.getRhs();
   Operation *localMatmulOp = mmOut.getOwner();
   if (auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get())) {
     if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
@@ -416,6 +752,22 @@ static bool isPerChannelSplitKPattern(OpOperand &mmOut) {
             isa<scf::YieldOp>(*(localMatmulOp->getResults()[0].user_begin())) &&
             correspondForRes.hasOneUse() &&
             isa<hivm::VAddOp>(*(correspondForRes.user_begin()))))
+        return false;
+      if (!(((cmpLhs == scfForOp.getLowerBound()) &&
+             (cmpRhs == scfForOp.getInductionVar())) ||
+            ((cmpLhs == scfForOp.getInductionVar()) &&
+             (cmpRhs == scfForOp.getLowerBound()))))
+        return false;
+      auto correspondForRes = scfForOp.getTiedLoopResult(blockArg);
+      auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
+      if (!(localMatmulOp->getResults()[0].hasOneUse() &&
+            (localMatmulOp->getResults()[0] == yieldValue->get()) &&
+            correspondForRes.hasOneUse() &&
+            isa<hivm::VAddOp>(*(correspondForRes.user_begin()))))
+        return false;
+      auto forInitArg = scfForOp.getTiedLoopInit(blockArg);
+      auto emptyOp = forInitArg->get().getDefiningOp<tensor::EmptyOp>();
+      if (!emptyOp)
         return false;
       auto vaddOp = dyn_cast<hivm::VAddOp>(*(correspondForRes.user_begin()));
       assert(vaddOp.getSrc().size() == 2);
@@ -439,6 +791,25 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
       auto correspondYieldVal = scfForOp.getTiedLoopYieldedValue(blockArg)->get();
 
       return !traceDefOp<tensor::EmptyOp>(correspondYieldVal).has_value();
+static bool isMMInitPerChannelSplitKPattern(OpOperand &mmOut,
+                                            OpOperand &mmInitCond) {
+  // matmul init condition must be false.
+  Value v = mmInitCond.get();
+  if (!matchPattern(v, m_Zero()))
+    return false;
+
+  Operation *localMatmulOp = mmOut.getOwner();
+  if (auto blockArg = dyn_cast_if_present<BlockArgument>(mmOut.get())) {
+    if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
+            blockArg.getOwner()->getParentOp())) {
+      auto yieldValue = scfForOp.getTiedLoopYieldedValue(blockArg);
+      auto forInitArg = scfForOp.getTiedLoopInit(blockArg);
+      if (!(localMatmulOp->getResults()[0].hasOneUse() &&
+            (localMatmulOp->getResults()[0] == yieldValue->get())))
+        return false;
+      auto vbrcOp = forInitArg->get().getDefiningOp<hivm::VBrcOp>();
+      if (vbrcOp && isSatisfiedBrcForPerChannel(vbrcOp, scfForOp))
+        return true;
     }
   }
 
@@ -449,11 +820,14 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
 /// %1 = tensor.empty()
 /// mmadL1 dst(%1)
 
+/// %alloc = memref.alloc(): memref<#hivm.address_space<cc>>
+/// mmadL1 dst(%alloc)
 /// PerChannelAdd
 /// %1 = vbrc src: (1, n) dst :(m, n)
 /// mmadL1 dst(%1)
 
 /// PerChannelAddWithSplitK
+/// PostPerChannelAddWithSplitK
 /// %init = tensor.empty()
 /// %mat = for split k (%iterator = %init) {
 ///   %acc_mad = mmadL1 dst(%iterator)
@@ -472,6 +846,17 @@ static bool isElementwiseAddCrossLoopPattern(OpOperand &mmOut) {
 ///   %acc_mad = mmadL1 dst(%iterator)
 ///   %vec_res = VectorOp %acc_mad
 //    yield %vec_res
+/// MMInitPerChannelAddWithSplitK
+/// %alloc = memref.alloc()
+/// %32 = bufferization.to_tensor %alloc
+/// %33 = tensor.empty()
+/// %34 = hivm.hir.vcast ins(%32) outs(%33)
+/// %35 = tensor.empty()
+/// %expanded = tensor.expand_shape %34
+/// %36 = vbrc %expanded: (1, n) %35 :(m, n)
+/// %mat = for split k (%iterator = %36) {
+///   %acc_mad = mmadL1 dst(%iterator)
+///   yield %acc_mad
 /// }
 
 /// Well, both per-channel modes are optimization and related pattern is a
@@ -504,6 +889,138 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   }
 
   return MatmulBiasMode::NoBias;
+  OpOperand &matmulInitCond = localMatmulOp.getInitConditionMutable();
+  // Here just traces forward to find satisfied first axis VBrcOp
+  if (isPerChannelPattern(matmulOutput, matmulInitCond))
+    return MatmulBiasMode::PerChannelAdd;
+
+  if (isPostPerChannelSplitKPattern(matmulOutput, matmulInitCond))
+    return MatmulBiasMode::PostPerChannelAddWithSplitK;
+
+  if (isMMInitPerChannelSplitKPattern(matmulOutput, matmulInitCond))
+    return MatmulBiasMode::MMInitPerChannelAddWithSplitK;
+
+  // When all traced allocs of the mmadL1 init are in the same L0C memory
+  // space, it means that the user is explicitly controlling buffer reuse on
+  // L0C. We treat it as NoBias case because we don't want to decompose it to
+  // mmadL1 + add.
+  auto allocOps =
+      traceDefOps<memref::AllocOp>(matmulOutput.get(),
+                                   /*isSingleChain=*/false,
+                                   /*traceMode=*/TraceResultMode::StrictSame);
+  bool isSameSpace = true;
+  std::optional<hivm::AddressSpace> addrSpace;
+  if (!allocOps.empty()) {
+    for (auto allocOp : allocOps) {
+      auto alloc = cast<memref::AllocOp>(allocOp);
+      if (auto curAddrSpace =
+              getOptionalHIVMAddressSpace(alloc.getMemref().getType())) {
+        if (!addrSpace.has_value()) {
+          addrSpace = curAddrSpace.value();
+        } else if (addrSpace.value() != curAddrSpace.value()) {
+          isSameSpace = false;
+          break;
+        }
+      }
+    }
+  }
+
+  DenseSet<Operation *> defOps = getPotentialDefiners(matmulOutput.get());
+  bool haveEmpty = llvm::any_of(
+      defOps, [](Operation *op) { return isa<tensor::EmptyOp>(op); });
+  bool allEmptyOrMmad = llvm::all_of(defOps, [](Operation *op) {
+    return isa<tensor::EmptyOp>(op) || isa<LocalMmadTy>(op);
+  });
+
+  return ((isSameSpace && addrSpace == hivm::AddressSpace::L0C) ||
+          (haveEmpty && allEmptyOrMmad))
+             ? MatmulBiasMode::NoBias
+             : MatmulBiasMode::ElementwiseAdd;
+}
+
+/// @brief Computes the target data layout for each operand of the MmadL1
+/// operation.
+///
+/// Constructs a mapping from each operand value to its corresponding
+/// DataLayoutAttr, determining the appropriate layout (nZ or zN) and block
+/// sizes based on operand type and transpose configuration:
+///
+/// - **Operand A**: Layout is `nZ` if transposed, `zN` otherwise. Block sizes
+///   are derived from the element type via `getBlockSizesTile()` with `isA=true`.
+/// - **Operand B**: Layout is `nZ` if transposed, `zN` otherwise. Block sizes
+///   are computed via `getBlockSizesTile()` with `isA=false`.
+/// - **Operand C**: Always uses `zN` layout with a fixed
+///   `FRACTAL_BLOCK_NUM × FRACTAL_BLOCK_NUM` block size.
+/// - **Per-channel bias** (optional): Uses `ND` layout with no block size
+///   specification.
+///
+/// @return A SmallDenseMap mapping each operand `Value` to its target
+///         `DataLayoutAttr`.
+llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto operA = getA();
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
+  auto mALayoutAttr = DataLayoutAttr::get(
+      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+  valLayoutMap[operA] = mALayoutAttr;
+
+  auto operB = getB();
+  bool isBTranspose = getBTranspose().has_value();
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
+  auto mBLayoutAttr = DataLayoutAttr::get(
+      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+  valLayoutMap[operB] = mBLayoutAttr;
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto mCLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::zN, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+  valLayoutMap[getC()] = mCLayoutAttr;
+
+  if (auto bias = getPerChannelBias()) {
+    auto biasLayoutAttr =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
+    valLayoutMap[bias] = biasLayoutAttr;
+  }
+  return valLayoutMap;
+}
+
+FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
+  FractalOperandLayouts layouts;
+
+  auto operA = getA();
+  bool isATranspose = getATranspose().has_value();
+  auto aBlockSizes = getBlockSizesTile(operA, isATranspose, true);
+  layouts.a = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+
+  auto operB = getB();
+  bool isBTranspose = getBTranspose().has_value();
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
+  layouts.b = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  layouts.c = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+
+  if (getPerChannelBias()) {
+    layouts.bias =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
+  }
+
+  return layouts;
 }
 
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
@@ -518,6 +1035,24 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
   case kDimFour:
     return DataLayoutAttr::get(getContext(),
                                isTranspose ? DataLayout::nZ : DataLayout::zN);
+  case kDimTwo: {
+    // If A is already in the fractal form the cube wants, the transpose is
+    // layout-only; suppress it so InferHIVMDataLayout skips its dim-swap.
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose && !sourceCarriesFractalLayoutHint(getA(), expected);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND,
+                               effectiveTranspose);
+  }
+  case kDimFour: {
+    auto shape = cast<ShapedType>(getA().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
   default:
     return failure();
   }
@@ -535,6 +1070,24 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandBLayout() {
   case kDimFour:
     return DataLayoutAttr::get(getContext(),
                                isTranspose ? DataLayout::nZ : DataLayout::zN);
+  case kDimTwo: {
+    // If B is already in the fractal form the cube wants, the transpose is
+    // layout-only; suppress it so InferHIVMDataLayout skips its dim-swap.
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose && !sourceCarriesFractalLayoutHint(getB(), expected);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND,
+                               effectiveTranspose);
+  }
+  case kDimFour: {
+    auto shape = cast<ShapedType>(getB().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
   default:
     return failure();
   }
@@ -571,6 +1124,59 @@ FailureOr<DataLayoutAttr> MmadL1Op::getOperandBiasLayout() {
   }
 }
 
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadL1Op::getOperandsCurrentLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto aLayoutAttr = getOperandALayout();
+  assert(succeeded(aLayoutAttr) && "Cannot get layout for Matrix A");
+  valLayoutMap[getDpsInputOperand(0)->get()] = *aLayoutAttr;
+
+  auto bLayoutAttr = getOperandBLayout();
+  assert(succeeded(bLayoutAttr) && "Cannot get layout for Matrix B");
+  valLayoutMap[getDpsInputOperand(1)->get()] = *bLayoutAttr;
+
+  auto cLayoutAttr = getOperandCLayout();
+  assert(succeeded(cLayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[getDpsInitOperand(0)->get()] = *cLayoutAttr;
+
+  if (getPerChannelBias()) {
+    auto biasLayoutAttr = getOperandBiasLayout();
+    assert(succeeded(biasLayoutAttr) && "Cannot get layout for bias");
+    valLayoutMap[getDpsInputOperand(getNumDpsInputs() - 1)->get()] =
+        *biasLayoutAttr;
+  }
+  return valLayoutMap;
+}
+
+std::string MmadL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  auto baseCallName = getOpName().str();
+  auto srcTypeName = hivm::detail::getTypeName(
+      this->getLoc(), getElementTypeOrSelf(this->getDpsInputs()[0].getType()));
+  auto dstTypeName = hivm::detail::getTypeName(
+      this->getLoc(), getElementTypeOrSelf(this->getDpsInits()[0].getType()));
+  auto transposeA = getATranspose();
+  auto transposeB = getBTranspose();
+  auto enableHF32 = getEnable_HF32();
+  std::string name = baseCallName;
+  if (getPerChannelBias()) {
+    auto biasTypeName = hivm::detail::getTypeName(
+        this->getLoc(),
+        getElementTypeOrSelf(this->getPerChannelBias().getType()));
+    name += "_with_" + biasTypeName + "_bias";
+  }
+  name += "_" + srcTypeName + "_to_" + dstTypeName;
+  if (transposeA.has_value()) {
+    name += "_ta";
+  }
+  if (transposeB.has_value()) {
+    name += "_tb";
+  }
+  if (enableHF32.has_value()) {
+    name += "_hf32";
+  }
+  return name;
+}
 bool MmadL1Op::isInitConstant(std::optional<bool> cst) {
   return isInitConstantForLocalMmadOp<MmadL1Op>(this, cst);
 }
@@ -578,11 +1184,16 @@ bool MmadL1Op::isInitConstant(std::optional<bool> cst) {
 bool MmadL1Op::isInitFirstLoopIter() {
   return isInitFirstLoopIterForLocalMmadOp<MmadL1Op>(this);
 }
-
 void MmadL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
 }
 
+llvm::SmallVector<int64_t>
+MmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
+}
 MatmulBiasMode MmadL1Op::getMatmulBiasMode() {
   return getMatmulLikeBiasMode<MmadL1Op>(*this);
 }
@@ -590,6 +1201,7 @@ MatmulBiasMode MmadL1Op::getMatmulBiasMode() {
 bool MmadL1Op::shouldDecomposeBiasByElementAdd() {
   if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd ||
       !isInitConstant(false)) {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
     // Type of C is not used for accumulating
     return false;
   }
@@ -624,7 +1236,6 @@ bool MmadL1Op::shouldDecomposeBiasByCrossLoopElementAdd() {
 
   return true;
 }
-
 //===----------------------------------------------------------------------===//
 // BatchMmadL1Op
 //===----------------------------------------------------------------------===//
@@ -639,6 +1250,11 @@ void BatchMmadL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
         real_k, real_n, c, /*sync_related_args*/ ValueRange{},
         /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose, b_transpose,
         enable_HF32, enable_i4, /*unit_flag_mode*/ ArrayAttr{});
+                          UnitAttr enable_HF32) {
+  build(odsBuilder, odsState, result_tensors, a, b, init_condition, real_m,
+        real_k, real_n, c, /*sync_related_args*/ ValueRange{},
+        /*unit_flag_cond*/ ValueRange{}, per_channel_bias, a_transpose,
+        b_transpose, enable_HF32, /*unit_flag_mode*/ ArrayAttr{});
 }
 
 int BatchMmadL1Op::getNumSyncRelatedArgs() { return 7; }
@@ -663,7 +1279,6 @@ bool BatchMmadL1Op::isInitConstant(std::optional<bool> cst) {
 bool BatchMmadL1Op::isInitFirstLoopIter() {
   return isInitFirstLoopIterForLocalMmadOp<BatchMmadL1Op>(this);
 }
-
 void BatchMmadL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
 }
@@ -707,6 +1322,9 @@ bool BatchMmadL1Op::shouldDecomposeBiasByCrossLoopElementAdd() {
   }
 
   return true;
+std::string
+BatchMmadL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  llvm_unreachable("this op has no library function");
 }
 
 //===----------------------------------------------------------------------===//
@@ -734,6 +1352,9 @@ LogicalResult MatmulOp::verify() {
   return success();
 }
 
+std::string MatmulOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  return getLibraryCallNameForGlobalMmadOps<MatmulOp>(this);
+}
 //===----------------------------------------------------------------------===//
 // MixMatmulOp
 //===----------------------------------------------------------------------===//
@@ -759,6 +1380,10 @@ LogicalResult MixMatmulOp::verify() {
   return success();
 }
 
+std::string
+MixMatmulOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  return getLibraryCallNameForGlobalMixMatmulOps<MixMatmulOp>(this);
+}
 //===----------------------------------------------------------------------===//
 // MixGroupMatmulOp
 //===----------------------------------------------------------------------===//
@@ -807,6 +1432,61 @@ void Conv1DL1Op::setInitCondition(Value init) {
 
 FailureOr<DataLayoutAttr> Conv1DL1Op::getInputLayout() {
   auto rank = getRankFromShapedTypeValue(getInput());
+std::string
+MixGroupMatmulOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  return getLibraryCallNameForGlobalMixMatmulOps<MixGroupMatmulOp>(this);
+}
+
+//===----------------------------------------------------------------------===//
+// MmadMxL1Op
+//===----------------------------------------------------------------------===//
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadMxL1Op::getOperandsTargetLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto operA = getA();
+  bool isATranspose = false;
+  auto aBlockSizes = getBlockSizes(operA);
+  auto mALayoutAttr = DataLayoutAttr::get(
+      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
+  valLayoutMap[operA] = mALayoutAttr;
+
+  auto operB = getB();
+  bool isBTranspose = false;
+  auto bBlockSizes = getBlockSizesTile(operB, isBTranspose, false);
+  auto mBLayoutAttr = DataLayoutAttr::get(
+      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
+  valLayoutMap[operB] = mBLayoutAttr;
+
+  auto operScaleA = getScaleA();
+  auto scaleABlockSizes = getScaleBlockSizes(operScaleA);
+  auto scaleALayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEA_zZ, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleABlockSizes)));
+  valLayoutMap[operScaleA] = scaleALayoutAttr;
+
+  auto operScaleB = getScaleB();
+  auto scaleBBlockSizes = getScaleBlockSizes(operScaleB);
+  auto scaleBLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::SCALEB_nN, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
+  valLayoutMap[operScaleB] = scaleBLayoutAttr;
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto mCLayoutAttr = DataLayoutAttr::get(
+      getContext(), DataLayout::zN, BoolAttr(),
+      mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
+  valLayoutMap[getC()] = mCLayoutAttr;
+  return valLayoutMap;
+}
+
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandALayout() {
+  auto rank = getRankFromShapedTypeValue(getA());
   if (failed(rank)) {
     return failure();
   }
@@ -817,6 +1497,16 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getInputLayout() {
     return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
   case kDimFive:
     return DataLayoutAttr::get(getContext(), DataLayout::NC1HWC0);
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND, false);
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getA().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::zN, BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
   default:
     return failure();
   }
@@ -824,6 +1514,8 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getInputLayout() {
 
 FailureOr<DataLayoutAttr> Conv1DL1Op::getWeightLayout() {
   auto rank = getRankFromShapedTypeValue(getWeight());
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBLayout() {
+  auto rank = getRankFromShapedTypeValue(getB());
   if (failed(rank)) {
     return failure();
   }
@@ -832,6 +1524,17 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getWeightLayout() {
     return DataLayoutAttr::get(getContext(), DataLayout::NCHW);
   case kDimFive:
     return DataLayoutAttr::get(getContext(), DataLayout::C1HWNC0);
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND, false);
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getB().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::zN, BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
   default:
     return failure();
   }
@@ -843,6 +1546,54 @@ FailureOr<DataLayoutAttr> Conv1DL1Op::getBiasLayout() {
 
 FailureOr<DataLayoutAttr> Conv1DL1Op::getInitLayout() {
   auto rank = getRankFromShapedTypeValue(getInit());
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleALayout() {
+  auto rank = getRankFromShapedTypeValue(getScaleA());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo: {
+    return DataLayoutAttr::get(getContext(), DataLayout::SCALEA_ND);
+  }
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getScaleA().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::SCALEA_zZ, BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandScaleBLayout() {
+  auto rank = getRankFromShapedTypeValue(getScaleB());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimTwo: {
+    return DataLayoutAttr::get(getContext(), DataLayout::SCALEB_DN);
+  }
+  case kDimFour: {
+    auto shape = cast<MemRefType>(getScaleB().getType()).getShape();
+    // When the alloc is four-dimensional, the last two dims should be the
+    // fractal block sizes.
+    return DataLayoutAttr::get(
+        getContext(), DataLayout::SCALEB_nN, BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandCLayout() {
+  auto rank = getRankFromShapedTypeValue(getC());
   if (failed(rank)) {
     return failure();
   }
@@ -1073,4 +1824,110 @@ bool Conv3DL1Op::isInitConstant(std::optional<bool> cst) {
 
 void Conv3DL1Op::setInitCondition(Value init) {
   getInitConditionMutable().assign(init);
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+MmadMxL1Op::getOperandsCurrentLayout() {
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto aLayoutAttr = getOperandALayout();
+  assert(succeeded(aLayoutAttr) && "Cannot get layout for Matrix A");
+  valLayoutMap[getDpsInputOperand(0)->get()] = *aLayoutAttr;
+
+  auto bLayoutAttr = getOperandBLayout();
+  assert(succeeded(bLayoutAttr) && "Cannot get layout for Matrix B");
+  valLayoutMap[getDpsInputOperand(1)->get()] = *bLayoutAttr;
+
+  auto scaleALayoutAttr = getOperandScaleALayout();
+  assert(succeeded(scaleALayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[this->getScaleA()] = *scaleALayoutAttr;
+
+  auto scaleBLayoutAttr = getOperandScaleBLayout();
+  assert(succeeded(scaleBLayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[this->getScaleB()] = *scaleBLayoutAttr;
+
+  auto cLayoutAttr = getOperandCLayout();
+  assert(succeeded(cLayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[getDpsInitOperand(0)->get()] = *cLayoutAttr;
+
+  return valLayoutMap;
+}
+
+bool MmadMxL1Op::isInitConstant(std::optional<bool> cst) {
+  return isInitConstantForLocalMmadOp<MmadMxL1Op>(this, cst);
+}
+
+void MmadMxL1Op::setInitCondition(Value init) {
+  getInitConditionMutable().assign(init);
+}
+
+std::string MmadMxL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
+  auto baseCallName = getOpName().str();
+  auto elemAType = getElementTypeOrSelf(this->getDpsInputs()[0].getType());
+  auto elemBType = getElementTypeOrSelf(this->getDpsInputs()[1].getType());
+
+  auto srcTypeName = hivm::detail::getTypeName(this->getLoc(), elemAType);
+  auto dstTypeName = hivm::detail::getTypeName(
+      this->getLoc(), getElementTypeOrSelf(this->getDpsInits()[0].getType()));
+
+  auto finalName = baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+
+  auto i8Type = IntegerType::get(getContext(), 8);
+
+  auto lhsFmt = getLhsFormat();
+  if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
+    return finalName;
+
+  std::string lhsFmtStr = "";
+
+  switch (lhsFmt.value().getSExtValue()) {
+  case 1:
+    lhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    lhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    lhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+
+  auto rhsFmt = getRhsFormat();
+  if (!rhsFmt)
+    return finalName;
+
+  std::string rhsFmtStr = "";
+
+  switch (rhsFmt.value().getSExtValue()) {
+  case 1:
+    rhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    rhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    rhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+
+  return finalName + "_lhs_format_" + lhsFmtStr + "_rhs_format_" + rhsFmtStr;
+}
+
+bool MmadMxL1Op::shouldDecomposeBiasByElementAdd() {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd)
+    return false;
+  if (isSingleChainMmadToMmad<MmadMxL1Op>(*this))
+    return false;
+  return true;
+}
+
+llvm::SmallVector<int64_t>
+MmadMxL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) const {
+  return ::getBlockSizesTile(oper, isTranspose, isA, true);
+}
+
+MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {
+  return getMatmulLikeBiasMode<MmadMxL1Op>(*this);
 }

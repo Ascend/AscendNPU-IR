@@ -16,6 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -51,7 +56,6 @@ static bool isBitwiseSelect(Operation *op) {
   }
   return false;
 }
-
 // Currently enumerate all possible Ops
 // TODO: generalize inlinable Op.
 // An Op is consider inlinable if its operand shape can be easily
@@ -62,6 +66,9 @@ static bool isInlinableOp(Operation *op) {
          isa<hfusion::ElemwiseBinaryOp>(op) ||
          isa<hfusion::ElemwiseUnaryOp>(op) ||
          (isa<hfusion::SelectOp, linalg::SelectOp>(op) && !isBitwiseSelect(op));
+         isa<hfusion::CompareOp>(op) ||
+         isa<hfusion::SelectOp>(op) ||
+         isa<linalg::SelectOp>(op);
 }
 
 // TODO : add platform information

@@ -60,6 +60,19 @@ brc_scalar_core_1d(T src_val, __ubuf__ T *dst_ptr, int64_t count) {
     };
     broadcast_scalar_b64<T>(src_val, &dst_memref);
   }
+  static_assert((sizeof(T) == 2 || sizeof(T) == 4) &&
+                "Brc_scalar_core_1d do not support this data type");
+  INTRINSIC_NO_ARGS(set_mask_count);
+  INTRINSIC(set_vector_mask, 0x0, count); // in counter mode
+  INTRINSIC(vector_dup,
+            dst_ptr, // dst
+            src_val, // src
+            1,       // repeat
+            1,       // dst blk stride
+            0,       // src blk stride
+            8,       // dst rep stride
+            0);      // src rep stride
+  INTRINSIC_NO_ARGS(set_mask_norm);
 }
 
 /// Broadcast scalar to vector, broadcast scalar to dst (m, n)[s, 1]

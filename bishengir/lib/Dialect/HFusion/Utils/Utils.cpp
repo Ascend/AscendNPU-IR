@@ -12,6 +12,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Also available under a BSD-style license. See LICENSE.
 //
 //===----------------------------------------------------------------------===//
 
@@ -20,6 +24,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "llvm/ADT/TypeSwitch.h"
@@ -29,7 +34,13 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/PatternMatch.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include <optional>
 #include <unordered_set>
 
@@ -52,6 +63,7 @@ Value hfusion::OverflowProcess(OpBuilder &builder, Value src,
                                Type targetElemType) {
   if (!getElementTypeOrSelf(targetElemType).isInteger()) {
     llvm::report_fatal_error("unsupport int type");
+    llvm_unreachable("unsupport int type");
   }
   uint32_t bits = targetElemType.getIntOrFloatBitWidth();
   double MAXINT = static_cast<double>(1ULL << bits);
@@ -132,6 +144,14 @@ Operation *hfusion::createCmpOp(PatternRewriter &rewriter, Location loc,
   auto cmpModeAttr = rewriter.getNamedAttr(
       hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
   return rewriter.create<hfusion::CompareOp>(
+Operation *hfusion::createCmpOp(OpBuilder &b, Location loc, Value lhs,
+                                Value rhs, CompareFn cmpFn) {
+  Type boolType = b.getIntegerType(1);
+  auto cmpInit = utils::createEmptyOpWithTargetElemType(b, loc, lhs, boolType);
+  auto cmpPredicateAttr = b.getAttr<hfusion::CompareFnAttr>(cmpFn);
+  auto cmpModeAttr =
+      b.getNamedAttr(hfusion::CompareFnAttr::getMnemonic(), cmpPredicateAttr);
+  return b.create<hfusion::CompareOp>(
       loc, TypeRange(cmpInit), ValueRange({lhs, rhs}), ValueRange(cmpInit),
       ArrayRef{cmpModeAttr});
 }
@@ -205,6 +225,45 @@ LogicalResult hfusion::simplifyVxorToVnot(PatternRewriter &rewriter,
   }
 
   return failure();
+Value hfusion::createEmptyLikeAnyShaped(OpBuilder &b, Location loc, Value a,
+                                        Value bval) {
+  auto aTy = a.getType();
+  if (isa<ShapedType>(aTy))
+    return utils::createEmptyOp(b, loc, a);
+
+  auto bTy = bval.getType();
+  if (isa<ShapedType>(bTy))
+    return utils::createEmptyOp(b, loc, bval);
+
+  llvm::report_fatal_error(
+      "createEmptyLikeAnyShaped: both operands are scalar; "
+      "elemwise tensor op requires at least one shaped operand.");
+}
+
+Operation *hfusion::createVandOp(OpBuilder &b, Location loc, Value lhs,
+                                 Value rhs) {
+  auto andEmptyOp = createEmptyLikeAnyShaped(b, loc, lhs, rhs);
+  return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                 hfusion::BinaryFnAttr>(
+      b, loc, hfusion::BinaryFn::vand, ValueRange({lhs, rhs}),
+      ValueRange{andEmptyOp});
+}
+
+Operation *hfusion::createLinalgElemwiseBinaryOp(OpBuilder &b, Location loc,
+                                                 linalg::BinaryFn fn, Value lhs,
+                                                 Value rhs) {
+  Value EmptyOp = createEmptyLikeAnyShaped(b, loc, lhs, rhs);
+  return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                 linalg::BinaryFnAttr>(
+      b, loc, fn, ValueRange{lhs, rhs}, ValueRange(EmptyOp));
+}
+Operation *hfusion::createHFusionElemwiseBinaryOp(OpBuilder &b, Location loc,
+                                                  hfusion::BinaryFn fn,
+                                                  Value lhs, Value rhs) {
+  Value EmptyOp = utils::createEmptyOp(b, loc, lhs);
+  return hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
+                                 hfusion::BinaryFnAttr>(
+      b, loc, fn, ValueRange{lhs, rhs}, ValueRange(EmptyOp));
 }
 
 void tiling::getCallerInfo(func::FuncOp callee, ModuleOp enclosingModule,
@@ -365,6 +424,15 @@ bool hfusion::isTensorManipulationOp(Operation *op) {
 bool hfusion::isMatmulOps(Operation *op) {
   return isa<linalg::MatmulOp>(op) || isa<linalg::MatmulTransposeAOp>(op) ||
          isa<linalg::MatmulTransposeBOp>(op);
+         isa<linalg::MatmulTransposeBOp>(op) ||
+         isa<linalg::BatchMatmulOp>(op) || isa<hfusion::MatMulMxOp>(op);
+}
+
+bool hfusion::isSimtOps(Operation *op) {
+  return isa<hfusion::IndirectLoadOp, hfusion::IndirectStoreOp,
+             hfusion::StrideLoadOp, hfusion::StrideStoreOp, hfusion::GatherTOp,
+             hfusion::EmbeddingGatherOp,
+             hfusion::IndexPutOp, hfusion::ScatterTOp>(op);
 }
 
 Value hfusion::getReshapeSource(Operation *op) {
@@ -373,6 +441,7 @@ Value hfusion::getReshapeSource(Operation *op) {
       .Case([](tensor::CollapseShapeOp collapse) { return collapse.getSrc(); })
       .Default([](Operation *op) {
         llvm::report_fatal_error("Unsupported reshape op");
+        llvm_unreachable("Unsupported reshape op");
         return Value();
       });
 }
@@ -384,6 +453,7 @@ Value hfusion::getReshapeResult(Operation *op) {
           [](tensor::CollapseShapeOp collapse) { return collapse.getResult(); })
       .Default([](Operation *op) {
         llvm::report_fatal_error("Unsupported reshape op");
+        llvm_unreachable("Unsupported reshape op");
         return Value();
       });
 }
@@ -396,6 +466,7 @@ Value hfusion::getReshapeOrSliceSource(Operation *op) {
       .Case([](tensor::InsertSliceOp insert) { return insert.getSource(); })
       .Default([](Operation *op) {
         llvm::report_fatal_error("Unsupported reshape or slice op");
+        llvm_unreachable("Unsupported reshape or slice op");
         return Value();
       });
 }
@@ -409,6 +480,7 @@ Value hfusion::getReshapeOrSliceResult(Operation *op) {
       .Case([](tensor::InsertSliceOp insert) { return insert.getResult(); })
       .Default([](Operation *op) {
         llvm::report_fatal_error("Unsupported reshape or slice op");
+        llvm_unreachable("Unsupported reshape or slice op");
         return Value();
       });
 }
@@ -643,6 +715,10 @@ bool isReturnOp(Operation *op) { return mlir::reshape_utils::isReturnOp(op); }
 } // namespace reshape_utils
 
 namespace util {
+/// trace value and judge if it is function argument
+bool isFromFunctionArg(mlir::Value v) {
+  return utils::tracebackMemRef(v).getDefiningOp() == nullptr;
+}
 
 hivm::AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand) {
   Value operandValue = operand.get();
@@ -732,6 +808,96 @@ bool hasDynamicShapeOperand(Operation *op) {
   return false;
 }
 
+bool hasComplexControlFlow(Operation *op) {
+  // blacklist for not flattening ops whose semantics depend on their
+  // logical iteration rank.
+  bool isComplex = false;
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::StrideLoadOp strideLoadOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::StrideStoreOp strideStoreOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::GatherTOp gatherTOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::IndexPutOp indexPutTOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::ScatterTOp scatterTOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  return isComplex;
+}
+
+bool hasCustomOp(Operation *op) {
+  bool found = false;
+
+  op->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (isa<hivm::CustomOp>(op) || isa<hivm::CustomMacroOp>(op)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  return found;
+}
+
+bool hasScope(Operation *funcOp) {
+  bool found = false;
+
+  funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      // TODO: remove this constraint when we can support propagate across scope
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  return found;
+}
+
+bool hasUnpropagateableCase(Operation *const op, bool skipScope) {
+  bool found = hasCustomOp(op) || hasComplexControlFlow(op);
+  if (skipScope) {
+    found |= hasScope(op);
+  }
+  return found;
+}
 } // namespace util
 } // namespace hfusion
 } // namespace mlir
@@ -1243,6 +1409,7 @@ void hfusion::offsetArangeOp(OpBuilder &builder, Operation *tiledOp,
       offsetVal = val;
     } else
       llvm::report_fatal_error("Expecting integer attribute or value as offset");
+      llvm_unreachable("Expecting integer attribute or value as offset");
     Value stride = std::get<1>(offsetStride);
     Value dimOffset =
         builder.createOrFold<arith::MulIOp>(loc, offsetVal, stride);
@@ -1377,4 +1544,217 @@ Value hfusion::divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Typ
   Value res =
       hfusion::castTo(builder, divF32->getResults()[0], resType, roundingMode);
   return res;
+// Check if a linalg op operates on a single element
+bool hfusion::isSingleElementLinalgOp(linalg::LinalgOp op) {
+  SmallVector<int64_t> shapes = op.getStaticShape();
+
+  return std::all_of(shapes.begin(), shapes.end(),
+                     [](int64_t dim) { return dim == 1; });
+}
+
+// Check if a linalg op operates on a zero element
+bool hfusion::isZeroElementLinalgOp(linalg::LinalgOp op) {
+  SmallVector<int64_t> shapes = op.getStaticShape();
+
+  return std::all_of(shapes.begin(), shapes.end(),
+                     [](int64_t dim) { return dim == 0; });
+}
+
+bool hfusion::isFillOp(Operation *op) {
+  if (auto lop = dyn_cast<linalg::LinalgOp>(op)) {
+    if (isa<linalg::FillOp>(lop))
+      return true;
+
+    if (isa<linalg::TransposeOp>(lop))
+      return false;
+
+    if (lop.getNumParallelLoops() != lop.getNumLoops())
+      return false;
+
+    if (lop.getNumDpsInits() != 1)
+      return false;
+
+    Block *body = &lop->getRegion(0).front();
+    if (body->getOperations().size() != 1)
+      return false;
+
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body->back());
+    if (!yieldOp || yieldOp.getNumOperands() != 1)
+      return false;
+
+    auto value = yieldOp.getOperand(0);
+    return !isa<BaseMemRefType, TensorType>(value.getType());
+  }
+  return false;
+}
+
+static bool canTraceBackToMatmul(Value operand) {
+  Operation *definingOp = operand.getDefiningOp();
+  if (definingOp)
+    return isa<linalg::MatmulOp, linalg::BatchMatmulOp>(definingOp);
+
+  // Operand is a BlockArgument
+  auto blockArg = dyn_cast<BlockArgument>(operand);
+  auto scfForOp =
+      dyn_cast_if_present<scf::ForOp>(blockArg.getOwner()->getParentOp());
+  if (!scfForOp)
+    return false;
+
+  // Recursively check in case of nested loops
+  if (OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg))
+    return canTraceBackToMatmul(iterArgOperand->get());
+
+  return false;
+}
+
+static bool isValueReachingMatmul(Value val) {
+  if (val.use_empty()) {
+    // not used value cannot reach matmul
+    return false;
+  }
+
+  bool reachable = llvm::any_of(val.getUsers(), [&](Operation *user) {
+    return llvm::TypeSwitch<Operation *, bool>(user)
+        // directly reach matmul-like op
+        .Case<linalg::MatmulOp, linalg::BatchMatmulOp, hfusion::MatMulMxOp>(
+            [](auto) { return true; })
+        // generic op reaches matmul if first input can trace back to matmul.
+        .Case<linalg::GenericOp>([&](auto genericOp) {
+          if (genericOp.getNumDpsInputs() == 0) {
+            return false;
+          }
+          // TODO: Should we check all inputs/operands of generic op?
+          return canTraceBackToMatmul(genericOp.getInputs()[0]);
+        })
+        // trace through scf::ForOp arguments
+        .Case<scf::ForOp>([&](auto forOp) {
+          auto inits = forOp.getInitArgs();
+          auto it = llvm::find(inits, val);
+          if (it == inits.end()) {
+            return false;
+          }
+          unsigned idx = static_cast<unsigned>(std::distance(inits.begin(), it));
+          Value iterArg = forOp.getRegionIterArg(idx);
+          return isValueReachingMatmul(iterArg);
+        })
+        // treat unhandled cases as not reachable to matmul
+        // TODO: should we handle other cases?
+        .Default(false);
+  });
+
+  LDBG("[isValueReachingMatmul]: val: " << val);
+  LDBG("[isValueReachingMatmul]: reachable: " << reachable);
+  return reachable;
+}
+
+namespace {
+template <typename T> bool canFillLikeOpFuseIntoMatmul(Operation *op) {
+  // for linalg.fill and linalg.transpose
+  /* Check if the DestinationPassing input
+     becomes to_tensor and reaches a matmul */
+  auto candidateOp = cast<T>(op);
+  Value doutput = candidateOp.getDpsInitOperand(0)->get();
+  for (auto *user : doutput.getUsers()) {
+    if (auto totensor = dyn_cast<bufferization::ToTensorOp>(user)) {
+      if (isValueReachingMatmul(totensor.getResult()))
+        return true;
+    }
+  }
+  /* Check if its output directly reaches a matmul */
+  if (candidateOp.getNumResults() == 0)
+    return false;
+  Value output = candidateOp.getResults()[0];
+  return isValueReachingMatmul(output);
+}
+} // end anonymous namespace
+
+bool hfusion::opCanFuseIntoMatmul(Operation *op) {
+  return TypeSwitch<Operation *, bool>(op)
+      .Case([](linalg::FillOp op) {
+        return canFillLikeOpFuseIntoMatmul<linalg::FillOp>(op);
+      })
+      .Case([](linalg::TransposeOp op) {
+        return canFillLikeOpFuseIntoMatmul<linalg::TransposeOp>(op);
+      })
+      .Default([](Operation *op) { return false; });
+}
+
+bool hfusion::isZeroOrEmptyTensor(Value op) {
+  auto emptyOp = op.getDefiningOp<tensor::EmptyOp>();
+  if (emptyOp) {
+    return true;
+  }
+
+  auto linalgFill = op.getDefiningOp<linalg::FillOp>();
+  if (!linalgFill) {
+    return false;
+  }
+  auto cstValue = linalgFill.getDpsInputOperand(0)
+                      ->get()
+                      .getDefiningOp<arith::ConstantOp>();
+  if (!cstValue) {
+    return false;
+  }
+  // Check if value is constant int or float zero.
+  std::optional<int64_t> cstInt = getConstantIntValue(cstValue.getValue());
+  if (cstInt && (*cstInt) == 0) {
+    return true;
+  }
+  auto cstFloat = dyn_cast_if_present<FloatAttr>(cstValue.getValue());
+  return cstFloat && cstFloat.getValue().isZero();
+}
+
+bool hfusion::isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
+                                     ArrayRef<int64_t> newShape) {
+  assert(oldShape.size() >= newShape.size() &&
+         "only use this function to check flatten");
+  size_t newShapeIdx = 0;
+  for (int64_t oldDim : oldShape) {
+    if (newShapeIdx >= newShape.size())
+      break;
+    if (oldDim == newShape[newShapeIdx]) {
+      ++newShapeIdx;
+    } else {
+      if (oldDim != 1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool hfusion::isFP8(Type type, Builder builder) {
+  return type == builder.getFloat8E5M2Type() ||
+         type == builder.getFloat8E4M3Type() ||
+         type == builder.getFloat8E4M3FNType() ||
+         type == builder.getFloat8E5M2FNUZType() ||
+         type == builder.getFloat8E4M3FNUZType() ||
+         type == builder.getFloat8E4M3B11FNUZType();
+}
+
+/// Tile_reduction_using_for will fail or cause bugs in some context, 
+/// see issue: AscendNPU-IR/issues/307
+/// So we still use tile_using_for instead for these context.
+bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
+  if (!isa<linalg::LinalgOp>(op))
+    return false;
+  auto linalgOp = cast<linalg::LinalgOp>(op);
+  /// TODO: here we only handle those have parallel axis and tail-axis
+  /// reduction.
+  if (linalgOp.getNumParallelLoops() == 0)
+    return false;
+  if (linalgOp.getNumReductionLoops() != 1)
+    return false;
+  // if there is more than one outputs and they are dependent with each other
+  // tile-reduction-using-for will cause coredump.
+  if (linalgOp.getRegionOutputArgs().size() > 1)
+    return false;
+
+  SmallVector<unsigned> reductionDims;
+  linalgOp.getReductionDims(reductionDims);
+  for (auto i : reductionDims) {
+    if (i < linalgOp.getNumLoops() - 1)
+      return false;
+  }
+  return true;
 }

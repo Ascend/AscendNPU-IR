@@ -18,6 +18,10 @@
 #include "bishengir/Dialect/Utils/UnionFind.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/raw_ostream.h"
+
+#define DEBUG_TYPE "UnionFind"
 
 int UnionFindBase::find(int x) {
   allocateMinimum(x);
@@ -51,4 +55,19 @@ void UnionFindBase::allocateMinimum(size_t n) {
       minIndex[i] = static_cast<int>(i);
     }
   }
+}
+
+void UnionFindBase::dump() {
+  LLVM_DEBUG(
+    llvm::dbgs() << "[UnionFind] parent_(" << parent_.size() << " entries):\n";
+    for (size_t i = 0; i < parent_.size() - 1; ++i) {
+      llvm::dbgs() << (parent_[i]<0 ? "" : " ") << parent_[i] << ", ";
+    }
+    llvm::dbgs() << (parent_[parent_.size()-1]<0 ? "" : " ") << parent_[parent_.size()-1] << "\n";
+    llvm::dbgs() << "[UnionFind] minIndex(" << minIndex.size() << " entries):\n";
+    for (size_t i = 0; i < minIndex.size() - 1; ++i) {
+      llvm::dbgs() << (minIndex[i]<0 ? "" : " ") << minIndex[i] << ", ";
+    }
+    llvm::dbgs() << (minIndex[minIndex.size()-1]<0 ? "" : " ") << minIndex[minIndex.size()-1] << "\n";
+  );
 }

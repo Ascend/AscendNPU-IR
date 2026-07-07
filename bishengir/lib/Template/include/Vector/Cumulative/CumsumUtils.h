@@ -20,6 +20,7 @@
 #include "Utils.h"
 #include "Vector/VecUtils.h"
 
+#ifndef __DAV_C310__
 template <typename T, bool reverse = false>
 __aiv__ __attribute__((always_inline)) void
 vector_cumsum_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst);
@@ -74,5 +75,28 @@ DECLARE_REVERSE_CUMSUM(ara, 3, int32_t);
 DECLARE_REVERSE_CUMSUM(ara, 3, half);
 DECLARE_REVERSE_CUMSUM(ara, 3, float);
 }
+
+#else
+template <typename T>
+__aiv__ __attribute__((always_inline)) void
+vector_cumsum_ra(memref_t<__ubuf__ T, 2> *src, memref_t<__ubuf__ T, 2> *dst);
+
+#define DECLARE_CUMSUM(dim, dtype)                                             \
+  __aiv__ __attribute__((always_inline)) void _mlir_ciface_cumsum_ra_##dtype(  \
+      memref_t<__ubuf__ dtype, dim> *src, memref_t<__ubuf__ dtype, dim> *dst)
+
+#define REGISTE_CUMSUM(dim, dtype)                                             \
+  DECLARE_CUMSUM(dim, dtype) { vector_cumsum_ra<dtype>(src, dst); }
+
+extern "C" {
+//===-------------------------------------------------------------------===//
+// cumsum ra, 2 dim
+//===-------------------------------------------------------------------===//
+DECLARE_CUMSUM(2, int16_t);
+DECLARE_CUMSUM(2, int32_t);
+DECLARE_CUMSUM(2, half);
+DECLARE_CUMSUM(2, float);
+}
+#endif
 
 #endif // BISHENGIR_LIB_TEMPLATE_INCLUDE_CUMSUM_UTILS_H

@@ -45,6 +45,38 @@ set_cbuf_to_2d_core(T scalar, memref_t<__cbuf__ T, 1> *l1) {
 }
 
 extern "C" {
+  uint64_t block_number = CEIL_DIV(sizeof(T) * l1->sizes[0], L1_ALIGN_BYTES);
+  int64_t config = (uint64_t)(repeat_time) | (uint64_t)(block_number << 16);
+  set_cbuf_to_2d_intrin_core(set2d_intrin_args<T>{l1_ptr, config, scalar});
+}
+
+#if defined(__DAV_C310__)
+template <typename T>
+__aicore__ __attribute__((always_inline)) void
+set_cbuf_to_2d_core_fp8(int8_t scalar, memref_t<__cbuf__ T, 1> *l1) {
+  check_inputs_of_set_cbuf_to_2d_core(l1);
+  auto l1_ptr = l1->aligned + l1->offset;
+
+  // current for 1d set 2d, repeat time for the outer loop is 1. Hence there is
+  // no the set of repeat gap
+  uint64_t repeat_time = 1;
+  uint64_t block_number = CEIL_DIV(sizeof(T) * l1->sizes[0], L1_ALIGN_BYTES);
+  int64_t config = (uint64_t)(repeat_time) | (uint64_t)(block_number << 16);
+  if constexpr (std::is_same_v<T, float8_e4m3_t> ||
+                std::is_same_v<T, float8_e5m2_t>) {
+    set_cbuf_to_2d_intrin_core(set2d_intrin_args<int8_t>{
+        reinterpret_cast<__cbuf__ int8_t *>(l1_ptr), config, scalar});
+  } else {
+    static_assert("only used for float8_e4m3_t and float8_e5m2_t");
+  }
+}
+#endif
+
+extern "C" {
+#if defined(__DAV_C310__)
+REGISTE_SET2D_FP8(cbuf, 1, float8_e4m3_t);
+REGISTE_SET2D_FP8(cbuf, 1, float8_e5m2_t);
+#endif
 REGISTE_SET2D(cbuf, 1, int8_t);
 REGISTE_SET2D(cbuf, 1, half);
 REGISTE_SET2D(cbuf, 1, float);

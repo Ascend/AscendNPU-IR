@@ -87,7 +87,7 @@ def PipeBarrierOp : HIVM_SynchronizationOp<"pipe_barrier"> {
 def SyncBlockOp : HIVM_SynchronizationOp<"sync_block"> {
   let summary = "hivm sync block between different kernels.";
   let description = [{
-    There are sync block modes:
+    There are three sync block modes:
       - ALL_CUBE : All cube are synchronized to a same point.
                    `tcube_pipe` needs to be set to the pipe that
                    the cube core is waiting for.
@@ -162,15 +162,20 @@ def SyncBlockWaitOp : HIVM_SynchronizationOp<"sync_block_wait"> {
                        HIVM_PipeAttr:$tpipe,
                        HIVM_PipeAttr:$pipe,
                        OptionalAttr<Builtin_IntegerAttr>:$static_flag_id,
-                       Optional<I64>:$dynamic_flag_id
+                       Optional<I64>:$dynamic_flag_id,
+                       DefaultValuedOptionalAttr<HIVM_SyncBlockInstrModeAttr,
+                         "INTRA_BLOCK_SYNCHRONIZATION">:$tsync_instr_mode
   );
   let assemblyFormat = [{
     attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
     `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
+    (`sync_instr_mode` `=` $tsync_instr_mode^)?
   }];
   let builders = [
     OpBuilder<(ins "TCoreTypeAttr":$tcore_type, "PipeAttr":$tpipe, "PipeAttr":$pipe,
-                   "OpFoldResult":$flag_id)>
+                   "OpFoldResult":$flag_id)>,
+    OpBuilder<(ins "TCoreTypeAttr":$tcore_type, "PipeAttr":$tpipe, "PipeAttr":$pipe,
+                   "OpFoldResult":$flag_id, "SyncBlockInstrModeAttr":$tsync_instr_mode)>
   ];
   let extraClassDeclaration = [{
     ::mlir::OpFoldResult getFlagId();
@@ -273,4 +278,23 @@ def FreeLockVarOp
   }];
 }
 
+
+def AnchorOp
+    : HIVM_Op<"anchor", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let summary = "Marker operation for recording IR positional information.";
+  let description = [{
+    Anchor operation used as a marker to record positional information in the
+    IR. Anchors carry a unique monotonically-increasing `id`.
+
+    They are inserted into the IR first, then later checked after other passes
+    have modified the IR so their positions can be used to analyze how the IR
+    changed.
+
+    Anchors declare a write effect on an internal resource so that
+    canonicalization / CSE / DCE / LICM cannot remove or reorder them.
+  }];
+  let arguments = (ins I64Attr:$id,
+                       OptionalAttr<HIVM_TCoreTypeAttr>:$tcore_type);
+  let assemblyFormat = "attr-dict";
+}
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMSYNCHRONIZATIONOPS_TD

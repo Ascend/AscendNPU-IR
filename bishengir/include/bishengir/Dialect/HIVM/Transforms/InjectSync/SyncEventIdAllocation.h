@@ -52,6 +52,18 @@ public:
     // Reserved eventIds for block-all operations if needed.
     reserveBlockAllEventIds();
   };
+struct SyncEventIdAllocOptions {
+  bool preferUnusedBlockSyncIDs = false;
+};
+
+class SyncEventIdAllocation {
+public:
+  SyncEventIdAllocation(SyncIRs &syncIR, SyncOperations &syncOperations,
+                        SyncEventIdAllocOptions options)
+      : syncIR(syncIR), syncOperations(syncOperations), options(options) {
+    // Reserved eventIds for block-all operations if needed.
+    reserveBlockAllEventIds();
+  }
 
   ~SyncEventIdAllocation() = default;
 
@@ -187,6 +199,9 @@ private:
 
   /// Number of reserved event IDs for block synchronization.
   uint64_t reservedBlockSyncEventIdNum{0};
+
+  /// Options
+  SyncEventIdAllocOptions options;
 };
 
 } // namespace hivm

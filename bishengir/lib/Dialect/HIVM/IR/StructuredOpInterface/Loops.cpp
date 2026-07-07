@@ -35,7 +35,8 @@ int64_t getRankFromShapedTypeValue(Value val) {
   return cast<ShapedType>(val.getType()).getRank();
 }
 
-std::optional<std::array<int64_t, 3>> getConv3DPaddingAttr(Attribute attr) {
+// Membase: getConv3DPaddingAttr
+std::optional<std::array<int64_t, 3>> getConv3DPaddingAttr_membase(Attribute attr) {
   if (auto intAttr = dyn_cast<IntegerAttr>(attr)) {
     int64_t value = intAttr.getInt();
     return std::array<int64_t, 3>{value, value, value};
@@ -74,14 +75,35 @@ SmallVector<hivm::IteratorType> getIteratorTypesArrayForGlobalMatmulOps() {
 
 } // namespace
 
-#define ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(OP_NAME)                    \
+// Membase: report_fatal_error version
+#define ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_MEMBASE(OP_NAME)              \
   SmallVector<hivm::IteratorType> OP_NAME::getIteratorTypesArray() {           \
-    llvm::report_fatal_error("get iterator not implemented");                          \
+    llvm::report_fatal_error("get iterator not implemented");                   \
   }
 
-ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(NZ2NDOp)
-ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(ND2NZOp)
-#undef ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY
+// Regbase: llvm_unreachable version
+#define ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_REGBASE(OP_NAME)              \
+  SmallVector<hivm::IteratorType> OP_NAME::getIteratorTypesArray_regbase() {     \
+    llvm_unreachable("get iterator not implemented");                            \
+  }
+
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_MEMBASE(NZ2NDOp)
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_MEMBASE(ND2NZOp)
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_REGBASE(NZ2NDOp)
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_REGBASE(ND2NZOp)
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_REGBASE(L12UBOp)
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_REGBASE(LoadMXScaleOp)
+
+#undef ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_MEMBASE
+#undef ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY_REGBASE
+
+// Wrappers for regbase-only ops
+SmallVector<hivm::IteratorType> L12UBOp::getIteratorTypesArray() {
+  return getIteratorTypesArray_regbase();
+}
+SmallVector<hivm::IteratorType> LoadMXScaleOp::getIteratorTypesArray() {
+  return getIteratorTypesArray_regbase();
+}
 
 #define ENABLE_COMMON_INDEXING_MAPS(OP_NAME)                                   \
   ArrayAttr OP_NAME::getIndexingMaps() {                                       \
@@ -91,16 +113,28 @@ ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(ND2NZOp)
 ENABLE_COMMON_INDEXING_MAPS(LoadOp)
 ENABLE_COMMON_INDEXING_MAPS(StoreOp)
 ENABLE_COMMON_INDEXING_MAPS(CopyOp)
-ENABLE_COMMON_INDEXING_MAPS(IndirectStoreOp)
+
 #undef ENABLE_COMMON_INDEXING_MAPS
 
 //===----------------------------------------------------------------------===//
-// IndirectStoreOp
+// IndirectStoreOp (membase)
 //===----------------------------------------------------------------------===//
 
-SmallVector<hivm::IteratorType> IndirectStoreOp::getIteratorTypesArray() {
+SmallVector<hivm::IteratorType> IndirectStoreOp::getIteratorTypesArray_membase() {
   int64_t rank = getRankFromShapedTypeValue(getSrc());
   return SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
+}
+
+SmallVector<hivm::IteratorType> IndirectStoreOp::getIteratorTypesArray() {
+  return getIteratorTypesArray_membase();
+}
+
+ArrayAttr IndirectStoreOp::getIndexingMaps_membase() {
+  return mlir::hivm::detail::getIndexingMapsImpl(*this);
+}
+
+ArrayAttr IndirectStoreOp::getIndexingMaps() {
+  return getIndexingMaps_membase();
 }
 
 //===----------------------------------------------------------------------===//
@@ -115,7 +149,8 @@ SmallVector<hivm::IteratorType> VArangeOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-ArrayAttr VArangeOp::getIndexingMaps() {
+// Membase: VArangeOp indexing maps
+ArrayAttr VArangeOp::getIndexingMaps_membase() {
   MLIRContext *context = getContext();
   unsigned numLoops = getNumLoops();
   AffineMap scalarMap = AffineMap::get(numLoops, 0, context);
@@ -125,6 +160,10 @@ ArrayAttr VArangeOp::getIndexingMaps() {
     indexingMaps.push_back(getRank(&opOperand) == 0 ? scalarMap : identityMap);
   }
   return Builder(context).getAffineMapArrayAttr(indexingMaps);
+}
+
+ArrayAttr VArangeOp::getIndexingMaps() {
+  return getIndexingMaps_membase();
 }
 
 //===----------------------------------------------------------------------===//
@@ -140,7 +179,7 @@ SmallVector<hivm::IteratorType> VBrcOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-ArrayAttr VBrcOp::getIndexingMaps() {
+ArrayAttr VBrcOp::getIndexingMaps_membase() {
   Builder builder(getContext());
   int64_t rank = getRankFromShapedTypeValue(getDpsInits()[0]);
   SmallVector<AffineExpr, 4> broadcastExprs;
@@ -161,6 +200,35 @@ ArrayAttr VBrcOp::getIndexingMaps() {
   return builder.getAffineMapArrayAttr({broadcastMap, outputMap});
 }
 
+ArrayAttr VBrcOp::getIndexingMaps_regbase() {
+  Builder builder(getContext());
+  int64_t rank = getRankFromShapedTypeValue(getDpsInits()[0]);
+  SmallVector<AffineExpr, 4> broadcastExprs;
+  if (isa<ShapedType>(getDpsInputs()[0].getType())) {
+    DenseSet<int64_t> broadcastDims(getBroadcastDims().begin(),
+                                    getBroadcastDims().end());
+    for (int i = 0; i < rank; i++) {
+      if (broadcastDims.contains(i)) {
+        broadcastExprs.push_back(builder.getAffineConstantExpr(0));
+      } else {
+        broadcastExprs.push_back(builder.getAffineDimExpr(i));
+      }
+    }
+  }
+  AffineMap broadcastMap;
+  if (getDpsInputs()[0].getType().isIntOrIndexOrFloat())
+    broadcastMap = AffineMap::get(rank, 0, getContext());
+  else
+    broadcastMap =
+        AffineMap::get(rank, 0, broadcastExprs, builder.getContext());
+  AffineMap outputMap = builder.getMultiDimIdentityMap(rank);
+  return builder.getAffineMapArrayAttr({broadcastMap, outputMap});
+}
+
+ArrayAttr VBrcOp::getIndexingMaps() {
+  return getIndexingMaps_membase();
+}
+
 //===----------------------------------------------------------------------===//
 // VConcatOp
 //===----------------------------------------------------------------------===//
@@ -178,7 +246,7 @@ SmallVector<hivm::IteratorType> VConcatOp::getIteratorTypesArray() {
 }
 
 //===----------------------------------------------------------------------===//
-// VConcatOp
+// VCumprodOp
 //===----------------------------------------------------------------------===//
 
 SmallVector<hivm::IteratorType> VCumprodOp::getIteratorTypesArray() {
@@ -186,6 +254,15 @@ SmallVector<hivm::IteratorType> VCumprodOp::getIteratorTypesArray() {
 }
 
 SmallVector<hivm::IteratorType> VCumsumOp::getIteratorTypesArray() {
+  return getCumOpIteratorTypesArray(*this);
+}
+
+// Regbase: VCummaxOp, VCumminOp
+SmallVector<hivm::IteratorType> VCummaxOp::getIteratorTypesArray() {
+  return getCumOpIteratorTypesArray(*this);
+}
+
+SmallVector<hivm::IteratorType> VCumminOp::getIteratorTypesArray() {
   return getCumOpIteratorTypesArray(*this);
 }
 
@@ -205,7 +282,7 @@ SmallVector<hivm::IteratorType> VDeinterleaveOp::getIteratorTypesArray() {
 // VGatherOp
 //===----------------------------------------------------------------------===//
 
-SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray() {
+SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray_membase() {
   int64_t rank = getRankFromShapedTypeValue(getDst());
   auto iteratorTypes =
       SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
@@ -214,17 +291,40 @@ SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
+SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray_regbase() {
+  int64_t rank = getRankFromShapedTypeValue(getDst());
+  auto iteratorTypes =
+      SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
+  // Set the actual gather axis based on gather_axis attribute.
+  // Default to last axis if attribute is not set or is -1.
+  int64_t gatherAxis = rank - 1;
+  auto axisAttr = getGatherAxis();
+  if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1) {
+    gatherAxis = static_cast<int64_t>(*axisAttr);
+  }
+  iteratorTypes[gatherAxis] = hivm::IteratorType::kGather;
+  return iteratorTypes;
+}
+
+SmallVector<hivm::IteratorType> VGatherOp::getIteratorTypesArray() {
+  return getIteratorTypesArray_membase();
+}
+
 //===----------------------------------------------------------------------===//
-// GatherMaskOp
+// GatherMaskOp (membase)
 //===----------------------------------------------------------------------===//
 
-SmallVector<hivm::IteratorType> VGatherMaskOp::getIteratorTypesArray() {
+SmallVector<hivm::IteratorType> VGatherMaskOp::getIteratorTypesArray_membase() {
   OperandRange dstRange = getDst();
   Value dst = dstRange.front();
   int64_t rank = getRankFromShapedTypeValue(dst);
   auto iteratorTypes =
       SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
   return iteratorTypes;
+}
+
+SmallVector<hivm::IteratorType> VGatherMaskOp::getIteratorTypesArray() {
+  return getIteratorTypesArray_membase();
 }
 
 //===----------------------------------------------------------------------===//
@@ -271,10 +371,6 @@ SmallVector<hivm::IteratorType> VPadOp::getIteratorTypesArray() {
   // conservative default choice: kPad
   auto iteratorTypes =
       SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kPad);
-  // `getConstantIntValue` is declared in
-  // "mlir/Dialect/Utils/StaticValueUtils.h" If a dimension's low and high
-  // padding lengths are both (statically known) zeros, then optimize it to
-  // hivm::IteratorType::kParallel.
   SmallVector<OpFoldResult> lowPadLengths = getMixedLowPad();
   SmallVector<OpFoldResult> highPadLengths = getMixedHighPad();
   for (int i = 0; i < rank; i++) {
@@ -299,7 +395,7 @@ SmallVector<hivm::IteratorType> VReduceOp::getIteratorTypesArray() {
   return iteratorTypes;
 }
 
-ArrayAttr VReduceOp::getIndexingMaps() {
+ArrayAttr VReduceOp::getIndexingMaps_membase() {
   Builder builder(getContext());
   int64_t rank = getRankFromShapedTypeValue(getDpsInputs()[0]);
   AffineMap inputMap = builder.getMultiDimIdentityMap(rank);
@@ -319,8 +415,30 @@ ArrayAttr VReduceOp::getIndexingMaps() {
   return builder.getAffineMapArrayAttr(maps);
 }
 
+ArrayAttr VReduceOp::getIndexingMaps_regbase() {
+  Builder builder(getContext());
+  int64_t rank = getRankFromShapedTypeValue(getDpsInputs()[0]);
+  AffineMap inputMap = builder.getMultiDimIdentityMap(rank);
+  SmallVector<AffineExpr, 4> outputExprs;
+  DenseSet<int64_t> reduceDims(getReduceDims().begin(), getReduceDims().end());
+  for (int i = 0; i < rank; i++) {
+    if (reduceDims.contains(i)) {
+      outputExprs.push_back(builder.getAffineConstantExpr(0));
+    } else {
+      outputExprs.push_back(builder.getAffineDimExpr(i));
+    }
+  }
+  AffineMap outputMap =
+      AffineMap::get(rank, 0, outputExprs, builder.getContext());
+  return builder.getAffineMapArrayAttr({inputMap, outputMap});
+}
+
+ArrayAttr VReduceOp::getIndexingMaps() {
+  return getIndexingMaps_membase();
+}
+
 //===----------------------------------------------------------------------===//
-// VTransposeOp
+// VTransposeOp (membase)
 //===----------------------------------------------------------------------===//
 
 SmallVector<hivm::IteratorType> VTransposeOp::getIteratorTypesArray() {
@@ -335,14 +453,14 @@ SmallVector<hivm::IteratorType> VTransposeOp::getIteratorTypesArray() {
 }
 
 LogicalResult
-VTransposeOp::setIteratorTypesArray(const IteratorType iteratorType,
-                                    const DenseI64ArrayAttr &arrayAttr) {
+VTransposeOp::setIteratorTypesArray_membase(const IteratorType iteratorType,
+                                            const DenseI64ArrayAttr &arrayAttr) {
   assert(iteratorType == hivm::IteratorType::kTranspose);
   getOperation()->setAttr(stringifyIteratorType(iteratorType), arrayAttr);
   return success();
 }
 
-ArrayAttr VTransposeOp::getIndexingMaps() {
+ArrayAttr VTransposeOp::getIndexingMaps_membase() {
   Builder builder(getContext());
   int64_t rank = getRankFromShapedTypeValue(getDst());
   // The iteration domain is the destination index space, so the output map is
@@ -366,6 +484,16 @@ ArrayAttr VTransposeOp::getIndexingMaps() {
   // (src input followed by the dst init); the optional temp_buffer is an
   // extra buffer and is intentionally excluded.
   return builder.getAffineMapArrayAttr({inputMap, outputMap});
+}
+
+LogicalResult
+VTransposeOp::setIteratorTypesArray(const IteratorType iteratorType,
+                                    const DenseI64ArrayAttr &arrayAttr) {
+  return setIteratorTypesArray_membase(iteratorType, arrayAttr);
+}
+
+ArrayAttr VTransposeOp::getIndexingMaps() {
+  return getIndexingMaps_membase();
 }
 
 //===----------------------------------------------------------------------===//
@@ -395,10 +523,11 @@ SmallVector<hivm::IteratorType> FixpipeOp::getIteratorTypesArray() {
   return SmallVector<hivm::IteratorType>(rank, hivm::IteratorType::kParallel);
 }
 
-ArrayAttr FixpipeOp::getIndexingMaps() {
+ArrayAttr FixpipeOp::getIndexingMaps_membase() {
   // If src/dst rank is 2, the indexing map is parallel.
   int64_t srcRank = getRankFromShapedTypeValue(getSrc());
   int64_t dstRank = getRankFromShapedTypeValue(getDst());
+
   // TODO: Handle ND2NZ indexing map.
   if (dstRank != 2 || srcRank != dstRank)
     llvm::report_fatal_error("Not implemented");
@@ -412,6 +541,30 @@ ArrayAttr FixpipeOp::getIndexingMaps() {
     affineMaps.push_back(resultMap);
 
   return Builder(getContext()).getAffineMapArrayAttr(affineMaps);
+}
+
+ArrayAttr FixpipeOp::getIndexingMaps_regbase() {
+  // If src/dst rank is 2, the indexing map is parallel.
+  int64_t srcRank = getRankFromShapedTypeValue(getSrc());
+  int64_t dstRank = getRankFromShapedTypeValue(getDst());
+
+  // TODO: Handle ND2NZ indexing map.
+  if (dstRank != 2 || srcRank != dstRank)
+    llvm_unreachable("Not implemented");
+
+  SmallVector<AffineMap> affineMaps(
+      getNumDpsInputs(),
+      AffineMap::getMultiDimIdentityMap(srcRank, getContext()));
+  AffineMap resultMap =
+      AffineMap::getMultiDimIdentityMap(dstRank, getContext());
+  for (int64_t i = 0, e = getNumDpsInits(); i < e; ++i)
+    affineMaps.push_back(resultMap);
+
+  return Builder(getContext()).getAffineMapArrayAttr(affineMaps);
+}
+
+ArrayAttr FixpipeOp::getIndexingMaps() {
+  return getIndexingMaps_membase();
 }
 
 //===----------------------------------------------------------------------===//
@@ -450,6 +603,43 @@ SmallVector<hivm::IteratorType> BatchMmadL1Op::getIteratorTypesArray() {
 }
 
 //===----------------------------------------------------------------------===//
+// MmadMxL1Op (regbase)
+//===----------------------------------------------------------------------===//
+
+SmallVector<hivm::IteratorType> MmadMxL1Op::getIteratorTypesArray_regbase() {
+  auto cLayoutAttr = getOperandCLayout();
+  if (failed(cLayoutAttr))
+    return {hivm::IteratorType::kOpaque};
+
+  if (cLayoutAttr.value().getDataLayout() == DataLayout::DOTC_ND) {
+    // For ND layout, assuming axes are (M, N, K).
+    return SmallVector<hivm::IteratorType>{hivm::IteratorType::kParallel,
+                                           hivm::IteratorType::kParallel,
+                                           hivm::IteratorType::kReduction};
+  }
+  if (cLayoutAttr.value().getDataLayout() == DataLayout::zN) {
+    // For zN layout, assuming axes are (N1, M1, M0, N0, K).
+    return SmallVector<hivm::IteratorType>{
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kReduction};
+  }
+
+  if (cLayoutAttr.value().getDataLayout() == DataLayout::nZ) {
+    // For nZ layout, assuming axes are (M1, N1, N0, M0, K).
+    return SmallVector<hivm::IteratorType>{
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kReduction};
+  }
+  return {hivm::IteratorType::kOpaque};
+}
+
+SmallVector<hivm::IteratorType> MmadMxL1Op::getIteratorTypesArray() {
+  return getIteratorTypesArray_regbase();
+}
+
+//===----------------------------------------------------------------------===//
 // GlobalMatmulOp
 //===----------------------------------------------------------------------===//
 
@@ -467,7 +657,7 @@ ENABLE_GLOBAL_MATMUL_GET_ITERATOR_TYPES_ARRAY(MixMatmulOp)
 // MmadL1Op
 //===----------------------------------------------------------------------===//
 
-ArrayAttr MmadL1Op::getIndexingMaps() {
+ArrayAttr MmadL1Op::getIndexingMaps_membase() {
   auto cLayoutAttr = getOperandCLayout();
   if (failed(cLayoutAttr) ||
       cLayoutAttr.value().getDataLayout() != DataLayout::DOTC_ND) {
@@ -496,6 +686,41 @@ ArrayAttr MmadL1Op::getIndexingMaps() {
                        : parseAffineMap("(d0, d1, d2) -> (d2, d1)", context);
   indexingMaps[getBMutable().getOperandNumber()] = bMap;
   return Builder(context).getAffineMapArrayAttr(indexingMaps);
+}
+
+ArrayAttr MmadL1Op::getIndexingMaps_regbase() {
+  auto cLayoutAttr = getOperandCLayout();
+  if (failed(cLayoutAttr) ||
+      cLayoutAttr.value().getDataLayout() != DataLayout::DOTC_ND) {
+    llvm_unreachable("Unknown/unsupported layout");
+    return ArrayAttr();
+  }
+
+  MLIRContext *context = getContext();
+  AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, context);
+  // Initialize all with scalar map
+  SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
+  // Indexing map of C is (M,   N,  K) -> (M,  N)
+  //                      (d0, d1, d2) -> (d0, d1)
+  AffineMap cMap = parseAffineMap("(d0, d1, d2) -> (d0, d1)", context);
+  indexingMaps[getCMutable().getOperandNumber()] = cMap;
+
+  // Indexing map of A is (M, N, K) -> (M, K) or (K, M)
+  AffineMap aMap = getATranspose().has_value()
+                       ? parseAffineMap("(d0, d1, d2) -> (d2, d0)", context)
+                       : parseAffineMap("(d0, d1, d2) -> (d0, d2)", context);
+  indexingMaps[getAMutable().getOperandNumber()] = aMap;
+
+  // Indexing map of B is (M, N, K) -> (K, N) or (N, K)
+  AffineMap bMap = getBTranspose().has_value()
+                       ? parseAffineMap("(d0, d1, d2) -> (d1, d2)", context)
+                       : parseAffineMap("(d0, d1, d2) -> (d2, d1)", context);
+  indexingMaps[getBMutable().getOperandNumber()] = bMap;
+  return Builder(context).getAffineMapArrayAttr(indexingMaps);
+}
+
+ArrayAttr MmadL1Op::getIndexingMaps() {
+  return getIndexingMaps_membase();
 }
 
 SmallVector<hivm::IteratorType> MmadL1Op::getIteratorTypesArray() {
@@ -528,10 +753,10 @@ SmallVector<hivm::IteratorType> MmadL1Op::getIteratorTypesArray() {
 }
 
 //===----------------------------------------------------------------------===//
-// Conv1DL1Op
+// Conv1DL1Op (membase)
 //===----------------------------------------------------------------------===//
 
-ArrayAttr Conv1DL1Op::getIndexingMaps() {
+ArrayAttr Conv1DL1Op::getIndexingMaps_membase() {
   MLIRContext *ctx = getContext();
   AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
   SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
@@ -583,7 +808,7 @@ ArrayAttr Conv1DL1Op::getIndexingMaps() {
   }
 }
 
-SmallVector<hivm::IteratorType> Conv1DL1Op::getIteratorTypesArray() {
+SmallVector<hivm::IteratorType> Conv1DL1Op::getIteratorTypesArray_membase() {
   bool hasBatch = false;
   if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
     if (inputType.hasRank() && inputType.getRank() == 3) {
@@ -607,11 +832,16 @@ SmallVector<hivm::IteratorType> Conv1DL1Op::getIteratorTypesArray() {
   }
 }
 
+ArrayAttr Conv1DL1Op::getIndexingMaps() { return getIndexingMaps_membase(); }
+SmallVector<hivm::IteratorType> Conv1DL1Op::getIteratorTypesArray() {
+  return getIteratorTypesArray_membase();
+}
+
 //===----------------------------------------------------------------------===//
-// Conv2DL1Op
+// Conv2DL1Op (membase)
 //===----------------------------------------------------------------------===//
 
-ArrayAttr Conv2DL1Op::getIndexingMaps() {
+ArrayAttr Conv2DL1Op::getIndexingMaps_membase() {
   MLIRContext *ctx = getContext();
   AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
   SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
@@ -664,7 +894,7 @@ ArrayAttr Conv2DL1Op::getIndexingMaps() {
   }
 }
 
-SmallVector<hivm::IteratorType> Conv2DL1Op::getIteratorTypesArray() {
+SmallVector<hivm::IteratorType> Conv2DL1Op::getIteratorTypesArray_membase() {
   bool hasBatch = false;
   if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
     if (inputType.hasRank() && inputType.getRank() == 4) {
@@ -691,11 +921,16 @@ SmallVector<hivm::IteratorType> Conv2DL1Op::getIteratorTypesArray() {
   }
 }
 
+ArrayAttr Conv2DL1Op::getIndexingMaps() { return getIndexingMaps_membase(); }
+SmallVector<hivm::IteratorType> Conv2DL1Op::getIteratorTypesArray() {
+  return getIteratorTypesArray_membase();
+}
+
 //===----------------------------------------------------------------------===//
-// Conv3DL1Op
+// Conv3DL1Op (membase)
 //===----------------------------------------------------------------------===//
 
-ArrayAttr Conv3DL1Op::getIndexingMaps() {
+ArrayAttr Conv3DL1Op::getIndexingMaps_membase() {
   MLIRContext *ctx = getContext();
   AffineMap scalarMap = AffineMap::get(getNumParallelLoops(), 0, ctx);
   SmallVector<AffineMap> indexingMaps(getNumOperands(), scalarMap);
@@ -759,7 +994,7 @@ ArrayAttr Conv3DL1Op::getIndexingMaps() {
         int64_t wH = packedWeightType.getDimSize(2);
         int64_t wW = packedWeightType.getDimSize(3);
         int64_t oC = packedWeightType.getDimSize(4);
-        auto padding = getConv3DPaddingAttr(getPaddingAttr());
+        auto padding = getConv3DPaddingAttr_membase(getPaddingAttr());
         if (padding) {
           int64_t oD = iD - wD + 1;
           int64_t oH = iH + 2 * (*padding)[1] - wH + 1;
@@ -836,7 +1071,7 @@ ArrayAttr Conv3DL1Op::getIndexingMaps() {
   return Builder(ctx).getAffineMapArrayAttr(indexingMaps);
 }
 
-SmallVector<hivm::IteratorType> Conv3DL1Op::getIteratorTypesArray() {
+SmallVector<hivm::IteratorType> Conv3DL1Op::getIteratorTypesArray_membase() {
   int64_t inputRank = -1;
   if (auto inputType = mlir::dyn_cast<ShapedType>(getInput().getType())) {
     if (inputType.hasRank()) {
@@ -879,4 +1114,9 @@ SmallVector<hivm::IteratorType> Conv3DL1Op::getIteratorTypesArray() {
         hivm::IteratorType::kReduction, hivm::IteratorType::kParallel,
         hivm::IteratorType::kParallel,  hivm::IteratorType::kParallel};
   }
+}
+
+ArrayAttr Conv3DL1Op::getIndexingMaps() { return getIndexingMaps_membase(); }
+SmallVector<hivm::IteratorType> Conv3DL1Op::getIteratorTypesArray() {
+  return getIteratorTypesArray_membase();
 }

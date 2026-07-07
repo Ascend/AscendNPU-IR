@@ -106,6 +106,13 @@ void replaceBlockIdUsers(IRRewriter &rewriter,
   auto castedMulOp =
       rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), mulOp);
   rewriter.replaceAllUsesExcept(getBlockIdxOp, castedMulOp, castedBlockID);
+                         Value logicBlockNum, Operation *castedBlockID) {
+  // block idx returns i64 meanwhile all other args are i32 so we cast it
+  rewriter.setInsertionPointAfterValue(iv);
+  auto loc = getBlockIdxOp->getLoc();
+  auto castedIV =
+      rewriter.create<arith::ExtSIOp>(loc, rewriter.getI64Type(), iv);
+  rewriter.replaceAllUsesExcept(getBlockIdxOp, castedIV, castedBlockID);
 }
 
 LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
@@ -128,6 +135,8 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
     if (isa<hivm::GetBlockIdxOp>(op)) {
        getBlockIdxOp = dyn_cast<hivm::GetBlockIdxOp>(op);
        rewriter.setInsertionPointAfter(getBlockIdxOp);
+      getBlockIdxOp = dyn_cast<hivm::GetBlockIdxOp>(op);
+      rewriter.setInsertionPointAfter(getBlockIdxOp);
     }
   }
   if (!logicBlockNum)
@@ -156,6 +165,10 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
   auto blockID = rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(),
                                                   getBlockIdxOp);
   auto forOp = rewriter.create<scf::ForOp>(loc, blockID, upperBound, physicalBlockNum);
+  auto blockID = rewriter.create<arith::TruncIOp>(loc, rewriter.getI32Type(),
+                                                  getBlockIdxOp);
+  auto forOp = rewriter.create<scf::ForOp>(loc, blockID, logicBlockNum,
+                                           physicalBlockNum);
 
   Block *loopBody = forOp.getBody();
   Operation *yieldOp = loopBody->getTerminator();
@@ -166,6 +179,7 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
   }
   replaceBlockIdUsers(rewriter, getBlockIdxOp, forOp.getInductionVar(),
                       logicBlockNum, blockID,blockifyV2);
+                      logicBlockNum, blockID);
   auto unit = UnitAttr::get(forOp->getContext());
   forOp->setAttr(BlockifyLoopAttrName, unit);
   return success();
@@ -174,6 +188,7 @@ LogicalResult loopOnLogicBlock(func::FuncOp funcOp, IRRewriter &rewriter) {
 
 void AutoBlockifyParallelLoopPass::runOnOperation() {
   auto funOp = dyn_cast<func::FuncOp>(getOperation());
+  func::FuncOp funOp = getOperation();
   if (!funOp) {
     return;
   }

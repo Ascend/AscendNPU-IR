@@ -20,6 +20,9 @@
 #include "Vector/VecUtils.h"
 #include <cstdint>
 #include <type_traits>
+#include "Utils.h"
+#include "Vector/Broadcast/BrcUtils.h"
+#include "Vector/VecUtils.h"
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) void
@@ -357,6 +360,62 @@ eltwise_v_2d(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
     }
   }
   vector_eltwise_v_2d<OP, T>(&aligned_src0, &aligned_dst, tmp_buf, mode);
+  if (args.repeat >= INTR_MAX_REPEAT_CNTS)
+    [[unlikely]] { vector_eltwise_2d_intrin_main<OP, T>(args); }
+
+  if (args.repeat % INTR_MAX_REPEAT_CNTS != 0)
+    [[likely]] {
+      __ubuf__ T *dst_addr =
+          args.dst + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
+                         args.dst_repeat_stride * num_per_block;
+      __ubuf__ T *src0_addr =
+          args.src[0] + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
+                            args.src_repeat_stride[0] * num_per_block;
+      const uint64_t repeat_num = args.repeat % INTR_MAX_REPEAT_CNTS;
+      const uint16_t dst_block_stride = args.dst_block_stride;
+      const uint16_t src0_block_stride = args.src_block_stride[0];
+      const uint16_t dst_repeat_stride = args.dst_repeat_stride;
+      const uint16_t src0_repeat_stride = args.src_repeat_stride[0];
+
+      if constexpr (OP > VectorOpTy::BINARY_VV_BEGIN &&
+                    OP < VectorOpTy::BINARY_VV_END) {
+        __ubuf__ T *src1_addr =
+            args.src[1] + FLOOR_FACTOR(args.repeat, INTR_MAX_REPEAT_CNTS) *
+                              args.src_repeat_stride[1] * num_per_block;
+        const uint16_t src1_block_stride = args.src_block_stride[1];
+        const uint16_t src1_repeat_stride = args.src_repeat_stride[1];
+        vector_eltwise_vv_intrin<OP, T>(
+            intrin_args<2, T>{dst_addr,
+                              {src0_addr, src1_addr},
+                              0, /* scalar */
+                              repeat_num,
+                              dst_block_stride,
+                              {src0_block_stride, src1_block_stride},
+                              dst_repeat_stride,
+                              {src0_repeat_stride, src1_repeat_stride}});
+      } else if constexpr (OP > VectorOpTy::BINARY_VS_BEGIN &&
+                           OP < VectorOpTy::BINARY_VS_END) {
+        vector_eltwise_vs_intrin<OP, T>(
+            intrin_args<1, T>{dst_addr,
+                              {src0_addr},
+                              args.scalar,
+                              repeat_num,
+                              dst_block_stride,
+                              {src0_block_stride},
+                              dst_repeat_stride,
+                              {src0_repeat_stride}});
+      } else if constexpr (OP > VectorOpTy::UNARY_BEGIN &&
+                           OP < VectorOpTy::UNARY_END) {
+        vector_eltwise_v_intrin<OP, T>(intrin_args<1, T>{dst_addr,
+                                                         {src0_addr},
+                                                         0, /* scalar */
+                                                         repeat_num,
+                                                         dst_block_stride,
+                                                         {src0_block_stride},
+                                                         dst_repeat_stride,
+                                                         {src0_repeat_stride}});
+      }
+    }
 }
 
 template <VectorOpTy OP, typename T, size_t OPERANUM>
@@ -626,6 +685,10 @@ __aiv__ __attribute__((always_inline)) void normalize_vector_last_axis_2d(
                 ? new_num_per_block
                 : new_num_per_block *
                       CEIL_FACTOR(src1->sizes[0], kSrcNumPerRepeatOfVBRCB);
+            tmp_buf_as_dst_t.offset + (src1->sizes[0] == 1
+                ? new_num_per_block
+                : new_num_per_block *
+                      CEIL_FACTOR(src1->sizes[0], kSrcNumPerRepeatOfVBRCB));
       }
     }
   }

@@ -26,8 +26,8 @@
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
+#include "bishengir/Tools/bishengir-compile/Utility.h"
 #include "bishengir/Version/Version.h"
-
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
@@ -116,6 +116,9 @@ int main(int argc, char **argv) {
   mlir::registerAllExtensions(registry);
   bishengir::registerAllExtensions(registry);
 
+  // Register translations.
+  mlir::registerAllToLLVMIRTranslations(registry);
+
   // Parse command line.
   registerAndParseCLIOptions(argc, argv);
 
@@ -153,6 +156,22 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   mlir::ModuleOp module = moduleRef.release();
+
+  // Triton/HACC paths
+  if (failed(inferLayoutOptimization(module, config))) {
+    llvm::errs() << "[ERROR] Failed to infer layout optimization\n";
+    return EXIT_FAILURE;
+  }
+  if (config.getEnableTritonKernelCompile()) {
+    if (failed(inferMixedCV(module, config))) {
+      llvm::errs() << "[ERROR] Failed to infer mix mode\n";
+      return EXIT_FAILURE;
+    }
+    if (failed(inferDotScale(module, config))) {
+      llvm::errs() << "[ERROR] Failed to infer dot scale\n";
+      return EXIT_FAILURE;
+    }
+  }
 
   auto res = runBiShengIRPipeline(module, config);
   if (failed(res)) {

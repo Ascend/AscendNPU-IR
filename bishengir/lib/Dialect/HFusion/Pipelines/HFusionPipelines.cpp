@@ -30,6 +30,25 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/Passes.h"
 #include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "bishengir/Conversion/Passes.h"
+#include "bishengir/Conversion/TensorToHFusion/TensorToHFusion.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
+#include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/MemRef/Transforms/Passes.h"
+#include "bishengir/Dialect/Scope/Transforms/Passes.h"
+#include "bishengir/Dialect/Symbol/Transforms/Passes.h"
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
+#include "bishengir/Dialect/Vector/Transforms/Passes.h"
+#include "bishengir/Transforms/Passes.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/Transforms/Passes.h"
+#include "mlir/Dialect/Vector/Transforms/Passes.h"
 #include "mlir/Transforms/Passes.h"
 
 #define DEBUG_TYPE "hfusion-pipeline"
@@ -58,6 +77,24 @@ enum DisableCanonicalizationPhase {
   AfterAutoSchedule = 2
 };
 
+struct TreeReduceEnableFlags {
+  bool enableRA;
+  bool enableAR;
+};
+
+static TreeReduceEnableFlags getTreeReduceEnableFlags(TreeReduceMode mode) {
+  switch (mode) {
+  case TreeReduceMode::Off:
+    return {false, false};
+  case TreeReduceMode::RA:
+    return {true, false};
+  case TreeReduceMode::AR:
+    return {false, true};
+  case TreeReduceMode::All:
+    return {true, true};
+  }
+  return {true, false};
+}
 static DenseMap<int, std::vector<std::string>> phaseToDisabledMap = {
     {NoRestriction, {}},
     {AfterFlattenBeforeAutoSchedule,
@@ -65,6 +102,18 @@ static DenseMap<int, std::vector<std::string>> phaseToDisabledMap = {
       canonicalizationEnumMap[FoldFillWithTensorReshapeExpand]}},
     {AfterAutoSchedule, {canonicalizationEnumMap[FoldTransposeWithTranspose]}}};
 
+// TODO: need to be reverted when Affinity GMM supported
+struct MarkDisableVectorizePass : public PassWrapper<MarkDisableVectorizePass,
+                                           OperationPass<mlir::ModuleOp>> {
+  const static constexpr llvm::StringLiteral kName = "hfusion.disableHfusionVectorize";
+
+  void runOnOperation() override {
+    mlir::ModuleOp module = getOperation();
+    mlir::MLIRContext *context = module.getContext();
+    if (!module->getAttr(kName))
+      module->setAttr(kName, UnitAttr::get(context));
+  }
+};
 static void
 canonicalizationPipeline(OpPassManager &pm,
                          const HFusionPipelineOptions &hfusionOptions,
@@ -84,10 +133,27 @@ static void preProcess(OpPassManager &pm,
   pm.addPass(createArithToHFusionConversionPass());
   pm.addPass(createMathToHFusionConversionPass());
   pm.addPass(createLinalgToHFusionConversionPass());
+  options.enableExtendedPattern = true;
+  options.disabledPatterns = phaseToDisabledMap[phase];
+  pm.addPass(createCanonicalizerPass(options));
+  pm.nest<func::FuncOp>().addPass(tensor::createNormalizeTensorOpsPass(
+      /*skipAlignedSlice=*/hfusionOptions.enableTritonKernelCompile));
+}
+
+static void convertAllToHFusion(OpPassManager &pm,
+                                const HFusionPipelineOptions &options,
+                                bool shouldConvertLinalgToNamedOps = true) {
+  pm.addPass(createArithToHFusionConversionPass());
+  pm.addPass(createMathToHFusionConversionPass());
+  // NOTE: linalg.generic should be converted to named equivalent ops after
+  // dropping unit dimensions
+  if (shouldConvertLinalgToNamedOps)
+    pm.addPass(createLinalgToHFusionConversionPass());
   if (options.enableTritonKernelCompile) {
     pm.addPass(createSymbolDCEPass());
     pm.addPass(createGPUToHFusionConversionPass());
     pm.addPass(createAdaptTritonKernelPass());
+    pm.addPass(createSymbolDCEPass());
   }
   pm.addPass(createTensorToHFusionConversionPass());
   pm.nest<func::FuncOp>().addPass(
@@ -99,6 +165,50 @@ static void preProcess(OpPassManager &pm,
   pm.addPass(createArithToHFusionConversionPass());
   pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());
   pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
+  // NOTE: linalg.generic should be converted to named equivalent ops after
+  // dropping unit dimensions
+  if (shouldConvertLinalgToNamedOps)
+    pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());
+}
+
+static void preProcess(OpPassManager &pm,
+                       const HFusionPipelineOptions &options) {
+  pm.nest<func::FuncOp>().addPass(createUpliftWhileToForPass());
+
+  LegalizeBoolPassOptions clampOptions;
+  clampOptions.enableClamp = true;
+  pm.addPass(createLegalizeBoolPass(clampOptions));
+  if (!options.enableSymbolAnalysis) {
+    pm.nest<func::FuncOp>().addPass(symbol::createEraseSymbolPass());
+  }
+  if (options.enableTritonKernelCompile &&
+      hacc::utils::isRegBasedArch(options.target)) {
+    if (options.enableFuseReductionIntoLoop)
+      pm.nest<func::FuncOp>().addPass(
+          bishengir::createFuseReductionIntoLoopPass());
+    pm.nest<func::FuncOp>().addPass(createLegalizeScalarPass());
+    // Convert the operations to HFusion as much as possible to make
+    // LinalgFoldUnitExtentDims work on LinalgOp interface more effectively.
+    // Avoid converting special linalg.generic (e.g. hfusion.reduce_with_index)
+    // because the pass is in the upstream so it cannot handle downstream
+    // special operations.
+    //
+    // FIX: To handle inputs that contain direct HFusion ops, better to use a
+    // pass that selectively generalizes HFusion ops (using
+    // mlir::linalg::LinalgGeneralizationPattern)
+    // delete enableDropUnitDims in future
+    if (options.enableFlatten && options.enableDropUnitDims) {
+      convertAllToHFusion(pm, options, false);
+      pm.nest<func::FuncOp>().addPass(createHFusionGeneralizePass());
+      pm.nest<func::FuncOp>().addPass(createHFusionFoldUnitDimsPass());
+      // NOTE: Re-converting to HFusion is necessary after applying the
+      // canonicalizer because it simplifies some linalg operations
+      canonicalizationPipeline(pm, options);
+    }
+  }
+  convertAllToHFusion(pm, options);
+  pm.nest<func::FuncOp>().addPass(createLegalizeBF16Pass());
+  pm.nest<func::FuncOp>().addPass(createLegalizeFP8Pass());
   DecomposeOptions decomposeOptions;
   decomposeOptions.hfusionDecomposePhase =
       bishengir::DecomposePhase::NO_CONSTRAINT;
@@ -106,12 +216,20 @@ static void preProcess(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createHFusionNormalizeSliceOpsPass(
       /*skipAlignedSlice=*/options.enableTritonKernelCompile));
   pm.nest<func::FuncOp>().addPass(createHFusionNormalizeOpsPass());
+  pm.nest<func::FuncOp>().addPass(createHFusionNormalizeSliceOpsPass());
+  pm.nest<func::FuncOp>().addPass(createGenericUnrollerPass());
+  NormalizeOptions normalizeOptions;
+  normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
   pm.addPass(createLegalizeBoolPass());
   pm.nest<func::FuncOp>().addPass(createSimplifyOpsPass());
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   // normalize should be called after inline-brc pass:
   //  a) convert scalar-vector ops to vector-scalar ops
   pm.nest<func::FuncOp>().addPass(createHFusionNormalizeOpsPass());
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
 }
 
 static void preFlattenPass(OpPassManager &pm,
@@ -204,6 +322,8 @@ hfusionTilingOptimizationPipeline(OpPassManager &pm,
   canonicalizationPipeline(pm, options, AfterAutoSchedule);
   PackTilingDataOptions packOptions;
   packOptions.emitGetTilingStructSizeFunction = !options.enableMultiKernel;
+  packOptions.emitGetTilingStructSizeFunction =
+      !options.enableMultiKernel;
   packOptions.packTilingKey = false;
   pm.addPass(createPackTilingDataPass(packOptions));
   // after tiling is all constantized and packed, try to simplify loops
@@ -242,6 +362,9 @@ static void hfusionAutoSchedulePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createDecomposeMulti());
   // Auto Schedule might generated generic ops.
   pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());
+  // If we want to vectorize, it is easier with generic ops
+  if (!hacc::utils::isRegBasedArch(options.target))
+    pm.nest<func::FuncOp>().addPass(createConvertGenericToNamedOpPass());
   if (options.enableOpsReorder) {
     canonicalizationPipeline(pm, options, AfterAutoSchedule);
     pm.nest<func::FuncOp>().addPass(createReorderOpsByBFS());
@@ -263,6 +386,13 @@ static void postProcess(OpPassManager &pm,
   // will only operate on functions with ShallowCV fusion kind
   AddFFTSAddrOptions addFFTSAddrOpt;
   if (options.enableTritonKernelCompile) {
+  NormalizeOptions normalizeOptions;
+  normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
+  // will only operate on functions with ShallowCV fusion kind
+  AddFFTSAddrOptions addFFTSAddrOpt;
+  if (options.enableTritonKernelCompile && options.insertFFTS) {
     addFFTSAddrOpt.forceAddFFTSAddr = 0;
   }
   pm.addPass(createAddFFTSAddrPass(addFFTSAddrOpt));
@@ -278,6 +408,95 @@ static void postProcess(OpPassManager &pm,
 
 void buildHFusionPipelines(OpPassManager &pm,
                            const HFusionPipelineOptions &options) {
+static void hfusionVectorizeManualScopePipeline(
+    OpPassManager &pm, const HFusionPipelineOptions &hfusionOptions) {
+  // vectorize manual vector scope
+  pm.addPass(scope::createOutlineScopePass());
+  VectorizeOpsOptions vectorizeOptions;
+  vectorizeOptions.forManualScope = true;
+  pm.addPass(createHFusionVectorizeOpsPass(vectorizeOptions));
+  pm.nest<func::FuncOp>().addPass(vector::createLowerVectorMaskPass());
+  pm.addPass(createSimplifyVFArgsPass());
+  canonicalizationPipeline(pm, hfusionOptions);
+  pm.nest<func::FuncOp>().addPass(
+      vector::createMaterializeVectorWriteToDestinationPass());
+}
+
+static void
+hfusionAutoVectorizePipeline(OpPassManager &pm,
+                             const HFusionPipelineOptions &hfusionOptions) {
+  canonicalizationPipeline(pm, hfusionOptions);
+  pm.nest<func::FuncOp>().addPass(createFoldExtractInsertPairPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
+  hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
+  // Prepare tree reduce options for RA / AR control.
+  TreeReduceEnableFlags treeReduceFlags =
+      getTreeReduceEnableFlags(hfusionOptions.enableTreeReduceMode);
+  TreeReduceV2Options treeReduceOptions;
+  treeReduceOptions.enableRA = treeReduceFlags.enableRA;
+  treeReduceOptions.enableAR = treeReduceFlags.enableAR;
+  if (enableSIMDVFFusion(hfusionOptions)) {
+    VFFusionOptions vfFusionOptions;
+    vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
+    vfFusionOptions.enableRA = treeReduceFlags.enableRA;
+    vfFusionOptions.enableAR = treeReduceFlags.enableAR;
+    vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
+    pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
+    canonicalizationPipeline(pm, hfusionOptions);
+  }
+  pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
+  PreVectorizationFusionOptions preVecOptions;
+  preVecOptions.enableTritonCompile = hfusionOptions.enableTritonKernelCompile;
+  preVecOptions.maxFusedElementwiseOps = hfusionOptions.hfusionMaxFusedElementwiseOps;
+  preVecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
+  pm.nest<func::FuncOp>().addPass(createPreVectorizationFusionPass(preVecOptions));
+  pm.nest<func::FuncOp>().addPass(createPrepareI1Nx1ForVectorizationPass());
+  canonicalizationPipeline(pm, hfusionOptions);
+  if (hfusionOptions.enableAutoVectorizeV2) {
+    AutoVectorizeV2Options vecOptions;
+    vecOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
+    vecOptions.enableMultipleConsumerFusion =
+        hfusionOptions.hfusionEnableMultipleConsumerFusion;
+    if (hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2 >= 0)
+      vecOptions.maxFusedOps =
+          static_cast<unsigned>(
+              hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
+    pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
+    pm.addPass(createOutlineVectorFunctionPass());
+  } else {
+    AutoVectorizeOptions vecOptions;
+    // Set maxVectorizeAxes to be 1 for compatiblity.
+    // TODO: Remove this constraint after e2e support for multi axes
+    // vectorization.
+    vecOptions.maxVectorizeAxes = 2;
+    vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    pm.addPass(createHFusionAutoVectorizePass(vecOptions));
+  }
+  pm.addPass(createAutoVectorizeVerifierPass());
+  pm.addPass(createTreeReduceV2Pass(treeReduceOptions));
+  pm.addPass(mlir::createHFusionToVectorConversionPass());
+  pm.nest<func::FuncOp>().addPass(
+      createRemoveMaskFromUnalignedReductionLoopPass());
+  pm.nest<func::FuncOp>().addPass(vector::createLowerVectorMaskPass());
+  if (enableSIMDVFFusion(hfusionOptions)) {
+    // Eliminate VFFusion outline
+    pm.addPass(mlir::createInlinerPass());
+  }
+  // Run after Inliner so VFFusion can pull cross-scope extract_slices into VF.
+  pm.addPass(createPullSliceIntoVectorFunctionPass());
+  pm.addPass(createSimplifyVFArgsPass());
+  pm.addPass(createLoopInvariantSubsetHoistingPass());
+  canonicalizationPipeline(pm, hfusionOptions);
+  pm.addPass(createRemoveRedundantWriteAndReadPairPass());
+  pm.addPass(createSCFForLoopCanonicalizationPass());
+  canonicalizationPipeline(pm, hfusionOptions);
+}
+
+void buildHFusionPipelines(OpPassManager &pm,
+                           const HFusionPipelineOptions &options) {
+  bool runRegBasePasses =
+      !options.enableMixedCV && hacc::utils::isRegBasedArch(options.target);
   preProcess(pm, options);
   canonicalizationPipeline(pm, options);
   if (!options.enableTritonKernelCompile) {
@@ -307,6 +526,91 @@ void buildHFusionPipelines(OpPassManager &pm,
   }
   canonicalizationPipeline(pm, options, AfterAutoSchedule);
   postProcess(pm, options);
+    // this logic copy from function: "flattenAndFold"
+    // step 1: flattenOps
+    // step 2: CanonicalizeTensorReshape
+    // step 3：FoldTensorEmpty
+    // step 4: CanonicalizeTensorReshape
+    // FIXME: because of VF fusion, for triton compile, we need flatten pass or
+    // other passes we didn't notice. Maybe these passes will be called later.
+    if (runRegBasePasses && options.enableFlatten) {
+      PropagateReshapeOptions opts;
+      opts.forRegbased = true;
+      opts.forHIVM = false;
+      opts.skipScope = options.skipScope;
+      pm.nest<func::FuncOp>().addPass(tensor::createPropagateReshapePass(opts));
+      pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
+      pm.nest<func::FuncOp>().addPass(
+          tensor::createCanonicalizeTensorReshapePass());
+      canonicalizationPipeline(pm, options);
+
+      FlattenOpsOptions flattenOpsOpt;
+      flattenOpsOpt.flattenMode = hfusion::FlattenMode::Tidy;
+      flattenOpsOpt.skipHost = options.enableMultiKernel;
+      flattenOpsOpt.multiDynamicShape = false;
+      flattenOpsOpt.registerBased = true;
+      flattenOpsOpt.skipScope = options.skipScope;
+      pm.nest<func::FuncOp>().addPass(createFlattenOpsPass(flattenOpsOpt));
+    }
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createCanonicalizeTensorReshapePass());
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createNormalizeLastDimUnalignedTensorOpPass());
+
+    if (runRegBasePasses) {
+      canonicalizationPipeline(pm, options, AfterAutoSchedule);
+      pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
+    }
+  }
+  canonicalizationPipeline(pm, options, AfterAutoSchedule);
+  postProcess(pm, options);
+
+  if (runRegBasePasses) {
+    if (!options.disableHfusionVectorize) {
+      hfusionAutoVectorizePipeline(pm, options);
+    }
+  }
+
+  // TODO: need to be reverted when Affinity GMM supported
+  if (options.disableHfusionVectorize) {
+    pm.addPass(std::make_unique<MarkDisableVectorizePass>());
+  }
+}
+
+void buildHFusionRegBasePipeline(OpPassManager &pm,
+                                 const HFusionPipelineOptions &options) {
+  // TODO: Commonize this with the non-mixed-cv pipeline to prevent potential
+  // out-of-sync pass orders
+  if (options.enableFlatten) {
+    PropagateReshapeOptions opts;
+    opts.forRegbased = true;
+    opts.forHIVM = false;
+    pm.nest<func::FuncOp>().addPass(tensor::createPropagateReshapePass(opts));
+    pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
+    pm.nest<func::FuncOp>().addPass(
+        tensor::createCanonicalizeTensorReshapePass());
+    canonicalizationPipeline(pm, options);
+
+    FlattenOpsOptions flattenOpsOpt;
+    flattenOpsOpt.flattenMode = hfusion::FlattenMode::Tidy;
+    flattenOpsOpt.skipHost = options.enableMultiKernel;
+    flattenOpsOpt.multiDynamicShape = false;
+    flattenOpsOpt.registerBased = true;
+    pm.nest<func::FuncOp>().addPass(createFlattenOpsPass(flattenOpsOpt));
+    canonicalizationPipeline(pm, options, AfterAutoSchedule);
+  }
+
+  pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
+  NormalizeOptions normalizeOptions;
+  normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
+  pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
+  hfusionAutoVectorizePipeline(pm, options);
+}
+
+bool enableSIMDVFFusion(const HFusionPipelineOptions &options) {
+  return options.enableTritonKernelCompile && options.enableVFFusion;
 }
 
 //===----------------------------------------------------------------------===//

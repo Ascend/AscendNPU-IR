@@ -82,6 +82,9 @@ struct InjectIR : public InjectIRBase<InjectIR> {
 
       IRMapping mapper;
       loadedBody.cloneInto(&currentBody, mapper);
+
+      // replace function type when mismatch
+      currentFunc.setFunctionType(loadedFunc.getFunctionType());
     }
   }
 };

@@ -54,6 +54,70 @@ template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 vconv(intrin_args<1, SRC_T, DST_T> args, CastMode cast_mode);
 
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) void
+vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
+                          memref_t<__ubuf__ DST_T, 2> *dst,
+                          memref_t<__ubuf__ SRC_T, 1> *tmp) {
+  static_assert(sizeof(SRC_T) > sizeof(DST_T) &&
+                "sizeof src dtype must large than dst dtype");
+  constexpr int num_per_block_dst = INTR_BYTES_PER_BLOCK / sizeof(DST_T);
+  // step1: Transpose src to tmp.
+  memref_t<__ubuf__ DST_T, 2> src_as_dst_t;
+  view_as<SRC_T, DST_T, 2>(src, &src_as_dst_t);
+  auto src_as_dst_t_size0 = src_as_dst_t.sizes[0];
+  auto src_as_dst_t_size1 = src_as_dst_t.sizes[1];
+
+  memref_t<__ubuf__ DST_T, 1> tmp_as_dst_t;
+  view_as<SRC_T, DST_T, 1>(tmp, &tmp_as_dst_t);
+  memref_t<__ubuf__ DST_T, 2> tmp_2d_as_dst_t{
+      tmp_as_dst_t.aligned,
+      tmp_as_dst_t.allocated,
+      tmp_as_dst_t.offset,
+      {src_as_dst_t_size1, src_as_dst_t_size0},
+      {CEIL_FACTOR(src_as_dst_t_size0, num_per_block_dst), 1}};
+  vnchwconv_2d(&src_as_dst_t, &tmp_2d_as_dst_t);
+
+  // step2: Take out the low-order results through copy_ubuf_to_ubuf.
+  __ubuf__ DST_T *tmp_2d_as_dst_t_ptr =
+      tmp_2d_as_dst_t.aligned + tmp_2d_as_dst_t.offset;
+  auto bits_factor = bitwidthOf<SRC_T>() / bitwidthOf<DST_T>();
+  auto lenBurst = CEIL_DIV(src_as_dst_t_size0, num_per_block_dst);
+  INTRINSIC(pipe_barrier, PIPE_V);
+  INTRINSIC(copy_ubuf_to_ubuf,
+            tmp_2d_as_dst_t_ptr,                 // src
+            tmp_2d_as_dst_t_ptr,                 // dst
+            0,                                   // sid
+            src_as_dst_t_size1 / bits_factor,    // nburst
+            lenBurst,                            // lenBurst
+            (bits_factor - 1) * lenBurst,        // srcGap
+            0);                                  // dstGap
+
+  tmp_2d_as_dst_t.sizes[0] = src_as_dst_t_size1 / bits_factor;
+  if (dst->strides[0] != CEIL_FACTOR(dst->sizes[1], num_per_block_dst)) {
+    // step3: Transpose tmp to tmp.
+    // The second half of tmp is used to store temporary tranpose results.
+    memref_t<__ubuf__ DST_T, 2> tmp_for_transpose{
+        tmp_as_dst_t.aligned,
+        tmp_as_dst_t.allocated,
+        tmp_as_dst_t.offset + tmp->sizes[0] * bits_factor / 2,
+        {dst->sizes[0], dst->sizes[1]},
+        {CEIL_FACTOR(dst->sizes[1], num_per_block_dst), 1}};
+    INTRINSIC(pipe_barrier, PIPE_V);
+    vnchwconv_2d(&tmp_2d_as_dst_t, &tmp_for_transpose);
+
+    // step4: copy tmp to dst.
+    INTRINSIC(pipe_barrier, PIPE_V);
+    tmp_for_transpose.sizes[0] = dst->sizes[0];
+    tmp_for_transpose.sizes[1] = dst->sizes[1];
+    copy_ubuf_to_ubuf_2d_core_with_contiguous_last_dim(&tmp_for_transpose, dst);
+    return;
+  }
+  // step3: Transpose tmp to dst.
+  INTRINSIC(pipe_barrier, PIPE_V);
+  vnchwconv_2d(&tmp_2d_as_dst_t, dst);
+}
+
 template <typename SRC_T, typename DST_T, bool DISABLE_SIZE_ALIGN>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
@@ -82,7 +146,7 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
       tmp->offset,
       {src_size0, src_size1},
       {CEIL_FACTOR(src_size1, num_per_block_src), 1}};
-    
+
     copy_ubuf_to_ubuf_2d_core(src, &tmp_2d_src_t);
     INTRINSIC(pipe_barrier, PIPE_V);
   } else {
@@ -94,7 +158,7 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
       {src->sizes[0], src->sizes[1]},
       {src->strides[0], src->strides[1]}};
   }
-  
+
   // step1: Transpose to tmp.
   memref_t<__ubuf__ DST_T, 2> src_as_dst_t;
   view_as<SRC_T, DST_T, 2>(&tmp_2d_src_t, &src_as_dst_t);
@@ -169,6 +233,12 @@ vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
                              memref_t<__ubuf__ DST_T, 1> *dst,
                              memref_t<__ubuf__ SRC_T, 1> *tmp);
 
+template <typename SRC_T, typename DST_T>
+__aiv__ __attribute__((always_inline)) void
+vector_cast_1d_with_overflow(memref_t<__ubuf__ SRC_T, 1> *src,
+                             memref_t<__ubuf__ DST_T, 1> *dst,
+                             memref_t<__ubuf__ SRC_T, 1> *tmp);
+
 #define REGISTE_CAST_1D_WITH_TEMP_CORE(src_type, dst_type)                     \
   template __aiv__ __attribute__((always_inline)) void                         \
   vector_cast_1d_with_temp(memref_t<__ubuf__ src_type, 1> *src,                \
@@ -182,6 +252,12 @@ vector_cast_2d_with_temp(memref_t<__ubuf__ SRC_T, 2> *src,
                          memref_t<__ubuf__ DST_T, 1> *temp);
 
 template <typename SRC_T, typename DST_T, bool DISABLE_SIZE_ALIGN>
+__aiv__ __attribute__((always_inline)) void
+vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
+                             memref_t<__ubuf__ DST_T, 2> *dst,
+                             memref_t<__ubuf__ SRC_T, 1> *tmp);
+
+template <typename SRC_T, typename DST_T>
 __aiv__ __attribute__((always_inline)) void
 vector_cast_2d_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
                              memref_t<__ubuf__ DST_T, 2> *dst,
@@ -219,7 +295,6 @@ __aiv__ __attribute__((always_inline)) void
 scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
                          memref_t<__ubuf__ DST_T, 2> *dst,
                          CastMode cast_mode);
-
 #define DECLARE_CAST(src_type, dst_type, dim)                                  \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vcast_##src_type##_to_##dst_type##_##dim##d_with_mode(      \
@@ -235,6 +310,13 @@ scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
           memref_t<__ubuf__ dst_type, dim> *dst,                               \
           memref_t<__ubuf__ src_type, 1> *tmp, CastMode cast_mode)
 
+#define DECLARE_CAST_OVERFLOW_V2(src_type, dst_type, dim)                         \
+  __aiv__ __attribute__((always_inline)) void                                  \
+      _mlir_ciface_vcast_##src_type##_to_##dst_type##_##dim##d_with_overflow(  \
+          memref_t<__ubuf__ src_type, dim> *src,                               \
+          memref_t<__ubuf__ dst_type, dim> *dst,                               \
+          memref_t<__ubuf__ src_type, 1> *tmp, CastMode cast_mode)
+
 #define DECLARE_CAST_OVERFLOW_NO_SIZE_ALIGN(src_type, dst_type, dim)                        \
   __aiv__ __attribute__((always_inline)) void                                               \
       _mlir_ciface_vcast_##src_type##_to_##dst_type##_##dim##d_with_overflow_no_size_align( \
@@ -242,6 +324,7 @@ scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
           memref_t<__ubuf__ dst_type, dim> *dst,                                            \
           memref_t<__ubuf__ src_type, 1> *tmp, CastMode cast_mode)
 
+// HEAD: combo wrapper that expands to both size_align and no_size_align declarations
 #define DECLARE_CAST_OVERFLOW(src_type, dst_type, dim)                         \
   DECLARE_CAST_OVERFLOW_SIZE_ALIGN(src_type, dst_type, dim);                   \
   DECLARE_CAST_OVERFLOW_NO_SIZE_ALIGN(src_type, dst_type, dim)
@@ -285,6 +368,17 @@ scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
   REGISTE_CAST_OVERFLOW_SIZE_ALIGN(src_type, dst_type, dim);                   \
   REGISTE_CAST_OVERFLOW_NO_SIZE_ALIGN(src_type, dst_type, dim)
 
+// Simple versions without alignment check (regbase style, _V2 suffix)
+#define REGISTE_CAST_V2(src_type, dst_type, dim)                               \
+  DECLARE_CAST(src_type, dst_type, dim) {                                      \
+    vector_cast_##dim##d_with_mode<src_type, dst_type>(src, dst, cast_mode);   \
+  }
+
+#define REGISTE_CAST_OVERFLOW_V2(src_type, dst_type, dim)                      \
+  DECLARE_CAST_OVERFLOW_SIZE_ALIGN(src_type, dst_type, dim) {                  \
+    vector_cast_##dim##d_with_overflow<src_type, dst_type>(src, dst, tmp);     \
+  }
+
 #define DECLARE_CAST_WITH_TEMP(src_type, dst_type, dim)                        \
   __aiv__ __attribute__((always_inline)) void                                  \
       _mlir_ciface_vcast_##src_type##_to_##dst_type##_##dim##d_with_temp(      \
@@ -301,6 +395,11 @@ scalar_cast_2d_with_mode(memref_t<__ubuf__ SRC_T, 2> *src,
     } else {                                                                   \
       vector_cast_##dim##d_with_temp<src_type, dst_type>(src, dst, temp);      \
     }                                                                          \
+  }
+
+#define REGISTE_CAST_WITH_TEMP_V2(src_type, dst_type, dim)                     \
+  DECLARE_CAST_WITH_TEMP(src_type, dst_type, dim) {                            \
+    vector_cast_##dim##d_with_temp<src_type, dst_type>(src, dst, temp);        \
   }
 
 extern "C" {

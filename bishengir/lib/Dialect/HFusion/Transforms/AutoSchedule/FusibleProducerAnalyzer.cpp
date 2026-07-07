@@ -321,6 +321,7 @@ analyzeProducersForStoreOp(hfusion::StoreOp storeOp, StoreOpInfo &storeOpInfo,
        << utils::debugger::to_string(strictlyParallelDims));
   if (!diff.empty())
     llvm::report_fatal_error("parallel and reduce dims are not disjoint!");
+    llvm_unreachable("parallel and reduce dims are not disjoint!");
 #endif
 
   bool doesOutputHaveReduceAxes = !looselyReductionDims.empty();

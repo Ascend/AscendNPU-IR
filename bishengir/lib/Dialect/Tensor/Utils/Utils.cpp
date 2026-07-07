@@ -12,6 +12,10 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Also available under a BSD-style license. See LICENSE.
 //
 //===----------------------------------------------------------------------===//
 
@@ -39,6 +43,27 @@ getHyperrectangleFromArray(int64_t superviewShape, int64_t offset, int64_t size,
   const int64_t n = static_cast<int64_t>(staticNewShape.size());
   if (n == 0) {
     LDBG("n == 0, hyperrectangle failed");
+std::string stringtifyElementKind(ElementKind kind) {
+    switch (kind) {
+        case ElementKind::HasMutation: return "HasMutation";
+        case ElementKind::NoMutation:  return "NoMutation";
+        case ElementKind::Unit:        return "Unit";
+    }
+}
+
+llvm::raw_ostream& operator<<(llvm::raw_ostream& os, ElementKind kind) {
+    os << stringtifyElementKind(kind);
+    return os;
+}
+
+using Hyperrectangle = SmallVector<HyperrectangularSlice>;
+std::optional<Hyperrectangle>
+getExtendHyperrectangleFromArray(int64_t superviewShape, int64_t offset,
+                                 int64_t size, int64_t stride,
+                                 llvm::ArrayRef<int64_t> staticNewShape) {
+  const int64_t n = static_cast<int64_t>(staticNewShape.size());
+  if (n == 0) {
+    LDBG("n == 0, ExtendHyperrectangle failed");
     return std::nullopt; // Handle empty shape
   }
   // Validate new shape matches total elements
@@ -51,6 +76,7 @@ getHyperrectangleFromArray(int64_t superviewShape, int64_t offset, int64_t size,
     LDBG("Total elements are not the same as the superviewShape "
          << totalElements << " " << superviewShape);
     llvm::report_fatal_error("Total elements are not the same as the superviewShape");
+    llvm_unreachable("Total elements are not the same as the superviewShape");
   }
   // Compute row-major strides (step sizes between dimensions)
   llvm::SmallVector<int64_t> computedStrides(n, 1);
@@ -139,7 +165,74 @@ getHyperrectangleFromArray(int64_t superviewShape, int64_t offset, int64_t size,
       result.emplace_back(i, 0, staticNewShape[i], 1);
     }
   }
+  // Collect all coordinates
+  llvm::SmallVector<llvm::SmallVector<int64_t>> allCoords;
+  allCoords.reserve(size);
 
+  for (int64_t k = 0; k < size; ++k) {
+    int64_t idx = offset + k * stride;
+    if (idx >= superviewShape) {
+      return std::nullopt;
+    }
+    allCoords.push_back(unravel(idx));
+  }
+
+  if (size == 1) {
+    Hyperrectangle result;
+    for (int64_t d = 0; d < n; ++d) {
+      result.emplace_back(d, allCoords[0][d], 1, 1);
+    }
+    return result;
+  }
+
+  llvm::SmallVector<llvm::SmallVector<int64_t>> dimValues(n);
+  for (const auto &coord : allCoords) {
+    for (int64_t d = 0; d < n; ++d) {
+      dimValues[d].push_back(coord[d]);
+    }
+  }
+
+  Hyperrectangle result;
+  int64_t totalProduct = 1;
+
+  for (int64_t d = 0; d < n; ++d) {
+    auto &vals = dimValues[d];
+    // Deduplicate and sort
+    std::set<int64_t> uniqueSet(vals.begin(), vals.end());
+    llvm::SmallVector<int64_t> sorted(uniqueSet.begin(), uniqueSet.end());
+    std::sort(sorted.begin(), sorted.end());
+
+    if (sorted.size() == 1) {
+      result.emplace_back(d, sorted[0], 1, 1);
+      continue;
+    }
+
+    // Check if the intervals are in arithmetic progression
+    int64_t dimStride = sorted[1] - sorted[0];
+    if (dimStride <= 0)
+      return std::nullopt;
+
+    for (size_t i = 2; i < sorted.size(); ++i) {
+      if (sorted[i] - sorted[i - 1] != dimStride) {
+        return std::nullopt;
+      }
+    }
+
+    int64_t dimOffset = sorted[0];
+    int64_t dimSize = (int64_t)sorted.size();
+
+    if (dimOffset + (dimSize - 1) * dimStride >= staticNewShape[d]) {
+      return std::nullopt;
+    }
+
+    result.emplace_back(d, dimOffset, dimSize, dimStride);
+    totalProduct *= dimSize;
+  }
+
+  // Verify size matches coordinate span
+  if (totalProduct != size) {
+    return std::nullopt;
+  }
   return result;
 }
 
@@ -185,6 +278,7 @@ Value getReverseReshapedValue(OpBuilder &builder, Value initialValue,
           /*reassociation=*/collapseOp.getReassociationIndices());
     } else {
       llvm::report_fatal_error(
+      llvm_unreachable(
           "only support reshape Op including tensor::ExpandShapeOp "
           "and tensor::CollapseShapeOp");
     }
@@ -245,6 +339,7 @@ static Value reifyTensorDim(tensor::DimOp dimOp, OpBuilder &builder,
     // Set insertion point before usage of this tensor.dim
     return materializedReify;
   }
+          }
   return dimOp.getResult();
 }
 

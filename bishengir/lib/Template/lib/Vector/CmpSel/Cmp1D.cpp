@@ -264,7 +264,6 @@ __aiv__ __attribute__((always_inline)) bool
 is_ub_repeat_space_enough_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0) {
   return (is_ub_repeat_space_enough<T, 1>(src0));
 }
-
 template <VectorOpTy OP, typename T>
 __aiv__ __attribute__((always_inline)) void
 vector_compare_vv_1d(memref_t<__ubuf__ T, 1> *src0,
@@ -443,7 +442,6 @@ vector_scalar_compare_vs_1d(memref_t<__ubuf__ T, 1> *src0, T scalar,
     scalar_compare_vs_1d<OP, T>(&tail_src0, scalar, &tail_dst);
   }
 }
-
 template <>
 __aiv__ __attribute__((always_inline)) void
 vector_compare_vv_1d<VectorOpTy::VCMP_NE, int32_t>(

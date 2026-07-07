@@ -65,6 +65,13 @@ void GraphSyncSolverPass::runOnOperation() {
 
   bool isMemBasedArch = true;
   bool isRegBasedArch = false;
+  if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+    return;
+  }
+
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
+  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   assert(isMemBasedArch != isRegBasedArch);
 
   SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC, isMemBasedArch,
@@ -101,7 +108,7 @@ void GraphSyncSolverPass::runOnOperation() {
     funcOp.emitError() << solver->getCustomMacroEventIdConflictMsg();
     return signalPassFailure();
   }
-
+  solver->solve();
   CodeGenerator codeGen(std::move(solver));
   codeGen.generateResultOps();
 

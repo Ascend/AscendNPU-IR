@@ -63,6 +63,9 @@ public:
 
   /// Constructor that takes the operation to flatten.
   explicit DimensionAnalyzer(Operation *op) : DimensionAnalyzerBase(op) {};
+  explicit DimensionAnalyzer(
+      Operation *op, mlir::detail::DimensionAnalyzerOptions options = {})
+      : DimensionAnalyzerBase(op, options) {};
   ~DimensionAnalyzer() override = default;
 
   /// @description: Find and set the anchor value based on current arguments.
@@ -170,10 +173,25 @@ protected:
 
   /// Processes gather operations.
   void processGatherOp(hfusion::GatherOp op);
+  void processScatterStoreOp(hfusion::ScatterStoreOp op);
 
   // Process interleave and deinterleave op
   void processInterleaveOp(hfusion::InterleaveOp op);
   void processDeinterleaveOp(hfusion::DeinterleaveOp op);
+  void processForOp(scf::ForOp op);
+  void processYieldOp(scf::YieldOp op);
+
+  void processToTensorOp(bufferization::ToTensorOp op);
+  void processToMemrefOp(bufferization::ToMemrefOp op);
+  void processSubviewOp(memref::SubViewOp op);
+
+  void processFlipOp(hfusion::FlipOp op);
+  void processSortOp(hfusion::SortOp op);
+  void processEmbeddingGatherOp(hfusion::EmbeddingGatherOp op);
+  void processIndirectLoadOp(hfusion::IndirectLoadOp op);
+  void processStrideLoadOp(hfusion::StrideLoadOp op);
+  void processIndirectStoreOp(hfusion::IndirectStoreOp op);
+  void processStrideStoreOp(hfusion::StrideStoreOp op);
 
   //===--------------------------------------------------------------------===//
   // Helper function

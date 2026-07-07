@@ -16,6 +16,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
@@ -31,11 +38,16 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/ValueRange.h"
@@ -54,6 +66,12 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <array>
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/MathExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -128,6 +146,7 @@ getConv3DIntTripleAttr(Attribute attr, StringRef attrName,
 }
 
 } // namespace
+static constexpr llvm::StringLiteral kVgatherDecomposeAttr = "VgatherDecompose";
 
 //===----------------------------------------------------------------------===//
 // Support for named HFusion ops defined in ods-gen.
@@ -141,6 +160,8 @@ using RegionBuilderFn = llvm::function_ref<void(ImplicitLocOpBuilder &, Block &,
                                                 ArrayRef<NamedAttribute>,
                                                 function_ref<InFlightDiagnostic()>)>;
 #endif
+using RegionBuilderFn = llvm::function_ref<void(ImplicitLocOpBuilder &, Block &,
+                                                ArrayRef<NamedAttribute>)>;
 
 /// Fills the region of a structured operation using the provided
 /// `regionBuilder`. The method is used by both named structured ops created by
@@ -181,6 +202,7 @@ static void fillStructuredOpRegion(OpBuilder &opBuilder, Region &region,
     return mlir::emitError(opBuilder.getUnknownLoc());
   });
 #endif
+  regionBuilder(b, *body, attrs);
 
   // indexing_maps is an auto-generated method.
 
@@ -453,6 +475,8 @@ public:
       return builder.create<math::AtanOp>(arg.getLoc(), arg);
     case UnaryFn::atanh:
       return builder.create<math::AtanhOp>(arg.getLoc(), arg);
+    case UnaryFn::atan:
+      return builder.create<math::AtanOp>(arg.getLoc(), arg);
     case UnaryFn::absi:
       return builder.create<math::AbsIOp>(arg.getLoc(), arg);
     case UnaryFn::erf:
@@ -481,6 +505,8 @@ public:
       return builder.create<mathExt::LgammaOp>(arg.getLoc(), arg);
     }
     llvm::report_fatal_error("unsupported unary function");
+    }
+    llvm_unreachable("unsupported unary function");
   }
 
   Value buildUnaryRelu(OpBuilder &builder, Value arg) {
@@ -497,6 +523,7 @@ public:
       return builder.create<arith::MaxSIOp>(arg.getLoc(), zero, arg);
     }
     llvm::report_fatal_error("unsupported type for relu");
+    llvm_unreachable("unsupported type for relu");
   }
 
   Value buildUnaryRec(OpBuilder &builder, Value arg) {
@@ -513,6 +540,7 @@ public:
       return builder.create<arith::DivSIOp>(arg.getLoc(), one, arg);
     }
     llvm::report_fatal_error("unsupported type for reciprocal");
+    llvm_unreachable("unsupported type for reciprocal");
   }
 
   Value buildUnaryVNot(OpBuilder &builder, Value arg) {
@@ -523,6 +551,12 @@ public:
       return builder.create<arith::XOrIOp>(arg.getLoc(), zero, arg);
     }
     llvm::report_fatal_error("unsupported type for not");
+      Value negOne = builder.create<arith::ConstantOp>(
+          arg.getLoc(), type, builder.getIntegerAttr(type, -1));
+      return builder.create<arith::XOrIOp>(arg.getLoc(), negOne, arg);
+    } else {
+      llvm_unreachable("unsupported type for not");
+    }
   }
 
   // Build the binary functions defined by OpDSL.
@@ -532,6 +566,7 @@ public:
     bool allInteger = isInteger(arg0) && isInteger(arg1);
     if (!allComplex && !allFloatingPoint && !allInteger)
       llvm::report_fatal_error("unsupported non numeric type");
+      llvm_unreachable("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (binaryFn) {
     case BinaryFn::vor:
@@ -574,6 +609,39 @@ public:
       if (allInteger)
         return builder.create<math::IPowIOp>(arg0.getLoc(), arg0, arg1);
       llvm::report_fatal_error("unsupported type for vpowi");
+      llvm_unreachable("unsupported type for vor");
+    case BinaryFn::vxor:
+      if (allInteger)
+        return builder.create<arith::XOrIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vxor");
+    case BinaryFn::vand:
+      if (allInteger)
+        return builder.create<arith::AndIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vand");
+    case BinaryFn::minf:
+      if (allFloatingPoint)
+        return builder.create<arith::MinimumFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vmin");
+    case BinaryFn::maxf:
+      if (allFloatingPoint)
+        return builder.create<arith::MaximumFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vmax");
+    case BinaryFn::minnumf:
+      if (allFloatingPoint)
+        return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vmin");
+    case BinaryFn::maxnumf:
+      if (allFloatingPoint)
+        return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vmax");
+    case BinaryFn::powf:
+      if (allFloatingPoint)
+        return builder.create<math::PowFOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vpow");
+    case BinaryFn::powi:
+      if (allInteger)
+        return builder.create<math::IPowIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for vpowi");
     case BinaryFn::mod:
       if (allInteger)
         return builder.create<arith::RemSIOp>(arg0.getLoc(), arg0, arg1);
@@ -616,6 +684,44 @@ public:
       llvm::report_fatal_error("unsupported type for ceildivui");
     }
     llvm::report_fatal_error("unsupported binary function");
+      llvm_unreachable("unsupported type for mod");
+    case BinaryFn::shli:
+      if (allInteger)
+        return builder.create<arith::ShLIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for shli");
+    case BinaryFn::shrsi:
+      if (allInteger)
+        return builder.create<arith::ShRSIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for shrsi");
+    case BinaryFn::shrui:
+      if (allInteger)
+        return builder.create<arith::ShRUIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for shrui");
+    case BinaryFn::ldexp:
+      if (allFloatingPoint)
+        return builder.create<mathExt::LdexpOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for ldexp");
+    case BinaryFn::floordivsi:
+      if (allInteger)
+        return builder.create<arith::FloorDivSIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for floordivsi");
+    case BinaryFn::ceildivsi:
+      if (allInteger)
+        return builder.create<arith::CeilDivSIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for ceildivsi");
+    case BinaryFn::ceildivui:
+      if (allInteger)
+        return builder.create<arith::CeilDivUIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for ceildivui");
+    case BinaryFn::modui:
+      if (allInteger)
+        return builder.create<arith::RemUIOp>(arg0.getLoc(), arg0, arg1);
+      llvm_unreachable("unsupported type for modui");
+    case BinaryFn::divfhp:
+      Type type = arg0.getType();
+      return builder.create<mathExt::DivFHPOp>(arg0.getLoc(), type, arg0, arg1);
+    }
+    llvm_unreachable("unsupported binary function");
   }
 
   // Build the compare functions defined by OpDSL.
@@ -625,6 +731,7 @@ public:
     bool allInteger = isInteger(arg0) && isInteger(arg1);
     if (!allComplex && !allFloatingPoint && !allInteger)
       llvm::report_fatal_error("unsupported non numeric type");
+      llvm_unreachable("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (compareFn) {
     case CompareFn::veq:
@@ -635,6 +742,7 @@ public:
         return builder.create<arith::CmpFOp>(
             arg0.getLoc(), arith::CmpFPredicate::OEQ, arg0, arg1);
       llvm::report_fatal_error("unsupported type for veq");
+      llvm_unreachable("unsupported type for veq");
     case CompareFn::vne:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
@@ -645,6 +753,8 @@ public:
       llvm::report_fatal_error("unsupported type for vne");
     case CompareFn::vle:
     case CompareFn::vule:
+      llvm_unreachable("unsupported type for vne");
+    case CompareFn::vle:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sle, arg0, arg1);
@@ -654,6 +764,8 @@ public:
       llvm::report_fatal_error("unsupported type for vle");
     case CompareFn::vlt:
     case CompareFn::vult:
+      llvm_unreachable("unsupported type for vle");
+    case CompareFn::vlt:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::slt, arg0, arg1);
@@ -663,6 +775,8 @@ public:
       llvm::report_fatal_error("unsupported type for vlt");
     case CompareFn::vge:
     case CompareFn::vuge:
+      llvm_unreachable("unsupported type for vlt");
+    case CompareFn::vge:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sge, arg0, arg1);
@@ -672,6 +786,8 @@ public:
       llvm::report_fatal_error("unsupported type for vge");
     case CompareFn::vgt:
     case CompareFn::vugt:
+      llvm_unreachable("unsupported type for vge");
+    case CompareFn::vgt:
       if (allInteger)
         return builder.create<arith::CmpIOp>(
             arg0.getLoc(), arith::CmpIPredicate::sgt, arg0, arg1);
@@ -681,6 +797,29 @@ public:
       llvm::report_fatal_error("unsupported type for vgt");
     }
     llvm::report_fatal_error("unsupported binary function");
+      llvm_unreachable("unsupported type for vgt");
+    case CompareFn::vule:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ule, arg0, arg1);
+      llvm_unreachable("unsupported type for ule");
+    case CompareFn::vuge:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::uge, arg0, arg1);
+      llvm_unreachable("unsupported type for uge");
+    case CompareFn::vugt:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ugt, arg0, arg1);
+      llvm_unreachable("unsupported type for ugt");
+    case CompareFn::vult:
+      if (allInteger)
+        return builder.create<arith::CmpIOp>(
+            arg0.getLoc(), arith::CmpIPredicate::ult, arg0, arg1);
+      llvm_unreachable("unsupported type for ult");
+    }
+    llvm_unreachable("unsupported binary function");
   }
 
   // Build the Ternary functions defined by OpDSL.
@@ -691,6 +830,7 @@ public:
     bool allInteger = isInteger(arg1) && isInteger(arg2);
     if (!allComplex && !allFloatingPoint && !allInteger)
       llvm::report_fatal_error("unsupported non numeric type");
+      llvm_unreachable("unsupported non numeric type");
     OpBuilder builder = getBuilder();
     switch (ternaryFn) {
     case TernaryFn::select:
@@ -699,6 +839,13 @@ public:
       llvm::report_fatal_error("unsupported type for select");
     }
     llvm::report_fatal_error("unsupported select function");
+      llvm_unreachable("unsupported type for select");
+    case TernaryFn::fma:
+      if (allFloatingPoint)
+        return builder.create<math::FmaOp>(arg0.getLoc(), arg0, arg1, arg2);
+      llvm_unreachable("unsupported type for multiply add");
+    }
+    llvm_unreachable("unsupported select function");
   }
 
   // Build the type functions defined by OpDSL.
@@ -728,6 +875,53 @@ public:
       isUnsignedCast = true;
     }
     return cast(toType, operand, isUnsignedCast);
+    llvm_unreachable("unsupported type conversion function");
+  }
+
+  // Build the type functions defined by OpDSL.
+  Value buildRoundMode(TypeFn cast, RoundMode round, UnsignedMode unsignedMode,
+                       Type toType, Value operand) {
+    bool isUnsignedCast = false;
+    if (operand.getType().isInteger(1) && toType.getIntOrFloatBitWidth() > 1) {
+      isUnsignedCast = (cast == TypeFn::cast_unsigned);
+    }
+
+    if (cast == TypeFn::cast_unsigned) {
+      isUnsignedCast = true;
+    }
+
+    Value castedOp = castRound(toType, operand, isUnsignedCast);
+    Operation *defOp = castedOp.getDefiningOp();
+    OpBuilder builder = getBuilder();
+
+    if (!defOp) {
+      return castedOp;
+    }
+    auto roundingAttr = builder.getAttr<hfusion::RoundModeAttr>(round);
+    auto unsignedAttr = builder.getAttr<hfusion::UnsignedModeAttr>(unsignedMode);
+
+    if (!roundingAttr) {
+      llvm_unreachable("Round type not supported");
+    }
+    if (!unsignedAttr) {
+      llvm_unreachable("Unsigned mode not supported");
+    }
+
+    defOp->setAttr("round_mode", roundingAttr);
+    defOp->setAttr("unsigned_mode", unsignedAttr);
+    return castedOp;
+  }
+
+  // Build the enable_saturate attr defined by OpDSL.
+  void buildEnableSaturate(bool enable_saturateVal, Value operand) {
+    Operation *defOp = operand.getDefiningOp();
+    OpBuilder builder = getBuilder();
+
+    if (!defOp) {
+      return;
+    }
+
+    defOp->setAttr("enable_saturate", builder.getBoolAttr(enable_saturateVal));
   }
 
   // Build the type functions defined by OpDSL.
@@ -771,6 +965,14 @@ private:
     return convertScalarToDtype(builder, loc, operand, toType, isUnsignedCast);
   }
 
+  Value castRound(Type toType, Value operand, bool isUnsignedCast) {
+    OpBuilder builder = getBuilder();
+    auto loc = operand.getLoc();
+    if (operand.getType() == toType && dyn_cast<FloatType>(toType)) {
+      return builder.create<math::RoundOp>(loc, operand);
+    }
+    return convertScalarToDtype(builder, loc, operand, toType, isUnsignedCast);
+  }
   bool isComplex(Value value) {
     return llvm::isa<ComplexType>(value.getType());
   }
@@ -792,6 +994,8 @@ private:
 };
 
 template <typename CumOpTy> LogicalResult verifyCumOp(CumOpTy op) {
+template <typename CumOpTy>
+LogicalResult verifyCumOp(CumOpTy op) {
   ArrayRef<int64_t> cumDims = op.getCumDims();
   if (cumDims.empty()) {
     return op.emitOpError() << "have empty cum dims array";
@@ -919,6 +1123,10 @@ void ReduceWithIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                               BoolAttr tie_break_left,
                               DenseI64ArrayAttr dimensions) {
   odsState.addAttribute("reduce_kind", reduce_kind);
+                              BoolAttr unsigned_src, BoolAttr tie_break_left,
+                              DenseI64ArrayAttr dimensions) {
+  odsState.addAttribute("reduce_kind", reduce_kind);
+  odsState.addAttribute("unsigned_src", unsigned_src);
   odsState.addAttribute("tie_break_left", tie_break_left);
   odsState.addAttribute("dimensions", dimensions);
   buildStructuredOp(odsBuilder, odsState, types, inputs, inits, {},
@@ -932,6 +1140,10 @@ void ReduceWithIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                               BoolAttr tie_break_left,
                               ArrayRef<int64_t> dimensions) {
   odsState.addAttribute("reduce_kind", reduce_kind);
+                              BoolAttr unsigned_src, BoolAttr tie_break_left,
+                              ArrayRef<int64_t> dimensions) {
+  odsState.addAttribute("reduce_kind", reduce_kind);
+  odsState.addAttribute("unsigned_src", unsigned_src);
   odsState.addAttribute("tie_break_left", tie_break_left);
   odsState.addAttribute("dimensions",
                         odsBuilder.getDenseI64ArrayAttr(dimensions));
@@ -1054,6 +1266,30 @@ void codeGenWithoutIndexDispatch(OpBuilder &builder, Block &block,
           builder, inValue, outValue, outIndex, indexType, theDimension,
           arith::CmpIPredicate::ult);
       break;
+    IntegerType::SignednessSemantics sgn =
+        cast<IntegerType>(elemType).getSignedness();
+    if (reduce_kind == ReduceWithIndexKind::MAX) {
+      if (sgn == IntegerType::SignednessSemantics::Signed ||
+          sgn == IntegerType::SignednessSemantics::Signless) {
+        codeGenWithoutIndex<arith::MaxSIOp, arith::CmpIOp,
+                            arith::CmpIPredicate>(
+            builder, inValue, outValue, outIndex, indexType, theDimension,
+            arith::CmpIPredicate::sgt);
+      } else {
+        llvm::report_fatal_error(
+            "Unsigned reduce_with_index is not currently supported by HFusion");
+      }
+    } else {
+      if (sgn == IntegerType::SignednessSemantics::Signed ||
+          sgn == IntegerType::SignednessSemantics::Signless) {
+        codeGenWithoutIndex<arith::MinSIOp, arith::CmpIOp,
+                            arith::CmpIPredicate>(
+            builder, inValue, outValue, outIndex, indexType, theDimension,
+            arith::CmpIPredicate::slt);
+      } else {
+        llvm::report_fatal_error(
+            "Unsigned reduce_with_index is not currently supported by HFusion");
+      }
     }
   } else {
     llvm::report_fatal_error("unsupported element type for reduce_with_index");
@@ -1125,6 +1361,10 @@ ReduceWithIndexOp::getRegionBuilder() {
             , function_ref<InFlightDiagnostic()> emitError
 #endif
   ) {
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+ReduceWithIndexOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &b, Block &block,
+            ArrayRef<NamedAttribute> attrs) {
     // check numArgs
     constexpr int kNumArgsWithoutIndex = 3;
     auto numArgs = block.getNumArguments();
@@ -1170,6 +1410,9 @@ ReduceWithIndexOp::getRegionBuilder() {
   };
 }
 
+std::string ReduceWithIndexOp::getLibraryCallName() {
+  return generateLibraryCallName(getOperation());
+}
 void ReduceWithIndexOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -1318,6 +1561,270 @@ LogicalResult ReduceWithIndexOp::verify() {
     return emitError(
         "ReduceWithIndexOp requires positive number of dimensions and inputs");
   }
+/// canonicalization pattern that replaces reduction if all reduction axes are
+/// unit dim
+///
+/// %1,%2 = hfusion.reduce_with_index <max_with_index>
+/// ins(%a:tensor<23x1x20xf32>,%b:tensor<23x1x20xi32>)
+/// outs(%c:tensor<23x20xf32>, %d:tensor<23x20xi32>) dimension[1]
+///
+/// becomes
+///
+/// %a_collapsed = tensor.collapse_shape %a : tensor<23x1x20xf32> ->
+/// tensor<23x20xf32>
+/// %cst_0 = arith.constant 0 : i32
+/// %d_filled = tensor.empty(): tensor<23x20xi32>
+/// %filled = linalg.fill %cst_0, %d_filled : (i32, tensor<23x20xi32>) ->
+/// tensor<23x20xi32>
+
+struct ReduceWithIndexUnitDimCanonicalization
+    : public OpRewritePattern<ReduceWithIndexOp> {
+  using OpRewritePattern<ReduceWithIndexOp>::OpRewritePattern;
+
+  SmallVector<ReassociationIndices>
+  buildReassociationForCollapse(ArrayRef<int64_t> shape,
+                                ArrayRef<bool> dropMask) const {
+    auto rank = shape.size();
+    SmallVector<int, 8> kept;
+    for (size_t i = 0; i < rank; ++i)
+      if (!dropMask[i])
+        kept.push_back(i);
+
+    SmallVector<ReassociationIndices> reassoc;
+    if (kept.empty()) {
+      // Collapse everything into a scalar => one group with all indices.
+      ReassociationIndices g;
+      for (size_t i = 0; i < rank; ++i)
+        g.push_back(i);
+      reassoc.push_back(g);
+      return reassoc;
+    }
+
+    // Attach dropped dims to the following kept dim (or prior if leading).
+    for (size_t ki = 0; ki < kept.size(); ++ki) {
+      int prev = (ki == 0 ? -1 : kept[ki - 1]);
+      int start = prev + 1;
+      int end = kept[ki];
+      ReassociationIndices group;
+      for (int d = start; d <= end; ++d)
+        group.push_back(d);
+      reassoc.push_back(group);
+    }
+    // attach trailing dims after last kept to last group
+    size_t lastKept = static_cast<size_t>(kept.back());
+    for (size_t d = lastKept + 1; d < rank; ++d)
+      reassoc.back().push_back(d);
+
+    return reassoc;
+  }
+
+  LogicalResult matchAndRewrite(ReduceWithIndexOp reduceWithIndexOp,
+                                PatternRewriter &rewriter) const override {
+    auto mod = reduceWithIndexOp->getParentOfType<ModuleOp>();
+    if (!hacc::utils::isRegBasedArch(mod))
+      return rewriter.notifyMatchFailure(reduceWithIndexOp,
+                                         "Pattern works on only RegBased arch");
+    if (!(reduceWithIndexOp.hasPureTensorSemantics()))
+      return failure();
+    SmallVector<Value> inputs = reduceWithIndexOp.getInputs();
+    assert(inputs.size() == 2);
+    Value inValue = inputs[0];
+    Value inIdx = inputs[1];
+    auto loc = reduceWithIndexOp->getLoc();
+    auto dataInTensorType = dyn_cast<RankedTensorType>(inValue.getType());
+    auto indexInTensorType = dyn_cast<RankedTensorType>(inIdx.getType());
+    auto reduceDims = reduceWithIndexOp.getDimensions();
+    // bail out if there exists dynamic axes for now
+    if (dataInTensorType.getNumDynamicDims() > 0) {
+      return failure();
+    }
+    int64_t rank = dataInTensorType.getRank();
+    SmallVector<bool, 8> dimsToDrop(rank, false);
+    for (auto dim : reduceDims) {
+      int64_t dimSize = dataInTensorType.getDimSize(dim);
+      if (dimSize == 1) {
+        dimsToDrop[dim] = true;
+      } else {
+        // bail if any reduction dim not 1
+        return failure();
+      }
+    }
+    // construct new shape for in_data and in_index
+    SmallVector<int64_t, 8> newShape;
+    for (int i = 0; i < rank; ++i) {
+      if (!dimsToDrop[i])
+        newShape.push_back(dataInTensorType.getDimSize(i));
+    }
+    auto dataInElemType = dataInTensorType.getElementType();
+    auto collapsedType = RankedTensorType::get(newShape, dataInElemType);
+    SmallVector<ReassociationIndices> reassoc =
+        buildReassociationForCollapse(dataInTensorType.getShape(), dimsToDrop);
+    Value collapsedInValue = rewriter.create<tensor::CollapseShapeOp>(
+        loc, collapsedType, inValue, reassoc);
+    auto cstZeroI32 =
+        rewriter.create<arith::ConstantOp>(loc, rewriter.getI32IntegerAttr(0));
+    Value emptyIdx = rewriter.create<tensor::EmptyOp>(
+        loc, newShape, indexInTensorType.getElementType());
+    Value fillVal = rewriter
+                        .create<linalg::FillOp>(loc, ValueRange{cstZeroI32},
+                                                ValueRange{emptyIdx})
+                        ->getResult(0);
+    rewriter.replaceOp(reduceWithIndexOp, {collapsedInValue, fillVal});
+    return success();
+  }
+};
+
+struct ExtractReduceWithExpandedUnitDims
+    : public OpRewritePattern<ReduceWithIndexOp> {
+  using OpRewritePattern<ReduceWithIndexOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ReduceWithIndexOp op,
+                                PatternRewriter &rewriter) const override {
+    SmallVector<int64_t> reducedDims(op.getDimensions());
+    if (reducedDims.size() == 1)
+      return failure();
+    auto inputType = cast<ShapedType>(op.getInputs()[0].getType());
+    auto oldResultType = cast<ShapedType>(op.getInits()[0].getType());
+    ArrayRef<int64_t> inputShape = inputType.getShape();
+    ArrayRef<int64_t> oldResultShape = oldResultType.getShape();
+    if (failed(validateReductionConstraints(reducedDims, inputShape)))
+      return failure();
+
+    // Compute new reduced dimensions
+    int64_t newReducedDim = computeCollapsedReducedDim(reducedDims, inputShape);
+
+    // Compute new result shape (input shape without reduced dims)
+    SmallVector<int64_t> newResultShape = llvm::to_vector(inputShape);
+    newResultShape.erase(std::next(newResultShape.begin(), newReducedDim));
+
+    // Compute reassociations for expand/collapse
+    SmallVector<ReassociationIndices> expandReassociation;
+    SmallVector<ReassociationIndices> collapseReassociation;
+    if (failed(computeReassociations(llvm::to_vector(oldResultShape),
+                                     newResultShape, expandReassociation,
+                                     collapseReassociation)))
+      return failure();
+
+    // Apply the transformation
+    OpBuilder builder(op->getContext());
+    op.setDimensions({newReducedDim});
+
+    expandInits(op, builder, newResultShape, expandReassociation);
+    // Update result types to match expanded init types
+    for (auto [i, result] : llvm::enumerate(op->getResults()))
+      result.setType(op.getInits()[i].getType());
+
+    collapseResults(op, builder, oldResultShape, collapseReassociation);
+
+    return success();
+  }
+
+private:
+  /// Validates that reduced dimensions meet the constraints:
+  /// - At most one non-unit dimension
+  /// - Dimensions are contiguous
+  static LogicalResult
+  validateReductionConstraints(ArrayRef<int64_t> reducedDims,
+                               ArrayRef<int64_t> inputShape) {
+    int64_t nonUnitCount = llvm::count_if(
+        reducedDims, [&](int64_t dim) { return inputShape[dim] != 1; });
+    if (nonUnitCount > 1)
+      return failure();
+    for (size_t i = 1; i < reducedDims.size(); ++i) {
+      if (reducedDims[i] - reducedDims[i - 1] != 1)
+        return failure();
+    }
+    return success();
+  }
+
+  /// Computes the collapsed reduced dimensions.
+  /// Keeps the first dimension, but updates it to the non-unit dimension if
+  /// exists.
+  static int64_t computeCollapsedReducedDim(ArrayRef<int64_t> reducedDims,
+                                            ArrayRef<int64_t> inputShape) {
+    // Find the non-unit dimension if it exists
+    auto collapsedDim = llvm::find_if(
+        reducedDims, [&inputShape](auto dim) { return inputShape[dim] != 1; });
+    if (collapsedDim == reducedDims.end())
+      collapsedDim = reducedDims.begin();
+    return *collapsedDim;
+  }
+
+  /// Computes expand and collapse reassociations between old and new result
+  /// shapes.
+  static LogicalResult computeReassociations(
+      SmallVector<int64_t> oldResultShape, SmallVector<int64_t> newResultShape,
+      SmallVector<ReassociationIndices> &expandReassociation,
+      SmallVector<ReassociationIndices> &collapseReassociation) {
+
+    SmallVector<ReassociationIndices> placeholder;
+    SmallVector<int64_t> placeholderShape;
+
+    // Compute expand reassociation: oldResultShape -> newResultShape
+    if (!areLooseReassociationsCompatible(expandReassociation, placeholder,
+                                          oldResultShape, newResultShape,
+                                          placeholderShape))
+      return failure();
+
+    utils::renumberReassociation(expandReassociation);
+
+    // Compute collapse reassociation: newResultShape -> oldResultShape
+    if (!areLooseReassociationsCompatible(placeholder, collapseReassociation,
+                                          newResultShape, oldResultShape,
+                                          placeholderShape))
+      return failure();
+
+    utils::renumberReassociation(collapseReassociation);
+
+    return success();
+  }
+
+  /// Expands init operands to the new result shape.
+  static void expandInits(ReduceWithIndexOp op, OpBuilder &builder,
+                          ArrayRef<int64_t> newResultShape,
+                          ArrayRef<ReassociationIndices> reassociation) {
+
+    builder.setInsertionPoint(op);
+    for (auto &init : op.getInitsMutable()) {
+      auto tensorType = cast<RankedTensorType>(init.get().getType());
+      auto elementType = tensorType.getElementType();
+      auto expandOp = builder.create<tensor::ExpandShapeOp>(
+          op->getLoc(), RankedTensorType::get(newResultShape, elementType),
+          init.get(), reassociation);
+      init.assign(expandOp.getResult());
+    }
+  }
+
+  /// Collapses results back to the original result shape.
+  void collapseResults(ReduceWithIndexOp op, OpBuilder &builder,
+                       ArrayRef<int64_t> oldResultShape,
+                       ArrayRef<ReassociationIndices> reassociation) const {
+
+    builder.setInsertionPointAfter(op);
+
+    for (auto [init, result] :
+         llvm::zip_equal(op.getInits(), op->getResults())) {
+      auto elementType = cast<ShapedType>(init.getType()).getElementType();
+
+      auto collapseOp = builder.create<tensor::CollapseShapeOp>(
+          op->getLoc(), RankedTensorType::get(oldResultShape, elementType),
+          result, reassociation);
+
+      result.replaceAllUsesExcept(collapseOp.getResult(), collapseOp);
+    }
+  }
+};
+
+void ReduceWithIndexOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                                    MLIRContext *context) {
+  results.add<ReplaceWithLinalgReduce, ReduceWithIndexUnitDimCanonicalization,
+              ExtractReduceWithExpandedUnitDims>(context);
+}
+
+LogicalResult ReduceWithIndexOp::verify() {
+  if (getDimensions().size() != 1)
+    return emitOpError(
+        "currently ReduceWithIndexOp only supports one reduction dimension");
   auto inputType = llvm::cast<ShapedType>(getInputs()[0].getType());
   auto initType = llvm::cast<ShapedType>(getInits()[0].getType());
 
@@ -1359,6 +1866,63 @@ LogicalResult ReduceWithIndexOp::verify() {
 } // namespace hfusion
 } // namespace mlir
 
+static LogicalResult appendMangledType(llvm::raw_string_ostream &ss, Type t) {
+  if (auto memref = llvm::dyn_cast<MemRefType>(t)) {
+    ss << "view";
+    for (auto size : memref.getShape())
+      if (size < 0)
+        ss << "sx";
+      else
+        ss << size << "x";
+    if (failed(appendMangledType(ss, memref.getElementType())))
+      return failure();
+    if (auto as = memref.getMemorySpace()) {
+      if (auto attr = llvm::dyn_cast<IntegerAttr>(as))
+        ss << "as" << attr.getInt();
+      else
+        return failure();
+    }
+    return success();
+  }
+  if (auto vec = llvm::dyn_cast<VectorType>(t)) {
+    ss << "vector";
+    llvm::interleave(
+        vec.getShape(), [&](int64_t i) { ss << i; }, [&]() { ss << "x"; });
+    if (failed(appendMangledType(ss, vec.getElementType())))
+      return failure();
+    return success();
+  }
+  if (t.isSignlessIntOrIndexOrFloat()) {
+    ss << t;
+    return success();
+  }
+  return failure();
+}
+
+std::string mlir::hfusion::generateLibraryCallName(Operation *op) {
+  assert(isa<linalg::LinalgOp>(op));
+  std::string name(op->getName().getStringRef().str());
+  std::string fun = "";
+  for (NamedAttribute kv : op->getAttrs()) {
+    if (UnaryFnAttr ufa = llvm::dyn_cast<UnaryFnAttr>(kv.getValue())) {
+      fun = stringifyEnum(ufa.getValue()).str() + "_";
+    } else if (BinaryFnAttr bfa = llvm::dyn_cast<BinaryFnAttr>(kv.getValue())) {
+      fun = stringifyEnum(bfa.getValue()).str() + "_";
+    }
+  }
+  name.reserve(128);
+  std::replace(name.begin(), name.end(), '.', '_');
+  llvm::raw_string_ostream ss(name);
+  ss << "_" << fun;
+  for (Type t : op->getOperandTypes()) {
+    if (failed(appendMangledType(ss, t)))
+      return std::string();
+    ss << "_";
+  }
+  std::string res = ss.str();
+  res.pop_back();
+  return res;
+}
 /// Pattern to fold cast into emtpy.
 ///
 /// Before:
@@ -1391,6 +1955,10 @@ struct ConstantFolding : public OpRewritePattern<hfusion::CastOp> {
     T rounded = std::round(x);
     const double epsilon = 1e-9;
     if (std::fabs(std::fabs(x - std::floor(x)) - 0.5) < epsilon) {
+  template <typename T>
+  inline T roundToOdd(T x) const {
+    T rounded = std::round(x);
+    if (std::fabs(x - std::floor(x)) == 0.5) {
       if (static_cast<int>(rounded) % 2 != 0) {
         if (x > 0) {
           rounded = std::floor(x);
@@ -1712,6 +2280,7 @@ LogicalResult CastOp::verify() {
 LogicalResult InterleaveOp::verify() {
   int64_t inputSize = static_cast<int64_t>(getInput().size());
   if (inputSize != getInterLeaveChannelNums()) {
+  if (static_cast<int64_t>(getInput().size()) != getInterLeaveChannelNums()) {
     return emitOpError("num of interleave op input must equal channel num");
   }
 
@@ -1935,6 +2504,7 @@ ParseResult ArangeOp::parse(OpAsmParser &parser, OperationState &result) {
     return mlir::emitError(builder.getLoc());
   });
 #endif
+  getRegionBuilder()(builder, block, result.attributes.getAttrs());
 
   return success();
 }
@@ -1972,6 +2542,10 @@ ArangeOp::getRegionBuilder() {
             , function_ref<InFlightDiagnostic()> emitError
 #endif
   ) {
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+ArangeOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> attrs) {
     OpBuilder::InsertionGuard guard(builder);
 
     auto segmentSizes = cast_or_null<DenseI32ArrayAttr>(
@@ -2025,12 +2599,16 @@ void ArangeOp::getStridesFromValue(OpBuilder &builder, Location loc, Value val,
       size = builder.createOrFold<tensor::DimOp>(loc, val, dim);
     else
       llvm::report_fatal_error(
+      llvm_unreachable(
           "Expected arange to be initialized with tensor or memref type.");
     strides[dim - 1] =
         builder.createOrFold<arith::MulIOp>(loc, strides[dim], size);
   }
 }
 
+std::string ArangeOp::getLibraryCallName() {
+  return generateLibraryCallName(getOperation());
+}
 void ArangeOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -2135,6 +2713,9 @@ ArrayAttr GatherOp::getIndexingMaps() {
   return ArrayAttr::get(ctx, {srcMap, indexMap, indexMap});
 }
 
+std::string GatherOp::getLibraryCallName() {
+  return generateLibraryCallName(getOperation());
+}
 void GatherOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -2168,6 +2749,10 @@ GatherOp::getRegionBuilder() {
             , function_ref<InFlightDiagnostic()> emitError
 #endif
   ) {
+std::function<void(ImplicitLocOpBuilder &, Block &, ArrayRef<NamedAttribute>)>
+GatherOp::getRegionBuilder() {
+  return [](ImplicitLocOpBuilder &builder, Block &block,
+            ArrayRef<NamedAttribute> attrs) {
     assert(block.getNumArguments() == 3 &&
            "GatherOp expecting 3 block arguments");
     Value srcVal = block.getArgument(0);
@@ -2310,6 +2895,11 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
   if (gatherAxis == rank - 1 && !srcElmTy.isInteger(64))
     return failure();
 
+  if (gatherAxis != rank - 1) {
+    ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    if (moduleOp && hacc::utils::isRegBasedArch(moduleOp))
+      return failure();
+  }
   Value cst0 = b.create<arith::ConstantIndexOp>(loc, 0);
   Value cst1 = b.create<arith::ConstantIndexOp>(loc, 1);
   Value idxGatherDimSize = b.create<tensor::DimOp>(loc, idx, gatherAxis);
@@ -2322,6 +2912,7 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
     Value iterArg =
         loopNest.empty() ? init : loopNest.back().getRegionIterArg(0);
     auto forOp = b.create<scf::ForOp>(loc, cst0, upperBound, cst1, iterArg);
+    forOp->setAttr(kVgatherDecomposeAttr, UnitAttr::get(b.getContext()));
     if (!loopNest.empty())
       b.create<scf::YieldOp>(loc, forOp.getResult(0));
     loopNest.push_back(forOp);
@@ -2554,7 +3145,96 @@ LogicalResult GatherMaskOp::verify() {
   }
   return success();
 }
+/// canonicalization pattern that replaces gather if srcShapes[axis]==1
+///
+/// %a = hfusion.gather ins(%src, %index) outs(%init) axis
+/// |
+/// v
+/// case1. if indexShape[axis] == 1:
+///    %src replace %a
+///
+/// eg
+/// %1 = hfusion.gather  ins(%arg0, %arg1 : tensor<5x6x1xf16>,
+/// tensor<5x6x1xi32>) outs(%0 : tensor<5x6x1xf16>) axis = 2 ->
+/// tensor<5x6x1xf16>
+/// |
+/// v
+/// %arg0 replace %1
+/// ---
+/// case2. if indexShape[axis] != 1 && srcShape.size() != 1:
+///    %newSrc = tensor.collapse_shape %src
+///    %newA = linalg.broadcast ins(%newSrc) outs(%init) dimensions = [axis]
+///    %newA replace %a
+///
+/// eg
+/// %1 = hfusion.gather  ins(%arg0, %arg1 : tensor<5x6x1xf16>,
+/// tensor<5x6x3xi32>) outs(%0 : tensor<5x6x3xf16>) axis = 2 ->
+/// tensor<5x6x3xf16>
+/// |
+/// v
+/// %newSrc = tensor.collapse_shape %arg0 [[0], [1, 2]] : tensor<5x6x1xf16> into
+/// tensor<5x6xf16> %arg0 = linalg.broadcast ins(%newSrc) outs(%init) dimensions
+/// = [axis] %arg0 replace %1
+struct GatherUnitDimCanonicalization : public OpRewritePattern<GatherOp> {
+  using OpRewritePattern<GatherOp>::OpRewritePattern;
 
+  LogicalResult matchAndRewrite(GatherOp gatherOp,
+                                PatternRewriter &rewriter) const override {
+    Value src = gatherOp.getDpsInputs()[0];
+    Value index = gatherOp.getDpsInputs()[1];
+    Value output = gatherOp.getDpsInits()[0];
+    int64_t gatherAxis = (int64_t)gatherOp.getAxis();
+    auto srcShape = utils::getShape(src.getType());
+    auto indexShape = utils::getShape(index.getType());
+    auto outShape = utils::getShape(output.getType());
+
+    if (srcShape.size() == 1) {
+      return failure();
+    }
+    if (srcShape[gatherAxis] != 1) {
+      return failure();
+    }
+    // %src replace %a
+    if (indexShape[gatherAxis] == 1) {
+      rewriter.replaceOp(gatherOp, src);
+      return success();
+    }
+    // convert to linalg.broadcast
+    SmallVector<ReassociationIndices> reassociation;
+    if (gatherAxis > 0) {
+      for (int64_t i = 0; i < gatherAxis - 1; ++i)
+        reassociation.push_back({i});
+      reassociation.push_back({gatherAxis - 1, gatherAxis});
+      for (int64_t i = gatherAxis + 1; i < (int)srcShape.size(); ++i)
+        reassociation.push_back({i});
+    } else {
+      reassociation.push_back({0, 1});
+      for (int64_t i = 2; i < (int)srcShape.size(); ++i)
+        reassociation.push_back({i});
+    }
+    SmallVector<int64_t> newShape;
+    for (int64_t i = 0; i < (int)srcShape.size(); ++i) {
+      if (i == gatherAxis)
+        continue;
+      newShape.push_back(srcShape[i]);
+    }
+    RankedTensorType collapsedType =
+        RankedTensorType::get(newShape, getElementTypeOrSelf(src));
+    auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
+        src.getLoc(), collapsedType, src, reassociation);
+    rewriter.setInsertionPointAfter(gatherOp);
+    auto broadcastOp = rewriter.create<linalg::BroadcastOp>(
+        gatherOp->getLoc(), collapseOp.getResult(), output, gatherAxis);
+    rewriter.replaceAllUsesWith(gatherOp.getResults(),
+                                broadcastOp->getResults());
+    rewriter.eraseOp(gatherOp);
+    return success();
+  }
+};
+void GatherOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                           MLIRContext *context) {
+  results.add<GatherUnitDimCanonicalization>(context);
+}
 //===----------------------------------------------------------------------===//
 // CumsumOp
 //===----------------------------------------------------------------------===//
@@ -2586,6 +3266,16 @@ void AtomicRMWOp::getEffects(
                        /*effectOnFullRegion=*/true,
                        SideEffects::DefaultResource::get());
 }
+// CummaxOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CummaxOp::verify() { return verifyCumOp(*this); }
+
+//===----------------------------------------------------------------------===//
+// CumminOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult CumminOp::verify() { return verifyCumOp(*this); }
 
 //===----------------------------------------------------------------------===//
 // AtomicCasOp
@@ -2622,6 +3312,14 @@ void AtomicXchgOp::getEffects(
                          &getOperation()->getOpOperand(0), /*stage=*/0,
                          /*effectOnFullRegion=*/true,
                          SideEffects::DefaultResource::get());
+  for (auto [index, operand] : llvm::enumerate(this->getInput())) {
+    if (!llvm::isa<MemRefType>(operand.getType()))
+      continue;
+    effects.emplace_back(MemoryEffects::Read::get(),
+                         &getOperation()->getOpOperand(index), /*stage=*/0,
+                         /*effectOnFullRegion=*/true,
+                         SideEffects::DefaultResource::get());
+  }
   OpOperand &operand = this->getDstMutable();
   if (!llvm::isa<MemRefType>(operand.get().getType()))
     return;
@@ -2905,6 +3603,22 @@ LogicalResult MatMulMxOp::verify() {
   }
 
   return success();
+//===----------------------------------------------------------------------===//
+// EmbeddingGatherOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult EmbeddingGatherOp::verify() { return success(); }
+
+void EmbeddingGatherOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
 }
 
 //===----------------------------------------------------------------------===//
@@ -3076,6 +3790,61 @@ LogicalResult Conv1DOp::verify() {
       return emitOpError()
              << "requires output width oW to be computed as: "
              << "(iW + 2 * padding - dilation * (wW - 1) - 1) / stride + 1";
+// IndirectLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult IndirectLoadOp::verify() {
+  auto srcType = getSrc().getType();
+  auto offsetsType = getOffsets().getType();
+  auto offsetsTensorType = mlir::cast<TensorType>(offsetsType);
+  if (!offsetsTensorType)
+    return emitOpError("offsets must be a tensor type");
+  auto dstType = getDst().getType();
+  auto dstTensorType = mlir::cast<TensorType>(dstType);
+  if (!dstTensorType)
+    return emitOpError("dst must be a tensor type");
+  auto srcMemrefType = mlir::cast<MemRefType>(srcType);
+  if (!srcMemrefType)
+    return emitOpError("src must be a memref type");
+
+  auto srcElementType = srcMemrefType.getElementType();
+  auto dstElementType = dstTensorType.getElementType();
+  if (dstElementType != srcElementType) {
+    return emitOpError("dst of hfusion::IndirectLoadOp must have the same "
+                       "element type as src");
+  }
+
+  if (dstTensorType.getShape() != offsetsTensorType.getShape()) {
+    return emitOpError(
+        "dst of hfusion::IndirectLoadOp must have the same shape as offsets");
+  }
+
+  auto mask = getMask();
+  auto maskType = mask.getType();
+  auto maskTensorType = mlir::cast<TensorType>(maskType);
+  if (!maskTensorType)
+    return emitOpError("mask must be a tensor type");
+
+  if (maskTensorType.getShape() != offsetsTensorType.getShape()) {
+    return emitOpError("mask of hfusion::IndirectLoadOp must have the same "
+                       "shape and rank as offsets");
+  }
+
+  auto other = getOther();
+  auto otherType = other.getType();
+  auto otherTensorType = mlir::cast<TensorType>(otherType);
+  if (!otherTensorType)
+    return emitOpError("other must be a tensor type");
+
+  if (otherTensorType.getShape() != offsetsTensorType.getShape()) {
+    return emitOpError("other of hfusion::IndirectLoadOp must have the same "
+                       "shape and rank as offsets");
+  }
+
+  auto otherElementType = otherTensorType.getElementType();
+  if (srcElementType != otherElementType) {
+    return emitOpError("other of hfusion::IndirectLoadOp must have the same "
+                       "element type as src");
   }
 
   return success();
@@ -3381,6 +4150,73 @@ LogicalResult Conv2DOp::verify() {
              << "requires output width oW to be computed as: "
              << "(iW + 2 * paddingW - dilationW * (wW - 1) - 1) / strideW + 1";
   }
+void IndirectLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getOffsetsMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getMaskMutable()),
+      SideEffects::DefaultResource::get();
+  effects.emplace_back(MemoryEffects::Read::get(), &getOtherMutable()),
+      SideEffects::DefaultResource::get();
+}
+
+//===----------------------------------------------------------------------===//
+// StrideLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideLoadOp::verify() {
+  auto srcMemrefType = dyn_cast<MemRefType>(getSrc().getType());
+  auto dstTensorType = dyn_cast<TensorType>(getDst().getType());
+
+  if (!srcMemrefType)
+    return emitOpError("src must be a memref type");
+  if (!dstTensorType)
+    return emitOpError("dst must be a tensor type");
+
+  int64_t rank = dstTensorType.getRank();
+  if (rank < 1 || rank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != rank ||
+      static_cast<int64_t>(getNumel().size()) != rank) {
+    return emitOpError(
+        "stride and numel operand counts must match dst rank");
+  }
+
+  auto getIndexType = [&](ValueRange values, StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  if (dstTensorType.getElementType() != srcMemrefType.getElementType()) {
+    return emitOpError(
+        "dst of hfusion::StrideLoadOp must have the same element type as src");
+  }
+  if (getOther().getType() != srcMemrefType.getElementType())
+    return emitOpError("other must have the same element type as src");
+
+  if (getResult() && getResult().getType() != getDst().getType())
+    return emitOpError("result must have the same type as dst");
 
   return success();
 }
@@ -3530,6 +4366,62 @@ ParseResult Conv2DOp::parse(OpAsmParser &p, OperationState &result) {
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
                          getRegionBuilder());
+void StrideLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideStoreOp::verify() {
+  auto dstMemrefType = dyn_cast<MemRefType>(getDst().getType());
+  auto srcTensorType = dyn_cast<TensorType>(getSrc().getType());
+
+  if (!dstMemrefType)
+    return emitOpError("dst must be a memref type");
+  if (!srcTensorType)
+    return emitOpError("src must be a tensor type");
+
+  int64_t rank = srcTensorType.getRank();
+  if (rank < 1 || rank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != rank ||
+      static_cast<int64_t>(getNumel().size()) != rank) {
+    return emitOpError(
+        "stride and numel operand counts must match src rank");
+  }
+
+  auto getIndexType = [&](ValueRange values, StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  if (srcTensorType.getElementType() != dstMemrefType.getElementType()) {
+    return emitOpError(
+        "src of hfusion::StrideStoreOp must have the same element type as dst");
+  }
 
   return success();
 }
@@ -3856,6 +4748,56 @@ ParseResult Conv3DOp::parse(OpAsmParser &p, OperationState &result) {
   fillStructuredOpRegion(opBuilder, *(result.addRegion()), inputTypes,
                          outputTypes, result.attributes.getAttrs(),
                          getRegionBuilder());
+void StrideStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// IndirectStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult IndirectStoreOp::verify() {
+
+  auto dstType = getDst().getType();
+  auto dstMemrefType = mlir::cast<MemRefType>(dstType);
+  if (!dstMemrefType)
+    return emitOpError("dst must be a memref type");
+  auto dstElementType = dstMemrefType.getElementType();
+  auto srcType = getSrc().getType();
+  auto srcTensorType = mlir::cast<TensorType>(srcType);
+  if (!srcTensorType)
+    return emitOpError("src must be a tensor type");
+  auto srcElementType = srcTensorType.getElementType();
+  if (dstElementType != srcElementType) {
+    return emitOpError("src of hfusion::IndirectStoreOp must have the same "
+                       "element type as dst");
+  }
+
+  auto offsetsType = getOffsets().getType();
+  auto offsetsTensorType = mlir::cast<TensorType>(offsetsType);
+  if (!offsetsTensorType)
+    return emitOpError("offsets must be a tensor type");
+  if(offsetsTensorType.getShape() != srcTensorType.getShape()) {
+    return emitOpError("offsets of hfusion::IndirectStoreOp must have the same "
+                         "shape and rank as src");
+  }
+
+  auto mask = getMask();
+  if (mask) {
+    auto maskType = mask.getType();
+    auto maskTensorType = mlir::cast<TensorType>(maskType);
+    if (!maskTensorType)
+      return emitOpError("mask must be a tensor type");
+    if (maskTensorType.getShape() != offsetsTensorType.getShape()) {
+      return emitOpError("mask of hfusion::IndirectStoreOp must have the same "
+                         "shape and rank as offsets");
+    }
+  }
 
   return success();
 }
@@ -3919,4 +4861,537 @@ LogicalResult HypotOp::verify() {
     }
   }
   return success();
+}
+void IndirectStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getOffsetsMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+
+  if (getMask()) {
+    effects.emplace_back(
+        MemoryEffects::Read::get(),
+        &getOperation()->getOpOperand(getODSOperandIndexAndLength(3).first),
+        SideEffects::DefaultResource::get());
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// GatherTOp
+//===----------------------------------------------------------------------===//
+
+void GatherTOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// IndexPutOp
+//===----------------------------------------------------------------------===//
+
+void IndexPutOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterTOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ScatterTOp::verify() {
+  auto valueType = getValue().getType();
+  auto valueTensorType = mlir::cast<TensorType>(valueType);
+  if (!valueTensorType) {
+    return emitOpError("value must be a tensor type");
+  }
+  auto indexTileType = getIndexTile().getType();
+  auto indexTileTensorType = mlir::cast<TensorType>(indexTileType);
+  if (!indexTileTensorType) {
+    return emitOpError("index_tile must be a tensor type");
+  }
+  if (valueTensorType.getShape() != indexTileTensorType.getShape()) {
+    return emitOpError("tensor of value and index_tile of hfusion::ScatterTOp "
+                       "must have the same shape");
+  }
+
+  return success();
+}
+
+void ScatterTOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexTileMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// HFusionDialect
+//===----------------------------------------------------------------------===//
+void HFusionDialect::getCanonicalizationPatterns(
+    RewritePatternSet &results) const {
+  results.add<
+      mlir::linalg::InlineDenseSplatToGenericRegion<hfusion::ElemwiseBinaryOp>,
+      mlir::linalg::InlineDenseSplatToGenericRegion<hfusion::ElemwiseUnaryOp>,
+      mlir::linalg::InlineDenseSplatToGenericRegion<hfusion::CompareOp>,
+      mlir::linalg::InlineDenseSplatToGenericRegion<hfusion::CastOp>,
+      mlir::linalg::SimplifySplatDenseForBinary<hfusion::ElemwiseBinaryOp>,
+      mlir::linalg::SimplifySplatDenseForBinary<hfusion::CompareOp>>(
+      getContext());
+}
+
+//===----------------------------------------------------------------------===//
+// SortOp
+//===----------------------------------------------------------------------===//
+
+int64_t SortOp::getSignedSortAxis() {
+  return getSortAxisAttr().getValue().getSExtValue();
+}
+
+LogicalResult SortOp::verify() {
+  int64_t sortAxis = getSignedSortAxis();
+  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
+  if (sortAxis != srcVecType.getRank() - 1 && sortAxis != -1) {
+    return emitOpError() << "Currently only tail axis sorting is supported";
+  }
+  return llvm::success();
+}
+
+//===----------------------------------------------------------------------===//
+// HistogramOp
+//===----------------------------------------------------------------------===//
+LogicalResult HistogramOp::verify() {
+  auto inTy = mlir::dyn_cast<RankedTensorType>(getInput().getType());
+  auto outTy = mlir::dyn_cast<RankedTensorType>(getOutput().getType());
+  Value mask = getMask();
+  // Input/output must be ranked tensors
+  if (!inTy || !outTy)
+    return emitOpError() << "requires ranked tensor types for input and output";
+
+  // Input must be 1D
+  if (inTy.getRank() != 1)
+    return emitOpError() << "input must be rank-1";
+  // Output must be 1D statically sized
+  if (outTy.getRank() != 1)
+    return emitOpError() << "output must be rank-1";
+  if (!outTy.hasStaticShape())
+    return emitOpError() << "output must have static shape";
+
+  // Output length must match num_bins
+  int64_t bins = static_cast<int64_t>(getNumBins());
+  if (outTy.getDimSize(0) != bins)
+    return emitOpError() << "output length (" << outTy.getDimSize(0)
+                         << ") must equal num_bins (" << bins << ")";
+
+  // If mask is provided, it must match input shape
+  if (mask) {
+    auto maskTy = mlir::dyn_cast<RankedTensorType>(mask.getType());
+    if (!maskTy)
+      return emitOpError() << "mask must be a ranked tensor";
+    if (maskTy.getElementType() != IntegerType::get(getContext(), 1))
+      return emitOpError() << "mask element type must be i1";
+    if (maskTy.getShape() != inTy.getShape())
+      return emitOpError() << "mask shape must match input shape";
+  }
+
+  return success();
+}
+
+namespace mlir::hfusion {
+/// Helper function: Calculate element's bin index and validity (whether it
+/// falls within [0, numBins)).
+///
+/// @param b OpBuilder for constructing MLIR operations.
+/// @param loc Location information for error reporting and debugging.
+/// @param input Input tensor containing elements to be histogrammed.
+/// @param i Loop induction variable (current element index).
+/// @param numBinsVal Total number of bins (as an IndexType value).
+/// @param c0 Constant 0 (IndexType), used for range checks.
+/// @return Pair of values:
+///         - First: Element's bin index (converted from input element).
+///         - Second: Boolean (i1) indicating if the element is in valid range
+///         [0, numBins).
+inline std::pair<Value, Value> getElementValidity(OpBuilder &b, Location loc,
+                                                  Value input, Value i,
+                                                  Value numBinsVal, Value c0) {
+  // Extract element and convert to bin index
+  Value elem = b.create<tensor::ExtractOp>(loc, input, ValueRange{i});
+  Value elemSigned = b.create<arith::ExtUIOp>(loc, b.getI64Type(), elem);
+  Value elemIdx =
+      b.create<arith::IndexCastOp>(loc, b.getIndexType(), elemSigned);
+
+  // Check if element is within valid range
+  Value geZero =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, elemIdx, c0);
+  Value ltNumBins = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt,
+                                            elemIdx, numBinsVal);
+  Value inRange = b.create<arith::AndIOp>(loc, geZero, ltNumBins);
+
+  return {elemIdx, inRange};
+}
+
+/// Helper function: Generate histogram update logic with conditional execution.
+///
+/// @param b OpBuilder for constructing MLIR operations.
+/// @param loc Location information for error reporting and debugging.
+/// @param hist Current histogram tensor (to be updated).
+/// @param elemIdx Bin index where the count should be incremented.
+/// @param cond Boolean (i1) condition: only update histogram if true.
+/// @param oneOut Constant 1 of the histogram's element type (used for
+/// incrementing counts).
+/// @return Updated histogram tensor (either modified or original, based on
+/// `cond`).
+inline Value histogramUpdate(OpBuilder &b, Location loc, Value hist,
+                             Value elemIdx, Value cond, Value oneOut) {
+  auto ifOp = b.create<scf::IfOp>(loc, TypeRange{hist.getType()}, cond, true);
+
+  // Then branch: Update histogram
+  {
+    OpBuilder thenBuilder = ifOp.getThenBodyBuilder();
+    Value old =
+        thenBuilder.create<tensor::ExtractOp>(loc, hist, ValueRange{elemIdx});
+    Value neu = thenBuilder.create<arith::AddIOp>(loc, old, oneOut);
+    Value upd = thenBuilder.create<tensor::InsertOp>(loc, neu, hist,
+                                                     ValueRange{elemIdx});
+    thenBuilder.create<scf::YieldOp>(loc, upd);
+  }
+
+  // Else branch: Return original histogram
+  {
+    OpBuilder elseBuilder = ifOp.getElseBodyBuilder();
+    elseBuilder.create<scf::YieldOp>(loc, hist);
+  }
+
+  return ifOp.getResult(0);
+}
+} // namespace mlir::hfusion
+
+/// Decompose the HistogramOp into a sequence of lower-level MLIR operations.
+/// This method implements the histogram calculation by iterating over input
+/// elements, checking their validity, and updating the histogram counts
+/// conditionally.
+///
+/// @param b OpBuilder used to construct the decomposed operations.
+/// @return Success: A vector containing the final histogram tensor.
+///         Failure: If decomposition encounters an error.
+FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
+  OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPoint(getOperation());
+
+  Location loc = getLoc();
+
+  Value input = getInput();
+  Value mask = getMask();
+  auto inTy = mlir::dyn_cast<RankedTensorType>(input.getType());
+  auto outTy = mlir::dyn_cast<RankedTensorType>(getOutput().getType());
+
+  Type outEltTy = outTy.getElementType();
+
+  // Helpers
+  auto cstIdx = [&](int64_t v) -> Value {
+    return b.create<arith::ConstantIndexOp>(loc, v);
+  };
+  auto cstOut = [&](int64_t v) -> Value {
+    return b.create<arith::ConstantOp>(loc, b.getIntegerAttr(outEltTy, v));
+  };
+
+  // Constants
+  Value c0 = cstIdx(0);
+  Value c1 = cstIdx(1);
+  Value oneOut = cstOut(1);
+  Value zeroOut = cstOut(0);
+  auto numBins = getNumBins();
+  Value numBinsVal = cstIdx(numBins);
+
+  // Create zero-initialized histogram tensor
+  Value histEmpty = b.create<tensor::EmptyOp>(loc, outTy.getShape(), outEltTy);
+  Value histInit =
+      b.create<linalg::FillOp>(loc, zeroOut, histEmpty).getResult(0);
+
+  // Upper bound: number of elements in input
+  Value ub = inTy.hasStaticShape() ? cstIdx(inTy.getDimSize(0))
+                                   : b.create<tensor::DimOp>(loc, input, 0);
+
+  // Single loop over input elements
+  auto forOp = b.create<scf::ForOp>(loc, c0, ub, c1, ValueRange{histInit});
+  {
+    OpBuilder::InsertionGuard bodyGuard(b);
+    b.setInsertionPointToStart(forOp.getBody());
+
+    Value i = forOp.getInductionVar();
+    Value hist = forOp.getRegionIterArg(0);
+
+    auto [elemIdx, inRange] =
+        getElementValidity(b, loc, input, i, numBinsVal, c0);
+    Value finalCond = inRange;
+    if (mask) {
+      Value maskCond = b.create<tensor::ExtractOp>(loc, mask, ValueRange{i});
+      finalCond = b.create<arith::AndIOp>(loc, maskCond, inRange);
+    }
+    Value updatedHist =
+        histogramUpdate(b, loc, hist, elemIdx, finalCond, oneOut);
+    b.create<scf::YieldOp>(loc, updatedHist);
+  }
+
+  Value finalHist = forOp.getResult(0);
+  return SmallVector<Value>{finalHist};
+}
+
+LogicalResult MatMulMxOp::verify() {
+  auto inputATy = mlir::cast<ShapedType>(getInputA().getType());
+  auto inputBTy = mlir::cast<ShapedType>(getInputB().getType());
+  auto scaleATy = mlir::cast<ShapedType>(getScaleA().getType());
+  auto scaleBTy = mlir::cast<ShapedType>(getScaleB().getType());
+  auto resultTy = mlir::cast<ShapedType>(getResult().getType());
+
+  // Input/Output must be ranked tensors
+  if (!inputATy || !inputBTy || !scaleATy || !scaleBTy)
+    return emitOpError() << "requires shaped types for input";
+
+  static constexpr int twoD = 2;
+  if (inputATy.getRank() != twoD || inputBTy.getRank() != twoD)
+    return emitOpError() << "requires both input to have rank 2";
+
+  static constexpr int dim0 = 0;
+  static constexpr int dim1 = 1;
+  if (inputATy.getDimSize(dim1) != inputBTy.getDimSize(dim0))
+    return emitOpError()
+           << "requires inner dimension of matmul matrix to match";
+
+  if (resultTy.getDimSize(dim0) != inputATy.getDimSize(dim0) ||
+      resultTy.getDimSize(dim1) != inputBTy.getDimSize(dim1))
+    return emitOpError() << "requires output shape to match with input shapes";
+
+  // if acc is provided
+  if (getAcc()) {
+    auto accTy = mlir::cast<ShapedType>(getAcc().getType());
+    if (accTy.getRank() != resultTy.getRank())
+      return emitOpError() << "acc and output should have the same shape";
+
+    for (int dim = 0; dim < accTy.getRank(); dim++) {
+      if (accTy.getDimSize(dim) != resultTy.getDimSize(dim))
+        return emitOpError() << "acc and output should have the same shape";
+    }
+  }
+
+  return success();
+}
+
+/// Input:
+/// %6 = hfusion.matmul_mx ins(%a, %b, %scaleA, %scaleB :
+///   tensor<64x64xf8E5M2>, tensor<64x64xf8E5M2>, tensor<64x2xi8>, tensor<64x2xi8>) outs(%1 : tensor<64x64xf32>
+/// ) -> tensor<64x64xf32>
+///
+/// Output:
+/// %c7_i16 = arith.constant 7 : i16
+/// %6 = tensor.empty() : tensor<64x2xi16>
+/// %7 = hfusion.cast {round_mode = #hfusion.round_mode<rint>}
+///   ins(%scaleA : tensor<64x2xi8>) outs(%6 : tensor<64x2xi16>) -> tensor<64x2xi16>
+/// %8 = tensor.empty() : tensor<64x2xi16>
+/// %9 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%scaleB: tensor<64x2xi8>)
+///   outs(%8 : tensor<64x2xi16>) -> tensor<64x2xi16>
+/// %10 = linalg.fill ins(%c7_i16 : i16) outs(%6 : tensor<64x2xi16>) -> tensor<64x2xi16>
+/// %11 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%7, %10 : tensor<64x2xi16>, tensor<64x2xi16>)
+/// outs(%6 : tensor<64x2xi16>) -> tensor<64x2xi16>
+/// %12 = linalg.fill ins(%c7_i16 : i16) outs(%8 : tensor<64x2xi16>) -> tensor<64x2xi16>
+/// %13 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>} ins(%9, %12 : tensor<64x2xi16>, tensor<64x2xi16>)
+///   outs(%8 : tensor<64x2xi16>) -> tensor<64x2xi16>
+/// %14 = tensor.empty() : tensor<64x2xbf16>
+/// %15 = hfusion.bitcast ins(%11 : tensor<64x2xi16>) outs(%14 : tensor<64x2xbf16>) -> tensor<64x2xbf16>
+/// %16 = tensor.empty() : tensor<64x2xbf16>
+/// %17 = hfusion.bitcast ins(%13 : tensor<64x2xi16>) outs(%16 : tensor<64x2xbf16>) -> tensor<64x2xbf16>
+/// %18 = tensor.empty() : tensor<64x2xf32>
+/// %19 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%15 : tensor<64x2xbf16>)
+///   outs(%18 : tensor<64x2xf32>) -> tensor<64x2xf32>
+/// %20 = tensor.empty() : tensor<64x2xf32>
+/// %21 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%17 : tensor<64x2xbf16>)
+///   outs(%20 : tensor<64x2xf32>) -> tensor<64x2xf32>
+/// %22 = tensor.empty() : tensor<64x64xf16>
+/// %23 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%2 : tensor<64x64xf8E5M2>)
+///   outs(%22 : tensor<64x64xf16>) -> tensor<64x64xf16>
+/// %24 = tensor.empty() : tensor<64x64xf16>
+/// %25 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%4 : tensor<64x64xf8E5M2>)
+///   outs(%24 : tensor<64x64xf16>) -> tensor<64x64xf16>
+/// %26 = tensor.empty() : tensor<64x2xf16>
+/// %27 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%19 : tensor<64x2xf32>)
+///   outs(%26 : tensor<64x2xf16>) -> tensor<64x2xf16>
+/// %28 = tensor.empty() : tensor<64x2xf16>
+/// %29 = hfusion.cast {round_mode = #hfusion.round_mode<rint>} ins(%21 : tensor<64x2xf32>)
+///   outs(%28 : tensor<64x2xf16>) -> tensor<64x2xf16>
+/// %30 = tensor.empty() : tensor<64x2x32xf16>
+/// %broadcasted = linalg.broadcast ins(%27 : tensor<64x2xf16>) outs(%30 : tensor<64x2x32xf16>) dimensions = [2]
+/// %collapsed = tensor.collapse_shape %broadcasted [[0], [1, 2]] : tensor<64x2x32xf16> into tensor<64x64xf16>
+/// %31 = tensor.empty() : tensor<64x2x32xf16>
+/// %broadcasted_6 = linalg.broadcast ins(%29 : tensor<64x2xf16>) outs(%31 : tensor<64x2x32xf16>) dimensions = [2]
+/// %collapsed_7 = tensor.collapse_shape %broadcasted_6 [[0], [1, 2]] : tensor<64x2x32xf16> into tensor<64x64xf16>
+/// %32 = tensor.empty() : tensor<64x64xf16>
+/// %transposed = linalg.transpose ins(%collapsed_7 : tensor<64x64xf16>) outs(%32 : tensor<64x64xf16>)
+///   permutation = [1, 0]
+/// %33 = tensor.empty() : tensor<64x64xf16>
+/// %34 = tensor.empty() : tensor<64x64xf16> 
+/// %35 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+///   ins(%a, %collapsed : tensor<64x64xf16>, tensor<64x64xf16>) outs(%33 : tensor<64x64xf16>) -> tensor<64x64xf16>
+/// %36 = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>}
+///   ins(%b, %transposed : tensor<64x64xf16>, tensor<64x64xf16>) outs(%34 : tensor<64x64xf16>) -> tensor<64x64xf16>
+/// %37 = linalg.matmul ins(%35, %36 : tensor<64x64xf16>, tensor<64x64xf16>)
+///   outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
+FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder) {
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(getOperation());
+  Location location = getLoc();
+
+  Value a = getInputA();
+  Value b = getInputB();
+  Value c = getAcc();
+  Value scaleA = getScaleA();
+  Value scaleB = getScaleB();
+
+  auto aType = cast<RankedTensorType>(a.getType());
+  auto bType = cast<RankedTensorType>(b.getType());
+
+  // Software emulation only used to support K = 32
+  auto K = aType.getShape()[1];
+  if (K != 32)
+    return failure();
+
+  auto scaleAType = cast<RankedTensorType>(scaleA.getType());
+  auto scaleBType = cast<RankedTensorType>(scaleB.getType());
+  auto shapeScaleA = scaleAType.getShape();
+  auto shapeScaleB = scaleBType.getShape();
+
+  // Cast scale to u16 (unsigned)
+  auto modeAttr = builder.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
+                                       builder.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::RINT));
+  const Type i16Ty = builder.getI16Type();
+  Value scaleAI16 = castTo(builder, scaleA, i16Ty, 
+      hfusion::TypeFn::cast_unsigned, hfusion::UnsignedMode::UI2UI);
+  Value scaleBI16 = castTo(builder, scaleB, i16Ty, 
+      hfusion::TypeFn::cast_unsigned, hfusion::UnsignedMode::UI2UI);
+
+  // scale <<= 7
+  auto shlFnAttr = builder.getNamedAttr("fun", builder.getAttr<hfusion::BinaryFnAttr>(hfusion::BinaryFn::shli));
+  Value const7 = builder.create<arith::ConstantIntOp>(location, builder.getI16Type(), 7);
+
+  Value emptyScaleAI16 = builder.create<tensor::EmptyOp>(
+      location, RankedTensorType::get(shapeScaleA, i16Ty), ValueRange{});
+  Value sevenA =
+      builder.create<linalg::FillOp>(location, const7, emptyScaleAI16).getResult(0);
+  Value scaleAShl = builder
+                        .create<hfusion::ElemwiseBinaryOp>(
+                            location, ValueRange{scaleAI16, sevenA},
+                            ValueRange{emptyScaleAI16}, shlFnAttr)
+                        ->getResult(0);
+  
+  Value emptyScaleBI16 = builder.create<tensor::EmptyOp>(
+      location, RankedTensorType::get(shapeScaleB, i16Ty), ValueRange{});
+  Value sevenB =
+      builder.create<linalg::FillOp>(location, const7, emptyScaleBI16).getResult(0);
+  Value scaleBShl = builder
+                        .create<hfusion::ElemwiseBinaryOp>(
+                            location, ValueRange{scaleBI16, sevenB},
+                            ValueRange{emptyScaleBI16}, shlFnAttr)
+                        ->getResult(0);
+
+  // Bitcast to bf16
+  const Type bf16Ty = builder.getBF16Type();
+  Value emptyScaleABF16 = builder.create<tensor::EmptyOp>(
+      location, RankedTensorType::get(shapeScaleA, bf16Ty), ValueRange{});
+  Value scaleABF16 = builder.create<hfusion::BitcastOp>(
+      location, TypeRange{emptyScaleABF16.getType()}, ValueRange{scaleAShl}, ValueRange{emptyScaleABF16}).getResult(0);
+  Value emptyScaleBBF16 = builder.create<tensor::EmptyOp>(
+      location, RankedTensorType::get(shapeScaleB, bf16Ty), ValueRange{});
+  Value scaleBBF16 = builder.create<hfusion::BitcastOp>(
+      location, TypeRange{emptyScaleBBF16.getType()}, ValueRange{scaleBShl}, ValueRange{emptyScaleBBF16}).getResult(0);
+
+  // Cast scale to f32
+  const Type f32Ty = builder.getF32Type();
+  Value scaleAF32 = castTo(builder, scaleABF16, f32Ty);
+  Value scaleBF32 = castTo(builder, scaleBBF16, f32Ty);
+
+  // If input is fp8, cast to fp16
+  const Type f16Ty = builder.getF16Type();
+  if (isFP8(aType.getElementType(), builder)) {
+    Value emptyAF16 = builder.create<tensor::EmptyOp>(
+        location, RankedTensorType::get(aType.getShape(), f16Ty), ValueRange{});
+    a = builder.create<hfusion::CastOp>(
+        location, ValueRange{a}, ValueRange{emptyAF16}, modeAttr).getResult(0);
+    aType = RankedTensorType::get(aType.getShape(), f16Ty);
+  }
+  if (isFP8(bType.getElementType(), builder)) {
+    Value emptyBF16 = builder.create<tensor::EmptyOp>(
+        location, RankedTensorType::get(bType.getShape(), f16Ty), ValueRange{});
+    b = builder.create<hfusion::CastOp>(
+        location, ValueRange{b}, ValueRange{emptyBF16}, modeAttr).getResult(0);
+    bType = RankedTensorType::get(bType.getShape(), f16Ty);
+  }
+
+  // Cast scale to input type
+  Value scaleAFinal = castTo(builder, scaleAF32, aType.getElementType());
+  Value scaleBFinal = castTo(builder, scaleBF32, bType.getElementType());
+
+  // Broadcast scale
+  static constexpr int TILE_SIZE = 32;
+  Value emptyScaleABroadcasted = builder.create<tensor::EmptyOp>(
+      location,
+      RankedTensorType::get({shapeScaleA[0], shapeScaleA[1], TILE_SIZE}, aType.getElementType()),
+      ValueRange{});
+  Value scaleABroadcasted = builder.create<linalg::BroadcastOp>(
+      location, scaleAFinal, emptyScaleABroadcasted, ArrayRef<int64_t>{2}).getResult()[0];
+  SmallVector<ReassociationIndices> reassocIdxScaleA{{0}, {1, 2}};
+  Value scaleACollapsed = builder.create<tensor::CollapseShapeOp>(
+      location, scaleABroadcasted, reassocIdxScaleA);
+  Value emptyScaleBBroadcasted = builder.create<tensor::EmptyOp>(
+      location,
+      RankedTensorType::get({shapeScaleB[0], shapeScaleB[1], TILE_SIZE}, bType.getElementType()),
+      ValueRange{});
+  Value scaleBBroadcasted = builder.create<linalg::BroadcastOp>(
+      location, scaleBFinal, emptyScaleBBroadcasted, ArrayRef<int64_t>{2}).getResult()[0];
+  SmallVector<ReassociationIndices> reassocIdxScaleB{{0}, {1, 2}};
+  Value scaleBCollapsed = builder.create<tensor::CollapseShapeOp>(
+      location, scaleBBroadcasted, reassocIdxScaleB);
+
+  // Transpose scale B
+  auto scaleBCollapsedType = cast<RankedTensorType>(scaleBCollapsed.getType());
+  auto shapeScaleBCollapsed = scaleBCollapsedType.getShape();
+  SmallVector<int64_t> shapeScaleBTransposed{shapeScaleBCollapsed[1], shapeScaleBCollapsed[0]};
+  Value emptyScaleBTransposed = builder.create<tensor::EmptyOp>(
+      location, RankedTensorType::get(shapeScaleBTransposed, scaleBCollapsedType.getElementType()), ValueRange{});
+  Value scaleBTransposed = builder.create<linalg::TransposeOp>(
+      location, scaleBCollapsed, emptyScaleBTransposed, ArrayRef<int64_t>{1, 0})->getResult(0);
+
+  // Multiply input and scale
+  auto linalgFnAttr = builder.getNamedAttr("fun", builder.getAttr<linalg::BinaryFnAttr>(linalg::BinaryFn::mul));
+  Value emptyA = builder.create<tensor::EmptyOp>(location, aType, ValueRange{});
+  Value emptyB = builder.create<tensor::EmptyOp>(location, bType, ValueRange{});
+  Value aFinal = builder.create<linalg::ElemwiseBinaryOp>(
+      location, ValueRange{a, scaleACollapsed}, ValueRange{emptyA}, linalgFnAttr)->getResult(0);
+  Value bFinal = builder.create<linalg::ElemwiseBinaryOp>(
+      location, ValueRange{b, scaleBTransposed}, ValueRange{emptyB}, linalgFnAttr)->getResult(0);
+
+  // Replace hfusion.matmul_mx with linalg.matmul
+  return SmallVector<Value>{
+      builder.create<linalg::MatmulOp>(location, ValueRange{aFinal, bFinal}, ValueRange{c})->getResult(0)};
 }

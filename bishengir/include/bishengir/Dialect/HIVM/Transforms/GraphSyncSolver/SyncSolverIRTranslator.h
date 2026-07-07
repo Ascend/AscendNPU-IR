@@ -33,6 +33,20 @@
 
 namespace mlir::hivm::syncsolver {
 
+using AnchorMap = llvm::DenseMap<int64_t, hivm::AnchorOp>;
+
+struct CVTripletKernels {
+  func::FuncOp mixFuncOp;
+  func::FuncOp vectorFuncOp;
+  func::FuncOp cubeFuncOp;
+  CVTripletKernels(const func::FuncOp &mixFuncOp,
+                   const func::FuncOp &vectorFuncOp,
+                   const func::FuncOp &cubeFuncOp)
+      : mixFuncOp(mixFuncOp), vectorFuncOp(vectorFuncOp),
+        cubeFuncOp(cubeFuncOp) {}
+};
+
+
 class IRTranslator {
 public:
   // Configuration options.
@@ -64,23 +78,36 @@ public:
   // cf::BranchOp operations.
   llvm::DenseMap<Value, llvm::SmallVector<Value>> blockArgAliases;
 
+  // Ordered map anchor-id -> (anchor op / anchor-attr marked op).
+  std::map<int64_t, OperationBase *> anchorOpMap;
+
 public:
+  IRTranslator(SyncSolverOptions options) : options(options) {}
+
+
   IRTranslator(func::FuncOp func, SyncSolverOptions options)
       : options(options), funcOp(func) {
     auto funcOp = std::make_unique<syncsolver::Function>(func.getOperation());
     auto scopeOp = funcIrBuilder(func.getRegion(), funcOp.get());
     funcOp->body.push_back(std::move(scopeOp));
     funcIr = std::move(funcOp);
-    syncIrBuilder(funcIr.get());
+    if (options.buildUnrolledSyncIR) {
+      syncIrBuilder(funcIr.get());
+    }
   }
 
   IRTranslator(std::unique_ptr<OperationBase> funcIr, SyncSolverOptions options)
       : options(options), funcIr(std::move(funcIr)) {
-    syncIrBuilder(this->funcIr.get());
+    if (this->funcIr && this->funcIr->op)
+      funcOp = dyn_cast<func::FuncOp>(this->funcIr->op);
+    if (options.buildUnrolledSyncIR) {
+      syncIrBuilder(this->funcIr.get());
+    }
   }
 
-private:
+protected:
   int64_t globalIndex{0};
+  int64_t globalPreOrderTraversalIndex{0};
 
   // Convert MLIR Region into the in-memory funcIr Scope representation.
   std::unique_ptr<Scope> funcIrBuilder(Region &region, OperationBase *parentOp,
@@ -116,8 +143,7 @@ private:
   llvm::SmallVector<Value> tracebackMemValsStep(Value val);
 
   // Extract memory-related Values from a list of pointer values.
-  llvm::SmallVector<Value>
-  getMemoryOps(const SmallVector<Value> &vals);
+  llvm::SmallVector<Value> getMemoryOps(const SmallVector<Value> &vals);
 
   // Return read and write memory operand lists for an MLIR operation.
   std::pair<llvm::SmallVector<Value>, llvm::SmallVector<Value>>
@@ -130,12 +156,21 @@ private:
 
   std::unique_ptr<OperationBase> getPipeInterfaceOp(hivm::OpPipeInterface op,
                                                     OperationBase *parentOp);
+  std::unique_ptr<OperationBase> getDebugOp(DebugOp debugOp, OperationBase *parentOp);
+
+  std::unique_ptr<OperationBase>
+  getDestinationStyleInterfaceOp(Operation *op, OperationBase *parentOp);
+
+  std::unique_ptr<OperationBase> translateRWLikeOp(Operation *op,
+                                                   OperationBase *parentOp);
 
   std::unique_ptr<OperationBase> getTensorExtractOp(tensor::ExtractOp extractOp,
                                                     OperationBase *parentOp);
 
   std::unique_ptr<OperationBase> getCallOp(func::CallOp callOp,
                                            OperationBase *parentOp);
+
+  bool isVectorOpResult(Value val);
 
   std::optional<hivm::PIPE>
   getInferredPipe(Operation *op, TCoreType coreType,
@@ -147,12 +182,39 @@ private:
 
   bool isParallelLoop(Loop *loopOp);
 
+  bool isCVUnrolledLoop(Loop *loopOp);
+
+
   std::optional<int64_t> getLoopMultibufferUnrollNum(Loop *loopOp);
 
   std::optional<int64_t> getScopePreloadNum(Scope *scopeOp);
 
   std::optional<int64_t> getScopeMaxPreloadNum(Scope *scopeOp);
 };
+
+class DelayedCrossCoreIRTranslator : public IRTranslator {
+public:
+  CVTripletKernels tripletKernels;
+  std::unique_ptr<IRTranslator> cubeIRTranslator;
+  std::unique_ptr<IRTranslator> vectorIRTranslator;
+
+public:
+  DelayedCrossCoreIRTranslator(const CVTripletKernels &t,
+                               SyncSolverOptions options)
+      : IRTranslator(options), tripletKernels(t) {
+    funcOp = tripletKernels.mixFuncOp;
+    initIRTranslators();
+    funcIr = buildDelayedFuncIr();
+    if (options.buildUnrolledSyncIR) {
+      syncIrBuilder(funcIr.get());
+    }
+  }
+
+  void initIRTranslators();
+
+  std::unique_ptr<OperationBase> buildDelayedFuncIr();
+};
+
 
 } // namespace mlir::hivm::syncsolver
 

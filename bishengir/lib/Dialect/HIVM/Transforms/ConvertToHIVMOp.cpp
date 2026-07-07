@@ -32,12 +32,16 @@
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeRange.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#define DEBUG_TYPE "convert-to-hivm-op"
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTTOHIVMOP
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
@@ -115,6 +119,98 @@ std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
       return leftPadValue;
     }
   }
+std::optional<Value> getPadValue(PatternRewriter &rewriter,
+                                 std::optional<memref::AllocOp> maybeAlloc) {
+  if (!maybeAlloc.has_value())
+    return std::nullopt;
+  // Compatible with older versions
+  for (auto *user : maybeAlloc.value()->getUsers()) {
+    if (llvm::isa_and_nonnull<hivm::VBrcOp>(user) &&
+        user->getOperand(0).getType().isIntOrFloat()) {
+      return user->getOperand(0);
+    }
+  }
+
+  auto allocValue = maybeAlloc.value();
+  auto padMarkOp = utils::getAnnotateOpWithAttr(allocValue, "pad_const");
+  if (!padMarkOp.has_value())
+    return std::nullopt;
+  auto markOp = dyn_cast<annotation::MarkOp>(padMarkOp.value());
+  auto padValue = markOp.getDynamicAttrValue("pad_const");
+  removeMarkOpDynamicAttr(markOp, "pad_const", rewriter);
+
+  return std::optional<Value>(padValue);
+}
+
+Value buildLeftPadNumForSubview(PatternRewriter &rewriter,
+                                memref::SubViewOp subviewOp) {
+  auto normalizeOffset = [](OpBuilder &builder, Location loc,
+                            int64_t offsetRawInt,
+                            int64_t numElemPerBlock) -> Value {
+    LDBG("offsetRawInt = " << offsetRawInt << " from arith.constant\n");
+    if (offsetRawInt < 0) {
+      llvm::report_fatal_error("negative offset is invalid");
+    }
+    auto offsetInt = offsetRawInt % numElemPerBlock;
+    return builder.create<arith::ConstantIndexOp>(loc, offsetInt);
+  };
+
+  auto loc = subviewOp.getLoc();
+  auto numElemPerBlock = mlir::utils::getNumPerBlock(subviewOp.getType());
+  auto offsets = subviewOp.getMixedOffsets();
+  auto offset = offsets.back();
+  LDBG("offset = " << offset << "\n");
+  auto offsetValue = dyn_cast<Value>(offset);
+  if (offsetValue) {
+    // The maximum padding size is 32B. So we need to process the raw
+    // left_pad.
+    APSInt intVal;
+    if (matchPattern(offsetValue, m_ConstantInt(&intVal))) {
+      offsetValue = normalizeOffset(rewriter, loc, intVal.getSExtValue(),
+                                    numElemPerBlock);
+      return offsetValue;
+    }
+    // offset is Value but not arith.constant
+    auto offsetTy = offsetValue.getType();
+    if (!offsetTy.isIndex()) {
+      llvm::report_fatal_error("offset must be index type");
+    }
+    auto numElemPerBlockVal =
+        rewriter.create<arith::ConstantIndexOp>(loc, numElemPerBlock);
+    auto leftPadValue =
+        rewriter.create<arith::RemUIOp>(loc, offsetValue, numElemPerBlockVal);
+    LDBG("leftPadValue = " << leftPadValue << "\n");
+    return leftPadValue;
+  }
+  // handle the case where offset is IntegerAttr
+  auto maybeConstantInt = getConstantIntValue(offset);
+  if (!maybeConstantInt.has_value())
+    llvm::report_fatal_error("offset as integer attr is not obtained");
+  offsetValue = normalizeOffset(rewriter, loc, maybeConstantInt.value(),
+                                numElemPerBlock);
+  return offsetValue;
+}
+
+std::optional<Value> getLeftPadNum(PatternRewriter &rewriter,
+                                   std::optional<memref::AllocOp> maybeAlloc,
+                                   Value dst, Operation *anchorOp) {
+  if (auto subviewOp = dst.getDefiningOp<memref::SubViewOp>()) {
+    return buildLeftPadNumForSubview(rewriter, subviewOp);
+  }
+  if (!maybeAlloc.has_value())
+    return std::nullopt;
+
+  DominanceInfo dom(anchorOp->getParentOfType<func::FuncOp>());
+  for (auto *user : maybeAlloc.value()->getUsers()) {
+    auto subviewOp = dyn_cast<memref::SubViewOp>(user);
+    if (!subviewOp)
+      continue;
+    if (subviewOp.getSource() != dst)
+      continue;
+    if (!dom.properlyDominates(subviewOp.getOperation(), anchorOp))
+      continue;
+    return buildLeftPadNumForSubview(rewriter, subviewOp);
+  }
   return std::nullopt;
 }
 
@@ -142,6 +238,8 @@ getInitInfo(Operation *op, hivm::LoadOp loadOp) {
 std::pair<std::optional<Operation *>, std::optional<Value>>
 getUniqueInitInfoForSingleValue(std::optional<Operation *> maybeAlloc,
                                 hivm::LoadOp loadOp) {
+getUniqueInitInfo(std::optional<memref::AllocOp> maybeAlloc,
+                  hivm::LoadOp loadOp) {
   if (!maybeAlloc.has_value())
     return {std::nullopt, std::nullopt};
 
@@ -176,6 +274,23 @@ getUniqueInitInfo(const SmallVector<Value> &allocOpAliases,
     }
   }
   return {std::nullopt, std::nullopt};
+std::optional<StringRef>
+getEvictionPolicy(PatternRewriter &rewriter,
+                  std::optional<memref::AllocOp> maybeAlloc) {
+  if (!maybeAlloc.has_value())
+    return std::nullopt;
+
+  auto allocValue = maybeAlloc.value();
+  std::optional<Operation *> evictionPolicy =
+      utils::getAnnotateOpWithAttr(allocValue, "eviction_policy");
+  if (!evictionPolicy.has_value()) {
+    return std::nullopt;
+  }
+  StringAttr evictionAttrVal =
+      evictionPolicy.value()->getAttrOfType<StringAttr>("eviction_policy");
+  auto markOp = dyn_cast<annotation::MarkOp>(evictionPolicy.value());
+  rewriter.eraseOp(markOp);
+  return evictionAttrVal.getValue();
 }
 
 LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
@@ -190,7 +305,12 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
   auto allocOpAliases = utils::tracebackMemRefAllocAndAlias(dst);
   auto maybePadValue = getPadValue(allocOpAliases);
   auto maybeLeftPadNum = getLeftPadNum(rewriter, allocOpAliases);
-
+  auto maybeAlloc = utils::tracebackMemRefToAlloc(dst);
+  auto maybePadValue = getPadValue(rewriter, maybeAlloc);
+  auto maybeLeftPadNum = getLeftPadNum(rewriter, maybeAlloc, dst, copyOp);
+  auto maybeEvictionPolicy = getEvictionPolicy(rewriter, maybeAlloc);
+  LDBG(*copyOp << "\n");
+  rewriter.setInsertionPoint(copyOp);
   auto loadOp = rewriter.create<hivm::LoadOp>(copyOp->getLoc(), TypeRange(),
                                               copyOp.getSource(), dst);
   if (maybeLeftPadNum.has_value()) {
@@ -203,6 +323,7 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
     loadOp.getPadValueMutable().assign(maybePadValue.value());
     auto [inlineInitOp, inlineInitCond] =
         getUniqueInitInfo(allocOpAliases, loadOp);
+    auto [inlineInitOp, inlineInitCond] = getUniqueInitInfo(maybeAlloc, loadOp);
     if (inlineInitOp.has_value()) {
       loadOp.setInitOutBuffer(true);
       rewriter.eraseOp(inlineInitOp.value());
@@ -227,6 +348,48 @@ LogicalResult replaceMemCopyByHIVMLoadOp(memref::CopyOp copyOp,
 
 bool isAllocLikeOrGMPointerCastOp(Value v) {
   return utils::isAllocLikeOp(v) || util::isGMPointerCastOp(v.getDefiningOp());
+  // Default set to evict_first
+  auto evictionPolicyAttr = rewriter.getAttr<hivm::EvictionPolicyAttr>(
+      hivm::EvictionPolicy::EvictFirst);
+  if (maybeEvictionPolicy.has_value()) {
+    if (maybeEvictionPolicy->ends_with("evict_last")) {
+      evictionPolicyAttr = rewriter.getAttr<hivm::EvictionPolicyAttr>(
+          hivm::EvictionPolicy::EvictLast);
+    }
+  }
+  loadOp.setEvictionPolicyAttr(evictionPolicyAttr);
+  rewriter.replaceOp(copyOp, loadOp);
+
+  // ensure pad value and left pad num are defined before load op
+  // to avoid the violation of SSA dominance
+  Operation *latestDef = nullptr;
+  auto updateLatestDef = [&loadOp, &latestDef](Value v) {
+    if (v) {
+      if (Operation *defOp = v.getDefiningOp()) {
+        if (defOp->getBlock() == loadOp->getBlock()) {
+          if (!latestDef || latestDef->isBeforeInBlock(defOp)) {
+            latestDef = defOp;
+          }
+        }
+      }
+    }
+  };
+
+  if (maybePadValue.has_value())
+    updateLatestDef(maybePadValue.value());
+  if (maybeLeftPadNum.has_value())
+    updateLatestDef(maybeLeftPadNum.value());
+
+  if (latestDef && loadOp->isBeforeInBlock(latestDef)) {
+    rewriter.moveOpAfter(loadOp, latestDef);
+  }
+  return success();
+}
+
+bool isGMSafeSource(Value v) {
+  Operation *defOp = v.getDefiningOp();
+  return utils::isAllocLikeOp(v) || util::isGMPointerCastOp(defOp) ||
+         (defOp && isa<memref::GetGlobalOp>(defOp));
 }
 
 bool isFromGMSpace(Value v) {
@@ -235,6 +398,11 @@ bool isFromGMSpace(Value v) {
   for (auto targetOP : targetOPVec) {
     auto defOp = targetOP.getDefiningOp();
     if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp)) {
+      utils::tracebackMemRefVecByTargetFn(v, isGMSafeSource);
+  for (auto targetOP : targetOPVec) {
+    auto defOp = targetOP.getDefiningOp();
+    if (defOp != nullptr && !isa<hivm::PointerCastOp>(defOp) &&
+        !isa<memref::GetGlobalOp>(defOp)) {
       return false;
     }
   }
@@ -250,6 +418,17 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
     // TODO：remove memref.copy conversion after changing to use
     // hivm.load/hivm.store directly
     bool convertToLoad = isFromGMSpace(src) || isFromDistCallResult(src);
+    // do not convert mem copy inside simt_vf
+    if (copyOp->getParentOfType<scf::ForallOp>() != nullptr) {
+      return failure();
+    }
+    bool isInVectorFunction = false;
+    if (auto funcOp = copyOp->getParentOfType<func::FuncOp>()) {
+      isInVectorFunction = funcOp->hasAttr("hivm.vector_function");
+    }
+
+    Value src = copyOp.getSource();
+    bool convertToLoad = !isInVectorFunction && isFromGMSpace(src);
     if (convertToLoad) {
       return replaceMemCopyByHIVMLoadOp(copyOp, rewriter);
     }
@@ -268,6 +447,9 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
       if (implicitTransposeAttr.has_value()) {
         storeOp.setMayImplicitTransposeWithLastAxis(true);
       }
+    bool convertToStore = !isInVectorFunction && isFromGMSpace(dst);
+    if (convertToStore) {
+      rewriter.replaceOpWithNewOp<hivm::StoreOp>(copyOp, TypeRange(), src, dst);
       return success();
     }
 
@@ -288,6 +470,7 @@ struct BufferizeMaterializeOpLowering
     // TODO：remove bufferization conversion after changing to use
     // hivm.load/hivm.store directly
     bool convertToStore = isFromGMSpace(dst) || isFromDistCallResult(dst);
+    bool convertToStore = isFromGMSpace(dst);
     if (convertToStore) {
       rewriter.replaceOpWithNewOp<hivm::StoreOp>(bufMIDOp, TypeRange(),
                                                  bufMIDOp.getSource(), dst);
@@ -297,6 +480,17 @@ struct BufferizeMaterializeOpLowering
   }
 };
 
+struct RemovePadConstAnnotation : public OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.isAnnotatedByDynamicAttr("pad_const")) {
+      rewriter.eraseOp(op);
+    }
+    return success();
+  }
+};
 void populateHIVMOpRewritingRule(RewritePatternSet &patterns) {
   patterns.add<MemrefCopyOpLowering, BufferizeMaterializeOpLowering>(
       patterns.getContext());
@@ -319,6 +513,20 @@ void ConvertToHIVMOpPass::runOnOperation() {
     // rewrite op within cur funcOp
     RewritePatternSet patterns(ctx);
     populateHIVMOpRewritingRule(patterns);
+    (void)applyPatternsGreedily(funcOp, std::move(patterns));
+  });
+
+  // Avoid missing cleanup of annotations("pad_const") on memrefs.
+  // Avoid the conflict with MemrefCopyOpLowering and
+  // BufferizeMaterializeOpLowering.
+  moduleOp->walk([&](func::FuncOp funcOp) {
+    if (hacc::utils::isHost(funcOp))
+      // avoid convert host op to hivm op
+      return;
+
+    // rewrite op within cur funcOp
+    RewritePatternSet patterns(ctx);
+    patterns.add<RemovePadConstAnnotation>(ctx);
     (void)applyPatternsGreedily(funcOp, std::move(patterns));
   });
 }

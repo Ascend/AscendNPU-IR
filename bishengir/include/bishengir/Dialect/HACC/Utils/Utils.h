@@ -22,6 +22,8 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/SmallSet.h"
 
 #include <type_traits>
@@ -134,6 +136,38 @@ std::optional<llvm::VersionTuple> getHIVMCVersion(ModuleOp op);
 
 bool isAscend910_95(ModuleOp op);
 
+std::optional<TargetDevice> getTargetDevice(ModuleOp op);
+
+void setTargetDevice(ModuleOp op, TargetDevice targetDevice);
+
+bool isAscend910B(TargetDevice targetDevice);
+
+bool isAscend910_93(TargetDevice targetDevice);
+
+bool isMemBasedArch(TargetDevice targetDevice);
+
+bool isAscend310B(TargetDevice targetDevice);
+
+bool isAscend950(TargetDevice targetDevice);
+bool isAscend950(llvm::StringRef targetDevice);
+
+bool isRegBasedArch(TargetDevice targetDevice);
+bool isRegBasedArch(llvm::StringRef targetDevice);
+
+bool isFFTSSupportedArch(TargetDevice targetDevice);
+
+bool isAscend910B(ModuleOp op);
+
+bool isAscend910_93(ModuleOp op);
+
+bool isMemBasedArch(ModuleOp op);
+
+bool isAscend310B(ModuleOp op);
+
+bool isAscend950(ModuleOp op);
+
+bool isRegBasedArch(ModuleOp op);
+
 } // namespace utils
 
 /// Seperate modules containing host and device code
@@ -169,6 +203,16 @@ std::string constructHostFunctionName(const std::string &kernelName,
                                       HostFuncType type);
 
 size_t countDeviceArgSizeInByte(ModuleOp modOp);
+
+bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op);
+
+bool isSkippable(linalg::ReduceOp op);
+
+/// linalg.generic is considered "reduce-like" iff
+/// - two inputs, one output
+/// - along at least one of axis iterator type is "reduce"
+/// - op have trivial layout maps
+bool isLegalReduceOp(linalg::ReduceOp op);
 
 } // namespace hacc
 } // namespace mlir

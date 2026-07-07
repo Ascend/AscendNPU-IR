@@ -29,6 +29,7 @@
 namespace mlir::hivm::syncsolver {
 
 class OperationBase;
+class Anchor;
 class Scope;
 class Loop;
 class Condition;
@@ -45,14 +46,17 @@ struct EventIdInfo {
   int64_t eventIdRepeatNum{1};
   int64_t preloadOffset1{0};
   int64_t preloadOffset2{0};
-  LoopLikeOpInterface multibufferLoop{nullptr};
-  LoopLikeOpInterface multibufferUnrollLoop1{nullptr};
-  LoopLikeOpInterface multibufferUnrollLoop2{nullptr};
+  Loop *multibufferLoop{nullptr};
+  Loop *multibufferUnrollLoop1{nullptr};
+  Loop *multibufferUnrollLoop2{nullptr};
+  LoopLikeOpInterface multibufferLoop_membase{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop1_membase{nullptr};
+  LoopLikeOpInterface multibufferUnrollLoop2_membase{nullptr};
   bool cannotRepeatFlagId{false};
   bool isCVPipeline{false};
   bool isCVPreload{false};
-  EventIdInfo() {};
-  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum) {};
+  EventIdInfo(){};
+  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum){};
 
   void useRepeatFlagId() {
     eventIdRepeatNum = eventIdNum;
@@ -63,6 +67,7 @@ struct EventIdInfo {
 enum struct OpType {
   OPERATION,
   PLACE_HOLDER,
+  ANCHOR,
   SCOPE,
   FUNCTION,
   FUNCTION_BLOCK,
@@ -88,13 +93,29 @@ enum struct OpType {
 
 std::string getOpTypeStr(OpType opType);
 
+struct AnchorInfo {
+  OperationBase *anchorBefore{nullptr};
+  OperationBase *anchorAfter{nullptr};
+
+  AnchorInfo() = default;
+  AnchorInfo(OperationBase *anchor)
+      : anchorBefore(anchor), anchorAfter(anchor) {}
+  AnchorInfo(OperationBase *anchorBefore, OperationBase *anchorAfter)
+      : anchorBefore(anchorBefore), anchorAfter(anchorAfter) {}
+};
+
+
 class OperationBase {
 
 public:
   int id{-1};
+  int preOrderIndex{-1};
   const OpType opType;
   mlir::Operation *op{nullptr};
   OperationBase *parentOp{nullptr};
+  std::optional<AnchorInfo> mixAnchorInfo;
+  std::optional<AnchorInfo> cubeAnchorInfo;
+  std::optional<AnchorInfo> vectorAnchorInfo;
 
 private:
   // Monotonic id allocator used to assign stable ids to in-memory ops.
@@ -115,6 +136,10 @@ public:
 
   // Compute the depth (levels up to root) of the provided operation.
   int getDepth() const;
+
+  // Walk up parents to find the first ancestor occurrence associated with 'op'.
+  OperationBase *getParentWithOp(Operation *op, bool assertExists = true);
+
 
   // Return the ancestor `dist` levels above this operation.
   OperationBase *getNthParent(int dist);
@@ -169,6 +194,22 @@ public:
   std::string str(int indent, bool recursive) const override;
 };
 
+class Anchor : public OperationBase {
+public:
+  const int64_t anchorId;
+
+public:
+  Anchor(Operation *op, OperationBase *parentOp, int64_t anchorId)
+      : OperationBase(OpType::ANCHOR, op, parentOp), anchorId(anchorId) {}
+
+  static bool classof(const OperationBase *e) {
+    return e->opType == OpType::ANCHOR;
+  }
+
+  std::string str(int indent, bool recursive) const override;
+};
+
+
 class Scope : public OperationBase {
 
 public:
@@ -211,6 +252,7 @@ class Loop : public Scope {
 private:
 public:
   bool isParallel{false};
+  bool isCVUnrolledLoop{false};
   std::optional<int64_t> multibufferUnrollNum;
   Loop(Operation *op, OperationBase *parentOp)
       : Scope(OpType::LOOP, op, parentOp) {}
@@ -228,7 +270,7 @@ public:
   MmadL0Operation *mmadL0Op{nullptr};
 
   MmadL1LoopOp(Operation *op, OperationBase *parentOp)
-      : Scope(OpType::MMAD_SCOPE, op, parentOp) {};
+      : Scope(OpType::MMAD_SCOPE, op, parentOp){};
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::MMAD_SCOPE;
@@ -303,6 +345,14 @@ public:
   const llvm::SmallVector<llvm::SmallVector<int64_t>> testWriteMemVals;
 
 public:
+  RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
+              hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
+              const llvm::SmallVector<MemInfo> &readMemInfo,
+              const llvm::SmallVector<MemInfo> &writeMemInfo,
+              OpType opType = OpType::RW_OPERATION)
+      : OperationBase(opType, op, parentOp), coreType(coreType),
+        pipeRead(pipeRead), pipeWrite(pipeWrite), readMemInfo(readMemInfo),
+        writeMemInfo(writeMemInfo){};
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
               const llvm::SmallVector<Value> &readMemVals,
@@ -410,6 +460,10 @@ public:
   SyncOp(const OpType &opType, Operation *op, OperationBase *parentOp)
       : OperationBase(opType, op, parentOp) {}
 
+  virtual std::unique_ptr<SyncOp> clone(Operation *op,
+                                        OperationBase *parentOp) = 0;
+
+
   static bool classof(const OperationBase *e) {
     return e->opType >= OpType::SYNC_OP && e->opType < OpType::SYNC_OP_END;
   }
@@ -448,9 +502,30 @@ public:
       : SetWaitOp(OpType::SET_FLAG_OP, op, parentOp, eventIds, pipeSrc,
                   pipeDst) {}
 
-  std::unique_ptr<SetFlagOp> clone() {
+  std::unique_ptr<SetFlagOp> clone_membase() {
     return std::make_unique<SetFlagOp>(op, parentOp, eventIds, pipeSrc,
                                        pipeDst);
+  }
+  std::unique_ptr<SyncOp> clone(Operation *op,
+                                OperationBase *parentOp) override {
+    auto ret =
+        std::make_unique<SetFlagOp>(op, parentOp, eventIds, pipeSrc, pipeDst);
+    ret->coreType = coreType;
+    ret->allAtOnce = allAtOnce;
+    ret->checkFirstIter = checkFirstIter;
+    ret->checkLastIter = checkLastIter;
+    ret->eventIdInfo = eventIdInfo;
+    return ret;
+  }
+  std::unique_ptr<SetFlagOp> clone() {
+    auto ret =
+        std::make_unique<SetFlagOp>(op, parentOp, eventIds, pipeSrc, pipeDst);
+    ret->coreType = coreType;
+    ret->allAtOnce = allAtOnce;
+    ret->checkFirstIter = checkFirstIter;
+    ret->checkLastIter = checkLastIter;
+    ret->eventIdInfo = eventIdInfo;
+    return ret;
   }
 
   static bool classof(const OperationBase *e) {
@@ -470,9 +545,30 @@ public:
       : SetWaitOp(OpType::WAIT_FLAG_OP, op, parentOp, eventIds, pipeSrc,
                   pipeDst) {}
 
-  std::unique_ptr<WaitFlagOp> clone() {
+  std::unique_ptr<WaitFlagOp> clone_membase() {
     return std::make_unique<WaitFlagOp>(op, parentOp, eventIds, pipeSrc,
                                         pipeDst);
+  }
+  std::unique_ptr<SyncOp> clone(Operation *op,
+                                OperationBase *parentOp) override {
+    auto ret =
+        std::make_unique<WaitFlagOp>(op, parentOp, eventIds, pipeSrc, pipeDst);
+    ret->coreType = coreType;
+    ret->allAtOnce = allAtOnce;
+    ret->checkFirstIter = checkFirstIter;
+    ret->checkLastIter = checkLastIter;
+    ret->eventIdInfo = eventIdInfo;
+    return ret;
+  }
+  std::unique_ptr<WaitFlagOp> clone() {
+    auto ret =
+        std::make_unique<WaitFlagOp>(op, parentOp, eventIds, pipeSrc, pipeDst);
+    ret->coreType = coreType;
+    ret->allAtOnce = allAtOnce;
+    ret->checkFirstIter = checkFirstIter;
+    ret->checkLastIter = checkLastIter;
+    ret->eventIdInfo = eventIdInfo;
+    return ret;
   }
 
   static bool classof(const OperationBase *e) {
@@ -486,11 +582,24 @@ class BarrierOp : public SyncOp {
 
 public:
   hivm::PIPE pipe{hivm::PIPE::PIPE_UNASSIGNED};
+  std::optional<hivm::TCoreType> coreType;
 
 private:
 public:
-  BarrierOp(Operation *op, OperationBase *parentOp, hivm::PIPE pipe)
+  BarrierOp_membase(Operation *op, OperationBase *parentOp, hivm::PIPE pipe)
       : SyncOp(OpType::BARRIER_OP, op, parentOp), pipe(pipe) {}
+  BarrierOp(Operation *op, OperationBase *parentOp, hivm::PIPE pipe,
+            std::optional<hivm::TCoreType> coreType = {})
+      : SyncOp(OpType::BARRIER_OP, op, parentOp), pipe(pipe),
+        coreType(coreType) {}
+
+  std::unique_ptr<SyncOp> clone(Operation *op,
+                                OperationBase *parentOp) override {
+    return std::make_unique<BarrierOp>(op, parentOp, pipe, coreType);
+  }
+  std::unique_ptr<BarrierOp> clone() {
+    return std::make_unique<BarrierOp>(op, parentOp, pipe, coreType);
+  }
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::BARRIER_OP;

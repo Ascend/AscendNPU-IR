@@ -29,6 +29,8 @@ namespace hfusion {
 /// Collect a set of patterns to Flatten HFusion/Linalg ops
 void populateFlattenOpsPattern(RewritePatternSet &patterns);
 
+void populateTreeReducePattern(RewritePatternSet &patterns);
+
 } // namespace hfusion
 } // namespace mlir
 

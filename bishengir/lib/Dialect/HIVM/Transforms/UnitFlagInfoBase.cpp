@@ -161,6 +161,7 @@ UnitFlagInfoBase::getUnitFlagArgs(Operation *op, IRRewriter &rewriter) {
     return getUnitFlagLinkedLoopArgs(op, rewriter);
   }
   llvm::report_fatal_error("unexpected unit-flag-info state");
+  llvm_unreachable("unexpected unit-flag-info state");
 }
 
 namespace mlir {

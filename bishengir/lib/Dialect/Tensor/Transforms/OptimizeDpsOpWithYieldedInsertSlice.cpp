@@ -105,6 +105,9 @@ struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
     rewriter.setInsertionPoint(srcDefiningOp);
     auto extractSlice = rewriter.create<ExtractSliceOp>(
         insertSliceOp.getLoc(), insertSliceOp.getDest(),
+        insertSliceOp.getLoc(),
+        insertSrc.getType(),
+        insertSliceOp.getDest(),
         insertSliceOp.getMixedOffsets(), insertSliceOp.getMixedSizes(),
         insertSliceOp.getMixedStrides());
 
@@ -134,4 +137,5 @@ mlir::tensor::createOptimizeDpsOpWithYieldedInsertSlicePass() {
 void bishengir::tensor::populateOptimizeDpsOpWithYieldedInsertSlicePattern(
     mlir::RewritePatternSet &patterns) {
   patterns.insert<ModifyDpsInitToSlicedIterArg>(patterns.getContext());
+}
 }

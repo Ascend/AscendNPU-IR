@@ -188,7 +188,7 @@ struct FoldRedundantCopy : public OpRewritePattern<memref::CopyOp> {
 };
 
 } // namespace
-
+#include "mlir/IR/TypeUtilities.h"
 namespace mlir {
 namespace memref {
 
@@ -229,6 +229,20 @@ void getExtendedCanonicalizationPatterns(mlir::RewritePatternSet &results) {
   results.add<FoldRedundantCopy>(context);
   results.add<FoldConstantDimOfOutputShape<ExpandShapeOp, CastOp>>(context);
 #endif
+/// This is a common class used for patterns of the form
+/// "someop(memref.memory_space_cast) -> someop".  It folds the source of any
+/// memref.cast into the root operation directly.
+LogicalResult foldMemRefSpaceCast(Operation *op, Value inner) {
+  bool folded = false;
+  for (OpOperand &operand : op->getOpOperands()) {
+    auto memrefCast = operand.get().getDefiningOp<MemorySpaceCastOp>();
+    if (memrefCast && operand.get() != inner &&
+        !llvm::isa<UnrankedMemRefType>(memrefCast.getOperand().getType())) {
+      operand.set(memrefCast.getOperand());
+      folded = true;
+    }
+  }
+  return success(folded);
 }
 
 } // namespace memref

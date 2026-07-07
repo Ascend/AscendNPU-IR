@@ -12,6 +12,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+// This file is licensed under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -52,11 +55,14 @@ public:
     if (failed(verifyLinalgCompatibleTypes(op, rewriter)))
       return failure();
     auto input = dyn_cast<DenseIntOrFPElementsAttr>(op.getValueAttr());
+    auto loc = op->getLoc();
+    auto input = mlir::dyn_cast<DenseIntOrFPElementsAttr>(op.getValueAttr());
     if (!input) {
       return failure();
     }
     auto elemType = input.getElementType();
     if (!isa<Float64Type>(elemType)) {
+    if (!mlir::isa<Float64Type>(elemType)) {
       return failure();
     }
     auto maybeCastElem = convertFP64ToFP32(input, rewriter);
@@ -84,6 +90,7 @@ public:
     }
 
     auto originalType = dyn_cast<RankedTensorType>(attr.getType());
+    auto originalType = mlir::dyn_cast<RankedTensorType>(attr.getType());
     if (!originalType) {
       return failure();
     }

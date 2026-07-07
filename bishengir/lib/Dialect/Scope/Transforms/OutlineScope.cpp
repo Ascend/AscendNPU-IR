@@ -25,6 +25,7 @@
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include <string>
@@ -47,6 +48,21 @@ public:
 };
 
 class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
+  static bool isExternalToScope(ScopeOp scopeOp, Value val) {
+    if (auto blockArg = dyn_cast<BlockArgument>(val))
+      return !scopeOp->isAncestor(blockArg.getParentRegion()->getParentOp());
+    if (auto *defOp = val.getDefiningOp())
+      return !scopeOp->isAncestor(defOp);
+    return false;
+  }
+
+  static Operation *getConstantLikeDefiningOp(Value val) {
+    auto *defOp = val.getDefiningOp();
+    if (!defOp || !defOp->hasTrait<OpTrait::ConstantLike>()) {
+      return nullptr;
+    }
+    return defOp;
+  }
   SmallVector<Value> getInputs(ScopeOp scopeOp) const {
     SetVector<Value> inputs;
     scopeOp.walk<WalkOrder::PreOrder>([&inputs, &scopeOp](Operation *op) {
@@ -61,6 +77,13 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
           if (scopeOp->isAncestor(defOp))
             continue;
         }
+        if (!isExternalToScope(scopeOp, val))
+          continue;
+
+        // External constants are cloned into the outlined function body, so
+        // they do not need to be modeled as function inputs.
+        if (getConstantLikeDefiningOp(val))
+          continue;
 
         inputs.insert(val);
       }
@@ -68,6 +91,20 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     return inputs.takeVector();
   }
 
+  SetVector<Operation *> getExternalConstantLikeOps(ScopeOp scopeOp) const {
+    SetVector<Operation *> constants;
+    // Collect each external ConstantLike producer once so it can be cloned
+    // before the outlined body is replayed.
+    scopeOp.walk<WalkOrder::PreOrder>([&](Operation *op) {
+      for (Value val : op->getOperands()) {
+        if (!isExternalToScope(scopeOp, val))
+          continue;
+        if (Operation *constantOp = getConstantLikeDefiningOp(val))
+          constants.insert(constantOp);
+      }
+    });
+    return constants;
+  }
   SetVector<Operation *> getOpsOfScopeOp(ScopeOp scopeOp) const {
     SetVector<Operation *> ops;
     scopeOp.getRegion().walk([&](Operation *op) { ops.insert(op); });
@@ -92,6 +129,19 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
         moduleOp.getContext(), TypeRange(inputs), scopeOp->getResultTypes());
     func::FuncOp newFuncOp = rewriter.create<func::FuncOp>(
         moduleOp->getLoc(), prefixFunctionName, funcTy, scopeOp->getAttrs());
+    // transfer layout attribute from scopeOp to funcOp if exists
+    for (auto [idx, input] : llvm::enumerate(inputs)) {
+      if (isa<BlockArgument>(input)) {
+        continue;
+      }
+      auto defOp = input.getDefiningOp();
+      if (!defOp) {
+        continue;
+      }
+      if (auto attr = defOp->getAttr("hivm.fractal_layout")) {
+        newFuncOp.setArgAttr(idx, "hivm.fractal_layout", attr);
+      }
+    }
     SymbolTable symbolTable(moduleOp);
     FailureOr<StringAttr> scopeFuncName =
         symbolTable.renameToUnique(newFuncOp, SmallVector<SymbolTable *>());
@@ -110,6 +160,15 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
       currentMap.map(oldIn, newIn);
     }
 
+    // Materialize external constants first so cloned scope ops keep seeing
+    // constant values instead of extra outlined function arguments.
+    for (Operation *constantOp : getExternalConstantLikeOps(scopeOp)) {
+      auto *newConstOp = rewriter.clone(*constantOp, currentMap);
+      for (auto [oldRes, newRes] :
+           llvm::zip_equal(constantOp->getResults(), newConstOp->getResults())) {
+        currentMap.map(oldRes, newRes);
+      }
+    }
     Operation *newScopeReturnOp = nullptr;
     for (auto it = scopeOp.getRegion().op_begin();
          it != scopeOp.getRegion().op_end(); ++it) {
@@ -121,6 +180,7 @@ class OutlineScopeOp : public OpRewritePattern<scope::ScopeOp> {
     }
     if (!newScopeReturnOp)
       return failure();
+    assert(newScopeReturnOp != nullptr && "scope::ReturnOp is not cloned");
 
     auto funcReturnOp = rewriter.create<func::ReturnOp>(
         entryBB->front().getLoc(), newScopeReturnOp->getOperands());
@@ -150,6 +210,9 @@ public:
 
   LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
                                 PatternRewriter &rewriter) const override {
+    if (!scopeOp->hasAttr("outline")) {
+      return failure();
+    }
     FailureOr<func::FuncOp> newFuncOp = outlineScope(scopeOp, rewriter);
     if (failed(newFuncOp))
       return failure();
@@ -176,4 +239,5 @@ std::unique_ptr<Pass> createOutlineScopePass() {
 }
 
 } // namespace scope
+} // namespace mlir
 } // namespace mlir

@@ -17,28 +17,100 @@
 
 #include "bishengir/Tools/ConfigOptions/Options.h"
 #include "mlir/TableGen/Pass.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/TableGen/Record.h"
 
 using namespace mlir;
 using namespace bishengir::tblgen;
 
 namespace {
+bool getBitField(const llvm::Record *def, StringRef fieldName) {
+  return def->getValueAsBit(fieldName);
+}
+
+std::string lowerLeadingAcronym(StringRef input) {
+  if (input.empty())
+    return "";
+
+  std::string result = input.str();
+  if (!std::isalpha(static_cast<unsigned char>(result.front())))
+    return result;
+
+  if (result.size() == 1 || !std::isupper(static_cast<unsigned char>(result[1]))) {
+    result.front() = std::tolower(static_cast<unsigned char>(result.front()));
+    return result;
+  }
+
+  size_t acronymEnd = 1;
+  while (acronymEnd < result.size() &&
+         std::isupper(static_cast<unsigned char>(result[acronymEnd]))) {
+    bool isLastUppercaseBeforeWord =
+        acronymEnd + 1 < result.size() &&
+        std::islower(static_cast<unsigned char>(result[acronymEnd + 1]));
+    if (isLastUppercaseBeforeWord)
+      break;
+    ++acronymEnd;
+  }
+
+  for (size_t i = 0; i < acronymEnd; ++i)
+    result[i] = std::tolower(static_cast<unsigned char>(result[i]));
+  return result;
+}
 
 std::string convertToDashSnakeFromCamelCase(StringRef input) {
   auto snakeCaseStr = llvm::convertToSnakeFromCamelCase(input);
+  SmallVector<StringRef> rawParts;
+  SmallVector<std::string> normalizedParts;
+  StringRef(snakeCaseStr).split(rawParts, '_', /*MaxSplit=*/-1,
+                                /*KeepEmpty=*/false);
+  for (StringRef part : rawParts) {
+    if (!normalizedParts.empty() && !normalizedParts.back().empty() &&
+        std::isdigit(normalizedParts.back().back()) && part.size() <= 2 &&
+        llvm::all_of(part, [](char c) { return std::islower(c); })) {
+      normalizedParts.back() += part.str();
+      continue;
+    }
+    normalizedParts.push_back(part.str());
+  }
+
+  snakeCaseStr.clear();
+  for (size_t i = 0; i < normalizedParts.size(); ++i) {
+    if (i > 0)
+      snakeCaseStr += '_';
+    snakeCaseStr += normalizedParts[i];
+  }
   std::replace(snakeCaseStr.begin(), snakeCaseStr.end(), '_', '-');
   return snakeCaseStr;
 }
 
-std::string lowerFirstLetter(StringRef input) {
-  if (input.empty()) {
+std::string upperFirstLetter(StringRef input) {
+  if (input.empty())
     return "";
-  }
-  std::string result = input.str();
-  if (std::isalpha(result[0]))
-    result[0] = std::tolower(result[0]);
 
+  std::string result = input.str();
+  if (std::isalpha(static_cast<unsigned char>(result[0])))
+    result[0] = std::toupper(static_cast<unsigned char>(result[0]));
   return result;
+}
+
+std::string resolveExplicitStorageLocation(const llvm::Record *def) {
+  StringRef explicitExternalStorageLocation =
+      def->getValueAsString(OptionFields::kExternalStorageLocation);
+  if (!explicitExternalStorageLocation.empty())
+    return explicitExternalStorageLocation.str();
+
+  StringRef externalStateObject =
+      def->getValueAsString(OptionFields::kExternalStateObject);
+  StringRef externalStateField =
+      def->getValueAsString(OptionFields::kExternalStateField);
+  if (!externalStateObject.empty() || !externalStateField.empty()) {
+    if (externalStateObject.empty() || externalStateField.empty())
+      return "";
+    return (externalStateObject + "." + externalStateField).str();
+  }
+
+  return "";
 }
 
 } // namespace
@@ -51,15 +123,20 @@ namespace bishengir::tblgen {
 
 ConfigOption::ConfigOption(const llvm::Record *def) : def(def) {
   StringRef defName = def->getName();
-  this->cppName = lowerFirstLetter(defName);
+  this->cppName = lowerLeadingAcronym(defName);
+  this->capitalizedCppName = upperFirstLetter(defName);
   this->argument = convertToDashSnakeFromCamelCase(defName);
-  this->externalStorageLocation = this->cppName + "Flag";
+  this->externalStorageLocation = resolveExplicitStorageLocation(def);
+  if (this->externalStorageLocation.empty())
+    this->externalStorageLocation =
+        this->cppName + (def->isSubClassOf(OptionFields::kListOption) ? "Flags"
+                                                                      : "Flag");
 }
 
 StringRef ConfigOption::getCppVariableName() const { return this->cppName; }
 
 StringRef ConfigOption::getCapitalizedCppVariableName() const {
-  return def->getName();
+  return this->capitalizedCppName;
 }
 
 StringRef ConfigOption::getArgument() const { return this->argument; }
@@ -83,19 +160,26 @@ std::optional<StringRef> ConfigOption::getAdditionalFlags() const {
   return additionalFlags.empty() ? std::optional<StringRef>() : additionalFlags;
 }
 
-bool ConfigOption::getExternalStorage() const {
-  return def->getValueAsBit(OptionFields::kExternalStorage);
+std::optional<StringRef> ConfigOption::getExternalStorageLocation() const {
+  return this->externalStorageLocation;
 }
 
-std::optional<StringRef> ConfigOption::getExternalStorageLocation() const {
-  if (!getExternalStorage())
-    return std::nullopt;
+bool ConfigOption::shouldUseCLIExternalStorage() const {
+  return getBitField(def, OptionFields::kExternalStorage);
+}
 
-  return this->externalStorageLocation;
+std::optional<StringRef> ConfigOption::getCLIExternalStorageLocation() const {
+  if (!shouldUseCLIExternalStorage())
+    return std::nullopt;
+  return getExternalStorageLocation();
 }
 
 std::vector<StringRef> ConfigOption::getPassGroups() const {
   return def->getValueAsListOfStrings(OptionFields::kPassGroup);
+}
+
+std::vector<StringRef> ConfigOption::getOptionScopes() const {
+  return def->getValueAsListOfStrings(OptionFields::kOptionScope);
 }
 
 std::vector<mlir::StringRef> ConfigOption::getOptionCategories() const {
@@ -106,16 +190,47 @@ std::optional<StringRef> ConfigOption::getCompileConfigName() const {
   return def->getValueAsOptionalString(OptionFields::kCompileConfigName);
 }
 
-bool ConfigOption::getEmitGetterSetter() const {
-  return def->getValueAsBit(OptionFields::kEmitGetterSetter);
+bool ConfigOption::shouldRegisterCLIOption() const {
+  return !isInternalStateOption() &&
+         getBitField(def, OptionFields::kEmitOptionRegistration);
 }
 
-bool ConfigOption::getEmitOptionRegistration() const {
-  return def->getValueAsBit(OptionFields::kEmitOptionRegistration);
+bool ConfigOption::shouldEmitConfigField() const {
+  return !isExternalStateOption();
+}
+
+bool ConfigOption::shouldEmitGetterSetter() const {
+  return shouldEmitConfigField() &&
+         getBitField(def, OptionFields::kEmitGetterSetter);
+}
+
+bool ConfigOption::shouldEmitPassOption() const {
+  return shouldRegisterCLIOption() && shouldEmitGetterSetter() &&
+         !isA3OnlyOption();
 }
 
 bool ConfigOption::isListOption() const {
   return def->isSubClassOf(OptionFields::kListOption);
+}
+
+bool ConfigOption::isInternalStateOption() const {
+  return def->isSubClassOf(OptionFields::kInternalStateOption);
+}
+
+bool ConfigOption::isA3OnlyOption() const {
+  return llvm::is_contained(getOptionScopes(), StringRef("A3_ONLY"));
+}
+
+bool ConfigOption::isA5OnlyOption() const {
+  return llvm::is_contained(getOptionScopes(), StringRef("A5_ONLY"));
+}
+
+bool ConfigOption::isSharedOption() const {
+  return !isA3OnlyOption() && !isA5OnlyOption();
+}
+
+bool ConfigOption::isExternalStateOption() const {
+  return def->isSubClassOf(OptionFields::kExternalStateOption);
 }
 
 std::string getContainerType(const ConfigOption &opt) {

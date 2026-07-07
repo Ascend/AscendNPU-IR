@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/MemoryDependentAnalyzer.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 
 #define DEBUG_TYPE "hivm-inject-sync"
 
@@ -53,6 +54,10 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
   }
   if (a->rootBuffer == b->rootBuffer) {
     return true;
+  }
+  if (isa<memref::AllocOp>(a->rootBuffer.getDefiningOp()) &&
+      isa<memref::AllocOp>(b->rootBuffer.getDefiningOp())) {
+    return false;
   }
   return isBufferAddressRangeOverlap(a, b);
 }

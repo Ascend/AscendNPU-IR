@@ -42,6 +42,7 @@ std::optional<Type> getAnyUserOfType(Value value) {
   return std::nullopt;
 }
 
+
 } // namespace utils
 } // namespace symbol
 } // namespace mlir

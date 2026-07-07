@@ -29,7 +29,7 @@ namespace utils {
 DiagnosedSilenceableFailure
 mapForToForallImpl(OpBuilder &builder, scf::ForOp forOp,
                    std::optional<ArrayAttr> deviceMappings,
-                   scf::ForallOp &forallOp);
+                   scf::ForallOp &forallOp, bool CheckMapForToForall = false);
 
 bool isNormalized(LoopLikeOpInterface forOp);
 

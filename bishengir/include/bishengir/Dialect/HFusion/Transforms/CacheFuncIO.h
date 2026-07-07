@@ -19,11 +19,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_CACHEFUNCIO_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_CACHEFUNCIO_H
-
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-
 namespace mlir {
 namespace hfusion {
 /// Apply caching to the input and output of the target function.

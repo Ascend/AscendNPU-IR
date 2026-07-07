@@ -98,6 +98,16 @@ process(__ubuf__ uint8_t *ub_mask_ptr, memref_t<__ubuf__ T, 1> subview_src0,
 ///   Parts a and b are calucated based on size of A dim. Pointer to mask
 ///   calculated as 0-index of mask
 template <ReduceOpTy OP, ReduceWithIndexOpTy WITH_INDEX_TYPE, typename T,
+/// reduce src (r, a) with stride [n, 1] to dst (r, 1) and return the reduction
+/// value and index separately.
+///
+/// constraint:
+/// 1. dim of src/dst must be 2.
+/// 2. the start pointer address, namely allocated + offset, should be aligned
+/// to ub_block_unit.
+/// 3. tmp buffer size is equal to r * sizeof(Index) aligned to ub_block_unit +
+/// 1 extra ub_block_unit
+template <ReduceOpTy OP, typename T,
           typename = typename std::enable_if<(std::is_same<half, T>() ||
                                               std::is_same<float, T>())>::type,
           typename = typename std::enable_if<
@@ -111,6 +121,12 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
                             memref_t<__ubuf__ T, 2> *dst_value,
                             memref_t<__ubuf__ int32_t, 2> *dst_index,
                             memref_t<__ubuf__ int32_t, 1> *tmp_index) {
+               OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX)>::type>
+__aiv__ __attribute__((always_inline)) void
+reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
+                     memref_t<__ubuf__ T, 2> *dst_value,
+                     memref_t<__ubuf__ int32_t, 2> *dst_index,
+                     memref_t<__ubuf__ int32_t, 1> *tmp_index) {
   // Input parameter constraints assert.
   check_inputs_of_reduce_ra_with_index(src0, dst_value, dst_index, tmp_index);
 
@@ -129,6 +145,13 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
       (__ubuf__ uint8_t *)(tmp_index_ptr + (num_repeats_for_a_dim_aligned *
                                             INTR_BYTES_PER_REPEAT) /
                                                sizeof(int32_t));
+  constexpr int64_t num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+
+  uint16_t last_dim_align_block =
+      CEIL_DIV(size1 * sizeof(T), INTR_BYTES_PER_BLOCK);
+  __ubuf__ uint8_t *ub_mask_ptr =
+      (__ubuf__ uint8_t *)(tmp_index->aligned + tmp_index->offset +
+                           last_dim_align_block * num_per_repeat);
 
   // calculate the num of blocks to store the mask
   // every elements need a bit for mask
@@ -140,6 +163,11 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
                             num_blocks_for_mask_aligned * INTR_BYTES_PER_BLOCK);
   INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+  uint16_t mask_aligned_block =
+      CEIL_DIV(size1, BITS_PER_BYTE * INTR_BYTES_PER_BLOCK);
+  __ubuf__ uint64_t *ub_mask_ptr_ptr =
+      (__ubuf__ uint64_t *)(ub_mask_ptr +
+                            mask_aligned_block * INTR_BYTES_PER_BLOCK);
   // to put the ub_mask_ptr in the CMPMASK
   ub_mask_ptr_ptr[0] =
       (uint64_t)((uint8_t *)(((uint64_t)((__ubuf__ uint8_t *)ub_mask_ptr))));
@@ -160,6 +188,13 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
             num_blocks_for_a_dim_aligned, // lenBurst
             0,                            // srcStride
             0                             // dstStride
+            dst_value_ptr,        // dst
+            src_ptr,              // src
+            0,                    // sid
+            1,                    // nBurst
+            last_dim_align_block, // lenBurst
+            0,                    // srcStride
+            0                     // dstStride
   );
   INTRINSIC(pipe_barrier, PIPE_V);
   brc_scalar_core_1d((int32_t)0, dst_index_ptr, size1);
@@ -180,6 +215,25 @@ vector_reduce_ra_with_index(memref_t<__ubuf__ T, 2> *src0,
     INTRINSIC(pipe_barrier, PIPE_V);
     process<OP, WITH_INDEX_TYPE, T>(ub_mask_ptr, subview_src0,
                                     subview_dst_value);
+    /// to get the result of vcmpv and max value
+    /// the type of T we can choose includes: int32_t, half, float
+    /// execute the Op we choose, including max/min
+    INTRINSIC(pipe_barrier, PIPE_V);
+    if constexpr (OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX) {
+      vector_cmp<VectorOpTy::VCMP_LT, T>(&subview_src0, &subview_dst_value,
+                                         ub_mask_ptr);
+      vector_eltwise_vv_1d<VectorOpTy::VMAX, T>(
+          &subview_dst_value, &subview_src0, &subview_dst_value);
+    } else if constexpr (OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX) {
+      vector_cmp<VectorOpTy::VCMP_GT, T>(&subview_src0, &subview_dst_value,
+                                         ub_mask_ptr);
+      vector_eltwise_vv_1d<VectorOpTy::VMIN, T>(
+          &subview_dst_value, &subview_src0, &subview_dst_value);
+    } else {
+      static_assert((OP == ReduceOpTy::REDUCE_MAX_WITH_INDEX ||
+                     OP == ReduceOpTy::REDUCE_MIN_WITH_INDEX) &&
+                    "unsupported op");
+    }
 
     // using vsel to update dst index
     INTRINSIC(pipe_barrier, PIPE_V);
@@ -511,7 +565,6 @@ reduce_ra_with_index_with_specified_index(
   INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
   INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
 }
-
 extern "C" {
 //===-------------------------------------------------------------------===//
 // reduce ra with index, 2 dim
@@ -570,4 +623,16 @@ REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(
 REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX_WITH_SPECIFIED_INDEX(
     reduce_min_with_index_right_with_specified_index,
     ReduceOpTy::REDUCE_MIN_WITH_INDEX, ReduceWithIndexOpTy::RIGHT, 2, float);
+}
+REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX, 2, half);
+REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_max_with_index,
+                                    ReduceOpTy::REDUCE_MAX_WITH_INDEX, 2,
+                                    float);
+
+REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX, 2, half);
+REGISTE_ENTIRE_REDUCE_RA_WITH_INDEX(reduce_min_with_index,
+                                    ReduceOpTy::REDUCE_MIN_WITH_INDEX, 2,
+                                    float);
 }

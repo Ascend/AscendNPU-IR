@@ -44,6 +44,7 @@ namespace mlir {
 using namespace mlir;
 using namespace mlir::hivm;
 
+static thread_local bool archIsRegbased{false};
 namespace {
 
 struct EnableStrideAlignPass
@@ -142,6 +143,10 @@ struct AddAlignAnnotationMarkForAlloc
       return failure();
     }
 
+    auto resType = mlir::dyn_cast<MemRefType>(allocOp.getResult().getType());
+    if (resType && llvm::all_of(resType.getShape(), [](int64_t d) { return d == 1; })) {
+        return failure();
+    }
     auto alignDims = allocOp->getAttrOfType<DenseI32ArrayAttr>(
         hivm::StrideAlignDimsAttr::name);
     auto alignBytes = allocOp->getAttrOfType<DenseI32ArrayAttr>(
@@ -306,12 +311,51 @@ struct RemoveAlignMarkPattern : public OpRewritePattern<annotation::MarkOp> {
   }
 };
 
+// storage-align re-allocates a buffer with padded static dims, which enlarges
+// the buffer by the ratio of the aligned vs the unaligned static element count.
+// The `buffer_size_in_byte` annotations were computed on the unaligned type and
+// are not updated when the buffer is re-padded here, so they must be scaled by
+// the same ratio.
+static void scaleBufferSizeMarks(PatternRewriter &rewriter, Value bufferValue,
+                                 MemRefType unalignedTy, MemRefType alignedTy) {
+  auto staticVolume = [](MemRefType t) -> int64_t {
+    int64_t v = 1;
+    for (int64_t d : t.getShape())
+      if (!ShapedType::isDynamic(d))
+        v *= d;
+    return v;
+  };
+  int64_t unalignedVol = staticVolume(unalignedTy);
+  int64_t alignedVol = staticVolume(alignedTy);
+  if (unalignedVol <= 0 || alignedVol <= unalignedVol)
+    return;
+
+  // The dynamic dims are identical on both types (padding only grows static
+  // dims), so the byte size scales by the static-volume ratio.
+  auto sizeMarks = utils::getAllAnnotateOpsWithAttr(
+      bufferValue, hivm::kBufferSizeInByteAttr);
+  for (auto *markOp : sizeMarks) {
+    int64_t oldSize =
+        markOp->getAttrOfType<IntegerAttr>(hivm::kBufferSizeInByteAttr)
+            .getInt();
+    // ceil-divide so the buffer is never under-allocated.
+    assert(unalignedVol != 0);
+    int64_t newSize = (oldSize * alignedVol + unalignedVol - 1) / unalignedVol;
+    rewriter.modifyOpInPlace(markOp, [&]() {
+      markOp->setAttr(hivm::kBufferSizeInByteAttr,
+                      rewriter.getI64IntegerAttr(newSize));
+    });
+  }
+}
 template <typename AllocLikeOp>
 struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
   using OpRewritePattern<AllocLikeOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(AllocLikeOp allocOp,
                                 PatternRewriter &rewriter) const override {
+    LLVM_DEBUG(
+      llvm::dbgs() << DEBUG_LINE_BEG("EnableStrideAlign-EnableAlignAllocation");
+    );
     auto alignDimsAttr = allocOp->getAttr(hivm::StrideAlignDimsAttr::name);
     auto alignBytesAttr =
         allocOp->getAttr(hivm::StrideAlignValueInByteAttr::name);
@@ -323,11 +367,37 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
     auto unalignedTy = allocOp.getType();
     SmallVector<int> alignUnits = utils::collectAlignUnits<MemRefType>(
         alignDims.asArrayRef(), alignBytes.asArrayRef(), unalignedTy);
+        alignDims.asArrayRef(), alignBytes.asArrayRef(), unalignedTy,
+        archIsRegbased);
+
+    LLVM_DEBUG(
+      size_t n = alignUnits.size();
+      llvm::dbgs() << "alignUnits(" << n << " entries) = [";
+      for (size_t i = 0; i < n - 1; ++i) {
+        llvm::dbgs() << alignUnits[i] << ", ";
+      }
+      llvm::dbgs() << alignUnits[n - 1] << "]\n";
+    );
 
     SmallVector<OpFoldResult> shape = allocOp.getMixedSizes();
     auto [alignedShape, subShape] =
         calculateAlignedShape(rewriter, allocOp.getLoc(), shape, alignUnits);
 
+    LLVM_DEBUG(
+      size_t n = alignedShape.size();
+      llvm::dbgs() << "alignedShape(" << n << " entries) = [";
+      for (size_t i = 0; i < n - 1; ++i) {
+        llvm::dbgs() << alignedShape[i] << ", ";
+      }
+      llvm::dbgs() << alignedShape[n - 1] << "]\n";
+
+      n = subShape.size();
+      llvm::dbgs() << "subShape(" << n << " entries) = [";
+      for (size_t i = 0; i < n - 1; ++i) {
+        llvm::dbgs() << subShape[i] << ", ";
+      }
+      llvm::dbgs() << subShape[n - 1] << "]\n";
+    );
     if (!isEqualConstantIntOrValueArray(alignedShape, subShape)) {
       SmallVector<Value> dynSizes;
       SmallVector<int64_t> staticSizes;
@@ -338,6 +408,10 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
       auto alignedAlloc =
           rewriter.create<AllocLikeOp>(allocOp.getLoc(), alignedTy, dynSizes);
 
+      // The buffer just grew due to padding; keep its buffer_size_in_byte
+      // annotations in sync before they get re-pointed to the new allocation.
+      scaleBufferSizeMarks(rewriter, allocOp.getResult(), unalignedTy,
+                           alignedTy);
       SmallVector<OpFoldResult> offsets(alignedTy.getRank(),
                                         rewriter.getIndexAttr(0));
       SmallVector<OpFoldResult> strides(alignedTy.getRank(),
@@ -362,6 +436,9 @@ struct EnableAlignAllocation : public OpRewritePattern<AllocLikeOp> {
         allocOp->removeAttr(hivm::StrideAlignValueInByteAttr::name);
       });
     }
+    LLVM_DEBUG(
+      llvm::dbgs() << DEBUG_LINE_END("EnableStrideAlign-EnableAlignAllocation");
+    );
     return success();
   }
 };
@@ -404,6 +481,8 @@ void populatePropagateAlignAmongOpOperandsPatterns(
 
 bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
             std::map<Operation *, std::unique_ptr<util::AlignInfo>> *rhs) {
+bool isSame(std::map<Operation *, std::unique_ptr<AlignInfo>> *lhs,
+            std::map<Operation *, std::unique_ptr<AlignInfo>> *rhs) {
   if (lhs->size() != rhs->size()) {
     return false;
   }
@@ -424,6 +503,7 @@ bool isSame(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *lhs,
 }
 
 void dump(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
+void dump(std::map<Operation *, std::unique_ptr<AlignInfo>> *alignInfoMap) {
 #ifndef NDEBUG
   LDBG("dump align info map");
   for (auto &it : *alignInfoMap) {
@@ -436,6 +516,7 @@ void dump(std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap)
 void collectAlignInfo(
     Operation *funcOp,
     std::map<Operation *, std::unique_ptr<util::AlignInfo>> *alignInfoMap) {
+    std::map<Operation *, std::unique_ptr<AlignInfo>> *alignInfoMap) {
   funcOp->walk([&](Operation *op) {
     if (!utils::isAllocLikeOp(op)) {
       return WalkResult::advance();
@@ -446,6 +527,7 @@ void collectAlignInfo(
     }
 
     auto alignInfo = std::make_unique<util::AlignInfo>(
+    auto alignInfo = std::make_unique<AlignInfo>(
         op->getAttrOfType<DenseI32ArrayAttr>(hivm::StrideAlignDimsAttr::name),
         op->getAttrOfType<DenseI32ArrayAttr>(
             hivm::StrideAlignValueInByteAttr::name));
@@ -458,6 +540,7 @@ void collectAlignInfo(
 LogicalResult propagteAlignInfoUpToAlloc(MLIRContext *context,
                                          Operation *funcOp,
                                          bool enableNormalize = false) {
+  LDBG("Starting to align");
   GreedyRewriteConfig config = GreedyRewriteConfig();
   if (enableNormalize) {
     // Normalize the mark op with storage align
@@ -513,6 +596,7 @@ LogicalResult propagateAlignInfoToOperands(MLIRContext *context,
                                            Operation *funcOp) {
   // collect the align info on allocation
   std::map<Operation *, std::unique_ptr<util::AlignInfo>> prevAlignInfoMap;
+  std::map<Operation *, std::unique_ptr<AlignInfo>> prevAlignInfoMap;
   collectAlignInfo(funcOp, &prevAlignInfoMap);
 
   bool isChanged;
@@ -538,6 +622,7 @@ LogicalResult propagateAlignInfoToOperands(MLIRContext *context,
 
     // collect the align info on allocation
     std::map<Operation *, std::unique_ptr<util::AlignInfo>> curAlignInfoMap;
+    std::map<Operation *, std::unique_ptr<AlignInfo>> curAlignInfoMap;
     collectAlignInfo(funcOp, &curAlignInfoMap);
     isChanged = !isSame(&prevAlignInfoMap, &curAlignInfoMap);
     LDBG("isChanged : " << isChanged);
@@ -591,6 +676,171 @@ void EnableStrideAlignPass::runOnOperation() {
   }
   // Add metadata.
   funcOp->setAttr(hivm::StorageAlignedAttr::name, UnitAttr::get(context));
+static void AddStrideAlignInfoForAiv(ModuleOp moduleOp, OpBuilder builder) {
+  DenseMap<Value, int> allocInfoMap;
+  struct StrideAlignInfo {
+    SmallVector<int32_t> dims;
+    SmallVector<int32_t> values;
+  };
+
+  DenseMap<int, StrideAlignInfo> strideAlignMap;
+  // first: collect stride_align info in aic
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    funcOp->walk([&](annotation::MarkOp markOp) {
+      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+      if (!tFuncCoreTypeAttr) {
+        return WalkResult::advance();
+      }
+      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIC) {
+        return WalkResult::advance();
+      }
+      auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+      if (!tcbAttr) {
+        return WalkResult::advance();
+      }
+      Value allocValue = markOp.getOperand(0);
+      if (!allocValue) {
+        return WalkResult::advance();
+      }
+      int id = tcbAttr.getId().value();
+      auto *defOp = allocValue.getDefiningOp();
+      if (!defOp)
+        return WalkResult::advance();
+
+      auto alignDimsAttr =
+          defOp->getAttrOfType<DenseI32ArrayAttr>(hivm::StrideAlignDimsAttr::name);
+      auto alignBytesAttr =
+          defOp->getAttrOfType<DenseI32ArrayAttr>(hivm::StrideAlignValueInByteAttr::name);
+      if (!alignDimsAttr || !alignBytesAttr)
+        return WalkResult::advance();
+
+      auto &info = strideAlignMap[id];
+      ArrayRef<int32_t> alignDims = alignDimsAttr.asArrayRef();
+      ArrayRef<int32_t> alignBytes = alignBytesAttr.asArrayRef();
+      info.dims.append(alignDims.begin(), alignDims.end());
+      info.values.append(alignBytes.begin(), alignBytes.end());
+      return WalkResult::advance();
+    });
+  }
+
+  // second: add stride align info in aiv
+  for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
+    if (hacc::utils::isHost(funcOp))
+      continue;
+    funcOp->walk([&builder, strideAlignMap, funcOp](annotation::MarkOp markOp) {
+      auto tFuncCoreTypeAttr = funcOp->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+      if (!tFuncCoreTypeAttr) {
+        return WalkResult::advance();
+      }
+      if (tFuncCoreTypeAttr.getFuncCoreType() != TFuncCoreType::AIV) {
+        return WalkResult::advance();
+      }
+      if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+        return WalkResult::advance();
+      }
+      auto attr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+          markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+      if (!attr) {
+        return WalkResult::advance();
+      }
+      if (strideAlignMap.empty()) {
+        return WalkResult::advance();
+      }
+      int id = attr.getId().value();
+      if (strideAlignMap.find(id) == strideAlignMap.end()) {
+        return WalkResult::advance();
+      }
+      Value allocValue = markOp.getOperand(0);
+      auto *defOp = allocValue.getDefiningOp();
+      if (defOp && defOp->hasAttr(hivm::StrideAlignDimsAttr::name))
+        return WalkResult::advance();
+      auto it = strideAlignMap.find(id);
+      const StrideAlignInfo &info = it->second;
+      for (size_t i = 0; i < info.dims.size(); ++i) {
+        auto newMarkOp = mlir::hivm::createAlignMarkOp(
+            builder, markOp.getLoc(), allocValue,
+            /*alignDims=*/ArrayRef<int32_t>({info.dims[i]}),
+            /*alignBytes=*/ArrayRef<int32_t>({info.values[i]}), hivm::StrideAlignDimsAttr::name.str(),
+            hivm::StrideAlignValueInByteAttr::name.str());
+
+        if (newMarkOp) {
+          markOp->moveAfter(*newMarkOp);
+        }
+      }
+      return WalkResult::advance();
+    });
+  }
+}
+
+void EnableStrideAlignPass::runOnOperation() {
+  auto mod = getOperation();
+  archIsRegbased = hacc::utils::isRegBasedArch(mod);
+  bool archIs950 = hacc::utils::isAscend950(mod);
+  bool isMarkStrideForAiv = false;
+
+  mod->walk([&](func::FuncOp funcOp) {
+    if (hacc::utils::isHost(funcOp))
+      return;
+
+    if (!isMarkStrideForAiv) {
+      funcOp->walk([&](hivm::FixpipeOp op) {
+        isMarkStrideForAiv = true;
+        return WalkResult::interrupt();
+      });
+    }
+
+    auto *context = &getContext();
+    // Propagate align info up to alloc op
+    if (failed(propagteAlignInfoUpToAlloc(context, funcOp,
+                                          true /*enableNormalize*/))) {
+      return signalPassFailure();
+    }
+    
+    //update aiv align info in fixpipe
+    auto moduleOp = funcOp->getParentOfType<ModuleOp>(); 
+    if (archIs950 && isMarkStrideForAiv) {
+      OpBuilder builder(&getContext());
+      AddStrideAlignInfoForAiv(moduleOp, builder);
+    }
+
+    // Propagate align info to all operands
+    if (failed(propagateAlignInfoToOperands(context, funcOp))) {
+      return signalPassFailure();
+    }
+
+    GreedyRewriteConfig config = GreedyRewriteConfig();
+    // Remove annotation.mark with storage align
+    if (failed(
+            applyPatterns<RemoveAlignMarkPattern>(context, config, funcOp))) {
+      LDBG("remove align mark failed");
+      return signalPassFailure();
+    }
+    LDBG("IR after propagating align marks");
+    LDBG(funcOp);
+
+    // Rewrite all allocations with align marks
+    RewritePatternSet patterns(context);
+    ConversionTarget target(getContext());
+    patterns.add<EnableAlignAllocation<memref::AllocOp>,
+                 EnableAlignAllocation<memref::AllocaOp>>(
+        patterns.getContext());
+    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+      LDBG("enable align allocation failed");
+      return signalPassFailure();
+    }
+
+    // Handle failed unrealized conversion cast propagations after all allocs
+    // have been processed. This ensures data consistency by inserting CopyOps
+    // between original and aligned memrefs where propagation could not push
+    // the conversion cast past certain operations.
+    IRRewriter rewriter(context);
+    handlePropagateFailure(rewriter, funcOp);
+  });
 }
 
 std::unique_ptr<Pass> mlir::hivm::createEnableStrideAlignPass() {

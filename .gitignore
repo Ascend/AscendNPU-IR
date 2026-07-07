@@ -35,3 +35,6 @@ Thumbs.db
 
 # --- Optional: Cursor agent / logs (uncomment if you want to ignore)
 # .cursor/agent-transcripts/
+
+# --- Codemate ---
+.codemate

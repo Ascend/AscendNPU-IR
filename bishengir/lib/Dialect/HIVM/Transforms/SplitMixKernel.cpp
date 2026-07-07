@@ -27,6 +27,14 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/Transforms/Transforms.h"
+#include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -41,6 +49,8 @@ namespace mlir {
 } // namespace mlir
 
 #define DEBUG_TYPE "hivm-split-mix-kernel"
+#define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
+#define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -54,6 +64,60 @@ FailureOr<bool> isCoreTypeOp(Operation *op, enum TCoreType coreType) {
   return res == coreType;
 }
 
+std::optional<BlockArgument> traceToArg(Value value);
+
+// trace through block argument across forOp iter_args
+std::optional<BlockArgument> traceBlockArgument(BlockArgument ba) {
+  auto forOp = dyn_cast<scf::ForOp>(ba.getParentBlock()->getParentOp());
+  if (!forOp) {
+    return ba;
+  }
+  for (const auto &[regionArg, initArg] :
+       zip_equal(forOp.getRegionIterArgs(), forOp.getInitArgs())) {
+    if (regionArg == ba) {
+      return traceToArg(initArg);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<BlockArgument> traceToArg(Value value) {
+  if (auto ba = dyn_cast<BlockArgument>(value)) {
+    return traceBlockArgument(ba);
+  }
+  // support tracing subview and extract_slice at the same time
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>()) {
+    return traceToArg(subview.getViewSource());
+  }
+  if (auto slice = value.getDefiningOp<tensor::ExtractSliceOp>()) {
+    return traceToArg(slice.getSource());
+  }
+  return std::nullopt;
+}
+
+SmallVector<unsigned> traceWriteOpArgId(func::CallOp callOp) {
+  SymbolRefAttr calleeName = callOp.getCalleeAttr();
+  mlir::SymbolTableCollection symbolTable;
+  auto calleeFunc =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(callOp, calleeName);
+  func::ReturnOp returnOp = nullptr;
+  calleeFunc->walk([&returnOp](func::ReturnOp op) { returnOp = op; });
+
+  // todo: current vf has only one return value and later vf will be moved
+  // after split-mix-kernel,this func can also be removed.
+  SmallVector<unsigned> writeOpArgIds;
+  for (unsigned i = 0; i < returnOp->getNumOperands(); i++) {
+    auto maybeWriteOp =
+        traceDefOp<vector::TransferWriteOp>(returnOp->getOperand(i));
+    if (maybeWriteOp.has_value()) {
+      auto write = cast<vector::TransferWriteOp>(maybeWriteOp.value());
+      auto arg = traceToArg(write.getSource());
+      assert(arg != nullptr);
+      writeOpArgIds.push_back(arg->getArgNumber());
+    }
+  }
+  return writeOpArgIds;
+}
 // mark the operands if the defining op is of given core type
 void annotateOpOperand(OpBuilder builder, Operation *op,
                        enum TCoreType coreType) {
@@ -152,7 +216,28 @@ static SmallVector<Value> getOutOperands(Operation *op) {
       if (funcOp.isKernelArg(i, hacc::KernelArgType::kOutput))
         outOperands.push_back(op->getOperand(i));
     }
-
+    if (hivm::isVFCall(op) && traceWriteOpArgId(callOp).size() > 0) {
+      for (auto i : traceWriteOpArgId(callOp)) {
+        outOperands.push_back(op->getOperand(i));
+      }
+    } else if (funcOp.getArgAttrsAttr()) {
+      auto funcParamSize = funcOp.getNumArguments();
+      for (size_t i = 0; i < funcParamSize; i++) {
+        if (funcOp.isKernelArg(i, hacc::KernelArgType::kOutput) ||
+            funcOp.isKernelArg(i, hacc::KernelArgType::kInputAndOutput))
+          outOperands.push_back(op->getOperand(i));
+      }
+    } else {
+      // FIXME: Unify the logic to handle func.callOp, with the calling
+      // convention of output operands as inputs
+      OpBuilder localBuilder(op->getContext());
+      localBuilder.setInsertionPoint(op);
+      for (auto result : op->getResults()) {
+        Value stub =
+            createZeroOrEmptyStub(localBuilder, op->getLoc(), result.getType());
+        outOperands.push_back(stub);
+      }
+    }
     return outOperands;
   }
 
@@ -196,6 +281,16 @@ void replaceResultWithInitOperand(Operation *op) {
   auto numResults = op->getNumResults();
   if (numResults == 0 || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
     return;
+  LDBG("unsupported op: " << *op);
+  // TODO: should we get the last operands as out operands by default?
+  llvm_unreachable("unsupported op to get out operands");
+}
+
+LogicalResult replaceResultWithInitOperand(Operation *op) {
+  // replace uses of op result with out operand
+  auto numResults = op->getNumResults();
+  if (numResults == 0 || isa<tensor::EmptyOp, memref::AllocOp>(op)) {
+    return success();
   }
 
   SmallVector<Value> outOperands = getOutOperands(op);
@@ -206,6 +301,15 @@ void replaceResultWithInitOperand(Operation *op) {
     OpResult res = op->getResult(i);
     res.replaceAllUsesWith(outOperands[i]);
   }
+    if (!outOperands[i]) {
+      // Null sentinel is only valid when the result has no uses.
+      if (!res.use_empty())
+        return failure();
+      continue;
+    }
+    res.replaceAllUsesWith(outOperands[i]);
+  }
+  return success();
 }
 
 struct SplitMixKernelPass
@@ -330,7 +434,64 @@ void postProcessVectorFunc(func::FuncOp func) {
   removeOpWithAttrFromFunc<tensor::ExtractOp>(
       "DuplicateTensorExtractForCube::newExtractLabel", func);
 }
+template <typename OpType>
+struct RemoveOpWithAttr : public OpRewritePattern<OpType> {
+  using OpRewritePattern<OpType>::OpRewritePattern;
 
+  explicit RemoveOpWithAttr(MLIRContext *ctx, StringRef attrName)
+      : OpRewritePattern<OpType>(ctx), attrName(attrName) {}
+
+  LogicalResult matchAndRewrite(OpType op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasAttr(attrName))
+      return failure();
+
+    for (Value result : op->getResults()) {
+      if (!result.use_empty()) {
+        return failure();
+      }
+    }
+
+    rewriter.eraseOp(op);
+    return success();
+  }
+
+private:
+  StringRef attrName;
+};
+
+void postProcessCubeFunc(func::FuncOp func) {
+  auto ctx = func.getOperation()->getContext();
+  RewritePatternSet patterns(ctx);
+  patterns.insert<PostCubeReplacement>(patterns.getContext());
+  if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
+    llvm::report_fatal_error("postProcessCubeFunc failed");
+  }
+
+  RewritePatternSet removePatterns(ctx);
+  removePatterns.add<RemoveOpWithAttr<bufferization::ToTensorOp>>(
+      ctx, "DuplicateTensorExtractForCube::cubeErasureLabel");
+  removePatterns.add<RemoveOpWithAttr<hivm::LoadOp>>(
+      ctx, "DuplicateTensorExtractForCube::cubeErasureLabel");
+  removePatterns.add<RemoveOpWithAttr<memref::AllocOp>>(
+      ctx, "DuplicateTensorExtractForCube::cubeErasureLabel");
+  if (failed(applyPatternsGreedily(func.getOperation(),
+                                   std::move(removePatterns)))) {
+    llvm::report_fatal_error("postProcessVectorFunc failed");
+  }
+}
+
+void postProcessVectorFunc(func::FuncOp func) {
+  auto ctx = func.getOperation()->getContext();
+  RewritePatternSet patterns(ctx);
+  patterns.add<RemoveOpWithAttr<annotation::MarkOp>>(
+      ctx, "DuplicateTensorExtractForCube::replacementLabel");
+  patterns.add<RemoveOpWithAttr<tensor::ExtractOp>>(
+      ctx, "DuplicateTensorExtractForCube::newExtractLabel");
+  if (failed(applyPatternsGreedily(func.getOperation(), std::move(patterns)))) {
+    llvm::report_fatal_error("postProcessVectorFunc failed");
+  }
+}
 } // namespace
 
 static bool isLoopOfCoreType(scf::ForOp forOp, TCoreType coreType) {
@@ -365,7 +526,6 @@ static void inferDistributedCoreType(func::FuncOp mixedFunc) {
     }
   });
 }
-
 // erase ops of given core type from function
 void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
                                        func::FuncOp mixedFunc,
@@ -407,6 +567,71 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
       replaceResultWithInitOperand(op);
       op->erase();
     }
+  // Do a first walk to erase scope in pre-order
+  mixedFunc.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    LDBG("current op: " << *op);
+    auto scopeOp = dyn_cast<scope::ScopeOp>(op);
+    if (!scopeOp) {
+      return WalkResult::advance();
+    }
+    if (auto vectorType = scopeOp->getAttrOfType<StringAttr>("vector_type")) {
+      if (vectorType.getValue() == "simt") {
+        scopeOp->setAttr(
+            hivm::TCoreTypeAttr::name,
+            hivm::TCoreTypeAttr::get(builder.getContext(), TCoreType::VECTOR));
+      }
+    }
+    if (scopeOp->getNumResults() != 0) {
+      return WalkResult::advance();
+    }
+    auto attr =
+        scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+    if (attr.getTcoretype() != coreType) {
+      op->erase();
+      return WalkResult::skip();
+    }
+    return WalkResult::advance();
+  });
+
+  SmallVector<Operation *> toSinkOutOfLoop;
+  mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
+    LDBG("current op: " << *op);
+    if (auto forOp = dyn_cast<scf::ForOp>(op)) {
+      if (isLoopOfCoreType(forOp, filterCoreType)) {
+        return WalkResult::skip();
+      }
+    }
+    FailureOr<bool> res = isCoreTypeOp(op, filterCoreType);
+    if (failed(res)) {
+      signalPassFailure();
+      return WalkResult::interrupt();
+    }
+    // If core type does not match, erase the operation.
+    if (res.value()) {
+      // For any op with regions: first walk internals to replace filtered
+      // ops' results before the parent op is erased.
+      if (op->getNumRegions() > 0) {
+        op->walk<WalkOrder::PostOrder>([&](Operation *innerOp) {
+          FailureOr<bool> innerRes = isCoreTypeOp(innerOp, filterCoreType);
+          if (failed(innerRes)) {
+            signalPassFailure();
+            return WalkResult::interrupt();
+          }
+          if (innerRes.value()) {
+            annotateOpOperand(builder, op, coreType);
+            (void)replaceResultWithInitOperand(innerOp);
+          }
+          return WalkResult::advance();
+        });
+      }
+      annotateOpOperand(builder, op, coreType);
+      if (failed(replaceResultWithInitOperand(op))) {
+        signalPassFailure();
+        return WalkResult::interrupt();
+      }
+      op->erase();
+    }
+    return WalkResult::advance();
   });
 
   for (Operation *op : toSinkOutOfLoop)
@@ -459,6 +684,14 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   if (!funcCoreTypeAttr ||
       funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX)
     return;
+  hivm::TFuncCoreTypeAttr funcCoreTypeAttr =
+      func->getAttrOfType<hivm::TFuncCoreTypeAttr>(
+          hivm::TFuncCoreTypeAttr::name);
+  // only operate on functions with CUBE_OR_VECTOR attribute
+  if (!funcCoreTypeAttr ||
+      funcCoreTypeAttr.getFuncCoreType() != TFuncCoreType::MIX) {
+    return;
+  }
 
   // generate a Mix function declaration for host callers
   generateMixKernelDecl(func);
@@ -469,6 +702,9 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   auto vecFunc = cast<func::FuncOp>(builder.clone(*func.getOperation()));
   vecFunc.setSymNameAttr(builder.getStringAttr(funcName + "_mix_aiv"));
   func.setSymNameAttr(builder.getStringAttr(funcName + "_mix_aic"));
+
+  func.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAicSuffix));
+  vecFunc.setSymNameAttr(builder.getStringAttr(funcName + kMixFuncAivSuffix));
 
   func->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
   vecFunc->setAttr(hivm::TPartOfMixAttr::name, builder.getUnitAttr());
@@ -486,6 +722,8 @@ void SplitMixKernelPass::splitMixKernel(func::FuncOp &func) {
   postProcessCubeFunc(func);
   filterMixFunc(builder, vecFunc, TCoreType::CUBE);
   LLVM_DEBUG({ llvm::dbgs() << "New aiv: " << vecFunc << "\n"; });
+  postProcessCubeFunc(func);
+  filterMixFunc(builder, vecFunc, TCoreType::CUBE);
   postProcessVectorFunc(vecFunc);
 }
 

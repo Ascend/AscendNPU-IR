@@ -19,20 +19,46 @@
 #define BISHENGIR_DIALECT_HIVM_IR_HIVMIMPL_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
-
-#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 namespace mlir {
 namespace hivm {
 static constexpr llvm::StringLiteral usedForDebugOp = "used_for_debug_op";
 
 static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+static constexpr llvm::StringLiteral VgatherDecomposeAttr = "VgatherDecompose";
+
+mlir::func::FuncOp getParentFuncOp(mlir::Value value);
+DenseSet<Operation *> getPotentialDefiners(Value v);
+
+/// Enum to control trace result matching behavior for multi-source cases
+enum class TraceResultMode {
+  // Default behaviour, insert every matched op to final result for all traced
+  // sources, which means as long as one of the sources produces matched op,
+  // final result is not empty.
+  Default,
+  // StrictSame consideres multi-source cases valid only if every traced source
+  // produces the same matched op set; otherwise this function returns an empty
+  // result.
+  StrictSame,
+  // Compared with Default, TypeMatch additionally requires the core type of
+  // every traced source matches the core type of tracing type.
+  // Note that currently we only check if sources matches non-vector core type,
+  // cases may expand later.
+  TypeMatch
+};
+
+using hivm::detail::queryCoreTypeHelper;
 
 /// find v in vector valueVec
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v);
@@ -172,6 +198,423 @@ isSingleChainCrossLoopMmadToMmad(MmadLikeOpType op) {
   return false;
 }
 
+template <typename OpType>
+std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
+  if (isSingleChain && getUsersNum(v) != 1)
+    return std::nullopt;
+  if (Operation *definingOp = v.getDefiningOp<OpType>()) {
+    return definingOp;
+  } else if (auto reshapeOp = v.getDefiningOp<tensor::ReshapeOp>()) {
+    return traceDefOp<OpType>(reshapeOp.getSource(), isSingleChain);
+  } else if (auto memrefCollapseShape =
+                 v.getDefiningOp<memref::CollapseShapeOp>()) {
+    return traceDefOp<OpType>(memrefCollapseShape.getViewSource(),
+                              isSingleChain);
+  } else if (auto tensorCollapseShape =
+                 v.getDefiningOp<tensor::CollapseShapeOp>()) {
+    return traceDefOp<OpType>(tensorCollapseShape.getSrc(), isSingleChain);
+  } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
+    return traceDefOp<OpType>(subViewOp.getViewSource(), isSingleChain);
+  } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToMemrefOp>()) {
+    return traceDefOp<OpType>(toMemrefOp.getOperand(), isSingleChain);
+  } else if (auto toTensorOp = v.getDefiningOp<bufferization::ToTensorOp>()) {
+    return traceDefOp<OpType>(toTensorOp.getOperand(), isSingleChain);
+  } else if (auto viewOp = v.getDefiningOp<memref::ViewOp>()) {
+    return traceDefOp<OpType>(viewOp.getViewSource(), isSingleChain);
+  } else if (auto reshapeOp = v.getDefiningOp<memref::ReshapeOp>()) {
+    return traceDefOp<OpType>(reshapeOp.getViewSource(), isSingleChain);
+  } else if (auto expandShapeOp = v.getDefiningOp<memref::ExpandShapeOp>()) {
+    return traceDefOp<OpType>(expandShapeOp.getViewSource(), isSingleChain);
+  } else if (auto tensorExpandShapeOp =
+                 v.getDefiningOp<tensor::ExpandShapeOp>()) {
+    return traceDefOp<OpType>(tensorExpandShapeOp->getOperand(0),
+                              isSingleChain);
+  } else if (auto extractStridedMetadataOp =
+                 v.getDefiningOp<memref::ExtractStridedMetadataOp>()) {
+    return traceDefOp<OpType>(extractStridedMetadataOp.getViewSource(),
+                              isSingleChain);
+  } else if (auto castOp = v.getDefiningOp<memref::CastOp>()) {
+    return traceDefOp<OpType>(castOp.getViewSource(), isSingleChain);
+  } else if (auto reinterpretCastOp =
+                 v.getDefiningOp<memref::ReinterpretCastOp>()) {
+    return traceDefOp<OpType>(reinterpretCastOp.getViewSource(), isSingleChain);
+  } else if (auto blockArg = dyn_cast_if_present<BlockArgument>(v)) {
+    if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
+            blockArg.getOwner()->getParentOp())) {
+      if (OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg))
+        return traceDefOp<OpType>(iterArgOperand->get(), isSingleChain);
+    }
+  } else if (auto forOp = v.getDefiningOp<scf::ForOp>()) {
+    const unsigned int index = cast<OpResult>(v).getResultNumber();
+    Value yieldedValue = forOp.getYieldedValues()[index];
+    return traceDefOp<OpType>(yieldedValue, isSingleChain);
+  } else if (auto ifOp = v.getDefiningOp<scf::IfOp>()) {
+    const unsigned int index = cast<OpResult>(v).getResultNumber();
+    Block &thenBlock = ifOp.getThenRegion().front();
+    Value yieldedValue = thenBlock.getTerminator()->getOperand(index);
+    return traceDefOp<OpType>(yieldedValue, isSingleChain);
+  } else if (auto extractSliceOp = v.getDefiningOp<tensor::ExtractSliceOp>()) {
+    return traceDefOp<OpType>(extractSliceOp.getSource(), isSingleChain);
+  } else if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
+    // In the tensor.insertSlice dialect, both source and Dest are data sources.
+    // Preferentially return the source.
+    auto traceOp = traceDefOp<OpType>(insertSliceOp.getSource(), isSingleChain);
+    if (traceOp != std::nullopt)
+      return traceOp;
+    else
+      return traceDefOp<OpType>(insertSliceOp.getDest(), isSingleChain);
+  } else if (auto memSpaceCastOp =
+                 v.getDefiningOp<memref::MemorySpaceCastOp>()) {
+    return traceDefOp<OpType>(memSpaceCastOp.getSource(), isSingleChain);
+  } else if (auto unrealizedConversionCastOp =
+                 v.getDefiningOp<UnrealizedConversionCastOp>())
+    return traceDefOp<OpType>(
+        unrealizedConversionCastOp
+            .getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
+  return std::nullopt;
+}
+
+enum class TraceDefState {
+  Failed,
+  Matched,
+  NoMatch,
+  InstOnly,
+};
+
+inline TraceDefState mergeTraceDefState(TraceDefState lhs, TraceDefState rhs) {
+  if (lhs == TraceDefState::Failed || rhs == TraceDefState::Failed)
+    return TraceDefState::Failed;
+  if (lhs == TraceDefState::Matched || rhs == TraceDefState::Matched)
+    return TraceDefState::Matched;
+  if (lhs == TraceDefState::NoMatch || rhs == TraceDefState::NoMatch)
+    return TraceDefState::NoMatch;
+  return TraceDefState::InstOnly;
+}
+
+inline bool usesTraceRootValue(Operation *op, Value traceRoot) {
+  if (!op || !traceRoot)
+    return false;
+  return llvm::any_of(op->getOperands(), [traceRoot](Value operand) {
+    return operand == traceRoot;
+  });
+}
+
+template <typename OpType>
+void traceDefOpsImpl(Value v, bool isSingleChain, TraceResultMode traceMode,
+                     SmallVectorImpl<Operation *> &results,
+                     SmallVectorImpl<Value> &recursionStack,
+                     DenseSet<Value> &visited, TraceDefState &traceDefState,
+                     Value traceRoot) {
+  if (!v) {
+    traceDefState = TraceDefState::NoMatch;
+    return;
+  }
+
+  if (!traceRoot)
+    traceRoot = v;
+
+  if (traceDefState == TraceDefState::Failed)
+    return;
+
+  // Already visited from another branch — skip redundant exploration.
+  // Within a single top-level traceDefOps call, the set of reachable ops
+  // from a Value is deterministic, so re-visiting adds no new information.
+  if (!visited.insert(v).second) {
+    traceDefState = TraceDefState::InstOnly;
+    return;
+  }
+
+  if (isSingleChain && getUsersNum(v) != 1) {
+    traceDefState = TraceDefState::Failed;
+    return;
+  }
+
+  // Currently we only check if current source is defined by vector while
+  // tracing type is MmadL1 or BatchMmadL1. If so, the result treats invalid to
+  // avoid missing matmul decompose.
+  auto defOp = v.getDefiningOp();
+  if (defOp && traceMode == TraceResultMode::TypeMatch) {
+    auto core = queryCoreTypeHelper(defOp).value_or(TCoreType::CUBE_OR_VECTOR);
+    if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
+         std::is_same_v<OpType, hivm::BatchMmadL1Op>) &&
+        (core == TCoreType::VECTOR)) {
+      traceDefState = TraceDefState::Failed;
+      return;
+    }
+  }
+
+  // Avoid infinite recursion (cycle detection in the same linear path)
+  for (Value stacked : recursionStack) {
+    if (stacked == v) {
+      traceDefState = TraceDefState::InstOnly;
+      return;
+    }
+  }
+  recursionStack.push_back(v);
+
+  struct RecursionStackGuard {
+    SmallVectorImpl<Value> &recursionStack;
+    ~RecursionStackGuard() { recursionStack.pop_back(); }
+  } guard{recursionStack};
+
+  auto traceSource = [isSingleChain, traceMode, &results, &recursionStack,
+                      &visited, &traceDefState, traceRoot](Value source) {
+    traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
+                            recursionStack, visited, traceDefState, traceRoot);
+  };
+
+  auto traceSources = [isSingleChain, traceMode, &results, &recursionStack,
+                       &visited, &traceDefState,
+                       traceRoot](ArrayRef<Value> sources) {
+    TraceDefState sourceTraceDefState = traceDefState;
+    for (auto source : sources) {
+      TraceDefState targetTraceDefState = TraceDefState::NoMatch;
+      traceDefOpsImpl<OpType>(source, isSingleChain, traceMode, results,
+                              recursionStack, visited, targetTraceDefState,
+                              traceRoot);
+      sourceTraceDefState =
+          mergeTraceDefState(sourceTraceDefState, targetTraceDefState);
+    }
+    traceDefState = sourceTraceDefState;
+  };
+
+  auto traceSameTraceResultSources = [isSingleChain, traceMode, &results,
+                                      &recursionStack, &visited, &traceDefState,
+                                      traceRoot](ArrayRef<Value> sources) {
+    if (sources.empty()) {
+      traceDefState = TraceDefState::NoMatch;
+      return;
+    }
+
+    SmallPtrSet<Operation *, 4> matchedResultSet;
+    bool initialized = false;
+    for (Value source : sources) {
+      SmallVector<Operation *> branchResults;
+      SmallPtrSet<Operation *, 4> branchResultSet;
+      SmallVector<Value> branchRecursionStack(recursionStack.begin(),
+                                              recursionStack.end());
+      TraceDefState targetTraceDefState = TraceDefState::NoMatch;
+      traceDefOpsImpl<OpType>(source,
+                              /*isSingleChain=*/isSingleChain,
+                              /*traceMode=*/traceMode, branchResults,
+                              branchRecursionStack, visited,
+                              targetTraceDefState, traceRoot);
+
+      if (targetTraceDefState == TraceDefState::Failed) {
+        traceDefState = TraceDefState::Failed;
+        return;
+      }
+
+      if (targetTraceDefState == TraceDefState::InstOnly)
+        continue;
+
+      for (Operation *op : branchResults)
+        branchResultSet.insert(op);
+
+      if (!initialized) {
+        initialized = true;
+        for (Operation *op : branchResults)
+          matchedResultSet.insert(op);
+        continue;
+      }
+
+      if (matchedResultSet.size() != branchResultSet.size()) {
+        traceDefState = TraceDefState::Failed;
+        return;
+      }
+      for (Operation *op : branchResultSet) {
+        if (!matchedResultSet.contains(op)) {
+          traceDefState = TraceDefState::Failed;
+          return;
+        }
+      }
+    }
+    if (!initialized) {
+      traceDefState = TraceDefState::InstOnly;
+    } else {
+      for (auto op : matchedResultSet)
+        results.push_back(op);
+      traceDefState = matchedResultSet.empty() ? TraceDefState::NoMatch
+                                               : TraceDefState::Matched;
+    }
+  };
+
+  if (Operation *definingOp = v.getDefiningOp<OpType>()) {
+    results.push_back(definingOp);
+    traceDefState = TraceDefState::Matched;
+    return;
+  } else if (auto reshapeOp = v.getDefiningOp<tensor::ReshapeOp>()) {
+    traceSource(reshapeOp.getSource());
+  } else if (auto memrefCollapseShape =
+                 v.getDefiningOp<memref::CollapseShapeOp>()) {
+    traceSource(memrefCollapseShape.getViewSource());
+  } else if (auto tensorCollapseShape =
+                 v.getDefiningOp<tensor::CollapseShapeOp>()) {
+    traceSource(tensorCollapseShape.getSrc());
+  } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
+    traceSource(subViewOp.getViewSource());
+  } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToMemrefOp>()) {
+    traceSource(toMemrefOp.getOperand());
+  } else if (auto toTensorOp = v.getDefiningOp<bufferization::ToTensorOp>()) {
+    traceSource(toTensorOp.getOperand());
+  } else if (auto viewOp = v.getDefiningOp<memref::ViewOp>()) {
+    traceSource(viewOp.getViewSource());
+  } else if (auto reshapeOp = v.getDefiningOp<memref::ReshapeOp>()) {
+    traceSource(reshapeOp.getViewSource());
+  } else if (auto expandShapeOp = v.getDefiningOp<memref::ExpandShapeOp>()) {
+    traceSource(expandShapeOp.getViewSource());
+  } else if (auto tensorExpandShapeOp =
+                 v.getDefiningOp<tensor::ExpandShapeOp>()) {
+    traceSource(tensorExpandShapeOp->getOperand(0));
+  } else if (auto extractStridedMetadataOp =
+                 v.getDefiningOp<memref::ExtractStridedMetadataOp>()) {
+    traceSource(extractStridedMetadataOp.getViewSource());
+  } else if (auto castOp = v.getDefiningOp<memref::CastOp>()) {
+    traceSource(castOp.getViewSource());
+  } else if (auto reinterpretCastOp =
+                 v.getDefiningOp<memref::ReinterpretCastOp>()) {
+    traceSource(reinterpretCastOp.getViewSource());
+  } else if (auto blockArg = dyn_cast_if_present<BlockArgument>(v)) {
+    if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
+            blockArg.getOwner()->getParentOp())) {
+      if (blockArg.getOwner() == scfForOp.getBody()) {
+        unsigned numInduction = scfForOp.getNumInductionVars();
+        unsigned argNo = blockArg.getArgNumber();
+        if (argNo < numInduction) {
+          traceDefState = TraceDefState::NoMatch;
+          return;
+        }
+
+        unsigned iterIdx = argNo - numInduction;
+        SmallVector<Value, 2> sources;
+        if (Operation *terminator = scfForOp.getBody()->getTerminator()) {
+          if (auto yieldOp = dyn_cast_if_present<scf::YieldOp>(terminator)) {
+            Value yielded = yieldOp.getOperand(iterIdx);
+            // avoid tracing to the same yield operand again
+            if (yielded != v)
+              sources.push_back(yielded);
+          }
+        }
+        if (OpOperand *iterInit = scfForOp.getTiedLoopInit(blockArg)) {
+          if (Value initValue = iterInit->get())
+            sources.push_back(initValue);
+        }
+
+        if (traceMode == TraceResultMode::StrictSame) {
+          traceSameTraceResultSources(sources);
+          return;
+        }
+
+        traceSources(sources);
+      }
+    }
+  } else if (auto forOp = v.getDefiningOp<scf::ForOp>()) {
+    const unsigned index = cast<OpResult>(v).getResultNumber();
+    Value yieldedValue = forOp.getYieldedValues()[index];
+    traceSource(yieldedValue);
+  } else if (auto ifOp = v.getDefiningOp<scf::IfOp>()) {
+    const unsigned index = cast<OpResult>(v).getResultNumber();
+    SmallVector<Value, 2> sources;
+    if (!ifOp.getThenRegion().empty()) {
+      Block &thenBlock = ifOp.getThenRegion().front();
+      sources.push_back(thenBlock.getTerminator()->getOperand(index));
+    }
+    if (!ifOp.getElseRegion().empty()) {
+      Block &elseBlock = ifOp.getElseRegion().front();
+      sources.push_back(elseBlock.getTerminator()->getOperand(index));
+    }
+    if (traceMode == TraceResultMode::StrictSame) {
+      traceSameTraceResultSources(sources);
+      return;
+    }
+    traceSources(sources);
+  } else if (auto extractSliceOp = v.getDefiningOp<tensor::ExtractSliceOp>()) {
+    traceSource(extractSliceOp.getSource());
+  } else if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
+    SmallVector<Value, 2> sources{insertSliceOp.getSource(),
+                                  insertSliceOp.getDest()};
+    if (traceMode == TraceResultMode::StrictSame) {
+      traceSameTraceResultSources(sources);
+      return;
+    }
+    traceSources(sources);
+  } else if (auto memSpaceCastOp =
+                 v.getDefiningOp<memref::MemorySpaceCastOp>()) {
+    traceSource(memSpaceCastOp.getSource());
+  } else if (auto unrealizedConversionCastOp =
+                 v.getDefiningOp<UnrealizedConversionCastOp>()) {
+    traceSource(unrealizedConversionCastOp
+                    .getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
+  } else if (traceMode == TraceResultMode::StrictSame) {
+    if (Operation *defOp = v.getDefiningOp()) {
+      if (usesTraceRootValue(defOp, traceRoot)) {
+        traceDefState = TraceDefState::InstOnly;
+      }
+    }
+  } else {
+    traceDefState = TraceDefState::NoMatch;
+  }
+}
+
+/// to trace ops in traceDefOp way and collect all matched ops
+///
+/// Compared with `traceDefOp`, this function additionally traces both branches
+/// of `scf.if`, both yielded values and init operands for `scf.for`, and both
+/// source and dest for `tensor.insert_slice`.
+///
+/// When `isSingleChain` is true, every recursively traced value is required to
+/// stay on a single-use chain. If any traced path violates this requirement,
+/// the whole trace is treated as failed and this function returns an empty
+/// result.
+///
+/// 'traceMode' controls trace result matching behaviour under multi-source
+/// cases(eg. result of scf.if, argument of scf.for ...). We require at
+/// least of one the source produces valid matched op. If traceMode is not
+/// Default, all paths will be checked jiontly, details can be referred in
+/// TraceResultMode's description.
+template <typename OpType>
+SmallVector<Operation *>
+traceDefOps(Value v, bool isSingleChain = false,
+            TraceResultMode traceMode = TraceResultMode::Default) {
+  SmallVector<Operation *> results;
+  SmallVector<Value> recursionStack;
+  DenseSet<Value> visited;
+  TraceDefState traceDefState = TraceDefState::NoMatch;
+  traceDefOpsImpl<OpType>(v, isSingleChain, traceMode, results, recursionStack,
+                          visited, traceDefState, v);
+  if (traceDefState == TraceDefState::Failed)
+    results.clear();
+  return results;
+}
+
+inline Operation *getRootAlloc(Value value) {
+  if (auto rootMemref = traceDefOp<memref::AllocOp>(value)) {
+    return rootMemref.value();
+  }
+
+  if (auto rootGMMemref =
+          traceDefOp<bishengir::memref_ext::AllocWorkspaceOp>(value)) {
+    return rootGMMemref.value();
+  }
+
+  return nullptr;
+}
+
+/// Returns whether the mmadlike operand traces back to the same mmad-like op
+/// set through a single chain.
+template <typename MmadLikeOpType>
+typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
+                            std::is_same_v<MmadLikeOpType, hivm::MmadMxL1Op> ||
+                            std::is_same_v<MmadLikeOpType, hivm::BatchMmadL1Op>,
+                        bool>::type
+isSingleChainMmadToMmad(MmadLikeOpType op) {
+  auto maybeMmadLikeOps =
+      traceDefOps<MmadLikeOpType>(op.getC(),
+                                  /*isSingleChain=*/true,
+                                  /*traceMode=*/TraceResultMode::TypeMatch);
+  return !maybeMmadLikeOps.empty();
+}
+
 /// Broadcast Scalar.
 hivm::VBrcOp brcScalar(RewriterBase &rewriter, Location loc,
                        TypedAttr initValue, Value targetTensor);
@@ -233,6 +676,11 @@ mlir::hivm::VCastOp castTo(OpBuilder &builder, Location loc, Value src,
                            hivm::RoundModeAttr roundMode, Type targetElemType,
                            hivm::TypeFnAttr typeFnAttr = {});
 
+/// Create castOP to specified element type with casting mode.
+mlir::hivm::VCastOp castTo(OpBuilder &builder, Location loc, Value src,
+                           hivm::RoundModeAttr roundMode, Type targetElemType,
+                           hivm::TypeFn casting = hivm::TypeFn::cast_signed);
+
 /// To retrieve real mmad perChannel bias from implicit broadcast and so on
 Value extractMmadBiasFromPotentialUnitDimExpand(Value bias);
 
@@ -278,7 +726,16 @@ struct OperAlignInfo : public AlignInfo {
     operand = operand_;
   }
 };
+} // namespace util
 
+std::pair<bool, bool> analyzeCoreTypes(Block *block);
+
+bool hasOnlySplittableRegions(Block *block);
+
+/// To judge whether yields of if have the same core type
+bool needsSplit(scf::IfOp ifOp);
+
+namespace util {
 /// Returns if the reassociations are identity that each indices group only
 /// contains a single dimension. e.g. `[[0], [1], [3]]` is indentity collapse.
 bool isIdentityCollapse(ArrayRef<ReassociationIndices> reassociations);
@@ -312,7 +769,15 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
                                              AddressSpaceAttr targetMemScope);
 
 } // namespace util
+
+/// Creates alloc.op based on a buffer size and element type
+Value allocExtraBuffer(Operation *op, const SmallVector<int64_t> &bufSize,
+                       Type elemType);
+
 bool isCopytoL1(Operation *op);
+
+bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp, Operation *hookOp = nullptr);
+
 } // namespace hivm
 } // namespace mlir
 

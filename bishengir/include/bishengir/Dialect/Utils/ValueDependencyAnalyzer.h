@@ -26,7 +26,11 @@
 namespace mlir {
 namespace utils {
 using ValueToIndexMap = DenseMap<Value, int>;
+
 class ValueDependencyAnalyzer {
+
+  using ValueToIndexMap = DenseMap<Value, int>;
+
 public:
   // Construct the value dependency to the allocation for all operands including
   // function block arguments This things can works inter through blocks as well
@@ -41,8 +45,16 @@ public:
   ValueToIndexMap valueToIndexMap;
   SmallVector<Value> valueList;
 
+  // vector of operations to an allocation chronologically
+  SmallVector<SmallVector<Operation *>> OpsOfAlloc;
+
 private:
+  // push effects from MemoryEffectOpInterface operation
+  void pushRelatedOpsOfAlloc(Operation *const op);
+
+  // push values/memrefs and effects
   void pushAllValues(Operation *parent);
+
   // reset all values
   void reset();
 

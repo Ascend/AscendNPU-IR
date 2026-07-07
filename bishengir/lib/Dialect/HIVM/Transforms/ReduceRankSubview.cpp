@@ -14,6 +14,12 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -120,6 +126,7 @@ MemRefType inferRankReducedResultType(ArrayRef<int64_t> resultShape,
   debugShape(resultShape, "resultShape: ");
 #ifndef NDEBUG
   for (unsigned dim : dropDims) {
+  for (int64_t dim : dropDims) {
     LDBG("dropDim: " << dim);
   }
 #endif
@@ -252,7 +259,6 @@ struct HIVMElemReduceRankSuvbviewPattern
         }
       }
     }
-
     if (op.getDpsInits().empty()) {
       return failure();
     }
@@ -386,6 +392,13 @@ struct VReduceOpReduceRankSubviewPattern
     rewriter.create<hivm::VReduceOp>(
         op->getLoc(), TypeRange(), subviewSrcOp, ValueRange(subviewDstRange),
         op.getTempBuffer(), op.getArithAttr(), newReduceDims, subviewIndicesOp);
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    Value tempBuffer =
+        hacc::utils::isRegBasedArch(moduleOp) ? Value() : op.getTempBuffer();
+    rewriter.create<hivm::VReduceOp>(
+        op->getLoc(), TypeRange(), subviewSrcOp, ValueRange(subviewDstRange),
+        tempBuffer, op.getArithAttr(), op.getUnsignedSrcAttr(),
+        op.getTieBreakLeftAttr(), rewriter.getDenseI64ArrayAttr(newReduceDims));
     rewriter.eraseOp(op);
     return success();
   }

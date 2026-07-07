@@ -55,6 +55,7 @@ void VTransposeOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
   std::iota(permutation.begin(), permutation.end(), 0);
   std::swap(permutation[adjustedDims[0]], permutation[adjustedDims[1]]);
   setPermutation(permutation);
+  setPermutation(adjustedDims);
 }
 
 void VCumsumOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
@@ -71,6 +72,15 @@ void VCumprodOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
   setCumDims(adjustedDims);
 }
 
+void VCummaxOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
+                                       const FlattenResult &result) {
+  setCumDims(result.adjustedTargetDims);
+}
+
+void VCumminOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
+                                       const FlattenResult &result) {
+  setCumDims(result.adjustedTargetDims);
+}
 void VPadOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
                                     const FlattenResult &result) {
   auto &adjustedDims = result.adjustedTargetDims;
@@ -104,6 +114,12 @@ void VFlipOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
   auto& otd = result.originalTargetDims;
   if (auto it = std::find(otd.begin(), otd.end(), getFlipAxis()); it != otd.end()) {
       setFlipAxis(atd[std::distance(otd.begin(), it)]);
+  for (size_t i = 0; i < result.adjustedTargetDims.size(); ++i) {
+    auto &originalDim = result.originalTargetDims[i];
+    if (originalDim == ssize_t(getFlipAxis())) {
+      setFlipAxis(result.adjustedTargetDims[i]);
+      break;
+    }
   }
 }
 

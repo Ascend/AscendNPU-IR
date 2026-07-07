@@ -1,5 +1,14 @@
+set(BISHENGIR_PRIVATE_LIBS
+  BiShengIRDialectUtils
+  BiShengIRMathExtDialect
+  BiShengIRTensorDialect
+  )
+
 add_bishengir_conversion_library(BiShengIRMathToHFusion
+  IS_OPEN_SOURCE
+
   MathToHFusion.cpp
+  ScalarMathPromotion.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Conversion/MathToHFusion
@@ -11,9 +20,7 @@ add_bishengir_conversion_library(BiShengIRMathToHFusion
   Core
 
   LINK_LIBS PUBLIC
-  BiShengIRDialectUtils
-  BiShengIRMathExtDialect
-  BiShengIRTensorDialect
+  ${BISHENGIR_PRIVATE_LIBS}
   MLIRArithDialect
   MLIRMathDialect
   MLIRFuncDialect

@@ -43,11 +43,18 @@ Value castToIndex(Value v, OpBuilder &opBuilder, bool isUnsigned = true);
 Value castIndexTo(Value v, Type t, OpBuilder &opBuilder,
                   bool isUnsigned = true);
 
+Value createEmptyLikeAnyShaped(OpBuilder &b, Location loc, Value a, Value bval);
+
 Operation *createCmpOp(PatternRewriter &rewriter, Location loc, Value lhs,
                        Value rhs, CompareFn cmpFn);
 
+Operation *createCmpOp(OpBuilder &b, Location loc, Value lhs, Value rhs,
+                       CompareFn cmpFn);
+
 Operation *createVandOp(PatternRewriter &rewriter, Location loc, Value lhs,
                         Value rhs);
+
+Operation *createVandOp(OpBuilder &b, Location loc, Value lhs, Value rhs);
 
 Operation *createVorOp(PatternRewriter &rewriter, Location loc, Value lhs,
                        Value rhs);
@@ -57,6 +64,14 @@ Operation *createVnotOp(PatternRewriter &rewriter, Location loc, Value value);
 /// simplify 'x vxor 0xFF...' to 'vnot(x)'
 LogicalResult simplifyVxorToVnot(PatternRewriter &rewriter,
                                  hfusion::ElemwiseBinaryOp op);
+
+Operation *createLinalgElemwiseBinaryOp(OpBuilder &b, Location loc,
+                                        linalg::BinaryFn fn, Value lhs,
+                                        Value rhs);
+Operation *createHFusionElemwiseBinaryOp(OpBuilder &b, Location loc,
+                                         hfusion::BinaryFn fn, Value lhs,
+                                         Value rhs);
+
 /// Tiling related utilities
 namespace tiling {
 
@@ -141,6 +156,8 @@ bool isReshapeOrSliceOp(Operation *op);
 bool isTensorManipulationOp(Operation *op);
 
 bool isMatmulOps(Operation *op);
+
+bool isSimtOps(Operation *op);
 
 Value getReshapeSource(Operation *op);
 Value getReshapeResult(Operation *op);
@@ -300,7 +317,60 @@ Value divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Type resType
                                 hfusion::RoundMode roundingMode, hfusion::TypeFn castIntegerType,
                                 std::optional<Operation **> divOp = std::nullopt);
 
+/// Cast `src` value to the specified element type and rounding mode.
+///
+/// `src` can be either tensor or scalar.
+/// If it's a scalar, casting is done by arith dialect ops.
+/// If it's a tensor, casting is done by `hfusion.cast` op. If `dst` is not
+/// provided, the init value is a `tensor.empty` op. Otherwise, it's written
+/// to `dst`.
+Value castTo(OpBuilder &builder, Value src, Type targetElemType,
+             hfusion::RoundMode roundMode,
+             std::optional<Value> dst = std::nullopt,
+             bool enableOverflow = true, bool enableSaturate = false,
+             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed,
+             hfusion::UnsignedMode unsignedMode = hfusion::UnsignedMode::SI2SI);
+
+/// Cast `src` value to the specified element type.
+/// Select rounding mode inside.
+Value castTo(OpBuilder &builder, Value src, Type targetElemType,
+             hfusion::TypeFn castIntegerType,
+             hfusion::UnsignedMode unsignedMode);
+
+Value castTo(OpBuilder &builder, Value src, Type targetElemType,
+             hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
+
+// Checks if a linalg op has only one element
+bool isSingleElementLinalgOp(linalg::LinalgOp op);
+
+// Checks if a linalg op has only zero element
+bool isZeroElementLinalgOp(linalg::LinalgOp op);
+
+bool isFillOp(Operation *op);
+
+// Check if the operation is certain ones (fill, transpose)
+// that can be fused into a matmul
+bool opCanFuseIntoMatmul(Operation *op);
+
+// Check if tensor is a linalg.fill op with zero value or a tensor.empty op
+bool isZeroOrEmptyTensor(Value op);
+
+// Check if only unit dimensions are flattened
+bool isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
+                            ArrayRef<int64_t> newShape);
+
+// Check if operations is in cube scope
+bool isInCubeScope(Operation *op);
+
+// Check if type is FP8
+bool isFP8(Type type, Builder builder);
+
+bool shouldUseTileReductionUsingForV2(Operation *Op);
+
 namespace util {
+const static std::string saturateSrcUnsigned = "saturate_src_unsigned";
+const static std::string saturateDstUnsigned = "saturate_dst_unsigned";
+
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
 const static int vectorBlockSizeBit = 256;
@@ -309,6 +379,8 @@ const static int srcNumPerRepeatOfVBRCBIntrin = 8;
 constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int VNCHWCONV_INTR_BYTES_PER_REPEAT = 512;
+
+bool isFromFunctionArg(mlir::Value v);
 
 /// Deduce Alignment information for DPS Op's init operand.
 ///
@@ -320,6 +392,15 @@ hivm::AlignKind deduceAlignmentForDPSInitOperand(OpOperand &operand);
 hivm::AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
 
 bool hasDynamicShapeOperand(Operation *op);
+
+bool hasCustomOp(Operation *op);
+
+enum ArchType : int64_t {
+  IsMemBased = 0,
+  IsRegBased = 1,
+};
+
+bool hasUnpropagateableCase(Operation *op, bool skipScope);
 
 } // namespace util
 
@@ -364,7 +445,7 @@ const float INVTRIG_P0 = 0.16668899232596927f;
 const float INVTRIG_P1 = 0.073496900982905745f;
 const float INVTRIG_P2 = 0.059274584886282809f;
 } // namespace trig
- 
+
 // ============================================================================
 // lgamma constants (Lanczos approximation with g=7, n=8)
 // Reference: torch-mlir/stablehlo ChloLegalizeToStablehlo.cpp
@@ -379,6 +460,7 @@ constexpr double LANCZOS_COEFFS[] = {
     12.507343278686904814458936853,     -0.13857109526572011689554707,
     9.984369578019570859563e-6,         1.50563273514931155834e-7};
 } // namespace lgamma_const
+
 } // namespace hfusion
 } // namespace mlir
 

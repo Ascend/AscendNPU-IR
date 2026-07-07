@@ -161,15 +161,17 @@ class EventIdSolver {
 private:
   int64_t eventIdsNumMax{-1};
   bool needRecalculateEventIds{false};
+  bool preferNewEventIds{false};
   llvm::SmallVector<std::unique_ptr<EventIdNode>> nodes;
   llvm::DenseMap<EventIdNode *, llvm::DenseMap<EventIdNode *, int64_t>> adjList;
   llvm::DenseMap<EventIdNode *, int64_t> sumAdjListSizes;
   llvm::DenseMap<ConflictPair *, EventIdNode *> conflictPair2Node;
   std::stack<std::unique_ptr<Action>> actionsStack;
-  llvm::DenseSet<int64_t> reservedEventIds;
+  llvm::DenseSet<int64_t> reservedEventIds_membase;
 
 public:
-  EventIdSolver(int64_t eventIdNumMax) : eventIdsNumMax(eventIdNumMax) {}
+  EventIdSolver(int64_t eventIdNumMax, bool preferNewEventIds = false)
+      : eventIdsNumMax(eventIdNumMax), preferNewEventIds(preferNewEventIds) {}
   ~EventIdSolver() = default;
 
   bool isColorable();
@@ -198,13 +200,14 @@ public:
 
   void debugPrint();
 
-  std::optional<int64_t> allocateUnusedEventId(int64_t eventIdMax);
+  std::optional<int64_t> allocateUnusedEventId_membase(int64_t eventIdMax);
 
-  void reserveEventId(int64_t eventId) {
+  void reserveEventId_membase(int64_t eventId) {
     // Pre-reserve a user-pinned id so EventIdSolver will not assign it
     // elsewhere.
-    reservedEventIds.insert(eventId);
+    reservedEventIds_membase.insert(eventId);
   }
+
 
 private:
   int64_t getEventIdsNum(bool dontCalcEventIds = false);

@@ -21,6 +21,8 @@
 #ifndef BISHENGIR_DIALECT_MEMREF_TRANSFORMS_PASSES_H
 #define BISHENGIR_DIALECT_MEMREF_TRANSFORMS_PASSES_H
 
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Pass/Pass.h"
@@ -33,6 +35,10 @@ namespace memref {
 std::unique_ptr<Pass> createFoldAllocReshapePass();
 std::unique_ptr<Pass> createDeadStoreEliminationPass();
 std::unique_ptr<Pass> createRemoveRedundantCopyPass();
+
+/// Create a pass to bind buffer according to annotation.
+std::unique_ptr<Pass> createBindBufferPass();
+
 
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/MemRef/Transforms/Passes.h.inc"

@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/MoveSyncState.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/RemoveRedundantSync.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncAnalysis.h"
@@ -30,6 +31,10 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/Support/Debug.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/Builders.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/LogicalResult.h"
 #include <type_traits>
 
 #define DEBUG_TYPE "hivm-inject-block-sync"
@@ -163,6 +168,9 @@ OpType InjectBlockSyncAnalysis::generateCVSyncOp(OpBuilder opBuilder,
   auto mte2PipeAttr =
       hivm::PipeAttr::get(opBuilder.getContext(), hivm::PIPE::PIPE_MTE2);
   return opBuilder.create<OpType>(loc, coreTypeAttr, pipeAttr, mte2PipeAttr,
+  auto pipeSAttr =
+      hivm::PipeAttr::get(opBuilder.getContext(), hivm::PIPE::PIPE_S);
+  return opBuilder.create<OpType>(loc, coreTypeAttr, pipeAttr, pipeSAttr,
                                   flagIdAttr);
 }
 
@@ -251,6 +259,10 @@ void SyncBlockIRTranslator::RecursionIR(Region *region) {
       if (failed(UpdateAllocLikeOpMemInfo(op))) {
         return WalkResult::interrupt();
       }
+    } else if (auto allocOp = dyn_cast<memref::AllocOp>(op)) {
+      UpdateAllocOpMeminfo(allocOp);
+    } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
+      UpdateCallOp(callOp);
     } else if (auto extractOp = dyn_cast<tensor::ExtractOp>(op)) {
       UpdateTensorExtractOpInform(op, extractOp);
     } else if (auto dstStyleOp = dyn_cast<DestinationStyleOpInterface>(op)) {
@@ -274,6 +286,7 @@ void SyncBlockIRTranslator::RecursionIR(Region *region) {
   });
   if (result == WalkResult::interrupt()) {
     llvm::report_fatal_error("InjectSync Traverse IR Failed! ");
+    llvm_unreachable("InjectSync Traverse IR Failed! ");
   }
 }
 
@@ -289,6 +302,7 @@ void SyncBlockIRTranslator::UpdateInitAndResAlias(
 }
 
 void SyncBlockIRTranslator::UpdateYieldOpInform(scf::YieldOp yieldOp) {
+  assert(yieldOp->getParentOp() != nullptr);
   for (auto [i, arg] : llvm::enumerate(yieldOp->getOpOperands())) {
     UpdateAliasBufferInfo(yieldOp->getParentOp()->getResult(i), arg.get());
   }
@@ -307,6 +321,68 @@ void SyncBlockIRTranslator::UpdateDestinationStyleOpInform(
   if (pipe == hivm::PIPE::PIPE_UNASSIGNED) {
     return;
   }
+bool SyncBlockIRTranslator::isVectorOpResult(Value value) {
+  if (auto resultVal = dyn_cast<OpResult>(value)) {
+    if (auto op = dyn_cast<CoreTypeInterface>(resultVal.getDefiningOp())) {
+      if (auto coreType = op.getCoreType()) {
+        if (coreType.value() == TCoreType::VECTOR) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+std::optional<hivm::PIPE> SyncBlockIRTranslator::getInferredPipe(
+    Operation *op, TCoreType coreType,
+    const SmallVector<const BaseMemInfo *> &defVec) {
+  if (!isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op) ||
+      coreType == TCoreType::CUBE_OR_VECTOR) {
+    return {};
+  }
+  if (coreType == TCoreType::VECTOR) {
+    if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+      if (isVectorOpResult(insertSliceOp.getDest())) {
+        return PIPE::PIPE_V;
+      }
+    }
+  }
+  if (defVec.empty()) {
+    return {};
+  }
+  std::optional<hivm::PIPE> pipe;
+  for (auto &memInfo : defVec) {
+    auto addressSpace = memInfo->addressSpace;
+    std::optional<hivm::PIPE> curPipe;
+    if (isa<hivm::VBrcOp>(op) && (addressSpace == AddressSpace::L1)) {
+      curPipe = PIPE::PIPE_MTE2;
+    }
+    if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::L1)) {
+      curPipe = PIPE::PIPE_MTE3;
+    }
+    if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) && (addressSpace == AddressSpace::UB)) {
+      curPipe = PIPE::PIPE_V;
+    }
+    if (curPipe.has_value()) {
+      if (pipe.has_value() && curPipe != pipe.value()) {
+        return {};
+      }
+      pipe = curPipe;
+    }
+  }
+  return pipe;
+}
+
+void SyncBlockIRTranslator::UpdateDestinationStyleOpInform(
+    Operation *op, DestinationStyleOpInterface dstStyleOp) {
+
+  auto coreType = getCoreType(op);
+  if (failed(coreType) || coreType.value() == TCoreType::CUBE_OR_VECTOR) {
+    return;
+  }
   SmallVector<const BaseMemInfo *> defVec;
   UpdateDefUseVec(dstStyleOp.getDpsInits(), defVec);
   SmallVector<const BaseMemInfo *> useVec;
@@ -318,6 +394,28 @@ void SyncBlockIRTranslator::UpdateDestinationStyleOpInform(
   auto coreType = getCoreType(op);
   assert(succeeded(coreType));
   assert(coreType.value() != TCoreType::CUBE_OR_VECTOR);
+
+  auto pipe = hivm::PIPE::PIPE_UNASSIGNED;
+  if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op)) {
+    if (auto pipeOpt = getInferredPipe(op, coreType.value(), defVec)) {
+      pipe = pipeOpt.value();
+    } else {
+      pipe = PIPE::PIPE_S;
+    }
+  } else if (auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(op)) {
+    pipe = mmadL1Op.getInPipe();
+  } else if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
+    if (pipeOp->hasTrait<OpTrait::SinglePipeOpTrait>()) {
+      pipe = pipeOp.getPipe();
+    }
+  }
+  if (pipe == hivm::PIPE::PIPE_UNASSIGNED) {
+    return;
+  }
+
+  auto copPtr = std::make_unique<CompoundInstanceElement>(
+      index, defVec, useVec, pipe, dstStyleOp->getName());
+  copPtr->elementOp = op;
   copPtr->compoundCoreType = coreType.value();
   syncIR.emplace_back(std::move(copPtr));
   index++;
@@ -400,11 +498,66 @@ void InjectBlockSyncAnalysis::InjectAllBlockSync() {
                                        hivm::PIPE::PIPE_MTE3, flagIdForMode2);
       generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::CUBE,
                                         hivm::PIPE::PIPE_MTE3, flagIdForMode2);
+void SyncBlockIRTranslator::UpdateAllocOpMeminfo(memref::AllocOp allocOp) {
+  auto allocOpResult = allocOp.getResult();
+  if (auto spaceAttr = GetBufferSpaceAttr(allocOpResult)) {
+    auto space = spaceAttr.value().getAddressSpace();
+    auto newMemInfo = std::make_unique<BaseMemInfo>(
+        allocOpResult, allocOpResult, space, SmallVector<int64_t>(1, 0), 0,
+        false, std::nullopt);
+    buffer2MemInfoMap[allocOpResult].emplace_back(std::move(newMemInfo));
+  }
+}
+
+void InjectBlockSyncAnalysis::InjectAllBlockSync() {
+  OpBuilder opBuilder(func_);
+  auto insertBlockAll = [this, &opBuilder](Operation *op,
+                                           bool insertBefore = false) {
+    if (insertBefore) {
+      opBuilder.setInsertionPoint(op);
+    } else {
+      opBuilder.setInsertionPointAfter(op);
+    }
+
+    auto loc = op->getLoc();
+    auto pipeAllAttr =
+        hivm::PipeAttr::get(opBuilder.getContext(), hivm::PIPE::PIPE_ALL);
+    auto interBlockFlagId1 = opBuilder.getI64IntegerAttr(blockAllFlagId1);
+    auto interBlockFlagId2 = opBuilder.getI64IntegerAttr(blockAllFlagId2);
+
+    /*
+    barrier-all(pipe_all)
+    sync_block_set(vector, pipe_s, pipe_s, flagId1)
+    sync_block_wait(cube, pipe_s, pipe_s, flagId1)
+    sync_block_set(cube, pipe_s, pipe_s, flagId2)
+    sync_block_wait(vector, pipe_s, pipe_s, flagId2)
+    */
+    opBuilder.create<hivm::PipeBarrierOp>(loc, pipeAllAttr);
+    generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::VECTOR,
+                                     hivm::PIPE::PIPE_S, interBlockFlagId1);
+    generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::CUBE,
+                                      hivm::PIPE::PIPE_S, interBlockFlagId1);
+    generateCVSyncOp<SyncBlockSetOp>(opBuilder, loc, TCoreType::CUBE,
+                                     hivm::PIPE::PIPE_S, interBlockFlagId2);
+    generateCVSyncOp<SyncBlockWaitOp>(opBuilder, loc, TCoreType::VECTOR,
+                                      hivm::PIPE::PIPE_S, interBlockFlagId2);
+  };
+
+  func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
+    opBuilder.setInsertionPointAfter(op);
+    if (isa<hivm::LoadOp, hivm::MmadL1Op, hivm::FixpipeOp, hivm::StoreOp,
+            hivm::CopyOp, tensor::InsertSliceOp, hivm::IndirectLoadOp,
+            hivm::StrideLoadOp, hivm::StrideStoreOp,
+            hivm::IndirectStoreOp>(op)) {
+      insertBlockAll(op, /*insertBefore=*/true);
+      insertBlockAll(op);
     }
   });
 }
 
 void InjectBlockSyncAnalysis::InjectBlockMixSync(bool assumeAliveLoops) {
+void InjectBlockSyncAnalysis::InjectBlockMixSync(
+    bool assumeAliveLoops, bool preferUnusedBlockSyncIDs) {
   MemoryDependentAnalyzer memAnalyzer;
   SyncIRs syncIR;
   SyncOperations syncOperations;
@@ -435,6 +588,10 @@ void InjectBlockSyncAnalysis::InjectBlockMixSync(bool assumeAliveLoops) {
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
 
   SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations);
+  SyncEventIdAllocOptions idAllocOptions{};
+  idAllocOptions.preferUnusedBlockSyncIDs = preferUnusedBlockSyncIDs;
+  SyncEventIdAllocation eventIdAllocation(syncIR, syncOperations,
+                                          idAllocOptions);
   eventIdAllocation.Allocate();
   LLVM_DEBUG(llvm::dbgs() << "SyncEventIdAllocation\n");
   LLVM_DEBUG(SyncDebug(syncIR).PrintSyncIr());
@@ -470,6 +627,9 @@ void InjectBlockSyncPass::runOnOperation() {
   if (hacc::utils::isHost(funcOp)) {
     return;
   }
+  if (funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+    return;
+  }
   auto funcCoreType = queryFuncCoreType(funcOp);
   if (!funcCoreType.has_value() ||
       (funcCoreType.value() != TFuncCoreType::MIX)) {
@@ -488,7 +648,14 @@ void InjectBlockSyncPass::runOnOperation() {
   }
   if (this->disableAutoInjectBlockSync)
     return;
-
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  if (hacc::utils::isMemBasedArch(moduleOp)) {
+    // get && set ffts base addr
+    auto baseAddr = getFFTSBaseAddrFromFunc(funcOp);
+    assert(baseAddr.has_value() &&
+           "The mix kernel parameter must have a ffts_addr value");
+    insertSetFFTSBaseAddrOp(baseAddr.value());
+  }
   InjectBlockSyncAnalysis injectBlockSyncAnalysis(funcOp);
   // TODO:
   //  refactor to implement block sync without distinguish
@@ -504,6 +671,8 @@ void InjectBlockSyncPass::runOnOperation() {
       return signalPassFailure();
     }
     injectBlockSyncAnalysis.InjectBlockMixSync(assumeAliveLoops);
+    injectBlockSyncAnalysis.InjectBlockMixSync(assumeAliveLoops,
+                                               preferUnusedBlockSyncIDs);
   }
 }
 

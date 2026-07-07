@@ -78,6 +78,7 @@ BubblePadElementwise::matchAndRewrite(tensor::PadOp padOp,
   auto mixHighPad = padOp.getMixedHighPad();
   auto staticHighPad = padOp.getStaticHigh();
   SmallVector<Value> newOperands;
+  assert(srcOp!=nullptr);
   for (auto opr : srcOp->getOperands()) {
     // Pad this
     if (isa<RankedTensorType>(opr.getType()) &&

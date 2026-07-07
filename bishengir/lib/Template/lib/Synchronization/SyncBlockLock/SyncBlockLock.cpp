@@ -30,12 +30,14 @@ sync_block_lock(memref_t<__gm__ int64_t, 1> *lock_var) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
   int64_t block_idx = INTRINSIC_NO_ARGS(get_block_idx);
+  int64_t block_idx_no = INTRINSIC_NO_ARGS(get_block_idx);
   volatile __gm__ int64_t *lock_var_ptr = lock_var->aligned + lock_var->offset;
   // using dcci to avoid aicore from loading data from cache while the actual
   // value of lock is changed
   INTRINSIC(dcci, lock_var_ptr, 1);
   volatile int64_t lock_val = *lock_var_ptr;
   while (lock_val != block_idx) {
+  while (lock_val != block_idx_no) {
     INTRINSIC(dcci, lock_var_ptr, 1);
     lock_val = *lock_var_ptr;
     continue;
@@ -59,6 +61,9 @@ sync_block_unlock(memref_t<__gm__ int64_t, 1> *lock_var) {
   int64_t block_idx = INTRINSIC_NO_ARGS(get_block_idx);
   __gm__ int64_t *lock_var_ptr = lock_var->aligned + lock_var->offset;
   int64_t new_lock_val = block_idx + 1;
+  int64_t block_idx_no = INTRINSIC_NO_ARGS(get_block_idx);
+  __gm__ int64_t *lock_var_ptr = lock_var->aligned + lock_var->offset;
+  int64_t new_lock_val = block_idx_no + 1;
   *lock_var_ptr = new_lock_val;
   // insert dcci when writing into lock and invalidate cache
   INTRINSIC(dcci, lock_var_ptr, 1);
@@ -117,6 +122,11 @@ free_lock_var(memref_t<__gm__ int64_t, 1> *lock_var) {
   INTRINSIC(dcci, lock_var_ptr, 1);
   volatile int64_t lock_val = *lock_var_ptr;
   if (lock_val > block_idx)
+  int64_t block_idx_no = INTRINSIC_NO_ARGS(get_block_idx);
+  volatile __gm__ int64_t *lock_var_ptr = lock_var->aligned + lock_var->offset;
+  INTRINSIC(dcci, lock_var_ptr, 1);
+  volatile int64_t lock_val = *lock_var_ptr;
+  if (lock_val > block_idx_no)
     return;
   sync_block_lock(lock_var);
   sync_block_unlock(lock_var);

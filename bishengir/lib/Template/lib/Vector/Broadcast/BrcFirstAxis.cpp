@@ -19,6 +19,9 @@
 #include "Vector/Broadcast/BrcUtils.h"
 #include "Vector/VecUtils.h"
 #include <cstdint>
+#include "Utils.h"
+#include "Vector/Broadcast/BrcUtils.h"
+#include "Vector/VecUtils.h"
 #include <type_traits>
 
 /// vcopy src to aligned dst. copy src size1 each repeat. support b16/b32
@@ -159,7 +162,6 @@ brc_first_axis_2d_align_core(memref_t<__ubuf__ T, 2> *src,
     vector_broadcast_first_axis_by_scalar(src, dst);
     return;
   }
-
   // Input parameter constraints assert.
   check_inputs_of_brc_first_axis_2d_align_core(src, dst);
 
@@ -242,6 +244,26 @@ brc_first_axis_2d_unalign_core(memref_t<__ubuf__ T, 2> *src,
     INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
     return;
   }
+  // Input parameter constraints assert.
+  check_inputs_of_brc_first_axis_2d_unalign_core(src, dst, tmp);
+
+  if (dst->sizes[1] == 1 && dst->strides[0] == 1)
+    [[unlikely]] {
+      auto src_ptr = src->aligned + src->offset;
+      auto dst_ptr = dst->aligned + dst->offset;
+      INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+      if constexpr (sizeof(T) == BYTES_B64) {
+        memref_t<__ubuf__ T, 1> dst_1d{
+            dst->allocated, dst->aligned, dst->offset, {dst->sizes[0]}, {1}};
+        broadcast_scalar_b64(src_ptr[0], &dst_1d);
+      } else {
+        brc_scalar_core_1d(src_ptr[0], dst_ptr, dst->sizes[0]);
+      }
+      INTRINSIC(set_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_S, PIPE_V, LIB_EVENT_ID0);
+      return;
+    }
 
   constexpr int num_per_block = INTR_BYTES_PER_BLOCK / sizeof(T);
   if constexpr (sizeof(T) == BYTES_B16 || sizeof(T) == BYTES_B32) {
@@ -295,6 +317,12 @@ brc_first_axis_2d_unknown_align_core(memref_t<__ubuf__ T, 2> *src,
       (sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8) &&
       "brc_first_axis_2d_unknown_align_core do not support this data type.");
   if (is_stride_aligned(dst)) {
+
+  int64_t stride0_dst = dst->strides[0];
+  int64_t stride0_dst_aligned =
+      CEIL_FACTOR(stride0_dst, UB_ALIGN_BYTES / sizeof(T));
+  const bool is_dst_aligned = stride0_dst == stride0_dst_aligned;
+  if (is_dst_aligned) {
     brc_first_axis_2d_align_core(src, dst);
   } else {
     brc_first_axis_2d_unalign_core(src, dst, tmp);
@@ -368,7 +396,6 @@ brc_first_axis_3d_vcopy(memref_t<__ubuf__ T, 3> *src,
     }
   }
 }
-
 /// broadcast src (1, a) to dst (b, a), here b is broadcast axis and a may be
 /// merged axis of multiple elementwise axes. Here the size of a is aligned to
 /// ub_block_unit.
@@ -424,6 +451,12 @@ brc_first_axis_align_core(memref_t<__ubuf__ T, Dim> *src,
       brc_first_axis_3d_vcopy<uint32_t>(&src_tmp, &dst_tmp);
     }
     INTRINSIC_NO_ARGS(set_mask_norm);
+    // reuse 2d core
+    memref_t<__ubuf__ T, 2> src_2d;
+    memref_t<__ubuf__ T, 2> dst_2d;
+    convert_3d_to_2d_args(src, &src_2d);
+    convert_3d_to_2d_args(dst, &dst_2d);
+    brc_first_axis_2d_align_core(&src_2d, &dst_2d);
   }
 }
 

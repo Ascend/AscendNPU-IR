@@ -16,6 +16,12 @@
 //===---------------------------------------------------------------------===//
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===---------------------------------------------------------------------===//
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -260,6 +266,7 @@ struct RecognizeDeinterleaveOpForLoad : public OpRewritePattern<hivm::LoadOp> {
 
     // adjust strides to hwAlignBytes for deinterleave to work
     auto hwAlignBytes = util::getHWAlignBytes(dstMemRef.getMemorySpace());
+    auto hwAlignBytes = getHWAlignBytes(dstMemRef.getMemorySpace());
     markEnableStrideAlign(deinterleaveSrc, rank - 1, hwAlignBytes, loc,
                           rewriter);
     return success();
@@ -334,7 +341,6 @@ struct RecognizeDeinterleaveOpForCopy : public OpRewritePattern<hivm::CopyOp> {
     return success();
   }
 };
-
 struct RecognizeDeinterleaveOpPass
     : public impl::HIVMRecognizeDeinterleaveOpBase<
           RecognizeDeinterleaveOpPass> {

@@ -84,6 +84,144 @@ FlattenResult getFlattenedUnit(FlattenResult &payload) {
   LDBG(to_string(reassociations));
   FlattenResult result =
       mlir::hivm::detail::collapseOperandsUniformly(payload, reassociations);
+enum class MaskValue {
+  Unit,           // Unit dimension (size 1), can be absorbed into adjacent groups
+  Collapsible,    // Non-unit dimension that can be collapsed with other Collapsibles
+  NonCollapsible  // Barrier dimension that cannot be collapsed, blocks unit absorption
+};
+
+/// Return a reassociation map from a ternary mask
+/// - Unit: absorbed into adjacent groups
+/// - Collapsible: forms groups, absorbs adjacent units
+/// - NonCollapsible: isolated, cannot absorb units from either side
+///
+/// Example: [Unit, Coll, Unit, NonColl, Unit, Coll, Unit]
+///   Result: [[0, 1, 2], [3], [4, 5, 6]]
+///   - Units 0,2 absorbed by Collapsible@1
+///   - NonCollapsible@3 is isolated
+///   - Units 4,6 absorbed by Collapsible@5
+static ReassociationMap
+getReassociationFromMask(const SmallVector<MaskValue> &mask) {
+  ReassociationMap reassociationMap;
+  int rank = static_cast<int>(mask.size());
+  if (rank == 0)
+    return reassociationMap;
+
+  // First pass: identify segments separated by NonCollapsible barriers
+  // Each segment will be processed independently
+  SmallVector<std::pair<int, int>> segments; // [start, end] pairs
+  for (int i = 0; i < rank; ++i) {
+    bool isCreateNewSegment = (i == 0) ||
+                         (mask[i] == MaskValue::NonCollapsible) ||
+                         (i > 0 && mask[i - 1] == MaskValue::NonCollapsible);
+    if (isCreateNewSegment) {
+      segments.emplace_back(i, i);
+    }
+    segments.back().second = i;
+  }
+
+  for (const auto &[start, end] : segments) {
+    if (mask[start] == MaskValue::NonCollapsible) {
+      reassociationMap.emplace_back();
+      reassociationMap.back().push_back(start);
+      continue;
+    }
+    reassociationMap.emplace_back();
+    int idx = start;
+    while (idx <= end && mask[idx] == MaskValue::Unit) {
+      reassociationMap.back().push_back(idx++);
+    }
+    bool firstVal = true;
+    while (idx <= end) {
+      assert(mask[idx] != MaskValue::NonCollapsible);
+      if (!firstVal) {
+        reassociationMap.emplace_back();
+      }
+      firstVal = false;
+      reassociationMap.back().push_back(idx++);
+      while (idx <= end && mask[idx] == MaskValue::Unit) {
+        reassociationMap.back().push_back(idx++);
+      }
+    }
+  }
+
+  return reassociationMap;
+}
+
+/// Build a ternary collapse mask from unit mask and barrier information
+/// @param unitMask Boolean mask where true indicates unit dimension
+/// @param barrierDims Indices of barrier dimensions
+/// @param rank Total number of dimensions
+/// @param options If the strict option is true, barriers become NonCollapsible; otherwise Collapsible
+static SmallVector<MaskValue>
+buildCollapseMask(const BitVector &unitMask,
+                  ArrayRef<int64_t> barrierDims,
+                  int rank,
+                  FlattenOptions &options) {
+  SmallVector<MaskValue> MaskValueInfo(rank);
+
+  // Build barrier set for O(1) lookup
+  llvm::DenseSet<int64_t> barrierSet(barrierDims.begin(), barrierDims.end());
+
+  for (int i = 0; i < rank; ++i) {
+    bool isBarrier = barrierSet.contains(i);
+    bool isUnit = unitMask[i];
+
+    if (options.strictBarrierWithUnit && isBarrier) {
+      // Strict mode: barriers are always NonCollapsible
+      MaskValueInfo[i] = MaskValue::NonCollapsible;
+    } else if (isUnit && !isBarrier) {
+      // Unit dimension (not a barrier)
+      MaskValueInfo[i] = MaskValue::Unit;
+    } else {
+      // Non-unit or barrier in non-strict mode
+      MaskValueInfo[i] = MaskValue::Collapsible;
+    }
+  }
+
+  return MaskValueInfo;
+}
+
+static std::string toMaskString(const SmallVector<MaskValue> &mask) {
+  std::string collapseMaskInfo = "[";
+  for (size_t i = 0; i < mask.size(); ++i) {
+    if (i > 0)
+      collapseMaskInfo += ", ";
+    switch (mask[i]) {
+    case MaskValue::Unit:
+      collapseMaskInfo += "U";
+      break;
+    case MaskValue::Collapsible:
+      collapseMaskInfo += "C";
+      break;
+    case MaskValue::NonCollapsible:
+      collapseMaskInfo += "N";
+      break;
+    }
+  }
+  return collapseMaskInfo + "]";
+}
+
+FlattenResult getFlattenedUnit(FlattenResult &payload,
+                               FlattenOptions &options) {
+  LDBG("payload dims " << to_string(payload.originalTargetDims));
+  LDBG("payload adjusted dims " << to_string(payload.adjustedTargetDims));
+
+  auto unitMask =
+      getUnitAxesMaskImpl(payload.getOperandTypes(DpsKind::kDpsAll));
+  int rank = static_cast<int>(unitMask.size());
+
+  // Build ternary mask considering barriers and strict mode
+  auto collapseMask = buildCollapseMask(
+      unitMask, payload.barrierDims, rank,options);
+
+  std::string maskInfo = toMaskString(collapseMask);
+  LDBG("collapse mask: " << maskInfo);
+
+  auto reassociations = getReassociationFromMask(collapseMask);
+  LDBG(to_string(reassociations));
+
+  FlattenResult result = collapseOperandsUniformly(payload, reassociations);
   auto mapping = getReassociationMapping(reassociations);
   result.adjustBarrierAndTargetDims(mapping);
   return result;
@@ -96,6 +234,9 @@ FlattenResult
 getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
                                 [[maybe_unused]] const FlattenOptions &options,
                                 ArrayRef<int64_t> permutationArray) {
+getFlattenedUnitTransposeLike(HIVMStructuredOp op,
+                              [[maybe_unused]] const FlattenOptions &options,
+                              ArrayRef<int64_t> permutationArray) {
   // Drop input first
   FlattenResult res(op.getOperation());
   res.originalTargetDims = llvm::to_vector(permutationArray);
@@ -108,6 +249,11 @@ getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
       // support back collapse, still need a pivot, collapse of the last element
       // will be done in the get flattened transposable phase
       unitMask[static_cast<int>(unitMask.size()) - 1] = false;
+      // Disable flattening the back because transposable OTF may not be able to
+      // support back collapse, still need a pivot, collapse of the last element
+      // will be done in the get flattened transposable phase
+      if (!isa<VTransposeOp>(op))
+        unitMask[static_cast<int>(unitMask.size()) - 1] = false;
       ReassociationMap newReassociation =
           getReassociationFromUnitMask(unitMask);
       res.reassociation.push_back(newReassociation);
@@ -144,4 +290,5 @@ getFlattenedUnitTransposableOTF(HIVMStructuredOp op,
   return res;
 }
 } // namespace detail
+} // namespace mlir::hivm
 } // namespace mlir::hivm

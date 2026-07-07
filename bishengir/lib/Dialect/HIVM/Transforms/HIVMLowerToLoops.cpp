@@ -59,6 +59,9 @@ struct HIVMLowerToLoopsPattern
                                 PatternRewriter &rewriter) const override {
     if (!op.shouldLowerToScalarLoops())
       return failure();
+    if (!op.shouldLowerToScalarLoops()) {
+      return failure();
+    }
 
     FailureOr<SmallVector<Value>> maybeNewResults = op.lowerToLoops(rewriter);
 

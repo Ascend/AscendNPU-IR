@@ -14,6 +14,12 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -146,7 +152,6 @@ struct VReduceOpLiftLowestStridePattern
       indicesCast = createLiftedOperand(rewriter, op->getLoc(), op.getIndices());
     }
 
-
     SmallVector<Value> dstVec;
     for (Value dst : dstRange) {
       Value dstCast = createLiftedOperand(rewriter, op->getLoc(), dst);
@@ -156,7 +161,13 @@ struct VReduceOpLiftLowestStridePattern
     rewriter.create<hivm::VReduceOp>(
         op->getLoc(), TypeRange(), srcCast, ValueRange(dstVec),
         op.getTempBuffer(), op.getArithAttr(), op.getReduceDimsAttr(), indicesCast);
-
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    Value tempBuffer =
+        hacc::utils::isRegBasedArch(moduleOp) ? Value() : op.getTempBuffer();
+    rewriter.create<hivm::VReduceOp>(
+        op->getLoc(), TypeRange(), srcCast, ValueRange(dstVec), tempBuffer,
+        op.getArithAttr(), op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+        op.getReduceDimsAttr());
     // Erase old op
     rewriter.eraseOp(op);
     return success();
@@ -292,6 +303,8 @@ struct CopyOpLiftLowestStridePattern : public OpRewritePattern<hivm::CopyOp> {
     Value dst = op.getDst();
     int64_t srcRank = cast<MemRefType>(src.getType()).getRank();
     if (srcRank == 0) {
+
+    if (cast<MemRefType>(src.getType()).getRank() == 0) {
       return rewriter.notifyMatchFailure(op, " op should not have zero rank");
     }
 
@@ -326,6 +339,9 @@ struct CopyOpLiftLowestStridePattern : public OpRewritePattern<hivm::CopyOp> {
         maybeCollapseReassociation.has_value()
             ? getReassociationIndicesAttribute(rewriter, newReassociation)
             : nullptr);
+    rewriter.replaceOpWithNewOp<hivm::CopyOp>(op, TypeRange(), srcCast, dstCast,
+                                              op.getPadModeAttr(),
+                                              op.getPadValue());
     return success();
   }
 };
@@ -402,6 +418,7 @@ template <typename OpType>
 static void registerOne(RewritePatternSet &patterns) {
   if constexpr (!(std::is_same_v<OpType, hivm::VBrcOp> ||
                   std::is_same_v<OpType, hivm::VReduceOp> ||
+                  std::is_same_v<OpType, hivm::VSortOp> ||
                   std::is_same_v<OpType, hivm::VTransposeOp> ||
                   std::is_same_v<OpType, hivm::VArangeOp> ||
                   std::is_same_v<OpType, hivm::VMulExtOp> ||
@@ -416,6 +433,10 @@ static void registerOne(RewritePatternSet &patterns) {
                   std::is_same_v<OpType, hivm::VCumsumOp> ||
                   std::is_same_v<OpType, hivm::VCumprodOp> ||
                   std::is_same_v<OpType, hivm::VSortOp>)) {
+                  std::is_same_v<OpType, hivm::VCumsumOp> ||
+                  std::is_same_v<OpType, hivm::VCumprodOp> ||
+                  std::is_same_v<OpType, hivm::VCummaxOp> ||
+                  std::is_same_v<OpType, hivm::VCumminOp>)) {
     patterns.add<ElemwiseOpLiftLowestStridePattern<OpType>>(
         patterns.getContext());
   }
@@ -452,6 +473,8 @@ void populateLiftLowestStridePatterns(RewritePatternSet &patterns) {
   >(patterns.getContext());
   (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumsumOp>>(patterns.getContext());
   (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumprodOp>>(patterns.getContext());
+  (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCummaxOp>>(patterns.getContext());
+  (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumminOp>>(patterns.getContext());
   registerVectorOps<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"

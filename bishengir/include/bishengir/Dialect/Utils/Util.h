@@ -1,5 +1,6 @@
 //===- Util.h ---BiShengIR Dialect Uitls-------------------------*- C++ -*-===//
 //
+
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +21,8 @@
 
 #include <utility>
 
+
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -42,26 +45,15 @@ namespace utils {
 constexpr const uint8_t kBitsToByte = 8;
 constexpr static unsigned int INTR_BITS_PER_BYTE = 8;
 constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
+
+constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
-static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
-
-namespace debugger {
-
-// Type trait to check if T is an LLVM-style container
-template <typename T, typename = void>
-struct IsLLVMContainer : public std::false_type {};
-
-template <typename T>
-struct IsLLVMContainer<T, std::void_t<decltype(std::declval<T>().begin()),
-                                      decltype(std::declval<T>().end()),
-                                      decltype(std::declval<T>().size())>>
-    : public std::true_type {};
-
-// Type trait to check if T supports indexing
 template <typename T, typename = void> struct HasSubscript : public std::false_type {};
+template <typename T, typename = void>
+struct HasSubscript : public std::false_type {};
 
 template <typename T>
 struct HasSubscript<T, std::void_t<decltype(std::declval<T>()[0])>>
@@ -71,6 +63,12 @@ template <typename T, typename = void> struct IsPrintable : public std::false_ty
 
 template <typename T>
 struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>() << std::declval<T>())>>
+template <typename T, typename = void>
+struct IsPrintable : public std::false_type {};
+
+template <typename T>
+struct IsPrintable<T, std::void_t<decltype(std::declval<llvm::raw_ostream>()
+                                           << std::declval<T>())>>
     : public std::true_type {};
 
 template <typename T>
@@ -82,6 +80,7 @@ std::string toStrHelper(const T &value, int indent, bool useEndl) {
     return to_string(value, indent + 2, useEndl);
   } else if constexpr (detail::is_pair<T>::value) {
     return "(" + to_string(value.first) + ", " + to_string(value.second) + ")";
+    return "(" + toStrHelper(value.first, indent, useEndl) + ", " + toStrHelper(value.second, indent, useEndl) + ")";
   } else if constexpr (IsPrintable<T>::value) {
     std::string buffer;
     llvm::raw_string_ostream os(buffer);
@@ -90,6 +89,7 @@ std::string toStrHelper(const T &value, int indent, bool useEndl) {
     return buffer;
   } else {
     return std::to_string(value);
+    llvm_unreachable("Cannot print expression");
   }
 }
 template <typename T>
@@ -134,24 +134,18 @@ std::string to_string(const T &container, int indent, bool useEndl) {
   return oss.str();
 }
 
+
+std::string getPrettyOpName(Operation *op);
+
+    return std::to_string(value);
+    llvm_unreachable("Cannot print expression");
 } // namespace debugger
 
 // Currently dtype cast rules:
 // (1-RINT ) f32 -> f16/bf16/f32
-// (2-RINT ) f16/bf16 -> f32
-// (3-RINT ) i8 -> f16
-// (4-TRUNC) float -> int
-// (5-RINT ) int -> float
-// (6-RINT ) int -> int
-template <typename T> T selectRoundMode(Type inType, Type outType) {
-  if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32()) {
-      return T::RINT;
-    }
-  }
-
-  if (outType.isF32()) {
     if (inType.isF16() || inType.isBF16()) {
+    if (inType.isF16() || inType.isBF16() || inType.isFloat8E4M3FN() ||
+        inType.isFloat8E5M2()) {
       return T::RINT;
     }
   }
@@ -160,18 +154,29 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
     return T::RINT;
   }
 
+  if (inType.isInteger(8) && // for bit width of 8 and 16 use RINT mode
+      outType.isF16()) {
+    return T::RINT;
+  }
+
+  if (inType.isInteger(16) && outType.isInteger(8)) {
+    return T::TRUNCWITHOVERFLOW;
+  }
+
   if (isa<mlir::FloatType>(inType) && outType.isInteger()) {
     return T::TRUNC;
   }
 
   if (inType.isInteger() && isa<mlir::FloatType>(outType)) {
     return T::RINT;
+    return T::TRUNC;
   }
 
   if (inType.isInteger() && outType.isInteger()) {
     return T::RINT;
   }
   llvm::report_fatal_error("unsupported type cast.");
+  llvm_unreachable("unsupported type cast.");
 }
 
 inline Type getMostElementType(
@@ -290,6 +295,19 @@ bool isArithOp(Operation *op);
 /// Return true if op is annotation mark op with attr `name`
 bool isAnnotationWithAttr(Operation *op, StringRef name);
 
+/// Return true if transfer write op suits for change to StoreWithStride
+bool isTransferWriteSuitForStoreWithStride(Operation *op);
+
+/// Whether a value as specified type user
+template <typename T> bool hasTypedUses(Value val) {
+  for (auto &user : val.getUses()) {
+    if (isa<T>(user.getOwner())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// Search the users of value v to find first annotation op with attr `name`.
 std::optional<Operation *> getAnnotateOpWithAttr(Value v, StringRef name);
 
@@ -322,6 +340,22 @@ memref::StoreOp createSinglePointStore(
 /// Create tensor.empty or memref.alloc op with the same type as source
 Value createEmptyOp(OpBuilder &builder, Location loc, Value source);
 
+
+Value createAllocTensorOp(OpBuilder &builder, Location loc, Value source);
+
+/// Return true if transfer write op suits for change to StoreWithStride
+bool isTransferWriteSuitForStoreWithStride(Operation *op);
+
+/// Whether a value as specified type user
+template <typename T> bool hasTypedUses(Value val) {
+  for (auto &user : val.getUses()) {
+    if (isa<T>(user.getOwner())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 ///  Create tensor.empty or memref.alloc op with the same shape as source
 ///  but with element type targetElemType
 Value createEmptyOpWithTargetElemType(
@@ -334,62 +368,6 @@ Value createEmptyOpWithTargetElemType(
 ///       shape.
 tensor::EmptyOp createStaticShapeEmptyOp(OpBuilder &builder, Location loc,
                                          TensorType targetTensorType);
-
-/// Returns RankedTensorType with same shape as source tensor with
-/// srcTensorType and element type newTensorElementType.
-/// e.g. tensor<512xi1> = getTensorTypeWithSameShape(tensor<512xf32>, i1)
-RankedTensorType getTensorTypeWithSameShape(Type srcTensorType,
-                                            Type newTensorElementType);
-
-/// Return the func::FuncOp called by `callOp`.
-template <typename FuncOp_t, typename CallOp_t>
-FuncOp_t getCalledFunction(CallOp_t callOp) {
-  SymbolRefAttr sym =
-      llvm::dyn_cast_if_present<SymbolRefAttr>(callOp.getCallableForCallee());
-  if (!sym)
-    return nullptr;
-  return dyn_cast_or_null<FuncOp_t>(
-      SymbolTable::lookupNearestSymbolFrom(callOp, sym));
-}
-
-/// Create a constant of type 'type' at location 'loc' whose value is 'value'
-template <typename T>
-Value createConstantOp(OpBuilder &builder, Location loc, Type type, T value) {
-  TypedAttr attr;
-  if (isa<FloatType>(type))
-    attr = builder.getFloatAttr(type, value);
-  else if (isa<IntegerType>(type))
-    attr = builder.getIntegerAttr(type, static_cast<int64_t>(value));
-  else {
-    auto vecTy = cast<ShapedType>(type);
-    attr = SplatElementsAttr::get(vecTy, value);
-  }
-  return builder.create<arith::ConstantOp>(loc, attr);
-}
-
-/// Implementation is borrowed from
-/// `mlir/lib/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.cpp`.
-/// Return the unique ReturnOp that terminates `funcOp`.
-/// Return nullptr if there is no such unique ReturnOp.
-func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp);
-
-bool areShapesAligned(ArrayRef<int64_t> staticShapes, int64_t alignment);
-/// Check if op's users all satisfy the condition function.
-std::optional<bool>
-checkUsersAllWithCondition(Value v, Operation *rootOp,
-                           const std::function<bool(Operation *op)> &condFn,
-                           const std::function<bool(Operation *op)> &skipFn);
-
-std::optional<bool> checkUsersAllWithConditionImpl(
-    Value v, Operation *rootOp,
-    const std::function<bool(Operation *op)> &condFn,
-    const std::function<bool(Operation *op)> &skipFn);
-
-int checkDefsAllWithCondition(Value v,
-                              const std::function<int(Operation *op)> &condFn);
-
-int checkDefsAnyWithCondition(Value v,
-                              const std::function<int(Operation *op)> &condFn);
 
 /// Try to trace back the current mermef-typed value to the source values.
 SmallVector<Value> tracebackMemRefVec(Value memrefVal);
@@ -412,12 +390,28 @@ std::optional<memref::AllocOp> tracebackMemRefToAlloc(Value memrefVal);
 
 /// Try to trace back the current mermef-typed value to the source values.
 SmallVector<Value> tracebackMemRefAllocAndAlias(Value memrefVal);
+/// Try to trace back the current mermef-typed value to the source
+/// `mermef.alloc` or `memref` block argument.
+/// Return `std::nullopt` if max-iteration is reached, or that the value doesn't
+/// originate from a alloc op or block argument.
+std::optional<Value> tracebackMemRefToAllocOrBlockArgument(Value memrefVal);
+
+/// Try to trace back the current mermef-typed value to the source values.
+SmallVector<Value> tracebackMemRefVec(Value memrefVal);
+
+/// Try to trace back the current mermef-typed value to the target source
+/// values.
+SmallVector<Value>
+tracebackMemRefVecByTargetFn(Value memrefVal,
+                             std::function<bool(Value)> targetFn);
 
 void fillAncestorOfOperation(SmallPtrSet<Operation *, 3> &container,
                              Operation *op);
 
 /// Returns all operations of specified type from \p scffor. If \p withNested is false
 /// nested scf::ForOp regions are ignored.
+/// Returns all operations of specified type from \p scffor. If \p withNested is
+/// false nested scf::ForOp regions are ignored.
 template <typename T>
 SmallVector<T> collectScfForBodyOperations(scf::ForOp scffor, bool withNested) {
   SmallVector<T> ops;
@@ -440,6 +434,12 @@ SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value, Block*
 template <typename... StopOpTys>
 std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
   Value value, DenseSet<Value> &visited, Operation *op, Block *block) {
+SmallVector<BlockArgument> tracebackOperandsToBlockArguments(Value value,
+                                                             Block *block);
+
+template <typename... StopOpTys>
+std::optional<Operation *> valueCalculatedUsingOperationInsideBlockImpl(
+    Value value, DenseSet<Value> &visited, Operation *op, Block *block) {
 
   if (!visited.insert(value).second) {
     return std::nullopt;
@@ -458,6 +458,9 @@ std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
 
     for (auto operand : defOp->getOperands()) {
       if (auto foundOp = valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(operand, visited, op, block)) {
+      if (auto foundOp =
+              valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(
+                  operand, visited, op, block)) {
         return foundOp;
       }
     }
@@ -471,11 +474,16 @@ std::optional<Operation*> valueCalculatedUsingOperationInsideBlockImpl(
 /// treated as dependency boundaries).
 template <typename... StopOpTys>
 std::optional<Operation*> valueCalculatedUsingOperationInsideBlock(Value value, Operation *op, Block *block) {
+std::optional<Operation *>
+valueCalculatedUsingOperationInsideBlock(Value value, Operation *op,
+                                         Block *block) {
   if (value.getDefiningOp() == op) {
     return op;
   } else {
     DenseSet<Value> visited;
     return valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(value, visited, op, block);
+    return valueCalculatedUsingOperationInsideBlockImpl<StopOpTys...>(
+        value, visited, op, block);
   }
 }
 
@@ -485,6 +493,7 @@ Value createTmpBufferOrTensorWithTargetType(
     std::optional<Type> targetElemType = std::nullopt,
     std::optional<ArrayRef<int64_t>> targetShape = std::nullopt,
     bool allowDynShapeAlloc = true);
+    std::optional<SmallVector<int64_t>> targetShape = std::nullopt);
 
 /// Get vector of dims with DimOp for buffer or tensor.
 llvm::SmallVector<Value> getTensorOrMemrefShapeDims(PatternRewriter &rewriter,
@@ -504,39 +513,35 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
     v = static_cast<T>(valFPAttr.getValueAsDouble());
   } else {
     llvm::report_fatal_error("getArithConstantOpValue supports only IntOrFloat");
+    v = valIntAttr.getInt();
+  } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
+    v = valFPAttr.getValueAsDouble();
+  } else {
+    llvm_unreachable("getArithConstantOpValue supports only IntOrFloat");
   }
   return v;
 }
 
+
+void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
+                   SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
+                   int innerAlignedUnits, int shapeAccumulation,
+                   int alignTargetDim, int alignUnitsDim);
+
+    v = static_cast<T>(valIntAttr.getInt());
+  } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
+    v = static_cast<T>(valFPAttr.getValueAsDouble());
+  } else {
+    llvm::report_fatal_error("getArithConstantOpValue supports only IntOrFloat");
+    v = valIntAttr.getInt();
+  } else if (auto valFPAttr = dyn_cast<FloatAttr>(valueAttr)) {
+    v = valFPAttr.getValueAsDouble();
+  } else {
+    llvm_unreachable("getArithConstantOpValue supports only IntOrFloat");
 template <typename TensorOrMemRefType,
           typename = typename std::enable_if_t<
               std::is_same_v<TensorOrMemRefType, TensorType> ||
               std::is_same_v<TensorOrMemRefType, MemRefType>>>
-SmallVector<int> collectAlignUnits(ArrayRef<int32_t> alignDims,
-                                   ArrayRef<int32_t> alignBytes,
-                                   TensorOrMemRefType unalignedTy) {
-  int rank = unalignedTy.getRank();
-  const unsigned bitWidth = unalignedTy.getElementTypeBitWidth();
-  SmallVector<int> alignTargets(rank, 1);
-  assert(alignBytes.size() == alignDims.size());
-  for (size_t i = 0; i < alignDims.size(); ++i) {
-    int dim = alignDims[i];
-    assert(dim >= 0 && dim < rank);
-    int alignBits = alignBytes[i] * utils::kBitsToByte;
-    if (bitWidth % alignBits == 0) {
-      // If the alignment is smaller than type size, align to itself
-      continue;
-    }
-    assert(alignBits % bitWidth == 0 &&
-           "Alignment cannot satisfied by bitwidth");
-    alignTargets[dim] =
-        static_cast<int>(std::lcm(alignBits / bitWidth, alignTargets[dim]));
-  }
-
-  int innerAlignedUnits = 1;
-  int shapeAccumulation = 1;
-  auto shapes = unalignedTy.getShape();
-  SmallVector<int> alignUnits(rank + 1, 1);
   for (int dim = rank - 1; dim >= 0; --dim) {
     // The alignment target forces the INNER dimension to get aligned
     int newAlignedUnits = std::lcm(innerAlignedUnits, alignTargets[dim]);
@@ -556,6 +561,28 @@ SmallVector<int> collectAlignUnits(ArrayRef<int32_t> alignDims,
           shapeAccumulation * std::lcm(shapes[dim], alignUnits[dim + 1]);
     }
   }
+  if constexpr (std::is_same_v<TensorOrMemRefType, MemRefType>) {
+    if (isRegBasedArch && isLastMemrefDimUnitStride(unalignedTy)) {
+      for (int dim = rank - 1; dim >= 0; --dim) {
+        setAlignUnits(alignTargets, alignUnits, shapes, innerAlignedUnits,
+                      shapeAccumulation, dim, dim);
+        if (alignUnits.empty()) {
+          return alignUnits;
+        }
+      }
+      alignUnits[0] = 1;
+      return alignUnits;
+    }
+  }
+
+  for (int dim = rank - 1; dim >= 0; --dim) {
+    setAlignUnits(alignTargets, alignUnits, shapes, innerAlignedUnits,
+                  shapeAccumulation, dim, dim + 1);
+    if (alignUnits.empty()) {
+      return alignUnits;
+    }
+  }
+
   // The outermost dimension needs no extra alignments
   alignUnits[0] = 1;
   return alignUnits;
@@ -574,31 +601,96 @@ template <typename IRType, typename CType> bool isConst(TypedAttr v, CType t) {
   return false;
 }
 
+
+ModuleOp getTopLevelModuleOp(Operation *op);
+
+/// Returns RankedTensorType with same shape as source tensor with
+/// srcTensorType and element type newTensorElementType.
+/// e.g. tensor<512xi1> = getTensorTypeWithSameShape(tensor<512xf32>, i1)
+RankedTensorType getTensorTypeWithSameShape(Type srcTensorType,
+                                            Type newTensorElementType);
+
+int64_t getArgumentIndex(Value value);
+
+bool hasBF16Operand(Operation *op);
+
+  for (int dim = rank - 1; dim >= 0; --dim) {
+    // The alignment target forces the INNER dimension to get aligned
+    int newAlignedUnits = std::lcm(innerAlignedUnits, alignTargets[dim]);
+    if (newAlignedUnits == 0)
+      return {};
+    if (shapeAccumulation % newAlignedUnits == 0) {
+      // already aligned
+      alignUnits[dim + 1] = 1;
+    } else {
+      if (innerAlignedUnits == 0)
+        return {}; // should be impossible case (SecA_DivideByZero)
+      alignUnits[dim + 1] = newAlignedUnits / innerAlignedUnits;
+    }
+    innerAlignedUnits = newAlignedUnits;
+    if (!ShapedType::isDynamic(shapes[dim])) {
+      shapeAccumulation =
+          shapeAccumulation * std::lcm(shapes[dim], alignUnits[dim + 1]);
+    }
+  }
+  if constexpr (std::is_same_v<TensorOrMemRefType, MemRefType>) {
+    if (isRegBasedArch && isLastMemrefDimUnitStride(unalignedTy)) {
+      for (int dim = rank - 1; dim >= 0; --dim) {
+        setAlignUnits(alignTargets, alignUnits, shapes, innerAlignedUnits,
+                      shapeAccumulation, dim, dim);
+        if (alignUnits.empty()) {
+          return alignUnits;
+        }
+      }
+      alignUnits[0] = 1;
+      return alignUnits;
+    }
+  }
+
+  for (int dim = rank - 1; dim >= 0; --dim) {
+    setAlignUnits(alignTargets, alignUnits, shapes, innerAlignedUnits,
+                  shapeAccumulation, dim, dim + 1);
+    if (alignUnits.empty()) {
+      return alignUnits;
+    }
+  }
+
 // get axis kind
 hivm::AxisKind getAxisKind(int dim, int rank);
 
 // get axis kind after outlining
 hivm::AxisKind getOutlinedAxisKind(int dim, int rank);
 
-BitVector arrayToMask(ArrayRef<int64_t> elements, int maskSize);
-
-std::optional<int64_t> traceToAllocMaxSize(mlir::Value memrefVal);
-
-/// Return a `memref.dim` or `tensor.dim` for the shape of `v` at `dim`.
-OpFoldResult getDimOFR(OpBuilder &builder, Location loc, Value v, int64_t dim);
-Value getDimValue(OpBuilder &builder, Location loc, Value v, int64_t dim);
-
-/// Returns a `memref.subview` or a `tensor.extract_slice` based on the type of
-/// the `source`.
-Value getSlice(OpBuilder &b, Location loc, Value source,
-               ArrayRef<OpFoldResult> offsets, ArrayRef<OpFoldResult> sizes,
-               ArrayRef<OpFoldResult> strides);
-
 bool isAlignedInUB(Type type);
 
 bool isUnstructuredMemAccLoop(Operation *op);
 
 ModuleOp getTopLevelModuleOp(Operation *op);
+
+// for debugging
+void dumpReassociationIndicesVector(
+    const SmallVector<ReassociationIndices> &reassocVec);
+
+int64_t getVectorSizeByElementType(Type t);
+
+/// Rewrite loop iter_arg to drop unit dims or to fixed hardware types
+template <bool DropUnitDimOnly>
+struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(scf::ForOp op,
+                                PatternRewriter &rewriter) const override;
+  virtual ~ForOpLegalization() = default;
+};
+
+bool isValidHIVMTileElementType(Type type);
+
+unsigned getHIVMTileSliceMinNumElts(Type type);
+
+bool isValidHIVMTileVectorType(VectorType vType);
+
+bool isValidTwoDimVectorType(VectorType vType);
+
+bool isUnstructuredMemAccLoop(Operation *op);
 
 } // namespace utils
 
@@ -611,6 +703,40 @@ bool isReshapingOp(Operation *op);
 bool isSlicingOp(Operation *op);
 
 bool isArgOp(Operation *op);
+
+
+bool isReinterpretedArgOp(Operation *op);
+
+bool isAlignedInUB(Type type);
+
+bool isUnstructuredMemAccLoop(Operation *op);
+
+ModuleOp getTopLevelModuleOp(Operation *op);
+
+// for debugging
+void dumpReassociationIndicesVector(
+    const SmallVector<ReassociationIndices> &reassocVec);
+
+int64_t getVectorSizeByElementType(Type t);
+
+/// Rewrite loop iter_arg to drop unit dims or to fixed hardware types
+template <bool DropUnitDimOnly>
+struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(scf::ForOp op,
+                                PatternRewriter &rewriter) const override;
+  virtual ~ForOpLegalization() = default;
+};
+
+bool isValidHIVMTileElementType(Type type);
+
+unsigned getHIVMTileSliceMinNumElts(Type type);
+
+bool isValidHIVMTileVectorType(VectorType vType);
+
+bool isValidTwoDimVectorType(VectorType vType);
+
+bool isUnstructuredMemAccLoop(Operation *op);
 
 bool isStopPropagatable(Operation *op);
 
@@ -638,25 +764,3 @@ bool isMarkedAsElementwiseUnaryOp(Operation *op);
 
 bool isAllParallelOp(Operation *op);
 
-bool areReassociationsCompatible(
-    ArrayRef<ReassociationIndices> collapseReassoc,
-    ArrayRef<ReassociationIndices> expandReassoc,
-    SmallVector<ReassociationIndices> &supposedExpand,
-    SmallVector<ReassociationIndices> &supposedCollapse,
-    ArrayRef<int64_t> collapseSourceShape, ArrayRef<int64_t> expandShapeResult,
-    SmallVector<int64_t> &newExpandShape);
-
-/// Get reassociation of expandShapeOp
-/// eg.
-///   tensor.expand_shape %arg0 [[0, 1], [2], [3, 4]] : tensor<4x5x3xf32> into
-///                                                     tensor<4x1x5x3x1f32>
-/// here outRank = 5, expandDims = {1, 4},
-/// the result reassociation=[[0, 1], [2], [3, 4]]
-SmallVector<SmallVector<int64_t, 2>>
-getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank);
-
-} // namespace reshape_utils
-
-} // namespace mlir
-
-#endif

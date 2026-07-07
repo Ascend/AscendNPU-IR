@@ -128,7 +128,7 @@ protected:
   // pairs.
   llvm::DenseMap<
       std::pair<syncsolver::RWOperation *, syncsolver::RWOperation *>,
-      llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>>
+      llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>>
       checkMemoryConflictsMem;
 
   // Set of pipe pairs that were forced to barrier-all (no event ids available).
@@ -163,6 +163,7 @@ public:
   CustomMacroSyncState customMacroSync;
 
   // Resolved event id per sync_event_slots entry, for sync_related_args.
+
   Solver() = delete;
   virtual ~Solver() = default;
 
@@ -182,6 +183,7 @@ public:
     return customMacroSync.conflictMessage();
   }
 
+
   // Build before/after maps of sync ops computed from chosen conflicts.
   SyncBeforeAfterMap getBeforeAfterSyncMaps();
 
@@ -195,6 +197,10 @@ protected:
     processingOrders = std::move(irTranslator->processingOrders);
     customMacroSync.collectReservedEventIds(funcOp, options);
   }
+
+  // Run solver in block-all mode.
+  void solveBlockAllMode();
+
 
   // Reset solver internal bookkeeping prior to another pass.
   void reset(bool resetEventIdRanOutOpts = false);
@@ -213,11 +219,17 @@ protected:
                                bool isUseless);
 
   std::optional<LoopLikeOpInterface>
+  getMultiBufferLoop_membase(RWOperation *rwOp1, RWOperation *rwOp2,
+                     const llvm::SmallVector<MemInfo> &memInfoList1,
+                     const llvm::SmallVector<MemInfo> &memInfoList2);
+  std::optional<LoopLikeOpInterface> getMultiBufferLoop_membase(RWOperation *rwOp1,
+                                                        RWOperation *rwOp2);
+  std::optional<Loop *>
   getMultiBufferLoop(RWOperation *rwOp1, RWOperation *rwOp2,
                      const llvm::SmallVector<MemInfo> &memInfoList1,
                      const llvm::SmallVector<MemInfo> &memInfoList2);
-  std::optional<LoopLikeOpInterface> getMultiBufferLoop(RWOperation *rwOp1,
-                                                        RWOperation *rwOp2);
+  std::optional<Loop *> getMultiBufferLoop(RWOperation *rwOp1,
+                                           RWOperation *rwOp2);
   std::optional<EventIdInfo> getMultiBufferEventIdInfo(Occurrence *occ1,
                                                        Occurrence *occ2,
                                                        RWOperation *rwOp1,
@@ -262,7 +274,28 @@ protected:
                             std::optional<int64_t> eventIdNum = {});
 
   llvm::SmallVector<std::tuple<CorePipeInfo, CorePipeInfo>>
-  checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
+  checkMemoryConflicts_membase(RWOperation *rwOp1, RWOperation *rwOp2);
+
+  bool checkMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
+
+  llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
+  getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                     const llvm::SmallVector<MemInfo> &memInfoList1,
+                     const llvm::SmallVector<MemInfo> &memInfoList2,
+                     std::optional<int64_t> lcmLen = {},
+                     std::optional<int64_t> eventIdNum = {});
+
+  llvm::SmallVector<std::pair<const MemInfo *, const MemInfo *>>
+  getMemInfoConflict(RWOperation *rwOp1, RWOperation *rwOp2,
+                     std::optional<int64_t> lcmLen = {},
+                     std::optional<int64_t> eventIdNum = {});
+
+  bool checkCVPipeliningMemConflict(RWOperation *rwOp1, RWOperation *rwOp2);
+
+  llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
+  getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
 
   bool checkMemoryConflictBetweenOccExclusive(
       Occurrence *occ1, Occurrence *occ2,
@@ -318,10 +351,13 @@ protected:
                                                              Occurrence *occ2);
   std::pair<Occurrence *, Occurrence *>
   getSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
+                std::optional<EventIdInfo> eventIdInfo = {});
+  std::pair<Occurrence *, Occurrence *>
+  getSetWaitOcc_membase(Occurrence *occ1, Occurrence *occ2,
                 bool sinkSyncIntoCVLoops = false);
   std::pair<Occurrence *, Occurrence *>
   getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
-                     bool sinkSyncIntoCVLoops = false);
+                     std::optional<EventIdInfo> eventIdInfo = {});
 
   Occurrence *getBarrierWaitOcc(Occurrence *occ1, Occurrence *occ2);
 
@@ -354,7 +390,8 @@ protected:
   std::unique_ptr<EventIdSolver> &getEventIdSolverRef(hivm::PIPE pipeSrc,
                                                       hivm::PIPE pipeDst);
 
-  bool checkRepeatMultiBufferFlagId(ConflictPair *conflictPair);
+  bool checkRepeatMultiBufferFlagId_membase(ConflictPair *conflictPair);
+  bool checkReuseMultiBufferFlagId(ConflictPair *conflictPair);
 
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,

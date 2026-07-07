@@ -53,6 +53,8 @@ DEFINE_SIMPLE_LIMITED_AXES(VBrcOp, getBroadcastDims)
 DEFINE_SIMPLE_LIMITED_AXES(VReduceOp, getReduceDims)
 DEFINE_SIMPLE_LIMITED_AXES(VCumsumOp, getCumDims)
 DEFINE_SIMPLE_LIMITED_AXES(VCumprodOp, getCumDims)
+DEFINE_SIMPLE_LIMITED_AXES(VCummaxOp, getCumDims)
+DEFINE_SIMPLE_LIMITED_AXES(VCumminOp, getCumDims)
 #undef DEFINE_SIMPLE_LIMITED_AXES
 
 SmallVector<int64_t> VTransposeOp::getLimitedAxes() {
@@ -94,7 +96,6 @@ SmallVector<int64_t> VGatherMaskOp::getLimitedAxes() {
   this->getGatherMaskLoopDims(limitedAxes);
   return limitedAxes;
 }
-
 SmallVector<int64_t> VArangeOp::getLimitedAxes() {
   // VArangeOp will not be flattened for now.
   SmallVector<int64_t> limitedAxes(this->getResult().getType().getRank());
@@ -105,6 +106,7 @@ SmallVector<int64_t> VArangeOp::getLimitedAxes() {
 SmallVector<int64_t> VFlipOp::getLimitedAxes() {
   SmallVector<int64_t> limitedAxes = computeElementwiseLimitation(*this);
   // limit for flip_axis dimension
+  // limit for last dimension
   limitedAxes.push_back(this->getFlipAxis());
   return limitedAxes;
 }
@@ -122,6 +124,7 @@ SmallVector<int64_t> computeElementwiseLimitation(HIVMStructuredOp op) {
   }
   if (op.existInlineTransposeLoopDims()) {
     llvm::report_fatal_error("use flatten unit for permutation instead");
+    llvm_unreachable("use flatten unit for permutation instead");
   }
   return {};
 }

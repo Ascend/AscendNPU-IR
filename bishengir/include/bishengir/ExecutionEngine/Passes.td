@@ -103,7 +103,11 @@ def ExecutionEngineHIVMToUpstreamConversion : Pass<"execution-engine-convert-hiv
     "memref::MemRefDialect",
     "tensor::TensorDialect",
   ];
+  let options =
+      [Option<"convertToNamedOp", "convert-to-named-op", "bool",
+      "true", "Convert hir operations to named ones">];
 }
+
 def ExecutionEngineHFusionToUpstreamConversion : Pass<"execution-engine-convert-hfusion-to-upstream"> {
   let summary = "Convert HFusion operations to upstream dialect's equivalent for execution engine";
   let description = [{
@@ -124,7 +128,8 @@ def ExecutionEngineHFusionToUpstreamConversion : Pass<"execution-engine-convert-
     "linalg::LinalgDialect",
     "math::MathDialect",
     "scf::SCFDialect",
-    "tensor::TensorDialect"
+    "tensor::TensorDialect",
   ];
 }
+
 #endif // BISHENGIR_EXECUTION_ENGINE_TRANSFORMS_PASSES

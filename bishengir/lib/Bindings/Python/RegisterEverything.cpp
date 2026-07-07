@@ -31,6 +31,9 @@ PYBIND11_MODULE(_bishengirRegisterEverything, m) {
   m.def("register_dialects",
         [](MlirContext context) { bishengirRegisterAllDialects(context); });
 
+  m.def("register_translations",
+        [](MlirContext context) { bishengirRegisterAllTranslations(context); });
+
   // Register all passes on load.
   bishengirRegisterAllPasses();
 }

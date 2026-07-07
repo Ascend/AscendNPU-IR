@@ -19,11 +19,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #ifndef BISHENGIR_DIALECT_HFUSION_TRANSFORMS_REORDEROPSBYBFS_H
 #define BISHENGIR_DIALECT_HFUSION_TRANSFORMS_REORDEROPSBYBFS_H
-
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-
 namespace mlir {
 namespace hfusion {
 void reorderOpsByBFS(func::FuncOp funcOp);

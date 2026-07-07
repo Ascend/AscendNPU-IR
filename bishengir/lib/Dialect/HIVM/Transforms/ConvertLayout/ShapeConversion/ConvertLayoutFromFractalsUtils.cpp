@@ -94,6 +94,7 @@ extractFractalToNDConversionParams(ArrayRef<OpFoldResult> currentShape,
   FractalToNDConversionParams params;
   params.fractalSize = *blockSizesResult;
   params.batchIndexBias = static_cast<int>(currentShape.size()) % 2;
+  params.batchIndexBias = (int64_t)(currentShape.size() % 2);
   LDBG("Batch index bias: " << params.batchIndexBias);
   if (params.batchIndexBias)
     params.batchDim = currentShape[0];

@@ -400,6 +400,8 @@ struct TilingCases {
   iterator begin() const { return cases.begin(); }
   iterator end() const { return cases.end(); }
 
+  using reference = SetVector<TilingKey> &;
+
   /// Add a tiling case key.
   ///
   /// \param caseKey
@@ -408,19 +410,14 @@ struct TilingCases {
   LogicalResult addKey(TilingKey caseKey);
 
   /// Get reference to the tiling cases.
-  SetVector<TilingKey> getRef() { return cases; }
+  reference getRef() { return cases; }
 
   /// Index into the tiling cases.
   TilingKey operator[](size_t n) const { return cases[n]; }
 
-  void removeIf(int64_t keepKey) {
-    cases.remove_if([&](int64_t key) { return key != keepKey; });
-  }
-
   /// Return the number of tiling case keys.
   size_t size() { return cases.size(); }
 
-private:
   SetVector<TilingKey> cases;
 };
 

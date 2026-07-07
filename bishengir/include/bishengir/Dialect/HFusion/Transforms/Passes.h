@@ -24,6 +24,7 @@
 
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
@@ -34,6 +35,15 @@ namespace mlir {
 namespace func {
 class FuncOp;
 } // namespace func
+
+namespace transform {
+class NamedSequenceOp;
+class TransformHandleTypeInterface;
+} // namespace transform
+
+namespace vector {
+class VectorDialect;
+} // namespace vector
 
 namespace hfusion {
 namespace opfusion {
@@ -102,10 +112,33 @@ createHFusionOpFusionPass(const HFusionOpFusionOptions &options = {});
 std::unique_ptr<Pass>
 createHFusionAutoSchedulePass(const AutoScheduleOptions &options = {});
 
+/// Create an auto vectorizer pass.
+std::unique_ptr<Pass>
+createHFusionAutoVectorizePass(const AutoVectorizeOptions &options = {});
+
+/// Create a pass to handle non-vectorizeable linalg.generic cases
+std::unique_ptr<Pass> createGenericUnrollerPass();
+
+/// Create a pass that pulls extract_slice/insert_slice into VF callees.
+std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
+
+/// Create an auto vectorizer v2 pass.
+std::unique_ptr<Pass>
+createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
+
+/// Create an auto vectorize verifier pass.
+std::unique_ptr<Pass> createAutoVectorizeVerifierPass();
+
+/// Create an outline vector function pass.
+std::unique_ptr<Pass> createOutlineVectorFunctionPass();
+
 /// Create a pass to execute auto schedule sequence for the target kernel.
 std::unique_ptr<Pass>
 createAutoScheduleInterpreterPass(const std::string &kernelName,
                                   transform::TransformOptions options = {});
+
+/// Create a pass to execute emitted auto vectorize transform sequences.
+std::unique_ptr<Pass> createAutoVectorizeInterpreterPass();
 
 /// Create a pass to erase auto schedule sequence for the target kernel.
 std::unique_ptr<Pass>
@@ -134,13 +167,27 @@ createOutlineSingleOpPass(const OutlineSingleOpOptions &options = {});
 /// Create a pass to simplify operations.
 std::unique_ptr<Pass> createSimplifyOpsPass();
 
+/// Create a pass to uplift `scf.while` loops to `scf.for` whenever the
+/// while shape matches upstream
+/// `scf::populateUpliftWhileToForPatterns`. Wired into the head of
+/// HFusion preProcess so downstream HIVM passes - notably multi-buffer -
+/// can fall back to the simpler scf.for path when the input while-loop
+/// is structurally for-shaped (single arith.cmpi-driven scf.condition in
+/// the `before` block, linear arith.addi on the IV in the `after`
+/// block). While-loops that don't match are left untouched and continue
+/// to flow through the alloca-based MultiBufferLoopAdapter counter.
+std::unique_ptr<Pass> createUpliftWhileToForPass();
+
+/// Register Tree Reduce v2 pass
+std::unique_ptr<Pass> createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
+
 /// Create a pass to normalize operations.
-std::unique_ptr<Pass> createHFusionNormalizeOpsPass();
+std::unique_ptr<Pass>
+createHFusionNormalizeOpsPass(const NormalizeOptions &options = {});
 
 /// Create a pass to normalize slice operations, including
 /// extract_slice/insert_slice.
-std::unique_ptr<Pass>
-createHFusionNormalizeSliceOpsPass(bool skipAlignedSlice = false);
+std::unique_ptr<Pass> createHFusionNormalizeSliceOpsPass();
 
 /// Create a pass to inline broadcast-like op
 std::unique_ptr<Pass> createHFusionInlineBrcPass();
@@ -153,8 +200,7 @@ createPackTilingDataPass(const PackTilingDataOptions &options = {});
 std::unique_ptr<Pass> createConstantizeTilingDataPass();
 
 /// Create a pass to label the triton entry kernel
-std::unique_ptr<Pass>
-createAdaptTritonKernelPass();
+std::unique_ptr<Pass> createAdaptTritonKernelPass();
 
 /// Create a pass to infer func fusion kind
 std::unique_ptr<Pass> createInferFuncFusionKind();
@@ -162,11 +208,18 @@ std::unique_ptr<Pass> createInferFuncFusionKind();
 // Create a pass to generate out tensor's shape function
 std::unique_ptr<Pass> createInferOutShapesPass();
 
+/// Create a pass to legalize scalar op
+std::unique_ptr<Pass> createLegalizeScalarPass();
+
 /// Create a pass to legalize bf16 type
 std::unique_ptr<Pass> createLegalizeBF16Pass();
 
+/// Create a pass to legalize fp8 type
+std::unique_ptr<Pass> createLegalizeFP8Pass();
+
 /// Create a pass to legalize bool
 std::unique_ptr<Pass> createLegalizeBoolPass();
+std::unique_ptr<Pass> createLegalizeBoolPass(const LegalizeBoolPassOptions &options);
 
 /// create a pass to reorder hfusion ops by bfs
 std::unique_ptr<Pass> createReorderOpsByBFS();
@@ -189,6 +242,9 @@ std::unique_ptr<Pass> createCacheIOForReturnArg();
 /// create a pass to recache io
 std::unique_ptr<Pass> createReCacheIO();
 
+/// create a pass to remove cache io
+std::unique_ptr<Pass> createRemoveCacheIO();
+
 /// Create a pass to convert hoist tensor empty to func parameters and merge
 /// into one parameter.
 std::unique_ptr<Pass> createHoistTensorEmptyPass();
@@ -201,6 +257,7 @@ createWrapHostFuncPass(const WrapHostFuncOptions &options = {});
 std::unique_ptr<Pass> createFoldSymbolicDimPass();
 std::unique_ptr<Pass> createUnfoldSymbolicDimPass();
 std::unique_ptr<Pass> createDropSymbolsPass();
+std::unique_ptr<Pass> createFoldExtractInsertPairPass();
 
 /// Create a pass to decompose ops that implemented AggregatedOpInterface.
 std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
@@ -208,6 +265,34 @@ std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
 /// Create a pass to eliminate duplicate functions.
 std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 
+// Create a pass to simplify VF function arguments
+std::unique_ptr<Pass> createSimplifyVFArgsPass();
+
+// Create a pass to Merge VF function
+std::unique_ptr<Pass> createMergeVecScopePass(const MergeVecScopeOptions &options = {});
+
+// Create a pass to prepare i1 Nx1 linalg.generic before vectorization.
+std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
+
+// Create a pass to perform elemwise op fusion before vectorization
+std::unique_ptr<Pass> createPreVectorizationFusionPass(
+    const PreVectorizationFusionOptions &options = {});
+
+// Create a pass to vectorize hfusion ops.
+std::unique_ptr<Pass>
+createHFusionVectorizeOpsPass(const VectorizeOpsOptions &options = {});
+
+/// Create a pass to fold unit dims in linalg ops on tensors
+std::unique_ptr<Pass> createHFusionFoldUnitDimsPass();
+
+// Create a pass to remove redundant transfer_write and transfer_read pair
+std::unique_ptr<Pass> createRemoveRedundantWriteAndReadPairPass();
+
+// Create a pass to remove mask from unaligned reduction loop
+std::unique_ptr<Pass> createRemoveMaskFromUnalignedReductionLoopPass();
+
+/// Create a pass to convert hfusion ops to generic ops
+std::unique_ptr<Pass> createHFusionGeneralizePass();
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
@@ -218,6 +303,9 @@ std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 
 /// Register a pass to execute auto schedule sequence for the target kernel.
 void registerAutoScheduleInterpreterPass();
+
+/// Register a pass to execute emitted auto vectorize transform sequences.
+void registerAutoVectorizeInterpreterPass();
 
 /// Register a pass to erase auto schedule sequence for the target kernel.
 void registerEraseAutoSchedulePass();

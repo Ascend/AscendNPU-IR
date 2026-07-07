@@ -95,7 +95,6 @@ traceStaticAllocShape(ShapedType dstType,
         "Unable to trace to a static alloc shape from a dynamic shape");
   }
 }
-
 // Match CC/CV/VC/VV junction and replace emptyOp with workspace
 // CC: mmadL1 -> fixpipe -> load -> mmadL1
 // CV: mmadL1 -> fixpipe -> load -> vector
@@ -145,6 +144,11 @@ struct InsertWorkSpace : public OpRewritePattern<OpType> {
           hivm::getTensorDynamicValues(rewriter, emptyOp->getLoc(),
                                       emptyOp->getResults()[0]),
           getElementTypeOrSelf(dstType), staticAllocShape);
+
+      rewriter.setInsertionPoint(emptyOp);
+      auto dstTensor =
+          getLocalWorkSpaceTensor(rewriter, emptyOp->getLoc(), dstType.getShape(),
+                                  getElementTypeOrSelf(dstType));
       rewriter.replaceAllUsesWith(emptyOp->getResult(0), dstTensor);
     }
     return success();

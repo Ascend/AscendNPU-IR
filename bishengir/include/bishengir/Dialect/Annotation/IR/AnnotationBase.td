@@ -31,6 +31,7 @@ def Annotation_Dialect : Dialect {
     annotation.mark %a { attr-dict } : f64
     ```
   }];
+  let useDefaultAttributePrinterParser = 1;
   let cppNamespace = "::mlir::annotation";
 }
 

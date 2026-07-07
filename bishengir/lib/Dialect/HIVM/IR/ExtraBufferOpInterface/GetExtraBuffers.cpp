@@ -74,7 +74,17 @@ ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VRsqrtOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VSqrtOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VRecOp)
 #undef ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumsumOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCummaxOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumminOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumprodOp)
+#undef ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION
 
+OperandRange CustomOp::getExtraBuffers() { return getTempBuffersMutable(); }
+
+OperandRange CustomMacroOp::getExtraBuffers() {
+  return getTempBuffersMutable();
+}
 // Vector Binary Op
 ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VAddOp)
 ENABLE_OP_SHOULD_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VMulOp)
@@ -110,6 +120,12 @@ ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VMulextendedOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VPowOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VGatherOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSortOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(CustomMacroOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumsumOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCummaxOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumminOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumprodOp)
 #undef ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC
 
 //===----------------------------------------------------------------------===//
@@ -123,6 +139,7 @@ int64_t getLastAxisInlineBrcBuffSize(MemRefType srcVecType,
   int64_t numPerBlock =
       (util::INTR_BYTES_PER_BLOCK * utils::INTR_BITS_PER_BYTE) / srcWidth;
   auto srcSizes = srcVecType.getShape();
+  auto src_sizes = srcVecType.getShape();
   int rank = srcVecType.getRank();
   assert(rank >= 1 && "rank must be >= 1.");
   if (rank == 1) {
@@ -141,6 +158,19 @@ int64_t getLastAxisInlineBrcBuffSize(MemRefType srcVecType,
 }
 
 template <typename HIVMOP> bool isHardwareNotSupportedVS() {
+  if (src_sizes[rank - 2] == ShapedType::kDynamic) {
+    return upperLimit;
+  }
+
+  if (src_sizes[rank - 2] == 1) {
+    return numPerBlock;
+  }
+  return numPerBlock * util::ceilFactor(src_sizes[rank - 2],
+                                        util::srcNumPerRepeatOfVBRCBIntrin);
+}
+
+template <typename HIVMOP>
+bool isHardwareNotSupportedVS() {
   return std::is_same<hivm::VDivOp, HIVMOP>::value ||
          std::is_same<hivm::VSubOp, HIVMOP>::value;
 }
@@ -187,6 +217,12 @@ std::optional<int64_t> getExtraBufferSizeForBinaryOp(HIVMOP op) {
   bool isSrc0BrcInline = false;
   bool isSrc1BrcInline = false;
   int64_t upperLimit = utils::traceToAllocMaxSize(op.getDst()[0]).value();
+  
+  std::optional<int64_t> srcAllocTotalSize = utils::traceToAllocMaxSize(op.getDst()[0]);
+  if (!srcAllocTotalSize.has_value()) {
+    return std::nullopt;
+  }
+  int64_t upperLimit = srcAllocTotalSize.value();
   if (!src0ScalarType) {
     MemRefType src0VecType = cast<MemRefType>(op.getSrc()[0].getType());
     isSrc0BrcInline = isSrcBrcInline(src0VecType, dstVecType);
@@ -236,6 +272,12 @@ std::optional<int64_t> getExtraBufferSizeForUnaryOp(HIVMOP op) {
   }
 
   int64_t upperLimit = utils::traceToAllocMaxSize(op.getDst()[0]).value();
+  
+  std::optional<int64_t> srcAllocTotalSize = utils::traceToAllocMaxSize(op.getSrc()[0]);
+  if (!srcAllocTotalSize.has_value()) {
+    return std::nullopt;
+  }
+  int64_t upperLimit = srcAllocTotalSize.value();
   int64_t lastAxisInlineBrcBuffSize =
       getLastAxisInlineBrcBuffSize(src0VecType, upperLimit);
   return lastAxisInlineBrcBuffSize;
@@ -289,12 +331,14 @@ std::optional<int64_t> VSelOp::getExtraBufferSize() {
   // vsel int64 vv case with i8 condition
   int rank = dstVecType.getRank();
   int libMaxRank = 1u;
+  int libMaxRank = this->getOpLibraryCallRank(rank);
   int64_t dstSize = 1;
   if (dstVecType.hasStaticShape()) {
     for (int i = 1; i <= libMaxRank; i++) {
       dstSize *= dstVecType.getShape()[rank - i];
     }
   } else {
+    assert(utils::traceToAllocMaxSize(this->getDst()[0]).has_value());
     dstSize = utils::traceToAllocMaxSize(this->getDst()[0]).value();
   }
   uint64_t numI32PerBlock = util::INTR_BYTES_PER_BLOCK / sizeof(int32_t);
@@ -342,11 +386,13 @@ std::optional<int64_t> VSortOp::getExtraBufferSize() {
         return sortAxisAlign * 4;
       if (elemType.isF16())
         return sortAxisAlign * 8;
+      // TODO: Implement sortwithindex for i32/i64 types
     } else {
       if (elemType.isF32())
         return sortAxisAlign * 5;
       if (elemType.isF16())
         return sortAxisAlign * 9;
+      // TODO: Implement sortwithindex for i32/i64 types
     }
   } else {
     if (isDescending) {
@@ -354,11 +400,19 @@ std::optional<int64_t> VSortOp::getExtraBufferSize() {
         return sortAxisAlign * 5;
       if (elemType.isF16())
         return sortAxisAlign * 10;
+      if (elemType.isInteger(32))
+        return sortAxisAlign * 12;
+      if (elemType.isInteger(64))
+        return sortAxisAlign * 10;
     } else {
       if (elemType.isF32())
         return sortAxisAlign * 6;
       if (elemType.isF16())
         return sortAxisAlign * 11;
+      if (elemType.isInteger(32))
+        return sortAxisAlign * 12;
+      if (elemType.isInteger(64))
+        return sortAxisAlign * 10;
     }
   }
   return 0;
@@ -371,5 +425,37 @@ std::optional<int64_t> VSortOp::getExtraBufferSize() {
 std::optional<int64_t> VXorOp::getExtraBufferSize() {
   std::optional<int64_t> srcAllocTotalSize =
       utils::traceToAllocMaxSize(this->getSrc()[0]);
+  return srcAllocTotalSize;
+}
+
+//===----------------------------------------------------------------------===//
+// VCumsumOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumsumOp::getExtraBufferSize() {
+ 	   std::optional<int64_t> srcAllocTotalSize =
+ 	       utils::traceToAllocMaxSize(this->getSrc());
+ 	   return srcAllocTotalSize;
+ 	 }
+
+//===----------------------------------------------------------------------===//
+// VCummaxOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCummaxOp::getExtraBufferSize() {
+  return utils::traceToAllocMaxSize(this->getSrc());
+}
+
+//===----------------------------------------------------------------------===//
+// VCumminOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumminOp::getExtraBufferSize() {
+  return utils::traceToAllocMaxSize(this->getSrc());
+}
+
+//===----------------------------------------------------------------------===//
+// VCumprodOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumprodOp::getExtraBufferSize() {
+  std::optional<int64_t> srcAllocTotalSize =
+      utils::traceToAllocMaxSize(this->getSrc());
   return srcAllocTotalSize;
 }
