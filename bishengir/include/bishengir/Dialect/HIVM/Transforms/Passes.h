@@ -53,9 +53,6 @@ namespace hivm {
 /// Create a pass to infer the core type of each function.
 std::unique_ptr<Pass> createInferFuncCoreTypePass();
 
-/// Create a pass to clone scf.if.yield operand for PlanMemory.
-std::unique_ptr<Pass> createCloneSCFIfYieldOperandPass();
-
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
 

@@ -229,7 +229,8 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
       continue;
     }
     auto scopeResult = defOp->getOperand(0);
-    if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp())) {
+    if (!isa_and_nonnull<scope::ScopeOp>(scopeResult.getDefiningOp()) ||
+        !scopeResult.getDefiningOp()->hasAttr(hivm::PreloadNumAttr::name)) {
       continue;
     }
     // Remove old copy out of scopeOp
