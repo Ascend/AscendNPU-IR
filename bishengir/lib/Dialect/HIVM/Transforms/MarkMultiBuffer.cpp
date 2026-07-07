@@ -143,8 +143,18 @@ struct MarkScopeMultiBuffer : public OpRewritePattern<CopyOpType> {
       auto scopeRes = scopeOp->getResult(operandIndex);
       bool isUsedByV1 = false;
       for (auto *scopeResUser : scopeRes.getUsers()) {
-        if (isa<scope::ScopeOp>(scopeResUser) || isa<scope::ScopeOp>(scopeResUser->getParentOp()))
+        if (isa<scope::ScopeOp>(scopeResUser)) {
           isUsedByV1 = true;
+        } else {
+          Operation *cur = scopeResUser->getParentOp();
+          while (cur) {
+            if (isa<scope::ScopeOp>(cur)) {
+              isUsedByV1 = true;
+              break;
+            }
+            cur = cur->getParentOp();
+          }
+        }
       }
       if (!isUsedByV1)
         continue;
