@@ -58,8 +58,14 @@ void AscendAllocationSharedMemCheckFn(Operation* op, int allocatedSharedMemorySi
   if (auto superBlockFactorAttr = moduleOp->getAttrOfType<IntegerAttr>(
           triton::gpu::AttrSuperBlockFactor))
     superBlockFactor = superBlockFactorAttr.getUInt();
+  
+  if (superBlockFactor > 1) {
+    // Round up to the next multiple of 16
+    allocatedSharedMemorySize = (allocatedSharedMemorySize - 1) / 16 * 16 + 16;
+    allocatedSharedMemorySize *= superBlockFactor;
+  }
 
-  if (superBlockFactor * allocatedSharedMemorySize > sharedMemoryCapacity)
+  if (allocatedSharedMemorySize > sharedMemoryCapacity)
     llvm::report_fatal_error("UB overflow, requires at least "
         + Twine(allocatedSharedMemorySize) + " bytes while only "
         + Twine(sharedMemoryCapacity) + " bytes available!");
