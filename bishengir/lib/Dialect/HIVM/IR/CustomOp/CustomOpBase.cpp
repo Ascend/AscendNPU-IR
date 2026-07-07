@@ -24,6 +24,7 @@
 #include "mlir/Support/LogicalResult.h"
 
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 
 #include <sstream>
@@ -189,29 +190,90 @@ ParseResult parseForCustomOps(OpAsmParser &parser, OperationState &result) {
 
   {
     SmallVector<int32_t, 3> variadicArgsSizes;
-    auto parseVariadicArgs = [&parser, &result,
-                              &variadicArgsSizes](const std::string &nameHint) {
-      SMLoc loc;
-      SmallVector<Type, 1> types;
-      SmallVector<OpAsmParser::UnresolvedOperand, 4> operands;
+    SmallVector<Attribute> inputAttrs;
+    bool hasInlineInputAttrs = false;
+    auto parseVariadicArgs =
+        [&parser, &result, &variadicArgsSizes, &inputAttrs,
+         &hasInlineInputAttrs](const std::string &nameHint) {
+          SMLoc loc;
+          SmallVector<Type, 1> types;
+          SmallVector<OpAsmParser::UnresolvedOperand, 4> operands;
 
-      if (succeeded(parser.parseOptionalKeyword(nameHint))) {
-        loc = parser.getCurrentLocation();
-        if (parser.parseLParen() || parser.parseOperandList(operands) ||
-            parser.parseColonTypeList(types) || parser.parseRParen())
-          return failure();
-      }
+          if (succeeded(parser.parseOptionalKeyword(nameHint))) {
+            loc = parser.getCurrentLocation();
+            if (parser.parseLParen())
+              return failure();
 
-      if (parser.resolveOperands(operands, types, loc, result.operands))
-        return failure();
+            do {
+              if (succeeded(parser.parseOptionalRParen()))
+                break;
 
-      variadicArgsSizes.push_back(static_cast<int32_t>(operands.size()));
-      return success();
-    };
+              if (parser.parseOperand(operands.emplace_back()))
+                return failure();
+            } while (succeeded(parser.parseOptionalComma()));
+
+            if (parser.parseColon())
+              return failure();
+
+            for (size_t i = 0, e = operands.size(); i < e; ++i) {
+              if (i != 0 && parser.parseComma())
+                return failure();
+
+              if (parser.parseType(types.emplace_back()))
+                return failure();
+
+              NamedAttrList operandAttrs;
+              if (parser.parseOptionalAttrDict(operandAttrs))
+                return failure();
+              if (nameHint == "ins" && !operandAttrs.empty()) {
+                hasInlineInputAttrs = true;
+                inputAttrs.push_back(
+                    operandAttrs.getDictionary(parser.getContext()));
+              } else if (nameHint == "ins") {
+                inputAttrs.push_back(DictionaryAttr::get(parser.getContext()));
+              }
+            }
+
+            if (parser.parseRParen())
+              return failure();
+          }
+
+          if (parser.resolveOperands(operands, types, loc, result.operands))
+            return failure();
+
+          variadicArgsSizes.push_back(static_cast<int32_t>(operands.size()));
+          return success();
+        };
 
     if (failed(parseVariadicArgs("ins")) || failed(parseVariadicArgs("outs")) ||
         failed(parseVariadicArgs("tmps"))) {
       return failure();
+    }
+
+    auto existingArgAttrs = dyn_cast_or_null<ArrayAttr>(
+        result.attributes.get(CustomOp::kArgAttrsName));
+    if (hasInlineInputAttrs || existingArgAttrs) {
+      auto newArgAttrs = hasInlineInputAttrs
+                             ? parser.getBuilder().getArrayAttr(inputAttrs)
+                             : existingArgAttrs;
+      if (hasInlineInputAttrs && existingArgAttrs) {
+        SmallVector<Attribute> merged(inputAttrs);
+        const size_t copySize =
+            std::min(existingArgAttrs.size(), merged.size());
+        for (size_t i = 0; i < copySize; ++i) {
+          auto existingDict = dyn_cast<DictionaryAttr>(existingArgAttrs[i]);
+          auto parsedDict = dyn_cast<DictionaryAttr>(merged[i]);
+          if (!existingDict || !parsedDict || existingDict.empty())
+            continue;
+
+          NamedAttrList attrs(existingDict);
+          for (NamedAttribute attr : parsedDict)
+            attrs.set(attr.getName(), attr.getValue());
+          merged[i] = attrs.getDictionary(parser.getContext());
+        }
+        newArgAttrs = parser.getBuilder().getArrayAttr(merged);
+      }
+      result.attributes.set(CustomOp::kArgAttrsName, newArgAttrs);
     }
 
     const auto operandSegmentSizesAttr =
@@ -276,15 +338,47 @@ ParseResult parseForCustomMacroOps(OpAsmParser &parser,
 
 template <typename CustomOpT>
 void printForCustomOps(CustomOpT op, OpAsmPrinter &p) {
-  p.printOptionalAttrDict(op->getAttrs(),
-                          /*elidedAttrs=*/{"operandSegmentSizes", "name"});
+  ArrayAttr argAttrs =
+      op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
+  bool printInputAttrsInline = false;
+  if (argAttrs) {
+    for (Attribute attr : argAttrs) {
+      auto dict = dyn_cast<DictionaryAttr>(attr);
+      if (dict && dict.contains(CustomOpT::kInplaceOutsAttrName)) {
+        printInputAttrsInline = true;
+        break;
+      }
+    }
+  }
+
+  SmallVector<StringRef> elidedAttrs = {"operandSegmentSizes", "name"};
+  if (printInputAttrsInline)
+    elidedAttrs.push_back(CustomOpT::kArgAttrsName);
+  p.printOptionalAttrDict(op->getAttrs(), elidedAttrs);
 
   p << " ";
   p.printString(op.getName());
 
-  auto printVariadicArgs = [&p](const auto &args, const std::string &nameHint) {
-    if (!args.empty())
-      p << " " << nameHint << "(" << args << " : " << args.getTypes() << ")";
+  auto printVariadicArgs = [&](const auto &args, const std::string &nameHint) {
+    if (args.empty())
+      return;
+
+    p << " " << nameHint << "(" << args << " : ";
+    llvm::interleaveComma(
+        llvm::enumerate(args.getTypes()), p, [&](auto indexedType) {
+          p << indexedType.value();
+          if (!printInputAttrsInline || nameHint != "ins" || !argAttrs ||
+              indexedType.index() >= argAttrs.size())
+            return;
+
+          auto dict = dyn_cast<DictionaryAttr>(argAttrs[indexedType.index()]);
+          if (!dict || dict.empty())
+            return;
+
+          p << " ";
+          p.printAttributeWithoutType(dict);
+        });
+    p << ")";
   };
 
   printVariadicArgs(op.getInputs(), "ins");
@@ -325,6 +419,70 @@ static LogicalResult verifyCustomOpExtraBufferAttrs(CustomOpT op) {
   return success();
 }
 
+template <typename CustomOpT>
+static LogicalResult verifyCustomOpInplaceOperandsAttr(CustomOpT op) {
+  auto argAttrs =
+      op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
+  if (!argAttrs)
+    return success();
+
+  llvm::DenseSet<int32_t> usedOutputs;
+  const int64_t numInputs = op.getInputs().size();
+  const int64_t numOutputs = op.getOutputs().size();
+  for (auto [inputIdx, inputAttr] : llvm::enumerate(argAttrs)) {
+    if (static_cast<int64_t>(inputIdx) >= numInputs)
+      break;
+
+    auto dict = dyn_cast<DictionaryAttr>(inputAttr);
+    if (!dict)
+      continue;
+
+    auto inplaceOutAttr = dyn_cast_or_null<IntegerAttr>(
+        dict.get(CustomOpT::kInplaceOutsAttrName));
+    if (!inplaceOutAttr) {
+      if (dict.contains(CustomOpT::kInplaceOutsAttrName))
+        return op.emitOpError() << CustomOpT::kInplaceOutsAttrName
+                                << " must be an integer attribute";
+      continue;
+    }
+
+    int32_t outputIdx = inplaceOutAttr.getInt();
+    if (outputIdx < 0 || outputIdx >= numOutputs) {
+      return op.emitOpError() << CustomOpT::kInplaceOutsAttrName
+                              << " must be a valid outs operand index";
+    }
+    if (!usedOutputs.insert(outputIdx).second) {
+      return op.emitOpError()
+             << CustomOpT::kInplaceOutsAttrName
+             << " cannot map multiple ins operands to the same outs operand";
+    }
+
+    Type inputType = op.getInputs()[inputIdx].getType();
+    Type outputType = op.getOutputs()[outputIdx].getType();
+    if (!isa<RankedTensorType, MemRefType>(inputType) ||
+        !isa<RankedTensorType, MemRefType>(outputType)) {
+      return op.emitOpError()
+             << CustomOpT::kInplaceOutsAttrName
+             << " requires mapped ins and outs operands to be ranked tensors "
+                "or memrefs";
+    }
+    if (inputType != outputType) {
+      return op.emitOpError()
+             << CustomOpT::kInplaceOutsAttrName
+             << " requires mapped ins and outs operands to have identical "
+                "ranked tensor or memref types";
+    }
+    if (op.getInputs()[inputIdx] != op.getOutputs()[outputIdx]) {
+      return op.emitOpError()
+             << CustomOpT::kInplaceOutsAttrName
+             << " requires each mapped ins operand to be the same SSA value "
+                "as its mapped outs operand";
+    }
+  }
+
+  return success();
+}
+
 template <typename CustomOpT> LogicalResult verifyBuiltins(CustomOpT op) {
   const auto &builtinInfo = CustomOpT::kBuiltins.at(op.getName());
 
@@ -359,6 +517,9 @@ template <typename CustomOpT> LogicalResult verifyBuiltins(CustomOpT op) {
 }
 
 template <typename CustomOpT> LogicalResult verifyCustomOp(CustomOpT op) {
+  if (failed(verifyCustomOpInplaceOperandsAttr(op)))
+    return failure();
+
   if (op.isBuiltin())
     return verifyBuiltins(op);
 
@@ -561,22 +722,7 @@ ParseResult CustomMacroOp::parse(OpAsmParser &parser, OperationState &result) {
 void CustomOp::print(OpAsmPrinter &p) { printForCustomOps(*this, p); }
 
 void CustomMacroOp::print(OpAsmPrinter &p) {
-  p.printOptionalAttrDict(getOperation()->getAttrs(),
-                          /*elidedAttrs=*/{"operandSegmentSizes", "name"});
-  p << " ";
-  p.printString(getName());
-
-  auto printVariadicArgs = [&p](const auto &args, const std::string &nameHint) {
-    if (!args.empty())
-      p << " " << nameHint << "(" << args << " : " << args.getTypes() << ")";
-  };
-
-  printVariadicArgs(getInputs(), "ins");
-  printVariadicArgs(getOutputs(), "outs");
-  printVariadicArgs(getTempBuffers(), "tmps");
-
-  if (!getResults().empty())
-    p.printOptionalArrowTypeList(getResultTypes());
+  printForCustomOps(*this, p);
 
   auto syncArgs = getSyncRelatedArgs();
   if (!syncArgs.empty())
