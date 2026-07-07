@@ -156,6 +156,40 @@ func.func @test_vci_v64_i16(%arg0: i16) -> () {
   return
 }
 
+// Test VciV128F16InstrOp
+// CHECK-LABEL: test_vci_f16
+func.func @test_vci_f16(%arg0: f16) -> () {
+  %c0 = arith.constant 0.0 : f16
+  // CHECK: [[R1:%.*]] = "hivm_regbaseintrins.intr.hivm.vci"([[V0:%.*]], [[V1:%.*]]) : (f16, i32) -> vector<128xf16>
+  %0 = ave.hir.vci %arg0, <INCREASE> : f16, vector<128xf16>
+  // CHECK: [[R1:%.*]] = "hivm_regbaseintrins.intr.hivm.vci"([[V0:%.*]], [[V1:%.*]]) : (f16, i32) -> vector<128xf16>
+  %1 = ave.hir.vci %c0, <INCREASE> : f16, vector<128xf16>
+  // CHECK: [[R2:%.*]] = "hivm_regbaseintrins.intr.hivm.vci"([[V0:%.*]], [[V1:%.*]]) : (f16, i32) -> vector<128xf16>
+  // CHECK: [[R3:%.*]] = builtin.unrealized_conversion_cast [[R2]] : vector<128xf16> to vector<64xf16>
+  %2 = ave.hir.vci %c0, <INCREASE> : f16, vector<64xf16>
+  "test.test"(%0) : (vector<128 x f16>) -> ()
+  "test.test"(%1) : (vector<128 x f16>) -> ()
+  "test.test"(%2) : (vector<64 x f16>) -> ()
+  return
+}
+
+// Test VciV64F32InstrOp
+// CHECK-LABEL: test_vci_f32
+func.func @test_vci_f32(%arg0: f32) -> () {
+  %c0 = arith.constant 0.0 : f32
+  // CHECK: [[R1:%.*]] = "hivm_regbaseintrins.intr.hivm.vci"([[V0:%.*]], [[V1:%.*]]) : (f32, i32) -> vector<64xf32>
+  %0 = ave.hir.vci %arg0, <INCREASE> : f32, vector<64xf32>
+  // CHECK: [[R1:%.*]] = "hivm_regbaseintrins.intr.hivm.vci"([[V0:%.*]], [[V1:%.*]]) : (f32, i32) -> vector<64xf32>
+  %1 = ave.hir.vci %c0, <INCREASE> : f32, vector<64xf32>
+  // CHECK: [[R2:%.*]] = "hivm_regbaseintrins.intr.hivm.vci"([[V0:%.*]], [[V1:%.*]]) : (f32, i32) -> vector<64xf32>
+  // CHECK: [[R3:%.*]] = builtin.unrealized_conversion_cast [[R2]] : vector<64xf32> to vector<32xf32>
+  %2 = ave.hir.vci %c0, <INCREASE> : f32, vector<32xf32>
+  "test.test"(%0) : (vector<64 x f32>) -> ()
+  "test.test"(%1) : (vector<64 x f32>) -> ()
+  "test.test"(%2) : (vector<32 x f32>) -> ()
+  return
+}
+
 // Test VciV256S8InstrOp
 // CHECK-LABEL: test_vci_v64_i8
 func.func @test_vci_v64_i8(%arg0: i8) -> () {
