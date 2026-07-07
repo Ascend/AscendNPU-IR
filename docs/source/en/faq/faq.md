@@ -20,9 +20,9 @@ The system limits open files per process. Raise the limit and rebuild, e.g.:
 ulimit -n 65535
 ```
 
-**Q1.3** Do I still need to use `--apply-patches`?
+**Q1.3** Why is `--apply-patches` required on first build?
 
-No. The third-party submodules (LLVM, Torch-MLIR) now use repository branches with patches pre-applied, so manual patch application is no longer needed during build. The `--apply-patches` option is deprecated and will be removed in the next version.
+`--apply-patches` enables AscendNPU IR extensions (patches) for LLVM/MLIR and other third-party repos; it is required on the first build. You can omit it for later incremental builds.
 
 ## Running and debugging
 
