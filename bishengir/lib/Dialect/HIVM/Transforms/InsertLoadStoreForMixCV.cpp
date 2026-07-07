@@ -976,20 +976,32 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
         })
         .Case([&](hivm::LoadOp op) {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getDstMutable());
-          if (upProp) {
-            auto coreType = PropagatorUtil::getCoreType(upProp);
-            if (coreType != TCoreType::CUBE_AND_VECTOR) {
-              op.setTcoretypeAttr(
-                  TCoreTypeAttr::get(op.getContext(), coreType));
-            } else {
-              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
-              auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
-                                                        : addressSpaces[0];
-              op.setTcoretypeAttr(TCoreTypeAttr::get(
-                  op.getContext(),
-                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
+          TCoreTypeAttr currentTcoretype = op.getTcoretype();
+          if (!upProp)
+            return;
+
+          // shouldn't change the core type that has been set
+          // consider case of vtranspose user of load op
+          if (currentTcoretype)
+            return;
+
+          TCoreTypeAttr newTcoretype = nullptr;
+          auto coreType = PropagatorUtil::getCoreType(upProp);
+          if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            newTcoretype = TCoreTypeAttr::get(op.getContext(), coreType);
+          } else {
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            if (addressSpaces.empty()) {
+              LDBG("not set tcoretype for " << op);
+              return;
             }
+            auto addressSpace = addressSpaces[0];
+            newTcoretype = TCoreTypeAttr::get(
+                op.getContext(),
+                PropagatorUtil::kAddressSpace2CoreType.at(addressSpace));
           }
+          if (newTcoretype)
+            op.setTcoretypeAttr(newTcoretype);
         });
   });
 
