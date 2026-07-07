@@ -776,16 +776,20 @@ void DelayedCrossCoreGSSPass::crossCoreGssRunOnOperation(
       }
       return loopOp;
     };
-    if (eventIdInfo.multibufferLoop) {
-      eventIdInfo.multibufferLoop = fixLoop(eventIdInfo.multibufferLoop);
+
+    if (auto &multiBufferInfo = eventIdInfo.multiBufferInfo) {
+      multiBufferInfo->multibufferLoop =
+          fixLoop(multiBufferInfo->multibufferLoop);
     }
-    if (eventIdInfo.multibufferUnrollLoop1) {
-      eventIdInfo.multibufferUnrollLoop1 =
-          fixLoop(eventIdInfo.multibufferUnrollLoop1);
+    if (auto &cvPipeliningInfo = eventIdInfo.cvPipeliningInfo) {
+      cvPipeliningInfo->cvPipeliningLoop1 =
+          fixLoop(cvPipeliningInfo->cvPipeliningLoop1);
+      cvPipeliningInfo->cvPipeliningLoop2 =
+          fixLoop(cvPipeliningInfo->cvPipeliningLoop2);
     }
-    if (eventIdInfo.multibufferUnrollLoop2) {
-      eventIdInfo.multibufferUnrollLoop2 =
-          fixLoop(eventIdInfo.multibufferUnrollLoop2);
+    if (auto &cvPreloadingInfo = eventIdInfo.cvPreloadingInfo) {
+      cvPreloadingInfo->cvPreloadingLoop =
+          fixLoop(cvPreloadingInfo->cvPreloadingLoop);
     }
   };
 

@@ -569,6 +569,10 @@ getFirstLastOpOfTypes(Operation *parentOp) {
 
 bool isEmptyScope(Scope *scope);
 
+bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg);
+
+llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs);
+
 } // namespace mlir::hivm::syncsolver
 
 #endif // BISHENG_DIALECT_HIVM_TRANSFORMS_GRAPHSYNCSOLVER_UTILITY_H
