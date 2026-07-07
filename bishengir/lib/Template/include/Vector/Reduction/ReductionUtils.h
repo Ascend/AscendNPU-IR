@@ -1353,12 +1353,17 @@ scalar_reduce_dichotomy_to_target(__ubuf__ T *src_ptr, int64_t stride, int64_t n
   const int64_t dichotomy_num = Log2(n);
   const int64_t main_size = static_cast<int64_t>(1) << dichotomy_num;
   const int64_t tail_size = n - main_size;
-
-  int64_t half = main_size / 2;
+  constexpr int num_per_repeat = INTR_BYTES_PER_REPEAT / sizeof(T);
+  int64_t half = (main_size == num_per_repeat) ? main_size : main_size / 2;
+  
   for (int64_t i = 0; i < half; ++i) {
-    T val0 = *(src_ptr + i * stride);
-    T val1 = *(src_ptr + (i + half) * stride);
-    tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
+      T val0 = *(src_ptr + i * stride);
+      if (main_size != num_per_repeat) {
+          T val1 = *(src_ptr + (i + half) * stride);
+          tmp_buffer[i] = reduction_scalar_operation<OP, T>(val0, val1);
+      } else {// if there is only one repeat, just move src0 to buffer
+          tmp_buffer[i] = val0;
+      }
   }
 
   if (tail_size > 0) {
