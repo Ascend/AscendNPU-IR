@@ -481,7 +481,8 @@ static void computeConflictListsForCopyOpOperand(
 ///    Then A and B are confilict with each other
 static void computeConflictLists(
     func::FuncOp func,
-    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap) {
+    llvm::MapVector<Operation *, FusableOpInfo> &fusableOpInfoMap,
+    bool enableCrossIfFusion) {
   func.walk([&](Block *block) {
     if (isa<func::FuncOp, scf::ForOp, scf::IfOp, scf::WhileOp, scope::ScopeOp>(
             block->getParentOp())) {
@@ -499,6 +500,55 @@ static void computeConflictLists(
               fusableOpInfoMap[upstreamOp].conflictList.insert(downstreamOp);
               fusableOpInfoMap[downstreamOp].conflictList.insert(upstreamOp);
             }
+          }
+
+          if (enableCrossIfFusion) {
+            // Only region-bearing ops or explicit sync/copy ops need the
+            // previous/following scan and the body walk below.
+            if (op->getNumRegions() == 0 &&
+                !isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                     hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
+                     hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op) &&
+                !isa<hivm::CopyOp, memref::CopyOp>(op))
+              return;
+
+            DenseSet<Operation *> previousOps;
+            DenseSet<Operation *> followingOps;
+            findPreviousAndFollowingFusableOpOf(op, block, previousOps,
+                                                followingOps);
+
+            // Walk the op body: CopyOps create operand-specific conflicts;
+            // sync ops trigger a full barrier between all previous and
+            // following fusable ops.
+            auto walker = [&fusableOpInfoMap, &previousOps,
+                           &followingOps](Operation *op) {
+              if (isa<hivm::CopyOp, memref::CopyOp>(op)) {
+                auto copyOp = cast<CopyOpInterface>(op);
+                computeConflictListsForCopyOpOperand(fusableOpInfoMap,
+                                                     previousOps, followingOps,
+                                                     copyOp.getTarget());
+                computeConflictListsForCopyOpOperand(fusableOpInfoMap,
+                                                     previousOps, followingOps,
+                                                     copyOp.getSource());
+                return WalkResult::advance();
+              }
+              if (isa<hivm::AnchorOp>(op))
+                return WalkResult::interrupt();
+              return isa<hivm::SyncBlockOp, hivm::SyncBlockSetOp,
+                         hivm::SyncBlockWaitOp, hivm::CreateSyncBlockLockOp,
+                         hivm::SyncBlockLockOp, hivm::SyncBlockUnlockOp>(op)
+                         ? WalkResult::interrupt()
+                         : WalkResult::advance();
+            };
+            if (op->walk(walker).wasInterrupted()) {
+              for (auto previousOp : previousOps) {
+                for (auto followingOp : followingOps) {
+                  fusableOpInfoMap[previousOp].conflictList.insert(followingOp);
+                  fusableOpInfoMap[followingOp].conflictList.insert(previousOp);
+                }
+              }
+            }
+            return;
           }
 
           if (isa<hivm::CopyOp, memref::CopyOp>(op)) {
@@ -1187,7 +1237,7 @@ void AutoVectorizeV2::initFusableOpInfo(
   LLVM_DEBUG(llvm::dbgs() << *func << "\n");
 
   // Find confict fusable ops for every fusable op.
-  computeConflictLists(func, fusableOpInfoMap);
+  computeConflictLists(func, fusableOpInfoMap, enableCrossIfFusion);
 #ifndef NDEBUG
   LLVM_DEBUG(llvm::dbgs() << "========Dumping conflict lists begin========\n");
   for (auto info : fusableOpInfoMap) {
@@ -1236,6 +1286,10 @@ void AutoVectorizeV2::planFuseSiblingForLeafNodes(
       // Don't fuse leaf with rank-reducing indexing_map into a vsstb group.
       if (llvm::any_of(leafNodeGroup, isVsstbPatternTransposeOp) &&
           hasRankReducingIndexingMap(leafNode))
+        continue;
+      // Don't fuse vsstb leaf into a group with rank-reducing indexing_map.
+      if (llvm::any_of(leafNodeGroup, hasRankReducingIndexingMap) &&
+          isVsstbPatternTransposeOp(leafNode))
         continue;
       // All leafNodes within a group have the same shape and do not conflict
       // with each other.
