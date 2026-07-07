@@ -402,6 +402,8 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownMemorySpaceCast(
   auto [tilingDim, tiledOffset, tiledSize] = getTilingDimInfo(propagateOp);
   insertDownPropagators(castOp, newCastOp, tiledOffset, tiledSize, tilingDim,
                         rewriter);
+  rewriter.eraseOp(castOp);
+  rewriter.eraseOp(propagateOp);
   return success();
 }
 
