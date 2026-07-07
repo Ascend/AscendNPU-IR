@@ -32,6 +32,75 @@ using namespace mlir;
 using namespace mlir::tensor;
 
 namespace {
+/// Returns true if `root` (or a view derived from it) is stored into inside
+/// `forOp`, e.g. by a DPS op, HIVM DMA, or similar destination write.
+static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
+  SmallVector<Value> workList = {root};
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (!workList.empty()) {
+    Value val = workList.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+    for (Operation *user : val.getUsers()) {
+      if (user->getParentOp() != forOp)
+        continue;
+      if (isa<DestinationStyleOpInterface>(user))
+        return true;
+      if (isa<hivm::ND2NZOp>(user))
+        return true;
+      if (isa<memref::MemorySpaceCastOp, memref::SubViewOp, memref::CastOp,
+              memref::ReinterpretCastOp>(user))
+        workList.push_back(user->getResult(0));
+    }
+  }
+  return false;
+}
+
+/// After replacing a loop-local alloc with a subview of a hoisted buffer,
+/// refresh nested subview/cast result types to match the new source layout.
+static void refreshDerivedMemrefViewTypes(Value root, scf::ForOp forOp,
+                                          PatternRewriter &rewriter) {
+  SmallVector<Value> workList = {root};
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (!workList.empty()) {
+    Value val = workList.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+    for (Operation *user : val.getUsers()) {
+      if (user->getParentOp() != forOp)
+        continue;
+      if (auto subview = dyn_cast<memref::SubViewOp>(user)) {
+        auto newType = cast<MemRefType>(memref::SubViewOp::inferResultType(
+            cast<MemRefType>(subview.getSource().getType()),
+            subview.getMixedOffsets(), subview.getMixedSizes(),
+            subview.getMixedStrides()));
+        if (newType != subview.getType()) {
+          rewriter.modifyOpInPlace(subview, [&]() {
+            subview.getResult().setType(newType);
+          });
+        }
+        workList.push_back(subview.getResult());
+      } else if (auto castOp = dyn_cast<memref::CastOp>(user)) {
+        auto srcType = cast<MemRefType>(castOp.getSource().getType());
+        auto dstType = cast<MemRefType>(castOp.getType());
+        auto newDstType = MemRefType::get(dstType.getShape(),
+                                          dstType.getElementType(),
+                                          srcType.getLayout(),
+                                          dstType.getMemorySpace());
+        if (newDstType != dstType) {
+          rewriter.modifyOpInPlace(castOp, [&]() {
+            castOp.getResult().setType(newDstType);
+          });
+        }
+        workList.push_back(castOp.getResult());
+      } else if (isa<memref::ReinterpretCastOp, memref::MemorySpaceCastOp>(
+                     user)) {
+        workList.push_back(user->getResult(0));
+      }
+    }
+  }
+}
+
 struct OptimizeDpsOpWithYieldedInsertSlicePass
     : public impl::OptimizeDpsOpWithYieldedInsertSliceBase<
           OptimizeDpsOpWithYieldedInsertSlicePass> {
@@ -139,25 +208,8 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       if (!allocOp)
         return failure();
 
-      // Verify the alloc/memcast is used as a load destination.
-      SmallVector<Value> workList = {toTensorOp.getMemref()};
-      bool hasLoadUser = false;
-      while (!workList.empty()) {
-        Value val = workList.pop_back_val();
-        for (auto *user : val.getUsers()) {
-          if (user->getParentOp() != forOp)
-            continue;
-          if (isa<DestinationStyleOpInterface>(user)) {
-            hasLoadUser = true;
-            break;
-          }
-          if (isa<memref::MemorySpaceCastOp, memref::SubViewOp>(user))
-            workList.push_back(user->getResults().front());
-        }
-        if (hasLoadUser)
-          break;
-      }
-      if (!hasLoadUser)
+      // Verify the alloc/memcast is used as a store destination in the loop.
+      if (!hasBufferStoreUserInLoop(toTensorOp.getMemref(), forOp))
         return failure();
 
       // Check if the iter_arg init is a vbrc (scalar broadcast fill).
@@ -301,6 +353,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
 
       // Redirect all users of the old memcast to the big subview.
       rewriter.replaceAllUsesWith(info.memcast, bigSubview.getResult());
+      refreshDerivedMemrefViewTypes(bigSubview.getResult(), forOp, rewriter);
 
       // Replace insert_slice result with the iter_arg (identity passthrough).
       // This keeps the forOp's SSA valid while making its tensor results
