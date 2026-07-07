@@ -63,7 +63,7 @@ private:
 
   // Cache mapping a loop + (eventIdA,eventIdB) pair to the created select Value
   // that chooses which buffer/event id to use at runtime.
-  llvm::DenseMap<std::pair<LoopLikeOpInterface, int64_t>,
+  llvm::DenseMap<std::tuple<LoopLikeOpInterface, int64_t>,
                  std::map<llvm::SmallVector<int64_t>, Value>>
       bufferSelectedMem;
 
@@ -131,19 +131,23 @@ private:
                                           OperationBase *opBase,
                                           SyncOp *syncOp);
 
+  llvm::SmallVector<int64_t>
+  getEventIdsWithOffset(const llvm::SmallVector<int64_t> &eventIds,
+                        int64_t offset);
+
   Value getNestedIndexModular(IRRewriter &rewriter,
-                              LoopLikeOpInterface multibufferLoop,
-                              int64_t eventIdNum, int64_t preloadOffset);
+                              LoopLikeOpInterface multibufferLoop, int64_t mod,
+                              int64_t offset = 0);
 
   Value getMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
   Value getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                           SetWaitOp *syncOp);
 
-  Value getCVMultiBufferSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
+  Value getCVPipeliningSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 
-  Value getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
-                                            SetWaitOp *syncOp);
+  Value getCVPipeliningSelectOpConsecutive(IRRewriter &rewriter,
+                                           SetWaitOp *syncOp);
 
   Value getMultiBufferBlockSelectOp(IRRewriter &rewriter, SetWaitOp *syncOp);
 

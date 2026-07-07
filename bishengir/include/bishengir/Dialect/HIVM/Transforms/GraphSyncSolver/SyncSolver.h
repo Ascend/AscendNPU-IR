@@ -220,6 +220,8 @@ protected:
                      const llvm::SmallVector<MemInfo> &memInfoList2);
   std::optional<Loop *> getMultiBufferLoop(RWOperation *rwOp1,
                                            RWOperation *rwOp2);
+  std::optional<int64_t> getMultiBufferEventIdNum(RWOperation *rwOp1,
+                                                  RWOperation *rwOp2);
   std::optional<EventIdInfo> getMultiBufferEventIdInfo(Occurrence *occ1,
                                                        Occurrence *occ2,
                                                        RWOperation *rwOp1,
@@ -231,10 +233,12 @@ protected:
                              CorePipeInfo corePipeSrc,
                              CorePipeInfo corePipeDst);
 
-  std::optional<EventIdInfo>
-  checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2);
-  std::optional<EventIdInfo>
-  checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1, RWOperation *rwOp2);
+  std::optional<EventIdInfo> checkCVPipeliningEventIdInfo(RWOperation *rwOp1,
+                                                          RWOperation *rwOp2);
+  std::optional<EventIdInfo> checkCVPreloadingEventIdInfo(Occurrence *occ1,
+                                                          Occurrence *occ2,
+                                                          RWOperation *rwOp1,
+                                                          RWOperation *rwOp2);
 
   std::optional<EventIdInfo> checkMultiBufferEventIdInfo(Occurrence *occ1,
                                                          Occurrence *occ2,
@@ -280,6 +284,8 @@ protected:
                      std::optional<int64_t> eventIdNum = {});
 
   bool checkCVPipeliningMemConflict(RWOperation *rwOp1, RWOperation *rwOp2);
+
+  bool checkCVPreloadingMemConflict(RWOperation *rwOp1, RWOperation *rwOp2);
 
   llvm::SmallVector<std::pair<CorePipeInfo, CorePipeInfo>>
   getMemoryConflicts(RWOperation *rwOp1, RWOperation *rwOp2);
@@ -374,7 +380,7 @@ protected:
   std::unique_ptr<EventIdSolver> &getEventIdSolverRef(hivm::PIPE pipeSrc,
                                                       hivm::PIPE pipeDst);
 
-  bool checkReuseMultiBufferFlagId(ConflictPair *conflictPair);
+  bool checkRepeatMultiBufferFlagId(ConflictPair *conflictPair);
 
   // Primary handler invoked to register/record a found conflict.
   void handleConflict(Occurrence *occ1, Occurrence *occ2, RWOperation *rwOp1,

@@ -16,8 +16,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <cstdint>
@@ -458,6 +460,26 @@ bool isEmptyScope(Scope *scope) {
     }
   }
   return true;
+}
+
+bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg) {
+  return hacc::utils::isKernelArg(funcOp, funcArg.getArgNumber(),
+                                  hacc::KernelArgType::kWorkspace);
+}
+
+llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs) {
+  llvm::SmallVector<int64_t> offsets;
+  for (auto addr : addrs) {
+    if (auto constOp = dyn_cast<arith::ConstantOp>(addr.getDefiningOp())) {
+      auto baseAddr =
+          static_cast<int64_t>(cast<IntegerAttr>(constOp.getValue()).getInt());
+      int64_t baseAddrInBits = baseAddr * utils::kBitsToByte;
+      offsets.push_back(baseAddrInBits);
+    } else {
+      offsets.push_back(ShapedType::kDynamic);
+    }
+  }
+  return offsets;
 }
 
 } // namespace mlir::hivm::syncsolver

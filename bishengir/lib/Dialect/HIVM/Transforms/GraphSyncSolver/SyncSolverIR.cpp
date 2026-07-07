@@ -103,6 +103,11 @@ std::string PointerLikeInfo::str() {
   return ret;
 }
 
+std::string AllocLikeInfo::str() {
+  std::string ret = "AllocLikeInfo()";
+  return ret;
+}
+
 std::string MemInfo::str() {
   std::string ret = "MemInfo";
   if (this->pipe) {
@@ -121,6 +126,10 @@ std::string MemInfo::str() {
   if (this->pointerLikeInfo) {
     ret += comma.get();
     ret += this->pointerLikeInfo->str();
+  }
+  if (this->allocLikeInfo) {
+    ret += comma.get();
+    ret += this->allocLikeInfo->str();
   }
   ret += ")";
   return ret;
