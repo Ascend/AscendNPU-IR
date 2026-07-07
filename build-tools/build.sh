@@ -14,6 +14,7 @@ readonly LONG_OPTS=(
   "add-cmake-options:"
   "bisheng-compiler:"
   "build-bishengir-template"
+  "build-shmem-template"
   "bishengir-publish"
   "build:"
   "build-bishengir-so"
@@ -128,6 +129,7 @@ SKIP_RPATH_OPTION="FALSE"
 BISHENGIR_PUBLISH="OFF"
 BUILD_TARGETS="host"
 BISHENGIR_BUILD_TEMPLATE="OFF"
+SHMEM_BUILD_TEMPLATE="OFF"
 BUILD_DIR="${GIT_ROOT}/build"
 COVERAGE="OFF"
 
@@ -181,6 +183,8 @@ usage() {
       --enable-pydsl                       Enable the PyDSL(BiShengTile) project.
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: OFF)
       -t, --build-bishengir-template       Build BiShengIR Template (Default: OFF)
+      --build-shmem-template               Build shmem Template (Default: OFF)
+                                           If this option is set, must set --bisheng-compiler option.
       --coverage                           Build with gcov-compatible coverage instrumentation
                                            (adds -fprofile-arcs -ftest-coverage -fprofile-update=atomic).
                                            Use clang/clang++.
@@ -217,6 +221,10 @@ while true; do
     ;;
   -t | --build-template)
     BISHENGIR_BUILD_TEMPLATE="ON"
+    shift
+    ;;
+  --build-shmem-template)
+    SHMEM_BUILD_TEMPLATE="ON"
     shift
     ;;
   --disable-cann)
@@ -443,6 +451,7 @@ cmake_generate() {
             -DLLVM_TARGETS_TO_BUILD="${BUILD_TARGETS}" \
             -DLLVM_ENABLE_HIIPU=ON \
             -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
+            -DSHMEM_BUILD_TEMPLATE="${SHMEM_BUILD_TEMPLATE}" \
             -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
             -DBISHENGIR_DISABLE_CANN="${BISHENGIR_DISABLE_CANN}" \
             -DLLVM_ENABLE_ASSERTIONS="${ENABLE_ASSERTION}" \
@@ -485,6 +494,7 @@ cmake_generate() {
     -DLLVM_TARGETS_TO_BUILD="${BUILD_TARGETS}" \
     -DLLVM_ENABLE_HIIPU=ON \
     -DBISHENGIR_BUILD_TEMPLATE="${BISHENGIR_BUILD_TEMPLATE}" \
+    -DSHMEM_BUILD_TEMPLATE="${SHMEM_BUILD_TEMPLATE}" \
     -DBISHENG_COMPILER_PATH="${BISHENG_COMPILER}" \
     -DBISHENGIR_DISABLE_CANN="${BISHENGIR_DISABLE_CANN}" \
     -DLLVM_ENABLE_ASSERTIONS="${ENABLE_ASSERTION}" \

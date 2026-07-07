@@ -2,3 +2,6 @@
 	path = third-party/llvm-project
 	url = https://gitcode.com/Ascend/llvm-project.git
 	branch = Ascend/AscendNPU-IR-Dev/llvmorg-19.1.7
+[submodule "third-party/shmem"]
+	path = third-party/shmem
+	url = https://gitcode.com/cann/shmem.git
