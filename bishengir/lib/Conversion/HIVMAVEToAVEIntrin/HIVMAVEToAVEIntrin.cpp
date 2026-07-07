@@ -3279,9 +3279,11 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
       auto targetType = VectorType::get(256, rewriter.getI8Type());
       result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else if (elemType.isF32() && resType.getNumElements() <= 64) {
-      result = rewriter.create<VciInstrOp>(loc, resType, src1, src2);
+      auto targetType = VectorType::get(64, rewriter.getF32Type());
+      result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else if (elemType.isF16() && resType.getNumElements() <= 128) {
-      result = rewriter.create<VciInstrOp>(loc, resType, src1, src2);
+      auto targetType = VectorType::get(128, rewriter.getF16Type());
+      result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else {
       return rewriter.notifyMatchFailure(op, "Unsupported vector type");
     }
