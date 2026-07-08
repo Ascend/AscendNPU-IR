@@ -415,6 +415,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
           static_cast<unsigned>(
               hfusionOptions.hfusionMaxFusedOpsInAutoVectorizeV2);
     vecOptions.treeReduce = hfusionOptions.enableTreeReduce;
+    vecOptions.enableCrossIfFusion = hfusionOptions.hfusionEnableCrossIfFusion;
     pm.addPass(createHFusionAutoVectorizeV2Pass(vecOptions));
     pm.addPass(createOutlineVectorFunctionPass());
   } else {

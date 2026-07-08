@@ -35,34 +35,6 @@ using namespace mlir;
 using namespace mlir::hivm;
 using namespace mlir::hivmave;
 
-static int getParentOpElementAlignmentBitWidth(Operation *op) {
-  if (op != nullptr && op->getParentOp() != nullptr) {
-    if (auto elementAlignmentAttr =
-            op->getParentOp()->getAttr(utils::elementAlignmentBitWidth)) {
-      return dyn_cast<mlir::IntegerAttr>(elementAlignmentAttr).getInt();
-    }
-  }
-  return -1;
-}
-
-static int getOpElementAlignmentBitWidth(Operation *op) {
-  if (op != nullptr) {
-    if (auto elementAlignmentAttr =
-            op->getAttr(utils::elementAlignmentBitWidth)) {
-      return dyn_cast<mlir::IntegerAttr>(elementAlignmentAttr).getInt();
-    }
-  }
-  return -1;
-}
-
-static int getElementAlignmentBitWidth(Operation *op) {
-  int elementAlignment = getParentOpElementAlignmentBitWidth(op);
-  if (elementAlignment != -1) {
-    return elementAlignment;
-  }
-  return getOpElementAlignmentBitWidth(op);
-}
-
 static std::optional<hivmave::VecMemType> getVecMemType(Type vector) {
   auto vecType = dyn_cast<VectorType>(vector);
   if (!vecType)
@@ -79,25 +51,21 @@ static std::optional<hivmave::VecMemType> getVecMemType(Type vector) {
 /// Before conversion:
 /// ```mlir
 ///    %res = ave.hir.vload <NORM> %subview[%c0] {ave.unaligned_ub_access =
-///     #ave.unaligned_ub_access, element_alignment_bit_width = 8 : i32,
+///     #ave.unaligned_ub_access,
 ///     functionType = #ave.func_dist_type<pb8>} : memref<64xi1, strided<[1],
 ///     offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
-///    %6 = ave.hir.pge <ALL> {element_alignment_bit_width = 8 : i32,
-///     functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
-///    %7 = ave.hir.preg.and <b8> %5, %res, %6 {element_alignment_bit_width
-///    = 8 : i32} : vector<64xi1>
+///    %6 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
+///    %7 = ave.hir.preg.and <b8> %5, %res, %6 : vector<64xi1>
 /// ```
 /// After conversion:
 /// ```mlir
 ///    %res = ave.hir.vload <NORM> %subview[%c0] {ave.unaligned_ub_access =
-///     #ave.unaligned_ub_access, element_alignment_bit_width = 8 : i32,
+///     #ave.unaligned_ub_access,
 ///     functionType = #ave.func_dist_type<pb16>} : memref<64xi1,
 ///     strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi1>
 ///    %6 = ave.hir.preg.cast %res <PK_B16> : vector<64xi1> -> vector<64xi1>  
-///    %7 = ave.hir.pge <ALL> {element_alignment_bit_width = 8 : i32,
-///     functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
-///    %10 = ave.hir.preg.and <b8> %5, %6,
-///    %7 {element_alignment_bit_width = 8 : i32} : vector<64xi1>
+///    %7 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb8>} : vector<64xi1>
+///    %10 = ave.hir.preg.and <b8> %5, %6, %7 : vector<64xi1>
 /// ```
 static LogicalResult insertPregCastAfterLoad(VFLoadOp load,
                                              VectorType vectorTy,
@@ -132,8 +100,8 @@ static LogicalResult insertPregCastAfterLoad(VFLoadOp load,
 /// ```mlir
 ///    ave.hir.masked_store <NORM_B8> %subview_0[%c0], %8, %7
 ///    {ave.unaligned_ub_access = #ave.unaligned_ub_access,
-///    element_alignment_bit_width = 8 : i32, functionType =
-///    #ave.func_dist_type<pb8>, hivm.is_continuous} : memref<64xi1,
+///    functionType = #ave.func_dist_type<pb8>,
+///    hivm.is_continuous} : memref<64xi1,
 ///    strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>,
 ///    vector<64xi1>
 /// ```
@@ -142,8 +110,8 @@ static LogicalResult insertPregCastAfterLoad(VFLoadOp load,
 ///   %12 = ave.hir.preg.cast %11 <UNPK4_B8> : vector<64xi1> -> vector<64xi1>
 ///       ave.hir.masked_store <NORM_B8> %subview_0[%c0], %10, %12
 ///       {ave.unaligned_ub_access = #ave.unaligned_ub_access,
-///       element_alignment_bit_width = 8 : i32, functionType =
-///       #ave.func_dist_type<pb32>, hivm.is_continuous} : memref<64xi1,
+///       functionType = #ave.func_dist_type<pb32>,
+///       hivm.is_continuous} : memref<64xi1,
 ///       strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>,
 ///       vector<64xi1>
 /// ```
@@ -161,7 +129,7 @@ static LogicalResult insertPregCastBeforeStore(VFMaskedStoreOp store,
     if (vecSize == 64) {
       store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
                                          store.getContext(),
-                                         hivmave::FunctionDistType::PB32));
+                                        hivmave::FunctionDistType::PB32));
     } else if (vecSize == 128) {
       store->setAttr("functionType", hivmave::FunctionDistTypeAttr::get(
                                          store.getContext(),
@@ -184,52 +152,8 @@ static LogicalResult insertPregCastBeforeStore(VFMaskedStoreOp store,
   return success();
 }
 
-static bool isAlignByElementAlignment(Operation *op) {
-  if (op->getUsers().empty()) {
-    return false;
-  }
-  if (isa<func::CallOp>(*(op->getUsers().begin()))) {
-    // result is used by call op, assume it as aligned.
-    return true;
-  }
-  auto srcAlignment = getOpElementAlignmentBitWidth(op);
-  int dstAlignment = -1;
-
-  // All users should be the same alignmentbitwidth,
-  // excpet that in some case a user's alignmentbitwidth
-  // may not be infered(eg. func.call)
-  for (auto user : op->getUsers()) {
-    dstAlignment = getOpElementAlignmentBitWidth(user);
-    if (dstAlignment != -1) {
-      break;
-    }
-    // If user is scf.for, trace through iter_args to find the real consumer
-    // alignment, since scf.for itself does not carry alignment attributes.
-    if (auto forOp = dyn_cast<scf::ForOp>(user)) {
-      for (auto [idx, initVal] : llvm::enumerate(forOp.getInitArgs())) {
-        for (auto res : op->getResults()) {
-          if (initVal == res) {
-            Value forResult = forOp.getResult(idx);
-            for (auto forResultUser : forResult.getUsers()) {
-              dstAlignment = getOpElementAlignmentBitWidth(forResultUser);
-              if (dstAlignment != -1)
-                break;
-            }
-            if (dstAlignment != -1)
-              break;
-          }
-        }
-        if (dstAlignment != -1)
-          break;
-      }
-    }
-  }
-  return srcAlignment == dstAlignment && srcAlignment != -1;
-}
-
 static Value addDistForUnalignedLoad(Value srcVal, hivmave::LoadDist dist,
-                                     Location loc, IRRewriter &rewriter,
-                                     Attribute bitWidthAttr) {
+                                     Location loc, IRRewriter &rewriter) {
   // vldus have no dist operand
   // VLDS support BRC mode with 1Byte alignment.
   // So the BRC mode does not use unaligned instruction.
@@ -239,12 +163,12 @@ static Value addDistForUnalignedLoad(Value srcVal, hivmave::LoadDist dist,
   case hivmave::LoadDist::UNPK_B8:
   case hivmave::LoadDist::UNPK_B16:
   case hivmave::LoadDist::UNPK_B32: {
-    dst = sparseByIntlv(srcVal, rewriter, loc, bitWidthAttr);
+    dst = sparseByIntlv(srcVal, rewriter, loc);
     break;
   }
   case hivmave::LoadDist::UNPK4_B8: {
-    dst = sparseByIntlv(srcVal, rewriter, loc, bitWidthAttr);
-    dst = sparseByIntlv(dst, rewriter, loc, bitWidthAttr);
+    dst = sparseByIntlv(srcVal, rewriter, loc);
+    dst = sparseByIntlv(dst, rewriter, loc);
     break;
   }
   default:
@@ -254,8 +178,7 @@ static Value addDistForUnalignedLoad(Value srcVal, hivmave::LoadDist dist,
 }
 
 static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
-                                      Location loc, IRRewriter &rewriter,
-                                      Attribute bitWidthAttr) {
+                                      Location loc, IRRewriter &rewriter) {
   // vstus have no dist operand
   // Implement ONEPT_xxx by using vsel
   // Implement PK_xxx by using vdintlv
@@ -263,12 +186,12 @@ static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
   switch (dist) {
   case hivmave::StoreDist::PK_B16:
   case hivmave::StoreDist::PK_B32: {
-    dst = denseByDIntlv(srcVal, rewriter, loc, bitWidthAttr);
+    dst = denseByDIntlv(srcVal, rewriter, loc);
     break;
   }
   case hivmave::StoreDist::PK4_B32: {
-    dst = denseByDIntlv(srcVal, rewriter, loc, bitWidthAttr);
-    dst = denseByDIntlv(dst, rewriter, loc, bitWidthAttr);
+    dst = denseByDIntlv(srcVal, rewriter, loc);
+    dst = denseByDIntlv(dst, rewriter, loc);
     break;
   }
   default:
@@ -277,8 +200,7 @@ static Value addDistForUnalignedStore(Value srcVal, hivmave::StoreDist dist,
   return dst;
 }
 
-/// Add load dist by element alignment bitwidth
-/// Change NORM to UNPK_B8/UNPK_B16/UNPK4_B8
+/// Change NORM to UNPK_B8/UNPK_B16/UNPK4_B8 based on functionType
 struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
   explicit AVELoadPattern(MLIRContext *context)
       : OpRewritePattern<VFLoadOp>(context) {}
@@ -288,28 +210,37 @@ struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
     VectorType vectorTy = load.getVectorType();
     auto vecElemTy = vectorTy.getElementType();
     auto elemWidth = vecElemTy.getIntOrFloatBitWidth();
-    int elementAlignment = getElementAlignmentBitWidth(load);
-    if (load.getPattern() == hivmave::LoadDist::NORM) {
-      if (elemWidth == 8 && elementAlignment == 16) {
-        load.setPattern(hivmave::LoadDist::UNPK_B8);
-        LDBG("set load dist from NORM to UNPK_B8");
-        return success();
-      } else if (elemWidth == 16 && elementAlignment == 32) {
-        load.setPattern(hivmave::LoadDist::UNPK_B16);
-        LDBG("set load dist from NORM to UNPK_B16");
-        return success();
-      } else if (elemWidth == 8 && elementAlignment == 32) {
-        load.setPattern(hivmave::LoadDist::UNPK4_B8);
-        LDBG("set load dist from NORM to UNPK4_B8");
-        return success();
+    auto funcDistAttr =
+        load->getAttrOfType<FunctionDistTypeAttr>("functionType");
+    if (load.getPattern() == hivmave::LoadDist::NORM && funcDistAttr) {
+      switch (funcDistAttr.getValue()) {
+      case hivmave::FunctionDistType::PK:
+        if (elemWidth == 8) {
+          load.setPattern(hivmave::LoadDist::UNPK_B8);
+          LDBG("set load dist from NORM to UNPK_B8");
+          return success();
+        } else if (elemWidth == 16) {
+          load.setPattern(hivmave::LoadDist::UNPK_B16);
+          LDBG("set load dist from NORM to UNPK_B16");
+          return success();
+        }
+        break;
+      case hivmave::FunctionDistType::PK4:
+        if (elemWidth == 8) {
+          load.setPattern(hivmave::LoadDist::UNPK4_B8);
+          LDBG("set load dist from NORM to UNPK4_B8");
+          return success();
+        }
+        break;
+      default:
+        break;
       }
     }
 
     if (!vecElemTy.isInteger(1) || !load->hasAttr(UnalignedAttr::name)) {
       return failure();
     }
-    if (auto funcDistAttr =
-            load->getAttrOfType<FunctionDistTypeAttr>("functionType")) {
+    if (funcDistAttr) {
       auto funcDist = funcDistAttr.getValue();
       if (funcDist == hivmave::FunctionDistType::PB8) {
         return insertPregCastAfterLoad(load, vectorTy, rewriter);
@@ -319,8 +250,7 @@ struct AVELoadPattern : public OpRewritePattern<VFLoadOp> {
   }
 };
 
-/// Add store dist by element alignment bitwidth
-/// Change NORM to PK_B16/PK_B32/PK4_B32
+/// Change NORM to PK_B16/PK_B32/PK4_B32 based on functionType
 struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
   explicit AVEStorePattern(MLIRContext *context)
       : OpRewritePattern<VFMaskedStoreOp>(context) {}
@@ -331,8 +261,6 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
     if (store->hasAttr(UnalignedAttr::name))
       return;
     Value data = store.getVal();
-    auto orgAligmentAttr =
-        data.getDefiningOp()->getAttr(utils::elementAlignmentBitWidth);
     Location loc = store->getLoc();
     VectorType orgVectorTy = store.getVectorType();
     Type dElemType = orgVectorTy.getElementType();
@@ -348,13 +276,11 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
           VectorType::get(SmallVector<int64_t>{regSize}, dElemType);
       UnrealizedConversionCastOp ucc =
           rewriter.create<UnrealizedConversionCastOp>(loc, castRegType, data);
-      ucc->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
       data = ucc->getResult(0);
     }
     VectorType targetVectorTy = VectorType::get(targetRegSize, targetRegType);
     LLVM::BitcastOp bitcast =
         rewriter.create<LLVM::BitcastOp>(loc, targetVectorTy, data);
-    bitcast->setAttr(utils::elementAlignmentBitWidth, orgAligmentAttr);
     store->setOperand(store->getNumOperands() - 1, bitcast);
   }
 
@@ -366,32 +292,36 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
     VectorType vectorTy = store.getVectorType();
     auto vecElemTy = vectorTy.getElementType();
     auto elemWidth = vecElemTy.getIntOrFloatBitWidth();
-    int elementAlignment = -1;
-    if (auto valOp = store.getVal().getDefiningOp()) {
-      elementAlignment = getElementAlignmentBitWidth(valOp);
-    }
-    if (elementAlignment == -1) {
-      elementAlignment = getElementAlignmentBitWidth(store);
-    }
+    auto funcDistAttr =
+        store->getAttrOfType<FunctionDistTypeAttr>("functionType");
 
-    if (store.getPattern() == hivmave::StoreDist::NORM_B8 ||
-        store.getPattern() == hivmave::StoreDist::NORM_B16) {
-      if (elemWidth == 8 && elementAlignment == 16) {
-        store.setPattern(hivmave::StoreDist::PK_B16);
-        LDBG("set store dist from NORM to PK_B16");
-        changeStoreVectorType(store, rewriter, 2, 16);
-        return success();
-      } else if (elemWidth == 16 && elementAlignment == 32) {
-        store.setPattern(hivmave::StoreDist::PK_B32);
-        LDBG("set store dist from NORM to PK_B32");
-        changeStoreVectorType(store, rewriter, 2, 32);
-        return success();
-      } else if (elemWidth == 8 && elementAlignment == 32) {
-        store.setPattern(hivmave::StoreDist::PK4_B32);
-        LDBG("set store dist from NORM to PK4_B32");
+    if ((store.getPattern() == hivmave::StoreDist::NORM_B8 ||
+         store.getPattern() == hivmave::StoreDist::NORM_B16) && funcDistAttr) {
+      switch (funcDistAttr.getValue()) {
+      case hivmave::FunctionDistType::PK:
+        if (elemWidth == 8) {
+          store.setPattern(hivmave::StoreDist::PK_B16);
+          LDBG("set store dist from NORM to PK_B16");
+          changeStoreVectorType(store, rewriter, 2, 16);
+          return success();
+        } else if (elemWidth == 16) {
+          store.setPattern(hivmave::StoreDist::PK_B32);
+          LDBG("set store dist from NORM to PK_B32");
+          changeStoreVectorType(store, rewriter, 2, 32);
+          return success();
+        }
+        break;
+      case hivmave::FunctionDistType::PK4:
+        if (elemWidth == 8) {
+          store.setPattern(hivmave::StoreDist::PK4_B32);
+          LDBG("set store dist from NORM to PK4_B32");
         if (archIs910_95)
           changeStoreVectorType(store, rewriter, 4, 32);
         return success();
+        }
+        break;
+      default:
+        break;
       }
     }
 
@@ -400,8 +330,7 @@ struct AVEStorePattern : public OpRewritePattern<VFMaskedStoreOp> {
     if (!isMaskI1Type || !store->hasAttr(UnalignedAttr::name)) {
       return failure();
     }
-    if (auto funcDistAttr =
-            store->getAttrOfType<FunctionDistTypeAttr>("functionType")) {
+    if (funcDistAttr) {
       auto funcDist = funcDistAttr.getValue();
       if (funcDist == hivmave::FunctionDistType::PB8) {
         return insertPregCastBeforeStore(store, maskType, rewriter);
@@ -438,13 +367,12 @@ struct AVEStoreWithStridePattern
     }
 
     Location loc = storeOp.getLoc();
-    auto bitWidthAttr = storeOp->getAttr(utils::elementAlignmentBitWidth);
     Value srcVal = storeOp.getVal();
 
     rewriter.setInsertionPoint(storeOp);
     Value result = srcVal;
     for (int i = 0; i < numDIntlv; ++i)
-      result = denseByDIntlv(result, rewriter, loc, bitWidthAttr);
+      result = denseByDIntlv(result, rewriter, loc);
 
     storeOp->setOperand(storeOp->getNumOperands() - 1, result);
     storeOp->removeAttr("functionType");
@@ -481,8 +409,6 @@ struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
     }
 
     Location loc = intlvOp.getLoc();
-    auto bitWidthAttr =
-        intlvOp->getAttr(utils::elementAlignmentBitWidth);
 
     rewriter.setInsertionPointAfter(intlvOp);
 
@@ -490,9 +416,10 @@ struct AVEIntlvFuncDistPattern : public OpRewritePattern<IntlvOp> {
       SmallVector<Operation *> oldUsers(res.getUsers());
       if (oldUsers.empty())
         return;
+
       Value result = res;
       for (int i = 0; i < numIntlv; ++i)
-        result = sparseByIntlv(result, rewriter, loc, bitWidthAttr);
+        result = sparseByIntlv(result, rewriter, loc);
       for (Operation *user : oldUsers)
         user->replaceUsesOfWith(res, result);
     };
@@ -637,30 +564,30 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
     if (elementAlignment == -1)
       elementAlignment = util::VL_BITS / dstTyNumElems;
     PgePattern pattern = pge.getPattern();
+    PgePattern normPattern = pattern;
     if (pattern == PgePattern::ALL &&
         dstTyNumElems != util::VL_BITS / elementAlignment)
-      pattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
+      normPattern = hivmave::getPgePatternAttr(rewriter, dstTyNumElems,
                                            util::PREDICATE_BITS)
                     .value()
                     .getValue();
-    PgePattern normPattern = pattern;
     // Use pattern all/half instead of const int
     switch (elementAlignment) {
     case 8:
-      if (pattern == PgePattern::VL128)
+      if (normPattern == PgePattern::VL128)
         normPattern = PgePattern::H;
       break;
       break;
     case 16:
-      if (pattern == PgePattern::VL128)
+      if (normPattern == PgePattern::VL128)
         normPattern = PgePattern::ALL;
       else if (pattern == PgePattern::VL64)
         normPattern = PgePattern::H;
       break;
     case 32:
-      if (pattern == PgePattern::VL64)
+      if (normPattern == PgePattern::VL64)
         normPattern = PgePattern::ALL;
-      else if (pattern == PgePattern::VL32)
+      else if (normPattern == PgePattern::VL32)
         normPattern = PgePattern::H;
       break;
     default:
@@ -681,13 +608,12 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
     hivmave::LoadDist dist = load.getPattern();
     Location loc = load->getLoc();
     auto dstVec = load.getRes();
-    auto bitWidthAttr = load->getAttr(mlir::utils::elementAlignmentBitWidth);
     rewriter.setInsertionPointAfter(load);
     SmallVector<Operation *> oldUsers(dstVec.getUsers());
     // Add additional op to adpat dist mode for unaligned load
     if (archIs910_95 && load->hasAttr(UnalignedAttr::name)) {
       Value result =
-          addDistForUnalignedLoad(dstVec, dist, loc, rewriter, bitWidthAttr);
+          addDistForUnalignedLoad(dstVec, dist, loc, rewriter);
       if (result != dstVec) {
         LDBG("add intlv for unaligned load");
         for (Operation *u : oldUsers)
@@ -700,8 +626,8 @@ static void adaptBitWidthForLoad(IRRewriter &rewriter,
     // and deinterleave data before store.
     if (!archIs910_95 && dist == hivmave::LoadDist::UNPK4_B8) {
       LDBG("add intlv for 310b4");
-      Value sparseVec1 = sparseByIntlv(dstVec, rewriter, loc, bitWidthAttr);
-      Value sparseVec2 = sparseByIntlv(sparseVec1, rewriter, loc, bitWidthAttr);
+      Value sparseVec1 = sparseByIntlv(dstVec, rewriter, loc);
+      Value sparseVec2 = sparseByIntlv(sparseVec1, rewriter, loc);
       for (Operation *u : oldUsers)
         u->replaceUsesOfWith(dstVec, sparseVec2);
       load.setPattern(hivmave::LoadDist::NORM);
@@ -718,12 +644,11 @@ static void adaptBitWidthForStore(IRRewriter &rewriter,
     hivmave::StoreDist dist = store.getPattern();
     Location loc = store->getLoc();
     auto srcVec = store.getVal();
-    auto bitWidthAttr = store->getAttr(mlir::utils::elementAlignmentBitWidth);
     rewriter.setInsertionPoint(store);
     // Add additional op to adpat dist mode for unaligned store
     if (archIs910_95 && store->hasAttr(UnalignedAttr::name)) {
       Value result =
-          addDistForUnalignedStore(srcVec, dist, loc, rewriter, bitWidthAttr);
+          addDistForUnalignedStore(srcVec, dist, loc, rewriter);
       if (result != srcVec) {
         LDBG("add dintlv for unaligned store");
         // set new src vector of store
@@ -736,59 +661,11 @@ static void adaptBitWidthForStore(IRRewriter &rewriter,
     // and deinterleave data before store.
     if (!archIs910_95 && dist == hivmave::StoreDist::PK4_B32) {
       LDBG("add dintlv for 310b4");
-      Value denseVec1 = denseByDIntlv(srcVec, rewriter, loc, bitWidthAttr);
-      Value denseVec2 = denseByDIntlv(denseVec1, rewriter, loc, bitWidthAttr);
+      Value denseVec1 = denseByDIntlv(srcVec, rewriter, loc);
+      Value denseVec2 = denseByDIntlv(denseVec1, rewriter, loc);
       // set new src vector of store
       store.setOperand(3, denseVec2);
       store.setPattern(hivmave::StoreDist::NORM_B8);
-    }
-    return WalkResult::advance();
-  });
-}
-
-template <typename OpToBeConverted>
-static void adaptBitWidthForTypeConversion(IRRewriter &rewriter,
-                                           mlir::func::FuncOp &funcOp) {
-  funcOp->walk([&rewriter](Operation *op) {
-    if (!isa<OpToBeConverted>(op))
-      return WalkResult::skip();
-    LDBG("process operation : " << *op);
-    OpToBeConverted convOp = dyn_cast<OpToBeConverted>(op);
-    VectorType resType = cast<VectorType>(convOp.getResult().getType());
-    VectorType srcType = cast<VectorType>(convOp.getSrc().getType());
-    unsigned int outBitWidth = resType.getElementTypeBitWidth();
-    unsigned int inBitWidt = srcType.getElementTypeBitWidth();
-    bool alignByElementAlignment = isAlignByElementAlignment(convOp);
-    LDBG("inBitWidt : " << inBitWidt);
-    LDBG("outBitWidth : " << outBitWidth);
-    LDBG("alignByElementAlignment : " << alignByElementAlignment);
-    if (alignByElementAlignment)
-      return WalkResult::skip();
-    if (inBitWidt == outBitWidth)
-      return WalkResult::skip();
-
-    auto loc = convOp.getLoc();
-    auto bitWidthAttr = convOp->getAttr(mlir::utils::elementAlignmentBitWidth);
-    if (inBitWidt > outBitWidth) {
-      // VFTruncF adapte for trunc + vsstb
-      if constexpr (std::is_same_v<OpToBeConverted, VFTruncFOp>)
-        if (resType.getNumElements() != srcType.getNumElements())
-          return WalkResult::skip();
-      rewriter.setInsertionPointAfter(convOp);
-      auto resVec = convOp.getResult();
-      SmallVector<Operation *> oldUsers(resVec.getUsers());
-      Value denseVec = denseByDIntlv(resVec, rewriter, loc, bitWidthAttr);
-      if (inBitWidt / outBitWidth == 4)
-        denseVec = denseByDIntlv(denseVec, rewriter, loc, bitWidthAttr);
-      for (Operation *u : oldUsers)
-        u->replaceUsesOfWith(resVec, denseVec);
-    } else {
-      rewriter.setInsertionPoint(convOp);
-      auto srcVec = convOp.getSrc();
-      Value sparseVec = sparseByIntlv(srcVec, rewriter, loc, bitWidthAttr);
-      if (outBitWidth / inBitWidt == 4)
-        sparseVec = sparseByIntlv(sparseVec, rewriter, loc, bitWidthAttr);
-      convOp.setOperand(0, sparseVec);
     }
     return WalkResult::advance();
   });
@@ -807,16 +684,6 @@ struct AVENormalizeOpsPass
 
     adaptBitWidthForLoad(rewriter, funcOp, archIs910_95);
     adaptBitWidthForStore(rewriter, funcOp, archIs910_95);
-
-    adaptBitWidthForTypeConversion<hivmave::VFExtFOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFExtSIOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFExtUIOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFTruncIOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFTruncFOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFFpToSIntOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFFpToUIntOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFSIntToFpOp>(rewriter, funcOp);
-    adaptBitWidthForTypeConversion<hivmave::VFUIntToFpOp>(rewriter, funcOp);
   }
 
 public:

@@ -1,5 +1,5 @@
 // RUN: bishengir-opt -hacc-append-device-spec=target=Ascend910_9589 \
-// RUN: -analyze-vector-layout -analyze-alignment-bitwidth -remove-vector-layout-attr \
+// RUN: -analyze-vector-layout -remove-vector-layout-attr \
 // RUN: -ave-normalize-ops -convert-hivmave-to-ave-intrin %s -split-input-file | FileCheck %s
 
 // CHECK-LABEL: @test_preg_arith_op_lowering

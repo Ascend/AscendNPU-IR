@@ -46,34 +46,6 @@ using namespace mlir::hivm;
 using namespace mlir::hivmave;
 using namespace mlir::hivm_regbaseintrins;
 
-static int getParentOpElementAlignmentBitWidth(Operation *op) {
-  if (op != nullptr && op->getParentOp() != nullptr) {
-    if (auto elementAlignmentAttr =
-            op->getParentOp()->getAttr(utils::elementAlignmentBitWidth)) {
-      return dyn_cast<mlir::IntegerAttr>(elementAlignmentAttr).getInt();
-    }
-  }
-  return -1;
-}
-
-static int getOpElementAlignmentBitWidth(Operation *op) {
-  if (op != nullptr) {
-    if (auto elementAlignmentAttr =
-            op->getAttr(utils::elementAlignmentBitWidth)) {
-      return dyn_cast<mlir::IntegerAttr>(elementAlignmentAttr).getInt();
-    }
-  }
-  return -1;
-}
-
-static int getElementAlignmentBitWidth(Operation *op) {
-  int elementAlignment = getParentOpElementAlignmentBitWidth(op);
-  if (elementAlignment != -1) {
-    return elementAlignment;
-  }
-  return getOpElementAlignmentBitWidth(op);
-}
-
 template <typename TargetTy, typename... Args>
 inline Value createTargetTyIfValid(OpBuilder &builder, const Location &loc,
                                    bool condition, Args &&...args) {
@@ -821,32 +793,6 @@ struct HIVM2VLLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
   }
 };
 
-int getMaxDataTypeWidths(Operation *op) {
-  int elementWidth = 0;
-  int opElementWidth = getParentOpElementAlignmentBitWidth(op);
-  if (opElementWidth != -1 && opElementWidth != 1) {
-    return opElementWidth;
-  }
-  opElementWidth = getOpElementAlignmentBitWidth(op);
-  if (opElementWidth != -1 && opElementWidth != 1) {
-    return opElementWidth;
-  }
-  for (size_t i = 0; i < op->getNumOperands(); ++i) {
-    Value operand = op->getOperand(i);
-    Type optype = operand.getType();
-    if (auto vectorType = mlir::dyn_cast<VectorType>(optype)) {
-      Type elementType = vectorType.getElementType();
-      elementWidth =
-        elementWidth > static_cast<int>(elementType.getIntOrFloatBitWidth())
-            ? elementWidth
-            : static_cast<int>(elementType.getIntOrFloatBitWidth());
-    }
-  }
-  elementWidth = (elementWidth == 8 || elementWidth == 16 || elementWidth == 32)
-                     ? elementWidth
-                     : -1;
-  return elementWidth;
-}
 
 static Value castToTypeIfNeeded(ConversionPatternRewriter &rewriter,
                                 Location loc, Value v, Type dstType) {
@@ -895,7 +841,6 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
 
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(load.getPattern()));
-    int elementAlignment = getElementAlignmentBitWidth(load);
     auto moduleOp = load->getParentOfType<mlir::ModuleOp>();
     bool archIs910_95 = hacc::utils::isAscend950(moduleOp);
 
@@ -904,24 +849,10 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       Type elementType = memRefTy.getElementType();
       // use vldus + movvp to support i1 unaligned address
       if (elementType.isInteger(1)) {
-        elementAlignment = getBitWidthFromAttr(load);
-        if (elementAlignment == -1) {
-          for (auto *userOp : load->getUsers()) {
-            // Skip UnrealizedConversionCastOp and look for its users instead
-            while (isa<UnrealizedConversionCastOp>(userOp)) {
-              if (userOp->getUsers().empty()) {
-                break;
-              }
-              userOp = *userOp->getUsers().begin();
-            }
-            elementAlignment = getMaxDataTypeWidths(userOp);
-            break;
-          }
-        }
-        assert(elementAlignment != -1);
-        auto result = createLoadOpFori1Type(dataPtr, rewriter, elementAlignment);
+        int pbMode = getBitWidthFromAttr(load);
+        auto result = createLoadOpFori1Type(dataPtr, rewriter, pbMode);
         if (!result) {
-          llvm_unreachable("unsupported elementAlignment!");
+          llvm_unreachable("unsupported pbMode!");
         }
         rewriter.replaceOp(load, result);
         return success();
@@ -1007,11 +938,11 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
                                                     dist, mode);
       Value pLoadRes = pLoadOp->getResult(0);
       auto origLoadTy = load->getResult(0).getType();
-      bool shouldSparsifyLayout =
-          elementAlignment == 16 || elementAlignment == 32;
+      int pbMode = getBitWidthFromAttr(load);
+      bool shouldSparsifyLayout = pbMode == 16 || pbMode == 32;
       if (archIs910_95 && shouldSparsifyLayout) {
         Value res = preginterleaveDataLayoutForExtCast(rewriter, loc, pLoadRes,
-                                                       elementAlignment);
+                                                       pbMode);
         res = castToTypeIfNeeded(rewriter, loc, res, origLoadTy);
         rewriter.replaceOp(load, res);
       } else {
@@ -1064,13 +995,6 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
     Value mode = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), rewriter.getI32IntegerAttr(0));
 
-    int elementAlignment = -1;
-    if (auto valOp = store.getVal().getDefiningOp()) {
-      elementAlignment = getElementAlignmentBitWidth(valOp);
-    }
-    if (elementAlignment == -1) {
-      elementAlignment = getElementAlignmentBitWidth(store);
-    }
     Value dist = rewriter.create<LLVM::ConstantOp>(
         loc, rewriter.getI32Type(), static_cast<uint32_t>(store.getPattern()));
     auto moduleOp = store->getParentOfType<mlir::ModuleOp>();
@@ -1186,9 +1110,9 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       rewriter.replaceOp(store, result);
     } else if (dElemType.isInteger(1)) {
       // if store data is sparse, need to convert compact
-      if (archIs910_95 &&
-          (elementAlignment == 16 || elementAlignment == 32)) {
-        auto asResult = createPstuOp(data, dataPtr, rewriter, elementAlignment);
+      int pbMode = getBitWidthFromAttr(store);
+      if (archIs910_95 && (pbMode == 16 || pbMode == 32)) {
+        auto asResult = createPstuOp(data, dataPtr, rewriter, pbMode);
         rewriter.replaceOp(store, asResult);
       } else {
         dist = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI32Type(),
@@ -1570,24 +1494,8 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
     Type elementType = vType.getElementType();
     auto vlType = createVLVectorType(elementType);
 
-    Value oldMsk = select.getMask();
     Value adaptMsk = adaptor.getMask();
     Value mask = adaptMsk;
-    auto parAlign = getParentOpElementAlignmentBitWidth(select);
-    auto *oldMskDefOp = oldMsk.getDefiningOp();
-    bool unaligned = false;
-    if (oldMskDefOp) {
-      unaligned = oldMskDefOp->hasAttr(UnalignedAttr::name);
-    }
-    if (parAlign == -1 && !unaligned && oldMskDefOp) {
-      int align = getElementAlignmentBitWidth(select);
-      int oldMskAlign = getElementAlignmentBitWidth(oldMskDefOp);
-      if (oldMskAlign != -1 && oldMskAlign < align) {
-        mask = getVLRegValueOrSelf(mask, rewriter);
-        mask = preginterleaveDataLayoutForExtCast(rewriter, loc, mask, align);
-      }
-    }
-
     mask = getVLRegValueOrSelf(mask, rewriter);
     auto trueValue = select.getTrueValue();
     auto falseValue = select.getFalseValue();
@@ -1677,47 +1585,6 @@ static Value cmpLowerToIntrin(VFCmpOp cmpOp,
   return result;
 }
 
-/// Densify the result of a VFCmpOp based on its functionType attribute.
-/// When the comparison result is an i1 vector and the op has functionType
-/// = DINTLV2/DINTLV4, insert punpack operations to de-interleave the mask.
-/// Returns the (possibly densified) value; if no densification is needed,
-/// returns cmpResult unchanged.
-static Value densifyCmpResult(VFCmpOp cmpOp, Value cmpResult,
-                               ConversionPatternRewriter &rewriter) {
-  auto resType = dyn_cast<VectorType>(cmpResult.getType());
-  if (!resType || !resType.getElementType().isSignlessInteger(1))
-    return cmpResult;
-
-  auto funcDistAttr =
-      cmpOp->getAttrOfType<FunctionDistTypeAttr>("functionType");
-  if (!funcDistAttr)
-    return cmpResult;
-
-  FunctionDistType funcType = funcDistAttr.getValue();
-  if (funcType != FunctionDistType::DINTLV2 &&
-      funcType != FunctionDistType::DINTLV4)
-    return cmpResult;
-
-  Location loc = cmpOp.getLoc();
-  Value part = rewriter.create<arith::ConstantOp>(
-      loc, rewriter.getI32IntegerAttr(0));
-  Value result = cmpResult;
-
-  if (funcType == FunctionDistType::DINTLV2) {
-    Operation *punpackOp =
-        hivm_regbaseintrins::buildPunpackOp(loc, part, result, rewriter);
-    result = punpackOp->getResult(0);
-  } else { // DINTLV4
-    Operation *punpackOp1 =
-        hivm_regbaseintrins::buildPunpackOp(loc, part, result, rewriter);
-    result = punpackOp1->getResult(0);
-    Operation *punpackOp2 =
-        hivm_regbaseintrins::buildPunpackOp(loc, part, result, rewriter);
-    result = punpackOp2->getResult(0);
-  }
-  return result;
-}
-
 struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
   explicit HIVMCmpOpLowering(LLVMTypeConverter &converter)
       : ConvertOpToLLVMPattern<VFCmpOp>(converter) {}
@@ -1759,7 +1626,7 @@ struct HIVMCmpOpLowering : public ConvertOpToLLVMPattern<VFCmpOp> {
       break;
     }
 
-    rewriter.replaceOp(cmpOp, densifyCmpResult(cmpOp, res, rewriter));
+    rewriter.replaceOp(cmpOp, res);
     return success();
   }
 };
@@ -3185,22 +3052,6 @@ struct HIVMPredicateBinaryLogicOpLowering
     Value adaptRhs = adaptor.getRhs();
     Value lhs = getVLRegValueOrSelf(adaptLhs, rewriter);
     Value rhs = getVLRegValueOrSelf(adaptRhs, rewriter);
-    auto parAlign = getParentOpElementAlignmentBitWidth(op);
-    if (parAlign == -1) {
-      int align = getOpElementAlignmentBitWidth(op);
-      auto *oldLhsDefOp = oldLhs.getDefiningOp();
-      int oldLhsAlign = getOpElementAlignmentBitWidth(oldLhsDefOp);
-      bool unaligned = oldLhsDefOp && oldLhsDefOp->hasAttr(UnalignedAttr::name);
-      if (oldLhsAlign != -1 && oldLhsAlign < align && !unaligned) {
-        lhs = preginterleaveDataLayoutForExtCast(rewriter, loc, lhs, align);
-      }
-      auto *oldRhsDefOp = oldRhs.getDefiningOp();
-      int oldRhsAlign = getElementAlignmentBitWidth(oldRhsDefOp);
-      unaligned = oldRhsDefOp && oldRhsDefOp->hasAttr(UnalignedAttr::name);
-      if (oldRhsAlign != -1 && oldRhsAlign < align && !unaligned) {
-        rhs = preginterleaveDataLayoutForExtCast(rewriter, loc, rhs, align);
-      }
-    }
     auto newOpResTy = createVLVectorType(rewriter.getI1Type());
     // Handle VFPAndOp, VFPOrOp, VFPXorOp
     if constexpr (std::is_same_v<OpToBeConverted, PregAndOp> ||
@@ -3279,9 +3130,11 @@ struct HIVMVCIOpLowering : public ConvertOpToLLVMPattern<VFVCIOp> {
       auto targetType = VectorType::get(256, rewriter.getI8Type());
       result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else if (elemType.isF32() && resType.getNumElements() <= 64) {
-      result = rewriter.create<VciInstrOp>(loc, resType, src1, src2);
+      auto targetType = VectorType::get(64, rewriter.getF32Type());
+      result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else if (elemType.isF16() && resType.getNumElements() <= 128) {
-      result = rewriter.create<VciInstrOp>(loc, resType, src1, src2);
+      auto targetType = VectorType::get(128, rewriter.getF16Type());
+      result = rewriter.create<VciInstrOp>(loc, targetType, src1, src2);
     } else {
       return rewriter.notifyMatchFailure(op, "Unsupported vector type");
     }

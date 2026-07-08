@@ -75,6 +75,38 @@ func.func @merge_load(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: memref<8x64x16x
   return
 }
 
+// CHECK-LABEL: func.func @no_merge_load_due_to_unaligned_load
+// CHECK: ave.hir.vload <NORM> %{{.*}} {ave.unaligned_ub_access = #ave.unaligned_ub_access}
+// CHECK-NOT: ave.hir.vload <DINTLV_B32>
+// CHECK: ave.hir.vdintlv %{{.*}}, %{{.*}} : vector<64xf16>, vector<128xf16>
+func.func @no_merge_load_due_to_unaligned_load(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %arg1: memref<8x64x16xf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+  %c1040 = arith.constant 1040 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %c0 = arith.constant 0 : index
+  scf.for %arg2 = %c0 to %c64 step %c1 {
+    %subview = memref.subview %arg0[%arg2, 0] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_0 = memref.subview %subview[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    %res = ave.hir.vload <NORM> %subview_0[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf32>
+    %0 = ave.hir.pge <ALL> : vector<64xi1>
+    %1 = ave.hir.vtruncf %res, <rint>, false, <part_even>, %0 : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    %subview_1 = memref.subview %arg1[0, %arg2, 0] [4, 1, 16] [1, 1, 1] : memref<8x64x16xf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>> to memref<4x1x16xf16, strided<[1040, 16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_2 = memref.subview %subview_1[0, 0, 0] [4, 1, 16] [1, 1, 1] : memref<4x1x16xf16, strided<[1040, 16, 1], offset: ?>, #hivm.address_space<ub>> to memref<4x16xf16, affine_map<(d0, d1)[s0] -> (d0 * 1040 + d1 + s0)>, #hivm.address_space<ub>>
+    %2 = ave.hir.pge <ALL> : vector<64xi1>
+    ave.hir.store_with_stride %subview_2[%c0, %c0], %c1040, %2, %1 : memref<4x16xf16, affine_map<(d0, d1)[s0] -> (d0 * 1040 + d1 + s0)>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
+    %subview_3 = memref.subview %arg0[%arg2, 64] [1, 64] [1, 1] : memref<64x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_4 = memref.subview %subview_3[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
+    %res_3 = ave.hir.vload <NORM> %subview_4[%c0] : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf32>
+    %3 = ave.hir.pge <ALL> : vector<64xi1>
+    %4 = ave.hir.vtruncf %res_3, <rint>, false, <part_even>, %3 : vector<64xf32>, vector<64xf16>, vector<64xi1>
+    %subview_5 = memref.subview %arg1[4, %arg2, 0] [4, 1, 16] [1, 1, 1] : memref<8x64x16xf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>> to memref<4x1x16xf16, strided<[1040, 16, 1], offset: ?>, #hivm.address_space<ub>>
+    %subview_6 = memref.subview %subview_5[0, 0, 0] [4, 1, 16] [1, 1, 1] : memref<4x1x16xf16, strided<[1040, 16, 1], offset: ?>, #hivm.address_space<ub>> to memref<4x16xf16, affine_map<(d0, d1)[s0] -> (d0 * 1040 + d1 + s0)>, #hivm.address_space<ub>>
+    %5 = ave.hir.pge <ALL> : vector<64xi1>
+    ave.hir.store_with_stride %subview_6[%c0, %c0], %c1040, %5, %4 : memref<4x16xf16, affine_map<(d0, d1)[s0] -> (d0 * 1040 + d1 + s0)>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16>
+  }
+  return
+}
+
 // CHECK-LABEL: func.func @no_merge_load
 // CHECK-NOT: ave.hir.vload <DINTLV_B32>
 // CHECK: ave.hir.vtruncf %{{.*}}, <rint>, false, <part_even>, %{{.*}} : vector<64xf32>, vector<64xf16>, vector<64xi1>

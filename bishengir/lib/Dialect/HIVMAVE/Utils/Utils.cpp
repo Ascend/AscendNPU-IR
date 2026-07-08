@@ -12,16 +12,19 @@
 
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMRegbaseIntrins/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include <cassert>
+#include <climits>
+#include <limits>
 #include <optional>
 
 using namespace mlir;
@@ -117,31 +120,153 @@ Value hivmave::computeLinearMemRefOffset(OpBuilder &builder, Location loc,
   return linearOffset;
 }
 
-static bool checkValueAligned(Value v, int64_t hwAlignBits, int64_t elemBits) {
-  Operation *defOp = nullptr;
-  if (auto blockArg = dyn_cast<BlockArgument>(v)) {
-    defOp = blockArg.getOwner()->getParentOp();
-  } else {
-    defOp = v.getDefiningOp();
+static bool isIntegerMultipleOf(int64_t value, int64_t factor) {
+  return value % factor == 0;
+}
+
+static bool isValueKnownMultipleOf(Value value, int64_t factor);
+
+// For an affine expression to be known as a multiple of factor, its result must
+// always be a multiple of factor.
+static bool isAffineExprKnownMultipleOf(AffineExpr expr, ValueRange operands,
+                                        unsigned numDims, int64_t factor) {
+  assert(factor > 0 && "factor must be positive");
+  if (factor == 1)
+    return true;
+
+  if (auto constExpr = dyn_cast<AffineConstantExpr>(expr))
+    return isIntegerMultipleOf(constExpr.getValue(), factor);
+
+  if (auto dimExpr = dyn_cast<AffineDimExpr>(expr)) {
+    unsigned pos = dimExpr.getPosition();
+    if (pos >= operands.size())
+      return false;
+    return isValueKnownMultipleOf(operands[pos], factor);
   }
-  if (!defOp) {
+
+  if (auto symbolExpr = dyn_cast<AffineSymbolExpr>(expr)) {
+    unsigned pos = numDims + symbolExpr.getPosition();
+    if (pos >= operands.size())
+      return false;
+    return isValueKnownMultipleOf(operands[pos], factor);
+  }
+
+  auto binaryExpr = dyn_cast<AffineBinaryOpExpr>(expr);
+  if (!binaryExpr)
     return false;
-  } else if (scf::ForOp forOp = dyn_cast<scf::ForOp>(defOp)) {
-    // In for op, if the start value and step value all aligned both,
-    // the iterative variables can be considered aligned.
+
+  switch (expr.getKind()) {
+  case AffineExprKind::Add:
+    // For lhs + rhs to stay a multiple, both lhs and rhs must already be
+    // multiples.
+    return isAffineExprKnownMultipleOf(binaryExpr.getLHS(), operands, numDims,
+                                       factor) &&
+           isAffineExprKnownMultipleOf(binaryExpr.getRHS(), operands, numDims,
+                                       factor);
+  case AffineExprKind::Mul: {
+    AffineExpr lhs = binaryExpr.getLHS();
+    AffineExpr rhs = binaryExpr.getRHS();
+    // For lhs * rhs to be a multiple, a constant factor can satisfy all or part
+    // of the requested factor; the other side must satisfy the rest.
+    auto proveConstMul =
+        [operands, numDims, factor](AffineExpr maybeConst,
+                                    AffineExpr other) -> std::optional<bool> {
+      auto constExpr = dyn_cast<AffineConstantExpr>(maybeConst);
+      if (!constExpr)
+        return std::nullopt;
+
+      int64_t constantFactor = constExpr.getValue();
+      if (constantFactor < 0) {
+        if (constantFactor == std::numeric_limits<int64_t>::min())
+          return false;
+        constantFactor = -constantFactor;
+      }
+      if (constantFactor == 0 ||
+          isIntegerMultipleOf(constantFactor, factor))
+        return true;
+      if (factor % constantFactor != 0)
+        return false;
+      return isAffineExprKnownMultipleOf(other, operands, numDims,
+                                         factor / constantFactor);
+    };
+
+    if (std::optional<bool> result = proveConstMul(lhs, rhs))
+      return *result;
+    if (std::optional<bool> result = proveConstMul(rhs, lhs))
+      return *result;
+
+    return isAffineExprKnownMultipleOf(lhs, operands, numDims, factor) ||
+           isAffineExprKnownMultipleOf(rhs, operands, numDims, factor);
+  }
+  case AffineExprKind::FloorDiv:
+  case AffineExprKind::CeilDiv: {
+    // For lhs floordiv divisor or lhs ceildiv divisor to stay a multiple, lhs
+    // must be a multiple of factor * divisor.
+    auto rhsConst = dyn_cast<AffineConstantExpr>(binaryExpr.getRHS());
+    if (!rhsConst || rhsConst.getValue() <= 0)
+      return false;
+    int64_t divisor = rhsConst.getValue();
+    if (factor > std::numeric_limits<int64_t>::max() / divisor)
+      return false;
+    return isAffineExprKnownMultipleOf(binaryExpr.getLHS(), operands, numDims,
+                                       factor * divisor);
+  }
+  case AffineExprKind::Mod: {
+    // For lhs mod modulus to be a multiple, prove it is zero or prove both lhs
+    // and modulus are already multiples.
+    auto rhsConst = dyn_cast<AffineConstantExpr>(binaryExpr.getRHS());
+    if (!rhsConst || rhsConst.getValue() <= 0)
+      return false;
+    int64_t modulus = rhsConst.getValue();
+    AffineExpr lhs = binaryExpr.getLHS();
+    return isAffineExprKnownMultipleOf(lhs, operands, numDims, modulus) ||
+           (isIntegerMultipleOf(modulus, factor) &&
+            isAffineExprKnownMultipleOf(lhs, operands, numDims, factor));
+  }
+  default:
+    return false;
+  }
+}
+
+// For a value to be known as a multiple of factor, follow only simple SSA
+// producers whose multiple-of property can be proven locally.
+static bool isValueKnownMultipleOf(Value value, int64_t factor) {
+  assert(factor > 0 && "factor must be positive");
+  if (factor == 1)
+    return true;
+
+  if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+    auto forOp = dyn_cast<scf::ForOp>(blockArg.getOwner()->getParentOp());
+    // Only the induction variable follows lowerBound + n * step. Loop-carried
+    // iter_args need separate yield analysis, so keep them conservatively
+    // unproven.
+    if (!forOp || blockArg != forOp.getInductionVar())
+      return false;
+    // For lowerBound + n * step to stay a multiple, both lowerBound and step
+    // must already be multiples.
     Value start = forOp.getLowerBound();
     Value step = forOp.getStep();
-    return checkValueAligned(start, hwAlignBits, elemBits) &&
-           checkValueAligned(step, hwAlignBits, elemBits);
-  } else if (arith::ConstantOp constOp = dyn_cast<arith::ConstantOp>(defOp)) {
-    // Check constant value is aligned.
-    auto intVal = getConstantIntValue(constOp.getResult());
-    if (intVal) {
-      return (*intVal * elemBits) % hwAlignBits == 0;
-    } else {
-      return false;
-    }
+    return isValueKnownMultipleOf(start, factor) &&
+           isValueKnownMultipleOf(step, factor);
   }
+
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp) {
+    return false;
+  } else if (arith::ConstantOp constOp = dyn_cast<arith::ConstantOp>(defOp)) {
+    // For a constant value to be known as a multiple, it must be a multiple of
+    // the requested factor.
+    auto intVal = getConstantIntValue(constOp.getResult());
+    if (intVal)
+      return isIntegerMultipleOf(*intVal, factor);
+  } else if (auto affineApplyOp = dyn_cast<affine::AffineApplyOp>(defOp)) {
+    AffineMap map = affineApplyOp.getAffineMap();
+    if (map.getNumResults() == 1)
+      return isAffineExprKnownMultipleOf(map.getResult(0),
+                                         affineApplyOp.getMapOperands(),
+                                         map.getNumDims(), factor);
+  }
+  // Unknown producers are treated conservatively as unproven multiples.
   return false;
 }
 
@@ -153,7 +278,8 @@ bool static isOffsetAligned(Value memrefVal,
   for (size_t i = 0; i < indices.size(); i++) {
     bool isOffsetAlign = false;
     if (auto v = dyn_cast<Value>(indices[i])) {
-      isOffsetAlign = checkValueAligned(v, hwAlignBits, elemBits);
+      int64_t requiredElementOffsetAlignment = hwAlignBits / elemBits;
+      isOffsetAlign = isValueKnownMultipleOf(v, requiredElementOffsetAlignment);
     } else if (Attribute attr = dyn_cast<Attribute>(indices[i])) {
       int64_t staticVal = dyn_cast<IntegerAttr>(attr).getValue().getSExtValue();
       isOffsetAlign = (staticVal * elemBits) % hwAlignBits == 0;
@@ -197,7 +323,10 @@ static bool isMemrefAligned(Value memrefVal, int64_t hwAlignBits,
     }
     bool isByteShiftAlign = false;
     if (auto v = dyn_cast<Value>(viewOp.getByteShift())) {
-      isByteShiftAlign = checkValueAligned(v, hwAlignBits, elemBits);
+      // The source memref alignment is checked above; byte_shift is measured in
+      // bytes, so prove that the byte displacement preserves HW alignment.
+      int64_t requiredByteOffsetAlignment = hwAlignBits / 8;
+      isByteShiftAlign = isValueKnownMultipleOf(v, requiredByteOffsetAlignment);
     }
     return isByteShiftAlign;
   } else if (auto collapseOp = dyn_cast<memref::CollapseShapeOp>(defOp)) {
@@ -642,22 +771,18 @@ Operation *hivmave::getBroadcastOp(Value scalar, VectorType tileType,
 }
 
 Value hivmave::sparseByIntlv(Value src, RewriterBase &rewriter,
-                             const Location &loc, Attribute attr) {
+                             const Location &loc) {
   hivmave::VFInterleaveOp interOp = rewriter.create<hivmave::VFInterleaveOp>(
       loc, ArrayRef<Type>({src.getType(), src.getType()}),
       ValueRange{src, src});
-  if (attr)
-    interOp->setAttr(utils::elementAlignmentBitWidth, attr);
   return interOp.getResult(0);
 }
 
 Value hivmave::denseByDIntlv(Value src, RewriterBase &rewriter,
-                             const Location &loc, Attribute attr) {
+                             const Location &loc) {
   hivmave::VFDeInterleaveOp deionOp = rewriter.create<hivmave::VFDeInterleaveOp>(
       loc, ArrayRef<Type>({src.getType(), src.getType()}),
       ValueRange{src, src});
-  if (attr)
-    deionOp->setAttr(utils::elementAlignmentBitWidth, attr);
   return deionOp.getResult(0);
 }
 

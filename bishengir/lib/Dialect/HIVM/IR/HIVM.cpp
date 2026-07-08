@@ -503,12 +503,7 @@ std::string hivm::detail::getTypeName(Location loc, Type type,
   return unknown;
 }
 
-//===----------------------------------------------------------------------===//
-// Debug Op helper
-//===----------------------------------------------------------------------===//
-
-namespace {
-std::string debugCallNameMangleSuffix(Operation *op) {
+std::string mlir::hivm::callNameMangleSuffix(Operation *op) {
   std::string suffix = "";
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   if (!moduleOp) {
@@ -534,7 +529,6 @@ std::string debugCallNameMangleSuffix(Operation *op) {
   }
   return suffix;
 }
-} // namespace
 
 //===----------------------------------------------------------------------===//
 // DebugOp
@@ -600,7 +594,7 @@ std::string DebugOp::getOpLibraryCallName(
     callName += "_gm"; // currently, scalar can choose either gm or ubuf since
                        // they currently call the same core
   }
-  return callName + debugCallNameMangleSuffix(this->getOperation());
+  return callName + callNameMangleSuffix(this->getOperation());
 }
 
 //===----------------------------------------------------------------------===//
@@ -609,8 +603,7 @@ std::string DebugOp::getOpLibraryCallName(
 
 std::string InitDebugOp::getOpLibraryCallName(
     [[maybe_unused]] std::optional<bool> isOpsAligned) {
-  return "_mlir_ciface_init_debug" +
-         debugCallNameMangleSuffix(this->getOperation());
+  return "_mlir_ciface_init_debug" + callNameMangleSuffix(this->getOperation());
 }
 
 //===----------------------------------------------------------------------===//
@@ -620,7 +613,7 @@ std::string InitDebugOp::getOpLibraryCallName(
 std::string FinishDebugOp::getOpLibraryCallName(
     [[maybe_unused]] std::optional<bool> isOpsAligned) {
   return "_mlir_ciface_finish_debug" +
-         debugCallNameMangleSuffix(this->getOperation());
+         callNameMangleSuffix(this->getOperation());
 }
 
 //===----------------------------------------------------------------------===//

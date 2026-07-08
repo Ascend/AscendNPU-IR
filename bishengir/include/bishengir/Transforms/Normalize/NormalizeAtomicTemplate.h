@@ -19,6 +19,7 @@
 #define BISHENGIR_TRANSFORMS_NORMALIZE_NORMALIZEATOMICTEMPLATE_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -88,10 +89,42 @@ struct StaticSizedBuffer {
 
   bool isValid() const { return valid; }
 
+  void copyMemrefIntoBuffer(TypedValue<MemRefType> memref) {
+    builder.create<memref::CopyOp>(loc, memref, dBuffer);
+  }
+
+  /// Stages a memref or tensor atomic input into the static-sized buffer.
+  ///
+  /// Atomic ops are expected to have identical `ins` and `outs` shapes. The
+  /// staged tile is materialized into `dBuffer`, while compute uses the full
+  /// static `sBuffer` view via `toStaticTensor()`.
+  FailureOr<TypedValue<TensorType>> stageInput(Value input) {
+    if (auto memref = dyn_cast<TypedValue<MemRefType>>(input)) {
+      copyMemrefIntoBuffer(memref);
+      return toStaticTensor();
+    }
+    auto tensor = dyn_cast<TypedValue<TensorType>>(input);
+    if (!tensor)
+      return failure();
+
+    builder.create<bufferization::MaterializeInDestinationOp>(
+        loc, Type(), tensor, dBuffer, /*restrict=*/false, /*writable=*/true);
+    return toStaticTensor();
+  }
+
+  /// Tensor view of the full static staging allocation.
   TypedValue<TensorType> toStaticTensor() {
     return builder
         .create<bufferization::ToTensorOp>(
             loc, sBuffer, /*restrict=*/true, /*writable=*/true)
+        .getResult();
+  }
+
+  /// Tensor view matching the GM destination shape (`ins` == `outs`).
+  TypedValue<TensorType> toLogicalTensor() {
+    return builder
+        .create<bufferization::ToTensorOp>(
+            loc, dBuffer, /*restrict=*/true, /*writable=*/true)
         .getResult();
   }
 
@@ -120,6 +153,21 @@ private:
   memref::SubViewOp definingOp;
   bool valid = true;
 };
+
+/// If `input` is a `bufferization.to_memref`, return its source tensor so
+/// decomposition can stage UB via `materialize_in_destination` instead of
+/// `memref.copy`. The `to_memref` is erased after the atomic op is removed.
+inline Value resolveAtomicInput(Value input) {
+  if (auto toMemref = input.getDefiningOp<bufferization::ToMemrefOp>())
+    return toMemref.getTensor();
+  return input;
+}
+
+inline void eraseToMemrefIfUnused(Value input, PatternRewriter &rewriter) {
+  if (auto toMemref = input.getDefiningOp<bufferization::ToMemrefOp>())
+    if (toMemref->use_empty())
+      rewriter.eraseOp(toMemref);
+}
 
 /// FP8 atomic arithmetic is evaluated in FP32, then cast back before storing.
 inline bool isAtomicElementFp8(ShapedType st) {
@@ -197,22 +245,24 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
     if (op.getDpsInputs().empty() || op.getDpsInits().empty())
       return rewriter.notifyMatchFailure(op, "expected store input and output");
 
-    TypedValue<MemRefType> ubMemref =
-        dyn_cast<TypedValue<MemRefType>>(op.getDpsInputs().front());
+    Value ubInput = op.getDpsInputs().front();
+    Value resolvedUbInput = resolveAtomicInput(ubInput);
     TypedValue<MemRefType> gmMemref =
         dyn_cast<TypedValue<MemRefType>>(op.getDpsInits().front());
-    if (!ubMemref || !gmMemref)
-      return rewriter.notifyMatchFailure(op, "expected memref store operands");
+    if (!gmMemref)
+      return rewriter.notifyMatchFailure(op, "expected memref store output");
 
     StaticSizedBuffer rhsBuffer(rewriter, loc, gmMemref);
     if (!rhsBuffer.isValid())
       return rewriter.notifyMatchFailure(
           op, "expected dynamic GM memref to be a static subview");
-    rewriter.create<memref::CopyOp>(loc, ubMemref, rhsBuffer.dBuffer);
+    FailureOr<TypedValue<TensorType>> maybeRhsTensor =
+        rhsBuffer.stageInput(resolvedUbInput);
+    if (failed(maybeRhsTensor))
+      return rewriter.notifyMatchFailure(op, "expected memref or tensor input");
 
-    Value rhsTensor =
-        castAtomicOpToF32IfFp8<Traits>(rewriter, loc, rhsBuffer.toStaticTensor(),
-                                       gmMemref.getType(), /*isForward=*/true);
+    Value rhsTensor = castAtomicOpToF32IfFp8<Traits>(
+        rewriter, loc, *maybeRhsTensor, gmMemref.getType(), /*isForward=*/true);
     StaticSizedBuffer lhsBuffer(rewriter, loc, gmMemref);
     if (!lhsBuffer.isValid())
       return rewriter.notifyMatchFailure(
@@ -240,6 +290,7 @@ struct NormalizeAtomicStoreElemwise : public OpRewritePattern<StoreOpTy> {
       return rewriter.notifyMatchFailure(op, "expected tensor result");
     lhsBuffer.storeBack(resultTensor);
     rewriter.eraseOp(op);
+    eraseToMemrefIfUnused(ubInput, rewriter);
     return success();
   }
 };
@@ -261,14 +312,12 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
     if (srcOperands.size() < 2 || dstOperands.empty())
       return rewriter.notifyMatchFailure(op, "expected CAS source and output");
 
-    TypedValue<MemRefType> ubComparing =
-        dyn_cast<TypedValue<MemRefType>>(srcOperands[0]);
-    TypedValue<MemRefType> ubStoring =
-        dyn_cast<TypedValue<MemRefType>>(srcOperands[1]);
+    TypedValue<MemRefType> ubComparing = dyn_cast<TypedValue<MemRefType>>(srcOperands[0]);
+    TypedValue<MemRefType> ubStoring = dyn_cast<TypedValue<MemRefType>>(srcOperands[1]);
     TypedValue<MemRefType> gmMemref =
         dyn_cast<TypedValue<MemRefType>>(dstOperands.front());
-    if (!ubComparing || !ubStoring || !gmMemref)
-      return rewriter.notifyMatchFailure(op, "expected memref CAS operands");
+    if (!gmMemref)
+      return rewriter.notifyMatchFailure(op, "expected memref CAS output");
 
     StaticSizedBuffer comparingBuffer(rewriter, loc, gmMemref);
     StaticSizedBuffer storingBuffer(rewriter, loc, gmMemref);
@@ -277,8 +326,14 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
         !gmValBuffer.isValid())
       return rewriter.notifyMatchFailure(
           op, "expected dynamic GM memref to be a static subview");
-    rewriter.create<memref::CopyOp>(loc, ubComparing, comparingBuffer.dBuffer);
-    rewriter.create<memref::CopyOp>(loc, ubStoring, storingBuffer.dBuffer);
+
+    FailureOr<TypedValue<TensorType>> maybeComparingTensor =
+        comparingBuffer.stageInput(resolveAtomicInput(srcOperands[0]));
+    FailureOr<TypedValue<TensorType>> maybeStoringTensor =
+        storingBuffer.stageInput(resolveAtomicInput(srcOperands[1]));
+    if (failed(maybeComparingTensor) || failed(maybeStoringTensor))
+      return rewriter.notifyMatchFailure(op,
+                                         "expected memref or tensor CAS inputs");
 
     SyncBlockLockGuard lock(rewriter, loc);
     rewriter.create<memref::CopyOp>(loc, gmMemref, gmValBuffer.dBuffer);
@@ -288,19 +343,20 @@ struct NormalizeAtomicCASTemplate : public OpRewritePattern<AtomicCasOpTy> {
         rewriter, loc,
         castAtomicOpToF32IfFp8<Traits>(rewriter, loc, gmValTensor, gmValTensor.getType(),
                              /*isForward=*/true),
-        castAtomicOpToF32IfFp8<Traits>(rewriter, loc, comparingBuffer.toStaticTensor(),
+        castAtomicOpToF32IfFp8<Traits>(rewriter, loc, *maybeComparingTensor,
                              gmValTensor.getType(), /*isForward=*/true),
         CompareKind::EQ);
     Value selectedResult =
-        Traits::createSelectOp(rewriter, loc, cmpResult,
-                               storingBuffer.toStaticTensor(), gmValTensor,
-                               gmValTensor);
+        Traits::createSelectOp(rewriter, loc, cmpResult, *maybeStoringTensor,
+                               gmValTensor, gmValTensor);
     auto selectedResultTensor =
         dyn_cast<TypedValue<TensorType>>(selectedResult);
     if (!selectedResultTensor)
       return rewriter.notifyMatchFailure(op, "expected tensor select result");
     gmValBuffer.storeBack(selectedResultTensor);
     rewriter.eraseOp(op);
+    eraseToMemrefIfUnused(srcOperands[0], rewriter);
+    eraseToMemrefIfUnused(srcOperands[1], rewriter);
     return success();
   }
 };
@@ -323,22 +379,57 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
     if (srcOperands.empty() || dstOperands.empty())
       return rewriter.notifyMatchFailure(op, "expected XCHG input and output");
 
-    TypedValue<MemRefType> ubMemref =
-        dyn_cast<TypedValue<MemRefType>>(srcOperands.front());
+    Value ubInput = resolveAtomicInput(srcOperands.front());
+    TypedValue<MemRefType> ubMemref = dyn_cast<TypedValue<MemRefType>>(ubInput);
+    TypedValue<TensorType> ubTensor = dyn_cast<TypedValue<TensorType>>(ubInput);
     TypedValue<MemRefType> gmMemref =
         dyn_cast<TypedValue<MemRefType>>(dstOperands.front());
-    if (!ubMemref || !gmMemref)
-      return rewriter.notifyMatchFailure(op, "expected memref XCHG operands");
+    if ((!ubMemref && !ubTensor) || !gmMemref)
+      return rewriter.notifyMatchFailure(op,
+                                         "expected memref or tensor XCHG input "
+                                         "and memref output");
 
+    const bool hasReturn = op->getNumResults() > 0;
+    scope::ScopeOp scopeOp;
+    if (hasReturn)
+      scopeOp = rewriter.create<scope::ScopeOp>(loc, op->getResultTypes());
+    else
+      scopeOp = rewriter.create<scope::ScopeOp>(loc, TypeRange{});
+    scopeOp->setAttr(
+        hivm::TCoreTypeAttr::name,
+        hivm::TCoreTypeAttr::get(rewriter.getContext(), hivm::TCoreType::VECTOR));
+    rewriter.createBlock(&scopeOp.getRegion());
+    OpBuilder::InsertionGuard scopeGuard(rewriter);
+    rewriter.setInsertionPointToStart(scopeOp.getBody());
+
+    StaticSizedBuffer gmBuffer(rewriter, loc, gmMemref);
     StaticSizedBuffer tmpBuffer(rewriter, loc, gmMemref);
-    if (!tmpBuffer.isValid())
+    if (!gmBuffer.isValid() || !tmpBuffer.isValid())
       return rewriter.notifyMatchFailure(
           op, "expected dynamic GM memref to be a static subview");
-    SyncBlockLockGuard lock(rewriter, loc);
+
+    Type memrefI64 = MemRefType::get({1}, rewriter.getI64Type());
+    auto createdLock =
+        rewriter.create<hivm::CreateSyncBlockLockOp>(loc, memrefI64, Value());
+    rewriter.create<hivm::SyncBlockLockOp>(loc, createdLock.getResult());
     rewriter.create<memref::CopyOp>(loc, gmMemref, tmpBuffer.dBuffer);
-    rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
-    rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
-    rewriter.eraseOp(op);
+    if (ubMemref) {
+      rewriter.create<memref::CopyOp>(loc, ubMemref, gmMemref);
+      rewriter.create<memref::CopyOp>(loc, tmpBuffer.dBuffer, ubMemref);
+    } else {
+      gmBuffer.storeBack(ubTensor);
+    }
+    rewriter.create<hivm::SyncBlockUnlockOp>(loc, createdLock);
+    if (hasReturn)
+      rewriter.create<scope::ReturnOp>(loc, tmpBuffer.toLogicalTensor());
+    else
+      rewriter.create<scope::ReturnOp>(loc);
+
+    if (hasReturn)
+      rewriter.replaceOp(op, scopeOp.getResults());
+    else
+      rewriter.eraseOp(op);
+    eraseToMemrefIfUnused(srcOperands.front(), rewriter);
     return success();
   }
 };

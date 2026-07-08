@@ -35,6 +35,8 @@ void OptMemPlanForDma::build(func::FuncOp func) {
         UpdateDmaBuffers(hivmStructuredOp.getDpsInits());
       } else if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_MTE3) {
         UpdateDmaBuffers(hivmStructuredOp.getDpsInputs());
+      } else if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_FIX) {
+        UpdateDmaBuffers(hivmStructuredOp.getDpsInputs());
       }
     } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
       UpdateScalarBuffers(loadOp);

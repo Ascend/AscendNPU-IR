@@ -1,5 +1,6 @@
 file(GLOB ALIGN_BUFFER ${CMAKE_CURRENT_SOURCE_DIR}/AlignBuffer/*.cpp)
-file(GLOB BUBBLE_UP_EXTRACT_SLICE ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
+file(GLOB BUBBLE_UP_EXTRACT_SLICE CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/BubbleUpExtractSlice/*.cpp)
 file(GLOB GRAPH_SYNC_CONFLICT_SOLVER ${CMAKE_CURRENT_SOURCE_DIR}/GraphSyncSolver/*.cpp)
 file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
 file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadStoreForMixCV/*.cpp)
@@ -49,6 +50,8 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayout.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutElementwise.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutInsertSlice.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutVBrc.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfFor.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfIf.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfWhile.cpp
