@@ -126,6 +126,12 @@ void populateConvertLayoutElementwise(
 void populateConvertLayoutExtractSlice(RewritePatternSet &patterns,
                                        MLIRContext *context);
 
+void populateConvertLayoutInsertSlice(RewritePatternSet &patterns,
+                                      MLIRContext *context);
+
+void populateConvertLayoutVBrc(RewritePatternSet &patterns,
+                               MLIRContext *context);
+
 void populateConvertLayoutScfIf(RewritePatternSet &patterns,
                                 MLIRContext *context);
 

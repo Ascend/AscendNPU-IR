@@ -266,6 +266,8 @@ struct PropagateConvertLayoutPass
     if (enableElementwisePropagate)
       populateConvertLayoutElementwise(patterns, context, options);
     populateConvertLayoutExtractSlice(patterns, context);
+    populateConvertLayoutInsertSlice(patterns, context);
+    populateConvertLayoutVBrc(patterns, context);
     // Enable this only for vcast
     populateConvertLayoutScfIf(patterns, context);
     populateConvertLayoutScfFor(patterns, context);

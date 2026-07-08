@@ -50,6 +50,8 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayout.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutElementwise.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutInsertSlice.cpp
+  ConvertLayout/Propagate/PropagateConvertLayoutVBrc.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfFor.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfIf.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutScfWhile.cpp
