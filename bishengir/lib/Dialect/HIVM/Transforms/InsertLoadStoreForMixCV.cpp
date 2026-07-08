@@ -831,7 +831,7 @@ struct AddConvertLayoutUBToL1
 bool isOnVectorCore(Operation *initialOp) const {
   auto findVectorCore =
       [](Operation *op,
-         std::function<void(std::queue<Operation *> & q, Operation * cur)>
+         std::function<void(std::queue<Operation *> & q, Operation *& cur)>
              enqueueNextOps) -> bool {
     std::queue<Operation *> q;
     q.push(op);
