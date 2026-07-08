@@ -565,6 +565,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
 
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
 

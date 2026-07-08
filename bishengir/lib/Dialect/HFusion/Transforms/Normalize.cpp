@@ -9867,7 +9867,7 @@ public:
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
     if (hacc::utils::isRegBasedArch(moduleOp) || useRegBase) {
       if (failed(runNormalizeRegBase(getOperation(),
-                                     enableHighPrecision)))
+                                     enableHighPrecision, enableFastDiv)))
         signalPassFailure();
       return;
     }

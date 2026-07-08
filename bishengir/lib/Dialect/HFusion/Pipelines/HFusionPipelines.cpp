@@ -106,7 +106,12 @@ static void preProcess(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createDecomposePass(decomposeOptions));
   pm.nest<func::FuncOp>().addPass(createHFusionNormalizeSliceOpsPass(
       /*skipAlignedSlice=*/options.enableTritonKernelCompile));
-  pm.nest<func::FuncOp>().addPass(createHFusionNormalizeOpsPass());
+  pm.nest<func::FuncOp>().addPass(createGenericUnrollerPass());
+  NormalizeOptions normalizeOptions;
+  normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
   pm.addPass(createLegalizeBoolPass());
   pm.nest<func::FuncOp>().addPass(createSimplifyOpsPass());
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
@@ -259,9 +264,11 @@ static void postProcess(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   // normalize should be called after auto schedule:
   // - tile reduction may generate unsupported elemwise op requiring normalize
-  pm.nest<func::FuncOp>().addPass(createHFusionNormalizeOpsPass());
-
-  // will only operate on functions with ShallowCV fusion kind
+  NormalizeOptions normalizeOptions;
+  normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
+  pm.nest<func::FuncOp>().addPass(
+      createHFusionNormalizeOpsPass(normalizeOptions));
   AddFFTSAddrOptions addFFTSAddrOpt;
   if (options.enableTritonKernelCompile) {
     addFFTSAddrOpt.forceAddFFTSAddr = 0;

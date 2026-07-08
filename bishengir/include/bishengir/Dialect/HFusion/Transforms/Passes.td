@@ -288,7 +288,11 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
            "Forcefully use RegBase normalize implementation.">,
     Option<"enableHighPrecision", "enable-high-precision", "bool",
            /*default=*/"true",
-           "Enable high precision calculation for sin/cos in HFusion.">
+           "Enable high precision calculation for sin/cos in HFusion.">,
+    Option<
+      "enableFastDiv", "enable-fast-div", "bool",
+      /*default=*/"false",
+      "Enable conversion of div with constant denominator into mul">
   ];
 }
 

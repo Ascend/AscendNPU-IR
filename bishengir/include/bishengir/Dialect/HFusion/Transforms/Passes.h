@@ -167,7 +167,8 @@ std::unique_ptr<Pass>
 createHFusionNormalizeOpsPass(const NormalizeOptions &options = {});
 
 /// Run the RegBase normalize.
-LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision);
+LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision,
+                                  bool enableFastDiv);
 
 /// Create a pass to normalize slice operations, including
 /// extract_slice/insert_slice.
