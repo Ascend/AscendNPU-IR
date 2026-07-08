@@ -848,7 +848,7 @@ bool isOnVectorCore(Operation *initialOp) const {
     return false;
   };
   // trace up
-  auto enqueueUpOps = [](std::queue<Operation *> &q, Operation *cur) {
+  auto enqueueUpOps = [](std::queue<Operation *> &q, Operation *&cur) {
     for (auto &opr : cur->getOpOperands()) {
       Operation *nextOp = opr.get().getDefiningOp();
       if (nextOp == nullptr)
@@ -860,7 +860,7 @@ bool isOnVectorCore(Operation *initialOp) const {
     return true;
 
   // trace down
-  auto enqueueDownOps = [](std::queue<Operation *> &q, Operation *cur) {
+  auto enqueueDownOps = [](std::queue<Operation *> &q, Operation *&cur) {
     for (auto *user : cur->getUsers()) {
       q.push(user);
     }
