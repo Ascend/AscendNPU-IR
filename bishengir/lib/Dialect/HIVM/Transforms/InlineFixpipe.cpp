@@ -404,6 +404,30 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
+/// Check if all non-ignored users of a value are fixpipe ops, optionally
+/// traced through tensor.extract_slice chains.
+/// This handles cases where the mmad result flows into multiple fixpipes
+/// (e.g., inside scf.if branches), where traceSingleChainUser fails
+/// because there isn't a single user chain.
+static bool allUsersReachFixpipe(Value v) {
+  SmallVector<Operation *> users;
+  for (auto *user : v.getUsers()) {
+    if (isa<tensor::DimOp, annotation::MarkOp>(user))
+      continue;
+    users.push_back(user);
+  }
+  if (users.empty())
+    return false;
+  return llvm::all_of(users, [](auto user) {
+    if (isa<hivm::FixpipeOp>(user))
+      return true;
+    // Trace through extract_slice
+    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user))
+      return allUsersReachFixpipe(extractSliceOp.getResult());
+    return false;
+  });
+}
+
 /// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
 template <typename OpType>
 struct InsertFixpipeOpPattern : public OpRewritePattern<OpType> {
@@ -425,6 +449,13 @@ public:
     // from the same mmad; you cannot rely on traceSingleChainUser to avoid
     // duplicating fixpipes anymore
     if (op->getAttr(mmadFixpipeForResultAlreadyInserted))
+      return failure();
+
+    // Check if all non-ignored users of the mmad result are fixpipes
+    // (possibly through extract_slice/insert_slice chains such as in
+    // scf.if branches). traceSingleChainUser cannot detect this case
+    // because there is not a single user chain.
+    if (allUsersReachFixpipe(mmadLikeOpRes))
       return failure();
 
     auto isMatchedOp = [](Operation *op, Value v) {
@@ -470,6 +501,13 @@ public:
   LogicalResult matchAndRewrite(hivm::MmadMxL1Op op,
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op->getResults()[0];
+
+    // Check if all non-ignored users of the mmad result are fixpipes
+    // (possibly through extract_slice/insert_slice chains such as in
+    // scf.if branches). traceSingleChainUser cannot detect this case
+    // because there is not a single user chain.
+    if (allUsersReachFixpipe(mmadLikeOpRes))
+      return failure();
 
     auto isMatchedOp = [](Operation *op, Value v) {
       LDBG("Matching this current op " << *op);
