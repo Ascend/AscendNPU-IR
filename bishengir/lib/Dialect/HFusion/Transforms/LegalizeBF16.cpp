@@ -65,6 +65,13 @@ static bool shouldLegalizeBF16Op(Operation *op) {
       isExcluded |= funAttr == linalg::UnaryFn::floor;
     }
     isExcluded |= isa<hfusion::GatherOp>(op);
+    // Ascend 950 supports native BF16 for elementwise mul/sub and select.
+    if (auto binOp = dyn_cast<linalg::ElemwiseBinaryOp>(op)) {
+      auto fun = binOp.getFun();
+      isExcluded |= fun == linalg::BinaryFn::mul ||
+                    fun == linalg::BinaryFn::sub;
+    }
+    isExcluded |= isa<hfusion::SelectOp>(op);
   }
   return utils::hasBF16Operand(op) && !isExcluded;
 }
