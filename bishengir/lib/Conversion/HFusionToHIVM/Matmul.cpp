@@ -40,25 +40,30 @@ constexpr static llvm::StringLiteral kPostVectorFuncArgsTagName =
 
 template <typename T,
           typename = std::enable_if_t<std::is_same_v<T, linalg::MatmulOp> ||
-                                      std::is_same_v<T, linalg::BatchMatmulOp>>>
+                                      std::is_same_v<T, linalg::BatchMatmulOp> ||
+                                      std::is_same_v<T, hfusion::MatMulMxOp>>>
 class MmadL1InfoCollector {
 public:
   explicit MmadL1InfoCollector(const T op) : op_(op) {
     mmadL1A_ = op_.getDpsInputOperand(0)->get();
-    if (auto l1ATransposeOp = mmadL1A_.getDefiningOp<linalg::TransposeOp>()) {
+    if (auto l1ATransposeOp =
+            mmadL1A_.getDefiningOp<linalg::TransposeOp>()) {
       transposeA_ = true;
       mmadL1A_ = l1ATransposeOp.getInput();
     }
     mmadL1B_ = op_.getDpsInputOperand(1)->get();
-    if (auto l1BTransposeOp = mmadL1B_.getDefiningOp<linalg::TransposeOp>()) {
+    if (auto l1BTransposeOp =
+            mmadL1B_.getDefiningOp<linalg::TransposeOp>()) {
       transposeB_ = true;
       mmadL1B_ = l1BTransposeOp.getInput();
     }
 
-    std::string inputPrecisionStr{"input_precision"};
-    if (auto attr = op_->getAttr(inputPrecisionStr)) {
-      if (dyn_cast<StringAttr>(attr).getValue() == "hf32") {
-        enableHF32_ = true;
+    if constexpr (!std::is_same_v<T, hfusion::MatMulMxOp>) {
+      std::string inputPrecisionStr{"input_precision"};
+      if (auto attr = op_->getAttr(inputPrecisionStr)) {
+        if (dyn_cast<StringAttr>(attr).getValue() == "hf32") {
+          enableHF32_ = true;
+        }
       }
     }
 
@@ -66,6 +71,15 @@ public:
   }
 
   T getSourceMatmulOp() const { return op_; };
+  Value getA() const { return mmadL1A_; }
+  Value getB() const { return mmadL1B_; }
+  Value getC() const { return mmadL0C_; }
+  UnitAttr getTransposeAFlag(OpBuilder &rewriter) const {
+    return getMmadL1TransposeAFlag(rewriter);
+  }
+  UnitAttr getTransposeBFlag(OpBuilder &rewriter) const {
+    return getMmadL1TransposeBFlag(rewriter);
+  }
 
   template <typename ReplaceOpTy>
   Operation *getReplacementOp(PatternRewriter &rewriter) {
@@ -511,24 +525,6 @@ mlir::hivm::HIVMMatmulDataformat convertDataformat(mlir::hfusion::Dataformat fmt
   llvm_unreachable("unsupported Dataformat");
 }
 
-struct FoldedTransposeInput {
-  Value input;
-  UnitAttr transposeAttr;
-  linalg::TransposeOp transposeOp;
-};
-
-FoldedTransposeInput foldTransposeInput(Value input, PatternRewriter &rewriter) {
-  auto transposeOp = input.getDefiningOp<linalg::TransposeOp>();
-  if (!transposeOp)
-    return {input, UnitAttr(), linalg::TransposeOp()};
-
-  ArrayRef<int64_t> permutation = transposeOp.getPermutation();
-  if (permutation.size() != 2 || permutation[0] != 1 || permutation[1] != 0)
-    return {input, UnitAttr(), linalg::TransposeOp()};
-
-  return {transposeOp.getInput(), rewriter.getUnitAttr(), transposeOp};
-}
-
 template <>
 struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     public OpRewritePattern<hfusion::MatMulMxOp> {
@@ -539,11 +535,9 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
                                 PatternRewriter &rewriter) const override {
     // convert hfusion::MatMulMxOp to hivm::MmadMxL1Op
     OpBuilder::InsertionGuard guard(rewriter);
-    auto acc = op.getAcc();
+    MmadL1InfoCollector<hfusion::MatMulMxOp> info(op);
     auto zeroCst = rewriter.create<arith::ConstantOp>(op->getLoc(),
                                                       rewriter.getIndexAttr(0));
-    Operation *initCondition;
-    Operation *newResult;
     auto lhsFmt = op.getLhsFormat();
     auto rhsFmt = op.getRhsFormat();
     auto lhsAttr =
@@ -552,43 +546,42 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     auto rhsAttr =
         rhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*rhsFmt))
                : nullptr;
-    FoldedTransposeInput inputA = foldTransposeInput(op.getInputA(), rewriter);
-    FoldedTransposeInput inputB = foldTransposeInput(op.getInputB(), rewriter);
-    if (!isa<BlockArgument>(acc) &&
-        (isa<tensor::EmptyOp>(acc.getDefiningOp()) ||
-         isa<linalg::FillOp>(acc.getDefiningOp()))) {
+
+    Value initCondition;
+    Value init = info.getC();
+    if (!isa<BlockArgument>(init) &&
+        (isa<tensor::EmptyOp>(init.getDefiningOp()) ||
+         isa<linalg::FillOp>(init.getDefiningOp()))) {
       // TODO:: we probably need a way to fill it with 0 in fp8 format. need
       // many work to do that. Or maybe it's ok to just dont fill it. auto
       // zeroCstAcc = rewriter.create<arith::ConstantOp>(op->getLoc(),
       // rewriter.getFloatAttr(0)); rewriter.create<linalg::FillOp>(
       //   op->getLoc(), ValueRange(zeroCstAcc), ValueRange(acc));
       auto empty = rewriter.create<tensor::EmptyOp>(
-          op->getLoc(), cast<TensorType>(acc.getType()), ValueRange{});
-      initCondition = rewriter.create<arith::ConstantOp>(
-          op->getLoc(), rewriter.getBoolAttr(true));
-      newResult = rewriter.create<hivm::MmadMxL1Op>(
-          op->getLoc(), op->getResultTypes(), inputA.input, inputB.input,
-          op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst,
-          zeroCst, zeroCst, empty->getResults()[0], lhsAttr, rhsAttr,
-          inputA.transposeAttr, inputB.transposeAttr, ValueRange{});
+          op->getLoc(), cast<TensorType>(init.getType()), ValueRange{});
+      initCondition = rewriter
+                          .create<arith::ConstantOp>(op->getLoc(),
+                                                     rewriter.getBoolAttr(true))
+                          .getResult();
+      init = empty->getResults()[0];
     } else {
-      initCondition = rewriter.create<arith::ConstantOp>(
-          op->getLoc(), rewriter.getBoolAttr(false));
-      newResult = rewriter.create<hivm::MmadMxL1Op>(
-          op->getLoc(), op->getResultTypes(), inputA.input, inputB.input,
-          op.getScaleA(), op.getScaleB(), initCondition->getResult(0), zeroCst,
-          zeroCst, zeroCst, acc, lhsAttr, rhsAttr, inputA.transposeAttr,
-          inputB.transposeAttr, ValueRange{});
+      initCondition = rewriter
+                          .create<arith::ConstantOp>(op->getLoc(),
+                                                     rewriter.getBoolAttr(false))
+                          .getResult();
     }
 
+    Operation *newResult =
+        rewriter
+            .create<hivm::MmadMxL1Op>(
+                op->getLoc(), op->getResultTypes(), info.getA(), info.getB(),
+                op.getScaleA(), op.getScaleB(), initCondition, zeroCst,
+                zeroCst, zeroCst, init, lhsAttr, rhsAttr,
+                info.getTransposeAFlag(rewriter),
+                info.getTransposeBFlag(rewriter), ValueRange{})
+            .getOperation();
+
     rewriter.replaceOp(op, newResult);
-    bool sameTransposeOp =
-        inputA.transposeOp && inputA.transposeOp == inputB.transposeOp;
-    if (inputA.transposeOp && inputA.transposeOp->use_empty())
-      rewriter.eraseOp(inputA.transposeOp);
-    if (inputB.transposeOp && !sameTransposeOp &&
-        inputB.transposeOp->use_empty())
-      rewriter.eraseOp(inputB.transposeOp);
     return success();
   }
 };

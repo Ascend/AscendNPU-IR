@@ -46,45 +46,63 @@ class HIVM_MacroOp<string mnemonic, list<Trait> traits = []> :
 // HIVM Local MMAD op definitions.
 //===----------------------------------------------------------------------===//
 
+class HIVM_LocalMmadLikeOperandDags {
+  dag localMmadLikeArgs = (ins
+    Arg<I1, [{
+      The condition under which
+      data in L0C is cleared before use
+    }]>:$init_condition,
+    Index:$real_m,
+    Index:$real_k,
+    Index:$real_n
+  );
+
+  dag localMmadLikeSyncArgs = (ins
+    Arg<Variadic<I64>, [{
+      Arguments required by mma_tile to insert
+      synchronization instructions, they are
+      managed by inject-sync passes.
+    }]>:$sync_related_args
+  );
+
+  dag localMmadLikeTransposeArgs = (ins
+    Arg<OptionalAttr<UnitAttr>, [{
+      Matrix A is transposed before load
+    }]>:$a_transpose,
+    Arg<OptionalAttr<UnitAttr>, [{
+      Matrix B is transposed before load
+    }]>:$b_transpose
+  );
+}
+
+def HIVM_LocalMmadLikeOperands : HIVM_LocalMmadLikeOperandDags;
+
 class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [AttrSizedOperandSegments,
      CubeCoreTypeTrait,
+     HIVMLocalMatmulLikeOpInterface,
      HIVMUnitFlagEnabledInterface,
      MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
     ], traits)> {
-  let arguments = (ins Arg<TensorOrMemref, "Matrix A">:$a,
-      Arg<TensorOrMemref, "Matrix B">:$b, Arg<I1, [{
- 
-                        The condition under which
-                        data in L0C is cleared before use
-                       }]>:$init_condition,
-      Index:$real_m, Index:$real_k, Index:$real_n,
-      Arg<TensorOrMemref, "Matrix C">:$c, Arg<Variadic<I64>, [{
-                        Arguments required by mma_tile to insert
-                        synchronization instructions, they are
- 
- 
- 
-                        managed by inject-sync passes.
-                       }]>:$sync_related_args,
-      Arg<Variadic<I1>, [{
+  let arguments = !con((ins
+      Arg<TensorOrMemref, "Matrix A">:$a,
+      Arg<TensorOrMemref, "Matrix B">:$b),
+    HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
+    (ins Arg<TensorOrMemref, "Matrix C">:$c),
+    HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs,
+    (ins Arg<Variadic<I1>, [{
                         An optional condition to enable unit-flag mode,
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
-      Optional<TensorOrMemref>:$per_channel_bias,
-      Arg<OptionalAttr<UnitAttr>, [{
-                        Matrix A is transposed before load
-                       }]>:$a_transpose,
-      Arg<OptionalAttr<UnitAttr>, [{
-                        Matrix B is transposed before load
-                       }]>:$b_transpose,
-      Arg<OptionalAttr<UnitAttr>, [{
+      Optional<TensorOrMemref>:$per_channel_bias),
+    HIVM_LocalMmadLikeOperands.localMmadLikeTransposeArgs,
+    (ins Arg<OptionalAttr<UnitAttr>, [{
                         MMAD HF32 mode control.If true, FP32 data will be rounded
                         to HF32 by CUBE before matrix multiplication, which achieves
                         double performance of MMAD.F32 but losing precision.
                        }]>:$enable_HF32,
-      OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode);
+      OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode));
  
   let results = (outs Variadic<AnyRankedTensor>:$result_tensors);
   code localMmadBaseDecls = [{
@@ -95,7 +113,13 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     bool isInitConstant(std::optional<bool> cst = std::nullopt);
     void setInitCondition(Value init);
     MatmulBiasMode getMatmulBiasMode();
-    bool shouldDecomposeBiasByElementAdd();
+    bool shouldDecomposeBiasByElementAdd() const;
+    bool supportsPerChannelBias() { return true; }
+    bool supportsNormalizeMmadCCF() { return true; }
+    bool supportsScaleOperands() { return false; }
+    bool usesBoolAttrForTargetLayout() { return false; }
+    llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
+        Value oper, bool isTranspose, bool isA);
     int getNumSyncRelatedArgs();
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
@@ -125,8 +149,6 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     `,` type($real_n)
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
-    (`a_transpose` $a_transpose^)?
-    (`b_transpose` $b_transpose^)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
@@ -166,9 +188,9 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     static StringRef getOpName() { return "mma_tile"; }
 
     // Declare functions necessary for OpLayoutInterface.
-    FailureOr<DataLayoutAttr> getOperandALayout();
-    FailureOr<DataLayoutAttr> getOperandBLayout();
-    FailureOr<DataLayoutAttr> getOperandCLayout();
+    FailureOr<DataLayoutAttr> getOperandALayout() const;
+    FailureOr<DataLayoutAttr> getOperandBLayout() const;
+    FailureOr<DataLayoutAttr> getOperandCLayout() const;
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
     llvm::SmallVector<int64_t> getBlockSizesTile(
         Value oper, bool isTranspose, bool isA);
@@ -194,29 +216,20 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [CubeCoreTypeTrait,
+     HIVMLocalMatmulLikeOpInterface,
      MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
     ], traits)> {
-  let arguments = (ins Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
-                       Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
-                       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
-                       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB,
-                       Arg<I1, [{
-                        The condition under which
-                        data in L0C is cleared before use
-                       }]>:$init_condition,
-                       Index:$real_m,
-                       Index:$real_k,
-                       Index:$real_n,
-                       Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
-                       OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
-                       OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat,
-                       OptionalAttr<UnitAttr>:$aTranspose,
-                       OptionalAttr<UnitAttr>:$bTranspose,
-                       Arg<Variadic<I64>, [{
-                        Arguments required by mma_tile to insert 
-                        synchronization instructions, they are 
-                        managed by inject-sync passes.
-                       }]>:$sync_related_args);
+  let arguments = !con((ins
+      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
+      Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
+      Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
+      Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB),
+    HIVM_LocalMmadLikeOperands.localMmadLikeArgs,
+    (ins Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
+         OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
+         OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat),
+    HIVM_LocalMmadLikeOperands.localMmadLikeTransposeArgs,
+    HIVM_LocalMmadLikeOperands.localMmadLikeSyncArgs);
   let results = (outs Variadic<ShapedTypeOf<[AnyFloat]>>:$result_tensors);
   code localMmadMxBaseDecls = [{
     // Implement functions necessary for DestinationStyleOpInterface.
@@ -227,7 +240,13 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     void setInitCondition(Value init);
     int getNumSyncRelatedArgs() { return 4; }
     MatmulBiasMode getMatmulBiasMode();
-    bool shouldDecomposeBiasByElementAdd();
+    bool shouldDecomposeBiasByElementAdd() const;
+    bool supportsPerChannelBias() { return false; }
+    bool supportsNormalizeMmadCCF() { return false; }
+    bool supportsScaleOperands() { return true; }
+    bool usesBoolAttrForTargetLayout() { return true; }
+    llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
+        Value oper, bool isTranspose, bool isA) const;
   }];
   string localMmadBaseDes = [{
     The computation logic is:
@@ -237,8 +256,8 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   }];
   let assemblyFormat = [{
     attr-dict
-    (`a_transpose` $aTranspose^)?
-    (`b_transpose` $bTranspose^)?
+    (`a_transpose` $a_transpose^)?
+    (`b_transpose` $b_transpose^)?
     `ins` `(`
     $a
     `,` $b
@@ -279,11 +298,11 @@ def MmadMxL1Op
     static StringRef getOpName() { return "mmadmxL1"; }
  
     // Declare functions necessary for OpLayoutInterface.
-    FailureOr<DataLayoutAttr> getOperandALayout();
-    FailureOr<DataLayoutAttr> getOperandBLayout();
+    FailureOr<DataLayoutAttr> getOperandALayout() const;
+    FailureOr<DataLayoutAttr> getOperandBLayout() const;
     FailureOr<DataLayoutAttr> getOperandScaleALayout();
     FailureOr<DataLayoutAttr> getOperandScaleBLayout();
-    FailureOr<DataLayoutAttr> getOperandCLayout();
+    FailureOr<DataLayoutAttr> getOperandCLayout() const;
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
     llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();

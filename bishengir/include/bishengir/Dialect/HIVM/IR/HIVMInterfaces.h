@@ -11,6 +11,7 @@
 
 #include "bishengir/Dialect/HIVM/Interfaces/ExtraBufferOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/ImplByScalarOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/Interfaces/OpLayoutInterface.h"
@@ -21,15 +22,18 @@
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/DenseMap.h"
 
 namespace mlir {
 namespace hivm {
 /// Forward declarations.
 class HIVMStructuredOp;
 class UnitFlagEnabledInterface;
+class DataLayoutAttr;
 enum class TCoreType : uint32_t;
 enum class IteratorType : uint32_t;
 enum class AddressSpace : uint32_t;
+enum class MatmulBiasMode : uint32_t;
 
 namespace detail {
 
