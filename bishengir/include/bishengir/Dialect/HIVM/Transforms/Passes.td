@@ -858,7 +858,27 @@ def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp
                         /*default=*/"false",
                         "Enable allow agnostic ops propagate reshape."
                         "Currently disabled because other passes has not supported"
-                        "fractal-layout operations.">];
+                        "fractal-layout operations.">,
+                 Option<"enableElementwisePropagate", "enable-elementwise-propagate", "bool",
+                        /*default=*/"false",
+                        "Enable elementwise convert layout propagation patterns.">];
+}
+
+def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::FuncOp"> {
+  let summary = "Convert layout to transpose decomposition";
+  let constructor = "mlir::hivm::createConvertLayoutToTransposePass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+  let options = [
+    Option<"use3dTranspose", "use-3d-transpose", "bool",
+           /*default=*/"true",
+           "Use staged 3D transpose decomposition for ND->Fractal conversions.">
+  ];
+}
+
+def CombineOptimizedConvertLayout : Pass<"hivm-combine-optimized-convert-layout", "func::FuncOp"> {
+  let summary = "Fold some convert layout patterns and change it into optimized form";
+  let constructor = "mlir::hivm::createCombineOptimizedConvertLayoutPass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
 }
 
 def CreatePreload : Pass<"create-preload"> {

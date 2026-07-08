@@ -14,8 +14,6 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 
-#include <llvm/Frontend/OpenMP/OMPConstants.h>
-
 #define DEBUG_TYPE "hivm-propagate-convert-layout"
 
 using namespace mlir;

@@ -99,6 +99,14 @@ def EnableHfusionCompile : FeatureControlOptions<
   "false"
 >;
 
+def EnableLayoutOptimization : FeatureControlOptions<
+  "Enable layout optimization (insert/propagate convert_layout around cube ops).",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def EnableSymbolAnalysis : FeatureControlOptions<
   "Enable symbol analysis.",
   "bool",

@@ -160,6 +160,7 @@ public:
         &enableHIVMInjectBarrierAllSync,
         &enableHIVMInjectBlockAllSync,
         &enableHivmNd2nzOnVector,
+        &enableLayoutOptimization,
         &enableSanitizer,
         &enableMemoryDisplay,
         &enableStaticBarePtr,

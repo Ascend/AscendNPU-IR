@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hivm-propagate-convert-layout="allow-agnostic-ops=true" --canonicalize %s | FileCheck %s
+// RUN: bishengir-opt --hivm-propagate-convert-layout="allow-agnostic-ops=true enable-elementwise-propagate=true" --canonicalize -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL:   func.func @propagate_up_from_for_result(
 // CHECK-SAME:                                            %[[VAL_0:.*]]: tensor<16x16xf16>,

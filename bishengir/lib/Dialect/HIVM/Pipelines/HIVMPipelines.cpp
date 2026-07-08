@@ -173,6 +173,21 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   }
 }
 
+static void addOptimizedConvertLayoutPipeline(OpPassManager &pm) {
+  pm.nest<func::FuncOp>().addPass(createInsertConvertLayoutPass());
+
+  PropagateConvertLayoutOptions options;
+  options.allowAgnosticOps = false;
+  pm.nest<func::FuncOp>().addPass(createPropagateConvertLayoutPass(options));
+
+  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass());
+  pm.nest<func::FuncOp>().addPass(createCSEPass());
+
+  // Fold load+convert_layout into ND2NZ and convert_layout+fixpipe on A3.
+  pm.addPass(mlir::hivm::createCombineOptimizedConvertLayoutPass());
+  pm.nest<func::FuncOp>().addPass(createConvertLayoutToTransposePass());
+}
+
 static void hivmPreBufferizationOptimizationPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   // HIVM brc/reduce op's operands have the same rank, so after converting from
@@ -189,6 +204,12 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.addPass(mlir::hivm::createInlineFixpipePass());
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
+  }
+  if (hivmPipelineOptions.enableLayoutOptimization) {
+    // Run after mix-CV load/store insertion so mmad operands are separated from
+    // producers by DMA ops, then fold remaining convert_layout into ND2NZ /
+    // fixpipe on the A3 mem-based path.
+    addOptimizedConvertLayoutPipeline(pm);
   }
   pm.nest<func::FuncOp>().addPass(createTileBatchMMIntoLoopPass());
 

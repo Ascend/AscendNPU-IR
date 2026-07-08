@@ -101,41 +101,34 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   return valLayoutMap;
 }
 
-
-llvm::SmallDenseMap<Value, DataLayoutAttr>
-MmadL1Op::getOperandsTargetFractalLayout() {
-  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
+  FractalOperandLayouts layouts;
 
   auto operA = getA();
   auto aBlockSizes = getBlockSizes(operA);
-  auto mALayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::Fractal,
-      nullptr,
+  layouts.a = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
-  valLayoutMap[operA] = mALayoutAttr;
 
   auto operB = getB();
   auto bBlockSizes = getBlockSizes(operB);
-  auto mBLayoutAttr = DataLayoutAttr::get(
-      getContext(), DataLayout::Fractal,
-      nullptr,
+  layouts.b = DataLayoutAttr::get(
+      getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
-  valLayoutMap[operB] = mBLayoutAttr;
 
   llvm::SmallVector<int64_t> cBlockSizes;
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
   cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
-  auto mCLayoutAttr = DataLayoutAttr::get(
+  layouts.c = DataLayoutAttr::get(
       getContext(), DataLayout::Fractal, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(cBlockSizes)));
-  valLayoutMap[getC()] = mCLayoutAttr;
 
-  if (auto bias = getPerChannelBias()) {
-    auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
-                                              nullptr, nullptr);
-    valLayoutMap[bias] = biasLayoutAttr;
+  if (getPerChannelBias()) {
+    layouts.bias =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
   }
-  return valLayoutMap;
+
+  return layouts;
 }
 
 //===----------------------------------------------------------------------===//

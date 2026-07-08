@@ -165,7 +165,7 @@ struct PropagateConvertLayoutScfForIterArgs
 
     // Create new ForOp with expanded init
     rewriter.setInsertionPoint(forOp);
-    LDBG(*forOp->getParentOp());
+    LDBG((forOp->getParentOp() ? *(forOp->getParentOp()) : *forOp));
     auto newForOp = createForOpWithModifiedInit(rewriter, forOp, iterArgIdx,
                                                 expandedInit);
     // Set up IR mapping for cloning
