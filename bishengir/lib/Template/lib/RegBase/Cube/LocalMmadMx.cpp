@@ -425,6 +425,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Load current tile from L1 to L0A.  The transposed A path needs the
     // scale metadata copied with the data copy so the MX scale address follows
     // the same transpose/tail handling as the data tile.
+    // FIXME: this need to refactor back into one without if branch.
     if constexpr (TA) {
       copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
     } else {

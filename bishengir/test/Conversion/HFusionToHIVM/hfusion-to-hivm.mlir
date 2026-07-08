@@ -1026,7 +1026,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   // CHECK-LABEL: func.func @test_matmulscale_transpose
   // CHECK-NOT: linalg.transpose
   // CHECK: hivm.hir.mmadmxL1 {{.*}}a_transpose{{.*}}b_transpose

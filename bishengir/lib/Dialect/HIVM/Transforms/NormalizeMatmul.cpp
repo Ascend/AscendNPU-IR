@@ -37,6 +37,7 @@
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1511,11 +1512,6 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
 
 // Add counter and if block in the tail for the case that mmad is probably not
 // executed
-template <typename T> constexpr bool isUnsupportedOpForNormalizeMmadCCF() {
-  // TODO: remove when MmadMxL1Op is supported with bias.
-  return std::is_same_v<T, hivm::MmadMxL1Op>;
-}
-
 template <typename T>
 struct NormalizeMmadCCFPattern : public OpRewritePattern<T> {
 public:
@@ -1523,7 +1519,7 @@ public:
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
     // TODO: need to be reverted when Affinity GMM supported
-    if constexpr (isUnsupportedOpForNormalizeMmadCCF<T>())
+    if (!op.supportsNormalizeMmadCCF())
       return failure();
     auto moduleOp = op->template getParentOfType<ModuleOp>();
     bool isDisableHfusionVectorize = false;

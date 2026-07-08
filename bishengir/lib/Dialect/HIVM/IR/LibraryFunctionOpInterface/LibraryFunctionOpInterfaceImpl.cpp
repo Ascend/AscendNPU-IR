@@ -1170,6 +1170,71 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
 }
 
 //===----------------------------------------------------------------------===//
+// MmadMxL1Op
+//===----------------------------------------------------------------------===//
+
+template <>
+std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
+    Operation *op, std::optional<bool> /*isOpsAligned*/) const {
+  auto concreteOp = cast<MmadMxL1Op>(op);
+  auto baseCallName = concreteOp.getOpName().str();
+  auto elemAType = getElementTypeOrSelf(concreteOp.getDpsInputs()[0].getType());
+  auto elemBType = getElementTypeOrSelf(concreteOp.getDpsInputs()[1].getType());
+
+  auto srcTypeName = getTypeName(concreteOp.getLoc(), elemAType);
+  auto dstTypeName = getTypeName(
+      concreteOp.getLoc(),
+      getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
+
+  auto finalName = baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+  if (concreteOp.getATranspose().has_value())
+    finalName += "_ta";
+  if (concreteOp.getBTranspose().has_value())
+    finalName += "_tb";
+
+  auto i8Type = IntegerType::get(concreteOp.getContext(), 8);
+  auto lhsFmt = concreteOp.getLhsFormat();
+  if (!lhsFmt || elemAType != i8Type || elemBType != i8Type)
+    return finalName;
+
+  std::string lhsFmtStr;
+  switch (lhsFmt->getSExtValue()) {
+  case 1:
+    lhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    lhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    lhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+
+  auto rhsFmt = concreteOp.getRhsFormat();
+  if (!rhsFmt)
+    return finalName;
+
+  std::string rhsFmtStr;
+  switch (rhsFmt->getSExtValue()) {
+  case 1:
+    rhsFmtStr = "fp8_e5m2_t";
+    break;
+  case 2:
+    rhsFmtStr = "fp8_e4m3_t";
+    break;
+  case 3:
+    rhsFmtStr = "fp4x2_e2m1_t";
+    break;
+  default:
+    llvm_unreachable("unsupported Dataformat");
+  }
+
+  return finalName + "_lhs_format_" + lhsFmtStr + "_rhs_format_" + rhsFmtStr;
+}
+
+//===----------------------------------------------------------------------===//
 // Conv1DL1Op
 //===----------------------------------------------------------------------===//
 
@@ -1618,6 +1683,7 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
 
     // Macro Ops
     REGISTER_NO_MAX_RANK(MmadL1Op);
+    REGISTER_NO_MAX_RANK(MmadMxL1Op);
     REGISTER_NO_MAX_RANK(Conv1DL1Op);
     REGISTER_NO_MAX_RANK(Conv2DL1Op);
     REGISTER_NO_MAX_RANK(MatmulOp);

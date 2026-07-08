@@ -55,6 +55,37 @@ class HIVM_MacroOp<string mnemonic, list<Trait> traits = []> :
 // HIVM Local MMAD op definitions.
 //===----------------------------------------------------------------------===//
 
+class HIVM_LocalMmadLikeOperandDags {
+  dag localMmadLikeArgs = (ins
+    Arg<I1, [{
+      The condition under which
+      data in L0C is cleared before use
+    }]>:$init_condition,
+    Index:$real_m,
+    Index:$real_k,
+    Index:$real_n
+  );
+
+  dag localMmadLikeSyncArgs = (ins
+    Arg<Variadic<I64>, [{
+      Arguments required by mma_tile to insert
+      synchronization instructions, they are
+      managed by inject-sync passes.
+    }]>:$sync_related_args
+  );
+
+  dag localMmadLikeTransposeArgs = (ins
+    Arg<OptionalAttr<UnitAttr>, [{
+      Matrix A is transposed before load
+    }]>:$a_transpose,
+    Arg<OptionalAttr<UnitAttr>, [{
+      Matrix B is transposed before load
+    }]>:$b_transpose
+  );
+}
+
+def HIVM_LocalMmadLikeOperands : HIVM_LocalMmadLikeOperandDags;
+
 class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [AttrSizedOperandSegments,
@@ -112,6 +143,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     bool shouldDecomposeBiasByElementAdd();
     bool shouldDecomposeBiasByCrossLoopElementAdd();
     bool supportsPerChannelBias() { return true; }
+    bool supportsNormalizeMmadCCF() { return true; }
     bool supportsScaleOperands() { return false; }
     bool usesBoolAttrForTargetLayout() { return false; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
@@ -145,8 +177,6 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     `,` type($real_n)
     (`,` type($per_channel_bias)^)? `)`
     `outs` `(` $c `:` type($c) `)`
-    (`a_transpose` $a_transpose^)?
-    (`b_transpose` $b_transpose^)?
     (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
     (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
     (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
@@ -255,6 +285,7 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd();
     bool supportsPerChannelBias() { return false; }
+    bool supportsNormalizeMmadCCF() { return true; }
     bool supportsScaleOperands() { return true; }
     bool usesBoolAttrForTargetLayout() { return true; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
@@ -312,11 +343,11 @@ def MmadMxL1Op
     static StringRef getOpName() { return "mmadmxL1"; }
  
     // Declare functions necessary for OpLayoutInterface.
-    FailureOr<DataLayoutAttr> getOperandALayout();
-    FailureOr<DataLayoutAttr> getOperandBLayout();
+    FailureOr<DataLayoutAttr> getOperandALayout() const;
+    FailureOr<DataLayoutAttr> getOperandBLayout() const;
     FailureOr<DataLayoutAttr> getOperandScaleALayout();
     FailureOr<DataLayoutAttr> getOperandScaleBLayout();
-    FailureOr<DataLayoutAttr> getOperandCLayout();
+    FailureOr<DataLayoutAttr> getOperandCLayout() const;
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
     llvm::SmallVector<int64_t> getBlockSizesTile(
         Value oper, bool isTranspose, bool isA) const;
