@@ -39,7 +39,7 @@ constexpr llvm::StringLiteral AICAttrTilingDim =
     "hivm.tiling_dim";
 constexpr llvm::StringLiteral tilghlyCoupledBufferAttr = 
     "hivm.tightly_coupled_buffer";
-/// Set on annotation.mark after AIV UB half-tile in BufferizationBubbleUpStrategy;
+/// Set on annotation.mark after AIV UB half-tile in BufferizationBubbleUpPattern;
 /// used to prune `tightlyCoupledBufferToTilingDim` before AIC fixpipe split.
 constexpr llvm::StringLiteral kTiledTightlyCoupledAlloc =
     "tiledAlloc";

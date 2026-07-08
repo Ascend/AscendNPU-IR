@@ -25,6 +25,7 @@ namespace bishengir_test {
   X(BiShengSegmenterPass);                                                     \
   X(InstructionMarkerPass);                                                    \
   X(TestAssignFusionKindAttrs);                                                \
+  X(TestBubbleUpBufferization);                                                \
   X(TestBufferUtilsPass);                                                      \
   X(TestCanFusePass);                                                          \
   X(TestDimensionAnalyzer);                                                    \
