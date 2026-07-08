@@ -9,8 +9,8 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -313,6 +313,8 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
     }
 
     Value src = copyOp.getSource();
+    // TODO：remove memref.copy conversion after changing to use
+    // hivm.load/hivm.store directly
     bool convertToLoad = !isInVectorFunction &&
                          (isFromGMSpace(src) || isFromDistCallResult(src));
     if (convertToLoad) {
@@ -320,6 +322,8 @@ struct MemrefCopyOpLowering : public OpRewritePattern<memref::CopyOp> {
     }
 
     Value dst = copyOp.getTarget();
+    // TODO：remove memref.copy conversion after changing to use
+    // hivm.load/hivm.store directly
     bool convertToStore = !isInVectorFunction &&
                           (isFromGMSpace(dst) || isFromDistCallResult(dst));
     if (convertToStore) {
@@ -341,6 +345,8 @@ struct BufferizeMaterializeOpLowering
   matchAndRewrite(bufferization::MaterializeInDestinationOp bufMIDOp,
                   PatternRewriter &rewriter) const override {
     Value dst = bufMIDOp.getDest();
+    // TODO：remove bufferization conversion after changing to use
+    // hivm.load/hivm.store directly
     bool convertToStore = isFromGMSpace(dst) || isFromDistCallResult(dst);
     if (convertToStore) {
       rewriter.replaceOpWithNewOp<hivm::StoreOp>(bufMIDOp, TypeRange(),

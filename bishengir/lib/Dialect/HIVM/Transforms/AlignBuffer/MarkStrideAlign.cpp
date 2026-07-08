@@ -808,12 +808,7 @@ void MarkStrideAlignPass::runOnOperation() {
       return WalkResult::advance();
     }
 
-    auto hivmOp = cast<HIVMStructuredOp>(op);
-    if (!hivmOp.hasPureBufferSemantics()) {
-      hivmOp->emitError("Not bufferized.");
-      return WalkResult::interrupt();
-    }
-
+    // check custom op first, custom op may call func without memref operand
     if (isa<CustomOp, CustomMacroOp>(op)) {
       ArrayAttr argAttrs =
           op->getAttrOfType<ArrayAttr>(CustomOp::kArgAttrsName);
@@ -836,6 +831,12 @@ void MarkStrideAlignPass::runOnOperation() {
       }
 
       return WalkResult::advance();
+    }
+
+    auto hivmOp = cast<HIVMStructuredOp>(op);
+    if (!hivmOp.hasPureBufferSemantics()) {
+      hivmOp->emitError("Not bufferized.");
+      return WalkResult::interrupt();
     }
 
     if (isa<hivm::VTransposeOp>(op) &&

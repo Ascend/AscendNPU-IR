@@ -181,11 +181,62 @@ public:
   }
 };
 
+class FoldStaticReshape : public OpRewritePattern<tensor::ReshapeOp> {
+public:
+  using OpRewritePattern<tensor::ReshapeOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tensor::ReshapeOp reshapeOp,
+                                PatternRewriter &rewriter) const override {
+    Value src = reshapeOp.getSource();
+    Value dst = reshapeOp.getResult();
+
+    RankedTensorType srcType = dyn_cast<RankedTensorType>(src.getType());
+    RankedTensorType dstType = dyn_cast<RankedTensorType>(dst.getType());
+    if (!srcType || !dstType || !srcType.hasStaticShape() || !dstType.hasStaticShape()) {
+      return failure();
+    }
+    
+    std::optional<int64_t> srcTotalSize = mlir::utils::getStaticTotalSize(srcType.getShape());
+    std::optional<int64_t> dstTotalSize = mlir::utils::getStaticTotalSize(dstType.getShape());
+    if (!srcTotalSize || !dstTotalSize || srcTotalSize.value() != dstTotalSize.value()) {
+      return failure();
+    }
+
+    // Prevent invalid collapse/expand if source or destination rank is 0 (scalar)
+    if (srcType.getRank() == 0 || dstType.getRank() == 0) {
+      return failure();
+    }
+
+    SmallVector<ReassociationIndices> collapseReassociation(1);
+    for (int64_t i = 0; i < srcType.getRank(); ++i) {
+      collapseReassociation[0].push_back(i);
+    }
+    SmallVector<ReassociationIndices> expandReassociation(1);
+    for (int64_t i = 0; i < dstType.getRank(); ++i) {
+      expandReassociation[0].push_back(i);
+    }
+
+    rewriter.setInsertionPointAfter(reshapeOp);
+    auto flat1DType = RankedTensorType::get({srcTotalSize.value()}, srcType.getElementType());
+    // collapse_shape: srcShape -> 1D
+    auto collapseOp = rewriter.create<tensor::CollapseShapeOp>(
+        reshapeOp.getLoc(), flat1DType, src, collapseReassociation);
+    // expand_shape: 1D -> dstShape
+    auto expandOp = rewriter.create<tensor::ExpandShapeOp>(
+        reshapeOp.getLoc(), dstType, collapseOp.getResult(),
+        expandReassociation);
+    rewriter.replaceAllUsesWith(reshapeOp, expandOp.getResult());
+    return success();
+  }
+};
+
 void CanonicalizeTensorReshape::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
   patterns.insert<CanonicalizeTensorReshapeOpPattern>(patterns.getContext());
   patterns.insert<FoldReshape>(patterns.getContext());
+  // This pattern decomposes `tensor.reshape` into a one-dimensional tensor using collapse and then expands it.
+  patterns.insert<FoldStaticReshape>(patterns.getContext());
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
     return signalPassFailure();
 }

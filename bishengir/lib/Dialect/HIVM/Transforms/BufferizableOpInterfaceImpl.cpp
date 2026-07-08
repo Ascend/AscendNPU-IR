@@ -85,7 +85,7 @@ struct MmadL1OpInterface
     : public DstBufferizableOpInterfaceExternalModel<MmadL1OpInterface,
                                                      hivm::MmadL1Op> {
   bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
-                               const AnalysisState &state) const {
+                              const AnalysisState &state) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
@@ -167,9 +167,92 @@ struct NDNZConversionOpInterface
 };
 
 template <typename CustomOpT>
+static std::optional<int32_t> getInplaceInputIndexForOutput(CustomOpT op,
+                                                            int64_t outputIdx) {
+  if (outputIdx < 0)
+    return std::nullopt;
+
+  auto argAttrs =
+      op->template getAttrOfType<ArrayAttr>(CustomOpT::kArgAttrsName);
+  if (!argAttrs)
+    return std::nullopt;
+
+  for (auto [inputIdx, inputAttr] : llvm::enumerate(argAttrs)) {
+    if (inputIdx >= op.getInputs().size())
+      break;
+
+    auto dict = dyn_cast<DictionaryAttr>(inputAttr);
+    if (!dict)
+      continue;
+
+    auto inplaceOutAttr = dyn_cast_or_null<IntegerAttr>(
+        dict.get(CustomOpT::kInplaceOutsAttrName));
+    if (!inplaceOutAttr)
+      continue;
+
+    if (inplaceOutAttr.getInt() == outputIdx)
+      return static_cast<int32_t>(inputIdx);
+  }
+
+  return std::nullopt;
+}
+
+template <typename CustomOpT>
+static std::optional<int64_t> getDpsInitIndex(CustomOpT op,
+                                              OpOperand &opOperand) {
+  auto dpsOp = cast<DestinationStyleOpInterface>(op.getOperation());
+  if (!dpsOp.isDpsInit(&opOperand)) {
+    return std::nullopt;
+  }
+  return opOperand.getOperandNumber() -
+         dpsOp.getDpsInits().getBeginOperandIndex();
+}
+
+template <typename CustomOpT>
+static bool isInplaceOutputOperand(CustomOpT op, OpOperand &opOperand) {
+  auto outputIdx = getDpsInitIndex(op, opOperand);
+  return outputIdx && getInplaceInputIndexForOutput(op, *outputIdx).has_value();
+}
+
+template <typename CustomOpT>
 struct HIVMCustomOpInterface
     : public DstBufferizableOpInterfaceExternalModel<
           HIVMCustomOpInterface<CustomOpT>, CustomOpT> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto customOp = cast<CustomOpT>(op);
+    if (isInplaceOutputOperand(customOp, opOperand)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool mustBufferizeInPlace(Operation *op, OpOperand &opOperand,
+                            const AnalysisState &state) const {
+    return isInplaceOutputOperand(cast<CustomOpT>(op), opOperand);
+  }
+
+  bool isNotConflicting(Operation *op, OpOperand *uRead, OpOperand *uWrite,
+                        const AnalysisState &state) const {
+    if (!uRead || !uWrite || uRead->getOwner() != op ||
+        uWrite->getOwner() != op) {
+      return false;
+    }
+
+    auto customOp = cast<CustomOpT>(op);
+    auto outputIdx = getDpsInitIndex(customOp, *uWrite);
+    if (!outputIdx) {
+      return false;
+    }
+
+    auto inputIdx = getInplaceInputIndexForOutput(customOp, *outputIdx);
+    if (!inputIdx) {
+      return false;
+    }
+
+    return uRead->getOperandNumber() == static_cast<unsigned>(*inputIdx);
+  }
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     return bufferizeDestinationStyleOpInterface(
@@ -193,9 +276,10 @@ struct HIVMLoadOpInterface
     auto loadOp = cast<hivm::LoadOp>(op);
     auto dst = loadOp.getDst();
     if (dst.getDefiningOp<tensor::EmptyOp>())
-      return getMemRefTypeWithStaticIdentityLayout(cast<TensorType>(dst.getType()));
-    auto dstMemrefType = bufferization::getBufferType(
-        loadOp.getDst(), options, invocationStack);
+      return getMemRefTypeWithStaticIdentityLayout(
+          cast<TensorType>(dst.getType()));
+    auto dstMemrefType =
+        bufferization::getBufferType(loadOp.getDst(), options, invocationStack);
     return dstMemrefType;
   }
 };
@@ -321,13 +405,13 @@ struct HIVMMatmulMxOpInterface
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInput(&opOperand);
   }
- 
+
   bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
                                const AnalysisState &state) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     return dpsOp.isDpsInit(&opOperand);
   }
- 
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     // The `tilingParams` operand might be already bufferized.
@@ -412,8 +496,7 @@ struct DebugOpInterface
     auto tcoretype = debugOp.getTcoretypeAttr();
     auto memscope = debugOp.getMemscopeAttr();
     replaceOpWithNewBufferizedOp<hivm::DebugOp>(
-        rewriter, op, debugtype, prefix, hex, newArg,
-        tcoretype, memscope);
+        rewriter, op, debugtype, prefix, hex, newArg, tcoretype, memscope);
 
     return success();
   }
@@ -684,9 +767,9 @@ struct StrideLoadOpInterface
     auto strideLoadOp = cast<StrideLoadOp>(op);
     AliasingValueList result;
     if (&opOperand == &strideLoadOp.getDstMutable()) { // $dst
-      result.addAlias({AliasingValue(strideLoadOp->getResult(0),
-                                     BufferRelation::Equivalent,
-                                     /*isMustAlias=*/true)});
+      result.addAlias(
+          {AliasingValue(strideLoadOp->getResult(0), BufferRelation::Equivalent,
+                         /*isMustAlias=*/true)});
     }
     return result;
   }
@@ -700,13 +783,11 @@ struct StrideLoadOpInterface
     if (failed(dstBuffer))
       return failure();
 
-    rewriter.create<StrideLoadOp>(strideLoadOp.getLoc(),
-                                  /*resultType*/ TypeRange{},
-                                  strideLoadOp.getSrc(), *dstBuffer,
-                                  strideLoadOp.getOffset(),
-                                  strideLoadOp.getOther(),
-                                  strideLoadOp.getStride(),
-                                  strideLoadOp.getNumel());
+    rewriter.create<StrideLoadOp>(
+        strideLoadOp.getLoc(),
+        /*resultType*/ TypeRange{}, strideLoadOp.getSrc(), *dstBuffer,
+        strideLoadOp.getOffset(), strideLoadOp.getOther(),
+        strideLoadOp.getStride(), strideLoadOp.getNumel());
 
     if (strideLoadOp->getNumResults() > 0) {
       replaceOpWithBufferizedValues(rewriter, op, *dstBuffer);
@@ -744,10 +825,10 @@ struct StrideStoreOpInterface
     if (failed(srcBuffer))
       return failure();
 
-    rewriter.create<StrideStoreOp>(strideStoreOp.getLoc(), strideStoreOp.getDst(),
-                                   *srcBuffer, strideStoreOp.getOffset(),
-                                   strideStoreOp.getStride(),
-                                   strideStoreOp.getNumel());
+    rewriter.create<StrideStoreOp>(
+        strideStoreOp.getLoc(), strideStoreOp.getDst(), *srcBuffer,
+        strideStoreOp.getOffset(), strideStoreOp.getStride(),
+        strideStoreOp.getNumel());
     rewriter.eraseOp(op);
 
     return success();
