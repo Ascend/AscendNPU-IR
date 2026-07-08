@@ -1748,7 +1748,7 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
       for (OpOperand &operand :
            llvm::make_early_inc_range(storeLikeOp->getUses())) {
         Operation *userOp = operand.getOwner();
-        if (!isa<LoadOp>(userOp))
+        if (!isa<LoadOp, ND2NZOp>(userOp))
           continue;
         builder.setInsertionPoint(userOp);
         Value loadSliceIdx = builder.create<arith::ConstantIndexOp>(loc, 0);
@@ -1978,6 +1978,7 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
   }
   LLVM_DEBUG(dbgs() << "\n\nAfter everything:\n";
              newLoop->getParentOfType<func::FuncOp>()->dump());
+  checkpoint->erase();
   return success();
 }
 
