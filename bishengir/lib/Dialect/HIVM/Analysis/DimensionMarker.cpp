@@ -539,10 +539,11 @@ void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
 
 void DimensionAnalyzer::processForOp(scf::ForOp op) {
   LDBG("Processing ForOp " << op);
-  for (const auto &[regionArg, initArg] :
-       zip_equal(op.getRegionIterArgs(), op.getInitArgs())) {
-    createDummyRefIfNotExist({regionArg, initArg});
+  for (const auto &[regionArg, initArg, yield] :
+       zip_equal(op.getRegionIterArgs(), op.getInitArgs(), op.getYieldedValues())) {
+    createDummyRefIfNotExist({regionArg, initArg, yield});
     processValue(regionArg, initArg);
+    processValue(regionArg, yield);
   }
 }
 
