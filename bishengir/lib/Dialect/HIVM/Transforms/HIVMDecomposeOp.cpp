@@ -1397,22 +1397,39 @@ class AtomicXchgOpLowering : public OpRewritePattern<hivm::AtomicXchgOp> {
                                 PatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto lockVar = createSyncBlockLockVar(rewriter, op->getLoc());
+    auto src = op.getSrc();
+    auto dst = op.getDst();
+    auto mask = op.getMask();
 
     // insert sync_block_lock
     rewriter.create<hivm::SyncBlockLockOp>(loc, lockVar);
 
     // step1: load old val in dst gm to ub
-    auto src = op.getSrc()[0];
     auto tmpUB = createMemrefAllocOpWithBufferSize(rewriter, loc, src);
-
-    auto dst = op.getDst();
     rewriter.create<hivm::LoadOp>(loc, TypeRange{}, dst, tmpUB);
 
-    // step2: store new val to dst gm
-    rewriter.create<hivm::StoreOp>(loc, TypeRange{}, src, dst);
-
-    // step3: copy old val to src ub
-    rewriter.create<hivm::CopyOp>(loc, TypeRange{}, tmpUB, src);
+    if (mask) {
+      // step2: select according to the mask
+      // tmpUB_masked_dst = vsel(mask, src, tmpUB)
+      //   where mask=1 -> take src (new val); where mask=0 -> take tmpUB (old)
+      auto tmpUB_masked_dst =
+          createMemrefAllocOpWithBufferSize(rewriter, loc, src);
+      rewriter.create<hivm::VSelOp>(loc, TypeRange{},
+                                    ValueRange({mask, src, tmpUB}),
+                                    ValueRange({tmpUB_masked_dst}), Value());
+      // src = vsel(mask, tmpUB, src)
+      //   where mask=1 -> take tmpUB (old val); where mask=0 -> keep src
+      rewriter.create<hivm::VSelOp>(loc, TypeRange{},
+                                    ValueRange({mask, tmpUB, src}),
+                                    ValueRange({src}), Value());
+      // step3: store the selected value to dst gm
+      rewriter.create<hivm::StoreOp>(loc, TypeRange{}, tmpUB_masked_dst, dst);
+    } else {
+      // step2: store new val to dst gm
+      rewriter.create<hivm::StoreOp>(loc, TypeRange{}, src, dst);
+      // step3: copy old val to src ub
+      rewriter.create<hivm::CopyOp>(loc, TypeRange{}, tmpUB, src);
+    }
 
     rewriter.create<hivm::SyncBlockUnlockOp>(loc, lockVar);
     rewriter.eraseOp(op);

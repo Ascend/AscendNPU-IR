@@ -1962,21 +1962,42 @@ func.func @atomic_cas_fp8_e5m2(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_ty
 }
 
 // -----
-// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<256xi16>
-// CHECK: %[[REINTERPRET_CAST:.*]] = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
-// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
-// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
-// CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<256xi16>
-// CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST:.*]] : memref<256xi16, strided<[1]>>) outs(%[[ALLOC_0]] : memref<256xi16>)
-// CHECK: hivm.hir.store ins(%[[ALLOC:.*]] : memref<256xi16>) outs(%[[REINTERPRET_CAST:.*]] : memref<256xi16, strided<[1]>>)
-// CHECK: hivm.hir.copy ins(%[[ALLOC_0:.*]] : memref<256xi16>) outs(%[[ALLOC:.*]] : memref<256xi16>)
-// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK-LABEL: func.func @atomic_xchg(
+// CHECK: %[[VAL_2:.*]] = memref.alloc() : memref<256xi16>
+// CHECK: %[[VAL_3:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
+// CHECK: %[[VAL_4:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_4]] : memref<1xi64>)
+// CHECK: %[[VAL_5:.*]] = memref.alloc() : memref<256xi16>
+// CHECK: hivm.hir.load ins(%[[VAL_3]] : memref<256xi16, strided<[1]>>) outs(%[[VAL_5]] : memref<256xi16>)
+// CHECK: hivm.hir.store ins(%[[VAL_2]] : memref<256xi16>) outs(%[[VAL_3]] : memref<256xi16, strided<[1]>>)
+// CHECK: hivm.hir.copy ins(%[[VAL_5]] : memref<256xi16>) outs(%[[VAL_2]] : memref<256xi16>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_4]] : memref<1xi64>)
 // CHECK: return
 func.func @atomic_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi16>) {
   %alloc = memref.alloc() : memref<256xi16>
-  %alloc_1 = memref.alloc() : memref<256xi16>
   %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
-  hivm.hir.atomic_xchg ins(%alloc_1, %alloc : memref<256xi16>, memref<256xi16>) outs(%reinterpret_cast_1 : memref<256xi16, strided<[1]>>)
+  hivm.hir.atomic_xchg ins(%alloc : memref<256xi16>) outs(%reinterpret_cast_1 : memref<256xi16, strided<[1]>>)
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @masked_atomic_xchg(
+// CHECK: %[[VAL_2:.*]] = memref.alloc() : memref<256xi16>
+// CHECK: %[[VAL_3:.*]] = memref.reinterpret_cast %[[ARG1:.*]] to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
+// CHECK: %[[VAL_4:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_4]] : memref<1xi64>)
+// CHECK: %[[VAL_5:.*]] = memref.alloc() : memref<256xi16>
+// CHECK: hivm.hir.load ins(%[[VAL_3]] : memref<256xi16, strided<[1]>>) outs(%[[VAL_5]] : memref<256xi16>)
+// CHECK: %[[VAL_6:.*]] = memref.alloc() : memref<256xi16>
+// CHECK: hivm.hir.vsel ins(%[[MASK:.*]], %[[VAL_2]], %[[VAL_5]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[VAL_6]] : memref<256xi16>)
+// CHECK: hivm.hir.vsel ins(%[[MASK]], %[[VAL_5]], %[[VAL_2]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[VAL_2]] : memref<256xi16>)
+// CHECK: hivm.hir.store ins(%[[VAL_6]] : memref<256xi16>) outs(%[[VAL_3]] : memref<256xi16, strided<[1]>>)
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_4]] : memref<1xi64>)
+// CHECK: return
+func.func @masked_atomic_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi16>, %arg2: memref<256xi1>) {
+  %alloc = memref.alloc() : memref<256xi16>
+  %reinterpret_cast_1 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1]>>
+  hivm.hir.atomic_xchg ins(%alloc : memref<256xi16>) outs(%reinterpret_cast_1 : memref<256xi16, strided<[1]>>) mask(%arg2 : memref<256xi1>)
   return
 }
 
