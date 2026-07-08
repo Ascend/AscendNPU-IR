@@ -33,14 +33,15 @@ thread_local bool archisAscend310B{false};
 thread_local bool archisMembased{false};
 
 static void populateNormalizeHFusionPatterns(RewritePatternSet &patterns,
-                                             bool enableHighPrecision) {
+                                             bool enableHighPrecision,
+                                             bool enableFastDiv) {
   populateNormalizeF16ToF32Patterns(patterns);
   populateNormalizeTrigPatterns(patterns, enableHighPrecision);
   populateNormalizeI8I32CmpPatterns(patterns);
   populateNormalizeMulRecPatterns(patterns);
   populateNormalizeModPatterns(patterns);
   populateNormalizeCmpToCastPatterns(patterns);
-  populateNormalizeArithmeticPatterns(patterns);
+  populateNormalizeArithmeticPatterns(patterns, enableFastDiv);
   populateNormalizePrimaryMathPatterns(patterns);
   populateNormalizeCastingPatterns(patterns);
   populateNormalizeGatherIndexPatterns(patterns);
@@ -77,7 +78,8 @@ struct NormalizeHFusionPass : public impl::NormalizeBase<NormalizeHFusionPass> {
     archisAscend310B = hacc::utils::isAscend310B(moduleOp);
     archisMembased = hacc::utils::isMemBasedArch(moduleOp);
     RewritePatternSet patterns(&getContext());
-    populateNormalizeHFusionPatterns(patterns, enableHighPrecision);
+    populateNormalizeHFusionPatterns(patterns, enableHighPrecision,
+                                     enableFastDiv);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns))))
       signalPassFailure();
   }

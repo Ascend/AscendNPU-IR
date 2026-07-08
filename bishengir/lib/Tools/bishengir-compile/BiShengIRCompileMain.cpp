@@ -237,7 +237,8 @@ runExternalHIVMC(ModuleOp &module,
                                      "enable-hivm-cross-core-gss",
                                      "vf-fusion-mode",
                                      "disable-vf-reachable-check",
-                                     "enable-sink-dpx-load"};
+                                     "enable-sink-dpx-load",
+                                     "enable-fast-div"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
