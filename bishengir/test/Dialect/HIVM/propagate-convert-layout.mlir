@@ -400,6 +400,46 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 
 // -----
 
+// CHECK-LABEL: func.func @propagate_up_through_scalar_vbrc(
+// CHECK-SAME:      %[[SCALAR:.*]]: bf16
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<8x8x16x16xbf16>
+// CHECK:           %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[SCALAR]] : bf16) outs(%[[EMPTY]] : tensor<8x8x16x16xbf16>) -> tensor<8x8x16x16xbf16>
+// CHECK:           return %[[VBRC]] : tensor<8x8x16x16xbf16>
+func.func @propagate_up_through_scalar_vbrc(%cst: bf16) -> tensor<8x8x16x16xbf16> {
+  %empty = tensor.empty() : tensor<128x128xbf16>
+  %brc = hivm.hir.vbrc ins(%cst : bf16) outs(%empty : tensor<128x128xbf16>)
+      -> tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %brc output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_up_through_insert_slice(
+// CHECK-SAME:      %[[DEST:.*]]: tensor<128x128xbf16>, %[[SRC:.*]]: tensor<32x128xbf16>
+// CHECK:           %[[DEST_FR:.*]] = hivm.hir.convert_layout %[[DEST]] output_shape [8, 8, 16, 16]
+// CHECK-SAME:      (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+// CHECK:           %[[SRC_FR:.*]] = hivm.hir.convert_layout %[[SRC]] output_shape [8, 2, 16, 16]
+// CHECK-SAME:      (tensor<32x128xbf16>) -> tensor<8x2x16x16xbf16>
+// CHECK:           %[[INSERTED:.*]] = tensor.insert_slice %[[SRC_FR]] into %[[DEST_FR]][0, 2, 0, 0] [8, 2, 16, 16] [1, 1, 1, 1]
+// CHECK:           return %[[INSERTED]] : tensor<8x8x16x16xbf16>
+func.func @propagate_up_through_insert_slice(
+    %dest: tensor<128x128xbf16>, %source: tensor<32x128xbf16>
+) -> tensor<8x8x16x16xbf16> {
+  %inserted = tensor.insert_slice %source into %dest[32, 0] [32, 128] [1, 1]
+      : tensor<32x128xbf16> into tensor<128x128xbf16>
+  %fractal = hivm.hir.convert_layout %inserted output_shape [8, 8, 16, 16]
+      {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>,
+       srcLayout = #hivm.data_layout<ND>}
+      : (tensor<128x128xbf16>) -> tensor<8x8x16x16xbf16>
+  return %fractal : tensor<8x8x16x16xbf16>
+}
+
+// -----
+
 // CHECK-LABEL: func.func @move_convert_layout_before_tensor_copy(
 // CHECK-SAME:      %[[ARG0:.*]]: tensor<16x16xf32>, %[[ARG1:.*]]: tensor<16x16xf32>
 // CHECK:           %[[CONVERT:.*]] = hivm.hir.convert_layout %[[ARG0]] output_shape [2, 1, 16, 8]
