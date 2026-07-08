@@ -1004,6 +1004,64 @@ FailureOrCastVec propagateScfForOp(RewriterBase &rewriter,
   return newConversionOps;
 }
 
+FailureOrCastVec propagateScfForYieldOp(RewriterBase &rewriter,
+                                        UnrealizedConversionCastOp conversionOp,
+                                        scf::ForOp op,
+                                        unsigned int yieldIndex) {
+  if (yieldIndex >= op.getNumResults())
+    return failure();
+
+  OpBuilder::InsertionGuard g(rewriter);
+
+  auto origType = conversionOp.getResult(0).getType();
+  auto newType = conversionOp.getOperand(0).getType();
+  if (!isa<MemRefType>(newType))
+    return failure();
+  if (op.getResult(yieldIndex).getType() != origType ||
+      op.getRegionIterArg(yieldIndex).getType() != origType)
+    return failure();
+
+  auto regionIterArg = op.getRegionIterArg(yieldIndex);
+  if (!regionIterArg.use_empty())
+    return failure();
+
+  rewriter.setInsertionPoint(op);
+  Value init = op.getInitArgs()[yieldIndex];
+  Value newInit = init;
+  if (init.getType() != newType) {
+    auto initConversion = init.getDefiningOp<UnrealizedConversionCastOp>();
+    auto initResult = dyn_cast<OpResult>(init);
+    if (initConversion &&
+        initConversion->getNumOperands() == initConversion->getNumResults() &&
+        initResult) {
+      unsigned initResultIndex = initResult.getResultNumber();
+      if (initConversion.getOperand(initResultIndex).getType() == newType) {
+        newInit = initConversion.getOperand(initResultIndex);
+      } else {
+        return failure();
+      }
+    } else {
+      return failure();
+    }
+  }
+  op.getInitArgsMutable()[yieldIndex].assign(newInit);
+  op.getRegionIterArg(yieldIndex).setType(newType);
+  op.getResult(yieldIndex).setType(newType);
+
+  rewriter.setInsertionPointAfter(op);
+  auto resultConversionOp = rewriter.create<UnrealizedConversionCastOp>(
+      op.getLoc(), origType, op.getResult(yieldIndex));
+  rewriter.replaceAllUsesExcept(op.getResult(yieldIndex),
+                                resultConversionOp.getResult(0),
+                                resultConversionOp);
+
+  auto mutableYieldValues = op.getYieldedValuesMutable();
+  assert(mutableYieldValues.has_value());
+  mutableYieldValues.value()[yieldIndex].assign(conversionOp.getOperand(0));
+
+  return UnrealizedCastOpVec{};
+}
+
 std::optional<Value> getConversionSrc(Value v) {
   auto conversionOp = v.getDefiningOp<UnrealizedConversionCastOp>();
   if (conversionOp == nullptr) {
@@ -1055,12 +1113,17 @@ FailureOrCastVec propagateScfIfOp(RewriterBase &rewriter, scf::IfOp op,
   return UnrealizedCastOpVec{resultConversionOp};
 }
 
-/// Push down an UnrealizedConversionCastOp past a CastOp.
-FailureOrCastVec propagateYieldOp(RewriterBase &rewriter, scf::YieldOp yieldOp,
+/// Push down an UnrealizedConversionCastOp past a YieldOp.
+FailureOrCastVec propagateYieldOp(RewriterBase &rewriter,
+                                  UnrealizedConversionCastOp conversionOp,
+                                  scf::YieldOp yieldOp,
                                   unsigned int yieldIndex) {
   auto *yieldParentOp = yieldOp->getBlock()->getParentOp();
   if (auto ifOp = dyn_cast_if_present<scf::IfOp>(yieldParentOp)) {
     return propagateScfIfOp(rewriter, ifOp, yieldIndex);
+  }
+  if (auto forOp = dyn_cast_if_present<scf::ForOp>(yieldParentOp)) {
+    return propagateScfForYieldOp(rewriter, conversionOp, forOp, yieldIndex);
   }
   return UnrealizedCastOpVec{};
 }
@@ -1685,8 +1748,8 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                     forOp.getTiedLoopResult(use).getResultNumber();
                 return propagateScfForOp(rewriter, conversion, forOp, initIndx);
               })
-              .Case([&rewriter, &use](scf::YieldOp yieldOp) {
-                return propagateYieldOp(rewriter, yieldOp,
+              .Case([&rewriter, &conversion, &use](scf::YieldOp yieldOp) {
+                return propagateYieldOp(rewriter, conversion, yieldOp,
                                         use->getOperandNumber());
               })
               .Case([&rewriter,
