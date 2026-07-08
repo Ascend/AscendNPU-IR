@@ -371,7 +371,6 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
-      pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
     }
   }
 
