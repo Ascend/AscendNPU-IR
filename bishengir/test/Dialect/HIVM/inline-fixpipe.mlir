@@ -1484,3 +1484,28 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   }
 }
 
+// -----
+
+// CHECK-LABEL: func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>
+// CHECK: hivm.hir.vcast {enable_overflow = true, enable_saturate = false
+// CHECK: hivm.hir.store
+func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate(
+    %mmad_res: tensor<16x16xi32>,
+    %fixpipe_dst: tensor<16x16xi32>,
+    %cast_dst: tensor<16x16xi8>,
+    %store_dst: memref<16x16xi8, strided<[16, 1]>>) {
+  %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%mmad_res : tensor<16x16xi32>) outs(%fixpipe_dst : tensor<16x16xi32>)
+      -> tensor<16x16xi32>
+  %cast = hivm.hir.vcast {
+      enable_overflow = true, enable_saturate = false,
+      hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+      ins(%fixpipe : tensor<16x16xi32>) outs(%cast_dst : tensor<16x16xi8>)
+      round_mode = <truncwithoverflow> -> tensor<16x16xi8>
+  hivm.hir.store ins(%cast : tensor<16x16xi8>)
+      outs(%store_dst : memref<16x16xi8, strided<[16, 1]>>)
+  return
+}
+

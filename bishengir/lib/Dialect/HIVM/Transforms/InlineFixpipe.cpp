@@ -551,7 +551,29 @@ private:
   InsertFixpipePatternOptions options;
 };
 
+/// Fixpipe pre-quant cannot implement integer narrowing casts that disable
+/// saturation (e.g. trunc-with-overflow semantics).
+static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp) {
+  auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
+  auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
+  if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
+    return true;
+
+  int64_t srcBitWidth = inputType.getIntOrFloatBitWidth();
+  int64_t dstBitWidth = outputType.getIntOrFloatBitWidth();
+  if (srcBitWidth <= dstBitWidth || outputType.isInteger(1))
+    return true;
+
+  if (auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate"))
+    return enableSaturate.getValue();
+
+  return true;
+}
+
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
+  if (!isVcastInlinableIntoFixpipe(castOp))
+    return std::nullopt;
+
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
   if (inputType.isF32() && outputType.isF16()) {
