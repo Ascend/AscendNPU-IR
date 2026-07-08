@@ -499,6 +499,7 @@ void CreatePreloadPass::runOnOperation() {
   PassManager pm(&getContext());
   pm.addPass(createCSEPass());
   pm.addPass(createCanonicalizerPass());
+  pm.addPass(scope::createInlineScopePass());
 
   if (failed(pm.run(moduleOp))) {
     signalPassFailure();

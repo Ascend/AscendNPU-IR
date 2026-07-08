@@ -1043,17 +1043,10 @@ def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
                         "to reduce intermediate buffer expansion">];
 }
 
-def CreatePreload : Pass<"create-preload", "func::FuncOp"> {
+def CreatePreload : Pass<"create-preload"> {
   let summary = "Create preload for CV pipelining";
   let constructor = "mlir::hivm::createCreatePreloadPass()";
-  let dependentDialects = [
-    "memref::MemRefDialect",
-    "hivm::HIVMDialect",
-    "mlir::scope::ScopeDialect",
-    "scf::SCFDialect",
-    "arith::ArithDialect",
-    "bufferization::BufferizationDialect"
-  ];
+  let dependentDialects = ["memref::MemRefDialect", "hivm::HIVMDialect", "mlir::scope::ScopeDialect"];
 }
 
 def AutoBlockifyParallelLoop
