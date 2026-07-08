@@ -735,13 +735,13 @@ struct AddConvertLayoutUBToL1
     auto inserted = getIntegersOfArrayAttr(op, insertedConvertLayout);
     if (std::find(inserted.begin(), inserted.end(), operandIdx) != inserted.end()) continue;
     auto producerOps = traceDefOps<OpType>(beforeValue);
-    if (std::is_same_v<OpType, hivm::VBrcOp>)
-      continue;
     if (producerOps.empty())
       continue;
 
     bool matched = false;
     for (Operation *producer : producerOps) {
+      if (std::is_same_v<OpType, hivm::VBrcOp> && !isOnVectorCore(producer))
+        continue;
       if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
         auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
         if (!scfForOp->hasAttr(ExtractLoadStoreAttr)) {
@@ -826,6 +826,48 @@ struct AddConvertLayoutUBToL1
     changed = true;
   }
   return changed ? success() : failure();
+}
+
+bool isOnVectorCore(Operation *initialOp) const {
+  auto findVectorCore =
+      [](Operation *op,
+         std::function<void(std::queue<Operation *> & q, Operation * cur)>
+             enqueueNextOps) -> bool {
+    std::queue<Operation *> q;
+    q.push(op);
+    while (!q.empty()) {
+      Operation *cur = q.front();
+      q.pop();
+      if (!isa<hivm::VBrcOp>(cur) && llvm::isa_and_nonnull<
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
+              >(cur))
+        return true;
+      enqueueNextOps(q, cur);
+    }
+    return false;
+  };
+  // trace up
+  auto enqueueUpOps = [](std::queue<Operation *> &q, Operation *cur) {
+    for (auto &opr : cur->getOpOperands()) {
+      Operation *nextOp = opr.get().getDefiningOp();
+      if (nextOp == nullptr)
+        continue;
+      q.push(nextOp);
+    }
+  };
+  if (findVectorCore(initialOp, enqueueUpOps))
+    return true;
+
+  // trace down
+  auto enqueueDownOps = [](std::queue<Operation *> &q, Operation *cur) {
+    for (auto *user : cur->getUsers()) {
+      q.push(user);
+    }
+  };
+  if (findVectorCore(initialOp, enqueueDownOps))
+    return true;
+  return false;
 }
 };
 
@@ -983,7 +1025,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
 
           // shouldn't change the core type that has been set
           // consider case of vtranspose user of load op
-          if (currentTcoretype)
+          if (currentTcoretype.getTcoretype() != TCoreType::CUBE_OR_VECTOR)
             return;
 
           auto inferNewCoreType =
@@ -1006,8 +1048,10 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           };
 
           TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
-          if (newTcoretype)
+          if (newTcoretype) {
+            LDBG("set tcoretype for " << op << " to " << newTcoretype);
             op.setTcoretypeAttr(newTcoretype);
+          }
         });
   });
 
