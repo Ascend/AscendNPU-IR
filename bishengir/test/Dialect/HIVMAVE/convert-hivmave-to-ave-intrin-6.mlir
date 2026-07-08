@@ -1,4 +1,4 @@
- // RUN: bishengir-opt  -analyze-vector-layout -analyze-alignment-bitwidth -ave-normalize-ops \
+ // RUN: bishengir-opt  -analyze-vector-layout -ave-normalize-ops \
  // RUN: -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse -split-input-file %s | FileCheck %s
  // CHECK-LABEL: @test_long_vector_len_case
 func.func @test_long_vector_len_case(%arg0: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg1: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg2: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg3: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg4: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg5: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>, %arg6: memref<1x1x135xi8, strided<[160, 160, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
@@ -145,9 +145,9 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       %base_buffer, %offset, %sizes:2, %strides:2 = memref.extract_strided_metadata %arg0 : memref<64x92xbf16, #hivm.address_space<ub>> -> memref<bf16, #hivm.address_space<ub>>, index, index, index, index, index
       %0 = affine.apply #map()[%arg11]
       %reinterpret_cast = memref.reinterpret_cast %base_buffer to offset: [%0], sizes: [1, 92], strides: [92, 1] : memref<bf16, #hivm.address_space<ub>> to memref<1x92xbf16, strided<[92, 1], offset: ?>, #hivm.address_space<ub>>
-      %res = ave.hir.vload <NORM> %reinterpret_cast[%c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 16 : i32} : memref<1x92xbf16, strided<[92, 1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
-      %res_0 = ave.hir.vload <NORM> %reinterpret_cast[%c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 16 : i32} : memref<1x92xbf16, strided<[92, 1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
-      %res1, %res2 = ave.hir.vdintlv %res, %res_0 {element_alignment_bit_width = 16 : i32} : vector<128xbf16>, vector<128xbf16>
+      %res = ave.hir.vload <NORM> %reinterpret_cast[%c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x92xbf16, strided<[92, 1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
+      %res_0 = ave.hir.vload <NORM> %reinterpret_cast[%c0, %c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1x92xbf16, strided<[92, 1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
+      %res1, %res2 = ave.hir.vdintlv %res, %res_0  : vector<128xbf16>, vector<128xbf16>
       // CHECK: "hivm_regbaseintrins.intr.hivm.vdintlv"
       // CHECK: "hivm_regbaseintrins.intr.hivm.vintlv"
       // CHECK: "hivm_regbaseintrins.intr.hivm.vintlv"
@@ -157,12 +157,12 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
       %2 = builtin.unrealized_conversion_cast %res2 : vector<128xbf16> to vector<1x128xbf16>
       %3 = builtin.unrealized_conversion_cast %1 : vector<1x128xbf16> to vector<1x64xbf16>
       %4 = builtin.unrealized_conversion_cast %3 : vector<1x64xbf16> to vector<64xbf16>
-      %5 = ave.hir.pge <ALL> {element_alignment_bit_width = -1 : i32} : vector<64xi1>
-      %6 = ave.hir.vextf %4, <part_even>, %5 {element_alignment_bit_width = 32 : i32} : vector<64xbf16>, vector<64xf32>, vector<64xi1>
+      %5 = ave.hir.pge <ALL>  : vector<64xi1>
+      %6 = ave.hir.vextf %4, <part_even>, %5  : vector<64xbf16>, vector<64xf32>, vector<64xi1>
       %7 = builtin.unrealized_conversion_cast %2 : vector<1x128xbf16> to vector<1x64xbf16>
       %8 = builtin.unrealized_conversion_cast %7 : vector<1x64xbf16> to vector<64xbf16>
-      %9 = ave.hir.pge <ALL> {element_alignment_bit_width = -1 : i32} : vector<64xi1>
-      %10 = ave.hir.vextf %8, <part_even>, %9 {element_alignment_bit_width = 32 : i32} : vector<64xbf16>, vector<64xf32>, vector<64xi1>
+      %9 = ave.hir.pge <ALL>  : vector<64xi1>
+      %10 = ave.hir.vextf %8, <part_even>, %9  : vector<64xbf16>, vector<64xf32>, vector<64xi1>
       scf.for %arg12 = %c0 to %c92 step %c64 {
         %11 = affine.min #map2(%arg12)
         %12 = affine.apply #map3()[%11]
@@ -179,10 +179,10 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
           %res_23, %new_true_shape_24 = ave.hir.plt %c46 {mask_op_idx = 2 : i32} : vector<64xi1>, index
           %base_buffer_25, %offset_26, %sizes_27:2, %strides_28:2 = memref.extract_strided_metadata %arg7 : memref<1x46xf32, #hivm.address_space<ub>> -> memref<f32, #hivm.address_space<ub>>, index, index, index, index, index
           %reinterpret_cast_29 = memref.reinterpret_cast %base_buffer_25 to offset: [0], sizes: [46], strides: [1] : memref<f32, #hivm.address_space<ub>> to memref<46xf32, strided<[1]>, #hivm.address_space<ub>>
-          ave.hir.masked_store <NORM_B32> %reinterpret_cast_29[%c0], %res_23, %6 {element_alignment_bit_width = 32 : i32} : memref<46xf32, strided<[1]>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+          ave.hir.masked_store <NORM_B32> %reinterpret_cast_29[%c0], %res_23, %6  : memref<46xf32, strided<[1]>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
           %base_buffer_30, %offset_31, %sizes_32:2, %strides_33:2 = memref.extract_strided_metadata %arg6 : memref<1x46xf32, #hivm.address_space<ub>> -> memref<f32, #hivm.address_space<ub>>, index, index, index, index, index
           %reinterpret_cast_34 = memref.reinterpret_cast %base_buffer_30 to offset: [0], sizes: [46], strides: [1] : memref<f32, #hivm.address_space<ub>> to memref<46xf32, strided<[1]>, #hivm.address_space<ub>>
-          ave.hir.masked_store <NORM_B32> %reinterpret_cast_34[%c0], %res_23, %10 {element_alignment_bit_width = 32 : i32} : memref<46xf32, strided<[1]>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+          ave.hir.masked_store <NORM_B32> %reinterpret_cast_34[%c0], %res_23, %10  : memref<46xf32, strided<[1]>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
         }
       }
     }

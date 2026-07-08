@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth -remove-vector-layout-attr \
-// RUN: -ave-normalize-ops -convert-hivmave-to-ave-intrin -cse %s -o %t.mlir
+// RUN: bishengir-opt -analyze-vector-layout -ave-normalize-ops \
+// RUN:  -remove-vector-layout-attr -convert-hivmave-to-ave-intrin -cse %s -o %t.mlir
 // RUN: cat %t.mlir | FileCheck %s
 
 // CHECK-LABEL: func.func @no_unroll

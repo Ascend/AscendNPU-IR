@@ -151,12 +151,6 @@ def AnalyzeVectorLayout : Pass<"analyze-vector-layout", "func::FuncOp"> {
   let dependentDialects = ["hivmave::AVEDialect"];
 }
 
-def AnalyzeAlignmentBitwidth : Pass<"analyze-alignment-bitwidth", "func::FuncOp"> {
-  let summary = "Analyze alignment bitwidth";
-  let constructor = "::mlir::hivmave::createAnalyzeAlignmentBitwidthPass()";
-  let dependentDialects = ["hivmave::AVEDialect"];
-}
-
 def RemoveVectorLayoutAttr : Pass<"remove-vector-layout-attr", "func::FuncOp"> {
   let summary = "Remove vector layout attribute before lowering to ave-intrin";
   let constructor = "::mlir::hivmave::createRemoveVectorLayoutAttrPass()";

@@ -552,10 +552,6 @@ struct VFTypeConvertionPattern : public OpConversionPattern<OpToBeConverted> {
     } else
       return failure();
 
-    if (auto elementAlignmentAttr =
-            op->getParentOp()->getAttr(mlir::utils::elementAlignmentBitWidth))
-      newOp->setAttr(mlir::utils::elementAlignmentBitWidth,
-                     elementAlignmentAttr);
     rewriter.replaceOp(op, newOp);
     return success();
   }

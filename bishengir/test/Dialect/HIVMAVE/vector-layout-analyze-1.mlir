@@ -1,4 +1,5 @@
-// RUN: bishengir-opt -analyze-vector-layout -analyze-alignment-bitwidth %s -split-input-file | FileCheck %s
+// RUN: bishengir-opt -analyze-vector-layout %s -split-input-file | FileCheck %s
+// CHECK-NOT: element_alignment_bit_width
 
 // CHECK-LABEL: @test_preg_arith_op_lowering
 func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<ub>>, %arg1: memref<8x8xi1, strided<[256, 1]>, #hivm.address_space<ub>>, %arg2: memref<8x8xi32, #hivm.address_space<ub>>, %arg3: memref<i32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
@@ -11,10 +12,10 @@ func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<u
   %c0_i32 = arith.constant 0 : i32
   %0 = ave.hir.pge <ALL> : vector<64xi1>
   %1 = ave.hir.broadcast %c0_i32, %0 : i32, vector<64xi1> -> vector<64xi32>
-  // CHECK: %1 = ave.hir.broadcast %c0_i32, %0 {element_alignment_bit_width = 32 : i32}
+  // CHECK: %1 = ave.hir.broadcast %c0_i32, %0
   %2 = ave.hir.pge <ALLF> : vector<64xi1>
   %res = ave.hir.vload <BRC_B32> %arg3[] : memref<i32, #hivm.address_space<ub>> into vector<1xi32>
-  // CHECK: %res = ave.hir.vload <BRC_B32> %arg3[] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>}
+  // CHECK: %res = ave.hir.vload <BRC_B32> %arg3[] {functionType = #ave.func_dist_type<norm>}
   %3 = builtin.unrealized_conversion_cast %res : vector<1xi32> to vector<i32>
   %4 = builtin.unrealized_conversion_cast %3 : vector<i32> to vector<64xi32>
   %5:2 = scf.for %arg4 = %c0 to %c8 step %c1 iter_args(%arg5 = %3, %arg6 = %4) -> (vector<i32>, vector<64xi32>) {
@@ -22,25 +23,25 @@ func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<u
     %subview = memref.subview %arg1[%arg4, 0] [1, 8] [1, 1] : memref<8x8xi1, strided<[256, 1]>, #hivm.address_space<ub>> to memref<1x8xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>>
     %subview_0 = memref.subview %arg2[%arg4, 0] [1, 8] [1, 1] : memref<8x8xi32, #hivm.address_space<ub>> to memref<1x8xi32, strided<[8, 1], offset: ?>, #hivm.address_space<ub>>
     %res_1 = ave.hir.vload <NORM> %arg0[%c0] : memref<8xi1, #hivm.address_space<ub>> into vector<64xi1>
-    // CHECK: %res_1 = ave.hir.vload <NORM> %arg0[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>}
+    // CHECK: %res_1 = ave.hir.vload <NORM> %arg0[%c0] {functionType = #ave.func_dist_type<pb32>}
     %10 = builtin.unrealized_conversion_cast %res_1 : vector<64xi1> to vector<256xi1>
     %11 = ave.hir.scalar_broadcast %c0_i8 : i8 -> vector<256xi8>
     %12 = ave.hir.scalar_broadcast %c1_i8 : i8 -> vector<256xi8>
     %13 = ave.hir.vsel %10, %12, %11 : vector<256xi1>, vector<256xi8>
-    // CHECK: %11 = ave.hir.scalar_broadcast %c0_i8 {element_alignment_bit_width = 32 : i32}
-    // CHECK-NEXT: %12 = ave.hir.scalar_broadcast %c1_i8 {element_alignment_bit_width = 32 : i32}
-    // CHECK-NEXT: %13 = ave.hir.vsel %10, %12, %11 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %11 = ave.hir.scalar_broadcast %c0_i8
+    // CHECK-NEXT: %12 = ave.hir.scalar_broadcast %c1_i8
+    // CHECK-NEXT: %13 = ave.hir.vsel %10, %12, %11
     %14 = ave.hir.pge <ALL> : vector<256xi1>
     %15 = arith.addi %arg4, %c1 : index
     %res_2, %new_true_shape = ave.hir.plt %15 : vector<256xi1>, index
     %res_3, %new_true_shape_4 = ave.hir.plt %arg4 : vector<256xi1>, index
     %16 = ave.hir.preg.xor <b8> %res_2, %res_3, %14 : vector<256xi1>
-    // CHECK: %16 = ave.hir.preg.xor <b8> %res_2, %res_3, %14 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %16 = ave.hir.preg.xor <b8> %res_2, %res_3, %14
     %17 = ave.hir.pge <ALL> : vector<256xi1>
     %18 = ave.hir.broadcast %c0_i16, %17 : i16, vector<256xi1> -> vector<256xi8>
     %19 = ave.hir.vor %13, %18, %16 : vector<256xi8>, vector<256xi1>
-    // CHECK: %18 = ave.hir.broadcast %c0_i16, %17 {element_alignment_bit_width = 32 : i32}
-    // CHECK-NEXT: %19 = ave.hir.vor %13, %18, %16 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %18 = ave.hir.broadcast %c0_i16, %17
+    // CHECK-NEXT: %19 = ave.hir.vor %13, %18, %16
     %20 = ave.hir.pge <ALL> : vector<256xi1>
     %res1, %res2 = ave.hir.vintlv %19, %18 {layout_change = #ave<layout_change UNCHANGED>}: vector<256xi8>, vector<256xi8>
     %21 = ave.hir.vxor %res1, %res2, %20 : vector<256xi8>, vector<256xi1>
@@ -61,34 +62,34 @@ func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<u
     %29 = ave.hir.vector_broadcast %28, %14, true : vector<256xi8>, vector<256xi1> -> vector<256xi8>
     %30 = ave.hir.scalar_broadcast %c0_i8 : i8 -> vector<256xi8>
     %31 = ave.hir.vcmp <NE> %29, %30, %14 : vector<256xi8>, vector<256xi1> -> vector<256xi1>
-    // CHECK: %31 = ave.hir.vcmp <NE> %29, %30, %14 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %31 = ave.hir.vcmp <NE> %29, %30, %14
     %32 = builtin.unrealized_conversion_cast %31 : vector<256xi1> to vector<64xi1>
     %33 = ave.hir.pge <VL8> : vector<64xi1>
     %subview_19 = memref.subview %subview[0, 0] [1, 8] [1, 1] : memref<1x8xi1, strided<[256, 1], offset: ?>, #hivm.address_space<ub>> to memref<8xi1, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
     %res_20 = ave.hir.vload <NORM> %subview_19[%c0] : memref<8xi1, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xi1>
-    // CHECK: %res_20 = ave.hir.vload <NORM> %subview_19[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>}
+    // CHECK: %res_20 = ave.hir.vload <NORM> %subview_19[%c0] {functionType = #ave.func_dist_type<pb32>}
     %subview_21 = memref.subview %subview_0[0, 0] [1, 8] [1, 1] : memref<1x8xi32, strided<[8, 1], offset: ?>, #hivm.address_space<ub>> to memref<8xi32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
     %res_22 = ave.hir.vload <NORM> %subview_21[%c0] : memref<8xi32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xi32>
-    // CHECK: %res_22 = ave.hir.vload <NORM> %subview_21[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>}
+    // CHECK: %res_22 = ave.hir.vload <NORM> %subview_21[%c0] {functionType = #ave.func_dist_type<norm>}
     %34 = ave.hir.pge <ALL> : vector<64xi1>
     %35 = ave.hir.preg.xor <b8> %32, %2, %34 : vector<64xi1>
-    // CHECK: %35 = ave.hir.preg.xor <b8> %32, %2, %34 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %35 = ave.hir.preg.xor <b8> %32, %2, %34
     %36 = ave.hir.pge <ALL> : vector<64xi1>
     %37 = ave.hir.preg.or <b8> %35, %res_20, %36 : vector<64xi1>
     %38 = ave.hir.vsel %37, %res_22, %1 : vector<64xi1>, vector<64xi32>
-    // CHECK: %37 = ave.hir.preg.or <b8> %35, %res_20, %36 {element_alignment_bit_width = 32 : i32}
-    // CHECK: %38 = ave.hir.vsel %37, %res_22, %1 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %37 = ave.hir.preg.or <b8> %35, %res_20, %36
+    // CHECK: %38 = ave.hir.vsel %37, %res_22, %1
     %39 = builtin.unrealized_conversion_cast %9 : vector<i32> to i32
     %40 = ave.hir.vsel %33, %38, %1 : vector<64xi1>, vector<64xi32>
-    // CHECK: %40 = ave.hir.vsel %33, %38, %1 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %40 = ave.hir.vsel %33, %38, %1
     %41 = ave.hir.pge <ALL> : vector<64xi1>
     %42 = builtin.unrealized_conversion_cast %39 : i32 to vector<1xi32>
     %43 = builtin.unrealized_conversion_cast %42 : vector<1xi32> to vector<64xi32>
     %44 = ave.hir.reduction <add>, %40, %41 : vector<64xi32>, vector<64xi1> -> vector<64xi32>
-    // CHECK: %44 = ave.hir.reduction <add>, %40, %41 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %44 = ave.hir.reduction <add>, %40, %41
     %45 = ave.hir.pge <ALL> : vector<64xi1>
     %46 = ave.hir.vadd %43, %44, %45 : vector<64xi32>, vector<64xi1>
-    // CHECK: %46 = ave.hir.vadd %43, %44, %45 {element_alignment_bit_width = 32 : i32}
+    // CHECK: %46 = ave.hir.vadd %43, %44, %45
     %47 = builtin.unrealized_conversion_cast %46 : vector<64xi32> to vector<1xi32>
     %48 = builtin.unrealized_conversion_cast %47 : vector<1xi32> to i32
     %49 = builtin.unrealized_conversion_cast %48 : i32 to vector<i32>
@@ -99,7 +100,7 @@ func.func @test_preg_arith_op_lowering(%arg0: memref<8xi1, #hivm.address_space<u
   %7 = builtin.unrealized_conversion_cast %6 : vector<i32> to vector<1xi32>
   %8 = ave.hir.pge <ALL> : vector<1xi1>
   ave.hir.masked_store <ONEPT_B32> %arg3[], %8, %7 : memref<i32, #hivm.address_space<ub>>, vector<1xi1>, vector<1xi32>
-  // CHECK: ave.hir.masked_store <ONEPT_B32> %arg3[], %8, %7 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>}
+  // CHECK: ave.hir.masked_store <ONEPT_B32> %arg3[], %8, %7 {functionType = #ave.func_dist_type<norm>}
   return
 }
 
@@ -118,46 +119,46 @@ func.func @plds_i1_as_msk_of_vsel_f32(%arg0: memref<64x64xi1, strided<[256, 1]>,
   %cst_0 = arith.constant 0.000000e+00 : f32
   %cst_1 = arith.constant 1.000000e+00 : f32
   %T = ave.hir.pge <ALL> : vector<64xi1>
-  %0 = ave.hir.broadcast %cst_0, %T {element_alignment_bit_width = 32 : i32} : f32, vector<64xi1> -> vector<64xf32>
-  // CHECK: %1 = ave.hir.broadcast %cst, %0 {element_alignment_bit_width = 32 : i32}
-  %1 = ave.hir.broadcast %cst_1, %T {element_alignment_bit_width = 32 : i32} : f32, vector<64xi1> -> vector<64xf32>
-  // CHECK-NEXT: %2 = ave.hir.broadcast %cst_0, %0 {element_alignment_bit_width = 32 : i32}
+  %0 = ave.hir.broadcast %cst_0, %T  : f32, vector<64xi1> -> vector<64xf32>
+  // CHECK: %1 = ave.hir.broadcast %cst, %0
+  %1 = ave.hir.broadcast %cst_1, %T  : f32, vector<64xi1> -> vector<64xf32>
+  // CHECK-NEXT: %2 = ave.hir.broadcast %cst_0, %0
   scf.for %arg6 = %c0 to %c64 step %c1 {
     %base_buffer_1, %offset_2, %sizes_3:2, %strides_4:2 = memref.extract_strided_metadata %arg0 : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> -> memref<i1, #hivm.address_space<ub>>, index, index, index, index, index
     %2 = affine.apply #map16()[%arg6]
     %reinterpret_cast_5 = memref.reinterpret_cast %base_buffer_1 to offset: [%2], sizes: [64], strides: [1] : memref<i1, #hivm.address_space<ub>> to memref<64xi1, #map15, #hivm.address_space<ub>>
-    %res = ave.hir.vload <NORM> %reinterpret_cast_5[%c0] {element_alignment_bit_width = 8 : i32} : memref<64xi1, #map15, #hivm.address_space<ub>> into vector<64xi1>
-    // CHECK: %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {element_alignment_bit_width = 8 : i32, functionType = #ave.func_dist_type<pb32>}
-    %9 = ave.hir.vsel %res, %0, %1 {element_alignment_bit_width = 32 : i32} : vector<64xi1>, vector<64xf32>
-    // CHECK-NEXT: %4 = ave.hir.vsel %res, %1, %2 {element_alignment_bit_width = 32 : i32}
-    %11 = ave.hir.vtruncf %9, <rint>, false, <part_even>, %T {element_alignment_bit_width = 32 : i32} : vector<64xf32>, vector<128xbf16>, vector<64xi1>
-    // CHECK-NEXT: %5 = ave.hir.vtruncf %4, <rint>, false, <part_even>, %0 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<even>}
+    %res = ave.hir.vload <NORM> %reinterpret_cast_5[%c0]  : memref<64xi1, #map15, #hivm.address_space<ub>> into vector<64xi1>
+    // CHECK: %res = ave.hir.vload <NORM> %reinterpret_cast[%c0] {functionType = #ave.func_dist_type<pb32>}
+    %9 = ave.hir.vsel %res, %0, %1  : vector<64xi1>, vector<64xf32>
+    // CHECK-NEXT: %4 = ave.hir.vsel %res, %1, %2
+    %11 = ave.hir.vtruncf %9, <rint>, false, <part_even>, %T  : vector<64xf32>, vector<128xbf16>, vector<64xi1>
+    // CHECK-NEXT: %5 = ave.hir.vtruncf %4, <rint>, false, <part_even>, %0 {functionType = #ave.func_dist_type<even>}
     %base_buffer_19, %offset_20, %sizes_21:3, %strides_22:3 = memref.extract_strided_metadata %arg5 : memref<4x64x16xbf16, strided<[1040, 16, 1]>, #hivm.address_space<ub>> -> memref<bf16, #hivm.address_space<ub>>, index, index, index, index, index, index, index
     %13 = affine.apply #map4()[%arg6]
     %14 = ave.hir.pge <VL64> : vector<128xi1>
     %reinterpret_cast_23 = memref.reinterpret_cast %base_buffer_19 to offset: [%13], sizes: [4, 16], strides: [1040, 1] : memref<bf16, #hivm.address_space<ub>> to memref<4x16xbf16, #map18, #hivm.address_space<ub>>
-    ave.hir.store_with_stride %reinterpret_cast_23[%c0, %c0], %c1040, %14, %11 {element_alignment_bit_width = 16 : i32} : memref<4x16xbf16, #map18, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
-    // CHECK: ave.hir.store_with_stride %reinterpret_cast_5[%c0, %c0], %c1040, %7, %5 {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<dintlv2>}
+    ave.hir.store_with_stride %reinterpret_cast_23[%c0, %c0], %c1040, %14, %11  : memref<4x16xbf16, #map18, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
+    // CHECK: ave.hir.store_with_stride %reinterpret_cast_5[%c0, %c0], %c1040, %7, %5 {functionType = #ave.func_dist_type<dintlv2>}
   }
   return
 }
 
 // -----
 // CHECK-LABEL: @test_exti32
-// CHECK: %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %1 = ave.hir.broadcast %c0_i64, %0 {element_alignment_bit_width = 32 : i32} : i64, vector<64xi1> -> vector<64xi64>
-// CHECK-NEXT: %2 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %3 = ave.hir.broadcast %c-1_i64, %2 {element_alignment_bit_width = 32 : i32} : i64, vector<64xi1> -> vector<64xi64>
-// CHECK: %res = ave.hir.vload <NORM> %subview[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi32>
-// CHECK-NEXT: %4 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %5 = ave.hir.vextsi %res, %4 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<even>, part = #ave.vcvt_part_type<part_even>} : vector<64xi32>, vector<64xi64>, vector<64xi1>
-// CHECK-NEXT: %6 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %7 = ave.hir.vcmp <EQ> %5, %3, %6 {element_alignment_bit_width = 32 : i32} : vector<64xi64>, vector<64xi1> -> vector<64xi1>
-// CHECK-NEXT: %8 = ave.hir.vsel %7, %1, %5 {element_alignment_bit_width = 32 : i32} : vector<64xi1>, vector<64xi64>
-// CHECK-NEXT: %9 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %10 = ave.hir.vtrunci %8, false, %9 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<even>, part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<si2si>} : vector<64xi64>, vector<64xi32>, vector<64xi1>
-// CHECK-NEXT: %11 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: ave.hir.masked_store <NORM_B32> %subview_0[%c0], %11, %10 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi32>
+// CHECK: %0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %1 = ave.hir.broadcast %c0_i64, %0  : i64, vector<64xi1> -> vector<64xi64>
+// CHECK-NEXT: %2 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %3 = ave.hir.broadcast %c-1_i64, %2  : i64, vector<64xi1> -> vector<64xi64>
+// CHECK: %res = ave.hir.vload <NORM> %subview[%c0] {functionType = #ave.func_dist_type<norm>} : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xi32>
+// CHECK-NEXT: %4 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %5 = ave.hir.vextsi %res, %4 {functionType = #ave.func_dist_type<even>, part = #ave.vcvt_part_type<part_even>} : vector<64xi32>, vector<64xi64>, vector<64xi1>
+// CHECK-NEXT: %6 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %7 = ave.hir.vcmp <EQ> %5, %3, %6  : vector<64xi64>, vector<64xi1> -> vector<64xi1>
+// CHECK-NEXT: %8 = ave.hir.vsel %7, %1, %5  : vector<64xi1>, vector<64xi64>
+// CHECK-NEXT: %9 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %10 = ave.hir.vtrunci %8, false, %9 {functionType = #ave.func_dist_type<even>, part = #ave.vcvt_part_type<part_even>, uni = #hivm.unsigned_mode<si2si>} : vector<64xi64>, vector<64xi32>, vector<64xi1>
+// CHECK-NEXT: %11 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: ave.hir.masked_store <NORM_B32> %subview_0[%c0], %11, %10 {functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xi32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi32>
 func.func @test_exti32(%arg0: memref<2112xi32, #hivm.address_space<ub>>, %arg1: memref<2112xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %c2112 = arith.constant 2112 : index
@@ -187,20 +188,20 @@ func.func @test_exti32(%arg0: memref<2112xi32, #hivm.address_space<ub>>, %arg1: 
 
 // -----
 // CHECK-LABEL: @test_i8_4vl_load_used_by_vcmp
-// CHECK: %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %1 = ave.hir.broadcast %c2147483647_i32, %0 {element_alignment_bit_width = 32 : i32} : i32, vector<64xi1> -> vector<64xi32>
-// CHECK-NEXT: %2 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %3 = ave.hir.broadcast %cst, %2 {element_alignment_bit_width = 32 : i32} : f32, vector<64xi1> -> vector<64xf32>
-// CHECK-NEXT: %4 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %5 = ave.hir.broadcast %c0_i16, %4 {element_alignment_bit_width = 32 : i32} : i16, vector<64xi1> -> vector<64xi8>
-// CHECK: %6 = ave.hir.pge <VL16> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>, mask_op_idx = 0 : i32} : vector<64xi1>
-// CHECK: %res = ave.hir.vload <NORM> %subview_2[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pk4>} : memref<16xi8, #map, #hivm.address_space<ub>> into vector<64xi8>
-// CHECK: %res_4 = ave.hir.vload <NORM> %subview_3[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<16xf32, #map, #hivm.address_space<ub>> into vector<64xf32>
-// CHECK-NEXT: %7 = ave.hir.vmuls %res_4, %arg2, %6 {element_alignment_bit_width = 32 : i32} : vector<64xf32>, f32, vector<64xi1>
-// CHECK-NEXT: %8 = ave.hir.vcmp <NE> %res, %5, %6 {element_alignment_bit_width = 32 : i32} : vector<64xi8>, vector<64xi1> -> vector<64xi1>
-// CHECK-NEXT: %9 = ave.hir.vsel %8, %7, %3 {element_alignment_bit_width = 32 : i32} : vector<64xi1>, vector<64xf32>
-// CHECK: ave.hir.masked_store <NORM_B32> %subview_5[%c0], %6, %9 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<16xf32, #map, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
-// CHECK: ave.hir.masked_store <NORM_B32> %subview_7[%c0], %6, %1 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<16xi32, #map, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi32>
+// CHECK: %0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %1 = ave.hir.broadcast %c2147483647_i32, %0  : i32, vector<64xi1> -> vector<64xi32>
+// CHECK-NEXT: %2 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %3 = ave.hir.broadcast %cst, %2  : f32, vector<64xi1> -> vector<64xf32>
+// CHECK-NEXT: %4 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %5 = ave.hir.broadcast %c0_i16, %4  : i16, vector<64xi1> -> vector<64xi8>
+// CHECK: %6 = ave.hir.pge <VL16> {functionType = #ave.func_dist_type<pb32>, mask_op_idx = 0 : i32} : vector<64xi1>
+// CHECK: %res = ave.hir.vload <NORM> %subview_2[%c0] {functionType = #ave.func_dist_type<pk4>} : memref<16xi8, #map, #hivm.address_space<ub>> into vector<64xi8>
+// CHECK: %res_4 = ave.hir.vload <NORM> %subview_3[%c0] {functionType = #ave.func_dist_type<norm>} : memref<16xf32, #map, #hivm.address_space<ub>> into vector<64xf32>
+// CHECK-NEXT: %7 = ave.hir.vmuls %res_4, %arg2, %6  : vector<64xf32>, f32, vector<64xi1>
+// CHECK-NEXT: %8 = ave.hir.vcmp <NE> %res, %5, %6  : vector<64xi8>, vector<64xi1> -> vector<64xi1>
+// CHECK-NEXT: %9 = ave.hir.vsel %8, %7, %3  : vector<64xi1>, vector<64xf32>
+// CHECK: ave.hir.masked_store <NORM_B32> %subview_5[%c0], %6, %9 {functionType = #ave.func_dist_type<norm>} : memref<16xf32, #map, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+// CHECK: ave.hir.masked_store <NORM_B32> %subview_7[%c0], %6, %1 {functionType = #ave.func_dist_type<norm>} : memref<16xi32, #map, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi32>
 
 
 func.func @test_i8_4vl_load_used_by_vcmp(%arg0: memref<8x16xi8, strided<[32, 1]>, #hivm.address_space<ub>>, %arg1: memref<8x16xf32, #hivm.address_space<ub>>, %arg2: f32, %arg3: memref<8x16xf32, #hivm.address_space<ub>>, %arg4: memref<8x16xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
@@ -239,14 +240,14 @@ func.func @test_i8_4vl_load_used_by_vcmp(%arg0: memref<8x16xi8, strided<[32, 1]>
 
 // -----
 // CHECK-LABEL: @test_iterarg_not_used
-// CHECK: %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %1 = ave.hir.broadcast %cst, %0 {element_alignment_bit_width = 32 : i32} : f32, vector<64xi1> -> vector<64xf32>
-// CHECK: %res = ave.hir.vload <NORM> %arg0[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
-// CHECK-NEXT: %5 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: ave.hir.masked_store <NORM_B32> %arg1[%c0], %5, %res {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xf32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
-// CHECK: %3 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK-NEXT: %4 = ave.hir.reduction <add>, %2, %3 {element_alignment_bit_width = 32 : i32} : vector<64xf32>, vector<64xi1> -> vector<64xf32>
-// CHECK-NEXT: ave.hir.masked_store <NORM_B32> %arg2[%c0], %3, %4 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xf32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+// CHECK: %0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %1 = ave.hir.broadcast %cst, %0  : f32, vector<64xi1> -> vector<64xf32>
+// CHECK: %res = ave.hir.vload <NORM> %arg0[%c0] {functionType = #ave.func_dist_type<norm>} : memref<64xf32, #hivm.address_space<ub>> into vector<64xf32>
+// CHECK-NEXT: %5 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: ave.hir.masked_store <NORM_B32> %arg1[%c0], %5, %res {functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xf32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
+// CHECK: %3 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK-NEXT: %4 = ave.hir.reduction <add>, %2, %3  : vector<64xf32>, vector<64xi1> -> vector<64xf32>
+// CHECK-NEXT: ave.hir.masked_store <NORM_B32> %arg2[%c0], %3, %4 {functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xf32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf32>
 func.func @test_iterarg_not_used(%arg0: memref<64xf32, #hivm.address_space<ub>>, %arg1: memref<64xf32, #hivm.address_space<ub>>, %arg2: memref<64xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %c64 = arith.constant 64 : index
@@ -266,13 +267,13 @@ func.func @test_iterarg_not_used(%arg0: memref<64xf32, #hivm.address_space<ub>>,
 }
 
 // CHECK-LABEL:@test_pstore
-// CHECK: %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK: %1 = ave.hir.broadcast %cst, %0 {element_alignment_bit_width = 32 : i32} : f32, vector<64xi1> -> vector<64xf32>
-// CHECK: %res = ave.hir.vload <NORM> %subview_1[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<64xf32, #map, #hivm.address_space<ub>> into vector<64xf32>
-// CHECK: %2 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK: %3 = ave.hir.vcmp <GE> %res, %1, %2 {element_alignment_bit_width = 32 : i32} : vector<64xf32>, vector<64xi1> -> vector<64xi1>
-// CHECK: %4 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK: ave.hir.masked_store <NORM_B8> %subview_2[%c0], %4, %3 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : memref<64xi1, #map, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
+// CHECK: %0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK: %1 = ave.hir.broadcast %cst, %0  : f32, vector<64xi1> -> vector<64xf32>
+// CHECK: %res = ave.hir.vload <NORM> %subview_1[%c0] {functionType = #ave.func_dist_type<norm>} : memref<64xf32, #map, #hivm.address_space<ub>> into vector<64xf32>
+// CHECK: %2 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK: %3 = ave.hir.vcmp <GE> %res, %1, %2  : vector<64xf32>, vector<64xi1> -> vector<64xi1>
+// CHECK: %4 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK: ave.hir.masked_store <NORM_B8> %subview_2[%c0], %4, %3 {functionType = #ave.func_dist_type<pb32>} : memref<64xi1, #map, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi1>
 func.func @test_pstore(%arg0: memref<64x64xf32, #hivm.address_space<ub>>, %arg1: memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %c64 = arith.constant 64 : index
@@ -296,11 +297,11 @@ func.func @test_pstore(%arg0: memref<64x64xf32, #hivm.address_space<ub>>, %arg1:
 
 // -----
 // CHECK-LABEL: @test_mull
-// CHECK: %0 = ave.hir.pge <ALL> {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
-// CHECK: %res = ave.hir.vload <NORM> %arg0[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<6xi32, #hivm.address_space<ub>> into vector<64xi32>
-// CHECK: %res_0 = ave.hir.vload <NORM> %arg0[%c0] {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<6xi32, #hivm.address_space<ub>> into vector<64xi32>
-// CHECK: %res1, %res2 = ave.hir.mull %res, %res_0, %0 {element_alignment_bit_width = 32 : i32} : vector<64xi32>, vector<64xi1>
-// CHECK: ave.hir.masked_store <NORM_B32> %arg0[%c0], %0, %res2 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<norm>} : memref<6xi32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi32>
+// CHECK: %0 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1>
+// CHECK: %res = ave.hir.vload <NORM> %arg0[%c0] {functionType = #ave.func_dist_type<norm>} : memref<6xi32, #hivm.address_space<ub>> into vector<64xi32>
+// CHECK: %res_0 = ave.hir.vload <NORM> %arg0[%c0] {functionType = #ave.func_dist_type<norm>} : memref<6xi32, #hivm.address_space<ub>> into vector<64xi32>
+// CHECK: %res1, %res2 = ave.hir.mull %res, %res_0, %0  : vector<64xi32>, vector<64xi1>
+// CHECK: ave.hir.masked_store <NORM_B32> %arg0[%c0], %0, %res2 {functionType = #ave.func_dist_type<norm>} : memref<6xi32, #hivm.address_space<ub>>, vector<64xi1>, vector<64xi32>
 func.func @test_mull(%arg0: memref<6xi32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c0 = arith.constant 0 : index
   %mask = ave.hir.pge <ALL> : vector<64xi1>
@@ -352,7 +353,7 @@ func.func @test_dintlv_before_vsstb(%arg0: memref<8x64x16xbf16, strided<[1040, 1
     %13 = ave.hir.pge <ALL> : vector<128xi1>
     %res1, %res2 = ave.hir.vdintlv %6, %12 {layout_change = #ave<layout_change DENSE>}: vector<64xbf16>, vector<128xbf16>
     ave.hir.store_with_stride %subview_7[%c0, %c0], %c1040, %13, %res1 : memref<4x16xbf16, affine_map<(d0, d1)[s0] -> (d0 * 1040 + d1 + s0)>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
-    // CHECK: ave.hir.store_with_stride %subview_7[%c0, %c0], %c1040, %13, %res1 {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<norm>} : memref<4x16xbf16, #map1, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
+    // CHECK: ave.hir.store_with_stride %subview_7[%c0, %c0], %c1040, %13, %res1 {functionType = #ave.func_dist_type<norm>} : memref<4x16xbf16, #map1, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
   }
   return
 }
@@ -400,23 +401,23 @@ func.func @test_dintlv_after_vgather(%arg0: memref<7x5x3x4xf8E5M2, strided<[480,
         %res1_3, %res2_4 = ave.hir.vintlv %res1, %res1_1 : vector<256xf8E5M2>, vector<256xf8E5M2>
         %subview_5 = memref.subview %subview_0[0, 0, 0, 0] [1, 1, 1, 7] [1, 1, 1, 1] : memref<1x1x1x7xf8E5M2, strided<[105, 21, 7, 1], offset: ?>, #hivm.address_space<ub>> to memref<7xf8E5M2, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
         ave.hir.masked_store <NORM_B8> %subview_5[%c0], %res, %res1_3 {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<7xf8E5M2, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>, vector<256xi1>, vector<256xf8E5M2>
-      // CHECK: %res, %new_true_shape = ave.hir.plt %c7 {element_alignment_bit_width = 8 : i32, functionType = #ave.func_dist_type<pb8>, mask_op_idx = 0 : i32} : vector<256xi1>, index
-      // CHECK: %7 = ave.hir.vci %c0_i16, <INCREASE> {element_alignment_bit_width = 16 : i32} : i16, vector<128xi16>
-      // CHECK: %8 = ave.hir.pge <ALL> {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-      // CHECK: %9 = ave.hir.vmuls %7, %c960_i16, %8 {element_alignment_bit_width = 16 : i32} : vector<128xi16>, i16, vector<128xi1>
-      // CHECK: %10 = ave.hir.vadds %9, %c480_i16, %8 {element_alignment_bit_width = 16 : i32} : vector<128xi16>, i16, vector<128xi1>
-      // CHECK: %11 = ave.hir.pge <ALL> {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-      // CHECK: %12 = ave.hir.broadcast %c0_i16, %11 {element_alignment_bit_width = 16 : i32} : i16, vector<128xi1> -> vector<128xi16>
-      // CHECK: %13 = ave.hir.pge <VL3> {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
-      // CHECK: %14 = ave.hir.vsel %13, %10, %12 {element_alignment_bit_width = 16 : i32} : vector<128xi1>, vector<128xi16>
-      // CHECK: %15 = ave.hir.vgather %subview[%c0, %c0, %c0, %c0] [%6], %res {element_alignment_bit_width = 8 : i32} : memref<7x1x1x1xf8E5M2, strided<[480, 96, 32, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1> into vector<256xf8E5M2>
-      // CHECK: %16 = ave.hir.vgather %subview[%c0, %c0, %c0, %c0] [%14], %res {element_alignment_bit_width = 8 : i32} : memref<7x1x1x1xf8E5M2, strided<[480, 96, 32, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1> into vector<256xf8E5M2>
-      // CHECK: %17 = ave.hir.scalar_broadcast %c0_i8 {element_alignment_bit_width = 16 : i32} : i8 -> vector<256xi8>
-      // CHECK: %18 = vector.bitcast %17 {element_alignment_bit_width = 16 : i32} : vector<256xi8> to vector<256xf8E5M2>
-      // CHECK: %res1, %res2 = ave.hir.vdintlv %15, %18 {element_alignment_bit_width = 16 : i32, layout_change = #ave<layout_change DENSE>} : vector<256xf8E5M2>, vector<256xf8E5M2>
-      // CHECK: %res1_1, %res2_2 = ave.hir.vdintlv %16, %18 {element_alignment_bit_width = 16 : i32, layout_change = #ave<layout_change DENSE>} : vector<256xf8E5M2>, vector<256xf8E5M2>
-      // CHECK: %res1_3, %res2_4 = ave.hir.vintlv %res1, %res1_1 {element_alignment_bit_width = 8 : i32} : vector<256xf8E5M2>, vector<256xf8E5M2>
-      // CHECK: ave.hir.masked_store <NORM_B8> %subview_5[%c0], %res, %res1_3 {ave.unaligned_ub_access = #ave.unaligned_ub_access, element_alignment_bit_width = 8 : i32, functionType = #ave.func_dist_type<norm>} : memref<7xf8E5M2, #map, #hivm.address_space<ub>>, vector<256xi1>, vector<256xf8E5M2>
+      // CHECK: %res, %new_true_shape = ave.hir.plt %c7 {functionType = #ave.func_dist_type<pb8>, mask_op_idx = 0 : i32} : vector<256xi1>, index
+      // CHECK: %7 = ave.hir.vci %c0_i16, <INCREASE>  : i16, vector<128xi16>
+      // CHECK: %8 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
+      // CHECK: %9 = ave.hir.vmuls %7, %c960_i16, %8  : vector<128xi16>, i16, vector<128xi1>
+      // CHECK: %10 = ave.hir.vadds %9, %c480_i16, %8  : vector<128xi16>, i16, vector<128xi1>
+      // CHECK: %11 = ave.hir.pge <ALL> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
+      // CHECK: %12 = ave.hir.broadcast %c0_i16, %11  : i16, vector<128xi1> -> vector<128xi16>
+      // CHECK: %13 = ave.hir.pge <VL3> {functionType = #ave.func_dist_type<pb16>} : vector<128xi1>
+      // CHECK: %14 = ave.hir.vsel %13, %10, %12  : vector<128xi1>, vector<128xi16>
+      // CHECK: %15 = ave.hir.vgather %subview[%c0, %c0, %c0, %c0] [%6], %res  : memref<7x1x1x1xf8E5M2, strided<[480, 96, 32, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1> into vector<256xf8E5M2>
+      // CHECK: %16 = ave.hir.vgather %subview[%c0, %c0, %c0, %c0] [%14], %res  : memref<7x1x1x1xf8E5M2, strided<[480, 96, 32, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<256xi1> into vector<256xf8E5M2>
+      // CHECK: %17 = ave.hir.scalar_broadcast %c0_i8  : i8 -> vector<256xi8>
+      // CHECK: %18 = vector.bitcast %17  : vector<256xi8> to vector<256xf8E5M2>
+      // CHECK: %res1, %res2 = ave.hir.vdintlv %15, %18 {layout_change = #ave<layout_change DENSE>} : vector<256xf8E5M2>, vector<256xf8E5M2>
+      // CHECK: %res1_1, %res2_2 = ave.hir.vdintlv %16, %18 {layout_change = #ave<layout_change DENSE>} : vector<256xf8E5M2>, vector<256xf8E5M2>
+      // CHECK: %res1_3, %res2_4 = ave.hir.vintlv %res1, %res1_1  : vector<256xf8E5M2>, vector<256xf8E5M2>
+      // CHECK: ave.hir.masked_store <NORM_B8> %subview_5[%c0], %res, %res1_3 {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>} : memref<7xf8E5M2, #map, #hivm.address_space<ub>>, vector<256xi1>, vector<256xf8E5M2>
       }
     }
   }
@@ -496,10 +497,10 @@ func.func @test_vor_dense(%arg0: memref<64x128xf32, #hivm.address_space<ub>>, %a
     %19 = ave.hir.vtruncf %14, <rint>, false, <part_odd>, %16 {layout_change = #ave<layout_change DENSE>} : vector<64xf32>, vector<128xf16>, vector<64xi1>
     %20 = ave.hir.vor %18, %19, %17 : vector<128xf16>, vector<128xi1>
     ave.hir.store_with_stride %subview_4[%c0, %c0], %c1040, %17, %20 : memref<4x16xf16, #map1, #hivm.address_space<ub>>, vector<128xi1>, vector<128xf16>
-    // CHECK:       %18 = ave.hir.vtruncf %12, <rint>, false, <part_even>, %15 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<c2c>, layout_change = #ave<layout_change DENSE>} : vector<64xf32>, vector<128xf16>, vector<64xi1>
-    // CHECK:       %19 = ave.hir.vtruncf %14, <rint>, false, <part_odd>, %16 {element_alignment_bit_width = 32 : i32, functionType = #ave.func_dist_type<c2c>, layout_change = #ave<layout_change DENSE>} : vector<64xf32>, vector<128xf16>, vector<64xi1>
-    // CHECK:       %20 = ave.hir.vor %18, %19, %17 {element_alignment_bit_width = 16 : i32} : vector<128xf16>, vector<128xi1>
-    // CHECK:       ave.hir.store_with_stride %subview_4[%c0, %c0], %c1040, %17, %20 {element_alignment_bit_width = 16 : i32, functionType = #ave.func_dist_type<norm>} : memref<4x16xf16, #map1, #hivm.address_space<ub>>, vector<128xi1>, vector<128xf16>
+    // CHECK:       %18 = ave.hir.vtruncf %12, <rint>, false, <part_even>, %15 {functionType = #ave.func_dist_type<c2c>, layout_change = #ave<layout_change DENSE>} : vector<64xf32>, vector<128xf16>, vector<64xi1>
+    // CHECK:       %19 = ave.hir.vtruncf %14, <rint>, false, <part_odd>, %16 {functionType = #ave.func_dist_type<c2c>, layout_change = #ave<layout_change DENSE>} : vector<64xf32>, vector<128xf16>, vector<64xi1>
+    // CHECK:       %20 = ave.hir.vor %18, %19, %17  : vector<128xf16>, vector<128xi1>
+    // CHECK:       ave.hir.store_with_stride %subview_4[%c0, %c0], %c1040, %17, %20 {functionType = #ave.func_dist_type<norm>} : memref<4x16xf16, #map1, #hivm.address_space<ub>>, vector<128xi1>, vector<128xf16>
 %21 = ave.hir.pge <ALL> : vector<64xi1>
     %22 = ave.hir.vadd %12, %14, %21 : vector<64xf32>, vector<64xi1>
     %23 = ave.hir.pge <ALL> : vector<64xi1>
