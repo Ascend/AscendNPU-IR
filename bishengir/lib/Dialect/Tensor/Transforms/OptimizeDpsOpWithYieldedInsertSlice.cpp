@@ -201,6 +201,11 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       if (auto align = info.allocOp.getAlignment())
         bigAlloc.setAlignment(align.value());
 
+      // Mark the big alloc as a page-load buffer (filled piece-by-piece
+      // by inner loop loads) so downstream passes (e.g. ND2NZ decompose) can
+      // identify it and only initialize the subview regions.
+      bigAlloc->setAttr("hivm.slice_load", rewriter.getUnitAttr());
+
       // If the iter_arg was initialized with a scalar vbrc (fill), replicate
       // that initialization on the big alloc to avoid losing the fill semantic.
       if (info.vbrcScalar) {
