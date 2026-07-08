@@ -124,9 +124,23 @@ def EliminateSingleIterationScfFor
 //===----------------------------------------------------------------------===//
 
 def DebugMemory : Pass<"debug-memory", "mlir::ModuleOp"> {
-  let summary = "Debug Memory";
+  let summary = "The pass allows developers review in Python intermediate "
+    "element-wise ops results from kernel after kernel execution. These ops "
+    "can be available only in kernel after Triton operation decomposition.";
+
   let description = [{
-    Debug Memory
+    The pass collects results of element-wise AVE dialect operations and
+    returns results to executed Python. Element-wise AVE dialect operations
+    can be created during Triton operation decomposition in compiler
+    compilation pipeline and not available in Triton kernel code.
+
+    All collected results are returned in one tensor. Python type
+    IntermediateTensor which parses returned tensor to human readable
+    separated by operation result is placed here:
+      bishengir/python/bishengir/debugging_capabilities.py
+
+    To enable the pass you should defined environment variable:
+      export ASCEND_DEBUG_PRINT=ALL
   }];
   let constructor = "bishengir::createDebugMemoryPass()";
   let dependentDialects = ["mlir::LLVM::LLVMDialect"];
