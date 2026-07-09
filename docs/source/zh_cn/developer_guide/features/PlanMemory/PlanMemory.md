@@ -103,8 +103,8 @@ Loop i:
 使用Level2前后的流水效果对比如下：
 ![image](../../../../images/developer_guide/plan_memory_level2.png)
 
- - 优点：同流水`PIPE`复用不引入`PIPE`间额外依赖，整体算子性能更好。
- - 缺点：可复用解空间小，内存复用的成功概率低。
+- 优点：同流水`PIPE`复用不引入`PIPE`间额外依赖，整体算子性能更好。
+- 缺点：可复用解空间小，内存复用的成功概率低。
 
 [2] Level1
 
@@ -134,8 +134,8 @@ Loop i:
 使用Level1前后的流水效果对比如下：
 ![image](../../../../images/developer_guide/plan_memory_level1.png)
 
- - 优点：避免`Double Buffer`场景下流水被打断，流水性能更好。
- - 缺点：额外开启`Double Buffer`，需要一片额外的内存，会降低整体内存复用成功的概率。
+- 优点：避免`Double Buffer`场景下流水被打断，流水性能更好。
+- 缺点：额外开启`Double Buffer`，需要一片额外的内存，会降低整体内存复用成功的概率。
 
 [3] Level0
 
@@ -144,8 +144,8 @@ Level0：如果两块`Buffer`的生命区间不重叠，内存可以直接复用
 使用Level0前后的内存使用情况对比如下：
 ![image](../../../../images/developer_guide/plan_memory_level0.png)
 
- - 优点：能够尽可能地复用内存，内存可复用概率高。
- - 缺点：完全无视硬件并行流水，不合理的复用会导致算子性能差。
+- 优点：能够尽可能地复用内存，内存可复用概率高。
+- 缺点：完全无视硬件并行流水，不合理的复用会导致算子性能差。
 
 #### OP变换
 

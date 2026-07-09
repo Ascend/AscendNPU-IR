@@ -19,7 +19,7 @@
 
 #### hfusion层调试：PrintOp
 
-##### 接口说明
+**接口说明**：
 
 ```mlir
 // hex：是否将所有值以十六进制而非十进制形式打印
@@ -27,7 +27,7 @@
 hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 ```
 
-##### 使用说明
+**使用说明**：
 
 可以在`hfusion Pass`阶段或手动构造`IR`时，显式添加`PrintOp`节点。
 如下：当我们想打印`load`进来的结果时我们可以手动在`hfusion`阶段`IR`中添加`hfusion.print`以实现该效果。
@@ -45,7 +45,7 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 
 #### hivm层调试：DebugOp
 
-##### 接口说明
+**接口说明**：
 
 ```mlir
 // debugtype：指明当前是 print 场景还是 assert 场景
@@ -56,7 +56,7 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 hivm.hir.debug {debugtype = "xxx", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<xxx>} %0 : tensor<8xi64>
 ```
 
-##### 使用说明
+**使用说明**：
 
 可以在`hivm Pass`阶段或手动构造`IR`时，显式添加`Debug Op`节点。
 如下：当我们想打印`load`进来的结果时我们可以手动在`hivm`阶段`IR`中添加`hivm.hir.debug`以实现该效果。
@@ -88,7 +88,7 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 
 #### static_assert
 
-##### 接口描述
+**接口描述**：
 
 ```python
 # condition: bool - 编译时可计算的布尔表达式
@@ -96,7 +96,7 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 triton.language.static_assert(condition: bool, message: str = "") -> None
 ```
 
-##### 使用示例
+**使用示例**：
 
 可以通过执行`python3 <file>.py`验证功能正确性。
 
@@ -125,20 +125,20 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-##### 断言效果
+**断言效果**：
 
 ![image](../../images/user_guide/debug_option1.png)
 
 #### static_print
 
-##### 接口描述
+**接口描述**：
 
 ```python
 # message: str - 要打印的消息，可以包含编译时常量
 triton.language.static_print(message: str) -> None
 ```
 
-##### 使用示例
+**使用示例**：
 
 可以通过执行`python3 <file>.py`验证功能正确性。
 
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-#### 打印效果
+**打印效果**：
 
 ```text
 [warning]: tiling struct [GMMTilingData] is conflict with one in tiling grating tiling
@@ -184,7 +184,7 @@ export TRITON_DEBUG=1
 export TRITON_DEVICE_PRINT=1
 ```
 
-##### 接口描述
+**接口描述**：
 
 ```python
 # condition: bool - 要断言的条件，必须是一个布尔张量
@@ -194,7 +194,7 @@ export TRITON_DEVICE_PRINT=1
 triton.language.device_assert(condition: bool, message: str = "") -> None
 ```
 
-##### 使用示例
+**使用示例**：
 
 可以通过执行`python3 <file>.py`验证功能正确性。
 
@@ -226,7 +226,7 @@ if __name__ == "__main__":
     test_assert()
 ```
 
-##### 断言效果
+**断言效果**：
 
 ![image](../../images/user_guide/debug_option3.png)
 
@@ -234,7 +234,7 @@ if __name__ == "__main__":
 
 说明：使用此功能前需要设置环境变量`export TRITON_DEVICE_PRINT=1`。
 
-##### 接口描述
+**接口描述**：
 
 ```python
 # prefix: str - 打印在值之前的前缀，必须是字符串
@@ -245,7 +245,7 @@ if __name__ == "__main__":
 triton.language.device_print(prefix, *args, hex=False) -> None
 ```
 
-##### 使用示例
+**使用示例**：
 
 可以通过执行`python3 <file>.py`验证功能正确性。
 
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     test_print()
 ```
 
-##### 打印效果
+**打印效果**：
 
 ![image](../../images/user_guide/debug_option4.png)
 
@@ -284,14 +284,14 @@ if __name__ == "__main__":
 
 命令行异常检测工具用于`triton`算子内存检测/竞争检测/未初始化检测等，使用此功能前需要设置环境变量`export TRITON_ENABLE_SANITIZER=true`。
 
-#### 使用方式
+**使用方式**：
 
 ```bash
 # 直接拉起 triton 算子运行即可
 mssanitizer python test.py
 ```
 
-#### 效果展示
+**效果展示**：
 
 以如下`triton add`用例为例（用例中`offsets`错误计算）展示`mssanitizer`的检测效果。
 
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 
 命令行模型调优工具用于`triton`算子性能数据的采集和解析。
 
-#### 使用方式
+**使用方式**：
 
 ```bash
 # 整网上板调优
@@ -370,7 +370,7 @@ msprof op --output=xxx --application="" --kernel-name=xxx --aic-metrics=xxx
 msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --output=xxx
 ```
 
-#### 常用性能分析图
+**常用性能分析图**：
 
 - `trace.json`：支持在`chrome://tracing/`上生成指令流水图
     ![image](../../images/user_guide/debug_option6.png)
@@ -380,7 +380,7 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 
 注：想要了解更多性能分析图可参见[MindStudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html)
 
-#### triton算子流水采集
+**triton算子流水采集**：
 
 以如下`add kernel`为例，希望跑出对应的流水情况：
 
