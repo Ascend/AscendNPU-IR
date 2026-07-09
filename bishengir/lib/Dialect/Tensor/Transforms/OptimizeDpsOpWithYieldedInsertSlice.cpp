@@ -15,7 +15,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
@@ -75,7 +74,7 @@ static void refreshDerivedMemrefViewTypes(Value root, scf::ForOp forOp,
             subview.getMixedOffsets(), subview.getMixedSizes(),
             subview.getMixedStrides()));
         if (newType != subview.getType()) {
-          rewriter.modifyOpInPlace(subview, [&]() {
+          rewriter.modifyOpInPlace(subview, [&subview, &newType]() {
             subview.getResult().setType(newType);
           });
         }
@@ -88,7 +87,7 @@ static void refreshDerivedMemrefViewTypes(Value root, scf::ForOp forOp,
                                           srcType.getLayout(),
                                           dstType.getMemorySpace());
         if (newDstType != dstType) {
-          rewriter.modifyOpInPlace(castOp, [&]() {
+          rewriter.modifyOpInPlace(castOp, [&castOp, &newDstType]() {
             castOp.getResult().setType(newDstType);
           });
         }
@@ -224,7 +223,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       }
 
       infos.push_back(
-          {insertOp, toTensorOp, allocOp, toTensorOp.getMemref(), (int)idx,
+          {insertOp, toTensorOp, allocOp, toTensorOp.getMemref(), static_cast<int>(idx),
            vbrcScalar});
     }
 
@@ -252,11 +251,6 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
           info.allocOp.getLoc(), bigAllocType);
       if (auto align = info.allocOp.getAlignment())
         bigAlloc.setAlignment(align.value());
-
-      // Mark the big alloc as a page-load buffer (filled piece-by-piece
-      // by inner loop loads) so downstream passes (e.g. ND2NZ decompose) can
-      // identify it and only initialize the subview regions.
-      bigAlloc->setAttr("hivm.slice_load", rewriter.getUnitAttr());
 
       // If the iter_arg was initialized with a scalar vbrc (fill), replicate
       // that initialization on the big alloc to avoid losing the fill semantic.
@@ -292,8 +286,9 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
     IRMapping mapping;
     DenseSet<Operation *> alreadyCloned;
 
-    std::function<Value(Value)> cloneValueChain =
-        [&](Value val) -> Value {
+    std::function<Value(Value)> cloneValueChain;
+    cloneValueChain =
+        [&mapping, &alreadyCloned, &rewriter, &cloneValueChain](Value val) -> Value {
       if (mapping.contains(val))
         return mapping.lookup(val);
       if (isa<BlockArgument>(val))
@@ -328,7 +323,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       // Create subview right before the original alloc.
       rewriter.setInsertionPoint(info.allocOp);
 
-      auto mapMix = [&](ArrayRef<OpFoldResult> mix) -> SmallVector<OpFoldResult> {
+      auto mapMix = [&mapping](ArrayRef<OpFoldResult> mix) -> SmallVector<OpFoldResult> {
         SmallVector<OpFoldResult> result;
         for (auto v : mix)
           result.push_back(
@@ -350,6 +345,9 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       auto bigSubview = rewriter.create<memref::SubViewOp>(
           info.insertOp.getLoc(), cast<MemRefType>(subviewType),
           bigMemcasts[i], newOffsets, newSizes, newStrides);
+      // Mark the page-level subview so downstream ND2NZ decompose only
+      // initializes this region instead of the entire alloc.
+      bigSubview->setAttr("hivm.slice_load", rewriter.getUnitAttr());
 
       // Redirect all users of the old memcast to the big subview.
       rewriter.replaceAllUsesWith(info.memcast, bigSubview.getResult());

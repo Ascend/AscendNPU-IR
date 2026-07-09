@@ -380,15 +380,20 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
 
   // Page-load mark (OptimizeDpsOpWithYieldedInsertSlice): the alloc is
   // filled piece-by-piece by sibling nd2nz ops. Use the innermost
-  // subview (the one directly defining getDst or reachable through
-  // CastOps) as the vbrc target. Walk through SubViewOps to find the
-  // one closest to getDst — it covers the exact region.
-  if (padMemref->hasAttr("hivm.slice_load")) {
-    Value dstVal = getDst();
-    while (auto castOp = dstVal.getDefiningOp<memref::CastOp>())
-      dstVal = castOp.getSource();
-    if (isa<memref::SubViewOp>(dstVal.getDefiningOp()))
-      vbrcTarget = dstVal;
+  // Page-load mark: walk from getDst() through CastOp and nested
+  // SubViewOps to find the subview carrying the marker. The marked
+  // subview covers the exact page region to initialize.
+  {
+    Value cursor = getDst();
+    while (auto castOp = cursor.getDefiningOp<memref::CastOp>())
+      cursor = castOp.getSource();
+    while (cursor.getDefiningOp<memref::SubViewOp>()) {
+      if (cursor.getDefiningOp()->hasAttr("hivm.slice_load")) {
+        vbrcTarget = cursor;
+        break;
+      }
+      cursor = cursor.getDefiningOp<memref::SubViewOp>()->getOperand(0);
+    }
   }
 
   if (getInitCondition()) {

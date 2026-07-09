@@ -90,7 +90,7 @@ func.func @load_problem(%lb: index, %ub: index, %step: index) -> tensor<18x111x3
 func.func @hoist_alloc_basic(%lb: index, %ub: index, %step: index) -> tensor<128x128xbf16> {
   %init = tensor.empty() : tensor<128x128xbf16>
   %cst = arith.constant 0.000000e+00 : bf16
-  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() {hivm.slice_load} : memref<128x128xbf16>
+  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() : memref<128x128xbf16>
   // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[BIG_ALLOC]]
   // CHECK: scf.for %{{.*}} = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[ARG:.*]] = %{{.*}})
   %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) -> (tensor<128x128xbf16>) {
@@ -114,9 +114,9 @@ func.func @hoist_alloc_basic(%lb: index, %ub: index, %step: index) -> tensor<128
 func.func @hoist_alloc_two_iter_args(%lb: index, %ub: index, %step: index) -> (tensor<128x128xbf16>, tensor<128x128xbf16>) {
   %init = tensor.empty() : tensor<128x128xbf16>
   %cst = arith.constant 0.000000e+00 : bf16
-  // CHECK: %[[BIG_ALLOC0:.*]] = memref.alloc() {hivm.slice_load} : memref<128x128xbf16>
+  // CHECK: %[[BIG_ALLOC0:.*]] = memref.alloc() : memref<128x128xbf16>
   // CHECK: %[[BIG_TENSOR0:.*]] = bufferization.to_tensor %[[BIG_ALLOC0]]
-  // CHECK: %[[BIG_ALLOC1:.*]] = memref.alloc() {hivm.slice_load} : memref<128x128xbf16>
+  // CHECK: %[[BIG_ALLOC1:.*]] = memref.alloc() : memref<128x128xbf16>
   // CHECK: %[[BIG_TENSOR1:.*]] = bufferization.to_tensor %[[BIG_ALLOC1]]
   %res:2 = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init, %arg2 = %init) -> (tensor<128x128xbf16>, tensor<128x128xbf16>) {
     %offset = "some_calculation"(%arg0) : (index) -> (index)
@@ -141,7 +141,7 @@ func.func @hoist_alloc_two_iter_args(%lb: index, %ub: index, %step: index) -> (t
 func.func @hoist_alloc_with_subview(%lb: index, %ub: index, %step: index) -> tensor<128x128xbf16> {
   %init = tensor.empty() : tensor<128x128xbf16>
   %cst = arith.constant 0.000000e+00 : bf16
-  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() {hivm.slice_load} : memref<128x128xbf16>
+  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() : memref<128x128xbf16>
   // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[BIG_ALLOC]]
   %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) -> (tensor<128x128xbf16>) {
     %offset = "some_calculation"(%arg0) : (index) -> (index)
@@ -165,7 +165,7 @@ func.func @hoist_alloc_with_subview(%lb: index, %ub: index, %step: index) -> ten
 func.func @hoist_alloc_with_memspace_cast(%lb: index, %ub: index, %step: index) -> tensor<128x128xbf16> {
   %init = tensor.empty() : tensor<128x128xbf16>
   %cst = arith.constant 0.000000e+00 : bf16
-  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() {hivm.slice_load} : memref<128x128xbf16, 5>
+  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() : memref<128x128xbf16, 5>
   // CHECK: %[[CAST:.*]] = memref.memory_space_cast %[[BIG_ALLOC]]
   // CHECK-SAME: memref<128x128xbf16, 5> to memref<128x128xbf16>
   // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[CAST]]
@@ -235,7 +235,7 @@ func.func @mixed_iter_args(%lb: index, %ub: index, %step: index) -> (tensor<128x
   %init = tensor.empty() : tensor<128x128xbf16>
   %cst = arith.constant 0.000000e+00 : bf16
   %c0_i32 = arith.constant 0 : i32
-  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() {hivm.slice_load} : memref<128x128xbf16>
+  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() : memref<128x128xbf16>
   // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[BIG_ALLOC]]
   %res:2 = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init, %arg2 = %c0_i32) -> (tensor<128x128xbf16>, i32) {
     %offset = "some_calculation"(%arg0) : (index) -> (index)
@@ -260,9 +260,11 @@ func.func @hoist_alloc_with_vbrc_init(%lb: index, %ub: index, %step: index) -> t
   %init = tensor.empty() : tensor<128x128xbf16>
   %cst = arith.constant 0.000000e+00 : bf16
   %filled = hivm.hir.vbrc ins(%cst : bf16) outs(%init : tensor<128x128xbf16>) -> tensor<128x128xbf16>
-  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() {hivm.slice_load}
+  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() : memref<128x128xbf16>
   // CHECK: hivm.hir.vbrc ins(%{{.*}} : bf16) outs(%[[BIG_ALLOC]]
   // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[BIG_ALLOC]]
+  // CHECK: scf.for
+  // CHECK: %[[SV:.*]] = memref.subview %[[BIG_ALLOC]]{{.*}} {hivm.slice_load}
   %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %filled) -> (tensor<128x128xbf16>) {
     %offset = "some_calculation"(%arg0) : (index) -> (index)
     %alloc = memref.alloc() : memref<32x128xbf16>
