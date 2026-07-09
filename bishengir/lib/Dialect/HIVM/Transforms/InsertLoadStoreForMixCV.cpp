@@ -956,7 +956,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   });
 
   /// Postprocess of adding core type attribute
-  funcOp->walk([](Operation *op) {
+  funcOp->walk([&builder](Operation *op) {
     TypeSwitch<Operation *>(op)
         .Case([&](hivm::DebugOp op) {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
@@ -1013,6 +1013,42 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           if (newTcoretype) {
             LDBG("set tcoretype for " << op << " to " << newTcoretype);
             op.setTcoretypeAttr(newTcoretype);
+          }
+        })
+        .Case([&](hivm::VBrcOp vbrcOp) {
+          auto upProp = PropagatorUtil::getUpPropagator(&vbrcOp.getDstMutable());
+          TCoreTypeAttr currentTcoretype = vbrcOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+          if (!upProp)
+            return;
+
+          // shouldn't change the core type that has been set
+          // consider case of vtranspose user of vbrcOp
+          if (currentTcoretype && currentTcoretype.getTcoretype() != TCoreType::CUBE_OR_VECTOR)
+            return;
+
+          auto inferNewCoreType =
+              [&vbrcOp](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
+            auto coreType = PropagatorUtil::getCoreType(upProp);
+            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+              return TCoreTypeAttr::get(vbrcOp.getContext(), coreType);
+            } else {
+              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+              if (addressSpaces.empty()) {
+                LDBG("not set tcoretype for " << vbrcOp);
+                return nullptr;
+              }
+              auto addressSpace = addressSpaces[0];
+              return TCoreTypeAttr::get(
+                  vbrcOp.getContext(),
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace));
+            }
+          };
+
+          TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
+          if (newTcoretype) {
+            LDBG("set tcoretype for " << vbrcOp << " to " << newTcoretype);
+            vbrcOp->setAttr(hivm::TCoreTypeAttr::name,
+              builder.getAttr<hivm::TCoreTypeAttr>(newTcoretype.getTcoretype()));
           }
         });
   });
