@@ -32,7 +32,9 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -735,13 +737,13 @@ struct AddConvertLayoutUBToL1
     auto inserted = getIntegersOfArrayAttr(op, insertedConvertLayout);
     if (std::find(inserted.begin(), inserted.end(), operandIdx) != inserted.end()) continue;
     auto producerOps = traceDefOps<OpType>(beforeValue);
+    if (std::is_same_v<OpType, hivm::VBrcOp>)
+      continue;
     if (producerOps.empty())
       continue;
 
     bool matched = false;
     for (Operation *producer : producerOps) {
-      if (std::is_same_v<OpType, hivm::VBrcOp>)
-        continue;
       if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
         auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
         if (!scfForOp->hasAttr(ExtractLoadStoreAttr)) {
@@ -783,6 +785,15 @@ struct AddConvertLayoutUBToL1
         auto maybeAnnotateOp = utils::getAnnotateOpWithAttr(
             collapseShapeOp.getResult(), maybeUnCollapsibleReshape);
         if (!maybeAnnotateOp.has_value())
+          continue;
+      }
+      if constexpr (std::is_same_v<OpType, tensor::InsertSliceOp>) {
+        // if the source is dynamic shape then, it can only be handled in vector
+        // core
+        auto insertSliceOp = llvm::cast<tensor::InsertSliceOp>(producer);
+        auto rankedTensorType =
+            dyn_cast<RankedTensorType>(insertSliceOp.getSource().getType());
+        if (!rankedTensorType || rankedTensorType.hasStaticShape())
           continue;
       }
       matched = true;
@@ -892,19 +903,13 @@ LogicalResult InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp f
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   populateAddConvertLayoutUBToL1<
-    hivm::FixpipeOp,
-    func::CallOp,
-    mlir::scf::ForOp,
-    hivm::IndirectLoadOp,
-    hivm::StrideLoadOp,
-    mlir::hivm::GatherLoadOp,
-    mlir::scope::ScopeOp,
-    tensor::CollapseShapeOp,
-    bufferization::ToTensorOp,
-    memref::AllocOp,
+      tensor::InsertSliceOp, hivm::FixpipeOp, func::CallOp, mlir::scf::ForOp,
+      hivm::IndirectLoadOp, hivm::StrideLoadOp, mlir::hivm::GatherLoadOp,
+      mlir::scope::ScopeOp, tensor::CollapseShapeOp, bufferization::ToTensorOp,
+      memref::AllocOp,
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-  >(patterns);
+      >(patterns);
   rewriteConfig.fold = false;
   if (failed(
           applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
