@@ -103,7 +103,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK:   %[[C16:.*]] = arith.constant 16 : index
   // CHECK:   %[[ARG0_LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
   // CHECK:   %[[ARG0_LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"inserted-load"} core_type = <CUBE> -> tensor<16x16xf16>
-  // CHECK:   %[[VBRC:.*]] = hivm.hir.vbrc ins(%[[CST:.*]] : f16) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK:   %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%[[CST:.*]] : f16) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   %[[EXTRACT:.*]] = tensor.extract_slice %[[ARG0_LOAD0]][0, 0] [%[[ARG2]], %[[ARG2]]] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
   // CHECK:   %[[INSERT:.*]] = tensor.insert_slice %[[EXTRACT]] into %[[VBRC]][0, 0] [%[[ARG2]], %[[ARG2]]] [1, 1] : tensor<?x?xf16> into tensor<16x16xf16>
   // CHECK:   %[[EXPAND:.*]] = tensor.expand_shape %[[INSERT]] {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 1, 16\]}} : tensor<16x16xf16> into tensor<16x1x16xf16>
@@ -579,7 +579,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %6 = tensor.empty() : tensor<16x16xi32>
     
     // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x32xi8>
-    // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc ins(%{{.*}} : i8) outs(%[[EMPTY]] : tensor<16x32xi8>) -> tensor<16x32xi8>
+    // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%{{.*}} : i8) outs(%[[EMPTY]] : tensor<16x32xi8>) -> tensor<16x32xi8>
     // CHECK: %[[INSERTED:.*]] = tensor.insert_slice %{{.*}} into %[[VBRC]][0, 0] [16, 16] [1, 1] : tensor<16x16xi8> into tensor<16x32xi8>
     // CHECK: %[[EXPANDED:.*]] = tensor.expand_shape %[[INSERTED]] {{\[\[}}0], [1, 2]] output_shape [16, 1, 32] : tensor<16x32xi8> into tensor<16x1x32xi8>
     // CHECK: %[[EMPTY_1:.*]] = tensor.empty() : tensor<1x16x32xi8>

@@ -51,12 +51,14 @@ struct MarkRealCoreTypePass
     // scalar-pipe operations.
     if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
             affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
-            tensor::InsertSliceOp, tensor::ExtractSliceOp, hivm::VBrcOp>(op)) {
+            tensor::InsertSliceOp, tensor::ExtractSliceOp>(op)) {
       return true;
     }
     if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
       return false;
     }
+    if (isa<hivm::VBrcOp>(op))
+      return false;
     if (isa<hivm::InferCoreTypeInterface>(op)) {
       return true;
     }
