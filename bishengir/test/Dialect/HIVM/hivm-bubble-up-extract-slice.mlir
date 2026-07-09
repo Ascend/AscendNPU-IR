@@ -584,7 +584,7 @@ func.func @stride_load_3d_bubble_up_example(%src: memref<?xf32>) -> tensor<1x2x4
 // CHECK:             %[[VAL_10:.*]] = arith.addi %[[VAL_8]], %[[VAL_2]] : index
 // CHECK:             %[[VAL_11:.*]] = arith.minsi %[[VAL_10]], %[[VAL_6]] : index
 // CHECK:             scf.for %[[VAL_12:.*]] = %[[VAL_8]] to %[[VAL_11]] step %[[VAL_4]] {
-// CHECK:               hivm.hir.load ins(%[[VAL_13:.*]] : memref<1x32xf32, strided<[32, 1], offset: ?>>) outs(%[[VAL_20:.*]] : memref<1x32xf32, strided<[32, 1], offset: ?>>)
+// CHECK:               hivm.hir.load ins(%[[VAL_13:.*]] : memref<1x32xf32, strided<[32, 1], offset: ?>>) outs(%[[VAL_20:.*]] : memref<?x32xf32, strided<[32, 1], offset: ?>>)
 // CHECK:             } {ExtractedLoadOrStore, hivm.parallel_loop}
 // CHECK:             %[[VAL_21:.*]] = bufferization.to_tensor %[[VAL_9]] restrict writable : memref<32x32xf32>
 // CHECK:             annotation.mark %[[VAL_21]] : tensor<32x32xf32>

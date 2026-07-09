@@ -865,7 +865,7 @@ bool DimensionAnalyzer::isParallelOp(Operation *op) const {
   return op && (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
                 utils::isAllocLikeOp(op) ||
                 isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-                    bufferization::ToMemrefOp>(op));
+                    bufferization::ToMemrefOp, arith::SelectOp>(op));
 }
 
 void DimensionAnalyzer::combineInferable() {
