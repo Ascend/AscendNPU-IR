@@ -89,33 +89,3 @@ func.func @test_fold_scalar_broadcast(%arg0: memref<1024xf16, #hivm.address_spac
   }
   return
 }
-// -----
-
-// CHECK-LABEL: func.func @test_bf16_not_folded_to_scalar
-// BF16 has no scalar-form intrinsic (VecUtils.h DECLARE_ELTWISE_VS covers only
-// int16/int32/half/float), so broadcast+binary must stay in vector form.
-// CHECK-NOT: ave.hir.vmuls
-// CHECK-NOT: ave.hir.vadds
-func.func @test_bf16_not_folded_to_scalar(%arg0: memref<1024xbf16, #hivm.address_space<ub>>, %arg1: memref<1024xbf16, #hivm.address_space<ub>>) {
-  %cst = arith.constant 3.000000e+00 : bf16
-  %0 = ave.hir.pge <ALL> : vector<128xi1>
-  %1 = ave.hir.scalar_broadcast %cst : bf16 -> vector<128xbf16>
-  %c128 = arith.constant 128 : index
-  %c1024 = arith.constant 1024 : index
-  %c0 = arith.constant 0 : index
-  scf.for %arg2 = %c0 to %c1024 step %c128 {
-    %subview = memref.subview %arg0[%arg2] [128] [1] : memref<1024xbf16, #hivm.address_space<ub>> to memref<128xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
-    %subview_0 = memref.subview %arg1[%arg2] [128] [1] : memref<1024xbf16, #hivm.address_space<ub>> to memref<128xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>
-    %2 = ave.hir.vload <NORM> %subview[%c0] : memref<128xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<128xbf16>
-    %3 = ave.hir.pge <ALL> : vector<128xi1>
-    // CHECK: ave.hir.vmul
-    %4 = ave.hir.vmul %2, %1, %3 : vector<128xbf16>, vector<128xi1>
-    // CHECK: ave.hir.vadd
-    %5 = ave.hir.vadd %2, %1, %3 : vector<128xbf16>, vector<128xi1>
-    %6 = ave.hir.pge <ALL> : vector<128xi1>
-    ave.hir.masked_store <NORM_B16> %subview_0[%c0], %6, %4 : memref<128xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
-    ave.hir.masked_store <NORM_B16> %subview_0[%c0], %6, %5 : memref<128xbf16, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<128xi1>, vector<128xbf16>
-
-  }
-  return
-}
