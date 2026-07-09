@@ -1068,6 +1068,7 @@ tileAndSliceOp(func::FuncOp func,
       }
       if (isTightlyCoupledMarkInCbufAddressSpace(markOp))
         return;
+      LDBG("Tiling dim for tcb " << markOp.getSrc() << " is " << tilingDim);
       tightlyCoupledBufferToTilingDim[maybeId.value()] = tilingDim;
     }
   });

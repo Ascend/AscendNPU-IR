@@ -1563,7 +1563,7 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
       sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
       tilingDim, rewriter);
 
-  rewriter.setInsertionPoint(sliceOp);
+  rewriter.setInsertionPointAfter(toTensorOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
       sliceOp.getLoc(), upAtToTensor.getResult(0), true, true);
   rewriter.replaceOp(sliceOp, newToTensorOp.getResult());
