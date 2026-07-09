@@ -2130,34 +2130,34 @@ bool MemPlan::IsBufferLifeVecConflict(PlanRecord &r, uint64_t offset,
 
 void MemPlan::PlanRelationOtherBufferEntryAddress(
     llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e) {
-  if (e->multiBufferNum == 1) {
-    // Single-buffer entry expanded to use multibuffer. Create
-    // one extra StorageEntry per multibuffer offset and store in
-    // firstBufferEntry2RelationOtherBufferEntry as a vector.
-    auto &vec = firstBufferEntry2RelationOtherBufferEntry[e];
-    vec.clear();
-    vec.reserve(otherBufferOffsets.size());
-    for (uint64_t offset : otherBufferOffsets) {
-      auto entry = std::make_unique<StorageEntry>();
-      entry->bufInfo = e->bufInfo;
-      entry->bufferLifeVec = e->bufferLifeVec;
-      entry->alignedConstBits = e->alignedConstBits;
-      entry->inplaceBuffers = e->inplaceBuffers;
-      entry->multiBufferNum = e->multiBufferNum;
-      entry->bitsOffset = offset;
-      vec.push_back(std::move(entry));
+  // First loop: assign offsets to existing otherBufferRelationEntries.
+  // For each multibuffer index from 1 to multiBufferNum, the corresponding
+  // relation entry (at index i-1) gets the offset at index i-1.
+  for (size_t i = 1; i < e->multiBufferNum; ++i) {
+    if (i - 1 >= e->otherBufferRelationEntries.size() ||
+        i - 1 >= otherBufferOffsets.size()) {
+      continue;
     }
-  } else if (e->multiBufferNum > 1 && !e->otherBufferRelationEntries.empty()) {
-    // Multi-buffer entry: assign each relation entry its multibuffer offset
-    // from otherBufferOffsets.
-    for (size_t i = 0; i < e->otherBufferRelationEntries.size() &&
-                       i < otherBufferOffsets.size();
-         ++i) {
-      if (StorageEntry *re = e->otherBufferRelationEntries[i])
-        re->bitsOffset = otherBufferOffsets[i];
+    if (StorageEntry *re = e->otherBufferRelationEntries[i - 1]) {
+      re->bitsOffset = otherBufferOffsets[i - 1];
     }
-  } else {
-    llvm_unreachable("Does not support other buffer entries reuse in level1!");
+  }
+
+  // Second loop: create new StorageEntries for the remaining offsets (from
+  // index multiBufferNum-1 to the end of otherBufferOffsets) and store them
+  // in firstBufferEntry2RelationOtherBufferEntry as a vector.
+  auto &vec = firstBufferEntry2RelationOtherBufferEntry[e];
+  vec.clear();
+  vec.reserve(otherBufferOffsets.size());
+  for (size_t i = e->multiBufferNum - 1; i < otherBufferOffsets.size(); ++i) {
+    auto entry = std::make_unique<StorageEntry>();
+    entry->bufInfo = e->bufInfo;
+    entry->bufferLifeVec = e->bufferLifeVec;
+    entry->alignedConstBits = e->alignedConstBits;
+    entry->inplaceBuffers = e->inplaceBuffers;
+    entry->multiBufferNum = e->multiBufferNum;
+    entry->bitsOffset = otherBufferOffsets[i];
+    vec.push_back(std::move(entry));
   }
 }
 
