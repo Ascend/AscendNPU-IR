@@ -469,7 +469,6 @@ module {
     // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID4>]
     // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID5>]
     // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID6>]
-    // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID7>]
     scf.for %arg8 = %c0 to %c1024 step %c1 {
       %0 = hivm.hir.pointer_cast(%c0_i64) : memref<1024xf16, #hivm.address_space<ub>>
       %1 = hivm.hir.pointer_cast(%c2048_i64) : memref<1024xf16, #hivm.address_space<ub>>
@@ -481,52 +480,48 @@ module {
       %7 = hivm.hir.pointer_cast(%c14336_i64) : memref<1024xf16, #hivm.address_space<ub>>
       // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT0:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%0 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT8:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT1:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%1 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT9:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT2:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT7:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT1:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%2 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT10:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT3:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT8:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT2:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%3 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT11:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT4:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT9:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT3:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%4 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT12:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT5:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT10:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT4:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%5 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT13:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT6:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT11:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT5:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%6 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <EVENT_ID1>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT7:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT12:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT6:EVENT_ID[0-7]]]>]
       hivm.hir.load ins(%arg0 : memref<1024xf16, #hivm.address_space<gm>>) outs(%7 : memref<1024xf16, #hivm.address_space<ub>>)
-      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT14:EVENT_ID[0-7]]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT8]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT13:EVENT_ID[0-7]]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT7]]>]
       %8 = memref.load %0[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT0]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT9]]>]
       %9 = memref.load %1[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT1]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT10]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT0]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT8]]>]
       %10 = memref.load %2[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT2]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT11]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT1]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT9]]>]
       %11 = memref.load %3[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT3]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT12]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT2]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT10]]>]
       %12 = memref.load %4[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT4]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT13]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT3]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT11]]>]
       %13 = memref.load %5[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT5]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <EVENT_ID1>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT4]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT12]]>]
       %14 = memref.load %6[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT6]]>]
-      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT14]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT5]]>]
+      // CHECK: hivm.hir.wait_flag[<PIPE_MTE2>, <PIPE_S>, <[[EVENT13]]>]
       %15 = memref.load %7[%c0] : memref<1024xf16, #hivm.address_space<ub>>
-      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT7]]>]
+      // CHECK: hivm.hir.set_flag[<PIPE_S>, <PIPE_MTE2>, <[[EVENT6]]>]
     }
     // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID1>]
@@ -535,7 +530,6 @@ module {
     // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID4>]
     // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID5>]
     // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID6>]
-    // CHECK: hivm.hir.wait_flag[<PIPE_S>, <PIPE_MTE2>, <EVENT_ID7>]
     return
   }
 }

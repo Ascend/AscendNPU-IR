@@ -285,10 +285,15 @@ int64_t getHWAvailableEventIdNum(SyncMode syncMode, hivm::PIPE setPipe,
                                  hivm::PIPE waitPipe) {
   if (syncMode == SyncMode::INTRA_CORE_SYNC) {
     const llvm::DenseMap<std::tuple<PIPE, PIPE>, int64_t> reservedEventIdNum = {
-        {{hivm::PIPE::PIPE_V, hivm::PIPE::PIPE_S}, 1},
         {{hivm::PIPE::PIPE_S, hivm::PIPE::PIPE_V}, 1},
-        {{hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_V}, 1},
+        {{hivm::PIPE::PIPE_S, hivm::PIPE::PIPE_MTE2}, 1},
+        {{hivm::PIPE::PIPE_S, hivm::PIPE::PIPE_MTE3}, 1},
+        {{hivm::PIPE::PIPE_V, hivm::PIPE::PIPE_S}, 1},
+        {{hivm::PIPE::PIPE_V, hivm::PIPE::PIPE_MTE3}, 1},
         {{hivm::PIPE::PIPE_M, hivm::PIPE::PIPE_FIX}, 1},
+        {{hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_S}, 1},
+        {{hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_V}, 1},
+        {{hivm::PIPE::PIPE_MTE3, hivm::PIPE::PIPE_S}, 1},
         {{hivm::PIPE::PIPE_FIX, hivm::PIPE::PIPE_M}, 1},
     };
     int64_t eventIdNum = INTRA_CORE_EVENT_ID_NUM;
@@ -317,10 +322,15 @@ SmallVector<int64_t> getHWAvailableEventIds(SyncMode syncMode,
                                             hivm::PIPE waitPipe) {
   if (syncMode == SyncMode::INTRA_CORE_SYNC) {
     const llvm::DenseMap<std::tuple<PIPE, PIPE>, int64_t> reservedEventIdNum = {
-        {{hivm::PIPE::PIPE_V, hivm::PIPE::PIPE_S}, 1},
         {{hivm::PIPE::PIPE_S, hivm::PIPE::PIPE_V}, 1},
-        {{hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_V}, 1},
+        {{hivm::PIPE::PIPE_S, hivm::PIPE::PIPE_MTE2}, 1},
+        {{hivm::PIPE::PIPE_S, hivm::PIPE::PIPE_MTE3}, 1},
+        {{hivm::PIPE::PIPE_V, hivm::PIPE::PIPE_S}, 1},
+        {{hivm::PIPE::PIPE_V, hivm::PIPE::PIPE_MTE3}, 1},
         {{hivm::PIPE::PIPE_M, hivm::PIPE::PIPE_FIX}, 1},
+        {{hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_S}, 1},
+        {{hivm::PIPE::PIPE_MTE2, hivm::PIPE::PIPE_V}, 1},
+        {{hivm::PIPE::PIPE_MTE3, hivm::PIPE::PIPE_S}, 1},
         {{hivm::PIPE::PIPE_FIX, hivm::PIPE::PIPE_M}, 1},
     };
     int64_t eventIdNum = INTRA_CORE_EVENT_ID_NUM;
