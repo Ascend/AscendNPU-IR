@@ -481,6 +481,14 @@ def EliminateDuplicateFuncs : Pass<"hfusion-eliminate-duplicate-funcs", "ModuleO
   let constructor = "mlir::hfusion::createEliminateDuplicateFuncsPass()";
 }
 
+def RemoveCacheIO
+    : Pass<"hfusion-remove-cache-io", "func::FuncOp"> {
+  let summary = "remove cache io";
+  let constructor = "::mlir::hfusion::createRemoveCacheIO()";
+  let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect",
+                           "mlir::tensor::TensorDialect"];
+}
+
 def Decompose : Pass<"hfusion-decompose", "func::FuncOp">{
   let summary = "Decompose ops that implemented AggregatedOpInterface.";
   let constructor = "mlir::hfusion::createDecomposePass()";

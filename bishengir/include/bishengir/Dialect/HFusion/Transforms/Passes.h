@@ -208,6 +208,9 @@ std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
 /// Create a pass to eliminate duplicate functions.
 std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 
+/// Create a pass to remove cache IO.
+std::unique_ptr<Pass> createRemoveCacheIO();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
