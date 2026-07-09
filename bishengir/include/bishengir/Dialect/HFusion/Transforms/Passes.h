@@ -214,6 +214,9 @@ std::unique_ptr<Pass> createRemoveCacheIO();
 /// Create a pass to uplift while loops to for loops.
 std::unique_ptr<Pass> createUpliftWhileToForPass();
 
+/// Create a pass to generalize named ops to generic ops.
+std::unique_ptr<Pass> createHFusionGeneralizePass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

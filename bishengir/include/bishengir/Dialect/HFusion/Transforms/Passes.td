@@ -513,4 +513,10 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
   let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];
 }
 
+def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
+  let summary = "Generalize named ops to generic ops";
+  let constructor = "mlir::hfusion::createHFusionGeneralizePass()";
+  let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES
