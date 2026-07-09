@@ -25,6 +25,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/LogicalResult.h"
 
 namespace mlir {
 #define GEN_PASS_DECL_SPLITMIXKERNEL
@@ -80,7 +81,11 @@ std::optional<BlockArgument> traceToArg(Value value) {
   return std::nullopt;
 }
 
-SmallVector<unsigned> traceWriteOpArgId(func::CallOp callOp) {
+llvm::FailureOr<SmallVector<unsigned>> traceWriteOpArgId(func::CallOp callOp) {
+  if (!hivm::isVFCall(callOp)) {
+    return failure();
+  }
+
   SymbolRefAttr calleeName = callOp.getCalleeAttr();
   mlir::SymbolTableCollection symbolTable;
   auto calleeFunc =
@@ -90,16 +95,26 @@ SmallVector<unsigned> traceWriteOpArgId(func::CallOp callOp) {
 
   // todo: current vf has only one return value and later vf will be moved
   // after split-mix-kernel,this func can also be removed.
+  // TODO: This implementation to trace write operands from the function
+  // definition seems weak, probably it didn't used to cause problems as vf-func
+  // calls aren't expected. Such currently are only found in kernels that uses
+  // scopes marked with core type, and in that case, the whole scope will be
+  // deleted with it's call ops. This needs to be revisited and a proper
+  // solution needs to be implemented.
   SmallVector<unsigned> writeOpArgIds;
   for (unsigned i = 0; i < returnOp->getNumOperands(); i++) {
-    auto maybeWriteOp =
-        traceDefOp<vector::TransferWriteOp>(returnOp->getOperand(i));
-    if (maybeWriteOp.has_value()) {
-      auto write = cast<vector::TransferWriteOp>(maybeWriteOp.value());
-      auto arg = traceToArg(write.getSource());
-      assert(arg != nullptr);
-      writeOpArgIds.push_back(arg->getArgNumber());
+    auto maybeWriteOp = traceDefOp<vector::TransferWriteOp>(
+        returnOp->getOperand(i), /*isSingleChain=*/false,
+        /*traceDestOperand=*/true);
+    if (!maybeWriteOp.has_value()) {
+      return failure();
     }
+    auto write = cast<vector::TransferWriteOp>(maybeWriteOp.value());
+    auto arg = traceToArg(write.getSource());
+    if (!arg) {
+      return failure();
+    }
+    writeOpArgIds.push_back(arg->getArgNumber());
   }
   return writeOpArgIds;
 }
@@ -207,8 +222,9 @@ static FailureOr<SmallVector<Value>> getOutOperands(Operation *op) {
             callOp);
     assert(funcOp && "callee func not found!");
 
-    if (hivm::isVFCall(op) && traceWriteOpArgId(callOp).size() > 0) {
-      for (auto i : traceWriteOpArgId(callOp)) {
+    auto trytraceWriteOpArgId = traceWriteOpArgId(callOp);
+    if (succeeded(trytraceWriteOpArgId)) {
+      for (auto i : trytraceWriteOpArgId.value()) {
         outOperands.push_back(op->getOperand(i));
       }
     } else if (funcOp.getArgAttrsAttr()) {
