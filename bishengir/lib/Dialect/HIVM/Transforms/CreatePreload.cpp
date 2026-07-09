@@ -91,19 +91,17 @@ static std::optional<hivm::PointerCastOp> getLocalBuffer(Value v) {
 }
 
 static std::optional<size_t> getMultiBufferNum(Value value) {
-  for (Operation *user : value.getUsers()) {
-    if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-      if (auto attr =
-              markOp->getAttrOfType<IntegerAttr>(hivm::MultiBufferAttr::name)) {
-        if (attr.getInt() != 0) {
-          return attr.getInt();
-        } else {
-          return std::nullopt;
-        }
-      }
-    }
+  auto markOp = utils::getAnnotateOpWithAttr(value, hivm::MultiBufferAttr::name);
+  if (!markOp) {
+    return std::nullopt;
   }
-  return std::nullopt;
+
+  auto attr = (*markOp)->getAttrOfType<IntegerAttr>(hivm::MultiBufferAttr::name);
+  if (!attr || attr.getInt() == 0) {
+    return std::nullopt;
+  }
+
+  return static_cast<size_t>(attr.getInt());
 }
 
 static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,

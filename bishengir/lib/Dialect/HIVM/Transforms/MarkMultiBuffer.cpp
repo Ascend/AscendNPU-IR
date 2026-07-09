@@ -150,8 +150,12 @@ static bool isPassthroughOpForTrace(Operation *op) {
 }
 
 void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, DenseSet<Operation *>& visited) {
-  if (!visited.insert(op).second)
+  if (!visited.insert(op).second) {
     return;
+  }
+  if (isa<annotation::MarkOp>(op)) {
+    return;
+  }
   if (auto scopeOp = dyn_cast<scope::ScopeOp>(op->getParentOp())) {
     scopes.push_back(scopeOp);
     return;
@@ -161,7 +165,6 @@ void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, Dense
       Operation *parent = user->getParentOp();
       if (auto scopeOp = dyn_cast<scope::ScopeOp>(parent)) {
         scopes.push_back(scopeOp);
-        return;
       } else {
         traceToScopes(user, scopes, visited);
       }
@@ -174,11 +177,21 @@ void traceForwardToScopes(Value v,
                           SmallVectorImpl<scope::ScopeOp> &consumerScopes) {
   DenseSet<Operation *> visited;
   for (Operation *user : v.getUsers()) {
+    if (isa<annotation::MarkOp>(user)) {
+      continue;
+    }
+
+    bool hasMemoryEffect = false;
     if (hasWrite(user, v)) {
+      hasMemoryEffect = true;
       traceToScopes(user, producerScopes, visited);
-    } else if (hasRead(user, v)) {
+    }
+    if (hasRead(user, v)) {
+      hasMemoryEffect = true;
       traceToScopes(user, consumerScopes, visited);
-    } else {
+    }
+    
+    if (!hasMemoryEffect) {
       if (isPassthroughOpForTrace(user)) {
         for (OpResult res : user->getResults()) {
           traceForwardToScopes(res, producerScopes, consumerScopes);
@@ -225,33 +238,49 @@ static void mark(mlir::Operation *op, PatternRewriter &rewriter,
   }
 }
 
+static std::optional<int32_t> getMaxProducerPreloadNum(SmallVector<scope::ScopeOp>& producerScopes) {
+  std::optional<int32_t> maxProducerPreloadNum;
+  for (auto scopeOp : producerScopes) {
+    auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr) {
+      continue;
+    }
+    int32_t preloadNum = preloadNumAttr.getInt();
+    if (maxProducerPreloadNum.has_value()) {
+      maxProducerPreloadNum = std::max(maxProducerPreloadNum.value(), preloadNum);
+    } else {
+      maxProducerPreloadNum = preloadNum;
+    }
+  }
+  return maxProducerPreloadNum;
+}
+
+static std::optional<int32_t> getMinConsumerPreloadNum(SmallVector<scope::ScopeOp>& consumerScopes) {
+  std::optional<int32_t> minConsumerPreloadNum;
+  for (auto scopeOp : consumerScopes) {
+    auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr) {
+      continue;
+    }
+    int32_t preloadNum = preloadNumAttr.getInt();
+    if (minConsumerPreloadNum.has_value()) {
+      minConsumerPreloadNum = std::min(minConsumerPreloadNum.value(), preloadNum);
+    } else {
+      minConsumerPreloadNum = preloadNum;
+    }
+  }
+  return minConsumerPreloadNum;
+}
+
 static std::optional<int32_t> getConsumerPreloadNum(Value scopeResult,
                                                     int32_t producerPreloadNum) {
-  std::optional<int32_t> consumerPreloadNum;
-
+  SmallVector<scope::ScopeOp> consumerScopes;
+  DenseSet<Operation *> visited;
   for (Operation *user : scopeResult.getUsers()) {
-    if (isa<annotation::MarkOp>(user))
-      continue;
-
-    auto consumerScope = dyn_cast<scope::ScopeOp>(user);
-    if (!consumerScope)
-      consumerScope = user->getParentOfType<scope::ScopeOp>();
-    if (!consumerScope)
-      continue;
-
-    auto preloadNumAttr =
-        consumerScope->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
-    if (!preloadNumAttr)
-      continue;
-
-    int32_t preloadNum = preloadNumAttr.getInt();
-    if (preloadNum >= producerPreloadNum)
-      continue;
-
-    consumerPreloadNum =
-        consumerPreloadNum ? std::min(*consumerPreloadNum, preloadNum)
-                           : std::optional<int32_t>(preloadNum);
+    traceToScopes(user, consumerScopes, visited);
   }
+
+  std::optional<int32_t> consumerPreloadNum = getMinConsumerPreloadNum(consumerScopes);
 
   return consumerPreloadNum;
 }
@@ -284,32 +313,14 @@ struct MarkScopeTightlyMultiBuffer : public OpRewritePattern<memref::AllocOp> {
 
     traceForwardToScopes(targetMemref, producerScopes, consumerScopes);
     
-    int32_t producerPreloadNum = -1;
-    int32_t consumerPreloadNum = INT32_MAX;
+    std::optional<int32_t> producerPreloadNum = getMaxProducerPreloadNum(producerScopes);
+    std::optional<int32_t> consumerPreloadNum = getMinConsumerPreloadNum(consumerScopes);
 
-    for (auto scopeOp : producerScopes) {
-      auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
-      if (!preloadNumAttr) {
-        continue;
-      }
-      int32_t preloadNum = preloadNumAttr.getInt();
-      producerPreloadNum = std::max(producerPreloadNum, preloadNum);
-    }
-
-    for (auto scopeOp : consumerScopes) {
-      auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
-      if (!preloadNumAttr) {
-        continue;
-      }
-      int32_t preloadNum = preloadNumAttr.getInt();
-      consumerPreloadNum = std::min(consumerPreloadNum, preloadNum);
-    }
-
-    if (producerPreloadNum == -1 || consumerPreloadNum == INT32_MAX) {
+    if (!producerPreloadNum.has_value() || !consumerPreloadNum.has_value()) {
       return failure();
     }
 
-    int32_t numBuffer = producerPreloadNum - consumerPreloadNum + 1;
+    int32_t numBuffer = producerPreloadNum.value() - consumerPreloadNum.value() + 1;
     if (numBuffer <= 0) {
       return failure();
     }
