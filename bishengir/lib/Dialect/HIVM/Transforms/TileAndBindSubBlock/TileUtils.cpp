@@ -454,6 +454,14 @@ LogicalResult pruneTightlyCoupledBufferToTilingDimAfterAivBubbleUp(
         HIVMTightlyCoupledBufferAttr::name);
     if (!attr || !attr.getId().has_value())
       return;
+    // Cbuf tightly-coupled buffers are not tiled; their IDs should not be in
+    // the map and must not affect the tiling decision.
+    {
+      auto maybeSpace =
+          getOptionalHIVMAddressSpace(markOp.getSrc().getType());
+      if (maybeSpace && *maybeSpace == AddressSpace::L1)
+        return;
+    }
     int32_t id = attr.getId().value();
     if (!markOp->hasAttrOfType<UnitAttr>(kTiledTightlyCoupledAlloc) &&
         !canSkipTilingForTrivialUbAlloc(markOp) &&
