@@ -210,12 +210,11 @@ public:
   /// ```
   /// into (unified alloca-based counter, see MultiBufferLoopAdapter):
   /// ```
-  /// %counter = memref.alloca() {hivm.multi_buffer_counter_for = 0 : i64} :
-  ///                memref<1xi64>
+  /// %counter = memref.alloca() : memref<1xi64>
   /// memref.store %c0_i64, %counter[%c0]
   /// %0 = hivm.hir.pointer_cast(addr1) [] : memref<4x128xf32>
   /// %1 = hivm.hir.pointer_cast(addr2) [] : memref<4x128xf32>
-  /// scf.for %iv = %c0 to %c16 step %c4 {hivm.multi_buffer_loop_id = 0 : i64} {
+  /// scf.for %iv = %c0 to %c16 step %c4 {
   ///   %loaded = memref.load %counter[%c0] : memref<1xi64>
   ///   %idx    = arith.remui %loaded, %c2_i64 : i64
   ///   %cond   = arith.cmpi eq, %idx, %c1_i64 : i64

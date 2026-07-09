@@ -14,8 +14,9 @@
 // Counter strategy (unified for both scf.for and scf.while; legacy
 // affine.apply((iv - lb)/step) % N codegen for scf.for is retired):
 //   The adapter materializes a single hivm.hir.multi_buffer_counter op in the
-//   loop body and reuses it across all clients. The op carries a loop id that
-//   matches kMultiBufferLoopIdAttr on the owning loop.
+//   loop body and reuses it across all clients. The op is a pure anchor with no
+//   attributes; the later lowering pass keys the concrete counter storage off
+//   the op's owning loop.
 //
 //   A later lowering pass rewrites that HIVM op to the concrete stateful form:
 //   memref.alloca<1xi64>() + initial store at FunctionOpInterface entry,

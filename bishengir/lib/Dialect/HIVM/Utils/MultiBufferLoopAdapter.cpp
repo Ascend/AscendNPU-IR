@@ -43,49 +43,14 @@ Block *getLoopBodyBlock(LoopLikeOpInterface loop) {
   return nullptr;
 }
 
-/// Allocate a fresh per-funcOp loop ID (i64) for `loop`. The id is stored on
-/// the op as kMultiBufferLoopIdAttr; subsequent calls return the existing id.
-/// Uniqueness is ensured by tracking the max id already in use within the
-/// parent FunctionOpInterface across both scf.for and scf.while loops so the
-/// for- and while-paths never collide on counter alloca identity.
-IntegerAttr getOrAssignLoopId(LoopLikeOpInterface loop) {
-  Operation *op = loop.getOperation();
-  if (auto existing = op->getAttrOfType<IntegerAttr>(kMultiBufferLoopIdAttr))
-    return existing;
-
-  auto funcOp = op->getParentOfType<FunctionOpInterface>();
-  if (!funcOp)
-    llvm_unreachable("LoopLike op must live inside a FunctionOpInterface");
-
-  int64_t maxId = -1;
-  // Walk LoopLikeOpInterface (interface handle, passed by value) instead
-  // of a raw Operation*; complies with G.FUN.06-CPP and is more precise
-  // since we only care about loop ops anyway.
-  funcOp.walk([&](LoopLikeOpInterface inner) {
-    if (!isa<scf::ForOp, scf::WhileOp>(inner.getOperation()))
-      return;
-    if (auto a = inner->getAttrOfType<IntegerAttr>(kMultiBufferLoopIdAttr))
-      maxId = std::max(maxId, a.getInt());
-  });
-
-  auto attr =
-      IntegerAttr::get(IntegerType::get(op->getContext(), 64), maxId + 1);
-  op->setAttr(kMultiBufferLoopIdAttr, attr);
-  return attr;
-}
-
-/// Locate the shared counter op for `loop` (matched by loop_id ==
-/// kMultiBufferLoopIdAttr). Returns nullptr if none exists yet.
-hivm::MultiBufferCounterOp findExistingCounterOp(LoopLikeOpInterface loop,
-                                                 IntegerAttr loopId) {
+/// Locate the shared counter op for `loop`. Returns nullptr if none exists yet.
+hivm::MultiBufferCounterOp findExistingCounterOp(LoopLikeOpInterface loop) {
   Block *body = getLoopBodyBlock(loop);
   if (!body)
     return {};
   for (auto &op : *body) {
     auto counter = dyn_cast<hivm::MultiBufferCounterOp>(&op);
-    if (!counter)
-      continue;
-    if (counter.getLoopIdAttr() == loopId)
+    if (counter)
       return counter;
   }
   return {};
@@ -116,13 +81,11 @@ void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder) {
     return;
   }
 
-  IntegerAttr loopId = getOrAssignLoopId(loop_);
-
   Location loc = loop_->getLoc();
   Type i64Ty = builder.getI64Type();
 
   // ---- Reuse path: a counter op already anchors this loop. ----
-  if (auto existing = findExistingCounterOp(loop_, loopId)) {
+  if (auto existing = findExistingCounterOp(loop_)) {
     cachedCounter_ = existing.getResult();
     builder.setInsertionPointAfter(existing);
     return;
@@ -132,8 +95,7 @@ void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder) {
   // concrete alloca/load/increment/store sequence is emitted later by
   // LowerMultiBufferCounter so all counter clients can reuse this SSA value.
   builder.setInsertionPointToStart(body);
-  auto counter =
-      builder.create<hivm::MultiBufferCounterOp>(loc, i64Ty, loopId);
+  auto counter = builder.create<hivm::MultiBufferCounterOp>(loc, i64Ty);
   cachedCounter_ = counter.getResult();
   builder.setInsertionPointAfter(counter);
 }

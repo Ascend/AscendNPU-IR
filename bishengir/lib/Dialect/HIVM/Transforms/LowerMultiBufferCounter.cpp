@@ -37,44 +37,6 @@ Block *getLoopBodyBlock(LoopLikeOpInterface loop) {
   return nullptr;
 }
 
-memref::AllocaOp findExistingCounterAlloca(FunctionOpInterface funcOp,
-                                           IntegerAttr loopId) {
-  if (!funcOp || funcOp.getFunctionBody().empty())
-    return {};
-
-  Block &entry = funcOp.getFunctionBody().front();
-  for (auto &op : entry) {
-    auto alloca = dyn_cast<memref::AllocaOp>(&op);
-    if (!alloca)
-      continue;
-    auto counterAttr =
-        alloca->getAttrOfType<IntegerAttr>(kMultiBufferCounterAttr);
-    if (counterAttr == loopId)
-      return alloca;
-  }
-  return {};
-}
-
-bool hasExistingCounterStore(LoopLikeOpInterface loop,
-                             memref::AllocaOp alloca) {
-  Block *body = getLoopBodyBlock(loop);
-  if (!body)
-    return false;
-  for (auto &op : *body) {
-    auto store = dyn_cast<memref::StoreOp>(&op);
-    if (store && store.getMemref() == alloca.getResult())
-      return true;
-  }
-  return false;
-}
-
-struct CounterLoweringState {
-  LoopLikeOpInterface loop;
-  IntegerAttr loopId;
-  memref::AllocaOp alloca;
-  Value firstLoad;
-};
-
 struct LowerMultiBufferCounterPass
     : public impl::LowerMultiBufferCounterBase<LowerMultiBufferCounterPass> {
   void runOnOperation() override;
@@ -95,7 +57,10 @@ void LowerMultiBufferCounterPass::runOnOperation() {
   Type i64Ty = rewriter.getI64Type();
   auto memTy = MemRefType::get(/*shape=*/{1}, i64Ty);
 
-  llvm::DenseMap<Operation *, CounterLoweringState> states;
+  // A loop owns at most one lowered counter. Dedup all counter ops of the same
+  // loop onto the first one so the alloca/init/increment triplet is emitted
+  // exactly once per loop; later clones just reuse that load value.
+  llvm::DenseMap<Operation *, Value> loweredCounter;
   for (hivm::MultiBufferCounterOp counterOp : counterOps) {
     LoopLikeOpInterface loop =
         counterOp->getParentOfType<LoopLikeOpInterface>();
@@ -112,77 +77,46 @@ void LowerMultiBufferCounterPass::runOnOperation() {
       signalPassFailure();
       return;
     }
-
-    IntegerAttr loopId = counterOp.getLoopIdAttr();
     Operation *loopOp = loop.getOperation();
-    if (auto existingLoopId =
-            loopOp->getAttrOfType<IntegerAttr>(kMultiBufferLoopIdAttr)) {
-      if (existingLoopId != loopId) {
-        counterOp.emitError("multi-buffer counter loop_id does not match "
-                            "owning loop id");
-        signalPassFailure();
-        return;
-      }
-    } else {
-      loopOp->setAttr(kMultiBufferLoopIdAttr, loopId);
-    }
 
-    CounterLoweringState &state = states[loopOp];
-    if (!state.loop) {
-      state.loop = loop;
-      state.loopId = loopId;
-      state.alloca = findExistingCounterAlloca(funcOp, loopId);
-      if (!state.alloca) {
-        rewriter.setInsertionPointToStart(&funcOp.getBody().front());
-        state.alloca = rewriter.create<memref::AllocaOp>(counterOp.getLoc(),
-                                                         memTy);
-        state.alloca->setAttr(kMultiBufferCounterAttr, loopId);
-
-        Value zero =
-            rewriter.create<arith::ConstantIntOp>(counterOp.getLoc(), i64Ty,
-                                                  /*value=*/0);
-        Value zeroIdx =
-            rewriter.create<arith::ConstantIndexOp>(counterOp.getLoc(), 0);
-        rewriter.create<memref::StoreOp>(counterOp.getLoc(), zero,
-                                         state.alloca.getResult(),
-                                         ValueRange{zeroIdx});
-      }
-    } else if (state.loopId != loopId) {
-      counterOp.emitError("multiple multi-buffer counter ids found for one "
-                          "loop");
-      signalPassFailure();
-      return;
-    }
-
-    rewriter.setInsertionPoint(counterOp);
-    Value zeroIdx =
-        rewriter.create<arith::ConstantIndexOp>(counterOp.getLoc(), 0);
-    auto load = rewriter.create<memref::LoadOp>(counterOp.getLoc(),
-                                                state.alloca.getResult(),
-                                                ValueRange{zeroIdx});
-    if (!state.firstLoad)
-      state.firstLoad = load.getResult();
-    rewriter.replaceOp(counterOp, load.getResult());
-  }
-
-  for (auto &it : states) {
-    CounterLoweringState &state = it.second;
-    if (hasExistingCounterStore(state.loop, state.alloca))
+    // Reuse path: a sibling counter op for this loop is already lowered.
+    if (auto it = loweredCounter.find(loopOp); it != loweredCounter.end()) {
+      rewriter.replaceOp(counterOp, it->second);
       continue;
+    }
 
-    Block *body = getLoopBodyBlock(state.loop);
+    // Fresh loop: function-scoped alloca + zero-init at the entry block.
+    rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+    auto alloca = rewriter.create<memref::AllocaOp>(counterOp.getLoc(), memTy);
+    Value zero = rewriter.create<arith::ConstantIntOp>(counterOp.getLoc(),
+                                                       i64Ty, /*value=*/0);
+    Value initIdx =
+        rewriter.create<arith::ConstantIndexOp>(counterOp.getLoc(), 0);
+    rewriter.create<memref::StoreOp>(counterOp.getLoc(), zero,
+                                     alloca.getResult(), ValueRange{initIdx});
+
+    // Body-head load replaces the anchor op.
+    rewriter.setInsertionPoint(counterOp);
+    Value loadIdx =
+        rewriter.create<arith::ConstantIndexOp>(counterOp.getLoc(), 0);
+    auto load = rewriter.create<memref::LoadOp>(
+        counterOp.getLoc(), alloca.getResult(), ValueRange{loadIdx});
+    Value counterVal = load.getResult();
+
+    // Body-tail increment/store keeps the counter monotonically increasing.
     Operation *terminator = body->getTerminator();
     rewriter.setInsertionPoint(terminator);
-    Value one = rewriter.create<arith::ConstantIntOp>(
-        terminator->getLoc(), i64Ty, /*value=*/1);
+    Value one = rewriter.create<arith::ConstantIntOp>(terminator->getLoc(),
+                                                      i64Ty, /*value=*/1);
     Value next =
-        rewriter.create<arith::AddIOp>(terminator->getLoc(), state.firstLoad,
-                                       one);
-    Value zeroIdx =
+        rewriter.create<arith::AddIOp>(terminator->getLoc(), counterVal, one);
+    Value storeIdx =
         rewriter.create<arith::ConstantIndexOp>(terminator->getLoc(), 0);
     rewriter.create<memref::StoreOp>(terminator->getLoc(), next,
-                                     state.alloca.getResult(),
-                                     ValueRange{zeroIdx});
+                                     alloca.getResult(), ValueRange{storeIdx});
+
+    loweredCounter.try_emplace(loopOp, counterVal);
+    rewriter.replaceOp(counterOp, counterVal);
   }
 }
 

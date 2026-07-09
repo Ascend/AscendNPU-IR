@@ -15,8 +15,7 @@
 // transparently for scf.while using the alloca-based counter scheme.
 //
 // Inspection items (all CHECK below):
-//   1. funcOp top: a memref<1xi64> alloca tagged with
-//      hivm.multi_buffer_counter_for, with an initial store of 0.
+//   1. funcOp top: a memref<1xi64> counter alloca, with an initial store of 0.
 //   2. The scf.while op result type list (i1) -> i1 stays unchanged.
 //   3. Body head: memref.load + arith.remui + arith.select to pick the slot.
 //   4. set_flag/wait_flag pairs use a dynamic event id (selected from the
@@ -28,7 +27,7 @@ func.func @while_pipeline_vadd(%arg0: memref<8xf32, #hivm.address_space<gm>>,
                                %arg1: memref<8xf32, #hivm.address_space<gm>>) {
   %true = arith.constant true
   // Counter alloca + init at funcOp top (item 1).
-  // CHECK-DAG: %[[CTR:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{.*}}} : memref<1xi64>
+  // CHECK-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
   // CHECK-DAG: memref.store %{{.*}}, %[[CTR]]
 
   // Pre-loop set_flag pre-roll for double buffering (one per slot).

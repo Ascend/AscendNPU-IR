@@ -16,7 +16,7 @@
 // parent; outer scf.for is just a passive enclosing loop.
 //
 // CHECK-LABEL: func.func @case_A_for_outer_while_inner_alloc_in_while(
-// CHECK-DAG:    %[[CTR_A:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK-DAG:    %[[CTR_A:.*]] = memref.alloca() : memref<1xi64>
 // CHECK-DAG:    memref.store %{{.*}}, %[[CTR_A]]
 // CHECK:        scf.for
 // CHECK-NEXT:     scf.while {{.*}} : (i1) -> i1
@@ -32,7 +32,6 @@
 // CHECK:            arith.addi %{{.*}}, %{{.*}} : i64
 // CHECK:            memref.store %{{.*}}, %[[CTR_A]]
 // CHECK:            scf.yield
-// CHECK:          {{.*}}hivm.multi_buffer_loop_id = {{[0-9]+}} : i64{{.*}}
 module {
   func.func @case_A_for_outer_while_inner_alloc_in_while(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,
@@ -79,7 +78,7 @@ module {
 // (i1) -> i1 unchanged.
 //
 // CHECK-LABEL: func.func @case_B_while_outer_for_inner_alloc_in_for(
-// CHECK-DAG:    %[[CTR_B:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK-DAG:    %[[CTR_B:.*]] = memref.alloca() : memref<1xi64>
 // CHECK-DAG:    memref.store %{{.*}}, %[[CTR_B]]
 // CHECK:        scf.while {{.*}} : (i1) -> i1
 // CHECK:          ^bb0
@@ -93,7 +92,7 @@ module {
 // CHECK:              arith.select %{{.*}} : memref<16xf16, #hivm.address_space<ub>>
 // CHECK:              arith.addi %{{.*}}, %{{.*}} : i64
 // CHECK:              memref.store %{{.*}}, %[[CTR_B]]
-// CHECK:            } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
+// CHECK:            }
 // CHECK:            scf.yield
 module {
   func.func @case_B_while_outer_for_inner_alloc_in_for(
@@ -142,7 +141,7 @@ module {
 // body; inner scf.while signature stays (i1) -> i1.
 //
 // CHECK-LABEL: func.func @case_C_for_outer_while_inner_alloc_in_for(
-// CHECK-DAG:    %[[CTR_C:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK-DAG:    %[[CTR_C:.*]] = memref.alloca() : memref<1xi64>
 // CHECK-DAG:    memref.store %{{.*}}, %[[CTR_C]]
 // CHECK:        scf.for
 // Cascade is in outer-for body, BEFORE the inner scf.while.
@@ -156,7 +155,7 @@ module {
 // CHECK:          scf.while {{.*}} : (i1) -> i1
 // CHECK:          arith.addi %{{.*}}, %{{.*}} : i64
 // CHECK:          memref.store %{{.*}}, %[[CTR_C]]
-// CHECK:        } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
+// CHECK:        }
 module {
   func.func @case_C_for_outer_while_inner_alloc_in_for(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,
@@ -203,7 +202,7 @@ module {
 // after-region; outer scf.while signature stays (i1) -> i1.
 //
 // CHECK-LABEL: func.func @case_D_while_outer_for_inner_alloc_in_while(
-// CHECK-DAG:    %[[CTR_D:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK-DAG:    %[[CTR_D:.*]] = memref.alloca() : memref<1xi64>
 // CHECK-DAG:    memref.store %{{.*}}, %[[CTR_D]]
 // CHECK:        scf.while {{.*}} : (i1) -> i1
 // CHECK:          ^bb0
@@ -218,7 +217,6 @@ module {
 // CHECK:            arith.addi %{{.*}}, %{{.*}} : i64
 // CHECK:            memref.store %{{.*}}, %[[CTR_D]]
 // CHECK:            scf.yield
-// CHECK:          {{.*}}hivm.multi_buffer_loop_id = {{[0-9]+}} : i64{{.*}}
 module {
   func.func @case_D_while_outer_for_inner_alloc_in_while(
       %arg0: memref<16xf16, #hivm.address_space<gm>>,

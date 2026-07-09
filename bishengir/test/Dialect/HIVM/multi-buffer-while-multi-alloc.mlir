@@ -2,13 +2,13 @@
 
 // -----
 // Multiple multi-address pointer_casts in the same scf.while body must share
-// the *same* counter alloca (looked up via hivm.multi_buffer_counter_for ==
-// hivm.multi_buffer_loop_id). Otherwise each call to ensureCounterMaterialized
-// would produce a duplicate alloca, increment-store pair and the counters
-// would drift apart.
+// the *same* counter alloca (the shared hivm.hir.multi_buffer_counter op is
+// deduplicated during lowering). Otherwise each call to
+// ensureCounterMaterialized would produce a duplicate alloca, increment-store
+// pair and the counters would drift apart.
 //
 // Verification:
-//   1. Exactly one memref.alloca with the counter tag at funcOp top
+//   1. Exactly one counter memref.alloca at funcOp top
 //      (single CHECK then CHECK-NOT after the loop).
 //   2. Exactly one increment-store back to the alloca per while iteration.
 //
@@ -28,7 +28,7 @@ module {
     %c272_i64 = arith.constant 272 : i64
     %true = arith.constant true
 
-    // CHECK: %[[CTR:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{.*}}} : memref<1xi64>
+    // CHECK: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
 
     // CHECK: scf.while {{.*}} : (i1) -> i1
     %r = scf.while (%cond = %true) : (i1) -> i1 {

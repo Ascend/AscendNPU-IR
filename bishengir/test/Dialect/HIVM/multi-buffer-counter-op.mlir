@@ -20,7 +20,7 @@ module {
 
     // ENABLE: scf.for
     scf.for %iv = %c0 to %c4 step %c1 {
-      // ENABLE: %[[CTR:.*]] = hivm.hir.multi_buffer_counter loop_id = {{[0-9]+}} -> i64
+      // ENABLE: %[[CTR:.*]] = hivm.hir.multi_buffer_counter -> i64
       // ENABLE: arith.remui %[[CTR]], %{{.*}} : i64
       // ENABLE: arith.remui %[[CTR]], %{{.*}} : i64
       // ENABLE-NOT: hivm.hir.multi_buffer_counter
@@ -36,7 +36,7 @@ module {
       hivm.hir.store ins(%2 : memref<16xf16, #hivm.address_space<ub>>)
                      outs(%arg2 : memref<16xf16, #hivm.address_space<gm>>)
     }
-    // ENABLE: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
+    // ENABLE: return
     return
   }
 }
@@ -45,7 +45,7 @@ module {
 
 module {
 // LOWER-LABEL: func.func @lower_counter_op(
-// LOWER: %[[CTR:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = 7 : i64} : memref<1xi64>
+// LOWER: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
 // LOWER: memref.store %{{.*}}, %[[CTR]][%{{.*}}] : memref<1xi64>
   func.func @lower_counter_op() {
     %c0 = arith.constant 0 : index
@@ -56,12 +56,35 @@ module {
     scf.for %iv = %c0 to %c4 step %c1 {
       // LOWER: %[[CUR:.*]] = memref.load %[[CTR]][%{{.*}}] : memref<1xi64>
       // LOWER-NOT: hivm.hir.multi_buffer_counter
-      %counter = hivm.hir.multi_buffer_counter loop_id = 7 -> i64
+      %counter = hivm.hir.multi_buffer_counter -> i64
       %use = arith.addi %counter, %c1_i64 : i64
       // LOWER: arith.addi %[[CUR]], %{{.*}} : i64
       // LOWER: memref.store %{{.*}}, %[[CTR]][%{{.*}}] : memref<1xi64>
     }
-    // LOWER: } {hivm.multi_buffer_loop_id = 7 : i64}
+    return
+  }
+}
+
+// -----
+
+// Multiple counter ops in one loop are deduplicated onto a single alloca; only
+// one memref.alloca / load / increment triplet is emitted for the loop.
+module {
+// LOWER-LABEL: func.func @dedup_counter_ops(
+// LOWER: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
+// LOWER-NOT: memref.alloca()
+  func.func @dedup_counter_ops() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    // LOWER: scf.for
+    scf.for %iv = %c0 to %c4 step %c1 {
+      // LOWER: %[[CUR:.*]] = memref.load %[[CTR]][%{{.*}}] : memref<1xi64>
+      // LOWER-NOT: hivm.hir.multi_buffer_counter
+      %a = hivm.hir.multi_buffer_counter -> i64
+      %b = hivm.hir.multi_buffer_counter -> i64
+      %sum = arith.addi %a, %b : i64
+    }
     return
   }
 }
