@@ -740,7 +740,7 @@ struct AddConvertLayoutUBToL1
 
     bool matched = false;
     for (Operation *producer : producerOps) {
-      if (std::is_same_v<OpType, hivm::VBrcOp> && !isOnVectorCore(producer))
+      if (std::is_same_v<OpType, hivm::VBrcOp>)
         continue;
       if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
         auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
@@ -826,48 +826,6 @@ struct AddConvertLayoutUBToL1
     changed = true;
   }
   return changed ? success() : failure();
-}
-
-bool isOnVectorCore(Operation *initialOp) const {
-  auto findVectorCore =
-      [](Operation *op,
-         std::function<void(std::queue<Operation *> & q, Operation *& cur)>
-             enqueueNextOps) -> bool {
-    std::queue<Operation *> q;
-    q.push(op);
-    while (!q.empty()) {
-      Operation *cur = q.front();
-      q.pop();
-      if (!isa<hivm::VBrcOp>(cur) && llvm::isa_and_nonnull<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-              >(cur))
-        return true;
-      enqueueNextOps(q, cur);
-    }
-    return false;
-  };
-  // trace up
-  auto enqueueUpOps = [](std::queue<Operation *> &q, Operation *&cur) {
-    for (auto &opr : cur->getOpOperands()) {
-      Operation *nextOp = opr.get().getDefiningOp();
-      if (nextOp == nullptr)
-        continue;
-      q.push(nextOp);
-    }
-  };
-  if (findVectorCore(initialOp, enqueueUpOps))
-    return true;
-
-  // trace down
-  auto enqueueDownOps = [](std::queue<Operation *> &q, Operation *&cur) {
-    for (auto *user : cur->getUsers()) {
-      q.push(user);
-    }
-  };
-  if (findVectorCore(initialOp, enqueueDownOps))
-    return true;
-  return false;
 }
 };
 
