@@ -159,8 +159,8 @@ func.func @no_merge_load(%arg0: i32, %arg1: i32, %arg2: i32, %arg3: memref<8x64x
 // CHECK: ave.hir.vtruncf %{{.*}}, <rint>, false, <part_even>, %{{.*}} : vector<64xf32>, vector<64xbf16>, vector<64xi1>
 // CHECK: ave.hir.pge <ALL> : vector<128xi1>
 // CHECK: ave.hir.vdintlv %{{.*}}, %{{.*}} : vector<64xbf16>, vector<128xbf16>
-// Test case: multiple loads exist, but non-elementwise ops (vcmp, vsel) on the
-// data path prevent load merging. Should fall back to vdintlv path.
+// Test case: multiple aligned f32 loads exist, but vsel on the data path
+// prevents load merging. Should fall back to vdintlv path.
 func.func @no_merge_load_due_to_non_elementwise(%arg0: memref<32xf32, #hivm.address_space<ub>>, %arg1: memref<32xf32, #hivm.address_space<ub>>, %arg2: memref<32x128xi8, #hivm.address_space<ub>>, %arg3: memref<32x128xi8, #hivm.address_space<ub>>, %arg4: memref<32x128xf32, #hivm.address_space<ub>>, %arg5: memref<32x128xf32, #hivm.address_space<ub>>, %arg6: f32, %arg7: memref<8x32x16xbf16, strided<[528, 16, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
   %c528 = arith.constant 528 : index
   %c0 = arith.constant 0 : index
@@ -190,10 +190,10 @@ func.func @no_merge_load_due_to_non_elementwise(%arg0: memref<32xf32, #hivm.addr
       %subview_6 = memref.subview %arg4[%arg8, %4] [1, 64] [1, 1] : memref<32x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
       %subview_7 = memref.subview %arg5[%arg8, %4] [1, 64] [1, 1] : memref<32x128xf32, #hivm.address_space<ub>> to memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>>
       %subview_8 = memref.subview %subview_6[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
-      %res_9 = ave.hir.vload <NORM> %subview_8[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf32>
+      %res_9 = ave.hir.vload <NORM> %subview_8[%c0] : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf32>
       %res_10 = ave.hir.vload <BRC_B32> %subview[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1xf32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xf32>
       %subview_11 = memref.subview %subview_7[0, 0] [1, 64] [1, 1] : memref<1x64xf32, strided<[128, 1], offset: ?>, #hivm.address_space<ub>> to memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>>
-      %res_12 = ave.hir.vload <NORM> %subview_11[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf32>
+      %res_12 = ave.hir.vload <NORM> %subview_11[%c0] : memref<64xf32, affine_map<(d0)[s0] -> (d0 + s0)>, #hivm.address_space<ub>> into vector<64xf32>
       %res_13 = ave.hir.vload <BRC_B32> %subview_0[%c0] {ave.unaligned_ub_access = #ave.unaligned_ub_access} : memref<1xf32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xf32>
       %7 = ave.hir.pge <ALL> : vector<64xi1>
       %8 = ave.hir.vsub %res_12, %res_13, %7 : vector<64xf32>, vector<64xi1>
@@ -204,10 +204,10 @@ func.func @no_merge_load_due_to_non_elementwise(%arg0: memref<32xf32, #hivm.addr
       %13 = ave.hir.vsub %11, %res_10, %12 : vector<64xf32>, vector<64xi1>
       %14 = ave.hir.pge <ALL> : vector<64xi1>
       %15 = ave.hir.vexp %13, %14 : vector<64xf32>, vector<64xi1>
-      // Non-elementwise op: vcmp breaks the elementwise chain
+      // vcmp creates a mask operand, which is not part of the traced data path.
       %16 = ave.hir.pge <ALL> : vector<64xi1>
       %17 = ave.hir.vcmp <NE> %6, %3, %16 : vector<64xi8>, vector<64xi1> -> vector<64xi1>
-      // Non-elementwise op: vsel breaks the elementwise chain
+      // vsel produces vector data but is not a traceable data-path op.
       %18 = ave.hir.vsel %17, %15, %1 : vector<64xi1>, vector<64xf32>
       %19 = ave.hir.pge <ALL> : vector<64xi1>
       %20 = ave.hir.vmul %18, %8, %19 : vector<64xf32>, vector<64xi1>
