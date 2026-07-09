@@ -158,7 +158,10 @@ struct HFusionGeneralizationPatterns
       // 0.000000e+00 : f8E4M3FN into arith.constant dense<0.000000e+00> :
       // vector<256xf8E4M3FN>. This allows us to use bitcast to avoid generating
       // FP8 constants, which are not accepted in the LLVM IR received in CCEC.
-      if (!elemType.isFloat8E4M3FN() && !elemType.isFloat8E5M2())
+      // I1 processed the same way, it prevents creation of
+      // unsupported memref.get_global.
+      if (!elemType.isFloat8E4M3FN() && !elemType.isFloat8E5M2() &&
+          !elemType.isInteger(1))
         return failure();
     }
     // Handle broadcastOp to be expand + linalg.generic when
