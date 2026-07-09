@@ -173,6 +173,20 @@ def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
+def ExposeMemrefWriteToTensor
+    : Pass<"hivm-expose-memref-write-to-tensor", "func::FuncOp"> {
+  let summary = "Expose memref-level writes to tensor-level analysis.";
+  let description = [{
+    Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis 
+    by add copyOp for toTensorOp and replace all users of toTensorOp. This makes 
+    memref-level writes visible to One-Shot Bufferization analysis, enabling RAW
+    conflict detection and correct copy insertion.
+  }];
+  let constructor = "mlir::hivm::createExposeMemrefWriteToTensorPass()";
+  let dependentDialects =
+    ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
+}
+
 def MarkTightlyCoupledBuffer
     : Pass<"hivm-mark-tightly-coupled-buffer", "func::FuncOp"> {
   let summary = "Mark L1/UB allocs with tightly-coupled-buffer attribute.";
