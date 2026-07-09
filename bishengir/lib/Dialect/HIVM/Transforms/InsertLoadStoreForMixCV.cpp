@@ -32,7 +32,6 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -43,8 +42,6 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
-
-#include <type_traits>
 
 namespace mlir {
 #define GEN_PASS_DEF_INSERTLOADSTOREFORMIXCV
@@ -715,12 +712,6 @@ static bool isVFCall(Operation *op) {
   return false;
 }
 
-template <typename... OpTypes> static bool traceVector(Value v) {
-  return ((!std::is_same_v<OpTypes, hivm::VBrcOp> &&
-           traceDefOp<OpTypes>(v) != std::nullopt) ||
-          ...);
-}
-
 template<typename OpType>
 struct AddConvertLayoutUBToL1
     : public OpRewritePattern<hivm::MmadL1Op> {
@@ -740,22 +731,11 @@ struct AddConvertLayoutUBToL1
 
     bool matched = false;
     for (Operation *producer : producerOps) {
-      if (std::is_same_v<OpType, hivm::VBrcOp> && !isOnVectorCore(producer))
-        continue;
       if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
         auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
         if (!scfForOp->hasAttr(ExtractLoadStoreAttr)) {
           continue;
         }
-        auto res = cast<OpResult>(beforeValue);
-        auto yieldOp = scfForOp.getBody()->getTerminator();
-        auto yieldOpOperand = yieldOp->getOperand(res.getResultNumber());
-        auto vectorOp = traceVector<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-            >(yieldOpOperand);
-        if (!vectorOp)
-          continue;
       }
       if constexpr (std::is_same_v<OpType, func::CallOp>) {
         if (!isVFCall(producer))
@@ -826,48 +806,6 @@ struct AddConvertLayoutUBToL1
     changed = true;
   }
   return changed ? success() : failure();
-}
-
-bool isOnVectorCore(Operation *initialOp) const {
-  auto findVectorCore =
-      [](Operation *op,
-         std::function<void(std::queue<Operation *> & q, Operation *& cur)>
-             enqueueNextOps) -> bool {
-    std::queue<Operation *> q;
-    q.push(op);
-    while (!q.empty()) {
-      Operation *cur = q.front();
-      q.pop();
-      if (!isa<hivm::VBrcOp>(cur) && llvm::isa_and_nonnull<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-              >(cur))
-        return true;
-      enqueueNextOps(q, cur);
-    }
-    return false;
-  };
-  // trace up
-  auto enqueueUpOps = [](std::queue<Operation *> &q, Operation *cur) {
-    for (auto &opr : cur->getOpOperands()) {
-      Operation *nextOp = opr.get().getDefiningOp();
-      if (nextOp == nullptr)
-        continue;
-      q.push(nextOp);
-    }
-  };
-  if (findVectorCore(initialOp, enqueueUpOps))
-    return true;
-
-  // trace down
-  auto enqueueDownOps = [](std::queue<Operation *> &q, Operation *cur) {
-    for (auto *user : cur->getUsers()) {
-      q.push(user);
-    }
-  };
-  if (findVectorCore(initialOp, enqueueDownOps))
-    return true;
-  return false;
 }
 };
 
@@ -1019,37 +957,19 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
         })
         .Case([&](hivm::LoadOp op) {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getDstMutable());
-          TCoreTypeAttr currentTcoretype = op.getTcoretype();
-          if (!upProp)
-            return;
-
-          // shouldn't change the core type that has been set
-          // consider case of vtranspose user of load op
-          if (currentTcoretype.getTcoretype() != TCoreType::CUBE_OR_VECTOR)
-            return;
-
-          auto inferNewCoreType =
-              [&op](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
+          if (upProp) {
             auto coreType = PropagatorUtil::getCoreType(upProp);
             if (coreType != TCoreType::CUBE_AND_VECTOR) {
-              return TCoreTypeAttr::get(op.getContext(), coreType);
+              op.setTcoretypeAttr(
+                  TCoreTypeAttr::get(op.getContext(), coreType));
             } else {
               auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
-              if (addressSpaces.empty()) {
-                LDBG("not set tcoretype for " << op);
-                return nullptr;
-              }
-              auto addressSpace = addressSpaces[0];
-              return TCoreTypeAttr::get(
+              auto addressSpace = addressSpaces.empty() ? hivm::AddressSpace::UB
+                                                        : addressSpaces[0];
+              op.setTcoretypeAttr(TCoreTypeAttr::get(
                   op.getContext(),
-                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace));
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace)));
             }
-          };
-
-          TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
-          if (newTcoretype) {
-            LDBG("set tcoretype for " << op << " to " << newTcoretype);
-            op.setTcoretypeAttr(newTcoretype);
           }
         });
   });

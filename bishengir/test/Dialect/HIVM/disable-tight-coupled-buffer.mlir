@@ -20,3 +20,5 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %5 : tensor<16x16xf16>
   }
 }
+
+
