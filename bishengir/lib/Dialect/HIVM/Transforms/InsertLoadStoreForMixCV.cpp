@@ -1030,6 +1030,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
 
           auto inferNewCoreType =
               [&op](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
+            TCoreTypeAttr newTcoretype = nullptr;
             auto coreType = PropagatorUtil::getCoreType(upProp);
             if (coreType != TCoreType::CUBE_AND_VECTOR) {
               return TCoreTypeAttr::get(op.getContext(), coreType);
