@@ -507,4 +507,10 @@ def Decompose : Pass<"hfusion-decompose", "func::FuncOp">{
   ];
 }
 
+def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
+  let summary = "Uplift scf.while loops to scf.for when possible";
+  let constructor = "mlir::hfusion::createUpliftWhileToForPass()";
+  let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES

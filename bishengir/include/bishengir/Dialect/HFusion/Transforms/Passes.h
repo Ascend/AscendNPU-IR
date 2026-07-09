@@ -211,6 +211,9 @@ std::unique_ptr<Pass> createEliminateDuplicateFuncsPass();
 /// Create a pass to remove cache IO.
 std::unique_ptr<Pass> createRemoveCacheIO();
 
+/// Create a pass to uplift while loops to for loops.
+std::unique_ptr<Pass> createUpliftWhileToForPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

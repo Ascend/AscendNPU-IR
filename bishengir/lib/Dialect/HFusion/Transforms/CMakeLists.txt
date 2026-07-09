@@ -37,6 +37,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   TensorResToOutParams.cpp
   TilingInterfaceImpl.cpp
   UnfoldSymbolicDim.cpp
+  UpliftWhileToFor.cpp
   LegalizeBF16.cpp
   LegalizeBool.cpp
   DowngradeFP64CstOp.cpp
