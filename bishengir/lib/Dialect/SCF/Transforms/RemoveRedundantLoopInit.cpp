@@ -36,8 +36,7 @@ using namespace mlir;
 namespace {
 int getUserNum(Value v) {
   auto users = v.getUsers();
-  auto userNum = std::distance(users.begin(), users.end());
-  return userNum;
+  return std::distance(users.begin(), users.end());
 }
 
 bool isConstOne(OpFoldResult result) {
