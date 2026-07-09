@@ -346,6 +346,10 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   //     unit-step subviews; passing them through preserves that).
   // Otherwise fall back to the legacy "pad the whole alloc" behavior.
   Value vbrcTarget = padMemref.getResult();
+
+  // CV pipelining mark: build a slot-scoped subview — dim 0 from dst,
+  // remaining dims full alloc extent — so vbrc covers the current slot
+  // without clobbering sibling slots.
   auto maybeMarked = utils::getAnnotateOpWithAttr(
       padMemref.getResult(), hivm::CVPipelinedMultiBufferAttr::name);
   if (maybeMarked.has_value()) {
@@ -360,25 +364,35 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
         SmallVector<OpFoldResult> newSizes;
         newOffsets.reserve(subOffsets.size());
         newSizes.reserve(subSizes.size());
-        // dim 0 (slot): borrow from the dst subview.
         newOffsets.push_back(subOffsets.front());
         newSizes.push_back(subSizes.front());
-        // remaining dims (within-slot): start at 0, cover the
-        // alloc's full extent.
         OpFoldResult zero = b.getIndexAttr(0);
         for (auto a : llvm::drop_begin(allocSizes)) {
           newOffsets.push_back(zero);
           newSizes.push_back(a);
         }
-        // Don't copy the dst's rank-reduction pattern — let
-        // SubViewOp::build infer the canonical full-rank result type
-        // from source + offsets/sizes/strides. vbrc accepts any rank;
-        // what matters is the physical region (offset/sizes/strides),
-        // which now exactly covers the current slot.
         vbrcTarget = b.create<memref::SubViewOp>(
             loc, padMemref.getResult(), newOffsets, newSizes,
             subview.getMixedStrides());
       }
+    }
+  }
+
+  // Page-load mark (OptimizeDpsOpWithYieldedInsertSlice): the alloc is
+  // filled piece-by-piece by sibling nd2nz ops. Use the innermost
+  // Page-load mark: walk from getDst() through CastOp and nested
+  // SubViewOps to find the subview carrying the marker. The marked
+  // subview covers the exact page region to initialize.
+  {
+    Value cursor = getDst();
+    while (auto castOp = cursor.getDefiningOp<memref::CastOp>())
+      cursor = castOp.getSource();
+    while (cursor.getDefiningOp<memref::SubViewOp>()) {
+      if (cursor.getDefiningOp()->hasAttr("hivm.slice_load")) {
+        vbrcTarget = cursor;
+        break;
+      }
+      cursor = cursor.getDefiningOp<memref::SubViewOp>()->getOperand(0);
     }
   }
 

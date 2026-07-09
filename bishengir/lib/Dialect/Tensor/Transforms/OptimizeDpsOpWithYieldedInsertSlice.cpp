@@ -6,13 +6,17 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Transforms.h"
 
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
-#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
@@ -27,6 +31,75 @@ using namespace mlir;
 using namespace mlir::tensor;
 
 namespace {
+/// Returns true if `root` (or a view derived from it) is stored into inside
+/// `forOp`, e.g. by a DPS op, HIVM DMA, or similar destination write.
+static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
+  SmallVector<Value> workList = {root};
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (!workList.empty()) {
+    Value val = workList.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+    for (Operation *user : val.getUsers()) {
+      if (user->getParentOp() != forOp)
+        continue;
+      if (isa<DestinationStyleOpInterface>(user))
+        return true;
+      if (isa<hivm::ND2NZOp>(user))
+        return true;
+      if (isa<memref::MemorySpaceCastOp, memref::SubViewOp, memref::CastOp,
+              memref::ReinterpretCastOp>(user))
+        workList.push_back(user->getResult(0));
+    }
+  }
+  return false;
+}
+
+/// After replacing a loop-local alloc with a subview of a hoisted buffer,
+/// refresh nested subview/cast result types to match the new source layout.
+static void refreshDerivedMemrefViewTypes(Value root, scf::ForOp forOp,
+                                          PatternRewriter &rewriter) {
+  SmallVector<Value> workList = {root};
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (!workList.empty()) {
+    Value val = workList.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+    for (Operation *user : val.getUsers()) {
+      if (user->getParentOp() != forOp)
+        continue;
+      if (auto subview = dyn_cast<memref::SubViewOp>(user)) {
+        auto newType = cast<MemRefType>(memref::SubViewOp::inferResultType(
+            cast<MemRefType>(subview.getSource().getType()),
+            subview.getMixedOffsets(), subview.getMixedSizes(),
+            subview.getMixedStrides()));
+        if (newType != subview.getType()) {
+          rewriter.modifyOpInPlace(subview, [&subview, &newType]() {
+            subview.getResult().setType(newType);
+          });
+        }
+        workList.push_back(subview.getResult());
+      } else if (auto castOp = dyn_cast<memref::CastOp>(user)) {
+        auto srcType = cast<MemRefType>(castOp.getSource().getType());
+        auto dstType = cast<MemRefType>(castOp.getType());
+        auto newDstType = MemRefType::get(dstType.getShape(),
+                                          dstType.getElementType(),
+                                          srcType.getLayout(),
+                                          dstType.getMemorySpace());
+        if (newDstType != dstType) {
+          rewriter.modifyOpInPlace(castOp, [&castOp, &newDstType]() {
+            castOp.getResult().setType(newDstType);
+          });
+        }
+        workList.push_back(castOp.getResult());
+      } else if (isa<memref::ReinterpretCastOp, memref::MemorySpaceCastOp>(
+                     user)) {
+        workList.push_back(user->getResult(0));
+      }
+    }
+  }
+}
+
 struct OptimizeDpsOpWithYieldedInsertSlicePass
     : public impl::OptimizeDpsOpWithYieldedInsertSliceBase<
           OptimizeDpsOpWithYieldedInsertSlicePass> {
@@ -35,29 +108,7 @@ public:
 };
 
 /// Pattern to modify dps op's inits to extract slice if the result
-
 /// is being inserted and yielded.
-///
-/// For example:
-/// ```
-/// %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) {
-///   %1 = linalg.add ins(...) outs(%empty)
-///   %inserted_slice = tensor.insert_slice %1 into %arg1
-///   scf.yield %inserted_slice
-/// }
-/// ```
-/// will be optimized to
-/// ```
-/// %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) {
-///   %extract_slice = tensor.extract_slice %arg1
-///   %1 = linalg.add ins(...) outs(%extract_slice)
-///   %inserted_slice = tensor.insert_slice %1 into %arg1
-///   scf.yield %inserted_slice
-/// }
-/// ```
-/// This is because one-shot-bufferize requires an extract and insert pair
-/// for region iter args to be considered for inplace reuse. Otherwise there
-/// will be extract copies.
 struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
   using OpRewritePattern<InsertSliceOp>::OpRewritePattern;
 
@@ -72,20 +123,15 @@ struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
     auto dpsSrc = cast<DestinationStyleOpInterface>(srcDefiningOp);
     auto resultNumber = cast<OpResult>(insertSrc).getResultNumber();
     auto tyingInit = dpsSrc.getDpsInitOperand(resultNumber);
-    // If the original semantic expects the dps op to write into some value, we
-    // cannot do this optimization.
     if (!isa_and_nonnull<EmptyOp>(tyingInit->get().getDefiningOp()))
       return rewriter.notifyMatchFailure(insertSliceOp,
                                          "init is not empty tensor");
 
     auto enclosingFunc = insertSliceOp->getParentOfType<func::FuncOp>();
-    // If the mixed offsets, sizes and strides are not dominated by the source,
-    // we cannot create the extract slice.
     DominanceInfo domInfo(enclosingFunc);
     for (auto operand : insertSliceOp->getOperands()) {
       if (isa<BlockArgument>(operand))
         continue;
-
       auto *operandDef = operand.getDefiningOp();
       if (!domInfo.dominates(operandDef, srcDefiningOp))
         return rewriter.notifyMatchFailure(
@@ -95,9 +141,7 @@ struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
 
     rewriter.setInsertionPoint(srcDefiningOp);
     auto extractSlice = rewriter.create<ExtractSliceOp>(
-        insertSliceOp.getLoc(),
-        insertSrc.getType(),
-        insertSliceOp.getDest(),
+        insertSliceOp.getLoc(), insertSrc.getType(), insertSliceOp.getDest(),
         insertSliceOp.getMixedOffsets(), insertSliceOp.getMixedSizes(),
         insertSliceOp.getMixedStrides());
 
@@ -105,6 +149,244 @@ struct ModifyDpsInitToSlicedIterArg : public OpRewritePattern<InsertSliceOp> {
         srcDefiningOp, [&dpsSrc, &resultNumber, &extractSlice]() {
           dpsSrc.getDpsInitsMutable()[resultNumber].set(extractSlice);
         });
+    return success();
+  }
+};
+
+/// Pattern to hoist allocs out of scf.for loops when the pattern is:
+///   alloc -> load -> to_tensor -> insert_slice -> yield
+///
+/// Uses a two-pass approach on the original forOp body:
+/// 1. First pass: insert big-alloc subviews and redirect load destinations.
+/// 2. Then remove dead ops and adjust the forOp type.
+struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
+  using OpRewritePattern<scf::ForOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(scf::ForOp forOp,
+                                PatternRewriter &rewriter) const override {
+    auto resultTypes = forOp.getResultTypes();
+    if (llvm::none_of(resultTypes, [](Type t) {
+          return isa<RankedTensorType>(t);
+        }))
+      return failure();
+
+    auto yieldOp = cast<scf::YieldOp>(forOp.getBody()->getTerminator());
+    auto iterArgs = forOp.getRegionIterArgs();
+
+    struct InsertSliceInfo {
+      tensor::InsertSliceOp insertOp;
+      bufferization::ToTensorOp toTensorOp;
+      memref::AllocOp allocOp;
+      Value memcast;
+      int resultIdx;
+      Value vbrcScalar = nullptr; // scalar src of vbrc if iter_arg init is vbrc
+    };
+    SmallVector<InsertSliceInfo> infos;
+
+    for (auto [idx, iterArg] : llvm::enumerate(iterArgs)) {
+      auto tensorType = dyn_cast<RankedTensorType>(iterArg.getType());
+      if (!tensorType)
+        continue;
+
+      Value yieldVal = yieldOp.getOperand(idx);
+      auto insertOp = yieldVal.getDefiningOp<tensor::InsertSliceOp>();
+      if (!insertOp || insertOp.getDest() != iterArg)
+        return failure();
+
+      auto toTensorOp =
+          insertOp.getSource().getDefiningOp<bufferization::ToTensorOp>();
+      if (!toTensorOp)
+        return failure();
+
+      Value memref = toTensorOp.getMemref();
+      while (auto castOp =
+                 memref.getDefiningOp<memref::MemorySpaceCastOp>())
+        memref = castOp.getSource();
+
+      auto allocOp = memref.getDefiningOp<memref::AllocOp>();
+      if (!allocOp)
+        return failure();
+
+      // Verify the alloc/memcast is used as a store destination in the loop.
+      if (!hasBufferStoreUserInLoop(toTensorOp.getMemref(), forOp))
+        return failure();
+
+      // Check if the iter_arg init is a vbrc (scalar broadcast fill).
+      // If so, record the fill scalar to replicate the init on the big alloc.
+      Value vbrcScalar = nullptr;
+      if (auto vbrcOp =
+              forOp.getInitArgs()[idx].getDefiningOp<hivm::VBrcOp>()) {
+        auto src = vbrcOp.getSrc();
+        // Only track scalar vbrc (fill a scalar value into the entire tensor).
+        if (isa<FloatType, IntegerType>(src.getType()))
+          vbrcScalar = src;
+      }
+
+      infos.push_back(
+          {insertOp, toTensorOp, allocOp, toTensorOp.getMemref(), static_cast<int>(idx),
+           vbrcScalar});
+    }
+
+    if (infos.empty())
+      return failure();
+
+    // ---- Perform the transformation ----
+
+    // 1. Create big allocs + to_tensors before the forOp.
+    rewriter.setInsertionPoint(forOp);
+    SmallVector<Value> bigMemcasts;
+    SmallVector<Value> toTensorResults;
+
+    for (auto &info : infos) {
+      auto tensorType =
+          cast<RankedTensorType>(iterArgs[info.resultIdx].getType());
+      auto allocMemRefType = cast<MemRefType>(info.allocOp.getType());
+      Type elementType = allocMemRefType.getElementType();
+      Attribute memorySpace = allocMemRefType.getMemorySpace();
+
+      auto bigAllocType = MemRefType::get(
+          tensorType.getShape(), elementType, MemRefLayoutAttrInterface{},
+          memorySpace);
+      auto bigAlloc = rewriter.create<memref::AllocOp>(
+          info.allocOp.getLoc(), bigAllocType);
+      if (auto align = info.allocOp.getAlignment())
+        bigAlloc.setAlignment(align.value());
+
+      // If the iter_arg was initialized with a scalar vbrc (fill), replicate
+      // that initialization on the big alloc to avoid losing the fill semantic.
+      if (info.vbrcScalar) {
+        rewriter.create<hivm::VBrcOp>(info.allocOp.getLoc(),
+                                      /*resultTypes=*/TypeRange{},
+                                      info.vbrcScalar,
+                                      bigAlloc.getResult());
+      }
+
+      Value bigMemref = bigAlloc.getResult();
+      if (info.memcast.getDefiningOp<memref::MemorySpaceCastOp>()) {
+        auto origCastResultType = cast<MemRefType>(info.memcast.getType());
+        auto memCastType = MemRefType::get(
+            tensorType.getShape(), elementType, origCastResultType.getLayout(),
+            origCastResultType.getMemorySpace());
+        bigMemref = rewriter.create<memref::MemorySpaceCastOp>(
+            info.memcast.getLoc(), memCastType, bigMemref);
+      }
+      bigMemcasts.push_back(bigMemref);
+
+      auto bigTensor = rewriter.create<bufferization::ToTensorOp>(
+          info.toTensorOp.getLoc(), bigMemref, /*restrict=*/true,
+          /*writable=*/true);
+      toTensorResults.push_back(bigTensor.getResult());
+    }
+
+    // 2. Inside the forOp body: insert subview of big buffer before each
+    //    alloc, redirect the load's destination, then clean up.
+    rewriter.setInsertionPointToStart(forOp.getBody());
+
+    // IRMapping for offset/size/stride SSA values. We'll clone them early.
+    IRMapping mapping;
+    DenseSet<Operation *> alreadyCloned;
+
+    std::function<Value(Value)> cloneValueChain;
+    cloneValueChain =
+        [&mapping, &alreadyCloned, &rewriter, &cloneValueChain](Value val) -> Value {
+      if (mapping.contains(val))
+        return mapping.lookup(val);
+      if (isa<BlockArgument>(val))
+        return val;
+      auto *defOp = val.getDefiningOp();
+      if (!defOp)
+        return val;
+      for (auto operand : defOp->getOperands())
+        cloneValueChain(operand);
+      if (alreadyCloned.contains(defOp))
+        return mapping.lookup(val);
+      auto *cloned = rewriter.clone(*defOp, mapping);
+      alreadyCloned.insert(defOp);
+      for (auto [orig, clonedRes] :
+           llvm::zip(defOp->getResults(), cloned->getResults()))
+        mapping.map(orig, clonedRes);
+      return mapping.lookup(val);
+    };
+
+    for (auto [i, info] : llvm::enumerate(infos)) {
+      // Pre-clone offset computation chain at the start of the loop body.
+      for (auto off : info.insertOp.getMixedOffsets())
+        if (off.is<Value>())
+          cloneValueChain(off.get<Value>());
+      for (auto sz : info.insertOp.getMixedSizes())
+        if (sz.is<Value>())
+          cloneValueChain(sz.get<Value>());
+      for (auto st : info.insertOp.getMixedStrides())
+        if (st.is<Value>())
+          cloneValueChain(st.get<Value>());
+
+      // Create subview right before the original alloc.
+      rewriter.setInsertionPoint(info.allocOp);
+
+      auto mapMix = [&mapping](ArrayRef<OpFoldResult> mix) -> SmallVector<OpFoldResult> {
+        SmallVector<OpFoldResult> result;
+        for (auto v : mix)
+          result.push_back(
+              v.is<Value>() && mapping.contains(v.get<Value>())
+                  ? OpFoldResult(mapping.lookup(v.get<Value>()))
+                  : v);
+        return result;
+      };
+
+      auto newOffsets = mapMix(info.insertOp.getMixedOffsets());
+      auto newSizes = mapMix(info.insertOp.getMixedSizes());
+      auto newStrides = mapMix(info.insertOp.getMixedStrides());
+
+      auto allocType = cast<MemRefType>(info.allocOp.getType());
+      auto bigMemRefType = cast<MemRefType>(bigMemcasts[i].getType());
+      auto subviewType = memref::SubViewOp::inferRankReducedResultType(
+          allocType.getShape(), bigMemRefType, newOffsets, newSizes,
+          newStrides);
+      auto bigSubview = rewriter.create<memref::SubViewOp>(
+          info.insertOp.getLoc(), cast<MemRefType>(subviewType),
+          bigMemcasts[i], newOffsets, newSizes, newStrides);
+      // Mark the page-level subview so downstream ND2NZ decompose only
+      // initializes this region instead of the entire alloc.
+      bigSubview->setAttr("hivm.slice_load", rewriter.getUnitAttr());
+
+      // Redirect all users of the old memcast to the big subview.
+      rewriter.replaceAllUsesWith(info.memcast, bigSubview.getResult());
+      refreshDerivedMemrefViewTypes(bigSubview.getResult(), forOp, rewriter);
+
+      // Replace insert_slice result with the iter_arg (identity passthrough).
+      // This keeps the forOp's SSA valid while making its tensor results
+      // dead code — the actual tensor data comes from the big buffer's
+      // to_tensor result.
+      rewriter.replaceAllUsesWith(info.insertOp.getResult(),
+                                  iterArgs[info.resultIdx]);
+    }
+
+    // 3. Replace uses of old forOp tensor results with to_tensor results.
+    //    The forOp itself stays in place (with dead tensor results).
+    unsigned toTensorResIdx = 0;
+    for (auto [idx, iterArg] : llvm::enumerate(iterArgs)) {
+      if (isa<RankedTensorType>(iterArg.getType())) {
+        rewriter.replaceAllUsesWith(forOp.getResult(idx),
+                                    toTensorResults[toTensorResIdx++]);
+      }
+    }
+
+    // 4. If we created a vbrc on the big alloc, replace the corresponding
+    //    iter_arg init with tensor.empty(). The vbrc init value is no longer
+    //    needed (the big alloc already has it), and this lets one-shot-bufferize
+    //    avoid inserting memref.copy to materialize the vbrc result.
+    for (auto &info : infos) {
+      if (info.vbrcScalar) {
+        auto tensorType =
+            cast<RankedTensorType>(iterArgs[info.resultIdx].getType());
+        rewriter.setInsertionPoint(forOp);
+        auto emptyOp = rewriter.create<tensor::EmptyOp>(
+            forOp.getLoc(), tensorType.getShape(),
+            tensorType.getElementType());
+        forOp.getInitsMutable()[info.resultIdx].set(emptyOp.getResult());
+      }
+    }
+
     return success();
   }
 };
@@ -126,5 +408,6 @@ mlir::tensor::createOptimizeDpsOpWithYieldedInsertSlicePass() {
 
 void bishengir::tensor::populateOptimizeDpsOpWithYieldedInsertSlicePattern(
     mlir::RewritePatternSet &patterns) {
-  patterns.insert<ModifyDpsInitToSlicedIterArg>(patterns.getContext());
+  patterns.insert<ModifyDpsInitToSlicedIterArg,
+                  HoistAllocForInsertSliceLoad>(patterns.getContext());
 }
