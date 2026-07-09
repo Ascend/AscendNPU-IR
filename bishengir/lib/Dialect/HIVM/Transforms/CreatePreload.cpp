@@ -126,8 +126,15 @@ static Value findPreloadWorkspaceMarkedValue(Value value) {
   auto roots = utils::tracebackMemRefVecByTargetFn(
       value, [](Value v) { return hasPreloadWorkspaceMark(v); });
 
-  if (roots.size() != 1)
+  if (roots.empty())
     return Value();
+
+  if (roots.size() != 1) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[hivm-create-preload]: ambiguous preload workspace roots, "
+               << "root size = " << roots.size() << "\n");
+    return Value();
+  }
 
   Value root = roots.front();
   if (!hasPreloadWorkspaceMark(root))

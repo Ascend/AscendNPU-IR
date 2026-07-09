@@ -1656,6 +1656,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     for (auto &localOutput : item->localOutputs) {
       if (!isTCBLocalOutput(localOutput))
         continue;
+      // TODO: Avoid the need to generate bufferization.to_tensor.
       Value toTensor = createToTensor(builder, loc, localOutput.second);
       if (!toTensor)
         return failure();
