@@ -1713,3 +1713,84 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return %5 : tensor<16x128xbf16>
   }
 }
+
+// -----
+
+// CHECK-LABEL: @a5_parallel_loop_memref_load_propagation
+// CHECK: scf.for
+// CHECK: hivm.hir.load
+// CHECK-SAME: core_type = <VECTOR>
+// CHECK: } {hivm.parallel_loop}
+// CHECK: hivm.hir.vmul
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_parallel_loop_memref_load_propagation(
+      %gm: memref<6x4xf32, strided<[4, 1]>>) -> tensor<3x4xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0 = arith.constant 0 : index
+    %c3 = arith.constant 3 : index
+    %c1 = arith.constant 1 : index
+    %alloc = memref.alloc() : memref<3x4xf32>
+    scf.for %i = %c0 to %c3 step %c1 {
+      %subview = memref.subview %gm[%i, 0] [1, 4] [1, 1]
+          : memref<6x4xf32, strided<[4, 1]>> to memref<1x4xf32, strided<[4, 1], offset: ?>>
+      %subview_out = memref.subview %alloc[%i, 0] [1, 4] [1, 1]
+          : memref<3x4xf32> to memref<1x4xf32, strided<[4, 1], offset: ?>>
+      hivm.hir.load ins(%subview : memref<1x4xf32, strided<[4, 1], offset: ?>>)
+          outs(%subview_out : memref<1x4xf32, strided<[4, 1], offset: ?>>)
+          left_padding_num = %c0 : index
+    } {hivm.parallel_loop}
+    %loaded = bufferization.to_tensor %alloc restrict writable : memref<3x4xf32>
+    %out = tensor.empty() : tensor<3x4xf32>
+    %mul = hivm.hir.vmul ins(%loaded, %loaded : tensor<3x4xf32>, tensor<3x4xf32>)
+        outs(%out : tensor<3x4xf32>) -> tensor<3x4xf32>
+    return %mul : tensor<3x4xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @a5_parallel_loop_memref_load_with_mmad
+// CHECK: hivm.hir.load
+// CHECK-SAME: {{"inserted-load"}}
+// CHECK-SAME: core_type = <CUBE>
+// CHECK: scf.for
+// CHECK: hivm.hir.load
+// CHECK-SAME: core_type = <CUBE>
+// CHECK: } {hivm.parallel_loop}
+// CHECK-NOT: {"inserted-copy"}
+// CHECK: hivm.hir.mmadL1
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_parallel_loop_memref_load_with_mmad(
+      %lhs: memref<128x128xbf16>, %gm: memref<32x128xbf16, strided<[128, 1]>>,
+      %rhs: tensor<8x8x16x16xbf16>) -> tensor<128x128xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c16 = arith.constant 16 : index
+    %true = arith.constant true
+    %zero = arith.constant 0.000000e+00 : bf16
+    %lhs_tensor = bufferization.to_tensor %lhs restrict writable : memref<128x128xbf16>
+    %init = tensor.empty() : tensor<128x128xbf16>
+    %tiles = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %init) -> (tensor<128x128xbf16>) {
+      %offset = arith.muli %i, %c32 : index
+      %alloc = memref.alloc() : memref<32x128xbf16>
+      hivm.hir.load ins(%gm : memref<32x128xbf16, strided<[128, 1]>>)
+          outs(%alloc : memref<32x128xbf16>)
+          pad_mode = <PadValue> pad_value = %zero : bf16
+          init_out_buffer = true eviction_policy = <EvictFirst>
+      %tile = bufferization.to_tensor %alloc restrict writable : memref<32x128xbf16>
+      %inserted = tensor.insert_slice %tile into %acc[%offset, 0] [32, 128] [1, 1]
+          : tensor<32x128xbf16> into tensor<128x128xbf16>
+      scf.yield %inserted : tensor<128x128xbf16>
+    } {hivm.parallel_loop}
+    %out = tensor.empty() : tensor<128x128xf32>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+        ins(%lhs_tensor, %tiles, %true, %c16, %c128, %c128
+            : tensor<128x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
+        outs(%out : tensor<128x128xf32>) -> tensor<128x128xf32>
+    return %mmad : tensor<128x128xf32>
+  }
+}
