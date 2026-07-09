@@ -1,4 +1,4 @@
-# hacc 方言 Passes
+# hacc方言Passes
 
 ## -hacc-append-device-spec
 

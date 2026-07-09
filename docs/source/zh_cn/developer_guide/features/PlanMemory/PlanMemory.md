@@ -63,7 +63,7 @@
 
 可复用分配包括`Inplace`复用和三级分配复用。
 
-##### Inplace 复用
+##### Inplace复用
 
 `Inplace`复用条件：
 
@@ -147,7 +147,7 @@ Level0：如果两块`Buffer`的生命区间不重叠，内存可以直接复用
  - 优点：能够尽可能地复用内存，内存可复用概率高。
  - 缺点：完全无视硬件并行流水，不合理的复用会导致算子性能差。
 
-#### OP 变换
+#### OP变换
 
 计算完成所有`Buffer`的地址后，将`memref_ext.alloc_workspace`（`GLOBAL_WORKSPACE_PLAN`） 和`memref.alloc`（`LOCAL_MEM_PLAN`）替换为`hivm.hir.pointer_cast(offset)`，指示`Buffer`的内存起始地址。
 

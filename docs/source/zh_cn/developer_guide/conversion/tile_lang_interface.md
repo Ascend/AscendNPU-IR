@@ -1,4 +1,4 @@
-# TileLang 接入
+# TileLang接入
 
 `Tile Language Ascend`（`tilelang-ascend`）是`tile-lang`领域特定语言针对华为昇腾`NPU`（神经网络处理器）架构的专用变体，经过专门优化。它基于`tile-lang`的`Python`式语法和[TVM](https://tvm.apache.org/)编译器基础架构，使开发者能够高效地为昇腾处理器（包括`GEMM`、向量运算和注意力机制等操作）创建高性能`AI`计算内核。`tilelang-ascend`让开发者能够专注于生产效率，同时不牺牲在`NPU`上实现前沿性能所需的底层优化。
 
@@ -89,7 +89,7 @@ pip install pybind11 torch_npu
 
 以下代码使用`TileLang`（`NPU`编程的领域特定语言）实现了向量加法内核。该代码定义了一个并行内核，通过将数据加载到片上统一缓冲区（`UB`）、使用低级`NPU`指令（`npuir_add`）执行逐元素加法，并将结果写回全局内存，在`NPU`上对两个长度为`4096`的`float32`向量进行加法运算。测试函数将内核输出与`PyTorch`原生向量加法进行比较以验证正确性。示例在`NPU`设备上运行，演示了`TileLang`的基本工作流程：内核定义、编译为`AscendNPU IR`，以及使用`PyTorch`张量执行。
 
-### TileLang 内核（向量加法）
+### TileLang内核（向量加法）
 
 ```python
 # test_tilelang.py

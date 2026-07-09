@@ -4,11 +4,11 @@ Auto-Sync是`AscendNPU IR`（`HIVM`）编译器的自动同步插入功能，用
 
 ## 硬件背景
 
-### AICore 架构
+### AICore架构
 
 <https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1/opdevg/Ascendcopdevg/atlas_ascendc_10_0008.html>
 
-### HIVM 同步操作
+### HIVM同步操作
 
 同步操作定义于`HIVMIR/HIVMSynchronizationOps.td`。以下从MLIR使用角度（操作数/属性）进行描述，而非汇编语法。
 
@@ -52,7 +52,7 @@ Auto-Sync是`AscendNPU IR`（`HIVM`）编译器的自动同步插入功能，用
 
 ## 算法原理
 
-### AutoSync 解决方案概述
+### AutoSync解决方案概述
 
 代码库提供两种Auto-Sync解决方案：
 

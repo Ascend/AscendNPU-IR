@@ -1,4 +1,4 @@
-# hfusion 方言 Passes
+# hfusion方言Passes
 
 ## -adapt-triton-kernel
 

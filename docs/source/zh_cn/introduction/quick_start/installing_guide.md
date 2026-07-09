@@ -38,11 +38,11 @@
 
 ### 运行依赖
 
-#### CANN 包安装
+#### CANN包安装
 
 `AscendNPU IR`端到端运行依赖`CANN`环境。
 
-1. 下载`CANN`包：需下载`toolkit`包及与硬件对应的`ops`包，可从[昇腾社区 CANN 下载页](https://www.hiascend.com/cann/download)获取。
+1. 下载`CANN`包：需下载`toolkit`包及与硬件对应的`ops`包，可从[昇腾社区CANN下载页](https://www.hiascend.com/cann/download)获取。
 
 2. 安装`CANN`包：
 
@@ -175,13 +175,13 @@ ninja -j32
 
 ### 二进制安装
 
-`AscendNPU IR`二进制会随`CANN toolkit`包一起安装，参见上文[CANN 包安装](#cann 包安装)。
+`AscendNPU IR`二进制会随`CANN toolkit`包一起安装，参见上文[CANN包安装](#cann包安装)。
 
-## 直接使用 Docker 镜像
+## 直接使用Docker镜像
 
 使用`Docker`镜像进行开发与验证，无需配置环境。
 
-### 复用 CANN 镜像
+### 复用CANN镜像
 
 `CANN Toolkit`包中会包含完整的`AscendNPU IR`二进制，`Docker`镜像可以复用`CANN`的镜像。
 
@@ -237,7 +237,7 @@ bishengir-compile --version # 可以看到 AscendNPU IR 的版本信息
 
 ## 运行测试
 
-### 编译测试 Target
+### 编译测试Target
 
 ```bash
 # 在 build 目录下
@@ -306,7 +306,7 @@ Total Discovered Tests: 388
 - **UNRESOLVED**：无法判定结果
 - **TIMEOUT**：超时
 
-### 使用 LLVM-LIT 执行测试套
+### 使用LLVM-LIT执行测试套
 
 ```bash
 # 在 build 目录下

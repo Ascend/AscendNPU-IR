@@ -14,7 +14,7 @@
 
 AscendNPU IR端到端运行依赖CANN环境。
 
-1. 下载CANN包：需下载toolkit包及与硬件对应的ops包，可从[昇腾社区 CANN 下载页](https://www.hiascend.com/cann/download)获取。
+1. 下载CANN包：需下载toolkit包及与硬件对应的ops包，可从[昇腾社区CANN下载页](https://www.hiascend.com/cann/download)获取。
 
 2. 安装CANN包：
 

@@ -1,4 +1,4 @@
-# hfusion 方言
+# hfusion方言
 
 Hybrid Fusion（HFusion）方言。
 

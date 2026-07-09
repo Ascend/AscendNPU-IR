@@ -1,6 +1,6 @@
-# IR 接入简介
+# IR接入简介
 
-## 多级 IR 抽象架构
+## 多级IR抽象架构
 
 - 提供一系列高层抽象接口，屏蔽底层细节，将硬件无关表达映射到底层指令，提升算子开发易用性。
 - 提供细粒度性能控制接口，能够精准控制片上内存地址、流水同步插入位置以及是否使能乒乓流水优化等。
@@ -63,13 +63,13 @@ func.func @kernel(...) attributes {hacc.entry, hacc.function_kind = #hacc.functi
 }
 ```
 
-## Triton 接入
+## Triton接入
 
-`Triton`是主流的高性能算子开发编程语言。[Triton Ascend](https://gitcode.com/Ascend/triton-ascend/)将`Triton`算子转换为`MLIR`，接入`AscendNPU IR`生态，支持在昇腾`NPU`上运行`Triton`内核。详细的`Triton`接入指南（含安装、环境、算子映射及昇腾扩展）请参考[Triton 接入](triton_interface.md)。
+`Triton`是主流的高性能算子开发编程语言。[Triton Ascend](https://gitcode.com/Ascend/triton-ascend/)将`Triton`算子转换为`MLIR`，接入`AscendNPU IR`生态，支持在昇腾`NPU`上运行`Triton`内核。详细的`Triton`接入指南（含安装、环境、算子映射及昇腾扩展）请参考[Triton接入](triton_interface.md)。
 
-## TileLang 接入
+## TileLang接入
 
-`TileLang`（`tilelang-ascend`）是面向昇腾`NPU`的领域特定语言，基于`tile-lang`的`Python`语法和[TVM](https://tvm.apache.org/)构建，支持`GEMM`、向量运算和注意力机制等算子，可将算子编译为`AscendNPU IR`（`HIVM`）在昇腾`NPU`上运行。详细的`TileLang`接入说明请参考[TileLang 接入](tile_lang_interface.md)。
+`TileLang`（`tilelang-ascend`）是面向昇腾`NPU`的领域特定语言，基于`tile-lang`的`Python`语法和[TVM](https://tvm.apache.org/)构建，支持`GEMM`、向量运算和注意力机制等算子，可将算子编译为`AscendNPU IR`（`HIVM`）在昇腾`NPU`上运行。详细的`TileLang`接入说明请参考[TileLang接入](tile_lang_interface.md)。
 
 ## 框架接入
 

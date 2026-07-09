@@ -12,7 +12,7 @@
 
 ![image](../../images/introduction/architecture2_zh.png)
 
-### HFusion 方言
+### HFusion方言
 
 `HFusion`（`Hybrid Fusion`）方言是基于`MLIR`社区`Linalg`方言的扩展集，`HFusion`方言继承了`Linalg`方言的所有`operations`并且自行扩展了`Linalg`社区还未支持的`operations`，要注意`HFusion`方言处理的`operations`均是`named operations`，这样可以最大化保留高层语义方便编译器处理。`HFusion`方言主要包括转换层、预处理、融合处理三层能力：
 
@@ -22,7 +22,7 @@
 
 3. **融合处理**：能够自动融合生成`Device Kernel`算子及`Host Tiling`函数。
 
-### HIVM 方言
+### HIVM方言
 
 `HIVM`（`Hybrid ISA Virtual Machine`）：面向昇腾硬件对计算、搬运、同步等操作进行抽象，提供`Tile`级`Operation`支持任意维度、大小的`Tensor`或者`Memref`操作类型，屏蔽昇腾硬件底层指令参数。`HIVM`层编译优化主要分为以下三层：
 
@@ -32,17 +32,17 @@
 
 3. **核内处理单元映射**：感知`NPU`核内多级流水处理单元，自动插入流水同步操作保证不同流水线有序执行同时并行流水优化；感知`NPU`指令细节自动完成基于策略的指令自动映射，使能`NPU SIMD`高效指令。
 
-### A5 芯片上的特性与 AscendNPU IR 的支持优化
+### A5芯片上的特性与AscendNPU IR的支持优化
 
 `A5`芯片继承了`310B`芯片的`RegBase`（`Register-based`）的编程模型，硬件上相比`A2`和`A3`芯片`Memory-based`编程模型增加了寄存器层；在`Cube`和`Vector`核之间增加了数据通路，为`CV`融合提供更多优化空间；增加了`Warp Scheduler`等组件引入`SIMT`能力；增加`ND-DMA`等一些新的硬件指令。
 
 `AscendNPU IR`在`HIVM`方言中对新的硬件特性提供了支持，包括`Arith`和`Vector`方言支持计算与规约类`OP`。对于纯`SIMD`编译增加了`VF`融合、向量化、掩码优化和`Combine`优化。在`A5`上新增`SIMT`编译支持，将社区的`TritonGPU`方言对接至`HIVM`，构建昇腾亲和的`Layout`优化、共享内存分配、核心指令映射优化的算法。`AscendNPU IR`在`A5`上除了支持纯`SIMD`模式和纯`SIMT`以外，还支持`SIMD/SIMT`混合编译。
 
-![A5 的 AscendNPU IR 架构](../../images/introduction/architecture_A5_zh.png)
+![A5的AscendNPU IR架构](../../images/introduction/architecture_A5_zh.png)
 
 ## 代码架构
 
-`AscendNPU IR`是基于`MLIR`生态构建的，`MLIR`原生社区代码是作为第三方引入，代码结构如下所示，`bishengir`（即`AscendNPU IR`）目录下是`AscendNPU IR`相关实现，`build-tools`目录下是`AscendNPU IR`构建所需脚本。`AscendNPU IR`对于`MLIR`原生社区的增强会优先在`include/bishengir/Dialect`独立目录下创建对应方言目录，通过独立目录新增文件扩展能力来避免对社区侵入式修改；对于无法隔离的修改，已直接提交到`third-party`下对应的 Ascend 维护分支中（例如 `llvm-project` 对应分支为 `Ascend/AscendNPU-IR/llvmorg-19.1.7`、`torch-mlir` 对应分支为 `Ascend/AscendNPU-IR/main-20250716`），每个修改均有单独`commit`信息，便于后续回合`MLIR`社区。历史版本中通过 `build-tools/patches` 目录下的 patch 文件在构建时应用的方式已废弃。
+`AscendNPU IR`是基于`MLIR`生态构建的，`MLIR`原生社区代码是作为第三方引入，代码结构如下所示，`bishengir`（即`AscendNPU IR`）目录下是`AscendNPU IR`相关实现，`build-tools`目录下是`AscendNPU IR`构建所需脚本。`AscendNPU IR`对于`MLIR`原生社区的增强会优先在`include/bishengir/Dialect`独立目录下创建对应方言目录，通过独立目录新增文件扩展能力来避免对社区侵入式修改；对于无法隔离的修改，已直接提交到`third-party`下对应的Ascend维护分支中（例如`llvm-project`对应分支为`Ascend/AscendNPU-IR/llvmorg-19.1.7`、`torch-mlir`对应分支为`Ascend/AscendNPU-IR/main-20250716`），每个修改均有单独`commit`信息，便于后续回合`MLIR`社区。历史版本中通过`build-tools/patches`目录下的patch文件在构建时应用的方式已废弃。
 
 ```text
 .

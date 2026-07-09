@@ -5,28 +5,28 @@
 - **DSL接入方式**：通过`Triton`、`TileLang`等领域特定语言接入，将算子编译为`AscendNPU IR`。
 - **IR接入方式**：通过`IR`表示接入，支持`Torch IR`、`Linalg`/`HFusion IR`、`HIVM IR`多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
 
-## DSL 接入方式
+## DSL接入方式
 
 `AscendNPU IR`向上支持与`Triton`、`TileLang`等语言或框架的对接，使能三方`DSL`支持昇腾硬件，在`NPU`上运行自定义算子。
 
 | 接入方式 | 说明 |
 |----------|------|
-| [Triton 接入](triton_interface.md) | 使用`Triton`编写高性能内核，通过`Triton Ascend`在昇腾`NPU`上运行。含安装、环境、算子映射及昇腾扩展说明。 |
-| [TileLang 接入](tile_lang_interface.md) | 使用`TileLang Ascend`（基于`tile-lang`/`TVM`的`DSL`）开发面向昇腾`NPU`的内核（如`GEMM`、向量运算、`attention`）。含环境、构建与快速开始。 |
+| [Triton接入](triton_interface.md) | 使用`Triton`编写高性能内核，通过`Triton Ascend`在昇腾`NPU`上运行。含安装、环境、算子映射及昇腾扩展说明。 |
+| [TileLang接入](tile_lang_interface.md) | 使用`TileLang Ascend`（基于`tile-lang`/`TVM`的`DSL`）开发面向昇腾`NPU`的内核（如`GEMM`、向量运算、`attention`）。含环境、构建与快速开始。 |
 
-## IR 接入方式
+## IR接入方式
 
-`AscendNPU IR`支持多层级`IR`接入，不同层级在抽象程度和控制粒度上有所差异（详见[IR 接入简介 - 多级 IR 抽象架构](interface_api.md#多级 ir 抽象架构)）：
+`AscendNPU IR`支持多层级`IR`接入，不同层级在抽象程度和控制粒度上有所差异（详见[IR接入简介-多级IR抽象架构](interface_api.md#多级ir抽象架构)）：
 
 - `Torch IR`：框架层`ATen`算子，经`Pass`转换为`Linalg`/`HFusion`。
 - `Linalg`/`HFusion IR`：通用张量代数层与硬件感知融合层，标准`MLIR dialect`表达算子语义，`HFusion`自动完成融合、切分和调度。
 - `HIVM IR`：`NPU`指令层，直接映射硬件指令，显式控制存储层级（`GM`/`UB`/`L1`/`L0`）和计算流水线（`Vector`/`Cube`/`MTE`），支持精细粒度调优。
 
-### Torch IR 接入
+### Torch IR接入
 
 直接使用`Torch dialect`的`ATen`算子，通过`convert-torch-to-hfusion`等`Pass`自动转换为`Linalg`/`HFusion Named Op`，再进入自动融合和调度流程。
 
-#### Torch → AscendNPU IR 转换流程
+#### Torch → AscendNPU IR转换流程
 
 `Torch IR`通过`torch-backend-to-named-op-backend-pipeline`转换流水线接入`AscendNPU IR`。`BishengIR`自定义的`convert-torch-to-hfusion` `Pass`优先将`Torch ATen`算子转换为`Linalg`/`HFusion Named Op`，未覆盖的算子回退到上游`torch-mlir`的标准`lowering`通路。主要转换阶段如下：
 
@@ -35,7 +35,7 @@
 - `convert-torch-to-scf` / `arith` / `tensor`：上游`torch-mlir`完成控制流、算术、`tensor`等转换。
 - `func-backend-type-conversion`：将`Torch`类型（`!torch.vtensor`）转换为标准`builtin`类型（`tensor`）。
 
-#### 用例 torch.mlir
+#### 用例torch.mlir
 
 ```mlir
 func.func @torch_mul(%arg0: !torch.vtensor<[4096],f16>, %arg1: !torch.vtensor<[1,56,4096],f16>) -> !torch.vtensor<[1,56,4096],f16>
@@ -47,7 +47,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 调用方式：有两种方式，二者共享同一套编译`pipeline`。
 
-- **分步转换**：先将`Torch IR`转换为`Linalg`/`HFusion IR`，适用于需要缓存或查看中间`IR`的场景。转换完成后，可将`torch_to_hfusion.mlir`作为输入，按[Linalg/HFusion IR 接入](#linalghfusion-ir-接入)流程继续编译生成二进制。
+- **分步转换**：先将`Torch IR`转换为`Linalg`/`HFusion IR`，适用于需要缓存或查看中间`IR`的场景。转换完成后，可将`torch_to_hfusion.mlir`作为输入，按[Linalg/HFusion IR接入](#linalghfusion-ir-接入)流程继续编译生成二进制。
   - 命令：`bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir`
   - **预期产物**：`MLIR`文本文件（`.mlir`格式），内容为转换后的`Linalg`/`HFusion IR`。例如：
 
@@ -64,7 +64,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
   - 命令：`bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 torch.mlir -o torch_kernel.o`
   - **预期产物**：`Ascend NPU`算子二进制文件（`.o`格式），可与`CANN runtime`配合在设备端运行。
 
-#### 支持的 Torch 算子
+#### 支持的Torch算子
 
 ##### Elementwise Binary
 
@@ -144,11 +144,11 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 | `aten.where.self` | `hfusion.select` |
 | `aten.arange.start_step` | `hfusion.arange` |
 
-### Linalg/HFusion IR 接入
+### Linalg/HFusion IR接入
 
 使用`Linalg`/`Tensor`、`HFusion`等标准`MLIR dialect`表达算子语义，直接进入`Linalg`/`HFusion IR`层级的自动融合和调度流程。
 
-#### 用例 hfusion.mlir
+#### 用例hfusion.mlir
 
 ```mlir
 func.func @hfusion_reduce_mul(%arg0: tensor<40960xf32>, %arg1: tensor<40960x1024xf32>, %arg2: tensor<40960x1024xf32>, %arg3: tensor<40960x1024xf32>) -> tensor<40960xf32>
@@ -182,13 +182,13 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 - `Transpose`
 - `Concat`
 
-关于自动融合的算法原理、约束能力、架构设计等详细说明，请参阅[HFusion AutoSchedule 自动融合与调度](../features/AutoSchedule/HFusion_AutoSchedule.md)。
+关于自动融合的算法原理、约束能力、架构设计等详细说明，请参阅[HFusion AutoSchedule自动融合与调度](../features/AutoSchedule/HFusion_AutoSchedule.md)。
 
-### HIVM IR 接入
+### HIVM IR接入
 
 对于需要精细控制硬件行为的场景，可以直接使用`HIVM dialect`编写`kernel`，显式管理存储层级和计算流水线。
 
-#### 用例 hivm.mlir
+#### 用例hivm.mlir
 
 ```mlir
 func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
@@ -218,4 +218,4 @@ func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
 - 命令：`bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 hivm.mlir -o hivm_kernel.o`
 - 预期产物：`Ascend NPU`算子二进制文件（`.o`格式），可与`CANN runtime`配合在设备端运行。
 
-关于`IR`层概念、公共编译选项及其他接入路径（如`Triton`、`TileLang`），请参阅[IR 接入简介](interface_api.md)。
+关于`IR`层概念、公共编译选项及其他接入路径（如`Triton`、`TileLang`），请参阅[IR接入简介](interface_api.md)。

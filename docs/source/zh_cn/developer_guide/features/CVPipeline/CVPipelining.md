@@ -1,4 +1,4 @@
-# Cube-Vector 软件流水优化
+# Cube-Vector软件流水优化
 
 本文介绍HIVM中的CV Pipelining `Pass`。该`Pass`针对CV类`kernel`进行优化。在阅读本文之前，建议先阅读[CV Optimization](../CV/CVOptimization.md)，了解CV编译相关术语。
 

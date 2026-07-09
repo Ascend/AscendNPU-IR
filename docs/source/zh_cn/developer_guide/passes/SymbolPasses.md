@@ -1,4 +1,4 @@
-# symbol 方言 Passes
+# symbol方言Passes
 
 ## -encoding-to-symbol
 

@@ -1,4 +1,4 @@
-# Cube-Vector 优化总览
+# Cube-Vector优化总览
 
 ## 硬件背景
 

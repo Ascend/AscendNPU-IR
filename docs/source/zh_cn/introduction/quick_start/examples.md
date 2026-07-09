@@ -4,7 +4,7 @@
 
 **前置条件**：已完成[构建安装](installing_guide.md)，且`bishengir-compile`已加入`PATH`，`CANN`环境已安装并完成`set_env.sh`配置。
 
-## IR 编译
+## IR编译
 
 准备一段`VecAdd`的`MLIR`（可从其他`IR`转换得到）：
 
@@ -33,7 +33,7 @@ bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 
 生成的`kernel.o`即为可在`NPU`上执行的算子二进制。
 
-## Runtime 注册与上板执行
+## Runtime注册与上板执行
 
 以下`C++`代码实现`CANN runtime`所需的算子注册与调用接口，编译后与`kernel.o`一起即可上板执行。
 

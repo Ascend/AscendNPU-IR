@@ -1,4 +1,4 @@
-# AscendNPU IR 用户
+# AscendNPU IR用户
 
 本项目已使能多个算子编程框架接入昇腾后端，并提供面向昇腾的编译优化能力。以下为已对接或使用AscendNPU IR的语言与框架示例。
 

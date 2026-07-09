@@ -1,6 +1,6 @@
 # AutoSchedule
 
-## HFusion AutoSchedule 自动融合与调度框架设计说明
+## HFusion AutoSchedule自动融合与调度框架设计说明
 
 HFusion是Bisheng IR上针对算子融合和自动调度的高层框架，其中AutoSchedule模块负责在确定融合单元后，自动生成面向Ascend NPU的高效执行schedule。设计目标包括：
 
@@ -21,7 +21,7 @@ AutoSchedule的设计正是针对上述硬件特性，通过自动化调度与Ti
 
 ### 算法原理
 
-AutoSchedule的核心算法围绕**大范围算子融合+ 轴映射驱动的循环生成 + Transform Dialect融合执行**展开：
+AutoSchedule的核心算法围绕**大范围算子融合+轴映射驱动的循环生成+ Transform Dialect融合执行**展开：
 
 1. **Dimension Analyzer轴映射分析**
    - 通过`DimensionAnalyzer`分析kernel内各op相对于anchor的轴映射关系（`getCommonAxis`、`getNormalizedInterchange`等）。
@@ -98,7 +98,7 @@ AutoSchedule在调度与Tiling过程中显式处理以下约束：
   - `PureElemwiseScheduler`：纯元素级算子融合策略（`PureElemwiseSchedule.h/cpp`）。
   - `AnyPBRScheduler`：面向AnyPBR（Pointwise/Broadcast/Reduce等op）的通用策略（`AnyPBRSchedule.h/cpp`）。
 
-##### 内核与 Tiling 抽象
+##### 内核与Tiling抽象
 
 - `KernelInfo`：融合内核的统一描述（`KernelInfo.h`），记录IO、维度、对齐需求、多核能力等。
 - `Tiling抽象与工具`（`TilingUtils.h/cpp`）：
@@ -156,7 +156,7 @@ AutoSchedule的整体调用链可以概括为：
   - 是否支持多核`reduce`以及可并行的维度信息。
 - 针对特定融合模式，可扩展派生类（如`AnyPBRKernelInfo`）以添加模式特有的分析结果。
 
-##### Tiling 描述（TilingUtils.h）
+##### Tiling描述（TilingUtils.h）
 
 - **TilingData**：表示单个维度的Tiling参数，可为常量或表达式。
 - **TilingStruct** / **TilingCases**：描述一组完整Tiling方案，以及多候选方案集合。
@@ -165,14 +165,14 @@ AutoSchedule的整体调用链可以概括为：
     - `Expr`：可进行加减乘除等运算，表达“维度/因子”、“对齐到某个粒度”等逻辑。
     - `StmtExprBuilder`：负责从IR中的shape信息、常量等构建`Expr`，生成host侧可执行的Tiling函数。
 
-##### ValueHandle 系列
+##### ValueHandle系列
 
 - 对MLIR中的`Value`、函数参数、命名值等进行统一封装，提供统一接口访问与处理。
 - 常见类型包括`NamedValueHandle`、`FuncArgHandle`等。
 
 ### 调度策略实现概述
 
-#### PureElemwise 调度策略
+#### PureElemwise调度策略
 
 - **适用场景**：算子图主要由逐元素算子组成，无复杂broadcast/reduce结构。
 - **实现位置**：`PureElemwiseSchedule.h/cpp`。
@@ -181,7 +181,7 @@ AutoSchedule的整体调用链可以概括为：
   - 更关注融合后的访存连续性与多级cache友好性；
   - 通过`calculateTilingImpl()`和`createScheduleImpl()`完成Tiling计算和调度原语串接。
 
-#### AnyPBR 调度策略（AnyPBRScheduler）
+#### AnyPBR调度策略（AnyPBRScheduler）
 
 - **适用场景**：包含`broadcast`、`reduce`等复杂模式的融合子图。
 - **实现位置**：`AnyPBRSchedule.h/cpp`。
@@ -203,7 +203,7 @@ AutoSchedule的整体调用链可以概括为：
 
 本节围绕stride-align对齐优化、动态shape支持、reduce多核并行三个方面，概述其设计与在AutoSchedule流程中的作用。
 
-#### Stride-Align 内存对齐优化
+#### Stride-Align内存对齐优化
 
 - **优化目标**：防止出现非对齐内存UB访问。
 - **接口与数据来源**：
@@ -220,7 +220,7 @@ AutoSchedule的整体调用链可以概括为：
 - **位置与时机**：
   - stride-align处理发生在Tiling计算阶段，即`SchedulerBase::runScheduleProcedure()`中调用`calculateTilingImpl()`时。
 
-#### 动态 Shape 支持
+#### 动态Shape支持
 
 - **问题与要求**：
   - 在实际业务场景中，部分维度（如batch size、高宽等）在编译期并非常量；
@@ -242,7 +242,7 @@ AutoSchedule的整体调用链可以概括为：
 - **配置与扩展**：
   - AutoSchedule通过如`AutoScheduleOptions::enableSymbolAnalysis`等选项使能符号等价性分析，用于动态`shape`下的Tiling优化。
 
-#### 多核 Reduce
+#### 多核Reduce
 
 多核reduce通过`analyzeMultiCoreReduceInfo()`进行分析，当kernel与pattern满足所需条件时启用（参见相关文档）。
 
@@ -250,12 +250,12 @@ AutoSchedule的整体调用链可以概括为：
 
 本节介绍如何在HFusion AutoSchedule框架中，新增一种融合模式及其调度策略，包括策略类实现、内核信息扩展以及注册流程。
 
-#### 定义新的 FusionKind
+#### 定义新的FusionKind
 
 - 在HFusion的枚举定义（如`HFusionEnums.td`）中，新增一个融合类型枚举，例如：`FusionKind::MyKind`。
 - 在融合分析与pattern匹配阶段，确保能识别并产出对应`FusionKind::MyKind`的融合单元，以便后续AutoSchedule正确选择调度器。
 
-#### 继承 SchedulerBase 实现自定义调度器
+#### 继承SchedulerBase实现自定义调度器
 
 - 在`bishengir/include/bishengir/Dialect/HFusion/Transforms/AutoSchedule/`下新增头文件（如`MySchedule.h`），定义调度器类：
 
@@ -305,7 +305,7 @@ public:
     - 特殊的pattern归一化；
     - 调度结果校验与统计输出。
 
-#### 扩展 KernelInfo（可选）
+#### 扩展KernelInfo（可选）
 
 若新策略需要额外的结构化信息，可通过继承`KernelInfo`扩展：
 
@@ -325,7 +325,7 @@ public:
 
 同时，在`KernelInfoCollector`实现中增加对`FusionKind::MyKind`的处理逻辑，构造并填充`MyKernelInfo`实例，以便调度器在`analyzeAndVerifyKernelImpl()`和`calculateTilingImpl()`中使用。
 
-#### 将新策略注册到 AutoSchedule 框架
+#### 将新策略注册到AutoSchedule框架
 
 在`AutoScheduleBase.cpp::applySchedule()`中，向`switch (fusionKind)`语句新增分支：
 
@@ -361,13 +361,13 @@ case FusionKind::MyKind:
 
 ### 内部机制简要说明
 
-#### ValueHandle 抽象体系
+#### ValueHandle抽象体系
 
 - 通过`ValueHandle`系列类型，将MLIR中不同来源（Value、Argument、命名值等）的对象统一抽象；
 - 提供一致的访问与操作接口，使调度器代码避免直接耦合底层IR细节；
 - 有助于在调度描述构造与Transform解释阶段维护代码简洁性与可维护性。
 
-#### Transform Dialect 集成与解释执行
+#### Transform Dialect集成与解释执行
 
 - AutoSchedule并不直接在调度器内部改写算子IR，而是构造一段Transform Dialect程序；
 - `AutoScheduleInterpreter.cpp`负责：
@@ -378,7 +378,7 @@ case FusionKind::MyKind:
   - 调度逻辑与IR变换细节解耦；
   - 调度过程可追踪（可打印Transform程序）、可调试、可复用。
 
-#### Tiling 计算框架
+#### Tiling计算框架
 
 - 通过`TilingInfo` + `Expr`系统，将维度大小、对齐规则、动态`shape`等统一抽象为表达式。
 - 对于静态`shape`：

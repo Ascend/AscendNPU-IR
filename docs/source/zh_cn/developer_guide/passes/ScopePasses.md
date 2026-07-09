@@ -1,4 +1,4 @@
-# scope 方言 Passes
+# scope方言Passes
 
 ## -inline-scope
 
