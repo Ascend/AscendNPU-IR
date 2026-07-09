@@ -23,6 +23,9 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Debug.h"
 
+#include <algorithm>
+#include <cstdint>
+
 #define DEBUG_TYPE "hivm-mark-multi-buffer"
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define DBGSNL() (llvm::dbgs() << "\n")
@@ -69,30 +72,164 @@ FailureOr<Operation *> tracebackForWorkspace(Value val) {
       .Default([&](Operation *op) { return failure(); });
 }
 
-/// Whether the op is already marked multi_buffer attr.
-static bool isMarked(Operation *op) {
-  auto users = op->getUsers();
-  // users has no rbegin iterator
-  for (auto user : users) {
-    if (auto markOp = dyn_cast<annotation::MarkOp>(user)) {
-      auto attrDict = markOp->getAttrDictionary();
-      if (!attrDict.empty() && attrDict.contains(hivm::MultiBufferAttr::name)) {
-        LLVM_DEBUG(DBGS() << "already marked, skip.\n");
-        return true;
+static Value traceToRootMemref(Value v) {
+  auto isRoot = [](Value v) {
+    Operation *op = v.getDefiningOp();
+    if (!op) {
+      return true;
+    }
+
+    return !isa<memref::MemorySpaceCastOp,
+                bufferization::ToTensorOp,
+                ViewLikeOpInterface>(op);
+  };
+
+  auto vals = utils::tracebackMemRefVecByTargetFn(v, isRoot);
+
+  if (vals.size() == 1) {
+    return vals.front();
+  }
+
+  return Value();
+}
+
+bool hasWrite(Operation *op, Value targetMemref) {
+  if (isa<scope::ScopeOp>(op)) {
+    return false;
+  }
+  if (isa<annotation::MarkOp>(op)) {
+    return false;
+  }
+
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  utils::collectAllEffects(op, effects);
+
+  for (auto &eff : effects) {
+    Value v = eff.getValue();
+    if (!v) {
+      continue;
+    }
+    Value rootV = traceToRootMemref(v);
+    Value rootT = traceToRootMemref(targetMemref);
+    if (isa<MemoryEffects::Write>(eff.getEffect()) && rootV == rootT) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool hasRead(Operation *op, Value targetMemref) {
+  if (isa<scope::ScopeOp>(op)) {
+    return false;
+  }
+  if (isa<annotation::MarkOp>(op)) {
+    return false;
+  }
+
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  utils::collectAllEffects(op, effects);
+
+  for (auto &eff : effects) {
+    Value v = eff.getValue();
+    if (!v) {
+      continue;
+    }
+    Value rootV = traceToRootMemref(v);
+    Value rootT = traceToRootMemref(targetMemref);
+    if (isa<MemoryEffects::Read>(eff.getEffect()) && rootV == rootT) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool isPassthroughOpForTrace(Operation *op) {
+  return isa<memref::MemorySpaceCastOp>(op) ||
+         isa<bufferization::ToTensorOp>(op) ||
+         isa<ViewLikeOpInterface>(op);
+}
+
+void traceToScopes(Operation *op, SmallVectorImpl<scope::ScopeOp> &scopes, DenseSet<Operation *>& visited) {
+  if (!visited.insert(op).second) {
+    return;
+  }
+  if (isa<annotation::MarkOp>(op)) {
+    return;
+  }
+  if (auto scopeOp = dyn_cast<scope::ScopeOp>(op->getParentOp())) {
+    scopes.push_back(scopeOp);
+    return;
+  }
+  for (OpResult res : op->getResults()) {
+    for (Operation *user : res.getUsers()) {
+      Operation *parent = user->getParentOp();
+      if (auto scopeOp = dyn_cast<scope::ScopeOp>(parent)) {
+        scopes.push_back(scopeOp);
+      } else {
+        traceToScopes(user, scopes, visited);
       }
     }
   }
+}
 
-  return false;
+void traceForwardToScopes(Value v,
+                          SmallVectorImpl<scope::ScopeOp> &producerScopes,
+                          SmallVectorImpl<scope::ScopeOp> &consumerScopes) {
+  DenseSet<Operation *> visited;
+  for (Operation *user : v.getUsers()) {
+    if (isa<annotation::MarkOp>(user)) {
+      continue;
+    }
+
+    bool hasMemoryEffect = false;
+    if (hasWrite(user, v)) {
+      hasMemoryEffect = true;
+      traceToScopes(user, producerScopes, visited);
+    }
+    if (hasRead(user, v)) {
+      hasMemoryEffect = true;
+      traceToScopes(user, consumerScopes, visited);
+    }
+    
+    if (!hasMemoryEffect) {
+      if (isPassthroughOpForTrace(user)) {
+        for (OpResult res : user->getResults()) {
+          traceForwardToScopes(res, producerScopes, consumerScopes);
+        }
+      }
+    }
+  }
+}
+
+/// Whether the op is already marked multi_buffer attr.
+static bool isMarked(Operation *op) {
+  bool marked = utils::getAnnotateOpWithAttr(op->getResult(0),
+                                             hivm::MultiBufferAttr::name)
+                    .has_value();
+  if (marked)
+    LLVM_DEBUG(DBGS() << "already marked, skip.\n");
+  return marked;
 }
 
 static void mark(mlir::Operation *op, PatternRewriter &rewriter,
                  unsigned numBuffer = 2, bool isPreload = false) {
-  OpBuilder::InsertionGuard guard(rewriter);
-  rewriter.setInsertionPointAfter(op);
   // result of allocOp or memref_ext::AllocWorkspaceOp
   auto mem = op->getResult(0);
-  auto markOp = rewriter.create<annotation::MarkOp>(op->getLoc(), mem);
+
+  annotation::MarkOp markOp;
+  for (Operation *user : mem.getUsers()) {
+    if (auto m = dyn_cast<annotation::MarkOp>(user)) {
+      markOp = m;
+      break;
+    }
+  }
+
+  if (!markOp) {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPointAfter(op);
+    markOp = rewriter.create<annotation::MarkOp>(op->getLoc(), mem);
+  }
+
   markOp->setAttr(hivm::MultiBufferAttr::name,
                   rewriter.getI32IntegerAttr(numBuffer));
   if (isPreload) {
@@ -101,56 +238,168 @@ static void mark(mlir::Operation *op, PatternRewriter &rewriter,
   }
 }
 
-template <typename CopyOpType>
-struct MarkScopeMultiBuffer : public OpRewritePattern<CopyOpType> {
-  using OpRewritePattern<CopyOpType>::OpRewritePattern;
-  
-  explicit MarkScopeMultiBuffer(MLIRContext *ctx)
-      : OpRewritePattern<CopyOpType>(ctx) {}
-  
-  LogicalResult matchAndRewrite(CopyOpType copyLikeOp,
-                                  PatternRewriter &rewriter) const override {
-    // Step 1: Get Return Op of Scope
-    auto scopeOp = cast<scope::ScopeOp>(copyLikeOp);
-    if (!scopeOp)
-      return failure();
-    // Filter preload_num == 0
+static std::optional<int32_t> getMaxProducerPreloadNum(SmallVector<scope::ScopeOp>& producerScopes) {
+  std::optional<int32_t> maxProducerPreloadNum;
+  for (auto scopeOp : producerScopes) {
     auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr) {
+      continue;
+    }
+    int32_t preloadNum = preloadNumAttr.getInt();
+    if (maxProducerPreloadNum.has_value()) {
+      maxProducerPreloadNum = std::max(maxProducerPreloadNum.value(), preloadNum);
+    } else {
+      maxProducerPreloadNum = preloadNum;
+    }
+  }
+  return maxProducerPreloadNum;
+}
+
+static std::optional<int32_t> getMinConsumerPreloadNum(SmallVector<scope::ScopeOp>& consumerScopes) {
+  std::optional<int32_t> minConsumerPreloadNum;
+  for (auto scopeOp : consumerScopes) {
+    auto preloadNumAttr = scopeOp->template getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
+    if (!preloadNumAttr) {
+      continue;
+    }
+    int32_t preloadNum = preloadNumAttr.getInt();
+    if (minConsumerPreloadNum.has_value()) {
+      minConsumerPreloadNum = std::min(minConsumerPreloadNum.value(), preloadNum);
+    } else {
+      minConsumerPreloadNum = preloadNum;
+    }
+  }
+  return minConsumerPreloadNum;
+}
+
+static std::optional<int32_t> getConsumerPreloadNum(Value scopeResult,
+                                                    int32_t producerPreloadNum) {
+  SmallVector<scope::ScopeOp> consumerScopes;
+  DenseSet<Operation *> visited;
+  for (Operation *user : scopeResult.getUsers()) {
+    traceToScopes(user, consumerScopes, visited);
+  }
+
+  std::optional<int32_t> consumerPreloadNum = getMinConsumerPreloadNum(consumerScopes);
+
+  return consumerPreloadNum;
+}
+
+struct MarkScopeTightlyMultiBuffer : public OpRewritePattern<memref::AllocOp> {
+  using OpRewritePattern<memref::AllocOp>::OpRewritePattern;
+  
+  explicit MarkScopeTightlyMultiBuffer(MLIRContext *ctx)
+      : OpRewritePattern<memref::AllocOp>(ctx) {}
+  
+  LogicalResult matchAndRewrite(memref::AllocOp allocOp,
+                                PatternRewriter &rewriter) const override {
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(allocOp->getParentOp())) {
+      return failure();
+    }
+
+    Value targetMemref = allocOp.getResult();
+    if (isMarked(allocOp)) {
+      return failure();
+    }
+    if (!utils::getAnnotateOpWithAttr(allocOp.getResult(),
+                                      hivm::HIVMTightlyCoupledBufferAttr::name)
+             .has_value()) {
+      return failure();
+    }
+
+    // Step 1: trace forward from alloc to find all reachable scopes
+    SmallVector<scope::ScopeOp> producerScopes;
+    SmallVector<scope::ScopeOp> consumerScopes;
+
+    traceForwardToScopes(targetMemref, producerScopes, consumerScopes);
+    
+    std::optional<int32_t> producerPreloadNum = getMaxProducerPreloadNum(producerScopes);
+    std::optional<int32_t> consumerPreloadNum = getMinConsumerPreloadNum(consumerScopes);
+
+    if (!producerPreloadNum.has_value() || !consumerPreloadNum.has_value()) {
+      return failure();
+    }
+
+    int32_t numBuffer = producerPreloadNum.value() - consumerPreloadNum.value() + 1;
+    if (numBuffer <= 0) {
+      return failure();
+    }
+
+    // apply mark
+    mark(allocOp, rewriter, numBuffer, true);
+    return success();
+  }
+};
+
+struct MarkScopeMultiBuffer : public OpRewritePattern<scope::ScopeOp> {
+  using OpRewritePattern<scope::ScopeOp>::OpRewritePattern;
+
+  explicit MarkScopeMultiBuffer(MLIRContext *ctx)
+      : OpRewritePattern<scope::ScopeOp>(ctx) {}
+
+  LogicalResult matchAndRewrite(scope::ScopeOp scopeOp,
+                                PatternRewriter &rewriter) const override {
+    // Filter preload_num == 0
+    auto preloadNumAttr =
+        scopeOp->getAttrOfType<IntegerAttr>(hivm::PreloadNumAttr::name);
     if (!preloadNumAttr || preloadNumAttr.getInt() == 0)
       return failure();
-    // Filter cube scope since cube's output will be saved on GM
-    auto tCoreType = scopeOp->template getAttrOfType<hivm::TCoreTypeAttr>(
-        hivm::kPipelinedLoopCoreTypeAttrName);
-    if (!tCoreType || tCoreType.getTcoretype() == hivm::TCoreType::CUBE)
-      return failure();
+    int32_t producerPreloadNum = preloadNumAttr.getInt();
+
     Block &block = scopeOp.getRegion().front();
     auto returnOp = cast<scope::ReturnOp>(block.getTerminator());
-    //Step 2: Get output of returnOp, and mark multibuffer=4
-    int32_t operandIndex = -1;
-    for (auto resultOp : returnOp->getOperands()) {
-      // Only buffer used by V1 should be set multibuffer=4
-      operandIndex++;
-      auto scopeRes = scopeOp->getResult(operandIndex);
-      bool isUsedByV1 = false;
-      for (auto *scopeResUser : scopeRes.getUsers()) {
-        if (isa<scope::ScopeOp>(scopeResUser) || isa<scope::ScopeOp>(scopeResUser->getParentOp()))
-          isUsedByV1 = true;
-      }
-      if (!isUsedByV1)
+
+    bool anyAllocHasBeenMarked = false;
+    for (auto [returnOperand, scopeResult] :
+         llvm::zip_equal(returnOp->getOperands(), scopeOp->getResults())) {
+      auto maybeConsumerPreloadNum =
+          getConsumerPreloadNum(scopeResult, producerPreloadNum);
+      if (!maybeConsumerPreloadNum)
         continue;
-      if (isa<memref::AllocOp>(resultOp.getDefiningOp())) {
-        auto *allocOpPtr = resultOp.getDefiningOp();
-        auto resultType = allocOpPtr->getResult(0).getType();
-        if (getHIVMAddressSpace(resultType) != hivm::AddressSpace::GM) {
-          if (isMarked(allocOpPtr))
-            return failure();
-          mark(allocOpPtr, rewriter, 4, true); // fixed value 4, need to be changed later
+
+      std::optional<memref::AllocOp> maybeAllocOp;
+      if (auto toTensor =
+              returnOperand.getDefiningOp<bufferization::ToTensorOp>()) {
+        maybeAllocOp = utils::tracebackMemRefToAlloc(toTensor.getMemref());
+      } else if (isa<BaseMemRefType>(returnOperand.getType())) {
+        maybeAllocOp = utils::tracebackMemRefToAlloc(returnOperand);
       }
-      } else {
+
+      if (!maybeAllocOp)
         continue;
+      memref::AllocOp allocOp = *maybeAllocOp;
+      auto maybeAddressSpace = getOptionalHIVMAddressSpace(allocOp.getType());
+      if (maybeAddressSpace && *maybeAddressSpace == hivm::AddressSpace::GM)
+        continue;
+
+      int32_t requiredBufferNum =
+          producerPreloadNum - *maybeConsumerPreloadNum + 1;
+      std::optional<int32_t> existingBufferNum;
+      if (auto maybeMarkOp = utils::getAnnotateOpWithAttr(
+              allocOp.getResult(), hivm::MultiBufferAttr::name)) {
+        if (auto attr = (*maybeMarkOp)
+                            ->getAttrOfType<IntegerAttr>(
+                                hivm::MultiBufferAttr::name)) {
+          existingBufferNum = static_cast<int32_t>(attr.getInt());
+        }
       }
+      uint32_t numBuffer =
+          std::max<uint32_t>(static_cast<uint32_t>(requiredBufferNum),
+                             existingBufferNum.value_or(0));
+
+      bool isPreloadLocalBufferMarked =
+          utils::getAnnotateOpWithAttr(allocOp.getResult(),
+                                       hivm::PreloadLocalBufferAttr::name)
+              .has_value();
+      if (existingBufferNum && *existingBufferNum >= requiredBufferNum &&
+          isPreloadLocalBufferMarked)
+        continue;
+
+      mark(allocOp, rewriter, numBuffer, true);
+      anyAllocHasBeenMarked = true;
     }
-    return success();
+
+    return success(anyAllocHasBeenMarked);
   }
 };
 
@@ -280,7 +529,8 @@ void MarkMultiBufferPass::runOnOperation() {
       funcCoreType.has_value() &&
       (funcCoreType.value() == TFuncCoreType::MIX ||
        funcOp->getAttrOfType<UnitAttr>(hivm::TPartOfMixAttr::name));
-  patterns.insert<MarkScopeMultiBuffer<scope::ScopeOp>>(patterns.getContext());
+  patterns.insert<MarkScopeTightlyMultiBuffer>(patterns.getContext());
+  patterns.insert<MarkScopeMultiBuffer>(patterns.getContext());
   // Per-buffer fine-grained gates (used by BiShengIRCompileMain's compile-
   // time fallback to surgically turn off the multi-buffer of just the
   // overflowing address space):
