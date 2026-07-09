@@ -107,6 +107,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
+  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
 
   mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
   SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
@@ -315,6 +316,11 @@ static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
          srcOrigDim == dstOrigDim;
 }
 
+template <>
+bool checkTileableMaskedStore<hivm::DebugOp>(hivm::DebugOp storeOp, size_t i) {
+  return false;
+}
+
 /// Walks every \c StoreOpTy under the analyzed op. For each source axis that
 /// is parallel, appends that \c Dimension to \p parallelDimMap (keyed by solver
 /// group and parent index) unless the axis is dynamic or size 1; for
@@ -340,7 +346,12 @@ void DimensionAnalyzer::computeTilingDimImpl(
         &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
-    auto src = op.getSrc();
+    Value src;
+    if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>) {
+      src = op.getArg();
+    } else {
+      src = op.getSrc();
+    }
     auto rank = utils::getShapeRank(src.getType()).value_or(0);
     createDummyRefIfNotExist({src});
     auto args = getValueDimIndices(src);
