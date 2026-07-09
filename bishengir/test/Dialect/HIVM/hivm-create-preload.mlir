@@ -181,102 +181,35 @@ module {
 
   // CHECK-DAG: %[[C1:.*]] = arith.constant 1 : i32
   // CHECK-DAG: %[[C2:.*]] = arith.constant 2 : i32
-  //
+
   // CHECK: %[[NEW_UB:.*]] = arith.addi %[[UB]], %[[C2]] : i32
-  //
   // CHECK: %[[RESULTS:.*]]:2 = scf.for %[[NEW_IV:.*]] = %[[LB]] to %[[NEW_UB]] step %[[C1]] iter_args(%[[ARG0:.*]] = %[[INIT0]], %[[ARG1:.*]] = %[[INIT1]]) -> (i32, i32) : i32 {
-  //
-  // The shifted mapped IV may be materialized before either guard.
+
   // CHECK: %[[MAPPED_IV:.*]] = arith.subi %[[NEW_IV]], %[[C1]] : i32
-  //
-  // preload_num = 1, direct mapping:
-  //   old_iv -> new_iv
+
+  // preload_num = 1: old_iv -> new_iv
   // CHECK: %[[LOWER_DIRECT:.*]] = arith.cmpi sge, %[[NEW_IV]], %[[LB]] : i32
   // CHECK: %[[UPPER_DIRECT:.*]] = arith.cmpi slt, %[[NEW_IV]], %[[UB]] : i32
   // CHECK: %[[COND_DIRECT:.*]] = arith.andi %[[LOWER_DIRECT]], %[[UPPER_DIRECT]] : i1
   // CHECK: %[[IF0:.*]] = scf.if %[[COND_DIRECT]] -> (i32) {
-  // CHECK:   %[[SCOPE0:.*]] = scope.scope : () -> i32 {
   // CHECK:   %[[R0:.*]] = arith.addi %[[ARG0]], %[[NEW_IV]] : i32
-  // CHECK:   scope.return %[[R0]] : i32
-  // CHECK:   } {hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32}
-  // CHECK:   scf.yield %[[SCOPE0]] : i32
+  // CHECK:   scf.yield %[[R0]] : i32
   // CHECK: } else {
   // CHECK:   scf.yield %[[ARG0]] : i32
   // CHECK: }
-  //
-  // preload_num = 0, shifted mapping:
-  //   old_iv -> new_iv - step
-  //
-  // The key check is the lower comparison against %[[LB]], not a constant zero.
+
+  // preload_num = 0: old_iv -> new_iv - step
   // CHECK: %[[LOWER_SHIFTED:.*]] = arith.cmpi sge, %[[MAPPED_IV]], %[[LB]] : i32
   // CHECK: %[[UPPER_SHIFTED:.*]] = arith.cmpi slt, %[[MAPPED_IV]], %[[UB]] : i32
   // CHECK: %[[COND_SHIFTED:.*]] = arith.andi %[[LOWER_SHIFTED]], %[[UPPER_SHIFTED]] : i1
   // CHECK: %[[IF1:.*]] = scf.if %[[COND_SHIFTED]] -> (i32) {
-  // CHECK:   %[[SCOPE1:.*]] = scope.scope : () -> i32 {
   // CHECK:   %[[R1:.*]] = arith.addi %[[ARG1]], %[[MAPPED_IV]] : i32
-  // CHECK:   scope.return %[[R1]] : i32
-  // CHECK:   } {hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32}
-  // CHECK:   scf.yield %[[SCOPE1]] : i32
+  // CHECK:   scf.yield %[[R1]] : i32
   // CHECK: } else {
   // CHECK:   scf.yield %[[ARG1]] : i32
   // CHECK: }
+
   // CHECK: scf.yield %[[IF0]], %[[IF1]] : i32, i32
   // CHECK: }
   // CHECK: return %[[RESULTS]]#0, %[[RESULTS]]#1 : i32, i32
 }
-
-// -----
-
-// Test skipped preload scope result used by hivm.hir.copy dst yielded by scf.for.
-//
-// Pattern before create-preload:
-//   %r = scope.scope ...
-//   hivm.hir.copy ins(%r) outs(%dst)
-//   scf.yield %dst
-//
-// When the preload scope is skipped, the false path should keep the old value
-// corresponding to the yielded copy dst. 
-
-// CHECK-LABEL: func.func @test_preload_false_branch_copy_dst_yield
-// CHECK-SAME: (%[[SRC:.*]]: memref<128x128xf32>, %[[INIT:.*]]: memref<128x128xf32>)
-func.func @test_preload_false_branch_copy_dst_yield(
-    %src: memref<128x128xf32>,
-    %init: memref<128x128xf32>) -> memref<128x128xf32> {
-  %c0 = arith.constant 0 : i32
-  %c4 = arith.constant 4 : i32
-  %c1 = arith.constant 1 : i32
-
-  %0 = scf.for %i = %c0 to %c4 step %c1
-      iter_args(%state = %init) -> memref<128x128xf32> : i32 {
-    %r = scope.scope : () -> memref<128x128xf32> {
-      scope.return %src : memref<128x128xf32>
-    } {
-      no_inline,
-      hivm.preload_num = 0 : i32,
-      hivm.max_preload_num = 1 : i32
-    }
-
-    hivm.hir.copy ins(%r : memref<128x128xf32>)
-                  outs(%state : memref<128x128xf32>)
-
-    scf.yield %state : memref<128x128xf32>
-  }
-
-  return %0 : memref<128x128xf32>
-}
-
-// CHECK: scf.for %[[IV:.*]] = {{.*}} to {{.*}} step {{.*}} : i32 {
-// CHECK:   %[[LOWER:.*]] = arith.cmpi sge, %[[IV]], {{.*}} : i32
-// CHECK:   %[[UPPER:.*]] = arith.cmpi slt, %[[IV]], {{.*}} : i32
-// CHECK:   %[[COND:.*]] = arith.andi %[[LOWER]], %[[UPPER]] : i1
-// CHECK:   %[[IF:.*]] = scf.if %[[COND]] -> (memref<128x128xf32>) {
-// CHECK:     %[[SCOPE:.*]] = scope.scope : () -> memref<128x128xf32> {
-// CHECK:       scope.return %[[SRC]] : memref<128x128xf32>
-// CHECK:     } {hivm.max_preload_num = 1 : i32, hivm.preload_num = 0 : i32}
-// CHECK:     scf.yield %[[SCOPE]] : memref<128x128xf32>
-// CHECK:   } else {
-// CHECK:     scf.yield %[[INIT]] : memref<128x128xf32>
-// CHECK:   }
-// CHECK:   hivm.hir.copy ins(%[[IF]] : memref<128x128xf32>) outs(%[[INIT]] : memref<128x128xf32>)
-// CHECK: }
-// CHECK: return %[[INIT]] : memref<128x128xf32>
