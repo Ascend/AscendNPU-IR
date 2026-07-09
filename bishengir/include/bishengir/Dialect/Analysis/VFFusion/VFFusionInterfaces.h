@@ -69,7 +69,7 @@ public:
 
         // Filter out for ops which make sense for fusion
         SmallVector<Operation *> computeOps =
-            getComputeOps(SmallVector<Operation*>(candidateBlock.getOps()));
+            getComputeOps(SmallVector<Operation *>(candidateBlock.getOps()));
         // When a fusion block contains at most one op, the normal fusion
         // path is bypassed (continue).  However, certain ops that are known
         // to be processed by a dedicated downstream pass (e.g. reduce-sum
