@@ -45,7 +45,10 @@ using namespace cl::sycl;
 // auto sychronization of compiler which use id among 0 and 5.
 #define MIN(x, y) (x < y ? x : y)
 #define MAX(x, y) (x > y ? x : y)
-#define LIB_EVENT_ID0 EVENT_ID6
+// Keep in sync with reservedEventIdNum in GraphSyncSolver/Utility.cpp.
+// LIB_EVENT_ID1 (EVENT_ID6) is not used and not reserved yet.
+#define LIB_EVENT_ID0 EVENT_ID7
+#define LIB_EVENT_ID1 EVENT_ID6
 
 // Avoid including <cmath> when building ARM target
 #define INFINITY (__builtin_inff())
