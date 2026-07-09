@@ -313,9 +313,13 @@ static LogicalResult handleParallelLoop(scf::ForOp parallelLoopOp,
     ub.set(newUb);
   });
   rewriter.setInsertionPoint(subViewOp);
+  auto offsets = subViewOp.getMixedOffsets();
+  auto sizes = subViewOp.getMixedSizes();
+  handleExtractOfExtract(offsets[tilingDim], sizes[tilingDim], tiledOffset,
+                         tiledSize, subViewOp.getLoc(), rewriter);
   rewriter.replaceOpWithNewOp<memref::SubViewOp>(
-      subViewOp, propagateOp.getInputs()[0], subViewOp.getMixedOffsets(),
-      subViewOp.getMixedSizes(), subViewOp.getMixedStrides());
+      subViewOp, propagateOp.getInputs()[0], offsets, sizes,
+      subViewOp.getMixedStrides());
   rewriter.eraseOp(propagateOp);
   return success();
 }
@@ -379,7 +383,8 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
     if (!newOp->hasAttr(attr.getName()))
       newOp->setAttr(attr.getName(), attr.getValue());
   }
-  insertDownPropagators(subViewOp, newOp, tiledOffset, tiledSize, tilingDim, rewriter);
+  insertDownPropagators(subViewOp, newOp, tiledOffset, tiledSize, tilingDim,
+                        rewriter);
   rewriter.eraseOp(subViewOp);
   rewriter.eraseOp(propagateOp);
   LDBG("Propagated down through dynamic subview " << newOp);
@@ -392,7 +397,7 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownMemorySpaceCast(
   auto oldResultType = dyn_cast<MemRefType>(castOp.getResult().getType());
   auto newInput = propagateOp.getInputs()[0];
   auto newSourceType = dyn_cast<MemRefType>(newInput.getType());
-  
+
   if (!oldResultType || !newSourceType)
     return failure();
   auto newResultType = getSlicedMemRefType(oldResultType, newSourceType);

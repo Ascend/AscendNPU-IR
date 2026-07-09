@@ -902,7 +902,8 @@ bool DimensionAnalyzer::isParallelOp(Operation *op) const {
 #else
                     bufferization::ToBufferOp
 #endif
-                    >(op));
+                    ,
+                    arith::SelectOp>(op));
 }
 
 void DimensionAnalyzer::combineInferable() {
