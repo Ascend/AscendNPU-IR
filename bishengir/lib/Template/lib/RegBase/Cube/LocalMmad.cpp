@@ -134,11 +134,20 @@ CATLASS_DEVICE void L1Mmad(
     constexpr uint32_t L0A_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementA);
     constexpr uint32_t L0B_ELE_NUM_PER_C0 = BYTE_PER_C0 / sizeof(ElementB);
 
+    bool enableDoubleBuffer = true;
     uint32_t l0K = RoundDown<C0_NUM_PER_FRACTAL>(
         min(L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) / RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) / L0A_ELE_NUM_PER_C0
                 * L0A_ELE_NUM_PER_C0,
             L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) / RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) / L0B_ELE_NUM_PER_C0
                 * L0B_ELE_NUM_PER_C0));
+    if (l0K == 0) {
+        enableDoubleBuffer = false;
+        l0K = RoundDown<C0_NUM_PER_FRACTAL>(
+            min(2 * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA) / RoundUp<L1AAlignHelper::M_ALIGNED>(actualM) / L0A_ELE_NUM_PER_C0
+                    * L0A_ELE_NUM_PER_C0,
+                2 * L0B_PINGPONG_BUF_SIZE / sizeof(ElementB) / RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) / L0B_ELE_NUM_PER_C0
+                    * L0B_ELE_NUM_PER_C0));
+    }
 
     uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
@@ -146,7 +155,7 @@ CATLASS_DEVICE void L1Mmad(
         uint32_t kL0Actual = (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
 
         // Get ping/pong id (0 or 1)
-        uint32_t pingPongId = getL1MmadPingPongId();
+        uint32_t pingPongId = enableDoubleBuffer ? getL1MmadPingPongId() : 0;
         uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
         // Locate the current tile on L0A
