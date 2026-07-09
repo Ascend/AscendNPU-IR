@@ -32,7 +32,6 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -986,26 +985,21 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           if (currentTcoretype)
             return;
 
-          auto inferNewCoreType =
-              [&op](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
-            TCoreTypeAttr newTcoretype = nullptr;
-            auto coreType = PropagatorUtil::getCoreType(upProp);
-            if (coreType != TCoreType::CUBE_AND_VECTOR) {
-              return TCoreTypeAttr::get(op.getContext(), coreType);
-            } else {
-              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
-              if (addressSpaces.empty()) {
-                LDBG("not set tcoretype for " << op);
-                return nullptr;
-              }
-              auto addressSpace = addressSpaces[0];
-              return TCoreTypeAttr::get(
-                  op.getContext(),
-                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace));
+          TCoreTypeAttr newTcoretype = nullptr;
+          auto coreType = PropagatorUtil::getCoreType(upProp);
+          if (coreType != TCoreType::CUBE_AND_VECTOR) {
+            newTcoretype = TCoreTypeAttr::get(op.getContext(), coreType);
+          } else {
+            auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+            if (addressSpaces.empty()) {
+              LDBG("not set tcoretype for " << op);
+              return;
             }
-          };
-
-          TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
+            auto addressSpace = addressSpaces[0];
+            newTcoretype = TCoreTypeAttr::get(
+                op.getContext(),
+                PropagatorUtil::kAddressSpace2CoreType.at(addressSpace));
+          }
           if (newTcoretype)
             op.setTcoretypeAttr(newTcoretype);
         });
