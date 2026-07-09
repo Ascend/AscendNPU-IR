@@ -2,7 +2,7 @@
 
 ## 性能优化案例
 
-### `Tiling` 策略
+### Tiling 策略
 
 #### 案例说明
 
@@ -87,7 +87,7 @@ BLOCK_K = 128
 + grid = (triton.cdiv(B, BLOCK_B),)
 ```
 
-### `kernel` 昇腾亲和改写
+### kernel 昇腾亲和改写
 
 #### 案例说明
 
@@ -180,9 +180,9 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 对于`varlen`类的算子，通常会在`seqlen`中随机采样`indice`，需要保证`indice`的入参合理性。例如严格递增且在`[0, seqlen]`范围内。
 
-### `UB overflow` 类问题
+### UB overflow 类问题
 
-#### `triton argmax op` 先 32B 对齐，再融轴，浪费大量 `UB` 空间
+#### triton argmax op 先 32B 对齐，再融轴，浪费大量 UB 空间
 
 `mlir`代码如下：
 
@@ -213,7 +213,7 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
     原始的数据`256x9x11xi8`大小：`25344B`；从`GM`中`load`到`UB`，`UB`中占用的大小（`256x32x11x1xi8`）：`90112B`，占用的`UB`大小为原始数据大小的3.5 倍多。
 
-#### `triton not op` 不合理的实现，导致额外占用内存
+#### triton not op 不合理的实现，导致额外占用内存
 
 `Triton Not OP`的实现，在`NPU-IR`中，被转成`VOR`、`VAND`、`VNOT`、`VAND`等一系列操作来处理，实际上可以只执行`VNOT`操作：
 
@@ -265,7 +265,7 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
     原始的数据大小为：`65536B`，为了完成`(input_data|(-1))&(!(input_data&(-1)))`运算，申请了`5 * 65536B`的`UB`空间。
 
-#### `triton max_dim0 op` 在 `int64` 类型输入下，先执行 `PlanMemory`，再执行 `HIVMLowerToLoops`，浪费大量 `UB` 空间
+#### triton max_dim0 op 在 int64 类型输入下，先执行 PlanMemory，再执行 HIVMLowerToLoops，浪费大量 UB 空间
 
 `mlir`代码如下：
 
@@ -288,7 +288,7 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hi
 
 - 总结：`PlanMemory`时考虑的`temp_buffer`在最后计算时并未使用，导致误报`ub overflow`，需要在`PlanMemory`前分配`temp_buffer`的步骤中修改临时节点分配规则。
 
-### `D-cache` 类
+### D-cache 类
 
 #### 无效地址访问
 
@@ -315,7 +315,7 @@ DEVICE="npu:0"
 A=torch.empty(shape, dtype, device=DEVICE).npu()
 ```
 
-#### 使用非负数 `iter arg` 作为访存索引
+#### 使用非负数 iter arg 作为访存索引
 
 - **现象**：由于编译过程会对访存操作进行分析并优化编译结果，若访存操作的索引涉及到复杂的控制流（如`for`循环索引引入的访问越界），目前编译器或许没有能力完全覆盖，因此建议使用非负数的`for`循环`iter`参数作为访存索引。
 
@@ -339,7 +339,7 @@ for i_w in tl.static_range(W):
 
 ### 访存类
 
-#### `Load` 隐式转置
+#### Load 隐式转置
 
 - **现象**："隐式转置"是指在加载或存储数据的同时完成矩阵转置操作，避免单独执行一个转置内核或额外的显式数据重排。它通常通过调整指针的步长和形状来实现，使得内存访问模式隐含地完成维度交换。这种技术可以节省全局内存带宽、减少内核启动开销，并提高计算效率。
 
@@ -437,7 +437,7 @@ y = transpose(x)
 
 执行结束不报错，证明运行成功。
 
-#### 使用 `mayDiscretememaccess` 规避 `UB overflow`
+#### 使用 mayDiscretememaccess 规避 UB overflow
 
 - **现象**：导致`UB overflow`的成因各异，除了本身张量数据类型过大，导致超出`192KB`的`UB`限制，另一个可能的原因是非连续搬运导致`UB`内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要`32B`对齐，而`1xf32`只有`4B`大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保`32B`对齐。无论因为什么原因导致的`UB overflow`，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免`UB overflow`。
 
@@ -679,7 +679,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 本章节介绍`Triton NPU`算子性能优化指南。
 
-### 使用 `bitwise_mask` 优化访存掩码
+### 使用 bitwise_mask 优化访存掩码
 
 #### 问题描述
 
@@ -998,9 +998,9 @@ def kernel_opt(in_ptr, out_ptr, batch_size,
 - 手动对齐要求`ALIGN`为编译期常量，且应等于硬件建议的对齐宽度。
 - 填充值（如`-inf`）需与后续计算兼容，确保不影响最终结果（例如`exp(-inf) = 0`）。
 
-### `CV` 类
+### CV 类
 
-#### 使用 `hivm.tile_mix_cube_num` 规避 `L1` 越界
+#### 使用 hivm.tile_mix_cube_num 规避 L1 越界
 
 ##### 问题描述
 
@@ -1112,7 +1112,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-## `Triton NPU` 编程案例
+## Triton NPU 编程案例
 
 `Triton NPU`编程请参考：
 [https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)

@@ -1,10 +1,10 @@
-# `hfusion` 方言
+# hfusion 方言
 
 Hybrid Fusion（HFusion）方言。
 
 ## 操作定义
 
-### `hfusion.arange` (hfusion::ArangeOp)
+### hfusion.arange (hfusion::ArangeOp)
 
 **功能：** 生成序列，与标准arange存在差异，支持偏移量（默认值0）与多维场景并配套多维步长。偏移量、步长定义规则与内存描述符保持一致。
 
@@ -29,7 +29,7 @@ Hybrid Fusion（HFusion）方言。
 | :----: | ----------- |
 | `result_tensor` | 任意类型带形状输出张量 |
 
-### `hfusion.assert` (hfusion::AssertOp)
+### hfusion.assert (hfusion::AssertOp)
 
 **功能：** 设备端调试断言。接收字符串提示信息与标量/张量判断条件。
 
@@ -51,7 +51,7 @@ operation ::= `hfusion.assert` $msg attr-dict $cond `:` type($cond)
 | :-----: | ----------- |
 | `cond` | 整数或任意类型定维张量 |
 
-### `hfusion.atomic_cas` (hfusion::AtomicCasOp)
+### hfusion.atomic_cas (hfusion::AtomicCasOp)
 
 **功能：** 原子比较交换（CAS）操作。包含内存地址、预期旧值、新值三个输入；仅当内存值等于预期旧值时，将内存更新为新值，无论是否更新均返回内存原始值。
 
@@ -94,7 +94,7 @@ hfusion.atomic_cas ins(%src0, %src1 : memref<?xf32>, memref<?xf32>) outs(%dst : 
 | :----: | ----------- |
 | `output` | 输出张量/内存视图 |
 
-### `hfusion.atomic_rmw` (hfusion::AtomicRMWOp)
+### hfusion.atomic_rmw (hfusion::AtomicRMWOp)
 
 **功能：** 原子读改写操作。流程：读取内存原值 → 根据原子类型执行计算 → 写入新值并返回原值，全程不可中断。
 
@@ -143,7 +143,7 @@ hfusion.atomic_rmw ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) atomic_k
 | :----: | ----------- |
 | `output` | 输出张量/内存视图 |
 
-### `hfusion.atomic_xchg` (hfusion::AtomicXchgOp)
+### hfusion.atomic_xchg (hfusion::AtomicXchgOp)
 
 **功能：** 原子交换操作。流程：读取内存原值 → 写入新值 → 返回原值，全程不可中断。
 
@@ -189,7 +189,7 @@ hfusion.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) mask(%m
 | :----: | ----------- |
 | `output` | 输出张量/内存视图 |
 
-### `hfusion.barrier` (hfusion::BarrierOp)
+### hfusion.barrier (hfusion::BarrierOp)
 
 **功能：** 同步单个计算核内所有流水线。
 
@@ -199,7 +199,7 @@ hfusion.atomic_xchg ins(%src : memref<?xf32>) outs(%dst : memref<?xf32>) mask(%m
 operation ::= `hfusion.barrier` attr-dict
 ```
 
-### `hfusion.bitcast` (hfusion::BitcastOp)
+### hfusion.bitcast (hfusion::BitcastOp)
 
 **功能：** 逐元素执行比特类型转换。
 
@@ -219,7 +219,7 @@ operation ::= `hfusion.barrier` attr-dict
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.cast` (hfusion::CastOp)
+### hfusion.cast (hfusion::CastOp)
 
 **功能：** 逐元素执行数值类型转换。
 
@@ -247,7 +247,7 @@ operation ::= `hfusion.barrier` attr-dict
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.compare` (hfusion::CompareOp)
+### hfusion.compare (hfusion::CompareOp)
 
 **功能：** 逐元素执行比较运算，不会对输入做数值类型提升转换。
 
@@ -273,7 +273,7 @@ operation ::= `hfusion.barrier` attr-dict
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.cumprod` (hfusion::CumprodOp)
+### hfusion.cumprod (hfusion::CumprodOp)
 
 **功能：** 在指定维度计算张量累积乘积，reverse控制累积方向，当前仅支持单维度累积。
 
@@ -306,7 +306,7 @@ operation ::= `hfusion.cumprod` $input attr-dict `:` type($input) `cum_dims` `=`
 | :----: | ----------- |
 | `output` | 与输入同类型、同秩输出张量 |
 
-### `hfusion.cumsum` (hfusion::CumsumOp)
+### hfusion.cumsum (hfusion::CumsumOp)
 
 **功能：** 在指定维度计算张量累积和，reverse控制累积方向，当前仅支持单维度累积。
 
@@ -339,7 +339,7 @@ operation ::= `hfusion.cumsum` $input attr-dict `:` type($input) `cum_dims` `=` 
 | :----: | ----------- |
 | `output` | 与输入同类型、同秩输出张量 |
 
-### `hfusion.deinterleave` (hfusion::DeinterleaveOp)
+### hfusion.deinterleave (hfusion::DeinterleaveOp)
 
 **功能：** 对输入张量最后一维解交织，拆分两组元素：偶数索引、奇数索引，输入最后一维长度必须为2的倍数。
 channelIndex控制输出：-1输出两组、0仅输出偶数通道、1仅输出奇数通道。
@@ -374,7 +374,7 @@ operation ::= `hfusion.deinterleave` $input custom<HFusionDeinterleave>($channel
 | :----: | ----------- |
 | `output` | 变长任意类型定维输出张量 |
 
-### `hfusion.elemwise_binary` (hfusion::ElemwiseBinaryOp)
+### hfusion.elemwise_binary (hfusion::ElemwiseBinaryOp)
 
 **功能：** 逐元素二元运算，自动将输入数值提升至输出/累加器数据类型。
 
@@ -401,7 +401,7 @@ operation ::= `hfusion.deinterleave` $input custom<HFusionDeinterleave>($channel
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.elemwise_unary` (hfusion::ElemwiseUnaryOp)
+### hfusion.elemwise_unary (hfusion::ElemwiseUnaryOp)
 
 **功能：** 逐元素一元运算，自动将输入数值提升至输出/累加器数据类型。
 
@@ -428,7 +428,7 @@ operation ::= `hfusion.deinterleave` $input custom<HFusionDeinterleave>($channel
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.flip` (hfusion::FlipOp)
+### hfusion.flip (hfusion::FlipOp)
 
 **功能：** 沿指定维度翻转张量，当前仅支持最后一维。
 
@@ -464,7 +464,7 @@ operation ::= `hfusion.flip` $input attr-dict `:` type($input)
 | :----: | ----------- |
 | `output` | 与输入同类型、同秩输出张量 |
 
-### `hfusion.gather` (hfusion::GatherOp)
+### hfusion.gather (hfusion::GatherOp)
 
 **功能：** 沿指定轴从源张量收集元素，非收集维度形状与输入保持一致，对齐triton.language.gather语义。
 
@@ -491,7 +491,7 @@ operation ::= `hfusion.flip` $input attr-dict `:` type($input)
 | :----: | ----------- |
 | `result` | 变长任意类型输出张量 |
 
-### `hfusion.group_matmul` (hfusion::GroupMatmulOp)
+### hfusion.group_matmul (hfusion::GroupMatmulOp)
 
 **功能：** 分组矩阵乘法，用于MoE场景，为每个专家权重与对应Token执行矩阵乘。
 
@@ -511,7 +511,7 @@ operation ::= `hfusion.flip` $input attr-dict `:` type($input)
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.histogram` (hfusion::HistogramOp)
+### hfusion.histogram (hfusion::HistogramOp)
 
 **功能：** 整数张量直方图统计，支持可选掩码，仅统计掩码为true的元素；输出为一维张量，长度等于分箱数量，分箱数为编译期常量。
 
@@ -542,7 +542,7 @@ operation ::= `hfusion.histogram` $input `,` $num_bins (`,` $mask^)? attr-dict `
 | :----: | ----------- |
 | `output` | 一维整数张量，支持32/64位无符号整数 |
 
-### `hfusion.interleave` (hfusion::InterleaveOp)
+### hfusion.interleave (hfusion::InterleaveOp)
 
 **功能：** 沿最后一维交织多个张量元素，当前仅支持2个输入张量；所有输入形状、秩必须完全一致。
 
@@ -570,7 +570,7 @@ operation ::= `hfusion.interleave` $input attr-dict `:` type($input) `->` type($
 | :----: | ----------- |
 | `output` | 任意类型定维交织输出张量 |
 
-### `hfusion.isfinite` (hfusion::IsFiniteOp)
+### hfusion.isfinite (hfusion::IsFiniteOp)
 
 **功能：** 判断浮点张量每个元素是否为有限值（非NaN、非正负无穷）。
 
@@ -596,7 +596,7 @@ operation ::= `hfusion.isfinite` $input attr-dict `:` type($input) `->` type($ou
 | :----: | ----------- |
 | `output` | 1比特定维布尔张量 |
 
-### `hfusion.isinf` (hfusion::IsInfOp)
+### hfusion.isinf (hfusion::IsInfOp)
 
 **功能：** 判断浮点张量每个元素是否为正负无穷。
 
@@ -622,7 +622,7 @@ operation ::= `hfusion.isinf` $input attr-dict `:` type($input) `->` type($outpu
 | :----: | ----------- |
 | `output` | 1比特定维布尔张量 |
 
-### `hfusion.isnan` (hfusion::IsNanOp)
+### hfusion.isnan (hfusion::IsNanOp)
 
 **功能：** 判断浮点张量每个元素是否为NaN。
 
@@ -648,7 +648,7 @@ operation ::= `hfusion.isnan` $input attr-dict `:` type($input) `->` type($outpu
 | :----: | ----------- |
 | `output` | 1比特定维布尔张量 |
 
-### `hfusion.load` (hfusion::LoadOp)
+### hfusion.load (hfusion::LoadOp)
 
 **功能：** 逐元素读取张量数据，不执行数值类型转换。
 
@@ -668,7 +668,7 @@ operation ::= `hfusion.isnan` $input attr-dict `:` type($input) `->` type($outpu
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.mulext` (hfusion::MulExtOp)
+### hfusion.mulext (hfusion::MulExtOp)
 
 **功能：** 有符号整数扩展乘法，输入N位整数，输出两组N位结果：乘积低半段、乘积高半段；低半段等价普通乘法结果。
 
@@ -696,7 +696,7 @@ operation ::= `hfusion.mulext` $lhs `,` $rhs attr-dict `:` type($lhs)
 | `low` | 乘积低半段，signless-integer-like类型 |
 | `high` | 乘积高半段，signless-integer-like类型 |
 
-### `hfusion.print` (hfusion::PrintOp)
+### hfusion.print (hfusion::PrintOp)
 
 **功能：** 设备端调试打印，接收前缀字符串与标量/张量，支持十六进制输出开关。
 
@@ -719,7 +719,7 @@ operation ::= `hfusion.print` $prefix attr-dict $arg `:` type($arg)
 | :-----: | ----------- |
 | `arg` | 整数、浮点或任意类型定维张量 |
 
-### `hfusion.reduce_with_index` (hfusion::ReduceWithIndexOp)
+### hfusion.reduce_with_index (hfusion::ReduceWithIndexOp)
 
 **功能：** 带索引的最大/最小值规约运算，仅支持单规约维度。两种使用模式：输入+索引张量输出结果与索引；仅输入张量自动生成索引。tie_break_left控制相等值取最左/最右索引。
 
@@ -747,7 +747,7 @@ operation ::= `hfusion.print` $prefix attr-dict $arg `:` type($arg)
 | :----: | ----------- |
 | `result` | 变长任意类型输出张量 |
 
-### `hfusion.select` (hfusion::SelectOp)
+### hfusion.select (hfusion::SelectOp)
 
 **功能：** 根据首个二元条件操作数选择对应数值。
 
@@ -767,7 +767,7 @@ operation ::= `hfusion.print` $prefix attr-dict $arg `:` type($arg)
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.sort` (hfusion::SortOp)
+### hfusion.sort (hfusion::SortOp)
 
 **功能：** 沿指定轴排序张量，输出排序数值与对应索引。
 
@@ -820,7 +820,7 @@ operation ::= `hfusion.sort` attr-dict `ins` `(` $src `:` type($src) `)`
 | :----: | ----------- |
 | `result` | 变长任意类型定维输出张量 |
 
-### `hfusion.store` (hfusion::StoreOp)
+### hfusion.store (hfusion::StoreOp)
 
 **功能：** 逐元素存储张量数据，不执行数值类型转换，支持原子写入模式。
 
@@ -846,7 +846,7 @@ operation ::= `hfusion.sort` attr-dict `ins` `(` $src `:` type($src) `)`
 | :----: | ----------- |
 | `result_tensors` | 变长任意类型定维输出张量 |
 
-### `hfusion.symbolic_dim` (hfusion::SymbolicDimOp)
+### hfusion.symbolic_dim (hfusion::SymbolicDimOp)
 
 **功能：** 通过符号名称引用符号维度，返回index类型数值。
 

@@ -38,7 +38,7 @@
 
 ### 运行依赖
 
-#### `CANN` 包安装
+#### CANN 包安装
 
 `AscendNPU IR`端到端运行依赖`CANN`环境。
 
@@ -177,11 +177,11 @@ ninja -j32
 
 `AscendNPU IR`二进制会随`CANN toolkit`包一起安装，参见上文[CANN 包安装](#cann 包安装)。
 
-## 直接使用 `Docker` 镜像
+## 直接使用 Docker 镜像
 
 使用`Docker`镜像进行开发与验证，无需配置环境。
 
-### 复用 `CANN` 镜像
+### 复用 CANN 镜像
 
 `CANN Toolkit`包中会包含完整的`AscendNPU IR`二进制，`Docker`镜像可以复用`CANN`的镜像。
 
@@ -237,10 +237,10 @@ bishengir-compile --version # 可以看到 AscendNPU IR 的版本信息
 
 ## 运行测试
 
-### 编译测试 `Target`
+### 编译测试 Target
 
 ```bash
-# 在 `build` 目录下
+# 在 build 目录下
 cmake --build . --target "check-mlir;check-bishengir"
 ```
 
@@ -306,10 +306,10 @@ Total Discovered Tests: 388
 - **UNRESOLVED**：无法判定结果
 - **TIMEOUT**：超时
 
-### 使用 `LLVM-LIT` 执行测试套
+### 使用 LLVM-LIT 执行测试套
 
 ```bash
-# 在 `build` 目录下
+# 在 build 目录下
 ./bin/llvm-lit ../bishengir/test
 ```
 

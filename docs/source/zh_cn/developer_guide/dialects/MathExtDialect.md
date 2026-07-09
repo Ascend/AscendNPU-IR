@@ -1,10 +1,10 @@
-# `mathExt` 方言
+# mathExt 方言
 
 扩展标准数学运算能力的方言，提供浮点数指数/分数部分分解等特殊数学操作，支持标量、张量和向量类型的逐元素计算。
 
 ## 操作定义
 
-### `mathExt.ilogb` (::mlir::mathExt::IlogbOp)
+### mathExt.ilogb (::mlir::mathExt::IlogbOp)
 
 **功能：** 计算浮点数绝对值的以2为底对数的向下取整（等效于提取IEEE 754浮点数的指数部分）。
 
@@ -37,7 +37,7 @@ operation ::= `mathExt.ilogb` $operand (`fastmath` `` $fastmath^)?
 | :------: | ------------ |
 | `result` | 浮点类型（与操作数同类型） |
 
-### `mathExt.ldep` (::mlir::mathExt::LdexpOp)
+### mathExt.ldep (::mlir::mathExt::LdexpOp)
 
 **功能：** 计算浮点数的分数部分与指数部分的归一化组合（等效于`x * (ilogb(x) + 1)^(-1)`）。
 

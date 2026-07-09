@@ -1,4 +1,4 @@
-# `annotation` 方言
+# annotation 方言
 
 `annotation`方言用于提供注解操作，可为指定操作附加扩展属性。
 
@@ -9,7 +9,7 @@ annotation.mark %a { attr-dict } : f64
 
 ## 操作定义
 
-### `annotation.mark` (annotation::MarkOp)
+### annotation.mark (annotation::MarkOp)
 
 **功能：** 使用键值对形式的属性对IR值添加注解。注解取值分为两种形式，静态取值通过内联属性字典定义，动态取值通过IR运行时值传入。
 

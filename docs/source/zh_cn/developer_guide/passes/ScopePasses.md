@@ -1,6 +1,6 @@
 # scope 方言 Passes
 
-## `-inline-scope`
+## -inline-scope
 
 **功能：** 内联ScopeOp中的作用域区域。若`scope.scope`未携带`no_inline`属性，则将作用域内的算子移出至其父区域。
 
@@ -39,7 +39,7 @@ func.func @test() {
 
 - `-force-inline`：忽略`no_inline`属性，强制内联所有作用域。
 
-## `-outline-scope`
+## -outline-scope
 
 **功能：** 外提ScopeOp中的作用域区域，将`scope.scope`转换为独立的`func.func`函数。
 

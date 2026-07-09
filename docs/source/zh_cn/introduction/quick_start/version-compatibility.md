@@ -4,7 +4,7 @@
 
 为了保证编译与运行的稳定性，请严格按照本文档提供的版本配套关系进行环境配置。
 
-## `CANN` 配套关系
+## CANN 配套关系
 
 以下版本组合为经过验证的推荐配置，建议优先使用：
 
@@ -34,7 +34,7 @@ cp -r $BiShengCompilerPath/* ${OLD_CANN_PATH}/tools/bisheng_compiler/
 rm -rf $TMP_PATH
 ```
 
-## `Python` 配套关系
+## Python 配套关系
 
 `AscendNPU IR`同时包含`Python`的`wheel`包，可以通过`pip`安装：
 

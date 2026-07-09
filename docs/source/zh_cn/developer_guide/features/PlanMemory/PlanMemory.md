@@ -63,7 +63,7 @@
 
 可复用分配包括`Inplace`复用和三级分配复用。
 
-##### `Inplace` 复用
+##### Inplace 复用
 
 `Inplace`复用条件：
 

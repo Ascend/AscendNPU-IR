@@ -25,9 +25,9 @@
   您可以新建[Requirement|需求建议](https://gitcode.com/Ascend/AscendNPU-IR/issues/create?type=template&title=%E6%96%B0%E9%9C%80%E6%B1%82&template=.gitcode%252FISSUE_TEMPLATE%252Ffeature.yml)类Issue对新的样例算子予以说明，并提供您的设计方案，然后在评论框中输入“/assign”或“/assign @yourself”，将该Issue分配给您进行处理。
 
   对于您浏览的其他Issue：
-  - 若该问题正是您要解决的，请在问题下评论说明您将负责处理。
-  - 若问题已打开较久，解决前请先做预检查。
-  - 若您解决了自己报告的问题，关闭前请简要说明处理结果。
+    - 若该问题正是您要解决的，请在问题下评论说明您将负责处理。
+    - 若问题已打开较久，解决前请先做预检查。
+    - 若您解决了自己报告的问题，关闭前请简要说明处理结果。
 
 - 问题咨询
 

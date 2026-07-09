@@ -187,7 +187,7 @@ hivm.hir.finish_debug
 
 `ConvertHIVMToLLVM`引入真正的库函数，并设置print相关函数的链接为`ExternWeak`（允许在多个llvm modules中重复定义）
 
-##### `Debug` op 库实现
+##### Debug op 库实现
 
 `op`库当前实现是通过`scalar`打印来实现的，通过`for`循环外抛的方式调用毕昇编译器提供的`cce::printf`接口进行`scalar`打印
 

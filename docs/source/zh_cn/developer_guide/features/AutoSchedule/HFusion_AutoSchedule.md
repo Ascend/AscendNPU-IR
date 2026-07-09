@@ -156,7 +156,7 @@ AutoSchedule的整体调用链可以概括为：
   - 是否支持多核`reduce`以及可并行的维度信息。
 - 针对特定融合模式，可扩展派生类（如`AnyPBRKernelInfo`）以添加模式特有的分析结果。
 
-##### Tiling 描述（`TilingUtils.h`）
+##### Tiling 描述（TilingUtils.h）
 
 - **TilingData**：表示单个维度的Tiling参数，可为常量或表达式。
 - **TilingStruct** / **TilingCases**：描述一组完整Tiling方案，以及多候选方案集合。
@@ -255,7 +255,7 @@ AutoSchedule的整体调用链可以概括为：
 - 在HFusion的枚举定义（如`HFusionEnums.td`）中，新增一个融合类型枚举，例如：`FusionKind::MyKind`。
 - 在融合分析与pattern匹配阶段，确保能识别并产出对应`FusionKind::MyKind`的融合单元，以便后续AutoSchedule正确选择调度器。
 
-#### 继承 `SchedulerBase` 实现自定义调度器
+#### 继承 SchedulerBase 实现自定义调度器
 
 - 在`bishengir/include/bishengir/Dialect/HFusion/Transforms/AutoSchedule/`下新增头文件（如`MySchedule.h`），定义调度器类：
 
@@ -305,7 +305,7 @@ public:
     - 特殊的pattern归一化；
     - 调度结果校验与统计输出。
 
-#### 扩展 `KernelInfo`（可选）
+#### 扩展 KernelInfo（可选）
 
 若新策略需要额外的结构化信息，可通过继承`KernelInfo`扩展：
 

@@ -1,6 +1,6 @@
 # 调试调测
 
-## 调试：`DEBUG OP` 类
+## 调试：DEBUG OP 类
 
 在基于`AscendNPU IR`进行算子开发与移植过程中（如基于`Triton`前端编写算子并基于`AscendNPU IR`编译执行）调试是必不可少的一环。为了帮助开发者在不同抽象层次定位问题，`AscendNPU IR`定义了两类核心调试算子：
 
@@ -10,14 +10,14 @@
 
 接下来将从`AscendNPU IR`的视角出发，介绍这两类调试算子的接口以及使用方式，并以`Triton`前端为例，演示如何在算子开发全流程中注入并使用这些调试能力。
 
-### AscendNPU IR 调试 `OP` 介绍
+### AscendNPU IR 调试 OP 介绍
 
 `AscendNPU IR`侧依赖毕昇编译器提供的`cce::printf`接口进行打印，要想开启打印需要满足以下两个条件：
 
 1. 需要启用宏`__CCE_ENABLE_PRINT__`（以`triton`为例，通过`export TRITON_DEVICE_PRINT=1`来启用该选项）。
 2. `AscendNPU IR meta OP`库（将逻辑代码映射成对应硬件指令的地方）编译的时候需要开启`--cce-enable-print`（当前默认一直开启）。
 
-#### `hfusion` 层调试：`PrintOp`
+#### hfusion 层调试：PrintOp
 
 ##### 接口说明
 
@@ -43,7 +43,7 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 }
 ```
 
-#### `hivm` 层调试：`DebugOp`
+#### hivm 层调试：DebugOp
 
 ##### 接口说明
 
@@ -75,7 +75,7 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 }
 ```
 
-### `triton` 接入说明
+### triton 接入说明
 
 有多种生态编程语言对接`AscendNPU IR`，当前仅以`Triton`为例进行介绍，剩余还有`TileLang`、`FlagTree`、`DLCompiler`与`TLE`等方式，可以参考`Triton`进行对接。
 
@@ -86,7 +86,7 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 - `device_assert`：运行时设备断言
 - `device_print`：运行时设备打印
 
-#### `static_assert`
+#### static_assert
 
 ##### 接口描述
 
@@ -129,7 +129,7 @@ if __name__ == "__main__":
 
 ![image](../../images/user_guide/debug_option1.png)
 
-#### `static_print`
+#### static_print
 
 ##### 接口描述
 
@@ -175,7 +175,7 @@ BLOCK = 32
 Dumping intermediate results to /root/.triton/dump/KHviKCdUEjStublnqGQietpeng6Sintejlr0t0SujtspD
 ```
 
-#### `device_assert`
+#### device_assert
 
 说明：启用本功能需预先设置以下环境变量：
 
@@ -230,7 +230,7 @@ if __name__ == "__main__":
 
 ![image](../../images/user_guide/debug_option3.png)
 
-#### `device_print`
+#### device_print
 
 说明：使用此功能前需要设置环境变量`export TRITON_DEVICE_PRINT=1`。
 
@@ -280,7 +280,7 @@ if __name__ == "__main__":
 
 ## 调试：工具类
 
-### `mssanitizer`
+### mssanitizer
 
 命令行异常检测工具用于`triton`算子内存检测/竞争检测/未初始化检测等，使用此功能前需要设置环境变量`export TRITON_ENABLE_SANITIZER=true`。
 
@@ -343,7 +343,7 @@ if __name__ == "__main__":
 
 注：想了解更多`mssanitizer`的检测情况详见[MindStudio 算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
 
-### `msprof`
+### msprof
 
 命令行模型调优工具用于`triton`算子性能数据的采集和解析。
 
@@ -380,7 +380,7 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 
 注：想要了解更多性能分析图可参见[MindStudio 算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html)
 
-#### `triton` 算子流水采集
+#### triton 算子流水采集
 
 以如下`add kernel`为例，希望跑出对应的流水情况：
 

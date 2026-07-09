@@ -1,10 +1,10 @@
-# `scope` 方言
+# scope 方言
 
 Scope方言用于定义代码作用域区域。
 
 ## 操作定义
 
-### `scope.return` (scope::ReturnOp)
+### scope.return (scope::ReturnOp)
 
 **功能：** `scope.scope`区域内部的终结返回操作。
 
@@ -32,7 +32,7 @@ scope.return
 | :-----: | ----------- |
 | `results` | 变长任意类型返回值 |
 
-### `scope.scope` (scope::ScopeOp)
+### scope.scope (scope::ScopeOp)
 
 **功能：** 定义一段独立操作区域的作用域容器。
 

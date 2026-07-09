@@ -1,6 +1,6 @@
 # hacc 方言 Passes
 
-## `-hacc-append-device-spec`
+## -hacc-append-device-spec
 
 **功能：** 为编译目标追加设备规格信息。
 
@@ -8,7 +8,7 @@
 
 - `-target`：指定设备目标名称。
 
-## `-hacc-rename-func`
+## -hacc-rename-func
 
 **功能：** 基于属性重命名函数。该Pass根据`hacc.rename_func`属性重命名函数，并同步更新模块内所有对该函数的调用引用。
 

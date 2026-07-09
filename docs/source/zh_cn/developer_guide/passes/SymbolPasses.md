@@ -1,14 +1,14 @@
 # symbol 方言 Passes
 
-## `-encoding-to-symbol`
+## -encoding-to-symbol
 
 **功能：** 将tensor编码转换为bind_symbolic_shape符号绑定。
 
-## `-erase-symbol`
+## -erase-symbol
 
 **功能：** 擦除符号标记。该Pass从函数中移除符号信息，用于无需符号分析时清理符号化Shape标注。
 
-## `-propagate-symbol`
+## -propagate-symbol
 
 **功能：** 沿算子传播符号信息。该Pass通过替换`tensor.dim`的使用，传播绑定在函数参数上的符号，使tensor动态维度之间的关联更加显式。
 
@@ -55,11 +55,11 @@ symbol.bind_symbolic_shape %out1, [%S1]
 symbol.bind_symbolic_shape %add1, [%S1]
 ```
 
-## `-symbol-to-encoding`
+## -symbol-to-encoding
 
 **功能：** 将bind_symbolic_shape符号绑定转换回tensor编码。
 
-## `-unfold-symbolic-int`
+## -unfold-symbolic-int
 
 **功能：** 展开符号整数，用具体值替换`symbol.symbolic_int`操作。
 该Pass依据bind_symbolic_shape替换所有符号整数，所有symbolic_int都应可通过其首次出现的bind_symbolic_shape完成替换。本Pass不执行符号具体化操作，如需执行具体化请参考propagate-symbol Pass。
