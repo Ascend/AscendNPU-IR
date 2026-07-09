@@ -16,13 +16,17 @@
 
 #include "Fixpipe/FixpipeUtils.h"
 
+template <typename DST_TYPE>
 __aicore__ __attribute__((always_inline)) void
 set_pre_quant_scale(float32_t quant_scale) {
 #ifdef ENABLE_CPU_TRACE_INTRINSIC
 #else
+  constexpr const uint64_t isSignedI8 = (std::is_same<DST_TYPE, int8_t>::value);
+  // QUANT PRE[31 : 13] are for the scale value, in the format of (1, 8, 10)
+  constexpr const uint64_t scaleBitMask = (1ull << 32) - (1ull << 13);
   // it will only consider the first 19 bits for TensorFloat32
   INTRINSIC(set_quant_pre,
-            static_cast<uint64_t>(*reinterpret_cast<int32_t *>(&quant_scale)));
+            (static_cast<uint64_t>(*reinterpret_cast<uint32_t *>(&quant_scale)) & scaleBitMask) | (isSignedI8 << 46));
 #endif
 }
 
@@ -66,7 +70,7 @@ copy_matrix_cc_to_gm_normal_2d_to_2d_core(memref_t<__cc__ SRC_TYPE, 2> *l0c,
   // burst length
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
 
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -106,7 +110,7 @@ copy_matrix_cc_to_gm_normal_4d_to_4d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint16_t src_stride = src_m_size; //in unit of C0
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -201,7 +205,7 @@ copy_matrix_cc_to_ubuf_normal_2d_to_2d_core(
   // burst length
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
 
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   if ((DualDst != DualDstMode::NO_DUAL) &&
@@ -251,7 +255,7 @@ copy_matrix_cc_to_ubuf_normal_4d_to_4d_core(
   uint16_t src_stride = src_m_size; //in unit of C0
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   if ((DualDst != DualDstMode::NO_DUAL) &&
@@ -299,7 +303,7 @@ copy_matrix_cc_to_cbuf_normal_2d_to_2d_core(
   // burst length
   uint16_t m_size = l0c->sizes[1] * sizeof(SRC_TYPE);
 
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
@@ -335,7 +339,7 @@ copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
   uint16_t src_stride = src_m_size; //in unit of C0
   uint16_t dst_stride = dst_m_size * FRACTAL_BLOCK_NUM; // in unit of element
 
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
@@ -372,7 +376,7 @@ copy_matrix_cc_to_gm_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint32_t dst_D = gm->strides[0];
 
   set_nd_para(1, 1, 1);
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_gm_intrin(
@@ -414,7 +418,7 @@ copy_matrix_cc_to_ubuf_nz2nd_4d_to_2d_core(
   }
 
   set_nd_para(1,1,1);
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
 
@@ -466,7 +470,7 @@ copy_matrix_cc_to_cbuf_nz2nd_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   if (n_size < dst_D) n_size = dst_D;
 
   set_nd_para(1, 1, 1);
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   QuantMode_t quant_mode = get_quant_mode(pre_quant);
   copy_matrix_cc_to_cbuf_intrin(
@@ -503,7 +507,7 @@ copy_matrix_cc_to_gm_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint32_t dst_D = gm->strides[0];                         // dstStride_dst_D
 
   set_nd_para(1,1,1);
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   uint64_t src_dn_stride = 1;
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
@@ -547,7 +551,7 @@ copy_matrix_cc_to_ubuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint32_t dst_D = ubuf->strides[0];
   
   set_nd_para(1,1,1);
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   uint64_t src_dn_stride = 1;
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
@@ -600,7 +604,7 @@ copy_matrix_cc_to_cbuf_nz2dn_4d_to_2d_core(memref_t<__cc__ SRC_TYPE, 4> *l0c,
   uint32_t dst_D = cbuf->strides[0];
   
   set_nd_para(1,1,1);
-  set_pre_quant_scale(quant_scale);
+  set_pre_quant_scale<DST_TYPE>(quant_scale);
 
   uint64_t src_dn_stride = 1;    
   uint64_t channel_para = (src_dn_stride & 0xffff) << 48;
