@@ -541,6 +541,21 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
                                 VFModeAttr::get(getContext(), vfMode));
       }
 
+      std::optional<InlineMode> getInlineMode() const {
+        if (const auto inlineModeAttr =
+            (*this)->template getAttrOfType<InlineModeAttr>(
+              InlineModeAttr::name)) {
+          return inlineModeAttr.getValue();
+        }
+
+        return {};
+      }
+
+      void setInlineMode(const InlineMode& inlineMode) {
+        getOperation()->setAttr(InlineModeAttr::name,
+            InlineModeAttr::get(getContext(), inlineMode));
+      }
+
       // Returns true when VFMode attribute must be present (see HIVMOps.cpp).
       bool requiresVFMode();
 
@@ -553,6 +568,8 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
       static constexpr StringLiteral kArgAttrsName = "arg_attrs";
       static constexpr StringLiteral kAlignDimName = "align_dim";
       static constexpr StringLiteral kMaxRankAttrName = "max_rank";
+      static constexpr StringLiteral kInplaceOutsAttrName = "inplace_outs";
+      static constexpr StringLiteral kInlineModeAttrName = "hivm.inline_mode";
 
       int getMaxRank() {
         if (auto maxRankAttr =
