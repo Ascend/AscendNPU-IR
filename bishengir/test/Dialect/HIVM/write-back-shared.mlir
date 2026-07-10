@@ -23,7 +23,7 @@ module {
   }
   module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 32 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 64 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>, hacc.simt_module, hacc.target = #hacc.target<"Ascend910_9589">, "ttg.enable-bishengir-simt-optimization" = 900001 : i32, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.shared = 32 : i32, ttg.target = "cuda:80", "ttg.threads-per-warp" = 32 : i32} {
     llvm.mlir.global external @global_smem() {addr_space = 3 : i32, alignment = 16 : i64} : !llvm.array<0 x i8>
-    llvm.func @simple_indirect_load_kernel_scope_0(%arg0: !llvm.ptr<1>, %arg1: !llvm.ptr<6>, %arg2: !llvm.ptr<1>, %arg3: i32, %arg4: !llvm.ptr<6>, %arg5: !llvm.ptr<6>, %arg6: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg7: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg8: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}, %arg9: !llvm.ptr<1>, %arg10: !llvm.ptr<1>) attributes {nvvm.kernel = 1 : ui1, nvvm.reqntid = array<i32: 128>} {
+    llvm.func @simple_indirect_load_kernel_scope_0(%arg0: !llvm.ptr<1>, %arg1: !llvm.ptr<6>, %arg2: !llvm.ptr<1>, %arg3: i32, %arg4: !llvm.ptr<6>, %arg5: !llvm.ptr<6>, %arg6: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg7: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg8: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}, %arg9: !llvm.ptr<1>, %arg10: !llvm.ptr<1>) attributes {hacc.entry, nvvm.kernel = 1 : ui1, nvvm.reqntid = array<i32: 128>} {
       %0 = llvm.mlir.undef : vector<1xf32>
       %1 = llvm.mlir.undef : vector<1xi64>
       %2 = llvm.mlir.constant(3 : i32) : i32
@@ -84,5 +84,24 @@ module {
       %57 = llvm.inline_asm has_side_effects asm_dialect = att operand_attrs = [] "@$2 st.global.b32 [ $1 + 0 ], { $0 };", "r,l,b" %56, %39, %54 : (i32, !llvm.ptr<6>, i1) -> !llvm.void
       llvm.return
     }
+  }
+}
+
+// -----
+
+// CHECK: func.func private @kernel(memref<64xi8>)
+// CHECK: %[[SHARED:.*]] = memref.alloc() : memref<64xi8>
+// CHECK-NEXT: call @kernel(%[[SHARED]]) : (memref<64xi8>) -> ()
+module {
+  module {
+    func.func private @kernel(memref<8xi8>)
+    func.func @main() {
+      %shared = memref.alloc() {hivm.shared_memory} : memref<8xi8>
+      call @kernel(%shared) : (memref<8xi8>) -> ()
+      return
+    }
+  }
+  module attributes {hacc.simt_module, ttg.shared = 64 : i32} {
+    llvm.func @kernel() attributes {hacc.entry}
   }
 }

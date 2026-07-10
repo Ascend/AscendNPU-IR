@@ -28,6 +28,23 @@ using namespace mlir;
 
 namespace {
 
+using PipelineBuilder = std::function<void(mlir::PassManager &,
+                                           const BiShengIRCompileMainConfig &)>;
+
+enum class CompileFlow {
+  Mixed,
+  PureSimt,
+  Simd,
+};
+
+CompileFlow getCompileFlow(const BiShengIRCompileMainConfig &config) {
+  if (config.getEnableSimdSimtMixCompile())
+    return CompileFlow::Mixed;
+  if (config.getPureSimt())
+    return CompileFlow::PureSimt;
+  return CompileFlow::Simd;
+}
+
 /// Get the lib directory path (../lib relative to bishengir-compile
 /// executable). Returns canonical absolute path without ".." or ".".
 static std::string getLibDirFromExecutable(StringRef executablePath) {
@@ -249,22 +266,49 @@ runExternalHIVMC(ModuleOp &module,
   return success();
 }
 
-bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
-                          BiShengIRCompileMainConfig config) {
-  config.setPureSimt(true);
-  bool result = true;
-  for (auto module : modules) {
-    // Stop SIMT lowering after earlier pipeline fails.
-    result = result && runPipeline(module, buildSIMTPipeline, config,
-                                   "BiShengSIMT").succeeded();
-  }
-  return result;
+bool runModulePipeline(ModuleOp module, const PipelineBuilder &builder,
+                       const BiShengIRCompileMainConfig &config,
+                       StringRef pipelineName) {
+  return succeeded(runPipeline(module, builder, config, pipelineName.str()));
 }
 
-bool runSIMDToLLVMCompile(ModuleOp module, BiShengIRCompileMainConfig &config) {
-  return runPipeline(module, buildBiShengHIRAVEToLLVMPipeline, config,
-                     "BiShengSIMD")
-      .succeeded();
+bool runModulePipelines(ArrayRef<ModuleOp> modules,
+                        const PipelineBuilder &builder,
+                        const BiShengIRCompileMainConfig &config,
+                        StringRef pipelineName) {
+  bool success = true;
+  for (auto module : modules) {
+    // Stop this pipeline on each module after earlier pipeline fails.
+    success =
+        success && runModulePipeline(module, builder, config, pipelineName);
+  }
+  return success;
+}
+
+bool runMixedPipelines(ModuleOp mixedModule,
+                       const BiShengIRCompileMainConfig &config) {
+  if (!runModulePipeline(mixedModule, buildBiShengHIRPipeline, config,
+                         "BiShengHIR")) {
+    return false;
+  }
+
+  auto [mainMod, simtMods] = getMixedModules(mixedModule);
+  if (!runModulePipelines(simtMods, buildBiShengTTIRPipeline, config,
+                          "BiShengSIMT")) {
+    return false;
+  }
+
+  if (!runModulePipeline(mixedModule, buildBiShengHIRFinishPipeline, config,
+                         "BishengHIR")) {
+    return false;
+  }
+
+  if (!runModulePipeline(mainMod, buildFinalHIVMPipelines, config,
+                         "buildFinalHIVMPipelines")) {
+    return false;
+  }
+  return runModulePipeline(mainMod, buildBiShengHIRAVEToLLVMPipeline, config,
+                           "BiShengSIMD");
 }
 } // namespace
 
@@ -316,6 +360,7 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
   if (config.getEnableTuningMode()) {
     tryTimes = 1;
   }
+  CompileFlow compileFlow = getCompileFlow(config);
   for (int i = 0; i < tryTimes; i++) {
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
@@ -323,37 +368,17 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     // simt-simd mixed pipeline
     bool success = true;
     hasUboverflow = false;
-    if (config.getEnableSimdSimtMixCompile()) {
-      // Do not use `success &= ...` here: `&=` evaluates the RHS.
-      success = success && succeeded(runPipeline(
-                               hirCompileMode, buildBiShengHIRPipeline, config,
-                               "BiShengHIR"));
-      // extract main module and simt modules
-      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
-      // run ttir pipeline on simt modules
-      for (auto simtMod : simtMods) {
-        // Stop TTIR lowering after earlier pipeline fails.
-        success = success && succeeded(runPipeline(
-                                 simtMod, buildBiShengTTIRPipeline, config,
-                                 "BiShengTTIR"));
-      }
-      success = success && succeeded(runPipeline(
-                               hirCompileMode, buildBiShengHIRFinishPipeline,
-                               config, "BishengHIR"));
-      // Stop final HIVM lowering after earlier pipeline fails.
-      success = success && succeeded(runPipeline(
-                               mainMod, buildFinalHIVMPipelines, config,
-                               "buildFinalHIVMPipelines"));
-    } else if (config.getEnableTritonIRCompile()) {
-      success = succeeded(runPipeline(hirCompileMode, buildBiShengTTIRPipeline,
-                                      config, "BiShengTTIR"));
+    if (compileFlow == CompileFlow::Mixed) {
+      success = runMixedPipelines(hirCompileMode, config);
+    } else if (compileFlow == CompileFlow::PureSimt) {
+      success = runModulePipeline(hirCompileMode, buildBiShengTTIRPipeline,
+                                  config, "BiShengSIMT");
     } else {
-      success = succeeded(runPipeline(hirCompileMode, buildBiShengHIRPipeline,
-                                      config, "BiShengHIR"));
-      // Stop final HIVM lowering after earlier pipeline fails.
-      success = success &&
-                succeeded(runPipeline(hirCompileMode, buildFinalHIVMPipelines,
-                                      config, "buildFinalHIVMPipelines"));
+      success = runModulePipeline(hirCompileMode, buildBiShengHIRPipeline,
+                                  config, "BiShengHIR");
+      success =
+          success && runModulePipeline(hirCompileMode, buildFinalHIVMPipelines,
+                                       config, "buildFinalHIVMPipelines");
       if (!success && hasUboverflow) {
         // Vector-side fallback tiers for UB overflow. These do not touch
         // multi-buffer and are tried in order until one is applicable.
@@ -374,31 +399,14 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
         if (clear && i != tryTimes)
           collectedDiagnostics.clear();
       }
-    }
-
-    if (!success) {
-      // Stop hivmc pipeline when upstream pipeline fails
-      continue;
-    }
-
-    // hivmc pipeline
-    if (config.getEnableSimdSimtMixCompile()) {
-      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
-      // SIMT modules run triton lowering pipeline
-      // Main module runs regular pipeline
-      if (runSIMTToLLVMCompile(simtMods, config) &&
-          runSIMDToLLVMCompile(mainMod, config)) {
-        // Once both are lowered, flatten into single module
-        // success &= succeeded(runPipeline(hirCompileModule,
-        //                                  buildFinalMixVFCompilePipeline,
-        //                                  config, "BiShengFinishLLVM"));
+      if (!success) {
+        // Stop downstream lowering preparation when earlier stages fail.
+        continue;
       }
-    } else if (config.getPureSimt()) {
-      // Stop SIMT lowering after earlier pipeline fails.
-      success = success && runSIMTToLLVMCompile(hirCompileMode, config);
-    } else {
       // Stop SIMD lowering after earlier pipeline fails.
-      success = success && runSIMDToLLVMCompile(hirCompileMode, config);
+      success =
+          runModulePipeline(hirCompileMode, buildBiShengHIRAVEToLLVMPipeline,
+                            config, "BiShengSIMD");
     }
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {
