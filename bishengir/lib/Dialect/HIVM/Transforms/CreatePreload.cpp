@@ -115,50 +115,14 @@ static bool hasPreloadWorkspaceMark(Value value) {
   }
 
   if (Operation *defOp = value.getDefiningOp()) {
-    if (defOp->hasAttr(hivm::PreloadWorkspaceAttr::name))
-      return true;
+    return defOp->hasAttr(hivm::PreloadWorkspaceAttr::name);
   }
 
   return false;
 }
 
-static Value findPreloadWorkspaceMarkedValue(Value value) {
-  auto roots = utils::tracebackMemRefVecByTargetFn(
-      value, [](Value v) { return hasPreloadWorkspaceMark(v); });
-
-  if (roots.empty())
-    return Value();
-
-  if (roots.size() != 1) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[hivm-create-preload]: ambiguous preload workspace roots, "
-               << "root size = " << roots.size() << "\n");
-    return Value();
-  }
-
-  Value root = roots.front();
-  if (!hasPreloadWorkspaceMark(root))
-    return Value();
-
-  return root;
-}
-
 static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
-  if (subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name))
-    return true;
-
-  Value markedValue = findPreloadWorkspaceMarkedValue(subviewOp.getSource());
-  if (!markedValue)
-    return false;
-
-  auto markedType = dyn_cast<MemRefType>(markedValue.getType());
-  if (!markedType)
-    return false;
-
-  // Only rewrite subviews whose source still has the workspace root rank.
-  // If a collapse_shape has already removed the preload slot dimension,
-  // offset[0] is no longer the slot offset.
-  return subviewOp.getSourceType().getRank() == markedType.getRank();
+  return hasPreloadWorkspaceMark(subviewOp.getSource());
 }
 
 static Value
