@@ -55,6 +55,39 @@ static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
   return false;
 }
 
+/// Returns true if `root` has a user inside `forOp` that is not on a
+/// recognized load/view chain (e.g., a func.call). The hoisting pattern
+/// must not redirect uses that are not part of the load/data path.
+static bool hasUnexpectedUserInLoop(Value toTensorMemref, Value allocRoot,
+                                    scf::ForOp forOp) {
+  SmallVector<Value> workList = {allocRoot};
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (!workList.empty()) {
+    Value val = workList.pop_back_val();
+    if (!visited.insert(val).second)
+      continue;
+    for (Operation *user : val.getUsers()) {
+      // Use isAncestor to catch users inside nested ops (e.g. func.call
+      // inside scf.if inside the for loop).
+      if (!forOp->isAncestor(user))
+        continue;
+      // Recognised: DPS ops, ND2NZ, view/cast chains, and the to_tensor
+      // that produces the insert_slice source.
+      if (isa<DestinationStyleOpInterface, hivm::ND2NZOp,
+              bufferization::ToTensorOp>(user))
+        continue;
+      if (isa<memref::MemorySpaceCastOp, memref::SubViewOp, memref::CastOp,
+              memref::ReinterpretCastOp>(user)) {
+        workList.push_back(user->getResult(0));
+        continue;
+      }
+      // Unrecognised user (e.g. func.call) — pattern can't hoist.
+      return true;
+    }
+  }
+  return false;
+}
+
 /// After replacing a loop-local alloc with a subview of a hoisted buffer,
 /// refresh nested subview/cast result types to match the new source layout.
 static void refreshDerivedMemrefViewTypes(Value root, scf::ForOp forOp,
@@ -209,6 +242,11 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
 
       // Verify the alloc/memcast is used as a store destination in the loop.
       if (!hasBufferStoreUserInLoop(toTensorOp.getMemref(), forOp))
+        return failure();
+      // The alloc must not have users (e.g. func.call) that are not on the
+      // recognized load/view chain — redirecting those would break the IR.
+      if (hasUnexpectedUserInLoop(toTensorOp.getMemref(),
+                                  allocOp.getResult(), forOp))
         return failure();
 
       // Check if the iter_arg init is a vbrc (scalar broadcast fill).
