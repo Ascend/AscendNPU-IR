@@ -20,6 +20,10 @@ namespace mlir {
 
 namespace vector {
 
+/// Creates an operation pass to convert `transfer.read` and `transfer.write`
+/// to vector.load and vector.write.
+std::unique_ptr<Pass> createVectorTransferLoweringPass();
+
 // Create a pass to materialize transfer_write to destination.
 std::unique_ptr<Pass> createMaterializeVectorWriteToDestinationPass();
 

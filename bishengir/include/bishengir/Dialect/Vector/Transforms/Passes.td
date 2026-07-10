@@ -11,6 +11,18 @@
 
 include "mlir/Pass/PassBase.td"
 
+def VectorTransferLowering
+    : Pass<"vector-transfer-lowering", "func::FuncOp"> {
+  let summary = "Pass to lower transfer ops to simpler ops like `vector.load` "
+                "`vector.store`, `vector.broadcast`";
+  let description = [{
+    This pass replace all transfer.read and transfer write to vector.load and
+    vector.write.
+  }];
+  let constructor = "mlir::vector::createVectorTransferLoweringPass()";
+  let dependentDialects = ["memref::MemRefDialect", "vector::VectorDialect"];
+}
+
 def MaterializeVectorWriteToDestination
     : Pass<"materialize-vector-write-to-destination", "func::FuncOp"> {
   let summary =
