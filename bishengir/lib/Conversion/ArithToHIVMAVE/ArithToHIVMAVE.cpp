@@ -1022,6 +1022,13 @@ struct ConstantOpToHivmVCIVCPLowering
       auto values = llvm::to_vector<0>(denseAttr.getValues<APFloat>());
       std::vector<APInt> quotients;
 
+      // NaN values break every float comparison below (NaN > epsilon is always
+      // false, NaN == 0 is false, ...), so a NaN splat would be misdetected as
+      // an arithmetic sequence and lowered to ave.hir.vci which does not accept
+      // bf16. Reject NaN early and let the normal splat lowering handle it.
+      if (llvm::any_of(values, [](const APFloat &v) { return v.isNaN(); }))
+        return std::make_tuple(false, 0.0f, 0.0f, quotients);
+
       double epsilon;
       if (denseAttr.getElementType().isF16() ||
           denseAttr.getElementType().isBF16())
