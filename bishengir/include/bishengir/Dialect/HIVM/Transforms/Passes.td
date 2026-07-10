@@ -173,14 +173,18 @@ def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::FuncOp"> {
-  let summary = "Clone scf.if.yield operand for PlanMemory.";
-  let description = [{This pass clones scf.if yield operand if yield operands
-    are same or it is used after this scf.if, avoid inplace by PlanMemory}];
-  let constructor = "mlir::hivm::createCloneSCFIfYieldOperandPass()";
+def ExposeMemrefWriteToTensor
+    : Pass<"hivm-expose-memref-write-to-tensor", "func::FuncOp"> {
+  let summary = "Expose memref-level writes to tensor-level analysis.";
+  let description = [{
+    Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis 
+    by add copyOp for toTensorOp and replace all users of toTensorOp. This makes 
+    memref-level writes visible to One-Shot Bufferization analysis, enabling RAW
+    conflict detection and correct copy insertion.
+  }];
+  let constructor = "mlir::hivm::createExposeMemrefWriteToTensorPass()";
   let dependentDialects =
-    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
-     "bufferization::BufferizationDialect"];
+    ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
 }
 
 def MarkTightlyCoupledBuffer

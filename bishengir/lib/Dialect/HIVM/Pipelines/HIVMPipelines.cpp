@@ -216,6 +216,11 @@ bufferizationPipeline(OpPassManager &pm,
   // Fold redundant extract_slice -> transfer_write -> insert_slice pattern
   // before bufferization to avoid unnecessary memref operations
   pm.nest<func::FuncOp>().addPass(hfusion::createFoldExtractInsertPairPass());
+  
+  // TODO: support process to_tensor in one-shot-buffeize.
+  // Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis
+  // by replacing to_tensor writable with materialize_in_destination.
+  pm.nest<func::FuncOp>().addPass(hivm::createExposeMemrefWriteToTensorPass());
   bufferization::OneShotBufferizationOptions oneShotOptions;
   oneShotOptions.bufferizeFunctionBoundaries = true;
   oneShotOptions.setFunctionBoundaryTypeConversion(

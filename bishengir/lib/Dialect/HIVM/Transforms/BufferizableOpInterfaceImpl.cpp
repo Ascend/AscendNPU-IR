@@ -330,6 +330,21 @@ struct HIVMCopyOrStoreOpInterface
     rewriter.replaceOp(op, newOp);
     return success();
   }
+
+  LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
+                                 const AnalysisState &state) const {
+    auto bufferizableOp = cast<BufferizableOpInterface>(op);
+    if (failed(bufferizableOp.resolveTensorOpOperandConflicts(rewriter, state)))
+      return failure();
+    
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    if (dpsOp->hasAttr("to_be_replaced")) {
+      rewriter.replaceAllUsesWith(dpsOp->getResult(0),
+                                  dpsOp.getDpsInputOperand(0)->get());
+      rewriter.eraseOp(dpsOp);
+    }
+    return success();
+  }
 };
 
 struct HIVMMatmulOpInterface

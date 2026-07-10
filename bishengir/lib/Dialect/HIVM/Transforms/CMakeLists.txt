@@ -33,7 +33,6 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   BindSyncBlockLockArg.cpp
   BindWorkSpaceArg.cpp
   BufferizableOpInterfaceImpl.cpp
-  CloneSCFIfYieldOperand.cpp
   CloneTensorEmpty.cpp
   ComposeCollapseExpand.cpp
   ConstantizeBufferSize.cpp
@@ -58,6 +57,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   CreatePreload.cpp
   CVPipelining.cpp
   EnableMultiBuffer.cpp
+  ExposeMemrefWriteToTensor.cpp
   Fixpipe/FixpipeExtractSlice.cpp
   FlattenOps.cpp
   HIVMAggregatedDecomposeOp.cpp

@@ -818,7 +818,7 @@ func.func @test_clone_yield_operands_for_preload(%arg0: i32, %arg1 : tensor<256x
       // CHECK: memref.copy %[[ALLOC]], %[[ALLOC_1:.*]] : memref<256xf16> to memref<256xf16>
       // CHECK: scope.return %[[ALLOC_1]] : memref<256xf16>
       scope.return %6 : tensor<256xf16>
-    }
+    } {hivm.preload_num = 1 : i32}
     // CHECK: scf.yield %[[SCOPE_RESULT]] : memref<256xf16>
     scf.yield %4 : tensor<256xf16>
   }
@@ -846,7 +846,7 @@ func.func @test_move_copy_for_preload(%arg0: i32, %arg1 : tensor<256xf16>,
       // CHECK: memref.copy %[[ALLOC]], %[[ALLOC_1:.*]] : memref<256xf16> to memref<256xf16>
       // CHECK: scope.return %[[ALLOC_1]] : memref<256xf16>
       scope.return %8 : tensor<256xf16>
-    }
+    } {hivm.preload_num = 1 : i32}
     %5 = bufferization.alloc_tensor() copy(%4): tensor<256xf16>
     // CHECK: scf.yield %[[SCOPE_RESULT]] : memref<256xf16>
     scf.yield %5 : tensor<256xf16>
