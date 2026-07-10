@@ -1613,7 +1613,7 @@ VTransposeBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     srcSizes[perm[i]] = sliceOp.getMixedSizes()[i];
   }
 
-  rewriter.setInsertionPoint(sliceOp);
+  rewriter.setInsertionPoint(transOp);
   auto newSrc = rewriter.create<tensor::ExtractSliceOp>(
       sliceOp.getLoc(), transOp.getSrc(), srcOffsets, srcSizes, srcStrides);
   auto newDst = rewriter.create<tensor::ExtractSliceOp>(
