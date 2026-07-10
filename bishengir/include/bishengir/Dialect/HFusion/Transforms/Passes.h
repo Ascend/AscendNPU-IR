@@ -27,6 +27,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Shape/IR/Shape.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Pass/Pass.h"
 
 namespace mlir {
@@ -101,6 +102,9 @@ createHFusionOpFusionPass(const HFusionOpFusionOptions &options = {});
 /// Create a pass to auto schedule fused kernels.
 std::unique_ptr<Pass>
 createHFusionAutoSchedulePass(const AutoScheduleOptions &options = {});
+
+/// Create a pass to handle non-vectorizeable linalg.generic cases
+std::unique_ptr<Pass> createGenericUnrollerPass();
 
 /// Create a pass to execute auto schedule sequence for the target kernel.
 std::unique_ptr<Pass>

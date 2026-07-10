@@ -89,6 +89,15 @@ def AutoSchedule : Pass<"hfusion-auto-schedule", "ModuleOp"> {
   ];
 }
 
+def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
+  let summary = "Provides lowering of non-vectorizeable linalg ops (currently only linalg.reduce)";
+  let constructor = "mlir::hfusion::createGenericUnrollerPass()";
+  let dependentDialects = ["linalg::LinalgDialect",
+                         "transform::TransformDialect",
+                         "arith::ArithDialect",
+                         "vector::VectorDialect"];
+}
+
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {
   let summary = "Add ffts base address to func param and annotation";
   let constructor = "mlir::hfusion::createAddFFTSAddrPass()";

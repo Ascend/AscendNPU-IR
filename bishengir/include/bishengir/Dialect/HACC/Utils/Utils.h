@@ -27,6 +27,10 @@
 #include <type_traits>
 
 namespace mlir {
+namespace linalg {
+class ReduceOp;
+} // namespace linalg
+
 namespace hacc {
 namespace utils {
 
@@ -201,6 +205,16 @@ std::string constructHostFunctionName(const std::string &kernelName,
                                       HostFuncType type);
 
 size_t countDeviceArgSizeInByte(ModuleOp modOp);
+
+bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op);
+
+bool isSkippable(linalg::ReduceOp op);
+
+/// linalg.generic is considered "reduce-like" iff 
+/// - two inputs, one output
+/// - along at least one of axis iterator type is "reduce"
+/// - op have trivial layout maps 
+bool isLegalReduceOp(linalg::ReduceOp op);
 
 } // namespace hacc
 } // namespace mlir

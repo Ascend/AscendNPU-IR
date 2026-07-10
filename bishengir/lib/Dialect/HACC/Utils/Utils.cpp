@@ -23,10 +23,14 @@
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 #include "llvm/Support/FormatVariadic.h"
 
+#include <optional>
 #include <unordered_set>
 
 #define DEBUG_TYPE "bishengir-hacc-utils"
@@ -587,6 +591,146 @@ size_t countDeviceArgSizeInByte(ModuleOp modOp) {
     return WalkResult::advance();
   });
   return maxArgSizeInBytes;
+}
+
+static bool isCombinerLikeRegion(Region &reg, unsigned expectedNumArgs = 2) {
+  if (!reg.hasOneBlock()) {
+    return false;
+  }
+  auto &block = reg.front();
+  if (block.getNumArguments() != expectedNumArgs) {
+    return false;
+  }
+  auto yield = dyn_cast<linalg::YieldOp>(block.getTerminator());
+  return yield && yield.getNumOperands() == 1;
+}
+
+static bool verifyReduceSupportedParams(linalg::ReduceOp op) {
+  if (op.hasIndexSemantics()) {
+    return false;
+  }
+  return isCombinerLikeRegion(op.getRegion());
+}
+
+static std::optional<std::pair<RankedTensorType, RankedTensorType>>
+getAndVerifyReduceInputs(linalg::ReduceOp op) {
+  if (op.getNumDpsInits() != 1 || op.getNumDpsInputs() != 1) {
+    return {};
+  }
+
+  Value input = op.getDpsInputOperand(0)->get();
+  Value outInit = op.getDpsInitOperand(0)->get();
+
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  auto outputType = dyn_cast<RankedTensorType>(outInit.getType());
+  if (!inputType || !outputType) {
+    return {};
+  }
+
+  return std::pair{inputType, outputType};
+}
+
+static std::optional<SmallVector<int64_t, 2>>
+verifyReduceGeometryAndGetReduceDims(linalg::ReduceOp op) {
+  auto reduceInputs = getAndVerifyReduceInputs(op);
+  if (!reduceInputs) {
+    return {};
+  }
+  auto [inputType, outputType] = *reduceInputs;
+
+  auto inputRank = inputType.getRank();
+  if (inputRank < 1) {
+    return {};
+  }
+
+  auto outRank = outputType.getRank();
+  if (outRank >= inputRank || outRank < 0) {
+    return {};
+  }
+
+  auto maps = op.getIndexingMapsArray();
+  if (maps.size() != 2) {
+    return {};
+  }
+
+  auto inMap = maps[0];
+  if (!inMap.isIdentity()) {
+    return {};
+  }
+  if (inMap.getNumDims() != inputRank) {
+    return {};
+  }
+
+  auto outMap = maps[1];
+  if (outMap.getNumDims() != inputRank) {
+    return {};
+  }
+  if (outMap.getNumResults() != outRank) {
+    return {};
+  }
+
+  auto iters = op.getIteratorTypesArray();
+  SmallVector<int64_t, 2> reduceDims;
+  for (auto [i, iterType] : llvm::enumerate(op.getIteratorTypesArray())) {
+    if (iterType == ::mlir::utils::IteratorType::reduction) {
+      reduceDims.push_back(i);
+    } else {
+      if (iterType != ::mlir::utils::IteratorType::parallel) {
+        return {};
+      }
+    }
+  }
+
+  if (inputRank - (int)reduceDims.size() != outRank) {
+    return {};
+  }
+  return reduceDims;
+}
+
+bool isSkippable(linalg::ReduceOp op) {
+  return op.getNumDpsInits() != 1 || op.getNumDpsInputs() != 1 ||
+         isCombinerLikeRegion(op.getRegion(), 4); // reduce with index
+}
+
+bool isLegalToAutoVectorizeReduce(linalg::ReduceOp op) {
+  assert(isLegalReduceOp(op));
+  auto isComplexSingleOp = [](Operation *op) {
+    return op->getDialect()->getNamespace() ==
+           scf::SCFDialect::getDialectNamespace();
+  };
+  auto getSingleReduceOp =
+      [&isComplexSingleOp](linalg::ReduceOp op) -> std::optional<Operation *> {
+    auto &region = op.getRegion();
+    assert(isCombinerLikeRegion(region));
+
+    auto &ops = region.front().getOperations();
+    if (ops.size() > 2 && !isComplexSingleOp(&ops.front())) {
+      return {};
+    }
+    return &ops.front();
+  };
+
+  auto reduceOp = getSingleReduceOp(op);
+  if (!reduceOp) {
+    return false;
+  }
+
+  if (isa<arith::AndIOp, arith::OrIOp>(*reduceOp)) {
+    // reduce i1 andi/ori will be normalized to i16 min/max in
+    // hfusion-normalize-ops, so it's legal to vectorize
+    auto elemType = (*reduceOp)->getOperand(0).getType();
+    return elemType.isInteger(1);
+  }
+
+  return isa<linalg::YieldOp, arith::AddFOp, arith::AddIOp, arith::MaximumFOp,
+             arith::MaxNumFOp, arith::MinimumFOp, arith::MinNumFOp,
+             arith::MinSIOp, arith::MinUIOp, arith::MaxSIOp, arith::MaxUIOp,
+             arith::XOrIOp>(*reduceOp);
+}
+
+bool isLegalReduceOp(linalg::ReduceOp op) {
+  return verifyReduceGeometryAndGetReduceDims(op) &&
+         verifyReduceSupportedParams(op);
 }
 
 } // namespace hacc
