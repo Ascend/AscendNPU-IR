@@ -32,6 +32,10 @@ public:
   // get max index from union index
   size_t getMaxIndexUnion(int x);
 
+  // Get the member element indices of the union containing x, so callers can
+  // enumerate a union's members without scanning every element.
+  const SmallVector<int> &getMembersUnion(int x);
+
   // check if two nodes are connected
   bool isConnected(int x, int y);
 
@@ -46,6 +50,8 @@ protected:
 
 private:
   SmallVector<size_t> maxIndex;
+  // Member element indices per representative root.
+  SmallVector<SmallVector<int>> unionMembers;
 };
 
 } // namespace analysis

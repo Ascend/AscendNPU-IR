@@ -30,7 +30,7 @@ using OpConfigMap =
 class CostModelInfoBase {
 public:
   virtual ~CostModelInfoBase() = default;
-  virtual const OpConfigMap getConfigMap(bool isReduction) const = 0;
+  virtual const OpConfigMap &getConfigMap(bool isReduction) const = 0;
 };
 using VALUInfoPtr = std::unique_ptr<CostModelInfoBase>;
 } // namespace mlir::analysis

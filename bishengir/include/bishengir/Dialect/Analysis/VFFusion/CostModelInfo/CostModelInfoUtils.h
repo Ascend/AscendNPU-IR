@@ -17,8 +17,8 @@ namespace analysis {
 class CostModelInfoUtils : public CostModelInfoBase {
 public:
     static TypeKind  getTypeKind(mlir::Type type);
-    static OpConfigMap getOpConfigMap(hacc::TargetDevice dev,
-                                  bool isReduction = false);
+    static const OpConfigMap &getOpConfigMap(hacc::TargetDevice dev,
+                                             bool isReduction = false);
     static CostInfo getOpCostInfo(mlir::Operation *op, bool isReduction = false);
     static CostInfo lookupConfig(const OpConfigMap &targetMap,
                              mlir::TypeID opTypeID, mlir::Type dataType,
