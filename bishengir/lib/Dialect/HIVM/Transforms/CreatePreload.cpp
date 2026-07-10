@@ -131,18 +131,50 @@ static bool hasPreloadWorkspaceMark(Value value) {
   }
 
   if (Operation *defOp = value.getDefiningOp()) {
-    return defOp->hasAttr(hivm::PreloadWorkspaceAttr::name);
+    if (defOp->hasAttr(hivm::PreloadWorkspaceAttr::name))
+      return true;
   }
 
   return false;
 }
 
+static Value findPreloadWorkspaceMarkedValue(Value value) {
+  auto roots = utils::tracebackMemRefVecByTargetFn(
+      value, [](Value v) { return hasPreloadWorkspaceMark(v); });
+
+  if (roots.empty())
+    return Value();
+
+  if (roots.size() != 1) {
+    LLVM_DEBUG(llvm::dbgs()
+               << "[hivm-create-preload]: ambiguous preload workspace roots, "
+               << "root size = " << roots.size() << "\n");
+    return Value();
+  }
+
+  Value root = roots.front();
+  if (!hasPreloadWorkspaceMark(root))
+    return Value();
+
+  return root;
+}
+
 static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
-  // The preload-workspace mark is placed on the subview op itself by the
-  // producer (see CVPipelining::createAttrForPreloadWS). Also accept a marked
-  // source so subviews derived from an already-marked workspace are detected.
-  return subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name) ||
-         hasPreloadWorkspaceMark(subviewOp.getSource());
+  if (subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name))
+    return true;
+
+  Value markedValue = findPreloadWorkspaceMarkedValue(subviewOp.getSource());
+  if (!markedValue)
+    return false;
+
+  auto markedType = dyn_cast<MemRefType>(markedValue.getType());
+  if (!markedType)
+    return false;
+
+  // Only rewrite subviews whose source still has the workspace root rank.
+  // If a collapse_shape has already removed the preload slot dimension,
+  // offset[0] is no longer the slot offset.
+  return subviewOp.getSourceType().getRank() == markedType.getRank();
 }
 
 static Value
@@ -385,7 +417,7 @@ static void rewritePreloadLoop(scf::ForOp forOp,
             } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&bodyOp);
                       subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
               for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
-                   preloadNum--) {
+                  preloadNum--) {
                 cloneWorkspaceSubview(subviewOp, preloadNum, info, b);
               }
               continue;
