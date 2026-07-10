@@ -106,6 +106,9 @@ createHFusionAutoSchedulePass(const AutoScheduleOptions &options = {});
 /// Create a pass to handle non-vectorizeable linalg.generic cases
 std::unique_ptr<Pass> createGenericUnrollerPass();
 
+/// Create an auto vectorize verifier pass.
+std::unique_ptr<Pass> createAutoVectorizeVerifierPass();
+
 /// Create a pass to execute auto schedule sequence for the target kernel.
 std::unique_ptr<Pass>
 createAutoScheduleInterpreterPass(const std::string &kernelName,

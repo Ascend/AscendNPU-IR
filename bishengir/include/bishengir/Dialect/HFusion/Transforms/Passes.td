@@ -98,6 +98,21 @@ def GenericUnroller : Pass<"hfusion-generic-unroller", "func::FuncOp"> {
                          "vector::VectorDialect"];
 }
 
+def AutoVectorizeVerifier
+    : Pass<"hfusion-auto-vectorize-verifier", "ModuleOp"> {
+  let summary = "Verify vector operations after auto vectorization";
+  let constructor = "mlir::hfusion::createAutoVectorizeVerifierPass()";
+  let dependentDialects = ["func::FuncDialect", "vector::VectorDialect",
+                           "hivm::HIVMDialect"];
+  let options = [
+    Option<"verifyFreeVectorRegion", "verify-free-vector-region", "bool",
+           "false",
+           "Verify vector operations are nested in outlined vector regions.">,
+    Option<"verifyFreeVectorFunc", "verify-free-vector-func", "bool", "true",
+           "Verify vector operations are not left outside vector functions.">,
+  ];
+}
+
 def AddFFTSAddr : Pass<"hfusion-add-ffts-addr", "ModuleOp"> {
   let summary = "Add ffts base address to func param and annotation";
   let constructor = "mlir::hfusion::createAddFFTSAddrPass()";
