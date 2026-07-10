@@ -52,7 +52,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/HIVMTilingInterfaceImpl.h"
 #include "bishengir/Dialect/SCF/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Scope/Transforms/BufferizableOpInterfaceImpl.h"
-#include "bishengir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
 #include "bishengir/Dialect/Tensor/Transforms/TilingInterfaceImpl.h"
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 
@@ -118,7 +117,6 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
   mlir::bufferization_ext::registerFuncBufferizableOpInterfaceExternalModels(
       registry);
   mlir::scope::registerBufferizableOpInterfaceExternalModels(registry);
-  mlir::tensor_ext::registerBufferizableOpInterfaceExternalModels(registry);
   bishengir::tensor::registerTilingInterfaceExternalModels(registry);
   bishengir::bufferization::registerTilingInterfaceExternalModels(registry);
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
