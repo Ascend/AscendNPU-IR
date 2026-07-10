@@ -802,6 +802,13 @@ def AnalyzeArithVectorMask : Pass<"arith-vector-mask-analyze", "func::FuncOp"> {
                            "annotation::AnnotationDialect"];
 }
 
+def AnnotateVFAlias : Pass<"hivm-annotate-vf-alias", "func::FuncOp"> {
+  let summary = "Annotate alias info within VF";
+  let constructor = "mlir::hivm::createAnnotateVFAliasPass()";
+  let dependentDialects = ["func::FuncDialect", "LLVM::LLVMDialect",
+                           "memref::MemRefDialect", "vector::VectorDialect"];
+}
+
 def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createTileAndBindSubBlockPass()";

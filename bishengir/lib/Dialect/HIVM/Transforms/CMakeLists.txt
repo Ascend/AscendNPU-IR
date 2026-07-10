@@ -20,6 +20,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp
   AllocToPointerCast.cpp
+  AnnotateVFAlias.cpp
   AutoBlockifyParallelLoop.cpp
   AutoInferBufferSize.cpp
   BindSyncBlockLockArg.cpp
@@ -138,6 +139,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
+  MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils
   BiShengIRTransform

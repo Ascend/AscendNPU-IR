@@ -257,6 +257,9 @@ std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 /// Create a pass to analyze arith/vector mask
 std::unique_ptr<Pass> createArithVectorMaskAnalysisPass();
 
+// Create a pass to annotate alias info within VF.
+std::unique_ptr<Pass> createAnnotateVFAliasPass();
+
 /// Create a pass to tile and bind sub block for mix cv function.
 std::unique_ptr<Pass>
 createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
