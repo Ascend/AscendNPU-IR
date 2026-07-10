@@ -26,7 +26,6 @@
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
-#include <cstring>
 
 #define DEBUG_TYPE "hivm-cross-core-gss"
 
@@ -130,6 +129,9 @@ void CrossCoreGSSPass::runOnOperation() {
   }
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
+  }
+  if (this->enableCVPatterns) {
+    options.enableCVPatterns = true;
   }
   if (this->blockAllSync) {
     options.enableBlockAllMode = true;

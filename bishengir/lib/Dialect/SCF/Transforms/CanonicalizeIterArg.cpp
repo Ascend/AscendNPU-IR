@@ -242,6 +242,14 @@ static bool isInLoopBody(Value x, Block *body) {
   return false;
 }
 
+static bool isInRegion(Value x, Region &region) {
+  if (auto barg = dyn_cast<BlockArgument>(x))
+    return region.isAncestor(barg.getOwner()->getParent());
+  if (auto *defOp = x.getDefiningOp())
+    return region.isAncestor(defOp->getParentRegion());
+  return false;
+}
+
 static LogicalResult
 isIterationIndependent(Value yield, Block *body, BlockArgument allowedIterArg,
                        SmallPtrSetImpl<Operation *> &tobeDeletedOps) {
@@ -357,6 +365,79 @@ public:
       resultVal.replaceAllUsesWith(yieldVal);
     }
     return success(changed);
+  }
+};
+
+// Canonicalize scope.scope results that simply forward values from outside the
+// scope region. For those channels, replace all uses with the forwarded value
+// directly and rebuild scope.scope with only internally-produced return values.
+struct CanonicalizeScopeReturnValPattern
+    : public OpRewritePattern<scope::ScopeOp> {
+public:
+  using OpRewritePattern<scope::ScopeOp>::OpRewritePattern;
+  LogicalResult
+  matchAndRewrite(scope::ScopeOp scopeOp,
+                  mlir::PatternRewriter &rewriter) const override {
+    const unsigned numResults = scopeOp.getNumResults();
+    if (numResults == 0 || !scopeOp->getNumRegions() || scopeOp.getRegion().empty())
+      return failure();
+
+    Block *body = scopeOp.getBody();
+    if (!body || body->empty())
+      return failure();
+    auto oldReturn = dyn_cast<scope::ReturnOp>(body->getTerminator());
+    if (!oldReturn || oldReturn.getNumOperands() != numResults)
+      return failure();
+
+    auto isDefinedInsideScope = [&](Value value) -> bool {
+      if (auto *defOp = value.getDefiningOp())
+        return scopeOp.getRegion().isAncestor(defOp->getParentRegion());
+      if (auto blockArg = dyn_cast<BlockArgument>(value))
+        return scopeOp.getRegion().isAncestor(blockArg.getOwner()->getParent());
+      return false;
+    };
+
+    llvm::SmallBitVector keep(numResults, true);
+    bool changed = false;
+    for (auto [i, result] : llvm::enumerate(scopeOp->getResults())) {
+      Value returnOperand = oldReturn.getOperand(i);
+      if (isDefinedInsideScope(returnOperand))
+        continue;
+      result.replaceAllUsesWith(returnOperand);
+      keep.reset(i);
+      changed = true;
+    }
+    if (!changed)
+      return failure();
+
+    SmallVector<Type> newResultTypes;
+    SmallVector<Value> newReturnOperands;
+    for (unsigned i = 0; i < numResults; ++i) {
+      if (!keep.test(i))
+        continue;
+      newResultTypes.push_back(scopeOp.getResult(i).getType());
+      newReturnOperands.push_back(oldReturn.getOperand(i));
+    }
+
+    rewriter.setInsertionPoint(scopeOp);
+    auto newScope = rewriter.create<scope::ScopeOp>(scopeOp.getLoc(), newResultTypes);
+    newScope->setAttrs(scopeOp->getAttrs());
+    rewriter.createBlock(&newScope.getRegion());
+    Block *newBody = newScope.getBody();
+
+    newBody->getOperations().splice(newBody->begin(), body->getOperations(),
+                                    body->begin(), oldReturn->getIterator());
+    rewriter.setInsertionPointToEnd(newBody);
+    rewriter.create<scope::ReturnOp>(scopeOp.getLoc(), newReturnOperands);
+
+    unsigned newIdx = 0;
+    for (auto [i, oldResult] : llvm::enumerate(scopeOp->getResults())) {
+      if (!keep.test(i))
+        continue;
+      oldResult.replaceAllUsesWith(newScope.getResult(newIdx++));
+    }
+    rewriter.eraseOp(scopeOp);
+    return success();
   }
 };
 
@@ -613,20 +694,28 @@ static llvm::SmallVector<Value> tracebackMemValsStep(Value val) {
 }
 
 // BFS over values: from each rootVal walk backward via tracebackMemValsStep
-// until shouldStop accepts. Visited stop-values are returned in insertion
-// order. `onVisitStep` is called for every value popped (used to record the
-// defining ops as "needed" for the rebuild).
+// until shouldStop accepts.
 template <typename StopPredicateT, typename VisitStepT>
-static llvm::SmallVector<Value>
-tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
-                 StopPredicateT &&shouldStop, VisitStepT &&onVisitStep) {
+static void tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
+                             StopPredicateT &&shouldStop,
+                             VisitStepT &&onVisitStep) {
   std::queue<Value> que;
   llvm::DenseSet<Value> visitedVals;
-  llvm::SetVector<Value> collectedValsSet;
+  auto printTracebackValue = [&](const char *label, Value value) {
+    if (auto opResult = dyn_cast<OpResult>(value)) {
+      llvm::dbgs() << label << "result#" << opResult.getResultNumber()
+                   << " of ";
+      opResult.getDefiningOp()->print(llvm::dbgs(),
+                                      OpPrintingFlags().skipRegions());
+      llvm::dbgs() << '\n';
+      return;
+    }
+    llvm::dbgs() << label << value << '\n';
+  };
   for (Value rootVal : rootVals) {
-    DEBUG_WITH_TYPE("scf-canonicalize-iter-arg-traceback",
-                    { llvm::dbgs() << "traceback-root: " << rootVal << '\n'; });
     if (visitedVals.insert(rootVal).second) {
+      DEBUG_WITH_TYPE("scf-canonicalize-iter-arg-traceback",
+                      printTracebackValue("traceback-root: ", rootVal));
       que.push(rootVal);
     }
   }
@@ -634,13 +723,12 @@ tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
   while (!que.empty()) {
     auto curVal = que.front();
     DEBUG_WITH_TYPE("scf-canonicalize-iter-arg-traceback",
-                    { llvm::dbgs() << "traceback-step: " << curVal << '\n'; });
+                    printTracebackValue("traceback-step: ", curVal));
     que.pop();
 
     onVisitStep(curVal);
 
     if (shouldStop(curVal)) {
-      collectedValsSet.insert(curVal);
       continue;
     }
 
@@ -653,8 +741,6 @@ tracebackMemVals(const SmallVectorImpl<Value> &rootVals,
       }
     }
   }
-
-  return collectedValsSet.takeVector();
 }
 
 // Resolve `oldValue` against the rebuild mapping in two ways:
@@ -1199,6 +1285,138 @@ static FailureOr<scf::WhileOp> rebuildWhileOpDroppingIterArgs(
   return newWhile;
 }
 
+// Rebuild a scope.scope while dropping dead return-style result channels.
+//
+// Two-pass strategy (same idea as rebuildIfOpDroppingIterArgs without else):
+//   1. Build a temporary result-less scope and clone live nested ops into it
+//      so mapForRebuild can check mappability against an attached block.
+//   2. Keep only return operands that are mappable from that cloned body, then
+//      build the final scope with compacted result types and splice cloned ops.
+//
+// For zero-result scopes, return-operand mappability is skipped, but we still
+// rebuild recursively so nested structured ops can be canonicalized.
+static LogicalResult rebuildScopeOpDroppingIterArgs(
+    mlir::PatternRewriter &rewriter, scope::ScopeOp oldScope,
+    IRMapping &outerMapping, SmallPtrSetImpl<Operation *> &neededOps,
+    const llvm::SmallBitVector *requestedKeep = nullptr) {
+  OpBuilder::InsertionGuard guard(rewriter);
+  if (!oldScope->getNumRegions())
+    return failure();
+
+  Region &oldRegion = oldScope.getRegion();
+  Block &oldBody = oldRegion.front();
+  scope::ReturnOp oldReturnOp{nullptr};
+
+  const unsigned numResults = oldScope.getNumResults();
+  if (requestedKeep && requestedKeep->size() != numResults)
+    return failure();
+  if (numResults > 0) {
+    if (oldBody.empty()) {
+      return failure();
+    }
+    oldReturnOp = dyn_cast<scope::ReturnOp>(oldBody.getTerminator());
+    if (!oldReturnOp || oldReturnOp.getNumOperands() != numResults) {
+      return failure();
+    }
+  }
+
+  bool rebuildFailed = false;
+  StringRef rebuildFailureReason;
+  Value rebuildFailureValue;
+  Operation *rebuildFailureOp = nullptr;
+
+  // First pass: clone live nested ops into a temporary no-result scope.
+  auto firstScopeOp =
+      rewriter.create<scope::ScopeOp>(oldScope.getLoc(), TypeRange{});
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.createBlock(&firstScopeOp.getRegion());
+    rewriter.setInsertionPointToEnd(firstScopeOp.getBody());
+    rewriter.create<scope::ReturnOp>(oldScope.getLoc());
+  }
+  Block *firstBody = firstScopeOp.getBody();
+
+  IRMapping firstMapping;
+  copyIRMapping(outerMapping, firstMapping);
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.setInsertionPointToStart(firstBody);
+    for (Operation &childOp : oldBody.getOperations()) {
+      if (childOp.hasTrait<OpTrait::IsTerminator>()) {
+        continue;
+      }
+      if (!neededOps.contains(&childOp)) {
+        continue;
+      }
+      if (failed(cloneOpRecursivelyDroppingIterArgs(rewriter, childOp,
+                                                    firstMapping, neededOps))) {
+        rebuildFailed = true;
+        rebuildFailureReason =
+            "failed to clone live op while rebuilding scope.scope";
+        rebuildFailureOp = &childOp;
+        break;
+      }
+    }
+  }
+
+  if (rebuildFailed) {
+    rewriter.eraseOp(firstScopeOp);
+    debugUnexpectedBuilderFailure("rebuildScopeOpDroppingIterArgs", oldScope,
+                                  requestedKeep, rebuildFailureReason,
+                                  rebuildFailureValue, rebuildFailureOp);
+    return failure();
+  }
+
+  // Determine surviving results by checking return-operand mappability against
+  // the attached first-pass scope body.
+  llvm::SmallBitVector keep(numResults, false);
+  SmallVector<Value> newReturnOperands;
+  if (numResults > 0) {
+    for (auto [i, operand] : llvm::enumerate(oldReturnOp->getOperands())) {
+      if (requestedKeep && !requestedKeep->test(i)) {
+        continue;
+      }
+      if (Value mappedOperand =
+              mapForRebuild(firstMapping, operand, firstBody)) {
+        keep.set(i);
+        newReturnOperands.push_back(mappedOperand);
+        continue;
+      }
+      if (requestedKeep && requestedKeep->test(i)) {
+        rewriter.eraseOp(firstScopeOp);
+        debugUnexpectedBuilderFailure(
+            "rebuildScopeOpDroppingIterArgs", oldScope, requestedKeep,
+            "kept scope.return operand is not mappable", operand);
+        return failure();
+      }
+    }
+  }
+
+  // Second pass: create final scope and move cloned ops over.
+  SmallVector<Type> newResultTypes =
+      filterByKeep(oldScope.getResultTypes(), keep);
+  auto newScopeOp =
+      rewriter.create<scope::ScopeOp>(oldScope.getLoc(), newResultTypes);
+  newScopeOp->setAttrs(oldScope->getAttrs());
+  {
+    OpBuilder::InsertionGuard innerGuard(rewriter);
+    rewriter.createBlock(&newScopeOp.getRegion());
+    rewriter.setInsertionPointToEnd(newScopeOp.getBody());
+    rewriter.create<scope::ReturnOp>(oldScope.getLoc(), newReturnOperands);
+  }
+  Block *newBody = newScopeOp.getBody();
+  newBody->getOperations().splice(newBody->begin(), firstBody->getOperations(),
+                                  firstBody->begin(),
+                                  firstBody->getTerminator()->getIterator());
+  rewriter.eraseOp(firstScopeOp);
+
+  for (auto [i, oldResult] :
+       llvm::enumerate(filterByKeep(oldScope.getResults(), keep))) {
+    outerMapping.map(oldResult, newScopeOp.getResult(i));
+  }
+  return success();
+}
+
 // Recursive driver: clone an op into the rebuilt region, recursing into nested
 // SCF ops with their own keep-masks derived from operand mappability.
 //
@@ -1216,6 +1434,11 @@ cloneOpRecursivelyDroppingIterArgs(mlir::PatternRewriter &rewriter,
   if (auto oldIf = dyn_cast<scf::IfOp>(&oldOp)) {
     return rebuildIfOpDroppingIterArgs(rewriter, oldIf, outerMapping,
                                        neededOps);
+  }
+
+  if (auto oldScope = dyn_cast<scope::ScopeOp>(&oldOp)) {
+    return rebuildScopeOpDroppingIterArgs(rewriter, oldScope, outerMapping,
+                                          neededOps);
   }
 
   if (auto nestedFor = dyn_cast<scf::ForOp>(&oldOp)) {
@@ -1421,78 +1644,56 @@ public:
     if (numResults == 0)
       return failure();
 
-    Block *body = forOp.getBody();
-    auto oldYield = cast<scf::YieldOp>(body->getTerminator());
+    Block *forBody = forOp.getBody();
+    auto oldYieldOp = cast<scf::YieldOp>(forBody->getTerminator());
     llvm::SmallBitVector keep(numResults, false);
     SmallPtrSet<Operation *, 32> neededOps;
     SmallVector<Value, 32> rootVals;
     seedLiveRootsFromResults(forOp.getResults(), keep, rootVals);
-    collectRootsFromSideEffects(body, neededOps, rootVals);
-
-    auto traceForRoots = [&]() {
-      return tracebackMemVals(
-          rootVals,
-          [&](Value v) {
-            auto barg = dyn_cast<BlockArgument>(v);
-            return barg && barg.getOwner() == body && barg.getArgNumber() > 0;
-          },
-          [&](Value tracedVal) {
-            if (Operation *def = tracedVal.getDefiningOp()) {
-              LLVM_DEBUG({
-                llvm::dbgs() << "Adding op to neededOps during for traceback: ";
-                def->print(llvm::dbgs(), OpPrintingFlags()
-                                             .printGenericOpForm()
-                                             .elideLargeElementsAttrs());
-                llvm::dbgs() << "\n";
-              });
-              neededOps.insert(def);
-            }
-          });
-    };
+    collectRootsFromSideEffects(forBody, neededOps, rootVals);
 
     // Trace backwards to discover live loop-carried channels and defining ops.
-    // Newly-kept channels make their tied yield values live, so keep tracing
-    // until all kept yielded values have contributed to neededOps.
-    llvm::SmallBitVector rootedChannels(numResults, false);
-    bool changed = true;
-    while (changed) {
-      changed = false;
-      SmallVector<Value> tracedIterArgs = traceForRoots();
-      for (Value iterArgVal : tracedIterArgs) {
-        auto barg = cast<BlockArgument>(iterArgVal);
-        unsigned idx = barg.getArgNumber() - 1;
-        if (idx >= numResults) {
-          assert(false && "iter arg index out of range");
-          continue;
-        }
-        if (!keep.test(idx)) {
-          keep.set(idx);
-          changed = true;
-        }
-      }
-      for (unsigned i = 0; i < numResults; ++i) {
-        if (!keep.test(i) || rootedChannels.test(i))
-          continue;
-        rootVals.push_back(oldYield.getOperand(i));
-        rootedChannels.set(i);
-        changed = true;
-      }
+    llvm::SetVector<Value> tracedIterArgs;
+    tracebackMemVals(
+        rootVals,
+        [&](Value value) -> bool {
+          bool isForResult = false;
+          if (auto opResult = dyn_cast<OpResult>(value)) {
+            isForResult = opResult.getDefiningOp() == forOp.getOperation();
+          }
+          return !isForResult && !isInRegion(value, forOp.getRegion());
+        },
+        [&](Value value) -> void {
+          if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+            if (blockArg.getOwner() == forBody && blockArg.getArgNumber() > 0) {
+              tracedIterArgs.insert(value);
+            }
+          }
+          if (Operation *defOp = value.getDefiningOp()) {
+            neededOps.insert(defOp);
+          }
+        });
+    for (Value iterArgVal : tracedIterArgs) {
+      auto blockArgument = cast<BlockArgument>(iterArgVal);
+      assert(blockArgument.getOwner() == forBody &&
+             "expected traced iter arg to belong to for body");
+      unsigned idx = blockArgument.getArgNumber();
+      assert(idx > 0 && idx < numResults + 1 &&
+             "expected block argument to be one of forOp iter args");
+      keep.set(idx - 1);
     }
 
-    // If every channel is live, this rewrite does not apply.
-    SmallVector<unsigned, 4> removableIdxs;
-    for (unsigned i = 0; i < numResults; ++i)
-      if (!keep.test(i))
-        removableIdxs.push_back(i);
-    if (removableIdxs.empty())
+    // If all channels are kept, this rewrite does not apply.
+    if (keep.all()) {
       return failure();
+    }
 
     // Validate kept yielded values are reconstructable before mutation.
     for (unsigned i = 0; i < numResults; ++i) {
       if (!keep.test(i))
         continue;
-      Value oldOperand = oldYield.getOperand(i);
-      if (!isInLoopBody(oldOperand, body))
+      Value oldOperand = oldYieldOp.getOperand(i);
+      if (!isInLoopBody(oldOperand, forBody))
         continue;
       if (auto barg = dyn_cast<BlockArgument>(oldOperand)) {
         if (barg.getArgNumber() == 0)
@@ -1504,7 +1705,7 @@ public:
         return failure();
       }
       Operation *def = oldOperand.getDefiningOp();
-      if (!def || def->getBlock() != body || !neededOps.contains(def)) {
+      if (!def || def->getBlock() != forBody || !neededOps.contains(def)) {
         assert(false && "unmapped kept yield operand from old loop body");
         return failure();
       }
@@ -1512,24 +1713,24 @@ public:
 
     // Rebuild loop with compacted channels, recursively updating nested SCF.
     IRMapping topMapping;
-    auto rebuiltOr = rebuildForOpDroppingIterArgs(rewriter, forOp, keep,
-                                                  neededOps, topMapping);
-    if (failed(rebuiltOr)) {
+    if (failed(rebuildForOpDroppingIterArgs(rewriter, forOp, keep, neededOps,
+                                            topMapping))) {
       debugUnexpectedBuilderFailure(
           "RemoveDeadIterArgBackwardForPattern", forOp, &keep,
           "top-level scf.for rebuild failed unexpectedly");
       return failure();
     }
+
     // Redirect uses from old kept results to rebuilt results.
-    for (unsigned i = 0; i < numResults; ++i) {
+    for (auto [i, result] : llvm::enumerate(forOp->getResults())) {
       if (!keep.test(i))
         continue;
-      Value mapped = topMapping.lookupOrNull(forOp.getResult(i));
+      Value mapped = topMapping.lookupOrNull(result);
       if (!mapped) {
         assert(false && "missing mapped result in rebuilt for loop");
         return failure();
       }
-      forOp.getResult(i).replaceAllUsesWith(mapped);
+      result.replaceAllUsesWith(mapped);
     }
     rewriter.eraseOp(forOp);
     return success();
@@ -1572,56 +1773,46 @@ public:
     // compute it are live even when the corresponding while result is unused.
     rootVals.push_back(oldCond.getCondition());
 
-    auto traceWhileRoots = [&]() {
-      return tracebackMemVals(
-          rootVals,
-          [&](Value v) {
-            auto barg = dyn_cast<BlockArgument>(v);
-            if (!barg)
-              return false;
-            return (barg.getOwner() == beforeBody ||
-                    barg.getOwner() == afterBody) &&
-                   barg.getArgNumber() < numResults;
-          },
-          [&](Value tracedVal) {
-            if (Operation *def = tracedVal.getDefiningOp())
-              neededOps.insert(def);
-          });
-    };
+    // Trace backwards to discover live loop-carried channels and defining ops.
+    llvm::SetVector<Value> tracedIterArgs;
+    tracebackMemVals(
+        rootVals,
+        [&](Value value) -> bool {
+          bool isWhileResult = false;
+          if (auto opResult = dyn_cast<OpResult>(value)) {
+            isWhileResult = opResult.getDefiningOp() == whileOp.getOperation();
+          }
+          return !isWhileResult && !isInRegion(value, whileOp.getBefore()) &&
+                 !isInRegion(value, whileOp.getAfter());
+        },
+        [&](Value value) -> void {
+          if (auto blockArg = dyn_cast<BlockArgument>(value)) {
+            if ((blockArg.getOwner() == beforeBody ||
+                 blockArg.getOwner() == afterBody) &&
+                blockArg.getArgNumber() < numResults) {
+              tracedIterArgs.insert(value);
+            }
+          }
+          if (Operation *defOp = value.getDefiningOp()) {
+            neededOps.insert(defOp);
+          }
+        });
 
     // Trace backward through both regions to recover live carried channels.
-    // Newly-kept channels make their tied condition/yield values live, so keep
-    // tracing until the keep mask stops changing.
-    llvm::SmallBitVector rootedChannels(numResults, false);
-    bool changed = true;
-    while (changed) {
-      changed = false;
-      SmallVector<Value> tracedArgs = traceWhileRoots();
-      for (Value argVal : tracedArgs) {
-        auto barg = cast<BlockArgument>(argVal);
-        unsigned idx = barg.getArgNumber();
-        if (!keep.test(idx)) {
-          keep.set(idx);
-          changed = true;
-        }
-      }
-      for (unsigned i = 0; i < numResults; ++i) {
-        if (!keep.test(i) || rootedChannels.test(i))
-          continue;
-        rootVals.push_back(oldCond.getArgs()[i]);
-        rootVals.push_back(oldYield.getOperand(i));
-        rootedChannels.set(i);
-        changed = true;
-      }
+    for (Value argVal : tracedIterArgs) {
+      auto barg = cast<BlockArgument>(argVal);
+      assert((barg.getOwner() == beforeBody || barg.getOwner() == afterBody) &&
+             "expected traced iter arg to belong to while regions");
+      unsigned idx = barg.getArgNumber();
+      assert(idx < keep.size() &&
+             "expected block argument to be one of whileOp iter args");
+      keep.set(idx);
     }
 
-    // If every channel is live, this rewrite does not apply.
-    SmallVector<unsigned, 4> removableIdxs;
-    for (unsigned i = 0; i < numResults; ++i)
-      if (!keep.test(i))
-        removableIdxs.push_back(i);
-    if (removableIdxs.empty())
+    // If all channels are kept, this rewrite does not apply.
+    if (keep.all()) {
       return failure();
+    }
 
     // Helper to check if an old value can be materialized in rebuilt regions.
     auto isMappable = [&](Value oldVal) -> bool {
@@ -1647,26 +1838,105 @@ public:
 
     // Rebuild while with compacted channels, recursively updating nested SCF.
     IRMapping topMapping;
-    auto rebuiltOr = rebuildWhileOpDroppingIterArgs(rewriter, whileOp, keep,
-                                                    neededOps, topMapping);
-    if (failed(rebuiltOr)) {
+    if (failed(rebuildWhileOpDroppingIterArgs(rewriter, whileOp, keep,
+                                              neededOps, topMapping))) {
       debugUnexpectedBuilderFailure(
           "RemoveDeadIterArgBackwardWhilePattern", whileOp, &keep,
           "top-level scf.while rebuild failed unexpectedly");
       return failure();
     }
+
     // Redirect uses from old kept results to rebuilt results.
-    for (unsigned i = 0; i < numResults; ++i) {
+    for (auto [i, result] : llvm::enumerate(whileOp->getResults())) {
       if (!keep.test(i))
         continue;
-      Value mapped = topMapping.lookupOrNull(whileOp.getResult(i));
+      Value mapped = topMapping.lookupOrNull(result);
       if (!mapped) {
         assert(false && "missing mapped result in rebuilt while");
         return failure();
       }
-      whileOp.getResult(i).replaceAllUsesWith(mapped);
+      result.replaceAllUsesWith(mapped);
     }
     rewriter.eraseOp(whileOp);
+    return success();
+  }
+};
+
+// Backward-trace dead-result removal for scope.scope.
+//
+// Unlike loop iter-args, scope channels are plain return-style results:
+//   - keep[i] is seeded directly from whether scope result i has users.
+//   - live side-effecting ops in the body are treated as roots.
+//   - kept return operands are traced to collect all defining ops needed to
+//     rebuild the scope body while dropping dead result channels.
+struct RemoveDeadResultsBackwardScopePattern
+    : public OpRewritePattern<scope::ScopeOp> {
+public:
+  using OpRewritePattern<scope::ScopeOp>::OpRewritePattern;
+  LogicalResult
+  matchAndRewrite(scope::ScopeOp scopeOp,
+                  mlir::PatternRewriter &rewriter) const override {
+    if (!scopeOp->getNumResults() || !scopeOp->getNumRegions() ||
+        scopeOp.getRegion().empty()) {
+      return failure();
+    }
+
+    Block *body = scopeOp.getBody();
+    if (!body || body->empty()) {
+      return failure();
+    }
+
+    auto oldReturn = dyn_cast<scope::ReturnOp>(body->getTerminator());
+    if (!oldReturn || oldReturn.getNumOperands() != scopeOp.getNumResults()) {
+      return failure();
+    }
+
+    llvm::SmallBitVector keep(scopeOp.getNumResults(), false);
+    SmallPtrSet<Operation *, 32> neededOps;
+    SmallVector<Value, 32> rootVals;
+    seedLiveRootsFromResults(scopeOp.getResults(), keep, rootVals);
+    collectRootsFromSideEffects(body, neededOps, rootVals);
+    for (auto [i, operand] : llvm::enumerate(oldReturn.getOperands())) {
+      if (keep.test(i)) {
+        rootVals.push_back(operand);
+      }
+    }
+
+    // If all channels are kept, this rewrite does not apply.
+    if (keep.all()) {
+      return failure();
+    }
+
+    Region &scopeRegion = scopeOp.getRegion();
+    tracebackMemVals(
+        rootVals,
+        [&](Value value) -> bool { return !isInRegion(value, scopeRegion); },
+        [&](Value value) -> void {
+          if (Operation *defOp = value.getDefiningOp()) {
+            neededOps.insert(defOp);
+          }
+        });
+
+    IRMapping topMapping;
+    if (failed(rebuildScopeOpDroppingIterArgs(rewriter, scopeOp, topMapping,
+                                              neededOps, &keep))) {
+      debugUnexpectedBuilderFailure(
+          "RemoveDeadResultsBackwardScopePattern", scopeOp, &keep,
+          "top-level scope.scope rebuild failed unexpectedly");
+      return failure();
+    }
+
+    for (auto [i, result] : llvm::enumerate(scopeOp->getResults())) {
+      if (!keep.test(i))
+        continue;
+      Value mapped = topMapping.lookupOrNull(result);
+      if (!mapped) {
+        assert(false && "missing mapped result in rebuilt scope.scope");
+        return failure();
+      }
+      result.replaceAllUsesWith(mapped);
+    }
+    rewriter.eraseOp(scopeOp);
     return success();
   }
 };
@@ -1682,6 +1952,7 @@ struct CanonicalizeIterArgPass
     tensor::populateFoldTensorEmptyPatterns(patterns);
 
     patterns.insert<CanonicalizeYieldValPattern<scf::ForOp>,
+                    CanonicalizeScopeReturnValPattern,
                     CanonicalizeIterArgPattern<scf::ForOp>,
                     CanonicalizeIterArgPattern<scf::WhileOp>,
                     RemoveDeadIterArgPattern<scf::ForOp>>(
@@ -1693,7 +1964,8 @@ struct CanonicalizeIterArgPass
       // been observed to interact badly with vector-only rewrites.
       if (!funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
         patterns.insert<RemoveDeadIterArgBackwardForPattern,
-                        RemoveDeadIterArgBackwardWhilePattern>(
+                        RemoveDeadIterArgBackwardWhilePattern,
+                        RemoveDeadResultsBackwardScopePattern>(
             patterns.getContext());
       }
     }

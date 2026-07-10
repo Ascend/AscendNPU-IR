@@ -333,6 +333,9 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"enableCVPatterns",
+              "enable-cv-patterns", "bool", /*default=*/"true",
+              "Enable CV patterns for cross-core synchronization.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -371,6 +374,9 @@ def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"enableCVPatterns",
+              "enable-cv-patterns", "bool", /*default=*/"true",
+              "Enable CV patterns for cross-core synchronization.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -588,6 +594,15 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
                         /*default=*/"false",
                         "Remove all core type attributes. If set to true, this "
                         "pass becomes a cleanup pass.">];
+}
+
+def HIVMCanonicalizationPipeline
+    : Pass<"hivm-canonicalization-pipeline", "func::FuncOp"> {
+  let summary = "Run HIVM canonicalization pass pipeline on one function";
+  let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "scf::SCFDialect"];
 }
 
 def SetBufferSize : Pass<"hivm-set-buffer-size", "func::FuncOp"> {
