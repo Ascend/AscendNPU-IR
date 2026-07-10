@@ -469,15 +469,8 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
       .Case([&](tensor::InsertSliceOp op) {
         if (step == PropagationStep::LOCAL)
           return failure();
-        if (PropagatorUtil::getCoreType(propagateOp) == TCoreType::CUBE) {
-          PropagatorUtil::createPropagatorsUp(op, TCoreType::VECTOR,
-                                              hivm::AddressSpace::UB, rewriter);
-          PropagatorUtil::createPropagatorsDown(
-              op, TCoreType::VECTOR, hivm::AddressSpace::UB, rewriter);
-        } else {
-          PropagatorUtil::createPropagatorsUp(op, propagateOp, rewriter);
-          PropagatorUtil::createPropagatorsDown(op, propagateOp, rewriter);
-        }
+        PropagatorUtil::createPropagatorsUp(op, propagateOp, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, propagateOp, rewriter);
         return success();
       })
       .Case<hivm::CustomMacroOp, hivm::CustomOp>([&](Operation *op) {
