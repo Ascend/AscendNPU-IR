@@ -71,6 +71,7 @@ void ScopeOp::getSuccessorRegions(RegionBranchPoint point,
     regions.push_back(RegionSuccessor(getResults()));
     return;
   }
+
   regions.push_back(RegionSuccessor(&getRegion()));
 }
 
