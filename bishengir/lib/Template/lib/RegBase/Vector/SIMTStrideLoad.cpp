@@ -38,18 +38,35 @@ struct IsStrideLoadDTypeSupported {
 
 __aiv__ __attribute__((always_inline)) static int32_t
 getStrideLoadBoundedSize(int32_t stride, int32_t numel, int32_t dstSize) {
-  if (stride <= 0 || numel <= 0 || dstSize <= 0) {
+  if (stride < 0 || numel <= 0 || dstSize <= 0) {
     return 0;
+  }
+  if (stride == 0) {
+    return dstSize == 1 ? 1 : 0;
   }
   return numel < dstSize ? numel : dstSize;
 }
 
 __aiv__ __attribute__((always_inline)) static int32_t
 getStrideLoadSize(int32_t stride, int32_t loadLower, int32_t loadUpper) {
-  if (stride <= 0 || loadUpper <= loadLower) {
+  if (stride < 0 || loadUpper <= loadLower) {
     return 0;
   }
+  if (stride == 0) {
+    return 1;
+  }
   return (loadUpper - loadLower) / stride;
+}
+
+__aiv__ __attribute__((always_inline)) static int32_t
+getStrideLoadUpper(int32_t loadLower, int32_t stride, int32_t loadSize) {
+  if (loadSize <= 0) {
+    return loadLower;
+  }
+  if (stride == 0) {
+    return loadLower + 1;
+  }
+  return loadLower + loadSize * stride;
 }
 
 template <typename DTYPE>
@@ -184,7 +201,8 @@ stride_load_1d(memref_t<__gm__ DTYPE, 1> *src,
   int32_t loadSize =
       getStrideLoadBoundedSize(innerStride, innerNumel, dstSize);
   int32_t loadLower = innerOffset;
-  int32_t loadUpper = innerOffset + loadSize * innerStride;
+  int32_t loadUpper =
+      getStrideLoadUpper(loadLower, innerStride, loadSize);
   int32_t padUpper = dstSize;
   stride_load_1d_impl<DTYPE>(
       reinterpret_cast<volatile __gm__ DTYPE *>(src->aligned + src->offset),
@@ -236,8 +254,10 @@ stride_load_2d(memref_t<__gm__ DTYPE, 1> *src,
       getStrideLoadBoundedSize(innerStride1, innerNumel1, dstSize1);
   int32_t loadLower0 = innerOffset;
   int32_t loadLower1 = 0;
-  int32_t loadUpper0 = innerOffset + loadSize0 * innerStride0;
-  int32_t loadUpper1 = loadSize1 * innerStride1;
+  int32_t loadUpper0 =
+      getStrideLoadUpper(loadLower0, innerStride0, loadSize0);
+  int32_t loadUpper1 =
+      getStrideLoadUpper(loadLower1, innerStride1, loadSize1);
   stride_load_2d_impl<DTYPE>(
       reinterpret_cast<volatile __gm__ DTYPE *>(src->aligned + src->offset),
       innerStride0, innerStride1, loadLower0, loadLower1, loadUpper0,
@@ -300,9 +320,12 @@ __aiv__ __attribute__((always_inline)) void stride_load_3d(
   int32_t loadLower0 = innerOffset;
   int32_t loadLower1 = 0;
   int32_t loadLower2 = 0;
-  int32_t loadUpper0 = innerOffset + loadSize0 * innerStride0;
-  int32_t loadUpper1 = loadSize1 * innerStride1;
-  int32_t loadUpper2 = loadSize2 * innerStride2;
+  int32_t loadUpper0 =
+      getStrideLoadUpper(loadLower0, innerStride0, loadSize0);
+  int32_t loadUpper1 =
+      getStrideLoadUpper(loadLower1, innerStride1, loadSize1);
+  int32_t loadUpper2 =
+      getStrideLoadUpper(loadLower2, innerStride2, loadSize2);
   stride_load_3d_impl<DTYPE>(
       reinterpret_cast<volatile __gm__ DTYPE *>(src->aligned + src->offset),
       innerStride0, innerStride1, innerStride2, loadLower0, loadLower1,
