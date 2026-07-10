@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/SCF/TransformOps/SCFTransformOps.h"
 #include "bishengir/Dialect/SCF/Transforms/Transform.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Transforms/Transforms.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -40,6 +41,82 @@ static constexpr llvm::StringLiteral kMapForToForallAttrName =
 
 using namespace mlir;
 using namespace mlir::transform;
+
+//===----------------------------------------------------------------------===//
+// ParallelLoopTileOp
+//===----------------------------------------------------------------------===//
+
+static SmallVector<int64_t> extractFromI64ArrayAttr(Attribute attr) {
+  if (ArrayAttr array = dyn_cast<ArrayAttr>(attr))
+    return llvm::to_vector<4>(
+        llvm::map_range(array, [](Attribute a) -> int64_t {
+          return cast<IntegerAttr>(a).getInt();
+        }));
+  if (DenseI64ArrayAttr array = dyn_cast<DenseI64ArrayAttr>(attr))
+    return SmallVector<int64_t>(array.asArrayRef());
+
+  llvm_unreachable("Unsupported type for conversion to an integer array.");
+}
+
+DiagnosedSilenceableFailure
+ParallelLoopTileOp::apply(TransformRewriter &rewriter,
+                          TransformResults &results, TransformState &state) {
+  auto payload = state.getPayloadOps(getTarget());
+  scf::ParallelOp loop = dyn_cast<scf::ParallelOp>(*payload.begin());
+
+  SmallVector<int64_t, 4> tileSizes = extractFromI64ArrayAttr(getStaticSizes());
+  for (auto tileSize : tileSizes)
+    if (tileSize == 0) {
+      return emitDefiniteFailure() << "tile size cannot be 0";
+    }
+
+  std::pair<scf::ParallelOp, scf::ParallelOp> result;
+  // noMinMaxBounds wired to false
+  result = tileParallelLoop(loop, tileSizes, false);
+  results.set(getOperation()->getOpResult(0), {result.first});
+  results.set(getOperation()->getOpResult(1), {result.second});
+
+  return DiagnosedSilenceableFailure::success();
+}
+
+void ParallelLoopTileOp::print(OpAsmPrinter &p) {
+  p << ' ';
+  p << getTarget();
+  p.printOptionalAttrDict((*this)->getAttrs());
+  p << " : ";
+  p.printFunctionalType(TypeRange(getOperand().getType()),
+                        getResults().getTypes());
+}
+
+ParseResult ParallelLoopTileOp::parse(OpAsmParser &parser,
+                                      OperationState &result) {
+  OpAsmParser::UnresolvedOperand targetOperand;
+  if (parser.parseOperand(targetOperand) ||
+      parser.parseOptionalAttrDict(result.attributes))
+    return failure();
+
+  FunctionType trailingType;
+  SMLoc typeLoc;
+  if (parser.getCurrentLocation(&typeLoc) ||
+      parser.parseColonType(trailingType)) {
+    return failure();
+  }
+  if (trailingType.getNumInputs() != 1)
+    return parser.emitError(typeLoc) << "expected one input type";
+
+  result.addTypes(trailingType.getResults());
+  if (parser.resolveOperand(targetOperand, trailingType.getInput(0),
+                            result.operands))
+    return failure();
+  return success();
+}
+
+void ParallelLoopTileOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  consumesHandle(getTargetMutable(), effects);
+  producesHandle(getOperation()->getOpResults(), effects);
+  modifiesPayload(effects);
+}
 
 //===----------------------------------------------------------------------===//
 // LoopTileOp
@@ -519,6 +596,33 @@ mlir::scf::ForOp bishengir::scf::normalizeToIndex(PatternRewriter &rewriter,
 }
 
 void LoopNormalizeOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  consumesHandle(getTargetMutable(), effects);
+  producesHandle(getOperation()->getOpResults(), effects);
+  modifiesPayload(effects);
+}
+
+//===----------------------------------------------------------------------===//
+// LoopFuseNestedSiblingsOp
+//===----------------------------------------------------------------------===//
+
+DiagnosedSilenceableFailure
+transform::LoopFuseNestedSiblingsOp::apply(TransformRewriter &rewriter,
+                                           TransformResults &transformResults,
+                                           TransformState &state) {
+  SetVector<Operation *> transformed;
+  for (Operation *target : state.getPayloadOps(getTarget())) {
+    if (!isa<scf::ForOp>(target))
+      return emitDefiniteFailure() << "expect only scf.for target!";
+    bishengir::fuseNestedSiblingLoops(target, rewriter, getRecursive());
+    transformed.insert(target);
+  }
+  transformResults.set(cast<OpResult>(getTransformed()),
+                       transformed.getArrayRef());
+  return DiagnosedSilenceableFailure::success();
+}
+
+void LoopFuseNestedSiblingsOp::getEffects(
     SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
   consumesHandle(getTargetMutable(), effects);
   producesHandle(getOperation()->getOpResults(), effects);

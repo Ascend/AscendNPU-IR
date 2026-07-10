@@ -26,6 +26,31 @@ include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/OpBase.td"
 
 //===----------------------------------------------------------------------===//
+// ParallelLoopTileOp
+//===----------------------------------------------------------------------===//
+
+def ParallelLoopTileOp : Op<Transform_Dialect, "parallel_loop.tile", [
+  FunctionalStyleTransformOpTrait,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+  TransformOpInterface]> {
+
+  let arguments =
+     (ins TransformHandleTypeInterface:$target,
+         DefaultValuedAttr<I64ArrayAttr, "{}">:$static_sizes);
+
+  let results = (outs Variadic<TransformHandleTypeInterface> : $loops);
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure apply(
+        ::mlir::transform::TransformRewriter & rewriter,
+        ::mlir::transform::TransformResults & transformResults,
+        ::mlir::transform::TransformState & state);
+  }];
+
+  let hasCustomAssemblyFormat = 1;
+}
+
+//===----------------------------------------------------------------------===//
 // LoopTileOp
 //===----------------------------------------------------------------------===//
 
@@ -161,6 +186,40 @@ def LoopNormalizeOp : Op<Transform_Dialect, "loop.normalize",
   }];
 
   let arguments = (ins TransformHandleTypeInterface:$target);
+
+  let assemblyFormat = "$target attr-dict `:` functional-type(operands, results)";
+
+  let results = (outs TransformHandleTypeInterface:$transformed);
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure apply(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::transform::TransformResults &transformResults,
+        ::mlir::transform::TransformState &state);
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// LoopFuseNestedSiblingsOp
+//===----------------------------------------------------------------------===//
+
+def LoopFuseNestedSiblingsOp : Op<Transform_Dialect, "loop.fuse_nested_siblings",
+    [FunctionalStyleTransformOpTrait,
+     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+     TransformOpInterface]> {
+  let summary = "Fuses sibling scf.for loops nested directly inside the target loop";
+  let description = [{
+    Collects the scf.for loops directly nested in the body of the target
+    scf.for loop, groups them into sets of mutually-independent siblings with
+    identical iteration counts, and fuses each group into a single loop.
+
+    If `recursive` is set, the fusion is applied again to the loops nested
+    inside each freshly fused loop, and so on, until no further inner sibling
+    loops can be fused.
+  }];
+
+  let arguments = (ins TransformHandleTypeInterface:$target,
+                       DefaultValuedAttr<BoolAttr, "false">:$recursive);
 
   let assemblyFormat = "$target attr-dict `:` functional-type(operands, results)";
 
