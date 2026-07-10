@@ -1435,4 +1435,40 @@ def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"
   ];
 }
 
+def TensorCopyInsertion : Pass<"hivm-tensor-copy-insertion", "ModuleOp"> {
+  let summary = "Run One-Shot analysis and insert tensor copies to resolve "
+                "bufferization conflicts";
+  let description = [{
+    This pass runs One-Shot Bufferize analysis (without bufferizing) and
+    inserts `bufferization.alloc_tensor` copies wherever a conflict (e.g.,
+    RaW) was detected. It is equivalent to the analyze + insertTensorCopies
+    phase of `one-shot-bufferize`, but without the final bufferization step.
+
+    Running this pass before `one-shot-bufferize` (with `copy-before-write`
+    or the default analyze+copy path) allows a second round of analysis to
+    catch conflicts that were exposed by the first round's copy insertion.
+  }];
+  let constructor = "mlir::hivm::createTensorCopyInsertionPass()";
+  let dependentDialects = [
+    "bufferization::BufferizationDialect",
+    "memref::MemRefDialect",
+    "tensor::TensorDialect",
+    "hivm::HIVMDialect",
+  ];
+  let options = [
+    Option<"allowReturnAllocsFromLoops", "allow-return-allocs-from-loops",
+           "bool", /*default=*/"false",
+           "Allows returning/yielding new allocations from a loop.">,
+    Option<"allowUnknownOps", "allow-unknown-ops", "bool",
+           /*default=*/"false",
+           "Allows unknown (not bufferizable) ops in the input IR.">,
+    Option<"analysisHeuristic", "analysis-heuristic", "std::string",
+           /*default=*/"\"bottom-up\"",
+           "Heuristic that control the IR traversal during analysis">,
+    Option<"bufferizeFunctionBoundaries", "bufferize-function-boundaries",
+           "bool", /*default=*/"false",
+           "Bufferize function boundaries (experimental).">,
+  ];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

@@ -24,7 +24,10 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+
+#include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Pass/Pass.h"
+
 #include <memory>
 
 /// Defines a scope for reinterpret map pass.
@@ -431,6 +434,12 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
+
+/// Create a pass that runs One-Shot analysis and inserts tensor copies to
+/// resolve bufferization conflicts, without performing the bufferization.
+std::unique_ptr<Pass> createTensorCopyInsertionPass();
+std::unique_ptr<Pass> createTensorCopyInsertionPass(
+    const bufferization::OneShotBufferizationOptions &options);
 
 
 //===----------------------------------------------------------------------===//

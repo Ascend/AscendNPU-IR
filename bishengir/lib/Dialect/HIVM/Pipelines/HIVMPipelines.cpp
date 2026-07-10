@@ -146,6 +146,10 @@ bufferizationPipeline(OpPassManager &pm,
       };
   oneShotOptions.analysisHeuristic =
       bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
+  // Run a first round of analysis + tensor copy insertion. The inserted
+  // copies (and the HIVM copy/store op's `to_be_replaced` cleanup in
+  // resolveConflicts) can expose conflicts that were previously masked.
+  pm.addPass(hivm::createTensorCopyInsertionPass(oneShotOptions));
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableTritonKernelCompile) {
