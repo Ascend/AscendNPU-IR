@@ -92,6 +92,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   NormalizeLoopIterator.cpp
   NormalizeMatmul.cpp
   OptMemPlanForPipeline.cpp
+  OutlineCopyInVF.cpp
   PlanMemory.cpp
   RecognizeDeinterleaveOp.cpp
   ReduceRankSubview.cpp
@@ -140,6 +141,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
+  MLIRMemRefTransforms
   MLIRVectorDialect
   BiShengIRMemRefExtDialect
   BiShengIRDialectUtils

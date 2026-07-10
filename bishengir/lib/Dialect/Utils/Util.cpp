@@ -663,6 +663,12 @@ bool isUnstructuredMemAccLoop(Operation *op) {
   return forOp->hasAttr("ExtractedLoadOrStore");
 }
 
+int64_t getNumPerRepeat(Type t) {
+  unsigned tBits = getElementTypeOrSelf(t).getIntOrFloatBitWidth();
+  unsigned tBytes = llvm::divideCeil(tBits, INTR_BITS_PER_BYTE);
+  return INTR_BYTES_PER_REPEAT / tBytes;
+}
+
 hivm::AxisKind getAxisKind(int dim, int rank) {
   if (dim == rank - 1)
     return hivm::AxisKind::LAST;

@@ -59,6 +59,7 @@ namespace utils {
 constexpr const uint8_t kBitsToByte = 8;
 constexpr static unsigned int INTR_BITS_PER_BYTE = 8;
 constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
+constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
@@ -622,6 +623,8 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
 bool isAlignedInUB(Type type);
 
 bool isUnstructuredMemAccLoop(Operation *op);
+
+int64_t getNumPerRepeat(Type t);
 
 ModuleOp getTopLevelModuleOp(Operation *op);
 

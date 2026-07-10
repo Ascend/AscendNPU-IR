@@ -138,6 +138,9 @@ std::unique_ptr<Pass> createConstantizeBufferSizePass();
 /// Create a pass to allocate extra buffer
 std::unique_ptr<Pass> createAllocExtraBufferPass();
 
+/// Create a pass to outline hivm.load in VF by rewriting it to hivm.copy.
+std::unique_ptr<Pass> createOutlineCopyInVFPass();
+
 /// Create a pass to remove unnecessary buffer address return
 std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
 
