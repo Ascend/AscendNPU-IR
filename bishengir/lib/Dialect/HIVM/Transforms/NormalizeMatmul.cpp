@@ -22,6 +22,7 @@
 #include "mlir/IR/TypeRange.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -30,6 +31,7 @@
 #include "llvm/Support/LogicalResult.h"
 
 #include <cassert>
+#include <type_traits>
 
 namespace mlir {
 #define GEN_PASS_DEF_NORMALIZEMATMUL
@@ -214,20 +216,20 @@ getRealShapeFromMemrefOrTensor(Value val, Location loc,
       subview.getSizes(), subview.getStaticSizes(), val.getLoc(), rewriter);
 }
 
-template <typename T>
-FailureOr<SmallVector<Value>> extractRealMKN(T op, PatternRewriter &rewriter) {
-  auto loc = op.getLoc();
+FailureOr<SmallVector<Value>>
+extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
+  auto loc = matmulOp.getLoc();
   SmallVector<Value> mkn;
-  size_t batchIndexBias = 0;
-  if constexpr (std::is_same_v<T, hivm::BatchMmadL1Op>) {
-    batchIndexBias = 1;
-  }
-  auto realMK = getRealShapeFromMemrefOrTensor(op.getA(), loc, rewriter);
+  const bool isBatchMmad = isa<BatchMmadL1Op>(matmulOp.getOperation());
+  const size_t batchIndexBias = isBatchMmad ? 1 : 0;
+  auto realMK =
+      getRealShapeFromMemrefOrTensor(matmulOp.getMatmulA(), loc, rewriter);
   const int matrixSize = 2;
   if (failed(realMK) || (*realMK).size() != matrixSize + batchIndexBias) {
     return failure();
   }
-  auto realKN = getRealShapeFromMemrefOrTensor(op.getB(), loc, rewriter);
+  auto realKN =
+      getRealShapeFromMemrefOrTensor(matmulOp.getMatmulB(), loc, rewriter);
   if (failed(realKN) || (*realKN).size() != matrixSize + batchIndexBias) {
     return failure();
   }
@@ -235,28 +237,30 @@ FailureOr<SmallVector<Value>> extractRealMKN(T op, PatternRewriter &rewriter) {
   // TODO: m is set to be l1M for group gemm scenario (use kDotPadOnlyK),
   //       which should be enhanced.
   Value realM;
-  if (op.getATranspose().has_value()) {
+  if (matmulOp.isMatmulATransposed()) {
     realM = (*realMK)[1 + batchIndexBias];
   } else {
     realM = (*realMK)[0 + batchIndexBias];
   }
 
-  if (utils::getAnnotateOpWithAttr(op.getA(), kDotPadOnlyK).has_value()) {
-    auto cType = dyn_cast<RankedTensorType>(op.getC().getType());
+  if (matmulOp.supportsPerChannelBias() &&
+      utils::getAnnotateOpWithAttr(matmulOp.getMatmulA(), kDotPadOnlyK)
+          .has_value()) {
+    auto cType = dyn_cast<RankedTensorType>(matmulOp.getMatmulC().getType());
     if (cType && cType.hasStaticShape()) {
-      size_t l1MIdx = (std::is_same_v<T, hivm::BatchMmadL1Op>) ? 1 : 0;
+      const size_t l1MIdx = isBatchMmad ? 1 : 0;
       int64_t l1M = cType.getShape()[l1MIdx + batchIndexBias];
       realM = rewriter.create<arith::ConstantIndexOp>(loc, l1M);
     }
   }
 
   mkn.push_back(realM);
-  if (op.getATranspose().has_value()) {
+  if (matmulOp.isMatmulATransposed()) {
     mkn.push_back((*realMK)[0 + batchIndexBias]);
   } else {
     mkn.push_back((*realMK)[1 + batchIndexBias]);
   }
-  if (op.getBTranspose().has_value()) {
+  if (matmulOp.isMatmulBTransposed()) {
     mkn.push_back((*realKN)[0 + batchIndexBias]);
   } else {
     mkn.push_back((*realKN)[1 + batchIndexBias]);
@@ -264,47 +268,26 @@ FailureOr<SmallVector<Value>> extractRealMKN(T op, PatternRewriter &rewriter) {
   return mkn;
 }
 
-template <>
-FailureOr<SmallVector<Value>> extractRealMKN(hivm::MmadMxL1Op op,
-                                             PatternRewriter &rewriter) {
-  auto loc = op.getLoc();
-  auto realMK = getRealShapeFromMemrefOrTensor(op.getA(), loc, rewriter);
-  static constexpr size_t matrixSize = 2;
-  if (failed(realMK) || (*realMK).size() != matrixSize) {
-    return failure();
-  }
-  auto realKN = getRealShapeFromMemrefOrTensor(op.getB(), loc, rewriter);
-  if (failed(realKN) || (*realKN).size() != matrixSize) {
-    return failure();
-  }
+struct SetRealMKNPattern
+    : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
+  using OpInterfaceRewritePattern<
+      LocalMatmulLikeOpInterface>::OpInterfaceRewritePattern;
 
-  // set m,k,n
-  return SmallVector<Value>{(*realMK)[0], (*realMK)[1], (*realKN)[1]};
-}
-
-template <typename T>
-struct SetRealMKNPattern : public OpRewritePattern<T> {
-public:
-  using OpRewritePattern<T>::OpRewritePattern;
-  LogicalResult matchAndRewrite(T mmadLikeOp,
+  LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface mmadLikeOp,
                                 PatternRewriter &rewriter) const override {
-    if (mmadLikeOp->hasAttr(kAlreadySetRealMKN))
-      return rewriter.notifyMatchFailure(mmadLikeOp, "Pattern already applied");
-
-    auto mkn = extractRealMKN<T>(mmadLikeOp, rewriter);
-    if (failed(mkn))
-      return rewriter.notifyMatchFailure(mmadLikeOp, "Failed to extract mkn");
-
     Operation *op = mmadLikeOp.getOperation();
+    if (op->hasAttr(kAlreadySetRealMKN))
+      return rewriter.notifyMatchFailure(op, "Pattern already applied");
+
+    auto mkn = extractRealMKN(mmadLikeOp, rewriter);
+    if (failed(mkn))
+      return rewriter.notifyMatchFailure(op, "Failed to extract mkn");
+
     // This pattern is intended to run only once. We clone the op and use
     // `GreedyRewriteStrictness::ExistingOps` to achieve this.
-    auto newOp = rewriter.clone(*op);
-    rewriter.modifyOpInPlace(newOp, [&newOp, &mkn]() {
-      auto newMmadLikeOp = cast<T>(newOp);
-      newMmadLikeOp.getRealMMutable().assign((*mkn)[0]);
-      newMmadLikeOp.getRealKMutable().assign((*mkn)[1]);
-      newMmadLikeOp.getRealNMutable().assign((*mkn)[2]);
-    });
+    Operation *newOp = rewriter.clone(*op);
+    cast<LocalMatmulLikeOpInterface>(newOp).setMatmulRealMKN(
+        (*mkn)[0], (*mkn)[1], (*mkn)[2]);
     rewriter.replaceOp(op, newOp);
     newOp->setAttr(kAlreadySetRealMKN, rewriter.getUnitAttr());
     return success();
@@ -1011,6 +994,8 @@ public:
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
     // TODO: need to be reverted when Affinity GMM supported
+    if (!op.supportsNormalizeMmadCCF())
+      return failure();
     auto moduleOp = op->template getParentOfType<ModuleOp>();
     bool isDisableHfusionVectorize = false;
     if (moduleOp) {
@@ -1261,9 +1246,7 @@ public:
 };
 
 void populateSetRealMKNPattern(RewritePatternSet &patterns) {
-  patterns.add<SetRealMKNPattern<hivm::MmadL1Op>,
-               SetRealMKNPattern<hivm::MmadMxL1Op>,
-               SetRealMKNPattern<hivm::BatchMmadL1Op>>(patterns.getContext());
+  patterns.add<SetRealMKNPattern>(patterns.getContext());
 }
 
 void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {

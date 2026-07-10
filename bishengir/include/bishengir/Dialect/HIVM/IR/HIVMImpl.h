@@ -220,7 +220,8 @@ void traceDefOpsImpl(Value v, bool isSingleChain, TraceResultMode traceMode,
   if (defOp && traceMode == TraceResultMode::TypeMatch) {
     auto core = queryCoreTypeHelper(defOp).value_or(TCoreType::CUBE_OR_VECTOR);
     if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
-         std::is_same_v<OpType, hivm::BatchMmadL1Op>) &&
+         std::is_same_v<OpType, hivm::BatchMmadL1Op> ||
+         std::is_same_v<OpType, hivm::LocalMatmulLikeOpInterface>) &&
         (core == TCoreType::VECTOR)) {
       traceDefState = TraceDefState::Failed;
       return;
@@ -492,6 +493,11 @@ typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
                             std::is_same_v<MmadLikeOpType, hivm::BatchMmadL1Op>,
                         bool>::type
 isSingleChainMmadToMmad(MmadLikeOpType op) {
+  if constexpr (std::is_same_v<MmadLikeOpType, hivm::MmadMxL1Op>) {
+    // TODO: support single-chain accumulation detection for MmadMxL1Op.
+    return false;
+  }
+
   auto maybeMmadLikeOps =
       traceDefOps<MmadLikeOpType>(op.getC(),
                                   /*isSingleChain=*/true,

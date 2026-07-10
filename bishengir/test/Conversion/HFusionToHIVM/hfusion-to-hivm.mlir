@@ -1227,3 +1227,23 @@ module {
     return %5 : tensor<4x16xf8E5M2>
   }
 }
+
+// -----
+module {
+  // CHECK-LABEL: func.func @test_matmulscale_transpose
+  // CHECK-NOT: linalg.transpose
+  // CHECK: hivm.hir.mmadmxL1 {{.*}}a_transpose{{.*}}b_transpose
+  func.func @test_matmulscale_transpose(%arg0: memref<8x4xf8E5M2>, %arg1: memref<16x8xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>) -> tensor<4x16xf32> {
+    %0 = bufferization.to_tensor %arg0 : memref<8x4xf8E5M2>
+    %1 = bufferization.to_tensor %arg1 : memref<16x8xf8E5M2>
+    %2 = bufferization.to_tensor %arg2 : memref<1xui8>
+    %3 = bufferization.to_tensor %arg3 : memref<1xui8>
+    %a_empty = tensor.empty() : tensor<4x8xf8E5M2>
+    %b_empty = tensor.empty() : tensor<8x16xf8E5M2>
+    %acc = tensor.empty() : tensor<4x16xf32>
+    %a_t = linalg.transpose ins(%0 : tensor<8x4xf8E5M2>) outs(%a_empty : tensor<4x8xf8E5M2>) permutation = [1, 0]
+    %b_t = linalg.transpose ins(%1 : tensor<16x8xf8E5M2>) outs(%b_empty : tensor<8x16xf8E5M2>) permutation = [1, 0]
+    %res = hfusion.matmul_mx ins(%a_t, %b_t, %2, %3 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>) outs(%acc : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %res : tensor<4x16xf32>
+  }
+}
