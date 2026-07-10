@@ -12,6 +12,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ${NORMALIZE_UTILS}
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
+  AutoVectorize/AutoVectorizeInterpreter.cpp
   AutoVectorize/Verify.cpp
   AutoVectorizeVerifier.cpp
   BufferizableOpInterfaceImpl.cpp

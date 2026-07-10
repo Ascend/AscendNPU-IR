@@ -114,6 +114,9 @@ std::unique_ptr<Pass>
 createAutoScheduleInterpreterPass(const std::string &kernelName,
                                   transform::TransformOptions options = {});
 
+/// Create a pass to execute emitted auto vectorize transform sequences.
+std::unique_ptr<Pass> createAutoVectorizeInterpreterPass();
+
 /// Create a pass to erase auto schedule sequence for the target kernel.
 std::unique_ptr<Pass>
 createEraseAutoSchedulePass(const std::string &kernelName);
@@ -267,6 +270,9 @@ std::unique_ptr<Pass> createRemoveRedundantWriteAndReadPairPass();
 
 /// Register a pass to execute auto schedule sequence for the target kernel.
 void registerAutoScheduleInterpreterPass();
+
+/// Register a pass to execute emitted auto vectorize transform sequences.
+void registerAutoVectorizeInterpreterPass();
 
 /// Register a pass to erase auto schedule sequence for the target kernel.
 void registerEraseAutoSchedulePass();
