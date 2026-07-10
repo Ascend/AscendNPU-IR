@@ -7,6 +7,8 @@ add_bishengir_dialect_library(BiShengIRAnnotationDialect
 
   DEPENDS
   BiShengIRAnnotationOpsIncGen
+  BiShengIRAnnotationAttributesIncGen
+  BiShengIRAnnotationEnumsIncGen
 
   LINK_LIBS PUBLIC
   MLIRDialect

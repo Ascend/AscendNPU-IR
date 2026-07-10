@@ -781,12 +781,12 @@ module {
                                      %arg1: memref<31457280xf32, #hivm.address_space<gm>>,
                                      %arg2: memref<31457280xf32, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
-    // CHECK: %[[CONST5:.*]] = arith.constant 8192 : i64
-    // CHECK: %[[CONST4:.*]] = arith.constant 32768 : i64
-    // CHECK: %[[CONST3:.*]] = arith.constant 0 : i64
-    // CHECK: %[[CONST2:.*]] = arith.constant 40960 : i64
-    // CHECK: %[[CONST1:.*]] = arith.constant 16384 : i64
-    // CHECK: %[[CONST0:.*]] = arith.constant 24576 : i64
+    // CHECK-DAG: %[[CONST5:.*]] = arith.constant 8192 : i64
+    // CHECK-DAG: %[[CONST4:.*]] = arith.constant 32768 : i64
+    // CHECK-DAG: %[[CONST3:.*]] = arith.constant 0 : i64
+    // CHECK-DAG: %[[CONST2:.*]] = arith.constant 40960 : i64
+    // CHECK-DAG: %[[CONST1:.*]] = arith.constant 16384 : i64
+    // CHECK-DAG: %[[CONST0:.*]] = arith.constant 24576 : i64
     %c0 = arith.constant 0 : index
     %c1572864 = arith.constant 1572864 : index
     %c2048 = arith.constant 2048 : index

@@ -266,7 +266,7 @@ struct RemoveUselessMarkOps : public OpRewritePattern<annotation::MarkOp> {
 
   LogicalResult matchAndRewrite(annotation::MarkOp markOp,
                                 PatternRewriter &rewriter) const override {
-    if (!markOp->getAttrs().empty()) {
+    if (!markOp.isAttrEmpty()) {
       return failure();
     }
 

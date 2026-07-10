@@ -660,7 +660,7 @@ void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
     markOp->removeAttr(attrName);
   }
 
-  if (markOp->getAttrDictionary().empty() && removeOp) {
+  if (markOp.isAttrEmpty() && removeOp) {
     markOp.erase();
   }
 }
@@ -675,7 +675,7 @@ void removeMarkOpAttr(annotation::MarkOp markOp, StringRef attrName,
     rewriter.modifyOpInPlace(markOp, [&]() { markOp->removeAttr(attrName); });
   }
 
-  if (markOp->getAttrDictionary().empty() && removeOp) {
+  if (markOp.isAttrEmpty() && removeOp) {
     rewriter.eraseOp(markOp);
   }
 }

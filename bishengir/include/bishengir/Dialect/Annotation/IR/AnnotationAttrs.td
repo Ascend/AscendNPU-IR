@@ -1,0 +1,79 @@
+//===- AnnotationAttrs.td - Annotation dialect attributes --*- tablegen -*-===//
+//
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+
+#ifndef BISHENGIR_DIALECT_ANNOTATION_IR_ANNOTATIONATTRS_TD
+#define BISHENGIR_DIALECT_ANNOTATION_IR_ANNOTATIONATTRS_TD
+
+include "mlir/IR/AttrTypeBase.td"
+include "mlir/Dialect/LLVMIR/LLVMOpBase.td"
+include "mlir/IR/EnumAttr.td"
+include "mlir/IR/BuiltinTypeInterfaces.td"
+include "bishengir/Dialect/Annotation/IR/AnnotationBase.td"
+include "mlir/Dialect/SCF/IR/DeviceMappingInterface.td"
+include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/EnumAttr.td"
+
+class Annotation_I32Enum<string name, string description, list<I32EnumAttrCase> cases>
+    : I32EnumAttr<name, description, cases> {
+  let genSpecializedAttr = 0;
+  let cppNamespace = "::mlir::annotation";
+}
+
+class Annotation_I32EnumAttr<string mnemonic, Annotation_I32Enum enumInfo>
+  : EnumAttr<Annotation_Dialect, enumInfo, mnemonic> {
+  let assemblyFormat = "`<` $value `>`";
+}
+
+def Annotation_EffectWrite : I32EnumAttrCase<"Write", 0, "write">;
+def Annotation_EffectRead : I32EnumAttrCase<"Read", 1, "read">;
+
+def Annotation_EffectModeEnum : Annotation_I32Enum<
+  "EffectMode", "Memory Effect Mode for Annotation", [
+    Annotation_EffectWrite,
+    Annotation_EffectRead,
+  ]>;
+
+def Annotation_EffectModeAttr : Annotation_I32EnumAttr<"effect_mode", Annotation_EffectModeEnum> {
+  let description = [{
+    annotation memory effect mode attribute.
+  }];
+}
+
+class Annotation_Attr<string attrName, string attrMnemonic, list<Trait> traits = []>
+  : AttrDef<Annotation_Dialect, attrName, traits> {
+  let mnemonic = attrMnemonic;
+}
+
+def Annotation_FilterPassesAttr : Annotation_Attr<"FilterPasses", "filter_passes"> {
+  let summary = "Restricts which passes run on the annotated operation";
+  let description = [{
+    When attached to an operation, the pass manager will only execute the passes
+    whose command-line argument names appear in the comma-separated `passes`
+    list. All other passes are silently skipped for that operation.
+
+    Example:
+    ```mlir
+    func.func @foo() attributes {
+        annotation.filter_passes = #annotation.filter_passes<"canonicalize,cse">
+    } { ... }
+    ```
+  }];
+  let parameters = (ins AttrParameter<"StringAttr", "comma-separated pass argument names">:$passes);
+  let assemblyFormat = "`<` $passes `>`";
+}
+
+#endif // BISHENGIR_DIALECT_ANNOTATION_IR_ANNOTATIONATTRS_TD

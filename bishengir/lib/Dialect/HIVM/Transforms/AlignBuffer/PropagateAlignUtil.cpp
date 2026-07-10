@@ -1477,7 +1477,7 @@ mlir::LogicalResult PropagateAlignUpToRootAllocationPattern::matchAndRewrite(
     removeMarkOpAttr(markOp, llvm::StringRef(alignBytesAttrName_), rewriter,
                      false /*removeOp*/);
   });
-  if (markOp->getAttrDictionary().empty()) {
+  if (markOp.isAttrEmpty()) {
     rewriter.eraseOp(markOp);
   }
   return result;

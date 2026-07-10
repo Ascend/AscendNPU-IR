@@ -35,7 +35,19 @@ static constexpr llvm::StringLiteral kBufferSizeInByteAttr =
 //===----------------------------------------------------------------------===//
 
 void MarkOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value src) {
-  build(odsBuilder, odsState, src, /*values=*/ValueRange{}, /*keys=*/nullptr);
+  build(odsBuilder, odsState, src,
+        odsBuilder.getStrArrayAttr(
+            llvm::ArrayRef<StringRef>{stringifyEffectMode(EffectMode::Write)}),
+        /*values=*/ValueRange{},
+        /*keys=*/nullptr);
+}
+
+void MarkOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value src,
+                   ValueRange values, ArrayAttr keys) {
+  build(odsBuilder, odsState, src,
+        odsBuilder.getStrArrayAttr(
+            llvm::ArrayRef<StringRef>{stringifyEffectMode(EffectMode::Write)}),
+        values, keys);
 }
 
 /// Fold buffer size annotation to mark the root alloc.
@@ -70,17 +82,14 @@ struct FoldUselessBufferSizeMarkOp
     if (!markOp.isAnnotatedByStaticAttr(kBufferSizeInByteAttr))
       return failure();
 
-    if (!llvm::hasSingleElement(markOp->getAttrs()))
+    if (markOp.getAttrNum() != 1)
       return failure();
 
     auto srcVal = markOp.getSrc();
     // If the alloc is a static one, we can ignore the buffer size.
     if (isa<MemRefType>(srcVal.getType())) {
       auto maybeAlloc = utils::tracebackMemRefToAlloc(srcVal);
-      if (!maybeAlloc.has_value()) {
-        return failure();
-      }
-      if ((*maybeAlloc).getType().hasStaticShape()) {
+      if (maybeAlloc.has_value() && (*maybeAlloc).getType().hasStaticShape()) {
         rewriter.eraseOp(markOp);
         return success();
       }
@@ -105,6 +114,36 @@ struct FoldUselessBufferSizeMarkOp
     }
 
     // otherwise, directly remote it
+    rewriter.eraseOp(markOp);
+    return success();
+  }
+};
+
+// TODO: Temporarily disabled because of SplitMixKernel not migrated.
+struct FoldRedundantMarkOp : public OpRewritePattern<annotation::MarkOp> {
+  using OpRewritePattern<annotation::MarkOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(annotation::MarkOp markOp,
+                                PatternRewriter &rewriter) const override {
+    // Condition 1: The MarkOp does not have any attributes
+    if (markOp.getAttrNum() != 0) {
+      return failure();
+    }
+
+    // Condition 2: The Source of MarkOp has other users
+    // Find the source of MarkOp
+    bool hasOtherUsers = false;
+    auto srcVal = markOp.getSrc();
+    for (Operation *user : srcVal.getUsers()) {
+      if (user != markOp) {
+        hasOtherUsers = true;
+        break;
+      }
+    }
+    if (!hasOtherUsers) { // If it does not have other users, cannot erase
+      return failure();
+    }
+
     rewriter.eraseOp(markOp);
     return success();
   }
@@ -150,4 +189,51 @@ Value MarkOp::getDynamicAttrValue(StringRef key) {
       return value;
   }
   return Value();
+}
+
+void MarkOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  for (auto effect : getEffectsAttr()) {
+    auto stringEffect = mlir::cast<StringAttr>(effect).getValue();
+    if (stringEffect == stringifyEffectMode(EffectMode::Write))
+      effects.emplace_back(MemoryEffects::Write::get(), &getSrcMutable(),
+                           SideEffects::DefaultResource::get());
+    if (stringEffect == stringifyEffectMode(EffectMode::Read))
+      effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                           SideEffects::DefaultResource::get());
+  }
+}
+
+bool MarkOp::isAttrEmpty() { return (*this).getAttrNum() == 0; }
+
+static bool isIgnoredStringAttr(NamedAttribute attr, StringAttr stringAttr) {
+  return attr.getName() == stringAttr;
+}
+
+template <typename Container>
+static Container filterNonIgnoredAttr(const Container &container,
+                                      StringAttr stringAttr) {
+  auto filteredRange =
+      llvm::make_filter_range(container, [&stringAttr](NamedAttribute attr) {
+        return !isIgnoredStringAttr(attr, stringAttr);
+      });
+  return Container(filteredRange.begin(), filteredRange.end());
+}
+
+int64_t MarkOp::getAttrNum() {
+  // if the annotation only has the default attribute, it can be ignored.
+  int64_t attrNum = 0;
+  for (auto effect : getEffectsAttr()) {
+    auto stringEffect = mlir::cast<StringAttr>(effect).getValue();
+    if (stringEffect == stringifyEffectMode(EffectMode::Read)) {
+      attrNum += 1;
+    }
+  }
+  attrNum += (int64_t)filterNonIgnoredAttr(
+                 DenseSet<NamedAttribute>((*this)->getAttrs().begin(),
+                                          (*this)->getAttrs().end()),
+                 (*this).getEffectsAttrName())
+                 .size();
+  return attrNum;
 }
