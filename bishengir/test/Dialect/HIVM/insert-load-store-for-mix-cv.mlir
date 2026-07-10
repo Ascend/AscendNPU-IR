@@ -1189,7 +1189,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: @insert_tight_coupled_buffer_between_stride_load_and_mmad
-// CHECK: %[[RHS_LOAD:.*]] = hivm.hir.load {{.*}} core_type = <CUBE>
+// CHECK: %[[RHS_LOAD:.*]] = hivm.hir.load {{.*}}
 // CHECK: %[[STRIDE_LOAD:.*]] = hivm.hir.stride_load
 // CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[STRIDE_LOAD]]
 // CHECK: %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]]
@@ -1752,10 +1752,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: @a5_parallel_loop_memref_load_with_mmad
 // CHECK: hivm.hir.load
 // CHECK-SAME: {{"inserted-load"}}
-// CHECK-SAME: core_type = <CUBE>
 // CHECK: scf.for
 // CHECK: hivm.hir.load
-// CHECK-SAME: core_type = <CUBE>
 // CHECK: } {hivm.parallel_loop}
 // CHECK-NOT: {"inserted-copy"}
 // CHECK: hivm.hir.mmadL1
@@ -1792,5 +1790,98 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
             : tensor<128x128xbf16>, tensor<128x128xbf16>, i1, index, index, index)
         outs(%out : tensor<128x128xf32>) -> tensor<128x128xf32>
     return %mmad : tensor<128x128xf32>
+  }
+}
+
+// -----
+
+// On A5 targets, inferred tcoretype is only set on inserted loads when it is
+// VECTOR. CUBE tcoretype must not be propagated onto inserted loads.
+//
+// CHECK-LABEL: @a5_inferred_load_tcoretype_vector_only
+// CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[CUBE_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"inserted-load"} -> tensor<16x16xf16>
+// CHECK-NOT: %[[CUBE_LOAD]]{{.*}}core_type = <CUBE>
+// CHECK: hivm.hir.mmadL1 ins(%[[CUBE_LOAD]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_inferred_load_tcoretype_vector_only(
+      %a: tensor<16x16xf16>, %x: index) -> tensor<16x16xf16>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %extracted = tensor.extract_slice %a[0, 0] [%x, %x] [1, 1]
+        : tensor<16x16xf16> to tensor<?x?xf16>
+    %inserted = tensor.insert_slice %extracted into %1[0, 0] [%x, %x] [1, 1]
+        : tensor<?x?xf16> into tensor<16x16xf16>
+    %out = tensor.empty() : tensor<16x16xf16>
+    %mm = hivm.hir.mmadL1 ins(%a, %inserted, %true, %c16, %c16, %c16
+        : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
+        outs(%out : tensor<16x16xf16>) -> tensor<16x16xf16>
+    return %mm : tensor<16x16xf16>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @a5_fixpipe_to_vector_load_gets_vector_tcoretype
+// CHECK: hivm.hir.load
+// CHECK-SAME: {"inserted-load"}
+// CHECK-SAME: core_type = <VECTOR>
+// CHECK: hivm.hir.vadd
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_fixpipe_to_vector_load_gets_vector_tcoretype(
+      %vec: tensor<128x64xf32>, %lhs: tensor<128x128xbf16>,
+      %rhs: tensor<64x128xbf16>) -> tensor<128x64xf32>
+      attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %true = arith.constant true
+    %out = tensor.empty() : tensor<128x64xf32>
+    %mmad_tmp = tensor.empty() : tensor<4x8x16x16xf32>
+    %lhs_nz = tensor.empty() : tensor<8x8x16x16xbf16>
+    %rhs_nz = tensor.empty() : tensor<4x8x16x16xbf16>
+    %lhs_nd2nz = hivm.hir.nd2nz {dst_continuous}
+        ins(%lhs : tensor<128x128xbf16>) outs(%lhs_nz : tensor<8x8x16x16xbf16>)
+        -> tensor<8x8x16x16xbf16>
+    %rhs_nd2nz = hivm.hir.nd2nz {dst_continuous}
+        ins(%rhs : tensor<64x128xbf16>) outs(%rhs_nz : tensor<4x8x16x16xbf16>)
+        -> tensor<4x8x16x16xbf16>
+    %mmad = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_for_result_already_inserted = true, normalized_in_L0C}
+        ins(%lhs_nd2nz, %rhs_nd2nz, %true, %c128, %c128, %c64
+            : tensor<8x8x16x16xbf16>, tensor<4x8x16x16xbf16>, i1, index, index, index)
+        outs(%mmad_tmp : tensor<4x8x16x16xf32>) -> tensor<4x8x16x16xf32>
+    %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%mmad : tensor<4x8x16x16xf32>) outs(%out : tensor<128x64xf32>)
+        -> tensor<128x64xf32>
+    %add = hivm.hir.vadd ins(%fixpipe, %vec : tensor<128x64xf32>, tensor<128x64xf32>)
+        outs(%out : tensor<128x64xf32>) -> tensor<128x64xf32>
+    return %add : tensor<128x64xf32>
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @a5_inferred_load_tcoretype_vector_only
+// CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[CUBE_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%3 : tensor<16x16xf16>) -> tensor<16x16xf16>
+// CHECK-NOT: %[[CUBE_LOAD]]{{.*}}core_type = <CUBE>
+// CHECK: hivm.hir.mmadL1 ins(%[[CUBE_LOAD]]
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @a5_inferred_load_tcoretype_vector_only(%arg0: tensor<16x16xf16>, %arg1: index) -> tensor<16x16xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f16
+    %0 = tensor.empty() : tensor<16x16xf16>
+    %1 = tensor.empty() : tensor<16x16xf16>
+    %2 = hivm.hir.load ins(%arg0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %3 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    %extracted_slice = tensor.extract_slice %arg0[0, 0] [%arg1, %arg1] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
+    %inserted_slice = tensor.insert_slice %extracted_slice into %3[0, 0] [%arg1, %arg1] [1, 1] : tensor<?x?xf16> into tensor<16x16xf16>
+    %4 = tensor.empty() : tensor<16x16xf16>
+    %5 = hivm.hir.mmadL1 ins(%2, %inserted_slice, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%4 : tensor<16x16xf16>) -> tensor<16x16xf16>
+    return %5 : tensor<16x16xf16>
   }
 }
