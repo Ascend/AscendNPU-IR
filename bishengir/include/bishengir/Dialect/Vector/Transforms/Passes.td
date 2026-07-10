@@ -11,4 +11,14 @@
 
 include "mlir/Pass/PassBase.td"
 
+def MaterializeVectorWriteToDestination
+    : Pass<"materialize-vector-write-to-destination", "func::FuncOp"> {
+  let summary =
+      "materialize vector transfer-write destination to avoid write to empty tensor";
+  let constructor =
+      "::mlir::vector::createMaterializeVectorWriteToDestinationPass()";
+  let dependentDialects = ["arith::ArithDialect", "scf::SCFDialect",
+                           "tensor::TensorDialect", "vector::VectorDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_VECTOR_TRANSFORMS_PASSES_TD

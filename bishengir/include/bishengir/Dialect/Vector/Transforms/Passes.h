@@ -20,6 +20,9 @@ namespace mlir {
 
 namespace vector {
 
+// Create a pass to materialize transfer_write to destination.
+std::unique_ptr<Pass> createMaterializeVectorWriteToDestinationPass();
+
 #define GEN_PASS_REGISTRATION
 #include "bishengir/Dialect/Vector/Transforms/Passes.h.inc"
 } // namespace vector
