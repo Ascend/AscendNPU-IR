@@ -133,6 +133,8 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            "disable-multi-buffer-on-l1", "bool",
            /*default=*/"false",
            "Skip multi-buffer mark for L1 (cbuf, ND2NZ) buffers">,
+    Option<"enablePreload", "enable-preload", "bool",
+           /*default=*/"false", "Mark multi buffer for preload.">,
   ];
 }
 
