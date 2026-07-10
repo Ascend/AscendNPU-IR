@@ -42,6 +42,13 @@ InsertPropagationPattern::matchAndRewrite(Operation *op,
     return failure();
 
   return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::VBrcOp>([&](auto op) {
+        PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
+                                            rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                              rewriter);
+        return success();
+      })
       .Case<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
@@ -51,10 +58,10 @@ InsertPropagationPattern::matchAndRewrite(Operation *op,
       .Case<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-          , hivm::BitcastOp, tensor::ExtractOp, tensor::InsertOp,
-          tensor::InsertSliceOp>([&](Operation *op) {
-        return insertPropagatorForVectorOp(op, rewriter);
-      })
+          , hivm::BitcastOp, tensor::ExtractOp, tensor::InsertOp>(
+          [&](Operation *op) {
+            return insertPropagatorForVectorOp(op, rewriter);
+          })
       .Case<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.cpp.inc"
