@@ -277,3 +277,26 @@ func.func @hoist_alloc_with_vbrc_init(%lb: index, %ub: index, %step: index) -> t
   // CHECK: return %[[BIG_TENSOR]]
   return %res : tensor<128x128xbf16>
 }
+
+// -----
+
+// Verify the pattern does NOT fire when the alloc has a non-load user
+// inside the loop (e.g. func.call). Redirecting it would break the IR.
+// CHECK-LABEL: func.func @func_call_user_no_hoist_2(
+func.func private @some_kernel_2(%m: memref<32x128xbf16>)
+func.func @func_call_user_no_hoist_2(%lb: index, %ub: index, %step: index) -> tensor<128x128xbf16> {
+  %init = tensor.empty() : tensor<128x128xbf16>
+  %cst = arith.constant 0.000000e+00 : bf16
+  // CHECK-NOT: memref.alloc() : memref<128x128xbf16>
+  %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) -> (tensor<128x128xbf16>) {
+    %offset = "some_calculation"(%arg0) : (index) -> (index)
+    %alloc = memref.alloc() : memref<32x128xbf16>
+    linalg.fill ins(%cst : bf16) outs(%alloc : memref<32x128xbf16>)
+    // Non-load user: func.call -- redirecting this would break the call.
+    func.call @some_kernel_2(%alloc) : (memref<32x128xbf16>) -> ()
+    %t = bufferization.to_tensor %alloc restrict writable : memref<32x128xbf16>
+    %inserted = tensor.insert_slice %t into %arg1[%offset, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+    scf.yield %inserted : tensor<128x128xbf16>
+  }
+  return %res : tensor<128x128xbf16>
+}
