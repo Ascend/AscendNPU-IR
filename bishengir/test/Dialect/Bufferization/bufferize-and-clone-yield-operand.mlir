@@ -276,7 +276,9 @@ func.func @test_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
     scf.yield %4 : tensor<256xf16>
   }
   return %2 : tensor<256xf16>
-}// -----
+}
+
+// -----
 
 func.func @test_not_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
@@ -295,7 +297,9 @@ func.func @test_not_clone_yield_operands_in_for(%arg0: i32, %arg1 : tensor<256xf
     scf.yield %4 : tensor<256xf16>
   }
   return %2 : tensor<256xf16>
-}// -----
+}
+
+// -----
 
 func.func @test_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
@@ -793,7 +797,9 @@ func.func @test_not_clone_in_AIC(%arg0: memref<64xf32>) {
   return
 }
 
-func.func @test_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tensor<256xf16>,
+// -----
+
+func.func @test_clone_yield_operands_for_preload(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
   %cst_0 = arith.constant 0.000000e+00 : f16
   %c4 = arith.constant 4 : index
@@ -815,6 +821,35 @@ func.func @test_clone_yield_operands_in_for_and_if(%arg0: i32, %arg1 : tensor<25
     }
     // CHECK: scf.yield %[[SCOPE_RESULT]] : memref<256xf16>
     scf.yield %4 : tensor<256xf16>
+  }
+  return %2 : tensor<256xf16>
+}
+
+// -----
+
+func.func @test_move_copy_for_preload(%arg0: i32, %arg1 : tensor<256xf16>,
+                                      %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
+  %cst_0 = arith.constant 0.000000e+00 : f16
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %0 = tensor.empty() : tensor<256xf16>
+  %1 = hivm.hir.vbrc ins(%cst_0 : f16) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+  %2 = scf.for %arg3 = %c0 to %c4 step %c1 iter_args(%arg4 = %1) -> (tensor<256xf16>) {
+    %3 = arith.cmpi eq, %arg3, %c1 : index
+    // CHECK: %[[SCOPE_RESULT:.*]] = scope.scope : () -> memref<256xf16> {
+    %4 = scope.scope : () -> tensor<256xf16> {
+      %7 = tensor.empty() : tensor<256xf16>
+      // CHECK: hivm.hir.vadd ins({{.*}}, {{.*}} : memref<256xf16>, memref<256xf16>) outs(%[[ALLOC:.*]] : memref<256xf16>)
+      %8 = hivm.hir.vadd ins(%arg4, %arg2 : tensor<256xf16>, tensor<256xf16>) outs(%7 : tensor<256xf16>) -> tensor<256xf16>
+      hivm.hir.debug {debugtype = "print", hex = false, prefix = " %arg4 : ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %arg4 : tensor<256xf16>
+      // CHECK: memref.copy %[[ALLOC]], %[[ALLOC_1:.*]] : memref<256xf16> to memref<256xf16>
+      // CHECK: scope.return %[[ALLOC_1]] : memref<256xf16>
+      scope.return %8 : tensor<256xf16>
+    }
+    %5 = bufferization.alloc_tensor() copy(%4): tensor<256xf16>
+    // CHECK: scf.yield %[[SCOPE_RESULT]] : memref<256xf16>
+    scf.yield %5 : tensor<256xf16>
   }
   return %2 : tensor<256xf16>
 }

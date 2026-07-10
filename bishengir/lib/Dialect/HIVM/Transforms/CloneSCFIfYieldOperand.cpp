@@ -121,18 +121,15 @@ bool checkNeedClone(Value writeYieldValue, Value usedYieldValue,
   return checkUseAfterOverWrite(WriteDefOp, usedYieldValue, usedYieldOp);
 }
 
-void cloneYieldValue(PatternRewriter &rewriter, scf::YieldOp yieldOp, int idx) {
-  auto yieldValue = yieldOp->getOperand(idx);
-  rewriter.setInsertionPoint(yieldOp);
-  Value dstValue =
-      utils::createAllocTensorOp(rewriter, yieldOp->getLoc(), yieldValue);
-  auto copyOp =
-      rewriter.create<hivm::CopyOp>(yieldOp->getLoc(), yieldValue.getType(),
-                                    /*src*/ yieldValue, /*dst*/ dstValue);
-  rewriter.modifyOpInPlace(yieldOp, [&]() {
-    yieldOp.getResultsMutable()[idx].assign(copyOp.getResult(0));
-  });
-  LDBG("clone yield value: " << yieldValue);
+void cloneValue(PatternRewriter &rewriter, Operation *op, int idx) {
+  auto value = op->getOperand(idx);
+  rewriter.setInsertionPoint(op);
+  Value dstValue = utils::createAllocTensorOp(rewriter, op->getLoc(), value);
+  auto copyOp = rewriter.create<hivm::CopyOp>(op->getLoc(), value.getType(),
+                                              /*src*/ value, /*dst*/ dstValue);
+  rewriter.modifyOpInPlace(op,
+                           [&]() { op->setOperand(idx, copyOp.getResult(0)); });
+  LDBG("clone value: " << value);
 }
 
 /// This pass clones scf.if yield operand if yield operands are same or it is
@@ -172,7 +169,7 @@ public:
       for (size_t i = 1; i < pair.second.size(); i++) {
         // Add copy of the same yield values before scf.if yield.
         // Copy times is one less than the number of same yield operands.
-        cloneYieldValue(rewriter, yieldOp, pair.second[i]);
+        cloneValue(rewriter, yieldOp.getOperation(), pair.second[i]);
         modified = true;
       }
     }
@@ -237,6 +234,7 @@ public:
     DominanceInfo domInfo;
     return parentForOp && domInfo.properlyDominates(usedDefOp, parentForOp, false);
   }
+  
   bool copyYieldOperandUseAfterSCFIf(PatternRewriter &rewriter,
                                      scf::YieldOp writeYieldOp,
                                      scf::YieldOp currBrYieldOp) const {
@@ -269,7 +267,7 @@ public:
       // after this Op, there should not be other op use %a
       if (checkDefOutOfFor(currBrYieldValue, currBrYieldOp) ||
           checkNeedClone(writeYieldValue, currBrYieldValue, currBrYieldOp)) {
-        cloneYieldValue(rewriter, currBrYieldOp, i);
+        cloneValue(rewriter, currBrYieldOp.getOperation(), i);
         modified = true;
       }
     }
@@ -311,13 +309,22 @@ public:
     auto forYieldOp = dyn_cast<scf::YieldOp>(forOp.getBody()->back());
     bool modified = false;
     for (size_t i = 0; i < forResultSize; i++) {
-      auto writeYieldValue = forYieldOp.getOperand(i);
+      auto yieldValue = forYieldOp.getOperand(i);
       auto iterArg = forOp.getRegionIterArgs()[i];
       if (!isYieldValueStaticShapeTensor(iterArg)) {
         continue;
       }
-      if (checkNeedClone(writeYieldValue, iterArg, forYieldOp)) {
-        cloneYieldValue(rewriter, forYieldOp, i);
+      if (checkNeedClone(yieldValue, iterArg, forYieldOp)) {
+        auto *defOp = yieldValue.getDefiningOp();
+        if (isa_and_nonnull<scope::ScopeOp>(defOp) &&
+            defOp->hasAttr(hivm::PreloadNumAttr::name)) {
+          auto scopeOp = cast<scope::ScopeOp>(defOp);
+          auto idx = cast<OpResult>(yieldValue).getResultNumber();
+          cloneValue(rewriter, scopeOp.getBody()->getTerminator(), idx);
+          modified = true;
+          continue;
+        }
+        cloneValue(rewriter, forYieldOp.getOperation(), i);
         modified = true;
       }
     }

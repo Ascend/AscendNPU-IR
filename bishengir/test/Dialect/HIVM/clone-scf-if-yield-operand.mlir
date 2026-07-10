@@ -251,3 +251,31 @@ func.func @test_clone_use_after_write_in_SCFIf_for_buffer(%arg0: i32, %arg1 : te
   }
   return %3 : tensor<256xf16>
 }
+
+
+// -----
+
+func.func @test_clone_ScopeReturnOp_in_forOp(%arg0: i32, %arg1: tensor<256xf16>, %arg2: tensor<256xf16>) -> tensor<256xf16> {
+  %cst = arith.constant 0.000000e+00 : f16
+  %cst_0 = arith.constant 1.000000e+00 : f16
+  %c4 = arith.constant 4 : index
+  %c1 = arith.constant 1 : index
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %0 = tensor.empty() : tensor<256xf16>
+  %1 = hivm.hir.vbrc ins(%cst : f16) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+  %2 = hivm.hir.vbrc ins(%cst_0 : f16) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+  %3 = scf.for %arg3 = %c0_i32 to %c0_i32 step %c1_i32 iter_args(%arg4 = %1) -> (tensor<256xf16>)  : i32 {
+    %4 = scope.scope : () -> tensor<256xf16> {
+      // CHECK: %[[ARG_0:.*]] = linalg.max ins({{.*}}, {{.*}} : tensor<256xf16>, tensor<256xf16>) outs{{.*}} : tensor<256xf16>) -> tensor<256xf16>
+      %5 = linalg.max ins(%arg4, %2 : tensor<256xf16>, tensor<256xf16>) outs(%0 : tensor<256xf16>) -> tensor<256xf16>
+      hfusion.print " %arg4 " {hex = false} %arg4 : tensor<256xf16>
+      // CHECK: %[[ARG_1:.*]] = hivm.hir.copy ins(%[[ARG_0]] : tensor<256xf16>) outs({{.*}} : tensor<256xf16>) -> tensor<256xf16>
+      // CHECK: scope.return %[[ARG_1]] : tensor<256xf16>
+      scope.return %5 : tensor<256xf16>
+    } {hivm.preload_num = 1 : i32}
+    scf.yield %4 : tensor<256xf16>
+  }
+  return %3 : tensor<256xf16>
+}
