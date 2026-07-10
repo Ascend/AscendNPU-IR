@@ -57,6 +57,8 @@ struct MarkRealCoreTypePass
     if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
       return false;
     }
+    if (isa<hivm::VBrcOp>(op))
+      return false;
     if (isa<hivm::InferCoreTypeInterface>(op)) {
       return true;
     }

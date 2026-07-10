@@ -32,7 +32,9 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/Value.h"
@@ -735,13 +737,13 @@ struct AddConvertLayoutUBToL1
     auto inserted = getIntegersOfArrayAttr(op, insertedConvertLayout);
     if (std::find(inserted.begin(), inserted.end(), operandIdx) != inserted.end()) continue;
     auto producerOps = traceDefOps<OpType>(beforeValue);
+    if (std::is_same_v<OpType, hivm::VBrcOp>)
+      continue;
     if (producerOps.empty())
       continue;
 
     bool matched = false;
     for (Operation *producer : producerOps) {
-      if (std::is_same_v<OpType, hivm::VBrcOp> && !isOnVectorCore(producer))
-        continue;
       if constexpr (std::is_same_v<OpType, mlir::scf::ForOp>) {
         auto scfForOp = llvm::cast<mlir::scf::ForOp>(producer);
         if (!scfForOp->hasAttr(ExtractLoadStoreAttr)) {
@@ -785,6 +787,15 @@ struct AddConvertLayoutUBToL1
         if (!maybeAnnotateOp.has_value())
           continue;
       }
+      if constexpr (std::is_same_v<OpType, tensor::InsertSliceOp>) {
+        // if the source is dynamic shape then, it can only be handled in vector
+        // core
+        auto insertSliceOp = llvm::cast<tensor::InsertSliceOp>(producer);
+        auto rankedTensorType =
+            dyn_cast<RankedTensorType>(insertSliceOp.getSource().getType());
+        if (!rankedTensorType || rankedTensorType.hasStaticShape())
+          continue;
+      }
       matched = true;
       break;
     }
@@ -826,48 +837,6 @@ struct AddConvertLayoutUBToL1
     changed = true;
   }
   return changed ? success() : failure();
-}
-
-bool isOnVectorCore(Operation *initialOp) const {
-  auto findVectorCore =
-      [](Operation *op,
-         std::function<void(std::queue<Operation *> & q, Operation *& cur)>
-             enqueueNextOps) -> bool {
-    std::queue<Operation *> q;
-    q.push(op);
-    while (!q.empty()) {
-      Operation *cur = q.front();
-      q.pop();
-      if (!isa<hivm::VBrcOp>(cur) && llvm::isa_and_nonnull<
-#define GET_OP_LIST
-#include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-              >(cur))
-        return true;
-      enqueueNextOps(q, cur);
-    }
-    return false;
-  };
-  // trace up
-  auto enqueueUpOps = [](std::queue<Operation *> &q, Operation *cur) {
-    for (auto &opr : cur->getOpOperands()) {
-      Operation *nextOp = opr.get().getDefiningOp();
-      if (nextOp == nullptr)
-        continue;
-      q.push(nextOp);
-    }
-  };
-  if (findVectorCore(initialOp, enqueueUpOps))
-    return true;
-
-  // trace down
-  auto enqueueDownOps = [](std::queue<Operation *> &q, Operation *cur) {
-    for (auto *user : cur->getUsers()) {
-      q.push(user);
-    }
-  };
-  if (findVectorCore(initialOp, enqueueDownOps))
-    return true;
-  return false;
 }
 };
 
@@ -934,19 +903,13 @@ LogicalResult InsertLoadStoreForMixCVPass::addConvertLayoutUBToL1(func::FuncOp f
   RewritePatternSet patterns(funcOp.getContext());
   GreedyRewriteConfig rewriteConfig;
   populateAddConvertLayoutUBToL1<
-    hivm::FixpipeOp,
-    func::CallOp,
-    mlir::scf::ForOp,
-    hivm::IndirectLoadOp,
-    hivm::StrideLoadOp,
-    mlir::hivm::GatherLoadOp,
-    mlir::scope::ScopeOp,
-    tensor::CollapseShapeOp,
-    bufferization::ToTensorOp,
-    memref::AllocOp,
+      tensor::InsertSliceOp, hivm::FixpipeOp, func::CallOp, mlir::scf::ForOp,
+      hivm::IndirectLoadOp, hivm::StrideLoadOp, mlir::hivm::GatherLoadOp,
+      mlir::scope::ScopeOp, tensor::CollapseShapeOp, bufferization::ToTensorOp,
+      memref::AllocOp,
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
-  >(patterns);
+      >(patterns);
   rewriteConfig.fold = false;
   if (failed(
           applyPatternsGreedily(funcOp, std::move(patterns), rewriteConfig))) {
@@ -993,7 +956,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   });
 
   /// Postprocess of adding core type attribute
-  funcOp->walk([](Operation *op) {
+  funcOp->walk([&builder](Operation *op) {
     TypeSwitch<Operation *>(op)
         .Case([&](hivm::DebugOp op) {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
@@ -1050,6 +1013,42 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           if (newTcoretype) {
             LDBG("set tcoretype for " << op << " to " << newTcoretype);
             op.setTcoretypeAttr(newTcoretype);
+          }
+        })
+        .Case([&](hivm::VBrcOp vbrcOp) {
+          auto upProp = PropagatorUtil::getUpPropagator(&vbrcOp.getDstMutable());
+          TCoreTypeAttr currentTcoretype = vbrcOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+          if (!upProp)
+            return;
+
+          // shouldn't change the core type that has been set
+          // consider case of vtranspose user of vbrcOp
+          if (currentTcoretype && currentTcoretype.getTcoretype() != TCoreType::CUBE_OR_VECTOR)
+            return;
+
+          auto inferNewCoreType =
+              [&vbrcOp](UnrealizedConversionCastOp upProp) -> TCoreTypeAttr {
+            auto coreType = PropagatorUtil::getCoreType(upProp);
+            if (coreType != TCoreType::CUBE_AND_VECTOR) {
+              return TCoreTypeAttr::get(vbrcOp.getContext(), coreType);
+            } else {
+              auto addressSpaces = PropagatorUtil::getAddressSpace(upProp);
+              if (addressSpaces.empty()) {
+                LDBG("not set tcoretype for " << vbrcOp);
+                return nullptr;
+              }
+              auto addressSpace = addressSpaces[0];
+              return TCoreTypeAttr::get(
+                  vbrcOp.getContext(),
+                  PropagatorUtil::kAddressSpace2CoreType.at(addressSpace));
+            }
+          };
+
+          TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
+          if (newTcoretype) {
+            LDBG("set tcoretype for " << vbrcOp << " to " << newTcoretype);
+            vbrcOp->setAttr(hivm::TCoreTypeAttr::name,
+              builder.getAttr<hivm::TCoreTypeAttr>(newTcoretype.getTcoretype()));
           }
         });
   });
