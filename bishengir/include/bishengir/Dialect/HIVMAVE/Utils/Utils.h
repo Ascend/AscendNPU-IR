@@ -78,12 +78,10 @@ Operation *getBroadcastOp(Value scalar, VectorType tileType,
                           PatternRewriter &rewriter, const Location &loc);
 
 /// Sparse vector by interleave
-Value sparseByIntlv(Value src, RewriterBase &rewriter, const Location &loc,
-                    Attribute attr = mlir::Attribute());
+Value sparseByIntlv(Value src, RewriterBase &rewriter, const Location &loc);
 
 /// Dense vector by deinterleave
-Value denseByDIntlv(Value src, RewriterBase &rewriter, const Location &loc,
-                    Attribute attr = mlir::Attribute());
+Value denseByDIntlv(Value src, RewriterBase &rewriter, const Location &loc);
 
 /// Get preg bit width from FunctionDistTypeAttr
 int getBitWidthFromAttr(Operation *Op);

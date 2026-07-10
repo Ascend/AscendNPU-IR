@@ -90,13 +90,29 @@ static std::optional<hivm::PointerCastOp> getLocalBuffer(Value v) {
   return std::nullopt;
 }
 
+static std::optional<size_t> getMultiBufferNum(Value value) {
+  auto markOp = utils::getAnnotateOpWithAttr(value, hivm::MultiBufferAttr::name);
+  if (!markOp) {
+    return std::nullopt;
+  }
+
+  auto attr = (*markOp)->getAttrOfType<IntegerAttr>(hivm::MultiBufferAttr::name);
+  if (!attr || attr.getInt() == 0) {
+    return std::nullopt;
+  }
+
+  return static_cast<size_t>(attr.getInt());
+}
+
 static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
-                              size_t preloadNum, PreloadInfo &info,
-                              OpBuilder &b) {
-  SmallVector<Value> addrs(info.maxPreloadNum);
+ 	  	                        size_t preloadNum, PreloadInfo &info,
+ 	  	                        OpBuilder &b) {
+  size_t bufferNum = getMultiBufferNum(op).value_or(info.maxPreloadNum);
+  SmallVector<Value> addrs(bufferNum);
+
+  size_t preloadIdx = preloadNum % bufferNum;
   for (auto [i, addr] : llvm::enumerate(op.getAddrs())) {
-    auto shiftedIdx =
-        (info.maxPreloadNum - preloadNum - 1 + i) % info.maxPreloadNum;
+    auto shiftedIdx = (bufferNum - preloadIdx - 1 + i) % bufferNum;
     addrs[shiftedIdx] = addr;
   }
   auto newPointerCastOp =
@@ -499,6 +515,7 @@ void CreatePreloadPass::runOnOperation() {
   PassManager pm(&getContext());
   pm.addPass(createCSEPass());
   pm.addPass(createCanonicalizerPass());
+  pm.addPass(scope::createInlineScopePass());
 
   if (failed(pm.run(moduleOp))) {
     signalPassFailure();

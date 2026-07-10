@@ -733,9 +733,19 @@ hivm::AxisKind getOutlinedAxisKind(int dim, int rank) {
   return getAxisKind(dim, rank);
 }
 
+
+/*
+* @param[in] alignTargets - target axes which need to be aligned
+* @param[out] alignUnits - vector of multipliers which make memref/tensor aligned by applying them to shape
+* @param[in] shapes - shapes of tensor/memref which needs to be aligned
+* @param[in, out] innerAlignedUnits - inner axis which are already aligned.
+* @param[in, out] shapeAccumulation - total number of elements of inner axes
+* @param[in] alignTargetDim - axis which need to be aligned
+* @param[in] alignUnitsDim - axis of alignUnits which contain multiplier to make axis aligned 
+*/
 void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
                    SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
-                   int innerAlignedUnits, int shapeAccumulation,
+                   int &innerAlignedUnits, int &shapeAccumulation,
                    int alignTargetDim, int alignUnitsDim) {
   // The alignment target forces the INNER dimension to get aligned
   int newAlignedUnits =
@@ -754,7 +764,7 @@ void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
     }
     alignUnits[alignUnitsDim] = newAlignedUnits / innerAlignedUnits;
   }
-  innerAlignedUnits = newAlignedUnits;
+  innerAlignedUnits = std::max(innerAlignedUnits, std::lcm(shapeAccumulation, innerAlignedUnits));
   if (!ShapedType::isDynamic(shapes[alignTargetDim])) {
     shapeAccumulation = shapeAccumulation * std::lcm(shapes[alignTargetDim],
                                                      alignUnits[alignUnitsDim]);
@@ -981,6 +991,38 @@ bool isValidTwoDimVectorType(VectorType vType) {
     return false;
 
   return true;
+}
+
+void collectAllEffects(
+ 	  Operation *op, SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  if (auto callOp = dyn_cast<CallOpInterface>(op)) {
+    for (Value arg : callOp.getArgOperands()) {
+      if (isa<MemRefType>(arg.getType())) {
+        auto addEffect = [&](auto effectType, Value v) {
+          if (auto res = llvm::dyn_cast<OpResult>(v)) {
+            effects.emplace_back(effectType, res, 0, true);
+          } else if (auto bArg = llvm::dyn_cast<BlockArgument>(v)) {
+            effects.emplace_back(effectType, bArg, 0, true);
+          }
+        };
+
+        addEffect(MemoryEffects::Write::get(), arg);
+      }
+    }
+    return;
+  }
+
+  if (auto interface = dyn_cast<MemoryEffectOpInterface>(op)) {
+    interface.getEffects(effects);
+  }
+
+  if (op->hasTrait<mlir::OpTrait::HasRecursiveMemoryEffects>()) {
+    for (Region &region : op->getRegions()) {
+      for (Operation &innerOp : region.getOps()) {
+        collectAllEffects(&innerOp, effects);
+      }
+    }
+  }
 }
 
 } // namespace utils

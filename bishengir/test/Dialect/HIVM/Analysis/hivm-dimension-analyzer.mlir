@@ -340,3 +340,15 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+// -----
+
+// CHECK: 1 succeedFunc - Function analyzed count
+// CHECK: Tiling dim for {{.*}} is 0
+module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 24 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 48 : i32>>>, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @hivm_dimension_debug_op(%arg0: tensor<16x128xf32>, %arg1: tensor<16x128xbf16>, %arg2: memref<16x128xbf16, strided<[100, 1], offset: ?>>) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[true, true, true, false]> : vector<4xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %0 = hivm.hir.vcast ins(%arg0 : tensor<16x128xf32>) outs(%arg1 : tensor<16x128xbf16>) -> tensor<16x128xbf16>
+    hivm.hir.debug {debugtype = "print", hex = false, prefix = " debug: ", tcoretype = #hivm.tcore_type<VECTOR>} %0 : tensor<16x128xbf16>
+    return
+  }
+}

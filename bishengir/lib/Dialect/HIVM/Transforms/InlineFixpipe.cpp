@@ -404,6 +404,30 @@ Operation *getInsertPoint(Operation *op, int &resultIndx) {
   return getInsertPoint(yieldParentOp, resultIndx);
 }
 
+/// Check if all non-ignored users of a value are fixpipe ops, optionally
+/// traced through tensor.extract_slice chains.
+/// This handles cases where the mmad result flows into multiple fixpipes
+/// (e.g., inside scf.if branches), where traceSingleChainUser fails
+/// because there isn't a single user chain.
+static bool allUsersReachFixpipe(Value v) {
+  SmallVector<Operation *> users;
+  for (auto *user : v.getUsers()) {
+    if (isa<tensor::DimOp, annotation::MarkOp>(user))
+      continue;
+    users.push_back(user);
+  }
+  if (users.empty())
+    return false;
+  return llvm::all_of(users, [](auto user) {
+    if (isa<hivm::FixpipeOp>(user))
+      return true;
+    // Trace through extract_slice
+    if (auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user))
+      return allUsersReachFixpipe(extractSliceOp.getResult());
+    return false;
+  });
+}
+
 /// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
 template <typename OpType>
 struct InsertFixpipeOpPattern : public OpRewritePattern<OpType> {
@@ -425,6 +449,13 @@ public:
     // from the same mmad; you cannot rely on traceSingleChainUser to avoid
     // duplicating fixpipes anymore
     if (op->getAttr(mmadFixpipeForResultAlreadyInserted))
+      return failure();
+
+    // Check if all non-ignored users of the mmad result are fixpipes
+    // (possibly through extract_slice/insert_slice chains such as in
+    // scf.if branches). traceSingleChainUser cannot detect this case
+    // because there is not a single user chain.
+    if (allUsersReachFixpipe(mmadLikeOpRes))
       return failure();
 
     auto isMatchedOp = [](Operation *op, Value v) {
@@ -471,6 +502,13 @@ public:
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op->getResults()[0];
 
+    // Check if all non-ignored users of the mmad result are fixpipes
+    // (possibly through extract_slice/insert_slice chains such as in
+    // scf.if branches). traceSingleChainUser cannot detect this case
+    // because there is not a single user chain.
+    if (allUsersReachFixpipe(mmadLikeOpRes))
+      return failure();
+
     auto isMatchedOp = [](Operation *op, Value v) {
       LDBG("Matching this current op " << *op);
       if (isa<hivm::FixpipeOp>(op)) {
@@ -513,7 +551,29 @@ private:
   InsertFixpipePatternOptions options;
 };
 
+/// Fixpipe pre-quant cannot implement integer narrowing casts that disable
+/// saturation (e.g. trunc-with-overflow semantics).
+static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp) {
+  auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
+  auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
+  if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
+    return true;
+
+  int64_t srcBitWidth = inputType.getIntOrFloatBitWidth();
+  int64_t dstBitWidth = outputType.getIntOrFloatBitWidth();
+  if (srcBitWidth <= dstBitWidth || outputType.isInteger(1))
+    return true;
+
+  if (auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate"))
+    return enableSaturate.getValue();
+
+  return true;
+}
+
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
+  if (!isVcastInlinableIntoFixpipe(castOp))
+    return std::nullopt;
+
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
   if (inputType.isF32() && outputType.isF16()) {

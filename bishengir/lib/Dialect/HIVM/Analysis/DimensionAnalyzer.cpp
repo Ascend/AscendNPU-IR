@@ -12,6 +12,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include <type_traits>
 
 using namespace mlir;
@@ -107,6 +108,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
+  computeTilingDimImpl<hivm::DebugOp>(parallelDimMaps, numStoreOps);
 
   mlir::detail::SimpleUnionFind candGroupDSU(argumentTotalLength_);
   SmallVector<int64_t> candidateGroupSize(argumentTotalLength_);
@@ -208,6 +210,8 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
   int64_t tilingDim = -1;
   int order = -1;
   auto args = getValueDimIndices(v);
+  LDBG("getTilingDim: " << utils::debugger::to_string(llvm::map_to_vector(
+           args, [&](auto arg) { return structuralDsu_->find(arg); })));
   for (size_t i = 0; i < rank; i++) {
     auto parentIndex = structuralDsu_->find(args[i]);
     if (selectedTilingParIdx.contains(parentIndex) &&
@@ -315,6 +319,11 @@ static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
          srcOrigDim == dstOrigDim;
 }
 
+template <>
+bool checkTileableMaskedStore<hivm::DebugOp>(hivm::DebugOp storeOp, size_t i) {
+  return false;
+}
+
 /// Walks every \c StoreOpTy under the analyzed op. For each source axis that
 /// is parallel, appends that \c Dimension to \p parallelDimMap (keyed by solver
 /// group and parent index) unless the axis is dynamic or size 1; for
@@ -340,7 +349,12 @@ void DimensionAnalyzer::computeTilingDimImpl(
         &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
-    auto src = op.getSrc();
+    Value src;
+    if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>) {
+      src = op.getArg();
+    } else {
+      src = op.getSrc();
+    }
     auto rank = utils::getShapeRank(src.getType()).value_or(0);
     createDummyRefIfNotExist({src});
     auto args = getValueDimIndices(src);

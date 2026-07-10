@@ -16,6 +16,7 @@
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/HIVMAVE/IR/HIVMAVE.h"
 #include "bishengir/Dialect/HIVMAVE/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -503,6 +504,47 @@ struct SimplifyPregTypeCastPattern : public OpRewritePattern<VFPregTypeCastOp> {
 void hivmave::VFPregTypeCastOp::getCanonicalizationPatterns(
     RewritePatternSet &results, MLIRContext *context) {
   results.add<SimplifyPregTypeCastPattern>(context);
+}
+
+//===----------------------------------------------------------------------===//
+// VFAddsOp canonicalization
+//===----------------------------------------------------------------------===//
+
+// Fold identity vadds where scalar is 0:
+//   ave.hir.vadds %vec, %cst_0, %mask -> %vec
+struct IdentityVFAddsOpPattern : public OpRewritePattern<VFAddsOp> {
+  using OpRewritePattern<VFAddsOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(VFAddsOp op,
+                                PatternRewriter &rewriter) const override {
+    auto scalar = op.getScalar();
+    auto constOp = scalar.getDefiningOp<arith::ConstantOp>();
+    if (!constOp)
+      return failure();
+
+    auto constValue = constOp.getValue();
+
+    // Float zero: vadds(vec, 0.0) -> vec
+    if (isa<FloatType>(constValue.getType()) &&
+        utils::isConst<FloatAttr, float_t>(constValue, 0.0)) {
+      rewriter.replaceOp(op, op.getVec());
+      return success();
+    }
+
+    // Integer zero: vadds(vec, 0) -> vec
+    if (isa<IntegerType>(constValue.getType()) &&
+        utils::isConst<IntegerAttr, int64_t>(constValue, 0)) {
+      rewriter.replaceOp(op, op.getVec());
+      return success();
+    }
+
+    return failure();
+  }
+};
+
+void hivmave::VFAddsOp::getCanonicalizationPatterns(
+    RewritePatternSet &results, MLIRContext *context) {
+  results.add<IdentityVFAddsOpPattern>(context);
 }
 
 LogicalResult VFExtSIOp::verify() {

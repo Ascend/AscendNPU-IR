@@ -381,6 +381,10 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return solveLayoutChangeProblem(op); })
             .Case<hivmave::VFVCIOp>(
                 [&](auto op) { return solveProblem(op); })
+            // Any op that falls through to Default is not an explicitly handled
+            // operation in the TypeSwitch. It could be a non-HIVMAVE dialect op
+            // (e.g. arith.addi), a HIVMAVE op not yet registered here, or a
+            // standard vector dialect op (e.g. vector.bitcast).
             .Default([&](Operation *op) { return solveProblemDefault(op); });
     return normalizeTreeSolves(solves);
   }
@@ -888,10 +892,9 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
   }
 
   TreeSolves solveProblemDefault(Operation *op) {
-    // suppose that su == sv
     SmallVector<Value> vecResults = getVectorResults(op);
+    // suppose that su == sv
     if (vecResults.empty()) {
-      llvm::errs() << "Not Implemented Vector Store Op: " << *op << "\n";
       return {};
     }
     SmallVector<std::pair<Value, State>> newInputs;
@@ -1058,18 +1061,24 @@ public:
           }
         }
         os << "\nPossible causes and solutions:\n";
-        os << "  1. The operation type may not be handled in solveProblem "
+        os << "  1. The operation may not have been lowered to the HIVMAVE "
+               "dialect before VectorLayout analysis.\n";
+        os << "     -> If using -analyze-vector-layout standalone: lower all "
+               "vector ops to HIVMAVE first.\n";
+        os << "     -> If running end-to-end: an upstream pass failed to "
+               "lower this op. Op: " << failedOp->getName() << "\n";
+        os << "  2. The operation type may not be handled in solveProblem "
                "TypeSwitch.\n";
         os << "     -> Add a new Case for " << failedOp->getName()
             << " in solveProblem().\n";
-        os << "  2. The specific VecMemType combination is not supported by "
+        os << "  3. The specific VecMemType combination is not supported by "
                "this op.\n";
         os << "     -> Check COMB_CASE branches in the corresponding "
                "solveProblem function.\n";
-        os << "  3. Conflicting layout requirements from multiple consumers.\n";
+        os << "  4. Conflicting layout requirements from multiple consumers.\n";
         os << "     -> Check if the operands/results have incompatible layout "
                "constraints.\n";
-        os << "  4. Unsupported element bitwidth (only 1/8/16/32 are "
+        os << "  5. Unsupported element bitwidth (only 1/8/16/32 are "
                "supported).\n";
         os << "     -> Verify all vector types have supported bitwidths.\n";
         os << "======================================================\n";

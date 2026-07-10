@@ -1514,7 +1514,7 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
       for (OpOperand &operand :
            llvm::make_early_inc_range(storeLikeOp->getUses())) {
         Operation *userOp = operand.getOwner();
-        if (!isa<LoadOp>(userOp))
+        if (!isa<LoadOp, ND2NZOp>(userOp))
           continue;
         builder.setInsertionPoint(userOp);
         Value loadSliceIdx = builder.create<arith::ConstantIndexOp>(loc, 0);
@@ -1578,15 +1578,7 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
     IRMapping scopeMap(globalIRMap);
 
     Value origIV = pipelineLoop.getInductionVar();
-    Value mappedIV = origIV;
-
-    if (!origIV.getType().isIndex()) {
-      mappedIV = builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
-                                                    origIV);
-      scopeMap.map(origIV, mappedIV);
-    } else {
-      scopeMap.map(origIV, mappedIV);
-    }
+    scopeMap.map(origIV, origIV);
 
     LLVM_DEBUG(dbgs() << "Created scope for work item #" << item->id << " with "
                       << returnTensors.size() << " results\n");
@@ -1719,6 +1711,7 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
     }
     eraseOp = usrOp;
   }
+  checkpoint->erase();
   return success();
 }
 

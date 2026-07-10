@@ -60,8 +60,6 @@ static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
-static constexpr llvm::StringLiteral elementAlignmentBitWidth =
-    "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 const llvm::StringLiteral padConst = "pad_const";
@@ -555,7 +553,7 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
 
 void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
                    SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
-                   int innerAlignedUnits, int shapeAccumulation,
+                   int &innerAlignedUnits, int &shapeAccumulation,
                    int alignTargetDim, int alignUnitsDim);
 
 template <typename TensorOrMemRefType,
@@ -688,6 +686,9 @@ bool isValidHIVMTileVectorType(VectorType vType);
 bool isValidTwoDimVectorType(VectorType vType);
 
 bool isUnstructuredMemAccLoop(Operation *op);
+
+void collectAllEffects(Operation *op,
+ 	  	                 SmallVectorImpl<MemoryEffects::EffectInstance> &effects);
 
 } // namespace utils
 

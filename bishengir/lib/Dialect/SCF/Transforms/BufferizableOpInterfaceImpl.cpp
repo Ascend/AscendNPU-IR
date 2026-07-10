@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Bufferization/Transforms/Bufferize.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/PatternMatch.h"
@@ -246,6 +247,10 @@ LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
       auto *returnOp = &scopeOp.getBody()->back();
       auto returnOpIdx = cast<OpResult>(value).getResultNumber();
       auto returnValue = returnOp->getOperand(returnOpIdx);
+      // Only shaped values need tensor-copy insertion. Scalar loop-carried
+      // values, e.g. i32 counters, are not bufferized and thus don't need to be copied.
+      if (!isa<TensorType>(returnValue.getType()))
+        continue;
       rewriter.setInsertionPoint(returnOp);
       FailureOr<Value> alloc = allocateTensorForShapedValue(
           rewriter, returnOp->getLoc(), returnValue, state.getOptions());

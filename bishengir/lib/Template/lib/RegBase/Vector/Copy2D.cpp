@@ -147,9 +147,8 @@ __aiv__ __attribute__((always_inline)) void load_gm_to_ubuf_2d_core(
 
   uint8_t l2_cache_ctl = static_cast<uint8_t>(eviction_policy);
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
-    bool is1D = (dst->sizes[0] == 1 || src->sizes[0] == 1);
     // last dimension is contiguous
-    if (!has_padding && !isStrideAligned<T>(stride0_ub) && !is1D) {
+    if (!has_padding && !isStrideAligned<T>(stride0_ub)) {
       load_gm_to_ubuf_2d_by_scalar<T>(src, dst);
       return;
     }
@@ -378,8 +377,7 @@ store_ubuf_to_gm_2d_core(memref_t<__ubuf__ T, 2> *src,
   if (stride1_gm == 1 && stride1_ub == 1) [[likely]] {
     // last dimension is contiguous
     // Check if stride0 is 32B aligned, otherwise use scalar path.
-    bool is1D = (dst->sizes[0] == 1 || src->sizes[0] == 1);
-    if (!isStrideAligned<T>(stride0_ub) && !is1D) {
+    if (!isStrideAligned<T>(stride0_ub)) {
       store_ubuf_to_gm_2d_by_scalar<T>(src, dst);
       set_store_atomic_none(atomic_kind);
       return;

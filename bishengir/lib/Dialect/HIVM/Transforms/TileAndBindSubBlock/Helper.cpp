@@ -99,9 +99,11 @@ int64_t calculateBufferSizeInBytes(ShapedType tiledType,
 
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
-                                        Value toBeTiledVal, int64_t tileDimension) {
+                                        Value toBeTiledVal,
+                                        int64_t tileDimension) {
   if (!isa<ShapedType>(toBeTiledVal.getType()))
-    llvm::report_fatal_error("expected shaped type in calculateOffsetAtTilingDim");
+    llvm::report_fatal_error(
+        "expected shaped type in calculateOffsetAtTilingDim");
   auto inputType = cast<ShapedType>(toBeTiledVal.getType());
   auto dimSize = inputType.getShape()[tileDimension];
 
@@ -117,8 +119,8 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
     bindDims(rewriter.getContext(), d0);
     auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
                                      d0.ceilDiv(kSubBlockDim));
-    tileStride = affine::makeComposedFoldedAffineApply(
-        rewriter, loc, ceilDivMap, {dimVal});
+    tileStride = affine::makeComposedFoldedAffineApply(rewriter, loc,
+                                                       ceilDivMap, {dimVal});
   } else {
     tileStride = getAsIndexOpFoldResult(
         rewriter.getContext(), llvm::divideCeil(dimSize, kSubBlockDim));
@@ -127,8 +129,7 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
   AffineExpr mulExpr =
       rewriter.getAffineSymbolExpr(0) * rewriter.getAffineSymbolExpr(1);
   return affine::makeComposedFoldedAffineApply(
-      rewriter, loc, mulExpr,
-      {containingLoop.getInductionVar(), tileStride});
+      rewriter, loc, mulExpr, {containingLoop.getInductionVar(), tileStride});
 }
 
 /// This function calculates the tile size by dividing the dimension size
@@ -206,8 +207,8 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
   } else {
     dimVal = builder.create<memref::DimOp>(loc, input, tileDimension);
   }
-  auto tileSizeOp = builder.create<affine::AffineApplyOp>(
-      loc, ceilDivMap, ValueRange{dimVal});
+  auto tileSizeOp = builder.create<affine::AffineApplyOp>(loc, ceilDivMap,
+                                                          ValueRange{dimVal});
   return getAsOpFoldResult(tileSizeOp);
 }
 
@@ -364,8 +365,7 @@ static bool checkOffsetsCreatedByTiling(ArrayRef<int64_t> staticOffsets,
       llvm::dyn_cast_if_present<Value>(mixedOffsets[tilingDim]);
   if (!tilingOffsetVal)
     return false;
-  auto offsetAffineMap =
-      tilingOffsetVal.getDefiningOp<affine::AffineApplyOp>();
+  auto offsetAffineMap = tilingOffsetVal.getDefiningOp<affine::AffineApplyOp>();
   // If it's created by tiling, then the offset at tiling dim must be
   // calculated by AffineApplyOp.
   if (!offsetAffineMap)
@@ -439,6 +439,14 @@ void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
   auto curLB = getValueOrCreateConstantIndexOp(builder, loc, offset);
   auto curUB = getValueOrCreateConstantIndexOp(builder, loc, size);
   if (getConstantIntValue(offset).value_or(ShapedType::kDynamic) == 0) {
+    auto sizeInt = getConstantIntValue(size).value_or(ShapedType::kDynamic);
+    auto tiledSizeInt =
+        getConstantIntValue(tiledSize).value_or(ShapedType::kDynamic);
+    if (!ShapedType::isDynamicShape({sizeInt, tiledSizeInt}) &&
+        2 * tiledSizeInt == sizeInt) {
+      size = tiledSize;
+      return;
+    }
     lb = builder.createOrFold<arith::MinSIOp>(loc, lb, curUB);
     curUB = builder.createOrFold<arith::SubIOp>(loc, curUB, lb);
     curUB = builder.createOrFold<arith::MinSIOp>(loc, curUB, ub);

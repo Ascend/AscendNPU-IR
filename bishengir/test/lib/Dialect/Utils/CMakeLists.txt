@@ -2,6 +2,7 @@
 add_bishengir_library(BishengIRTestDialectUtils
   BiShengSegmenter.cpp
   InstructionMarker.cpp
+  TestBubbleUpBufferization.cpp
   TestDimensionAnalyzer.cpp
   TestIndexBoundAnalyzer.cpp
 

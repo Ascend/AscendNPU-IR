@@ -33,10 +33,12 @@ using namespace mlir::hivmave;
 // path to find source VFLoadOp(s). The data path consists exclusively of
 // VFLoadOp and AVEElementwiseOp operations.
 //
-// Non-data operands — masks (VFPgeOp, VFPltOp, VFPltMOp), broadcasts
-// (VFBroadcastScalarOp, VFBroadcastScalarMaskOp, VFScalarBroadcastOp),
-// constants, block arguments, and any other non-elementwise op — are
-// automatically skipped: deinterleaving the source load does not affect them.
+// Non-data or load-independent operands, such as masks (VFPgeOp, VFPltOp,
+// VFPltMOp), broadcasts (VFBroadcastScalarOp, VFBroadcastScalarMaskOp),
+// constants, and block arguments, are skipped because deinterleaving the traced
+// source load does not affect them. Unsupported vector data producers are not
+// skipped; they stop the search so load merging falls back to the safe vdintlv
+// path.
 //
 // Safety invariant: every intermediate value on the data path (results of
 // elementwise ops between the load and the starting op) must only be consumed
@@ -46,6 +48,14 @@ using namespace mlir::hivmave;
 //
 // Returns true if all data paths reached valid NORM loads with single use.
 // Returns false if any path is unsafe or reached an invalid load.
+static bool isSafeToIgnoreForLoadTrace(Value operand, Operation *srcOp) {
+  auto vectorType = dyn_cast<VectorType>(operand.getType());
+  if (!vectorType)
+    return true;
+  return isa<arith::ConstantOp, VFBroadcastScalarOp, VFBroadcastScalarMaskOp,
+             VFPgeOp, VFPltOp, VFPltMOp>(srcOp);
+}
+
 static bool findLoadOp(Operation *op, SmallVector<Operation *> &opList,
                        SmallVector<VFLoadOp> &loadList) {
   if (!op)
@@ -69,11 +79,13 @@ static bool findLoadOp(Operation *op, SmallVector<Operation *> &opList,
     if (!srcOp)
       continue; // block argument — not on the data path, skip
 
-    // Only trace data-path operands: loads and elementwise ops.
-    // All other operands (masks, broadcasts, constants, etc.) are not on the
-    // data path and are safely skipped.
-    if (!isa<VFLoadOp>(srcOp) && !isa<hivmave::AVEElementwiseOp>(srcOp))
+    // Only known load-independent operands are skipped. Mask-producing ops
+    // such as vcmp still carry vector data dependencies and must be traced.
+    if (isSafeToIgnoreForLoadTrace(operand, srcOp))
       continue;
+    // Only trace data-path operands: loads and elementwise ops.
+    if (!isa<VFLoadOp>(srcOp) && !isa<hivmave::AVEElementwiseOp>(srcOp))
+      return false;
 
     // Safety: this intermediate value must not be consumed by any non-
     // elementwise op. If it is, deinterleaving the source load would corrupt

@@ -134,6 +134,8 @@ protected:
   void startTransaction(Operation *op);
   bool finalizeTransaction();
 
+  bool isParallelOp(Operation *op) const;
+
   //===--------------------------------------------------------------------===//
   // Helper function
   //===--------------------------------------------------------------------===//

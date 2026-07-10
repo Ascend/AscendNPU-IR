@@ -464,8 +464,14 @@ LogicalResult VBrcOp::verify() {
 }
 
 int VBrcOp::inferOpLibraryMaxRank() {
-  Type srcType = this->getSrc().getType();
   MemRefType dstVecType = cast<MemRefType>(this->getDst().getType());
+  auto dstMemSpaceAttr = dstVecType.getMemorySpace();
+  auto dstAddrSpace =
+      dyn_cast<AddressSpaceAttr>(dstMemSpaceAttr).getAddressSpace();
+  if (dstAddrSpace == AddressSpace::L1)
+    return 1;
+
+  Type srcType = this->getSrc().getType();
   int rank = dstVecType.getRank();
   if (isScalarLike(srcType))
     return 2;
