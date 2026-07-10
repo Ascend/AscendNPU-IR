@@ -118,30 +118,27 @@ protected:
     SmallVector<VFFusionBlock> splitBlocks;
     VFFusionBlock currentBlock;
     bool hasCurrentBlock = false;
+    auto fits = [&](const VFFusionBlock &blk) {
+      return getTotalParamRegisterCost(blk.getInputs()) <= option.maxVFParams &&
+             stackInfoBuilder.fitsStack(blk.getOps());
+    };
 
     for (Operation *op : fusionBlock.getOps()) {
-      VFFusionBlock tentativeBlock = currentBlock;
-      tentativeBlock.fuseOp(op);
-
-      SmallVector<Operation *> tentativeOps = tentativeBlock.getOps();
-      if ((getTotalParamRegisterCost(tentativeBlock.recomputeInputs()) <=
-           option.maxVFParams) &&
-          stackInfoBuilder.fitsStack(tentativeOps)) {
-        currentBlock = std::move(tentativeBlock);
+      // Grow the current block in place -- no per-op block copy.
+      currentBlock.fuseOp(op);
+      if (fits(currentBlock)) {
         hasCurrentBlock = true;
         continue;
       }
 
+      // Overflows: roll back it.
+      currentBlock.unfuseOp(op);
       if (hasCurrentBlock)
-        splitBlocks.push_back(currentBlock);
+        splitBlocks.push_back(std::move(currentBlock));
 
-      VFFusionBlock singletonBlock;
-      singletonBlock.fuseOp(op);
-      SmallVector<Operation *> singletonOps = singletonBlock.getOps();
-      if ((getTotalParamRegisterCost(singletonBlock.recomputeInputs()) <=
-           option.maxVFParams) &&
-          stackInfoBuilder.fitsStack(singletonOps)) {
-        currentBlock = std::move(singletonBlock);
+      currentBlock = VFFusionBlock();
+      currentBlock.fuseOp(op);
+      if (fits(currentBlock)) {
         hasCurrentBlock = true;
       } else {
         currentBlock = VFFusionBlock();
@@ -150,7 +147,7 @@ protected:
     }
 
     if (hasCurrentBlock)
-      splitBlocks.push_back(currentBlock);
+      splitBlocks.push_back(std::move(currentBlock));
 
     return splitBlocks;
   }

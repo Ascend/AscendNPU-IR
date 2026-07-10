@@ -26,35 +26,28 @@ bool VFFusionBlock::hasFusedUser(Operation *const op) const {
                 [this](Operation *const user) { return hasFusedUser(user); });
 }
 
-SmallVector<Operation *> VFFusionBlock::getOps() const {
-  return SmallVector<Operation *>(ops.begin(), ops.end());
-}
+ArrayRef<Operation *> VFFusionBlock::getOps() const { return ops.getArrayRef(); }
 
 // insert operand to `inputs` if it uses an operand that is defined from
 // outside.
 SetVector<Value> VFFusionBlock::recomputeInputs() {
   inputs.clear();
-  // insert all operands.
+  DenseSet<Value> definedInside;
   for (Operation *const outerOp : ops) {
-    outerOp->walk<WalkOrder::PreOrder>([this](Operation *const op) -> void {
-      for (auto opr : op->getOperands()) {
-        inputs.insert(opr);
-      }
+    outerOp->walk<WalkOrder::PreOrder>([&definedInside](Operation *const op) {
+      for (auto res : op->getResults())
+        definedInside.insert(res);
+      for (auto &reg : op->getRegions())
+        for (auto &block : reg.getBlocks())
+          for (auto blockArg : block.getArguments())
+            definedInside.insert(blockArg);
     });
   }
-  // remove operands that are defined from the FusedBlock.
   for (Operation *const outerOp : ops) {
-    outerOp->walk<WalkOrder::PreOrder>([this](Operation *const op) -> void {
-      for (auto opr : op->getResults()) {
-        inputs.remove(opr);
-      }
-      for (auto &reg : op->getRegions()) {
-        for (auto &block : reg.getBlocks()) {
-          for (auto &blockArg : block.getArguments()) {
-            inputs.remove(blockArg);
-          }
-        }
-      }
+    outerOp->walk<WalkOrder::PreOrder>([&](Operation *const op) {
+      for (auto opr : op->getOperands())
+        if (!definedInside.contains(opr))
+          inputs.insert(opr);
     });
   }
   return inputs;
@@ -62,7 +55,7 @@ SetVector<Value> VFFusionBlock::recomputeInputs() {
 
 // might need to recompute inputs, consider how inputs looks like when outline
 // two consecutive blocks.
-SetVector<Value> VFFusionBlock::getInputs() const { return inputs; }
+const SetVector<Value> &VFFusionBlock::getInputs() const { return inputs; }
 
 // insert result to `outputs` if it has a user that is not fused on the same
 // block.
@@ -77,7 +70,7 @@ SetVector<Value> VFFusionBlock::recomputeOutputs() {
   for (Operation *outerOp : ops) {
     for (auto res : outerOp->getResults()) {
       // all users are in the fused block.
-      if (all_of(res.getUsers(), [opsInside](Operation *userOp) {
+      if (all_of(res.getUsers(), [&opsInside](Operation *userOp) {
             return opsInside.contains(userOp);
           }))
         continue;
@@ -94,7 +87,35 @@ SetVector<Value> VFFusionBlock::getOutputs() const { return outputs; }
 void VFFusionBlock::fuseOp(Operation *const op) {
   if (ops.contains(op))
     return;
+  // Incrementally maintain inputs.
+  DenseSet<Value> definedInOp;
+  op->walk<WalkOrder::PreOrder>([&definedInOp](Operation *const inner) {
+    for (auto res : inner->getResults())
+      definedInOp.insert(res);
+    for (auto &region : inner->getRegions())
+      for (auto &block : region.getBlocks())
+        for (auto blockArg : block.getArguments())
+          definedInOp.insert(blockArg);
+  });
+  op->walk<WalkOrder::PreOrder>([&](Operation *const inner) {
+    for (auto opr : inner->getOperands()) {
+      if (definedInOp.contains(opr))
+        continue; // defined within op itself
+      Operation *def = opr.getDefiningOp();
+      if (def && ops.contains(def))
+        continue; // defined by an op already in the block
+      inputs.insert(opr);
+    }
+  });
   ops.insert(op);
+}
+
+void VFFusionBlock::unfuseOp(Operation *const op) {
+  if (!ops.contains(op))
+    return;
+  ops.remove(op);
+  // The asymptotic time complexity is O(n), maybe it can be optimized to O(1).
+  recomputeInputs();
 }
 
 } // namespace analysis

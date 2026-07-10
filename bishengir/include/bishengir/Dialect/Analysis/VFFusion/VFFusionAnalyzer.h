@@ -16,6 +16,8 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
+#include "llvm/ADT/DenseSet.h"
 
 namespace mlir::analysis {
 
@@ -210,18 +212,17 @@ bool VFFusionAnalyzerBase<AnalyzerClass>::hasInvalidDependencyIfFused(
   const int pxMax = (int)dsu.getMaxIndexUnion(x);
   const int pyMax = (int)dsu.getMaxIndexUnion(y);
   const int maxTopoRank = std::max(pyMax, pxMax);
-  // all users of every ops in either unions should be defined later than it.
-  // TODO: optimize using the smaller to larger technique instead of O(n)
-  for (Operation *const op : opsInBlock) {
-    const int curOpIndex = (int)dsu.getMaxIndexUnion(opToIndex.at(op));
-    if (curOpIndex != pxMax && curOpIndex != pyMax)
-      continue;
+  // We only need to check the op in the group with a smaller index, because the
+  // user of the op in any group must be located below that group.
+  const int smaller = (pxMax <= pyMax) ? x : y;
+  for (int idx : dsu.getMembersUnion(smaller)) {
+    Operation *const op = opsInBlock[idx];
     for (Operation *const user : op->getUsers()) {
       const int opUnionIndex = (int)dsu.getMaxIndexUnion(opToIndex.at(user));
-      // not in either unions
+      // user lives inside the merged group -> internal, no constraint
       if (opUnionIndex == pxMax || opUnionIndex == pyMax)
         continue;
-      // will have not dominate use error
+      // user's group ends before the merged group -> dominance violation
       if (maxTopoRank > opUnionIndex)
         return true;
     }
@@ -313,6 +314,37 @@ public:
       : VFFusionAnalyzerBase<MaxParallelAnalyzer>(option){};
   ~MaxParallelAnalyzer() override = default;
 
+  struct CostMetrics {
+    float computeScore = 0.0f;
+    int computeOpCount = 0;
+    float parallelism = 0.0f;
+    int singleExuCnt = 0;
+    int doubleExuCnt = 0;
+    DenseMap<std::pair<int64_t, int64_t>, unsigned> innerOpCnts;
+    llvm::SmallDenseSet<Value> inputs;
+    llvm::SmallDenseSet<Value> outputs;
+    llvm::SmallDenseSet<Value> allValues;
+    bool isValidLinalg = false;
+
+    CostMetrics &operator+=(const CostMetrics &rhs) {
+      computeScore += rhs.computeScore;
+      computeOpCount += rhs.computeOpCount;
+      parallelism = std::max(parallelism, rhs.parallelism);
+      singleExuCnt += rhs.singleExuCnt;
+      doubleExuCnt += rhs.doubleExuCnt;
+      for (const auto &[k, v] : rhs.innerOpCnts)
+        innerOpCnts[k] += v;
+      for (Value v : rhs.inputs)
+        inputs.insert(v);
+      for (Value v : rhs.outputs)
+        outputs.insert(v);
+      for (Value v : rhs.allValues)
+        allValues.insert(v);
+      isValidLinalg |= rhs.isValidLinalg;
+      return *this;
+    }
+  };
+
 private:
   std::vector<OpOperand *> getSortedConsumerOperands(Operation *producerOp);
   bool hasReductionToConsumer(const int producerIndex, const int consumerIndex);
@@ -320,17 +352,21 @@ private:
   bool fuseProducerConsumerImpl(Block &block);
   bool fuseIOBoundGroupsWithNearestConsumer();
   bool isIOBoundGroup(int groupId);
-  bool parallelismSubModel(DenseSet<Operation *> &producerGroup,
-                                  DenseSet<Operation *> &consumerGroup) const;
-  bool execUnitUtilizationSubModel(DenseSet<Operation *> &producerGroup,
-                                          DenseSet<Operation *> &consumerGroup) const;
-  bool canFuseGroups(int producerGroupId, int consumerGroupId, int producerIndex);
+  bool parallelismSubModel(const CostMetrics &, const CostMetrics &) const;
+  bool execUnitUtilizationSubModel(const CostMetrics &,
+                                   const CostMetrics &) const;
+  bool canFuseGroups(int producerGroupId, int consumerGroupId,
+                     int producerIndex);
   bool mergeGroups(const int producerGroupId, const int consumerGroupId);
-  bool tryFuseGroups(int producerIndex, int consumerIndex,
-                      int producerGroupId, int consumerGroupId);
+  bool tryFuseGroups(int producerIndex, int consumerIndex, int producerGroupId,
+                     int consumerGroupId);
   void printValidGroupCount();
+  const CostMetrics &getOpMetrics(Operation *op);
   DenseMap<Operation *, size_t> opToGroupIndex;
   DenseMap<int64_t, DenseSet<Operation *>> AllFusedGroupBlocks;
+  DenseMap<int64_t, CostMetrics> groupMetrics;
+  CostMetrics nonLinalgOpMetrics;
+  DenseMap<Operation *, CostMetrics> linalgOpMetrics;
   int stage = 1;
 };
 
