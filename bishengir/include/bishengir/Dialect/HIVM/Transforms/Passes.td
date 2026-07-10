@@ -1018,4 +1018,17 @@ def RemoveCopyOps : Pass<"hivm-remove-copy-ops", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
+def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"> {
+  let summary = "Fuse linalg.transpose into hivm.hir.load by leveraging DMA on-the-fly transpose";
+  let constructor = "mlir::hivm::createFuseTransposeIntoLoadPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "hivm::HIVMDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect",
+  ];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

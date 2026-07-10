@@ -4,6 +4,7 @@ endif()
 
 add_bishengir_library(BiShengIRDialectUtils
   BytecodeDialectExtensions.cpp
+  IndexBoundAnalyzer.cpp
   OpInterfaceUtils.cpp
   ReachabilityAnalyzer.cpp
   UnionFind.cpp
@@ -25,6 +26,7 @@ add_bishengir_library(BiShengIRDialectUtils
   MLIRMemRefDialect
   MLIRSCFDialect
   MLIRTensorDialect
+  MLIRValueBoundsOpInterface
   BiShengIRMemRefDialect
   BiShengIRTensorDialect
   ${BS_FEAT_LINK_LIBS}

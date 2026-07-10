@@ -1401,3 +1401,31 @@ Value hfusion::divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Typ
       hfusion::castTo(builder, divF32->getResults()[0], resType, roundingMode);
   return res;
 }
+
+bool hfusion::isFillOp(Operation *op) {
+  if (auto lop = dyn_cast<linalg::LinalgOp>(op)) {
+    if (isa<linalg::FillOp>(lop))
+      return true;
+
+    if (isa<linalg::TransposeOp>(lop))
+      return false;
+
+    if (lop.getNumParallelLoops() != lop.getNumLoops())
+      return false;
+
+    if (lop.getNumDpsInits() != 1)
+      return false;
+
+    Block *body = &lop->getRegion(0).front();
+    if (body->getOperations().size() != 1)
+      return false;
+
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body->back());
+    if (!yieldOp || yieldOp.getNumOperands() != 1)
+      return false;
+
+    auto value = yieldOp.getOperand(0);
+    return !isa<BaseMemRefType, TensorType>(value.getType());
+  }
+  return false;
+}

@@ -334,6 +334,10 @@ std::unique_ptr<Pass> createRemoveHIVMDataLayoutAnnotationPass();
 /// Create a pass to remove redundant copy ops in VF functions.
 std::unique_ptr<Pass> createRemoveCopyOpsPass();
 
+/// Create a pass to fuse linalg.transpose into hivm.hir.load via DMA
+/// on-the-fly transpose.
+std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

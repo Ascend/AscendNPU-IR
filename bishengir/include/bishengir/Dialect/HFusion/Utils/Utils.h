@@ -303,6 +303,8 @@ Value divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Type resType
                                 hfusion::RoundMode roundingMode, hfusion::TypeFn castIntegerType,
                                 std::optional<Operation **> divOp = std::nullopt);
 
+bool isFillOp(Operation *op);
+
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
