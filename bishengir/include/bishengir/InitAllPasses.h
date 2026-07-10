@@ -117,6 +117,7 @@ inline void registerAllPasses() {
   mlir::hivm::registerLowerHIVMPipelines();
   mlir::hivm::registerConvertToHIVMPipelines();
   mlir::hfusion::registerLowerHFusionPipelines();
+  mlir::hfusion::regbase::registerLowerHFusionPipelines();
 
 #if MLIR_ENABLE_EXECUTION_ENGINE
   mlir::execution_engine::registerExecutionEnginePasses();
