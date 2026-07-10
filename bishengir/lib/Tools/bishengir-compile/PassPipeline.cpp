@@ -105,41 +105,9 @@ public:
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation();
     BiShengIRCompileMainConfig config;
-    // Use fluent API to set the pass option into config.
-
-    // Feature control options
-    config
-#if BISHENGIR_ENABLE_TORCH_CONVERSIONS
-        .setEnableTorchCompile(enableTorchCompile)
-        .setEnsureNoImplicitBroadcast(ensureNoImplicitBroadcast)
-#endif
-        .setEnableTritonKernelCompile(enableTritonKernelCompile)
-        .setEnableHfusionCompile(enableHfusionCompile)
-        .setEnableHIVMCompile(enableHIVMCompile)
-        .setEnableManageHostResources(enableManageHostResources)
-        .setEnableSymbolAnalysis(enableSymbolAnalysis)
-        .setEnableMultiKernel(enableMultiKernel);
-
-    // DFX control options
-    config.setEnableSanitizer(enableSanitizer)
-        .setEnableDebugInfo(enableDebugInfo)
-        .setEnableMemoryDisplay(enableMemoryDisplay);
-
-    // Output setting options
+    // Use generated metadata from Options.td to map pass options back to the
+    // compile config.
     config.setOutputFile(outputFile);
-
-    // General optimization control options
-    config.setEnableAutoMultiBuffer(enableAutoMultiBuffer)
-        .setEnableDeterministicComputing(enableDeterministicComputing)
-        .setEnableOpsReorder(enableOpsReorder)
-        .setEnableTuningMode(enableTuningMode)
-        .setBlockDim(blockDim);
-
-    // HFusion optimization control options
-    config.setHfusionMaxHorizontalFusionSize(hfusionMaxHorizontalFusionSize)
-        .setHfusionMaxBufferCountTuning(hfusionMaxBufferCountTuning)
-        .setenableHfusionCountBufferDmaOpt(enableHfusionCountBufferDmaOpt)
-        .setCubeTilingTuning(cubeTilingTuning);
 
     SmallVector<Pass::Option<bool> *> sharedWithHIVMCompileBool = {
         &enableAutoBindSubBlock,
@@ -215,7 +183,7 @@ public:
                         hacc::stringifyTargetDeviceEnum(opt->getValue()).str();
       collectedArgs.push_back(arg);
     }
-    for (const std::string &arg : this->hIVMCArgs) {
+    for (const std::string &arg : this->hivmcArgs) {
       collectedArgs.push_back(arg);
     }
 

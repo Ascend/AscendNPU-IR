@@ -41,6 +41,24 @@ class BiShengIRCompileListOpt<
   string compileConfigName = "BiShengIRCompileMainConfig";
 }
 
+class BiShengIRCompileInternalStateOpt<
+  string desc,
+  string ty,
+  string defaultVal
+> : BiShengIRCompileOpt<desc, ty, defaultVal>, InternalStateOption;
+
+// A5 options whose implementation/types have not been migrated to A3 yet.
+// This intentionally does not inherit Option, so bishengir-options-tblgen keeps
+// the record name for future migration but emits no C++ option surface.
+class A5UnmigratedOptionStub {
+  list<string> optionScope = ["A5_ONLY"];
+}
+
+//===----------------------------------------------------------------------===//
+// Shared / Public Options
+// Ordered to match A3's bishengir-compile/Options.td.
+//===----------------------------------------------------------------------===//
+
 //===----------------------------------------------------------------------===//
 // Feature Control Options
 //===----------------------------------------------------------------------===//
@@ -59,6 +77,7 @@ def EnableTritonKernelCompile : FeatureControlOptions<
   "false"
 > {
   let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
+  bit isSharedWithDownstreamToolchain = 1;
 }
 
 def EnableUbufSaving : FeatureControlOptions<
@@ -66,6 +85,7 @@ def EnableUbufSaving : FeatureControlOptions<
   "bool",
   "false"
 >{
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
 }
 
@@ -74,6 +94,7 @@ def DisableSizeAlignForCast : FeatureControlOptions<
   "bool",
   "false"
 >{
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM", "HFUSION_TO_HIVM"];
 }
 
@@ -178,7 +199,7 @@ def DisableAutoInjectBlockSync : FeatureControlOptions<
   "bool",
   "false"
 > {
-  let passGroup = ["HFUSION", "HIVM"];
+  let passGroup = ["HIVM"];
 }
 
 def EnableHIVMGraphSyncSolver : FeatureControlOptions<
@@ -186,7 +207,7 @@ def EnableHIVMGraphSyncSolver : FeatureControlOptions<
   "bool",
   "true"
 > {
-  let passGroup = ["HFUSION", "HIVM"];
+  let passGroup = ["HIVM"];
 }
 
 def DisableAutoCVWorkSpaceManage : FeatureControlOptions<
@@ -194,6 +215,7 @@ def DisableAutoCVWorkSpaceManage : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
 }
 
@@ -205,11 +227,20 @@ def EnableHIVMCrossCoreGSS : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableHIVMDelayedCrossCoreGSS : FeatureControlOptions<
+  "Use hivm delayed cross-core graph-sync-solver instead of inject-block-sync.",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
 def DisableHIVMAutoInjectSync : FeatureControlOptions<
   "Disable auto inject sync intra core.",
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
 }
 
@@ -218,6 +249,7 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
   "bool",
   "false"
 > {
+  let optionScope = ["A3_ONLY"];
   let passGroup = ["HFUSION", "HIVM"];
 }
 
@@ -280,7 +312,7 @@ def InjectIRFromFile : DFXControlOptions<
   "std::string",
   "\"\""
 > {
-  bit isSharedWithDownstreamToolchain = 1;
+  let passGroup = ["HFUSION", "HIVM"];
 }
 
 def SaveTemps : DFXControlOptions<
@@ -314,7 +346,7 @@ def LimitAutoMultiBufferOnlyForLocalBuffer : GeneralOptimizationControlOptions<
   "bool",
   "false"
 > {
-  let passGroup = ["HFUSION", "HIVM"];
+  let passGroup = ["HIVM"];
 }
 
 def EnableTuningMode : GeneralOptimizationControlOptions<
@@ -412,6 +444,33 @@ llvm::cl::values(
   }];
 }
 
+// Fine-grained per-buffer multi-buffer disables. These act AND-wise on top of
+// the existing LimitAutoMultiBufferOfLocalBuffer / LimitAutoMultiBufferBuffer
+// switches: any of them being true skips marking on that address space
+// regardless of the broader strategy. They are also the knobs the compile-
+// time fallback in BiShengIRCompileMain flips when a specific memory space
+// reports overflow:
+//   ub overflow   -> DisableMultiBufferOnUB
+//   cc overflow   -> DisableMultiBufferOnL0C
+//   cbuf overflow -> DisableMultiBufferOnL1
+def DisableMultiBufferOnUB : HIVMOptimizationControlOptions<
+  "Disable auto multi-buffer for UB (Vector) buffers (gates Load/Store mark).",
+  "bool",
+  "false"
+>;
+
+def DisableMultiBufferOnL0C : HIVMOptimizationControlOptions<
+  "Disable auto multi-buffer for L0C (Cube accumulator) buffers (gates Fixpipe mark).",
+  "bool",
+  "false"
+>;
+
+def DisableMultiBufferOnL1 : HIVMOptimizationControlOptions<
+  "Disable auto multi-buffer for L1 (cbuf) buffers (gates ND2NZ mark).",
+  "bool",
+  "false"
+>;
+
 def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit.",
   "MultiBufferStrategy",
@@ -456,7 +515,9 @@ def EnableHIVMAssumeAliveLoops : HIVMOptimizationControlOptions<
   "Assume that all loops (forOp whileOp) will execute at least once.",
   "bool",
   "false"
->;
+> {
+  let optionScope = ["A3_ONLY"];
+}
 
 def EnableHIVMInjectBlockAllSync : HIVMOptimizationControlOptions<
   "Enable inject all block sync for HIVM inject block sync.",
@@ -488,6 +549,19 @@ def EnablePreload : HIVMOptimizationControlOptions<
   "false"
 >;
 
+def EnableLazyLoading : HIVMOptimizationControlOptions<
+  "Enable lazy loading in CV pipelining to reduce buffer expansion.",
+  "bool",
+  "false"
+>;
+
+// TODO: Restore this A5 option when A5 CVPipelineMode and the matching HIVM
+// CV-pipelining pipeline wiring are migrated to A3. A3 currently exposes
+// preload/skew through EnablePreload and the CVPipelining pass uses
+// enableSkewMode/setDepthInUnrollMode, so generating this enum option would
+// reference an unmigrated type and imply unsupported behavior.
+def SetCVPipelineMode : A5UnmigratedOptionStub;
+
 def EnableHIVMAutoStorageAlign : HIVMOptimizationControlOptions<
   "Enable mark/enable storage align.",
   "bool",
@@ -502,6 +576,19 @@ def EnableHivmNd2nzOnVector : HIVMOptimizationControlOptions<
 
 def EnableAutoBlockifyLoop : HIVMOptimizationControlOptions<
   "Enable auto loop on blocks for all parallel.",
+  "bool",
+  "false"
+>;
+
+def SuperBlockFactor : HIVMOptimizationControlOptions<
+  "The factor of super-blocking (must be a power of 2, >= 1). "
+  "1 means no super-blocking.",
+  "unsigned",
+  "1"
+>;
+
+def SuperBlockBarrier : HIVMOptimizationControlOptions<
+  "Enable/disable super-block barrier lowering.",
   "bool",
   "false"
 >;
@@ -529,25 +616,25 @@ def Target : BiShengIRCompileOpt<
 > {
   let additionalOptFlags = [{
 llvm::cl::values(
-    #define TO_STRING(x) #x
+#define TO_STRING(x) #x
     #define REGISTER_TARGET(TARGET)                                              \
-    clEnumValN(mlir::hacc::TargetDevice::TARGET, TO_STRING(TARGET),              \
-                TO_STRING(TARGET))
+  clEnumValN(mlir::hacc::TargetDevice::TARGET, TO_STRING(TARGET),              \
+             TO_STRING(TARGET))
                 // Ascend910B series
-                REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
-                REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
+  REGISTER_TARGET(Ascend910B1), REGISTER_TARGET(Ascend910B2),
+  REGISTER_TARGET(Ascend910B3), REGISTER_TARGET(Ascend910B4),
                 clEnumValN(mlir::hacc::TargetDevice::Ascend910B4_1,
                               "Ascend910B4-1", "Ascend910B4-1"),
                 REGISTER_TARGET(Ascend910B2C),
                 // Ascend910_93 series
-                REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9372),
-                REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
-                REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
+  REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9372),
+  REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
+  REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
                 // Ascend910_95 series
-                REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
-                REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
-                REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
-                REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
+  REGISTER_TARGET(Ascend910_950z), REGISTER_TARGET(Ascend910_9579),
+  REGISTER_TARGET(Ascend910_957b), REGISTER_TARGET(Ascend910_957d),
+  REGISTER_TARGET(Ascend910_9581), REGISTER_TARGET(Ascend910_9589),
+  REGISTER_TARGET(Ascend910_958a), REGISTER_TARGET(Ascend910_958b),
                 REGISTER_TARGET(Ascend910_9599),
                 // Ascend950PR series
                 REGISTER_TARGET(Ascend950PR_950z), REGISTER_TARGET(Ascend950PR_9579),
@@ -571,11 +658,12 @@ llvm::cl::values(
                 REGISTER_TARGET(Ascend950DT_9595), REGISTER_TARGET(Ascend950DT_9596),
                 REGISTER_TARGET(Ascend950DT_95A1), REGISTER_TARGET(Ascend950DT_95A2),
                 REGISTER_TARGET(Unknown)
-    #undef REGISTER_TARGET
-    #undef TO_STRING
+#undef REGISTER_TARGET
+#undef TO_STRING
 )
   }];
   let compileOptionCategories = ["targetCategory"];
+  bit isSharedWithDownstreamToolchain = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -644,5 +732,630 @@ def AppendBishengOptions : BiShengIRCompileOpt<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+
+class SIMTOptimizationControlOptions<
+  string desc,
+  string ty,
+  string defaultVal
+> : BiShengIRCompileOpt<desc, ty, defaultVal> {
+  let compileOptionCategories = ["simtOptCategory"];
+}
+
+class ProtonOptions<
+  string desc,
+  string ty,
+  string defaultVal
+> : BiShengIRCompileOpt<desc, ty, defaultVal>, ExternalStateOption {
+  let compileOptionCategories = ["protonCategory"];
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
+class ProtonFieldOption<
+  string desc,
+  string ty,
+  string defaultVal,
+  string fieldName
+> : ProtonOptions<desc, ty, defaultVal> {
+  let externalStateObject = "protonGPUCompileConfig";
+  let externalStateField = fieldName;
+}
+
+//===----------------------------------------------------------------------===//
+// A5-only Options
+//===----------------------------------------------------------------------===//
+let optionScope = ["A5_ONLY"] in {
+
+//===----------------------------------------------------------------------===//
+// Feature Control Options
+//===----------------------------------------------------------------------===//
+
+#ifdef BISHENGIR_ENABLE_TRITON_COMPILE
+def EnableTritonIRCompile : FeatureControlOptions<
+  "Enable compile from Triton dialect",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+#endif
+
+def DisableTightCoupledBuffer : FeatureControlOptions<
+  "Disable Tight Coupled Buffer Allocation",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+}
+
+def EnableMixedCV : FeatureControlOptions<
+  "Enable mixed CV compilation",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION", "HIVM"];
+  let additionalOptFlags = [{
+llvm::cl::Hidden,
+    llvm::cl::callback([](const bool &) {
+      llvm::errs() << "[WARNING] --enable-mixed-cv is deprecated.\n";
+    })
+  }];
+}
+
+def DisableTightlyCoupledBufferReuse : FeatureControlOptions<
+  "disable tightly coupled buffer reuse",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def DisableVFReachableCheck : FeatureControlOptions<
+  "disable VF reachable check",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def DisableFFTS : FeatureControlOptions<
+  "Force disabling FFTS.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def DisableFMA : FeatureControlOptions<
+  "Force disabling FMA.",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def DisableHfusionVectorize : FeatureControlOptions<
+  "Disable hfusion auto vectorize.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def PureSimt : FeatureControlOptions<
+  "Full SIMT compile.",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def SimtVFDynamicSize : FeatureControlOptions<
+  "Dynamic ub size(KB) for simt VF. Default is 216.",
+  "int",
+  "216"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def SimtTritonGrid : BiShengIRCompileListOpt<
+  "Grid dimensions (e.g., -simt-triton-grid=2,2,2). Default is 1.",
+  "int64_t"
+>;
+
+def OnlyRunHIVMPipeline : FeatureControlOptions<
+  "Only run BiShengHIR HIVM pipeline",
+  "bool",
+  "false"
+>;
+
+def EnableTreeReduce : FeatureControlOptions<
+  "Enable tree reduce",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def SkipScope : FeatureControlOptions<
+  "Skip passes like flattenOps when scope exists",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableAutoVectorizeV2 : FeatureControlOptions<
+  "Enable auto vectorize v2",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableVFFusion : FeatureControlOptions<
+  "Enable vf fusion",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableVFStackLimit : FeatureControlOptions<
+  "Enable conservative vector function stack slot limit",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+// TODO: Restore this A5 option when the A5 VFFusion implementation and
+// mlir::analysis::FusionMode are migrated to A3.
+def VfFusionMode : A5UnmigratedOptionStub;
+
+// TODO: Restore this A5 option when the A5 TreeReduce pipeline mode and
+// mlir::hfusion::TreeReduceMode are migrated to A3.
+def EnableTreeReduceMode : A5UnmigratedOptionStub;
+
+def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
+  "Enable multiple consumer fusion in AutoVectorizeV2",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableHighPrecision : FeatureControlOptions<
+  "Enable high precision calculation for sin/cos in HFusion",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def SaveLinkedIR : FeatureControlOptions<
+  "Enable saving linked IR before compile to binary",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+#ifdef BISHENGIR_ENABLE_TRITON_COMPILE
+def NumWarps : FeatureControlOptions<
+  "Number of warps",
+  "int32_t",
+  "4"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def ThreadsPerWarp : FeatureControlOptions<
+  "Number of threads per warp",
+  "int32_t",
+  "32"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def SharedMemDynamicSize : FeatureControlOptions<
+  "Dynamic size of shared memory (in bytes)",
+  "int32_t",
+  "122880"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableSimdSimtMixCompile : HIVMOptimizationControlOptions<
+  "Enable simd-simt mix kernel compile",
+  "bool",
+  "false"
+> {
+  let passGroup = [];
+  bit isSharedWithDownstreamToolchain = 1;
+}
+#endif
+
+//===----------------------------------------------------------------------===//
+// DFX Control Options
+//===----------------------------------------------------------------------===//
+
+def EnablePrintMemoryAllocatedSize : DFXControlOptions<
+  "Enable print memory allocated size",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def PrintPassId : DFXControlOptions<
+  "Print pass ID before each pass",
+  "bool",
+  "false"
+>;
+
+def VerifyEach : DFXControlOptions<
+  "Verify the IR after every pass. When disabled (default), the IR is only "
+  "verified once after the last pass of each pipeline.",
+  "bool",
+  "false"
+>;
+
+def EnableLibCallNoInline : DFXControlOptions<
+  "Mark the library-call function declarations generated during HIVM-to-"
+  "Standard conversion as hacc.noinline instead of hacc.always_inline.",
+  "bool",
+  "true"
+>;
+
+def InjectIrBefore : DFXControlOptions<
+  "Inject IR from file before a specific pass. Format: pass_id@file_path",
+  "std::string",
+  "\"\""
+>;
+
+def InjectIrAfter : DFXControlOptions<
+  "Inject IR from file after a specific pass. Format: pass_id@file_path",
+  "std::string",
+  "\"\""
+>;
+
+//===----------------------------------------------------------------------===//
+// General Optimization Control Options
+//===----------------------------------------------------------------------===//
+
+def EnableDropUnitDims : GeneralOptimizationControlOptions<
+  "Enable drop-unit-dims pass",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableFlatten : GeneralOptimizationControlOptions<
+  "Enable flatten pass",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableFuseReductionIntoLoop : GeneralOptimizationControlOptions<
+  "Enable fuse post-loop reductions into the loop body",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def EnableBishengirSimtOptimization : GeneralOptimizationControlOptions<
+  "enable bishengir simt optimization",
+  "int",
+  "900101"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableVfMergeLevel : GeneralOptimizationControlOptions<
+  "Enable vector function merge with level",
+  "int32_t",
+  "1"
+> {
+  let passGroup = ["HIVM"];
+}
+
+//===----------------------------------------------------------------------===//
+// HFusion Optimization Control Options
+//===----------------------------------------------------------------------===//
+
+def HfusionMaxFusedOpsInAutoVectorizeV2 : HFusionOptimizationControlOptions<
+  "Maximum number of ops to fuse in AutoVectorizeV2 (Default: pass default)",
+  "int32_t",
+  "-1"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+def HfusionMaxFusedElementwiseOps : HFusionOptimizationControlOptions<
+  "Maximum number of elementwise ops to fuse in PreVectorizationFusion (Default: unlimited)",
+  "int32_t",
+  "-1"
+> {
+  let passGroup = ["HFUSION"];
+}
+
+//===----------------------------------------------------------------------===//
+// HIVM Optimization Control Options
+//===----------------------------------------------------------------------===//
+
+def EnableFusedMultiplyAdd : HIVMOptimizationControlOptions<
+  "Enable fused multiply add",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def MaxReductionSplit : HIVMOptimizationControlOptions<
+  "Max split times for reductionLoop.",
+  "int",
+  "1"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def InlineQuantScaleInFixpipe : HIVMOptimizationControlOptions<
+  "Inline scalar quant scale from vmul into fixpipe op during inline-fixpipe pass.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+//===----------------------------------------------------------------------===//
+// SIMT / Proton / Other Options
+//===----------------------------------------------------------------------===//
+
+def TritonMetadataOutput : BiShengIRCompileOpt<
+  "File to dump triton metadata. -- means stdout",
+  "std::string",
+  "\"\""
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def DisableDecomposeReduction : SIMTOptimizationControlOptions<
+  "Disable SIMT decompose reduction pass",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def DisableReorderInstruction : SIMTOptimizationControlOptions<
+  "Disable reorder instruction pass",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
+  "Enable post-lowering instruction scheduling that reduces register pressure by interleaving load-compute-store chains",
+  "bool",
+  "true"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableOptimizeMath : SIMTOptimizationControlOptions<
+  "Enable optimize math pass",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
+}
+
+def EnableSimtReorderInstruction : SIMTOptimizationControlOptions<
+  "Enable SIMT reorder instruction pass",
+  "bool",
+  "false"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def EnableSIMTFastDiv : SIMTOptimizationControlOptions<
+  "Enable SIMT fast division optimization",
+  "bool",
+  "true"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+#ifdef BISHENGIR_ENABLE_TRITON_COMPILE
+def ProtonMetricType : ProtonFieldOption<
+  "The performance counter metric type we are profiling",
+  "proton::MetricType",
+  "proton::MetricType::CYCLE",
+  "metricType"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(proton::MetricType::CYCLE, "cycle", "Cycle")
+)
+  }];
+}
+
+def ProtonSamplingStrategy : ProtonFieldOption<
+  "Profiling sampling strategy",
+  "proton::SamplingStrategy",
+  "proton::SamplingStrategy::NONE",
+  "samplingStrategy"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(proton::SamplingStrategy::NONE, "none", "No Sampling"),
+  clEnumValN(proton::SamplingStrategy::SELECTIVE, "selective",
+             "Selective Sampling")
+)
+  }];
+}
+
+def ProtonSamplingOptions : ProtonFieldOption<
+  "Profiling sampling options",
+  "std::string",
+  "\"\"",
+  "samplingOptions"
+>;
+
+def ProtonGranularity : ProtonFieldOption<
+  "Profiling granularity: warp, warp_group, or cta",
+  "proton::gpu::Granularity",
+  "proton::gpu::Granularity::WARP",
+  "granularity"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(proton::gpu::Granularity::THREAD, "thread", "Thread"),
+  clEnumValN(proton::gpu::Granularity::WARP, "warp", "Warp"),
+  clEnumValN(proton::gpu::Granularity::WARP_2, "warp-2", "2 Warps"),
+  clEnumValN(proton::gpu::Granularity::WARP_4, "warp-4", "4 Warps"),
+  clEnumValN(proton::gpu::Granularity::WARP_8, "warp-8", "8 Warps"),
+  clEnumValN(proton::gpu::Granularity::CTA, "cta", "CTA"),
+  clEnumValN(proton::gpu::Granularity::WARP_GROUP, "warp-group",
+             "Warp Group"),
+  clEnumValN(proton::gpu::Granularity::WARP_GROUP_2, "warp-group-2",
+             "2 Warp Groups"),
+  clEnumValN(proton::gpu::Granularity::WARP_GROUP_4, "warp-group-4",
+             "4 Warp Groups"),
+  clEnumValN(proton::gpu::Granularity::WARP_GROUP_8, "warp-group-8",
+             "8 Warp Groups")
+)
+  }];
+}
+
+def ProtonBufferStrategy : ProtonFieldOption<
+  "Profiler buffer recording strategy (circular or flush)",
+  "proton::gpu::BufferStrategy",
+  "proton::gpu::BufferStrategy::CIRCULAR",
+  "bufferStrategy"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(proton::gpu::BufferStrategy::CIRCULAR, "circular",
+             "Circular Buffer"),
+  clEnumValN(proton::gpu::BufferStrategy::FLUSH, "flush", "Flush Buffer")
+)
+  }];
+}
+
+def ProtonBufferType : ProtonFieldOption<
+  "Internal buffer type (SHARED, GLOBAL) that stores the profiling data",
+  "proton::gpu::BufferType",
+  "proton::gpu::BufferType::SHARED",
+  "bufferType"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(proton::gpu::BufferType::SHARED, "shared", "Shared Memory"),
+  clEnumValN(proton::gpu::BufferType::GLOBAL, "global", "Global Memory")
+)
+  }];
+}
+
+def ProtonBufferSize : ProtonFieldOption<
+  "Internal buffer byte size that stores the profiling data. 0 means auto-size based on the device's `maxSharedMemSize`",
+  "int32_t",
+  "0",
+  "bufferSize"
+>;
+
+def ProtonMaxSharedMem : ProtonFieldOption<
+  "Maximum available shared memory size per CTA",
+  "int32_t",
+  "32768",
+  "maxSharedMemSize"
+>;
+
+def ProtonProfileScratchSize : ProtonFieldOption<
+  "Profiler global scratch memory size per CTA",
+  "int64_t",
+  "32768",
+  "profileScratchSize"
+>;
+
+def ProtonProfileScratchAlignment : ProtonFieldOption<
+  "Profiler global scratch memory alignment",
+  "int32_t",
+  "128",
+  "profileScratchAlignment"
+>;
+
+def ProtonClkExt : ProtonFieldOption<
+  "Use long clock if true, otherwise use 32-bit clock",
+  "bool",
+  "false",
+  "clockExtension"
+>;
+#endif
+
+def EnableDirectHIVMLowering : BiShengIRCompileOpt<
+  "enable-direct-hivm-lowering",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+// These A5-specific compile states are still real options/config entries and
+// therefore stay in Options.td, even though they are not currently surfaced as
+// normal generated CLI/pass options.
+def CompileHost : BiShengIRCompileInternalStateOpt<
+  "Compile host-side code path.",
+  "bool",
+  "false"
+>;
+
+def LowerToLLVM : BiShengIRCompileInternalStateOpt<
+  "Enable lowering to LLVM.",
+  "bool",
+  "true"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def HostOutputFile : BiShengIRCompileInternalStateOpt<
+  "Host output file path.",
+  "std::string",
+  "\"-\""
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def DeviceMaxInputParamSizeInBytes : BiShengIRCompileInternalStateOpt<
+  "Device max input parameter size in bytes.",
+  "size_t",
+  "1536"
+>;
+
+def SimtStackLimit : BiShengIRCompileInternalStateOpt<
+  "Per-thread stack size limit (bytes) for SIMT kernels. The compiler fails "
+  "compilation if a kernel's per-thread stack usage exceeds this limit. If "
+  "unset, the check is skipped — Triton-Ascend owns the policy (env var, "
+  "default) and always forwards a resolved value. Set to a negative value "
+  "to disable the check; 0 is a valid (strict) limit.",
+  "int32_t",
+  "-1"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+
+def UseDPX : BiShengIRCompileOpt<
+  "Enable SIMT lowering through DPX Dialect.",
+  "bool",
+  "true"
+> {
+  bit isSharedWithDownstreamToolchain = 1;
+}
+} // let optionScope = ["A5_ONLY"]
 
 #endif // BISHENGIR_TOOLS_BISHENGIR_COMPILE_OPTIONS_TD

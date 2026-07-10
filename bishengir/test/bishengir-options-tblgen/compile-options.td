@@ -45,7 +45,7 @@ def List : ListOption {
 // CHECK: static llvm::cl::list<std::string, std::vector<std::string>> list(
 // CHECK:     "list"
 // CHECK:     ,llvm::cl::desc("")
-// CHECK:     ,llvm::cl::location(listFlag)
+// CHECK:     ,llvm::cl::location(listFlags)
 // CHECK:     ,llvm::cl::MiscFlags::CommaSeparated
 // CHECK: );
 //

@@ -43,16 +43,16 @@ def List : ListOption {
 // CHECK:   }
 
 // CHECK: protected:
-// CHECK:   std::vector<std::string> listFlag;
+// CHECK:   std::vector<std::string> listFlags;
 
 // CHECK: public:
 // CHECK:   Config &setList(const std::vector<std::string>& val) {
-// CHECK:     listFlag = val;
+// CHECK:     listFlags = val;
 // CHECK:     return *this;
 // CHECK:   }
 
 // CHECK:   std::vector<std::string> getList() const {
-// CHECK:     return listFlag;
+// CHECK:     return listFlags;
 // CHECK:   }
 
 // CHECK: protected:

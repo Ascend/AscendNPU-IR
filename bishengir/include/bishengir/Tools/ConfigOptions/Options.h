@@ -35,14 +35,21 @@ constexpr llvm::StringLiteral kDefaultValue = "defaultValue";
 constexpr llvm::StringLiteral kDescription = "description";
 constexpr llvm::StringLiteral kAdditionalOptFlags = "additionalOptFlags";
 constexpr llvm::StringLiteral kExternalStorage = "externalStorage";
+constexpr llvm::StringLiteral kExternalStateObject = "externalStateObject";
+constexpr llvm::StringLiteral kExternalStateField = "externalStateField";
+constexpr llvm::StringLiteral kExternalStorageLocation =
+    "externalStorageLocation";
 constexpr llvm::StringLiteral kPassGroup = "passGroup";
+constexpr llvm::StringLiteral kOptionScope = "optionScope";
 constexpr llvm::StringLiteral kCompileOptionCategories =
     "compileOptionCategories";
 constexpr llvm::StringLiteral kCompileConfigName = "compileConfigName";
 constexpr llvm::StringLiteral kEmitGetterSetter = "emitGetterSetter";
-constexpr llvm::StringLiteral kListOption = "ListOption";
 constexpr llvm::StringLiteral kEmitOptionRegistration =
     "emitOptionRegistration";
+constexpr llvm::StringLiteral kListOption = "ListOption";
+constexpr llvm::StringLiteral kExternalStateOption = "ExternalStateOption";
+constexpr llvm::StringLiteral kInternalStateOption = "InternalStateOption";
 } // namespace OptionFields
 
 class ConfigOption {
@@ -73,14 +80,20 @@ public:
   /// Return the additional flags passed to the option constructor.
   std::optional<mlir::StringRef> getAdditionalFlags() const;
 
-  /// Return whether the config option has external storage.
-  bool getExternalStorage() const;
-
   /// Return the external storage location for the config option.
   std::optional<mlir::StringRef> getExternalStorageLocation() const;
 
+  /// Return whether CLI registration should use external storage.
+  bool shouldUseCLIExternalStorage() const;
+
+  /// Return the external storage location used by CLI registration.
+  std::optional<mlir::StringRef> getCLIExternalStorageLocation() const;
+
   /// Return the list of pass pipeline groups that this option belongs to.
   std::vector<mlir::StringRef> getPassGroups() const;
+
+  /// Return the declared option surface scopes.
+  std::vector<mlir::StringRef> getOptionScopes() const;
 
   /// Return the list of categories that this option belongs to.
   std::vector<mlir::StringRef> getOptionCategories() const;
@@ -88,19 +101,43 @@ public:
   /// Returns the compile config's class name.
   std::optional<mlir::StringRef> getCompileConfigName() const;
 
-  /// Returns whether to emit getter or setter methods.
-  bool getEmitGetterSetter() const;
-
   /// Returns whether to emit command line option registration.
-  bool getEmitOptionRegistration() const;
+  bool shouldRegisterCLIOption() const;
+
+  /// Returns whether to emit the config field declaration.
+  bool shouldEmitConfigField() const;
+
+  /// Returns whether to emit getter or setter methods.
+  bool shouldEmitGetterSetter() const;
+
+  /// Returns whether this option should be visible as a pass / pass-pipeline
+  /// option in generated code.
+  bool shouldEmitPassOption() const;
 
   /// Flag indicating if this is a list option.
   bool isListOption() const;
+
+  /// Returns whether this option only exists as internal compile config state.
+  bool isInternalStateOption() const;
+
+  /// Returns whether this option is tracked as A3-only in the shared schema.
+  bool isA3OnlyOption() const;
+
+  /// Returns whether this option exists only on the A5 surface.
+  bool isA5OnlyOption() const;
+
+  /// Returns whether this option is shared by both surfaces.
+  bool isSharedOption() const;
+
+  /// Returns whether this option stores into an external object instead of the
+  /// generated compile config.
+  bool isExternalStateOption() const;
 
 private:
   const llvm::Record *def;
 
   std::string cppName{};
+  std::string capitalizedCppName{};
   std::string argument{};
   std::string externalStorageLocation{};
 };

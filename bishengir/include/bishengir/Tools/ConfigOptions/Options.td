@@ -62,6 +62,21 @@ class Option {
   //   location = "fooBarFlag";
   bit externalStorage = 1;
 
+  // Explicit external object / field override.
+  //
+  // This is the structured form of external storage, used by options that
+  // write into an object outside the generated compile config.
+  string externalStateObject = "";
+  string externalStateField = "";
+
+  // Explicit external storage location override.
+  //
+  // This remains as an escape hatch for historical field compatibility.
+  // When empty, the location is derived from
+  // `externalStateObject.externalStateField`, or `<derivedCppName>Flag`
+  // (`<derivedCppName>Flags` for list options).
+  string externalStorageLocation = "";
+
   // The groups that this option belong to.
   //
   // If specified, macro guards will be generated to wrap the
@@ -75,6 +90,13 @@ class Option {
   //   #undef
   // ```
   list<string> passGroup = [];
+
+  // Scope of the option surface.
+  //
+  // SHARED: present on both A3 and A5 surfaces.
+  // A3_ONLY: kept only for A3 surface / migration tracking.
+  // A5_ONLY: introduced only on A5 surface.
+  list<string> optionScope = ["SHARED"];
 
   // The list of categories for the CLI option.
   list<string> compileOptionCategories = [];
@@ -104,5 +126,13 @@ class Option {
 class ListOption : Option {
   let defaultValue = "";
 }
+
+/// Marker for a CLI-visible option that writes into an external storage object
+/// instead of the generated compile config class.
+class ExternalStateOption;
+
+/// Marker for config state that exists in the generated compile config but is
+/// intentionally not surfaced as a generated command line option.
+class InternalStateOption;
 
 #endif // BISHENGIR_TOOLS_CONFIG_OPTIONS_OPTIONS_TD
