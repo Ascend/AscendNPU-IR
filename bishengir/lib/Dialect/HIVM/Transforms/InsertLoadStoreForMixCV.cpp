@@ -956,7 +956,7 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
   });
 
   /// Postprocess of adding core type attribute
-  funcOp->walk([&builder](Operation *op) {
+  funcOp->walk([&builder, this](Operation *op) {
     TypeSwitch<Operation *>(op)
         .Case([&](hivm::DebugOp op) {
           auto upProp = PropagatorUtil::getUpPropagator(&op.getArgMutable());
@@ -1010,9 +1010,19 @@ void InsertLoadStoreForMixCVPass::runOnOperation() {
           };
 
           TCoreTypeAttr newTcoretype = inferNewCoreType(upProp);
-          if (newTcoretype) {
-            LDBG("set tcoretype for " << op << " to " << newTcoretype);
-            op.setTcoretypeAttr(newTcoretype);
+          if (isA5Target()) {
+            // in A5, load op with cube core type will be converted to nd2nz
+            // from combining load and convert_layout
+            if (newTcoretype &&
+                newTcoretype.getTcoretype() == TCoreType::VECTOR) {
+              LDBG("set tcoretype for " << op << " to " << newTcoretype);
+              op.setTcoretypeAttr(newTcoretype);
+            }
+          } else {
+            if (newTcoretype) {
+              LDBG("set tcoretype for " << op << " to " << newTcoretype);
+              op.setTcoretypeAttr(newTcoretype);
+            }
           }
         })
         .Case([&](hivm::VBrcOp vbrcOp) {
