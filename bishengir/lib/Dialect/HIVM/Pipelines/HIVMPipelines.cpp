@@ -326,6 +326,15 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
   }
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
+  // MarkTightlyCoupledBuffer before CVPipelining is only needed in Skew
+  // (preload) mode: createNewLoopsForPreloadWithScopes uses TCB marks to
+  // decide which local outputs bypass scope.return.  Running it for
+  // standard CVPipelining causes migrateOps to clone the TCB-marked allocs
+  // into work-item loops; those dead clones retain their marks and force
+  // PlanMemory to allocate them as independent buffers, causing UB overflow.
+  if (hivmPipelineOptions.setCVPipelineMode == CVPipelineMode::Skew) {
+    pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+  }
   // must run CloneTensorEmpty to resotre merged&hoisted tensor.empty caused by
   // CSE
   pm.nest<func::FuncOp>().addPass(createCloneTensorEmptyPass());
@@ -371,6 +380,7 @@ static void hivmPreBufferizationOptimizationPipeline(
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
       pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
+      pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
     }
   }
 
