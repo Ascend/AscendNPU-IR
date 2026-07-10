@@ -39,8 +39,10 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   OutlineSingleOp.cpp
   PackTilingData.cpp
   PrepareI1Nx1ForVectorization.cpp
+  PullSliceIntoVectorFunction.cpp
   ReCacheIO.cpp
   RemoveCacheIO.cpp
+  RemoveMaskFromUnalignedReductionLoop.cpp
   ReorderOpsByBFS.cpp
   SimplifyOps.cpp
   TensorResToOutParams.cpp

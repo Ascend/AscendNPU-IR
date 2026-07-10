@@ -571,4 +571,19 @@ def PrepareI1Nx1ForVectorization
   let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect"];
 }
 
+def PullSliceIntoVectorFunction
+    : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
+  let summary = "Pull tensor slice ops into VF callees to reduce buffer copies";
+  let constructor = "mlir::hfusion::createPullSliceIntoVectorFunctionPass()";
+  let dependentDialects = ["tensor::TensorDialect", "func::FuncDialect",
+                           "hivm::HIVMDialect", "scf::SCFDialect"];
+}
+
+def RemoveMaskFromUnalignedReductionLoop
+    : Pass<"hfusion-remove-mask-from-unaligned-reduction-loop", "func::FuncOp"> {
+  let summary = "Remove mask from unaligned reduction loops";
+  let constructor = "mlir::hfusion::createRemoveMaskFromUnalignedReductionLoopPass()";
+  let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES

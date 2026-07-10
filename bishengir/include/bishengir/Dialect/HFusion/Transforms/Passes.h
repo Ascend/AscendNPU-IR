@@ -235,8 +235,14 @@ std::unique_ptr<Pass> createHFusionFoldUnitDimsPass();
 /// Create a pass to generalize named ops to generic ops.
 std::unique_ptr<Pass> createHFusionGeneralizePass();
 
-// Create a pass to prepare i1 Nx1 linalg.generic before vectorization.
+/// Create a pass to prepare i1 Nx1 linalg.generic before vectorization.
 std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
+
+/// Create a pass to pull slice into vector function.
+std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
+
+/// Create a pass to remove mask from unaligned reduction loop.
+std::unique_ptr<Pass> createRemoveMaskFromUnalignedReductionLoopPass();
 
 //===----------------------------------------------------------------------===//
 // Registration
