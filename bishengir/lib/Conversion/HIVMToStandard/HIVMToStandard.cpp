@@ -451,6 +451,20 @@ class NZ2NDOpToLibraryCallPattern : public OpRewritePattern<hivm::NZ2NDOp> {
   }
 };
 
+class L12UBOpToLibraryCallPattern : public OpRewritePattern<hivm::L12UBOp> {
+  using OpRewritePattern<hivm::L12UBOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::L12UBOp op,
+                                PatternRewriter &rewriter) const final {
+    // TODO: merge this with L12UBOpToLibraryCallPattern
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation())
+                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       op->getOperands(), {});
+    return success();
+  }
+};
+
 class FixpipeOpToLibraryCallPattern : public OpRewritePattern<hivm::FixpipeOp> {
 public:
   using OpRewritePattern<hivm::FixpipeOp>::OpRewritePattern;
@@ -1811,6 +1825,7 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                Conv2DL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                NZ2NDOpToLibraryCallPattern,
+               L12UBOpToLibraryCallPattern,
                FixpipeOpToLibraryCallPattern,
                MatmulOpToLibraryCallPattern,
                MixMatmulOpToLibraryCallPattern,

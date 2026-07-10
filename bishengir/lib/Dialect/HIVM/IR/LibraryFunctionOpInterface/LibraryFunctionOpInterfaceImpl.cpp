@@ -244,6 +244,30 @@ std::string getNZ2NDOpLibraryCallName(NZ2NDOp concreteOp,
          "_" + dataTypeStr;
 }
 
+std::string getL12UBOpLibraryCallName(L12UBOp concreteOp,
+                                      std::optional<bool> /*isOpsAligned*/) {
+  // check address space
+  Type srcType = concreteOp.getSrc().getType();
+#ifndef NDEBUG
+  AddressSpace srcScope = getHIVMAddressSpace(srcType);
+  assert(srcScope == AddressSpace::L1 && "src scope should be L1");
+  Type dstType = concreteOp.getDst().getType();
+  AddressSpace dstScope = getHIVMAddressSpace(dstType);
+  assert(dstScope == AddressSpace::UB && "dst scope should be UB");
+#endif
+  // get dimensions
+  MemRefType srcMemref = cast<MemRefType>(concreteOp.getSrcOperandType());
+  std::string srcRankStr = std::to_string(srcMemref.getRank()) + "d";
+  MemRefType dstMemref = cast<MemRefType>(concreteOp.getDstOperandType());
+  std::string dstRankStr = std::to_string(dstMemref.getRank()) + "d";
+  // get data type
+  std::string dataTypeStr =
+      getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+  // make library function name
+  return concreteOp.getOpName().str() + "_" + srcRankStr + "_to_" + dstRankStr +
+         "_" + dataTypeStr;
+}
+
 std::string callNameMangleSuffix(Operation *op) {
   std::string suffix = "";
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
