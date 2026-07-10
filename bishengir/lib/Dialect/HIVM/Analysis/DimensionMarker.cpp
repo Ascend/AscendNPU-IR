@@ -545,8 +545,8 @@ void DimensionAnalyzer::processYieldOp(scf::YieldOp op) {
 
 void DimensionAnalyzer::processForOp(scf::ForOp op) {
   LDBG("Processing ForOp " << op);
-  for (const auto &[regionArg, initArg, yield] :
-       zip_equal(op.getRegionIterArgs(), op.getInitArgs(), op.getYieldedValues())) {
+  for (const auto &[regionArg, initArg, yield] : zip_equal(
+           op.getRegionIterArgs(), op.getInitArgs(), op.getYieldedValues())) {
     createDummyRefIfNotExist({regionArg, initArg, yield});
     processValue(regionArg, initArg);
     processValue(regionArg, yield);
@@ -865,7 +865,8 @@ bool DimensionAnalyzer::isParallelOp(Operation *op) const {
   return op && (isElemwiseNaryOpImpl(op) || isa<CopyOpInterface>(op) ||
                 utils::isAllocLikeOp(op) ||
                 isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-                    bufferization::ToMemrefOp, arith::SelectOp>(op));
+                    bufferization::ToMemrefOp, arith::SelectOp,
+                    hivm::IndirectLoadOp, hivm::IndirectStoreOp>(op));
 }
 
 void DimensionAnalyzer::combineInferable() {
