@@ -254,6 +254,10 @@ std::unique_ptr<Pass> createSimplifyVFArgsPass();
 /// Create a pass to pull slice into vector function.
 std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
 
+// Create a pass to vectorize hfusion ops.
+std::unique_ptr<Pass>
+createHFusionVectorizeOpsPass(const VectorizeOpsOptions &options = {});
+
 /// Create a pass to remove mask from unaligned reduction loop.
 std::unique_ptr<Pass> createRemoveMaskFromUnalignedReductionLoopPass();
 

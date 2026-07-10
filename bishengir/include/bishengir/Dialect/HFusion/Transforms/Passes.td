@@ -609,6 +609,19 @@ def PullSliceIntoVectorFunction
                            "hivm::HIVMDialect", "scf::SCFDialect"];
 }
 
+def VectorizeOps : Pass<"hfusion-vectorize-ops", "ModuleOp"> {
+  let summary = "vectorize hfusion ops";
+  let constructor = "mlir::hfusion::createHFusionVectorizeOpsPass()";
+  let dependentDialects = [
+    "bufferization::BufferizationDialect", "func::FuncDialect",
+    "hfusion::HFusionDialect", "linalg::LinalgDialect",
+    "memref::MemRefDialect", "tensor::TensorDialect", "vector::VectorDialect"
+  ];
+  let options =
+      [Option<"forManualScope", "for-manual-scope", "bool", "false",
+              "Enable hfusion vectorize only for manual scope function">];
+}
+
 def RemoveMaskFromUnalignedReductionLoop
     : Pass<"hfusion-remove-mask-from-unaligned-reduction-loop", "func::FuncOp"> {
   let summary = "Remove mask from unaligned reduction loops";
