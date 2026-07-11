@@ -283,6 +283,10 @@ std::unique_ptr<Pass> createRemoveMaskFromUnalignedReductionLoopPass();
 // Create a pass to remove redundant transfer_write and transfer_read pair
 std::unique_ptr<Pass> createRemoveRedundantWriteAndReadPairPass();
 
+// Create a pass to hoist loop-carried transfer_read/transfer_write pairs out of
+// scf.for loops, keeping the temporary value in registers across iterations.
+std::unique_ptr<Pass> createLoopInvariantPromotionPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

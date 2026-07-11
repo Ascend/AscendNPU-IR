@@ -665,6 +665,15 @@ def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
   let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect"];
 }
 
+def LoopInvariantPromotion
+    : Pass<"loop-invariant-promotion", "func::FuncOp"> {
+  let summary = "promote transfer_read/transfer_write in loop";
+  let constructor = "::mlir::hfusion::createLoopInvariantPromotionPass()";
+  let dependentDialects = ["scf::SCFDialect", "vector::VectorDialect",
+                           "tensor::TensorDialect", "arith::ArithDialect",
+                           "affine::AffineDialect"];
+}
+
 def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let summary = "Generalize named ops to generic ops";
   let constructor = "mlir::hfusion::createHFusionGeneralizePass()";

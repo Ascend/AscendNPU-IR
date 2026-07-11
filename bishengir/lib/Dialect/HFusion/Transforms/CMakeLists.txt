@@ -38,6 +38,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   FoldSymbolicDim.cpp
   GenericUnroller.cpp
   HFusionGeneralize.cpp
+  LoopInvariantPromotion.cpp
   HoistTensorEmpty.cpp
   InlineBrc.cpp
   InferFuncFusionKind.cpp
@@ -112,6 +113,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   MLIRShapeDialect
   MLIRTensorDialect
   MLIRTensorTransformOps
+  MLIRTensorTransforms
   MLIRTensorUtils
   MLIRTransformDialect
   MLIRTransformDialectTransforms
