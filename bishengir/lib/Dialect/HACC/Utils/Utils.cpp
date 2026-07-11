@@ -258,6 +258,141 @@ bool isAscend910_95(ModuleOp op) {
   return isAscend910_95(targetDevice);
 }
 
+void setTargetDevice(ModuleOp op, TargetDevice targetDevice) {
+  MLIRContext *ctx = op->getContext();
+  op->setAttr(
+      TargetAttr::name,
+      TargetAttr::get(
+          ctx, StringAttr::get(ctx, stringifyTargetDeviceEnum(targetDevice))));
+}
+
+// TODO: we should use td to check the arch automatically
+bool isAscend910B(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend910B1 ||
+         targetDevice == TargetDevice::Ascend910B2 ||
+         targetDevice == TargetDevice::Ascend910B3 ||
+         targetDevice == TargetDevice::Ascend910B4;
+}
+
+bool isAscend910_93(TargetDevice targetDevice) {
+  return targetDevice == TargetDevice::Ascend910_9362 ||
+         targetDevice == TargetDevice::Ascend910_9372 ||
+         targetDevice == TargetDevice::Ascend910_9381 ||
+         targetDevice == TargetDevice::Ascend910_9382 ||
+         targetDevice == TargetDevice::Ascend910_9391 ||
+         targetDevice == TargetDevice::Ascend910_9392;
+}
+
+bool isMemBasedArch(TargetDevice targetDevice) {
+  return isAscend910B(targetDevice) || isAscend910_93(targetDevice);
+}
+
+bool isAscend310B(TargetDevice targetDevice) {
+  return false;
+}
+
+// use unordered_set to speedup because this func is frequently called
+bool isAscend950(TargetDevice targetDevice) {
+  static const std::unordered_set<TargetDevice> ascend950Devices = {
+      TargetDevice::Ascend910_950z,   TargetDevice::Ascend910_9579,
+      TargetDevice::Ascend910_957b,   TargetDevice::Ascend910_957d,
+      TargetDevice::Ascend910_9581,   TargetDevice::Ascend910_9589,
+      TargetDevice::Ascend910_958a,   TargetDevice::Ascend910_958b,
+      TargetDevice::Ascend910_9599,   TargetDevice::Ascend950PR_950z,
+      TargetDevice::Ascend950PR_9579, TargetDevice::Ascend950PR_957a,
+      TargetDevice::Ascend950PR_957b, TargetDevice::Ascend950PR_957c,
+      TargetDevice::Ascend950PR_957d, TargetDevice::Ascend950PR_9589,
+      TargetDevice::Ascend950PR_958a, TargetDevice::Ascend950PR_958b,
+      TargetDevice::Ascend950PR_958c, TargetDevice::Ascend950PR_958d,
+      TargetDevice::Ascend950PR_9599, TargetDevice::Ascend950PR_959a,
+      TargetDevice::Ascend950PR_959b, TargetDevice::Ascend950DT_950x,
+      TargetDevice::Ascend950DT_950y, TargetDevice::Ascend950DT_9571,
+      TargetDevice::Ascend950DT_9572, TargetDevice::Ascend950DT_9573,
+      TargetDevice::Ascend950DT_9574, TargetDevice::Ascend950DT_9575,
+      TargetDevice::Ascend950DT_9576, TargetDevice::Ascend950DT_9577,
+      TargetDevice::Ascend950DT_9578, TargetDevice::Ascend950DT_9581,
+      TargetDevice::Ascend950DT_9582, TargetDevice::Ascend950DT_9583,
+      TargetDevice::Ascend950DT_9584, TargetDevice::Ascend950DT_9585,
+      TargetDevice::Ascend950DT_9586, TargetDevice::Ascend950DT_9587,
+      TargetDevice::Ascend950DT_9588, TargetDevice::Ascend950DT_9591,
+      TargetDevice::Ascend950DT_9592, TargetDevice::Ascend950DT_9595,
+      TargetDevice::Ascend950DT_9596, TargetDevice::Ascend950DT_95A1,
+      TargetDevice::Ascend950DT_95A2};
+
+  return ascend950Devices.find(targetDevice) != ascend950Devices.end();
+}
+
+bool isAscend950(llvm::StringRef targetDevice) {
+  return isAscend950(symbolizeTargetDeviceEnum(targetDevice));
+}
+
+bool isRegBasedArch(TargetDevice targetDevice) {
+  return isAscend310B(targetDevice) || isAscend950(targetDevice);
+}
+
+bool isRegBasedArch(llvm::StringRef targetDevice) {
+  return isRegBasedArch(symbolizeTargetDeviceEnum(targetDevice));
+}
+
+bool isFFTSSupportedArch(TargetDevice targetDevice) {
+  return isAscend910B(targetDevice) || isAscend910_93(targetDevice) ||
+         isAscend950(targetDevice);
+}
+
+bool isAscend910B(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return true
+    // if no target device exists in the IR.
+    return true;
+  return isAscend910B(maybeTargetDevice.value());
+}
+
+bool isAscend910_93(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  return isAscend910_93(maybeTargetDevice.value());
+}
+
+bool isMemBasedArch(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return true
+    // if no target device exists in the IR.
+    return true;
+  return isMemBasedArch(maybeTargetDevice.value());
+}
+
+bool isAscend310B(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  return isAscend310B(maybeTargetDevice.value());
+}
+
+bool isAscend950(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  return isAscend950(maybeTargetDevice.value());
+}
+
+bool isRegBasedArch(ModuleOp op) {
+  auto maybeTargetDevice = getTargetDevice(op);
+  if (!maybeTargetDevice.has_value())
+    // Default is 910B. To ensure compatibility, return false
+    // if no target device exists in the IR.
+    return false;
+  return isRegBasedArch(maybeTargetDevice.value());
+}
+
 } // namespace utils
 
 static ModuleOp getDeviceModule(ModuleOp op) {
