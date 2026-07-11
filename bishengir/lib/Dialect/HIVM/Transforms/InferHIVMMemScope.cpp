@@ -60,7 +60,8 @@ bool isSingleResultPropagatableMemrefOp(Operation *op) {
   return false;
 }
 
-static BlockArgument getTiedWhileBodyIterArg(scf::WhileOp op, OpOperand *opOperand) {
+static BlockArgument getTiedWhileBodyIterArg(scf::WhileOp op,
+                                             OpOperand *opOperand) {
   auto argsMutable = op.getInitsMutable();
   auto *it = llvm::find(argsMutable, *opOperand);
   if (it == argsMutable.end())
@@ -106,7 +107,15 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           auto parentResult = parentOp->getResult(user.getOperandNumber());
 
           Type yieldType = yieldResult.getType();
+          Type valType = val.getType();
           if (!isa<BaseMemRefType>(yieldType))
+            return success();
+          if (!isa<BaseMemRefType>(valType))
+            return success();
+          auto yieldMemRefType = cast<BaseMemRefType>(yieldType);
+          auto valMemRefType = cast<BaseMemRefType>(valType);
+          if (yieldMemRefType.getElementType() !=
+              valMemRefType.getElementType())
             return success();
           setBaseMemRefTypeScope(parentResult, memrefScope);
           if (failed(propagateMemScopeToUsers(parentResult))) {
@@ -124,14 +133,25 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
         })
         .Case<scf::WhileOp>([&](scf::WhileOp op) {
           auto bbArg = op.getTiedLoopRegionIterArg(&user);
+          if (!bbArg)
+            return failure();
           auto yield = op.getTiedLoopYieldedValue(bbArg);
+          if (!yield)
+            return failure();
           auto afterArg = getTiedWhileBodyIterArg(op, &user);
+          if (!afterArg)
+            return failure();
           setBaseMemRefTypeScope(bbArg, memrefScope);
           setBaseMemRefTypeScope(yield->get(), memrefScope);
           setBaseMemRefTypeScope(afterArg, memrefScope);
           return success(propagateMemScopeToUsers(afterArg).succeeded() &&
                          propagateMemScopeToUsers(bbArg).succeeded() &&
                          propagateMemScopeToUsers(yield->get()).succeeded());
+        })
+        .Case<memref::ExtractStridedMetadataOp>([&](auto op) {
+          auto baseBuffer = op.getBaseBuffer();
+          setBaseMemRefTypeScope(baseBuffer, memrefScope);
+          return propagateMemScopeToUsers(baseBuffer);
         })
         .Case<func::CallOp>([&](auto op) {
           // For function calls, we cannot propagate the memory scope because
@@ -147,6 +167,12 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
             return defaultPropagateFn(op);
           }
           // Distributed CustomOp is just a func Call
+          return success();
+        })
+        .Case<hivm::FixpipeOp>([&](hivm::FixpipeOp op) {
+          // Fixpipe moves data from L0C to an independently inferred
+          // destination memory hierarchy. Do not propagate the source scope
+          // through the operation.
           return success();
         })
         .Default(defaultPropagateFn);
@@ -171,7 +197,7 @@ MemScopeInferAndPropagateHelper::Run(Value operand,
 
   auto memSpace = memRefType.getMemorySpace();
   if (memSpace) {
-    return success();
+    return propagateMemScopeToUsers(operand);
   }
 
   // Update its scope.

@@ -267,6 +267,101 @@ module {
 
 // -----
 
+// Verify that an existing address space is propagated to users.
+// Before the regbase common fix, InferHIVMMemScope returned immediately for
+// the already-scoped function argument and left its cast result unscoped.
+
+// CHECK-LABEL: func.func @propagate_existing_scope(
+// CHECK-SAME: %[[ARG:.*]]: memref<?xf32, #hivm.address_space<gm>>
+func.func @propagate_existing_scope(
+    %arg0: memref<?xf32, #hivm.address_space<gm>>) attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  // CHECK: builtin.unrealized_conversion_cast %[[ARG]]
+  // CHECK-SAME: to memref<?xf32, #hivm.address_space<gm>>
+  %bridge = builtin.unrealized_conversion_cast %arg0 :
+      memref<?xf32, #hivm.address_space<gm>> to memref<?xf32>
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @propagate_extract_strided_metadata(
+// CHECK-SAME: %[[ARG:.*]]: memref<16xf32, #hivm.address_space<gm>>
+func.func @propagate_extract_strided_metadata(%arg0: memref<16xf32>)
+    attributes {hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  // CHECK: %[[BASE:.*]], %{{.*}}, %{{.*}}, %{{.*}} =
+  // CHECK-SAME: memref.extract_strided_metadata %[[ARG]]
+  // CHECK-SAME: -> memref<f32, #hivm.address_space<gm>>
+  %base, %offset, %size, %stride = memref.extract_strided_metadata %arg0 :
+      memref<16xf32> -> memref<f32>, index, index, index
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_mmadL1_tightly_coupled(
+func.func @test_mmadL1_tightly_coupled() {
+  // CHECK: #hivm.address_space<cbuf>
+  %rhs = memref.alloc() : memref<16x128xf16>
+  // CHECK: #hivm.address_space<cc>
+  %output = memref.alloc() : memref<16x128xf32>
+  %transpose = arith.constant true
+  %c16 = arith.constant 16 : index
+  %c128 = arith.constant 128 : index
+  %tightly_coupled = memref.alloc() :
+      memref<16x16xf16, #hivm.address_space<cbuf>>
+  annotation.mark %tightly_coupled {
+      hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} :
+      memref<16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: to memref<16x16xf16, #hivm.address_space<cbuf>>
+  %cast = memref.memory_space_cast %tightly_coupled :
+      memref<16x16xf16, #hivm.address_space<cbuf>> to memref<16x16xf16>
+  hivm.hir.mmadL1 ins(%cast, %rhs, %transpose, %c16, %c16, %c128 :
+      memref<16x16xf16>, memref<16x128xf16>, i1, index, index, index)
+      outs(%output : memref<16x128xf32>)
+  return
+}
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // CHECK-LABEL: func.func @test_coupled_buffer_aic(
+  func.func @test_coupled_buffer_aic() attributes {
+      hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>} {
+    %transpose = arith.constant true
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %lhs = memref.alloc() {alignment = 64 : i64} : memref<64x128xf16>
+    %rhs = memref.alloc() : memref<64x128xf16>
+    %output = memref.alloc() {alignment = 64 : i64} : memref<64x64xf32>
+    hivm.hir.mmadL1 {already_set_real_mkn, b_transpose,
+        fixpipe_already_inserted = true}
+        ins(%lhs, %rhs, %transpose, %c64, %c128, %c64 :
+            memref<64x128xf16>, memref<64x128xf16>, i1, index, index, index)
+        outs(%output : memref<64x64xf32>)
+    // CHECK: #hivm.address_space<ub>
+    %tightly_coupled = memref.alloc() :
+        memref<64x64xf32, #hivm.address_space<ub>>
+    annotation.mark %tightly_coupled {
+        effects = ["write", "read"],
+        hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} :
+        memref<64x64xf32, #hivm.address_space<ub>>
+    hivm.hir.sync_block_wait[<CUBE>, <PIPE_V>, <PIPE_S>] flag = 0
+    // CHECK: ins({{.*}} : memref<64x64xf32, #hivm.address_space<cc>>)
+    // CHECK-SAME: outs({{.*}} : memref<64x64xf32, #hivm.address_space<ub>>)
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%output : memref<64x64xf32>)
+        outs(%tightly_coupled : memref<64x64xf32,
+            #hivm.address_space<ub>>)
+    hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 1
+    %unused = memref.alloc() : memref<64x128xf16>
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: test_infer_mem_scope_unrealized_conversion_cast
 module {
   func.func @test_infer_mem_scope_unrealized_conversion_cast(%arg0 : memref<128xi32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>} {
