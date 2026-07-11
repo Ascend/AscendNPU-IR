@@ -3,7 +3,7 @@
 // Case 1: expand_shape + annotation.mark + 1 vsstb transpose
 
 // CHECK-LABEL: func.func @case1()
-// CHECK: %expanded = tensor.expand_shape {{.*}} : tensor<128x128xf16> into tensor<128x8x16xf16>
+// CHECK: %expanded = tensor.expand_shape {{.*}} output_shape [128, 8, 16] : tensor<128x128xf16> into tensor<128x8x16xf16>
 // CHECK: annotation.mark %expanded
 // CHECK: scf.for
 // CHECK-NOT: tensor.expand_shape
@@ -28,7 +28,7 @@ module {
 // Case 2: expand_shape + sync_block_wait + 2 vsstb transposes
 
 // CHECK-LABEL: func.func @case2()
-// CHECK: %expanded = tensor.expand_shape {{.*}} : tensor<128x128xf16> into tensor<128x8x16xf16>
+// CHECK: %expanded = tensor.expand_shape {{.*}} output_shape [128, 8, 16] : tensor<128x128xf16> into tensor<128x8x16xf16>
 // CHECK: scf.for
 // CHECK-NOT: tensor.expand_shape
 // CHECK: vector.transfer_write
@@ -62,7 +62,7 @@ module {
 
 // CHECK-LABEL: func.func @case3()
 // CHECK: scf.for
-// CHECK: %expanded = tensor.expand_shape {{.*}} : tensor<1x128xf16> into tensor<1x8x16xf16>
+// CHECK: %expanded = tensor.expand_shape {{.*}} output_shape [1, 8, 16] : tensor<1x128xf16> into tensor<1x8x16xf16>
 // CHECK-COUNT-2: vector.transfer_write
 // CHECK: {"outlined-loop-target-1"}
 
@@ -87,7 +87,7 @@ module {
 // Case 4: expand_shape + sync nested in scf.for + vsstb transpose.
 
 // CHECK-LABEL: func.func @case4()
-// CHECK: %expanded = tensor.expand_shape {{.*}} : tensor<128x128xf16> into tensor<128x8x16xf16>
+// CHECK: %expanded = tensor.expand_shape {{.*}} output_shape [128, 8, 16] : tensor<128x128xf16> into tensor<128x8x16xf16>
 // CHECK: hivm.hir.sync_block_wait
 // CHECK: scf.for
 // CHECK-NOT: tensor.expand_shape
@@ -118,7 +118,7 @@ module {
 
 // CHECK-LABEL: func.func @baseline()
 // CHECK: scf.for
-// CHECK: %expanded = tensor.expand_shape {{.*}} : tensor<1x128xf16> into tensor<1x8x16xf16>
+// CHECK: %expanded = tensor.expand_shape {{.*}} output_shape [1, 8, 16] : tensor<1x128xf16> into tensor<1x8x16xf16>
 // CHECK: vector.transfer_write
 // CHECK: {"outlined-loop-target-1"}
 
