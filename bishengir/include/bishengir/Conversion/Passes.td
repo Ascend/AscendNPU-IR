@@ -71,6 +71,27 @@ def ConvertGPUToHFusion : Pass<"convert-gpu-to-hfusion"> {
 }
 
 //===----------------------------------------------------------------------===//
+// ArithToHIVMLLVM
+//===----------------------------------------------------------------------===//
+
+def ArithToHIVMLLVMConversionPass: Pass<"convert-arith-to-hivm-llvm"> {
+  let summary = "Partial convert arith to llvm for double buffer in backend";
+  let description = [{
+    This pass convert arith::select to llvm::select with pointer as operand as
+    opposed to memref descriptor in the ArithToLLVM conversion pass. This is the
+    first step to help the auto-sync in backend to reconginze double buffer. This
+    pass is very machine specific so it is not stored in conversion pass folder.
+  }];
+  let constructor = "mlir::createArithToHIVMLLVMConversionPass()";
+  let dependentDialects = ["LLVM::LLVMDialect", "hivm::HIVMDialect"];
+  let options = [
+    Option<"indexBitwidth", "index-bitwidth", "unsigned",
+           /*default=kDeriveIndexBitwidthFromDataLayout*/"0",
+           "Bitwidth of the index type, 0 to use size of machine word">,
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // HFusionToHIVM
 //===----------------------------------------------------------------------===//
 

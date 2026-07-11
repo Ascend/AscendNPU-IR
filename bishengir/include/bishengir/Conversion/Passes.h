@@ -23,6 +23,7 @@
 #include "bishengir/Conversion/ArithToHFusion/ArithToHFusion.h"
 #include "bishengir/Conversion/ArithToHIVMAVE/ArithToHIVMAVE.h"
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
+#include "bishengir/Conversion/ArithToHIVMLLVM/ArithToHIVMLLVM.h"
 #include "bishengir/Conversion/GPUToHFusion/GPUToHFusion.h"
 #include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVMPass.h"
 #include "bishengir/Conversion/HFusionToVector/HFusionToVector.h"
