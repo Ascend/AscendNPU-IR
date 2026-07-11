@@ -13,28 +13,21 @@
 //
 // Counter strategy (unified for both scf.for and scf.while; legacy
 // affine.apply((iv - lb)/step) % N codegen for scf.for is retired):
-//   An i64 counter is materialized as a memref.alloca<1xi64>() at the top
-//   of the parent FunctionOpInterface. The alloca carries
-//   kMultiBufferCounterAttr whose value matches a kMultiBufferLoopIdAttr
-//   placed on the owning loop op itself. Counter discovery is purely
-//   IR-driven: a second pass that constructs a fresh adapter for the same
-//   loop will find and reuse the existing alloca/load/store instead of
-//   creating duplicates. The loop signature (iter_args / yields / result
-//   types) is *not* modified.
+//   The adapter materializes a single hivm.hir.multi_buffer_counter op in the
+//   loop body and reuses it across all clients. The op is a pure anchor with no
+//   attributes; the later lowering pass keys the concrete counter storage off
+//   the op's owning loop.
 //
-//   For scf.for the body block is `forOp.getBody()`; for scf.while it is
-//   `whileOp.getAfter().front()`. Body-head load + body-tail
-//   increment-store are inserted into this body block, and the alloca
-//   sits at funcOp entry so the counter persists across any outer-loop
-//   re-entries (equivalent to the legacy affine-flattening (iv-lb)/step
-//   semantics but expressed as stateful IR instead of a pure expression).
+//   A later lowering pass rewrites that HIVM op to the concrete stateful form:
+//   memref.alloca<1xi64>() + initial store at FunctionOpInterface entry,
+//   body-head load, and body-tail increment-store. The loop signature
+//   (iter_args / yields / result types) is *not* modified.
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef MLIR_DIALECT_HIVM_UTILS_MULTIBUFFER_LOOP_ADAPTER_H
 #define MLIR_DIALECT_HIVM_UTILS_MULTIBUFFER_LOOP_ADAPTER_H
 
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Value.h"
@@ -50,19 +43,17 @@ public:
   static FailureOr<MultiBufferLoopAdapter> create(LoopLikeOpInterface loop);
 
   /// Returns the slot-select index value, computed as `counter mod modular`,
-  /// where counter is the body-head load of the i64 alloca counter for both
-  /// scf.for and scf.while. Counter materialization (alloca + init +
-  /// body-head load + body-tail increment-store) is done idempotently on
-  /// the first call.
+  /// where counter is produced by the shared hivm.hir.multi_buffer_counter op
+  /// for both scf.for and scf.while. Counter-op materialization is done
+  /// idempotently on the first call.
   Value getModuloIndex(OpBuilder &builder, int64_t modular);
 
-  /// Returns the raw counter SSA value (no modulo), index-typed, as the
-  /// body-head load of the i64 alloca counter for both for and while.
+  /// Returns the raw counter SSA value (no modulo), index-typed, from the
+  /// shared hivm.hir.multi_buffer_counter op for both for and while.
   Value getIterationCounter(OpBuilder &builder);
 
-  /// Idempotent. Ensures the body-tail "+1; store back to alloca" pair
-  /// exists. Safe to call from any pass; primarily a backstop in case
-  /// some client bypassed getModuloIndex / getIterationCounter.
+  /// Idempotent. Ensures the shared counter op exists. The concrete increment
+  /// store is produced by the lowering pass.
   void finalizeIncrement(OpBuilder &builder);
 
   LoopLikeOpInterface loop() const { return loop_; }
@@ -85,17 +76,13 @@ public:
 private:
   explicit MultiBufferLoopAdapter(LoopLikeOpInterface loop) : loop_(loop) {}
 
-  /// Find existing counter alloca via attribute lookup, or create one at the
-  /// top of the parent FunctionOpInterface (alloca + init store + body-head
-  /// load + body-tail increment-store are all materialized at once and
-  /// tagged so subsequent calls can reuse them). Works uniformly for both
-  /// scf.for (body = forOp.getBody()) and scf.while (body =
+  /// Find or create the shared counter op in the loop body. Works uniformly for
+  /// both scf.for (body = forOp.getBody()) and scf.while (body =
   /// whileOp.getAfter().front()).
   void ensureCounterMaterialized(OpBuilder &builder);
 
   LoopLikeOpInterface loop_;
-  memref::AllocaOp counterAlloca_ = {};
-  Value cachedLoad_ = {};
+  Value cachedCounter_ = {};
 };
 
 } // namespace hivm

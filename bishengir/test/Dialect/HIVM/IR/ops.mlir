@@ -384,3 +384,16 @@ func.func @test_mmadmxl1(%arg0: memref<4x8xf8E4M3FN>,
   %result = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %init_condition, %real_m, %real_k, %real_n : tensor<4x8xf8E4M3FN>, tensor<8x16xf8E4M3FN>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%c : tensor<4x16xf8E5M2>) -> tensor<4x16xf8E5M2>
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_multi_buffer_counter
+func.func @test_multi_buffer_counter() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %iv = %c0 to %c4 step %c1 {
+    // CHECK: hivm.hir.multi_buffer_counter -> i64
+    %counter = hivm.hir.multi_buffer_counter -> i64
+  }
+  return
+}

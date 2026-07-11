@@ -1,23 +1,19 @@
-// RUN: bishengir-opt %s -hivm-enable-multi-buffer -split-input-file | FileCheck  %s
+// RUN: bishengir-opt %s -hivm-enable-multi-buffer -hivm-lower-multi-buffer-counter -split-input-file | FileCheck  %s
 
 // EnableMultiBuffer now drives slot rotation through MultiBufferLoopAdapter
 // for both scf.for and scf.while. For
 // scf.for parents the previous affine.apply((iv - lb)/step) % modular
 // codegen has been replaced by a function-scoped memref.alloca<1xi64>
 // counter plus body-head memref.load / arith.remui / arith.select cascade
-// and body-tail arith.addi / memref.store-back, all carrying the
-// hivm.multi_buffer_counter_for / hivm.multi_buffer_loop_id attribute pair
-// so the four multi-buffer passes (MarkMultiBuffer / PlanMemory /
-// GraphSyncSolver / EnableMultiBuffer) can rediscover & reuse the same
-// counter across runs. These CHECKs verify those structural markers; exact
-// SSA names are intentionally not bound (they shift between unrelated
-// runs).
+// and body-tail arith.addi / memref.store-back. These CHECKs verify those
+// structural markers; exact SSA names are intentionally not bound (they
+// shift between unrelated runs).
 
 // -----
 
 module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual(
-// CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK:   memref.alloca() : memref<1xi64>
 // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
 // CHECK:   hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
 // CHECK:   hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
@@ -55,8 +51,7 @@ module {
       // CHECK:   arith.addi %{{.*}}, %{{.*}} : i64
       // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     }
-    // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
-    hivm.hir.pipe_barrier[<PIPE_ALL>]
+    // CHECK: }
     return
   }
 }
@@ -64,7 +59,7 @@ module {
 // -----
 module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_2for(
-// CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK:   memref.alloca() : memref<1xi64>
 // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
   func.func @multi_buffer_alloc_manual_2for(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
@@ -108,8 +103,7 @@ module {
           // CHECK:   arith.addi %{{.*}}, %{{.*}} : i64
           // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
         }
-        // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
-      hivm.hir.pipe_barrier[<PIPE_ALL>]
+        // CHECK: }
     }
 
     return
@@ -120,12 +114,11 @@ module {
 module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_for_vadd(
 // Two distinct multi-buffer candidates parented to two different fors:
-// outer for owns counter id=1 (alloc %1 hoisted to outer body), inner for
-// owns counter id=0 (alloc %0 in inner body). Two alloca<1xi64> at funcOp
-// top, two distinct hivm.multi_buffer_loop_id attributes on the two
-// scf.for ops.
-// CHECK-DAG:   memref.alloca() {hivm.multi_buffer_counter_for = 0 : i64} : memref<1xi64>
-// CHECK-DAG:   memref.alloca() {hivm.multi_buffer_counter_for = 1 : i64} : memref<1xi64>
+// outer for owns one counter (alloc %1 hoisted to outer body), inner for
+// owns the other (alloc %0 in inner body). Two alloca<1xi64> at funcOp top,
+// one per scf.for op.
+// CHECK-DAG:   memref.alloca() : memref<1xi64>
+// CHECK-DAG:   memref.alloca() : memref<1xi64>
   func.func @multi_buffer_alloc_manual_for_vadd(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c16_i64 = arith.constant 16 : i64
@@ -166,8 +159,7 @@ module {
         // CHECK:   arith.addi %{{.*}}, %{{.*}} : i64
         // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
       }
-      // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
-
+      // CHECK: }
       hivm.hir.pipe_barrier[<PIPE_ALL>]
       hivm.hir.store ins(%1 : memref<16xf16, #hivm.address_space<ub>>)
                      outs(%arg1 : memref<16xf16, #hivm.address_space<gm>>)
@@ -176,8 +168,7 @@ module {
       // CHECK:   arith.addi %{{.*}}, %{{.*}} : i64
       // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     }
-    // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
-
+    // CHECK: }
     return
   }
 }
@@ -189,7 +180,7 @@ module {
 // fors host vadd/vmul uses but are not multi-buffer parents themselves
 // (the alloc lives in the outer-for body), so only one counter alloca and
 // one loop_id attribute show up.
-// CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK:   memref.alloca() : memref<1xi64>
   func.func @multi_buffer_alloc_manual_for_vadd_vmul(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c16_i64 = arith.constant 16 : i64
@@ -237,8 +228,7 @@ module {
       // CHECK:   arith.addi %{{.*}}, %{{.*}} : i64
       // CHECK:   memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     }
-    // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
-
+    // CHECK: }
     return
   }
 }
@@ -248,7 +238,7 @@ module {
 // CHECK-LABEL: func.func @multi_buffer_alloc_manual_3for(
 // 3-level nested for, multi-buffer candidate parented to innermost. One
 // alloca at funcOp top, slot select cascade lives in innermost body.
-// CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+// CHECK:   memref.alloca() : memref<1xi64>
   func.func @multi_buffer_alloc_manual_3for(%arg0: memref<16xf16, #hivm.address_space<gm>>, %arg1: memref<16xf16, #hivm.address_space<gm>>) {
     %c0_i64 = arith.constant 0 : i64
     %c16_i64 = arith.constant 16 : i64
@@ -287,8 +277,7 @@ module {
             // CHECK: arith.addi %{{.*}}, %{{.*}} : i64
             // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
           }
-          // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
-        hivm.hir.pipe_barrier[<PIPE_ALL>]
+          // CHECK: }
       }
     }
     return
@@ -315,7 +304,7 @@ module {
     %c8192_i64 = arith.constant 8192 : i64
     %c24576_i64 = arith.constant 24576 : i64
     %c53312_i64 = arith.constant 53312 : i64
-    // CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK:   memref.alloca() : memref<1xi64>
     // CHECK: scf.for
     scf.for %arg7 = %c0_i32 to %c16_i32 step %c1_i32  : i32 {
       // CHECK-NOT: arith.select
@@ -353,7 +342,7 @@ module {
     %c24576_i64 = arith.constant 24576 : i64
     %c53312_i64 = arith.constant 53312 : i64
     %c57408_i64 = arith.constant 57408 : i64
-    // CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK:   memref.alloca() : memref<1xi64>
     // CHECK: scf.for
     scf.for %arg7 = %c0_i32 to %c16_i32 step %c1_i32  : i32 {
       %29 = hivm.hir.pointer_cast(%c8192_i64) : memref<1x2048xf16, #hivm.address_space<ub>>
@@ -395,7 +384,7 @@ module {
     %c57408_i64 = arith.constant 57408 : i64
 
     %29 = hivm.hir.pointer_cast(%c8192_i64) : memref<1x2048xf16, #hivm.address_space<ub>>
-    // CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK:   memref.alloca() : memref<1xi64>
     // CHECK: scf.for
     scf.for %arg6 = %c0_i32 to %c16_i32 step %c1_i32  : i32 {
       // CHECK: scf.for
@@ -415,6 +404,7 @@ module {
 
         scf.yield %31#1 : memref<1x2048xf16, #hivm.address_space<ub>>
       }
+      scf.yield
     }
 
     return
@@ -443,7 +433,7 @@ module {
     %c57408_i64 = arith.constant 57408 : i64
 
     %29 = hivm.hir.pointer_cast(%c8192_i64) : memref<1x2048xf16, #hivm.address_space<ub>>
-    // CHECK:   memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK:   memref.alloca() : memref<1xi64>
     // CHECK: scf.for
     scf.for %arg6 = %c0_i32 to %c16_i32 step %c1_i32  : i32 {
       // CHECK-NOT: arith.select
@@ -464,6 +454,7 @@ module {
 
         scf.yield %31#0 : memref<1x2048xf16, #hivm.address_space<ub>>
       }
+      scf.yield
     }
 
     return
@@ -490,8 +481,8 @@ module {
     %c61504_i64 = arith.constant 61504 : i64
     %true = arith.constant true
 
-    // CHECK-DAG: memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
-    // CHECK-DAG: memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK-DAG: memref.alloca() : memref<1xi64>
+    // CHECK-DAG: memref.alloca() : memref<1xi64>
     // CHECK: scf.for
     scf.for %arg1 = %c0_i32 to %c16_i32 step %c1_i32  : i32 {
       // Outer-level select for %0.
@@ -545,7 +536,7 @@ module {
     %c53312_i64 = arith.constant 53312 : i64
     %c57408_i64 = arith.constant 57408 : i64
 
-    // CHECK: memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK: memref.alloca() : memref<1xi64>
     // CHECK: scf.for
     scf.for %arg6 = %c0_i32 to %c16_i32 step %c1_i32 : i32 {
       // The select for %39 is anchored to this outer for.
@@ -566,8 +557,9 @@ module {
       hivm.hir.vadd ins(%31, %31 : memref<1x2048xf16, #hivm.address_space<ub>>,
                                     memref<1x2048xf16, #hivm.address_space<ub>>)
                     outs(%43 : memref<1x2048xf16, #hivm.address_space<ub>>)
+      scf.yield
     }
-    // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
+    // CHECK: }
     return
   }
 }

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -hivm-inject-sync -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-inject-sync -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
 
 // -----
 module {
@@ -308,7 +308,7 @@ module {
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
     %c16 = arith.constant 16 : index
-    // CHECK: memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK: memref.alloca() : memref<1xi64>
     // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
@@ -329,7 +329,7 @@ module {
       // CHECK: arith.addi %{{.*}}, %{{.*}} : i64
       // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     }
-    // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
+    // CHECK: }
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
     return
@@ -350,7 +350,7 @@ module {
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
     %c16 = arith.constant 16 : index
-    // CHECK: memref.alloca() {hivm.multi_buffer_counter_for = {{[0-9]+}} : i64} : memref<1xi64>
+    // CHECK: memref.alloca() : memref<1xi64>
     // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
@@ -389,7 +389,7 @@ module {
       // CHECK: arith.addi %{{.*}}, %{{.*}} : i64
       // CHECK: memref.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<1xi64>
     }
-    // CHECK: } {hivm.multi_buffer_loop_id = {{[0-9]+}} : i64}
+    // CHECK: }
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
     // CHECK: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID2>]

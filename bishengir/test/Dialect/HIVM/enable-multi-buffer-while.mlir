@@ -1,12 +1,11 @@
-// RUN: bishengir-opt %s -hivm-enable-multi-buffer -split-input-file | FileCheck %s
+// RUN: bishengir-opt %s -hivm-enable-multi-buffer -hivm-lower-multi-buffer-counter -split-input-file | FileCheck %s
 
 // -----
 // Verify the alloca-based counter scheme for scf.while.
 //
 // EnableMultiBuffer should:
 //  1. Hoist single-address pointer_casts out of the loop (one per slot).
-//  2. Materialize a memref<1xi64> counter alloca at the top of the func,
-//     tagged with `hivm.multi_buffer_counter_for`.
+//  2. Materialize a memref<1xi64> counter alloca at the top of the func.
 //  3. Initialize that alloca to 0 via memref.store before the loop.
 //  4. Insert a memref.load + arith.remui at the head of the after region,
 //     followed by the arith.select cascade picking among the slot ptrs.
@@ -23,8 +22,8 @@ module {
     // Hoisted single-addr casts (one per slot).
     // CHECK-DAG: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
     // CHECK-DAG: hivm.hir.pointer_cast(%{{.*}}) : memref<16xf16, #hivm.address_space<ub>>
-    // Counter alloca at the top of the func body, tagged with our attribute.
-    // CHECK-DAG: %[[CTR:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{.*}}} : memref<1xi64>
+    // Counter alloca at the top of the func body.
+    // CHECK-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
     // CHECK-DAG: memref.store %{{.*}}, %[[CTR]]
 
     %c0_i64 = arith.constant 0 : i64

@@ -1437,4 +1437,17 @@ def CustomMacroOp : HIVM_CustomOp<"custom_macro", [MacroOpTrait, InferMaxRankTra
   let hasCanonicalizer = 1;
 }
 
+def MultiBufferCounterOp : HIVM_Op<"multi_buffer_counter"> {
+  let summary = "Materialized multi-buffer loop counter anchor.";
+  let description = [{
+    This op anchors the per-iteration multi-buffer counter for an scf.for or
+    scf.while loop. It is introduced by MultiBufferLoopAdapter and shared by
+    all consumers that need slot rotation. A later lowering pass rewrites it to
+    a function-scoped memref.alloca counter plus a body-head load and body-tail
+    increment/store.
+  }];
+  let results = (outs I64:$counter);
+  let assemblyFormat = "attr-dict `->` type($counter)";
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMOPS_TD

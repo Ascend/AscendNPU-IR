@@ -97,6 +97,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   LiftLowestStride.cpp
   LiftZeroRank.cpp
   LowerCreateSyncBlockLock.cpp
+  LowerMultiBufferCounter.cpp
   MarkDisableLoad.cpp
   MarkSyncBlockLockWithSubblock.cpp
   MarkMultiBuffer.cpp
