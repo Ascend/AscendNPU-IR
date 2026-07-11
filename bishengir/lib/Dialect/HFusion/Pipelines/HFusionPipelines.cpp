@@ -447,6 +447,8 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(
       createRemoveMaskFromUnalignedReductionLoopPass());
   pm.nest<func::FuncOp>().addPass(vector::createLowerVectorMaskPass());
+  if (hfusionOptions.enableLoopInvariantPromotion)
+    pm.nest<func::FuncOp>().addPass(createLoopInvariantPromotionPass());
   if (enableSIMDVFFusion(hfusionOptions)) {
     // Eliminate VFFusion outline
     pm.addPass(mlir::createInlinerPass());

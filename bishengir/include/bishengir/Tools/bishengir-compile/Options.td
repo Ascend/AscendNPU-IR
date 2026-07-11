@@ -386,6 +386,12 @@ def EnableOpsReorder : HFusionOptimizationControlOptions<
   "true"
 >;
 
+def EnableLoopInvariantPromotion : HFusionOptimizationControlOptions<
+  "Enable the loop-invariant-promotion pass",
+  "bool",
+  "true"
+>;
+
 def HfusionMaxHorizontalFusionSize : HFusionOptimizationControlOptions<
   "Number of horizontal fusion attempt (Default: unlimited).",
   "int32_t",
