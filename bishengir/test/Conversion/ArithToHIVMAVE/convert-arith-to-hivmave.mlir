@@ -347,4 +347,41 @@ func.func @test_create_preg_from_constant_op(%arg0: memref<16x2x1xi1, strided<[6
   }
   return
 }
+
 // -----
+
+// NaN splat constants must NOT be lowered to ave.hir.vci. IEEE 754 NaN breaks
+// every float comparison in extractArithmeticSequenceParams (NaN > epsilon is
+// always false, NaN == 0 is false), so a NaN splat was misdetected as an
+// arithmetic sequence and generated vci with an unsupported type (e.g. bf16).
+// The fix adds an early NaN check so the splat falls through to broadcast.
+
+// CHECK-LABEL: @nan_splat_bf16
+// CHECK-NOT: ave.hir.vci
+// CHECK: ave.hir.broadcast
+func.func @nan_splat_bf16() -> vector<128xbf16> {
+  %cst = arith.constant dense<0x7FC0> : vector<128xbf16>
+  return %cst : vector<128xbf16>
+}
+
+// -----
+
+// CHECK-LABEL: @nan_splat_f16
+// CHECK-NOT: ave.hir.vci
+// CHECK: ave.hir.broadcast
+func.func @nan_splat_f16() -> vector<128xf16> {
+  %cst = arith.constant dense<0x7E00> : vector<128xf16>
+  return %cst : vector<128xf16>
+}
+
+// -----
+
+// CHECK-LABEL: @nan_splat_f32
+// CHECK-NOT: ave.hir.vci
+// CHECK: ave.hir.broadcast
+func.func @nan_splat_f32() -> vector<64xf32> {
+  %cst = arith.constant dense<0x7FC00000> : vector<64xf32>
+  return %cst : vector<64xf32>
+}
+// -----
+

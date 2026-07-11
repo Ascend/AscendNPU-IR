@@ -209,9 +209,15 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Wait for mmad finished
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
 
-    // Load current tile from L1 to L0A
-    copyL1ToL0A(tensorL0A, tensorTileL1A);
-    copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    // Load current tile from L1 to L0A.  The transposed A path needs the
+    // scale metadata copied with the data copy so the MX scale address follows
+    // the same transpose/tail handling as the data tile.
+    if constexpr (TA) {
+      copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+    } else {
+      copyL1ToL0A(tensorL0A, tensorTileL1A);
+      copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    }
     if (kL0Idx == kL0Loop - 1 && l1AMTE1MTE2EventId != -1) {
       AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
           l1AMTE1MTE2EventId);
@@ -223,15 +229,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto layoutBInL0 =
         tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, actualN);
     auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
-    // Locate the current tile of matrix B on L1
     auto tensorTileL1B = GetTile(tensorL1B, tla::MakeCoord(kL0Idx * l0K, 0),
                                  tla::MakeShape(kL0Actual, actualN));
-    // Locate the current tile of matrix mxScaleB on L1
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
-
-    // Load current tile from L1 to L0B
     copyL1ToL0B(tensorL0B, tensorTileL1B);
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
     if (kL0Idx == kL0Loop - 1 && l1BMTE1MTE2EventId != -1) {
@@ -420,9 +422,16 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Wait for mmad finished
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
 
-    // Load current tile from L1 to L0A
-    copyL1ToL0A(tensorL0A, tensorTileL1A);
-    copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    // Load current tile from L1 to L0A.  The transposed A path needs the
+    // scale metadata copied with the data copy so the MX scale address follows
+    // the same transpose/tail handling as the data tile.
+    // FIXME: this need to refactor back into one without if branch.
+    if constexpr (TA) {
+      copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+    } else {
+      copyL1ToL0A(tensorL0A, tensorTileL1A);
+      copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
+    }
     if (kL0Idx == kL0Loop - 1 && l1AMTE1MTE2EventId != -1) {
       AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
           l1AMTE1MTE2EventId);
@@ -434,15 +443,11 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto layoutBInL0 =
         tla::MakeLayout<ElementB, LayoutTagL0B>(kL0Actual, actualN);
     auto tensorL0B = tla::MakeTensor(l0BTile, layoutBInL0, Arch::PositionL0B{});
-    // Locate the current tile of matrix B on L1
     auto tensorTileL1B = GetTile(tensorL1B, tla::MakeCoord(kL0Idx * l0K, 0),
                                  tla::MakeShape(kL0Actual, actualN));
-    // Locate the current tile of matrix mxScaleB on L1
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
-
-    // Load current tile from L1 to L0B
     copyL1ToL0B(tensorL0B, tensorTileL1B);
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
     if (kL0Idx == kL0Loop - 1 && l1BMTE1MTE2EventId != -1) {
@@ -506,7 +511,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
 } // namespace Catlass::Gemm
 
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE>
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
 __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
     memref_t<__cbuf__ SRC_TYPE, 4> *mb,
@@ -514,18 +520,21 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, int64_t m, int64_t k,
     int64_t n, int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
     int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, false, false,
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
-      (ma->sizes[1] * ma->sizes[2]), (ma->sizes[0] * ma->sizes[3]),
-      (mb->sizes[0] * mb->sizes[3]), (ma->sizes[1] * ma->sizes[2]), k, n,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
+      m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
       l1b_wait_mmad_l1_event, true, true, false);
 }
 
-template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE>
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
 __aicore__ __attribute__((always_inline)) void
 mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ SRC_TYPE, 4> *ma,
@@ -535,13 +544,15 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
                 int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
                 int64_t l1b_wait_mmad_l1_event, bool isFp4) {
-  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, false, false,
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
       mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
       l1MxScaleB->aligned + l1MxScaleB->offset, nullptr,
-      (ma->sizes[1] * ma->sizes[2]), (ma->sizes[0] * ma->sizes[3]),
-      (mb->sizes[0] * mb->sizes[3]), (ma->sizes[1] * ma->sizes[2]), k, n,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
+      m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
       l1b_wait_mmad_l1_event, true, true, false, isFp4);
 }
@@ -551,5 +562,17 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
 extern "C" {
 REGISTER_MMA_MX(float8_e5m2_t, float, float);
 REGISTER_MMA_MX(float8_e4m3_t, float, float);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta_tb, true, true);
 REGISTER_MMA_MX_FP4(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                          fp4x2_e2m1_t, _ta, true, false);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                          fp4x2_e2m1_t, _tb, false, true);
+REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                          fp4x2_e2m1_t, _ta_tb, true, true);
 }

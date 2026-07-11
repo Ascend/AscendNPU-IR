@@ -81,4 +81,45 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     "some_consume"(%result) : (tensor<16x16xf32>) -> ()
     return
   }
+
+  // Minimal preload case for the TCB mixed-CV inserted-load path:
+  //   CUBE mmadL1 -> fixpipe(nz2nd) -> VECTOR inserted-load.
+  // The TCB tensor view must be rebuilt after the CUBE scope.
+  // CHECK-LABEL: func.func @preload_tcb_fixpipe_inserted_load
+  // CHECK: scf.for
+  // CHECK: %[[TCB_ALLOC:.*]] = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+  // CHECK: scope.scope : () -> () {
+  // CHECK: hivm.hir.mmadL1
+  // CHECK: annotation.mark %[[TCB_ALLOC]] {{.*}}hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>{{.*}} : memref<128x128xf32, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.fixpipe
+  // CHECK: scope.return
+  // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>
+  // CHECK: %[[TCB_CAST:.*]] = memref.memory_space_cast %[[TCB_ALLOC]] : memref<128x128xf32, #hivm.address_space<ub>> to memref<128x128xf32>
+  // CHECK-NEXT: %[[TCB_TENSOR:.*]] = bufferization.to_tensor %[[TCB_CAST]] restrict writable : memref<128x128xf32>
+  // CHECK: scope.scope
+  // CHECK: hivm.hir.load ins(%[[TCB_TENSOR]] : tensor<128x128xf32>)
+  func.func @preload_tcb_fixpipe_inserted_load(%arg0: tensor<8x8x16x16xf16>, %arg1: tensor<8x8x16x16xf16>) attributes {func_dyn_memref_args = dense<[false, false]> : vector<2xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
+    %c0 = arith.constant 0 : i32
+    %step = arith.constant 1 : i32
+    %bound = "some_op"() : () -> i32
+    %true = arith.constant true
+    %c128 = arith.constant 128 : index
+    %init = tensor.empty() : tensor<128x128xf32>
+    %result = scf.for %i = %c0 to %bound step %step iter_args(%acc = %init) -> tensor<128x128xf32> : i32 {
+      %dot0_init = tensor.empty() : tensor<8x8x16x16xf32>
+      %dot0 = hivm.hir.mmadL1 {already_set_real_mkn, b_transpose, fixpipe_for_result_already_inserted = true, normalized_in_L0C} ins(%arg0, %arg1, %true, %c128, %c128, %c128 : tensor<8x8x16x16xf16>, tensor<8x8x16x16xf16>, i1, index, index, index) outs(%dot0_init : tensor<8x8x16x16xf32>) -> tensor<8x8x16x16xf32>
+      %tcb_alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
+      annotation.mark %tcb_alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<128x128xf32, #hivm.address_space<ub>>
+      %tcb_tensor = bufferization.to_tensor %tcb_alloc restrict writable : memref<128x128xf32, #hivm.address_space<ub>>
+      %fix0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%dot0 : tensor<8x8x16x16xf32>) outs(%tcb_tensor : tensor<128x128xf32>) -> tensor<128x128xf32>
+
+      %load0_init = tensor.empty() : tensor<128x128xf32>
+      %load0 = hivm.hir.load ins(%fix0 : tensor<128x128xf32>) outs(%load0_init : tensor<128x128xf32>) {"inserted-load"} core_type = <VECTOR> -> tensor<128x128xf32>
+      %v0_init = tensor.empty() : tensor<128x128xf32>
+      %v0 = hivm.hir.vexp ins(%load0 : tensor<128x128xf32>) outs(%v0_init : tensor<128x128xf32>) -> tensor<128x128xf32>
+      scf.yield %v0 : tensor<128x128xf32>
+    } {fixpipe_for_mmad_result_already_inserted = true}
+    "some_consume"(%result) : (tensor<128x128xf32>) -> ()
+    return
+  }
 }

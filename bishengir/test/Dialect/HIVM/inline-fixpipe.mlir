@@ -1436,6 +1436,31 @@ module {
 
 // -----
 
+// Square 8x8: nz2nd + vtranspose -> nz2dn, then extract_slice swap must keep nz2dn.
+// CHECK-LABEL: func.func @inline_nz2dn_fixpipe_vtranspose_extract_slice_swap
+// CHECK: tensor.extract_slice %{{.*}} : tensor<8x8xf32> to tensor<?x?xf32>
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>}
+// CHECK-NOT: dma_mode = #hivm.dma_mode<nz2nd>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @inline_nz2dn_fixpipe_vtranspose_extract_slice_swap(
+      %mmad_out: tensor<8x8xf32>,
+      %fixpipe_dst: tensor<8x8xf32>,
+      %transpose_dst: tensor<8x8xf32>,
+      %store_dst: memref<?x?xf32>,
+      %off0: index,
+      %size0: index,
+      %off1: index,
+      %size1: index) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%mmad_out : tensor<8x8xf32>) outs(%fixpipe_dst : tensor<8x8xf32>) -> tensor<8x8xf32>
+    %1 = hivm.hir.vtranspose ins(%0 : tensor<8x8xf32>) outs(%transpose_dst : tensor<8x8xf32>) permutation = [1, 0] -> tensor<8x8xf32>
+    %2 = tensor.extract_slice %1[%off0, %off1] [%size0, %size1] [1, 1] : tensor<8x8xf32> to tensor<?x?xf32>
+    hivm.hir.store ins(%2 : tensor<?x?xf32>) outs(%store_dst : memref<?x?xf32>)
+    return
+  }
+}
+
+// -----
+
 // CHECK-LABEL: func.func @inline_nz2dn_fixpipe_vtranspose_return
 // CHECK-NOT: nz2nd
 // CHECK: %[[FixRes:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%{{.*}} : tensor<128x64xf32>) outs(%{{.*}} : tensor<64x128xf32>)

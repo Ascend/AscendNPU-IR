@@ -394,6 +394,489 @@ public:
   const std::string vfInstructionsDisabled;
 };
 
+class OpBuilderContextItem {
+public:
+  OpBuilderContextItem(
+    const std::string name,
+    const Type type,
+    const mlir::Attribute attributeValue) :
+      name(name),
+      type(type),
+      attributeValue(attributeValue) {}
+
+  OpBuilderContextItem(
+    const std::string name,
+    const Type type,
+    const mlir::Value value1,
+    const mlir::Value value2) :
+      name(name),
+      type(type),
+      value1(value1),
+      value2(value2) {}
+
+  bool operator==(const OpBuilderContextItem& other) const {
+    return
+      (name == other.name) &&
+      (type == other.type) &&
+      (attributeValue == other.attributeValue) &&
+      (value1 == other.value1) &&
+      (value2 == other.value2);
+  }
+
+  const std::string name;
+  const Type type;
+  const mlir::Attribute attributeValue;
+  const mlir::Value value1;
+  const mlir::Value value2;
+};
+
+struct ContextItemHash {
+  size_t operator()(const OpBuilderContextItem& item) const {
+    std::hash<std::string> h;
+    const size_t typeHash = DenseMapInfo<Type>::getHashValue(item.type);
+    const size_t attributeValueHash = item.attributeValue ?
+      DenseMapInfo<Attribute>::getHashValue(item.attributeValue) : 0;
+    const size_t value1Hash = item.value1 ?
+      DenseMapInfo<Value>::getHashValue(item.value1) : 0;
+    const size_t value2Hash = item.value2 ?
+      DenseMapInfo<Value>::getHashValue(item.value2) : 0;
+    return h(item.name) + typeHash + attributeValueHash + value1Hash * 2 + value2Hash * 4;
+  }
+};
+
+class OpBuilderContext {
+public:
+  template <typename T>
+  T get(mlir::Type type, mlir::Attribute value) const {
+    const auto name = llvm::getTypeName<T>().str();
+    OpBuilderContextItem item(name, type, value);
+    auto it = items.find(item);
+    if (it == items.end()) {
+      return T();
+    }
+    return dyn_cast<T>(it->second);
+  }
+
+  template <typename T>
+  T get(mlir::Type type, mlir::Value value1, mlir::Value value2) const {
+    const auto name = llvm::getTypeName<T>().str();
+    OpBuilderContextItem item(name, type, value1, value2);
+    auto it = items.find(item);
+    if (it == items.end()) {
+      return T();
+    }
+    return dyn_cast<T>(it->second);
+  }
+
+  template <typename T>
+  void add(mlir::Type type, mlir::Attribute value, T& instance) {
+    const auto name = llvm::getTypeName<T>().str();
+    OpBuilderContextItem item(name, type, value);
+    items.emplace(item, instance);
+  }
+
+  template <typename T>
+  void add(mlir::Type type, mlir::Value value1, mlir::Value value2, T& instance) {
+    const auto name = llvm::getTypeName<T>().str();
+    OpBuilderContextItem item(name, type, value1, value2);
+    items.emplace(item, instance);
+  }
+
+private:
+  std::unordered_map<OpBuilderContextItem, Operation*, ContextItemHash> items;
+};
+
+class DebugMemoryContext {
+public:
+  arith::ConstantOp createConstant(
+      OpBuilder& functionBuilder,
+      Location functionLocation,
+      const Type type,
+      const TypedAttr value) {
+    if (!type) {
+      DEBUG_LLVM_LOG_ERROR("type is empty");
+      return nullptr;
+    }
+
+    if (!value) {
+      DEBUG_LLVM_LOG_ERROR("attribute is empty");
+      return nullptr;
+    }
+
+    arith::ConstantOp constantOp = context.get<arith::ConstantOp>(type, value);
+    if (!constantOp) {
+      constantOp = functionBuilder.create<arith::ConstantOp>(
+        functionLocation,
+        type,
+        value);
+      context.add<arith::ConstantOp>(type, value, constantOp);
+    }
+    return constantOp;
+  }
+
+  hivmave::VFPgeOp createVFPgeOp(
+      OpBuilder& functionBuilder,
+      Location functionLocation,
+      const VectorType outVecType,
+      const mlir::hivmave::PgePattern pgePattern) {
+    const auto patternAttr = mlir::hivmave::PgePatternAttr::get(
+      functionBuilder.getContext(),
+      pgePattern);
+
+    hivmave::VFPgeOp pgeOp = context.get<hivmave::VFPgeOp>(outVecType, patternAttr);
+    if (!pgeOp) {
+      auto maskType = VectorType::get(
+        SmallVector<int64_t> {outVecType.getNumElements()},
+        functionBuilder.getI1Type());
+
+      pgeOp = functionBuilder.create<hivmave::VFPgeOp>(
+        functionLocation,
+        maskType,
+        patternAttr);
+
+      context.add<hivmave::VFPgeOp>(outVecType, patternAttr, pgeOp);
+    }
+    return pgeOp;
+  }
+
+  hivmave::VFBroadcastScalarMaskOp createVFBroadcastScalarMaskOp(
+      OpBuilder& functionBuilder,
+      Location functionLocation,
+      const VectorType outVecType,
+      const Value constant,
+      const Value mask) {
+    auto broadcastOp = context.get<hivmave::VFBroadcastScalarMaskOp>(
+      outVecType,
+      constant,
+      mask);
+    if (!broadcastOp) {
+      broadcastOp = functionBuilder.create<hivmave::VFBroadcastScalarMaskOp>(
+        functionLocation,
+        outVecType,
+        constant,
+        mask);
+
+      context.add<hivmave::VFBroadcastScalarMaskOp>(
+        outVecType,
+        constant,
+        mask,
+        broadcastOp);
+    }
+    return broadcastOp;
+  }
+
+private:
+  OpBuilderContext context;
+};
+
+class HeaderBuilder {
+public:
+  enum class OperationId {
+    OPERATION_VMULL = 1,
+    OPERATION_VADD,
+    OPERATION_UNKNOWN
+  };
+
+  enum class TypeId {
+    TYPE_F16 = 1,
+    TYPE_F32,
+    TYPE_UNKNOWN
+  };
+
+  HeaderBuilder(
+      const DebugMemoryContext& context,
+      const OpBuilder& functionBuilder,
+      const Location& functionLocation) :
+      context(context),
+      functionBuilder(functionBuilder),
+      functionLocation(functionLocation) {}
+
+  class HeaderDefinition {
+  public:
+    HeaderDefinition(
+      const size_t size,
+      const arith::ConstantOp dataSizeConstantOp,
+      const hivmave::VFBroadcastScalarMaskOp dataSizeBroadcastOp,
+      const hivmave::VFBroadcastScalarMaskOp typeIdBroadcastOp,
+      const arith::ConstantOp instructionIdConstantOp,
+      const arith::ConstantOp offsetConstantOp,
+      const hivmave::VFBroadcastScalarMaskOp instructionIdBroadcastOp) :
+        size(size),
+        dataSizeConstantOp(dataSizeConstantOp),
+        dataSizeBroadcastOp(dataSizeBroadcastOp),
+        typeIdBroadcastOp(typeIdBroadcastOp),
+        instructionIdConstantOp(instructionIdConstantOp),
+        offsetConstantOp(offsetConstantOp),
+        instructionIdBroadcastOp(instructionIdBroadcastOp) {
+    }
+
+    const size_t size;
+    const arith::ConstantOp dataSizeConstantOp;
+    hivmave::VFBroadcastScalarMaskOp dataSizeBroadcastOp;
+    hivmave::VFBroadcastScalarMaskOp typeIdBroadcastOp;
+    arith::ConstantOp instructionIdConstantOp;
+    arith::ConstantOp offsetConstantOp;
+    hivmave::VFBroadcastScalarMaskOp instructionIdBroadcastOp;
+  };
+
+  class Header {
+  public:
+    Header() : headerSize(0), dataSize(0) {}
+
+    Header(
+      const memref::SubViewOp subViewOp,
+      const arith::AddIOp addIOp,
+      const Value loopIterArg,
+      const size_t headerSize,
+      const size_t dataSize) :
+        subViewOp(subViewOp),
+        addIOp(addIOp),
+        loopIterArg(loopIterArg),
+        headerSize(headerSize),
+        dataSize(dataSize) {
+    }
+
+    explicit operator bool() const {
+      return (subViewOp && addIOp && loopIterArg && (headerSize != 0) && (dataSize != 0));
+    }
+
+    memref::SubViewOp subViewOp;
+    arith::AddIOp addIOp;
+    const Value loopIterArg;
+    const size_t headerSize;
+    const size_t dataSize;
+  };
+
+  Header createHeader(
+      OpBuilder& storeBuilder,
+      Location& storeLocation,
+      Operation& operation,
+      const Value functionProbArg,
+      const Value loopIterArg,
+      arith::AddIOp offsetIncrementAddOp,
+      memref::SubViewOp intermediateSubView,
+      OperandRange& indices) {
+    ::llvm::ArrayRef<int64_t> staticSizes = intermediateSubView.getStaticSizes();
+    if (staticSizes.empty()) {
+      DEBUG_LLVM_LOG_ERROR("staticSizes is empty");
+      return Header();
+    }
+
+    if (staticSizes.size() != 1) {
+      DEBUG_LLVM_LOG_ERROR("staticSizes: unexpected size: " + std::to_string(staticSizes.size()));
+      return Header();
+    }
+
+    const auto dataSize = staticSizes[0];
+    const MemRefType resultType = intermediateSubView.getType();
+    const Type type = resultType.getElementType();
+
+    auto headerDefinition = createHeaderDefinition(operation, dataSize, type);
+
+    const hivmave::StoreDist storePattern = hivmave::StoreDist::NORM_B32;
+
+    auto resultTypes = operation.getResultTypes();
+    const Type outType = resultTypes.front();
+    const VectorType outVecType = cast<VectorType>(outType);
+
+    IRMapping map;
+    map.map(intermediateSubView->getOperand(0), functionProbArg);
+    map.map(intermediateSubView->getOperand(1), loopIterArg);
+    auto subView = storeBuilder.clone(*intermediateSubView, map);
+    memref::SubViewOp subViewOp = dyn_cast<memref::SubViewOp>(subView);
+
+    {
+      const auto pgeOp = context.createVFPgeOp(
+        storeBuilder,
+        storeLocation,
+        outVecType,
+        mlir::hivmave::PgePattern::ALL);
+
+      storeBuilder.create<hivmave::VFMaskedStoreOp>(
+        storeLocation,
+        storePattern,
+        subViewOp,
+        indices,
+        pgeOp->getResult(0),
+        headerDefinition.instructionIdBroadcastOp);
+    }
+
+    {
+      const auto pgeOp = context.createVFPgeOp(
+        storeBuilder,
+        storeLocation,
+        outVecType,
+        mlir::hivmave::PgePattern::VL2);
+
+      storeBuilder.create<hivmave::VFMaskedStoreOp>(
+        storeLocation,
+        storePattern,
+        subViewOp,
+        indices,
+        pgeOp->getResult(0),
+        headerDefinition.typeIdBroadcastOp);
+    }
+
+    {
+      const auto pgeOp = context.createVFPgeOp(
+        storeBuilder,
+        storeLocation,
+        outVecType,
+        mlir::hivmave::PgePattern::VL1);
+
+      storeBuilder.create<hivmave::VFMaskedStoreOp>(
+        storeLocation,
+        storePattern,
+        subViewOp,
+        indices,
+        pgeOp->getResult(0),
+        headerDefinition.dataSizeBroadcastOp);
+    }
+
+    Operation* offsetIncrementAdd = offsetIncrementAddOp.getOperation();
+    IRMapping addMap;
+    addMap.map(offsetIncrementAddOp->getOperand(0), loopIterArg);
+    addMap.map(offsetIncrementAddOp->getOperand(1), headerDefinition.offsetConstantOp);
+    Operation* add = storeBuilder.clone(*offsetIncrementAdd, addMap);
+
+    arith::AddIOp addOp = dyn_cast<arith::AddIOp>(add);
+    const Value newLoopIterArg = addOp.getResult();
+
+    return Header(subViewOp, addOp, newLoopIterArg, headerDefinition.size, dataSize);
+  }
+
+private:
+  static OperationId getOperationId(const Operation& op) {
+    if (isa<hivmave::VFMulOp>(op)) {
+      return OperationId::OPERATION_VMULL;
+    } else if (isa<hivmave::VFAddOp>(op)) {
+      return OperationId::OPERATION_VADD;
+    } else {
+      return OperationId::OPERATION_UNKNOWN;
+    }
+  }
+
+  static TypeId getTypeId(const Type type, OpBuilder& builder) {
+    if (builder.getF16Type() == type) {
+      return TypeId::TYPE_F16;
+    } else if (builder.getF32Type() == type) {
+      return TypeId::TYPE_F32;
+    } else {
+      return TypeId::TYPE_UNKNOWN;
+    }
+  }
+
+  mlir::TypedAttr getAttribute(const Type type, const size_t value) {
+    if (functionBuilder.getF16Type() == type) {
+      return functionBuilder.getF16FloatAttr(value);
+    } else if (functionBuilder.getF32Type() == type) {
+      return functionBuilder.getF32FloatAttr(value);
+    } else if (functionBuilder.getIndexType() == type) {
+      return functionBuilder.getIndexAttr(value);
+    } else {
+      return nullptr;
+    }
+  }
+
+  HeaderDefinition createHeaderDefinition(
+      Operation& operation,
+      const size_t dataSize,
+      const Type type) {
+    auto dataSizeConstantOp = context.createConstant(
+      functionBuilder,
+      functionLocation,
+      type,
+      getAttribute(type, dataSize));
+
+    const size_t operationId = static_cast<size_t>(getOperationId(operation));
+    auto instructionIdConstantOp = context.createConstant(
+      functionBuilder,
+      functionLocation,
+      type,
+      getAttribute(type, operationId));
+
+    const size_t typeId = static_cast<size_t>(getTypeId(type, functionBuilder));
+    auto typeIdConstantOp = context.createConstant(
+      functionBuilder,
+      functionLocation,
+      type,
+      getAttribute(type, typeId));
+
+    const size_t headerSize = 8;
+    const Type indexType = functionBuilder.getIndexType();
+    auto offsetConstantOp = context.createConstant(
+      functionBuilder,
+      functionLocation,
+      indexType,
+      getAttribute(indexType, headerSize));
+
+    auto resultTypes = operation.getResultTypes();
+    const Type outType = resultTypes.front();
+    const VectorType outVecType = cast<VectorType>(outType);
+
+    hivmave::VFBroadcastScalarMaskOp dataSizeBroadcastOp;
+    {
+      const Value pgeOp = context.createVFPgeOp(
+        functionBuilder,
+        functionLocation,
+        outVecType,
+        mlir::hivmave::PgePattern::ALL);
+
+      dataSizeBroadcastOp = context.createVFBroadcastScalarMaskOp(
+        functionBuilder,
+        functionLocation,
+        outVecType,
+        dataSizeConstantOp,
+        pgeOp);
+    }
+
+    hivmave::VFBroadcastScalarMaskOp typeIdBroadcastOp;
+    {
+      const Value pgeOp = context.createVFPgeOp(
+        functionBuilder,
+        functionLocation,
+        outVecType,
+        mlir::hivmave::PgePattern::ALL);
+
+      typeIdBroadcastOp = context.createVFBroadcastScalarMaskOp(
+        functionBuilder,
+        functionLocation,
+        outVecType,
+        typeIdConstantOp,
+        pgeOp);
+    }
+
+    hivmave::VFBroadcastScalarMaskOp instructionIdBroadcastOp;
+    {
+      const Value pgeOp = context.createVFPgeOp(
+        functionBuilder,
+        functionLocation,
+        outVecType,
+        mlir::hivmave::PgePattern::ALL);
+
+      instructionIdBroadcastOp = context.createVFBroadcastScalarMaskOp(
+        functionBuilder,
+        functionLocation,
+        outVecType,
+        instructionIdConstantOp,
+        pgeOp);
+    }
+
+    return HeaderDefinition(
+      headerSize,
+      dataSizeConstantOp,
+      dataSizeBroadcastOp,
+      typeIdBroadcastOp,
+      instructionIdConstantOp,
+      offsetConstantOp,
+      instructionIdBroadcastOp);
+  }
+
+  DebugMemoryContext context;
+  OpBuilder functionBuilder;
+  Location functionLocation;
+};
+
 class UbProbeActionHandler : public DebugActionHandler {
 public:
   BlockArgument addArgument(
@@ -516,7 +999,7 @@ public:
     llvm::SmallVector<mlir::OpFoldResult> mixedOffsets = intermediateSubviewOp.getMixedOffsets();
     for (const auto& offset : mixedOffsets) {
       if (offset.is<Value>()) {
-        Value offsetValue = dyn_cast<Value>(offset);
+        const Value offsetValue = dyn_cast<Value>(offset);
         auto blockArg = dyn_cast<mlir::BlockArgument>(offsetValue);
         if (blockArg != nullptr) {
           mlir::Block* parentBlock = blockArg.getOwner();
@@ -577,7 +1060,7 @@ public:
 
         std::vector<std::pair<Value, Value>> results;
         for (auto& op : llvm::make_early_inc_range(*oldBody)) {
-          if (dyn_cast<scf::YieldOp>(op) != nullptr) {
+          if (isa<scf::YieldOp>(op)) {
             continue;
           }
 
@@ -655,12 +1138,33 @@ public:
     return result;
   }
 
+  static LogicalResult getIntValue(const Value value, int64_t& intValue) {
+    Operation* constant = value.getDefiningOp();
+    arith::ConstantOp constantOp = dyn_cast<arith::ConstantOp>(constant);
+    if (!constantOp) {
+      DEBUG_LLVM_LOG_ERROR("Operation is not constant");
+      return LogicalResult::failure();
+    }
+
+    const Attribute attr = constantOp.getValue();
+    const IntegerAttr intAttr = dyn_cast<IntegerAttr>(attr);
+    if (!intAttr) {
+      DEBUG_LLVM_LOG_ERROR("Unexpected constant value type");
+      return LogicalResult::failure();
+    }
+
+    intValue = intAttr.getInt();
+    return LogicalResult::success();
+  }
+
   LogicalResult handleFunctionOp(
+        DebugMemoryContext& context,
         ModuleOp moduleOp,
         func::FuncOp functionOp,
         mlir::Value entryOutputArg,
         mlir::Value& castedEntryProbArg,
-        const Config& config) {
+        const Config& config,
+        size_t& storeOffset) {
 
     LogicalResult result = LogicalResult::success();
 
@@ -668,6 +1172,7 @@ public:
     arith::AddIOp offsetIncrementAddOpOriginal;
     Value loopIterArg;
     scf::YieldOp newYieldOp;
+    scf::ForOp newForOp;
 
     {
       const std::vector<Operation*> operations = DebugActionHandler::findOperations(functionOp, tensorChangeOperations);
@@ -701,13 +1206,14 @@ public:
               prevForOpBuilder.getIndexAttr(initialOffsetValue));
             DEBUG_LLVM_LOG_DEBUG_EXEC("initialOffsetConstant:", initialOffsetConstant.dump());
 
-            updateForOpIterArgs(
+            auto newFor = updateForOpIterArgs(
               forOp,
               initialOffsetConstant,
               offsetIncrementAddOp,
               loopIterArg,
               newYieldOp);
 
+            newForOp = dyn_cast<scf::ForOp>(newFor);
             offsetIncrementAddOpOriginal = offsetIncrementAddOp;
             forOp.erase();
           } else {
@@ -768,6 +1274,18 @@ public:
     hivmave::VFLoadOp loadOp;
     memref::SubViewOp intermediateSubviewOp;
     Operation* existingMaskedStoreOp = nullptr;
+
+    OpBuilder functionBuilder(functionOp);
+    Block& entryBlock = functionOp.getRegion().front();
+    if (entryBlock.empty()) {
+        DEBUG_LLVM_LOG_ERROR("function region is empty");
+        return LogicalResult::failure();
+    }
+
+    functionBuilder.setInsertionPointAfter(&entryBlock.front());
+    Location functionLocation = entryBlock.front().getLoc();
+    HeaderBuilder headerBuilder(context, functionBuilder, functionLocation);
+
     for (Operation* operation : operations) {
       if ((intermediateSubview == nullptr) && (intermediateLoad == nullptr)) {
         result = getIntermediateSubviewOp(operations[0], loadOp, intermediateSubviewOp);
@@ -786,6 +1304,7 @@ public:
             "loadOp (" + std::to_string(loadOp->getNumOperands()) + "):",
             loadOp->dump());
         }
+
         if (intermediateSubviewOp) {
           intermediateSubview = intermediateSubviewOp.getOperation();
           DEBUG_LLVM_LOG_DEBUG_EXEC(
@@ -812,25 +1331,53 @@ public:
         Type outType = resultTypes.front();
         VectorType outVecType = cast<VectorType>(outType);
 
-        auto maskType = VectorType::get(
-          SmallVector<int64_t> {outVecType.getNumElements()},
-          builder.getI1Type());
-
-        auto pgeOp = builder.create<hivmave::VFPgeOp>(
-          location,
-          maskType,
-          mlir::hivmave::PgePatternAttr::get(builder.getContext(), mlir::hivmave::PgePattern::ALL));
-
-        DEBUG_LLVM_LOG_DEBUG_EXEC("PgeOp operation was created & inserted", pgeOp->dump());
-
+        auto pgeOp = context.createVFPgeOp(builder, location, outVecType, mlir::hivmave::PgePattern::ALL);
         auto operationResult = operation->getResult(0);
         auto pgeOpResult = pgeOp->getResult(0);
+
+        if (existingMaskedStoreOp == nullptr) {
+          std::vector<Operation*> existingMaskedStores = DebugActionHandler::findOperations(
+            functionOp,
+            { maskedStore });
+          if (existingMaskedStores.size() != 1) {
+            DEBUG_LLVM_LOG_DEBUG("unexpected existing masked stores: " + std::to_string(existingMaskedStores.size()));
+            return LogicalResult::failure();
+          }
+          existingMaskedStoreOp = existingMaskedStores[0];
+        }
+
+        hivmave::VFMaskedStoreOp existingMaskedStore = dyn_cast<hivmave::VFMaskedStoreOp>(existingMaskedStoreOp);
 
         Value base;
         if (config.vfSubviewDisabled) {
           DEBUG_LLVM_LOG_DEBUG("view operation is disabled");
         } else {
           if (intermediateSubview != nullptr) {
+            {
+              auto indices = existingMaskedStore.getIndices();
+              auto opLocation = operation->getLoc();
+
+              OpBuilder headerOpBuilder(operation->getBlock(), std::next(operation->getIterator()));
+              headerOpBuilder.setInsertionPointAfter(operation);
+
+              const auto header = headerBuilder.createHeader(
+                headerOpBuilder,
+                opLocation,
+                *operation,
+                functionProbArg,
+                loopIterArg,
+                offsetIncrementAddOp,
+                intermediateSubviewOp,
+                indices);
+              if (!header) {
+                DEBUG_LLVM_LOG_ERROR("header was not created");
+                return LogicalResult::failure();
+              }
+
+              storeOffset += header.headerSize + header.dataSize;
+              loopIterArg = header.loopIterArg;
+            }
+
             IRMapping map;
             map.map(intermediateSubview->getOperand(0), functionProbArg);
             map.map(intermediateSubview->getOperand(1), loopIterArg);
@@ -855,20 +1402,6 @@ public:
             return LogicalResult::failure();
           }
           DEBUG_LLVM_LOG_DEBUG_EXEC("base:", base.dump());
-
-          if (existingMaskedStoreOp == nullptr) {
-            std::vector<Operation*> existingMaskedStores = DebugActionHandler::findOperations(
-              functionOp,
-              { maskedStore });
-            if (existingMaskedStores.size() != 1) {
-              DEBUG_LLVM_LOG_DEBUG("unexpected existing masked stores: " + std::to_string(existingMaskedStores.size()));
-              return LogicalResult::failure();
-            }
-            existingMaskedStoreOp = existingMaskedStores[0];
-          }
-
-          hivmave::VFMaskedStoreOp existingMaskedStore = dyn_cast<hivmave::VFMaskedStoreOp>(existingMaskedStoreOp);
-          DEBUG_LLVM_LOG_DEBUG_EXEC("existingMaskedStore:", existingMaskedStore->dump());
 
           if (config.vfStoreDisabled) {
             DEBUG_LLVM_LOG_DEBUG("store operation was disabled");
@@ -906,15 +1439,68 @@ public:
       offsetIncrementAddOpOriginal.erase();
     }
 
+    if (newForOp != nullptr) {
+      int64_t lowerBound;
+      result = getIntValue(newForOp.getLowerBound(), lowerBound);
+      if (!result.succeeded()) {
+        DEBUG_LLVM_LOG_ERROR("lowerBound was not received");
+        return result;
+      }
+      if (lowerBound < 0) {
+        DEBUG_LLVM_LOG_ERROR("lowerBound has to be zero or positive: " + std::to_string(lowerBound));
+        return LogicalResult::failure();
+      }
+
+      int64_t upperBound;
+      result = getIntValue(newForOp.getUpperBound(), upperBound);
+      if (!result.succeeded()) {
+        DEBUG_LLVM_LOG_ERROR("upperBound was not received");
+        return result;
+      }
+      if (upperBound < 0) {
+        DEBUG_LLVM_LOG_ERROR("upperBound has to be zero or positive: " + std::to_string(upperBound));
+        return LogicalResult::failure();
+      }
+
+      if (lowerBound >= upperBound) {
+        DEBUG_LLVM_LOG_ERROR(std::string("not expected loop parameters: ") +
+          "lowerBound(" + std::to_string(lowerBound) + "), " +
+          "upperBound (" + std::to_string(upperBound) + ")");
+        return LogicalResult::failure();
+      }
+
+      int64_t step;
+      result = getIntValue(newForOp.getStep(), step);
+      if (!result.succeeded()) {
+        DEBUG_LLVM_LOG_ERROR("step was not received");
+        return result;
+      }
+      if (step <= 0) {
+        DEBUG_LLVM_LOG_ERROR("step has to be positive: " + std::to_string(step));
+        return LogicalResult::failure();
+      }
+
+      if (((upperBound - lowerBound) % step) != 0) {
+        DEBUG_LLVM_LOG_ERROR(std::string("not expected loop parameters: ") +
+          "lowerBound(" + std::to_string(lowerBound) + "), " +
+          "upperBound (" + std::to_string(upperBound) + "), " +
+          "step (" + std::to_string(step) + ")");
+        return LogicalResult::failure();
+      }
+
+      storeOffset = storeOffset * static_cast<size_t>((upperBound - lowerBound) / step);
+    }
     return result;
   }
 
   LogicalResult handleFunctionOps(
+        DebugMemoryContext& context,
         ModuleOp moduleOp,
         func::FuncOp entryFunction,
         mlir::Value entryOutputArg,
         mlir::Value& castedEntryProbArg,
-        const Config& config) {
+        const Config& config,
+        size_t& storeOffset) {
 
     LogicalResult result = LogicalResult::success();
     moduleOp.walk([&](func::FuncOp functionOp) {
@@ -925,15 +1511,20 @@ public:
       const auto outlinedFunctionName = functionOp.getSymName().str();
       DEBUG_LLVM_LOG_DEBUG("outlinedFunctionName: " + outlinedFunctionName);
 
+      size_t functionStoreOffset = 0;
       result = handleFunctionOp(
+        context,
         moduleOp,
         functionOp,
         entryOutputArg,
         castedEntryProbArg,
-        config);
+        config,
+        functionStoreOffset);
       if (!result.succeeded()) {
         return WalkResult::interrupt();
       }
+
+      storeOffset += functionStoreOffset;
 
       return WalkResult::advance();
     });
@@ -1001,14 +1592,18 @@ public:
     }
     DEBUG_LLVM_LOG_DEBUG_EXEC("entry prob arg (" + std::to_string(entryProbArg.getArgNumber()) + ")", entryProbArg.dump());
 
+    DebugMemoryContext context;
+    size_t storeOffset = 0;
     mlir::Value castedEntryProbArg;
     if (!config.vfDisabled) {
       const auto result = handleFunctionOps(
+        context,
         moduleOp,
         entryFunction,
         entryOutputArg,
         castedEntryProbArg,
-        config);
+        config,
+        storeOffset);
       if (!result.succeeded()) {
         return LogicalResult::failure();
       }
@@ -1063,10 +1658,8 @@ public:
       } else {
         DEBUG_LLVM_LOG_DEBUG_EXEC("sharedOperation:", sharedOperation->dump());
         DEBUG_LLVM_LOG_DEBUG("sharedOperation->getName():", sharedOperation->getName().getStringRef().str());
-        hivm::PointerCastOp pointerCastOp = dyn_cast<hivm::PointerCastOp>(sharedOperation);
-        if (pointerCastOp) {
-          DEBUG_LLVM_LOG_DEBUG("pointerCastOp");
-          DEBUG_LLVM_LOG_DEBUG_EXEC("pointerCastOp:", castedEntryProbArg.dump());
+        if (isa<hivm::PointerCastOp>(sharedOperation)) {
+          DEBUG_LLVM_LOG_DEBUG_EXEC("castedEntryProbArg: ", castedEntryProbArg.dump());
           probValue = castedEntryProbArg;
         } else {
           DEBUG_LLVM_LOG_DEBUG_EXEC("Unknow shared operation type", sharedOperation->dump());
@@ -1077,10 +1670,51 @@ public:
       DEBUG_LLVM_LOG_DEBUG_EXEC("probValue:", probValue.dump());
 
       OpBuilder cloneBuilder(entryProbStore);
+      Operation* clonedInputProbSubView = nullptr;
+      {
+        auto entryProbSubView = probValue.getDefiningOp();
+
+        auto storeOffsetConstant = context.createConstant(
+          cloneBuilder,
+          sharedOperation->getLoc(),
+          cloneBuilder.getIndexType(),
+          cloneBuilder.getIndexAttr(storeOffset));
+
+        IRMapping map;
+        map.map(entryProbSubView->getOperand(1), storeOffsetConstant);
+        clonedInputProbSubView = cloneBuilder.clone(*entryProbSubView, map);
+
+        auto source = entryProbSubView->getResult(0);
+        auto target = clonedInputProbSubView->getResult(0);
+        source.replaceAllUsesWith(target);
+        entryProbSubView->erase();
+      }
+
+      Operation* clonedOuputProbSubView = nullptr;
+      {
+        auto storeOffsetConstant = context.createConstant(
+          cloneBuilder,
+          sharedOperation->getLoc(),
+          cloneBuilder.getIndexType(),
+          cloneBuilder.getIndexAttr(storeOffset));
+        Operation* ouputProbSubView = entryProbStore->getOperand(1).getDefiningOp();
+
+        IRMapping map;
+        map.map(ouputProbSubView->getOperand(1), storeOffsetConstant);
+        clonedOuputProbSubView = cloneBuilder.clone(*ouputProbSubView, map);
+
+        auto source = ouputProbSubView->getResult(0);
+        auto target = clonedOuputProbSubView->getResult(0);
+        source.replaceAllUsesWith(target);
+        ouputProbSubView->erase();
+      }
+
+
       IRMapping map;
-      map.map(originalOutputOperand, probValue);
+      map.map(entryProbStore->getOperand(0), clonedInputProbSubView->getResult(0));
+      map.map(entryProbStore->getOperand(1), clonedOuputProbSubView->getResult(0));
       cloneBuilder.clone(*entryProbStore, map);
-      
+
       entryProbStore->erase();
     }
 

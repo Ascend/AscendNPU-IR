@@ -337,6 +337,76 @@ func.func @keep_outer_iter_arg_used_by_nested_while_store(%arg0: index, %arg1: i
 
 // -----
 
+// Triggers the fixed-point keep propagation in RemoveDeadIterArgBackwardFor:
+// result#0 is live, but it traces first to iter-arg#1, then to iter-arg#2 via
+// tied yields in subsequent iterations. Channels #3/#4/#5 remain dead and are
+// removed.
+// CHECK-LABEL: func.func @drop_unused_iter_args_requires_fixed_point
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0, %{{.*}} = %arg1, %{{.*}} = %arg2) -> (index, index, index) {
+// CHECK: arith.addi
+// CHECK-NOT: arith.addi
+// CHECK: scf.yield %{{.*}}, %{{.*}}, %{{.*}} : index, index, index
+// CHECK-NOT: scf.yield %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
+// CHECK: return %{{.*}}#0 : index
+func.func @drop_unused_iter_args_requires_fixed_point(%arg0: index, %arg1: index, %arg2: index,
+                                                       %arg3: index, %arg4: index, %arg5: index)
+    -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %res:6 = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%ch0 = %arg0, %ch1 = %arg1, %ch2 = %arg2,
+                %dead0 = %arg3, %dead1 = %arg4, %dead2 = %arg5)
+      -> (index, index, index, index, index, index) {
+    %ch2_next = arith.addi %ch2, %c1 : index
+    %dead0_next = arith.addi %dead0, %c1 : index
+    %dead1_next = arith.addi %dead1, %c1 : index
+    %dead2_next = arith.addi %dead2, %c1 : index
+    scf.yield %ch1, %ch2, %ch2_next, %dead0_next, %dead1_next, %dead2_next
+        : index, index, index, index, index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// Triggers the fixed-point keep propagation in RemoveDeadIterArgBackwardWhile:
+// result#0 is live, but it traces first to channel#1, then to channel#2 via
+// condition/yield channel forwarding. Channels #3/#4/#5 remain dead and are
+// removed.
+// CHECK-LABEL: func.func @drop_unused_while_iter_args_requires_fixed_point
+// CHECK: scf.while (%{{.*}} = %arg0, %{{.*}} = %arg1, %{{.*}} = %arg2) : (index, index, index) -> (index, index, index)
+// CHECK-NOT: scf.while (%{{.*}} = %arg0, %{{.*}} = %arg1, %{{.*}} = %arg2, %{{.*}} = %arg3
+// CHECK: scf.condition(%{{.*}}) %{{.*}}, %{{.*}}, %{{.*}} : index, index, index
+// CHECK: scf.yield %{{.*}}, %{{.*}}, %{{.*}} : index, index, index
+// CHECK-NOT: scf.yield %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}
+// CHECK: return %{{.*}}#0 : index
+func.func @drop_unused_while_iter_args_requires_fixed_point(%arg0: index, %arg1: index, %arg2: index,
+                                                             %arg3: index, %arg4: index, %arg5: index,
+                                                             %ub: index) -> index {
+  %c1 = arith.constant 1 : index
+  %res:6 = scf.while (%ch0 = %arg0, %ch1 = %arg1, %ch2 = %arg2,
+                      %dead0 = %arg3, %dead1 = %arg4, %dead2 = %arg5)
+      : (index, index, index, index, index, index)
+        -> (index, index, index, index, index, index) {
+    %cond = arith.cmpi slt, %ch0, %ub : index
+    scf.condition(%cond) %ch1, %ch2, %ch2, %dead0, %dead1, %dead2
+        : index, index, index, index, index, index
+  } do {
+  ^bb0(%after0: index, %after1: index, %after2: index,
+       %after_dead0: index, %after_dead1: index, %after_dead2: index):
+    %ch2_next = arith.addi %after2, %c1 : index
+    %dead0_next = arith.addi %after_dead0, %c1 : index
+    %dead1_next = arith.addi %after_dead1, %c1 : index
+    %dead2_next = arith.addi %after_dead2, %c1 : index
+    scf.yield %after1, %after2, %ch2_next, %dead0_next, %dead1_next, %dead2_next
+        : index, index, index, index, index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
 // CHECK-LABEL: func.func @drop_dead_for_iter_arg_through_nested_for_and_if_results
 // CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (index) {
 // CHECK-NOT: iter_args(%{{.*}} = %arg0, %{{.*}} = %arg1)
@@ -524,4 +594,237 @@ func.func @bail_nested_result_used_by_live_op(%lb: index, %ub: index, %step: ind
     scf.yield %n : tensor<1xf32>
   }
   return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @drop_dead_for_iter_arg_through_scope_result
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (index) {
+// CHECK: %[[SCOPE:.*]] = scope.scope
+// CHECK: scope.return %{{.*}} : index
+// CHECK-NOT: scope.return %{{.*}}, %{{.*}} : index, index
+// CHECK: scf.yield %[[SCOPE]] : index
+func.func @drop_dead_for_iter_arg_through_scope_result(%arg0: index, %arg1: index) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %res:2 = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%live = %arg0, %dead = %arg1) -> (index, index) {
+    %scope:2 = scope.scope : () -> (index, index) {
+      %live_next = arith.addi %live, %c1 : index
+      %dead_next = arith.addi %dead, %c1 : index
+      scope.return %live_next, %dead_next : index, index
+    }
+    scf.yield %scope#0, %scope#1 : index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @drop_dead_while_iter_arg_through_scope_result
+// CHECK: scf.while (%{{.*}} = %arg0) : (index) -> index
+// CHECK: %[[SCOPE:.*]] = scope.scope
+// CHECK: scope.return %{{.*}} : index
+// CHECK-NOT: scope.return %{{.*}}, %{{.*}} : index, index
+// CHECK: scf.yield %[[SCOPE]] : index
+func.func @drop_dead_while_iter_arg_through_scope_result(%arg0: index, %arg1: index, %ub: index) -> index {
+  %c1 = arith.constant 1 : index
+  %res:2 = scf.while (%live = %arg0, %dead = %arg1) : (index, index) -> (index, index) {
+    %cond = arith.cmpi slt, %live, %ub : index
+    scf.condition(%cond) %live, %dead : index, index
+  } do {
+  ^bb0(%after_live: index, %after_dead: index):
+    %scope:2 = scope.scope : () -> (index, index) {
+      %live_next = arith.addi %after_live, %c1 : index
+      %dead_next = arith.addi %after_dead, %c1 : index
+      scope.return %live_next, %dead_next : index, index
+    }
+    scf.yield %scope#0, %scope#1 : index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scope_no_results_survives_dead_iter_arg_drop
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (index) {
+// CHECK-NOT: iter_args(%{{.*}} = %arg0, %{{.*}} = %arg1)
+// CHECK: scope.scope : () -> () {
+// CHECK: memref.store
+// CHECK: scope.return
+func.func @scope_no_results_survives_dead_iter_arg_drop(%arg0: index, %arg1: index, %out: memref<1xindex>) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %res:2 = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%live = %arg0, %dead = %arg1) -> (index, index) {
+    %live_next = arith.addi %live, %c1 : index
+    scope.scope : () -> () {
+      memref.store %live_next, %out[%c0] : memref<1xindex>
+      scope.return
+    }
+    %dead_next = arith.addi %dead, %c1 : index
+    scf.yield %live_next, %dead_next : index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scope_results_kept_drop_inner_dead_use
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (index) {
+// CHECK-NOT: iter_args(%{{.*}} = %arg0, %{{.*}} = %arg1)
+// CHECK: %[[SCOPE:.*]] = scope.scope : () -> index {
+// CHECK: arith.addi
+// CHECK-NOT: arith.subi
+// CHECK: scope.return %{{.*}} : index
+// CHECK: scf.yield %[[SCOPE]] : index
+func.func @scope_results_kept_drop_inner_dead_use(%arg0: index, %arg1: index) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %res:2 = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%live = %arg0, %dead = %arg1) -> (index, index) {
+    %scope_live = scope.scope : () -> index {
+      %live_step0 = arith.addi %live, %c1 : index
+      %dead_unused = arith.subi %dead, %c1 : index
+      %live_step1 = arith.addi %live_step0, %c1 : index
+      scope.return %live_step1 : index
+    }
+    %dead_next = arith.addi %dead, %c1 : index
+    scf.yield %scope_live, %dead_next : index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @loop_within_scope_within_loop
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (index) {
+// CHECK-NOT: iter_args(%{{.*}} = %arg0, %{{.*}} = %arg1)
+// CHECK: %[[SCOPE:.*]] = scope.scope : () -> index {
+// CHECK: %[[INNER:.*]] = scf.for {{.*}} iter_args(%{{.*}} = %{{.*}}) -> (index) {
+// CHECK: scope.return %[[INNER]] : index
+// CHECK: scf.yield %[[SCOPE]] : index
+func.func @loop_within_scope_within_loop(%arg0: index, %arg1: index) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  %res:2 = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%live = %arg0, %dead = %arg1) -> (index, index) {
+    %scope_live = scope.scope : () -> index {
+      %inner = scf.for %j = %c0 to %c4 step %c1
+          iter_args(%inner_live = %live) -> (index) {
+        %inner_next = arith.addi %inner_live, %c1 : index
+        scf.yield %inner_next : index
+      }
+      scope.return %inner : index
+    }
+    %dead_next = arith.addi %dead, %c1 : index
+    scf.yield %scope_live, %dead_next : index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @if_within_scope_within_loop
+// CHECK: scf.for {{.*}} iter_args(%{{.*}} = %arg0) -> (index) {
+// CHECK-NOT: iter_args(%{{.*}} = %arg0, %{{.*}} = %arg1)
+// CHECK: scope.scope : () -> index {
+// CHECK: scf.if %arg2 -> (index)
+// CHECK: scope.return %{{.*}} : index
+func.func @if_within_scope_within_loop(%arg0: index, %arg1: index, %cond: i1) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c4 = arith.constant 4 : index
+  %res:2 = scf.for %iv = %c0 to %c4 step %c1
+      iter_args(%live = %arg0, %dead = %arg1) -> (index, index) {
+    %scope_live = scope.scope : () -> index {
+      %selected = scf.if %cond -> (index) {
+        %then_v = arith.addi %live, %c1 : index
+        scf.yield %then_v : index
+      } else {
+        %else_v = arith.addi %live, %c2 : index
+        scf.yield %else_v : index
+      }
+      scope.return %selected : index
+    }
+    %dead_next = arith.addi %dead, %c1 : index
+    scf.yield %scope_live, %dead_next : index, index
+  }
+  return %res#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @drop_unused_scope_result_outer_values
+// CHECK-NOT: scope.scope
+// CHECK: return %arg0 : index
+func.func @drop_unused_scope_result_outer_values(%arg0: index, %arg1: index) -> index {
+  %scope:2 = scope.scope : () -> (index, index) {
+    scope.return %arg0, %arg1 : index, index
+  }
+  return %scope#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @drop_unused_scope_result_channel
+// CHECK: %[[SCOPE:.*]] = scope.scope : () -> index {
+// CHECK: arith.addi
+// CHECK-NOT: arith.subi
+// CHECK: scope.return %{{.*}} : index
+// CHECK-NOT: scope.return %{{.*}}, %{{.*}} : index, index
+// CHECK: return %[[SCOPE]] : index
+func.func @drop_unused_scope_result_channel(%arg0: index, %arg1: index) -> index {
+  %scope:2 = scope.scope : () -> (index, index) {
+    %live = arith.addi %arg0, %arg1 : index
+    %dead = arith.subi %arg0, %arg1 : index
+    scope.return %live, %dead : index, index
+  }
+  return %scope#0 : index
+}
+
+// -----
+
+// CHECK-LABEL: func.func @drop_all_unused_scope_results_keep_side_effects
+// CHECK-NOT: scope.scope : () -> (index
+// CHECK: scope.scope : () -> () {
+// CHECK: arith.addi
+// CHECK-NOT: arith.subi
+// CHECK: memref.store
+// CHECK: scope.return
+func.func @drop_all_unused_scope_results_keep_side_effects(%arg0: index, %arg1: index,
+                                                            %out: memref<1xindex>) {
+  %c0 = arith.constant 0 : index
+  %scope:2 = scope.scope : () -> (index, index) {
+    %stored = arith.addi %arg0, %arg1 : index
+    memref.store %stored, %out[%c0] : memref<1xindex>
+    %dead = arith.subi %arg0, %arg1 : index
+    scope.return %stored, %dead : index, index
+  }
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @canonicalize_scope_result_defined_outside
+// CHECK: %[[SCOPE:.*]] = scope.scope : () -> index {
+// CHECK-NOT: scope.scope : () -> (index, index)
+// CHECK: scope.return %{{.*}} : index
+// CHECK-NOT: scope.return %arg0, %{{.*}} : index, index
+// CHECK: %[[SUM:.*]] = arith.addi %arg0, %c1 : index
+// CHECK: %[[MIX:.*]] = arith.addi %[[SUM]], %[[SCOPE]] : index
+func.func @canonicalize_scope_result_defined_outside(%arg0: index, %arg1: index) -> index {
+  %c1 = arith.constant 1 : index
+  %scope:2 = scope.scope : () -> (index, index) {
+    %inner = arith.addi %arg0, %arg1 : index
+    scope.return %arg0, %inner : index, index
+  }
+  %sum = arith.addi %scope#0, %c1 : index
+  %mix = arith.addi %sum, %scope#1 : index
+  return %mix : index
 }

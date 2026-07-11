@@ -20,11 +20,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/Value.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
-#include "llvm/ADT/SmallVector.h"
-#include <climits>
-#include <pthread.h>
 
 namespace mlir::hivm::syncsolver {
 
@@ -35,18 +32,16 @@ struct FuncArgInfo {
   bool isWorkSpace{false};
 
   FuncArgInfo() = default;
-  explicit FuncArgInfo(func::FuncOp funcOp, BlockArgument funcArg,
-                       bool isWorkSpace = false)
-      : funcOp(funcOp), funcArg(funcArg), isWorkSpace(isWorkSpace) {
+  explicit FuncArgInfo(func::FuncOp funcOp, BlockArgument funcArg)
+      : funcOp(funcOp), funcArg(funcArg), argNum(funcArg.getArgNumber()) {
     assert(funcOp != nullptr && "funcOp is nullptr");
     assert(funcArg != nullptr && "blockArg is nullptr");
-    argNum = funcArg.getArgNumber();
+    assert(argNum >= 0 && "argNum is negative");
   }
 
   bool operator==(const FuncArgInfo &other) const {
-    return std::tie(funcOp, funcArg, argNum, isWorkSpace) ==
-           std::tie(other.funcOp, other.funcArg, other.argNum,
-                    other.isWorkSpace);
+    return std::tie(funcOp, funcArg, argNum) ==
+           std::tie(other.funcOp, other.funcArg, other.argNum);
   }
   bool operator!=(const FuncArgInfo &other) const { return !(*this == other); }
 
@@ -70,12 +65,7 @@ struct PointerLikeInfo {
   PointerLikeInfo() = default;
   explicit PointerLikeInfo(Operation *op) : op(op) {}
 
-  bool operator==(const PointerLikeInfo &other) const {
-    return std::tie(op, addresses, allocateSize, addressSpace, parentLoop,
-                    isWorkSpace) ==
-           std::tie(other.op, other.addresses, other.allocateSize,
-                    other.addressSpace, other.parentLoop, other.isWorkSpace);
-  }
+  bool operator==(const PointerLikeInfo &other) const { return op == other.op; }
   bool operator!=(const PointerLikeInfo &other) const {
     return !(*this == other);
   }
@@ -96,10 +86,36 @@ struct PointerLikeInfo {
                             std::optional<int64_t> eventIdNum = {});
 };
 
+struct AllocLikeInfo {
+  Operation *op{nullptr};
+  bool isWorkSpace{false};
+  bool isTightlyCoupledBuffer{false};
+
+  AllocLikeInfo() = default;
+  explicit AllocLikeInfo(Operation *op) : op(op) {}
+
+  bool operator==(const AllocLikeInfo &other) const { return op == other.op; }
+  bool operator!=(const AllocLikeInfo &other) const {
+    return !(*this == other);
+  }
+
+  std::string str();
+
+  static std::optional<AllocLikeInfo> tryGet(memref::AllocOp pointerCastOp);
+
+  static std::optional<AllocLikeInfo> tryGet(Value value);
+
+  static bool checkConflict(const AllocLikeInfo &allocLikeInfo1,
+                            const AllocLikeInfo &allocLikeInfo2,
+                            std::optional<int64_t> lcmLen = {},
+                            std::optional<int64_t> eventIdNum = {});
+};
+
 struct MemInfo {
   Value value;
   std::optional<FuncArgInfo> funcArgInfo;
   std::optional<PointerLikeInfo> pointerLikeInfo;
+  std::optional<AllocLikeInfo> allocLikeInfo;
   std::optional<PIPE> pipe;
 
   MemInfo() = default;
@@ -115,6 +131,19 @@ struct MemInfo {
                    std::optional<PIPE> pipe = {})
       : value(value), pointerLikeInfo(pointerLikeInfo), pipe(pipe) {}
 
+  explicit MemInfo(Value value, AllocLikeInfo allocLikeInfo,
+                   std::optional<PIPE> pipe = {})
+      : value(value), allocLikeInfo(allocLikeInfo), pipe(pipe) {}
+
+  bool operator==(const MemInfo &other) const {
+    return std::tie(value, funcArgInfo, pointerLikeInfo, allocLikeInfo, pipe) ==
+           std::tie(other.value, other.funcArgInfo, other.pointerLikeInfo,
+                    other.allocLikeInfo, other.pipe);
+  }
+  bool operator!=(const MemInfo &other) const { return !(*this == other); }
+
+  std::string str();
+
   int64_t getSz() const {
     if (pointerLikeInfo.has_value()) {
       return pointerLikeInfo->addresses.size();
@@ -125,32 +154,14 @@ struct MemInfo {
     return 0;
   }
 
-  bool operator==(const MemInfo &other) const {
-    return std::tie(value, funcArgInfo, pointerLikeInfo, pipe) ==
-           std::tie(other.value, other.funcArgInfo, other.pointerLikeInfo,
-                    other.pipe);
-  }
-  bool operator!=(const MemInfo &other) const { return !(*this == other); }
+  static MemInfo getMemInfo(Value val, std::optional<PIPE> pipe = {});
 
-  std::string str();
+  static MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs);
 
   static bool checkConflict(const MemInfo &memInfo1, const MemInfo &memInfo2,
                             std::optional<int64_t> lcmLen = {},
                             std::optional<int64_t> eventIdNum = {});
 };
-
-llvm::SmallVector<int64_t> getAddresses(const llvm::SmallVector<Value> &addrs);
-
-PointerLikeInfo getPointerLikeInfo(hivm::PointerCastOp pointerCastOp);
-
-PointerLikeInfo
-getPointerLikeInfo(bishengir::memref_ext::AllocWorkspaceOp allocWorkspaceOp);
-
-MemInfo getMemInfo(Value val, std::optional<PIPE> pipe = {});
-
-MemInfo getMemInfo(const llvm::SmallVector<int64_t> &addrs);
-
-bool isWorkSpaceFuncArgument(func::FuncOp funcOp, BlockArgument funcArg);
 
 } // namespace mlir::hivm::syncsolver
 

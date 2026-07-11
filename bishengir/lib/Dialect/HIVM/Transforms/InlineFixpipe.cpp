@@ -331,29 +331,6 @@ private:
   InsertFixpipePatternOptions options;
 };
 
-/// Infer dma_mode after slice-swap rewrites. DMAMode in Fixpipe is unreliable
-/// x_x
-///
-/// If the swapped source/destination keep compatible shapes, treat it as a
-/// layout-preserving path (NZ2NZ / ND2ND-like), otherwise keep original mode.
-FixpipeDMAMode inferSwapFixpipeDmaMode(Value src, Value dst,
-                                       FixpipeDMAMode fallbackMode) {
-  auto srcType = dyn_cast<ShapedType>(src.getType());
-  auto dstType = dyn_cast<ShapedType>(dst.getType());
-  if (!srcType || !dstType)
-    return fallbackMode;
-
-  if (srcType.hasRank() && dstType.hasRank() &&
-      succeeded(
-          verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
-    if (dstType.getRank() == 2)
-      // 2d→2d may come from the old layout pipeline, so use nz2nd.
-      return FixpipeDMAMode::NZ2ND;
-    return FixpipeDMAMode::NZ2NZ;
-  }
-  return fallbackMode;
-}
-
 bool hasCompatibleShape(Value lhs, Value rhs) {
   auto lhsType = dyn_cast<ShapedType>(lhs.getType());
   auto rhsType = dyn_cast<ShapedType>(rhs.getType());
@@ -952,16 +929,11 @@ private:
     Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
         rewriter, extractSliceOp.getLoc(), newExtractSliceResult,
         getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
-    MLIRContext *ctx = rewriter.getContext();
-    auto dmaMode = inferSwapFixpipeDmaMode(newExtractSliceResult, fixpipeInit,
-                                           op.getDmaMode());
-    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(ctx, dmaMode);
     SmallVector<Value> oprs({newExtractSliceResult, fixpipeInit});
     if (auto quantScale = op.getQuantScale())
       oprs.push_back(quantScale);
     auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
         extractSliceOp.getLoc(), fixpipeInit.getType(), oprs, op->getAttrs());
-    newFixpipeOp.setDmaModeAttr(dmaModeAttr);
     rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithExtractSliceReshape");
@@ -982,16 +954,11 @@ private:
     Value fixpipeInit = utils::createEmptyOpWithTargetElemType(
         rewriter, insertSliceOp.getLoc(), newInsertSliceResult,
         getInitType(newInsertSliceResult, op.getPreQuant(), rewriter));
-    MLIRContext *ctx = rewriter.getContext();
-    auto dmaMode = inferSwapFixpipeDmaMode(newInsertSliceResult, fixpipeInit,
-                                           op.getDmaMode());
-    FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(ctx, dmaMode);
     SmallVector<Value> oprs({newInsertSliceResult, fixpipeInit});
     if (auto quantScale = op.getQuantScale())
       oprs.push_back(quantScale);
     auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
         insertSliceOp.getLoc(), TypeRange{fixpipeInit}, oprs, op->getAttrs());
-    newFixpipeOp.setDmaModeAttr(dmaModeAttr);
     rewriter.replaceOp(insertSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithInsertSliceOpReshape");

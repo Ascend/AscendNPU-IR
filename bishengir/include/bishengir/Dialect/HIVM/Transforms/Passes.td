@@ -133,6 +133,8 @@ def MarkMultiBuffer : Pass<"hivm-mark-multi-buffer", "func::FuncOp"> {
            "disable-multi-buffer-on-l1", "bool",
            /*default=*/"false",
            "Skip multi-buffer mark for L1 (cbuf, ND2NZ) buffers">,
+    Option<"enablePreload", "enable-preload", "bool",
+           /*default=*/"false", "Mark multi buffer for preload.">,
   ];
 }
 
@@ -173,14 +175,18 @@ def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
   let dependentDialects = ["hivm::HIVMDialect"];
 }
 
-def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::FuncOp"> {
-  let summary = "Clone scf.if.yield operand for PlanMemory.";
-  let description = [{This pass clones scf.if yield operand if yield operands
-    are same or it is used after this scf.if, avoid inplace by PlanMemory}];
-  let constructor = "mlir::hivm::createCloneSCFIfYieldOperandPass()";
+def ExposeMemrefWriteToTensor
+    : Pass<"hivm-expose-memref-write-to-tensor", "func::FuncOp"> {
+  let summary = "Expose memref-level writes to tensor-level analysis.";
+  let description = [{
+    Expose memref-level writes (e.g., hivm.hir.load) to tensor-level analysis 
+    by add copyOp for toTensorOp and replace all users of toTensorOp. This makes 
+    memref-level writes visible to One-Shot Bufferization analysis, enabling RAW
+    conflict detection and correct copy insertion.
+  }];
+  let constructor = "mlir::hivm::createExposeMemrefWriteToTensorPass()";
   let dependentDialects =
-    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
-     "bufferization::BufferizationDialect"];
+    ["bufferization::BufferizationDialect", "memref::MemRefDialect"];
 }
 
 def MarkTightlyCoupledBuffer
@@ -333,6 +339,9 @@ def CrossCoreGSS : Pass<"hivm-cross-core-gss", "func::FuncOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"enableCVPatterns",
+              "enable-cv-patterns", "bool", /*default=*/"true",
+              "Enable CV patterns for cross-core synchronization.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -371,6 +380,9 @@ def DelayedCrossCoreGSS : Pass<"hivm-delayed-cross-core-gss", "ModuleOp"> {
        Option<"useDifferentMultiBufferFlagIds",
               "use-different-multibuffer-flag-ids", "bool", /*default=*/"false",
               "Use different flag-ids for multibuffer backward sync pairs.">,
+       Option<"enableCVPatterns",
+              "enable-cv-patterns", "bool", /*default=*/"true",
+              "Enable CV patterns for cross-core synchronization.">,
        Option<"forceIsMemBased", "force-is-mem-based", "bool",
               /*default=*/"false",
               "Force memory based ai-core architecture mode.">,
@@ -588,6 +600,15 @@ def MarkRealCoreType : Pass<"hivm-mark-real-core-type", "ModuleOp"> {
                         /*default=*/"false",
                         "Remove all core type attributes. If set to true, this "
                         "pass becomes a cleanup pass.">];
+}
+
+def HIVMCanonicalizationPipeline
+    : Pass<"hivm-canonicalization-pipeline", "func::FuncOp"> {
+  let summary = "Run HIVM canonicalization pass pipeline on one function";
+  let constructor = "mlir::hivm::createHIVMCanonicalizationPipelinePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "func::FuncDialect",
+                           "arith::ArithDialect", "memref::MemRefDialect", 
+                           "scf::SCFDialect"];
 }
 
 def SetBufferSize : Pass<"hivm-set-buffer-size", "func::FuncOp"> {

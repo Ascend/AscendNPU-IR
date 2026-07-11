@@ -64,80 +64,98 @@ bool isLocalMatmulInit(Operation *op, Value v);
 bool traceSingleChainUser(
     Value v, const std::function<bool(Operation *, Value v)> &isMatchedOp);
 
+/// TODO: This trace util handles loops and if scopes incorrectly (doesn't
+/// consider multiple iterations and doesn't consider else scopes). also it
+/// checks for view-like ops and copy-like ops (tensor.insert_slice). It uses
+/// cases should be checked and a proper solution should be implemented.
 template <typename OpType>
-std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false) {
+std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false,
+                                      bool traceDestOperand = false) {
   if (isSingleChain && getUsersNum(v) != 1)
-    return std::nullopt;
+    return std::optional<Operation *>();
   if (Operation *definingOp = v.getDefiningOp<OpType>()) {
     return definingOp;
   } else if (auto reshapeOp = v.getDefiningOp<tensor::ReshapeOp>()) {
-    return traceDefOp<OpType>(reshapeOp.getSource(), isSingleChain);
+    return traceDefOp<OpType>(reshapeOp.getSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto memrefCollapseShape =
                  v.getDefiningOp<memref::CollapseShapeOp>()) {
     return traceDefOp<OpType>(memrefCollapseShape.getViewSource(),
-                              isSingleChain);
+                              isSingleChain, traceDestOperand);
   } else if (auto tensorCollapseShape =
                  v.getDefiningOp<tensor::CollapseShapeOp>()) {
-    return traceDefOp<OpType>(tensorCollapseShape.getSrc(), isSingleChain);
+    return traceDefOp<OpType>(tensorCollapseShape.getSrc(), isSingleChain,
+                              traceDestOperand);
   } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
-    return traceDefOp<OpType>(subViewOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(subViewOp.getViewSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToMemrefOp>()) {
-    return traceDefOp<OpType>(toMemrefOp.getOperand(), isSingleChain);
+    return traceDefOp<OpType>(toMemrefOp.getOperand(), isSingleChain,
+                              traceDestOperand);
   } else if (auto toTensorOp = v.getDefiningOp<bufferization::ToTensorOp>()) {
-    return traceDefOp<OpType>(toTensorOp.getOperand(), isSingleChain);
+    return traceDefOp<OpType>(toTensorOp.getOperand(), isSingleChain,
+                              traceDestOperand);
   } else if (auto viewOp = v.getDefiningOp<memref::ViewOp>()) {
-    return traceDefOp<OpType>(viewOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(viewOp.getViewSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto reshapeOp = v.getDefiningOp<memref::ReshapeOp>()) {
-    return traceDefOp<OpType>(reshapeOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(reshapeOp.getViewSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto expandShapeOp = v.getDefiningOp<memref::ExpandShapeOp>()) {
-    return traceDefOp<OpType>(expandShapeOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(expandShapeOp.getViewSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto tensorExpandShapeOp =
                  v.getDefiningOp<tensor::ExpandShapeOp>()) {
-    return traceDefOp<OpType>(tensorExpandShapeOp->getOperand(0),
-                              isSingleChain);
+    return traceDefOp<OpType>(tensorExpandShapeOp->getOperand(0), isSingleChain,
+                              traceDestOperand);
   } else if (auto extractStridedMetadataOp =
                  v.getDefiningOp<memref::ExtractStridedMetadataOp>()) {
     return traceDefOp<OpType>(extractStridedMetadataOp.getViewSource(),
-                              isSingleChain);
+                              isSingleChain, traceDestOperand);
   } else if (auto castOp = v.getDefiningOp<memref::CastOp>()) {
-    return traceDefOp<OpType>(castOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(castOp.getViewSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto reinterpretCastOp =
                  v.getDefiningOp<memref::ReinterpretCastOp>()) {
-    return traceDefOp<OpType>(reinterpretCastOp.getViewSource(), isSingleChain);
+    return traceDefOp<OpType>(reinterpretCastOp.getViewSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto blockArg = dyn_cast_if_present<BlockArgument>(v)) {
     if (auto scfForOp = dyn_cast_if_present<scf::ForOp>(
             blockArg.getOwner()->getParentOp())) {
       if (OpOperand *iterArgOperand = scfForOp.getTiedLoopInit(blockArg))
-        return traceDefOp<OpType>(iterArgOperand->get(), isSingleChain);
+        return traceDefOp<OpType>(iterArgOperand->get(), isSingleChain,
+                                  traceDestOperand);
     }
   } else if (auto forOp = v.getDefiningOp<scf::ForOp>()) {
     const unsigned int index = cast<OpResult>(v).getResultNumber();
     Value yieldedValue = forOp.getYieldedValues()[index];
-    return traceDefOp<OpType>(yieldedValue, isSingleChain);
+    return traceDefOp<OpType>(yieldedValue, isSingleChain, traceDestOperand);
   } else if (auto ifOp = v.getDefiningOp<scf::IfOp>()) {
     const unsigned int index = cast<OpResult>(v).getResultNumber();
     Block &thenBlock = ifOp.getThenRegion().front();
     Value yieldedValue = thenBlock.getTerminator()->getOperand(index);
-    return traceDefOp<OpType>(yieldedValue, isSingleChain);
+    return traceDefOp<OpType>(yieldedValue, isSingleChain, traceDestOperand);
   } else if (auto extractSliceOp = v.getDefiningOp<tensor::ExtractSliceOp>()) {
-    return traceDefOp<OpType>(extractSliceOp.getSource(), isSingleChain);
+    return traceDefOp<OpType>(extractSliceOp.getSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto insertSliceOp = v.getDefiningOp<tensor::InsertSliceOp>()) {
-    // In the tensor.insertSlice dialect, both source and Dest are data sources.
-    // Preferentially return the source.
-    auto traceOp = traceDefOp<OpType>(insertSliceOp.getSource(), isSingleChain);
-    if (traceOp != std::nullopt)
-      return traceOp;
-    else
-      return traceDefOp<OpType>(insertSliceOp.getDest(), isSingleChain);
+    if (traceDestOperand) {
+      return traceDefOp<OpType>(insertSliceOp.getDest(), isSingleChain,
+                                traceDestOperand);
+    } else {
+      return traceDefOp<OpType>(insertSliceOp.getSource(), isSingleChain,
+                                traceDestOperand);
+    }
   } else if (auto memSpaceCastOp =
                  v.getDefiningOp<memref::MemorySpaceCastOp>()) {
-    return traceDefOp<OpType>(memSpaceCastOp.getSource(), isSingleChain);
+    return traceDefOp<OpType>(memSpaceCastOp.getSource(), isSingleChain,
+                              traceDestOperand);
   } else if (auto unrealizedConversionCastOp =
                  v.getDefiningOp<UnrealizedConversionCastOp>())
     return traceDefOp<OpType>(
         unrealizedConversionCastOp
             .getInputs()[dyn_cast<OpResult>(v).getResultNumber()]);
-  return std::nullopt;
+  return std::optional<Operation *>();
 }
 
 enum class TraceDefState {
@@ -202,7 +220,8 @@ void traceDefOpsImpl(Value v, bool isSingleChain, TraceResultMode traceMode,
   if (defOp && traceMode == TraceResultMode::TypeMatch) {
     auto core = queryCoreTypeHelper(defOp).value_or(TCoreType::CUBE_OR_VECTOR);
     if ((std::is_same_v<OpType, hivm::MmadL1Op> ||
-         std::is_same_v<OpType, hivm::BatchMmadL1Op>) &&
+         std::is_same_v<OpType, hivm::BatchMmadL1Op> ||
+         std::is_same_v<OpType, hivm::LocalMatmulLikeOpInterface>) &&
         (core == TCoreType::VECTOR)) {
       traceDefState = TraceDefState::Failed;
       return;
@@ -474,6 +493,11 @@ typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
                             std::is_same_v<MmadLikeOpType, hivm::BatchMmadL1Op>,
                         bool>::type
 isSingleChainMmadToMmad(MmadLikeOpType op) {
+  if constexpr (std::is_same_v<MmadLikeOpType, hivm::MmadMxL1Op>) {
+    // TODO: support single-chain accumulation detection for MmadMxL1Op.
+    return false;
+  }
+
   auto maybeMmadLikeOps =
       traceDefOps<MmadLikeOpType>(op.getC(),
                                   /*isSingleChain=*/true,

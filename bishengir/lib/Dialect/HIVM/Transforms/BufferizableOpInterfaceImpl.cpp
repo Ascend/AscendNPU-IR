@@ -288,6 +288,12 @@ template <typename CopyOrStoreOpT>
 struct HIVMCopyOrStoreOpInterface
     : public DstBufferizableOpInterfaceExternalModel<
           HIVMCopyOrStoreOpInterface<CopyOrStoreOpT>, CopyOrStoreOpT> {
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    return dpsOp.isDpsInput(&opOperand);
+  }
+
   LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
                           const BufferizationOptions &options) const {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
@@ -322,6 +328,21 @@ struct HIVMCopyOrStoreOpInterface
     // We need to manually replace the old op because it has memory effects
     // and won't be deleted automatically.
     rewriter.replaceOp(op, newOp);
+    return success();
+  }
+
+  LogicalResult resolveConflicts(Operation *op, RewriterBase &rewriter,
+                                 const AnalysisState &state) const {
+    auto bufferizableOp = cast<BufferizableOpInterface>(op);
+    if (failed(bufferizableOp.resolveTensorOpOperandConflicts(rewriter, state)))
+      return failure();
+    
+    auto dpsOp = cast<DestinationStyleOpInterface>(op);
+    if (dpsOp->hasAttr("to_be_replaced")) {
+      rewriter.replaceAllUsesWith(dpsOp->getResult(0),
+                                  dpsOp.getDpsInputOperand(0)->get());
+      rewriter.eraseOp(dpsOp);
+    }
     return success();
   }
 };

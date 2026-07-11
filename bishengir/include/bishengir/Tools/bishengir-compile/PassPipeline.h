@@ -34,10 +34,6 @@ void buildBiShengTTIRPipeline(mlir::OpPassManager &pm,
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config);
 
-/// Build the SIMT pipeline.
-void buildSIMTPipeline(mlir::OpPassManager &pm,
-                       const BiShengIRCompileMainConfig &config);
-
 /// Register a pass that compiles module into binary.
 void registerBiShengIRCompilePass();
 

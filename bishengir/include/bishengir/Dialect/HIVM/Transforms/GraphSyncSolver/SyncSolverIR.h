@@ -20,7 +20,6 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/UnitFlagInfoBase.h"
-#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Casting.h"
 #include <memory>
@@ -36,22 +35,6 @@ class Condition;
 class RWOperation;
 class MmadL0Operation;
 using Body = std::vector<std::unique_ptr<OperationBase>>;
-
-// Currently gss-code-gen will handle offsetting induction variables for
-// multibuffer-enabled sync pairs, which can be done by create-preload.
-// TODO: move create-preload pass after gss in the hivm compilation pipeline and
-// let it handle preload-offset values.
-struct EventIdInfo {
-  int64_t eventIdNum{0};
-  int64_t eventIdRepeatNum{1};
-  int64_t preloadOffset1{0};
-  int64_t preloadOffset2{0};
-  Loop *multibufferLoop{nullptr};
-  Loop *multibufferUnrollLoop1{nullptr};
-  Loop *multibufferUnrollLoop2{nullptr};
-  EventIdInfo(){};
-  explicit EventIdInfo(int64_t eventIdNum) : eventIdNum(eventIdNum){};
-};
 
 enum struct OpType {
   OPERATION,
@@ -256,7 +239,7 @@ public:
   MmadL0Operation *mmadL0Op{nullptr};
 
   MmadL1LoopOp(Operation *op, OperationBase *parentOp)
-      : Scope(OpType::MMAD_SCOPE, op, parentOp){};
+      : Scope(OpType::MMAD_SCOPE, op, parentOp) {};
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::MMAD_SCOPE;
@@ -338,7 +321,7 @@ public:
               OpType opType = OpType::RW_OPERATION)
       : OperationBase(opType, op, parentOp), coreType(coreType),
         pipeRead(pipeRead), pipeWrite(pipeWrite), readMemInfo(readMemInfo),
-        writeMemInfo(writeMemInfo){};
+        writeMemInfo(writeMemInfo) {};
   RWOperation(Operation *op, OperationBase *parentOp, hivm::TCoreType coreType,
               hivm::PIPE pipeRead, hivm::PIPE pipeWrite,
               const llvm::SmallVector<Value> &readMemVals,
@@ -348,10 +331,10 @@ public:
         pipeRead(pipeRead), pipeWrite(pipeWrite), readMemVals(readMemVals),
         writeMemVals(writeMemVals) {
     for (auto &val : readMemVals) {
-      readMemInfo.push_back(getMemInfo(val));
+      readMemInfo.push_back(MemInfo::getMemInfo(val));
     }
     for (auto &val : writeMemVals) {
-      writeMemInfo.push_back(getMemInfo(val));
+      writeMemInfo.push_back(MemInfo::getMemInfo(val));
     }
   };
   RWOperation(
@@ -364,10 +347,10 @@ public:
         pipeRead(pipeRead), pipeWrite(pipeWrite),
         testReadMemVals(testReadMemVals), testWriteMemVals(testWriteMemVals) {
     for (auto &val : testReadMemVals) {
-      readMemInfo.push_back(getMemInfo(val));
+      readMemInfo.push_back(MemInfo::getMemInfo(val));
     }
     for (auto &val : testWriteMemVals) {
-      writeMemInfo.push_back(getMemInfo(val));
+      writeMemInfo.push_back(MemInfo::getMemInfo(val));
     }
   };
 
@@ -438,6 +421,57 @@ public:
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::MMAD_OPERATION;
   }
+};
+
+struct MultiBufferInfo {
+  Loop *multibufferLoop{nullptr};
+
+  MultiBufferInfo() {};
+  explicit MultiBufferInfo(Loop *multibufferLoop)
+      : multibufferLoop(multibufferLoop) {};
+};
+
+struct CVPipeliningInfo {
+  Loop *cvPipeliningLoop1{nullptr};
+  Loop *cvPipeliningLoop2{nullptr};
+
+  CVPipeliningInfo() {};
+  explicit CVPipeliningInfo(Loop *cvPipeliningLoop1, Loop *cvPipeliningLoop2)
+      : cvPipeliningLoop1(cvPipeliningLoop1),
+        cvPipeliningLoop2(cvPipeliningLoop2) {};
+};
+
+struct CVPreloadingInfo {
+  Loop *cvPreloadingLoop{nullptr};
+  Scope *preloadScope1{nullptr};
+  Scope *preloadScope2{nullptr};
+  int64_t preloadOffset1{0};
+  int64_t preloadOffset2{0};
+
+  CVPreloadingInfo() {};
+  explicit CVPreloadingInfo(Loop *cvPreloadingLoop, Scope *preloadScope1,
+                            Scope *preloadScope2)
+      : cvPreloadingLoop(cvPreloadingLoop), preloadScope1(preloadScope1),
+        preloadScope2(preloadScope2) {
+    preloadOffset1 = preloadScope1->maxPreloadNum.value() -
+                     preloadScope1->preloadNum.value() - 1;
+    preloadOffset2 = preloadScope2->maxPreloadNum.value() -
+                     preloadScope2->preloadNum.value() - 1;
+  };
+};
+
+struct EventIdInfo {
+  int64_t eventIdNum{0};
+  int64_t eventIdRepeatNum{1};
+  std::optional<MultiBufferInfo> multiBufferInfo;
+  std::optional<CVPreloadingInfo> cvPreloadingInfo;
+  std::optional<CVPipeliningInfo> cvPipeliningInfo;
+
+  EventIdInfo() {};
+  explicit EventIdInfo(int64_t eventIdNum, int64_t eventIdRepeatNum = 1)
+      : eventIdNum(eventIdNum), eventIdRepeatNum(eventIdRepeatNum) {};
+
+  int64_t getEventIdNum() const { return eventIdNum * eventIdRepeatNum; }
 };
 
 class SyncOp : public OperationBase {

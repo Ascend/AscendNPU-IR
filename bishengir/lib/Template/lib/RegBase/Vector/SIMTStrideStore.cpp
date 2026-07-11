@@ -38,18 +38,35 @@ struct IsStrideStoreDTypeSupported {
 
 __aiv__ __attribute__((always_inline)) static int32_t
 getStrideStoreBoundedSize(int32_t stride, int32_t numel, int32_t srcSize) {
-  if (stride <= 0 || numel <= 0 || srcSize <= 0) {
+  if (stride < 0 || numel <= 0 || srcSize <= 0) {
     return 0;
+  }
+  if (stride == 0) {
+    return srcSize == 1 ? 1 : 0;
   }
   return numel < srcSize ? numel : srcSize;
 }
 
 __aiv__ __attribute__((always_inline)) static int32_t
 getStrideStoreSize(int32_t stride, int32_t storeLower, int32_t storeUpper) {
-  if (stride <= 0 || storeUpper <= storeLower) {
+  if (stride < 0 || storeUpper <= storeLower) {
     return 0;
   }
+  if (stride == 0) {
+    return storeUpper == storeLower + 1 ? 1 : 0;
+  }
   return (storeUpper - storeLower) / stride;
+}
+
+__aiv__ __attribute__((always_inline)) static int32_t
+getStrideStoreUpper(int32_t storeLower, int32_t stride, int32_t storeSize) {
+  if (storeSize <= 0) {
+    return storeLower;
+  }
+  if (stride == 0) {
+    return storeLower + 1;
+  }
+  return storeLower + storeSize * stride;
 }
 
 template <typename DTYPE>
@@ -135,7 +152,8 @@ stride_store_1d(memref_t<__gm__ DTYPE, 1> *dst,
   int32_t storeSize =
       getStrideStoreBoundedSize(innerStride, innerNumel, srcSize);
   int32_t storeLower = innerOffset;
-  int32_t storeUpper = innerOffset + storeSize * innerStride;
+  int32_t storeUpper =
+      getStrideStoreUpper(storeLower, innerStride, storeSize);
   stride_store_1d_impl<DTYPE>(
       reinterpret_cast<__gm__ DTYPE *>(dst->aligned + dst->offset),
       innerStride, storeLower, storeUpper,
@@ -180,8 +198,10 @@ __aiv__ __attribute__((always_inline)) void stride_store_2d(
       getStrideStoreBoundedSize(innerStride1, innerNumel1, srcSize1);
   int32_t storeLower0 = innerOffset;
   int32_t storeLower1 = 0;
-  int32_t storeUpper0 = innerOffset + storeSize0 * innerStride0;
-  int32_t storeUpper1 = storeSize1 * innerStride1;
+  int32_t storeUpper0 =
+      getStrideStoreUpper(storeLower0, innerStride0, storeSize0);
+  int32_t storeUpper1 =
+      getStrideStoreUpper(storeLower1, innerStride1, storeSize1);
   stride_store_2d_impl<DTYPE>(
       reinterpret_cast<__gm__ DTYPE *>(dst->aligned + dst->offset),
       innerStride0, innerStride1, storeLower0, storeLower1, storeUpper0,
@@ -238,9 +258,12 @@ __aiv__ __attribute__((always_inline)) void stride_store_3d(
   int32_t storeLower0 = innerOffset;
   int32_t storeLower1 = 0;
   int32_t storeLower2 = 0;
-  int32_t storeUpper0 = innerOffset + storeSize0 * innerStride0;
-  int32_t storeUpper1 = storeSize1 * innerStride1;
-  int32_t storeUpper2 = storeSize2 * innerStride2;
+  int32_t storeUpper0 =
+      getStrideStoreUpper(storeLower0, innerStride0, storeSize0);
+  int32_t storeUpper1 =
+      getStrideStoreUpper(storeLower1, innerStride1, storeSize1);
+  int32_t storeUpper2 =
+      getStrideStoreUpper(storeLower2, innerStride2, storeSize2);
   stride_store_3d_impl<DTYPE>(
       reinterpret_cast<__gm__ DTYPE *>(dst->aligned + dst->offset),
       innerStride0, innerStride1, innerStride2, storeLower0, storeLower1,

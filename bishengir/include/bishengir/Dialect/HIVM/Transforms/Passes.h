@@ -53,8 +53,9 @@ namespace hivm {
 /// Create a pass to infer the core type of each function.
 std::unique_ptr<Pass> createInferFuncCoreTypePass();
 
-/// Create a pass to clone scf.if.yield operand for PlanMemory.
-std::unique_ptr<Pass> createCloneSCFIfYieldOperandPass();
+/// Create a pass to expose memref-level writes (e.g., hivm.hir.load) to
+/// tensor-level analysis by add copyOp for toTensorOp.
+std::unique_ptr<Pass> createExposeMemrefWriteToTensorPass();
 
 /// Create a pass to convert ops from other dialects to HIVM Ops.
 std::unique_ptr<Pass> createConvertToHIVMOpPass();
@@ -168,6 +169,9 @@ std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});
+
+// Create a pass to run the HIVM canonicalization pass pipeline on a function.
+std::unique_ptr<Pass> createHIVMCanonicalizationPipelinePass();
 
 // Create a pass to set buffer size
 std::unique_ptr<Pass> createSetBufferSizePass();
