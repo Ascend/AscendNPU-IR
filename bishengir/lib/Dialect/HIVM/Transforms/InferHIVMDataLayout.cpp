@@ -999,6 +999,15 @@ DataLayoutInferAndPropagateHelper::rewriteAllocOp(memref::AllocOp op) {
   return newAlloc.getOperation();
 }
 
+/// Copy user-defined attributes with the "hivm." prefix (e.g. markers like
+/// hivm.slice_load) from the old op to the new op. Skips auto-generated attrs.
+static void copyHIVMUserAttrs(Operation *oldOp, Operation *newOp) {
+  for (auto namedAttr : oldOp->getAttrs()) {
+    if (namedAttr.getName().strref().starts_with("hivm."))
+      newOp->setAttr(namedAttr.getName(), namedAttr.getValue());
+  }
+}
+
 Operation *
 DataLayoutInferAndPropagateHelper::rewriteSubViewOp(memref::SubViewOp op) {
   auto src = op.getViewSource();
@@ -1079,6 +1088,7 @@ DataLayoutInferAndPropagateHelper::rewriteSubViewOp(memref::SubViewOp op) {
       builder.getDenseI64ArrayAttr(newStaticOffsets),
       builder.getDenseI64ArrayAttr(newStaticSizes),
       builder.getDenseI64ArrayAttr(newStaticStrides));
+  copyHIVMUserAttrs(op, newSubViewOp);
   map(op.getResult(), newSubViewOp.getResult(), layoutInfo.targetLayout);
   return newSubViewOp;
 }
