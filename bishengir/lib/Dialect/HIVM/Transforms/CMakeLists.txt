@@ -106,7 +106,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TightlyCoupledBufferUtils.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
-
+  AnalyzeArithVectorMask.cpp
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Transforms
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils

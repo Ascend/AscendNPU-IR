@@ -795,6 +795,13 @@ def HIVMInlineOTFLoadStore : Pass<"hivm-inline-otf-load-store", "func::FuncOp"> 
                            "hivm::HIVMDialect"];
 }
 
+def AnalyzeArithVectorMask : Pass<"arith-vector-mask-analyze", "func::FuncOp"> {
+  let summary = "Analyze arith/vector mask to eliminate select OP";
+  let constructor = "mlir::hivm::createArithVectorMaskAnalysisPass()";
+  let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect",
+                           "annotation::AnnotationDialect"];
+}
+
 def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createTileAndBindSubBlockPass()";
