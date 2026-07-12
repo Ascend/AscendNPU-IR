@@ -58,14 +58,14 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         Value input, int64_t tileDimension);
 
 /// This function calculates the tile size by dividing the dimension size
-/// by kSubBlockDim (using ceiling division).
+/// by the containing loop's split factor (using ceiling division).
 ///
-/// For static dimensions: tile_size = ceil(dim_size / kSubBlockDim)
+/// For static dimensions: tile_size = ceil(dim_size / tiling_factor)
 /// For dynamic dimensions: creates affine operations to compute at runtime
 ///
 /// @param input The input tensor to be tiled
 /// @return The computed tile size as an OpFoldResult, or failure if the
-///         static dimension size is less than kSubBlockDim
+///         static dimension size is less than the loop split count
 FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
                                           Value input, int64_t tileDimension,
                                           scf::ForOp containingLoop);

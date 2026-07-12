@@ -360,6 +360,13 @@ void setupLowerTritonPipelineOptions(
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
   if (config.getEnableSimdSimtMixCompile()) {
+    if (config.getEnableSimtVFSubTiling()) {
+      SIMTVFSubTilingOptions subTilingOptions;
+      subTilingOptions.maxTileSize = config.getSimtVFSubTilingMaxTileSize();
+      // Run while the split SIMT module is still in HIVM so sub-tiling can
+      // reuse tensor/memref tiling helpers before TTIR lowering.
+      pm.addPass(hivm::createSIMTVFSubTilingPass(subTilingOptions));
+    }
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
     pm.addPass(hivm::createMaterializeSimtVFMemScopePass());

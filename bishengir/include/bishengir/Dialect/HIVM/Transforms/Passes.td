@@ -1170,6 +1170,26 @@ def MaterializeSimtVFMemScope
   let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
 }
 
+def SIMTVFSubTiling
+    : Pass<"hivm-simt-vf-sub-tiling", "ModuleOp"> {
+  let summary = "Split oversized SIMT VF tiles into serial smaller tiles";
+  let constructor = "mlir::hivm::createSIMTVFSubTilingPass()";
+  let dependentDialects = [
+    "annotation::AnnotationDialect",
+    "arith::ArithDialect",
+    "bufferization::BufferizationDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect",
+    "tensor::TensorDialect"
+  ];
+  let options = [Option<
+      "maxTileSize", "max-tile-size", "int64_t",
+      /*default=*/"64",
+      "Maximum per-tile size on the selected SIMT tiling dimension">];
+}
+
 def InsertMemSemanticForSimtVF : Pass<"insert-memory-semantic-for-simtvf"> {
   let summary = "Insert memory semantic for simt vf";
   let constructor = "mlir::hivm::createInsertMemSemanticForSimtVFPass()";

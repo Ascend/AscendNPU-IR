@@ -85,6 +85,24 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
   return false;
 }
 
+template <typename StoreOpTy> Value getStoreLikeSrc(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getData();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>)
+    return storeOp.getArg();
+  else
+    return storeOp.getSrc();
+}
+
+template <typename StoreOpTy> Value getStoreLikeDst(StoreOpTy storeOp) {
+  if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
+    return storeOp.getDstValue();
+  else if constexpr (std::is_same_v<StoreOpTy, hivm::LocalStoreOp>)
+    return storeOp.getAddr();
+  else
+    return storeOp.getDst();
+}
+
 /// Get the optimal tiling dimension for each value in the operation.
 /// Analyzes parallel dimensions across all storeOp and selects
 /// the dimension that appears most frequently as a parallel dimension.
@@ -105,6 +123,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::VReduceOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::LocalStoreOp>(parallelDimMaps, numStoreOps);
   } else {
     computeTilingDimImpl<hivm::FixpipeOp>(parallelDimMaps, numStoreOps);
   }
@@ -293,13 +312,8 @@ DimensionAnalyzer::getHigherDimCounts(ArrayRef<Dimension> candidate,
 /// \endcode
 template <typename StoreOpTy>
 static bool checkTileableMaskedStore(StoreOpTy storeOp, size_t i) {
-  auto src = storeOp.getSrc();
-  Value dst;
-  if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>) {
-    dst = storeOp.getDstValue();
-  } else {
-    dst = storeOp.getDst();
-  }
+  auto src = getStoreLikeSrc(storeOp);
+  auto dst = getStoreLikeDst(storeOp);
 
   int64_t srcOrigDim = ShapedType::kDynamic;
   int64_t dstOrigDim = ShapedType::kDynamic;
@@ -349,12 +363,7 @@ void DimensionAnalyzer::computeTilingDimImpl(
         &parallelDimMap,
     DenseMap<int64_t, int> &numStoreOps) {
   op_->walk<WalkOrder::PreOrder>([&](StoreOpTy op) {
-    Value src;
-    if constexpr (std::is_same_v<StoreOpTy, hivm::DebugOp>) {
-      src = op.getArg();
-    } else {
-      src = op.getSrc();
-    }
+    auto src = getStoreLikeSrc(op);
     auto rank = utils::getShapeRank(src.getType()).value_or(0);
     createDummyRefIfNotExist({src});
     auto args = getValueDimIndices(src);

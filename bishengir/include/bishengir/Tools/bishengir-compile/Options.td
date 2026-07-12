@@ -857,6 +857,22 @@ def SimtVFDynamicSize : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def EnableSimtVFSubTiling : FeatureControlOptions<
+  "Enable SIMT VF sub-tiling after split-simt-module.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
+def SimtVFSubTilingMaxTileSize : FeatureControlOptions<
+  "Maximum tile size kept inside SIMT VF after sub-tiling.",
+  "int",
+  "64"
+> {
+  let passGroup = ["HIVM"];
+}
+
 def SimtTritonGrid : BiShengIRCompileListOpt<
   "Grid dimensions (e.g., -simt-triton-grid=2,2,2). Default is 1.",
   "int64_t"
