@@ -368,10 +368,16 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownSubView(
           .getShape();
 
   SmallVector<int64_t> reducedShape;
+  int64_t tilingDimOffset = 0;
   for (size_t i = 0; i < fullShape.size(); i++) {
-    if (!droppedDims[i])
+    if (!droppedDims[i]) {
       reducedShape.push_back(fullShape[i]);
+    } else if (static_cast<int64_t>(i) < tilingDim) {
+      tilingDimOffset++;
+    }
   }
+
+  tilingDim -= tilingDimOffset;
 
   auto newSubViewType = memref::SubViewOp::inferRankReducedResultType(
       reducedShape, slicedSourceType, newOffsets, newSizes, newStrides);
