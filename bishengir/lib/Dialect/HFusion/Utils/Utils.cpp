@@ -379,8 +379,8 @@ bool hfusion::isMatmulOps(Operation *op) {
 bool hfusion::isSimtOps(Operation *op) {
   return isa<hfusion::IndirectLoadOp, hfusion::IndirectStoreOp,
              hfusion::StrideLoadOp, hfusion::StrideStoreOp, hfusion::GatherTOp,
-             hfusion::EmbeddingGatherOp,
-             hfusion::IndexPutOp, hfusion::ScatterTOp>(op);
+             hfusion::EmbeddingGatherOp, hfusion::IndexPutOp,
+             hfusion::ScatterTOp>(op);
 }
 
 Value hfusion::getReshapeSource(Operation *op) {
@@ -1585,7 +1585,8 @@ static bool isValueReachingMatmul(Value val) {
           if (it == inits.end()) {
             return false;
           }
-          unsigned idx = static_cast<unsigned>(std::distance(inits.begin(), it));
+          unsigned idx =
+              static_cast<unsigned>(std::distance(inits.begin(), it));
           Value iterArg = forOp.getRegionIterArg(idx);
           return isValueReachingMatmul(iterArg);
         })
@@ -1656,6 +1657,48 @@ bool hfusion::isZeroOrEmptyTensor(Value op) {
   return cstFloat && cstFloat.getValue().isZero();
 }
 
+bool hfusion::isEmptyLikeTensor(Value op) {
+  Operation *defOp = op.getDefiningOp();
+  if (!defOp)
+    return false;
+  if (isa<tensor::EmptyOp>(defOp))
+    return true;
+  if (auto collapseOp = dyn_cast<tensor::CollapseShapeOp>(defOp))
+    return isEmptyLikeTensor(collapseOp.getSrc());
+  if (auto expandOp = dyn_cast<tensor::ExpandShapeOp>(defOp))
+    return isEmptyLikeTensor(expandOp.getSrc());
+  if (auto extractOp = dyn_cast<tensor::ExtractSliceOp>(defOp))
+    return isEmptyLikeTensor(extractOp.getSource());
+  return false;
+}
+
+bool hfusion::isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
+                                     ArrayRef<int64_t> newShape) {
+  assert(oldShape.size() >= newShape.size() &&
+         "only use this function to check flatten");
+  size_t newShapeIdx = 0;
+  for (int64_t oldDim : oldShape) {
+    if (newShapeIdx >= newShape.size())
+      break;
+    if (oldDim == newShape[newShapeIdx]) {
+      ++newShapeIdx;
+    } else {
+      if (oldDim != 1) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool hfusion::isFP8(Type type, Builder builder) {
+  return type == builder.getFloat8E5M2Type() ||
+         type == builder.getFloat8E4M3Type() ||
+         type == builder.getFloat8E4M3FNType() ||
+         type == builder.getFloat8E5M2FNUZType() ||
+         type == builder.getFloat8E4M3FNUZType() ||
+         type == builder.getFloat8E4M3B11FNUZType();
+}
 bool hfusion::shouldUseTileReductionUsingForV2(Operation *op) {
   if (!isa<linalg::LinalgOp>(op))
     return false;

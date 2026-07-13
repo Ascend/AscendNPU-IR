@@ -322,6 +322,19 @@ bool opCanFuseIntoMatmul(Operation *op);
 // Check if tensor is a linalg.fill op with zero value or a tensor.empty op
 bool isZeroOrEmptyTensor(Value op);
 
+// Check if tensor is a tensor.empty op or is derived from one through
+// reshape/slice-like tensor view ops.
+bool isEmptyLikeTensor(Value op);
+
+// Check if only unit dimensions are flattened
+bool isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
+                            ArrayRef<int64_t> newShape);
+
+// Check if operations is in cube scope
+bool isInCubeScope(Operation *op);
+
+// Check if type is FP8
+bool isFP8(Type type, Builder builder);
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
