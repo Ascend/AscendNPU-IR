@@ -16,6 +16,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -49,6 +50,19 @@ constexpr llvm::StringLiteral fixpipeDoNotMoveOutOfScfFor =
 
 constexpr llvm::StringLiteral scfforFixpipeForMMADResultAlreadyInserted =
     "fixpipe_for_mmad_result_already_inserted";
+
+/// Return true when \p op is nested in a scope marked for the vector core.
+/// Fixpipe must not be fused with a store in such scopes: fusion would place
+/// the cube fixpipe inside the vector scope and break mix AIC/AIV splitting.
+static bool isInsideVectorScope(Operation *op) {
+  auto scopeOp = op->getParentOfType<scope::ScopeOp>();
+  if (!scopeOp)
+    return false;
+  auto coreTypeAttr =
+      scopeOp->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name);
+  return coreTypeAttr &&
+         coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
+}
 } // namespace
 
 namespace {
@@ -651,6 +665,8 @@ private:
     // FixPipe followed by debugOp only, no need to inline
     if (curOp == nullptr)
       return success();
+    if (isInsideVectorScope(curOp))
+      return failure();
 
     // 1. cast or quantization
     auto castOp = dyn_cast_if_present<hivm::VCastOp>(curOp);
