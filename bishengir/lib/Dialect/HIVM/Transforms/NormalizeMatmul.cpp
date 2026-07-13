@@ -686,6 +686,18 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
     if (!found)
       return CCFInfo::getFailure(info);
 
+    // The res should only be used by yields in the if block.
+    for (OpOperand &use : info.outVal.getUses()) {
+      Operation *user = use.getOwner();
+      auto yieldOp = dyn_cast<scf::YieldOp>(user);
+      if (!yieldOp)
+        return CCFInfo::getFailure(info);
+      if (yieldOp->getBlock() != op->getBlock())
+        return CCFInfo::getFailure(info);
+      if (use.getOperandNumber() != resultIdx)
+        return CCFInfo::getFailure(info);
+    }
+
     if (op->getBlock() == ifOp.thenBlock()) {
       if (elseYieldOp->getOperand(resultIdx) != info.inVal)
         return CCFInfo::getFailure(info);
