@@ -81,22 +81,22 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 枚举符号      | 数值   | 标识字符串 |
 | :-----------: | :----: | ---------- |
-| AlwaysFalse   | `0`    | false      |
-| OEQ           | `1`    | oeq        |
-| OGT           | `2`    | ogt        |
-| OGE           | `3`    | oge        |
-| OLT           | `4`    | olt        |
-| OLE           | `5`    | ole        |
-| ONE           | `6`    | one        |
-| ORD           | `7`    | ord        |
-| UEQ           | `8`    | ueq        |
-| UGT           | `9`    | ugt        |
-| UGE           | `10`   | uge        |
-| ULT           | `11`   | ult        |
-| ULE           | `12`   | ule        |
-| UNE           | `13`   | une        |
-| UNO           | `14`   | uno        |
-| AlwaysTrue    | `15`   | true       |
+| AlwaysFalse   | 0    | false      |
+| OEQ           | 1    | oeq        |
+| OGT           | 2    | ogt        |
+| OGE           | 3    | oge        |
+| OLT           | 4    | olt        |
+| OLE           | 5    | ole        |
+| ONE           | 6    | one        |
+| ORD           | 7    | ord        |
+| UEQ           | 8    | ueq        |
+| UGT           | 9    | ugt        |
+| UGE           | 10   | uge        |
+| ULT           | 11   | ult        |
+| ULE           | 12   | ule        |
+| UNE           | 13   | une        |
+| UNO           | 14   | uno        |
+| AlwaysTrue    | 15   | true       |
 
 ### CmpIPredicate
 
@@ -106,16 +106,16 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 枚举符号 | 数值   | 标识字符串 |
 | :------: | :----: | ---------- |
-| eq       | `0`    | eq         |
-| ne       | `1`    | ne         |
-| slt      | `2`    | slt        |
-| sle      | `3`    | sle        |
-| sgt      | `4`    | sgt        |
-| sge      | `5`    | sge        |
-| ult      | `6`    | ult        |
-| ule      | `7`    | ule        |
-| ugt      | `8`    | ugt        |
-| uge      | `9`    | uge        |
+| eq       | 0    | eq         |
+| ne       | 1    | ne         |
+| slt      | 2    | slt        |
+| sle      | 3    | sle        |
+| sgt      | 4    | sgt        |
+| sge      | 5    | sge        |
+| ult      | 6    | ult        |
+| ule      | 7    | ule        |
+| ugt      | 8    | ugt        |
+| uge      | 9    | uge        |
 
 ### IntegerOverflowFlags
 
@@ -123,9 +123,9 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 枚举符号 | 数值   | 标识字符串 |
 | :------: | :----: | ---------- |
-| none     | `0`    | none       |
-| nsw      | `1`    | nsw        |
-| nuw      | `2`    | nuw        |
+| none     | 0    | none       |
+| nsw      | 1    | nsw        |
+| nuw      | 2    | nuw        |
 
 ### RoundingMode
 
@@ -133,11 +133,11 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 枚举符号           | 数值   | 标识字符串          |
 | :----------------: | :----: | ------------------- |
-| to_nearest_even    | `0`    | to_nearest_even     |
-| downward           | `1`    | downward            |
-| upward             | `2`    | upward              |
-| toward_zero        | `3`    | toward_zero         |
-| to_nearest_away    | `4`    | to_nearest_away     |
+| to_nearest_even    | 0    | to_nearest_even     |
+| downward           | 1    | downward            |
+| upward             | 2    | upward              |
+| toward_zero        | 3    | toward_zero         |
+| to_nearest_away    | 4    | to_nearest_away     |
 
 ### AtomicRMWKind
 
@@ -147,21 +147,21 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 枚举符号    | 数值   | 标识字符串  |
 | :---------: | :----: | ----------- |
-| addf        | `0`    | addf        |
-| addi        | `1`    | addi        |
-| assign      | `2`    | assign      |
-| maximumf    | `3`    | maximumf    |
-| maxs        | `4`    | maxs        |
-| maxu        | `5`    | maxu        |
-| minimumf    | `6`    | minimumf    |
-| mins        | `7`    | mins        |
-| minu        | `8`    | minu        |
-| mulf        | `9`    | mulf        |
-| muli        | `10`   | muli        |
-| ori         | `11`   | ori         |
-| andi        | `12`   | andi        |
-| maxnumf     | `13`   | maxnumf     |
-| minnumf     | `14`   | minnumf     |
+| addf        | 0    | addf        |
+| addi        | 1    | addi        |
+| assign      | 2    | assign      |
+| maximumf    | 3    | maximumf    |
+| maxs        | 4    | maxs        |
+| maxu        | 5    | maxu        |
+| minimumf    | 6    | minimumf    |
+| mins        | 7    | mins        |
+| minu        | 8    | minu        |
+| mulf        | 9    | mulf        |
+| muli        | 10   | muli        |
+| ori         | 11   | ori         |
+| andi        | 12   | andi        |
+| maxnumf     | 13   | maxnumf     |
+| minnumf     | 14   | minnumf     |
 
 ### FastMathFlags
 
@@ -169,12 +169,12 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 | 枚举符号   | 数值    | 标识字符串 |
 | :--------: | :-----: | ---------- |
-| none       | `0`     | none       |
-| reassoc    | `1`     | reassoc    |
-| nnan       | `2`     | nnan       |
-| ninf       | `4`     | ninf       |
-| nsz        | `8`     | nsz        |
-| arcp       | `16`    | arcp       |
-| contract   | `32`    | contract   |
-| afn        | `64`    | afn        |
-| fast       | `127`   | fast       |
+| none       | 0     | none       |
+| reassoc    | 1     | reassoc    |
+| nnan       | 2     | nnan       |
+| ninf       | 4     | ninf       |
+| nsz        | 8     | nsz        |
+| arcp       | 16    | arcp       |
+| contract   | 32    | contract   |
+| afn        | 64    | afn        |
+| fast       | 127   | fast       |

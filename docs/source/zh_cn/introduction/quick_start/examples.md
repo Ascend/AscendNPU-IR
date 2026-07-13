@@ -1,12 +1,12 @@
 # 编译与执行示例
 
-本示例展示如何用`bishengir-compile`将`IR`编译为设备端二进制，并基于`CANN`提供的`runtime`接口完成注册与上板执行。
+本示例展示如何用`bishengir-compile`将IR编译为设备端二进制，并基于CANN提供的runtime接口完成注册与上板执行。
 
-**前置条件**：已完成[构建安装](installing_guide.md)，且`bishengir-compile`已加入`PATH`，`CANN`环境已安装并完成`set_env.sh`配置。
+**前置条件**：已完成[构建安装](installing_guide.md)，且`bishengir-compile`已加入`PATH`，CANN环境已安装并完成`set_env.sh`配置。
 
 ## IR编译
 
-准备一段`VecAdd`的`MLIR`（可从其他`IR`转换得到）：
+准备一段`VecAdd`的MLIR（可从其他IR转换得到）：
 
 ```mlir
 // add.mlir
@@ -31,11 +31,11 @@ module {
 bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 ```
 
-生成的`kernel.o`即为可在`NPU`上执行的算子二进制。
+生成的`kernel.o`即为可在NPU上执行的算子二进制。
 
 ## Runtime注册与上板执行
 
-以下`C++`代码实现`CANN runtime`所需的算子注册与调用接口，编译后与`kernel.o`一起即可上板执行。
+以下C++代码实现CANN runtime所需的算子注册与调用接口，编译后与`kernel.o`一起即可上板执行。
 
 ```cpp
 // main.cpp

@@ -14,7 +14,7 @@
 
 AscendNPU IR端到端运行依赖CANN环境。
 
-1. 下载CANN包：需下载toolkit包及与硬件对应的ops包，可从[昇腾社区CANN下载页](https://www.hiascend.com/cann/download)获取。
+1. 下载CANN包：需下载Toolkit包及与硬件对应的ops包，可从[昇腾社区CANN下载页](https://www.hiascend.com/cann/download)获取。
 
 2. 安装CANN包：
 
@@ -231,7 +231,7 @@ def kernel_debug_barrier():
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
-| `sender` | str | 发送单元类型 | 
+| `sender` | str | 发送单元类型 |
 | `receiver` | str | 接收单元类型 |
 | `event_id` | int | 事件标识符 |
 | `sender_pipe_value` | [PIPE枚举值](#pipe) | 发送管道值 |
@@ -264,17 +264,17 @@ def triton_matmul_exp():
 
 | 参数名 | 类型 | 描述 | 有效值 |
 |--------|------|------|--------|
-| `mode` | str | 同步模式，指定要同步的核心类型 | `"all_cube"`, `"all_vector"`, `"all"`, `"all_sub_vector"` |
-| `event_id` | int | 同步事件标识符 | `0` ~ `15` |
+| `mode` | str | 同步模式，指定要同步的核心类型 | "all_cube", "all_vector", "all", "all_sub_vector" |
+| `event_id` | int | 同步事件标识符 | 0 ~ 15 |
 
 **同步模式详解**：
 
 | 模式 | 描述 | 同步范围 |
 |------|------|----------|
-| `"all_cube"` | 同步所有Cube核 | 当前AI Core上的所有Cube核 |
-| `"all_vector"` | 同步所有Vector核 | 当前AI Core上的所有Vector核 |
-| `"all"` | 同步所有核心 | 当前AI Core上的所有计算核心（Cube+Vector） |
-| `"all_sub_vector"` | 同步所有子Vector核 | 当前AI Core上的所有子Vector核 |
+| "all_cube" | 同步所有Cube核 | 当前AI Core上的所有Cube核 |
+| "all_vector" | 同步所有Vector核 | 当前AI Core上的所有Vector核 |
+| "all" | 同步所有核心 | 当前AI Core上的所有计算核心（Cube+Vector） |
+| "all_sub_vector" | 同步所有子Vector核 | 当前AI Core上的所有子Vector核 |
 
 **写法样例**：
 
@@ -396,14 +396,14 @@ def triton_compile_hint():
 
 | 参数名 | 类型 | 描述 |
 |--------|------|------|
-| `core_mode` | str | 核心类型，指定区块内操作使用的计算核心， 只接受`"cube"`或`"vector"`两种模式 |
+| `core_mode` | str | 核心类型，指定区块内操作使用的计算核心， 只接受"cube"或"vector"两种模式 |
 
 **核心模式选项**：
 
 | 模式 | 描述 |
 |------|------|
-| `"cube"` | 使用Cube核进行计算 |
-| `"vector"` | 使用Vector核进行计算 |
+| "cube" | 使用Cube核进行计算 |
+| "vector" | 使用Vector核进行计算 |
 
 **写法样例**：
 
@@ -482,9 +482,9 @@ def index_select_manual_kernel():
 
 | 参数名 | 类型 | 描述 | 默认值 |
 |--------|------|------|--------|
-| `ptr` | tensor | 输入张量 | - |
-| `dim` | int或tl.constexpr[int] | 要排序的维度 | `-1` |
-| `descending` | bool或tl.constexpr[bool] | 排序方向，`True`表示降序，`False`表示升序 | `False` |
+| `ptr` | `tensor` | 输入张量 | - |
+| `dim` | `int`或`tl.constexpr[int]` | 要排序的维度 | -1 |
+| `descending` | `bool`或`tl.constexpr[bool]` | 排序方向，`True`表示降序，`False`表示升序 | `False` |
 
 **写法样例**：
 
@@ -780,8 +780,8 @@ def scatter():
 
 **约束条件**：
 
-- `read_shape[dim]`必须为`-1`。
-- `src_offset[dim]`可以为`-1`（将被忽略）。
+- `read_shape[dim]`必须为-1。
+- `src_offset[dim]`可以为-1（将被忽略）。
 - 边界处理：当`src_offset + read_shape > src_shape`时，会自动截断到`src_shape`边界。
 - 不进行检查`index`是否包含越界值。
 
@@ -863,7 +863,7 @@ def my_kernel(...):
 
 ### 内置定制操作
 
-内置定制操作的名称均以`"__builtin_"`开头，是triton-ascend内置的已定制好的操作，不需要注册即可直接使用。例如：
+内置定制操作的名称均以"__builtin_"开头，是triton-ascend内置的已定制好的操作，不需要注册即可直接使用。例如：
 
 ```python
 import triton
@@ -983,7 +983,7 @@ class my_custom_op:
 
 ```
 
-当输入的src为指向float32类型的指针，index为int32类型的3维tensor时，上述定制操作对应的设备侧函数符号名为：`"my_func_3d_float_int32_t"`；不同的输入参数会对应不同的符号名。
+当输入的src为指向float32类型的指针，index为int32类型的3维tensor时，上述定制操作对应的设备侧函数符号名为："my_func_3d_float_int32_t"；不同的输入参数会对应不同的符号名。
 
 注意这里类型名使用的`cname`，表示对应类型在AscendC语言中的名称，如int32对应的cname就是`int32_t`。因为我们通常会采用宏的方式来声明这些函数，并将相关类型名嵌入到函数名中，所以`cname`会较为常用。
 

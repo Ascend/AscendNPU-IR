@@ -2,20 +2,20 @@
 
 ## 调试：DEBUG OP类
 
-在基于`AscendNPU IR`进行算子开发与移植过程中（如基于`Triton`前端编写算子并基于`AscendNPU IR`编译执行）调试是必不可少的一环。为了帮助开发者在不同抽象层次定位问题，`AscendNPU IR`定义了两类核心调试算子：
+在基于AscendNPU IR进行算子开发与移植过程中（如基于Triton前端编写算子并基于AscendNPU IR编译执行）调试是必不可少的一环。为了帮助开发者在不同抽象层次定位问题，AscendNPU IR定义了两类核心调试算子：
 
-- `hfusion`层的`PrintOp`：在图编译和融合阶段使用，用于打印中间计算结果和张量信息。
+- hfusion层的`PrintOp`：在图编译和融合阶段使用，用于打印中间计算结果和张量信息。
 
-- `hivm`层的`DebugOp`：在更低级的`HIVM`层执行时使用，用于打印中间计算结果和张量信息。
+- hivm层的DebugOp：在更低级的HIVM层执行时使用，用于打印中间计算结果和张量信息。
 
-接下来将从`AscendNPU IR`的视角出发，介绍这两类调试算子的接口以及使用方式，并以`Triton`前端为例，演示如何在算子开发全流程中注入并使用这些调试能力。
+接下来将从AscendNPU IR的视角出发，介绍这两类调试算子的接口以及使用方式，并以Triton前端为例，演示如何在算子开发全流程中注入并使用这些调试能力。
 
 ### AscendNPU IR调试OP介绍
 
-`AscendNPU IR`侧依赖毕昇编译器提供的`cce::printf`接口进行打印，要想开启打印需要满足以下两个条件：
+AscendNPU IR侧依赖毕昇编译器提供的`cce::printf`接口进行打印，要想开启打印需要满足以下两个条件：
 
-1. 需要启用宏`__CCE_ENABLE_PRINT__`（以`triton`为例，通过`export TRITON_DEVICE_PRINT=1`来启用该选项）。
-2. `AscendNPU IR meta OP`库（将逻辑代码映射成对应硬件指令的地方）编译的时候需要开启`--cce-enable-print`（当前默认一直开启）。
+1. 需要启用宏`__CCE_ENABLE_PRINT__`（以Triton为例，通过`export TRITON_DEVICE_PRINT=1`来启用该选项）。
+2. AscendNPU IR meta OP库（将逻辑代码映射成对应硬件指令的地方）编译的时候需要开启`--cce-enable-print`（当前默认一直开启）。
 
 #### hfusion层调试：PrintOp
 
@@ -29,8 +29,8 @@ hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 
 **使用说明**：
 
-可以在`hfusion Pass`阶段或手动构造`IR`时，显式添加`PrintOp`节点。
-如下：当我们想打印`load`进来的结果时我们可以手动在`hfusion`阶段`IR`中添加`hfusion.print`以实现该效果。
+可以在`hfusion Pass`阶段或手动构造IR时，显式添加`PrintOp`节点。
+如下：当我们想打印`load`进来的结果时我们可以手动在hfusion阶段IR中添加`hfusion.print`以实现该效果。
 
 ```mlir
 func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -58,8 +58,8 @@ hivm.hir.debug {debugtype = "xxx", hex = xxx, prefix = " xxx: ", tcoretype = #hi
 
 **使用说明**：
 
-可以在`hivm Pass`阶段或手动构造`IR`时，显式添加`Debug Op`节点。
-如下：当我们想打印`load`进来的结果时我们可以手动在`hivm`阶段`IR`中添加`hivm.hir.debug`以实现该效果。
+可以在hivm Pass阶段或手动构造IR时，显式添加Debug Op节点。
+如下：当我们想打印`load`进来的结果时我们可以手动在hivm阶段IR中添加`hivm.hir.debug`以实现该效果。
 
 ```mlir
 func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, false, false, false, false]> : vector<8xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -77,9 +77,9 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 
 ### triton接入说明
 
-有多种生态编程语言对接`AscendNPU IR`，当前仅以`Triton`为例进行介绍，剩余还有`TileLang`、`FlagTree`、`DLCompiler`与`TLE`等方式，可以参考`Triton`进行对接。
+有多种生态编程语言对接AscendNPU IR，当前仅以Triton为例进行介绍，剩余还有TileLang、FlagTree、DLCompiler与TLE等方式，可以参考Triton进行对接。
 
-目前与调试调测相关的`triton OP`主要有如下四类：
+目前与调试调测相关的triton OP主要有如下四类：
 
 - `static_assert`：编译时静态断言
 - `static_print`：编译时静态打印
@@ -282,7 +282,7 @@ if __name__ == "__main__":
 
 ### mssanitizer
 
-命令行异常检测工具用于`triton`算子内存检测/竞争检测/未初始化检测等，使用此功能前需要设置环境变量`export TRITON_ENABLE_SANITIZER=true`。
+命令行异常检测工具用于Triton算子内存检测/竞争检测/未初始化检测等，使用此功能前需要设置环境变量`export TRITON_ENABLE_SANITIZER=true`。
 
 **使用方式**：
 
@@ -293,7 +293,7 @@ mssanitizer python test.py
 
 **效果展示**：
 
-以如下`triton add`用例为例（用例中`offsets`错误计算）展示`mssanitizer`的检测效果。
+以如下`triton add`用例为例（用例中`offsets`错误计算）展示mssanitizer的检测效果。
 
 ```python
 import torch
@@ -337,15 +337,15 @@ if __name__ == "__main__":
     output_triton = add(x, y)
 ```
 
-执行`mssanitizer python3 test_add.py`产生如下屏幕输出信息，可以看到`mssanitizer`检测发现当前`test_add.py`文件中执行到`tl.load`结点时检测发现`GM`异常读了`40B`（`10 * float32`）的空间。
+执行`mssanitizer python3 test_add.py`产生如下屏幕输出信息，可以看到mssanitizer检测发现当前`test_add.py`文件中执行到`tl.load`结点时检测发现GM异常读了40B（10 * float32）的空间。
 
 ![image](../../images/user_guide/debug_option5.png)
 
-注：想了解更多`mssanitizer`的检测情况详见[MindStudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
+注：想了解更多mssanitizer的检测情况详见[MindStudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html)
 
 ### msprof
 
-命令行模型调优工具用于`triton`算子性能数据的采集和解析。
+命令行模型调优工具用于Triton算子性能数据的采集和解析。
 
 **使用方式**：
 
@@ -375,7 +375,7 @@ msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --ou
 - `trace.json`：支持在`chrome://tracing/`上生成指令流水图
     ![image](../../images/user_guide/debug_option6.png)
 
-- `visualize_data.bin`：支持在`Mind Studio Insight`可视化呈现指令在昇腾`AI`处理器上的运行情况
+- `visualize_data.bin`：支持在Mind Studio Insight可视化呈现指令在昇腾AI处理器上的运行情况
     ![image](../../images/user_guide/debug_option7.png)
 
 注：想要了解更多性能分析图可参见[MindStudio算子开发工具](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html)
@@ -428,5 +428,5 @@ if __name__ == "__main__":
 
 执行`msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`在当前路径下会生成带着时间戳的`OPPROF`文件夹
 
-取出`simulator`下的`visualize_data.bin`用`MindStudio Insight`打开就得到了`0`核对应的流水图，前面描述的两类常用性能流水图（`trace.json/visualize_data.bin`）都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
+取出simulator下的`visualize_data.bin`用MindStudio Insight打开就得到了0核对应的流水图，前面描述的两类常用性能流水图（`trace.json/visualize_data.bin`）都可以在`./OPPROF_<Timestamp>/simulator`目录下找到
 ![image](../../images/user_guide/debug_option9.png)

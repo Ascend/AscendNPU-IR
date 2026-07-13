@@ -6,7 +6,7 @@
 
 **案例说明**：
 
-基于`GPU`实现的`Triton`算子迁移到`NPU`时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销。建议在编写迁移时，调整`Tiling`策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能。本案例使用`triton`实现。
+基于GPU实现的Triton算子迁移到NPU时，通常发射的逻辑核数量远大于物理核，会有严重的启动及调度开销。建议在编写迁移时，调整Tiling策略，缩减核数，尽量使发射的逻辑核数量等于物理核，提升性能。本案例使用Triton实现。
 
 ```python
 out = torch.gather(x, dim=1, index=idx)
@@ -91,7 +91,7 @@ BLOCK_K = 128
 
 **案例说明**：
 
-原始`GPU`计算流程`i64`/`i32` `cmp`操作在`NPU`设备上无法使能`vector`，退化为`scalar`计算效率降低；通过转化为`fp32`来利用`vec_cast`和`vec_cmp`实现`vector`操作加速。需要注意的是，在`tl.load`和`tl.save`中的`mask`使用`cmp`功能，大部分情况下编译器可以自动优化为`vec`操作，本例中`tl.where`则需要手动转换。本案例以`layerNorm`为例说明实现向量化`cmp`加速`NPU`计算流程，该`cmp`操作用于处理`layerNorm`中的尾块处理。
+原始GPU计算流程`i64`/`i32` `cmp`操作在NPU设备上无法使能`vector`，退化为scalar计算效率降低；通过转化为`fp32`来利用`vec_cast`和`vec_cmp`实现`vector`操作加速。需要注意的是，在`tl.load`和`tl.save`中的`mask`使用`cmp`功能，大部分情况下编译器可以自动优化为`vec`操作，本例中`tl.where`则需要手动转换。本案例以layerNorm为例说明实现向量化`cmp`加速NPU计算流程，该`cmp`操作用于处理layerNorm中的尾块处理。
 
 **案例差异点详解**：
 
@@ -119,16 +119,16 @@ BLOCK_K = 128
 
 **现象**：
 
-算子选项规避超时报错，算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用`Kernel`时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
+算子选项规避超时报错，算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
 
 **写法样例**：
 
 | 编译选项 | 数值 | 说明 |
 |--------|------|------|
-| `inject_barrier_all` | `false`(default) | 前端尝试打开为`true`，如果卡死问题消失，证明核内同步有问题，适用`mix`/`aic`/`aiv`三类`kernel` |
-| `inject_block_all` | `false`(default) | 前端尝试打开为`true`，如果卡死问题消失，证明核间同步有问题，适用`mix`类`kernel` |
+| `inject_barrier_all` | `false`(默认) | 前端尝试打开为`true`，如果卡死问题消失，证明核内同步有问题，适用`mix`/`aic`/`aiv`三类kernel |
+| `inject_block_all` | `false`(默认) | 前端尝试打开为`true`，如果卡死问题消失，证明核间同步有问题，适用`mix`类kernel |
 
-以`GDN`网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码写法样例调用如下：
+以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码写法样例调用如下：
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -151,7 +151,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-开启`CV`全流水后的写法样例为：
+开启CV全流水后的写法样例为：
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -197,25 +197,25 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
 **分析**：
 
-第1行，原始的数据大小为`256x9x11xi8`，保存在`GM`中（`kernel`的参数`%arg3`）；
+第1行，原始的数据大小为`256x9x11xi8`，保存在GM中（kernel的参数`%arg3`）；
 
-第2行，申请一块大小为`256x32x11x1xi8`的`UB`空间，用于从`GM`中拷贝数据到`UB`，这里对第1轴进行了32字节对齐操作，同时尾轴增加一维；
+第2行，申请一块大小为`256x32x11x1xi8`的UB空间，用于从GM中拷贝数据到UB，这里对第1轴进行了32字节对齐操作，同时尾轴增加一维；
 
-第3行，对第2行申请的`UB`形状`256×32×11×1xi8`，通过`subview`提取`256x9x11xi8`的子视图；
+第3行，对第2行申请的UB形状`256×32×11×1xi8`，通过subview提取`256x9x11xi8`的子视图；
 
-第4行，通过`collapse_shape`，对第1行的`GM`中的视图`256x9x11xi8`，进行合并维度，变成`256x99xi8`类型；
+第4行，通过`collapse_shape`，对第1行的GM中的视图`256x9x11xi8`，进行合并维度，变成`256x99xi8`类型；
 
-第5行，通过`collapse_shape`，对第3行的`UB`中的视图`256x9x11xi8`，进行合并维度，变成`256x99xi8`类型；
+第5行，通过`collapse_shape`，对第3行的UB中的视图`256x9x11xi8`，进行合并维度，变成`256x99xi8`类型；
 
-第6行，将第4行的`GM`中形状为`256x99xi8`的数据，拷贝到第5行的`UB`中的`256x99xi8`形状中。
+第6行，将第4行的GM中形状为`256x99xi8`的数据，拷贝到第5行的UB中的`256x99xi8`形状中。
 
 **总结**：
 
-原始的数据`256x9x11xi8`大小：`25344B`；从`GM`中`load`到`UB`，`UB`中占用的大小（`256x32x11x1xi8`）：`90112B`，占用的`UB`大小为原始数据大小的3.5 倍多。
+原始的数据`256x9x11xi8`大小：25344B；从GM中`load`到UB，UB中占用的大小（`256x32x11x1xi8`）：90112B，占用的UB大小为原始数据大小的3.5 倍多。
 
 #### triton not op不合理的实现，导致额外占用内存
 
-`Triton Not OP`的实现，在`NPU-IR`中，被转成`VOR`、`VAND`、`VNOT`、`VAND`等一系列操作来处理，实际上可以只执行`VNOT`操作：
+Triton Not OP的实现，在`NPU-IR`中，被转成`VOR`、`VAND`、`VNOT`、`VAND`等一系列操作来处理，实际上可以只执行`VNOT`操作：
 
 **mlir代码如下**：
 
@@ -235,35 +235,35 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
 **分析**：
 
-第1行，原始的数据大小为`65536xi8`，保存在`GM`中（`kernel`的参数`%arg3`）；
+第1行，原始的数据大小为`65536xi8`，保存在GM中（kernel的参数`%arg3`）；
 
-第2行，申请一块大小为`65536xi8`的`UB`空间；
+第2行，申请一块大小为`65536xi8`的UB空间；
 
-第3行，将第1行的`GM`中的形状为`65536xi8`的数据，拷贝到第2行的形状为`65536xi8`的`UB`空间中；
+第3行，将第1行的GM中的形状为`65536xi8`的数据，拷贝到第2行的形状为`65536xi8`的UB空间中；
 
-第4行，申请一块大小为`65536xi8`的`UB`空间；
+第4行，申请一块大小为`65536xi8`的UB空间；
 
-第5行，将第4行申请的`65536xi8`的`UB`空间，全填充`-1`；
+第5行，将第4行申请的`65536xi8`的UB空间，全填充-1；
 
-第6行：申请一块大小为`65536xi8`的`UB`空间；
+第6行：申请一块大小为`65536xi8`的UB空间；
 
-第7行："输入数据"与`"-1"`做`or`运算，结果存储到第6行申请的`UB`空间中；
+第7行："输入数据"与"-1"做`or`运算，结果存储到第6行申请的UB空间中；
 
-第8行：申请一块大小为`65536xi8`的`UB`空间；
+第8行：申请一块大小为`65536xi8`的UB空间；
 
-第9行："输入数据"与`"-1"`做`and`运算，结果存储到第8行申请的`UB`空间中；
+第9行："输入数据"与"-1"做`and`运算，结果存储到第8行申请的UB空间中；
 
-第10行：再对第9行的结果做`not`运算，将结果存储到第8行申请的`UB`空间中；
+第10行：再对第9行的结果做`not`运算，将结果存储到第8行申请的UB空间中；
 
-第11行：申请一块大小为`65536xi8`的`UB`空间；
+第11行：申请一块大小为`65536xi8`的UB空间；
 
-第12行：将第7行的结果，与第10行的结果，进行`and`运算，将结果存储到第11行申请的`UB`空间中。
+第12行：将第7行的结果，与第10行的结果，进行`and`运算，将结果存储到第11行申请的UB空间中。
 
 **总结**：
 
 对输入数据`input_data`进行`not`操作，`mlir`翻译成了如下运算：`(input_data|(-1))&(!(input_data&(-1)))`。
 
-原始的数据大小为：`65536B`，为了完成`(input_data|(-1))&(!(input_data&(-1)))`运算，申请了`5 * 65536B`的`UB`空间。
+原始的数据大小为：65536B，为了完成`(input_data|(-1))&(!(input_data&(-1)))`运算，申请了`5 * 65536B`的UB空间。
 
 #### triton max_dim0 op在int64类型输入下，先执行PlanMemory，再执行HIVMLowerToLoops，浪费大量UB空间
 
@@ -278,17 +278,17 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hi
 
 **分析**：
 
-第1行，输入数据大小为`2x4912xi64`，在`UB`中分配，数据来源于`GM`；
+第1行，输入数据大小为`2x4912xi64`，在UB中分配，数据来源于GM；
 
-第2行，输出数据大小为`1x4912xi64`，在`UB`中分配，存储计算结果，最后存储到`GM`中；
+第2行，输出数据大小为`1x4912xi64`，在UB中分配，存储计算结果，最后存储到GM中；
 
-第3行，申请一块大小为`9824xi64`的`UB`空间作为`vreduce`操作的临时节点；
+第3行，申请一块大小为`9824xi64`的UB空间作为`vreduce`操作的临时节点；
 
-第4行，对于`int64`的输入，`vreduce`操作会在后面`lower`为`loop scalar`操作，并将`temp_buffer`删掉。
+第4行，对于`int64`的输入，`vreduce`操作会在后面lower为`loop scalar`操作，并将`temp_buffer`删掉。
 
 **总结**：
 
-`PlanMemory`时考虑的`temp_buffer`在最后计算时并未使用，导致误报`ub overflow`，需要在`PlanMemory`前分配`temp_buffer`的步骤中修改临时节点分配规则。
+PlanMemory时考虑的`temp_buffer`在最后计算时并未使用，导致误报`ub overflow`，需要在PlanMemory前分配`temp_buffer`的步骤中修改临时节点分配规则。
 
 ### D-cache类
 
@@ -296,7 +296,7 @@ hivm.hir.vreduce {already_initialize_init} <max> ins(%2 : memref<2x4912xi64, #hi
 
 **现象**：
 
-算子输入合法且均为同一个`deviceID`，实际算子的`deviceID`设置不正确，导致无法取到数据，出现`D-cache`读写错误。
+算子输入合法且均为同一个`deviceID`，实际算子的`deviceID`设置不正确，导致无法取到数据，出现D-cache读写错误。
 
 **写法样例**：
 
@@ -327,7 +327,7 @@ A=torch.empty(shape, dtype, device=DEVICE).npu()
 
 **写法样例**：
 
-以`GDN`网络的`causal_conv1d_fwd_kernel`为例，源代码中`i_w`可能是负数。
+以GDN网络的`causal_conv1d_fwd_kernel`为例，源代码中`i_w`可能是负数。
 
 错误样例：
 
@@ -449,7 +449,7 @@ y = transpose(x)
 
 **现象**：
 
-导致`UB overflow`的成因各异，除了本身张量数据类型过大，导致超出`192KB`的`UB`限制，另一个可能的原因是非连续搬运导致`UB`内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要`32B`对齐，而`1xf32`只有`4B`大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保`32B`对齐。无论因为什么原因导致的`UB overflow`，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免`UB overflow`。
+导致UB overflow的成因各异，除了本身张量数据类型过大，导致超出192KB的UB限制，另一个可能的原因是非连续搬运导致UB内扩轴。以`<Nx1xf32>`数据类型为例，由于硬件在尾轴需要32B对齐，而`1xf32`只有4B大小，因此`<Nx1xf32>`在硬件上的实际大小会被扩轴至`<Nx8xf32>`以确保32B对齐。无论因为什么原因导致的UB overflow，都可以通过加上`mayDiscretememaccess`的编译提示，使张量操作退化为标量操作，从而避免UB overflow。
 
 **写法样例**：
 
@@ -485,7 +485,7 @@ tl.store(pointer, value)
     b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
     ```
 
-    通过增加编译提示，张量访存会被退化为标量访存，避免`UB overflow`，参考以下代码段：
+    通过增加编译提示，张量访存会被退化为标量访存，避免UB overflow，参考以下代码段：
 
     ```python
     b_x = tl.load(x + o_t * D + o_d[:, None], mask=(m_t & m_d[:, None]), other=0)
@@ -542,7 +542,7 @@ tl.store(pointer, value)
         tl.store(B_block_ptr, a, boundary_check=(0, 1))
     ```
 
-**示例2使用`compile hint`前后的`ir`对比**：
+**示例2使用`compile hint`前后的ir对比**：
 
 ```mlir
 // before using tl.compile_hint(a, "mayDiscretememaccess")
@@ -687,13 +687,13 @@ module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 
 ## 场景化调试举例
 
-本章节介绍`Triton NPU`算子性能优化指南。
+本章节介绍Triton NPU算子性能优化指南。
 
 ### 使用bitwise_mask优化访存掩码
 
 **问题描述**：
 
-在昇腾硬件上，布尔类型（`i1`）的张量在全局内存（`GM`）中实际是按`i8`（一个字节）存储的。当`Triton Ascend`处理以`i1`张量作为输入的运算时，它会将`i1`视为`i8`搬入，但某些情况下（例如作为`tl.where`的条件掩码）又需要将结果转换回`i1`，导致不必要的类型转换，带来性能损耗。
+在昇腾硬件上，布尔类型（`i1`）的张量在全局内存（GM）中实际是按`i8`（一个字节）存储的。当Triton Ascend处理以`i1`张量作为输入的运算时，它会将`i1`视为`i8`搬入，但某些情况下（例如作为`tl.where`的条件掩码）又需要将结果转换回`i1`，导致不必要的类型转换，带来性能损耗。
 
 为了解决这个问题，提供了`compile_hint: "bitwise_mask"`。通过该提示，编译器可以识别出该`i1`张量是作为位掩码使用的，从而直接按位操作，避免中间的类型转换，提升性能。
 
@@ -773,7 +773,7 @@ test_where_lt_case1()
 
 **切分逻辑**：
 
-`bitmask`和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于：(1) `CV`场景下使能`1:2`性能优化；(2) 融轴；(3) `broadcast`场景；(4) 非硬件支撑的数据类型；(5) `triton`算子输入非`1`的`grid`切块等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组`mask`例子（由`i8 bitmask`组出`i1`的标杆`mask`）供你参考，这个组`mask`逻辑不考虑场景，是从`bitmask`结果的误差推导组`mask`逻辑的。
+`bitmask`和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于：(1) CV场景下使能1:2性能优化；(2) 融轴；(3) `broadcast`场景；(4) 非硬件支撑的数据类型；(5) Triton算子输入非1的grid切块等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组`mask`例子（由`i8 bitmask`组出`i1`的标杆`mask`）供你参考，这个组`mask`逻辑不考虑场景，是从`bitmask`结果的误差推导组`mask`逻辑的。
 
 假设这是本来的组`mask`逻辑：
 
@@ -784,13 +784,13 @@ for i in range(numel // 8):
         flatten_cond_i1[..., i*8 + bit] = (byte_value & (1 << bit)) != 0
 ```
 
-假设在某个场景下，`shape`为`(2，X，X，X)`时，`vimdiff`结果为：
+假设在某个场景下，shape为`(2，X，X，X)`时，vimdiff结果为：
 ![image](../../images/user_guide/bitmask1.png)
 
-而在同一场景下，`shape`为`(3，X，X，X)`时，`vimdiff`结果为：
+而在同一场景下，shape为`(3，X，X，X)`时，vimdiff结果为：
 ![image](../../images/user_guide/bitmask2.png)
 
-由此感知，当`shape`为`(A, X, X, X)`时，上述场景的切分逻辑是按首轴（即`A`）处理，错误的组`mask`逻辑导致只有首轴的首个切分精度对齐，而剩下的有`(A-1)/A`的数据则有偏差，如此，精度验证的标杆组`mask`逻辑就需要考虑`A`了，见以下代码：
+由此感知，当shape为`(A, X, X, X)`时，上述场景的切分逻辑是按首轴（即`A`）处理，错误的组`mask`逻辑导致只有首轴的首个切分精度对齐，而剩下的有`(A-1)/A`的数据则有偏差，如此，精度验证的标杆组`mask`逻辑就需要考虑`A`了，见以下代码：
 
 ```python
 for sub_A in range(A):
@@ -917,17 +917,17 @@ def test_where_lt_case1(param_list):
 
 **限制**：
 
-- 由于`Triton`前端会将`i1`转换为`i8`，如果对其他类型如`i16`/`i32`等进行`bitwise_mask`操作反而会带来性能损耗，因此此功能只支持`i8`类型的`mask`。
+- 由于Triton前端会将`i1`转换为`i8`，如果对其他类型如`i16`/`i32`等进行`bitwise_mask`操作反而会带来性能损耗，因此此功能只支持`i8`类型的`mask`。
 
 ### 使用手动对齐提升尾轴不对齐场景的编译器优化效率
 
 **问题描述**：
 
-在`Triton`算子开发中，当张量的尾轴维度较小（如`4`）且未对齐到硬件建议的`32`字节（对应`8`个`float32`元素）时，编译器后端在处理此类非对齐形状时，往往难以生成最优的连续访存和向量化指令，导致性能无法充分发挥。为获得更好的编译器优化效果，推荐开发者在前端`kernel`中通过手动填充（`padding`）或`mask`加载的方式，将数据尾轴维度显式对齐到合适的宽度，从而为编译器提供对齐友好的数据布局。这样能够简化后端的优化决策，显著提升执行效率。
+在Triton算子开发中，当张量的尾轴维度较小（如4）且未对齐到硬件建议的32字节（对应8个`float32`元素）时，编译器后端在处理此类非对齐形状时，往往难以生成最优的连续访存和向量化指令，导致性能无法充分发挥。为获得更好的编译器优化效果，推荐开发者在前端kernel中通过手动填充（padding）或`mask`加载的方式，将数据尾轴维度显式对齐到合适的宽度，从而为编译器提供对齐友好的数据布局。这样能够简化后端的优化决策，显著提升执行效率。
 
 **算子示例**：
 
-以下展示了尾轴为`4`的两种`kernel`实现：版本`1`直接使用`4`作为尾轴维度，未做对齐处理，性能较差；版本`2`通过`mask`加载将尾轴维度对齐至`8`，是推荐的优化写法。
+以下展示了尾轴为4的两种kernel实现：版本1直接使用4作为尾轴维度，未做对齐处理，性能较差；版本2通过`mask`加载将尾轴维度对齐至8，是推荐的优化写法。
 
 - 版本1：尾轴未对齐（存在优化瓶颈）
 
@@ -1001,11 +1001,11 @@ def test_where_lt_case1(param_list):
                 out_flat, mask=p_mask[:, None])
     ```
 
-    版本`2`通过手动将尾轴维度对齐到`8`，编译器可以直接利用连续、对齐的访存模式生成高效指令，避免了因尾轴不对齐可能引入的额外处理开销，从而提升整体性能。
+    版本2通过手动将尾轴维度对齐到8，编译器可以直接利用连续、对齐的访存模式生成高效指令，避免了因尾轴不对齐可能引入的额外处理开销，从而提升整体性能。
 
 **限制**：
 
-- 手动对齐要求`ALIGN`为编译期常量，且应等于硬件建议的对齐宽度。
+- 手动对齐要求ALIGN为编译期常量，且应等于硬件建议的对齐宽度。
 - 填充值（如`-inf`）需与后续计算兼容，确保不影响最终结果（例如`exp(-inf) = 0`）。
 
 ### CV类
@@ -1014,7 +1014,7 @@ def test_where_lt_case1(param_list):
 
 **问题描述**：
 
-由于编译器目前只能对单个`matmul`进行切分需求分析，并不考虑其他`matmul`的生命周期，因此当`matmul`被多次触发时（例如执行逻辑为`cube -> vector -> cube`时），若上一个`matmul`的生命周期和当前的`matmul`生命周期有所重叠，算子运行时可能会导致`L1`越界。后续编译器会对切分的生命周期分析进行增强，目前则需通过加上`hivm.tile_mix_cube_num`编译提示，令编译器可以感知是否需要对相关的`matmul`操作进行`sub tiling`。
+由于编译器目前只能对单个`matmul`进行切分需求分析，并不考虑其他`matmul`的生命周期，因此当`matmul`被多次触发时（例如执行逻辑为`cube -> vector -> cube`时），若上一个`matmul`的生命周期和当前的`matmul`生命周期有所重叠，算子运行时可能会导致L1越界。后续编译器会对切分的生命周期分析进行增强，目前则需通过加上`hivm.tile_mix_cube_num`编译提示，令编译器可以感知是否需要对相关的`matmul`操作进行sub tiling。
 
 **算子示例**：
 
@@ -1025,7 +1025,7 @@ res = tl.dot(lhs, rhs)
 tl.compile_hint(res, "hivm.tile_mix_cube_num", 2)
 ```
 
-以`Flash Attention`的`_attn_fwd_inner`算子为例，原代码的`QKV`矩阵乘法逻辑大致为：
+以Flash Attention的`_attn_fwd_inner`算子为例，原代码的`QKV`矩阵乘法逻辑大致为：
 
 ```python
 qk = tl.dot(q, trans_k)
@@ -1035,7 +1035,7 @@ p = tl.math.exp(qk)
 pv = tl.dot(p, v)
 ```
 
-参考以上代码，`qk`是`cube`操作，而`softmax`等计算属于`vector`操作，最后`vector`计算出的结果又再导入到第二次的`cube`操作中执行矩阵乘法。在以上场景下，编译器无法监控第二次`cube`操作中的切分逻辑，代码或许会在`L1`缓存中越界。因此，需要为第二次的`dot`操作结果加上`tile_mix_cube_num`的编译提示，令编译器对该操作进行`sub tiling`，见以下代码段：
+参考以上代码，`qk`是`cube`操作，而`softmax`等计算属于`vector`操作，最后`vector`计算出的结果又再导入到第二次的`cube`操作中执行矩阵乘法。在以上场景下，编译器无法监控第二次`cube`操作中的切分逻辑，代码或许会在L1缓存中越界。因此，需要为第二次的`dot`操作结果加上`tile_mix_cube_num`的编译提示，令编译器对该操作进行sub tiling，见以下代码段：
 
 ```python
 qk = tl.dot(q, trans_k)
@@ -1051,18 +1051,18 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 | 编译选项 | 含义 | 取值范围 |
 | --- | --- | --- |
 | `multibuffer` | 设置是否启用乒乓流水 | `False`(默认),`True` |
-| `limit_auto_multi_buffer_of_local_buffer` | 设置乒乓流水在片中 (`L1`, `L0`, 及`UB`) 的作用范围`"no-limit"`表示不限乒乓流水范围`"no-l0c"`表示只允许`L0`缓存外启用乒乓流水 | `"no-limit"`,`"no-l0c"`(默认) |
+| `limit_auto_multi_buffer_of_local_buffer` | 设置乒乓流水在片中 (L1, L0, 及UB) 的作用范围"no-limit"表示不限乒乓流水范围"no-l0c"表示只允许L0缓存外启用乒乓流水 | "no-limit","no-l0c"(默认) |
 | `unit_flag` | 设置`cube`搬出时是否按照`block`搬出，仅限数据对齐场景下使用 | `False`(默认),`True` |
-| `limit_auto_multi_buffer_only_for_local_buffer` | 设置是否在`GM workspace`中启用`CV`流水并行，`False`表示启用后续会整改接口，提供更可读的选项 | `False`(默认),`True` |
-| `set_workspace_multibuffer` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置`CV`并行的并行度使用时需确保数据没有依赖若设置为`N`，则`N`个`CV`操作并行执行 | `2`(默认),`4` |
-| `tile_mix_vector_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置当前`vector`的切分数量，数值可由`autotuning`得出，均可为最优 | `1`(默认),`2`,`4` |
-| `tile_mix_cube_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置当前`cube`的切分数量，数值可由`autotuning`得出，均可为最优 | `1`(默认),`2`,`4` |
+| `limit_auto_multi_buffer_only_for_local_buffer` | 设置是否在GM workspace中启用CV流水并行，`False`表示启用后续会整改接口，提供更可读的选项 | `False`(默认),`True` |
+| `set_workspace_multibuffer` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置CV并行的并行度使用时需确保数据没有依赖若设置为`N`，则`N`个CV操作并行执行 | 2(默认),4 |
+| `tile_mix_vector_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置当前`vector`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
+| `tile_mix_cube_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置当前`cube`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
 
 #### 算子选项规避超时报错
 
 **问题描述**：
 
-导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用`Kernel`时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
+导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
 
 ```python
 # 核同步选项
@@ -1075,7 +1075,7 @@ multibuffer = False # 关闭乒乓流水
 
 **算子示例**：
 
-以`GDN`网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码调用为：
+以GDN网络的`chunk_gated_delta_rule_fwd_kernel_h_blockdim64`算子为例，原代码调用为：
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -1098,7 +1098,7 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 )
 ```
 
-关闭`CV`流水后的调用则为：
+关闭CV流水后的调用则为：
 
 ```python
 chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
@@ -1124,5 +1124,5 @@ chunk_gated_delta_rule_fwd_kernel_h_blockdim64[grid](
 
 ## Triton NPU编程案例
 
-`Triton NPU`编程请参考：
+Triton NPU编程请参考：
 [https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md](https://github.com/Ascend/triton-ascend-ops/blob/main/tutorial/README.zh.md)

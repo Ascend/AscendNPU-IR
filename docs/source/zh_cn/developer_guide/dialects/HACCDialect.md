@@ -323,17 +323,17 @@ HACC设备硬件规格枚举
 
 | 枚举符号 | 数值 | 字符串标识 |
 | :----: | :---: | ------ |
-| AI_CORE_COUNT | `0` | AI_CORE_COUNT |
-| CUBE_CORE_COUNT | `1` | CUBE_CORE_COUNT |
-| VECTOR_CORE_COUNT | `2` | VECTOR_CORE_COUNT |
-| UB_SIZE | `3` | UB_SIZE |
-| L1_SIZE | `4` | L1_SIZE |
-| L0A_SIZE | `5` | L0A_SIZE |
-| L0B_SIZE | `6` | L0B_SIZE |
-| L0C_SIZE | `7` | L0C_SIZE |
-| UB_ALIGN_SIZE | `8` | UB_ALIGN_SIZE |
-| L1_ALIGN_SIZE | `9` | L1_ALIGN_SIZE |
-| L0C_ALIGN_SIZE | `10` | L0C_ALIGN_SIZE |
+| AI_CORE_COUNT | 0 | AI_CORE_COUNT |
+| CUBE_CORE_COUNT | 1 | CUBE_CORE_COUNT |
+| VECTOR_CORE_COUNT | 2 | VECTOR_CORE_COUNT |
+| UB_SIZE | 3 | UB_SIZE |
+| L1_SIZE | 4 | L1_SIZE |
+| L0A_SIZE | 5 | L0A_SIZE |
+| L0B_SIZE | 6 | L0B_SIZE |
+| L0C_SIZE | 7 | L0C_SIZE |
+| UB_ALIGN_SIZE | 8 | UB_ALIGN_SIZE |
+| L1_ALIGN_SIZE | 9 | L1_ALIGN_SIZE |
+| L0C_ALIGN_SIZE | 10 | L0C_ALIGN_SIZE |
 
 ### HACCFuncType
 
@@ -341,8 +341,8 @@ HACC函数大类枚举
 
 | 枚举符号 | 数值 | 字符串标识 |
 | :----: | :---: | ------ |
-| HOST | `1` | HOST |
-| DEVICE | `2` | DEVICE |
+| HOST | 1 | HOST |
+| DEVICE | 2 | DEVICE |
 
 ### HostFuncType
 
@@ -350,14 +350,14 @@ HACC主机函数细分类型枚举
 
 | 枚举符号 | 数值 | 字符串标识 |
 | :----: | :---: | ------ |
-| kEntry | `1` | host_entry |
-| kTilingFunction | `2` | tiling_function |
-| kInferOutputShapeFunction | `3` | infer_output_shape_function |
-| kInferWorkspaceShapeFunction | `4` | infer_workspace_shape_function |
-| kInferSyncBlockLockNumFunction | `5` | infer_sync_block_lock_num_function |
-| kInferSyncBlockLockInitFunction | `6` | infer_sync_block_lock_init_function |
-| kGetTilingStructSizeFunction | `7` | get_tiling_struct_size_function |
-| kInferTaskTypeFunction | `8` | infer_task_type_function |
+| kEntry | 1 | host_entry |
+| kTilingFunction | 2 | tiling_function |
+| kInferOutputShapeFunction | 3 | infer_output_shape_function |
+| kInferWorkspaceShapeFunction | 4 | infer_workspace_shape_function |
+| kInferSyncBlockLockNumFunction | 5 | infer_sync_block_lock_num_function |
+| kInferSyncBlockLockInitFunction | 6 | infer_sync_block_lock_init_function |
+| kGetTilingStructSizeFunction | 7 | get_tiling_struct_size_function |
+| kInferTaskTypeFunction | 8 | infer_task_type_function |
 
 ### KernelArgType
 
@@ -365,17 +365,17 @@ HACC主机函数细分类型枚举
 
 | 枚举符号 | 数值 | 字符串标识 |
 | :----: | :---: | ------ |
-| kFFTSBaseAddr | `0` | ffts_base_address |
-| kInput | `1` | input |
-| kOutput | `2` | output |
-| kInputAndOutput | `3` | input_and_output |
-| kWorkspace | `4` | workspace |
-| kSyncBlockLock | `5` | sync_block_lock |
-| kTilingKey | `6` | tiling_key |
-| kTilingData | `7` | tiling_data |
-| kTilingStruct | `8` | tiling_struct |
-| kMeshArg | `9` | mesh_arg |
-| kSanitizerAddr | `10` | sanitizer_addr |
+| kFFTSBaseAddr | 0 | ffts_base_address |
+| kInput | 1 | input |
+| kOutput | 2 | output |
+| kInputAndOutput | 3 | input_and_output |
+| kWorkspace | 4 | workspace |
+| kSyncBlockLock | 5 | sync_block_lock |
+| kTilingKey | 6 | tiling_key |
+| kTilingData | 7 | tiling_data |
+| kTilingStruct | 8 | tiling_struct |
+| kMeshArg | 9 | mesh_arg |
+| kSanitizerAddr | 10 | sanitizer_addr |
 
 ### HACCToLLVMIRTranslateAttr
 
@@ -383,6 +383,6 @@ HACC主机函数细分类型枚举
 
 | 枚举符号 | 数值 | 字符串标识 |
 | :----: | :---: | ------ |
-| ENTRY | `0` | hacc.entry |
-| MIX_ENTRY | `1` | hacc.mix_entry |
-| ALWAYS_INLINE | `2` | hacc.always_inline |
+| ENTRY | 0 | hacc.entry |
+| MIX_ENTRY | 1 | hacc.mix_entry |
+| ALWAYS_INLINE | 2 | hacc.always_inline |

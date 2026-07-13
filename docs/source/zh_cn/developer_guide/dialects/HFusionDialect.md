@@ -1092,17 +1092,17 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| NONE | `0` | none |
-| ADD | `1` | add |
-| MAX | `2` | max |
-| MIN | `3` | min |
-| AND | `4` | and |
-| OR | `5` | or |
-| XOR | `6` | xor |
-| CAS | `7` | cas |
-| XCHG | `8` | xchg |
-| UMAX | `9` | umax |
-| UMIN | `10` | umin |
+| NONE | 0 | none |
+| ADD | 1 | add |
+| MAX | 2 | max |
+| MIN | 3 | min |
+| AND | 4 | and |
+| OR | 5 | or |
+| XOR | 6 | xor |
+| CAS | 7 | cas |
+| XCHG | 8 | xchg |
+| UMAX | 9 | umax |
+| UMIN | 10 | umin |
 
 ### BinaryFn
 
@@ -1110,24 +1110,24 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| vor | `0` | vor |
-| vand | `1` | vand |
-| vxor | `2` | vxor |
-| minf | `3` | minf |
-| maxf | `4` | maxf |
-| powf | `5` | powf |
-| mod | `6` | mod |
-| modui | `7` | modui |
-| shli | `8` | shli |
-| shrsi | `9` | shrsi |
-| shrui | `10` | shrui |
-| ldexp | `11` | ldexp |
-| ceildivsi | `12` | ceildivsi |
-| ceildivui | `13` | ceildivui |
-| floordivsi | `14` | floordivsi |
-| powi | `15` | powi |
-| minnumf | `16` | minnumf |
-| maxnumf | `17` | maxnumf |
+| vor | 0 | vor |
+| vand | 1 | vand |
+| vxor | 2 | vxor |
+| minf | 3 | minf |
+| maxf | 4 | maxf |
+| powf | 5 | powf |
+| mod | 6 | mod |
+| modui | 7 | modui |
+| shli | 8 | shli |
+| shrsi | 9 | shrsi |
+| shrui | 10 | shrui |
+| ldexp | 11 | ldexp |
+| ceildivsi | 12 | ceildivsi |
+| ceildivui | 13 | ceildivui |
+| floordivsi | 14 | floordivsi |
+| powi | 15 | powi |
+| minnumf | 16 | minnumf |
+| maxnumf | 17 | maxnumf |
 
 ### CastMode
 
@@ -1135,15 +1135,15 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| F32TOI8 | `0` | F32TOI8 |
-| F32TOI16 | `1` | F32TOI16 |
-| F16TOI8 | `2` | F16TOI8 |
-| I64TOI32 | `3` | I64TOI32 |
-| I64TOI16 | `4` | I64TOI16 |
-| I64TOI8 | `5` | I64TOI8 |
-| I32TOI16 | `6` | I32TOI16 |
-| I32TOI8 | `7` | I32TOI8 |
-| I16TOI8 | `8` | I16TOI8 |
+| F32TOI8 | 0 | F32TOI8 |
+| F32TOI16 | 1 | F32TOI16 |
+| F16TOI8 | 2 | F16TOI8 |
+| I64TOI32 | 3 | I64TOI32 |
+| I64TOI16 | 4 | I64TOI16 |
+| I64TOI8 | 5 | I64TOI8 |
+| I32TOI16 | 6 | I32TOI16 |
+| I32TOI8 | 7 | I32TOI8 |
+| I16TOI8 | 8 | I16TOI8 |
 
 ### CompareFn
 
@@ -1151,16 +1151,16 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| veq | `0` | veq |
-| vne | `1` | vne |
-| vle | `2` | vle |
-| vlt | `3` | vlt |
-| vge | `4` | vge |
-| vgt | `5` | vgt |
-| vule | `6` | vule |
-| vult | `7` | vult |
-| vuge | `8` | vuge |
-| vugt | `9` | vugt |
+| veq | 0 | veq |
+| vne | 1 | vne |
+| vle | 2 | vle |
+| vlt | 3 | vlt |
+| vge | 4 | vge |
+| vgt | 5 | vgt |
+| vule | 6 | vule |
+| vult | 7 | vult |
+| vuge | 8 | vuge |
+| vugt | 9 | vugt |
 
 ### FlattenMode
 
@@ -1168,8 +1168,8 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| Greedy | `1` | Greedy |
-| Tidy | `2` | Tidy |
+| Greedy | 1 | Greedy |
+| Tidy | 2 | Tidy |
 
 ### FusionKind
 
@@ -1177,16 +1177,16 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| PureElemwise | `1` | PURE_ELEMWISE |
-| AnyPB | `2` | ANY_PB |
-| LastAxisPBR | `3` | LAST_AXIS_PBR |
-| AnyPBR | `4` | ANY_PBR |
-| SingleCube | `5` | SINGLE_CUBE |
-| ShallowCV | `6` | SHALLOW_CV |
-| ShallowVV | `7` | SHALLOW_VV |
-| MixCV | `8` | MIX_CV |
-| MixC2 | `9` | MIX_C2 |
-| Unknown | `10` | UNKNOWN |
+| PureElemwise | 1 | PURE_ELEMWISE |
+| AnyPB | 2 | ANY_PB |
+| LastAxisPBR | 3 | LAST_AXIS_PBR |
+| AnyPBR | 4 | ANY_PBR |
+| SingleCube | 5 | SINGLE_CUBE |
+| ShallowCV | 6 | SHALLOW_CV |
+| ShallowVV | 7 | SHALLOW_VV |
+| MixCV | 8 | MIX_CV |
+| MixC2 | 9 | MIX_C2 |
+| Unknown | 10 | UNKNOWN |
 
 ### OutputMode
 
@@ -1194,9 +1194,9 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| Multiple | `1` | Multiple |
-| Single | `2` | Single |
-| SingleAggressive | `3` | SingleAggressive |
+| Multiple | 1 | Multiple |
+| Single | 2 | Single |
+| SingleAggressive | 3 | SingleAggressive |
 
 ### CumOpType
 
@@ -1204,9 +1204,9 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| UNDEFINED | `0` | undefined |
-| CUMSUM | `1` | cumsum |
-| CUMPROD | `2` | cumprod |
+| UNDEFINED | 0 | undefined |
+| CUMSUM | 1 | cumsum |
+| CUMPROD | 2 | cumprod |
 
 ### MmMapMode
 
@@ -1214,8 +1214,8 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| CoreOp | `0` | core_op |
-| MacroInstr | `1` | macro_instr |
+| CoreOp | 0 | core_op |
+| MacroInstr | 1 | macro_instr |
 
 ### ReduceWithIndexKind
 
@@ -1223,10 +1223,10 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| MIN | `0` | min |
-| MAX | `1` | max |
-| MINUI | `2` | minui |
-| MAXUI | `3` | maxui |
+| MIN | 0 | min |
+| MAX | 1 | max |
+| MINUI | 2 | minui |
+| MAXUI | 3 | maxui |
 
 ### RoundMode
 
@@ -1234,13 +1234,13 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| RINT | `0` | rint |
-| ROUND | `1` | round |
-| FLOOR | `2` | floor |
-| CEIL | `3` | ceil |
-| TRUNC | `4` | trunc |
-| ODD | `5` | odd |
-| TRUNCWITHOVERFLOW | `6` | truncwithoverflow |
+| RINT | 0 | rint |
+| ROUND | 1 | round |
+| FLOOR | 2 | floor |
+| CEIL | 3 | ceil |
+| TRUNC | 4 | trunc |
+| ODD | 5 | odd |
+| TRUNCWITHOVERFLOW | 6 | truncwithoverflow |
 
 ### TaylorMode
 
@@ -1248,8 +1248,8 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| SIN | `0` | sin |
-| ATAN | `1` | atan |
+| SIN | 0 | sin |
+| ATAN | 1 | atan |
 
 ### TernaryFn
 
@@ -1257,7 +1257,7 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| select | `0` | select |
+| select | 0 | select |
 
 ### TypeFn
 
@@ -1265,9 +1265,9 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| cast_signed | `0` | cast_signed |
-| cast_unsigned | `1` | cast_unsigned |
-| bitcast | `2` | bitcast |
+| cast_signed | 0 | cast_signed |
+| cast_unsigned | 1 | cast_unsigned |
+| bitcast | 2 | bitcast |
 
 ### UnaryFn
 
@@ -1275,21 +1275,21 @@ operation ::= `hfusion.symbolic_dim` $symbolName attr-dict `:` type($result)
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :----: | :---: | ------ |
-| relu | `0` | relu |
-| sqrt | `1` | sqrt |
-| rsqrt | `2` | rsqrt |
-| rec | `3` | rec |
-| vnot | `4` | vnot |
-| tanh | `5` | tanh |
-| sin | `6` | sin |
-| cos | `7` | cos |
-| atan | `8` | atan |
-| tan | `9` | tan |
-| absi | `10` | absi |
-| erf | `11` | erf |
-| log2 | `12` | log2 |
-| log10 | `13` | log10 |
-| log1p | `14` | log1p |
-| exp2 | `15` | exp2 |
-| expm1 | `16` | expm1 |
-| ilogb | `17` | ilogb |
+| relu | 0 | relu |
+| sqrt | 1 | sqrt |
+| rsqrt | 2 | rsqrt |
+| rec | 3 | rec |
+| vnot | 4 | vnot |
+| tanh | 5 | tanh |
+| sin | 6 | sin |
+| cos | 7 | cos |
+| atan | 8 | atan |
+| tan | 9 | tan |
+| absi | 10 | absi |
+| erf | 11 | erf |
+| log2 | 12 | log2 |
+| log10 | 13 | log10 |
+| log1p | 14 | log1p |
+| exp2 | 15 | exp2 |
+| expm1 | 16 | expm1 |
+| ilogb | 17 | ilogb |

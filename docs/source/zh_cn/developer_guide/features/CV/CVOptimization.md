@@ -37,7 +37,7 @@ Ascend NPU采用异构计算架构，主要包含：
 | **UB** | 统一缓冲，Vector运算主存 | 256 KB |
 | **GM** | 全局内存 | 外部DDR |
 
-**fixpipe**是`Cube`与`Vector`之间的数据搬运通道，昇腾芯片的Cube和Vector底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说，`Cube`计算完成后，通过`fixpipe`将结果从`L0C`搬运到`GM`，供后续`Vector`运算使用。在IR中体现为`hivm.hir.fixpipe`算子；硬件上对应专门的`L0C→UB`数据通路，可同时完成类型转换、量化等（由`fixpipe`的`pre_quant`、`pre_relu`等属性控制）。910系列的芯片架构如下：
+**fixpipe**是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vector底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说，Cube计算完成后，通过fixpipe将结果从L0C搬运到GM，供后续Vector运算使用。在IR中体现为`hivm.hir.fixpipe`算子；硬件上对应专门的L0C→UB数据通路，可同时完成类型转换、量化等（由fixpipe的`pre_quant`、`pre_relu`等属性控制）。910系列的芯片架构如下：
 ![V220架构](../../../../images/developer_guide/cvarch.png)
 
 ## 算法原理
@@ -86,7 +86,7 @@ after
 mmadL1 -> fixpipe
 ```
 
-`InlineFixpipe`负责插入`fixpipe`，站在新增的`fixpipe`的基础上，尝试inline op，如`hivm.vcast`/`hivm.vrelu`/`hivm.store`。
+InlineFixpipe负责插入fixpipe，站在新增的fixpipe的基础上，尝试inline op，如`hivm.vcast`/`hivm.vrelu`/`hivm.store`。
 
 ### createTileBatchMMIntoLoopPass
 
@@ -112,7 +112,7 @@ for batch_idx in range(batch):
 ### createInsertLoadStoreForMixCVPass
 
 - **作用**：在Cube-Vector交汇处插入`load`/`store`，使数据在tensor与全局workspace间正确流转
-- **目的**：保证`CV`之间数据的正确传递
+- **目的**：保证CV之间数据的正确传递
 - **典型变换**：batchMmadL1 + fixpipe被改写为循环内的mmadL1 + fixpipe，对输入/输出做extract_slice / insert_slice
 - **典型场景**：Cube-Vector混合（CV模式）
 
@@ -137,7 +137,7 @@ vadd
 
 - **作用**：在Cube-Vector交汇点（CC/CV/VC/VV）用`memref_ext.alloc_workspace`替换`tensor.empty`
 - **目的**：将fixpipe输出、store输出等中间buffer改为从全局workspace分配，实现跨迭代、跨核共享
-- **匹配模式**：`CC`（`mmadL1`→`fixpipe`→`load`→`mmadL1`）、`CV`（`mmadL1`→`fixpipe`→`load`→`vector`）、`VC`（`vector`→`store`→`load`→`mmadL1`）、`VV`（`vector`→`store`→`load`→`vector`）
+- **匹配模式**：CC（`mmadL1`→`fixpipe`→`load`→`mmadL1`）、CV（`mmadL1`→`fixpipe`→`load`→`vector`）、VC（`vector`→`store`→`load`→`mmadL1`）、VV（`vector`→`store`→`load`→`vector`）
 - **典型场景**：Cube-Vector混合（CV模式）
 
 before：
@@ -220,8 +220,8 @@ func.func @bind_workspace_arg(
 
 ### createSplitMixKernelPass
 
-- **作用**：将`Mix`内核拆分为`AIC`（`Cube`主）和`AIV`（`Vector`主）两个子函数，并生成mix entry
-- **目的**：后端可按`AIC`/`AIV`分别调度到`Cube`/`Vector`核心，便于流水与同步
+- **作用**：将Mix内核拆分为AIC（Cube主）和AIV（Vector主）两个子函数，并生成mix entry
+- **目的**：后端可按AIC/AIV分别调度到Cube/Vector核心，便于流水与同步
 - **典型变换**：根据core type遍历IR，将Cube相关代码放入AIC，Vector放入AIV；用`annotation.mark`标记跨核传递的tensor
 
 before：

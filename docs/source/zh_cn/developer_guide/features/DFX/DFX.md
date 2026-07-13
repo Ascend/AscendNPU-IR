@@ -22,9 +22,9 @@ flowchart LR
 
 关键硬件资源约束：
 
-- UB打印缓冲区：每个`aicore`固定分配16 KB空间用于数据暂存，且同一个`aicore`内的所有打印操作共享这16 KB缓冲区，写满后新数据提示warning，大小超过缓冲区最大值后丢弃。
+- UB打印缓冲区：每个aicore固定分配16 KB空间用于数据暂存，且同一个aicore内的所有打印操作共享这16 KB缓冲区，写满后新数据提示warning，大小超过缓冲区最大值后丢弃。
 
-- 多核并发：每个`aicore`独立执行内核代码，最终host侧呈现每个核的打印结果。
+- 多核并发：每个aicore独立执行内核代码，最终host侧呈现每个核的打印结果。
 
 ### 算法原理
 
@@ -80,7 +80,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #
 
 ##### InlineFixpipe
 
-插入`fixpipe`以用于`hivm.print`，该`hivm.print`会打印`mmad`结果，而`mmad`结果是`scf.for`中的`yield`。
+插入fixpipe以用于`hivm.print`，该`hivm.print`会打印`mmad`结果，而`mmad`结果是`scf.for`中的`yield`。
 
 ```mlir
 // Before InlineFixpipe
@@ -103,7 +103,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #
 
 ##### InsertNZ2NDForDebug
 
-`device_print`仅支持UB/GM上的数据打印，因此当打印L1的数据时，需要将数据先从L1搬至GM。该`Pass`的作用就是：当识别到`hivm::MmadL1Op`时，检查该op的输入；若输入被`hivm::DebugOp`用到，则需要申请一块`workspace`的大小，然后插入`NZ2ND`的op，确保搬至GM打印。
+`device_print`仅支持UB/GM上的数据打印，因此当打印L1的数据时，需要将数据先从L1搬至GM。该Pass的作用就是：当识别到`hivm::MmadL1Op`时，检查该op的输入；若输入被`hivm::DebugOp`用到，则需要申请一块`workspace`的大小，然后插入`NZ2ND`的op，确保搬至GM打印。
 
 ```mlir
 // Before InsertNZ2NDForDebug
@@ -145,7 +145,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretyp
 
 ##### SplitMixKernel
 
-`mix`类用例`Debug` op会在该`Pass`内先进行`InferCoreType`推断出精确的`coretype`（VECTOR/CUBE），默认是CUBE_OR_VECTOR，然后对`mix`函数进行拆分后生成纯`cube`函数和纯`vector`函数，这将决定`Debug` op最终在`cube`核上运行还是`vector`核上运行。
+`mix`类用例`Debug` op会在该Pass内先进行`InferCoreType`推断出精确的`coretype`（VECTOR/CUBE），默认是CUBE_OR_VECTOR，然后对`mix`函数进行拆分后生成纯`cube`函数和纯`vector`函数，这将决定`Debug` op最终在`cube`核上运行还是`vector`核上运行。
 
 ##### InsertInitAndFinishForDebug
 
@@ -189,11 +189,11 @@ hivm.hir.finish_debug
 
 ##### Debug op库实现
 
-`op`库当前实现是通过`scalar`打印来实现的，通过`for`循环外抛的方式调用毕昇编译器提供的`cce::printf`接口进行`scalar`打印
+`op`库当前实现是通过scalar打印来实现的，通过`for`循环外抛的方式调用毕昇编译器提供的`cce::printf`接口进行scalar打印
 
 #### 毕昇编译器
 
-`triton-ascend`产生的host侧launcher调用`bisheng`编译器编好的`kernel`并将打印缓冲区传给`kernel`，待`kernel`返回后在host launcher侧读取缓冲区并进行真正的打印。此部分代码在`bisheng`编译器自带的头文件中实现，并由`triton-ascend`自动从`bisheng`编译器的路径中抽取。
+triton-ascend产生的host侧launcher调用bisheng编译器编好的kernel并将打印缓冲区传给kernel，待kernel返回后在host launcher侧读取缓冲区并进行真正的打印。此部分代码在bisheng编译器自带的头文件中实现，并由triton-ascend自动从bisheng编译器的路径中抽取。
 
 ### 接口说明
 
@@ -215,4 +215,4 @@ hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #
 |--------|--------|
 | A3 & A5 | - 打印对象仅支持张量、标量。<br> - `device_print`打印缓冲区固定为16KB。<br> - Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br> - 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br> - 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br> - 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br> - 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
 | A3 | 支持打印数据类型：`bool`、`int8`、`uint8`、`int16`、`uint16`、`int32`、`uint32`、`int64`、`bfloat16`、`half`、`float32`。 |
-| A5 | - 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br> - 融合调度约束：插入`device_print`破坏`VF`融合边界情况下可能引发`UB`溢出，需减小`tiling`分块。<br> - 缓存资源约束：打印`fp8`张量、`L1`张量边界情况下可能会引发`UB`溢出，需减小`tiling`分块规避缓存溢出。 |
+| A5 | - 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br> - 融合调度约束：插入`device_print`破坏VF融合边界情况下可能引发UB溢出，需减小tiling分块。<br> - 缓存资源约束：打印`fp8`张量、L1张量边界情况下可能会引发UB溢出，需减小tiling分块规避缓存溢出。 |

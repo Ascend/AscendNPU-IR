@@ -1423,7 +1423,7 @@ operation ::= `hivm.hir.vcast` attr-dict (`ins` `(` $src^ `:` type($src) `)`)?
 hivm.hir.vcast ins(%src : memref<32xf32>) outs(%dst : memref<32xi32>) {round_mode = #hivm.round_mode<rint>}
 ```
 
-**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>,` `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
+**特性：** `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`, `BroadcastableOTF`, `CollapsibleConsecutiveTargetDimsTrait`, `ElementwiseNaryOpTrait<1>`, `HIVMOpSameOperandsAndResultRank`, `OpPipeTrait<PIPE::PIPE_V>`, `SinglePipeOpTrait`, `TransposableOTF`, `UniformReassociationFlattenTrait`, `VectorCoreTypeTrait`, `VectorOnlyTrait<0>`
 
 **操作数：**
 
@@ -3123,13 +3123,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| Zero | `0` | zero |
-| GM | `1` | gm |
-| L1 | `2` | cbuf |
-| L0A | `3` | ca |
-| L0B | `4` | cb |
-| L0C | `5` | cc |
-| UB | `6` | ub |
+| Zero | 0 | zero |
+| GM | 1 | gm |
+| L1 | 2 | cbuf |
+| L0A | 3 | ca |
+| L0B | 4 | cb |
+| L0C | 5 | cc |
+| UB | 6 | ub |
 
 ### AlignKind
 
@@ -3137,9 +3137,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| ALIGN | `0` | align |
-| UNALIGNED | `1` | unaligned |
-| UNKNOWN | `2` | unknown |
+| ALIGN | 0 | align |
+| UNALIGNED | 1 | unaligned |
+| UNKNOWN | 2 | unknown |
 
 ### AtomicKind
 
@@ -3147,17 +3147,17 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| NONE | `0` | none |
-| ADD | `1` | add |
-| MAX | `2` | max |
-| MIN | `3` | min |
-| AND | `4` | and |
-| OR | `5` | or |
-| XOR | `6` | xor |
-| CAS | `7` | or |
-| XCHG | `8` | xor |
-| UMAX | `9` | umax |
-| UMIN | `10` | umin |
+| NONE | 0 | none |
+| ADD | 1 | add |
+| MAX | 2 | max |
+| MIN | 3 | min |
+| AND | 4 | and |
+| OR | 5 | or |
+| XOR | 6 | xor |
+| CAS | 7 | or |
+| XCHG | 8 | xor |
+| UMAX | 9 | umax |
+| UMIN | 10 | umin |
 
 ### AxisKind
 
@@ -3165,9 +3165,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| FIRST | `0` | first |
-| MIDDLE | `1` | middle |
-| LAST | `2` | last |
+| FIRST | 0 | first |
+| MIDDLE | 1 | middle |
+| LAST | 2 | last |
 
 ### CompareMode
 
@@ -3175,12 +3175,12 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| EQ | `0` | eq |
-| NE | `1` | ne |
-| LT | `2` | lt |
-| GT | `3` | gt |
-| GE | `4` | ge |
-| LE | `5` | le |
+| EQ | 0 | eq |
+| NE | 1 | ne |
+| LT | 2 | lt |
+| GT | 3 | gt |
+| GE | 4 | ge |
+| LE | 5 | le |
 
 ### DCCIMode
 
@@ -3188,8 +3188,8 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| SINGLE_CACHE_LINE | `0` | single_cache_line |
-| ALL_CACHE_LINES | `1` | all_cache_lines |
+| SINGLE_CACHE_LINE | 0 | single_cache_line |
+| ALL_CACHE_LINES | 1 | all_cache_lines |
 
 ### DataCacheKind
 
@@ -3197,10 +3197,10 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| ALL | `0` | all |
-| UB | `1` | ub |
-| OUT | `2` | out |
-| ATOMIC | `3` | atomic |
+| ALL | 0 | all |
+| UB | 1 | ub |
+| OUT | 2 | out |
+| ATOMIC | 3 | atomic |
 
 ### DataLayout
 
@@ -3208,12 +3208,12 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| DOTA_ND | `1` | dotA_ND |
-| DOTB_ND | `2` | dotB_ND |
-| DOTC_ND | `3` | dotC_ND |
-| nZ | `4` | nZ |
-| zN | `5` | zN |
-| ND | `6` | ND |
+| DOTA_ND | 1 | dotA_ND |
+| DOTB_ND | 2 | dotB_ND |
+| DOTC_ND | 3 | dotC_ND |
+| nZ | 4 | nZ |
+| zN | 5 | zN |
+| ND | 6 | ND |
 
 ### DeinterleaveMode
 
@@ -3221,9 +3221,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| CHANNEL_0 | `0` | CHANNEL_0 |
-| CHANNEL_1 | `1` | CHANNEL_1 |
-| ALL_CHANNELS | `999` | ALL_CHANNELS |
+| CHANNEL_0 | 0 | CHANNEL_0 |
+| CHANNEL_1 | 1 | CHANNEL_1 |
+| ALL_CHANNELS | 999 | ALL_CHANNELS |
 
 ### DescaleMode
 
@@ -3231,9 +3231,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| DescaleNull | `0` | DescaleNull |
-| DescalePerChannel | `1` | DescalePerChannel |
-| DescalePerTensor | `2` | DescalePerTensor |
+| DescaleNull | 0 | DescaleNull |
+| DescalePerChannel | 1 | DescalePerChannel |
+| DescalePerTensor | 2 | DescalePerTensor |
 
 ### EVENT
 
@@ -3241,14 +3241,14 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| EVENT_ID0 | `0` | EVENT_ID0 |
-| EVENT_ID1 | `1` | EVENT_ID1 |
-| EVENT_ID2 | `2` | EVENT_ID2 |
-| EVENT_ID3 | `3` | EVENT_ID3 |
-| EVENT_ID4 | `4` | EVENT_ID4 |
-| EVENT_ID5 | `5` | EVENT_ID5 |
-| EVENT_ID6 | `6` | EVENT_ID6 |
-| EVENT_ID7 | `7` | EVENT_ID7 |
+| EVENT_ID0 | 0 | EVENT_ID0 |
+| EVENT_ID1 | 1 | EVENT_ID1 |
+| EVENT_ID2 | 2 | EVENT_ID2 |
+| EVENT_ID3 | 3 | EVENT_ID3 |
+| EVENT_ID4 | 4 | EVENT_ID4 |
+| EVENT_ID5 | 5 | EVENT_ID5 |
+| EVENT_ID6 | 6 | EVENT_ID6 |
+| EVENT_ID7 | 7 | EVENT_ID7 |
 
 ### FixpipePreQuantMode
 
@@ -3256,10 +3256,10 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| NO_QUANT | `0` | NO_QUANT |
-| S322I8 | `9` | S322I8 |
-| F322F16 | `1` | F322F16 |
-| F322BF16 | `16` | F322BF16 |
+| NO_QUANT | 0 | NO_QUANT |
+| S322I8 | 9 | S322I8 |
+| F322F16 | 1 | F322F16 |
+| F322BF16 | 16 | F322BF16 |
 
 ### FixpipePreReluMode
 
@@ -3267,10 +3267,10 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| NO_RELU | `0` | NO_RELU |
-| NORMAL_RELU | `1` | NORMAL_RELU |
-| LEAKY_RELU | `2` | LEAKY_RELU |
-| P_RELU | `3` | P_RELU |
+| NO_RELU | 0 | NO_RELU |
+| NORMAL_RELU | 1 | NORMAL_RELU |
+| LEAKY_RELU | 2 | LEAKY_RELU |
+| P_RELU | 3 | P_RELU |
 
 ### IteratorType
 
@@ -3278,18 +3278,18 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| kParallel | `0` | parallel |
-| kBroadcast | `1` | broadcast |
-| kTranspose | `2` | transpose |
-| kReduction | `3` | reduction |
-| kInterleave | `4` | interleave |
-| kDeinterleave | `5` | deinterleave |
-| kInverse | `6` | inverse |
-| kPad | `7` | pad |
-| kConcat | `8` | concat |
-| kGather | `9` | gather |
-| kCumulative | `10` | cumulative |
-| kOpaque | `99` | opaque |
+| kParallel | 0 | parallel |
+| kBroadcast | 1 | broadcast |
+| kTranspose | 2 | transpose |
+| kReduction | 3 | reduction |
+| kInterleave | 4 | interleave |
+| kDeinterleave | 5 | deinterleave |
+| kInverse | 6 | inverse |
+| kPad | 7 | pad |
+| kConcat | 8 | concat |
+| kGather | 9 | gather |
+| kCumulative | 10 | cumulative |
+| kOpaque | 99 | opaque |
 
 ### MatmulBiasMode
 
@@ -3297,11 +3297,11 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| NoBias | `0` | NoBias |
-| PerChannelAdd | `1` | PerChannelAdd |
-| PerChannelAddWithSplitK | `2` | PerChannelAddWithSplitK |
-| ElementwiseCrossLoopAdd | `4` | ElementwiseCrossLoopAdd |
-| ElementwiseAdd | `3` | ElementwiseAdd |
+| NoBias | 0 | NoBias |
+| PerChannelAdd | 1 | PerChannelAdd |
+| PerChannelAddWithSplitK | 2 | PerChannelAddWithSplitK |
+| ElementwiseCrossLoopAdd | 4 | ElementwiseCrossLoopAdd |
+| ElementwiseAdd | 3 | ElementwiseAdd |
 
 ### MemPlanMode
 
@@ -3309,8 +3309,8 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| LOCAL_MEM_PLAN | `0` | LOCAL_MEM_PLAN |
-| GLOBAL_WORKSPACE_PLAN | `1` | GLOBAL_WORKSPACE_PLAN |
+| LOCAL_MEM_PLAN | 0 | LOCAL_MEM_PLAN |
+| GLOBAL_WORKSPACE_PLAN | 1 | GLOBAL_WORKSPACE_PLAN |
 
 ### PadMode
 
@@ -3318,9 +3318,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| PadNull | `0` | PadNull |
-| PadFirstElem | `1` | PadFirstElem |
-| PadValue | `2` | PadValue |
+| PadNull | 0 | PadNull |
+| PadFirstElem | 1 | PadFirstElem |
+| PadValue | 2 | PadValue |
 
 ### PIPE
 
@@ -3328,21 +3328,21 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| PIPE_S | `0` | PIPE_S |
-| PIPE_V | `1` | PIPE_V |
-| PIPE_M | `2` | PIPE_M |
-| PIPE_MTE1 | `3` | PIPE_MTE1 |
-| PIPE_MTE2 | `4` | PIPE_MTE2 |
-| PIPE_MTE3 | `5` | PIPE_MTE3 |
-| PIPE_ALL | `6` | PIPE_ALL |
-| PIPE_MTE4 | `7` | PIPE_MTE4 |
-| PIPE_MTE5 | `8` | PIPE_MTE5 |
-| PIPE_V2 | `9` | PIPE_V2 |
-| PIPE_FIX | `10` | PIPE_FIX |
-| VIRTUAL_PIPE_MTE2_L1A | `11` | VIRTUAL_PIPE_MTE2_L1A |
-| VIRTUAL_PIPE_MTE2_L1B | `12` | VIRTUAL_PIPE_MTE2_L1B |
-| PIPE_NUM | `13` | PIPE_NUM |
-| PIPE_UNASSIGNED | `99` | PIPE_UNASSIGNED |
+| PIPE_S | 0 | PIPE_S |
+| PIPE_V | 1 | PIPE_V |
+| PIPE_M | 2 | PIPE_M |
+| PIPE_MTE1 | 3 | PIPE_MTE1 |
+| PIPE_MTE2 | 4 | PIPE_MTE2 |
+| PIPE_MTE3 | 5 | PIPE_MTE3 |
+| PIPE_ALL | 6 | PIPE_ALL |
+| PIPE_MTE4 | 7 | PIPE_MTE4 |
+| PIPE_MTE5 | 8 | PIPE_MTE5 |
+| PIPE_V2 | 9 | PIPE_V2 |
+| PIPE_FIX | 10 | PIPE_FIX |
+| VIRTUAL_PIPE_MTE2_L1A | 11 | VIRTUAL_PIPE_MTE2_L1A |
+| VIRTUAL_PIPE_MTE2_L1B | 12 | VIRTUAL_PIPE_MTE2_L1B |
+| PIPE_NUM | 13 | PIPE_NUM |
+| PIPE_UNASSIGNED | 99 | PIPE_UNASSIGNED |
 
 ### ReduceOperation
 
@@ -3350,20 +3350,20 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| sum | `1` | sum |
-| prod | `2` | prod |
-| max | `3` | max |
-| min | `4` | min |
-| max_with_index_left | `5` | max_with_index_left |
-| max_with_index_right | `6` | max_with_index_right |
-| min_with_index_left | `7` | min_with_index_left |
-| min_with_index_right | `8` | min_with_index_right |
-| any | `9` | any |
-| all | `10` | all |
-| xori | `11` | xori |
-| ori | `12` | ori |
-| andi | `13` | andi |
-| none | `0` | none |
+| sum | 1 | sum |
+| prod | 2 | prod |
+| max | 3 | max |
+| min | 4 | min |
+| max_with_index_left | 5 | max_with_index_left |
+| max_with_index_right | 6 | max_with_index_right |
+| min_with_index_left | 7 | min_with_index_left |
+| min_with_index_right | 8 | min_with_index_right |
+| any | 9 | any |
+| all | 10 | all |
+| xori | 11 | xori |
+| ori | 12 | ori |
+| andi | 13 | andi |
+| none | 0 | none |
 
 ### RoundMode
 
@@ -3371,13 +3371,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| RINT | `0` | rint |
-| ROUND | `1` | round |
-| FLOOR | `2` | floor |
-| CEIL | `3` | ceil |
-| TRUNC | `4` | trunc |
-| ODD | `5` | odd |
-| TRUNCWITHOVERFLOW | `6` | truncwithoverflow |
+| RINT | 0 | rint |
+| ROUND | 1 | round |
+| FLOOR | 2 | floor |
+| CEIL | 3 | ceil |
+| TRUNC | 4 | trunc |
+| ODD | 5 | odd |
+| TRUNCWITHOVERFLOW | 6 | truncwithoverflow |
 
 ### SyncBlockInstrMode
 
@@ -3385,9 +3385,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| INTER_BLOCK_SYNCHRONIZATION | `0` | INTER_BLOCK_SYNCHRONIZATION |
-| INTER_SUBBLOCK_SYNCHRONIZATION | `1` | INTER_SUBBLOCK_SYNCHRONIZATION |
-| INTRA_BLOCK_SYNCHRONIZATION | `2` | INTRA_BLOCK_SYNCHRONIZATION |
+| INTER_BLOCK_SYNCHRONIZATION | 0 | INTER_BLOCK_SYNCHRONIZATION |
+| INTER_SUBBLOCK_SYNCHRONIZATION | 1 | INTER_SUBBLOCK_SYNCHRONIZATION |
+| INTRA_BLOCK_SYNCHRONIZATION | 2 | INTRA_BLOCK_SYNCHRONIZATION |
 
 ### SyncBlockMode
 
@@ -3395,12 +3395,12 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| ALL_CUBE | `0` | ALL_CUBE |
-| ALL_VECTOR | `1` | ALL_VECTOR |
-| ALL_SUB_VECTOR | `2` | ALL_SUB_VECTOR |
-| BARRIER_CUBE | `3` | BARRIER_CUBE |
-| BARRIER_VECTOR | `4` | BARRIER_VECTOR |
-| ALL | `5` | ALL |
+| ALL_CUBE | 0 | ALL_CUBE |
+| ALL_VECTOR | 1 | ALL_VECTOR |
+| ALL_SUB_VECTOR | 2 | ALL_SUB_VECTOR |
+| BARRIER_CUBE | 3 | BARRIER_CUBE |
+| BARRIER_VECTOR | 4 | BARRIER_VECTOR |
+| ALL | 5 | ALL |
 
 ### TCoreType
 
@@ -3408,10 +3408,10 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| CUBE | `1` | CUBE |
-| VECTOR | `2` | VECTOR |
-| CUBE_OR_VECTOR | `3` | CUBE_OR_VECTOR |
-| CUBE_AND_VECTOR | `4` | CUBE_AND_VECTOR |
+| CUBE | 1 | CUBE |
+| VECTOR | 2 | VECTOR |
+| CUBE_OR_VECTOR | 3 | CUBE_OR_VECTOR |
+| CUBE_AND_VECTOR | 4 | CUBE_AND_VECTOR |
 
 ### TFuncCoreType
 
@@ -3419,10 +3419,10 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| AIC | `1` | AIC |
-| AIV | `2` | AIV |
-| MIX | `3` | MIX |
-| AIC_OR_AIV | `4` | AIC_OR_AIV |
+| AIC | 1 | AIC |
+| AIV | 2 | AIV |
+| MIX | 3 | MIX |
+| AIC_OR_AIV | 4 | AIC_OR_AIV |
 
 ### TModuleCoreType
 
@@ -3430,9 +3430,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| AIC | `1` | AIC |
-| AIV | `2` | AIV |
-| MIX | `3` | MIX |
+| AIC | 1 | AIC |
+| AIV | 2 | AIV |
+| MIX | 3 | MIX |
 
 ### TypeFn
 
@@ -3440,9 +3440,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| cast_signed | `0` | cast_signed |
-| cast_unsigned | `1` | cast_unsigned |
-| bitcast | `2` | bitcast |
+| cast_signed | 0 | cast_signed |
+| cast_unsigned | 1 | cast_unsigned |
+| bitcast | 2 | bitcast |
 
 ### UNIT_FLAG
 
@@ -3450,13 +3450,13 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| DISABLED | `0` | DISABLED |
-| RESERVED | `1` | RESERVED |
-| ENABLED_WITHOUT_UPDATE | `2` | ENABLED_WITHOUT_UPDATE |
-| ENABLED_WITH_UPDATE | `3` | ENABLED_WITH_UPDATE |
-| ENABLED_ONLY_LAST_ITER | `4` | ENABLED_ONLY_LAST_ITER |
-| ENABLED_ONLY_FIRST_ITER | `5` | ENABLED_ONLY_FIRST_ITER |
-| ENABLED_ONLY_FIRST_AND_LAST_ITERS | `6` | ENABLED_ONLY_FIRST_AND_LAST_ITERS |
+| DISABLED | 0 | DISABLED |
+| RESERVED | 1 | RESERVED |
+| ENABLED_WITHOUT_UPDATE | 2 | ENABLED_WITHOUT_UPDATE |
+| ENABLED_WITH_UPDATE | 3 | ENABLED_WITH_UPDATE |
+| ENABLED_ONLY_LAST_ITER | 4 | ENABLED_ONLY_LAST_ITER |
+| ENABLED_ONLY_FIRST_ITER | 5 | ENABLED_ONLY_FIRST_ITER |
+| ENABLED_ONLY_FIRST_AND_LAST_ITERS | 6 | ENABLED_ONLY_FIRST_AND_LAST_ITERS |
 
 ### VFMode
 
@@ -3464,9 +3464,9 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| SIMD | `0` | SIMD |
-| SIMT | `1` | SIMT |
-| MIX | `2` | MIX |
+| SIMD | 0 | SIMD |
+| SIMT | 1 | SIMT |
+| MIX | 2 | MIX |
 
 ### MappingId
 
@@ -3474,4 +3474,4 @@ hivm.hir.wait_flag [#hivm.pipe<PIPE_M>, #hivm.pipe<PIPE_V>, #hivm.event<EVENT_ID
 
 | 枚举符号 | 数值 | 标识字符串 |
 | :------: | :--: | ---------- |
-| DimX | `0` | x |
+| DimX | 0 | x |

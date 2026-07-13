@@ -48,10 +48,10 @@ AI处理器型号及对应查询方式如下：
 
 **适用产品**：
 
-- `Atlas A2`训练系列产品 / `Atlas A2`推理系列产品
-- `Atlas 200I/500 A2`推理产品
-- `Atlas`推理系列产品
-- `Atlas`训练系列产品
+- Atlas A2训练系列产品 / Atlas A2推理系列产品
+- Atlas 200I/500 A2推理产品
+- Atlas推理系列产品
+- Atlas训练系列产品
 
 在安装AI处理器的服务器上执行该命令，查询得到`<Name>`的对应取值，完整配置值为`Ascend<Name>`。示例：若`<Name>`取值为`xxx`，则配置值为`Ascendxxx`。
 
@@ -59,8 +59,8 @@ AI处理器型号及对应查询方式如下：
 
 **适用产品**：
 
-- `Atlas 350`加速卡
-- `Atlas A3`训练系列产品 / `Atlas A3`推理系列产品
+- Atlas 350加速卡
+- Atlas A3训练系列产品 / Atlas A3推理系列产品
 
 在安装AI处理器的服务器上执行该命令，获取**Chip Name**和**NPU Name**信息，实际配置值为`<Chip Name>_<NPU Name>`。示例：若Chip Name为`Ascendxxx`、NPU Name为`yyy`，则配置值为`Ascendxxx_yyy`。
 

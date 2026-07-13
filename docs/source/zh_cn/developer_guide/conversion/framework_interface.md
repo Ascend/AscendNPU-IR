@@ -1,39 +1,39 @@
 # 框架接入
 
-`AscendNPU IR`支持框架（`PyTorch`/`TensorFlow`/`MindSpore`）接入，有两种方式：
+AscendNPU IR支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：
 
-- **DSL接入方式**：通过`Triton`、`TileLang`等领域特定语言接入，将算子编译为`AscendNPU IR`。
-- **IR接入方式**：通过`IR`表示接入，支持`Torch IR`、`Linalg`/`HFusion IR`、`HIVM IR`多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
+- **DSL接入方式**：通过Triton、TileLang等领域特定语言接入，将算子编译为AscendNPU IR。
+- **IR接入方式**：通过IR表示接入，支持Torch IR、Linalg/HFusion IR、HIVM IR多层级接入，支持自动算子融合和切分，生成昇腾亲和的高性能算子。
 
 ## DSL接入方式
 
-`AscendNPU IR`向上支持与`Triton`、`TileLang`等语言或框架的对接，使能三方`DSL`支持昇腾硬件，在`NPU`上运行自定义算子。
+AscendNPU IR向上支持与Triton、TileLang等语言或框架的对接，使能三方DSL支持昇腾硬件，在NPU上运行自定义算子。
 
 | 接入方式 | 说明 |
 |----------|------|
-| [Triton接入](triton_interface.md) | 使用`Triton`编写高性能内核，通过`Triton Ascend`在昇腾`NPU`上运行。含安装、环境、算子映射及昇腾扩展说明。 |
-| [TileLang接入](tile_lang_interface.md) | 使用`TileLang Ascend`（基于`tile-lang`/`TVM`的`DSL`）开发面向昇腾`NPU`的内核（如`GEMM`、向量运算、`attention`）。含环境、构建与快速开始。 |
+| [Triton接入](triton_interface.md) | 使用Triton编写高性能内核，通过Triton Ascend在昇腾NPU上运行。含安装、环境、算子映射及昇腾扩展说明。 |
+| [TileLang接入](tile_lang_interface.md) | 使用TileLang Ascend（基于tile-lang/TVM的DSL）开发面向昇腾NPU的内核（如GEMM、向量运算、attention）。含环境、构建与快速开始。 |
 
 ## IR接入方式
 
-`AscendNPU IR`支持多层级`IR`接入，不同层级在抽象程度和控制粒度上有所差异（详见[IR接入简介-多级IR抽象架构](interface_api.md#多级ir抽象架构)）：
+AscendNPU IR支持多层级IR接入，不同层级在抽象程度和控制粒度上有所差异（详见[IR接入简介-多级IR抽象架构](interface_api.md#多级ir抽象架构)）：
 
-- `Torch IR`：框架层`ATen`算子，经`Pass`转换为`Linalg`/`HFusion`。
-- `Linalg`/`HFusion IR`：通用张量代数层与硬件感知融合层，标准`MLIR dialect`表达算子语义，`HFusion`自动完成融合、切分和调度。
-- `HIVM IR`：`NPU`指令层，直接映射硬件指令，显式控制存储层级（`GM`/`UB`/`L1`/`L0`）和计算流水线（`Vector`/`Cube`/`MTE`），支持精细粒度调优。
+- Torch IR：框架层`ATen`算子，经Pass转换为Linalg/HFusion。
+- Linalg/HFusion IR：通用张量代数层与硬件感知融合层，标准MLIR dialect表达算子语义，HFusion自动完成融合、切分和调度。
+- HIVM IR：NPU指令层，直接映射硬件指令，显式控制存储层级（GM/UB/L1/L0）和计算流水线（Vector/Cube/MTE），支持精细粒度调优。
 
 ### Torch IR接入
 
-直接使用`Torch dialect`的`ATen`算子，通过`convert-torch-to-hfusion`等`Pass`自动转换为`Linalg`/`HFusion Named Op`，再进入自动融合和调度流程。
+直接使用Torch dialect的`ATen`算子，通过`convert-torch-to-hfusion`等Pass自动转换为Linalg/HFusion Named Op，再进入自动融合和调度流程。
 
 #### Torch → AscendNPU IR转换流程
 
-`Torch IR`通过`torch-backend-to-named-op-backend-pipeline`转换流水线接入`AscendNPU IR`。`BishengIR`自定义的`convert-torch-to-hfusion` `Pass`优先将`Torch ATen`算子转换为`Linalg`/`HFusion Named Op`，未覆盖的算子回退到上游`torch-mlir`的标准`lowering`通路。主要转换阶段如下：
+Torch IR通过`torch-backend-to-named-op-backend-pipeline`转换流水线接入AscendNPU IR。BiShengIR自定义的`convert-torch-to-hfusion` Pass优先将Torch ATen算子转换为Linalg/HFusion Named Op，未覆盖的算子回退到上游torch-mlir的标准lowering通路。主要转换阶段如下：
 
-- `convert-torch-to-hfusion`：`BishengIR`自定义转换，覆盖`55+`个`ATen`算子到`Linalg`/`HFusion Named Op`。
-- `convert-torch-to-linalg`：上游`torch-mlir`转换，处理剩余算子。
-- `convert-torch-to-scf` / `arith` / `tensor`：上游`torch-mlir`完成控制流、算术、`tensor`等转换。
-- `func-backend-type-conversion`：将`Torch`类型（`!torch.vtensor`）转换为标准`builtin`类型（`tensor`）。
+- `convert-torch-to-hfusion`：BiShengIR自定义转换，覆盖55+个`ATen`算子到Linalg/HFusion Named Op。
+- `convert-torch-to-linalg`：上游torch-mlir转换，处理剩余算子。
+- `convert-torch-to-scf` / `arith` / `tensor`：上游torch-mlir完成控制流、算术、`tensor`等转换。
+- `func-backend-type-conversion`：将Torch类型（`!torch.vtensor`）转换为标准`builtin`类型（`tensor`）。
 
 #### 用例torch.mlir
 
@@ -45,11 +45,11 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 }
 ```
 
-调用方式：有两种方式，二者共享同一套编译`pipeline`。
+调用方式：有两种方式，二者共享同一套编译pipeline。
 
-- **分步转换**：先将`Torch IR`转换为`Linalg`/`HFusion IR`，适用于需要缓存或查看中间`IR`的场景。转换完成后，可将`torch_to_hfusion.mlir`作为输入，按[Linalg/HFusion IR接入](#linalghfusion-ir接入)流程继续编译生成二进制。
+- **分步转换**：先将Torch IR转换为Linalg/HFusion IR，适用于需要缓存或查看中间IR的场景。转换完成后，可将`torch_to_hfusion.mlir`作为输入，按[Linalg/HFusion IR接入](#linalghfusion-ir接入)流程继续编译生成二进制。
     - 命令：`bishengir-opt -torch-backend-to-named-op-backend-pipeline torch.mlir -o torch_to_hfusion.mlir`
-    - **预期产物**：`MLIR`文本文件（`.mlir`格式），内容为转换后的`Linalg`/`HFusion IR`。例如：
+    - **预期产物**：MLIR文本文件（`.mlir`格式），内容为转换后的Linalg/HFusion IR。例如：
 
 ```mlir
 func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x4096xf16>) -> tensor<1x56x4096xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -60,15 +60,15 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 }
 ```
 
-- **端到端编译**：使用`bishengir-compile`直接将`Torch IR`编译为可执行二进制，完整经过`Torch` → `HFusion` → `HIVM IR`编译`pipeline`。
+- **端到端编译**：使用`bishengir-compile`直接将Torch IR编译为可执行二进制，完整经过Torch → HFusion → HIVM IR编译pipeline。
     - 命令：`bishengir-compile -enable-torch-compile=true -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 torch.mlir -o torch_kernel.o`
-    - **预期产物**：`Ascend NPU`算子二进制文件（`.o`格式），可与`CANN runtime`配合在设备端运行。
+    - **预期产物**：Ascend NPU算子二进制文件（`.o`格式），可与CANN runtime配合在设备端运行。
 
 #### 支持的Torch算子
 
 ##### Elementwise Binary
 
-| `Torch Op` | 转换目标 |
+| Torch Op | 转换目标 |
 |----------|----------|
 | `aten.add.Tensor` / `aten.add.Scalar` | `linalg.binary_fn<add>` |
 | `aten.sub.Tensor` / `aten.sub.Scalar` | `linalg.binary_fn<sub>` |
@@ -85,7 +85,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 ##### Elementwise Unary
 
-| `Torch Op` | 转换目标 |
+| Torch Op | 转换目标 |
 |----------|----------|
 | `aten.abs` | `linalg.unary_fn<abs>` |
 | `aten.ceil` | `linalg.unary_fn<ceil>` |
@@ -107,7 +107,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 ##### Compare
 
-| `Torch Op` | 转换目标 |
+| Torch Op | 转换目标 |
 |----------|----------|
 | `aten.gt.Scalar` / `aten.gt.Tensor` | `hfusion.compare_fn<vgt>` |
 | `aten.lt.Scalar` / `aten.lt.Tensor` | `hfusion.compare_fn<vlt>` |
@@ -118,7 +118,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 ##### Reduction
 
-| `Torch Op` | 转换目标 |
+| Torch Op | 转换目标 |
 |----------|----------|
 | `aten.sum` / `aten.sum.dim_IntList` | `linalg.reduce` + `arith.addf`/`addi` |
 | `aten.prod` / `aten.prod.dim_int` | `linalg.reduce` + `arith.mulf`/`muli` |
@@ -131,14 +131,14 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 ##### Data Movement
 
-| `Torch Op` | 转换目标 |
+| Torch Op | 转换目标 |
 |----------|----------|
 | `aten.permute` | `linalg.transpose` |
 | `aten.broadcast_to` | `linalg.broadcast` |
 
 ##### 其他
 
-| `Torch Op` | 转换目标 |
+| Torch Op | 转换目标 |
 |----------|----------|
 | `aten.to.dtype` | `hfusion.cast` |
 | `aten.where.self` | `hfusion.select` |
@@ -146,7 +146,7 @@ func.func @torch.aten.mul_tensor(%arg0: tensor<4096xf16>, %arg1: tensor<1x56x409
 
 ### Linalg/HFusion IR接入
 
-使用`Linalg`/`Tensor`、`HFusion`等标准`MLIR dialect`表达算子语义，直接进入`Linalg`/`HFusion IR`层级的自动融合和调度流程。
+使用Linalg/Tensor、HFusion等标准MLIR dialect表达算子语义，直接进入Linalg/HFusion IR层级的自动融合和调度流程。
 
 #### 用例hfusion.mlir
 
@@ -168,13 +168,13 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 调用方式：
 
 - 命令：`bishengir-compile -enable-hfusion-compile=true -enable-hivm-compile=true -target=Ascend910B1 hfusion.mlir -o hfusion_kernel.o`
-- **预期产物**：`Ascend NPU`算子二进制文件（`.o`格式），可与`CANN runtime`配合在设备端运行。
+- **预期产物**：Ascend NPU算子二进制文件（`.o`格式），可与CANN runtime配合在设备端运行。
 
 #### 自动融合
 
-`Linalg`/`HFusion IR`接入后，`HFusion`编译流程会对符合融合条件的算子执行自动融合与调度：将多个算子合并进同一`kernel`执行，使中间结果在片上内存中复用，减少全局内存读写；并根据融合模式与算子特征，自动选择`Tiling`方案和调度策略，生成面向`Ascend NPU`的高效执行`schedule`。融合后的`IR`经`Tiling`、循环生成、`Transform Dialect`应用等步骤，最终下推至`HIVM`并生成可执行二进制。
+Linalg/HFusion IR接入后，HFusion编译流程会对符合融合条件的算子执行自动融合与调度：将多个算子合并进同一kernel执行，使中间结果在片上内存中复用，减少全局内存读写；并根据融合模式与算子特征，自动选择Tiling方案和调度策略，生成面向Ascend NPU的高效执行schedule。融合后的IR经Tiling、循环生成、Transform Dialect应用等步骤，最终下推至HIVM并生成可执行二进制。
 
-支持的`Op`类型包括：
+支持的Op类型包括：
 
 - `Elemwise`
 - `Broadcast`
@@ -186,7 +186,7 @@ attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
 
 ### HIVM IR接入
 
-对于需要精细控制硬件行为的场景，可以直接使用`HIVM dialect`编写`kernel`，显式管理存储层级和计算流水线。
+对于需要精细控制硬件行为的场景，可以直接使用HIVM dialect编写kernel，显式管理存储层级和计算流水线。
 
 #### 用例hivm.mlir
 
@@ -211,11 +211,13 @@ func.func @hivm_vadd(%valueA: memref<16xf16, #hivm.address_space<gm>>,
 }
 ```
 
-`HIVM`层使用`#hivm.address_space`标注存储层级：`gm`（全局内存）、`ub`（`Unified Buffer`）、`l1`（`L1 Buffer`）、`l0a`/`l0b`/`l0c`（`L0 Buffer`）。通过`hivm.hir.load`/`hivm.hir.store`进行显式`DMA`搬运，通过`hivm.hir.vadd`等指令在片上完成计算。
+HIVM层使用`#hivm.address_space`标注存储层级：`gm`（Global Memory）、`ub`（Unified Buffer）、`l1`（L1 Buffer）、`l0a`/`l0b`/`l0c`（L0 Buffer）。通过`hivm.hir.load`/`hivm.hir.store`进行显式DMA搬运，通过`hivm.hir.vadd`等指令在片上完成计算。
 
-调用方式：`HIVM`层无需使能`HFusion`编译流程，默认的`HIVM`编译流程会完成同步插入、内存规划等优化。
+
+
+调用方式：HIVM层无需使能HFusion编译流程，默认的HIVM编译流程会完成同步插入、内存规划等优化。
 
 - 命令：`bishengir-compile -enable-hfusion-compile=false -enable-hivm-compile=true -target=Ascend910B1 hivm.mlir -o hivm_kernel.o`
-- 预期产物：`Ascend NPU`算子二进制文件（`.o`格式），可与`CANN runtime`配合在设备端运行。
+- 预期产物：Ascend NPU算子二进制文件（`.o`格式），可与CANN runtime配合在设备端运行。
 
-关于`IR`层概念、公共编译选项及其他接入路径（如`Triton`、`TileLang`），请参阅[IR接入简介](interface_api.md)。
+关于IR层概念、公共编译选项及其他接入路径（如Triton、TileLang），请参阅[IR接入简介](interface_api.md)。

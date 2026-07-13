@@ -1,6 +1,6 @@
 # 版本配套说明
 
-本文说明`AscendNPU IR`依赖的`CANN`软件栈以及硬件驱动环境。
+本文说明AscendNPU IR依赖的CANN软件栈以及硬件驱动环境。
 
 为了保证编译与运行的稳定性，请严格按照本文档提供的版本配套关系进行环境配置。
 
@@ -8,14 +8,14 @@
 
 以下版本组合为经过验证的推荐配置，建议优先使用：
 
-| `AscendNPU IR`版本 | `Gitcode`分支 | 依赖`CANN`版本 | 硬件支持 |
+| AscendNPU IR版本 | Gitcode分支 | 依赖CANN版本 | 硬件支持 |
 | --- | --- | --- | --- |
-| `v1.0.0` | `release/v1.0.0` | `CANN 8.5.0` | `Ascend A2/A3` |
-| `v1.1.0` | `release/v1.1.0` | `CANN 9.0.0` | `Ascend A2/A3`；<br>`950`系列（`branch feature_a5`） |
+| `v1.0.0` | `release/v1.0.0` | CANN 8.5.0 | Ascend A2/A3 |
+| `v1.1.0` | `release/v1.1.0` | CANN 9.0.0 | Ascend A2/A3；<br>950系列（`branch feature_a5`） |
 
 **重要说明**：
 
-如果您的`CANN`版本不想进行升级和替换，又想使用`AscendNPU IR`的新特性，可以参考如下方式尝试体验：
+如果您的CANN版本不想进行升级和替换，又想使用AscendNPU IR的新特性，可以参考如下方式尝试体验：
 
 ```bash
 NEW_CANN_PKG="PATH-TO/Ascend-cann-toolkit_9.0.0_linux-aarch64.run"
@@ -36,15 +36,15 @@ rm -rf $TMP_PATH
 
 ## Python配套关系
 
-`AscendNPU IR`同时包含`Python`的`wheel`包，可以通过`pip`安装：
+AscendNPU IR同时包含Python的wheel包，可以通过`pip`安装：
 
 ```bash
 pip install ascendnpu-ir
 ```
 
-支持的`Python`版本范围如下：
+支持的Python版本范围如下：
 
-| `AscendNPU IR`版本 | `Python`版本支持 |
+| AscendNPU IR版本 | Python版本支持 |
 | --- | --- |
-| `v1.0.0` | `>=3.9`，`<=3.12` |
-| `v1.1.0` | `>=3.10`，`<=3.13` |
+| `v1.0.0` | `>=3.9，<=3.12` |
+| `v1.1.0` | `>=3.10，<=3.13` |
