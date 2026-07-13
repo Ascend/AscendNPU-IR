@@ -1,7 +1,7 @@
 [submodule "third-party/llvm-project"]
 	path = third-party/llvm-project
-	url = https://gitcode.com/Ascend/llvm-project.git
-	branch = Ascend/AscendNPU-IR/llvmorg-19.1.7
+	url = https://gitcode.com/zaq15csdn/llvm-project.git
+	branch = to_buffer
 [submodule "third-party/torch-mlir"]
 	path = third-party/torch-mlir
 	url = https://gitcode.com/Ascend/torch-mlir.git
