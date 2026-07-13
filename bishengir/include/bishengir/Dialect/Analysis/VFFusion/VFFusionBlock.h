@@ -30,15 +30,16 @@ namespace analysis {
 class VFFusionBlock {
 public:
   VFFusionBlock() = default;
-  SmallVector<Operation *> getOps() const;
+  ArrayRef<Operation *> getOps() const;
 
   SetVector<Value> recomputeInputs();
   SetVector<Value> recomputeOutputs();
 
-  SetVector<Value> getInputs() const;
+  const SetVector<Value> &getInputs() const;
   SetVector<Value> getOutputs() const;
 
   void fuseOp(Operation *op);
+  void unfuseOp(Operation *op);
 
 private:
   // Only store operation directly after a function
