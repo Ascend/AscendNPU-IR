@@ -148,6 +148,23 @@ def EnableMultiBuffer : Pass<"hivm-enable-multi-buffer", "func::FuncOp"> {
   let dependentDialects = ["mlir::affine::AffineDialect", ];
 }
 
+def LowerMultiBufferCounter
+    : Pass<"hivm-lower-multi-buffer-counter", "func::FuncOp"> {
+  let summary = "Lower HIVM multi-buffer counter anchors to memref state.";
+  let description = [{
+    This pass lowers hivm.hir.multi_buffer_counter to the concrete alloca-based
+    counter representation used by multi-buffer slot rotation.
+  }];
+
+  let constructor = "mlir::hivm::createLowerMultiBufferCounterPass()";
+  let dependentDialects = [
+    "arith::ArithDialect",
+    "hivm::HIVMDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect",
+  ];
+}
+
 def AllocToAlloca : Pass<"hivm-memref-alloc-to-alloca"> {
   let summary = "Convert local AllocOp to AllocaOp";
   let description = [{This pass replace all memref.alloc with non -

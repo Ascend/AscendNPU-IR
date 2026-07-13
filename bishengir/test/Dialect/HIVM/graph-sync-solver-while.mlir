@@ -1,11 +1,10 @@
-// RUN: bishengir-opt -hivm-graph-sync-solver -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-graph-sync-solver -hivm-lower-multi-buffer-counter -split-input-file %s | FileCheck %s
 
 // -----
 // GraphSyncSolver should drive its event-id rotation off the alloca-based
 // counter (created by MultiBufferLoopAdapter::ensureCounterMaterialized) when
 // the multi-buffer loop is an scf.while. The scf.while signature must NOT be
-// extended; the counter lives in a memref<1xi64> alloca tagged with
-// hivm.multi_buffer_counter_for at the funcOp top.
+// extended; the counter lives in a memref<1xi64> alloca at the funcOp top.
 
 module {
 // CHECK-LABEL: func.func @while_gss_basic(
@@ -16,7 +15,7 @@ module {
     %true = arith.constant true
 
     // Funcop-top alloca for the counter, init to 0.
-    // CHECK-DAG: %[[CTR:.*]] = memref.alloca() {hivm.multi_buffer_counter_for = {{.*}}} : memref<1xi64>
+    // CHECK-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
     // CHECK-DAG: memref.store %{{.*}}, %[[CTR]]
 
     // Set/wait flag for unmodified MTE3->MTE2 pre-roll plus first-iter set.
