@@ -264,8 +264,9 @@ func.func @hoist_alloc_with_vbrc_init(%lb: index, %ub: index, %step: index) -> t
   // CHECK: hivm.hir.vbrc ins(%{{.*}} : bf16) outs(%[[BIG_ALLOC]]
   // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[BIG_ALLOC]]
   // CHECK: scf.for
-  // CHECK: %[[SV:.*]] = memref.subview %[[BIG_ALLOC]]{{.*}} {hivm.slice_load}
   %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %filled) -> (tensor<128x128xbf16>) {
+    // CHECK: %[[SV:.*]] = memref.subview %[[BIG_ALLOC]]
+    // CHECK: annotation.mark %[[BIG_ALLOC]] {hivm.slice_load} {{.*}}values = [%[[SV]]
     %offset = "some_calculation"(%arg0) : (index) -> (index)
     %alloc = memref.alloc() : memref<32x128xbf16>
     linalg.fill ins(%cst : bf16) outs(%alloc : memref<32x128xbf16>)
