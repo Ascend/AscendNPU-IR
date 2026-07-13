@@ -376,3 +376,19 @@ func.func @bubble_up_subview_shared_by_mark_and_load(
       : tensor<64x32xf32> to tensor<32x32xf32>
   return %s0, %s1 : tensor<32x32xf32>, tensor<32x32xf32>
 }
+
+// -----
+// CHECK: Successfully bubble up bufferization
+func.func @bubble_up_propagate_down_subview_dropped_dim(
+    %index: index, %offset: index) -> tensor<16x128xf32> {
+  %alloc = memref.alloc() : memref<2x16x128xf32>
+  %ucc = builtin.unrealized_conversion_cast %alloc, %offset
+      : memref<2x16x128xf32>, index to memref<2x32x128xf32>
+      {bubble_up_propagate_down, tiling_dim_info = [1 : index, -9223372036854775808 : index, 16 : index]}
+  %subview = memref.subview %ucc[%index, 0, 0] [1, 32, 128] [1, 1, 1]
+      : memref<2x32x128xf32> to memref<32x128xf32, strided<[128, 1], offset: ?>>
+  %tensor = bufferization.to_tensor %subview restrict writable : memref<32x128xf32, strided<[128, 1], offset: ?>>
+  %slice = tensor.extract_slice %tensor[%offset, 0] [16, 128] [1, 1] {to_be_bubbled_slice}
+      : tensor<32x128xf32> to tensor<16x128xf32>
+  return %slice : tensor<16x128xf32>
+}
