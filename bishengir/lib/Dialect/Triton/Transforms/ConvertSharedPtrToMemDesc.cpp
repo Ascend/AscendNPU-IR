@@ -29,6 +29,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
 #include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "triton/Dialect/Triton/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
@@ -664,7 +665,36 @@ private:
     // for the same logical (m, k, j).  The 2D-direct + memdesc_subslice
     // path here gives addresses computed by ONE shared linear layout for
     // both store and load, so they always agree.
-    OpBuilder builder(&func.getBody().front(), func.getBody().front().begin());
+    // Insert the local_alloc as late as possible.  The buffer must dominate
+    // every access, so we anchor it in the nearest common dominator block of
+    // all accesses and place it just before the earliest access there.
+    //
+    // We deliberately do NOT force it into the entry block: Triton lowers
+    // `ttg.local_alloc` to a *static* SMEM offset, so an alloc that ends up
+    // inside a loop body resolves to a fixed offset that is simply reused on
+    // every iteration (no per-iteration allocation).  Allowing loop-body
+    // placement lets the buffer's live range shrink to the innermost region
+    // that actually contains all of its accesses.
+    DominanceInfo domInfo(func);
+    Block *home = classified.front().op->getBlock();
+    for (auto &c : classified)
+      home = domInfo.findNearestCommonDominator(home, c.op->getBlock());
+    assert(home && "scratch-acc accesses share no common dominator block");
+    Operation *firstUserTop = nullptr;
+    for (auto &c : classified) {
+      // Lift each access to its ancestor op that sits directly in `home`
+      // (the access itself may be nested deeper, e.g. inside an scf.for).
+      Operation *anc = c.op;
+      while (anc && anc->getBlock() != home)
+        anc = anc->getParentOp();
+      if (anc && (!firstUserTop || anc->isBeforeInBlock(firstUserTop)))
+        firstUserTop = anc;
+    }
+    OpBuilder builder(ctx);
+    if (firstUserTop)
+      builder.setInsertionPoint(firstUserTop);
+    else
+      builder.setInsertionPointToEnd(home);
     Location loc = func.getLoc();
 
     // If any access is DYNAMIC, allocate a 3D envelope whose byte layout
