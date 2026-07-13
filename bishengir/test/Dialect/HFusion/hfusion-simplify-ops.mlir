@@ -407,3 +407,76 @@ func.func @castInLoopWithInnerUse(%arg0: tensor<16x32xf16>, %arg1: tensor<16x32x
   }
   return %1#0, %1#1 : tensor<16x32xf16>, tensor<1x32xf16>
 }
+
+// -----
+// CHECK-LABEL: func.func @collapse_chain
+// CHECK:         %[[C:.*]] = arith.constant dense<4> : tensor<32xi32>
+// CHECK:         %[[M:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %[[C]]
+// CHECK:         linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[M]], %arg1
+// CHECK-NOT:     binary_fn<add>
+func.func @collapse_chain(%inv: tensor<32xi32>, %b: tensor<32xi32>, %e: tensor<32xi32>) -> tensor<32xi32> {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %b : tensor<32xi32>, tensor<32xi32>) outs(%e : tensor<32xi32>) -> tensor<32xi32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %0 : tensor<32xi32>, tensor<32xi32>) outs(%e : tensor<32xi32>) -> tensor<32xi32>
+  %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %1 : tensor<32xi32>, tensor<32xi32>) outs(%e : tensor<32xi32>) -> tensor<32xi32>
+  %3 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %2 : tensor<32xi32>, tensor<32xi32>) outs(%e : tensor<32xi32>) -> tensor<32xi32>
+  return %3 : tensor<32xi32>
+}
+
+// -----
+// CHECK-LABEL: func.func @collapse_multi_operand
+// CHECK:         arith.constant dense<2>
+// CHECK-COUNT-2: binary_fn<mul>
+// CHECK:         binary_fn<add>
+// CHECK-NOT:     binary_fn<add>
+// CHECK:         return
+func.func @collapse_multi_operand(%a: tensor<8xi32>, %b: tensor<8xi32>, %e: tensor<8xi32>) -> tensor<8xi32> {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%a, %b : tensor<8xi32>, tensor<8xi32>) outs(%e : tensor<8xi32>) -> tensor<8xi32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%0, %a : tensor<8xi32>, tensor<8xi32>) outs(%e : tensor<8xi32>) -> tensor<8xi32>
+  %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%1, %b : tensor<8xi32>, tensor<8xi32>) outs(%e : tensor<8xi32>) -> tensor<8xi32>
+  return %2 : tensor<8xi32>
+}
+
+// -----
+// CHECK-LABEL: func.func @collapse_self_add
+// CHECK:         %[[C:.*]] = arith.constant dense<2> : tensor<4xi32>
+// CHECK:         %[[M:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %[[C]]
+// CHECK:         return %[[M]]
+// CHECK-NOT:     binary_fn<add>
+func.func @collapse_self_add(%a: tensor<4xi32>, %e: tensor<4xi32>) -> tensor<4xi32> {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%a, %a : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
+  return %0 : tensor<4xi32>
+}
+
+// -----
+// CHECK-LABEL: func.func @collapse_multiuse
+// CHECK:         %[[C:.*]] = arith.constant dense<2> : tensor<4xi32>
+// CHECK:         %[[K:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%arg0, %arg1
+// CHECK:         %[[M:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<mul>} ins(%arg0, %[[C]]
+// CHECK:         %[[R:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[M]], %[[K]]
+// CHECK:         return %[[R]], %[[K]]
+func.func @collapse_multiuse(%inv: tensor<4xi32>, %b: tensor<4xi32>, %e: tensor<4xi32>) -> (tensor<4xi32>, tensor<4xi32>) {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %b : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %0 : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
+  %2 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %1 : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
+  return %2, %0 : tensor<4xi32>, tensor<4xi32>
+}
+
+// -----
+// CHECK-LABEL: func.func @no_collapse_float
+// CHECK-COUNT-2: binary_fn<add>
+// CHECK-NOT:     binary_fn<mul>
+func.func @no_collapse_float(%inv: tensor<4xf32>, %b: tensor<4xf32>, %e: tensor<4xf32>) -> tensor<4xf32> {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %b : tensor<4xf32>, tensor<4xf32>) outs(%e : tensor<4xf32>) -> tensor<4xf32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%inv, %0 : tensor<4xf32>, tensor<4xf32>) outs(%e : tensor<4xf32>) -> tensor<4xf32>
+  return %1 : tensor<4xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @no_collapse_distinct
+// CHECK-COUNT-2: binary_fn<add>
+// CHECK-NOT:     binary_fn<mul>
+func.func @no_collapse_distinct(%a: tensor<4xi32>, %b: tensor<4xi32>, %c: tensor<4xi32>, %e: tensor<4xi32>) -> tensor<4xi32> {
+  %0 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%a, %b : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
+  %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%0, %c : tensor<4xi32>, tensor<4xi32>) outs(%e : tensor<4xi32>) -> tensor<4xi32>
+  return %1 : tensor<4xi32>
+}

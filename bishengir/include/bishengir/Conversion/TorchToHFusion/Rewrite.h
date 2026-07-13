@@ -9,8 +9,6 @@
 #ifndef BISHENGIR_CONVERSION_TORCHTOHFUSION_REWTRITE_H
 #define BISHENGIR_CONVERSION_TORCHTOHFUSION_REWTRITE_H
 
-#include "bishengir/Conversion/TorchToHFusion/TorchToHFusion.h"
-#include "bishengir/Conversion/TorchToHFusion/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 
 #include <type_traits>
