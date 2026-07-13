@@ -27,4 +27,11 @@ def NormalizeArith
   let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect"];
 }
 
+def LiftArithIndexCast : Pass<"lift-arith-indexcast",
+                                       "func::FuncOp"> {
+  let summary = "Bubble-up arith.index_cast index to i32/...";
+  let constructor = "mlir::arith::createLiftArithIndexCastPass()";
+  let dependentDialects = ["arith::ArithDialect", "vector::VectorDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_ARITH_TRANSFORMS_PASSES_TD

@@ -32,6 +32,9 @@ namespace arith {
 /// Pass to normalizes arith ops to meet HIVM requirements.
 std::unique_ptr<Pass> createNormalizeArithPass();
 
+/// Pass to lift arith.index_cast to simplify vector instr lowering
+std::unique_ptr<Pass> createLiftArithIndexCastPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//

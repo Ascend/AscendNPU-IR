@@ -434,6 +434,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
   pm.nest<func::FuncOp>().addPass(arith::createNormalizeArithPass());
+  pm.nest<func::FuncOp>().addPass(arith::createLiftArithIndexCastPass());
 }
 
 void buildOptimizeHIVMPipeline(OpPassManager &pm,
