@@ -456,8 +456,32 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
   return loadOp;
 }
 
+static FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
+                                                bool inferFixpipeDmaMode) {
+  if (!inferFixpipeDmaMode)
+    return FixpipeDMAMode::NZ2ND;
+
+  auto srcType = dyn_cast<ShapedType>(src.getType());
+  auto dstType = dyn_cast<ShapedType>(dst.getType());
+  if (!srcType || !dstType)
+    return FixpipeDMAMode::NZ2ND;
+
+  if (srcType.hasRank() && dstType.hasRank() &&
+      succeeded(
+          verifyCompatibleShape(srcType.getShape(), dstType.getShape()))) {
+    // For same-shape cases, use rank to distinguish ND-like tensors.
+    // A 2D destination is treated as ND; otherwise keep normal mode.
+    if (dstType.getRank() == 2)
+      return FixpipeDMAMode::NZ2ND;
+    return FixpipeDMAMode::NZ2NZ;
+  }
+
+  return FixpipeDMAMode::NZ2ND;
+}
+
 hivm::FixpipeOp insertFixpipe(Value value, Location loc,
-                              PatternRewriter &rewriter) {
+                              PatternRewriter &rewriter,
+                              bool inferFixpipeDmaMode) {
   auto tensorType = cast<RankedTensorType>(value.getType());
 
   auto emptyOp = insertTensor(value, loc, rewriter, tensorType.getShape(),
@@ -465,6 +489,9 @@ hivm::FixpipeOp insertFixpipe(Value value, Location loc,
 
   auto fixpipeOp = rewriter.create<hivm::FixpipeOp>(loc, TypeRange(tensorType),
                                                     value, emptyOp);
+  auto dmaMode = getInsertedFixpipeDmaMode(value, emptyOp, inferFixpipeDmaMode);
+  auto dmaModeAttr = FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode);
+  fixpipeOp.setDmaModeAttr(dmaModeAttr);
   fixpipeOp->setAttr(hivm::kInsertedFixpipeAttr::name, rewriter.getUnitAttr());
   return fixpipeOp;
 }

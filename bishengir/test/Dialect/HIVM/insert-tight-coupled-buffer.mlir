@@ -99,8 +99,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
   // CHECK:   %[[TRUE:.*]] = arith.constant true
   // CHECK:   %[[C16:.*]] = arith.constant 16 : index
-  // CHECK:   %[[ARG0_LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
-  // CHECK:   %[[ARG0_LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"inserted-load"} -> tensor<16x16xf16>
+  // CHECK:   %[[ARG0_LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
+  // CHECK:   %[[ARG0_LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"hivm.inserted-load"} -> tensor<16x16xf16>
   // CHECK:   %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%[[CST:.*]] : f16) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   %[[EXTRACT:.*]] = tensor.extract_slice %[[ARG0_LOAD0]][0, 0] [%[[ARG2]], %[[ARG2]]] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
   // CHECK:   %[[INSERT:.*]] = tensor.insert_slice %[[EXTRACT]] into %[[VBRC]][0, 0] [%[[ARG2]], %[[ARG2]]] [1, 1] : tensor<?x?xf16> into tensor<16x16xf16>
@@ -108,11 +108,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK:   %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x16x16xf16>
   // CHECK:   %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
   // CHECK:   %[[EXPAND0:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
-  // CHECK:   %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
-  // CHECK:   %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
-  // CHECK:   %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x16xf16>
-  // CHECK:   hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
-  // CHECK:   %[[MM:.*]] = hivm.hir.mmadL1 ins(%[[ARG0_LOAD1]], %[[BUF_TENSOR:.*]], %[[TRUE]], %[[C16]], %[[C16]], %[[C16]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK:   %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<1x1x16x16xf16>
+  // CHECK:   %[[COPY:.*]] = hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[TENSOR]] : tensor<1x1x16x16xf16>)
+  // CHECK:   %[[MM:.*]] = hivm.hir.mmadL1 ins(%[[ARG0_LOAD1]], %[[COPY:.*]], %[[TRUE]], %[[C16]], %[[C16]], %[[C16]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   return %[[MM]] : tensor<16x16xf16>
 }
 
@@ -160,11 +158,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK:   %[[EMPTY_T:.*]] = tensor.empty() : tensor<1x16x16xf16>
   // CHECK:   %[[TRANSPOSE:.*]] = hivm.hir.vtranspose ins(%[[EXPAND]] : tensor<16x1x16xf16>) outs(%[[EMPTY_T]] : tensor<1x16x16xf16>) permutation = [1, 0, 2] -> tensor<1x16x16xf16>
   // CHECK:   %[[EXPAND0:.*]] = tensor.expand_shape {{.*}} {{\[\[0\], \[1, 2\], \[3]\]}} output_shape {{\[1, 1, 16, 16\]}} : tensor<1x16x16xf16> into tensor<1x1x16x16xf16>
-  // CHECK:   %[[ALLOC:.*]] = memref.alloc() : memref<1x1x16x16xf16, #hivm.address_space<cbuf>>
-  // CHECK:   %[[CAST:.*]] = memref.memory_space_cast %[[ALLOC]] : memref<1x1x16x16xf16, #hivm.address_space<cbuf>> to memref<1x1x16x16xf16>
-  // CHECK:   %[[BUF_TENSOR:.*]] = bufferization.to_tensor %[[CAST]] restrict writable : memref<1x1x16x16xf16>
-  // CHECK:   hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[CAST:.*]] : memref<1x1x16x16xf16>)
-  // CHECK:   %[[MM:.*]] = hivm.hir.mmadL1 ins(%[[LOAD1]], %[[BUF_TENSOR:.*]], %[[TRUE]], %[[C16]], %[[C16]], %[[C16]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index) outs(%[[EMPTY0]] : tensor<16x16xf16>) -> tensor<16x16xf16>
+  // CHECK:   %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<cbuf>, "hivm.inserted-tensor"} : tensor<1x1x16x16xf16>
+  // CHECK:   %[[COPY:.*]] = hivm.hir.copy ins(%[[EXPAND0]] : tensor<1x1x16x16xf16>) outs(%[[TENSOR:.*]] : tensor<1x1x16x16xf16>)
+  // CHECK:   %[[MM:.*]] = hivm.hir.mmadL1 ins(%[[LOAD1]], %[[COPY]], %[[TRUE]], %[[C16]], %[[C16]], %[[C16]] : tensor<16x16xf16>, tensor<1x1x16x16xf16>, i1, index, index, index)
   // CHECK:   return %[[MM]] : tensor<16x16xf16>
 }
 
@@ -702,7 +698,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: scf.yield %[[MMAD]]
 // CHECK: }
 // CHECK: %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<64x64xf32>
-// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[IF]] : tensor<64x64xf32>) outs(%[[TENSOR]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[IF]] : tensor<64x64xf32>) outs(%[[TENSOR]] : tensor<64x64xf32>) -> tensor<64x64xf32>
 // CHECK: hivm.hir.vadd ins(%[[FIXPIPE]],
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @func_mmad_l0c_ub(%arg0: memref<?xi8>, %arg1: tensor<64x32xbf16>, %arg2: tensor<32x64xbf16>, %arg3: tensor<64x64xbf16>, %arg4: tensor<64x64xbf16>, %arg5: i32, %arg6: tensor<64x64xf32>) -> tensor<64x64xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
@@ -731,14 +727,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK-LABEL: func.func @func_mmad_l0c_ub(
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
 // CHECK: %[[TENSOR_1:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<64x64xf32>
-// CHECK: %[[FIXPIPE_1:.*]] = hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[MMAD]] : tensor<64x64xf32>) outs(%[[TENSOR_1]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK: %[[FIXPIPE_1:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[MMAD]] : tensor<64x64xf32>) outs(%[[TENSOR_1]] : tensor<64x64xf32>) -> tensor<64x64xf32>
 // CHECK: %[[IF:.*]] = scf.if
 // CHECK: %[[IF_MMAD:.*]] = hivm.hir.mmadL1
 // CHECK: scf.yield %[[IF_MMAD]]
 // CHECK: scf.yield %[[MMAD]]
 // CHECK: }
 // CHECK: %[[TENSOR_2:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<64x64xf32>
-// CHECK: %[[FIXPIPE_2:.*]] = hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[IF]] : tensor<64x64xf32>) outs(%[[TENSOR_2]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK: %[[FIXPIPE_2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[IF]] : tensor<64x64xf32>) outs(%[[TENSOR_2]] : tensor<64x64xf32>) -> tensor<64x64xf32>
 // CHECK: hivm.hir.vadd ins(%[[FIXPIPE_2]], %[[FIXPIPE_1]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @func_mmad_l0c_ub(%arg0: memref<?xi8>, %arg1: tensor<64x32xbf16>, %arg2: tensor<32x64xbf16>, %arg3: tensor<64x64xbf16>, %arg4: tensor<64x64xbf16>, %arg5: i32, %arg6: tensor<64x64xf32>) -> tensor<64x64xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {

@@ -213,7 +213,9 @@ insertStore(Value value, Location loc, PatternRewriter &rewriter,
 hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
 
 /// Insert a fixpipe that rematerializes `value` with matching element type.
-hivm::FixpipeOp insertFixpipe(Value value, Location loc, PatternRewriter &rewriter);
+hivm::FixpipeOp insertFixpipe(Value value, Location loc,
+                              PatternRewriter &rewriter,
+                              bool inferFixpipeDmaMode);
 
 /// Insert tight coupled buffer to L1 that rematerializes `value` with matching element type.
 std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToL1(Value value, Location loc, PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize);

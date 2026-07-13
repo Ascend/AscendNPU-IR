@@ -163,11 +163,12 @@ static LogicalResult resolveLocaltoGM(UnrealizedConversionCastOp downPropOp,
   return success();
 }
 
-static LogicalResult resolveL0CToUB(UnrealizedConversionCastOp downPropOp,
-                                    UnrealizedConversionCastOp upPropOp,
-                                    PatternRewriter &rewriter) {
+LogicalResult TightCoupledBufferResolvePropagationPattern::resolveL0CToUB(
+    UnrealizedConversionCastOp downPropOp, UnrealizedConversionCastOp upPropOp,
+    PatternRewriter &rewriter) const {
   auto fixpipeOp = PropagatorUtil::insertFixpipe(downPropOp->getResult(0),
-                                                 downPropOp.getLoc(), rewriter);
+                                                 downPropOp.getLoc(), rewriter,
+                                                 inferFixpipeDmaMode);
   if (isa<RankedTensorType>(fixpipeOp.getDstOperandType())) {
     Value loadedValue = fixpipeOp.getResult(0);
     rewriter.modifyOpInPlace(

@@ -427,7 +427,8 @@ LogicalResult InsertLoadStoreForMixCVPass::runPropagateOpPatterns(func::FuncOp f
   rewriteConfig.fold = false;
 
   if (isEnabledTightCoupledBuffer()) {
-    patterns.add<TightCoupledBufferResolvePropagationPattern>(patterns.getContext());
+    patterns.add<TightCoupledBufferResolvePropagationPattern>(
+        patterns.getContext(), inferFixpipeDmaMode);
   }
   
 

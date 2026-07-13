@@ -1323,7 +1323,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: @vbrc_mmad_rhs_no_convert_layout(
-// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: {"hivm.inserted-copy"}
 // CHECK-NOT: hivm.hir.vtranspose
 // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
 // CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[VBRC]]
@@ -1411,7 +1411,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[FOR:.*]] = scf.for
 // CHECK-SAME: iter_args(%{{.*}} = %[[VBRC]]
 // CHECK: hivm.hir.vcast
-// CHECK: {"inserted-copy"}
+// CHECK: {"hivm.inserted-copy"}
 // CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[FOR]]
 // CHECK-NOT: hivm.hir.copy ins(%[[VBRC]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -1449,7 +1449,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: @vbrc_mmad_rhs_no_convert_layout(
-// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: {"hivm.inserted-copy"}
 // CHECK-NOT: hivm.hir.vtranspose
 // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
 // CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[VBRC]]
@@ -1537,7 +1537,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: %[[FOR:.*]] = scf.for
 // CHECK-SAME: iter_args(%{{.*}} = %[[VBRC]]
 // CHECK: hivm.hir.vcast
-// CHECK: {"inserted-copy"}
+// CHECK: {"hivm.inserted-copy"}
 // CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[FOR]]
 // CHECK-NOT: hivm.hir.copy ins(%[[VBRC]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -1578,7 +1578,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: hivm.hir.load {{.*}} core_type = <CUBE>
 // CHECK-NOT: hivm.hir.load {{.*}} core_type = <VECTOR>
 // CHECK: hivm.hir.vtranspose
-// CHECK: {"inserted-copy"}
+// CHECK: {"hivm.inserted-copy"}
 // CHECK: hivm.hir.mmadL1
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @preserve_preset_cube_load_core_type_with_vtranspose_path(
@@ -1638,9 +1638,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: @preserve_preset_vector_inserted_load_core_type(
 // CHECK: hivm.hir.fixpipe
-// CHECK: {{"inserted-store"}}
+// CHECK: {{"hivm.inserted-store"}}
 // CHECK: %[[LOAD:.*]] = hivm.hir.load
-// CHECK-SAME: {{"inserted-load"}}
+// CHECK-SAME: {{"hivm.inserted-load"}}
 // CHECK-SAME: core_type = <VECTOR>
 // CHECK: hivm.hir.vadd ins(%[[LOAD]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -1671,7 +1671,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     %fix = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
         ins(%mmad : tensor<4x8x16x16xf32>) outs(%out : tensor<128x64xf32>) -> tensor<128x64xf32>
     %loaded = hivm.hir.load ins(%fix : tensor<128x64xf32>) outs(%out : tensor<128x64xf32>)
-        {"inserted-load"} core_type = <VECTOR> -> tensor<128x64xf32>
+        {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<128x64xf32>
     %res = hivm.hir.vadd ins(%loaded, %vmul : tensor<128x64xf32>, tensor<128x64xf32>)
         outs(%out : tensor<128x64xf32>) -> tensor<128x64xf32>
     return %res : tensor<128x64xf32>
@@ -1680,7 +1680,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // -----
 // CHECK-LABEL: @vbrc_mmad_fixpipe_rhs_no_convert_layout(
-// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: {"hivm.inserted-copy"}
 // CHECK-NOT: hivm.hir.vtranspose
 // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
 // CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[VBRC]]
@@ -1703,7 +1703,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: @vbrc_mmad_vector_rhs_no_convert_layout(
-// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: {"hivm.inserted-copy"}
 // CHECK-NOT: hivm.hir.vtranspose
 // CHECK: %[[VBRC:.*]] = hivm.hir.vbrc
 // CHECK: hivm.hir.mmadL1 {{.*}} ins({{.*}}, %[[VBRC]]
@@ -1760,11 +1760,11 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: @a5_parallel_loop_memref_load_with_mmad
 // CHECK: hivm.hir.load
-// CHECK-SAME: {{"inserted-load"}}
+// CHECK-SAME: {{"hivm.inserted-load"}}
 // CHECK: scf.for
 // CHECK: hivm.hir.load
 // CHECK: } {hivm.parallel_loop}
-// CHECK-NOT: {"inserted-copy"}
+// CHECK-NOT: {"hivm.inserted-copy"}
 // CHECK: hivm.hir.mmadL1
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @a5_parallel_loop_memref_load_with_mmad(
@@ -1808,8 +1808,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // VECTOR. CUBE tcoretype must not be propagated onto inserted loads.
 //
 // CHECK-LABEL: @a5_inferred_load_tcoretype_vector_only
-// CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
-// CHECK: %[[CUBE_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"inserted-load"} -> tensor<16x16xf16>
+// CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[CUBE_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"hivm.inserted-load"} -> tensor<16x16xf16>
 // CHECK-NOT: %[[CUBE_LOAD]]{{.*}}core_type = <CUBE>
 // CHECK: hivm.hir.mmadL1 ins(%[[CUBE_LOAD]]
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -1837,7 +1837,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
 // CHECK-LABEL: @a5_fixpipe_to_vector_load_gets_vector_tcoretype
 // CHECK: hivm.hir.load
-// CHECK-SAME: {"inserted-load"}
+// CHECK-SAME: {"hivm.inserted-load"}
 // CHECK-SAME: core_type = <VECTOR>
 // CHECK: hivm.hir.vadd
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
@@ -1874,7 +1874,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // -----
 
 // CHECK-LABEL: @a5_inferred_load_tcoretype_vector_only
-// CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[VEC_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<16x16xf16>
 // CHECK: %[[CUBE_LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%3 : tensor<16x16xf16>) -> tensor<16x16xf16>
 // CHECK-NOT: %[[CUBE_LOAD]]{{.*}}core_type = <CUBE>
 // CHECK: hivm.hir.mmadL1 ins(%[[CUBE_LOAD]]
@@ -1904,7 +1904,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // CHECK: scf.yield %[[FOR_MMAD]]
 // CHECK: }
 // CHECK: %[[TENSOR:.*]] = tensor.empty() {hivm.address_space = #hivm.address_space<ub>, "hivm.inserted-tensor"} : tensor<64x64xf32>
-// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {"hivm.inserted-fixpipe"} ins(%[[FOR]] : tensor<64x64xf32>) outs(%[[TENSOR]] : tensor<64x64xf32>) -> tensor<64x64xf32>
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, "hivm.inserted-fixpipe"} ins(%[[FOR]] : tensor<64x64xf32>) outs(%[[TENSOR]] : tensor<64x64xf32>) -> tensor<64x64xf32>
 // CHECK: hivm.hir.vadd ins(%[[FIXPIPE]],
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @func_mmad_l0c_ub(%arg0: memref<?xi8>, %arg1: tensor<64x32xbf16>, %arg2: tensor<32x64xbf16>, %arg3: tensor<64x64xbf16>, %arg4: tensor<64x64xbf16>, %arg5: i32, %arg6: tensor<64x64xf32>) -> tensor<64x64xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
