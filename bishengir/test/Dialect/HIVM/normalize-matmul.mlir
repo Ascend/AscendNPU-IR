@@ -1679,7 +1679,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 }
 
 // -----
-// CHECK-LABEL:   func.func @test_mmadmx_normalize_decompose_matmul(
+// CHECK-LABEL: func.func @test_mmadmx_normalize_decompose_matmul(
 // CHECK-SAME:                                         %[[VAL_0:.*]]: memref<16x16xf32>) -> tensor<16x16xf32> {
 // CHECK-DAG:       %[[VAL_1:.*]] = arith.constant true
 // CHECK-DAG:       %[[VAL_2:.*]] = arith.constant 16 : index
@@ -3007,3 +3007,23 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   }
 }
 
+// -----
+// CHECK-LABEL: func.func @test_mmadmx_chain_no_elemwise_decompose(
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_mmadmx_chain_no_elemwise_decompose() -> tensor<4x16xf32> {
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %true = arith.constant true
+    %a = tensor.empty() : tensor<4x8xf8E5M2>
+    %b = tensor.empty() : tensor<8x16xf8E5M2>
+    %scaleA = tensor.empty() : tensor<1xui8>
+    %scaleB = tensor.empty() : tensor<1xui8>
+    %initC = tensor.empty() : tensor<4x16xf32>
+    %first = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %true, %c4, %c8, %c16 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%initC : tensor<4x16xf32>) -> tensor<4x16xf32>
+    // CHECK-NOT: hivm.hir.vadd
+    %second = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %false, %c4, %c8, %c16 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%first : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %second : tensor<4x16xf32>
+  }
+}

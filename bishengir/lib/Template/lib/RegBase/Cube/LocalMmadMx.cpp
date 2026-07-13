@@ -517,9 +517,10 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
     memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, int64_t m, int64_t k,
-    int64_t n, int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
-    int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1b_wait_mmad_l1_event) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -530,7 +531,7 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
       m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
-      l1b_wait_mmad_l1_event, true, true, false);
+      l1b_wait_mmad_l1_event, init, true, false);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
@@ -540,8 +541,8 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                 memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                 memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, int64_t m,
-                int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
+                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
+                int64_t m, int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
                 int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
                 int64_t l1b_wait_mmad_l1_event, bool isFp4) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
@@ -554,7 +555,7 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
       m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
-      l1b_wait_mmad_l1_event, true, true, false, isFp4);
+      l1b_wait_mmad_l1_event, init, true, false, isFp4);
 }
 
 #endif // CATLASS_GEMM_L1MMAD_HPP
