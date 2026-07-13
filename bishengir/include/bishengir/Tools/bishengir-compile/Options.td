@@ -239,9 +239,10 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
 }
 
 def EnableFastDiv : FeatureControlOptions<
-  "Enable conversion of div with constant denominator into mul",
+  "Enable conversion of div with constant denominator into mul "
+  "excluding cases when reciprocal value is denormal or inf value",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION"];
 }
