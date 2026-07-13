@@ -137,17 +137,17 @@ module {
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: _attn_fwd_mix_aic(
-  // CHECK: memref.alloc()
-  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>}
+  // CHECK: %[[CBUF:.*]] = memref.alloc() {alignment = 64 : i64} : memref<16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: annotation.mark %[[CBUF]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf16, #hivm.address_space<cbuf>>
   // CHECK: bufferization.to_tensor
   // CHECK: hivm.hir.mmadL1
-  // CHECK: %[[VAL_1:.*]]  = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
-  // CHECK: annotation.mark %[[VAL_1]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf32, #hivm.address_space<ub>>
-  // CHECK: hivm.hir.fixpipe {enable_nz2nd} ins({{.*}} : tensor<16x16xf32>) outs(%[[VAL_1:.*]] : memref<16x16xf32, #hivm.address_space<ub>>)
+  // CHECK: %[[UB:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark %[[UB]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK: hivm.hir.fixpipe {enable_nz2nd} ins({{.*}} : tensor<16x16xf32>) outs(%[[UB]] : memref<16x16xf32, #hivm.address_space<ub>>)
   // CHECK-LABEL: _attn_fwd_mix_aiv(
-  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xf16, #hivm.address_space<cbuf>>
+  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf16, #hivm.address_space<cbuf>>
   // CHECK: memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
-  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<1>} : memref<16x16xf32, #hivm.address_space<ub>>
+  // CHECK: annotation.mark {{.*}} {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<16x16xf32, #hivm.address_space<ub>>
   func.func @_attn_fwd(%arg0: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg2: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: f32, %arg5: i32, %arg6: i32, %arg7: i32) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<MIX>, mix_mode = "mix"} {
     %c16 = arith.constant 16 : index
     %c16_i32 = arith.constant 16 : i32
@@ -218,6 +218,10 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     // Two new UB allocs without TCB mark.
     %new0 = memref.alloc() : memref<8x8xf32, #hivm.address_space<ub>>
     %new1 = memref.alloc() : memref<32xf32, #hivm.address_space<ub>>
+    %tensor_8x8 = tensor.empty() : tensor<8x8xf32>
+    %tensor_32 = tensor.empty() : tensor<32xf32>
+    hivm.hir.fixpipe {enable_nz2nd} ins(%tensor_8x8 : tensor<8x8xf32>) outs(%new0 : memref<8x8xf32, #hivm.address_space<ub>>)
+    hivm.hir.fixpipe {enable_nz2nd} ins(%tensor_32 : tensor<32xf32>) outs(%new1 : memref<32xf32, #hivm.address_space<ub>>)
 
     return
   }

@@ -6,8 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Marks every L1/UB `memref.alloc` of a MIX function with a
-// `hivm.tightly_coupled_buffer` id. This runs before SplitMixKernel clones the
+// Marks tightly-coupled L1/UB `memref.alloc` buffers in a MIX function with a
+// `hivm.tightly_coupled_buffer` id. Candidates are discovered from `hivm.fixpipe`
+// dst (UB alloc) and `hivm.copy` dst (L1/cbuf alloc) via `traceDefOps`.
 // MIX function into its AIC/AIV copies so that both clones inherit identical
 // ids; PlanMemory later relies on those ids to pair the AIC/AIV buffers at
 // consistent offsets.
@@ -21,6 +22,7 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -48,15 +50,51 @@ struct MarkTightlyCoupledBufferPass
   void runOnOperation() override;
 };
 
-void MarkTightlyCoupledBufferPass::runOnOperation() {
-  func::FuncOp func = getOperation();
-  if (hacc::utils::isHost(func))
+static void collectUsedTightlyCoupledId(memref::AllocOp allocOp,
+                                        llvm::DenseSet<int64_t> &usedIds) {
+  auto maybeMarked = utils::getAnnotateOpWithAttr(
+      allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
+  if (!maybeMarked.has_value())
     return;
 
-  // Mirror the original SplitMixKernel behavior: only RegBase (Ascend950)
-  // targets use CV tightly-coupled buffers.
-  auto module = func->getParentOfType<ModuleOp>();
-  if (!module || !hacc::utils::isAscend950(module))
+  auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarked);
+  if (!markOp)
+    return;
+
+  auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
+      markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+  if (!tcbAttr || !tcbAttr.getId().has_value())
+    return;
+
+  usedIds.insert(tcbAttr.getId().value());
+}
+
+static void tryAddCandidateAlloc(memref::AllocOp allocOp,
+                                 SmallVector<memref::AllocOp> &candidateAllocs,
+                                 llvm::DenseSet<int64_t> &usedIds) {
+  if (!allocOp || llvm::is_contained(candidateAllocs, allocOp))
+    return;
+  collectUsedTightlyCoupledId(allocOp, usedIds);
+  candidateAllocs.push_back(allocOp);
+}
+
+static void collectAllocsFromDst(Value dst, AddressSpace requiredSpace,
+                                 SmallVector<memref::AllocOp> &candidateAllocs,
+                                 llvm::DenseSet<int64_t> &usedIds) {
+  for (Operation *op : traceDefOps<memref::AllocOp>(dst)) {
+    auto allocOp = dyn_cast_or_null<memref::AllocOp>(op);
+    if (!allocOp)
+      continue;
+    auto maybeMemrefAddressSpace =
+        getOptionalHIVMAddressSpace(allocOp.getMemref().getType());
+    if (maybeMemrefAddressSpace != requiredSpace)
+      continue;
+    tryAddCandidateAlloc(allocOp, candidateAllocs, usedIds);
+  }
+}
+
+static void markTightlyCoupledBufferOnFunc(func::FuncOp func) {
+  if (hacc::utils::isHost(func))
     return;
 
   OpBuilder builder(func.getContext());
@@ -71,27 +109,17 @@ void MarkTightlyCoupledBufferPass::runOnOperation() {
         maybeMemrefAddressSpace != AddressSpace::UB) {
       return;
     }
+    collectUsedTightlyCoupledId(allocOp, usedIds);
+  });
 
-    candidateAllocs.push_back(allocOp);
+  func.walk([&](hivm::FixpipeOp fixpipeOp) {
+    collectAllocsFromDst(fixpipeOp.getDst(), AddressSpace::UB, candidateAllocs,
+                         usedIds);
+  });
 
-    auto maybeMarked = utils::getAnnotateOpWithAttr(
-        allocOp.getMemref(), hivm::HIVMTightlyCoupledBufferAttr::name);
-    if (!maybeMarked.has_value()) {
-      return;
-    }
-
-    auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarked);
-    if (!markOp) {
-      return;
-    }
-
-    auto tcbAttr = dyn_cast_if_present<hivm::HIVMTightlyCoupledBufferAttr>(
-        markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
-    if (!tcbAttr || !tcbAttr.getId().has_value()) {
-      return;
-    }
-
-    usedIds.insert(tcbAttr.getId().value());
+  func.walk([&](hivm::CopyOp copyOp) {
+    collectAllocsFromDst(copyOp.getDst(), AddressSpace::L1, candidateAllocs,
+                         usedIds);
   });
 
   int64_t nextId = 0;
@@ -127,6 +155,18 @@ void MarkTightlyCoupledBufferPass::runOnOperation() {
                   hivm::HIVMTightlyCoupledBufferAttr::get(
                       allocOp->getContext(), static_cast<int32_t>(newId)));
   }
+}
+
+void MarkTightlyCoupledBufferPass::runOnOperation() {
+  func::FuncOp func = getOperation();
+
+  // Mirror the original SplitMixKernel behavior: only RegBase (Ascend950)
+  // targets use CV tightly-coupled buffers.
+  ModuleOp moduleOp = func->getParentOfType<ModuleOp>();
+  if (!moduleOp || !hacc::utils::isAscend950(moduleOp))
+    return;
+
+  markTightlyCoupledBufferOnFunc(func);
 }
 
 } // namespace
