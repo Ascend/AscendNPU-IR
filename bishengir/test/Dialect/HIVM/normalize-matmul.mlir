@@ -1180,3 +1180,44 @@ func.func @test_mmadl1_normalize_in_nested_ccf(%arg0: i1, %arg1: i1, %arg2: i32,
   
   return %for_res#1 : tensor<112x64xf32>
 }
+
+// -----
+// CHECK-LABEL: func.func @test_mmadmx_elemwise_bias_decompose(
+module {
+  func.func @test_mmadmx_elemwise_bias_decompose(%bias: tensor<4x16xf32>) -> tensor<4x16xf32> {
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %a = tensor.empty() : tensor<4x8xf8E5M2>
+    %b = tensor.empty() : tensor<8x16xf8E5M2>
+    %scaleA = tensor.empty() : tensor<1xui8>
+    %scaleB = tensor.empty() : tensor<1xui8>
+    // CHECK: tensor.empty
+    // CHECK: hivm.hir.mmadmxL1
+    // CHECK: hivm.hir.vadd
+    %mad = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %false, %c4, %c8, %c16 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%bias : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %mad : tensor<4x16xf32>
+  }
+}
+
+// -----
+// CHECK-LABEL: func.func @test_mmadmx_chain_no_elemwise_decompose(
+module {
+  func.func @test_mmadmx_chain_no_elemwise_decompose() -> tensor<4x16xf32> {
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %false = arith.constant false
+    %true = arith.constant true
+    %a = tensor.empty() : tensor<4x8xf8E5M2>
+    %b = tensor.empty() : tensor<8x16xf8E5M2>
+    %scaleA = tensor.empty() : tensor<1xui8>
+    %scaleB = tensor.empty() : tensor<1xui8>
+    %initC = tensor.empty() : tensor<4x16xf32>
+    %first = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %true, %c4, %c8, %c16 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%initC : tensor<4x16xf32>) -> tensor<4x16xf32>
+    // CHECK-NOT: hivm.hir.vadd
+    %second = hivm.hir.mmadmxL1 ins(%a, %b, %scaleA, %scaleB, %false, %c4, %c8, %c16 : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>, tensor<1xui8>, tensor<1xui8>, i1, index, index, index) outs(%first : tensor<4x16xf32>) -> tensor<4x16xf32>
+    return %second : tensor<4x16xf32>
+  }
+}
