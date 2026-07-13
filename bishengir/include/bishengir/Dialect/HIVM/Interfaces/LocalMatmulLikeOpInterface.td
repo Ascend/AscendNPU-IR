@@ -124,11 +124,6 @@ def HIVMLocalMatmulLikeOpInterface
       /*methodName=*/"supportsPerChannelBias",
       /*args=*/(ins)>,
     InterfaceMethod<
-      /*desc=*/"Return whether CCF normalization is supported.",
-      /*retTy=*/"bool",
-      /*methodName=*/"supportsNormalizeMmadCCF",
-      /*args=*/(ins)>,
-    InterfaceMethod<
       /*desc=*/"Return whether scale operands are present.",
       /*retTy=*/"bool",
       /*methodName=*/"supportsScaleOperands",

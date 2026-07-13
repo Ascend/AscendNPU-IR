@@ -517,10 +517,11 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
     memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
-    int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
-    int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
-    int64_t l1b_wait_mmad_l1_event) {
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, 
+    bool init,
+    int64_t m, int64_t k, int64_t n, 
+    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -541,10 +542,12 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                 memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                 memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
-                int64_t m, int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
-                int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
-                int64_t l1b_wait_mmad_l1_event, bool isFp4) {
+                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, 
+                bool init,
+                int64_t m, int64_t k, int64_t n, 
+                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event, 
+                int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event, 
+                bool isFp4) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,

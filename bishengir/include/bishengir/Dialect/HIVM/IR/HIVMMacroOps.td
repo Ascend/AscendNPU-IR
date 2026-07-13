@@ -115,7 +115,6 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd() const;
     bool supportsPerChannelBias() { return true; }
-    bool supportsNormalizeMmadCCF() { return true; }
     bool supportsScaleOperands() { return false; }
     bool usesBoolAttrForTargetLayout() { return false; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
@@ -242,7 +241,6 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd() const;
     bool supportsPerChannelBias() { return false; }
-    bool supportsNormalizeMmadCCF() { return false; }
     bool supportsScaleOperands() { return true; }
     bool usesBoolAttrForTargetLayout() { return true; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
