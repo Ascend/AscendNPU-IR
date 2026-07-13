@@ -71,6 +71,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InsertLoadStoreForMixCV.cpp
   InsertLoadStoreForScalar.cpp
   InsertNZ2NDForDebug.cpp
+  InsertL12UBForDebug.cpp
   InsertWorkSpaceForMixCV.cpp
   LiftLowestStride.cpp
   LiftZeroRank.cpp

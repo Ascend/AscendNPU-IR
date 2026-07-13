@@ -259,6 +259,9 @@ std::unique_ptr<Pass> createMarkSyncBlockLockWithSubblockPass();
 // Create a pass to insert nz2nd for debug.
 std::unique_ptr<Pass> createInsertNZ2NDForDebugPass();
 
+// Create a pass to insert l12ub for debug.
+std::unique_ptr<Pass> createInsertL12UBForDebugPass();
+
 /// Create a pass to loop on blocks when logical blocknum is larger than
 /// physical one
 std::unique_ptr<Pass> createAutoBlockifyParallelLoopPass();

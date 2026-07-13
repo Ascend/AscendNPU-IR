@@ -782,6 +782,16 @@ def InsertNZ2NDForDebug : Pass<"hivm-insert-nz2nd-for-debug"> {
   ];
 }
 
+def InsertL12UBForDebug : Pass<"hivm-insert-l12ub-for-debug"> {
+  let summary = "insert l12ub for debug";
+  let constructor = "mlir::hivm::createInsertL12UBForDebugPass()";
+  let dependentDialects = [
+    "hivm::HIVMDialect",
+    "bishengir::memref_ext::MemRefExtDialect",
+    "bufferization::BufferizationDialect"
+  ];
+}
+
 def CVPipelining : Pass<"cv-pipelining", "func::FuncOp"> {
   let summary = "Cube and vector core pipelining for multi-buffer'ed mix-cv ops";
   let constructor = "mlir::hivm::createCVPipeliningPass()";
