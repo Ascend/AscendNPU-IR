@@ -735,7 +735,31 @@ LogicalResult VTransposeOp::verify() {
   }
   const int supportedTransposeAxisNum = 2;
   if (tranposeAxisNum != supportedTransposeAxisNum) {
-    return emitOpError() << "Vtranspose only support two axes transpose";
+    int rank = srcVecType.getRank();
+    if (rank == 4) {
+      int swaps = 0;
+      int supportedSwapNum = 2;
+      llvm::SmallVector<bool, 8> vis(permSize, false);
+      for (size_t i = 0; i < permSize; ++i) {
+        if (vis[i])
+          continue;
+        size_t j = i, len = 0;
+        while (!vis[j]) {
+          vis[j] = 1;
+          j = (size_t)permutation[j];
+          ++len;
+        }
+        swaps += (int)len - 1;
+      }
+      if (swaps != supportedSwapNum) {
+        return emitOpError()
+               << "Vtranspose supports only swapping two axes; for rank-4, "
+                  "also allows permutations equivalent to two swaps (got moved="
+               << tranposeAxisNum << ", swaps=" << swaps << ")";
+      }
+    } else {
+      return emitOpError() << "Vtranspose only support two axes transpose";
+    }
   }
 
   // Verify elem type and rank of src/dst/res

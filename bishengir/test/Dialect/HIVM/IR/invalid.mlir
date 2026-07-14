@@ -155,8 +155,8 @@ module {
   func.func @incorrect_tranpose_permutation() {
     %src = memref.alloc() : memref<16x8x32x8xf32>
     %dst = memref.alloc() : memref<8x16x8x32xf32>
-    // expected-error@+1 {{'hivm.hir.vtranspose' op Vtranspose only support two axes transpose}}
-    hivm.hir.vtranspose ins(%src : memref<16x8x32x8xf32>) outs(%dst : memref<8x16x8x32xf32>) permutation = [1, 0, 3, 2]
+    // expected-error@+1 {{'hivm.hir.vtranspose' op Vtranspose supports only swapping two axes; for rank-4, also allows permutations equivalent to two swaps}}
+    hivm.hir.vtranspose ins(%src : memref<16x8x32x8xf32>) outs(%dst : memref<8x16x8x32xf32>) permutation = [1, 2, 3, 0]
     return
   }
 }

@@ -166,7 +166,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
 
 def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
-  OpLayoutInterface,
+  DeclareOpInterfaceMethods<OpLayoutInterface, ["getOperandsTargetFractalLayout"]>,
 ]> {
   let summary = [{
     Matrix Multiply and Add Op with inputs from L1 memory hierarchy.
@@ -182,9 +182,6 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     FailureOr<DataLayoutAttr> getOperandBLayout();
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetFractalLayout();
-    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
   }];
 }
 

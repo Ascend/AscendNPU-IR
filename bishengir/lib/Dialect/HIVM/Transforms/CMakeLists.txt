@@ -33,6 +33,8 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp
+  ConvertLayout/CombineOptimizedConvertLayout.cpp
+  ConvertLayout/ConvertLayoutToTranspose.cpp
   ConvertLayout/ConvertLayoutUtils.cpp
   ConvertLayout/HoistConvertLayout.cpp
   ConvertLayout/InsertConvertLayout.cpp

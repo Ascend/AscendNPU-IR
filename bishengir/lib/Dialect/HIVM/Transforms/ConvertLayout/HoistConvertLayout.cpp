@@ -81,7 +81,8 @@ private:
 
     if (previousNode) {
       if (auto prevConvert = dyn_cast<ConvertLayoutOp>(previousNode))
-        validConvertLayoutPosition |= (prevConvert.getSource() == source);
+        validConvertLayoutPosition |=
+            (prevConvert.getSource().getDefiningOp() == source.getDefiningOp());
     }
 
     return validConvertLayoutPosition;
@@ -129,4 +130,4 @@ void populateHoistConvertLayout(RewritePatternSet &patterns,
                                 MLIRContext *context) {
   patterns.add<MoveConvertLayoutToSourcePattern>(context, true);
 }
-}
+} // namespace mlir::hivm
