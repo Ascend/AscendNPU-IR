@@ -413,6 +413,247 @@ void LoadOp::print(::mlir::OpAsmPrinter &_odsPrinter) {
   }
 }
 
+::mlir::ParseResult ND2NZOp::parse(::mlir::OpAsmParser &parser,
+                                   ::mlir::OperationState &result) {
+  ::mlir::OpAsmParser::UnresolvedOperand srcRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> srcOperands(
+      &srcRawOperand, 1);
+  ::llvm::SMLoc srcOperandsLoc;
+  (void)srcOperandsLoc;
+  ::mlir::Type srcRawType{};
+  ::llvm::ArrayRef<::mlir::Type> srcTypes(&srcRawType, 1);
+  ::mlir::OpAsmParser::UnresolvedOperand dstRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> dstOperands(
+      &dstRawOperand, 1);
+  ::llvm::SMLoc dstOperandsLoc;
+  (void)dstOperandsLoc;
+  ::mlir::Type dstRawType{};
+  ::llvm::ArrayRef<::mlir::Type> dstTypes(&dstRawType, 1);
+  ::mlir::BoolAttr init_out_bufferAttr;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4> pad_valueOperands;
+  ::llvm::SMLoc pad_valueOperandsLoc;
+  (void)pad_valueOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> pad_valueTypes;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4>
+      init_conditionOperands;
+  ::llvm::SMLoc init_conditionOperandsLoc;
+  (void)init_conditionOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> init_conditionTypes;
+  ::llvm::SmallVector<::mlir::Type, 1> result_tensorTypes;
+  {
+    auto loc = parser.getCurrentLocation();
+    (void)loc;
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return ::mlir::failure();
+    if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+          return parser.emitError(loc)
+                 << "'" << result.name.getStringRef() << "' op ";
+        })))
+      return ::mlir::failure();
+  }
+  if (parser.parseKeyword("ins"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  srcOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(srcRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::ShapedType type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    srcRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (parser.parseKeyword("outs"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  dstOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(dstRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::ShapedType type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    dstRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (::mlir::succeeded(parser.parseOptionalKeyword("init_out_buffer"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    if (parser.parseCustomAttributeWithFallback(
+            init_out_bufferAttr, parser.getBuilder().getIntegerType(1)))
+      return ::mlir::failure();
+    if (init_out_bufferAttr)
+      result.getOrAddProperties<ND2NZOp::Properties>().init_out_buffer =
+          init_out_bufferAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("pad_value"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    {
+      pad_valueOperandsLoc = parser.getCurrentLocation();
+      ::mlir::OpAsmParser::UnresolvedOperand operand;
+      ::mlir::OptionalParseResult parseResult =
+          parser.parseOptionalOperand(operand);
+      if (parseResult.has_value()) {
+        if (failed(*parseResult))
+          return ::mlir::failure();
+        pad_valueOperands.push_back(operand);
+      }
+    }
+    if (parser.parseColon())
+      return ::mlir::failure();
+
+    {
+      ::mlir::Type optionalType;
+      ::mlir::OptionalParseResult parseResult =
+          parser.parseOptionalType(optionalType);
+      if (parseResult.has_value()) {
+        if (failed(*parseResult))
+          return ::mlir::failure();
+        pad_valueTypes.push_back(optionalType);
+      }
+    }
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("init_condition"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    {
+      init_conditionOperandsLoc = parser.getCurrentLocation();
+      ::mlir::OpAsmParser::UnresolvedOperand operand;
+      ::mlir::OptionalParseResult parseResult =
+          parser.parseOptionalOperand(operand);
+      if (parseResult.has_value()) {
+        if (failed(*parseResult))
+          return ::mlir::failure();
+        init_conditionOperands.push_back(operand);
+      }
+    }
+    if (parser.parseColon())
+      return ::mlir::failure();
+
+    {
+      ::mlir::Type optionalType;
+      ::mlir::OptionalParseResult parseResult =
+          parser.parseOptionalType(optionalType);
+      if (parseResult.has_value()) {
+        if (failed(*parseResult))
+          return ::mlir::failure();
+        init_conditionTypes.push_back(optionalType);
+      }
+    }
+  }
+  if (::mlir::succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseTypeList(result_tensorTypes))
+      return ::mlir::failure();
+  }
+  ::llvm::copy(
+      ::llvm::ArrayRef<int32_t>(
+          {1, 1, static_cast<int32_t>(pad_valueOperands.size()),
+           static_cast<int32_t>(init_conditionOperands.size())}),
+      result.getOrAddProperties<ND2NZOp::Properties>()
+          .operandSegmentSizes.begin());
+  result.addTypes(result_tensorTypes);
+  if (parser.resolveOperands(srcOperands, srcTypes, srcOperandsLoc,
+                             result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(dstOperands, dstTypes, dstOperandsLoc,
+                             result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(pad_valueOperands, pad_valueTypes,
+                             pad_valueOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(init_conditionOperands, init_conditionTypes,
+                             init_conditionOperandsLoc, result.operands))
+    return ::mlir::failure();
+  return ::mlir::success();
+}
+
+void ND2NZOp::print(::mlir::OpAsmPrinter &_odsPrinter) {
+  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
+  elidedAttrs.push_back("init_out_buffer");
+  _odsPrinter.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  _odsPrinter << ' ' << "ins";
+  _odsPrinter << "(";
+  _odsPrinter << getSrc();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = getSrc().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  _odsPrinter << ' ' << "outs";
+  _odsPrinter << "(";
+  _odsPrinter << getDst();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = getDst().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::ShapedType>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  if (getInitOutBufferAttr()) {
+    _odsPrinter << ' ' << "init_out_buffer";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printAttributeWithoutType(getInitOutBufferAttr());
+  }
+  if (getPadValue()) {
+    _odsPrinter << ' ' << "pad_value";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getPadValue())
+      _odsPrinter << value;
+    _odsPrinter << ' ' << ":";
+    _odsPrinter << ' ';
+    _odsPrinter << (getPadValue()
+                        ? ::llvm::ArrayRef<::mlir::Type>(
+                              getPadValue().getType())
+                        : ::llvm::ArrayRef<::mlir::Type>());
+  }
+  if (getInitCondition()) {
+    _odsPrinter << ' ' << "init_condition";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getInitCondition())
+      _odsPrinter << value;
+    _odsPrinter << ' ' << ":";
+    _odsPrinter << ' ';
+    _odsPrinter << (getInitCondition()
+                        ? ::llvm::ArrayRef<::mlir::Type>(
+                              getInitCondition().getType())
+                        : ::llvm::ArrayRef<::mlir::Type>());
+  }
+  if (!getResultTensor().empty()) {
+    _odsPrinter << ' ' << "->";
+    _odsPrinter << ' ';
+    _odsPrinter << getResultTensor().getTypes();
+  }
+}
+
 
 
 } // namespace hivm

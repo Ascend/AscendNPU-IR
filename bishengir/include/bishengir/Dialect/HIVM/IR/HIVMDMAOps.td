@@ -336,15 +336,7 @@ def ND2NZOp : HIVM_DmaOp<"nd2nz", [
                        Optional<AnyType>:$init_condition
   );
   let results = (outs Variadic<AnyRankedTensor>:$result_tensor);
-  let assemblyFormat = [{
-    attr-dict
-    `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst `:` type($dst) `)`
-    (`init_out_buffer` `=` $init_out_buffer^ )?
-    (`pad_value` `=` $pad_value^ `:` type($pad_value))?
-    (`init_condition` `=` $init_condition^ `:` type($init_condition))?
-    (`->` type($result_tensor)^)?
-  }];
+  let hasCustomAssemblyFormat = 1;
   let builders = [
     OpBuilder<(ins "TypeRange" : $res, "Value" : $src, "Value" : $dst,
                    "UnitAttr" : $dst_continuous)>,
