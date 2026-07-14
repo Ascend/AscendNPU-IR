@@ -1139,6 +1139,37 @@ func.func @test_dot_pad_only_k_l1M_for_real_m() -> tensor<128x128xf32> {
 }
 
 // -----
+
+// Test: annotation.mark {matmul_at_least_once} on scf.for result overrides
+// mayNotExec to false, suppressing tail fallback and kMayNotExec attr.
+// CHECK-LABEL: func.func @test_matmul_at_least_once_annotation
+// CHECK: memref.alloca() {normalize_matmul_counter} : memref<i32>
+// CHECK-NOT: may_not_exec
+// CHECK: scf.for
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, hivm.remain_in_l0c, normalized_in_L0C}
+func.func @test_matmul_at_least_once_annotation(%arg0: i32, %arg1: i32) -> tensor<64x64xf32> {
+  %c64 = arith.constant 64 : index
+  %c1_i32 = arith.constant 1 : i32
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %empty = tensor.empty() : tensor<64x64xf32>
+  %init_brc = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<64x64xf32>) -> tensor<64x64xf32>
+  %alloc_a = memref.alloc() : memref<64x64xf16>
+  %tensor_a = bufferization.to_tensor %alloc_a restrict writable : memref<64x64xf16>
+  %alloc_b = memref.alloc() : memref<64x64xf16>
+  %tensor_b = bufferization.to_tensor %alloc_b restrict writable : memref<64x64xf16>
+
+  %for_res = scf.for %i = %arg0 to %arg1 step %c1_i32 iter_args(%acc = %init_brc) -> (tensor<64x64xf32>) : i32 {
+    %mmad = hivm.hir.mmadL1 ins(%tensor_a, %tensor_b, %false, %c0, %c0, %c0 : tensor<64x64xf16>, tensor<64x64xf16>, i1, index, index, index) outs(%acc : tensor<64x64xf32>) -> tensor<64x64xf32>
+    scf.yield %mmad : tensor<64x64xf32>
+  }
+  annotation.mark %for_res {matmul_at_least_once} : tensor<64x64xf32>
+
+  return %for_res : tensor<64x64xf32>
+}
+
+// -----
 // Test mmadL1 normalization in nested scf.for and scf.if (no counter should be generated)
 // CHECK-LABEL: func.func @test_mmadl1_normalize_in_nested_ccf
 // CHECK-NOT: normalize_matmul_counter
