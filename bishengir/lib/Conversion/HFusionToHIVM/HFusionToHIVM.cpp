@@ -1061,8 +1061,8 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     auto bias = op.getBias();
     auto group = op.getGroups();
     auto padding = op.getPadding();
-    Value initCondition =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
+    Value initCondition = rewriter.create<arith::ConstantOp>(
+        op->getLoc(), rewriter.getIntegerAttr(int1Type, 1));
     rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, padding, group);
@@ -1085,8 +1085,8 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     auto bias = op.getBias();
     auto group = op.getGroups();
     auto padding = op.getPaddingAttr();
-    Value initCondition =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
+    Value initCondition = rewriter.create<arith::ConstantOp>(
+        op->getLoc(), rewriter.getIntegerAttr(int1Type, 1));
     rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, padding, group);
@@ -1109,8 +1109,8 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     auto bias = op.getBias();
     auto group = op.getGroups();
     auto padding = op.getPaddingAttr();
-    Value initCondition =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
+    Value initCondition = rewriter.create<arith::ConstantOp>(
+        op->getLoc(), rewriter.getIntegerAttr(int1Type, 1));
     rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, padding, group);

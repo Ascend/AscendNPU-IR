@@ -189,7 +189,8 @@ static SmallVector<Value> createEqualZeroOp(const SmallVector<Value> &targets,
     Value castResult =
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), target);
     Value zero =
-        rewriter.create<arith::ConstantIntOp>(loc, 0, rewriter.getI64Type());
+        rewriter.create<arith::ConstantOp>(
+            loc, rewriter.getIntegerAttr(rewriter.getI64Type(), 0));
     Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                 castResult, zero);
     results.push_back(cond);

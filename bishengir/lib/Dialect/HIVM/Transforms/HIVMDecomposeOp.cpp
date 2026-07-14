@@ -336,7 +336,8 @@ private:
                          Location loc) const {
     return llvm::TypeSwitch<Type, Value>(elementType)
         .Case([&](IntegerType intType) {
-          return rewriter.create<arith::ConstantIntOp>(loc, 1, intType);
+          return rewriter.create<arith::ConstantOp>(
+              loc, rewriter.getIntegerAttr(intType, 1));
         })
         .Case([&](FloatType floatType) {
           return rewriter.create<arith::ConstantOp>(
@@ -894,8 +895,8 @@ struct DecomposeI32ScalarExtOp : public OpRewritePattern<ExtOp> {
       auto rhsExtOp = createExtOp(rewriter, op.getLoc(), op.getRhs(), isUnsigned);
       auto mulI64Res =
           rewriter.create<arith::MulIOp>(op.getLoc(), lhsExtOp, rhsExtOp);
-      auto constThirtyTwo = rewriter.create<arith::ConstantIntOp>(
-          op.getLoc(), 32, rewriter.getI64Type());
+      auto constThirtyTwo = rewriter.create<arith::ConstantOp>(
+          op.getLoc(), rewriter.getIntegerAttr(rewriter.getI64Type(), 32));
       auto shLIOp = rewriter.create<arith::ShLIOp>(op.getLoc(), mulI64Res,
                                                    constThirtyTwo);
       auto shROpForLow = createShROp(rewriter, op.getLoc(),
@@ -1135,7 +1136,8 @@ struct VAbsIntegerLowering : public OpRewritePattern<hivm::VAbsOp> {
 
     // decompose abs to: vmax(vadd(vnot(src), one), src)
     Type elemType = getElementTypeOrSelf(src.getType());
-    auto one = rewriter.create<arith::ConstantIntOp>(op.getLoc(), 1, elemType);
+    auto one = rewriter.create<arith::ConstantOp>(
+        op.getLoc(), rewriter.getIntegerAttr(elemType, 1));
     auto vnotInit = createTmpBufferOrTensorWithTargetType(
         rewriter, op->getLoc(), src, elemType);
 

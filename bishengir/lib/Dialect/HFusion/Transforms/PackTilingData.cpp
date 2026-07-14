@@ -974,8 +974,9 @@ private:
 
     // Return the tiling size
     opBuilder.setInsertionPointToStart(entryBlock);
-    auto tilingStructSizeV = opBuilder.create<arith::ConstantIntOp>(
-        opBuilder.getUnknownLoc(), tilingStructSize, returnType);
+    auto tilingStructSizeV = opBuilder.create<arith::ConstantOp>(
+        opBuilder.getUnknownLoc(),
+        opBuilder.getIntegerAttr(returnType, tilingStructSize));
     opBuilder.create<func::ReturnOp>(opBuilder.getUnknownLoc(),
                                      SmallVector<Value>{tilingStructSizeV});
 

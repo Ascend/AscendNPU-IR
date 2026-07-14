@@ -168,10 +168,17 @@ struct IsInfDecomposeInterface
         APFloat::getInf(floatType.getFloatSemantics(), /*negative*/ true);
 
     // Create MLIR constant operations for infinity values.
+#ifdef BSPUB_DAVINCI_BISHENGIR_A5
+    Value posInfConst =
+        rewriter.create<arith::ConstantFloatOp>(loc, floatType, posInf);
+    Value negInfConst =
+        rewriter.create<arith::ConstantFloatOp>(loc, floatType, negInf);
+#else
     Value posInfConst =
         rewriter.create<arith::ConstantFloatOp>(loc, posInf, floatType);
     Value negInfConst =
         rewriter.create<arith::ConstantFloatOp>(loc, negInf, floatType);
+#endif
 
     // Create the output tensor (boolean type).
     auto resultType = mlir::cast<RankedTensorType>(isInfOp.getOutput().getType());

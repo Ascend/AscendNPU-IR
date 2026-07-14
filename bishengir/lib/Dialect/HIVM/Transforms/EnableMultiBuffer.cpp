@@ -147,8 +147,8 @@ public:
     //     if (idx == i) selected = bufi else keep previous
     Value selectedBuffer = newPtrCastOps[0];
     for (unsigned i = 1; i < factor; ++i) {
-      Value iVal = builder.create<arith::ConstantIntOp>(
-          loc, static_cast<int64_t>(i), idxType);
+      Value iVal = builder.create<arith::ConstantOp>(
+          loc, builder.getIntegerAttr(idxType, static_cast<int64_t>(i)));
       Value cond = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                  modularIdx, iVal);
       selectedBuffer = builder.create<arith::SelectOp>(

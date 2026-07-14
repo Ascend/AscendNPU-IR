@@ -180,7 +180,7 @@ func::FuncOp createEmptyHostTilingFunction(func::FuncOp deviceFunc,
       /*sym_name=*/
       opBuilder.getStringAttr(hacc::constructHostFunctionName(
           deviceFunc.getSymName().str(), hacc::HostFuncType::kTilingFunction)),
-      /*function_type=*/TypeAttr::get(t),
+      /*function_type=*/t,
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/deviceFunc.getArgAttrsAttr(),
       /*res_attrs=*/ArrayAttr());

@@ -3290,10 +3290,10 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   };
   auto cstInZero = [&](Value src) -> Value {
     auto ty = cast<IntegerType>(src.getType());
-#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
-    return b.create<arith::ConstantIntOp>(loc, 0, ty);
-#else
+#ifdef BSPUB_DAVINCI_BISHENGIR_A5
     return b.create<arith::ConstantIntOp>(loc, ty, static_cast<int64_t>(0));
+#else
+    return b.create<arith::ConstantIntOp>(loc, 0, ty);
 #endif
   };
 
@@ -3439,8 +3439,8 @@ MatMulMxOp::decomposeOperation(OpBuilder &builder) {
   // scale <<= 7
   auto shlFnAttr = builder.getNamedAttr(
       "fun", builder.getAttr<hfusion::BinaryFnAttr>(hfusion::BinaryFn::shli));
-  Value const7 =
-      builder.create<arith::ConstantIntOp>(location, 7, builder.getI16Type());
+  Value const7 = builder.create<arith::ConstantOp>(
+      location, builder.getIntegerAttr(builder.getI16Type(), 7));
 
   Value emptyScaleAI16 = builder.create<tensor::EmptyOp>(
       location, RankedTensorType::get(shapeScaleA, i16Ty), ValueRange{});

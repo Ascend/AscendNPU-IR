@@ -169,14 +169,16 @@ Value materializeSyncRelatedArg(
 
   if (auto it = resolvedIds.find(macroOp); it != resolvedIds.end()) {
     if (slotIdx < it->second.size() && it->second[slotIdx] >= 0) {
-      return rewriter.create<arith::ConstantIntOp>(
-          macroOp->getLoc(), it->second[slotIdx], rewriter.getI64Type());
+      return rewriter.create<arith::ConstantOp>(
+          macroOp->getLoc(),
+          rewriter.getIntegerAttr(rewriter.getI64Type(), it->second[slotIdx]));
     }
   }
 
   if (auto pinned = getSlotPinnedEventId(slot)) {
-    return rewriter.create<arith::ConstantIntOp>(macroOp->getLoc(), *pinned,
-                                                 rewriter.getI64Type());
+    return rewriter.create<arith::ConstantOp>(
+        macroOp->getLoc(),
+        rewriter.getIntegerAttr(rewriter.getI64Type(), *pinned));
   }
 
   return defaultValue;
@@ -371,8 +373,9 @@ void CustomMacroSyncCodegenState::populateSyncRelatedArgs(
     auto slotValues = collectedArgs.lookup(customMacroOp);
 
     rewriter.setInsertionPoint(customMacroOp);
-    auto defaultValue = rewriter.create<arith::ConstantIntOp>(
-        customMacroOp->getLoc(), -1, rewriter.getI64Type());
+    auto defaultValue = rewriter.create<arith::ConstantOp>(
+        customMacroOp->getLoc(),
+        rewriter.getIntegerAttr(rewriter.getI64Type(), -1));
     llvm::SmallVector<Value> newArgs(numSlots, defaultValue);
 
     for (auto [idx, slot] :

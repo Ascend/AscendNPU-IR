@@ -96,7 +96,7 @@ func::FuncOp copyShapeFunction(MLIRContext *context, func::FuncOp srcFunc) {
       builder.getStringAttr(hacc::constructHostFunctionName(
           srcFunc.getName().str(),
           hacc::HostFuncType::kInferOutputShapeFunction)),
-      /*function_type=*/TypeAttr::get(funcType),
+      /*function_type=*/funcType,
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/srcFunc.getArgAttrsAttr(),
       /*res_attrs=*/ArrayAttr());
