@@ -111,5 +111,8 @@ if ('bisheng' in config.bisheng_compiler_executable and os.path.isfile(config.bi
 if shutil.which('hivmc'):
     config.available_features.add('hivmc')
 
+if shutil.which('hivmc-a5'):
+    config.available_features.add('hivmc-a5')
+
 if config.shmem_build_template:
     config.available_features.add('shmem')
