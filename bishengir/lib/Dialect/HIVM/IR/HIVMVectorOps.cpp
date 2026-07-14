@@ -932,6 +932,158 @@ LogicalResult VInterleaveOp::verify() {
 // VDeinterleaveOp
 //===----------------------------------------------------------------------===//
 
+::mlir::ParseResult VDeinterleaveOp::parse(::mlir::OpAsmParser &parser,
+                                           ::mlir::OperationState &result) {
+  ::mlir::OpAsmParser::UnresolvedOperand srcRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> srcOperands(
+      &srcRawOperand, 1);
+  ::llvm::SMLoc srcOperandsLoc;
+  (void)srcOperandsLoc;
+  ::mlir::Type srcRawType{};
+  ::llvm::ArrayRef<::mlir::Type> srcTypes(&srcRawType, 1);
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4> dstOperands;
+  ::llvm::SMLoc dstOperandsLoc;
+  (void)dstOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> dstTypes;
+  ::mlir::IntegerAttr channel_numAttr;
+  ::mlir::hivm::DeinterleaveModeAttr index_modeAttr;
+  ::llvm::SmallVector<::mlir::Type, 1> resultTypes;
+  {
+    auto loc = parser.getCurrentLocation();
+    (void)loc;
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return ::mlir::failure();
+    if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+          return parser.emitError(loc)
+                 << "'" << result.name.getStringRef() << "' op ";
+        })))
+      return ::mlir::failure();
+  }
+  if (parser.parseKeyword("ins"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  srcOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(srcRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    srcRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (parser.parseKeyword("outs"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  dstOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperandList(dstOperands))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  if (parser.parseTypeList(dstTypes))
+    return ::mlir::failure();
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (::mlir::succeeded(parser.parseOptionalKeyword("channel_num"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    if (parser.parseCustomAttributeWithFallback(
+            channel_numAttr, parser.getBuilder().getIntegerType(64)))
+      return ::mlir::failure();
+    if (channel_numAttr)
+      result.getOrAddProperties<VDeinterleaveOp::Properties>().channel_num =
+          channel_numAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("index_mode"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    if (parser.parseCustomAttributeWithFallback(index_modeAttr, ::mlir::Type{}))
+      return ::mlir::failure();
+    if (index_modeAttr)
+      result.getOrAddProperties<VDeinterleaveOp::Properties>().index_mode =
+          index_modeAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseTypeList(resultTypes))
+      return ::mlir::failure();
+  }
+  result.addTypes(resultTypes);
+  if (parser.resolveOperands(srcOperands, srcTypes, srcOperandsLoc,
+                             result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(dstOperands, dstTypes, dstOperandsLoc,
+                             result.operands))
+    return ::mlir::failure();
+  return ::mlir::success();
+}
+
+void VDeinterleaveOp::print(::mlir::OpAsmPrinter &_odsPrinter) {
+  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("channel_num");
+  elidedAttrs.push_back("index_mode");
+  {
+    ::mlir::Builder odsBuilder(getContext());
+    ::mlir::Attribute attr = getIndexModeAttr();
+    if (attr && (attr == ::mlir::hivm::DeinterleaveModeAttr::get(
+                            odsBuilder.getContext(),
+                            DeinterleaveMode::ALL_CHANNELS)))
+      elidedAttrs.push_back("index_mode");
+  }
+  _odsPrinter.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  _odsPrinter << ' ' << "ins";
+  _odsPrinter << "(";
+  _odsPrinter << getSrc();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = getSrc().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::Type>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+    else
+      _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  _odsPrinter << ' ' << "outs";
+  _odsPrinter << "(";
+  _odsPrinter << getDst();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  _odsPrinter << getDst().getTypes();
+  _odsPrinter << ")";
+  if (getChannelNumAttr()) {
+    _odsPrinter << ' ' << "channel_num";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printAttributeWithoutType(getChannelNumAttr());
+  }
+  if ((getIndexModeAttr() &&
+       getIndexModeAttr() !=
+           ::mlir::hivm::DeinterleaveModeAttr::get(
+               ::mlir::OpBuilder((*this)->getContext()).getContext(),
+               DeinterleaveMode::ALL_CHANNELS))) {
+    _odsPrinter << ' ' << "index_mode";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printStrippedAttrOrType(getIndexModeAttr());
+  }
+  if (!getResult().empty()) {
+    _odsPrinter << ' ' << "->";
+    _odsPrinter << ' ';
+    _odsPrinter << getResult().getTypes();
+  }
+}
+
 LogicalResult VDeinterleaveOp::verify() {
   auto outputs = getDst();
   auto mode = getIndexMode();

@@ -1370,13 +1370,7 @@ def VDeinterleaveOp : HIVM_VectorOp<"vdeinterleave",
                          "DeinterleaveMode::ALL_CHANNELS">:$index_mode
   );
   let results = (outs Variadic<AnyRankedTensor>:$result);
-  let assemblyFormat = [{
-    attr-dict `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst `:` type($dst) `)`
-    (`channel_num` `=` $channel_num^)?
-    (`index_mode` `=` $index_mode^)?
-    (`->` type($result)^)?
-  }];
+  let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
   let extraClassDeclaration = vectorOpBaseDecls # [{
     static StringRef getOpName() { return "deinterleave"; }
