@@ -325,6 +325,28 @@ _Reduce rank using subview_
 
 ## `-hivm-set-buffer-size`
 
+## `-hivm-split-mixed-if-conditionals`
+
+_Split mixed-core scf.if ops into per-core if chains._
+
+Architecture-agnostic standalone pass (not in the default HIVM pipeline). Run
+explicitly before `-hivm-split-mix-kernel` when MIX kernels contain mixed-core
+`scf.if`s; results are tagged `hivm.cube_only` / `hivm.vec_only`.
+
+## `-hivm-mark-tightly-coupled-buffer`
+
+_Mark L1/UB allocs with tightly-coupled-buffer ids (Ascend950 / RegBase)._
+
+Assigns `hivm.tightly_coupled_buffer` ids on the MIX function before
+`-hivm-split-mix-kernel` so AIC/AIV clones inherit identical ids.
+
+## `-hivm-hoist-tightly-coupled-alloc`
+
+_Hoist yielded tightly-coupled allocs out of inner regions (Ascend950)._
+
+Keeps CV tightly-coupled buffer multi-buffer anchors aligned across AIC/AIV
+after the mix split.
+
 ## `-hivm-split-mix-kernel`
 
 _Split Mix device functions into AICube and AIVector functions._
@@ -337,6 +359,10 @@ Note:
   * If a Mix kernel is called within a Host function, a function declaration
     is generated for the final kernel launch. Currently don't support calling
     Mix kernel within a device function.
+  * When mixed-core `scf.if`s are present, run `-hivm-split-mixed-if-conditionals`
+    first (standalone; not in the default pipeline).
+  * On Ascend950, also run `-hivm-mark-tightly-coupled-buffer` and
+    `-hivm-hoist-tightly-coupled-alloc` before this pass.
 
 Input:
 

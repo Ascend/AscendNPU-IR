@@ -147,6 +147,18 @@ std::unique_ptr<Pass> createInsertInferTaskTypeFuncPass();
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
 
+// Create a pass to split mixed-core scf.if ops into per-core if chains
+// (Ascend950 / RegBase). Intended to run before SplitMixKernel.
+std::unique_ptr<Pass> createSplitMixedIfConditionalsPass();
+
+// Create a pass to mark L1/UB allocs with the tightly-coupled-buffer attribute
+// before SplitMixKernel clones the MIX function.
+std::unique_ptr<Pass> createMarkTightlyCoupledBufferPass();
+
+// Create a pass to hoist yielded tightly-coupled allocs out of inner regions so
+// the AIC/AIV multi-buffer anchor stays consistent after SplitMixKernel.
+std::unique_ptr<Pass> createHoistTightlyCoupledAllocPass();
+
 // Create a pass to mark scalar operations with core-type attribute.
 std::unique_ptr<Pass>
 createMarkRealCoreTypePass(const MarkRealCoreTypeOptions &options = {});

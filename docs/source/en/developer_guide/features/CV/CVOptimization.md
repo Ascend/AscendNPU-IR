@@ -272,7 +272,9 @@ bishengir-opt --hivm-tile-batchmm-into-loop input.mlir -o output.mlir
 bishengir-opt -insert-workspace-for-mix-cv input.mlir -o output.mlir
 bishengir-opt --hivm-bind-workspace-arg input.mlir -o output.mlir
 bishengir-opt -hivm-plan-memory -mem-plan-mode=global-work-space-plan input.mlir -o output.mlir
-bishengir-opt -hivm-split-mix-kernel input.mlir -o output.mlir
+# Standalone split-mixed-if when needed; TCB mark/hoist are Ascend950.
+bishengir-opt -hivm-split-mixed-if-conditionals -hivm-mark-tightly-coupled-buffer \
+  -hivm-hoist-tightly-coupled-alloc -hivm-split-mix-kernel input.mlir -o output.mlir
 ```
 
 ### Test Cases

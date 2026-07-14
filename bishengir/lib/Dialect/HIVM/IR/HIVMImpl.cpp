@@ -15,9 +15,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -168,12 +170,14 @@ bool traceSingleChainUser(
       return traceSingleChainUser(ifResult, isMatchedOp);
     }
 
-    SmallVector<Value> elseYieldValues =
-        llvm::to_vector(scfIfOp.elseYield().getResults());
-    auto idxScfIfElse = findIdx(elseYieldValues, v);
-    if (idxScfIfElse.has_value()) {
-      auto ifResult = scfIfOp.getResults()[idxScfIfElse.value()];
-      return traceSingleChainUser(ifResult, isMatchedOp);
+    if (!scfIfOp.getElseRegion().empty()) {
+      SmallVector<Value> elseYieldValues =
+          llvm::to_vector(scfIfOp.elseYield().getResults());
+      auto idxScfIfElse = findIdx(elseYieldValues, v);
+      if (idxScfIfElse.has_value()) {
+        auto ifResult = scfIfOp.getResults()[idxScfIfElse.value()];
+        return traceSingleChainUser(ifResult, isMatchedOp);
+      }
     }
   }
 
@@ -268,10 +272,31 @@ bool isCopytoL1(Operation *op) {
 }
 
 FailureOr<TCoreType> getCoreType(Operation *op) {
-  // coretype attribute has the highest priority.
+  // VF / copy-to-L1 are always VECTOR for mix splitting (f9d978b behavior),
+  // ahead of an explicit coretype attribute.
+  if (isVFCall(op) || isCopytoL1(op))
+    return TCoreType::VECTOR;
+
+  // Explicit coretype attribute is next.
   if (auto coreTypeAttr =
           op->getAttrOfType<hivm::TCoreTypeAttr>(hivm::TCoreTypeAttr::name)) {
     return coreTypeAttr.getTcoretype();
+  }
+  // SplitMixedIfConditionals tags uniform-core ifs; honor those for filtering.
+  if (isa<scf::IfOp>(op)) {
+    if (op->hasAttr(kCubeOnlyAttrName))
+      return TCoreType::CUBE;
+    if (op->hasAttr(kVecOnlyAttrName))
+      return TCoreType::VECTOR;
+  }
+  // Scope pipelined-loop override: used when CV pipelining tags a scope without
+  // also setting hivm.tcore_type. Do not apply this to scf.for — those stay
+  // CUBE_OR_VECTOR so annotateOpOperand can recurse into the body.
+  if (isa<scope::ScopeOp>(op)) {
+    if (auto coreTypeAttr = op->getAttrOfType<hivm::TCoreTypeAttr>(
+            hivm::kPipelinedLoopCoreTypeAttrName)) {
+      return coreTypeAttr.getTcoretype();
+    }
   }
   // annotation.mark has the second highest priority.
   if (op->getNumResults() > 0) {
@@ -428,6 +453,64 @@ VCastOp castTo(OpBuilder &builder, Location loc, Value src,
   mlir::hivm::VCastOp VCastOp = builder.create<hivm::VCastOp>(
       loc, resultTypeRange, src, targetTensor, roundMode, typeFnAttr);
   return VCastOp;
+}
+
+std::pair<bool, bool> analyzeCoreTypes(Block *block) {
+  bool hasC = false, hasV = false;
+  if (!block || block->empty()) {
+    LDBG("Empty block or nullptr");
+    return {hasC, hasV};
+  }
+  for (Operation &op : *block) {
+    auto coreType = mlir::hivm::detail::queryCoreTypeHelper(&op);
+    if (coreType.has_value()) {
+      if (coreType.value() == TCoreType::CUBE)
+        hasC = true;
+      else if (coreType.value() == TCoreType::VECTOR)
+        hasV = true;
+    }
+    if (op.getNumRegions() > 0) {
+      for (Region &region : op.getRegions()) {
+        for (Block &nestedBlock : region) {
+          auto [nestedHasC, nestedHasV] = analyzeCoreTypes(&nestedBlock);
+          hasC = hasC || nestedHasC;
+          hasV = hasV || nestedHasV;
+        }
+      }
+    }
+  }
+  return {hasC, hasV};
+}
+
+bool hasOnlySplittableRegions(Block *block) {
+  if (!block)
+    return true;
+  for (Operation &op : *block) {
+    if (op.getNumRegions() == 0)
+      continue;
+    if (isa<scf::IfOp>(&op)) {
+      for (Region &region : op.getRegions()) {
+        for (Block &nestedBlock : region) {
+          if (!hasOnlySplittableRegions(&nestedBlock))
+            return false;
+        }
+      }
+      continue;
+    }
+    // Non-scf.if region ops are allowed only if their body is uniform-core.
+    // WorklistBuilder treats such ops atomically via pipeline annotations.
+    bool hasC = false, hasV = false;
+    for (Region &region : op.getRegions()) {
+      for (Block &nestedBlock : region) {
+        auto [nc, nv] = analyzeCoreTypes(&nestedBlock);
+        hasC = hasC || nc;
+        hasV = hasV || nv;
+      }
+    }
+    if (hasC && hasV)
+      return false;
+  }
+  return true;
 }
 
 namespace util {

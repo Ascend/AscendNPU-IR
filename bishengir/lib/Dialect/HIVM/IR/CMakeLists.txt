@@ -38,6 +38,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   StoreLikeOpInterface.cpp
   ../Utils/Utils.cpp
   ../Utils/RegbaseUtils.cpp
+  ../Utils/WorklistBuilder.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM
@@ -69,6 +70,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   MLIRSCFDialect
   MLIRTransformUtils
   MLIRTensorDialect
+  MLIRVectorDialect
   MLIRViewLikeInterface
   BiShengIRDialectUtils
   BiShengIRHACCDialect

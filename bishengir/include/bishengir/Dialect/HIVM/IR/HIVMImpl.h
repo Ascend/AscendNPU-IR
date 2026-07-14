@@ -236,6 +236,12 @@ mlir::hivm::VCastOp castTo(OpBuilder &builder, Location loc, Value src,
 /// To retrieve real mmad perChannel bias from implicit broadcast and so on
 Value extractMmadBiasFromPotentialUnitDimExpand(Value bias);
 
+/// Union of CUBE/VECTOR core types reachable from ops in `block` (recursive).
+std::pair<bool, bool> analyzeCoreTypes(Block *block);
+
+/// True if every nested region op is either `scf.if` or uniform-core.
+bool hasOnlySplittableRegions(Block *block);
+
 namespace util {
 struct AlignInfo {
   llvm::SmallVector<int32_t> alignDims;

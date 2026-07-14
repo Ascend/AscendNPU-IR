@@ -407,17 +407,75 @@ def InsertInferTaskTypeFunc : Pass<"hivm-insert-infer-task-type-func", "ModuleOp
   let dependentDialects = ["func::FuncDialect", "hacc::HACCDialect"];
 }
 
+def MarkTightlyCoupledBuffer
+    : Pass<"hivm-mark-tightly-coupled-buffer", "func::FuncOp"> {
+  let summary = "Mark L1/UB allocs with tightly-coupled-buffer attribute.";
+  let description = [{
+    Before SplitMixKernel clones a MIX function into AIC/AIV copies, every
+    L1/UB `memref.alloc` is given a `hivm.tightly_coupled_buffer` id (skipping
+    allocs that already carry one and preserving their ids). The ids are
+    assigned on the single MIX function, so both clones inherit identical ids
+    and PlanMemory can later pair the AIC/AIV buffers at consistent offsets.
+    Only runs for Ascend950 (RegBase) targets.
+  }];
+  let constructor = "mlir::hivm::createMarkTightlyCoupledBufferPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "annotation::AnnotationDialect",
+                           "memref::MemRefDialect"];
+}
+
+def HoistTightlyCoupledAlloc
+    : Pass<"hivm-hoist-tightly-coupled-alloc", "func::FuncOp"> {
+  let summary = "Hoist yielded tightly-coupled allocs out of inner regions.";
+  let description = [{
+    A tightly-coupled `memref.alloc` whose tensor view (through
+    `memory_space_cast`/`to_tensor`/`subview`/`extract_slice`/`expand_shape`/
+    `collapse_shape`/`cast`) is yielded out of its enclosing `scf.for`/
+    `scf.if`/`scf.while` is moved up to the outermost region that the yielded
+    value escapes to. This keeps the buffer anchored on the same loop on both
+    the AIC and AIV side after SplitMixKernel, so the auto-multi-buffer slot
+    rotation does not diverge between the two cores (a CV tightly-coupled
+    buffer must not rotate on the inner loop on one core and the outer loop on
+    the other).
+    Only runs for Ascend950 (RegBase) targets.
+  }];
+  let constructor = "mlir::hivm::createHoistTightlyCoupledAllocPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scf::SCFDialect",
+                           "tensor::TensorDialect", "memref::MemRefDialect",
+                           "bufferization::BufferizationDialect"];
+}
+
+def SplitMixedIfConditionals
+    : Pass<"hivm-split-mixed-if-conditionals", "func::FuncOp"> {
+  let summary = "Split mixed-core scf.if ops into per-core if chains.";
+  let description = [{
+    Splits MIX-function `scf.if` ops whose then/else bodies contain both CUBE
+    and VECTOR work into per-core `scf.if` chains (via WorklistBuilder), tagged
+    with `hivm.cube_only` / `hivm.vec_only`. Architecture-agnostic standalone
+    pass — not added to the default HIVM pipeline; run it explicitly before
+    `-hivm-split-mix-kernel` when mixed-core if splitting is required.
+  }];
+  let constructor = "mlir::hivm::createSplitMixedIfConditionalsPass()";
+  let dependentDialects = ["arith::ArithDialect", "hivm::HIVMDialect",
+                           "tensor::TensorDialect", "scf::SCFDialect"];
+}
+
 def SplitMixKernel : Pass<"hivm-split-mix-kernel", "ModuleOp"> {
   let summary =
       "Split Mix device functions into AICube and AIVector functions.";
   let description = [{
-    Split mix kernels into sperate AICube and AIVector kernels, and mark the
+    Split mix kernels into separate AICube and AIVector kernels, and mark the
     parent module as a Mix module.
 
     Note:
-      * If a Mix kernel is called within a Host function, a function declaration
-        is generated for the final kernel launch. Currently don't support calling
-        Mix kernel within a device function.
+      * If a Mix kernel is called within a Host function, a function
+        declaration is generated for the final kernel launch. Currently
+        don't support calling Mix kernel within a device function.
+      * When MIX kernels contain mixed-core `scf.if`s, run
+        `-hivm-split-mixed-if-conditionals` first (standalone; not in the
+        default pipeline).
+      * On Ascend950, also run `-hivm-mark-tightly-coupled-buffer` and
+        `-hivm-hoist-tightly-coupled-alloc` so AIC/AIV clones share consistent
+        tightly-coupled buffer ids and anchors.
 
     Input:
 

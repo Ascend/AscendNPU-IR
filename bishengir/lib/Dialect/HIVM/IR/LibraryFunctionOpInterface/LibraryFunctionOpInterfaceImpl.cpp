@@ -491,10 +491,10 @@ getLibraryCallNameForGlobalMixMatmulOps(GlobalMixMatmulTy mixMatmulOp) {
   auto coreTypeAttr = dyn_cast<hivm::TFuncCoreTypeAttr>(coreType);
   switch (coreTypeAttr.getFuncCoreType()) {
   case hivm::TFuncCoreType::AIV:
-    ss << "_mix_aiv";
+    ss << std::string(kMixFuncAivSuffix);
     break;
   case hivm::TFuncCoreType::AIC:
-    ss << "_mix_aic";
+    ss << std::string(kMixFuncAicSuffix);
     break;
   default:
     llvm::report_fatal_error("Unsupported CoreType");

@@ -1,4 +1,5 @@
 // REQUIRES: hivmc
+// UNSUPPORTED: bishengir_published
 // RUN: bishengir-compile -enable-hfusion-compile=true -enable-hivm-inject-barrier-all-sync -enable-triton-kernel-compile %s
 // RUN: bishengir-compile -enable-hfusion-compile=true -enable-triton-kernel-compile %s
 
