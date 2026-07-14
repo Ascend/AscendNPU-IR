@@ -1135,10 +1135,15 @@ struct AscendDPXSyncThreadsOpLowering
   explicit AscendDPXSyncThreadsOpLowering(LLVMTypeConverter &converter)
       : mlir::ConvertOpToLLVMPattern<ascend_dpx::SyncThreadsOp>(converter) {}
   LogicalResult
-  matchAndRewrite(ascend_dpx::SyncThreadsOp dpx_op,
+  matchAndRewrite(ascend_dpx::SyncThreadsOp dpxOp,
                   ascend_dpx::SyncThreadsOp::Adaptor adaptor,
                   ConversionPatternRewriter &rewriter) const override {
-    rewriter.replaceOpWithNewOp<hivm_regbaseintrins::SyncThreadsOp>(dpx_op);
+    auto numWarps = triton::gpu::maybeLookupNumWarps(dpxOp);
+    if (numWarps && *numWarps == 1)
+      rewriter.replaceOpWithNewOp<hivm_regbaseintrins::ThreadFenceBlockOp>(
+          dpxOp);
+    else
+      rewriter.replaceOpWithNewOp<hivm_regbaseintrins::SyncThreadsOp>(dpxOp);
     return success();
   }
 };

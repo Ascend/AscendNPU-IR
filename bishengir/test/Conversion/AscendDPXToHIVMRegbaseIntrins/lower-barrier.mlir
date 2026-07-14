@@ -1,4 +1,4 @@
-// RUN: bishengir-opt %s -convert-ascend-dpx-to-hivmregbaseintrins | FileCheck %s
+// RUN: bishengir-opt %s -convert-ascend-dpx-to-hivmregbaseintrins --split-input-file | FileCheck %s
 
 // CHECK-LABEL:   llvm.func @test_multi_barrier_kernel(
 // CHECK-SAME:                                         %[[VAL_0:.*]]: !llvm.ptr<1>,
@@ -112,6 +112,40 @@ module attributes {
   ttg.shared = 12 : i32,
   "ttg.threads-per-warp" = 32 : i32,
   "ttg.super-block-barrier" = true
+} {
+  llvm.func @test_multi_barrier_kernel(
+    %arg0: !llvm.ptr<1>,
+    %arg1: !llvm.ptr<6> {hivm.shared_memory}
+  ) attributes {hivm_regbaseintrins.kernel} {
+    %0 = llvm.mlir.constant(1 : i32) : i32
+    ascend_dpx.sync_threads
+    %1 = llvm.add %0, %0 : i32
+    ascend_dpx.sync_threads
+    %2 = llvm.add %1, %0 : i32
+    ascend_dpx.sync_threads
+    llvm.return
+  }
+}
+
+// -----
+
+// CHECK-LABEL:   llvm.func @test_multi_barrier_kernel(
+// CHECK-SAME:                                         %[[VAL_0:.*]]: !llvm.ptr<1>,
+// CHECK-SAME:                                         %[[VAL_1:.*]]: !llvm.ptr<6> {hivm.shared_memory}) attributes {hivm_regbaseintrins.kernel} {
+// CHECK-NEXT: %[[VAL_0:.*]] = llvm.mlir.constant(1 : i32) : i32
+// CHECK-NEXT: hivm_regbaseintrins.thread_fence_block
+// CHECK-NEXT: %[[VAL_1:.*]] = llvm.add %[[VAL_0]], %[[VAL_0]] : i32
+// CHECK-NEXT: hivm_regbaseintrins.thread_fence_block
+// CHECK-NEXT: %[[VAL_2:.*]] = llvm.add %[[VAL_1]], %[[VAL_0]] : i32
+// CHECK-NEXT: hivm_regbaseintrins.thread_fence_block
+// CHECK-NEXT: llvm.return
+
+module attributes {
+  dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #hacc.target_device_spec<#dlti.dl_entry<"AI_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"CUBE_CORE_COUNT", 28 : i32>, #dlti.dl_entry<"VECTOR_CORE_COUNT", 56 : i32>, #dlti.dl_entry<"UB_SIZE", 2031616 : i32>, #dlti.dl_entry<"L1_SIZE", 4194304 : i32>, #dlti.dl_entry<"L0A_SIZE", 524288 : i32>, #dlti.dl_entry<"L0B_SIZE", 524288 : i32>, #dlti.dl_entry<"L0C_SIZE", 2097152 : i32>, #dlti.dl_entry<"UB_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L1_ALIGN_SIZE", 256 : i32>, #dlti.dl_entry<"L0C_ALIGN_SIZE", 4096 : i32>, #dlti.dl_entry<"MINIMAL_D_CACHE_SIZE", 262144 : i32>, #dlti.dl_entry<"MAXIMUM_D_CACHE_SIZE", 983040 : i32>, #dlti.dl_entry<"ARCH", "dav-c310">>>,
+  "ttg.num-warps" = 1 : i32,
+  "ttg.super-block-factor" = 4 : ui32,
+  ttg.shared = 12 : i32,
+  "ttg.threads-per-warp" = 32 : i32
 } {
   llvm.func @test_multi_barrier_kernel(
     %arg0: !llvm.ptr<1>,

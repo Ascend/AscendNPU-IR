@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/Analysis/VFFusion/CostModelInfo/CostModelInfoUtils.h"
 #include "bishengir/Dialect/Analysis/VFFusion/VFFusionAnalyzer.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Visitors.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -162,14 +163,6 @@ static float getComputeScores(Operation *op) {
   return computeScores;
 }
 
-static float_t getFusedOpsComputeScores(const DenseSet<Operation *> &fusedOps) {
-  auto computeScores = 0.0f;
-  for (auto op : fusedOps) {
-    computeScores += getComputeScores(op);
-  }
-  return computeScores;
-}
-
 /// Count non-terminator inner ops of a single linalgOp.
 static int getComputeOpCount(Operation *op) {
   int count = 0;
@@ -178,23 +171,12 @@ static int getComputeOpCount(Operation *op) {
   return count;
 }
 
-/// Count non-terminator inner ops across a set of operations.
-static int getComputeOpCount(const DenseSet<Operation *> &fusedOps) {
-  int count = 0;
-  for (auto *op : fusedOps) {
-    count += getComputeOpCount(op);
-  }
-  return count;
-}
 // === Exec Unit Utilization ===
-static float getExecUnitUtilization(const SmallVector<Operation *> &ops) {
-  if (ops.empty()) {
-    return 0.0f;
-  }
-  const auto execUnitCounts = getExecUnitCounts(ops);
+static float getExecUnitUtilization(
+    int singleCnt, int doubleCnt,
+    const DenseMap<std::pair<int64_t, int64_t>, unsigned> &innerOpCnts) {
   float avgMaxCycle = 0.0f;
-  const auto &groupInstMap = getSameGroupOpCnts(ops);
-  for (const auto &[key, opCnt] : groupInstMap) {
+  for (const auto &[key, opCnt] : innerOpCnts) {
     const auto [numerator, denominator] = key;
     if (denominator == 0) {
       continue;
@@ -203,10 +185,10 @@ static float getExecUnitUtilization(const SmallVector<Operation *> &ops) {
         1.0f * opCnt * (static_cast<float>(numerator) / denominator);
     avgMaxCycle = std::max(cycle, avgMaxCycle);
   }
-  if (execUnitCounts.second < execUnitCounts.first) {
-    avgMaxCycle = std::max(avgMaxCycle, 1.0f * execUnitCounts.first);
+  if (doubleCnt < singleCnt) {
+    avgMaxCycle = std::max(avgMaxCycle, 1.0f * singleCnt);
   }
-  int totalExecUnits = execUnitCounts.second + execUnitCounts.first;
+  int totalExecUnits = doubleCnt + singleCnt;
   float maxAllowedUnits = avgMaxCycle * 2.0f;
   float utilization = totalExecUnits / maxAllowedUnits;
   return std::min(utilization, 1.0f);
@@ -239,54 +221,18 @@ static void collectValuesFromOps(const DenseSet<Operation *> &ops,
 }
 
 // IO Scores compute with eliminated inputs/outputs
-static std::pair<size_t, size_t>
-calculateIoCounts(const llvm::SmallDenseSet<Value> &uniqueInputs,
-                  const llvm::SmallDenseSet<Value> &uniqueOutputs,
-                  const llvm::SmallDenseSet<Value> &uniqueAll) {
-  auto optIoNum =
-      (uniqueInputs.size() + uniqueOutputs.size()) - uniqueAll.size();
-  auto inputsNums = uniqueInputs.size() - optIoNum;
-  auto outputsNums = uniqueOutputs.size() - optIoNum;
+static std::pair<size_t, size_t> calculateIoCounts(size_t input, size_t output,
+                                                   size_t all) {
+  auto optIoNum = (input + output) - all;
+  auto inputsNums = input - optIoNum;
+  auto outputsNums = output - optIoNum;
   return {inputsNums, outputsNums};
 }
 
-static float_t getFusedOpsIoScores(const DenseSet<Operation *> &fusedOps) {
-  llvm::SmallDenseSet<Value> uniqueInputs;
-  llvm::SmallDenseSet<Value> uniqueOutputs;
-  llvm::SmallDenseSet<Value> uniqueAll;
-  collectValuesFromOps(fusedOps, uniqueInputs, uniqueOutputs, uniqueAll);
-  auto [inputsNums, outputsNums] =
-      calculateIoCounts(uniqueInputs, uniqueOutputs, uniqueAll);
-  float ioScores = 0.0f;
-  if (inputsNums > outputsNums) {
-    ioScores = (outputsNums + inputsNums) * 0.5f;
-  } else {
-    ioScores = outputsNums;
-  }
-  return ioScores;
-}
-
-static llvm::SmallVector<size_t>
-getFusedIoCount(const DenseSet<Operation *> &producerGroup,
-                const DenseSet<Operation *> &consumerGroup) {
-  llvm::SmallVector<size_t> ioCounts = {0, 0};
-
-  bool hasValidLinalg = llvm::any_of(producerGroup, [](Operation *op) {
-    return isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
-  });
-  if (!hasValidLinalg)
-    return ioCounts;
-
-  llvm::SmallDenseSet<Value> uniqueInputs;
-  llvm::SmallDenseSet<Value> uniqueOutputs;
-  llvm::SmallDenseSet<Value> uniqueAll;
-  collectValuesFromOps(producerGroup, uniqueInputs, uniqueOutputs, uniqueAll);
-  collectValuesFromOps(consumerGroup, uniqueInputs, uniqueOutputs, uniqueAll);
-  auto [inputsNums, outputsNums] =
-      calculateIoCounts(uniqueInputs, uniqueOutputs, uniqueAll);
-  ioCounts[0] = inputsNums;
-  ioCounts[1] = outputsNums;
-  return ioCounts;
+static float ioScoreFromCounts(size_t inputsNums, size_t outputsNums) {
+  if (inputsNums > outputsNums)
+    return (outputsNums + inputsNums) * 0.5f;
+  return static_cast<float>(outputsNums);
 }
 
 // === Parallelism ===
@@ -307,16 +253,6 @@ static float getParallelism(Operation *op) {
                                  costInfo.execInterval,
                              parallelism);
     }
-  }
-  return parallelism;
-}
-
-static float getParallelism(const DenseSet<Operation *> &fusedOps) {
-  float_t parallelism = 0.f;
-  float_t currentOpParallelism = 0.f;
-  for (auto op : fusedOps) {
-    currentOpParallelism = getParallelism(op);
-    parallelism = std::max(currentOpParallelism, parallelism);
   }
   return parallelism;
 }
@@ -365,20 +301,22 @@ bool MaxParallelAnalyzer::areFusibleOps(const int producerIndex,
   int consumerGroupId = static_cast<int>(opToGroupIndex[consumerOp]);
   auto &producerGroup = AllFusedGroupBlocks[producerGroupId];
   auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
-  DenseSet<Operation *> fusedGroupsSet;
-  for (Operation* op : producerGroup)
-    fusedGroupsSet.insert(op);
-  for (Operation* op : consumerGroup)
-    fusedGroupsSet.insert(op);
-  for (Operation* op : fusedGroupsSet) {
-    if (isa<tensor::ExtractSliceOp>(op) || isa<tensor::ExtractOp>(op)) {
-      for (Operation* user : op->getUsers()) {
-        if (!fusedGroupsSet.contains(user)) {
-          return false;
-        }
-      }
-    }
-  }
+  // Similar to hasInvalidDependencyIfFused, if the number of ops in a group is
+  // greater than 1, then the extract ops in that group must satisfy the
+  // constraint rules.
+  SmallVector<Operation *, 4> extractVec;
+  if (producerGroup.size() == 1)
+    for (Operation *op : producerGroup)
+      if (isa<tensor::ExtractSliceOp>(op) || isa<tensor::ExtractOp>(op))
+        extractVec.push_back(op);
+  if (consumerGroup.size() == 1)
+    for (Operation *op : consumerGroup)
+      if (isa<tensor::ExtractSliceOp>(op) || isa<tensor::ExtractOp>(op))
+        extractVec.push_back(op);
+  for (auto *extractOp : extractVec)
+    for (auto *user : extractOp->getUsers())
+      if (!consumerGroup.count(user) && !producerGroup.count(user))
+        return false;
 
   if (!isInFusionWhiteList(producerOp) || !isInFusionWhiteList(consumerOp))
     return false;
@@ -424,16 +362,43 @@ void MaxParallelAnalyzer::initializeImpl(Block &block) {
     if (!isInFusionWhiteList(&op))
       continue;
     auto currentOpIndex = opToIndex.at(&op);
-    if (!opToGroupIndex.count(opsInBlock[currentOpIndex])) {
+    Operation *groupOp = opsInBlock[currentOpIndex];
+    if (!opToGroupIndex.count(groupOp)) {
       auto groupId = AllFusedGroupBlocks.size();
       DenseSet<Operation *> newGroup;
-      newGroup.insert(opsInBlock[currentOpIndex]);
+      newGroup.insert(groupOp);
       AllFusedGroupBlocks[groupId] = newGroup;
-      opToGroupIndex.insert({opsInBlock[currentOpIndex], groupId});
+      opToGroupIndex.insert({groupOp, groupId});
+      groupMetrics[groupId] = getOpMetrics(groupOp);
     }
   }
   LDBG("Initialized " << AllFusedGroupBlocks.size()
                       << " groups with one op each");
+}
+
+const MaxParallelAnalyzer::CostMetrics &
+MaxParallelAnalyzer::getOpMetrics(Operation *op) {
+  if (!isa<linalg::LinalgOp>(op))
+    return nonLinalgOpMetrics;
+  auto it = linalgOpMetrics.find(op);
+  if (it != linalgOpMetrics.end())
+    return it->second;
+  CostMetrics curOpMetrics;
+  curOpMetrics.isValidLinalg = isValidLinalgOp(dyn_cast<linalg::LinalgOp>(op));
+  curOpMetrics.computeScore = getComputeScores(op);
+  curOpMetrics.computeOpCount = getComputeOpCount(op);
+  curOpMetrics.parallelism = getParallelism(op);
+  SmallVector<Operation *, 1> single{op};
+  auto [s, d] = getExecUnitCounts(single);
+  curOpMetrics.singleExuCnt = s;
+  curOpMetrics.doubleExuCnt = d;
+  curOpMetrics.innerOpCnts = getSameGroupOpCnts(single);
+  DenseSet<Operation *> singleSet;
+  singleSet.insert(op);
+  collectValuesFromOps(singleSet, curOpMetrics.inputs, curOpMetrics.outputs,
+                       curOpMetrics.allValues);
+  linalgOpMetrics[op] = curOpMetrics;
+  return linalgOpMetrics[op];
 }
 
 bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
@@ -449,79 +414,102 @@ bool MaxParallelAnalyzer::canFuseGroups(int producerGroupId,
     return true;
   }
   if (stage == 1) {
-    DenseSet<Operation *> candidateOpGroup;
-    candidateOpGroup.insert(candidateOp);
-    float_t producerComputeScores = getFusedOpsComputeScores(candidateOpGroup);
-    float_t producerIoScores = getFusedOpsIoScores(candidateOpGroup);
-    float consumerComputeScores = getFusedOpsComputeScores(consumerGroup);
-    float consumerIoScores = getFusedOpsIoScores(consumerGroup);
+    // TODO Perhaps we can cache the computation state of operation, but we
+    // cannot estimate the memory overhead as each operation consumes 208 bytes
+    // of memory.
+    const CostMetrics &cand = getOpMetrics(candidateOp);
+    float producerComputeScores = cand.computeScore;
+    auto [candIn, candOut] = calculateIoCounts(
+        cand.inputs.size(), cand.outputs.size(), cand.allValues.size());
+    float producerIoScores = ioScoreFromCounts(candIn, candOut);
+    const CostMetrics &consumer = groupMetrics[consumerGroupId];
+    float consumerComputeScores = consumer.computeScore;
+    auto [consIn, consOut] =
+        calculateIoCounts(consumer.inputs.size(), consumer.outputs.size(),
+                          consumer.allValues.size());
+    float consumerIoScores = ioScoreFromCounts(consIn, consOut);
 
     // IO Scores compute with uneliminated inputs/outputs
     float_t fusedIoScores = producerIoScores + consumerIoScores;
     float_t fusedComputeScores = producerComputeScores + consumerComputeScores;
 
-    auto paralLift = parallelismSubModel(candidateOpGroup, consumerGroup);
-    auto execUtilLift =
-      execUnitUtilizationSubModel(candidateOpGroup, consumerGroup);
+    auto paralLift = parallelismSubModel(cand, consumer);
+    auto execUtilLift = execUnitUtilizationSubModel(cand, consumer);
 
     LDBG("candidate op producer: compute=" << producerComputeScores
-                                         << " io=" << producerIoScores);
+                                           << " io=" << producerIoScores);
     LDBG("consumer(" << consumerGroup.size() << "): compute="
-                   << consumerComputeScores << " io=" << consumerIoScores);
+                     << consumerComputeScores << " io=" << consumerIoScores);
 
     if (producerIoScores + kEpsilon > producerComputeScores &&
         consumerIoScores + kEpsilon > consumerComputeScores) {
-            LDBG("Both IO Bound -> Fuse");
-            return true;
+      LDBG("Both IO Bound -> Fuse");
+      return true;
     }
 
     if (!(producerIoScores < producerComputeScores &&
-        consumerIoScores < consumerComputeScores) &&
-      fusedIoScores + kEpsilon > fusedComputeScores) {
-    LDBG("Fused IO >= Compute -> Fuse");
-    return true;
-  }
-  LDBG("execUtilLift=" << execUtilLift << "paralLift=" << paralLift);
-  return (execUtilLift || paralLift);
+          consumerIoScores < consumerComputeScores) &&
+        fusedIoScores + kEpsilon > fusedComputeScores) {
+      LDBG("Fused IO >= Compute -> Fuse");
+      return true;
+    }
+    LDBG("execUtilLift=" << execUtilLift << "paralLift=" << paralLift);
+    return (execUtilLift || paralLift);
   } else {
     return true;
   }
 }
 
+static size_t countUnique(const llvm::SmallDenseSet<Value> &lhs,
+                          const llvm::SmallDenseSet<Value> &rhs) {
+  size_t cnt = 0;
+  for (Value v : rhs) {
+    if (!lhs.contains(v))
+      ++cnt;
+  }
+  return cnt;
+}
+
 bool MaxParallelAnalyzer::parallelismSubModel(
-    DenseSet<Operation *> &producerGroup,
-    DenseSet<Operation *> &consumerGroup) const {
-  llvm::SmallDenseSet<Value> uniqueInputs;
-  llvm::SmallDenseSet<Value> uniqueOutputs;
-  llvm::SmallDenseSet<Value> uniqueAll;
-  auto fusedIoCount = getFusedIoCount(producerGroup, consumerGroup);
-  auto fusedIoCountNum = fusedIoCount[0] + fusedIoCount[1];
+    const MaxParallelAnalyzer::CostMetrics &candidateCM,
+    const MaxParallelAnalyzer::CostMetrics &consumerCM) const {
+  size_t fusedIoCountNum = 0;
+  if (candidateCM.isValidLinalg) {
+    size_t mergedIn = consumerCM.inputs.size() +
+                      countUnique(consumerCM.inputs, candidateCM.inputs);
+    size_t mergedOut = consumerCM.outputs.size() +
+                       countUnique(consumerCM.outputs, candidateCM.outputs);
+    size_t mergedAll = consumerCM.allValues.size() +
+                       countUnique(consumerCM.allValues, candidateCM.allValues);
+    auto [inNum, outNum] = calculateIoCounts(mergedIn, mergedOut, mergedAll);
+    fusedIoCountNum = inNum + outNum;
+  }
   auto fusedComputeCount =
-      getComputeOpCount(producerGroup) + getComputeOpCount(consumerGroup);
+      candidateCM.computeOpCount + consumerCM.computeOpCount;
   int totalOps =
       static_cast<int>(fusedIoCountNum) + static_cast<int>(fusedComputeCount);
   float fusedLoopParallelism = (1.0f * kIssueQueueLen * 2 / totalOps) *
                                (1.0f * fusedComputeCount / totalOps);
   auto opMaxParallelism =
-      std::max(getParallelism(producerGroup), getParallelism(consumerGroup));
+      std::max(candidateCM.parallelism, consumerCM.parallelism);
   return fusedLoopParallelism + kEpsilon > opMaxParallelism;
 }
 
 bool MaxParallelAnalyzer::execUnitUtilizationSubModel(
-    DenseSet<Operation *> &producerGroup,
-    DenseSet<Operation *> &consumerGroup) const {
-  llvm::SmallVector<Operation *> producerGroupOps(producerGroup.begin(),
-                                                  producerGroup.end());
-  llvm::SmallVector<Operation *> consumerGroupOps(consumerGroup.begin(),
-                                                  consumerGroup.end());
-  llvm::SmallVector<Operation *> fusableOps;
-  fusableOps.append(consumerGroup.begin(), consumerGroup.end());
-  fusableOps.append(producerGroup.begin(), producerGroup.end());
-  float producerUtil = getExecUnitUtilization(producerGroupOps);
-  float consumerUtil = getExecUnitUtilization(consumerGroupOps);
+    const CostMetrics &candidateCM, const CostMetrics &consumerCM) const {
+  float producerUtil =
+      getExecUnitUtilization(candidateCM.singleExuCnt, candidateCM.doubleExuCnt,
+                             candidateCM.innerOpCnts);
+  float consumerUtil = getExecUnitUtilization(
+      consumerCM.singleExuCnt, consumerCM.doubleExuCnt, consumerCM.innerOpCnts);
   LDBG("producerUtil=" << producerUtil << " consumerUtil=" << consumerUtil);
   float beforeUtil = std::min(consumerUtil, producerUtil);
-  float mergedUtil = getExecUnitUtilization(fusableOps);
+  DenseMap<std::pair<int64_t, int64_t>, unsigned> temp = consumerCM.innerOpCnts;
+  for (const auto &[k, v] : candidateCM.innerOpCnts)
+    temp[k] += v;
+  float mergedUtil = getExecUnitUtilization(
+      candidateCM.singleExuCnt + consumerCM.singleExuCnt,
+      candidateCM.doubleExuCnt + consumerCM.doubleExuCnt, temp);
   LDBG("mergedUtil=" << mergedUtil);
   return beforeUtil + kEpsilon < 1.0f && beforeUtil < mergedUtil + kEpsilon;
 }
@@ -530,8 +518,11 @@ bool MaxParallelAnalyzer::isIOBoundGroup(int groupId) {
   if (AllFusedGroupBlocks[groupId].empty()) {
     return false;
   }
-  float computeScores = getFusedOpsComputeScores(AllFusedGroupBlocks[groupId]);
-  float ioScores = getFusedOpsIoScores(AllFusedGroupBlocks[groupId]);
+  const CostMetrics &cm = groupMetrics[groupId];
+  float computeScores = cm.computeScore;
+  auto [in, out] = calculateIoCounts(cm.inputs.size(), cm.outputs.size(),
+                                     cm.allValues.size());
+  float ioScores = ioScoreFromCounts(in, out);
   return ioScores + kEpsilon > computeScores;
 }
 
@@ -544,6 +535,11 @@ bool MaxParallelAnalyzer::mergeGroups(const int producerGroupId,
     opToGroupIndex[op] = consumerGroupId;
   }
   producerGroup.clear();
+  auto it = groupMetrics.find(producerGroupId);
+  if (it != groupMetrics.end()) {
+    groupMetrics[consumerGroupId] += groupMetrics[producerGroupId];
+    groupMetrics.erase(it);
+  }
   LDBG("merged group " << producerGroupId << " into group " << consumerGroupId);
   return true;
 }
@@ -662,7 +658,6 @@ bool MaxParallelAnalyzer::fuseProducerConsumerImpl(Block &block) {
   return hasFused;
 }
 
-
 bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
   bool hasFused = false;
   bool madeProgress = true;
@@ -705,8 +700,10 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
           if (AllFusedGroupBlocks[foundGroupId].empty())
             continue;
 
-          int foundGroupMaxIndex = dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp]));
-          if (consumerGroupId < 0 || foundGroupMaxIndex < consumerGroupMinIndex) {
+          int foundGroupMaxIndex =
+              dsu.getMaxIndexUnion(static_cast<int>(opToIndex[consumerOp]));
+          if (consumerGroupId < 0 ||
+              foundGroupMaxIndex < consumerGroupMinIndex) {
             consumerGroupId = foundGroupId;
             consumerGroupMinIndex = foundGroupMaxIndex;
           }
@@ -717,8 +714,8 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
       if (AllFusedGroupBlocks[consumerGroupId].empty())
         continue;
 
-      LDBG("IO-bound group " << producerGroupId
-                             << " -> consumer group " << consumerGroupId);
+      LDBG("IO-bound group " << producerGroupId << " -> consumer group "
+                             << consumerGroupId);
 
       auto &consumerGroup = AllFusedGroupBlocks[consumerGroupId];
 
@@ -730,14 +727,14 @@ bool MaxParallelAnalyzer::fuseIOBoundGroupsWithNearestConsumer() {
 
       int producerIndex = static_cast<int>(opToIndex[producerOp]);
       int consumerIndex = static_cast<int>(opToIndex[consumerOp]);
-      
+
       if (!areFusibleOps(producerIndex, consumerIndex)) {
-          LDBG("areFusibleOps returned false");
-          continue;
+        LDBG("areFusibleOps returned false");
+        continue;
       }
 
-      if (tryFuseGroups(producerIndex, consumerIndex,
-                        producerGroupId, consumerGroupId)) {
+      if (tryFuseGroups(producerIndex, consumerIndex, producerGroupId,
+                        consumerGroupId)) {
         hasFused = true;
         madeProgress = true;
         LDBG("IO-bound group " << producerGroupId

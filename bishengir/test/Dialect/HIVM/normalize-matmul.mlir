@@ -1137,3 +1137,46 @@ func.func @test_dot_pad_only_k_l1M_for_real_m() -> tensor<128x128xf32> {
     %result = hivm.hir.mmadL1 ins(%tensorA, %tensorB, %true, %c29, %c128, %c128 : tensor<128x128xf16>, tensor<128x128xf16>, i1, index, index, index) outs(%empty : tensor<128x128xf32>) -> tensor<128x128xf32>
     return %result : tensor<128x128xf32>
 }
+
+// -----
+// Test mmadL1 normalization in nested scf.for and scf.if (no counter should be generated)
+// CHECK-LABEL: func.func @test_mmadl1_normalize_in_nested_ccf
+// CHECK-NOT: normalize_matmul_counter
+func.func @test_mmadl1_normalize_in_nested_ccf(%arg0: i1, %arg1: i1, %arg2: i32, %arg3: memref<112x64xf32>) -> tensor<112x64xf32> {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %false = arith.constant false
+  %cst = arith.constant 0.000000e+00 : f32
+  %c0 = arith.constant 0 : index
+  %empty = tensor.empty() : tensor<112x64xf32>
+  %init_brc = hivm.hir.vbrc ins(%cst : f32) outs(%empty : tensor<112x64xf32>) -> tensor<112x64xf32>
+  %alloc_a = memref.alloc() : memref<112x1xf32>
+  %tensor_a = bufferization.to_tensor %alloc_a restrict writable : memref<112x1xf32>
+  %alloc_b = memref.alloc() : memref<1x64xf32>
+  %tensor_b = bufferization.to_tensor %alloc_b restrict writable : memref<1x64xf32>
+  %for_res:2 = scf.for %i = %c0_i32 to %arg2 step %c1_i32 
+      iter_args(%acc = %init_brc, %sum = %init_brc) -> (tensor<112x64xf32>, tensor<112x64xf32>) : i32 {
+    %if_res:2 = scf.if %arg0 -> (tensor<112x64xf32>, tensor<112x64xf32>) {
+      %mmad1 = hivm.hir.mmadL1 ins(%tensor_a, %tensor_b, %false, %c0, %c0, %c0 : tensor<112x1xf32>, tensor<1x64xf32>, i1, index, index, index) 
+          outs(%init_brc : tensor<112x64xf32>) -> tensor<112x64xf32>
+      %abs = hivm.hir.vabs ins(%mmad1 : tensor<112x64xf32>) outs(%empty : tensor<112x64xf32>) -> tensor<112x64xf32>
+      %add1 = hivm.hir.vadd ins(%sum, %abs : tensor<112x64xf32>, tensor<112x64xf32>) outs(%empty : tensor<112x64xf32>) -> tensor<112x64xf32>
+      scf.yield %mmad1, %add1 : tensor<112x64xf32>, tensor<112x64xf32>
+    } else {
+      %inner_if:2 = scf.if %arg1 -> (tensor<112x64xf32>, tensor<112x64xf32>) {
+        %bias_tensor = bufferization.to_tensor %arg3 restrict writable : memref<112x64xf32>
+        %mmad2 = hivm.hir.mmadL1 ins(%tensor_a, %tensor_b, %false, %c0, %c0, %c0 : tensor<112x1xf32>, tensor<1x64xf32>, i1, index, index, index) 
+            outs(%acc : tensor<112x64xf32>) -> tensor<112x64xf32>
+        %add2 = hivm.hir.vadd ins(%mmad2, %bias_tensor : tensor<112x64xf32>, tensor<112x64xf32>) outs(%empty : tensor<112x64xf32>) -> tensor<112x64xf32>
+        scf.yield %mmad2, %add2 : tensor<112x64xf32>, tensor<112x64xf32>
+      } else {
+        scf.yield %acc, %init_brc : tensor<112x64xf32>, tensor<112x64xf32>
+      }
+      %add3 = hivm.hir.vadd ins(%sum, %inner_if#1 : tensor<112x64xf32>, tensor<112x64xf32>) outs(%empty : tensor<112x64xf32>) -> tensor<112x64xf32>
+      scf.yield %inner_if#0, %add3 : tensor<112x64xf32>, tensor<112x64xf32>
+    }
+    scf.yield %if_res#0, %if_res#1 : tensor<112x64xf32>, tensor<112x64xf32>
+  }
+  
+  return %for_res#1 : tensor<112x64xf32>
+}

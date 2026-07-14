@@ -378,22 +378,17 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
     }
   }
 
-  // Page-load mark (OptimizeDpsOpWithYieldedInsertSlice): the alloc is
-  // filled piece-by-piece by sibling nd2nz ops. Use the innermost
-  // Page-load mark: walk from getDst() through CastOp and nested
-  // SubViewOps to find the subview carrying the marker. The marked
-  // subview covers the exact page region to initialize.
-  {
-    Value cursor = getDst();
-    while (auto castOp = cursor.getDefiningOp<memref::CastOp>())
-      cursor = castOp.getSource();
-    while (cursor.getDefiningOp<memref::SubViewOp>()) {
-      if (cursor.getDefiningOp()->hasAttr("hivm.slice_load")) {
-        vbrcTarget = cursor;
-        break;
-      }
-      cursor = cursor.getDefiningOp<memref::SubViewOp>()->getOperand(0);
-    }
+  // Page-load mark (OptimizeDpsOpWithYieldedInsertSlice): the alloc has
+  // an annotation.mark {hivm.slice_load} carrying the page subview as a
+  // value. Use that subview directly as the vbrc target.
+  if (auto mark = utils::getAnnotateOpWithAttr(padMemref.getResult(),
+                                                "hivm.slice_load")) {
+    auto markOp = cast<annotation::MarkOp>(*mark);
+    if (markOp.getValues().empty())
+      return emitOpError("hivm.slice_load annotation.mark has no subview "
+                         "value — expected the page-load subview as a value");
+    vbrcTarget = markOp.getValues().front();
+    markOp->erase();
   }
 
   if (getInitCondition()) {

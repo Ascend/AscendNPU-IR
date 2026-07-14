@@ -217,11 +217,9 @@ static void mark(mlir::Operation *op, PatternRewriter &rewriter,
   auto mem = op->getResult(0);
 
   annotation::MarkOp markOp;
-  for (Operation *user : mem.getUsers()) {
-    if (auto m = dyn_cast<annotation::MarkOp>(user)) {
-      markOp = m;
-      break;
-    }
+  if (auto maybeMarkOp = utils::getAnnotateOpWithAttr(
+          mem, hivm::MultiBufferAttr::name)) {
+    markOp = cast<annotation::MarkOp>(*maybeMarkOp);
   }
 
   if (!markOp) {

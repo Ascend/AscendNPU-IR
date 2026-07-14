@@ -6,6 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Transforms.h"
@@ -18,6 +19,8 @@
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -273,6 +276,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
     // 1. Create big allocs + to_tensors before the forOp.
     rewriter.setInsertionPoint(forOp);
     SmallVector<Value> bigMemcasts;
+    SmallVector<Value> bigAllocResults;
     SmallVector<Value> toTensorResults;
 
     for (auto &info : infos) {
@@ -309,6 +313,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
             info.memcast.getLoc(), memCastType, bigMemref);
       }
       bigMemcasts.push_back(bigMemref);
+      bigAllocResults.push_back(bigAlloc.getResult());
 
       auto bigTensor = rewriter.create<bufferization::ToTensorOp>(
           info.toTensorOp.getLoc(), bigMemref, /*restrict=*/true,
@@ -383,9 +388,13 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       auto bigSubview = rewriter.create<memref::SubViewOp>(
           info.insertOp.getLoc(), cast<MemRefType>(subviewType),
           bigMemcasts[i], newOffsets, newSizes, newStrides);
-      // Mark the page-level subview so downstream ND2NZ decompose only
-      // initializes this region instead of the entire alloc.
-      bigSubview->setAttr("hivm.slice_load", rewriter.getUnitAttr());
+      // Mark the alloc with the page subview so ND2NZ decompose knows
+      // exactly which region to vbrc.
+      auto markOp = rewriter.create<annotation::MarkOp>(
+          info.insertOp.getLoc(), /*src=*/bigAllocResults[i],
+          /*values=*/ValueRange{bigSubview.getResult()},
+          /*key=*/rewriter.getArrayAttr({}));
+      markOp->setAttr("hivm.slice_load", rewriter.getUnitAttr());
 
       // Redirect all users of the old memcast to the big subview.
       rewriter.replaceAllUsesWith(info.memcast, bigSubview.getResult());

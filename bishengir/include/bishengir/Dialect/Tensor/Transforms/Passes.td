@@ -184,6 +184,7 @@ def OptimizeDpsOpWithYieldedInsertSlice :
   }];
   let dependentDialects = [
     "tensor::TensorDialect",
+    "annotation::AnnotationDialect",
   ];
 }
 
