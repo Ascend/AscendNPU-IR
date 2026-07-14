@@ -180,8 +180,10 @@ void HIVMAggregatedDecomposeOpPass::runOnOperation() {
     return;
   RewritePatternSet patterns(&getContext());
   patterns.add<HIVMDecomposePattern>(&getContext(), decomposePhase);
-  if (decomposePhase ==
-      bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT) {
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  if (moduleOp && hacc::utils::isMemBasedArch(moduleOp) &&
+      decomposePhase ==
+          bishengir::DecomposePhase::AFTER_INFER_HIVM_DATA_LAYOUT) {
     LLVM_DEBUG(llvm::dbgs() << "Applying decompose unaligned subview\n";);
     patterns.add<DecomposeUnalignedSubview>(&getContext());
   }
@@ -192,5 +194,3 @@ std::unique_ptr<Pass> mlir::hivm::createHIVMAggregatedDecomposeOpPass(
     const HIVMAggregatedDecomposeOpOptions &options) {
   return std::make_unique<HIVMAggregatedDecomposeOpPass>(options);
 }
-
-// memref<64x32xi1, <[64, 1], offset: ?>>

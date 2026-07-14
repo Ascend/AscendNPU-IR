@@ -109,7 +109,7 @@ func.func @mm_nd2nz_trans_brc_nd2nz(%arg0: memref<256x128xf32, strided<[?, ?], o
   %10 = affine.apply #map5()[%c0_9, %c0_10]
   %subview_11 = memref.subview %alloc[%9, %7, %8, %10] [%6, %5, %c16_8, %c8_7] [1, 1, 1, 1] : memref<?x?x?x?xf32, #hivm.address_space<cbuf>> to memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>
   // AFTERLAYOUT: hivm.hir.vbrc ins({{.*}}: f32)
-  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<256x?xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs({{.*}} : memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = false
+  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<256x?xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs({{.*}} : memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%subview : memref<256x?xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs(%subview_11 : memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32
   %11 = arith.minsi %0, %c128 : index
   %subview_12 = memref.subview %arg1[0, 0] [%11, 128] [1, 1] : memref<128x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>> to memref<?x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>
@@ -126,7 +126,7 @@ func.func @mm_nd2nz_trans_brc_nd2nz(%arg0: memref<256x128xf32, strided<[?, ?], o
   %17 = affine.apply #map5()[%c0_16, %c0_17]
   %subview_18 = memref.subview %alloc_5[%16, %14, %15, %17] [%13, %12, %c16_15, %c8_14] [1, 1, 1, 1] : memref<?x?x?x?xf32, #hivm.address_space<cbuf>> to memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>
   // AFTERLAYOUT: hivm.hir.vbrc ins({{.*}}: f32)
-  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs({{.*}} : memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = false
+  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs({{.*}} : memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%subview_12 : memref<?x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>) outs(%subview_18 : memref<?x?x?x?xf32, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32
   %c256_19 = arith.constant 256 : index
   %c128_20 = arith.constant 128 : index
@@ -366,7 +366,7 @@ func.func @mm_nd2nz_trans_if_brc_nd2nz(%arg0: memref<?x?x?x?xf32, #hivm.address_
   // AFTERLAYOUT: scf.if
   // AFTERLAYOUT: hivm.hir.vbrc
   // AFTERLAYOUT: } {hivm.unlikely_condition}
-  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = false
+  // AFTERLAYOUT: hivm.hir.nd2nz {dst_continuous} ins({{.*}} : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs({{.*}} : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous}  ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%alloc : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %arg1 : i1
   return
 }
@@ -674,6 +674,55 @@ func.func @test_stride_layout_not_same() {
 }
 
 // -----
+// BEFOREALIGN-LABLE: func.func @brc_tensor
+func.func @brc_tensor(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) -> tensor<32x16xf16> {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<16x32xf16, #hivm.address_space<ub>>
+  %subview = memref.subview %arg0[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, strided<[?, 1], offset: ?>> to memref<?x32xf16, strided<[?, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, #hivm.address_space<ub>> to memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<ub>>
+  // BEFOREALIGN: scf.if
+  // BEFOREALIGN: hivm.hir.vbrc
+  // BEFOREALIGN: } {hivm.unlikely_condition}
+  hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1 
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16, #hivm.address_space<ub>>
+  %1 = tensor.empty() : tensor<32x16xf16>
+  %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
+  return %2 : tensor<32x16xf16>
+}
+
+// -----
+// BEFOREALIGN-LABLE: func.func @brc_tensor_aic
+func.func @brc_tensor_aic(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<16x32xf16, #hivm.address_space<cbuf>>
+  %subview = memref.subview %arg0[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, strided<[?, 1], offset: ?>> to memref<?x32xf16, strided<[?, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, #hivm.address_space<cbuf>> to memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<cbuf>>
+  // BEFOREALIGN-NOT: scf.if
+  // BEFOREALIGN-NOT: hivm.hir.vbrc
+  hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<cbuf>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1
+  return
+}
+
+// -----
+// BEFOREALIGN-LABLE: func.func @brc_tensor_aiv
+func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) -> tensor<16x32xf16> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f16
+  %alloc = memref.alloc() : memref<16x32xf16, #hivm.address_space<ub>>
+  %subview = memref.subview %arg0[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, strided<[?, 1], offset: ?>> to memref<?x32xf16, strided<[?, 1], offset: ?>>
+  %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xf16, #hivm.address_space<ub>> to memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<ub>>
+  // BEFOREALIGN: scf.if
+  // BEFOREALIGN: hivm.hir.vbrc
+  // BEFOREALIGN: } {hivm.unlikely_condition}
+  hivm.hir.load ins(%subview : memref<?x32xf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xf16, strided<[32, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1
+  %0 = bufferization.to_tensor %alloc restrict writable : memref<16x32xf16, #hivm.address_space<ub>>
+  %1 = tensor.empty() : tensor<32x16xf16>
+  %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
+  return %0 : tensor<16x32xf16>
+}
+// -----
 // When the nd2nz dst is a subview of an alloc carrying an
 // `annotation.mark` with the `hivm.cv_pipelined_multi_buffer` attribute
 // (stamped by the cv-pipelining pass on its expanded multi-buffer
@@ -841,5 +890,22 @@ func.func @test_aligned_i1_subview(%offset: index) {
   // AFTERLAYOUT-NOT: hivm.hir.vcast
   hivm.hir.copy ins(%subview : memref<64x256xi1, strided<[512, 1], offset: ?>, #hivm.address_space<ub>>)
                 outs(%dst : memref<64x256xi1, #hivm.address_space<ub>>)
+  return
+}
+
+// -----
+// When there is no slot-dim pattern (dst IS the alloc), the vbrc still
+// targets the alloc — legacy behavior, so we do not regress
+// non-pipelined nd2nz where the alloc itself is the single slot.
+//
+// AFTERLAYOUT-LABEL: func @nd2nz_no_slot_dim_targets_whole_alloc
+func.func @nd2nz_no_slot_dim_targets_whole_alloc(%arg0: memref<?x?x?x?xf32, #hivm.address_space<gm>>, %cond: i1) {
+  %cst = arith.constant 0.000000e+00 : f32
+  %alloc = memref.alloc() : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>
+  // AFTERLAYOUT: scf.if %{{.*}} {
+  // AFTERLAYOUT-NEXT: hivm.hir.vbrc {{.*}} outs(%alloc
+  // AFTERLAYOUT-NEXT: } {hivm.unlikely_condition}
+  // AFTERLAYOUT: hivm.hir.nd2nz
+  hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%alloc : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
   return
 }
