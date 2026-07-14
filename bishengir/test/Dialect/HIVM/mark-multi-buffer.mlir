@@ -216,14 +216,15 @@ module {
 
 // -----
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // CHECK-LABEL: func.func @test_for_scope_markmultibuffer_for_preload
   func.func @test_for_scope_markmultibuffer_for_preload(%arg0: i32, %arg1: tensor<128xf32>, %arg2: tensor<128x128xf32>, %arg3 : tensor<8x8x16x16xf32>) -> tensor<128x128xf32> {
     %c128_i32 = arith.constant 128 : i32
+    // CHECK: %[[ALLOC:.*]] = memref.alloc()
+    // CHECK-NEXT: annotation.mark %[[ALLOC]] {hivm.multi_buffer = 2 : i32, hivm.preload_local_buffer = 1 : i32}
     %alloc = memref.alloc() : memref<128x128xf32, #hivm.address_space<ub>>
     %0 = tensor.empty() : tensor<128x128xf32>
     %1 = scope.scope : () -> i32 {
-      // CHECK: annotation.mark
-      // CHECK-SAME: hivm.multi_buffer = 2 : i32
-      // CHECK-SAME: hivm.preload_local_buffer = 1 : i32
+      // CHECK: annotation.mark %[[ALLOC]] {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>}
       annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<2>} : memref<128x128xf32, #hivm.address_space<ub>>
       hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%arg3 : tensor<8x8x16x16xf32>) outs(%alloc : memref<128x128xf32, #hivm.address_space<ub>>)
       %2 = arith.addi %arg0, %c128_i32 : i32
