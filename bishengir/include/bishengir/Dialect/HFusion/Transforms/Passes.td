@@ -176,6 +176,18 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let dependentDialects = ["hfusion::HFusionDialect"];
 }
 
+def NormalizeRegBase : Pass<"hfusion-normalize-ops-regbase", "func::FuncOp"> {
+  let summary = "Normalize Hfusion for RegBased architecture";
+  let constructor = "mlir::hfusion::createHFusionNormalizeOpsRegBasePass()";
+  let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect",
+                           "bufferization::BufferizationDialect"];
+  let options = [
+    Option<"enableHighPrecision", "enable-high-precision", "bool",
+           /*default=*/"true",
+           "Enable high precision calculation for sin/cos in HFusion.">
+  ];
+}
+
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {
   let summary = "Normalize Slice Ops.";
   let options = [

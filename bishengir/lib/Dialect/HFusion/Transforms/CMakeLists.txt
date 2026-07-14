@@ -1,11 +1,15 @@
 file(GLOB AUTO_SCHEDULE ${CMAKE_CURRENT_SOURCE_DIR}/AutoSchedule/*.cpp)
 file(GLOB FLATTENER ${CMAKE_CURRENT_SOURCE_DIR}/Flattener/*.cpp)
 file(GLOB OP_FUSION ${CMAKE_CURRENT_SOURCE_DIR}/OpFusion/*.cpp)
+file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/*.cpp)
+file(GLOB NORMALIZE_UTILS ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/Utils/*.cpp)
 
 add_bishengir_dialect_library(BiShengIRHFusionTransforms
   ${AUTO_SCHEDULE}
   ${FLATTENER}
   ${OP_FUSION}
+  ${NORMALIZE}
+  ${NORMALIZE_UTILS}
   AdaptTritonKernel.cpp
   AddFFTSAddr.cpp
   BufferizableOpInterfaceImpl.cpp

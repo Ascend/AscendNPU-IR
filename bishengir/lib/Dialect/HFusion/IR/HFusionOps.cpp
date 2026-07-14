@@ -613,6 +613,9 @@ public:
       if (allInteger)
         return builder.create<arith::CeilDivUIOp>(arg0.getLoc(), arg0, arg1);
       llvm::report_fatal_error("unsupported type for ceildivui");
+    // TODO-A5: make an appropriate port
+    case BinaryFn::divfhp:
+      return builder.create<arith::DivFOp>(arg0.getLoc(), arg0, arg1);
     }
     llvm::report_fatal_error("unsupported binary function");
   }
@@ -696,6 +699,11 @@ public:
       if (allInteger || allFloatingPoint)
         return builder.create<arith::SelectOp>(arg0.getLoc(), arg0, arg1, arg2);
       llvm::report_fatal_error("unsupported type for select");
+    // TODO-A5: make an appropriate port
+    case TernaryFn::fma:
+      if (allFloatingPoint)
+        return builder.create<math::FmaOp>(arg0.getLoc(), arg0, arg1, arg2);
+      llvm::report_fatal_error("unsupported type for multiply add");
     }
     llvm::report_fatal_error("unsupported select function");
   }
@@ -1392,6 +1400,35 @@ void ReduceWithIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                               BoolAttr tie_break_left,
                               ArrayRef<int64_t> dimensions) {
   odsState.addAttribute("reduce_kind", reduce_kind);
+  odsState.addAttribute("tie_break_left", tie_break_left);
+  odsState.addAttribute("dimensions",
+                        odsBuilder.getDenseI64ArrayAttr(dimensions));
+  buildStructuredOp(odsBuilder, odsState, types, inputs, inits, {},
+                    ReduceWithIndexOp::getRegionBuilder());
+}
+
+void ReduceWithIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                              TypeRange types, ValueRange inputs,
+                              ValueRange inits,
+                              ReduceWithIndexKindAttr reduce_kind,
+                              BoolAttr unsigned_src, BoolAttr tie_break_left,
+                              DenseI64ArrayAttr dimensions) {
+  odsState.addAttribute("reduce_kind", reduce_kind);
+  odsState.addAttribute("unsigned_src", unsigned_src);
+  odsState.addAttribute("tie_break_left", tie_break_left);
+  odsState.addAttribute("dimensions", dimensions);
+  buildStructuredOp(odsBuilder, odsState, types, inputs, inits, {},
+                    ReduceWithIndexOp::getRegionBuilder());
+}
+
+void ReduceWithIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                              TypeRange types, ValueRange inputs,
+                              ValueRange inits,
+                              ReduceWithIndexKindAttr reduce_kind,
+                              BoolAttr unsigned_src, BoolAttr tie_break_left,
+                              ArrayRef<int64_t> dimensions) {
+  odsState.addAttribute("reduce_kind", reduce_kind);
+  odsState.addAttribute("unsigned_src", unsigned_src);
   odsState.addAttribute("tie_break_left", tie_break_left);
   odsState.addAttribute("dimensions",
                         odsBuilder.getDenseI64ArrayAttr(dimensions));

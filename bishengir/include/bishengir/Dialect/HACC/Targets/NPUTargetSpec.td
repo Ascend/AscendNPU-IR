@@ -109,6 +109,45 @@ def Ascend910B2CSpec : Ascend910B_BaseSpec<"Ascend910B2C"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Ascend310B
+//===----------------------------------------------------------------------===//
+
+class Ascend310B_BaseSpec <string name> : TargetSpec<name> {
+  let UbSize = 2097152; // bits = 256KB
+  let L1Size = 4194304; // bits = 512KB
+  let L0aSize = 524288; // bits = 64KB
+  let L0bSize = 524288; // bits = 64KB
+  let L0cSize = 2097152; // bits = 256KB
+  let UbAlignSize = 256; // bits = 32B
+  let L1AlignSize = 256; // bits = 32B
+  let L0cAlignSize = 4096; // bits = 512B
+}
+
+def Ascend310B1Spec : Ascend310B_BaseSpec<"Ascend310B1"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+def Ascend310B2Spec : Ascend310B_BaseSpec<"Ascend310B2"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+def Ascend310B3Spec : Ascend310B_BaseSpec<"Ascend310B3"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+def Ascend310B4Spec : Ascend310B_BaseSpec<"Ascend310B4"> {
+  let AiCoreCount = 32;
+  let CubeCoreCount = 32;
+  let VectorCoreCount = 64;
+}
+
+//===----------------------------------------------------------------------===//
 // Ascend910_93
 //===----------------------------------------------------------------------===//
 

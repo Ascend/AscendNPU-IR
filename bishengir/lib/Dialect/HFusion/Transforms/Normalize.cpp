@@ -3023,7 +3023,7 @@ public:
 // get polyexpr in the format [(input + p1) * squareSrc + p2] * squareSrc + ...,
 // enableLastMulTerm = false means [(input + p1) * squareSrc + p2] + ... remove
 // the last multiplication by squareSrc.
-Value genPolyExpr(PatternRewriter &rewriter, Location loc,
+static Value genPolyExpr(PatternRewriter &rewriter, Location loc,
                   const Value squareSrc, Value input,
                   const llvm::SmallVector<double> &numerCoeff,
                   bool enableLastMulTerm = true) {
@@ -4652,7 +4652,7 @@ static void replaceResultsWithTargetType(const SmallVector<Value> &oldResults,
   }
 }
 
-SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
+static SmallVector<Value> normalizeF16ToF32(PatternRewriter &rewriter,
                                      const SmallVector<Value> &values) {
   SmallVector<Value> result;
   for (Value v : values) {
@@ -4704,7 +4704,7 @@ SmallVector<Value> normalizeSrcToTargetIntegerType(
   return result;
 }
 
-arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
+static arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   switch (predicate) {
   case arith::CmpIPredicate::eq:
     return arith::CmpFPredicate::OEQ;
@@ -4730,7 +4730,7 @@ arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   llvm::report_fatal_error("unexpected arith::CmpIPredicate");
 }
 
-Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
+static Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
                         Operation *bodyOp, IRMapping &mapper) {
   const DenseMap<Value, Value> &valueMap = mapper.getValueMap();
   Value oldLhs = bodyOp->getOperand(0);
@@ -4777,7 +4777,7 @@ Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,
   llvm::report_fatal_error("unsupported body op to map");
 }
 
-Operation *mapReduceBodyOpToFloat(PatternRewriter &rewriter, Location loc,
+static Operation *mapReduceBodyOpToFloat(PatternRewriter &rewriter, Location loc,
                                   Operation *bodyOp, Type srcType,
                                   IRMapping &mapper) {
   if (isa<linalg::YieldOp>(bodyOp)) {
@@ -4808,7 +4808,7 @@ Operation *mapReduceBodyOpToFloat(PatternRewriter &rewriter, Location loc,
   return cloneArithOp(rewriter, loc, bodyOp, mapper);
 }
 
-Operation *createNewReduceOp(linalg::ReduceOp op, PatternRewriter &rewriter,
+static Operation *createNewReduceOp(linalg::ReduceOp op, PatternRewriter &rewriter,
                              Type srcType, Type targetType,
                              SmallVector<Value> &newInputs,
                              SmallVector<Value> &newInits) {
@@ -9616,6 +9616,13 @@ namespace {
 struct NormalizeHFusionPass : public impl::NormalizeBase<NormalizeHFusionPass> {
 public:
   void runOnOperation() final {
+    ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+    if (hacc::utils::isRegBasedArch(moduleOp)) {
+      if (failed(runNormalizeRegBase(getOperation(),
+                                     /*enableHighPrecision=*/true)))
+        signalPassFailure();
+      return;
+    }
     RewritePatternSet patterns(&getContext());
     populateNormalizeHFusionPatterns(patterns);
     if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {

@@ -76,6 +76,9 @@ def AppendTargetDeviceSpec : Pass<"hacc-append-device-spec", "ModuleOp"> {
             clEnumValN(mlir::hacc::TargetDevice::Ascend910B4_1,
                            "Ascend910B4-1", "Ascend910B4-1"),
             REGISTER_TARGET(Ascend910B2C),
+            // Ascend310B series
+            REGISTER_TARGET(Ascend310B1), REGISTER_TARGET(Ascend310B2),
+            REGISTER_TARGET(Ascend310B3), REGISTER_TARGET(Ascend310B4),
             // Ascend910_93 series
             REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9372),
             REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),

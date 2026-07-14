@@ -288,7 +288,10 @@ bool isMemBasedArch(TargetDevice targetDevice) {
 }
 
 bool isAscend310B(TargetDevice targetDevice) {
-  return false;
+  return targetDevice == TargetDevice::Ascend310B1 ||
+         targetDevice == TargetDevice::Ascend310B2 ||
+         targetDevice == TargetDevice::Ascend310B3 ||
+         targetDevice == TargetDevice::Ascend310B4;
 }
 
 // use unordered_set to speedup because this func is frequently called
