@@ -38,6 +38,386 @@
 #define GET_OP_CLASSES
 #include "bishengir/Dialect/HIVM/IR/HIVMDMAOps.cpp.inc"
 
+namespace mlir {
+namespace hivm {
+
+::mlir::ParseResult LoadOp::parse(::mlir::OpAsmParser &parser, ::mlir::OperationState &result) {
+  ::mlir::OpAsmParser::UnresolvedOperand srcRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> srcOperands(&srcRawOperand, 1);  ::llvm::SMLoc srcOperandsLoc;
+  (void)srcOperandsLoc;
+  ::mlir::Type srcRawType{};
+  ::llvm::ArrayRef<::mlir::Type> srcTypes(&srcRawType, 1);
+  ::mlir::OpAsmParser::UnresolvedOperand dstRawOperand{};
+  ::llvm::ArrayRef<::mlir::OpAsmParser::UnresolvedOperand> dstOperands(&dstRawOperand, 1);  ::llvm::SMLoc dstOperandsLoc;
+  (void)dstOperandsLoc;
+  ::mlir::Type dstRawType{};
+  ::llvm::ArrayRef<::mlir::Type> dstTypes(&dstRawType, 1);
+  ::mlir::hivm::PadModeAttr pad_modeAttr;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4> pad_valueOperands;
+  ::llvm::SMLoc pad_valueOperandsLoc;
+  (void)pad_valueOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> pad_valueTypes;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4> left_padding_numOperands;
+  ::llvm::SMLoc left_padding_numOperandsLoc;
+  (void)left_padding_numOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> left_padding_numTypes;
+  ::mlir::BoolAttr init_out_bufferAttr;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4> right_padding_numOperands;
+  ::llvm::SMLoc right_padding_numOperandsLoc;
+  (void)right_padding_numOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> right_padding_numTypes;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4> init_conditionOperands;
+  ::llvm::SMLoc init_conditionOperandsLoc;
+  (void)init_conditionOperandsLoc;
+  ::llvm::SmallVector<::mlir::Type, 1> init_conditionTypes;
+  ::mlir::BoolAttr may_implicit_transpose_with_last_axisAttr;
+  ::mlir::hivm::TCoreTypeAttr tcoretypeAttr;
+  ::llvm::SmallVector<::mlir::Type, 1> result_tensorTypes;
+  if (parser.parseKeyword("ins"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  srcOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(srcRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    srcRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  if (parser.parseKeyword("outs"))
+    return ::mlir::failure();
+  if (parser.parseLParen())
+    return ::mlir::failure();
+
+  dstOperandsLoc = parser.getCurrentLocation();
+  if (parser.parseOperand(dstRawOperand))
+    return ::mlir::failure();
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type type;
+    if (parser.parseCustomTypeWithFallback(type))
+      return ::mlir::failure();
+    dstRawType = type;
+  }
+  if (parser.parseRParen())
+    return ::mlir::failure();
+  {
+    auto loc = parser.getCurrentLocation();(void)loc;
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return ::mlir::failure();
+    if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+        return parser.emitError(loc) << "'" << result.name.getStringRef() << "' op ";
+      })))
+      return ::mlir::failure();
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("pad_mode"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(pad_modeAttr, ::mlir::Type{})) {
+    return ::mlir::failure();
+  }
+  if (pad_modeAttr) result.getOrAddProperties<LoadOp::Properties>().pad_mode = pad_modeAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("pad_value"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  {
+    pad_valueOperandsLoc = parser.getCurrentLocation();
+    ::mlir::OpAsmParser::UnresolvedOperand operand;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalOperand(operand);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      pad_valueOperands.push_back(operand);
+    }
+  }
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type optionalType;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalType(optionalType);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      pad_valueTypes.push_back(optionalType);
+    }
+  }
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("left_padding_num"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  {
+    left_padding_numOperandsLoc = parser.getCurrentLocation();
+    ::mlir::OpAsmParser::UnresolvedOperand operand;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalOperand(operand);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      left_padding_numOperands.push_back(operand);
+    }
+  }
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type optionalType;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalType(optionalType);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      left_padding_numTypes.push_back(optionalType);
+    }
+  }
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("init_out_buffer"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(init_out_bufferAttr, parser.getBuilder().getIntegerType(1))) {
+    return ::mlir::failure();
+  }
+  if (init_out_bufferAttr) result.getOrAddProperties<LoadOp::Properties>().init_out_buffer = init_out_bufferAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("right_padding_num"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  {
+    right_padding_numOperandsLoc = parser.getCurrentLocation();
+    ::mlir::OpAsmParser::UnresolvedOperand operand;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalOperand(operand);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      right_padding_numOperands.push_back(operand);
+    }
+  }
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type optionalType;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalType(optionalType);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      right_padding_numTypes.push_back(optionalType);
+    }
+  }
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("init_condition"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  {
+    init_conditionOperandsLoc = parser.getCurrentLocation();
+    ::mlir::OpAsmParser::UnresolvedOperand operand;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalOperand(operand);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      init_conditionOperands.push_back(operand);
+    }
+  }
+  if (parser.parseColon())
+    return ::mlir::failure();
+
+  {
+    ::mlir::Type optionalType;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalType(optionalType);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      init_conditionTypes.push_back(optionalType);
+    }
+  }
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("may_implicit_transpose_with_last_axis"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(may_implicit_transpose_with_last_axisAttr, parser.getBuilder().getIntegerType(1))) {
+    return ::mlir::failure();
+  }
+  if (may_implicit_transpose_with_last_axisAttr) result.getOrAddProperties<LoadOp::Properties>().may_implicit_transpose_with_last_axis = may_implicit_transpose_with_last_axisAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("core_type"))) {
+  if (parser.parseEqual())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(tcoretypeAttr, ::mlir::Type{})) {
+    return ::mlir::failure();
+  }
+  if (tcoretypeAttr) result.getOrAddProperties<LoadOp::Properties>().tcoretype = tcoretypeAttr;
+  }
+  if (::mlir::succeeded(parser.parseOptionalArrow())) {
+
+  {
+    ::mlir::Type optionalType;
+    ::mlir::OptionalParseResult parseResult =
+                                    parser.parseOptionalType(optionalType);
+    if (parseResult.has_value()) {
+      if (failed(*parseResult))
+        return ::mlir::failure();
+      result_tensorTypes.push_back(optionalType);
+    }
+  }
+  }
+::llvm::copy(::llvm::ArrayRef<int32_t>({1, 1, static_cast<int32_t>(pad_valueOperands.size()), static_cast<int32_t>(left_padding_numOperands.size()), static_cast<int32_t>(right_padding_numOperands.size()), static_cast<int32_t>(init_conditionOperands.size())}), result.getOrAddProperties<LoadOp::Properties>().operandSegmentSizes.begin());
+  result.addTypes(result_tensorTypes);
+  if (parser.resolveOperands(srcOperands, srcTypes, srcOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(dstOperands, dstTypes, dstOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(pad_valueOperands, pad_valueTypes, pad_valueOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(left_padding_numOperands, left_padding_numTypes, left_padding_numOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(right_padding_numOperands, right_padding_numTypes, right_padding_numOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(init_conditionOperands, init_conditionTypes, init_conditionOperandsLoc, result.operands))
+    return ::mlir::failure();
+  return ::mlir::success();
+}
+
+void LoadOp::print(::mlir::OpAsmPrinter &_odsPrinter) {
+  _odsPrinter << ' ' << "ins";
+  _odsPrinter << "(";
+  _odsPrinter << getSrc();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = getSrc().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::Type>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+   else
+     _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  _odsPrinter << ' ' << "outs";
+  _odsPrinter << "(";
+  _odsPrinter << getDst();
+  _odsPrinter << ' ' << ":";
+  _odsPrinter << ' ';
+  {
+    auto type = getDst().getType();
+    if (auto validType = ::llvm::dyn_cast<::mlir::Type>(type))
+      _odsPrinter.printStrippedAttrOrType(validType);
+   else
+     _odsPrinter << type;
+  }
+  _odsPrinter << ")";
+  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
+  elidedAttrs.push_back("pad_mode");
+  elidedAttrs.push_back("init_out_buffer");
+  elidedAttrs.push_back("may_implicit_transpose_with_last_axis");
+  elidedAttrs.push_back("tcoretype");
+  {
+     ::mlir::Builder odsBuilder(getContext());
+     ::mlir::Attribute attr = getTcoretypeAttr();
+     if(attr && (attr == ::mlir::hivm::TCoreTypeAttr::get(odsBuilder.getContext(), ::mlir::hivm::TCoreType::CUBE_OR_VECTOR)))
+       elidedAttrs.push_back("tcoretype");
+  }
+  _odsPrinter.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  if (getPadModeAttr()) {
+    _odsPrinter << ' ' << "pad_mode";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+  _odsPrinter.printStrippedAttrOrType(getPadModeAttr());
+  }
+  if (getPadValue()) {
+    _odsPrinter << ' ' << "pad_value";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getPadValue())
+      _odsPrinter << value;
+    _odsPrinter << ' ' << ":";
+    _odsPrinter << ' ';
+    _odsPrinter << (getPadValue() ? ::llvm::ArrayRef<::mlir::Type>(getPadValue().getType()) : ::llvm::ArrayRef<::mlir::Type>());
+  }
+  if (getLeftPaddingNum()) {
+    _odsPrinter << ' ' << "left_padding_num";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getLeftPaddingNum())
+      _odsPrinter << value;
+    _odsPrinter << ' ' << ":";
+    _odsPrinter << ' ';
+    _odsPrinter << (getLeftPaddingNum() ? ::llvm::ArrayRef<::mlir::Type>(getLeftPaddingNum().getType()) : ::llvm::ArrayRef<::mlir::Type>());
+  }
+  if (getInitOutBufferAttr()) {
+    _odsPrinter << ' ' << "init_out_buffer";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printAttributeWithoutType(getInitOutBufferAttr());
+  }
+  if (getRightPaddingNum()) {
+    _odsPrinter << ' ' << "right_padding_num";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getRightPaddingNum())
+      _odsPrinter << value;
+    _odsPrinter << ' ' << ":";
+    _odsPrinter << ' ';
+    _odsPrinter << (getRightPaddingNum() ? ::llvm::ArrayRef<::mlir::Type>(getRightPaddingNum().getType()) : ::llvm::ArrayRef<::mlir::Type>());
+  }
+  if (getInitCondition()) {
+    _odsPrinter << ' ' << "init_condition";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getInitCondition())
+      _odsPrinter << value;
+    _odsPrinter << ' ' << ":";
+    _odsPrinter << ' ';
+    _odsPrinter << (getInitCondition() ? ::llvm::ArrayRef<::mlir::Type>(getInitCondition().getType()) : ::llvm::ArrayRef<::mlir::Type>());
+  }
+  if (getMayImplicitTransposeWithLastAxisAttr()) {
+    _odsPrinter << ' ' << "may_implicit_transpose_with_last_axis";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printAttributeWithoutType(getMayImplicitTransposeWithLastAxisAttr());
+  }
+  if ((getTcoretypeAttr() && getTcoretypeAttr() != ::mlir::hivm::TCoreTypeAttr::get(::mlir::OpBuilder((*this)->getContext()).getContext(), ::mlir::hivm::TCoreType::CUBE_OR_VECTOR))) {
+    _odsPrinter << ' ' << "core_type";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+  _odsPrinter.printStrippedAttrOrType(getTcoretypeAttr());
+  }
+  if (getResultTensor()) {
+    _odsPrinter << ' ' << "->";
+    _odsPrinter << ' ';
+    _odsPrinter << (getResultTensor() ? ::llvm::ArrayRef<::mlir::Type>(getResultTensor().getType()) : ::llvm::ArrayRef<::mlir::Type>());
+  }
+}
+
+
+
+} // namespace hivm
+} // namespace mlir
+
 using namespace mlir;
 using namespace mlir::hivm;
 

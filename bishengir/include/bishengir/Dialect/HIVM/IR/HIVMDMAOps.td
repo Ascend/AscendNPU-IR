@@ -125,20 +125,7 @@ def LoadOp : HIVM_DmaOp<"load", [
                "Value":$left_padding_num, "bool":$init_out_buffer,
                "bool":$may_implicit_transpose_with_last_axis)>,               
   ];
-  let assemblyFormat = [{
-    `ins` `(` $src `:` type($src) `)`
-    `outs` `(` $dst `:` type($dst) `)`
-    attr-dict
-    (`pad_mode` `=` $pad_mode^)?
-    (`pad_value` `=` $pad_value^ `:` type($pad_value))?
-    (`left_padding_num` `=` $left_padding_num^ `:` type($left_padding_num))?
-    (`init_out_buffer` `=` $init_out_buffer^ )?
-    (`right_padding_num` `=` $right_padding_num^ `:` type($right_padding_num))?
-    (`init_condition` `=` $init_condition^ `:` type($init_condition))?
-    (`may_implicit_transpose_with_last_axis` `=` $may_implicit_transpose_with_last_axis^ )?
-    (`core_type` `=` $tcoretype^ )?
-    (`->` type($result_tensor)^)?
-  }];
+  let hasCustomAssemblyFormat = 1;
   let hasFolder = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = DmaOpBaseDecl;
