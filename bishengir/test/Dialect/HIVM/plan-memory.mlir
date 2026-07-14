@@ -997,16 +997,17 @@ module {
 
 // -----
 
-module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+module {
   func.func @test_multi_buffer_not_on_alloc(%src_gm: memref<16x1xf16, #hivm.address_space<gm>>,
                                         %dst_gm: memref<16x1xf16, #hivm.address_space<gm>>) {
     // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST1:.*]] = arith.constant 512 : i64
     // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
     %c16 = arith.constant 16 : index
     scf.for %i0 = %c0 to %c16 step %c4 {
-      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]], %[[CONST1]])
       %src_ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
       %subview = memref.subview %src_ub[0, 0] [16, 1] [1, 1] :
          memref<16x16xf16, #hivm.address_space<ub>> to

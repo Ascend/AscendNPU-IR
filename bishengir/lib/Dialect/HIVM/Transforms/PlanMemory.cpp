@@ -540,15 +540,12 @@ MemLivenessAnalysis::GetLiveBuffersInLoop(LoopLikeOpInterface loopOp,
   return allocBeforeLoopBuffers;
 }
 
-void MemLivenessAnalysis::UpdateMultiBufferInfo(annotation::MarkOp markOp) {
-  auto attrDict = markOp->getAttrDictionary();
-  if (attrDict.empty()) {
+void MemLivenessAnalysis::UpdateMultiBufferInfo(annotation::MarkOp markOp,
+                                                Value memrefVal) {
+  if (!markOp->hasAttr(hivm::MultiBufferAttr::name)) {
     return;
   }
-  if (!attrDict.contains(hivm::MultiBufferAttr::name)) {
-    return;
-  }
-  auto multiBufferValAttr = attrDict.get(hivm::MultiBufferAttr::name);
+  auto multiBufferValAttr = markOp->getAttr(hivm::MultiBufferAttr::name);
   assert(isa<IntegerAttr>(multiBufferValAttr) &&
          "multi buffer value must be integer!");
   auto valAttr = cast<IntegerAttr>(multiBufferValAttr);
@@ -556,7 +553,7 @@ void MemLivenessAnalysis::UpdateMultiBufferInfo(annotation::MarkOp markOp) {
     // Num is 1, which is a singebuffer and does not require any processing.
     return;
   }
-  buffer2MultiNum[markOp.getSrc()] = static_cast<uint64_t>(valAttr.getInt());
+  buffer2MultiNum[memrefVal] = static_cast<uint64_t>(valAttr.getInt());
 }
 
 LogicalResult
@@ -784,11 +781,20 @@ void MemLivenessAnalysis::UpdatePreloadBuffers(annotation::MarkOp markOp,
 
 void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
                                         OpInfo *curOpInfo, Liveness live) {
-  UpdateMultiBufferInfo(markOp);
+  if (!isa<MemRefType>(markOp.getSrc().getType())) {
+    return;
+  }
+  // global workspace plan
+  if (!isLocalMemPlan()) {
+    UpdateMultiBufferInfo(markOp, markOp.getSrc());
+    return;
+  }
+  // get allocOp
   auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
   if (!maybeAlloc.has_value()) {
     return;
   }
+  UpdateMultiBufferInfo(markOp, maybeAlloc.value().getResult());
   UpdatePreloadBuffers(markOp, maybeAlloc.value());
   UpdateMemoryUniqueBufferInfo(markOp, maybeAlloc.value());
   if (ProcessMarkOpForTightlyCoupledCV(markOp, maybeAlloc.value())) {
