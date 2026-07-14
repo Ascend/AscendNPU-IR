@@ -1189,6 +1189,17 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     tt.return
   }
 
+
+  // CHECK-LABEL: @test_fast_tanhf_fp32
+  // CHECK: ascend_dpx.fast_tanhf {{.*}} : (f32) -> f32
+  tt.func public @test_fast_tanhf_fp32(%arg0: !tt.ptr<f32>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
+    %0 = tt.splat %arg1 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_fast_tanh_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %3 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %3, %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
   // CHECK-LABEL: @test_finitef_fp32
   // CHECK: ascend_dpx.finitef {{.*}} : (f32) -> i1
   tt.func public @test_finitef_fp32(%arg0: !tt.ptr<i1>, %arg1: !tt.ptr<f32>, %arg2: i32 {gpu.block = #gpu.block<x>, tt.divisibility = 1 : i32}, %arg3: i32 {gpu.block = #gpu.block<y>, tt.divisibility = 1 : i32}, %arg4: i32 {gpu.block = #gpu.block<z>, tt.divisibility = 1 : i32}) attributes {noinline = false} {
@@ -1290,6 +1301,54 @@ module attributes {"ttg.enable-bishengir-simt-optimization" = 900101 : i32, "ttg
     %8 = tt.extern_elementwise %1, %3, %5, %7 {libname = "", libpath = "", pure = true, symbol = "__hmf_norm4d_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>, tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
     %9 = tt.splat %arg0 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
     tt.store %9, %8 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_requested_conversion_ops
+  // CHECK: ascend_dpx.float2half_rn {{.*}} : (f32) -> f16
+  // CHECK: ascend_dpx.half2float {{.*}} : (f16) -> f32
+  // CHECK: ascend_dpx.nanf {{.*}} : (!llvm.ptr{{.*}}) -> f32
+  tt.func public @test_requested_conversion_ops(%out32: !tt.ptr<f32>, %out16: !tt.ptr<f16>, %in32: !tt.ptr<f32>, %in16: !tt.ptr<f16>, %tag: !tt.ptr<i8>) attributes {noinline = false} {
+    %0 = tt.splat %in32 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.extern_elementwise %1 {libname = "", libpath = "", pure = true, symbol = "__hmf_float2half_rn_fp32"} : (tensor<1xf32, #blocked>) -> tensor<1xf16, #blocked>
+    %3 = tt.splat %in16 : !tt.ptr<f16> -> tensor<1x!tt.ptr<f16>, #blocked>
+    %4 = tt.load %3 : tensor<1x!tt.ptr<f16>, #blocked>
+    %5 = tt.extern_elementwise %4 {libname = "", libpath = "", pure = true, symbol = "__hmf_half2float_fp16"} : (tensor<1xf16, #blocked>) -> tensor<1xf32, #blocked>
+    %6 = tt.splat %tag : !tt.ptr<i8> -> tensor<1x!tt.ptr<i8>, #blocked>
+    %7 = tt.extern_elementwise %6 {libname = "", libpath = "", pure = true, symbol = "__hmf_nanf_fp32"} : (tensor<1x!tt.ptr<i8>, #blocked>) -> tensor<1xf32, #blocked>
+    %8 = tt.splat %out16 : !tt.ptr<f16> -> tensor<1x!tt.ptr<f16>, #blocked>
+    tt.store %8, %2 : tensor<1x!tt.ptr<f16>, #blocked>
+    %9 = tt.splat %out32 : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %9, %5 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %9, %7 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.return
+  }
+
+  // CHECK-LABEL: @test_requested_max_min_ops
+  // CHECK: ascend_dpx.max {{.*}} : (f32, f32) -> f32
+  // CHECK: ascend_dpx.min {{.*}} : (f32, f32) -> f32
+  // CHECK: ascend_dpx.max {{.*}} : (i32, i32) -> i32
+  // CHECK: ascend_dpx.min {{.*}} : (i32, i32) -> i32
+  tt.func public @test_requested_max_min_ops(%outf: !tt.ptr<f32>, %outi: !tt.ptr<i32>, %fa: !tt.ptr<f32>, %fb: !tt.ptr<f32>, %ia: !tt.ptr<i32>, %ib: !tt.ptr<i32>) attributes {noinline = false} {
+    %0 = tt.splat %fa : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %1 = tt.load %0 : tensor<1x!tt.ptr<f32>, #blocked>
+    %2 = tt.splat %fb : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    %3 = tt.load %2 : tensor<1x!tt.ptr<f32>, #blocked>
+    %4 = tt.splat %ia : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %5 = tt.load %4 : tensor<1x!tt.ptr<i32>, #blocked>
+    %6 = tt.splat %ib : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    %7 = tt.load %6 : tensor<1x!tt.ptr<i32>, #blocked>
+    %8 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_fmax_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %9 = tt.extern_elementwise %1, %3 {libname = "", libpath = "", pure = true, symbol = "__hmf_fmin_fp32"} : (tensor<1xf32, #blocked>, tensor<1xf32, #blocked>) -> tensor<1xf32, #blocked>
+    %10 = tt.extern_elementwise %5, %7 {libname = "", libpath = "", pure = true, symbol = "__hmf_max_i32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %11 = tt.extern_elementwise %5, %7 {libname = "", libpath = "", pure = true, symbol = "__hmf_min_i32"} : (tensor<1xi32, #blocked>, tensor<1xi32, #blocked>) -> tensor<1xi32, #blocked>
+    %12 = tt.splat %outf : !tt.ptr<f32> -> tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %12, %8 : tensor<1x!tt.ptr<f32>, #blocked>
+    tt.store %12, %9 : tensor<1x!tt.ptr<f32>, #blocked>
+    %13 = tt.splat %outi : !tt.ptr<i32> -> tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %13, %10 : tensor<1x!tt.ptr<i32>, #blocked>
+    tt.store %13, %11 : tensor<1x!tt.ptr<i32>, #blocked>
     tt.return
   }
 }
