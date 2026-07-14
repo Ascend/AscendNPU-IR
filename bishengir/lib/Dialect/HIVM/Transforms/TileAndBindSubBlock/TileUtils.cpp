@@ -21,7 +21,6 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
-#include "bishengir/Dialect/HIVM/Transforms/BubbleUpExtractSlice/BufferizationBubbleUp.h"
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -37,18 +36,11 @@
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/raw_ostream.h"
-
-#define DEBUG_TYPE "hivm-bind-sub-block-tile-utils"
-#define LDBG(X) LLVM_DEBUG(llvm::dbgs() << "[" DEBUG_TYPE "]: " << X << "\n")
 
 namespace mlir {
 namespace hivm {
 
 using namespace mlir;
-using mlir::hivm::detail::BufferizationPropagateDownPattern;
-using mlir::hivm::detail::BufferizationPropagateUpPattern;
 
 
 LogicalResult computeFixpipeSplitInfo(FixpipeOp op, int64_t tilingDim,
@@ -132,42 +124,17 @@ public:
   }
 };
 
-static FailureOr<int64_t> getHalvedStaticDim(MemRefType type,
-                                             int64_t tilingDim) {
-  if (tilingDim < 0 || tilingDim >= type.getRank())
-    return failure();
-  int64_t size = type.getDimSize(tilingDim);
-  if (ShapedType::isDynamic(size))
-    return failure();
-  return size / 2;
-}
+struct splitFixpipe : public OpRewritePattern<FixpipeOp> {
+  const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim;
 
-static FailureOr<int64_t> getFixpipeDstTilingDim(Value dst,
-                                                 memref::AllocOp allocOp,
-                                                 int64_t allocTilingDim) {
-  auto dstType = dyn_cast<MemRefType>(dst.getType());
-  if (!dstType)
-    return failure();
-  int64_t rankReducedCount = allocOp.getType().getRank() - dstType.getRank();
-  if (rankReducedCount < 0)
-    return failure();
+public:
+  splitFixpipe(MLIRContext *context,
+               const DenseMap<int32_t, int64_t> &tightlyCoupledMapIn)
+      : OpRewritePattern<FixpipeOp>(context),
+        tightlyCoupledBufferToTilingDim(tightlyCoupledMapIn) {}
 
-  int64_t dstTilingDim = allocTilingDim - rankReducedCount;
-  if (dstTilingDim < 0 || dstTilingDim >= dstType.getRank())
-    return failure();
-  return dstTilingDim;
-}
-
-} // namespace
-
-InsertFixpipeDstPropagateUp::InsertFixpipeDstPropagateUp(
-    MLIRContext *context,
-    const DenseMap<int32_t, int64_t> &tightlyCoupledMapIn)
-    : OpRewritePattern<FixpipeOp>(context),
-      tightlyCoupledBufferToTilingDim(tightlyCoupledMapIn) {}
-
-LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
-    FixpipeOp op, PatternRewriter &rewriter) const {
+  LogicalResult matchAndRewrite(FixpipeOp op,
+                                PatternRewriter &rewriter) const override {
     if (op->hasAttr(tileAndSliceFailure)) {
       return failure();
     }
@@ -180,53 +147,53 @@ LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
     auto dstMemrefType = dyn_cast<MemRefType>(dst.getType());
     if (!dstMemrefType)
       return failure();
-
     auto dstMemorySpace = dstMemrefType.getMemorySpace();
-    if (!dstMemorySpace) 
+    if (!dstMemorySpace)
       return failure();
-  
     auto toAddrSpace = cast<AddressSpaceAttr>(dstMemorySpace).getAddressSpace();
     if ((!dstMemorySpace) || (toAddrSpace != AddressSpace::UB)) {
       return success();
     }
 
+    bool cvpipeFlag = true;
+    auto subviewOp = dst.getDefiningOp<memref::SubViewOp>();
+    if (!subviewOp)
+      cvpipeFlag = false;
     auto maybeAllocOp = traceDefOp<memref::AllocOp>(dst);
     if (!maybeAllocOp)
       return failure();
-    
     memref::AllocOp allocOp = cast<memref::AllocOp>(*maybeAllocOp);
     mlir::Value allocVal = allocOp.getResult();
     auto maybeMarkOpRaw =
         utils::getAnnotateOpWithAttr(allocVal, tilghlyCoupledBufferAttr);
     if (!maybeMarkOpRaw)
       return failure();
-
     auto markOp = dyn_cast<annotation::MarkOp>(*maybeMarkOpRaw);
-    if (!markOp) 
+    if (!markOp)
       return failure();
-    
     auto attr = markOp->getAttrOfType<HIVMTightlyCoupledBufferAttr>(
         tilghlyCoupledBufferAttr);
     if (!attr || !attr.getId().has_value())
       return failure();
-
     /// FIXME: If the fixpipe dual dst mode is not specified, will defautly
     /// fixpipe the whole data into two aiv cores. So if ub is not tiled, just
     /// keep fixpipe as default.
-    if (!tightlyCoupledBufferToTilingDim.contains(attr.getId().value())) {
-      LDBG("AIC fixpipe skip propagate-up insertion: buffer id "
-           << attr.getId().value() << " is not in tiling map");
+    if (!tightlyCoupledBufferToTilingDim.contains(attr.getId().value()))
       return failure();
-    }
 
     auto tilingDimAttr = markOp->getAttrOfType<IntegerAttr>(AICAttrTilingDim);
     if (!tilingDimAttr)
       return failure();
-
     int64_t tilingDim = tilingDimAttr.getValue().getSExtValue();
+    auto rank = allocOp.getType().getRank();
     if (tilingDim == -1) {
       op->emitWarning("The tilingDim in AIC does not exist! Maybe because AIV "
                       "tightly coupled alloc is not tiled!");
+      return failure();
+    }
+    if (tilingDim != rank - 2 && tilingDim != rank - 1) {
+      op->emitWarning(
+          "The tilingDim in AIC does not match row_split or column split!");
       return failure();
     }
 
@@ -242,93 +209,111 @@ LogicalResult InsertFixpipeDstPropagateUp::matchAndRewrite(
       return failure();
     }
 
-    auto maybeDstTilingDim =
-        getFixpipeDstTilingDim(dst, allocOp, tilingDim);
-    if (failed(maybeDstTilingDim)) {
-      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-      return failure();
-    }
-    // `tilingDim` indexes the alloc; `dstTilingDim` indexes fixpipe outs.
-    int64_t dstTilingDim = maybeDstTilingDim.value();
-    LDBG("The dst tiling dim is: " << dstTilingDim);
+    auto oldTy = cast<MemRefType>(allocVal.getType());
+    if (!cvpipeFlag) {
+      auto newTy = MemRefType::get(splitShape, oldTy.getElementType(),
+                                   oldTy.getLayout(), oldTy.getMemorySpace());
+      rewriter.setInsertionPoint(allocOp);
+      auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
 
-    auto dstType = cast<MemRefType>(dst.getType());
-    auto slicedDstShape = llvm::to_vector(dstType.getShape());
-    auto maybeHalvedDim = getHalvedStaticDim(dstType, dstTilingDim);
-    if (failed(maybeHalvedDim)) {
-      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-      return failure();
-    }
-    slicedDstShape[dstTilingDim] = maybeHalvedDim.value();
-    // After tiling, the dst is a subview of a newly allocated compact UB
-    // buffer. Rebuild contiguous strides for the halved shape (and keep a
-    // dynamic offset) so the UCC type matches the subview that bubble-up
-    // will create. Keeping the pre-tile strides (e.g. [64,1] after 64→32)
-    // causes memref.subview layout verification failures.
-    int64_t dstOffset = 0;
-    SmallVector<int64_t> unusedStrides;
-    if (failed(getStridesAndOffset(dstType, unusedStrides, dstOffset)))
-      dstOffset = ShapedType::kDynamic;
-    SmallVector<int64_t> compactStrides(slicedDstShape.size());
-    int64_t running = 1;
-    for (int64_t i = static_cast<int64_t>(slicedDstShape.size()) - 1; i >= 0;
-         --i) {
-      compactStrides[i] = running;
-      if (ShapedType::isDynamic(slicedDstShape[i]))
-        running = ShapedType::kDynamic;
-      else if (!ShapedType::isDynamic(running))
-        running *= slicedDstShape[i];
-    }
-    auto slicedDstType = MemRefType::get(
-        slicedDstShape, dstType.getElementType(),
-        StridedLayoutAttr::get(rewriter.getContext(), dstOffset, compactStrides),
-        dstType.getMemorySpace());
+      rewriter.setInsertionPoint(markOp);
+      auto newMark =
+          rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
+      rewriter.modifyOpInPlace(newMark,
+                               [&] { newMark->setAttrs(markOp->getAttrs()); });
+      auto dualAttr =
+          FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
+      rewriter.setInsertionPoint(op);
+      SmallVector<Value> oprs({op.getSrc(), newAlloc});
+      if (auto quantScale = op.getQuantScale())
+        oprs.push_back(quantScale);
+      auto newFixpipeOp = rewriter.create<FixpipeOp>(op.getLoc(), TypeRange{},
+                                                     oprs, op->getAttrs());
+      newFixpipeOp.setDualDstModeAttr(dualAttr);
 
+      rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
+      rewriter.replaceOp(op, newFixpipeOp->getResults());
+      rewriter.eraseOp(markOp);
+      rewriter.eraseOp(allocOp);
+      return success();
+    }
+
+    auto newTy = MemRefType::get(splitShape, oldTy.getElementType(),
+                                 oldTy.getLayout(), oldTy.getMemorySpace());
+
+    rewriter.setInsertionPoint(allocOp);
+    auto newAlloc = rewriter.create<memref::AllocOp>(allocOp.getLoc(), newTy);
+
+    rewriter.setInsertionPoint(markOp);
+    auto newMark =
+        rewriter.create<annotation::MarkOp>(markOp->getLoc(), newAlloc);
+    rewriter.modifyOpInPlace(newMark,
+                             [&] { newMark->setAttrs(markOp->getAttrs()); });
+    rewriter.setInsertionPoint(subviewOp);
+    SmallVector<OpFoldResult> sizes = subviewOp.getMixedSizes();
+    if (tilingDim == rank - 2) {
+      if (sizes[1].is<Attribute>()) {
+        int64_t oldSize = cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt();
+        sizes[1] = rewriter.getIndexAttr(oldSize / 2);
+      }
+    } else {
+      if (sizes[2].is<Attribute>()) {
+        int64_t oldSize = cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt();
+        sizes[2] = rewriter.getIndexAttr(oldSize / 2);
+      }
+    }
+
+    int64_t dim1 = sizes[1].is<Attribute>()
+                       ? cast<IntegerAttr>(sizes[1].get<Attribute>()).getInt()
+                       : ShapedType::kDynamic;
+    int64_t dim2 = sizes[2].is<Attribute>()
+                       ? cast<IntegerAttr>(sizes[2].get<Attribute>()).getInt()
+                       : ShapedType::kDynamic;
+    SmallVector<int64_t> new2DShape = {dim1, dim2};
+
+    auto srcType = cast<MemRefType>(newAlloc.getType());
+    Type elementType = srcType.getElementType();
+    Attribute memorySpace = srcType.getMemorySpace();
+    auto layout = StridedLayoutAttr::get(rewriter.getContext(),
+                                         ShapedType::kDynamic, {dim2, 1});
+    auto result2DType =
+        MemRefType::get(new2DShape, elementType, layout, memorySpace);
+
+    auto newSubview = rewriter.create<memref::SubViewOp>(
+        subviewOp.getLoc(), result2DType, newAlloc, subviewOp.getMixedOffsets(),
+        sizes, subviewOp.getMixedStrides());
+
+    auto dualAttr =
+        FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode);
     rewriter.setInsertionPoint(op);
-    auto up = mlir::hivm::detail::createBubblePropagatorUpLink(
-        dst, slicedDstType, rewriter.getIndexAttr(0),
-        rewriter.getIndexAttr(slicedDstShape[dstTilingDim]), dstTilingDim,
-        rewriter);
-    rewriter.modifyOpInPlace(op, [&]() {
-      op.getDstMutable().assign(up.getResult(0)); // change the newFixpipe to the ucc result
-      op.setDualDstModeAttr(
-          FixpipeDualDstModeAttr::get(rewriter.getContext(), splitMode));
-    });
-    LDBG("AIC fixpipe inserted dst propagate-up for:\n " << op);
+    NamedAttrList attrs(op->getAttrs());
+    attrs.set(op.getDualDstModeAttrName(), dualAttr);
+
+    auto newFixpipeOp = rewriter.create<FixpipeOp>(
+        op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},
+        attrs.getAttrs());
+
+    rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
+    rewriter.replaceAllUsesWith(subviewOp.getResult(), newSubview.getResult());
+    rewriter.replaceOp(op, newFixpipeOp->getResults());
+
+    rewriter.eraseOp(subviewOp);
+    rewriter.eraseOp(markOp);
+    rewriter.eraseOp(allocOp);
     return success();
-}
+  }
+};
 
-namespace {
-
-static bool hasUnpropagatedBubblePropagator(func::FuncOp func) {
-  return func
-      .walk([](UnrealizedConversionCastOp propagateOp) {
-        if (propagateOp->hasAttr(mlir::hivm::detail::kBubbleUpPropagateUp) ||
-            propagateOp->hasAttr(mlir::hivm::detail::kBubbleUpPropagateDown)) {
-          LDBG("AIC fixpipe propagation did not converge, remaining UCC is:\n "
-               << propagateOp);
-          return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-      })
-      .wasInterrupted();
-}
-
-static LogicalResult tileAndSliceOpAIC(
-    func::FuncOp func,
+static LogicalResult runSplitFixpipe(
+    func::FuncOp funcOp,
     const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
-  RewritePatternSet patterns(func.getContext());
-  patterns.add<InsertFixpipeDstPropagateUp>(
-      func.getContext(), tightlyCoupledBufferToTilingDim);
-  patterns.add<BufferizationPropagateUpPattern,
-               BufferizationPropagateDownPattern>(func.getContext());
-  if (failed(applyPatternsGreedily(func, std::move(patterns)))) {
+  RewritePatternSet patterns(funcOp.getContext());
+  patterns.add<splitFixpipe>(funcOp.getContext(),
+                             tightlyCoupledBufferToTilingDim);
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
     return failure();
   }
-  if (hasUnpropagatedBubblePropagator(func)) {
-    return failure();
-  }
-  if (func
+  if (funcOp
           .walk([](FixpipeOp fixpipeOp) {
             return fixpipeOp->hasAttrOfType<UnitAttr>(tileAndSliceFailure)
                        ? WalkResult::interrupt()
@@ -338,6 +323,12 @@ static LogicalResult tileAndSliceOpAIC(
     return failure();
   }
   return success();
+}
+
+static LogicalResult tileAndSliceOpAIC(
+    func::FuncOp func,
+    const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
+  return runSplitFixpipe(func, tightlyCoupledBufferToTilingDim);
 }
 
 } // namespace

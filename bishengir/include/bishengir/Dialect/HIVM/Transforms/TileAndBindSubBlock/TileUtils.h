@@ -20,7 +20,6 @@
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -44,17 +43,6 @@ constexpr llvm::StringLiteral tilghlyCoupledBufferAttr =
 /// used to prune `tightlyCoupledBufferToTilingDim` before AIC fixpipe split.
 constexpr llvm::StringLiteral kTiledTightlyCoupledAlloc =
     "tiledAlloc";
-
-struct InsertFixpipeDstPropagateUp : public OpRewritePattern<FixpipeOp> {
-  const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim;
-
-  InsertFixpipeDstPropagateUp(
-      MLIRContext *context,
-      const llvm::DenseMap<int32_t, int64_t> &tightlyCoupledMapIn);
-
-  LogicalResult matchAndRewrite(FixpipeOp op,
-                                PatternRewriter &rewriter) const override;
-};
 
 LogicalResult limitUniqueSubBlockToStore(func::FuncOp funcOp);
 
