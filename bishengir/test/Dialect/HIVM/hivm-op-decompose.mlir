@@ -2231,3 +2231,54 @@ func.func @test_bug_194_regression(%arg0: memref<1024xi64>, %arg1: memref<1024xi
   hivm.hir.vsel ins(%alloc_3, %arg0, %arg1 : memref<1024xi1>, memref<1024xi64>, memref<1024xi64>) outs(%alloc_4 : memref<1024xi64>)
   return
 }
+
+// -----
+// CHECK-LABEL: func @test_scalar_f32_to_ui64(
+// CHECK-SAME: %[[SRC0:.*]]: f32
+func.func @test_scalar_f32_to_ui64(%0: f32, %1 : memref<1xi64>) {
+  // CHECK-DAG: %[[THR:.*]] = arith.constant 9.22337203E+18 : f32
+  // CHECK-DAG: %[[MIN:.*]] = arith.constant -9223372036854775808 : i64
+  // CHECK: %[[GE:.*]] = arith.cmpf oge, %[[SRC0]], %[[THR]] : f32
+  // CHECK: %[[SUB:.*]] = arith.subf %[[SRC0]], %[[THR]] : f32
+  // CHECK: %[[ADJ:.*]] = arith.select %[[GE]], %[[SUB]], %[[SRC0]] : f32
+  // CHECK: %[[S:.*]] = arith.fptosi %[[ADJ]] : f32 to i64
+  // CHECK: %[[OR:.*]] = arith.ori %[[S]], %[[MIN]] : i64
+  // CHECK: %[[RES:.*]] = arith.select %[[GE]], %[[OR]], %[[S]] : i64
+  // CHECK: memref.store %[[RES]], %[[SRC1:.*]]
+  // CHECK-NOT: arith.fptoui
+  // CHECK-NOT: hivm.hir.vcast
+  %c0 = arith.constant 0 : index
+  %6 = arith.fptoui %0 : f32 to i64
+  memref.store %6, %1[%c0] : memref<1xi64>
+  return
+}
+
+// -----
+// Signed counterpart: the scalar unit natively supports f32->i64 fptosi, so it
+// is left untouched (neither expanded nor routed to the vector unit).
+// CHECK-LABEL: func @test_scalar_f32_to_si64(
+func.func @test_scalar_f32_to_si64(%0: f32, %1 : memref<1xi64>) {
+  // CHECK: arith.fptosi
+  // CHECK-NOT: hivm.hir.vcast
+  %c0 = arith.constant 0 : index
+  %6 = arith.fptosi %0 : f32 to i64
+  memref.store %6, %1[%c0] : memref<1xi64>
+  return
+}
+
+
+// -----
+// On reg-based arch, VReduceInitInitializing must not seed reduce init.
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  // CHECK-LABEL: func @test_reduce_min_with_index_int64_regbase_no_init
+  func.func @test_reduce_min_with_index_int64_regbase_no_init() {
+    // CHECK-NOT: hivm.hir.vbrc
+    // CHECK-NOT: already_initialize_init
+    // CHECK: hivm.hir.vreduce <min_with_index_left>
+    %src = memref.alloc() : memref<2x2xi64>
+    %dst1 = memref.alloc() : memref<1x2xi64>
+    %dst2 = memref.alloc() : memref<1x2xi32>
+    hivm.hir.vreduce <min_with_index_left> ins(%src : memref<2x2xi64>) outs(%dst1, %dst2 : memref<1x2xi64>, memref<1x2xi32>) reduce_dims = [0]
+    return
+  }
+}

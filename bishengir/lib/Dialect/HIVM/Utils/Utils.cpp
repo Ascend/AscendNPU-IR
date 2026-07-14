@@ -1318,6 +1318,14 @@ bool isGMPointerCastOp(Operation *op) {
   return memSpaceAttr.getAddressSpace() == hivm::AddressSpace::GM;
 }
 
+bool isSIMTVF(Operation *op) {
+  std::optional<VFMode> vfMode = std::nullopt;
+  if (const auto vfModeAttr = op->getAttrOfType<VFModeAttr>(VFModeAttr::name)) {
+    vfMode = vfModeAttr.getValue();
+  }
+  return vfMode == hivm::VFMode::SIMT;
+}
+
 bool isArgminOrArgmax(ReduceOperation op) {
   return op == ReduceOperation::min_with_index_left ||
          op == ReduceOperation::max_with_index_left ||

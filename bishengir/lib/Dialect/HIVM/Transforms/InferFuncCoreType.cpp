@@ -1,6 +1,6 @@
 //===- HIVMInferFuncCoreType.cpp - CoreType Inference Pass ----------------===//
 //
-// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Copyright (c) Huawei Technologies Co., Ltd. 2025~2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -53,6 +53,28 @@ public:
   using ModuleCoreTypeMap = std::map<ModuleOp, hivm::TModuleCoreType>;
 
   void runOnOperation() override {
+    auto module = getOperation();
+    // For the V300 Arch, there is no need to go through mix kernel related
+    // analysis and processing.
+    // TODO: Refactor this later.
+    // Note: isAscend310B is currently stubbed false on master until Ascend310B
+    // target enums/specs are ported from f9.
+    if (hacc::utils::isAscend310B(module)) {
+      module->setAttr(hivm::TModuleCoreTypeAttr::name,
+                      hivm::TModuleCoreTypeAttr::get(
+                          module->getContext(), hivm::TModuleCoreType::AIV));
+
+      module->walk([&](Operation *nestedOp) {
+        if (isa<hivm::MmadL1Op>(nestedOp)) {
+          auto *func = nestedOp->getParentOp();
+          func->setAttr(hivm::TFuncCoreTypeAttr::name,
+                        hivm::TFuncCoreTypeAttr::get(func->getContext(),
+                                                     hivm::TFuncCoreType::AIC));
+        }
+      });
+      return;
+    }
+
     const mlir::CallGraph callGraph(getOperation());
 
     // core type constraits for each function.

@@ -339,6 +339,10 @@ def FinishDebugOp : HIVM_Op<"finish_debug", [CubeVectorCoreTypeTrait]> {
 //===----------------------------------------------------------------------===//
 
 def GatherLoadOp : HIVM_Op<"gather_load", [
+    HIVMCoreTypeInterface,
+    VectorCoreTypeTrait,
+    OpPipeInterface,
+    SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
     DestinationStyleOpInterface,
     InferTypeOpAdaptor,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
@@ -409,13 +413,15 @@ def GatherLoadOp : HIVM_Op<"gather_load", [
 
 def ScatterStoreOp
     : HIVM_Op<
-          "scatter_store", [DestinationStyleOpInterface,
-                            DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-                            DeclareOpInterfaceMethods<StoreLikeOpInterface>,
-                            SameVariadicOperandSize,
-                            AllElementTypesMatch<["base", "data"]>,
-                            AllRanksMatch<["indices", "data"]>,
-                            AllShapesMatch<["indices", "data"]>]> {
+          "scatter_store",
+          [HIVMCoreTypeInterface, VectorCoreTypeTrait, OpPipeInterface,
+           SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_V">,
+           DestinationStyleOpInterface,
+           DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+           DeclareOpInterfaceMethods<StoreLikeOpInterface>,
+           SameVariadicOperandSize, AllElementTypesMatch<["base", "data"]>,
+           AllRanksMatch<["indices", "data"]>,
+           AllShapesMatch<["indices", "data"]>]> {
   let summary = [{
     Performs sparse memory storing with optional mask
   }];
