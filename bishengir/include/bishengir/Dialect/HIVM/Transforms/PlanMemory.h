@@ -96,6 +96,8 @@ struct BufferInfo {
   /// other buffer due to wrong lifetime.
   /// TODO: Modify the lifetime of A and C and allow them to be inplaced further
   bool ignoreInplace{false};
+  /// Buffer will use unique memory and will not share memory with other buffers
+  bool memoryUnique{false};
   /// CV mix id from HIVMTightlyCoupledBufferAttr (-1 = not a tightly-coupled
   /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
   /// analysis to identify a sharing pair.
@@ -471,6 +473,10 @@ private:
   /// need to run UpdateOpGenInfo manually.
   bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
                                         memref::AllocOp allocOp);
+
+  /// Update bufferInfos for AllocOp which need to plan unique memory.
+  void UpdateMemoryUniqueBufferInfo(annotation::MarkOp markOp,
+                                    memref::AllocOp allocOp);
 
   /// If buffer is used by multi vector scope, update buffer's gen and kill to
   /// the start and end of `for` op which is the parent op of `scope` op.

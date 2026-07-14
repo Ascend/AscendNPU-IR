@@ -31,6 +31,7 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/WithColor.h"
@@ -789,12 +790,26 @@ void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
     return;
   }
   UpdatePreloadBuffers(markOp, maybeAlloc.value());
+  UpdateMemoryUniqueBufferInfo(markOp, maybeAlloc.value());
   if (ProcessMarkOpForTightlyCoupledCV(markOp, maybeAlloc.value())) {
     UpdateOpGenInfo(curOpInfo, maybeAlloc.value()->getResults());
   }
   // TODO: Update buffer kill time when RecursionIR visits any user of the
   // buffer, rather than only getting buffer kill time in last user
   UpdateOpKillInfo(curOpInfo, maybeAlloc.value(), live);
+}
+
+void MemLivenessAnalysis::UpdateMemoryUniqueBufferInfo(
+    annotation::MarkOp markOp, memref::AllocOp allocOp) {
+  if (!markOp->hasAttr(hivm::HIVMMemoryUniqueAttr::getMnemonic())) {
+    return;
+  }
+  auto allocValue = allocOp.getResult();
+  auto *it = bufferInfos.find(allocValue);
+  if (it == bufferInfos.end()) {
+    llvm::report_fatal_error("Use allocOp before defined!");
+  }
+  it->second.memoryUnique = true;
 }
 
 bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
@@ -1062,9 +1077,9 @@ BufferInfo MemLivenessAnalysis::GetBufferInfo(Operation *op, Value operand,
 
 void MemLivenessAnalysis::InitializeInplacePairList() {
   LDBG("-------------------------- AliasPair --------------------------\n");
-  for (auto &bufferInfo : bufferInfos) {
-    assert(memref_ext::isDefiningOpAllocLike(bufferInfo.first));
-    auto iter = buffer2AliasVec.find(bufferInfo.first);
+  for (auto &[buffer, bufferInfo] : bufferInfos) {
+    assert(memref_ext::isDefiningOpAllocLike(buffer));
+    auto *iter = buffer2AliasVec.find(buffer);
     if (iter == buffer2AliasVec.end()) {
       continue;
     }
@@ -1074,23 +1089,26 @@ void MemLivenessAnalysis::InitializeInplacePairList() {
         continue;
       }
       if (count(inplacePairList.begin(), inplacePairList.end(),
-                std::make_pair(bufferInfo.first, aliasBuffer)) ||
+                std::make_pair(buffer, aliasBuffer)) ||
           count(inplacePairList.begin(), inplacePairList.end(),
-                std::make_pair(aliasBuffer, bufferInfo.first))) {
+                std::make_pair(aliasBuffer, buffer))) {
         continue;
       }
       LDBG("inplace pair: (buffer: "
-           << bufferInfo.first << ", alias buffer: " << aliasBuffer << ")"
+           << buffer << ", alias buffer: " << aliasBuffer << ")"
            << " , condition: " << aliasBufferPair.second << "\n");
       if (aliasBufferPair.second) {
         continue;
       }
-      inplacePairList.emplace_back(
-          std::make_pair(bufferInfo.first, aliasBuffer));
-      auto it = bufferInfos.find(aliasBuffer);
-      assert(it != bufferInfos.end() && "buffer Info need define before! ");
-      it->second.ignoreInplace = true;
-      bufferInfo.second.ignoreInplace = true;
+      auto *it = bufferInfos.find(aliasBuffer);
+      assert(it != bufferInfos.end() && "buffer Info need define before!");
+      auto &aliasBufferInfo = it->second;
+      if (aliasBufferInfo.memoryUnique || bufferInfo.memoryUnique) {
+        continue;
+      }
+      inplacePairList.emplace_back(std::make_pair(buffer, aliasBuffer));
+      aliasBufferInfo.ignoreInplace = true;
+      bufferInfo.ignoreInplace = true;
     }
   }
 }
@@ -1966,29 +1984,37 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
                              rootStorageEntry->mergedChildren.begin(),
                              rootStorageEntry->mergedChildren.end());
 
-  // reorder storage entrys: dma touched buffers + other buffers + scalar
-  // touched buffers
+  // reorder storage entrys: mem unique buffers + dma touched buffers + other
+  // buffers + scalar touched buffers. Dma touched buffers and scalar touched
+  // buffers will only exist in UB.
+  SmallVector<StorageEntry *> memUniqueStorageEntryVec;
   SmallVector<StorageEntry *> touchDmaStorageEntryVec;
-  SmallVector<StorageEntry *> otherStorageEntryVec;
   SmallVector<StorageEntry *> touchPipeScalarStorageEntryVec;
-  for (auto &storageEntry : origStorageEntryVec) {
+  SmallVector<StorageEntry *> otherStorageEntryVec;
+  for (auto *storageEntry : origStorageEntryVec) {
     if (!storageEntry) {
       continue;
     }
-    bool recorded = false;
-    for (auto &buffer : storageEntry->inplaceBuffers) {
-      if (dmaFirstPipelineOpt.IsDmaBuffer(buffer)) {
-        touchDmaStorageEntryVec.push_back(storageEntry);
-        recorded = true;
-        break;
-      }
-      if (dmaFirstPipelineOpt.IsScalarBuffer(buffer)) {
-        touchPipeScalarStorageEntryVec.push_back(storageEntry);
-        recorded = true;
-        break;
-      }
-    }
-    if (!recorded) {
+    bool isOtherBuffer =
+        llvm::all_of(storageEntry->inplaceBuffers, [&](Value &buffer) {
+          auto *it = bufferInfos.find(buffer);
+          assert(it != bufferInfos.end() &&
+                 "buffer should be find in bufferInfos");
+          if (it->second.memoryUnique) {
+            memUniqueStorageEntryVec.push_back(storageEntry);
+            return false;
+          }
+          if (dmaFirstPipelineOpt.IsDmaBuffer(buffer)) {
+            touchDmaStorageEntryVec.push_back(storageEntry);
+            return false;
+          }
+          if (dmaFirstPipelineOpt.IsScalarBuffer(buffer)) {
+            touchPipeScalarStorageEntryVec.push_back(storageEntry);
+            return false;
+          }
+          return true;
+        });
+    if (isOtherBuffer) {
       otherStorageEntryVec.push_back(storageEntry);
     }
   }
@@ -1996,6 +2022,8 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
     auto storageEntryVecOrderCmp = [](StorageEntry *a, StorageEntry *b) {
       return a->bufInfo->constBits > b->bufInfo->constBits;
     };
+    llvm::sort(memUniqueStorageEntryVec.begin(),
+               memUniqueStorageEntryVec.end(), storageEntryVecOrderCmp);
     llvm::sort(touchDmaStorageEntryVec.begin(), touchDmaStorageEntryVec.end(),
                storageEntryVecOrderCmp);
     llvm::sort(touchPipeScalarStorageEntryVec.begin(),
@@ -2003,7 +2031,10 @@ MemPlan::GetReorderRootStorageEntry(StorageEntry *rootStorageEntry) {
     llvm::sort(otherStorageEntryVec.begin(), otherStorageEntryVec.end(),
                storageEntryVecOrderCmp);
   }
-  SmallVector<StorageEntry *> reorderedStorageEntryVec = touchDmaStorageEntryVec;
+  auto reorderedStorageEntryVec = memUniqueStorageEntryVec;
+  reorderedStorageEntryVec.insert(reorderedStorageEntryVec.end(),
+                                  touchDmaStorageEntryVec.begin(),
+                                  touchDmaStorageEntryVec.end());
   reorderedStorageEntryVec.insert(reorderedStorageEntryVec.end(),
                                   otherStorageEntryVec.begin(),
                                   otherStorageEntryVec.end());
@@ -2612,6 +2643,15 @@ bool MemPlan::IsSamePlanAsLastRollBack(uint64_t allocOffset, int curChildIdx,
 inline bool MemPlan::VerifyConflictStage0(
     StorageEntry *e, const std::shared_ptr<MemoryBound> &last,
     SmallVector<ValuePair> &stallPipelineInplacePairs) {
+  if (e->bufferLifeVec.empty() || last->bufferLifeVec.empty()) {
+    return false;
+  }
+  auto *bufferInfoIt1 = bufferInfos.find(e->bufferLifeVec[0]->buffer);
+  auto *bufferInfoIt2 = bufferInfos.find(last->bufferLifeVec[0]->buffer);
+  if (bufferInfoIt1->second.memoryUnique ||
+      bufferInfoIt2->second.memoryUnique) {
+    return true;
+  }
   // level_0: offset = 0, offset means life distance
   DenseMap<ValuePair, BufferLife> intersection =
       GetOverlapBufferLife(e->bufferLifeVec, last->bufferLifeVec);
@@ -2690,9 +2730,6 @@ MemPlan::GetOverlapBufferLife(const BufferLifeVec &b1,
   size_t j = 0;
   size_t b1Len = b1.size();
   size_t b2Len = b2.size();
-  if (b1Len == 0 || b2Len == 0) {
-    return intersection;
-  }
   while (i < b1Len && j < b2Len) {
     auto lo = std::max(b1[i]->allocTime, b2[j]->allocTime);
     auto hi = std::min(b1[i]->freeTime, b2[j]->freeTime);
