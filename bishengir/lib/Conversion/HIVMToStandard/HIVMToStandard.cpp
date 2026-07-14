@@ -560,7 +560,22 @@ private:
       Value dualDstMode =
           rewriter.create<arith::ConstantIntOp>(op->getLoc(), dualDstVal, 8);
       additionalArgs.push_back(dualDstMode);
+    } else if (dstIsUB(op)) {
+      // Single-destination L0C->UB fixpipe: the target sub-block is a bool
+      // argument (0 -> sub-block 0's UB, 1 -> sub-block 1's).
+      bool subBlockId = op.getSubBlockIdx() != FixpipeSubBlock::SUB_BLOCK_0;
+      additionalArgs.push_back(rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getBoolAttr(subBlockId)));
     }
+  }
+
+  /// True when the fixpipe destination is a UB memref
+  static bool dstIsUB(FixpipeOp op) {
+    auto memref = dyn_cast<BaseMemRefType>(op.getDst().getType());
+    if (!memref)
+      return false;
+    auto space = dyn_cast_if_present<AddressSpaceAttr>(memref.getMemorySpace());
+    return space && space.getAddressSpace() == hivm::AddressSpace::UB;
   }
 };
 

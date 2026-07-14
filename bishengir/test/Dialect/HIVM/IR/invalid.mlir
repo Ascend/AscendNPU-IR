@@ -483,3 +483,18 @@ func.func @test_matmul_valid_descale_dim(%A_gm : memref<16x16xf16, #hivm.address
 
   return
 }
+
+// -----
+// CHECK-LABEL test_fixpipe_dual_dst_mode_with_sub_block_idx
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_fixpipe_dual_dst_mode_with_sub_block_idx() {
+    %l0c = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    // expected-error@+1 {{'hivm.hir.fixpipe' op sub_block_idx must not be set when dual_dst_mode is enabled!}}
+    hivm.hir.fixpipe {sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
+                    ins(%l0c : memref<16x16xf16, #hivm.address_space<cc>>)
+                    outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+                    dual_dst_mode = #hivm.fixpipe_dual_dst_mode<ROW_SPLIT>
+    return
+  }
+}
