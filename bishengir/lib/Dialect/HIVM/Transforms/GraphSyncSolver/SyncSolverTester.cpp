@@ -27,6 +27,7 @@
 #include "llvm/Support/LogicalResult.h"
 #include <cerrno>
 #include <memory>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -329,7 +330,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
       ongoingWrites, ongoingReads;
   llvm::DenseMap<CorePipeInfo, std::vector<std::pair<const RWOperation *, int>>>
       runningOps;
-  llvm::DenseMap<std::pair<hivm::PIPE, hivm::PIPE>, std::multiset<int64_t>>
+  llvm::DenseMap<std::tuple<hivm::TCoreType, hivm::PIPE, hivm::PIPE>,
+                 std::multiset<int64_t>>
       triggeredSetFlagOps;
   std::set<int> allIndexes;
   auto corePipeAll =
@@ -347,10 +349,17 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 
   auto getTriggeredGroup = [this](const SetWaitOp *syncOp) {
     if (syncMode == SyncMode::TEST_INTRA_CORE_MODE) {
-      return std::make_pair(syncOp->pipeSrc, syncOp->pipeDst);
+      return std::make_tuple(TCoreType::CUBE_OR_VECTOR, syncOp->pipeSrc,
+                             syncOp->pipeDst);
     } else {
-      return std::make_pair(hivm::PIPE::PIPE_UNASSIGNED,
-                            hivm::PIPE::PIPE_UNASSIGNED);
+      if (isa<const SetFlagOp>(syncOp)) {
+        return std::make_tuple(getOppositeCoreType(syncOp->coreType),
+                               hivm::PIPE::PIPE_UNASSIGNED,
+                               hivm::PIPE::PIPE_UNASSIGNED);
+      } else {
+        return std::make_tuple(syncOp->coreType, hivm::PIPE::PIPE_UNASSIGNED,
+                               hivm::PIPE::PIPE_UNASSIGNED);
+      }
     }
   };
 
@@ -420,14 +429,16 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
   };
 
   [[maybe_unused]] auto printMainQue = [&]() {
-    for (auto &[triggerGroup, eventIds] : triggeredSetFlagOps)
+    for (auto &[triggerGroup, eventIds] : triggeredSetFlagOps) {
+      auto [coreType, setPipe, waitPipe] = triggerGroup;
       if (!eventIds.empty()) {
-        llvm::dbgs() << triggerGroup.first << ' ' << triggerGroup.second << ' ';
+        llvm::dbgs() << coreType << ' ' << setPipe << ' ' << waitPipe << ' ';
         for (auto e : eventIds) {
           llvm::dbgs() << e << ' ';
         }
         llvm::dbgs() << '\n';
       }
+    }
     for (auto corePipe : mainQue) {
       int szLimit = 100;
       llvm::dbgs() << corePipe.coreType << ' ' << corePipe.pipe << ": ";
@@ -649,7 +660,8 @@ llvm::LogicalResult SyncTester::runSimulation(int runId, bool debugPrint) {
 // ops, and run multiple simulation runs to verify correctness.
 llvm::LogicalResult SyncTester::test() {
   auto funcIr = getGeneratedRandomTest();
-  LLVM_DEBUG(llvm::dbgs() << "before:\n" << funcIr->str(0, true) << '\n';);
+  LLVM_DEBUG(llvm::dbgs() << "before-tester:\n"
+                          << funcIr->str(0, true) << '\n';);
 
   SyncSolverOptions options(syncMode, /*isMemBasedArch=*/false,
                             /*isRegBasedArch=*/false);
