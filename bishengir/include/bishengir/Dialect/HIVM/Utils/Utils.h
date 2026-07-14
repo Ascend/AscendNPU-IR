@@ -37,6 +37,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <optional>
 #include <queue>
 #include <set>
 #include <type_traits>
@@ -107,7 +108,8 @@ static constexpr unsigned int MaskControlBit = 56;
 static constexpr unsigned int OverrideSaturationBit = 60;
 
 const std::set<hivm::AddressSpace> LocalBufferSpace{
-    hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C};
+    hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C,
+    hivm::AddressSpace::SSBUF};
 
 const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
     {TFuncCoreType::AIC, TCoreType::CUBE},
@@ -171,8 +173,13 @@ SmallVector<Value> getOpTouchBuffer(Operation *op);
 /// Determine whether there is a Local Buffer in the current operation.
 bool isOpTouchLocalBuffer(Operation *op);
 
+bool isOpTouchSsbufferOnly(Operation *op);
+
 /// Determine whether there is in ub buffer.
 bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
+
+/// Determine whether there is in ssbuffer.
+bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
 
 /// Determine whether there is a global Buffer in the current operation.
 bool isOpTouchGlobalBuffer(Operation *op);
