@@ -109,3 +109,27 @@ func.func @sym_kernel_mix_aic(%arg0: memref<?xi8>, %arg1: memref<?xi8>, %arg2: m
     bufferization.materialize_in_destination %1 in writable %reinterpret_cast : (tensor<1xf32>, memref<1xf32, strided<[1]>>) -> ()
     return
 }
+
+
+// -----
+
+// CHECK-LABEL: func.func @test_ssbuf_unaffected
+// CHECK-SAME: (%[[ARG0:.*]]: i64)
+func.func @test_ssbuf_unaffected(%arg0: i64) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  %c0_i8 = arith.constant 0 : i8
+  %c1_i8 = arith.constant 1 : i8
+
+  // CHECK: %[[PTR:.*]] = hivm.hir.pointer_cast(%[[ARG0]]) : memref<i8, #hivm.address_space<ssbuf>>
+  %0 = hivm.hir.pointer_cast(%arg0) : memref<i8, #hivm.address_space<ssbuf>>
+
+  // CHECK: %[[VAL:.*]] = memref.load %[[PTR]][] {{.*}} : memref<i8, #hivm.address_space<ssbuf>>
+  %1 = memref.load %0[] : memref<i8, #hivm.address_space<ssbuf>>
+
+  %2 = arith.cmpi sgt, %1, %c0_i8 : i8
+  scf.if %2 {
+    %3 = arith.subi %1, %c1_i8 : i8
+    // CHECK: memref.store {{.*}}, %[[PTR]][] : memref<i8, #hivm.address_space<ssbuf>>
+    memref.store %3, %0[] : memref<i8, #hivm.address_space<ssbuf>>
+  }
+  return
+}

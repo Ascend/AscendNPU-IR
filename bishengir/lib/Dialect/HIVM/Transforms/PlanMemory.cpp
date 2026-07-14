@@ -699,6 +699,10 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
   auto allocOp = dyn_cast<memref::AllocOp>(op);
   assert(allocOp && "must be alloc op");
   auto memorySpaceAttr = GetBufferSpaceAttr(allocOp.getResult());
+
+  // TODO: Remove this after plan mem support SSBUF alloc
+  assert(!isSsbuffer(memorySpaceAttr) &&
+         "Alloc on SSBUFFER is not yet supported!");
   if (isLocalBuffer(memorySpaceAttr)) {
     return success();
   }
@@ -707,6 +711,11 @@ MemLivenessAnalysis::CheckLocalBufferAllocOp(Operation *op) const {
 }
 
 bool MemLivenessAnalysis::isSkippableOp(Operation *op) const {
+  // TODO: Remove this after plan mem support SSBUF alloc
+  if (auto pointerCastOp = llvm::dyn_cast<PointerCastOp>(op);
+      pointerCastOp && isOpTouchSsbufferOnly(pointerCastOp)) {
+    return true;
+  }
   // TODO: Can Func CallOp be skipped?
   return isa<func::ReturnOp, scf::YieldOp, memref::DimOp, hivm::DCCIOp,
              scope::ReturnOp>(op);
@@ -1051,6 +1060,11 @@ bool MemLivenessAnalysis::AllDeadAfter(Operation *op, SetVector<Value> aliasVec,
 BufferInfo MemLivenessAnalysis::GenerateBufferInfo(Operation *op,
                                                    Value operand) {
   auto memorySpaceAttr = GetBufferSpaceAttr(operand);
+  // TODO: Remove this after plan mem support SSBUF alloc
+  if (isSsbuffer(memorySpaceAttr)) {
+    llvm_unreachable("Alloc-like on SSBUF is not yet supported!");
+  }
+
   if (isLocalMemPlan() && isLocalBuffer(memorySpaceAttr)) {
     assert(memorySpaceAttr.has_value() && "buffer must has space!");
     return GetBufferInfo(op, operand,

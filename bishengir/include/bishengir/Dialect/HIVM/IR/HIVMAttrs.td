@@ -190,6 +190,7 @@ def HIVM_AddressSpace_L0A : I32EnumAttrCase<"L0A", 3, "ca">;
 def HIVM_AddressSpace_L0B : I32EnumAttrCase<"L0B", 4, "cb">;
 def HIVM_AddressSpace_L0C : I32EnumAttrCase<"L0C", 5, "cc">;
 def HIVM_AddressSpace_UB : I32EnumAttrCase<"UB", 6, "ub">;
+def HIVM_AddressSpace_SSBUF : I32EnumAttrCase<"SSBUF", 11, "ssbuf">;
 
 def HIVM_AddressSpaceEnum : HIVM_I32Enum<
   "AddressSpace", "HIVM Address Space", [
@@ -199,7 +200,8 @@ def HIVM_AddressSpaceEnum : HIVM_I32Enum<
     HIVM_AddressSpace_L0A,
     HIVM_AddressSpace_L0B,
     HIVM_AddressSpace_L0C,
-    HIVM_AddressSpace_UB
+    HIVM_AddressSpace_UB,
+    HIVM_AddressSpace_SSBUF    
   ]>;
 
 def HIVM_AddressSpaceAttr : HIVM_Attr<"AddressSpace", "address_space",
@@ -207,7 +209,7 @@ def HIVM_AddressSpaceAttr : HIVM_Attr<"AddressSpace", "address_space",
   let parameters = (ins EnumParameter<HIVM_AddressSpaceEnum>:$address_space);
   let assemblyFormat = "`<` params `>`";
   let description = [{
-    HIVM address space mapping attribute. Maps to GM, L1, L0A, L0B, L0C and UB.
+    HIVM address space mapping attribute. Maps to GM, L1, L0A, L0B, L0C, UB and SSBUF.
   }];
 }
 

@@ -111,7 +111,7 @@ bool DimensionAnalyzerBase::isHeadOperation(Operation *op) {
            isa_and_present<memref::AllocaOp, memref::AllocOp,
                            memref::ReinterpretCastOp,
                            arith::ConstantOp, memref::ExpandShapeOp,
-                           memref::CollapseShapeOp>(op);
+                           memref::CollapseShapeOp, hivm::PointerCastOp>(op);
   }
   return reshape_utils::isArgOp(op);
 }

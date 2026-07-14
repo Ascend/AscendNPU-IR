@@ -27,6 +27,7 @@
 #include "llvm/Support/Debug.h"
 
 #include <cassert>
+#include <optional>
 #include <queue>
 #include <set>
 #include <type_traits>
@@ -91,7 +92,8 @@ const std::string Ascend910BDataLayout =
     "e-i1:8:32-i8:8:32-i16:16:32-i64:64-f16:16:32-v16:16-v32:32-n64-S64";
 
 const std::set<hivm::AddressSpace> LocalBufferSpace{
-    hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C};
+    hivm::AddressSpace::UB, hivm::AddressSpace::L1, hivm::AddressSpace::L0C,
+    hivm::AddressSpace::SSBUF};
 
 const std::map<TFuncCoreType, TCoreType> kTFuncCoreType2TCoreType = {
     {TFuncCoreType::AIC, TCoreType::CUBE},
@@ -159,8 +161,13 @@ SmallVector<Value> getOpTouchBuffer(Operation *op);
 /// Determine whether there is a Local Buffer in the current operation.
 bool isOpTouchLocalBuffer(Operation *op);
 
+bool isOpTouchSsbufferOnly(Operation *op);
+
 /// Determine whether there is in ub buffer.
 bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
+
+/// Determine whether there is in ssbuffer.
+bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr);
 
 /// Determine whether there is a global Buffer in the current operation.
 bool isOpTouchGlobalBuffer(Operation *op);
