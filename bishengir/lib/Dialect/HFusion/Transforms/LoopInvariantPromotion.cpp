@@ -11,21 +11,25 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/LogicalResult.h"
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -38,25 +42,41 @@ using namespace mlir;
 using namespace mlir::hfusion;
 
 namespace {
+
 struct SubsetInfo {
+  SmallVector<SmallVector<OpFoldResult>> offsets, sizes, strides;
   SmallVector<Value> indices;
   VectorType vecTy;
   AffineMap permMap;
   Value mask, pad;
   ArrayAttr inBounds;
-  bool operator!=(const SubsetInfo &rhs) const {
-    // pad only compare when owner is read.
+
+  bool operator!=(const SubsetInfo &rhs) {
+    if (offsets.size() != rhs.offsets.size())
+      return true;
+    assert(sizes.size() == rhs.sizes.size() &&
+           strides.size() == rhs.strides.size());
+    auto isSameOFRs = [](ArrayRef<OpFoldResult> lhs,
+                         ArrayRef<OpFoldResult> rhs) {
+      return lhs.size() == rhs.size() && llvm::equal(lhs, rhs);
+    };
+    for (unsigned i = 0, e = offsets.size(); i != e; ++i) {
+      if (!isSameOFRs(offsets[i], rhs.offsets[i]) ||
+          !isSameOFRs(sizes[i], rhs.sizes[i]) ||
+          !isSameOFRs(strides[i], rhs.strides[i]))
+        return true;
+    }
+    // pad is not check here.
     return !llvm::equal(indices, rhs.indices) || vecTy != rhs.vecTy ||
            permMap != rhs.permMap || mask != rhs.mask ||
            inBounds != rhs.inBounds;
   }
-  bool operator==(const SubsetInfo &rhs) const { return !(*this != rhs); }
 };
 
 struct Candidate {
   unsigned idx;
   SmallVector<vector::TransferReadOp> reads;
-  SmallVector<vector::TransferWriteOp> writes;
+  SmallVector<Operation *> threadOps;
   Value yield;
   bool endedInWrite;
   SubsetInfo subset;
@@ -71,6 +91,17 @@ static bool isDefinedOutsideLoop(LoopLikeOpInterface loop, Value v) {
   return !v || loop.isDefinedOutsideOfLoop(v);
 }
 
+static SmallVector<tensor::ExtractSliceOp> extractChainOf(Value v) {
+  SmallVector<tensor::ExtractSliceOp> chain;
+  while (auto es = v.getDefiningOp<tensor::ExtractSliceOp>()) {
+    chain.push_back(es);
+    v = es.getSource();
+  }
+  // TODO complete calculation of root, offset, stripes, and other information.
+  std::reverse(chain.begin(), chain.end());
+  return chain;
+}
+
 static std::optional<Candidate> analyze(scf::ForOp forOp, unsigned idx) {
   BlockArgument arg = forOp.getRegionIterArg(idx);
   if (!isa<RankedTensorType>(arg.getType())) // Only solve tensor type
@@ -78,10 +109,18 @@ static std::optional<Candidate> analyze(scf::ForOp forOp, unsigned idx) {
   Candidate cand;
   cand.idx = idx;
   SubsetInfo &s = cand.subset;
-  bool haveSubsset = false;
-  auto match = [&](ValueRange indices, VectorType vecTy, AffineMap map,
-                   Value mask, ArrayAttr inBoudns, bool isRead,
-                   Value pad) -> bool {
+  bool haveSubset = false;
+
+  auto isInvariant = [&](ArrayRef<OpFoldResult> array) {
+    for (auto ofr : array)
+      if (auto v = dyn_cast<Value>(ofr))
+        if (!isDefinedOutsideLoop(forOp, v))
+          return false;
+    return true;
+  };
+  auto match = [&](Value src, ValueRange indices, VectorType vecTy,
+                   AffineMap map, Value mask, ArrayAttr inBounds, bool isRead,
+                   Value pad) {
     for (Value i : indices)
       if (!isDefinedOutsideLoop(forOp, i))
         return false;
@@ -89,73 +128,126 @@ static std::optional<Candidate> analyze(scf::ForOp forOp, unsigned idx) {
         // For transfer_read we need to check padding.
         (isRead && !isDefinedOutsideLoop(forOp, pad)))
       return false;
-    SubsetInfo temp = {indices, vecTy, map, mask, pad, inBoudns};
-    if (!haveSubsset)
-      s = temp, haveSubsset = true;
+    SmallVector<SmallVector<OpFoldResult>> offsets, sizes, strides;
+    for (auto es : extractChainOf(src)) {
+      auto offs = es.getMixedOffsets(), szs = es.getMixedSizes(),
+           strs = es.getMixedStrides();
+      if (!isInvariant(offs) || !isInvariant(szs) || !isInvariant(strs))
+        return false;
+      offsets.push_back(std::move(offs));
+      sizes.push_back(std::move(szs));
+      strides.push_back(std::move(strs));
+    }
+    SubsetInfo temp = {offsets, sizes, strides, indices, vecTy,
+                       map,     mask,  pad,     inBounds};
+    if (!haveSubset)
+      s = temp, haveSubset = true;
     else if (s != temp)
       return false;
-
     if (isRead) {
-      if (s.pad == nullptr)
+      if (!s.pad)
         s.pad = pad;
       else if (s.pad != pad)
         return false;
     }
     return true;
   };
-  // 1. Check the legality of promotion and collect optimization instructions.
+
+  DenseSet<Operation *> handled;
+  DenseSet<Value> visited;
   SmallVector<Value> worklist{arg};
+  auto record = [&](Operation *op) {
+    if (handled.insert(op).second)
+      cand.threadOps.push_back(op);
+  };
+  // 1. Check the legality of promotion and collect optimization instructions.
   while (!worklist.empty()) {
-    Value t = worklist.pop_back_val();
-    for (OpOperand &use : t.getUses()) {
+    Value v = worklist.pop_back_val();
+    visited.insert(v);
+    for (OpOperand &use : v.getUses()) {
       Operation *owner = use.getOwner();
-      assert(owner->getBlock() == forOp.getBody());
-      // TODO only support same index yield.
       if (owner == forOp.getBody()->getTerminator()) {
+        // TODO now only support same index yield.
         if (use.getOperandNumber() != idx)
           return std::nullopt;
         continue;
       }
+      // A thread value used outside the loop's own body (e.g. captured into a
+      // nested scf.for / scf.if) is not a straight-line access we can promote.
+      if (owner->getBlock() != forOp.getBody())
+        return std::nullopt;
       if (auto rd = dyn_cast<vector::TransferReadOp>(owner)) {
-        assert(rd.getSource() == t);
-        if (!match(rd.getIndices(), rd.getVectorType(), rd.getPermutationMap(),
-                   rd.getMask(), rd.getInBoundsAttr(), true, rd.getPadding()))
+        assert(rd.getSource() == v);
+        if (!match(v, rd.getIndices(), rd.getVectorType(),
+                   rd.getPermutationMap(), rd.getMask(), rd.getInBoundsAttr(),
+                   true, rd.getPadding()))
           return std::nullopt;
         cand.reads.push_back(rd);
+        record(rd);
+        // As the endpoint.
         continue;
       }
       if (auto wr = dyn_cast<vector::TransferWriteOp>(owner)) {
-        assert(wr.getSource() == t && wr.getResult() != nullptr);
-        if (!match(wr.getIndices(), wr.getVectorType(), wr.getPermutationMap(),
-                   wr.getMask(), wr.getInBoundsAttr(), false, {}))
+        assert(wr.getSource() == v && wr.getResult() != nullptr);
+        if (!match(v, wr.getIndices(), wr.getVectorType(),
+                   wr.getPermutationMap(), wr.getMask(), wr.getInBoundsAttr(),
+                   false, {}))
           return std::nullopt;
-        cand.writes.push_back(wr);
         worklist.push_back(wr.getResult());
+        record(wr);
         continue;
       }
-      // Default
+      if (auto es = dyn_cast<tensor::ExtractSliceOp>(owner)) {
+        assert(es.getSource() == v);
+        worklist.push_back(es.getResult());
+        record(es);
+        continue;
+      }
+      if (auto is = dyn_cast<tensor::InsertSliceOp>(owner)) {
+        if (is.getSource() == v) {
+          if (!isInvariant(is.getMixedOffsets()) ||
+              !isInvariant(is.getMixedSizes()) ||
+              !isInvariant(is.getMixedStrides()))
+            return std::nullopt;
+          worklist.push_back(is.getResult());
+          record(is);
+          continue;
+        }
+        if (is.getDest() == v)
+          continue;
+        return std::nullopt; // ????
+      }
+      // Default.
       return std::nullopt;
     }
   }
-  // illiagle instruction arith.select(mask: vector<4x8xi1>, value:
-  // vector<8x4xf32>, ...)
+
+  // 2. Verify the closure value.
+  for (auto v : visited) {
+    for (OpOperand &use : v.getUses()) {
+      Operation *owner = use.getOwner();
+      if (owner == forOp.getBody()->getTerminator() &&
+          use.getOperandNumber() == idx)
+        continue;
+      // For example, %1 = insert_slice %2 into %3[0,0][1,8], and %2 is not in
+      // the closure. We should conservatively exit optimization.
+      if (!handled.count(owner))
+        return std::nullopt;
+    }
+  }
+  // Illiagle instruction arith.select(mask: vector<4x8xi1>, value:
+  // vector<8x4xf32>, ...).
   if (cand.reads.empty() ||
       (s.mask &&
        cast<VectorType>(s.mask.getType()).getShape() != s.vecTy.getShape()))
     return std::nullopt;
 
-  // 2. Classify the yield value.
+  // 3. Classify the yield value.
   Value yield = forOp.getYieldedValues()[idx];
   cand.yield = yield;
-  if (yield == arg)
-    cand.endedInWrite = false;
-  else if (auto *def = yield.getDefiningOp();
-           isa_and_nonnull<vector::TransferWriteOp>(def) &&
-           llvm::is_contained(cand.writes, cast<vector::TransferWriteOp>(def)))
-    cand.endedInWrite = true;
-  else
+  cand.endedInWrite = yield != arg;
+  if (cand.endedInWrite && !visited.count(yield))
     return std::nullopt;
-
   return cand;
 }
 
@@ -164,12 +256,24 @@ static LogicalResult promote(IRRewriter &rewriter, scf::ForOp forOp,
   auto &s = cand.subset;
   auto loc = forOp.getLoc();
 
+  auto rootOf = [](Value v) {
+    while (auto es = v.getDefiningOp<tensor::ExtractSliceOp>())
+      v = es.getSource();
+    return v;
+  };
+  auto cloneRead = [&](vector::TransferReadOp r, Value base) {
+    IRMapping map;
+    map.map(rootOf(r.getSource()), base);
+    for (tensor::ExtractSliceOp es : extractChainOf(r.getSource()))
+      rewriter.clone(*es.getOperation(), map);
+    return rewriter.clone(*r.getOperation(), map);
+  };
+
   // 1. Create hoist transfer_read.
   assert(!cand.reads.empty());
   rewriter.setInsertionPoint(forOp);
   auto hoistedRead = cast<vector::TransferReadOp>(
-      rewriter.clone(*cand.reads.front().getOperation()));
-  hoistedRead.getSourceMutable().assign(forOp.getInitArgs()[cand.idx]);
+      cloneRead(cand.reads.front(), forOp.getInitArgs()[cand.idx]));
   Value padBrc;
   if (s.mask)
     padBrc = rewriter.create<vector::BroadcastOp>(loc, s.vecTy, s.pad);
@@ -180,74 +284,95 @@ static LogicalResult promote(IRRewriter &rewriter, scf::ForOp forOp,
       return r;
     return rewriter.create<arith::SelectOp>(loc, s.mask, r, padBrc);
   };
-  auto removeDeadWrites =
-      [&rewriter](ArrayRef<vector::TransferWriteOp> writes) {
-        for (auto w : reverse(writes))
-          if (w->use_empty())
-            rewriter.eraseOp(w);
-      };
-  auto mem2reg = [&](DenseMap<Value, Value> &avail) {
-    for (auto w : cand.writes)
-      avail[w.getResult()] = w.getVector();
+  auto removeDeadOp = [&rewriter](ArrayRef<Operation *> ops) {
+    for (auto *op : reverse(ops))
+      if (op->use_empty())
+        rewriter.eraseOp(op);
+  };
+  auto mem2ssa = [&](Value regBase, Value regVal) {
+    DenseMap<Value, Value> avail;
+    avail[regBase] = regVal;
+    std::function<Value(Value)> help = [&](Value v) -> Value {
+      if (auto it = avail.find(v); it != avail.end())
+        return it->second;
+      Operation *d = v.getDefiningOp();
+      Value r;
+      if (auto es = dyn_cast_or_null<tensor::ExtractSliceOp>(d))
+        r = help(es.getSource());
+      else if (auto w = dyn_cast_or_null<vector::TransferWriteOp>(d))
+        r = w.getVector();
+      else if (auto ins = dyn_cast_or_null<tensor::InsertSliceOp>(d))
+        r = help(ins.getSource());
+      else
+        r = nullptr;
+      avail[v] = r;
+      return r;
+    };
     for (auto r : cand.reads) {
-      Value v = avail.lookup(r.getSource());
+      Value v = help(r.getSource());
       assert(v != nullptr);
       rewriter.setInsertionPoint(r);
       rewriter.replaceAllUsesWith(r.getResult(), legalize(v));
     }
-    for (auto r : cand.reads)
-      rewriter.eraseOp(r);
   };
 
   // 2. Rewrite if there is no write on the def-use chain.
   if (!cand.endedInWrite) {
-    BlockArgument arg = forOp.getRegionIterArg(cand.idx);
-    DenseMap<Value, Value> avail;
-    avail[arg] = hoistedRead.getResult();
-    mem2reg(avail);
-    removeDeadWrites(cand.writes);
-    // No modifications have been made.
+    mem2ssa(forOp.getRegionIterArg(cand.idx), hoistedRead.getResult());
+    removeDeadOp(cand.threadOps);
     rewriter.replaceAllUsesWith(forOp.getResult(cand.idx),
                                 forOp.getInitArgs()[cand.idx]);
     return success();
   }
 
   // 3. Rewrite if there have write on the def-use chain.
-  auto maybe = forOp.replaceWithAdditionalYields(
+  Value y = cand.yield;
+  while (auto ins = y.getDefiningOp<tensor::InsertSliceOp>())
+    y = ins.getSource();
+  auto result = forOp.replaceWithAdditionalYields(
       rewriter, {hoistedRead.getResult()}, false,
       [&](OpBuilder &, Location,
           ArrayRef<BlockArgument>) -> SmallVector<Value> {
-        return {cast<vector::TransferWriteOp>(cand.yield.getDefiningOp())
-                    .getVector()};
+        return {cast<vector::TransferWriteOp>(y.getDefiningOp()).getVector()};
       });
-  if (failed(maybe)) {
-    rewriter.eraseOp(hoistedRead);
-    if (padBrc)
-      rewriter.eraseOp(padBrc.getDefiningOp());
+  if (failed(result))
     return failure();
-  }
-  auto newFor = cast<scf::ForOp>(maybe->getOperation());
-  DenseMap<Value, Value> avail;
+  auto newFor = cast<scf::ForOp>(result->getOperation());
   BlockArgument newArg = newFor.getRegionIterArgs().back(),
                 idxArg = newFor.getRegionIterArg(cand.idx);
-  avail[idxArg] = newArg;
-  mem2reg(avail);
+  mem2ssa(idxArg, newArg);
   Operation *yieldOp = cast<scf::YieldOp>(newFor.getBody()->getTerminator());
-  // canonicalize will remove it.
+  // Canonicalize will remove it.
   rewriter.modifyOpInPlace(yieldOp,
                            [&] { yieldOp->setOperand(cand.idx, idxArg); });
 
   // Reconstruct the tensor outside the loop: write the final register value
   // (the added vector result) back into the init, and redirect the loop's
   // tensor result to it.
+  auto cloneWrite = [&](Value yield, Value base, Value vec) {
+    SmallVector<tensor::InsertSliceOp> inserts;
+    Value u = yield;
+    while (auto ins = u.getDefiningOp<tensor::InsertSliceOp>()) {
+      inserts.push_back(ins);
+      u = ins.getSource();
+    }
+    auto w = u.getDefiningOp<vector::TransferWriteOp>();
+    assert(w != nullptr);
+    IRMapping map;
+    map.map(rootOf(w.getSource()), base);
+    map.map(w.getVector(), vec);
+    for (auto es : extractChainOf(w.getSource()))
+      rewriter.clone(*es.getOperation(), map);
+    Value res = rewriter.clone(*w.getOperation(), map)->getResult(0);
+    for (auto ins : reverse(inserts))
+      res = rewriter.clone(*ins.getOperation(), map)->getResult(0);
+    return res;
+  };
   rewriter.setInsertionPointAfter(newFor);
   Value vecRes = newFor->getResults().back();
-  auto newWrite = cast<vector::TransferWriteOp>(
-      rewriter.clone(*cand.yield.getDefiningOp()));
-  newWrite.getVectorMutable().assign(vecRes);
-  newWrite.getSourceMutable().assign(newFor.getInitArgs()[cand.idx]);
-  rewriter.replaceAllUsesWith(newFor.getResult(cand.idx), newWrite.getResult());
-  removeDeadWrites(cand.writes);
+  Value res = cloneWrite(cand.yield, newFor.getInitArgs()[cand.idx], vecRes);
+  rewriter.replaceAllUsesWith(newFor.getResult(cand.idx), res);
+  removeDeadOp(cand.threadOps);
   return success();
 }
 
