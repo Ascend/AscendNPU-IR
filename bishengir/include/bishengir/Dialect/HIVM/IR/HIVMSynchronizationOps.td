@@ -137,12 +137,7 @@ def SyncBlockSetOp : HIVM_SynchronizationOp<"sync_block_set", [AttrSizedOperandS
                        DefaultValuedOptionalAttr<HIVM_SyncBlockInstrModeAttr,
                          "INTRA_BLOCK_SYNCHRONIZATION">:$tsync_instr_mode
   );
-  let assemblyFormat = [{
-    attr-dict `[` $tcore_type `,` $tpipe `,` $pipe`]`
-    `flag` `=` custom<FlagID>($static_flag_id, $dynamic_flag_id)
-    (`ffts_base_addr` `=` $ffts_base_addr^)?
-    (`sync_instr_mode` `=` $tsync_instr_mode^)?
-  }];
+  let hasCustomAssemblyFormat = 1;
   let builders = [
     OpBuilder<(ins "TCoreTypeAttr":$tcore_type, "PipeAttr":$tpipe, "PipeAttr":$pipe,
                    "OpFoldResult":$flag_id)>,

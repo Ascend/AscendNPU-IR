@@ -141,6 +141,153 @@ LogicalResult SyncBlockSetOp::verify() {
   return success();
 }
 
+::mlir::ParseResult SyncBlockSetOp::parse(::mlir::OpAsmParser &parser,
+                                          ::mlir::OperationState &result) {
+  ::mlir::hivm::TCoreTypeAttr tcore_typeAttr;
+  ::mlir::hivm::PipeAttr tpipeAttr;
+  ::mlir::hivm::PipeAttr pipeAttr;
+  ::mlir::IntegerAttr static_flag_idAttr;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4>
+      dynamic_flag_idOperands;
+  ::llvm::SMLoc dynamic_flag_idOperandsLoc;
+  (void)dynamic_flag_idOperandsLoc;
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4>
+      ffts_base_addrOperands;
+  ::llvm::SMLoc ffts_base_addrOperandsLoc;
+  (void)ffts_base_addrOperandsLoc;
+  ::mlir::hivm::SyncBlockInstrModeAttr tsync_instr_modeAttr;
+  {
+    auto loc = parser.getCurrentLocation();
+    (void)loc;
+    if (parser.parseOptionalAttrDict(result.attributes))
+      return ::mlir::failure();
+    if (failed(verifyInherentAttrs(result.name, result.attributes, [&]() {
+          return parser.emitError(loc)
+                 << "'" << result.name.getStringRef() << "' op ";
+        })))
+      return ::mlir::failure();
+  }
+  if (parser.parseLSquare())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(tcore_typeAttr, ::mlir::Type{}))
+    return ::mlir::failure();
+  if (tcore_typeAttr)
+    result.getOrAddProperties<SyncBlockSetOp::Properties>().tcore_type =
+        tcore_typeAttr;
+  if (parser.parseComma())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(tpipeAttr, ::mlir::Type{}))
+    return ::mlir::failure();
+  if (tpipeAttr)
+    result.getOrAddProperties<SyncBlockSetOp::Properties>().tpipe = tpipeAttr;
+  if (parser.parseComma())
+    return ::mlir::failure();
+
+  if (parser.parseCustomAttributeWithFallback(pipeAttr, ::mlir::Type{}))
+    return ::mlir::failure();
+  if (pipeAttr)
+    result.getOrAddProperties<SyncBlockSetOp::Properties>().pipe = pipeAttr;
+  if (parser.parseRSquare())
+    return ::mlir::failure();
+  if (parser.parseKeyword("flag"))
+    return ::mlir::failure();
+  if (parser.parseEqual())
+    return ::mlir::failure();
+  {
+    dynamic_flag_idOperandsLoc = parser.getCurrentLocation();
+    ::std::optional<::mlir::OpAsmParser::UnresolvedOperand> dynamic_flag_idOperand;
+    auto odsResult =
+        parseFlagID(parser, static_flag_idAttr, dynamic_flag_idOperand);
+    if (odsResult)
+      return ::mlir::failure();
+    if (static_flag_idAttr)
+      result.getOrAddProperties<SyncBlockSetOp::Properties>().static_flag_id =
+          static_flag_idAttr;
+    if (dynamic_flag_idOperand.has_value())
+      dynamic_flag_idOperands.push_back(*dynamic_flag_idOperand);
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("ffts_base_addr"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    {
+      ffts_base_addrOperandsLoc = parser.getCurrentLocation();
+      ::mlir::OpAsmParser::UnresolvedOperand operand;
+      ::mlir::OptionalParseResult parseResult =
+          parser.parseOptionalOperand(operand);
+      if (parseResult.has_value()) {
+        if (failed(*parseResult))
+          return ::mlir::failure();
+        ffts_base_addrOperands.push_back(operand);
+      }
+    }
+  }
+  if (::mlir::succeeded(parser.parseOptionalKeyword("sync_instr_mode"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+
+    if (parser.parseCustomAttributeWithFallback(tsync_instr_modeAttr,
+                                                ::mlir::Type{}))
+      return ::mlir::failure();
+    if (tsync_instr_modeAttr)
+      result.getOrAddProperties<SyncBlockSetOp::Properties>().tsync_instr_mode =
+          tsync_instr_modeAttr;
+  }
+  ::llvm::copy(
+      ::llvm::ArrayRef<int32_t>(
+          {static_cast<int32_t>(dynamic_flag_idOperands.size()),
+           static_cast<int32_t>(ffts_base_addrOperands.size())}),
+      result.getOrAddProperties<SyncBlockSetOp::Properties>()
+          .operandSegmentSizes.begin());
+  ::mlir::Type odsBuildableType0 = parser.getBuilder().getIntegerType(64);
+  if (parser.resolveOperands(dynamic_flag_idOperands, odsBuildableType0,
+                             dynamic_flag_idOperandsLoc, result.operands))
+    return ::mlir::failure();
+  if (parser.resolveOperands(ffts_base_addrOperands, odsBuildableType0,
+                             ffts_base_addrOperandsLoc, result.operands))
+    return ::mlir::failure();
+  return ::mlir::success();
+}
+
+void SyncBlockSetOp::print(::mlir::OpAsmPrinter &_odsPrinter) {
+  ::llvm::SmallVector<::llvm::StringRef, 2> elidedAttrs;
+  elidedAttrs.push_back("operandSegmentSizes");
+  elidedAttrs.push_back("tcore_type");
+  elidedAttrs.push_back("tpipe");
+  elidedAttrs.push_back("pipe");
+  elidedAttrs.push_back("static_flag_id");
+  elidedAttrs.push_back("tsync_instr_mode");
+  _odsPrinter.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+  _odsPrinter << "[";
+  _odsPrinter.printStrippedAttrOrType(getTcoreTypeAttr());
+  _odsPrinter << ",";
+  _odsPrinter << ' ';
+  _odsPrinter.printStrippedAttrOrType(getTpipeAttr());
+  _odsPrinter << ",";
+  _odsPrinter << ' ';
+  _odsPrinter.printStrippedAttrOrType(getPipeAttr());
+  _odsPrinter << "]";
+  _odsPrinter << ' ' << "flag";
+  _odsPrinter << ' ' << "=";
+  _odsPrinter << ' ';
+  printFlagID(_odsPrinter, *this, getStaticFlagIdAttr(), getDynamicFlagId());
+  if (getFftsBaseAddr()) {
+    _odsPrinter << ' ' << "ffts_base_addr";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    if (::mlir::Value value = getFftsBaseAddr())
+      _odsPrinter << value;
+  }
+  if (getTsyncInstrModeAttr()) {
+    _odsPrinter << ' ' << "sync_instr_mode";
+    _odsPrinter << ' ' << "=";
+    _odsPrinter << ' ';
+    _odsPrinter.printStrippedAttrOrType(getTsyncInstrModeAttr());
+  }
+}
+
 void SyncBlockSetOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                            TCoreTypeAttr tcore_type, PipeAttr tpipe,
                            PipeAttr pipe, OpFoldResult flag_id) {
