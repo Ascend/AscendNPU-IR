@@ -113,20 +113,20 @@ private:
     return std::uniform_int_distribution<int>(minNum, maxNum)(*randGenerator);
   }
 
-  std::vector<int> getNDifferentRandNums(int n, int mod) {
+  llvm::SmallVector<int> getNDifferentRandNums(int n, int mod) {
+    assert(n >= 0);
+    assert(mod >= 0);
     assert(n <= mod);
-    std::set<int> ret;
-    while (static_cast<int>(ret.size()) < n) {
-      int rnd = getRand();
-      int val = rnd % (mod - static_cast<int>(ret.size()));
-      for (auto e : ret) {
-        if (e <= val) {
-          val++;
-        }
+    llvm::SetVector<int> ret;
+    for (int j = mod - n; j < mod; ++j) {
+      int candidate = getRand(0, j);
+      if (ret.contains(candidate)) {
+        ret.insert(j);
+      } else {
+        ret.insert(candidate);
       }
-      ret.insert(val);
     }
-    return std::vector<int>(ret.begin(), ret.end());
+    return ret.takeVector();
   }
 
   bool isTrueWithProbability(int a, int b) {
