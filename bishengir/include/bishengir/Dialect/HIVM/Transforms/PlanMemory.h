@@ -96,6 +96,10 @@ struct BufferInfo {
   /// other buffer due to wrong lifetime.
   /// TODO: Modify the lifetime of A and C and allow them to be inplaced further
   bool ignoreInplace{false};
+  /// CV mix id from HIVMTightlyCoupledBufferAttr (-1 = not a tightly-coupled
+  /// CV buffer). Used by the cross-scope tightly-coupled CV-buffer reuse
+  /// analysis to identify a sharing pair.
+  int32_t cvMixId{-1};
 };
 
 /// linear operation info.
@@ -463,6 +467,11 @@ private:
   void ProcessMarkOp(annotation::MarkOp markOp, OpInfo *curOpInfo,
                      Liveness live);
 
+  /// Process AllocOp that don't need to plan memory and if return allocOp, we
+  /// need to run UpdateOpGenInfo manually.
+  bool ProcessMarkOpForTightlyCoupledCV(annotation::MarkOp markOp,
+                                        memref::AllocOp allocOp);
+
   /// If buffer is used by multi vector scope, update buffer's gen and kill to
   /// the start and end of `for` op which is the parent op of `scope` op.
   void UpdatePreloadBuffersGenKillMap();
@@ -503,6 +512,10 @@ private:
 
   /// random generator for shuffle operation order in plan memory.
   std::mt19937 randomGenerator;
+
+  /// record AllocOp that don't need to plan memory. For example, in
+  /// CV-separated architectures, we don't need to plan UB address in AIC func.
+  DenseSet<Value> skipMemPlan;
 };
 
 /// Pair of StorageEntry.

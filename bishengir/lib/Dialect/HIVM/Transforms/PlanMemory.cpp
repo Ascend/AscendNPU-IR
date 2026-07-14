@@ -167,6 +167,34 @@ bool isStaticShapeSame(Operation *op, const Value &genBuffer,
   return true;
 }
 
+/// Get allocOp and CVMixId from markOp. If failed, it will return std::nullopt.
+std::optional<memref::AllocOp>
+getCVMixIdAndAllocOpFromMarkOp(annotation::MarkOp markOp, int32_t &cvMixId) {
+  if (!markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name)) {
+    return std::nullopt;
+  }
+  // get cvMixId
+  auto attr = dyn_cast<hivm::HIVMTightlyCoupledBufferAttr>(
+      markOp->getAttr(hivm::HIVMTightlyCoupledBufferAttr::name));
+  if (!attr || !attr.getId().has_value()) {
+    LDBG("MarkOp for : " << markOp.getSrc());
+    LDBG("  Parse tightly_coupled_buffer attribute failed. No input or input "
+         "fromat error. Correct format should be: hivm.tightly_coupled_buffer"
+         " = #hivm.tightly_coupled_buffer<$id>\n");
+    return std::nullopt;
+  }
+  // get allocOp
+  if (!isa<MemRefType>(markOp.getSrc().getType())) {
+    return std::nullopt;
+  }
+  auto maybeAlloc = utils::tracebackMemRefToAlloc(markOp.getSrc());
+  if (!maybeAlloc.has_value()) {
+    return std::nullopt;
+  }
+  cvMixId = attr.getId().value();
+  return maybeAlloc;
+}
+
 } // namespace
 
 void MemLivenessAnalysis::build() {
@@ -761,7 +789,50 @@ void MemLivenessAnalysis::ProcessMarkOp(annotation::MarkOp markOp,
     return;
   }
   UpdatePreloadBuffers(markOp, maybeAlloc.value());
+  if (ProcessMarkOpForTightlyCoupledCV(markOp, maybeAlloc.value())) {
+    UpdateOpGenInfo(curOpInfo, maybeAlloc.value()->getResults());
+  }
+  // TODO: Update buffer kill time when RecursionIR visits any user of the
+  // buffer, rather than only getting buffer kill time in last user
   UpdateOpKillInfo(curOpInfo, maybeAlloc.value(), live);
+}
+
+bool MemLivenessAnalysis::ProcessMarkOpForTightlyCoupledCV(
+    annotation::MarkOp markOp, memref::AllocOp allocOp) {
+  // Check CV mix id
+  if (!markOp->hasAttr(hivm::HIVMTightlyCoupledBufferAttr::name)) {
+    return false;
+  }
+  auto attr = markOp->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+      hivm::HIVMTightlyCoupledBufferAttr::name);
+  if (!attr.getId().has_value()) {
+    LDBG("MarkOp for : " << markOp.getSrc());
+    LDBG(" Parse tightly_coupled_buffer attribute failed. No input or input "
+         "fromat error. Correct format should be: hivm.tightly_coupled_buffer"
+         " = #hivm.tightly_coupled_buffer<$id>\n");
+    return false;
+  }
+  auto allocValue = allocOp.getResult();
+  auto *it = bufferInfos.find(allocValue);
+  if (it == bufferInfos.end()) {
+    llvm::report_fatal_error("Use allocOp before defined!");
+  }
+  it->second.cvMixId = attr.getId().value();
+  auto addressSpace = getHIVMAddressSpace(allocValue.getType());
+  auto funcType = queryFuncCoreType(func_);
+  if ((funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::UB) ||
+      (funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::L1)) {
+    skipMemPlan.insert(allocValue);
+    LDBG(allocValue << " Skip mem plan\n");
+  }
+  if ((funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::UB) ||
+      (funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::L1)) {
+    // AllocOp will be writed in another scope and read in current scope, so we
+    // will update its genInfo in markOp.
+    LDBG(allocValue << " Manually run UpdateOpGenInfo\n");
+    return true;
+  }
+  return false;
 }
 
 void MemLivenessAnalysis::UpdatePreloadBuffersGenInfo(
@@ -2877,6 +2948,15 @@ private:
   planMemoryForFuncOp(func::FuncOp &funcOp,
                       VFInplaceReuseAnalysis &vfInplaceReuseAnalysis);
 
+  void updateId2Offsets(func::FuncOp &funcOp,
+                        DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+                        DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets);
+
+  void updateBuffer2OffsetsForFuncOp(
+      func::FuncOp &funcOp,
+      DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+      DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets);
+
   void populateBufferAddressToAllocOp(
       RewritePatternSet &patterns,
       DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets) {
@@ -2966,6 +3046,54 @@ PlanMemoryPass::planMemoryForFuncOp(
   return std::nullopt;
 }
 
+void PlanMemoryPass::updateId2Offsets(
+    func::FuncOp &funcOp,
+    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+    DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets) {
+  auto funcType = queryFuncCoreType(funcOp);
+
+  funcOp->walk([&](annotation::MarkOp markOp) {
+    int32_t cvMixId;
+    auto maybeAlloc = getCVMixIdAndAllocOpFromMarkOp(markOp, cvMixId);
+    if (!maybeAlloc.has_value()) {
+      return WalkResult::advance();
+    }
+    auto allocOpTypeValue = maybeAlloc.value().getResult();
+    auto addressSpace = getHIVMAddressSpace(allocOpTypeValue.getType());
+    if ((funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::UB) ||
+        (funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::L1)) {
+      id2Offsets[cvMixId] = buffer2Offsets[allocOpTypeValue];
+      LDBG("id2Offsets add key: " << cvMixId << " vector_size: "
+                                  << id2Offsets[cvMixId].size() << "\n");
+    }
+    return WalkResult::advance();
+  });
+}
+
+void PlanMemoryPass::updateBuffer2OffsetsForFuncOp(
+    func::FuncOp &funcOp,
+    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets,
+    DenseMap<int32_t, SmallVector<uint64_t>> &id2Offsets) {
+  auto funcType = queryFuncCoreType(funcOp);
+
+  funcOp->walk([&](annotation::MarkOp markOp) {
+    int32_t cvMixId;
+    auto maybeAlloc = getCVMixIdAndAllocOpFromMarkOp(markOp, cvMixId);
+    if (!maybeAlloc.has_value()) {
+      return WalkResult::advance();
+    }
+    auto allocOpTypeValue = maybeAlloc.value().getResult();
+    auto addressSpace = getHIVMAddressSpace(allocOpTypeValue.getType());
+    if ((funcType == TFuncCoreType::AIC && addressSpace == AddressSpace::UB) ||
+        (funcType == TFuncCoreType::AIV && addressSpace == AddressSpace::L1)) {
+      buffer2Offsets[allocOpTypeValue] = id2Offsets[cvMixId];
+      LDBG("id2Offsets use key: " << cvMixId << " vector_size: "
+                                  << id2Offsets[cvMixId].size() << "\n");
+    }
+    return WalkResult::advance();
+  });
+}
+
 bool PlanMemoryPass::checkSimilarPointerCastOps(hivm::PointerCastOp op1,
                                                 hivm::PointerCastOp op2) const {
   return (op1->getNumResults() == op2->getNumResults() &&
@@ -3051,19 +3179,39 @@ void MemPlan::SetMemscope2rootSuccessStorageEntry() {
 void PlanMemoryPass::runOnOperation() {
   ModuleOp moduleOp = getOperation();
   VFInplaceReuseAnalysis vfInplaceReuseAnalysis(moduleOp);
+  // Map all funcs to buffer2Offsets obtained in PlanMemoryForFuncOp,
+  // because in the second walk, buffer2Offset is needed to populate
+  // bufferAddress to allocOp.
+  DenseMap<func::FuncOp, DenseMap<Value, SmallVector<uint64_t>>>
+      buffer2OffsetMap;
+  // map cvMixId to the address will be used in both aic and aiv.
+  DenseMap<int32_t, SmallVector<uint64_t>> id2Offsets;
+  // planMem for variables and update Id2Offsets.
   for (auto funcOp : moduleOp.getOps<func::FuncOp>()) {
     if (hacc::utils::isHost(funcOp))
       continue;
     if (hivm::isVF(funcOp))
       continue;
+    LDBG("\n-----funcOp " << funcOp.getName() << " mem plan start !! -----\n");
     auto plannedBuffer2Offsets =
         planMemoryForFuncOp(funcOp, vfInplaceReuseAnalysis);
-    if (!plannedBuffer2Offsets.has_value()) {
+    if (plannedBuffer2Offsets.has_value()) {
+      buffer2OffsetMap[funcOp] = plannedBuffer2Offsets.value();
+    } else {
       signalPassFailure();
       return;
     }
+    LDBG("\n-----------------Update Id2Offsets start !! ------------------\n");
+    updateId2Offsets(funcOp, plannedBuffer2Offsets.value(), id2Offsets);
+  };
+
+  // Update buffer2Offsets and populate bufferAddress to allocOp.
+  LDBG("\n----------------Second traversal of func !! --------------------\n");
+  for (auto [funcOp, buffer2Offsets] : buffer2OffsetMap) {
+    LDBG("\n------------funcOp : " << funcOp.getName() << "---------------\n");
+    updateBuffer2OffsetsForFuncOp(funcOp, buffer2Offsets, id2Offsets);
     RewritePatternSet patterns(&getContext());
-    populateBufferAddressToAllocOp(patterns, plannedBuffer2Offsets.value());
+    populateBufferAddressToAllocOp(patterns, buffer2Offsets);
     if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
       signalPassFailure();
       return;
