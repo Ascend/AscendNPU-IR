@@ -15,6 +15,7 @@ add_bishengir_conversion_library(BiShengIRTensorToHIVM
   MLIRTensorDialect
   MLIRFuncDialect
   BiShengIRHIVMDialect
+  BiShengIRHACCUtils
   MLIRRewrite
   MLIRPass
 )

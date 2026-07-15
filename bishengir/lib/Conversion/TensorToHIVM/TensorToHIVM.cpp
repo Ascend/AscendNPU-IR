@@ -17,6 +17,7 @@
 
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -24,6 +25,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Pass/Pass.h"
@@ -55,10 +57,14 @@ struct TensorToHIVMConcatOp : public OpRewritePattern<tensor::ConcatOp> {
     auto newConcatOp = rewriter.replaceOpWithNewOp<hivm::VConcatOp>(
         concatOp, concatOp.getResult().getType(), concatOp.getDim(),
         concatOp.getInputs(), emptyDest);
-    auto index = traceInsertSliceSourceIndex(concatOp, rewriter);
-    if (index.has_value()) {
-      newConcatOp->setAttr(hivm::InsertSliceSourceIndexAttr::name,
-                           rewriter.getI64IntegerAttr(index.value()));
+    // membase-only
+    if (hacc::utils::isMemBasedArch(
+            concatOp->getParentOfType<ModuleOp>())) {
+      auto index = traceInsertSliceSourceIndex(concatOp, rewriter);
+      if (index.has_value()) {
+        newConcatOp->setAttr(hivm::InsertSliceSourceIndexAttr::name,
+                             rewriter.getI64IntegerAttr(index.value()));
+      }
     }
     return success();
   }
