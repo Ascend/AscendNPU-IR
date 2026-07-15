@@ -814,19 +814,22 @@ struct ExpandShapeOpTiling
                                      (*collapsedSliceParam).sizes, srcStrides);
 
     // create result type
-    SmallVector<int64_t> resShape =
-        llvm::to_vector(llvm::map_range(sizes, [](OpFoldResult ofr) {
+    SmallVector<Value> outputShape;
+    SmallVector<int64_t> resShape = llvm::to_vector(
+        llvm::map_range(sizes, [&outputShape](OpFoldResult ofr) {
           std::optional<int64_t> maybeIntSize = getConstantIntValue(ofr);
-          if (!maybeIntSize.has_value())
+          if (!maybeIntSize.has_value()) {
+            outputShape.push_back(ofr.get<Value>());
             return ShapedType::kDynamic;
+          }
           return maybeIntSize.value();
         }));
     auto resType = expandShapeOp.getResultType().clone(resShape);
 
     Operation *tiledExpandShapeOp = b.create<tensor::ExpandShapeOp>(
         loc, resType, tiledSrc, expandShapeOp.getReassociation(),
-        ValueRange(expandShapeOp.getOutputShape()),
-        expandShapeOp.getStaticOutputShapeAttr());
+        ValueRange(outputShape),
+        /*static_output_shape=*/b.getDenseI64ArrayAttr(resShape));
 
     return TilingResult{{tiledExpandShapeOp},
                         SmallVector<Value>(tiledExpandShapeOp->getResults())};
