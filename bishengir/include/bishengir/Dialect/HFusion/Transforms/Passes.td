@@ -519,6 +519,17 @@ def Decompose : Pass<"hfusion-decompose", "func::FuncOp">{
   ];
 }
 
+def HFusionFoldUnitDims : Pass<"hfusion-fold-unit-dims", "func::FuncOp"> {
+  let summary = "Extended version of removing unit-extent dimension in Linalg ops on tensors";
+  let constructor = "hfusion::createHFusionFoldUnitDimsPass()";
+  let dependentDialects = [
+    "bufferization::BufferizationDialect",
+    "linalg::LinalgDialect",
+    "memref::MemRefDialect",
+    "hfusion::HFusionDialect"
+  ];
+}
+
 def UpliftWhileToFor : Pass<"hfusion-uplift-while-to-for", "func::FuncOp"> {
   let summary = "Uplift scf.while loops to scf.for when possible";
   let constructor = "mlir::hfusion::createUpliftWhileToForPass()";

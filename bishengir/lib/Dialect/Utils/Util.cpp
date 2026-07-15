@@ -1310,6 +1310,106 @@ getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank) {
   return retVecVec;
 }
 
+bool isConstIntOne(Value v) {
+  auto type = getElementTypeOrSelf(v);
+  if (type.isIntOrIndex()) {
+    if (matchPattern(v, m_One())) {
+      return true;
+    }
+  }
+  return false;
+}
+
+SmallVector<int64_t> getSqueezedShape(SmallVectorImpl<int64_t> &shape) {
+  SmallVector<int64_t> newShape;
+  for (int64_t dimSize : shape) {
+    if (dimSize != 1) {
+      newShape.push_back(dimSize);
+    }
+  }
+  // We do not allow empty shape which means rank 0 shaped value
+  if (newShape.empty()) {
+    newShape.push_back(1);
+  }
+  return newShape;
+}
+
+std::optional<int64_t> getIntAttr(const OpFoldResult ofr) {
+  if (ofr.is<Attribute>() && isa<IntegerAttr>(ofr.get<Attribute>()))
+    return dyn_cast<IntegerAttr>(ofr.get<Attribute>()).getInt();
+  return std::nullopt;
+}
+
+OpFoldResult mulOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
+                     OpBuilder &b, const Location loc) {
+  auto lhsIntAttr = getIntAttr(lhs);
+  auto rhsIntAttr = getIntAttr(rhs);
+
+  // both lhs and rhs are constants, return result directly
+  if (lhsIntAttr && rhsIntAttr)
+    return b.getIndexAttr(lhsIntAttr.value() * rhsIntAttr.value());
+
+  // shortcuts for special cases
+  if (lhsIntAttr) {
+    if (lhsIntAttr.value() == 0)
+      return lhs;
+    if (lhsIntAttr.value() == 1)
+      return rhs;
+  }
+  if (rhsIntAttr) {
+    if (rhsIntAttr.value() == 0)
+      return rhs;
+    if (rhsIntAttr.value() == 1)
+      return lhs;
+  }
+
+  // otherwise, need to create instructions to calculate new attribute value
+  auto lhsValue = dyn_cast<Value>(lhs);
+  if (lhsIntAttr) {
+    auto lhsOp =
+        b.create<arith::ConstantOp>(loc, b.getIndexAttr(lhsIntAttr.value()));
+    lhsValue = lhsOp.getResult();
+  }
+
+  auto rhsValue = dyn_cast<Value>(rhs);
+  if (rhsIntAttr) {
+    auto rhsOp =
+        b.create<arith::ConstantOp>(loc, b.getIndexAttr(rhsIntAttr.value()));
+    rhsValue = rhsOp.getResult();
+  }
+
+  auto mulOp = b.create<arith::MulIOp>(loc, lhsValue, rhsValue);
+  return mulOp.getResult();
+}
+
+void shrinkReassocIdxByDroppedDims(
+    SmallVector<ReassociationIndices> &reassocIdxVec,
+    llvm::SmallBitVector &droppedDims) {
+  size_t rank = droppedDims.size();
+  SmallVector<int64_t> shiftTable(rank, 0);
+  shiftTable[0] = (droppedDims.test(0) ? 1 : 0);
+  for (size_t i = 1; i < rank; ++i) {
+    shiftTable[i] = shiftTable[i - 1] + (droppedDims.test(i) ? 1 : 0);
+  }
+  for (auto it = reassocIdxVec.begin(); it != reassocIdxVec.end();) {
+    auto &reassoc = *it;
+    size_t writePos = 0;
+    for (size_t readPos = 0; readPos < reassoc.size(); ++readPos) {
+      int64_t originalIdx = reassoc[readPos];
+      if (!droppedDims.test(originalIdx)) {
+        reassoc[writePos] = originalIdx - shiftTable[originalIdx];
+        ++writePos;
+      }
+    }
+    reassoc.resize(writePos);
+    if (reassoc.empty()) {
+      it = reassocIdxVec.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 } // namespace reshape_utils
 
 BitVector utils::arrayToMask(ArrayRef<int64_t> elements, int maskSize) {
@@ -1484,4 +1584,13 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
   return true;
 }
 
+
+void utils::dumpReassociationIndicesVector(
+    const SmallVector<ReassociationIndices> &reassocVec) {
+  for (size_t i = 0; i < reassocVec.size(); ++i) {
+    std::string name = "reassocVec";
+    name += "[" + std::to_string(i) + "]";
+    llvm::dbgs() << name << reassocVec[i] << "\n";
+  }
+}
 } // namespace mlir

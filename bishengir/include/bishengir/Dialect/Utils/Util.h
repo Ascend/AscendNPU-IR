@@ -40,6 +40,20 @@
 #define DEBUG_LINE_BEG(m) "===[" #m "]===[BEG]>>>\n"
 #define DEBUG_LINE_END(m) "<<<[" #m "]===[END]===\n"
 
+namespace llvm {
+template <typename T>
+inline raw_ostream &operator<<(raw_ostream &os, const SmallVectorImpl<T> &vec) {
+  if (vec.empty())
+    return os << "is empty";
+  os << "(" << vec.size() << " entries) = [";
+  for (size_t i = 0; i < vec.size(); ++i) {
+    os << vec[i];
+    if (i < vec.size() - 1)
+      os << ", ";
+  }
+  return os << "]";
+}
+} // namespace llvm
 namespace mlir {
 namespace utils {
 constexpr const uint8_t kBitsToByte = 8;
@@ -622,6 +636,20 @@ bool isValidTwoDimVectorType(VectorType vType);
 /// Return true if transfer write op suits for change to StoreWithStride
 bool isTransferWriteSuitForStoreWithStride(Operation *op);
 
+bool isValidHIVMTileElementType(Type type);
+
+unsigned getHIVMTileSliceMinNumElts(Type type);
+
+bool isValidHIVMTileVectorType(VectorType vType);
+
+bool isValidTwoDimVectorType(VectorType vType);
+
+/// Return true if transfer write op suits for change to StoreWithStride
+bool isTransferWriteSuitForStoreWithStride(Operation *op);
+
+void dumpReassociationIndicesVector(
+    const SmallVector<ReassociationIndices> &reassocVec);
+
 } // namespace utils
 
 namespace reshape_utils {
@@ -677,6 +705,157 @@ bool areReassociationsCompatible(
 SmallVector<SmallVector<int64_t, 2>>
 getReAssociation(ArrayRef<int64_t> expandDims, int64_t outRank);
 
+bool isConstIntOne(Value v);
+
+/**
+ * @brief Remove unit dimensions (size=1) from a shape vector
+ * @details Filters out all elements with value 1 from the input shape,
+ *          returning a new shape vector with only non-unit dimensions
+ *
+ * Shape Transformation Example:
+ * - Input:  [2, 1, 3, 1, 5] (shape with unit dims at index 1, 3)
+ * - Output: [2, 3, 5] (unit dims removed)
+ *
+ * Edge Cases:
+ * - Input:  [1, 1, 1] → Output: [] (all unit dims)
+ * - Input:  [4, 5, 6] → Output: [4, 5, 6] (no unit dims)
+ * - Input:  [] → Output: [] (empty shape)
+ *
+ * @param[in] shape Input shape vector (int64_t dim sizes)
+ * @return SmallVector<int64_t> New shape vector with unit dims (size=1) removed
+ * @note Does not modify the original input shape vector
+ */
+SmallVector<int64_t> getSqueezedShape(SmallVectorImpl<int64_t> &type);
+
+/**
+ * @brief Multiply two OpFoldResult (OFR) values (constants/Values)
+ * @details Optimize multiplication for constant OFRs; create arith::MulIOp for
+ * dynamic Value-backed OFRs
+ *
+ * Multiplication Logic Flow:
+ * 1. Constant-Constant (OFR → IntegerAttr):
+ *    Input: lhs=IntegerAttr(5), rhs=IntegerAttr(3) → Output: IntegerAttr(15)
+ *
+ * 2. Constant-Special Case (0/1):
+ *    Input: lhs=IntegerAttr(0), rhs=Value(%0) → Output: lhs (IntegerAttr(0))
+ *    Input: lhs=IntegerAttr(1), rhs=Value(%0) → Output: rhs (Value(%0))
+ *
+ * 3. Dynamic-Dynamic (Value-backed OFR):
+ *    Input: lhs=Value(%a), rhs=Value(%b) → Output: Value(arith.muli %a, %b :
+ * index)
+ *
+ * 4. Constant-Dynamic Mixed:
+ *    Input: lhs=IntegerAttr(2), rhs=Value(%a) → Output: Value(arith.muli
+ * (arith.constant 2), %a : index)
+ *
+ * @param[in] lhs Left-hand side OFR (constant/Value)
+ * @param[in] rhs Right-hand side OFR (constant/Value)
+ * @param[in,out] b OpBuilder for creating constant/mul ops
+ * @param[in] loc Location for new operations (arith::ConstantOp/arith::MulIOp)
+ * @return OpFoldResult Result of multiplication (IntegerAttr or Value of
+ * arith::MulIOp)
+ * @note 1. Prioritizes constant folding (avoids op creation for constant
+ * inputs)
+ *       2. Handles 0/1 shortcuts to avoid unnecessary ops
+ *       3. Converts constant OFRs to arith::ConstantOp for mixed
+ * dynamic/constant cases
+ *       4. Returns Value-backed OFR for non-constant multiplication
+ */
+OpFoldResult mulOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
+                     OpBuilder &b, const Location loc);
+
+/**
+ * @brief Extract integer value from OpFoldResult (OFR) if it's IntegerAttr
+ * @details Check if OFR holds an IntegerAttr and return its int64_t value;
+ * return nullopt otherwise
+ *
+ * Value Extraction Example:
+ * - Case 1 (Match):
+ *   OFR = IntegerAttr(42) → returns std::optional<int64_t> = 42
+ * - Case 2 (No Match):
+ *   OFR = Value(%0 : index) → returns std::nullopt
+ * - Case 3 (No Match):
+ *   OFR = FloatAttr(3.14) → returns std::nullopt
+ *
+ * @param[in] ofr OpFoldResult to extract integer value from
+ * @return std::optional<int64_t> Integer value if OFR is IntegerAttr; nullopt
+ * otherwise
+ * @note Only handles IntegerAttr (ignores other Attribute types or Value-backed
+ * OFR)
+ */
+std::optional<int64_t> getIntAttr(const OpFoldResult ofr);
+
+/**
+ * @brief Multiply two OpFoldResult (OFR) values (constants/Values)
+ * @details Optimize multiplication for constant OFRs; create arith::MulIOp for
+ * dynamic Value-backed OFRs
+ *
+ * Multiplication Logic Flow:
+ * 1. Constant-Constant (OFR → IntegerAttr):
+ *    Input: lhs=IntegerAttr(5), rhs=IntegerAttr(3) → Output: IntegerAttr(15)
+ *
+ * 2. Constant-Special Case (0/1):
+ *    Input: lhs=IntegerAttr(0), rhs=Value(%0) → Output: lhs (IntegerAttr(0))
+ *    Input: lhs=IntegerAttr(1), rhs=Value(%0) → Output: rhs (Value(%0))
+ *
+ * 3. Dynamic-Dynamic (Value-backed OFR):
+ *    Input: lhs=Value(%a), rhs=Value(%b) → Output: Value(arith.muli %a, %b :
+ * index)
+ *
+ * 4. Constant-Dynamic Mixed:
+ *    Input: lhs=IntegerAttr(2), rhs=Value(%a) → Output: Value(arith.muli
+ * (arith.constant 2), %a : index)
+ *
+ * @param[in] lhs Left-hand side OFR (constant/Value)
+ * @param[in] rhs Right-hand side OFR (constant/Value)
+ * @param[in,out] b OpBuilder for creating constant/mul ops
+ * @param[in] loc Location for new operations (arith::ConstantOp/arith::MulIOp)
+ * @return OpFoldResult Result of multiplication (IntegerAttr or Value of
+ * arith::MulIOp)
+ * @note 1. Prioritizes constant folding (avoids op creation for constant
+ * inputs)
+ *       2. Handles 0/1 shortcuts to avoid unnecessary ops
+ *       3. Converts constant OFRs to arith::ConstantOp for mixed
+ * dynamic/constant cases
+ *       4. Returns Value-backed OFR for non-constant multiplication
+ */
+OpFoldResult mulOFRs(const OpFoldResult lhs, const OpFoldResult rhs,
+                     OpBuilder &b, const Location loc);
+
+/**
+ * @brief Shrink reassociation indices by removing dropped dimensions
+ * @details Adjust reassociation indices to exclude dropped dims and shift
+ * remaining indices (compensate for dropped dims)
+ *
+ * Reassociation Transformation Example:
+ * - Input:
+ *   reassocIdxVec = [[0,1,2], [3,4]] (original indices for rank=5)
+ *   droppedDims = [0, 0, 1, 0, 0] (bit 2 marked as dropped)
+ *   shiftTable = [0,0,1,1,1] (precomputed shift for each index)
+ *
+ * - Step 1 (Filter dropped dim 2):
+ *   [[0,1], [3,4]] (remove index 2 from first group)
+ *
+ * - Step 2 (Shift indices by shiftTable):
+ *   [[0,1], [2,3]] (3→2, 4→3; shiftTable[3]=1, shiftTable[4]=1)
+ *
+ * - Output:
+ *   reassocIdxVec = [[0,1], [2,3]] (empty groups are erased)
+ *
+ * @param[in,out] reassocIdxVec Nested reassociation indices (modified in-place)
+ * @param[in] droppedDims BitVector marking dropped dimensions (bit set = dim is
+ * dropped)
+ *
+ * @note 1. shiftTable precomputes cumulative count of dropped dims up to each
+ * index
+ *       2. Remaining indices are shifted left by number of dropped dims before
+ * them
+ *       3. Empty reassociation groups are erased from the vector
+ *       4. Operation is in-place (modifies input reassocIdxVec directly)
+ */
+void shrinkReassocIdxByDroppedDims(
+    SmallVector<ReassociationIndices> &reassocIdxVec,
+    llvm::SmallBitVector &droppedDims);
 } // namespace reshape_utils
 
 } // namespace mlir
