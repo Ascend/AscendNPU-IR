@@ -507,8 +507,8 @@ calculateBufferSize(int64_t bufferSize, SetBufferSizeMode unitMode,
   }
   if (referenceTypeWidth == 0) {
     llvm_unreachable("Reference type's width should be positive");
-    result.diag =
-        emitDefiniteFailure(loc, "reference type's width should be positive");
+    result.diag = emitDefiniteFailure(
+        loc, "reference type's width should be positive");
     return result;
   }
   auto factor = elementBitWidth / referenceTypeWidth;
@@ -879,16 +879,13 @@ static Operation *buildCopyOpForValue(Location loc, Value from,
   if (!rankedTy)
     return nullptr;
   SmallVector<OpFoldResult> sizes = tensor::getMixedSizes(rewriter, loc, from);
-  Value empty =
-      rewriter.create<tensor::EmptyOp>(loc, sizes, rankedTy.getElementType());
-  if (isEmptyLikeTensor(from))
-    return empty.getDefiningOp();
+  Value empty = rewriter.create<tensor::EmptyOp>(loc, sizes,
+                                                 rankedTy.getElementType());
   return rewriter.create<linalg::CopyOp>(loc, from, empty);
 }
 
-static void
-duplicateReusedValuesForSCFForOp(SmallVector<scf::ForOp> loops,
-                                 transform::TransformRewriter &rewriter) {
+static void duplicateReusedValuesForSCFForOp(
+    SmallVector<scf::ForOp> loops, transform::TransformRewriter &rewriter) {
   DenseSet<Value> set;
   for (auto loop : loops) {
     OpBuilder::InsertionGuard g(rewriter);
@@ -1099,9 +1096,8 @@ transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
   SmallVector<scf::ForOp> loops = collectLoops(targets, state);
 
   // When outline loop as VF, some reused values inside this loop will cause
-  // memref.alloc and memref.copy which is illegal inside VF after
-  // bufferization. Here we duplicate these reused values to avoid this. See
-  // issue:
+  // memref.alloc and memref.copy which is illegal inside VF after bufferization.
+  // Here we duplicate these reused values to avoid this. See issue:
   // https://codehub-y.huawei.com/CompilerKernel/BiShengKernel/BiSheng/issues/3395
   duplicateReusedValuesForSCFForOp(loops, rewriter);
 

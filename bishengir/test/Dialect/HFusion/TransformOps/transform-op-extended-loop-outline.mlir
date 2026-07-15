@@ -5,7 +5,6 @@
 module attributes {transform.with_named_sequence} {
     // CHECK: func.func @test_outline_multiple_loop_into_one_function_outlined_vf_0
     // CHECK: func.func @test_outline_multiple_loop_into_one_function
-    // CHECK-NOT: linalg.copy
     func.func @test_outline_multiple_loop_into_one_function(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>) -> tensor<f32> attributes {test} {
         %c0 = arith.constant 0 : index
         %dim = tensor.dim %arg0, %c0 : tensor<?xf32>
@@ -57,7 +56,6 @@ module attributes {transform.with_named_sequence} {
     // CHECK: func.func @test_outline_multiple_loop_into_separate_functions_outlined_vf_0
     // CHECK: func.func @test_outline_multiple_loop_into_separate_functions_outlined_vf_1
     // CHECK: func.func @test_outline_multiple_loop_into_separate_functions
-    // CHECK-NOT: linalg.copy
     func.func @test_outline_multiple_loop_into_separate_functions(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>) -> tensor<f32> {
         %c0 = arith.constant 0 : index
         %dim = tensor.dim %arg0, %c0 : tensor<?xf32>
@@ -106,7 +104,6 @@ module attributes {transform.with_named_sequence} {
 module attributes {transform.with_named_sequence} {
     // CHECK: func.func @test_outline_multiple_loop_into_separate_functions_outlined_vf_0
     // CHECK: func.func @test_outline_multiple_loop_into_separate_functions
-    // CHECK-NOT: linalg.copy
     func.func @test_outline_multiple_loop_into_separate_functions(%arg0: tensor<?xf32>, %arg1: tensor<?xf32>) -> tensor<f32> {
         %c0 = arith.constant 0 : index
         %c2 = arith.constant 2 : index
