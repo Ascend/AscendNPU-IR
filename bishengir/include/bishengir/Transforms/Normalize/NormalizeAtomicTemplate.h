@@ -398,6 +398,10 @@ struct NormalizeAtomicXCHGTemplate : public OpRewritePattern<AtomicXchgOpTy> {
     scopeOp->setAttr(
         hivm::TCoreTypeAttr::name,
         hivm::TCoreTypeAttr::get(rewriter.getContext(), hivm::TCoreType::VECTOR));
+    // Allow FlattenOps/PropagateReshape to run despite skip-scope: collapsing
+    // multi-rank shapes in this critical section reduces padded UB usage.
+    scopeOp->setAttr(hivm::AllowFlattenAttr::name,
+                     rewriter.getUnitAttr());
     rewriter.createBlock(&scopeOp.getRegion());
     OpBuilder::InsertionGuard scopeGuard(rewriter);
     rewriter.setInsertionPointToStart(scopeOp.getBody());

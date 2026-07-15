@@ -783,6 +783,10 @@ bool hasScope(Operation *funcOp) {
 
   funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
     if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      // Scopes marked allow_flatten (e.g. software atomic_xchg) are safe for
+      // FlattenOps / PropagateReshape; ignore them for the skip-scope guard.
+      if (scopeOp->hasAttr(hivm::AllowFlattenAttr::name))
+        return WalkResult::advance();
       // TODO: remove this constraint when we can support propagate across scope
       found = true;
       return WalkResult::interrupt();

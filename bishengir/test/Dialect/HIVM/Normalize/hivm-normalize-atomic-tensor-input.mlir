@@ -26,7 +26,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: memref.copy %[[GM:.*]], %[[TMP:.*]] : memref<4x4xi32> to memref<4x4xi32>
 // CHECK: bufferization.materialize_in_destination %[[UB:.*]] in writable %[[GM]] : (tensor<4x4xi32>, memref<4x4xi32>) -> ()
 // CHECK: scope.return %{{.*}} : tensor<4x4xi32>
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hivm.hir.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_tensor_ins_with_return(%arg0: memref<4x4xi32>, %arg1: tensor<4x4xi32>) -> tensor<4x4xi32> {
