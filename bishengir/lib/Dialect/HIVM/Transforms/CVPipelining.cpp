@@ -695,9 +695,9 @@ LogicalResult CVPipelineImpl::markOutputs() {
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
       // or auto cross-core legality), skip to_tensor results backed by a
-      // LoadOp since the load is cloned into each consuming work item
-      // directly and therefore does not need a multi-buffered cross-stage
-      // tensor.
+      // load-like writer (LoadOp or ND2NZOp) since the writer is cloned into
+      // each consuming work item directly and therefore does not need a
+      // multi-buffered cross-stage tensor.
       FailureOr<bool> shouldLazy = wlBuilder.shouldLazyLoadFor(op);
       if (failed(shouldLazy))
         return failure();
