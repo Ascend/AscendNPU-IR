@@ -156,6 +156,8 @@ std::string to_string(const T &container, int indent, bool useEndl) {
   return oss.str();
 }
 
+std::string getPrettyOpName(Operation *op);
+
 } // namespace debugger
 
 // Currently dtype cast rules:

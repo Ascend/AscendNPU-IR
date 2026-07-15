@@ -608,6 +608,20 @@ def SimplifyVFArgs : Pass<"hfusion-simplify-vf-arg", "ModuleOp"> {
   let dependentDialects = ["func::FuncDialect"];
 }
 
+def MergeVecScope : Pass<"hfusion-merge-vf", "ModuleOp"> {
+    let summary = "Merge vf function";
+    let constructor = "mlir::hfusion::createMergeVecScopePass()";
+    let dependentDialects = ["func::FuncDialect"];
+    let options=[
+      Option<"mergeLevel", "merge-level",
+                        "int", /*default=*/"1",
+                        "Merging level. 0: no merge; 1: merge VFs only without dependency;"
+                        "2: merge all VFs.">,
+      Option<"mergeVFNumLimit", "merge-vf-num-limit", "int", "4",
+              "allowed maximum number of merged VFs">,
+  ];
+}
+
 def PullSliceIntoVectorFunction
     : Pass<"hfusion-pull-slice-into-vector-function", "ModuleOp"> {
   let summary = "Pull tensor slice ops into VF callees to reduce buffer copies";

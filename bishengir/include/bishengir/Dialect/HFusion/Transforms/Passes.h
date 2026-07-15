@@ -254,6 +254,9 @@ std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
 /// Create a pass to simplify VF function arguments.
 std::unique_ptr<Pass> createSimplifyVFArgsPass();
 
+// Create a pass to Merge VF function
+std::unique_ptr<Pass> createMergeVecScopePass(const MergeVecScopeOptions &options = {});
+
 /// Create a pass to pull slice into vector function.
 std::unique_ptr<Pass> createPullSliceIntoVectorFunctionPass();
 

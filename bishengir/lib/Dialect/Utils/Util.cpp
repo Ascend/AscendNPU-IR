@@ -137,6 +137,27 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
 
 namespace utils {
 
+namespace debugger {
+std::string getPrettyOpName(Operation *op) {
+  std::string str;
+  llvm::raw_string_ostream os(str);
+
+  if (auto callOp = llvm::dyn_cast<mlir::func::CallOp>(op)) {
+    os << "func.call @" << callOp.getCallee();
+  } else {
+    os << op->getName();
+  }
+
+  if (op->getNumResults() > 0) {
+    os << " (res0: " << op->getResult(0) << ")";
+  } else {
+    os << " (ptr: " << op << ")";
+  }
+
+  return os.str();
+}
+} // namespace debugger
+
 ModuleOp getTopLevelModuleOp(Operation *op) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
   while (moduleOp && moduleOp->getParentOp()) {

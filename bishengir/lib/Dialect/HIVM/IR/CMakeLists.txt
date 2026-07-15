@@ -44,6 +44,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ../Utils/Utils.cpp
   ../Utils/RegbaseUtils.cpp
   ../Utils/WorklistBuilder.cpp
+  ../Utils/MemrefAliasAnalysisState.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM

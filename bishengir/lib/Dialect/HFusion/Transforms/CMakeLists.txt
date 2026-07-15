@@ -37,6 +37,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   InlineBrc.cpp
   InferFuncFusionKind.cpp
   InferOutShapes.cpp
+  MergeVecScope.cpp
   Normalize.cpp
   NormalizeSliceOps.cpp
   OpFusion.cpp
