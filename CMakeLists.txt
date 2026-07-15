@@ -34,6 +34,13 @@ if(LLVM_MAJOR_VERSION_20_COMPATIBLE)
   message(STATUS "Building with LLVM 20 or later")
   add_definitions(-D__LLVM_MAJOR_VERSION_20_COMPATIBLE__)
 endif()
+
+if(LLVM_BSPUB_DAVINCI_BISHENGIR_A5)
+  add_compile_definitions(BSPUB_DAVINCI_BISHENGIR_A5)
+endif()
+if(LLVM_BSPUB_DAVINCI_BISHENGIR_A5_NPUIR)
+  add_compile_definitions(BSPUB_DAVINCI_BISHENGIR_A5_NPUIR)
+endif()
 # -------------------------------------------------------------------------------
 # Handle Option
 # -------------------------------------------------------------------------------
