@@ -176,7 +176,11 @@ __aicore__ __attribute__((always_inline)) void copy_matrix_cc_to_ubuf_split(
             quant_mode, pre_relu, channel_split,
             nz2nd_en FIXPIPE_ARGS_XT2_VALUES(nz2dn_xt2)});
 
-    uint32_t offset_elements = (n_size_half1) * m_size;
+    // NZ2DN L0C source keeps M padded to tile stride; use src_stride when
+    // jumping to the second N half.
+    // TODO: need to check whether all case need to use src_stride.
+    uint32_t offset_elements =
+        n_size_half1 * (nz2dn_xt2 ? src_stride : m_size);
     copy_matrix_cc_to_ubuf_intrin(
         copy_matrix_cc_to_ubuf_intrin_args<SRC_TYPE, DST_TYPE>{
             ubuf_ptr, l0c_ptr + offset_elements,
