@@ -19,10 +19,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Transform/Interfaces/TransformInterfaces.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
@@ -35,14 +37,24 @@
 #define DBGS() (llvm::dbgs() << "[" DEBUG_TYPE "]: ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+namespace mlir {
+#define GEN_PASS_DEF_INLINESCOPE
+#include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
+} // namespace mlir
+
 using namespace mlir;
 using namespace mlir::impl;
 
 namespace mlir {
-#define GEN_PASS_DEF_INLINESCOPE
-#include "bishengir/Dialect/Scope/Transforms/Passes.h.inc"
-
 namespace scope {
+
+static bool isSimtScope(Operation *op) {
+  if (auto vectorType = op->getAttrOfType<StringAttr>("vector_type")) {
+    return vectorType.getValue() == "simt";
+  }
+  return false;
+}
+
 template <typename OpTy>
 class ExtractOpsFromBodyPattern : public OpRewritePattern<OpTy> {
 public:
@@ -104,6 +116,14 @@ void InlineScopePass::runOnOperation() {
 
   if (forceInline) {
     moduleOp.walk([](scope::ScopeOp op) { op.setNoInline(false); });
+  }
+
+  // regbase-only: SIMT scopes should not be inlined
+  if (hacc::utils::isRegBasedArch(moduleOp)) {
+    moduleOp.walk([](scope::ScopeOp op) {
+      if (isSimtScope(op))
+        op.setNoInline(true);
+    });
   }
 
   pm.addPass(std::make_unique<ExtractScopeBodyPass>());

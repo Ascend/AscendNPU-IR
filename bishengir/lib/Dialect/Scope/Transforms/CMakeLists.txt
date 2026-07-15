@@ -12,6 +12,7 @@ add_bishengir_dialect_library(BiShengIRScopeTransforms
   LINK_LIBS PUBLIC
   BiShengIRDialectUtils
   BiShengIRScopeDialect
+  BiShengIRHACCUtils
   MLIRDialect
   MLIRFuncDialect
   MLIRIR
