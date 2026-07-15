@@ -1,5 +1,6 @@
 // RUN: bishengir-opt -hivm-inline-fixpipe %s -split-input-file -verify-diagnostics | FileCheck %s
 
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 
 // CHECK: func.func @matmul
 func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32) attributes {global_kernel = "local"} {
@@ -97,7 +98,9 @@ func.func @matmul(%arg0: memref<?xf16> {tt.divisibility = 16 : i32}, %arg1: memr
     return
   }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_batchMmadL1_fixpipe
 func.func @test_batchMmadL1_fixpipe(%ma : tensor<2x256x128xf16>, %mb : tensor<2x128x256xf16>, %dst : memref<2x256x256xf16>){
 
@@ -117,7 +120,9 @@ func.func @test_batchMmadL1_fixpipe(%ma : tensor<2x256x128xf16>, %mb : tensor<2x
   return
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @matmul_kernel
 func.func @matmul_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32 {tt.divisibility = 16 : i32}, %arg7: i32 {tt.divisibility = 16 : i32}, %arg8: i32 {tt.divisibility = 16 : i32}, %arg9: i32 {tt.divisibility = 16 : i32}, %arg10: i32, %arg11: i32, %arg12: i32, %arg13: i32, %arg14: i32, %arg15: i32) attributes {global_kernel = "local", hacc.entry = "", hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
   %cst = arith.constant 0.000000e+00 : f16
@@ -220,7 +225,9 @@ func.func @matmul_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
   return
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @mm_01
 module {
   func.func @mm_01(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false]> : vector<9xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
@@ -275,7 +282,9 @@ module {
   }
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @_attn_fwd
 func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg_cube : memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg1: memref<?xf16> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: f32, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32}, %arg7: i32 {tt.divisibility = 16 : i32}, %arg8: i32 {tt.divisibility = 16 : i32}, %arg9: i32 {tt.divisibility = 16 : i32}, %arg10: i32 {tt.divisibility = 16 : i32}, %arg11: i32 {tt.divisibility = 16 : i32}, %arg12: i32 {tt.divisibility = 16 : i32}, %arg13: i32 {tt.divisibility = 16 : i32}, %arg14: i32 {tt.divisibility = 16 : i32}, %arg15: i32 {tt.divisibility = 16 : i32}, %arg16: i32 {tt.divisibility = 16 : i32}, %arg17: i32 {tt.divisibility = 16 : i32}, %arg18: i32 {tt.divisibility = 16 : i32}, %arg19: i32, %arg20: i32 {tt.divisibility = 16 : i32}, %arg21: i32 {tt.divisibility = 16 : i32}, %arg22: i32, %arg23: i32, %arg24: i32, %arg25: i32, %arg26: i32, %arg27: i32) attributes {global_kernel = "local", hacc.entry = "", hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
   %cst = arith.constant 2.000000e+00 : f32
@@ -496,7 +505,9 @@ func.func @_attn_fwd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addres
   return
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @_attn_bwd(
 // CHECK-SAME: %[[ARG0:.*]]: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %[[ARG_cube:.*]]: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %[[ARG1:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG2:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG3:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG4:.*]]: f32, %[[ARG5:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG6:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG7:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG8:.*]]: memref<?xf16> {tt.divisibility = 16 : i32}, %[[ARG9:.*]]: memref<?xf32> {tt.divisibility = 16 : i32}, %[[ARG10:.*]]: memref<?xf32> {tt.divisibility = 16 : i32}, %[[ARG11:.*]]: i32 {tt.divisibility = 16 : i32}, %[[ARG12:.*]]: i32 {tt.divisibility = 16 : i32}, %[[ARG13:.*]]: i32 {tt.divisibility = 16 : i32}, %[[ARG14:.*]]: i32, %[[ARG15:.*]]: i32 {tt.divisibility = 16 : i32}, %[[ARG16:.*]]: i32, %[[ARG17:.*]]: i32, %[[ARG18:.*]]: i32)
 module {
@@ -911,7 +922,9 @@ module {
   }
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 func.func @mm_with_add(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32}, %arg6: i32, %arg7: i32, %arg8: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, false, false, false]> : vector<9xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
   %true = arith.constant true
   %cst = arith.constant 0.000000e+00 : f32
@@ -976,7 +989,9 @@ func.func @mm_with_add(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
 }
 
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 func.func @mmad_mmad_fixpipe_case(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32}, %arg7: memref<?xf16> {tt.divisibility = 16 : i32}, %arg8: memref<?xf16> {tt.divisibility = 16 : i32}, %arg9: memref<?xf32> {tt.divisibility = 16 : i32}, %arg10: memref<?xf32> {tt.divisibility = 16 : i32}, %arg11: f32, %arg12: i32, %arg13: i32, %arg14: i32, %arg15: i32, %arg16: i32, %arg17: i32) attributes {WorkspaceArgIdx = 0 : i64, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "mix"} {
     %cst = arith.constant 0.693147182 : f32
     %c1024 = arith.constant 1024 : index
@@ -1208,7 +1223,9 @@ func.func @mmad_mmad_fixpipe_case(%arg0: i64 {hacc.arg_type = #hacc.arg_type<fft
   }
 
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmadL1_fixpipe_no_quant
 func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xf32>){
 
@@ -1229,7 +1246,9 @@ func.func @test_mmadL1_fixpipe_no_quant(%ma : tensor<256x128xi8>, %mb : tensor<1
 }
 
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmadL1_fixpipe_atomic
 func.func @test_mmadL1_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xi32>){
   %mc = tensor.empty() : tensor<256x256xi32>
@@ -1247,7 +1266,9 @@ func.func @test_mmadL1_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128
 }
 
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmadL1_no_fixpipe_atomic
 func.func @test_mmadL1_no_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xi32>){
   %mc = tensor.empty() : tensor<256x256xi32>
@@ -1265,7 +1286,9 @@ func.func @test_mmadL1_no_fixpipe_atomic(%ma : tensor<256x128xi8>, %mb : tensor<
 }
 
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmadL1_fixpipe_no_atomic
 func.func @test_mmadL1_fixpipe_no_atomic(%ma : tensor<256x128xi8>, %mb : tensor<128x256xi8>, %dst : memref<256x256xi32>){
   %mc = tensor.empty() : tensor<256x256xi32>
@@ -1280,7 +1303,9 @@ func.func @test_mmadL1_fixpipe_no_atomic(%ma : tensor<256x128xi8>, %mb : tensor<
   return
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmad_accumulation_merged
 func.func @test_mmad_accumulation_merged(%A: tensor<64x64xf16>, %B: tensor<64x64xf16>, %C_good_init: tensor<64x64xf32>, %C_bad_init: tensor<64x64xf32>, %cond: i1) -> (tensor<64x64xf32>, tensor<64x64xf32>) {
   %c0 = arith.constant 0 : index
@@ -1320,7 +1345,9 @@ func.func @test_mmad_accumulation_merged(%A: tensor<64x64xf16>, %B: tensor<64x64
   return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmad_accumulation_with_inloop_vec_consumer
 // This test verifies that when an accumulation mmadL1 has both:
 // 1. its result flowing to scf.yield (accumulation in L1), and
@@ -1359,7 +1386,9 @@ func.func @test_mmad_accumulation_with_inloop_vec_consumer(%A: tensor<64x64xf16>
   return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmad_accumulation_multi_vec_consumers
 // Boundary: multiple Vector consumers of the same accumulation mmad result
 // inside the same loop. All Vector consumers should be redirected to the
@@ -1398,7 +1427,9 @@ func.func @test_mmad_accumulation_multi_vec_consumers(%A: tensor<64x64xf16>, %B:
   return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_mmad_accumulation_nested_for_no_redirect
 // Boundary: Vector consumer inside a nested scf.for within the accumulation
 // loop. Its nearest ForOp is the nested one, not the accumulation loop,
@@ -1433,7 +1464,9 @@ func.func @test_mmad_accumulation_nested_for_no_redirect(%A: tensor<64x64xf16>, 
   return %loop_res#0, %loop_res#1 : tensor<64x64xf32>, tensor<64x64xf32>
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_conv1d
 func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
   %true = arith.constant true
@@ -1484,7 +1517,9 @@ func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   return
 }
 
+}
 // -----
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
 // CHECK-LABEL: func.func @test_conv2d
 func.func @test_conv2d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf32> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
   %true = arith.constant true
@@ -1544,4 +1579,5 @@ func.func @test_conv2d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   %reinterpret_cast_11 = memref.reinterpret_cast %arg6 to offset: [0], sizes: [16, 30, 30], strides: [900, 30, 1] : memref<?xf32> to memref<16x30x30xf32, strided<[900, 30, 1]>>
   hivm.hir.store ins(%26 : tensor<16x30x30xf32>) outs(%reinterpret_cast_11 : memref<16x30x30xf32, strided<[900, 30, 1]>>)
   return
+}
 }

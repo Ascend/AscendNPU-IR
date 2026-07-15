@@ -699,6 +699,11 @@ def InlineFixpipe : Pass<"hivm-inline-fixpipe"> {
   let constructor = "mlir::hivm::createInlineFixpipePass()";
   let dependentDialects =
       ["hivm::HIVMDialect", "bishengir::memref_ext::MemRefExtDialect", "annotation::AnnotationDialect"];
+  let options = [Option<
+      "inlineQuantScale", "inline-quant-scale", "bool",
+      /*default=*/"false",
+      "Inline a scalar vmul quantization scale into fixpipe on "
+      "register-based targets.">];
 }
 
 def TileBatchMMIntoLoop : Pass<"hivm-tile-batchmm-into-loop", "func::FuncOp"> {

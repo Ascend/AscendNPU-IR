@@ -1015,6 +1015,11 @@ static void printVersion0_2(FixpipeOp &op, OpAsmPrinter &_odsPrinter) {
       _odsPrinter << type;
   }
   _odsPrinter << ")";
+  if (Value quantScale = op.getQuantScale()) {
+    _odsPrinter << ' ' << "quant_scale" << ' ' << "=" << ' ';
+    _odsPrinter << quantScale << ' ' << ":" << ' ';
+    _odsPrinter << quantScale.getType();
+  }
   if (op.getDualDstModeAttr()) {
     _odsPrinter << ' ' << "dual_dst_mode";
     _odsPrinter << ' ' << "=";
@@ -1087,6 +1092,10 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   (void)dstOperandsLoc;
   ::mlir::Type dstRawType{};
   ::llvm::ArrayRef<::mlir::Type> dstTypes(&dstRawType, 1);
+  ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 1>
+      quantScaleOperands;
+  ::llvm::SmallVector<::mlir::Type, 1> quantScaleTypes;
+  ::llvm::SMLoc quantScaleOperandsLoc;
   ::mlir::hivm::FixpipeDualDstModeAttr dual_dst_modeAttr;
   ::mlir::ArrayAttr unit_flag_modeAttr;
   ::llvm::SmallVector<::mlir::OpAsmParser::UnresolvedOperand, 4>
@@ -1155,6 +1164,17 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   }
   if (parser.parseRParen())
     return ::mlir::failure();
+  if (::mlir::succeeded(parser.parseOptionalKeyword("quant_scale"))) {
+    if (parser.parseEqual())
+      return ::mlir::failure();
+    quantScaleOperandsLoc = parser.getCurrentLocation();
+    quantScaleOperands.emplace_back();
+    if (parser.parseOperand(quantScaleOperands.back()) || parser.parseColon())
+      return ::mlir::failure();
+    quantScaleTypes.emplace_back();
+    if (parser.parseType(quantScaleTypes.back()))
+      return ::mlir::failure();
+  }
   if (::mlir::succeeded(parser.parseOptionalKeyword("dual_dst_mode"))) {
     if (parser.parseEqual())
       return ::mlir::failure();
@@ -1216,14 +1236,16 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
   if (parser.resolveOperands(unit_flag_condOperands, odsBuildableType0,
                              unit_flag_condOperandsLoc, result.operands))
     return ::mlir::failure();
+  if (parser.resolveOperands(quantScaleOperands, quantScaleTypes,
+                             quantScaleOperandsLoc, result.operands))
+    return ::mlir::failure();
   // AttrSizedOperandSegments / Properties: must match ODS-generated build()
-  // (src, dst, unit_flag_cond variadic, optional quant_scale -- not in
-  // assembly).
-  ::llvm::copy(
-      ::llvm::ArrayRef<int32_t>(
-          {1, 1, static_cast<int32_t>(unit_flag_condOperands.size()), 0}),
-      result.getOrAddProperties<FixpipeOp::Properties>()
-          .operandSegmentSizes.begin());
+  // (src, dst, unit_flag_cond variadic, optional quant_scale).
+  ::llvm::copy(::llvm::ArrayRef<int32_t>(
+                   {1, 1, static_cast<int32_t>(unit_flag_condOperands.size()),
+                    static_cast<int32_t>(quantScaleOperands.size())}),
+               result.getOrAddProperties<FixpipeOp::Properties>()
+                   .operandSegmentSizes.begin());
   return ::mlir::success();
 }
 
