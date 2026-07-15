@@ -962,18 +962,17 @@ template <ReduceOpTy OP, typename T>
 __aiv__ inline __attribute__((always_inline)) void
 reduce_ar(memref_t<__ubuf__ T, 2> *src0, memref_t<__ubuf__ T, 2> *dst,
           memref_t<__ubuf__ T, 1> *tmp_buf, T initvalue) {
-
-  INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
-  INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
   bool is_unalign = is_unaligned_reduce<OP, T>(src0, dst, tmp_buf, initvalue);
   if (is_unalign) {
-    reduce_ar_scalar<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1], initvalue, tmp_buf);
+    INTRINSIC(set_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_V, PIPE_S, LIB_EVENT_ID0);
+    reduce_ar_scalar<OP, T>(src0, dst, src0->sizes[0], src0->sizes[1],
+                            initvalue, tmp_buf);
     return;
   }
 
-  //stride and offset are all aligned
+  // stride and offset are all aligned
   vec_reduce_ar<OP, T>(src0, dst, tmp_buf, initvalue);
-
 }
 
 #endif // REDUCE_AR_IMPL_H
