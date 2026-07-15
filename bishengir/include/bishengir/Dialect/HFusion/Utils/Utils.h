@@ -179,7 +179,8 @@ FailureOr<Value> traceReshapeOrSliceOnlyOneUser(Value input);
 Value traceReshapeOrSliceOnlyOneUserOrSelf(Value input);
 
 /// Whether is scalar-vector binary op.
-template <typename SrcOp> bool isSVOp(SrcOp op) {
+template <typename SrcOp>
+bool isSVOp(SrcOp op) {
   llvm::SmallVector<Value> inputs = op.getDpsInputs();
   if (inputs.size() != 2) {
     return false;
@@ -305,7 +306,7 @@ Value castTo(OpBuilder &builder, Value src, Type targetElemType,
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
              hfusion::TypeFn castIntegerType,
              hfusion::UnsignedMode unsignedMode);
-
+             
 Value castTo(OpBuilder &builder, Value src, Type targetElemType,
              hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed);
 
@@ -323,10 +324,6 @@ bool opCanFuseIntoMatmul(Operation *op);
 
 // Check if tensor is a linalg.fill op with zero value or a tensor.empty op
 bool isZeroOrEmptyTensor(Value op);
-
-// Check if tensor is a tensor.empty op or is derived from one through
-// reshape/slice-like tensor view ops.
-bool isEmptyLikeTensor(Value op);
 
 // Check if only unit dimensions are flattened
 bool isOnlyUnitDimFlattened(ArrayRef<int64_t> oldShape,
