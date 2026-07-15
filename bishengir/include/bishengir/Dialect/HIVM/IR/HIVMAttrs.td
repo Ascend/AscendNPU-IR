@@ -958,6 +958,19 @@ def HIVM_FixpipeDMAModeAttr : HIVM_I32EnumAttr<
   let description = "HIVM Fixpipe DMA mode";
 }
 
+def HIVM_FIXPIPE_SUBBLOCK_0 : I32EnumAttrCase<"SUB_BLOCK_0", 0, "sub_block_0">;
+def HIVM_FIXPIPE_SUBBLOCK_1 : I32EnumAttrCase<"SUB_BLOCK_1", 1, "sub_block_1">;
+
+def HIVM_FixpipeSubBlockEnum : HIVM_I32Enum<
+  "FixpipeSubBlock", "HIVM fixpipe target AIV sub-block", [
+    HIVM_FIXPIPE_SUBBLOCK_0, HIVM_FIXPIPE_SUBBLOCK_1
+  ]>;
+
+def HIVM_FixpipeSubBlockAttr : HIVM_I32EnumAttr<
+  "fixpipe_sub_block", HIVM_FixpipeSubBlockEnum> {
+  let description = "HIVM Fixpipe target AIV sub-block (0 or 1)";
+}
+
 //===----------------------------------------------------------------------===//
 // Deinterleave Mode for VDeinterleaveOp
 //===----------------------------------------------------------------------===//

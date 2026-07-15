@@ -2847,3 +2847,33 @@ module {
     return
   }
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // CHECK-LABEL: func @test_fixpipe_nz2nd_ub_sub_block_1
+  func.func @test_fixpipe_nz2nd_ub_sub_block_1() {
+    %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
+    %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
+    //   CHECK-DAG: %[[SB1:.*]] = arith.constant true
+    //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf({{.*}}, %[[SB1]]) :
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, sub_block_idx = #hivm.fixpipe_sub_block<sub_block_1>}
+      ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
+      outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
+    return
+ }
+}
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  // CHECK-LABEL: func @test_fixpipe_nz2nd_ub_sub_block_default
+  func.func @test_fixpipe_nz2nd_ub_sub_block_default() {
+    %ubC = memref.alloc() : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>
+    %l0c = memref.alloc() : memref<2x2x16x16xf32, #hivm.address_space<cc>>
+    //   CHECK-NOT: arith.constant true
+    //       CHECK: call @fixpipe_nz2nd_float_to_half_4d_to_2d_ubuf(
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%l0c : memref<2x2x16x16xf32, #hivm.address_space<cc>>)
+      outs(%ubC : memref<32x32xf16, strided<[32, 1], offset: 0>, #hivm.address_space<ub>>)
+    return
+ }
+}

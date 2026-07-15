@@ -219,7 +219,7 @@ static FixpipeOp insertFixpipe(PatternRewriter &rewriter,
 
   auto fixpipe = rewriter.create<FixpipeOp>(
       point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
-      /*dual_dst_mode=*/nullptr,
+      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
       /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
 
   SmallPtrSet<Operation *, 4> exceptedOps;
@@ -518,7 +518,8 @@ public:
         op.getLoc(), /*result_tensor=*/fixpipeInit.getType(),
         /*src=*/insertAfterOp->getResult(resultIndx),
         /*dst=*/fixpipeInit, dmaModeAttr, /*dual_dst_mode=*/nullptr,
-        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+        /*sub_block_idx=*/nullptr, /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
+        /*channel_split=*/nullptr);
     rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
                                   res.getResultTensor(), res);
     return success();
@@ -877,6 +878,7 @@ private:
     auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
         op.getLoc(), vMulDst.getType(), fixPipeSrc, vMulDst,
         op.getUnitFlagCond(), op.getDmaModeAttr(), op.getDualDstModeAttr(),
+        op.getSubBlockIdxAttr(),
         FixpipePreQuantModeAttr::get(rewriter.getContext(), quantPreMode),
         op.getPreReluAttr(), op.getChannelSplitAttr(), op.getUnitFlagModeAttr(),
         quantScaleValue);
@@ -1055,7 +1057,8 @@ public:
         op.getLoc(), /*result_tensor=*/TypeRange{},
         /*src=*/maybeMmadRes,
         /*dst=*/localWorkSpace, dmaModeAttr, /*dual_dst_mode=*/nullptr,
-        /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+        /*sub_block_idx=*/nullptr, /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
+        /*channel_split=*/nullptr);
     rewriter.modifyOpInPlace(op, [&]() {
       OpOperand &arg = op.getArgMutable();
       arg.assign(toTensor.getResult());

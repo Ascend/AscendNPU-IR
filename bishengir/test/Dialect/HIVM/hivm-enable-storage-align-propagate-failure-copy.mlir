@@ -148,6 +148,87 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_c
 
 // -----
 
+// CHECK-LABEL: func @propagate_scf_for_yield_with_plain_init
+func.func @propagate_scf_for_yield_with_plain_init() -> memref<1x7xf32, #hivm.address_space<ub>> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: %[[INIT:.*]] = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: %[[FOR:.*]] = scf.for
+  // CHECK-SAME: iter_args(%{{.*}} = %[[INIT]]) -> (memref<1x7xf32, #hivm.address_space<ub>>)
+  %0 = scf.for %i = %c0 to %c1 step %c1 iter_args(%iter = %init) -> (memref<1x7xf32, #hivm.address_space<ub>>) {
+    %alloc = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x7xf32, #hivm.address_space<ub>>
+    // CHECK: %[[ALIGNED:.*]] = memref.alloc() : memref<1x7x8xf32, #hivm.address_space<ub>>
+    // CHECK: %[[SUBVIEW:.*]] = memref.subview %[[ALIGNED]]
+    // CHECK-SAME: memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+    // CHECK: %[[COPY_DST:.*]] = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>) outs(%[[COPY_DST]] : memref<1x7xf32, #hivm.address_space<ub>>)
+    // CHECK: scf.yield %[[COPY_DST]]
+    scf.yield %alloc : memref<1x7xf32, #hivm.address_space<ub>>
+  }
+  // CHECK: return %[[FOR]]
+  return %0 : memref<1x7xf32, #hivm.address_space<ub>>
+}
+
+// -----
+
+// CHECK-LABEL: func @propagate_scf_for_yield_with_result_use
+func.func @propagate_scf_for_yield_with_result_use() -> memref<1x7xf32, #hivm.address_space<ub>> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init_storage = memref.alloc() : memref<1x7x8xf32, #hivm.address_space<ub>>
+  %init_subview = memref.subview %init_storage[0, 0, 0] [1, 7, 1] [1, 1, 1] : memref<1x7x8xf32, #hivm.address_space<ub>> to memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+  %init = builtin.unrealized_conversion_cast %init_subview : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: %[[INIT_SUBVIEW:.*]] = memref.subview
+  // CHECK-SAME: memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+  // CHECK: %[[FOR:.*]] = scf.for
+  // CHECK-SAME: iter_args(%{{.*}} = %[[INIT_SUBVIEW]]) -> (memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>)
+  %0 = scf.for %i = %c0 to %c1 step %c1 iter_args(%iter = %init) -> (memref<1x7xf32, #hivm.address_space<ub>>) {
+    %alloc = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x7xf32, #hivm.address_space<ub>>
+    // CHECK: %[[YIELD_SUBVIEW:.*]] = memref.subview
+    // CHECK-SAME: memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+    // CHECK: scf.yield %[[YIELD_SUBVIEW]]
+    scf.yield %alloc : memref<1x7xf32, #hivm.address_space<ub>>
+  }
+  // CHECK: %[[RESULT_CAST:.*]] = builtin.unrealized_conversion_cast %[[FOR]] : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: return %[[RESULT_CAST]]
+  return %0 : memref<1x7xf32, #hivm.address_space<ub>>
+}
+
+// -----
+
+// CHECK-LABEL: func @do_not_propagate_scf_for_yield_when_iter_arg_is_used
+func.func @do_not_propagate_scf_for_yield_when_iter_arg_is_used() -> memref<1x7xf32, #hivm.address_space<ub>> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init_storage = memref.alloc() : memref<1x7x8xf32, #hivm.address_space<ub>>
+  %init_subview = memref.subview %init_storage[0, 0, 0] [1, 7, 1] [1, 1, 1] : memref<1x7x8xf32, #hivm.address_space<ub>> to memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+  %init = builtin.unrealized_conversion_cast %init_subview : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: %[[INIT_CAST:.*]] = builtin.unrealized_conversion_cast %{{.*}} : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: %[[FOR:.*]] = scf.for
+  // CHECK-SAME: iter_args(%{{.*}} = %[[INIT_CAST]]) -> (memref<1x7xf32, #hivm.address_space<ub>>)
+  %0 = scf.for %i = %c0 to %c1 step %c1 iter_args(%iter = %init) -> (memref<1x7xf32, #hivm.address_space<ub>>) {
+    %iter_slice = memref.subview %iter[0, 0] [1, 7] [1, 1] : memref<1x7xf32, #hivm.address_space<ub>> to memref<1x7xf32, strided<[7, 1]>, #hivm.address_space<ub>>
+    %tmp = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    memref.copy %iter_slice, %tmp : memref<1x7xf32, strided<[7, 1]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+    %alloc = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x7xf32, #hivm.address_space<ub>>
+    // CHECK: %[[ALIGNED:.*]] = memref.alloc() : memref<1x7x8xf32, #hivm.address_space<ub>>
+    // CHECK: %[[YIELD_SUBVIEW:.*]] = memref.subview %[[ALIGNED]]
+    // CHECK-SAME: memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+    // CHECK: %[[COPY_DST:.*]] = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    // CHECK: hivm.hir.copy ins(%[[YIELD_SUBVIEW]] : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>) outs(%[[COPY_DST]] : memref<1x7xf32, #hivm.address_space<ub>>)
+    // CHECK: scf.yield %[[COPY_DST]]
+    scf.yield %alloc : memref<1x7xf32, #hivm.address_space<ub>>
+  }
+  // CHECK: return %[[FOR]]
+  return %0 : memref<1x7xf32, #hivm.address_space<ub>>
+}
+
+// -----
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @producer_fixpipe_with_multiple_syncs() attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %cc0 = memref.alloc() : memref<4x4xf32, #hivm.address_space<cc>>

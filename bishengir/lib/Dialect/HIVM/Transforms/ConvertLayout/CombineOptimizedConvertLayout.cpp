@@ -738,8 +738,9 @@ struct FoldFixpipeConvertLayoutPattern
         fixpipeOp.getSrc(),  // Same source
         emptyOp.getResult(), // New dst with ND shape (must match result)
         FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode),
-        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getPreQuantAttr(),
-        fixpipeOp.getPreReluAttr(), fixpipeOp.getChannelSplitAttr());
+        fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
+        fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
+        fixpipeOp.getChannelSplitAttr());
 
     if (fixpipeOp.getUnitFlagMode())
       newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());

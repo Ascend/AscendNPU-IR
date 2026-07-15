@@ -124,6 +124,50 @@ public:
   }
 };
 
+/// Before retyping a fixpipe-target alloc to its per-sub-block (split) shape,
+/// detach any read-view chain (`memref.memory_space_cast` -> `to_tensor`) that
+/// hangs off the alloc. Such a read-view is pure bookkeeping (its only consumer
+/// is an `annotation.mark`, e.g. `matmul_at_least_once`); the real data path is
+/// the fixpipe write into UB that the AIV cores read across the sub-block.
+///
+/// If left attached, `replaceAllUsesWith(allocVal, newAlloc)` would repoint the
+/// cast's operand at the split-shape alloc while leaving the cast's result type
+/// at the original (full) shape, producing an illegal shape-changing
+/// `memref.memory_space_cast` (e.g. 64x128 -> 128x128) that fails verification
+/// at the end of the BiShengHIR pipeline.
+///
+/// This mirrors `CanonicalizeAllocToTensor`, which replaces such read-view
+/// `to_tensor`s with a shape-preserving `tensor.empty`, but handles the case
+/// where the alloc has additional (fixpipe-write) uses so that canonicalizer's
+/// `hasOneUse` guard does not fire.
+static void detachReadViewFromAlloc(Value allocVal, PatternRewriter &rewriter) {
+  SmallVector<memref::MemorySpaceCastOp> castOps;
+  for (Operation *user : allocVal.getUsers()) {
+    if (auto castOp = dyn_cast<memref::MemorySpaceCastOp>(user))
+      castOps.push_back(castOp);
+  }
+  for (memref::MemorySpaceCastOp castOp : castOps) {
+    SmallVector<bufferization::ToTensorOp> toTensorOps;
+    bool onlyReadView = true;
+    for (Operation *castUser : castOp->getUsers()) {
+      if (auto toTensorOp = dyn_cast<bufferization::ToTensorOp>(castUser))
+        toTensorOps.push_back(toTensorOp);
+      else
+        onlyReadView = false;
+    }
+    // Only detach when the cast feeds nothing but read-view `to_tensor`s, so we
+    // never drop a cast that participates in the real data path.
+    if (!onlyReadView || toTensorOps.empty())
+      continue;
+    for (bufferization::ToTensorOp toTensorOp : toTensorOps) {
+      auto tensorType = cast<RankedTensorType>(toTensorOp.getType());
+      rewriter.replaceOpWithNewOp<tensor::EmptyOp>(
+          toTensorOp, tensorType.getShape(), tensorType.getElementType());
+    }
+    rewriter.eraseOp(castOp);
+  }
+}
+
 struct splitFixpipe : public OpRewritePattern<FixpipeOp> {
   const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim;
 
@@ -231,6 +275,10 @@ public:
                                                      oprs, op->getAttrs());
       newFixpipeOp.setDualDstModeAttr(dualAttr);
 
+      // Detach the read-view chain before repointing uses at the split-shape
+      // alloc, otherwise the read-view's memory_space_cast becomes a
+      // shape-changing (illegal) cast.
+      detachReadViewFromAlloc(allocVal, rewriter);
       rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
       rewriter.replaceOp(op, newFixpipeOp->getResults());
       rewriter.eraseOp(markOp);
@@ -293,6 +341,9 @@ public:
         op.getLoc(), TypeRange{}, ValueRange{op.getSrc(), newSubview},
         attrs.getAttrs());
 
+    // See the note in the non-cvpipe branch: detach any read-view chain so the
+    // split-shape alloc does not leave behind a shape-changing cast.
+    detachReadViewFromAlloc(allocVal, rewriter);
     rewriter.replaceAllUsesWith(allocVal, newAlloc.getResult());
     rewriter.replaceAllUsesWith(subviewOp.getResult(), newSubview.getResult());
     rewriter.replaceOp(op, newFixpipeOp->getResults());
