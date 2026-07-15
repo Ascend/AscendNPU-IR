@@ -209,7 +209,8 @@ hfusionTilingOptimizationPipeline(OpPassManager &pm,
   pm.addPass(createConstantizeTilingDataPass());
   canonicalizationPipeline(pm, options, AfterAutoSchedule);
   PackTilingDataOptions packOptions;
-  packOptions.emitGetTilingStructSizeFunction = !options.enableMultiKernel;
+  packOptions.emitGetTilingStructSizeFunction =
+      !options.enableMultiKernel;
   packOptions.packTilingKey = false;
   pm.addPass(createPackTilingDataPass(packOptions));
   // after tiling is all constantized and packed, try to simplify loops
