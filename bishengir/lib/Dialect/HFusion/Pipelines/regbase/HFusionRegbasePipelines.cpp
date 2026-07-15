@@ -410,23 +410,12 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   treeReduceOptions.enableRA = treeReduceFlags.enableRA;
   treeReduceOptions.enableAR = treeReduceFlags.enableAR;
   if (enableSIMDVFFusion(hfusionOptions)) {
-    bool runRegBasePasses = !hfusionOptions.enableMixedCV &&
-                            hacc::utils::isRegBasedArch(hfusionOptions.target);
     VFFusionOptions vfFusionOptions;
     vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
     vfFusionOptions.enableRA = treeReduceFlags.enableRA;
     vfFusionOptions.enableAR = treeReduceFlags.enableAR;
     vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
-    if (runRegBasePasses && hfusionOptions.enableFlatten) {
-      FlattenOpsOptions flattenOpsOpt;
-      flattenOpsOpt.flattenMode = hfusion::FlattenMode::Tidy;
-      flattenOpsOpt.skipHost = hfusionOptions.enableMultiKernel;
-      flattenOpsOpt.multiDynamicShape = false;
-      flattenOpsOpt.registerBased = true;
-      flattenOpsOpt.skipScope = hfusionOptions.skipScope;
-      pm.nest<func::FuncOp>().addPass(createFlattenOpsPass(flattenOpsOpt));
-    }
     canonicalizationPipeline(pm, hfusionOptions);
   }
   pm.nest<func::FuncOp>().addPass(hivm::createFuseTransposeIntoLoadPass());
