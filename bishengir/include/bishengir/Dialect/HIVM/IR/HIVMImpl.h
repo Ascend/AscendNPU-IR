@@ -111,6 +111,10 @@ std::optional<Operation *> traceDefOp(Value v, bool isSingleChain = false,
                  v.getDefiningOp<memref::ReinterpretCastOp>()) {
     return traceDefOp<OpType>(reinterpretCastOp.getViewSource(), isSingleChain,
                               shouldFilterInsertSlice);
+  } else if (auto memorySpaceCastOp =
+                 v.getDefiningOp<memref::MemorySpaceCastOp>()) {
+    return traceDefOp<OpType>(memorySpaceCastOp.getSource(), isSingleChain,
+                              shouldFilterInsertSlice);
   } else if (auto blockArg = dyn_cast_if_present<BlockArgument>(v)) {
     if (auto loop = dyn_cast_if_present<LoopLikeOpInterface>(
             blockArg.getOwner()->getParentOp())) {

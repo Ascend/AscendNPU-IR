@@ -33,6 +33,58 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
 
 // -----
 module {
+  // CHECK-LABEL: func.func @test_move_nested_debug_through_memory_space_cast
+  // The tiled batch matmul loop must be placed before the nested debug loop.
+  // CHECK: scf.for
+  // CHECK:   hivm.hir.mmadL1 {batch_matmul}
+  // CHECK: }
+  // CHECK: scf.for
+  // CHECK:   hivm.hir.debug
+  // CHECK: }
+  func.func @test_move_nested_debug_through_memory_space_cast(
+      %dst: memref<2x1x1xf32>) {
+    %ma = tensor.empty() : tensor<2x1x1xf16>
+    %mb = tensor.empty() : tensor<2x1x1xf16>
+    %mc = tensor.empty() : tensor<2x1x1xf32>
+    %true = arith.constant true
+    %one = arith.constant 1 : index
+    %zero_i32 = arith.constant 0 : i32
+    %one_i32 = arith.constant 1 : i32
+
+    %result = hivm.hir.batchMmadL1
+        ins(%ma, %mb, %true, %one, %one, %one
+            : tensor<2x1x1xf16>, tensor<2x1x1xf16>, i1, index, index, index)
+        outs(%mc : tensor<2x1x1xf32>) -> tensor<2x1x1xf32>
+
+    %alloc = memref.alloc() : memref<2x1x1xf32, #hivm.address_space<ub>>
+    %cast = memref.memory_space_cast %alloc
+        : memref<2x1x1xf32, #hivm.address_space<ub>> to memref<2x1x1xf32>
+    %debug_tensor = bufferization.to_tensor %cast restrict writable
+        : memref<2x1x1xf32>
+
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%result : tensor<2x1x1xf32>)
+        outs(%alloc : memref<2x1x1xf32, #hivm.address_space<ub>>)
+
+    scf.for %i = %zero_i32 to %one_i32 step %one_i32 : i32 {
+      hivm.hir.debug {
+        debugtype = "print",
+        hex = false,
+        memscope = #hivm.address_space<ub>,
+        prefix = "result: ",
+        tcoretype = #hivm.tcore_type<VECTOR>
+      } %debug_tensor : tensor<2x1x1xf32>
+    }
+
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%result : tensor<2x1x1xf32>)
+        outs(%dst : memref<2x1x1xf32>)
+    return
+  }
+}
+
+// -----
+module {
   // CHECK-LABEL: func.func @test_tile_mix_cv
   func.func @test_tile_mix_cv(%arg2: memref<?xf32>, %arg3: memref<?xf16>, %arg4: memref<?xf16>, %arg5: memref<?xf32> , %arg6: i32, %arg7: i32, %arg8: i32) {
     %c32 = arith.constant 32 : index
