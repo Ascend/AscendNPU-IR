@@ -73,3 +73,48 @@ module{
     return %0#0, %0#1, %0#2 : f32, f32, f32
   }
 }
+
+// -----
+
+// CHECK: func.func @test_scope_with_outline_attr
+// CHECK: %[[CST_0:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: scope.scope
+// CHECK: scope.return %[[CST_0]]
+// CHECK: call @test_scope_with_outline_attr_scope_0()
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @test_scope_with_outline_attr() -> (f32, f32){
+    %cst = arith.constant 0.000000e+00 : f32
+    %cst_1 = arith.constant 1.000000e+00 : f32
+    %0 = scope.scope : () -> (f32) {
+      scope.return %cst : f32
+    }
+    %1 = scope.scope : () -> (f32) {
+      scope.return %cst_1 : f32
+    } {outline = true}
+    return %0, %1 : f32, f32
+  }
+}
+
+// -----
+
+// CHECK-LABEL: func.func @outline_varange_constants_scope_0() -> tensor<8xi32>
+// CHECK: %[[C0:.*]] = arith.constant 0 : index
+// CHECK: %[[C1:.*]] = arith.constant 1 : index
+// CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<8xi32>
+// CHECK: %[[ARANGE:.*]] = hivm.hir.varange offset[%[[C0]]] strides[%[[C1]]] outs(%[[EMPTY]] : tensor<8xi32>) -> tensor<8xi32>
+// CHECK: return %[[ARANGE]] : tensor<8xi32>
+// CHECK-LABEL: func.func @outline_varange_constants() -> tensor<8xi32>
+// CHECK: %[[CALL:.*]] = call @outline_varange_constants_scope_0() : () -> tensor<8xi32>
+// CHECK: return %[[CALL]] : tensor<8xi32>
+module attributes {hacc.target = #hacc.target<"Ascend950PR_957b">} {
+  func.func @outline_varange_constants() -> tensor<8xi32> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %0 = scope.scope : () -> tensor<8xi32> {
+      %empty = tensor.empty() : tensor<8xi32>
+      %arange = hivm.hir.varange offset[%c0] strides[%c1] outs(%empty : tensor<8xi32>) -> tensor<8xi32>
+      scope.return %arange : tensor<8xi32>
+    } {outline = true}
+    return %0 : tensor<8xi32>
+  }
+}
