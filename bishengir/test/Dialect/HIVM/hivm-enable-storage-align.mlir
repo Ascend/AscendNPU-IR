@@ -278,6 +278,32 @@ func.func @test_cumsum_unalignment(%arg0: memref<5x3x3x3x3x5xi32, #hivm.address_
 
 // -----
 
+// CHECK-LABEL: func @propagate_scf_for_yield_with_result_use
+func.func @propagate_scf_for_yield_with_result_use() -> memref<1x7xf32, #hivm.address_space<ub>> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %init_storage = memref.alloc() : memref<1x7x8xf32, #hivm.address_space<ub>>
+  %init_subview = memref.subview %init_storage[0, 0, 0] [1, 7, 1] [1, 1, 1] : memref<1x7x8xf32, #hivm.address_space<ub>> to memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+  %init = builtin.unrealized_conversion_cast %init_subview : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: %[[INIT_SUBVIEW:.*]] = memref.subview
+  // CHECK-SAME: memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+  // CHECK: %[[FOR:.*]] = scf.for
+  // CHECK-SAME: iter_args(%{{.*}} = %[[INIT_SUBVIEW]]) -> (memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>)
+  %0 = scf.for %i = %c0 to %c1 step %c1 iter_args(%iter = %init) -> (memref<1x7xf32, #hivm.address_space<ub>>) {
+    %alloc = memref.alloc() : memref<1x7xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {hivm.stride_align_dims = array<i32: 1>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x7xf32, #hivm.address_space<ub>>
+    // CHECK: %[[YIELD_SUBVIEW:.*]] = memref.subview
+    // CHECK-SAME: memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>>
+    // CHECK: scf.yield %[[YIELD_SUBVIEW]]
+    scf.yield %alloc : memref<1x7xf32, #hivm.address_space<ub>>
+  }
+  // CHECK: %[[RESULT_CAST:.*]] = builtin.unrealized_conversion_cast %[[FOR]] : memref<1x7xf32, strided<[56, 8]>, #hivm.address_space<ub>> to memref<1x7xf32, #hivm.address_space<ub>>
+  // CHECK: return %[[RESULT_CAST]]
+  return %0 : memref<1x7xf32, #hivm.address_space<ub>>
+}
+
+// -----
+
 module {
   func.func @test_propagate_unrealized_conversion(%arg0: memref<1x2x3x2x5x60000x7x2xi16, #hivm.address_space<gm>>, %ub: index, %size: index) {
     %c0 = arith.constant 0 : index
