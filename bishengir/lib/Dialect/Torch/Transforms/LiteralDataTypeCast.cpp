@@ -51,12 +51,13 @@ public:
     // Verify CompatibleTypes.
     if (failed(verifyLinalgCompatibleTypes(op, rewriter)))
       return failure();
-    auto input = dyn_cast<DenseIntOrFPElementsAttr>(op.getValueAttr());
+    auto loc = op->getLoc();
+    auto input = mlir::dyn_cast<DenseIntOrFPElementsAttr>(op.getValueAttr());
     if (!input) {
       return failure();
     }
     auto elemType = input.getElementType();
-    if (!isa<Float64Type>(elemType)) {
+    if (!mlir::isa<Float64Type>(elemType)) {
       return failure();
     }
     auto maybeCastElem = convertFP64ToFP32(input, rewriter);
@@ -83,7 +84,7 @@ public:
       fp32Values.push_back(static_cast<float>(value));
     }
 
-    auto originalType = dyn_cast<RankedTensorType>(attr.getType());
+    auto originalType = mlir::dyn_cast<RankedTensorType>(attr.getType());
     if (!originalType) {
       return failure();
     }
