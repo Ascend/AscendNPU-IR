@@ -17,8 +17,10 @@
 #include "mlir/Dialect/Linalg/TransformOps/LinalgTransformOps.h"
 #include "mlir/Dialect/Linalg/TransformOps/Syntax.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/IR/TransformOps.h"
+#include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 #include "mlir/Transforms/RegionUtils.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1159,6 +1161,250 @@ transform::ExtendedLoopOutlineOp::apply(transform::TransformRewriter &rewriter,
   results.set(cast<OpResult>(getCall()), calls);
 
   return DiagnosedSilenceableFailure::success();
+}
+
+//===----------------------------------------------------------------------===//
+// Helper functions for MergeProducerExtractUsesOp
+//===----------------------------------------------------------------------===//
+
+static bool isValidSliceOpInContainingOp(tensor::ExtractSliceOp sliceOp,
+                                         scf::ForOp containingOp) {
+  if (!sliceOp || !containingOp->isProperAncestor(sliceOp)) {
+    return false;
+  }
+
+  auto staticStrides = sliceOp.getStaticStrides();
+  if (llvm::count_if(staticStrides, [](int64_t s) { return s != 1; }) > 0) {
+    // only handle extract slice with stride 1
+    return false;
+  }
+
+  return true;
+}
+
+static void
+findCommonAncesterForOps(SmallVector<tensor::ExtractSliceOp> &extractUserOps,
+                         SmallVector<scf::ForOp> &commonAncesterForOps,
+                         scf::ForOp containingForOp) {
+  assert(extractUserOps.size() > 1);
+  scf::ForOp ancestorForOp = extractUserOps[0]->getParentOfType<scf::ForOp>();
+  while (containingForOp->isAncestor(ancestorForOp)) {
+    bool isAncestorOfAll = true;
+    for (size_t i = 1; i < extractUserOps.size(); ++i) {
+      if (!ancestorForOp->isAncestor(extractUserOps[i])) {
+        isAncestorOfAll = false;
+        break;
+      }
+    }
+    if (isAncestorOfAll)
+      break;
+    ancestorForOp = ancestorForOp->getParentOfType<scf::ForOp>();
+  }
+  while (ancestorForOp && containingForOp->isAncestor(ancestorForOp)) {
+    commonAncesterForOps.push_back(ancestorForOp);
+    ancestorForOp = ancestorForOp->getParentOfType<scf::ForOp>();
+  }
+}
+
+static bool hasSameOffset(unsigned i, OpFoldResult offset,
+                          SmallVector<tensor::ExtractSliceOp> extractUserOps) {
+  for (auto extractUserOp : extractUserOps) {
+    SmallVector<OpFoldResult> offsets = extractUserOp.getMixedOffsets();
+    if (offsets[i] != offset)
+      return false;
+  }
+  return true;
+}
+
+// If there are multiple consumers of producer in containing op, only fuse
+// producer once into the first extractSliceOp of producer. For example:
+//   %1 = linalg.generic    // producer op
+//   scf.for                // containing op
+//     %2 = tensor.extract_slice %1
+//     %3 = linalg.generic ins(%2)
+//     %4 = tensor.extract_slice %1
+//     %5 = linalg.generic ins(%4)
+// after merge these two extract uses,there is only one consumer of producer:
+//   %1 = linalg.generic    // producer op
+//   scf.for                // containing op
+//     %2 = tensor.extract_slice %1
+//     %3 = tensor.extract_slice %2
+//     %4 = linalg.generic ins(%3)
+//     %5 = tensor.extract_slice %2
+//     %6 = linalg.generic ins(%5)
+// another example of there are nested scf.for:
+//   %1 = linalg.generic    // producer op
+//   scf.for                // containing op
+//     scf.for
+//       %2 = tensor.extract_slice %1
+//       %3 = linalg.generic ins(%2)
+//     scf.for
+//       %4 = tensor.extract_slice %1
+//       %5 = linalg.generic ins(%4)
+// after merge these two extract uses:
+//   %1 = linalg.generic    // producer op
+//   scf.for                // containing op
+//     %2 = tensor.extract_slice %1
+//     scf.for
+//       %3 = tensor.extract_slice %2
+//       %4 = linalg.generic ins(%3)
+//     scf.for
+//       %5 = tensor.extract_slice %2
+//       %6 = linalg.generic ins(%5)
+static void
+findAndMergeMultipleExtractUses(transform::TransformRewriter &rewriter,
+                                Operation *producerOp,
+                                scf::ForOp containingForOp) {
+  if (producerOp->getNumResults() != 1)
+    return;
+
+  for (Value res : producerOp->getResults()) {
+    SmallVector<tensor::ExtractSliceOp> extractUserOps;
+    for (auto user : res.getUsers()) {
+      auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(user);
+      if (isValidSliceOpInContainingOp(extractSliceOp, containingForOp))
+        extractUserOps.push_back(extractSliceOp);
+    }
+    if (extractUserOps.size() <= 1)
+      continue;
+
+    SmallVector<scf::ForOp> commonAncesterForOps;
+    findCommonAncesterForOps(extractUserOps, commonAncesterForOps,
+                             containingForOp);
+    assert(commonAncesterForOps.size() >= 1);
+    DenseSet<Value> inductionVarsOfCommonAncesterForOps;
+    for (scf::ForOp commonAncesterForOp : commonAncesterForOps) {
+      inductionVarsOfCommonAncesterForOps.insert(
+          commonAncesterForOp.getInductionVar());
+    }
+
+    scf::ForOp innermostCommonAncesterForOp = commonAncesterForOps[0];
+    llvm::sort(extractUserOps, [&](Operation *op1, Operation *op2) {
+      Operation *current1 = op1;
+      while (auto anscestorForOp = current1->getParentOfType<scf::ForOp>()) {
+        if (anscestorForOp == innermostCommonAncesterForOp)
+          break;
+        current1 = anscestorForOp.getOperation();
+      }
+      Operation *current2 = op2;
+      while (auto anscestorForOp = current2->getParentOfType<scf::ForOp>()) {
+        if (anscestorForOp == innermostCommonAncesterForOp)
+          break;
+        current2 = anscestorForOp.getOperation();
+      }
+      return current1->isBeforeInBlock(current2);
+    });
+
+    // Build new extract slice op inside innermost commonAncesterForOp, which
+    // will be used by all inner extract slice ops.
+    tensor::ExtractSliceOp firstExtractUserOp = extractUserOps[0];
+    SmallVector<OpFoldResult> offsets = firstExtractUserOp.getMixedOffsets();
+    SmallVector<OpFoldResult> sizes = firstExtractUserOp.getMixedSizes();
+    SmallVector<OpFoldResult> strides = firstExtractUserOp.getMixedStrides();
+    SmallVector<OpFoldResult> newOuterOffsets;
+    SmallVector<OpFoldResult> newOuterSizes;
+    OpFoldResult zeroAttr = rewriter.getIndexAttr(0);
+    SmallVector<bool> hasSameOffsetForAllExtractUserOps(offsets.size(), false);
+
+    Operation *insertionPoint = firstExtractUserOp;
+    while (auto anscestorForOp =
+               insertionPoint->getParentOfType<scf::ForOp>()) {
+      if (anscestorForOp == innermostCommonAncesterForOp)
+        break;
+      insertionPoint = anscestorForOp.getOperation();
+    }
+    rewriter.setInsertionPoint(insertionPoint);
+
+    Location loc = firstExtractUserOp.getLoc();
+    auto resShapedType = cast<ShapedType>(res.getType());
+    for (unsigned i = 0; i < offsets.size(); i++) {
+      if (inductionVarsOfCommonAncesterForOps.contains(
+              llvm::dyn_cast_if_present<Value>(offsets[i])) &&
+          hasSameOffset(i, offsets[i], extractUserOps)) {
+        newOuterOffsets.push_back(offsets[i]);
+        newOuterSizes.push_back(sizes[i]);
+        hasSameOffsetForAllExtractUserOps[i] = true;
+        continue;
+      }
+      newOuterOffsets.push_back(zeroAttr);
+      int64_t inputShape = resShapedType.getShape()[i];
+      // For a dynamic dimension getShape() returns ShapedType::kDynamic
+      // (INT64_MIN), and will be truncated to 0.
+      if (ShapedType::isDynamic(inputShape))
+        newOuterSizes.push_back(rewriter.createOrFold<tensor::DimOp>(
+            loc, res, static_cast<int64_t>(i)));
+      else
+        newOuterSizes.push_back(rewriter.getIndexAttr(inputShape));
+    }
+
+    tensor::ExtractSliceOp newOuterExtractSliceOp =
+        rewriter.create<tensor::ExtractSliceOp>(loc, res, newOuterOffsets,
+                                                newOuterSizes, strides);
+
+    // Build new inner extract slice op for every extractUserOp
+    for (tensor::ExtractSliceOp extractUserOp : extractUserOps) {
+      SmallVector<OpFoldResult> userOffsets = extractUserOp.getMixedOffsets();
+      SmallVector<OpFoldResult> userSizes = extractUserOp.getMixedSizes();
+      SmallVector<OpFoldResult> userStrides = extractUserOp.getMixedStrides();
+      SmallVector<OpFoldResult> newInnerOffsets;
+      SmallVector<OpFoldResult> newInnerSizes;
+
+      for (unsigned i = 0; i < userOffsets.size(); i++) {
+        if (hasSameOffsetForAllExtractUserOps[i]) {
+          newInnerOffsets.push_back(zeroAttr);
+          newInnerSizes.push_back(userSizes[i]);
+          continue;
+        }
+        newInnerOffsets.push_back(userOffsets[i]);
+        newInnerSizes.push_back(userSizes[i]);
+      }
+      rewriter.setInsertionPoint(extractUserOp);
+      auto newInnerExtractSliceOp = rewriter.create<tensor::ExtractSliceOp>(
+          extractUserOp.getLoc(), newOuterExtractSliceOp.getResult(),
+          newInnerOffsets, newInnerSizes, userStrides);
+      rewriter.replaceOp(extractUserOp, newInnerExtractSliceOp);
+    }
+  }
+  containingForOp->walk(
+      [&](LoopLikeOpInterface loopLike) { moveLoopInvariantCode(loopLike); });
+}
+
+//===----------------------------------------------------------------------===//
+// MergeProducerExtractUsesOp
+//===----------------------------------------------------------------------===//
+
+DiagnosedSilenceableFailure
+MergeProducerExtractUsesOp::apply(TransformRewriter &rewriter,
+                                  TransformResults &transformResults,
+                                  TransformState &state) {
+  auto producerOps = state.getPayloadOps(getProducerOp());
+  auto containingOps = state.getPayloadOps(getContainingOp());
+  if (!llvm::hasSingleElement(containingOps)) {
+    return emitDefiniteFailure()
+           << "requires exactly one containing_op handle (got "
+           << llvm::range_size(containingOps) << ")";
+  }
+  Operation *containingOp = *containingOps.begin();
+  auto containingForOp = dyn_cast<scf::ForOp>(*containingOps.begin());
+  if (!containingOp) {
+    Diagnostic diag(containingOp->getLoc(), DiagnosticSeverity::Remark);
+    diag << "could not merge extract uses in " << *containingOp;
+    return DiagnosedSilenceableFailure::silenceableFailure(std::move(diag));
+  }
+
+  for (Operation *producerOp : producerOps) {
+    // merge all extract uses to make sure producer op is fused only once.
+    findAndMergeMultipleExtractUses(rewriter, producerOp, containingForOp);
+  }
+
+  return DiagnosedSilenceableFailure::success();
+}
+
+void MergeProducerExtractUsesOp::getEffects(
+    SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  onlyReadsHandle(getProducerOpMutable(), effects);
+  onlyReadsHandle(getContainingOpMutable(), effects);
+  modifiesPayload(effects);
 }
 
 #include "bishengir/Dialect/HFusion/TransformOps/HFusionTransformOpsEnums.cpp.inc"

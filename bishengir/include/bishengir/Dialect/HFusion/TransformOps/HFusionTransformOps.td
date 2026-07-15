@@ -643,4 +643,45 @@ def ExtendedLoopOutlineOp : Op<Transform_Dialect, "loop.extended_outline_op",
     "$targets attr-dict `:` functional-type(operands, results)";
 }
 
+//===----------------------------------------------------------------------===//
+// MergeProducerExtractUsesOp
+//===----------------------------------------------------------------------===//
+
+def MergeProducerExtractUsesOp : Op<Transform_Dialect, "loop.merge_producer_extract_uses",
+    [TransformOpInterface,
+     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+     ReportTrackingListenerFailuresOpTrait]> {
+  let summary = "Merge multiple extract_slice uses of a producer into one";
+  let description = [{
+    When a producer has multiple extract_slice uses inside a containing
+    scf.for, this transform merges them into a single outer extract_slice
+    plus one inner extract_slice per original use.  This ensures the
+    producer is fused only once during a subsequent FuseIntoContainingOp.
+
+    The containing op handle must be associated with exactly one payload op,
+    and that op must be an scf.for.  The producer op handle may be
+    associated with multiple payload ops.  Each producer must have exactly
+    one result; multi-result producers are silently ignored.
+
+    #### Return Modes
+
+    This operation only reads both handles and modifies the payload IR.
+    It produces no handles.  Silently succeeds when there is nothing to
+    merge.
+  }];
+
+  let arguments = (ins TransformHandleTypeInterface:$producer_op,
+                       TransformHandleTypeInterface:$containing_op);
+  let results = (outs);
+
+  let extraClassDeclaration = [{
+    ::mlir::DiagnosedSilenceableFailure apply(
+        ::mlir::transform::TransformRewriter &rewriter,
+        ::mlir::transform::TransformResults &transformResults,
+        ::mlir::transform::TransformState &state);
+  }];
+
+  let assemblyFormat = "$producer_op `into` $containing_op attr-dict `:` type($producer_op) `into` type($containing_op)";
+}
+
 #endif // HFUSION_TRANSFORMOPS_HFUSIONTRANSFORMOPS
