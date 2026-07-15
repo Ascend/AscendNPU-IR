@@ -1534,3 +1534,24 @@ func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate(
   return
 }
 
+// -----
+
+// CHECK-LABEL: func.func @no_inline_fixpipe_with_store_in_vector_scope
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {{.*}} -> tensor
+// CHECK: scope.scope
+// CHECK: hivm.hir.store ins(%[[FIXPIPE]]
+func.func @no_inline_fixpipe_with_store_in_vector_scope(
+    %mmad_res: tensor<4x4xi32>,
+    %fixpipe_dst: tensor<4x4xi32>,
+    %gm: memref<4x4xi32, strided<[4, 1]>>) {
+  %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%mmad_res : tensor<4x4xi32>) outs(%fixpipe_dst : tensor<4x4xi32>)
+      -> tensor<4x4xi32>
+  scope.scope : () -> () {
+    hivm.hir.store ins(%fixpipe : tensor<4x4xi32>)
+        outs(%gm : memref<4x4xi32, strided<[4, 1]>>)
+    scope.return
+  } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+  return
+}
+
