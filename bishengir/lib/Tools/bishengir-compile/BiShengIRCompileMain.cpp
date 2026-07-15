@@ -118,7 +118,11 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
 
 /// Get the HIVMC binary name.
 StringRef getHIVMCName() {
+#ifdef BSPUB_DAVINCI_BISHENGIR_A5
+  const char *kBiShengIRHIVMBinaryName = "hivmc-a5";
+#else
   const char *kBiShengIRHIVMBinaryName = "hivmc";
+#endif
   return kBiShengIRHIVMBinaryName;
 }
 

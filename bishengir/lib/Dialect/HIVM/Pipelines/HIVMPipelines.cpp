@@ -286,9 +286,11 @@ static void hivmPreBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(createInsertInferWorkSpaceSizeFuncPass());
   }
 
+#if !defined(BSPUB_DAVINCI_BISHENGIR_A5)
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     pm.addPass(createInsertInferTaskTypeFuncPass());
   }
+#endif
   // Mark/hoist tightly-coupled buffers on the MIX function first so the
   // AIC/AIV clones share consistent buffer ids and multi-buffer anchors
   // (Ascend950 / RegBase; no-op on other arches).
