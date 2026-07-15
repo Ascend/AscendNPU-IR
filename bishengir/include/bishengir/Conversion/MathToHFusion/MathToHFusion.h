@@ -20,6 +20,8 @@
 
 #include <memory>
 
+#include "mlir/IR/BuiltinOps.h"
+
 namespace mlir {
 class LLVMTypeConverter;
 class RewritePatternSet;
@@ -29,7 +31,9 @@ class Pass;
 #include "bishengir/Conversion/Passes.h.inc"
 
 namespace hfusion {
-void populateMathToHFusionConversionPatterns(RewritePatternSet &patterns);
+void populateMathToHFusionConversionPatterns(RewritePatternSet &patterns,
+                                              ModuleOp moduleOp);
+void populateScalarMathPromotionPatterns(RewritePatternSet &patterns);
 } // namespace hfusion
 
 /// Creates a pass to convert the HFusion dialect to the HIVM dialect.

@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/MathToHFusion/MathToHFusion.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
@@ -23,6 +24,7 @@
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -162,7 +164,14 @@ struct MathFmaToComposeBinaryOp : public OpRewritePattern<math::FmaOp> {
 // Two kinds of conversions are applied:
 // 1. math ops to linalg unary/binary ops
 // 2. math ops to hfusion unary/binary ops
-void mlir::hfusion::populateMathToHFusionConversionPatterns(
+//
+// SUFFIX SPLIT: 7 HFusion patterns (Atan2/Atanh/Asin/Acos/Sinh/Acosh/Lgamma)
+// are membase-only — forced by regbase's HFusionEnums.td lacking those enum
+// cases (regbase UnaryFn stops at ilogb=17; BinaryFn slot 18 is divfhp, not
+// master's atan2). _membase keeps all 24 HFusion patterns; _regbase drops
+// the 7. Dispatcher chooses via hacc::utils::isRegBasedArch(ModuleOp).
+
+static void populateMathToHFusionConversionPatterns_membase(
     RewritePatternSet &patterns) {
   patterns.add<
       ElementwiseOpToLinalgUnary<math::ExpOp, linalg::UnaryFn::exp>,
@@ -197,6 +206,44 @@ void mlir::hfusion::populateMathToHFusionConversionPatterns(
       MathFmaToComposeBinaryOp>(patterns.getContext());
 }
 
+static void populateMathToHFusionConversionPatterns_regbase(
+    RewritePatternSet &patterns) {
+  // regbase subset: drops Atan2/Atanh/Asin/Acos/Sinh/Acosh/Lgamma
+  // (regbase HFusionEnums.td lacks those enum cases).
+  patterns.add<
+      ElementwiseOpToLinalgUnary<math::ExpOp, linalg::UnaryFn::exp>,
+      ElementwiseOpToLinalgUnary<math::LogOp, linalg::UnaryFn::log>,
+      ElementwiseOpToLinalgUnary<math::AbsFOp, linalg::UnaryFn::abs>,
+      ElementwiseOpToLinalgUnary<math::CeilOp, linalg::UnaryFn::ceil>,
+      ElementwiseOpToLinalgUnary<math::FloorOp, linalg::UnaryFn::floor>,
+      ElementwiseOpToHFusionBinary<mathExt::LdexpOp, hfusion::BinaryFn::ldexp>,
+      ElementwiseOpToHFusionBinary<math::PowFOp, hfusion::BinaryFn::powf>,
+      ElementwiseOpToHFusionUnary<math::SqrtOp, hfusion::UnaryFn::sqrt>,
+      ElementwiseOpToHFusionUnary<math::RsqrtOp, hfusion::UnaryFn::rsqrt>,
+      ElementwiseOpToHFusionUnary<math::TanhOp, hfusion::UnaryFn::tanh>,
+      ElementwiseOpToHFusionUnary<math::AtanOp, hfusion::UnaryFn::atan>,
+      ElementwiseOpToHFusionUnary<math::TanOp, hfusion::UnaryFn::tan>,
+      ElementwiseOpToHFusionUnary<math::SinOp, hfusion::UnaryFn::sin>,
+      ElementwiseOpToHFusionUnary<math::CosOp, hfusion::UnaryFn::cos>,
+      ElementwiseOpToHFusionUnary<math::AbsIOp, hfusion::UnaryFn::absi>,
+      ElementwiseOpToHFusionUnary<math::ErfOp, hfusion::UnaryFn::erf>,
+      ElementwiseOpToHFusionUnary<math::Log2Op, hfusion::UnaryFn::log2>,
+      ElementwiseOpToHFusionUnary<math::Log10Op, hfusion::UnaryFn::log10>,
+      ElementwiseOpToHFusionUnary<math::Log1pOp, hfusion::UnaryFn::log1p>,
+      ElementwiseOpToHFusionUnary<math::Exp2Op, hfusion::UnaryFn::exp2>,
+      ElementwiseOpToHFusionUnary<math::ExpM1Op, hfusion::UnaryFn::expm1>,
+      ElementwiseOpToHFusionUnary<mathExt::IlogbOp, hfusion::UnaryFn::ilogb>,
+      MathFmaToComposeBinaryOp>(patterns.getContext());
+}
+
+void mlir::hfusion::populateMathToHFusionConversionPatterns(
+    RewritePatternSet &patterns, ModuleOp moduleOp) {
+  if (moduleOp && hacc::utils::isRegBasedArch(moduleOp))
+    populateMathToHFusionConversionPatterns_regbase(patterns);
+  else
+    populateMathToHFusionConversionPatterns_membase(patterns);
+}
+
 namespace {
 struct MathToHFusionConversionPass
     : public impl::ConvertMathToHFusionBase<MathToHFusionConversionPass> {
@@ -206,6 +253,18 @@ struct MathToHFusionConversionPass
 
 void MathToHFusionConversionPass::runOnOperation() {
   auto *module = getOperation();
+  auto moduleOp = dyn_cast<ModuleOp>(module);
+
+  if (moduleOp && hacc::utils::isRegBasedArch(moduleOp)) {
+    RewritePatternSet scalarPatterns(&getContext());
+    populateScalarMathPromotionPatterns(scalarPatterns);
+    if (failed(
+            applyPatternsGreedily(module, std::move(scalarPatterns)))) {
+      signalPassFailure();
+      return;
+    }
+  }
+
   ConversionTarget target(getContext());
   target.addLegalDialect<linalg::LinalgDialect, tensor::TensorDialect,
                          hfusion::HFusionDialect>();
@@ -216,7 +275,7 @@ void MathToHFusionConversionPass::runOnOperation() {
       [](Operation *op) { return !operateOnTensors(op); });
 
   RewritePatternSet patterns(&getContext());
-  populateMathToHFusionConversionPatterns(patterns);
+  populateMathToHFusionConversionPatterns(patterns, moduleOp);
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     signalPassFailure();
   }
