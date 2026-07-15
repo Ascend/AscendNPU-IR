@@ -84,6 +84,33 @@ void hivm::printFlagID(OpAsmPrinter &printer, Operation *op,
 }
 
 //===----------------------------------------------------------------------===//
+// Printing/parsing for SyncID
+//===----------------------------------------------------------------------===//
+ParseResult hivm::parseSyncID(
+    OpAsmParser &parser, IntegerAttr &syncIDAttr,
+    std::optional<OpAsmParser::UnresolvedOperand> &syncIDValue) {
+  OpAsmParser::UnresolvedOperand operand;
+  auto res = parser.parseOptionalOperand(operand);
+  if (res.has_value() && succeeded(res.value())) {
+    syncIDValue = operand;
+    return success();
+  }
+  syncIDValue = std::nullopt;
+  if (parser.parseCustomAttributeWithFallback(syncIDAttr, Type{}))
+    return failure();
+
+  return success();
+}
+
+void hivm::printSyncID(OpAsmPrinter &printer, Operation *op,
+                        IntegerAttr syncIDAttr, Value syncIDValue) {
+  if (syncIDAttr) {
+    printer << syncIDAttr.getValue();
+    return;
+  }
+  printer << syncIDValue;
+}
+//===----------------------------------------------------------------------===//
 // SetFlagOp
 //===----------------------------------------------------------------------===//
 
@@ -150,7 +177,7 @@ void SyncBlockSetOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           /*tsync_instr_mode=*/{});
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          cast<Value>(flag_id), nullptr, /*tsync_instr_mode=*/{});
+          flag_id.get<Value>(), nullptr, /*tsync_instr_mode=*/{});
   }
 }
 
@@ -164,7 +191,7 @@ void SyncBlockSetOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           cast<IntegerAttr>(attr), nullptr, ffts_base_addr, tsync_instr_mode);
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          cast<Value>(flag_id), ffts_base_addr, tsync_instr_mode);
+          flag_id.get<Value>(), ffts_base_addr, tsync_instr_mode);
   }
 }
 
@@ -200,7 +227,20 @@ void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           cast<IntegerAttr>(attr), nullptr);
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          cast<Value>(flag_id));
+          flag_id.get<Value>());
+  }
+}
+
+void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                           TCoreTypeAttr tcore_type, PipeAttr tpipe,
+                           PipeAttr pipe, OpFoldResult flag_id,
+                           hivm::SyncBlockInstrModeAttr tsync_instr_mode) {
+  if (auto attr = dyn_cast_if_present<Attribute>(flag_id)) {
+    build(odsBuilder, odsState, tcore_type, tpipe, pipe,
+          cast<IntegerAttr>(attr), nullptr, tsync_instr_mode);
+  } else {
+    build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
+          flag_id.get<Value>(), tsync_instr_mode);
   }
 }
 
@@ -230,6 +270,7 @@ LogicalResult SyncBlockOp::verify() {
     }
   }
   if (synBlockMode == SyncBlockMode::ALL_VECTOR ||
+      synBlockMode == SyncBlockMode::ALL_SUB_VECTOR ||
       synBlockMode == SyncBlockMode::ALL) {
     if (getTvectorPipeAttr() == nullptr) {
       return emitOpError("tvector_pipe should be defined!");
@@ -238,11 +279,6 @@ LogicalResult SyncBlockOp::verify() {
                                    TCoreType::VECTOR)) {
       return emitOpError(
           "tvector_pipe of ALL_VECTOR should match VECTOR core type!");
-    }
-  }
-  if (synBlockMode == SyncBlockMode::ALL_SUB_VECTOR) {
-    if (getTvectorPipeAttr() == nullptr) {
-      return emitOpError("tvector_pipe should be defined!");
     }
   }
   return success();

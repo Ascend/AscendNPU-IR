@@ -48,34 +48,34 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
   auto reduceOpAttr = reduceOpArith.getReduceOp();
 
   switch (reduceOpAttr) {
-    case hivm::ReduceOperation::sum:
-      arithKind = VectorArithKind::ADD;
-      combiningKind = vector::CombiningKind::ADD;
-      break;
-    case hivm::ReduceOperation::prod:
-      arithKind = VectorArithKind::MUL;
-      combiningKind = vector::CombiningKind::MUL;
-      break;
-    case hivm::ReduceOperation::max:
-      arithKind = VectorArithKind::MAX;
-      if (isa<FloatType>(elementType)) {
-        combiningKind = vector::CombiningKind::MAXIMUMF;
-      } else {
-        combiningKind = getUnsignedSrc() ? vector::CombiningKind::MAXUI
-                                          : vector::CombiningKind::MAXSI;
-      }
-      break;
-    case hivm::ReduceOperation::min:
-      arithKind = VectorArithKind::MIN;
-      if (isa<FloatType>(elementType)) {
-        combiningKind = vector::CombiningKind::MINIMUMF;
-      } else {
-        combiningKind = getUnsignedSrc() ? vector::CombiningKind::MINUI
-                                          : vector::CombiningKind::MINSI;
-      }
-      break;
-    default:
-      return failure();
+  case hivm::ReduceOperation::sum:
+    arithKind = VectorArithKind::ADD;
+    combiningKind = vector::CombiningKind::ADD;
+    break;
+  case hivm::ReduceOperation::prod:
+    arithKind = VectorArithKind::MUL;
+    combiningKind = vector::CombiningKind::MUL;
+    break;
+  case hivm::ReduceOperation::max:
+    arithKind = VectorArithKind::MAX;
+    if (isa<FloatType>(elementType)) {
+      combiningKind = vector::CombiningKind::MAXIMUMF;
+    } else {
+      combiningKind = getUnsignedSrc() ? vector::CombiningKind::MAXUI
+                                       : vector::CombiningKind::MAXSI;
+    }
+    break;
+  case hivm::ReduceOperation::min:
+    arithKind = VectorArithKind::MIN;
+    if (isa<FloatType>(elementType)) {
+      combiningKind = vector::CombiningKind::MINIMUMF;
+    } else {
+      combiningKind = getUnsignedSrc() ? vector::CombiningKind::MINUI
+                                       : vector::CombiningKind::MINSI;
+    }
+    break;
+  default:
+    return failure();
   }
 
   // Create base indices (all zeros)
@@ -132,27 +132,35 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
       loc, outputVectorType, dst, indices, identityMap, padding,
       /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
 
-  // Reshape accumulator to match multi_reduction output shape (remove size-1 dims)
-  Value vectorOut = rewriter.create<vector::ShapeCastOp>(
-      loc, reducedVectorType, initAccum);
+  // Reshape accumulator to match multi_reduction output shape (remove size-1
+  // dims)
+  Value vectorOut =
+      rewriter.create<vector::ShapeCastOp>(loc, reducedVectorType, initAccum);
 
+#if defined(__LLVM_MAJOR_VERSION_20_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_21_COMPATIBLE__) ||                           \
+    defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__)
+  // Perform multi-dimensional reduction with accumulator
+  Value reduced = rewriter.create<vector::MultiDimReductionOp>(
+      loc, combiningKind, vectorData, vectorOut, reduceDims);
+#else
   // Perform multi-dimensional reduction with accumulator
   Value reduced = rewriter.create<vector::MultiDimReductionOp>(
       loc, combiningKind, vectorData, vectorOut,
       rewriter.getI64ArrayAttr(reduceDims));
+#endif
 
   // Reshape result back to have size-1 dimensions
-  Value finalResult = rewriter.create<vector::ShapeCastOp>(
-      loc, outputVectorType, reduced);
+  Value finalResult =
+      rewriter.create<vector::ShapeCastOp>(loc, outputVectorType, reduced);
 
   // Write result back
   bool isTensorSemantics = getNumResults() > 0;
   Value destOperand = isTensorSemantics ? getResult().front() : getDst()[0];
 
   auto writeOp = rewriter.create<vector::TransferWriteOp>(
-      loc, TypeRange(destOperand.getType()), finalResult, destOperand,
-      indices, identityMap, /*mask=*/Value(),
-      rewriter.getBoolArrayAttr(inBounds));
+      loc, TypeRange(destOperand.getType()), finalResult, destOperand, indices,
+      identityMap, /*mask=*/Value(), rewriter.getBoolArrayAttr(inBounds));
   if (isTensorSemantics) {
     rewriter.replaceAllUsesWith(getResult().front(), writeOp.getResult());
   } else {
@@ -161,4 +169,4 @@ LogicalResult VReduceOp::vectorize(RewriterBase &rewriter,
 
   return success();
 }
-}
+} // namespace mlir::hivm

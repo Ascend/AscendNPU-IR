@@ -598,3 +598,90 @@ LogicalResult VXorOp::allocExtraBuffersIfPossible() {
   this->getTempBufferMutable().assign(extraBuf);
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// CumOps
+//===----------------------------------------------------------------------===//
+
+template <typename CumOpWithTemp>
+static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
+  if (op.getTempBuffer()) {
+    op.emitWarning("already has extra temp buffer");
+    return success();
+  }
+  // TODO: no temp buffer needed for cumsum and cumprod in Membase
+  if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp> ||
+                std::is_same_v<CumOpWithTemp, VCumprodOp>) {
+    return success();
+  }
+  llvm::ArrayRef<int64_t> cumDims = op.getCumDims();
+  int64_t cumDim = cumDims[0];
+  MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
+
+  // SIMT 1D scan (CUMSUM only, cumDim==0, rank==1): allocate 2*ceil(N/32)
+  // scratch slots for the per-warp totals (the "double space" the SIMT kernel
+  // needs). Dynamic N -> leave temp unset and fall back to dst-aliased scratch.
+  // Guarded to VCumsumOp: cumprod 1D uses the non-SIMT twoway path and must NOT
+  // get this temp (it would change its library-call operands).
+  if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp>) {
+    bool is1DScan = (cumDim == 0) && (srcVecType.getRank() == 1);
+    if (is1DScan) {
+      int64_t n = srcVecType.getShape()[0];
+      if (ShapedType::isDynamic(n))
+        return success();
+      auto srcType = getElementTypeOrSelf(op.getSrc());
+      SmallVector<int64_t> extraBufSizes = {2 * ((n + 31) / 32)};
+      Value extraBuf =
+          allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
+      op.getTempBufferMutable().assign(extraBuf);
+      return success();
+    }
+  }
+
+  bool isCumAtMiddle = (cumDim == 1) && (srcVecType.getRank() == 3);
+  bool isCumAtTail = (cumDim == 1) && (srcVecType.getRank() == 2);
+  if (isCumAtMiddle) {
+    auto srcType = getElementTypeOrSelf(op.getSrc());
+    SmallVector<int64_t> extraBufSizes(srcVecType.getShape().begin(),
+                                       srcVecType.getShape().end());
+    unsigned elemBitWidth = srcVecType.getElementTypeBitWidth();
+    int64_t alignElements = util::vectorBlockSizeBit / elemBitWidth;
+    extraBufSizes[2] =
+        (extraBufSizes[2] + alignElements - 1) / alignElements * alignElements;
+    Value extraBuf =
+        allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
+    op.getTempBufferMutable().assign(extraBuf);
+    return success();
+  } else if (isCumAtTail) {
+    auto srcType = getElementTypeOrSelf(op.getSrc());
+    SmallVector<int64_t> extraBufSizes(srcVecType.getShape().rbegin(),
+                                       srcVecType.getShape().rend());
+    unsigned elemBitWidth = srcVecType.getElementTypeBitWidth();
+    int64_t alignElements = util::vectorBlockSizeBit / elemBitWidth;
+    extraBufSizes[1] =
+        (extraBufSizes[1] + alignElements - 1) / alignElements * alignElements;
+    Value extraBuf =
+        allocExtraBuffer(op.getOperation(), extraBufSizes, srcType);
+    op.getTempBufferMutable().assign(extraBuf);
+    return success();
+  }
+  return success();
+}
+
+LogicalResult VCumsumOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
+}
+
+LogicalResult VCummaxOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
+}
+
+LogicalResult VCumminOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
+}
+
+LogicalResult VCumprodOp::allocExtraBuffersIfPossible() {
+  return allocCumOpExtraBuffersIfPossible(*this);
+}
+
+#undef ENABLE_CUMOP_EXTRA_BUFFER_METHODS

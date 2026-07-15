@@ -98,6 +98,7 @@ def LoadOp : HIVM_DmaOp<"load", [
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
                        Optional<AnyType>:$init_condition,
                        DefaultValuedOptionalAttr<BoolAttr, "false">:$may_implicit_transpose_with_last_axis,
+                       OptionalAttr<HIVM_EvictionPolicyAttr>:$eviction_policy,
                        DefaultValuedOptionalAttr<HIVM_TCoreTypeAttr, "::mlir::hivm::TCoreType::CUBE_OR_VECTOR">:$tcoretype
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
@@ -121,9 +122,16 @@ def LoadOp : HIVM_DmaOp<"load", [
                    "Value":$left_padding_num, "bool":$init_out_buffer,
                    "Value":$init_condition)>,
     OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
-               "hivm::PadModeAttr":$pad_mode, "Value":$pad_value,
-               "Value":$left_padding_num, "bool":$init_out_buffer,
-               "bool":$may_implicit_transpose_with_last_axis)>,               
+                   "hivm::PadModeAttr":$pad_mode, "Value":$pad_value,
+                   "Value":$left_padding_num, "bool":$init_out_buffer,
+                   "bool":$may_implicit_transpose_with_last_axis)>,
+    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
+                   "hivm::PadModeAttr":$pad_mode, "Value":$pad_value,
+                   "hivm::EvictionPolicyAttr":$eviction_policy)>,
+    OpBuilder<(ins "TypeRange":$res, "Value":$src, "Value":$dst,
+                   "hivm::PadModeAttr":$pad_mode, "Value":$pad_value,
+                   "Value":$left_padding_num,
+                   "hivm::EvictionPolicyAttr":$eviction_policy)>,
   ];
   let assemblyFormat = [{
     `ins` `(` $src `:` type($src) `)`
@@ -136,6 +144,7 @@ def LoadOp : HIVM_DmaOp<"load", [
     (`right_padding_num` `=` $right_padding_num^ `:` type($right_padding_num))?
     (`init_condition` `=` $init_condition^ `:` type($init_condition))?
     (`may_implicit_transpose_with_last_axis` `=` $may_implicit_transpose_with_last_axis^ )?
+    (`eviction_policy` `=` $eviction_policy^)?
     (`core_type` `=` $tcoretype^ )?
     (`->` type($result_tensor)^)?
   }];
@@ -206,7 +215,7 @@ def CopyOp : HIVM_DmaOp<"copy", [
     Copy the data between local memory hierarchies.
     Currently support:
       - UB to UB
-      - UB to L1 (for Ascend910_95 series)
+      - UB to L1 (for Ascend950 series)
 
     Examples:
     ```mlir
@@ -265,12 +274,13 @@ def CopyOp : HIVM_DmaOp<"copy", [
 def FixpipeOp : HIVM_DmaOp<"fixpipe", [
   AttrSizedOperandSegments,
   SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_FIX">,
-  HIVMCoreTypeInterface, CubeCoreTypeTrait,
-  HIVMUnitFlagEnabledInterface,
+  HIVMCoreTypeInterface, CubeCoreTypeTrait, NoMaxRankTrait,
+  HIVMUnitFlagEnabledInterface, DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<StoreLikeOpInterface>
 ]> {
-  let summary = "HIVM data copy operation from L0C to other memory hierarchies.";
+  let summary =
+      "HIVM data copy operation from L0C to other memory hierarchies.";
   let description = [{
     Fixpipe is pipeline that performing data movement from L0C to other memory hierarchies,
     with on-the-fly fixed function of pre-stage quantization,
@@ -278,27 +288,36 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
     Currently support:
       - L0C to OUT
       - L0C to L1
-      - L0C to UB (for Ascend910_95 series)
+      - L0C to UB (for Ascend950 series)
 
     Additionally, Fixpipe is also capable of layout transform.
+
+    ### Attributes
+
+    #### 'dma_mode'
+    HIVM data movement model from L0C to destination, There are three values: NZ2DN, NZ2ND, and NZ2NZ(normal).
+
+    #### `dual_dst_mode`
+    HIVM dual destination mode control. dual destination mode can be enabled only when nz2nd or normal data
+    movement mode is enabled, and data movement is being performed from L0C to UB. Only supported on Ascend950 series.
   }];
   let arguments = (ins AnyShaped:$src,
                        AnyShaped:$dst,
                        Arg<Variadic<I1>, [{
-                        An optional condition to enable unit-flag mode, 
+                        An optional condition to enable unit-flag mode,
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
                        DefaultValuedAttr<HIVM_FixpipeDMAModeAttr,
                          "FixpipeDMAMode::NZ2NZ">:$dma_mode,
-                       DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
+                        DefaultValuedOptionalAttr<HIVM_FixpipeDualDstModeAttr,
                          "FixpipeDualDstMode::NO_DUAL">:$dual_dst_mode,
-                       DefaultValuedOptionalAttr<HIVM_FixpipePreQuantModeAttr,
+                        DefaultValuedOptionalAttr<HIVM_FixpipePreQuantModeAttr,
                          "FixpipePreQuantMode::NO_QUANT">:$pre_quant,
-                       DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
+                        DefaultValuedOptionalAttr<HIVM_FixpipePreReluModeAttr,
                          "FixpipePreReluMode::NO_RELU">:$pre_relu,
-                       DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
-                       OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
-                       Optional<AnyFloat>:$quant_scale
+                        DefaultValuedOptionalAttr<BoolAttr, "false">:$channel_split,
+                        OptionalAttr<UnitFlagArrayAttr>:$unit_flag_mode,
+                        Optional<AnyFloat>:$quant_scale
   );
   let results = (outs Optional<AnyRankedTensor>:$result_tensor);
   let builders = [
@@ -306,19 +325,22 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
                     CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split,
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu,
+                    CArg<"BoolAttr", "nullptr">:$channel_split,
                     CArg<"Value", "nullptr">:$quant_scale)
     >,
     OpBuilder<(ins "Type":$result, "Value":$src, "Value":$dst,
                     CArg<"FixpipeDMAModeAttr", "nullptr">:$dma_mode,
                     CArg<"FixpipeDualDstModeAttr", "nullptr">:$dual_dst_mode,
                     CArg<"FixpipePreQuantModeAttr", "nullptr">:$pre_quant,
-                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu, CArg<"BoolAttr", "nullptr">:$channel_split,
+                    CArg<"FixpipePreReluModeAttr", "nullptr">:$pre_relu,
+                    CArg<"BoolAttr", "nullptr">:$channel_split,
                     CArg<"Value", "nullptr">:$quant_scale)
     >
   ];
 
   let hasCustomAssemblyFormat = 1;
+  let hasFolder = 1;
   let hasVerifier = 1; // verify parameter according to hardware version
   let extraClassDeclaration = DmaOpBaseDecl # [{
     int getFixpipeState();
@@ -329,7 +351,8 @@ def FixpipeOp : HIVM_DmaOp<"fixpipe", [
 
 def ND2NZOp : HIVM_DmaOp<"nd2nz", [
   AttrSizedOperandSegments, SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
-  HIVMCoreTypeInterface, CubeCoreTypeTrait,
+  HIVMCoreTypeInterface, CubeCoreTypeTrait, NoMaxRankTrait,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   DeclareOpInterfaceMethods<BiShengIRAggregatedOpInterface,
   ["decomposeOperation", "getDecomposePhase"]>
 ]> {
@@ -403,8 +426,34 @@ def L12UBOp : HIVM_DmaOp<"l12ub",
   let extraClassDeclaration = DmaOpBaseDecl;
 }
 
+def LoadMXScaleOp
+    : HIVM_DmaOp<
+          "load_scale", [SinglePipeOpTrait, OpPipeTrait<"PIPE::PIPE_MTE2">,
+                         HIVMCoreTypeInterface, CubeCoreTypeTrait,
+                         NoMaxRankTrait,
+                         DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+]> {
+  let summary =
+      "HIVM data copy operation for loading scale tensor for mmad mx op";
+  let description =
+      [{ loading scale tensor from OUT to L1 using special version of dn2nz . }];
+  let arguments = (ins TensorOrMemref:$src, TensorOrMemref:$dst,
+      DefaultValuedOptionalAttr<BoolAttr, "false">:$is_transposed);
+  let results = (outs Optional<AnyRankedTensor>:$result_tensor);
+  let assemblyFormat = [{
+    attr-dict
+    `ins` `(` $src `:` type($src) `)`
+    `outs` `(` $dst `:` type($dst) `)`
+    (`is_transposed` `=` $is_transposed^ )?
+    (`->` type($result_tensor)^)?
+  }];
+  let extraClassDeclaration = DmaOpBaseDecl;
+}
+
 def AtomicCasOp : HIVM_Op<"atomic_cas", [
-  OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>,
+  NoLibraryFunctionTrait,
+  OperElemTypeConstraints<[0], [I8, I16, I32, F16, BF16, F32, F8E4M3FN,
+                                F8E5M2, I64]>,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Atomic Compare-And-Swap (CAS) Op";
@@ -443,6 +492,7 @@ def AtomicCasOp : HIVM_Op<"atomic_cas", [
 }
 
 def AtomicXchgOp : HIVM_Op<"atomic_xchg", [
+  NoLibraryFunctionTrait,
   OperElemTypeConstraints<[0], [I8, I16, I32, F16, F32, I64, BF16]>
 ]> {
   let summary = "Atomic Exchange Op";

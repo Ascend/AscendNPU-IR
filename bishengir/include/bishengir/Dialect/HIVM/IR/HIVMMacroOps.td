@@ -73,12 +73,12 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
                        Index:$real_n,
                        Arg<TensorOrMemref, "Matrix C">:$c,
                        Arg<Variadic<I64>, [{
-                        Arguments required by mma_tile to insert 
-                        synchronization instructions, they are 
+                        Arguments required by mma_tile to insert
+                        synchronization instructions, they are
                         managed by inject-sync passes.
                        }]>:$sync_related_args,
                        Arg<Variadic<I1>, [{
-                        An optional condition to enable unit-flag mode, 
+                        An optional condition to enable unit-flag mode,
                         useful if there is a dependency on a for loop to run at least once.
                        }]>:$unit_flag_cond,
                        Optional<TensorOrMemref>:$per_channel_bias,
@@ -165,6 +165,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
 }
 
 def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
+  NoMaxRankTrait,
   DeclareOpInterfaceMethods<HIVMStructuredOpInterface, ["getIndexingMaps"]>,
   DeclareOpInterfaceMethods<OpLayoutInterface, ["getOperandsTargetFractalLayout"]>,
 ]> {
@@ -182,10 +183,13 @@ def MmadL1Op : HIVM_LocalMmadOp<"mmadL1", [
     FailureOr<DataLayoutAttr> getOperandBLayout();
     FailureOr<DataLayoutAttr> getOperandCLayout();
     FailureOr<DataLayoutAttr> getOperandBiasLayout();
+    llvm::SmallVector<int64_t> getBlockSizesTile(
+        Value oper, bool isTranspose, bool isA);
   }];
 }
 
-def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1"> {
+def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
+  [NoLibraryFunctionTrait]> {
   let summary = [{
     Batch Matrix Multiply and Add Op with inputs from L1 memory hierarchy.
   }];
@@ -197,6 +201,106 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1"> {
 }
 
 //===----------------------------------------------------------------------===//
+// HIVM Local MMADMx op definitions.
+//===----------------------------------------------------------------------===//
+ 
+class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
+  HIVM_MacroOp<mnemonic, !listconcat(
+    [CubeCoreTypeTrait,
+     MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+    ], traits)> {
+  let arguments = (ins Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
+                       Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
+                       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleA">:$scaleA,
+                       Arg<ShapedTypeOf<[UI8, I8]>, "Matrix ScaleB">:$scaleB,
+                       Arg<I1, [{
+                        The condition under which
+                        data in L0C is cleared before use
+                       }]>:$init_condition,
+                       Index:$real_m,
+                       Index:$real_k,
+                       Index:$real_n,
+                       Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
+                       OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
+                       OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat,
+                       Arg<Variadic<I64>, [{
+                        Arguments required by mma_tile to insert 
+                        synchronization instructions, they are 
+                        managed by inject-sync passes.
+                       }]>:$sync_related_args);
+  let results = (outs Variadic<ShapedTypeOf<[AnyFloat]>>:$result_tensors);
+  code localMmadMxBaseDecls = [{
+    // Implement functions necessary for DestinationStyleOpInterface.
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return getCMutable();
+    }
+    bool isInitConstant(std::optional<bool> cst = std::nullopt);
+    void setInitCondition(Value init);
+    int getNumSyncRelatedArgs() { return 4; }
+    MatmulBiasMode getMatmulBiasMode();
+    bool shouldDecomposeBiasByElementAdd();
+  }];
+  string localMmadBaseDes = [{
+    The computation logic is:
+    ```
+    C = C + A x ScaleA + B x ScaleB
+    ```
+  }];
+  let assemblyFormat = [{
+    attr-dict `ins` `(`
+    $a
+    `,` $b
+    `,` $scaleA
+    `,` $scaleB
+    `,` $init_condition
+    `,` $real_m
+    `,` $real_k
+    `,` $real_n
+    `:`
+    type($a)
+    `,` type($b)
+    `,` type($scaleA)
+    `,` type($scaleB)
+    `,` type($init_condition)
+    `,` type($real_m)
+    `,` type($real_k)
+    `,` type($real_n)
+    `)`
+    `outs` `(` $c `:` type($c) `)`
+    (`sync_related_args` `(` $sync_related_args^ `:` type($sync_related_args) `)`)?
+    (`->` type($result_tensors)^)?
+  }];
+ 
+  let hasVerifier = 0;
+}
+ 
+def MmadMxL1Op
+    : HIVM_LocalMmadMxOp<"mmadmxL1", [NoMaxRankTrait, OpLayoutInterface]> {
+  let summary = [{
+    Matrix Multiply and Add Op with inputs from L1 memory hierarchy.
+  }];
+  let description = localMmadBaseDes#[{
+    Note: the rank of A, B, and C Matrix must be two.
+  }];
+ 
+  let extraClassDeclaration = localMmadMxBaseDecls#[{
+    static StringRef getOpName() { return "mmadmxL1"; }
+ 
+    // Declare functions necessary for OpLayoutInterface.
+    FailureOr<DataLayoutAttr> getOperandALayout();
+    FailureOr<DataLayoutAttr> getOperandBLayout();
+    FailureOr<DataLayoutAttr> getOperandScaleALayout();
+    FailureOr<DataLayoutAttr> getOperandScaleBLayout();
+    FailureOr<DataLayoutAttr> getOperandCLayout();
+    FailureOr<DataLayoutAttr> getOperandBiasLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsTargetLayout();
+    llvm::SmallDenseMap<Value, DataLayoutAttr> getOperandsCurrentLayout();
+    llvm::SmallVector<int64_t> getBlockSizesTile(
+        Value oper, bool isTranspose, bool isA) const;
+  }];
+}
+
+//===----------------------------------------------------------------------===//
 // HIVM Global MMAD op definitions.
 //===----------------------------------------------------------------------===//
 
@@ -205,6 +309,7 @@ class HIVM_GlobalMmadOp<string mnemonic, list<Trait> traits = []> :
     !listconcat([MacroOpPipeTrait<"PIPE::PIPE_MTE2, PIPE::PIPE_MTE3">,
                  DeclareOpInterfaceMethods<HIVMInferCoreTypeInterface,
                    ["inferCoreType"]>,
+                 NoMaxRankTrait,
                  AttrSizedOperandSegments
                 ], traits)> {
   let results = (outs Variadic<AnyRankedTensor>:$result);

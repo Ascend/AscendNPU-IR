@@ -24,13 +24,16 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/Vector/Utils/VectorUtils.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 #include <algorithm>
+#include <sstream>
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -87,12 +90,9 @@ template <typename HIVMOP> LogicalResult verifyCumOp(HIVMOP op) {
 // Vector Binary Op
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VAddOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VMulOp)
-ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VMinOp)
-ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VMaxOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VAndOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VOrOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VSubOp)
-ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VDivOp)
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VShLOp)
 // Vector Unary Op
 ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VNotOp)
@@ -106,14 +106,60 @@ ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VRecOp)
 #undef ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF
 
 //===----------------------------------------------------------------------===//
+// VMaxOp
+//===----------------------------------------------------------------------===//
+
+void VMaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        /*is_signed=*/BoolAttr::get(odsBuilder.getContext(), true), transpose,
+        broadcast);
+}
+
+//===----------------------------------------------------------------------===//
+// VMinOp
+//===----------------------------------------------------------------------===//
+
+void VMinOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        /*is_signed=*/BoolAttr::get(odsBuilder.getContext(), true), transpose,
+        broadcast);
+}
+
+//===----------------------------------------------------------------------===//
+// VDivOp
+//===----------------------------------------------------------------------===//
+
+void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        /*isSigned=*/BoolAttr::get(odsBuilder.getContext(), true),
+        /*isHP=*/BoolAttr::get(odsBuilder.getContext(), false), transpose,
+        broadcast);
+}
+
+//===----------------------------------------------------------------------===//
 // VShROp
 //===----------------------------------------------------------------------===//
+
 void VShROp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
                    BoolAttr round, DenseI64ArrayAttr transpose,
                    DenseI64ArrayAttr broadcast) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, round,
         transpose, broadcast);
+}
+
+void VShROp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   BoolAttr is_signed, BoolAttr round,
+                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        is_signed, round, transpose, broadcast);
 }
 
 //===----------------------------------------------------------------------===//
@@ -141,7 +187,8 @@ LogicalResult VBrcOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
-      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) ||
+       llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
     return emitOpError("Current hardware doesn't support fp8 type");
 
   if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
@@ -277,7 +324,9 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, ValueRange dst,
                       hivm::ReduceOpAttr arith, DenseI64ArrayAttr reduce_dims) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, arith,
-        reduce_dims, /*indices=*/nullptr);
+        /*unsigned_src=*/nullptr,
+        /*tie_break_left=*/nullptr, reduce_dims,
+        /*indices=*/nullptr);
 }
 
 void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -285,7 +334,26 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       hivm::ReduceOpAttr arith, DenseI64ArrayAttr reduce_dims,
                       Value indices) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, arith,
-        reduce_dims, indices);
+        /*unsigned_src=*/nullptr,
+        /*tie_break_left=*/nullptr, reduce_dims, indices);
+}
+
+void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, ValueRange dst,
+                      Value temp_buffer, hivm::ReduceOpAttr arith,
+                      DenseI64ArrayAttr reduce_dims) {
+  build(odsBuilder, odsState, result, src, dst, temp_buffer, arith,
+        /*unsigned_src=*/nullptr,
+        /*tie_break_left=*/nullptr, reduce_dims, /*indices=*/nullptr);
+}
+
+void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, ValueRange dst,
+                      Value temp_buffer, hivm::ReduceOpAttr arith,
+                      DenseI64ArrayAttr reduce_dims, Value indices) {
+  build(odsBuilder, odsState, result, src, dst, temp_buffer, arith,
+        /*unsigned_src=*/nullptr,
+        /*tie_break_left=*/nullptr, reduce_dims, indices);
 }
 
 static LogicalResult verifyVReduceDims(VReduceOp op) {
@@ -380,6 +448,17 @@ LogicalResult VReduceOp::verify() {
   auto tmpBuf = getTempBuffer();
   if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
     return emitOpError() << "temp_buffer'rank should be one";
+  }
+
+  // fp8 check
+  mlir::ModuleOp moduleOp = (*this)->getParentOfType<mlir::ModuleOp>();
+  if (!hacc::utils::isAscend950(moduleOp)) {
+    Type srcType = this->getSrc().getType();
+    ShapedType srcVecType = cast<ShapedType>(srcType);
+    Type eleType = srcVecType.getElementType();
+    if (eleType.isFloat8E4M3FN() || eleType.isFloat8E5M2()) {
+      return this->emitError("fp8 is not supported.");
+    }
   }
 
   if (failed(verifyVReduceDims(*this)))
@@ -680,6 +759,43 @@ bool VReduceOp::useVectorCrossIntr(bool lastAxis, int rank) {
 }
 
 //===----------------------------------------------------------------------===//
+// VSortOp
+//===----------------------------------------------------------------------===//
+
+void VSortOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                    TypeRange result, Value src, ValueRange dst,
+                    bool descending, int64_t sort_axis) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, descending, sort_axis);
+}
+
+Value VSortOp::getDstValue() { return getDst()[0]; }
+
+Value VSortOp::getDstIndex() {
+  assert(getDst().size() == 2 && "there should be 2 operands");
+  return getDst()[1];
+}
+
+int64_t VSortOp::getSignedSortAxis() {
+  return getSortAxisAttr().getValue().getSExtValue();
+}
+
+LogicalResult VSortOp::verify() {
+  // tmpBuf can be null
+  auto tmpBuf = getTempBuffer();
+  if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
+    return emitOpError() << "temp_buffer'rank should be one";
+  }
+
+  int64_t sortAxis = this->getSignedSortAxis();
+  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
+  if (sortAxis != srcVecType.getRank() - 1 && sortAxis != -1) {
+    return emitOpError() << "Currently only tail axis sorting is supported";
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // VTransposeOp
 //===----------------------------------------------------------------------===//
 
@@ -712,7 +828,8 @@ LogicalResult VTransposeOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!mlir::hacc::utils::isAscend910_95(moduleOp) &&
-      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) || llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcElemType) ||
+       llvm::isa<mlir::Float8E5M2Type>(srcElemType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (permutation.empty()) {
     return emitOpError() << "Permutation array should not be empty.";
@@ -1014,7 +1131,14 @@ SmallVector<OpFoldResult> VPadOp::getMixedHighPad() {
 void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value indices, Value dst) {
   build(odsBuilder, odsState, result, src, indices, dst,
-        /*temp_buffer=*/nullptr);
+        /*temp_buffer=*/nullptr, /*gather_axis=*/IntegerAttr());
+}
+
+void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value indices, Value dst,
+                      int64_t axis) {
+  build(odsBuilder, odsState, result, src, indices, dst,
+        /*temp_buffer=*/nullptr, odsBuilder.getI64IntegerAttr(axis));
 }
 
 //===----------------------------------------------------------------------===//
@@ -1023,45 +1147,112 @@ void VGatherOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 LogicalResult VCumprodOp::verify() { return verifyCumOp(*this); }
 
+void VCumprodOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                       TypeRange result, Value src, Value dst,
+                       DenseI64ArrayAttr cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse));
+}
+
+void VCumprodOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                       TypeRange result, Value src, Value dst,
+                       ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims), reverse);
+}
+
 //===----------------------------------------------------------------------===//
 // VCumsumOp
 //===----------------------------------------------------------------------===//
 
 LogicalResult VCumsumOp::verify() { return verifyCumOp(*this); }
 
-//===----------------------------------------------------------------------===//
-// VSortOp
-//===----------------------------------------------------------------------===//
-
-void VSortOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                    TypeRange result, Value src, ValueRange dst,
-                    bool descending, int64_t sort_axis) {
+void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      DenseI64ArrayAttr cumDims, bool reverse) {
   build(odsBuilder, odsState, result, src, dst,
-        /*temp_buffer=*/nullptr, descending, sort_axis);
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse));
 }
 
-Value VSortOp::getDstValue() { return getDst()[0]; }
-
-Value VSortOp::getDstIndex() {
-  assert(getDst().size() == 2 && "there should be 2 operands");
-  return getDst()[1];
+void VCumsumOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims), reverse);
 }
 
-int64_t VSortOp::getSignedSortAxis() {
-  return getSortAxisAttr().getValue().getSExtValue();
+//===----------------------------------------------------------------------===//
+// VCummaxOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult VCummaxOp::verify() { return verifyCumOp(*this); }
+
+void VCummaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      DenseI64ArrayAttr cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse),
+        /*propagate_nan=*/BoolAttr::get(odsBuilder.getContext(), true));
 }
 
-LogicalResult VSortOp::verify() {
-  // tmpBuf can be null
-  auto tmpBuf = getTempBuffer();
-  if (tmpBuf && tmpBuf.getType().getShape().size() != 1) {
-    return emitOpError() << "temp_buffer'rank should be one";
-  }
+void VCummaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims), reverse);
+}
 
-  int64_t sorAxis = this->getSignedSortAxis();
-  ShapedType srcVecType = cast<ShapedType>(getSrc().getType());
-  if (sorAxis != srcVecType.getRank() - 1 && sorAxis != -1) {
-    return emitOpError() << "Currently only tail axis sorting is supported";
-  }
-  return success();
+//===----------------------------------------------------------------------===//
+// VCumminOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult VCumminOp::verify() { return verifyCumOp(*this); }
+
+void VCumminOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      DenseI64ArrayAttr cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        /*temp_buffer=*/nullptr, cumDims,
+        BoolAttr::get(odsBuilder.getContext(), reverse),
+        /*propagate_nan=*/BoolAttr::get(odsBuilder.getContext(), true));
+}
+
+void VCumminOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, Value dst,
+                      ArrayRef<int64_t> cumDims, bool reverse) {
+  build(odsBuilder, odsState, result, src, dst,
+        DenseI64ArrayAttr::get(odsBuilder.getContext(), cumDims), reverse);
+}
+
+//===----------------------------------------------------------------------===//
+// VCmpOp
+//===----------------------------------------------------------------------===//
+
+void VCmpOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   hivm::CompareMode compare_mode) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        /*is_signed=*/true, compare_mode,
+        /*transpose=*/{}, /*broadcast=*/{});
+}
+
+void VCmpOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   hivm::CompareModeAttr compare_mode) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        /*is_signed=*/odsBuilder.getBoolAttr(true), compare_mode,
+        /*transpose=*/odsBuilder.getDenseI64ArrayAttr({}),
+        /*broadcast=*/odsBuilder.getDenseI64ArrayAttr({}));
+}
+
+void VCmpOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   hivm::CompareModeAttr compare_mode,
+                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
+        /*is_signed=*/odsBuilder.getBoolAttr(true), compare_mode, transpose,
+        broadcast);
 }

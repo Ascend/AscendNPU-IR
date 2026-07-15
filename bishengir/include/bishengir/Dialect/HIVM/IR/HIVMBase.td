@@ -56,6 +56,12 @@ def HIVM_Dialect : Dialect {
 def TensorOrMemref :
   AnyTypeOf<[AnyMemRef, AnyRankedTensor], "Tensor or Memref">;
 
+class ShapedTypeOf<list<Type> allowedTypes, list<Pred> preds = [],
+                   string summary = "Shaped Type">
+    : ShapedContainerType<allowedTypes,
+                          And<!listconcat([IsShapedTypePred], preds)>, summary,
+                          "::mlir::ShapedType">;
+
 //===----------------------------------------------------------------------===//
 // HIVM Dialect operations.
 //===----------------------------------------------------------------------===//

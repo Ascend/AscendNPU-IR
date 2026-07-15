@@ -574,6 +574,16 @@ void VCumprodOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
   results.add<RedundantVCumOp<VCumprodOp>>(context);
 }
 
+void VCummaxOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<RedundantVCumOp<VCummaxOp>>(context);
+}
+
+void VCumminOp::getCanonicalizationPatterns(::mlir::RewritePatternSet &results,
+                                            ::mlir::MLIRContext *context) {
+  results.add<RedundantVCumOp<VCumminOp>>(context);
+}
+
 void VTransposeOp::getCanonicalizationPatterns(
     ::mlir::RewritePatternSet &results, ::mlir::MLIRContext *context) {
   results.add<RedudantVTransposeOpOp>(context);
@@ -601,6 +611,12 @@ LogicalResult LoadOp::fold(hivm::LoadOp::FoldAdaptor adaptor,
 LogicalResult StoreOp::fold(hivm::StoreOp::FoldAdaptor adaptor,
                             SmallVectorImpl<OpFoldResult> &results) {
   return memref::foldMemRefCast(*this);
+}
+
+LogicalResult FixpipeOp::fold(hivm::FixpipeOp::FoldAdaptor adaptor,
+                              SmallVectorImpl<OpFoldResult> &results) {
+  Operation *fixpipeOp = *this;
+  return memref::foldMemRefCast(fixpipeOp);
 }
 
 //===----------------------------------------------------------------------===//

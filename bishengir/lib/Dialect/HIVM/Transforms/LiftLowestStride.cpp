@@ -143,9 +143,9 @@ struct VReduceOpLiftLowestStridePattern
     Value srcCast = createLiftedOperand(rewriter, op->getLoc(), src);
     Value indicesCast = nullptr;
     if (op.getIndices()) {
-      indicesCast = createLiftedOperand(rewriter, op->getLoc(), op.getIndices());
+      indicesCast =
+          createLiftedOperand(rewriter, op->getLoc(), op.getIndices());
     }
-
 
     SmallVector<Value> dstVec;
     for (Value dst : dstRange) {
@@ -153,9 +153,10 @@ struct VReduceOpLiftLowestStridePattern
       dstVec.push_back(dstCast);
     }
 
-    rewriter.create<hivm::VReduceOp>(
-        op->getLoc(), TypeRange(), srcCast, ValueRange(dstVec),
-        op.getTempBuffer(), op.getArithAttr(), op.getReduceDimsAttr(), indicesCast);
+    rewriter.create<hivm::VReduceOp>(op->getLoc(), TypeRange(), srcCast,
+                                     ValueRange(dstVec), op.getTempBuffer(),
+                                     op.getArithAttr(), op.getReduceDimsAttr(),
+                                     indicesCast);
 
     // Erase old op
     rewriter.eraseOp(op);
@@ -415,6 +416,8 @@ static void registerOne(RewritePatternSet &patterns) {
                   std::is_same_v<OpType, hivm::VGatherMaskOp> ||
                   std::is_same_v<OpType, hivm::VCumsumOp> ||
                   std::is_same_v<OpType, hivm::VCumprodOp> ||
+                  std::is_same_v<OpType, hivm::VCumminOp> ||
+                  std::is_same_v<OpType, hivm::VCummaxOp> ||
                   std::is_same_v<OpType, hivm::VSortOp>)) {
     patterns.add<ElemwiseOpLiftLowestStridePattern<OpType>>(
         patterns.getContext());
