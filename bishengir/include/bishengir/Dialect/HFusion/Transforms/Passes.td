@@ -113,6 +113,22 @@ def AutoVectorizeVerifier
   ];
 }
 
+def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::FuncOp"> {
+  let summary = "Perform elemwise op fusion and generalization before vectorization";
+  let constructor = "::mlir::hfusion::createPreVectorizationFusionPass()";
+  let dependentDialects = ["linalg::LinalgDialect", "annotation::AnnotationDialect",
+                           "hfusion::HFusionDialect"];
+  let options = [
+    Option<"enableTritonCompile", "enable-triton-compile",
+           "bool", "false", "Enable Triton compile.">,
+    Option<"maxFusedElementwiseOps", "max-fused-elementwise-ops", "int", "-1",
+           "Maximum number of elementwise ops to combine into one fused "
+           "linalg.generic (-1 means unlimited).">,
+    Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
+           "Enable conservative vector function stack slot limit.">
+  ];
+}
+
 def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
  	   let summary = "tree-reduce-v2";
  	   let constructor = "mlir::hfusion::createTreeReduceV2Pass()";

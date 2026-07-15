@@ -45,6 +45,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   OutlineVectorFunction.cpp
   PackTilingData.cpp
   PrepareI1Nx1ForVectorization.cpp
+  PreVectorizationFusion.cpp
   PullSliceIntoVectorFunction.cpp
   ReCacheIO.cpp
   RemoveCacheIO.cpp
@@ -85,6 +86,8 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   BiShengIRAnnotationDialect
   BiShengIRScopeDialect
   BiShengIRScopeUtils
+  BiShengIRVFFusion
+  BiShengIRHFusionToHIVM
   MLIRAffineDialect
   MLIRArithDialect
   MLIRBufferizationDialect
