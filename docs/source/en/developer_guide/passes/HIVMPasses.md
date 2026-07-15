@@ -98,6 +98,10 @@ to be composed to the combination of f32 to f16 cast op and f16 to i8 cast op.
 In dynamic cases, create annotation.markOp with attr buffer_size_in_byte for allocated extra
 buffer, the value of buffer_size_in_byte is same as the src or dst operand of original op.
 
+Also expands scalar `arith.fptoui` f32→i64 (no native scalar fptoui), skips
+`hivm.vector_function` kernels, and skips reduce-init seeding on reg-based
+arch (`isRegBasedArch`).
+
 ## `-hivm-enable-multi-buffer`
 
 _Enable multi buffer_
@@ -131,6 +135,9 @@ _Infer data layout for HIVM Ops_
 ## `-hivm-infer-func-core-type`
 
 _Infer the core type of each function_
+
+On Ascend310B / V300, skips mix-kernel analysis and forces module AIV (with AIC
+marking for `mmadL1` parents). Gather/scatter contribute vector core type.
 
 ## `-hivm-infer-mem-scope`
 
@@ -232,6 +239,11 @@ _Lower CreateSyncBlockLockOp to ViewOp_
 
 _Lower hivm ops to loops_
 
+Lowers selected HIVM ops to scalar `scf.for` nests. Gates include i64,
+HW-unsupported scalar operands, SIMT VF (`hivm.vf_mode = SIMT`), and on
+reg-based arch only index-reduce ops with illegal template-lib geometry.
+SIMT-lowered loops are tagged `map_for_to_forall`.
+
 ## `-hivm-map-forall-to-blocks`
 
 _Map forall to hivm blocks._
@@ -295,11 +307,14 @@ _Normalize hivm matmul op_
 
 _Try to optimize function output after bufferization._
 
-Try to remove unnecessary address return.### `-hivm-opt-single-point`
+Try to remove unnecessary address return.
+
+## `-hivm-opt-single-point`
 
 _Optimize single point hivm op by scalar operation._
 
 This pass optimize the single point hivm op by scalar operation.
+Supports elementwise ops including `vdiv` and unsigned `vmax`/`vmin`.
 
 ## `-hivm-plan-memory`
 

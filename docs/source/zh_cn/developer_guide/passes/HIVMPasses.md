@@ -89,6 +89,8 @@
 
 动态场景下，会为额外分配的缓冲区创建携带buffer_size_in_byte属性的annotation.markOp，该属性值与原始算子的src或dst操作数对应大小一致。
 
+此外会展开标量 `arith.fptoui` f32→i64，跳过 `hivm.vector_function` 内核，并在寄存器架构（`isRegBasedArch`）上跳过 reduce-init 播种。
+
 ## `-hivm-enable-multi-buffer`
 
 **功能：** 为算子启用多缓冲优化。
@@ -120,6 +122,8 @@
 ## `-hivm-infer-func-core-type`
 
 **功能：** 推断每个函数对应的核心类型。
+
+在 Ascend310B / V300 上跳过 mix-kernel 分析并强制模块 AIV（并对 `mmadL1` 父函数标记 AIC）。gather/scatter 计入 vector 核心类型。
 
 ## `-hivm-infer-mem-scope`
 
@@ -213,6 +217,8 @@
 
 **功能：** 将hivm算子降级为循环实现。
 
+将选定的 HIVM 算子降级为标量 `scf.for` 嵌套。门控包括 i64、硬件不支持的标量操作数、SIMT VF（`hivm.vf_mode = SIMT`），以及在寄存器架构上仅对几何不合法的 index-reduce。SIMT 降级后的循环会打上 `map_for_to_forall` 标记。
+
 ## `-hivm-map-forall-to-blocks`
 
 **功能：** 将forall循环映射到hivm块。
@@ -275,7 +281,7 @@
 
 **功能：** 通过标量运算优化单点hivm算子。
 
-该Pass借助标量操作完成单点hivm算子的优化。
+该Pass借助标量操作完成单点hivm算子的优化，覆盖包括 `vdiv` 以及无符号 `vmax`/`vmin` 在内的逐元素算子。
 
 ## `-hivm-plan-memory`
 

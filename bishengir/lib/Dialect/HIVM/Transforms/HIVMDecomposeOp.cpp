@@ -1,6 +1,6 @@
 //===------------- HIVMDecomposeOp.cpp - hivm op decompose-----------------===//
 //
-// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Copyright (c) Huawei Technologies Co., Ltd. 2025~2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -40,6 +40,7 @@
 #include "llvm/Support/RWMutex.h"
 
 #include <array>
+#include <limits>
 
 namespace mlir {
 #define GEN_PASS_DEF_HIVMDECOMPOSEOP
@@ -1073,6 +1074,13 @@ struct VReduceInitInitializing : public OpRewritePattern<hivm::VReduceOp> {
       return failure();
     }
 
+    // On reg-based arch (Ascend950/310B), skip scalar-loop init seeding; the
+    // template-lib / compiler path owns reduce init.
+    auto mod = op->getParentOfType<ModuleOp>();
+    if (hacc::utils::isRegBasedArch(mod)) {
+      return failure();
+    }
+
     static constexpr llvm::StringLiteral kAlreadyInitalizeInit =
         "already_initialize_init";
     if (op->hasAttr(kAlreadyInitalizeInit)) {
@@ -2083,6 +2091,44 @@ public:
   }
 };
 
+/// Expand scalar `arith.fptoui` f32→i64. The scalar unit has no native fptoui
+/// for this conversion; rewrite via compare/select/fptosi/or.
+///
+///   %thr = 2^63 : f32
+///   %ge  = arith.cmpf oge, %x, %thr
+///   %adj = arith.select %ge, %x - %thr, %x
+///   %s   = arith.fptosi %adj : f32 to i64          // in [0, 2^63)
+///   %res = arith.select %ge, %s | 0x8000...0, %s   // add 2^63 when x >= 2^63
+struct ExpandScalarFPToUIToI64 : public OpRewritePattern<arith::FPToUIOp> {
+  using OpRewritePattern<arith::FPToUIOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(arith::FPToUIOp op,
+                                PatternRewriter &rewriter) const override {
+    Value src = op.getOperand();
+    if (!src.getType().isF32() || !op.getType().isInteger(64)) {
+      return failure();
+    }
+
+    Location loc = op.getLoc();
+    Type i64Ty = op.getType();
+    // 2^63, exactly representable in f32 (0x5F000000).
+    Value threshold = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF32FloatAttr(0x1p63f));
+    Value ge = rewriter.create<arith::CmpFOp>(loc, arith::CmpFPredicate::OGE,
+                                              src, threshold);
+    Value shifted = rewriter.create<arith::SubFOp>(loc, src, threshold);
+    Value adjusted = rewriter.create<arith::SelectOp>(loc, ge, shifted, src);
+    Value signedConv = rewriter.create<arith::FPToSIOp>(loc, i64Ty, adjusted);
+    // Re-apply the high bit (add 2^63) when the input was >= 2^63.
+    Value highBit = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getI64IntegerAttr(std::numeric_limits<int64_t>::min()));
+    Value withHighBit = rewriter.create<arith::OrIOp>(loc, signedConv, highBit);
+    Value res =
+        rewriter.create<arith::SelectOp>(loc, ge, withHighBit, signedConv);
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+};
+
 struct HIVMDecomposeOpPass
     : public impl::HIVMDecomposeOpBase<HIVMDecomposeOpPass> {
   void runOnOperation() override;
@@ -2091,7 +2137,8 @@ struct HIVMDecomposeOpPass
 
 void HIVMDecomposeOpPass::runOnOperation() {
   auto funcOp = getOperation();
-  if (hacc::utils::isHost(funcOp))
+  if (hacc::utils::isHost(funcOp) ||
+      funcOp->hasAttr(hivm::VectorFunctionAttr::name))
     return;
 
   RewritePatternSet patterns(&getContext());
@@ -2109,7 +2156,7 @@ void HIVMDecomposeOpPass::runOnOperation() {
                DecomposeI32ScalarExtOp<arith::MulSIExtendedOp>,
                DecomposeI32ScalarExtOp<arith::MulUIExtendedOp>,
                DecomposeVSubScalarOp, DecomposeVDeinterleaveOp,
-               DecomposeConv3dOp,
+               DecomposeConv3dOp, ExpandScalarFPToUIToI64,
                AtomicStoreOpLowering, AtomicCasOpLowering, AtomicXchgOpLowering,
                AtomicRMWOpLowering, HIVMSetAtomicOpLowering,
                VSelOpLowering>(&getContext());

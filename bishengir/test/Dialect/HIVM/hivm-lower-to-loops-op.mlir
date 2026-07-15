@@ -4215,3 +4215,16 @@ func.func @test_vadd_2d_i64() {
                 outs(%dst : memref<8x8xi64, #hivm.address_space<ub>>) broadcast = [0, 1]
   return
 }
+// -----
+// SIMT VF forces scalar-loop lowering even for f32 elementwise ops, and tags
+// nested scf.for with map_for_to_forall.
+// CHECK-LABEL: func.func @test_simt_vf_vadd_f32_map_for_to_forall
+func.func @test_simt_vf_vadd_f32_map_for_to_forall(%arg0: memref<8xf32>, %arg1: memref<8xf32>, %arg2: memref<8xf32>) {
+  // CHECK: scf.for
+  // CHECK: arith.addf
+  // CHECK: } {map_for_to_forall}
+  hivm.hir.vadd {hivm.vf_mode = #hivm.vf_mode<SIMT>}
+      ins(%arg0, %arg1 : memref<8xf32>, memref<8xf32>)
+      outs(%arg2 : memref<8xf32>)
+  return
+}

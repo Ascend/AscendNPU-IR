@@ -1,6 +1,6 @@
 //===------------- HIVMOptSinglePoint.cpp - optimize single point op-------===//
 //
-// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Copyright (c) Huawei Technologies Co., Ltd. 2025~2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -262,11 +262,14 @@ void HIVMOptSinglePointOpPass::runOnOperation() {
       SinglePointEltVecOp<hivm::VAddOp, arith::AddFOp, arith::AddIOp, None>,
       SinglePointEltVecOp<hivm::VSubOp, arith::SubFOp, arith::SubIOp, None>,
       SinglePointEltVecOp<hivm::VMulOp, arith::MulFOp, arith::MulIOp, None>,
+      SinglePointEltVecOp<hivm::VDivOp, arith::DivFOp, arith::DivSIOp,
+                          arith::DivUIOp>,
       SinglePointEltVecOp<hivm::VAbsOp, math::AbsFOp, math::AbsIOp, None>,
       SinglePointEltVecOp<hivm::VSqrtOp, math::SqrtOp, math::SqrtOp, None>,
-      SinglePointEltVecOp<hivm::VMaxOp, arith::MaximumFOp, arith::MaxSIOp, None>,
+      SinglePointEltVecOp<hivm::VMaxOp, arith::MaximumFOp, arith::MaxSIOp,
+                          arith::MaxUIOp>,
       SinglePointEltVecOp<hivm::VMinOp, arith::MinimumFOp, arith::MinSIOp,
-                          None>>(&getContext());
+                          arith::MinUIOp>>(&getContext());
 
   if (failed(applyPatternsGreedily(funcOp, std::move(patterns))))
     signalPassFailure();

@@ -56,6 +56,14 @@ func.func @test_f32_element_scalar_opt(%arg0: memref<1x1xf32>,
   hivm.hir.vmul ins(%arg0, %arg1 : memref<1x1xf32>, memref<1x1xf32>)
                 outs(%arg2 : memref<1x1xf32>)
 
+  // CHECK-NOT: hivm.hir.vdiv
+  // CHECK: memref.load
+  // CHECK-NEXT: memref.load
+  // CHECK-NEXT: arith.divf
+  // CHECK-NEXT: memref.store
+  hivm.hir.vdiv ins(%arg0, %arg1 : memref<1x1xf32>, memref<1x1xf32>)
+                outs(%arg2 : memref<1x1xf32>)
+
   // CHECK-NOT: hivm.hir.vabs
   // CHECK: memref.load
   // CHECK-NEXT: math.absf

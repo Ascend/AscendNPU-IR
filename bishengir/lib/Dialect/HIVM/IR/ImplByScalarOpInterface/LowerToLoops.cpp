@@ -1,6 +1,6 @@
 //===- LowerToLoops.cpp - HIVM Impl by scalar interface -------------------===//
 //
-// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Copyright (c) Huawei Technologies Co., Ltd. 2025~2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -47,8 +47,12 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
   llvm::SmallVector<Value> resTensors;
   Value resTensor;
   if constexpr (std::is_same<hivm::VMulOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VMulOp, arith::MulIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (getElementTypeOrSelf(op.getOperand(0)).isInteger())
+      resTensor = getScalarResult<hivm::VMulOp, arith::MulIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMulOp, arith::MulFOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMulExtOp, HIVMOP>::value) {
     auto mulextOp = rewriter.create<arith::MulSIExtendedOp>(
@@ -65,28 +69,52 @@ createScalarComputeOp(RewriterBase &rewriter, HIVMOP op,
         rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VDivOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VDivOp, arith::DivSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (getElementTypeOrSelf(op.getOperand(0)).isInteger())
+      resTensor = getScalarResult<hivm::VDivOp, arith::DivSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VDivOp, arith::DivFOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VAddOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VAddOp, arith::AddIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (getElementTypeOrSelf(op.getOperand(0)).isInteger())
+      resTensor = getScalarResult<hivm::VAddOp, arith::AddIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VAddOp, arith::AddFOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VSubOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VSubOp, arith::SubIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (getElementTypeOrSelf(op.getOperand(0)).isInteger())
+      resTensor = getScalarResult<hivm::VSubOp, arith::SubIOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VSubOp, arith::SubFOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMinOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (isa<FloatType>(getElementTypeOrSelf(op.getOperand(0))))
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinimumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMinOp, arith::MinSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VMaxOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (isa<FloatType>(getElementTypeOrSelf(op.getOperand(0))))
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaximumFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VMaxOp, arith::MaxSIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VAbsOp, HIVMOP>::value) {
-    resTensor = getScalarResult<hivm::VAbsOp, math::AbsIOp>(
-        rewriter, op.getLoc(), scalarInputs);
+    if (isa<FloatType>(getElementTypeOrSelf(op.getOperand(0))))
+      resTensor = getScalarResult<hivm::VAbsOp, math::AbsFOp>(
+          rewriter, op.getLoc(), scalarInputs);
+    else
+      resTensor = getScalarResult<hivm::VAbsOp, math::AbsIOp>(
+          rewriter, op.getLoc(), scalarInputs);
     resTensors.push_back(resTensor);
   } else if constexpr (std::is_same<hivm::VCmpOp, HIVMOP>::value) {
     arith::CmpIPredicate predType;
@@ -198,7 +226,15 @@ void decomposeVectorOpToScalarOpImpl(RewriterBase &rewriter, HIVMOP op) {
   for (int i = 0; i < dstType.getRank(); i++) {
     loopDims.insert(i);
   }
-  createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
+  std::vector<scf::ForOp> loops =
+      createNestedLoops(rewriter, op.getLoc(), dst, loopDims, buildLoopBody);
+
+  // SIMT VF kernels need nested scf.for tagged so MapForToForall can promote
+  // them later.
+  if (util::isSIMTVF(op.getOperation())) {
+    for (scf::ForOp loop : loops)
+      loop->setAttr(kMapForToForallAttrName, rewriter.getUnitAttr());
+  }
 }
 
 template <typename HIVMOP>

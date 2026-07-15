@@ -413,6 +413,9 @@ bool isGMPointerCastOp(Operation *op);
 
 bool isArgminOrArgmax(ReduceOperation op);
 
+/// Return true if `op` (typically a func/VF) runs in SIMT vector-function mode.
+bool isSIMTVF(Operation *op);
+
 void validateMultiBufferAttr(mlir::DictionaryAttr attrDict);
 } // namespace util
 } // namespace hivm
