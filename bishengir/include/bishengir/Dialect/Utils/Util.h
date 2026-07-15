@@ -69,6 +69,7 @@ static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
+const llvm::StringLiteral padConst = "pad_const";
 
 namespace debugger {
 
@@ -437,6 +438,12 @@ Value tracebackMemRef(Value memrefVal);
 /// Return `std::nullopt` if max-iteration is reached, or that the value doesn't
 /// originate from a alloc op.
 std::optional<memref::AllocOp> tracebackMemRefToAlloc(Value memrefVal);
+
+/// Try to trace back the current mermef-typed value to the source
+/// `mermef.alloc` or `memref` block argument.
+/// Return `std::nullopt` if max-iteration is reached, or that the value doesn't
+/// originate from a alloc op or block argument.
+std::optional<Value> tracebackMemRefToAllocOrBlockArgument(Value memrefVal);
 
 /// Try to trace back the current mermef-typed value to the source values.
 SmallVector<Value> tracebackMemRefAllocAndAlias(Value memrefVal);

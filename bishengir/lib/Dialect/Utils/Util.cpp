@@ -1215,6 +1215,14 @@ std::optional<memref::AllocOp> utils::tracebackMemRefToAlloc(Value memrefVal) {
   return std::nullopt;
 }
 
+std::optional<Value>
+utils::tracebackMemRefToAllocOrBlockArgument(Value memrefVal) {
+  auto tracedValue = utils::tracebackMemRef(memrefVal);
+  return utils::isAllocLikeOp(tracedValue) || isa<BlockArgument>(tracedValue)
+             ? tracedValue
+             : std::optional<Value>();
+}
+
 SmallVector<Value> utils::tracebackMemRefAllocAndAlias(Value memrefVal) {
   return utils::tracebackMemRefVecByTargetFn(memrefVal, [](Value val) {
     return utils::isAllocLikeOp(val) || utils::isCollapseShapeOp(val) ||

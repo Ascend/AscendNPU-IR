@@ -307,6 +307,21 @@ bool isFillOp(Operation *op);
 
 bool shouldUseTileReductionUsingForV2(Operation *op);
 
+bool isSimtOps(Operation *op);
+
+// Checks if a linalg op has only one element
+bool isSingleElementLinalgOp(linalg::LinalgOp op);
+
+// Checks if a linalg op has only zero element
+bool isZeroElementLinalgOp(linalg::LinalgOp op);
+
+// Check if the operation is certain ones (fill, transpose)
+// that can be fused into a matmul
+bool opCanFuseIntoMatmul(Operation *op);
+
+// Check if tensor is a linalg.fill op with zero value or a tensor.empty op
+bool isZeroOrEmptyTensor(Value op);
+
 namespace util {
 constexpr static unsigned int VL = 256;
 constexpr static unsigned int BL = VL / 8;
@@ -329,6 +344,8 @@ hivm::AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
 bool hasDynamicShapeOperand(Operation *op);
 
 bool hasCustomOp(Operation *op);
+
+bool isFromFunctionArg(mlir::Value v);
 
 } // namespace util
 
