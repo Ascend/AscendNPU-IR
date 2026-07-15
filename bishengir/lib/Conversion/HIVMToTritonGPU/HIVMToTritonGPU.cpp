@@ -20,6 +20,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/MLIRContext.h"
@@ -66,6 +67,23 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   auto module = getOperation();
   auto &ctx = getContext();
 
+  // FIXME: Compose the parent reinterpret_cast offset into the subview offset
+  // instead of rejecting this nested view.
+  bool hasUnsupportedNestedView = false;
+  module->walk([&](memref::SubViewOp subviewOp) {
+    auto parentCast =
+        subviewOp.getSource().getDefiningOp<memref::ReinterpretCastOp>();
+    if (!parentCast || parentCast.getStaticOffsets().front() == 0)
+      return;
+    subviewOp.emitOpError(
+        "parent memref.reinterpret_cast before memref.subview is not "
+        "supported: parent view offset is not yet composed");
+    hasUnsupportedNestedView = true;
+  });
+  if (hasUnsupportedNestedView) {
+    return signalPassFailure();
+  }
+
   // Stage1: Convert operators in function body
   ConversionTarget stage1Target(ctx);
   stage1Target
@@ -95,7 +113,7 @@ void HIVMToTritonGPUConversionPass::runOnOperation() {
   if (failed(applyPartialConversion(module, stage1Target,
                                     std::move(stage1Patterns)))) {
     module->emitError("Stage1 failed: HIVM/Bufferization Op conversion failed");
-    signalPassFailure();
+    return signalPassFailure();
   }
 
   // Remove redundant memref.alloc
