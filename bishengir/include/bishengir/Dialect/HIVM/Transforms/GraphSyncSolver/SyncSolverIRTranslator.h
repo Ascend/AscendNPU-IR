@@ -128,14 +128,16 @@ private:
   template <typename OP>
   std::unique_ptr<OperationBase> getLoadStoreOp(OP op, OperationBase *parentOp);
 
-  std::unique_ptr<OperationBase> getPipeInterfaceOp(hivm::OpPipeInterface op,
-                                                    OperationBase *parentOp);
+  std::unique_ptr<OperationBase>
+  getDestinationStyleInterfaceOp(Operation *op, OperationBase *parentOp);
 
   std::unique_ptr<OperationBase> getTensorExtractOp(tensor::ExtractOp extractOp,
                                                     OperationBase *parentOp);
 
   std::unique_ptr<OperationBase> getCallOp(func::CallOp callOp,
                                            OperationBase *parentOp);
+
+  bool isVectorOpResult(Value val);
 
   std::optional<hivm::PIPE>
   getInferredPipe(Operation *op, TCoreType coreType,

@@ -338,9 +338,69 @@ IRTranslator::getDecomposedMmadl1(hivm::MmadL1Op mmadl1Op,
   return outerScopeOp;
 }
 
+bool IRTranslator::isVectorOpResult(Value value) {
+  if (auto resultVal = dyn_cast<OpResult>(value)) {
+    if (auto op = dyn_cast<CoreTypeInterface>(resultVal.getDefiningOp())) {
+      if (auto coreType = op.getCoreType()) {
+        if (coreType.value() == TCoreType::VECTOR) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
 std::optional<hivm::PIPE>
 IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
                               const llvm::SmallVector<Value> &writeMemInfo) {
+  // TODO: A3/A5 DIFF
+  if (options.isRegBasedArch) {
+    if (!isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op) ||
+        coreType == TCoreType::CUBE_OR_VECTOR) {
+      return {};
+    }
+    if (coreType == TCoreType::VECTOR) {
+      if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+        if (isVectorOpResult(insertSliceOp.getDest())) {
+          return PIPE::PIPE_V;
+        }
+      }
+    }
+    if (writeMemInfo.empty()) {
+      return {};
+    }
+    std::optional<hivm::PIPE> pipe;
+    for (auto &memInfoVal : writeMemInfo) {
+      auto addressSpaceOpt = GetBufferSpaceAttr(memInfoVal);
+      if (!addressSpaceOpt.has_value()) {
+        return {};
+      }
+      auto addressSpace = addressSpaceOpt.value().getAddressSpace();
+      std::optional<hivm::PIPE> curPipe;
+      if (isa<hivm::VBrcOp>(op) && (addressSpace == AddressSpace::L1)) {
+        curPipe = PIPE::PIPE_MTE2;
+      }
+      if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+          (coreType == TCoreType::VECTOR) &&
+          (addressSpace == AddressSpace::L1)) {
+        curPipe = PIPE::PIPE_MTE3;
+      }
+      if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+          (coreType == TCoreType::VECTOR) &&
+          (addressSpace == AddressSpace::UB)) {
+        curPipe = PIPE::PIPE_V;
+      }
+      if (curPipe.has_value()) {
+        if (pipe.has_value() && curPipe != pipe.value()) {
+          return {};
+        }
+        pipe = curPipe;
+      }
+    }
+    return pipe;
+  }
+
   if (!isa<hivm::CopyOp, hivm::VBrcOp>(op) ||
       coreType == TCoreType::CUBE_OR_VECTOR || writeMemInfo.empty()) {
     return {};
@@ -372,24 +432,24 @@ IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
 }
 
 std::unique_ptr<OperationBase>
-IRTranslator::getPipeInterfaceOp(hivm::OpPipeInterface op,
-                                 OperationBase *parentOp) {
+IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
+                                             OperationBase *parentOp) {
   if (options.decomposeMmadl1Op) {
-    if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op.getOperation())) {
+    if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op)) {
       return getDecomposedMmadl1(mmadl1Op, parentOp);
     }
   }
   auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;
   if (options.isCrossCoreMode()) {
-    auto coreType = hivm::getCoreType(op.getOperation());
+    auto coreType = hivm::getCoreType(op);
     assert(llvm::succeeded(coreType));
     assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
     coreTypeVal = coreType.value();
   }
-  auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op.getOperation());
+  auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op);
   std::optional<hivm::PIPE> pipe;
   if (options.isCrossCoreMode()) {
-    if (isa<hivm::CopyOp, hivm::VBrcOp>(op)) {
+    if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op)) {
       if (auto pipeOpt = getInferredPipe(op, coreTypeVal, writeMemOps)) {
         pipe = pipeOpt.value();
       } else {
@@ -401,16 +461,16 @@ IRTranslator::getPipeInterfaceOp(hivm::OpPipeInterface op,
   if (pipe.has_value()) {
     pipeRead = pipe.value();
     pipeWrite = pipe.value();
-  } else {
-    pipeRead = op.isSinglePipeOp() ? op.getPipe() : op.getInPipe();
-    pipeWrite = op.isSinglePipeOp() ? op.getPipe() : op.getOutPipe();
+  } else if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
+    pipeRead = pipeOp.isSinglePipeOp() ? pipeOp.getPipe() : pipeOp.getInPipe();
+    pipeWrite =
+        pipeOp.isSinglePipeOp() ? pipeOp.getPipe() : pipeOp.getOutPipe();
   }
   assert(pipeRead != hivm::PIPE::PIPE_UNASSIGNED &&
          pipeWrite != hivm::PIPE::PIPE_UNASSIGNED);
-  auto rwOp = std::make_unique<RWOperation>(op.getOperation(), parentOp,
-                                            coreTypeVal, pipeRead, pipeWrite,
-                                            readMemOps, writeMemOps);
-  if (isa<UnitFlagEnabledInterface>(op.getOperation())) {
+  auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipeRead,
+                                            pipeWrite, readMemOps, writeMemOps);
+  if (isa<UnitFlagEnabledInterface>(op)) {
     rwOp->hasUnitFlagFeat = true;
     unitFlagFeaturedOps.insert(rwOp.get());
   }
@@ -440,7 +500,83 @@ IRTranslator::getTensorExtractOp(tensor::ExtractOp extractOp,
 
 std::unique_ptr<OperationBase>
 IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
-  return nullptr;
+  // TODO: A3/A5 DIFF
+  if (!options.isRegBasedArch) {
+    return nullptr;
+  }
+  ModuleOp module = funcOp->getParentOfType<ModuleOp>();
+  SymbolTable symtab(module);
+  auto calledFuncOp = symtab.lookup<func::FuncOp>(callOp.getCallee());
+  if (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+    return nullptr;
+  }
+  llvm::SetVector<Value> readMemVals, writeMemVals;
+  auto handleRWValue = [&](Value val, hivm::MemoryEffect memoryEffect) {
+    for (auto &rwVal : getMemoryOps({val}, calledFuncOp)) {
+      if (auto blockArg = dyn_cast<BlockArgument>(rwVal)) {
+        auto callArg = callOp->getOperand(blockArg.getArgNumber());
+        if (memoryEffect == MemoryEffect::READ ||
+            memoryEffect == MemoryEffect::READ_WRITE) {
+          readMemVals.insert(callArg);
+        }
+        if (memoryEffect == MemoryEffect::WRITE ||
+            memoryEffect == MemoryEffect::READ_WRITE) {
+          writeMemVals.insert(callArg);
+        }
+      }
+    }
+  };
+
+  // handle function arguments annotated with memory effect attributes
+  for (auto [i, arg] : llvm::enumerate(calledFuncOp.getArguments())) {
+    // get the attribute by name for i-th argument
+    auto memEffectAttr =
+        calledFuncOp.getArgAttr(i, hivm::MemoryEffectAttr::name);
+    if (!memEffectAttr) {
+      continue;
+    }
+    auto effect = cast<hivm::MemoryEffectAttr>(memEffectAttr).getEffect();
+    auto callArg = callOp->getOperand(i);
+    // logic based on the attribute value
+    if (effect == hivm::MemoryEffect::READ) {
+      handleRWValue(callArg, MemoryEffect::READ);
+    } else if (effect == hivm::MemoryEffect::WRITE) {
+      handleRWValue(callArg, MemoryEffect::WRITE);
+    } else if (effect == hivm::MemoryEffect::READ_WRITE) {
+      handleRWValue(callArg, MemoryEffect::READ_WRITE);
+    }
+  }
+
+  calledFuncOp.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (auto loadOp = dyn_cast<affine::AffineLoadOp>(op)) {
+      handleRWValue(loadOp.getMemRef(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<affine::AffineStoreOp>(op)) {
+      handleRWValue(storeOp.getMemRef(), MemoryEffect::WRITE);
+    } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
+      handleRWValue(loadOp.getMemRef(), MemoryEffect::READ);
+    } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
+      handleRWValue(storeOp.getMemRef(), MemoryEffect::WRITE);
+    } else if (auto tensorExtractOp = dyn_cast<tensor::ExtractOp>(op)) {
+      handleRWValue(tensorExtractOp.getTensor(), MemoryEffect::READ);
+    } else if (auto transferReadOp = dyn_cast<vector::TransferReadOp>(op)) {
+      handleRWValue(transferReadOp.getSource(), MemoryEffect::READ);
+    } else if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
+      handleRWValue(transferWriteOp.getVector(), MemoryEffect::READ);
+      handleRWValue(transferWriteOp.getSource(), MemoryEffect::WRITE);
+    } else if (auto gatherOp = dyn_cast<vector::GatherOp>(op)) {
+      handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
+    }
+  });
+
+  auto readMemValsVec = getMemoryOps(readMemVals.takeVector());
+  auto writeMemValsVec = getMemoryOps(writeMemVals.takeVector());
+
+  auto coreTypeVal = options.isIntraCoreMode() ? hivm::TCoreType::CUBE_OR_VECTOR
+                                               : hivm::TCoreType::VECTOR;
+  auto rwOp = std::make_unique<RWOperation>(
+      callOp.getOperation(), parentOp, coreTypeVal, hivm::PIPE::PIPE_V,
+      hivm::PIPE::PIPE_V, readMemValsVec, writeMemValsVec);
+  return rwOp;
 }
 
 bool IRTranslator::isUnlikelyCondition(Condition *condOp) {
@@ -602,8 +738,17 @@ std::unique_ptr<Scope> IRTranslator::funcIrBuilder(Region &region,
         continue;
       }
 
-      if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
-        if (auto rwOp = getPipeInterfaceOp(pipeOp, parScope)) {
+      // TODO: A3/A5 DIFF
+      Operation *dstStyleOp = nullptr;
+      if (options.isRegBasedArch) {
+        if (auto dsiOp = dyn_cast<DestinationStyleOpInterface>(op)) {
+          dstStyleOp = dsiOp;
+        }
+      } else if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
+        dstStyleOp = pipeOp;
+      }
+      if (dstStyleOp) {
+        if (auto rwOp = getDestinationStyleInterfaceOp(dstStyleOp, parScope)) {
           parScope->body.push_back(std::move(rwOp));
         }
       } else if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {

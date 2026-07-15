@@ -66,7 +66,10 @@ void GraphSyncSolverPass::runOnOperation() {
   bool isMemBasedArch = true;
   bool isRegBasedArch = false;
   assert(isMemBasedArch != isRegBasedArch);
-
+  
+  if (isRegBasedArch && funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+    return;
+  }
   SyncSolverOptions options(SyncMode::INTRA_CORE_SYNC, isMemBasedArch,
                             isRegBasedArch);
   options.enableUnitFlagFeature = this->enableUnitFlag;
