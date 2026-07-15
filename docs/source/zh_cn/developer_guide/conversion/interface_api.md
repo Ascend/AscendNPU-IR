@@ -22,9 +22,9 @@
   LIR -> Binary             （机器码生成）
 ```
 
-- Linalg / Tensor层：使用标准MLIR dialect表达算子语义，支持`Elemwise`、`Broadcast`、`Reduce`、`Transpose`、`Concat`等运算，HFusion自动完成算子融合、切分和调度。
-- HFusion层：提供昇腾NPU感知的Named Op（如`hfusion.elemwise_unary`、`hfusion.cast`、`hfusion.select`、`hfusion.reduce_with_index`等），支持`tensor`语义，自动完成bufferization、tiling和调度。
-- HIVM层：直接映射NPU硬件指令，显式控制存储层级（GM/UB/L1/L0）、计算流水线（Vector/Cube/MTE）和同步原语，支持精细粒度的性能调优。
+- **Linalg / Tensor层**：使用标准MLIR dialect表达算子语义，支持`Elemwise`、`Broadcast`、`Reduce`、`Transpose`、`Concat`等运算，HFusion自动完成算子融合、切分和调度。
+- **HFusion层**：提供昇腾NPU感知的Named Op（如`hfusion.elemwise_unary`、`hfusion.cast`、`hfusion.select`、`hfusion.reduce_with_index`等），支持`tensor`语义，自动完成bufferization、tiling和调度。
+- **HIVM层**：直接映射NPU硬件指令，显式控制存储层级（GM/UB/L1/L0）、计算流水线（Vector/Cube/MTE）和同步原语，支持精细粒度的性能调优。
 
 上述多级接口支持自定义DSL和生态框架灵活对接。Triton和PyTorch等框架通过IR转换接入上述流程，实现自定义算子在昇腾NPU上的高性能运行。
 
@@ -37,7 +37,7 @@
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
 | `-target` | `Ascend<Name>` | 目标设备，用于获取核数、片上内存大小等硬件规格，可通过查询`npu-smi info` |
-| `-block-dim` | 1 | 指定使用的`block`数量，编译后kernel携带`hacc.block_dim`属性 |
+| `-block-dim` | 1 | 指定使用的block数量，编译后kernel携带`hacc.block_dim`属性 |
 | `-enable-hfusion-compile` | `false` | 使能HFusion编译流程（融合、调度、切分） |
 | `-enable-hivm-compile` | `true` | 使能HIVM编译流程（转换到HIVM指令并优化） |
 | `-enable-torch-compile` | `false` | 使能Torch-MLIR编译流程 |
@@ -75,7 +75,7 @@ TileLang（tilelang-ascend）是面向昇腾NPU的领域特定语言，基于til
 
 AscendNPU IR支持框架（PyTorch/TensorFlow/MindSpore）接入，有两种方式：
 
-- DSL接入方式：如Triton、TileLang
-- IR接入方式：如Torch IR、Linalg/HFusion IR、HIVM IR
+- **DSL接入方式**：如Triton、TileLang
+- **IR接入方式**：如Torch IR、Linalg/HFusion IR、HIVM IR
 
 详细的框架接入说明请参考[框架接入](framework_interface.md)。

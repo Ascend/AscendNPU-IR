@@ -119,7 +119,7 @@ operation ::= `mathExt.ldep` $lhs `,` $rhs (`fastmath` `` $fastmath^)?
 
 ### IntegerOverflowFlags
 
-**功能：** 标记整数溢出行为的语义属性（如nsw表示No Signed Wrap）。
+**功能：** 标记整数溢出行为的语义属性（如`nsw`表示No Signed Wrap）。
 
 | 枚举符号 | 数值   | 标识字符串 |
 | :------: | :----: | ---------- |

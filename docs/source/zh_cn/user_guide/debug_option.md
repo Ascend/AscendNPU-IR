@@ -6,7 +6,7 @@
 
 - hfusion层的`PrintOp`：在图编译和融合阶段使用，用于打印中间计算结果和张量信息。
 
-- hivm层的DebugOp：在更低级的HIVM层执行时使用，用于打印中间计算结果和张量信息。
+- hivm层的`DebugOp`：在更低级的HIVM层执行时使用，用于打印中间计算结果和张量信息。
 
 接下来将从AscendNPU IR的视角出发，介绍这两类调试算子的接口以及使用方式，并以Triton前端为例，演示如何在算子开发全流程中注入并使用这些调试能力。
 
@@ -29,7 +29,7 @@ hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 
 **使用说明**：
 
-可以在`hfusion Pass`阶段或手动构造IR时，显式添加`PrintOp`节点。
+可以在hfusion Pass阶段或手动构造IR时，显式添加`PrintOp`节点。
 如下：当我们想打印`load`进来的结果时我们可以手动在hfusion阶段IR中添加`hfusion.print`以实现该效果。
 
 ```mlir

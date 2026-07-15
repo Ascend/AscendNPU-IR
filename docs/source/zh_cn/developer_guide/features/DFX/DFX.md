@@ -1,10 +1,10 @@
 # 调试模块（DFX）
 
-## device_print
+## 硬件背景
 
-### 硬件背景
+**device_print**：
 
-`device_print`是Triton框架在昇腾NPU上提供的一个设备端调试工具，允许开发者在算子内核执行过程中直接打印标量/矢量信息，核心流程如下：
+device_print是Triton框架在昇腾NPU上提供的一个设备端调试工具，允许开发者在算子内核执行过程中直接打印标量/矢量信息，核心流程如下：
 
 ```mermaid
 flowchart LR
@@ -20,27 +20,27 @@ flowchart LR
     end
 ```
 
-关键硬件资源约束：
+**关键硬件资源约束**：
 
 - UB打印缓冲区：每个aicore固定分配16 KB空间用于数据暂存，且同一个aicore内的所有打印操作共享这16 KB缓冲区，写满后新数据提示warning，大小超过缓冲区最大值后丢弃。
 
 - 多核并发：每个aicore独立执行内核代码，最终host侧呈现每个核的打印结果。
 
-### 算法原理
+## 算法原理
 
 实现原理涉及Triton Ascend、AscendNPU IR、毕昇编译器三部分配合，实现该功能主要以AscendNPU IR为重点展开说明。
 
-#### Triton Ascend
+### Triton Ascend
 
 生成初始`.ttadapter` IR过程中会将triton侧的`tl.device_print`转换成`func.call @triton_print_*`接口。
 
-#### AscendNPU IR
+### AscendNPU IR
 
 接收到`.ttadapter` IR之后在AscendNPU IR阶段主要会经历如下变换：
 
-##### AdaptTritonKernel
+#### AdaptTritonKernel
 
-将`func.call @triton_print_*`接口转换成`hfusion.print`接口
+将`func.call @triton_print_*`接口转换成`hfusion.print`接口。
 
 ```mlir
 // Before AdaptTritonKernel
@@ -58,7 +58,7 @@ memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8x
 hfusion.print " x: " {hex = false} %0 : tensor<8xi64>
 ```
 
-##### HFusionToHIVM
+#### HFusionToHIVM
 
 将`hfusion.print`接口转换成`hivm.hir.debug`接口。
 
@@ -78,7 +78,7 @@ memref.copy %reinterpret_cast, %alloc : memref<8xi64, strided<[1]>> to memref<8x
 hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %0 : tensor<8xi64>
 ```
 
-##### InlineFixpipe
+#### InlineFixpipe
 
 插入fixpipe以用于`hivm.print`，该`hivm.print`会打印`mmad`结果，而`mmad`结果是`scf.for`中的`yield`。
 
@@ -101,7 +101,7 @@ hivm.hir.debug {debugtype = "print", hex = false, prefix = " x: ", tcoretype = #
 }
 ```
 
-##### InsertNZ2NDForDebug
+#### InsertNZ2NDForDebug
 
 `device_print`仅支持UB/GM上的数据打印，因此当打印L1的数据时，需要将数据先从L1搬至GM。该Pass的作用就是：当识别到`hivm::MmadL1Op`时，检查该op的输入；若输入被`hivm::DebugOp`用到，则需要申请一块`workspace`的大小，然后插入`NZ2ND`的op，确保搬至GM打印。
 
@@ -143,13 +143,13 @@ hivm.hir.load ins(%reinterpret_cast_0 : memref<4x1xf32, strided<[?, 1], offset: 
 hivm.hir.debug {debugtype = "print", hex = false, prefix = " a_vals: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %15 : tensor<1x4xf32>
 ```
 
-##### SplitMixKernel
+#### SplitMixKernel
 
 `mix`类用例`Debug` op会在该Pass内先进行`InferCoreType`推断出精确的`coretype`（VECTOR/CUBE），默认是CUBE_OR_VECTOR，然后对`mix`函数进行拆分后生成纯`cube`函数和纯`vector`函数，这将决定`Debug` op最终在`cube`核上运行还是`vector`核上运行。
 
-##### InsertInitAndFinishForDebug
+#### InsertInitAndFinishForDebug
 
-若存在`Debug` op则将`hivm.hir.init_print`调用添加到每个函数开头，将`hivm.hir.finish_print`添加到每个`hivm.hir.print`之后。`hivm.hir.init_print`用于打印之前的准备工作，`hivm.hir.finish_print`用于打印之后的工作，目前没有特别具体作用，为将来扩展`device_print`预留了接口
+若存在`Debug` op则将`hivm.hir.init_print`调用添加到每个函数开头，将`hivm.hir.finish_print`添加到每个`hivm.hir.print`之后。`hivm.hir.init_print`用于打印之前的准备工作，`hivm.hir.finish_print`用于打印之后的工作，目前没有特别具体作用，为将来扩展`device_print`预留了接口。
 
 ```mlir
 // Before InsertInitAndFinishForDebug
@@ -179,23 +179,23 @@ hivm.hir.debug {debugtype = "print", finishInserted = 0 : i32, hex = false, pref
 hivm.hir.finish_debug
 ```
 
-##### ConvertHIVMToStandard
+#### ConvertHIVMToStandard
 
-将`hivm.hir.init_print`/`hivm.hir.print`/`hivm.hir.finish_print`转换为库函数调用
+将`hivm.hir.init_print`/`hivm.hir.print`/`hivm.hir.finish_print`转换为库函数调用。
 
-##### ConvertHIVMToLLVM
+#### ConvertHIVMToLLVM
 
-`ConvertHIVMToLLVM`引入真正的库函数，并设置print相关函数的链接为`ExternWeak`（允许在多个llvm modules中重复定义）
+`ConvertHIVMToLLVM`引入真正的库函数，并设置print相关函数的链接为`ExternWeak`（允许在多个llvm modules中重复定义）。
 
-##### Debug op库实现
+#### Debug op库实现
 
-`op`库当前实现是通过scalar打印来实现的，通过`for`循环外抛的方式调用毕昇编译器提供的`cce::printf`接口进行scalar打印
+`op`库当前实现是通过scalar打印来实现的，通过`for`循环外抛的方式调用毕昇编译器提供的`cce::printf`接口进行scalar打印。
 
-#### 毕昇编译器
+### 毕昇编译器
 
 triton-ascend产生的host侧launcher调用bisheng编译器编好的kernel并将打印缓冲区传给kernel，待kernel返回后在host launcher侧读取缓冲区并进行真正的打印。此部分代码在bisheng编译器自带的头文件中实现，并由triton-ascend自动从bisheng编译器的路径中抽取。
 
-### 接口说明
+## 接口说明
 
 通过设置环境变量`TRITON_DEVICE_PRINT=1`来开启该功能。开启后，triton-ascend侧会设置相关宏信息`__CCE_ENABLE_PRINT__`，该宏信息在毕昇编译器侧会影响是否开启打印。此外，编译`meta op`库的时候需开启`--cce-enable-print`（当前默认一直开启），以确保开启打印。
 
@@ -209,10 +209,10 @@ hfusion.print " prefix = xxx " {hex = xxx} %args : dtype
 hivm.hir.debug {debugtype = "print", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %args : dtype
 ```
 
-### 约束能力
+## 使用约束
 
-| 适用硬件 | 约束规则 |
+| 适用硬件 | 使用约束 |
 |--------|--------|
-| A3 & A5 | - 打印对象仅支持张量、标量。<br> - `device_print`打印缓冲区固定为16KB。<br> - Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br> - 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br> - 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br> - 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br> - 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
+| A3 & A5 | 1. 打印对象仅支持张量、标量。<br>2. `device_print`打印缓冲区固定为16KB。<br>3.Triton内存检测工具sanitizer与`device_print`互斥，不可同时启用。<br>4. 编码规范：单个张量单独打印，打印指令紧跟目标张量，防止张量生命周期变动引发运行异常。<br>5. 内核限制：不允许待打印算子仅作为`device_print`唯一输入。<br>6. 循环限制：`while`循环内禁止打印循环体外定义的操作数。<br>7. 超时限制：打印等待内核完成超时时间10分钟，长耗时用例开启打印会触发超时失败。 |
 | A3 | 支持打印数据类型：`bool`、`int8`、`uint8`、`int16`、`uint16`、`int32`、`uint32`、`int64`、`bfloat16`、`half`、`float32`。 |
-| A5 | - 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br> - 融合调度约束：插入`device_print`破坏VF融合边界情况下可能引发UB溢出，需减小tiling分块。<br> - 缓存资源约束：打印`fp8`张量、L1张量边界情况下可能会引发UB溢出，需减小tiling分块规避缓存溢出。 |
+| A5 | 1. 数据类型兼容：兼容A3全部类型，额外支持`fp8`。<br>2. 融合调度约束：插入`device_print`破坏VF融合边界情况下可能引发UB溢出，需减小tiling分块。<br>3. 缓存资源约束：打印`fp8`张量、L1张量边界情况下可能会引发UB溢出，需减小tiling分块规避缓存溢出。 |

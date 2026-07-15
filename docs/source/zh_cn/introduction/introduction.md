@@ -9,7 +9,7 @@
 - **分层方言与编译优化**
     - **HFusion**：基于Linalg扩展，负责硬件相对无关的优化与生态对接；支持与Arith、Math、Torch等方言的转换，以及Tensor化简、类型合法化、算子融合生成。
     - **HIVM**：面向昇腾对计算、搬运、同步进行Tile级抽象，屏蔽底层指令参数；负责CV核映射（Mix Kernel的CV融合、核间同步、CVPipeline流水与AutoSubTiling等）、核内片上内存映射与多级流水/指令映射。
-    - **HACC**：异构硬件抽象，表达Host/Device编程模型与`launch`语义；Annotation、Scope等用于`compiler hint`与作用域标记。
+    - **HACC**：异构硬件抽象，表达Host/Device编程模型与launch语义；Annotation、Scope等用于`compiler hint`与作用域标记。
 - **关键编译特性**
   支持CV融合与流水（CVPipeline、AutoSubTiling）、自动内存规划（PlanMemory）与流水同步（AutoSync）、块化与调度（AutoBlockify、AutoFlatten、AutoSchedule），以及自定义算子、DFX、CV优化等，便于在保持高层语义的前提下获得可移植性能。
 - **生态对接与开放**

@@ -2,19 +2,19 @@
 
 ## 背景
 
-Auto Blockify Pass通过高效地将逻辑块映射到硬件物理块，对Ascend兼容算子的执行进行关键优化。在我们的架构中，高效调度对性能至关重要，因此当逻辑块与物理块进行一对一映射时，可以省去调度开销，从而提升性能。
+Auto Blockify Pass通过高效地将逻辑块映射到硬件物理块，是昇腾兼容算子执行链路的核心优化手段。当前架构下调度效率直接决定算子性能，逻辑块与物理块一对一映射可消除调度开销，实现性能提升。
 
-根据我们在AscendNPU IR架构上的经验，可用物理块数量通常远少于计算所需的逻辑块数量（物理块 < 50，逻辑块可能达到500+）。在这种10倍差距的场景下，加速效果可超过原始速度的两倍。
+结合AscendNPU IR架构使用实践，可用物理块数量通常远少于计算所需的逻辑块数量（物理块 < 50，逻辑块可能达到500+）。在这种10倍差距的场景下，加速效果可超过原始速度的两倍。
 
 在运行Triton内核（通过triton-ascend）时，激活Auto Blockify逻辑的方式是添加以下标志：`TRITON_ALL_PARALLEL`。
 
-对于AscendNPU IR用户，可在bishengir-compile命令中添加以下标志：`--enable-auto-blockify-loop`。
+对于AscendNPU IR开发者，可在`bishengir-compile`命令中添加以下标志：`--enable-auto-blockify-loop`。
 
 ![image](../../../../images/developer_guide/AutoBlockify.jpg)
 
 ## 算法原理
 
-Auto Blockify Pass（全名：AutoBlockifyParallelLoop）通过引入额外的循环层来变换IR，具体逻辑如下：
+Auto Blockify Pass（AutoBlockifyParallelLoop）通过引入额外的循环层来变换IR，具体逻辑如下：
 
 ```plaintext
 for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
@@ -22,9 +22,9 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
         use(min(outer * physical_block_dim + inner, logical_block_dim))
 ```
 
-### 逻辑说明
+**逻辑说明**：
 
-1. 原始调度：
+1. 原始调度
     原始模式通常如下所示：
 
     ```plaintext
@@ -35,38 +35,40 @@ for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
         use(block.idx)
     ```
 
-2. 使用TRITON_ALL_PARALLEL的示例​：
+2. 使用`TRITON_ALL_PARALLEL`的示例​
 
-    当用户在triton adapter中添加TRITON_ALL_PARALLEL标志时，内核将被限制为仅使用最大物理块数量启动（假设逻辑块数 > 物理块数）。因此执行被限制为：
+    当用户在triton adapter中添加`TRITON_ALL_PARALLEL`标志时，内核将被限制为仅使用最大物理块数量启动（假设逻辑块数 > 物理块数）。因此执行被限制为：
 
     ```plaintext
     for block.idx from 0,...,physical_block_num   <- 来自 get_block_idx
         use(block.idx)
     ```
 
-    仅有此逻辑是不完整的（部分索引会缺失），这正是需要Auto Blockify Pass来补全逻辑的原因——通过自动添加一层外部循环/块化来完善。
+    仅依靠该循环逻辑无法覆盖全部计算索引，存在索引缺失问题。这也是引入Auto Blockify Pass补齐逻辑的原因：通过自动添加一层外部循环/块化来完善。
 
-    （注：如果用户不通过triton adapter，需要自行确保块维度的设置与上述一致。）
+    > 注：若不通过triton adapter接入，需要自行确保块维度的设置与上述一致。
 
-3. 使用Auto Blockify后的最终逻辑​：
+3. 使用Auto Blockify后的最终逻辑​
 
+    经Auto Blockify Pass自动补全循环结构，最终执行逻辑如下：
+    
     ```plaintext
     for outer from 0,...,ceildiv(logical_block_dim, physical_block_dim)
         for inner from 0,...,physical_block_dim  <- 作为 block.idx 使用
             use(min(outer * physical_block_dim + inner, logical_block_dim))
     ```
 
-### 接口说明
+**接口说明**：
 
 该功能通过bishengir-compile中的`--enable-auto-blockify-loop`标志控制，也可通过bishengir-opt的`--auto-blockify-parallel-loop`标志直接调用。
 
 为正确使用此功能，需注意以下几点：
 
-1. Pass获取逻辑块数量的方式是查找标有`kLogicalBlockNumAttr`属性（IR中为`logical_block_num`）的值，用户需确保该值可用，否则Pass调用时将失败。
+- Pass获取逻辑块数量的方式是查找标有`kLogicalBlockNumAttr`属性（IR中为`logical_block_num`）的值，用户需确保该值可用，否则Pass调用时将失败。
 
-2. Pass还需要找到一个`hivm get_block_idx`操作，该操作返回从0到块维度的块索引。使用AutoBlockify时，用户需要在调用设备内核时修改块维度（以最大物理块维度启动，与上述算法一致），使得blockidx操作返回0到physical_block_num范围内的值。
+- Pass还需要找到一个`hivm get_block_idx`操作，该操作返回从0到块维度的块索引。使用AutoBlockify时，用户需要在调用设备内核时修改块维度（以最大物理块维度启动，与上述算法一致），使得`blockidx`操作返回0到`physical_block_num`范围内的值。
 
-#### Triton Adapter
+**Triton Adapter**：
 
 该Pass已在triton adapter流水线中广泛使用。在此情况下正确使用AutoBlockify特性的方式是从前端（triton）通过`TRITON_ALL_PARALLEL=1`启用，该环境变量会同时完成准备工作（锁定块数量），然后自动以正确的标志调用相应的编译器命令。在triton流水线中有一个名为`TritonGlobalKernelArgsToHIVMOpPass`的Pass，会自动确保存在标记了`logical_block_num`的值，并创建所需的`get_block_idx`操作。
 
@@ -177,8 +179,6 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
 
 ## 约束
 
-1. ​**可并行性**​：
-   Auto Blockify算法仅适用于完全可并行的代码。这意味着各逻辑块的计算与访问必须可以安全地并行执行，块间不存在依赖关系。
+- **可并行性**​：Auto Blockify算法仅适用于完全可并行的代码。这意味着各逻辑块的计算与访问必须可以安全地并行执行，块间不存在依赖关系。
 
-2. ​**使用场景**​：
-   若逻辑块数量非常小，则此Pass不会带来任何优势。
+- **使用场景**​：若逻辑块数量非常小，则此Pass不会带来任何优势。

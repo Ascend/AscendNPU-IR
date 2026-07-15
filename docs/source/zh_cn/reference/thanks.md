@@ -8,7 +8,7 @@ MLIR源自LLVM社区，提供可复用、可扩展的编译器基础设施。Asc
 
 - **模块化设计**：可定义不同抽象层次的IR，便于渐进式lowering。
 - **基础设施复用**：复用MLIR的解析、转换、优化与代码生成工具链。
-- **生态互通性**：通过扩展MLIR方言，可与MLIR生态中其他方言（如TensorFlow、PyTorch导出的IR）交互与转换，为对接上层框架提供通路。
+- **生态互通性**：通过扩展MLIR方言，可与MLIR生态中其他方言（如PyTorch、TensorFlow导出的IR）交互与转换，为对接上层框架提供通路。
 
 ## [Triton-Ascend](https://gitcode.com/Ascend/triton-ascend)
 

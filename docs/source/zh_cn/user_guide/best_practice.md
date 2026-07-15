@@ -12,14 +12,14 @@
 out = torch.gather(x, dim=1, index=idx)
 ```
 
-输入：
+**输入**：
 
 | Input | Shape  |
 |-------|--------|
 | `x`   | `(B, C)` |
 | `idx` | `(B, K)` |
 
-输出：
+**输出**：
 
 | Input | Shape  |
 |-------|--------|
@@ -211,11 +211,11 @@ hivm.hir.load ins(%collapse_shape : memref<256x99xi8, strided<[99, 1]>, #hivm.ad
 
 **总结**：
 
-原始的数据`256x9x11xi8`大小：25344B；从GM中`load`到UB，UB中占用的大小（`256x32x11x1xi8`）：90112B，占用的UB大小为原始数据大小的3.5 倍多。
+原始的数据`256x9x11xi8`大小为25344B；从GM中`load`到UB，UB中占用的大小（`256x32x11x1xi8`）为90112B，占用的UB大小为原始数据大小的3.5 倍多。
 
 #### triton not op不合理的实现，导致额外占用内存
 
-Triton Not OP的实现，在`NPU-IR`中，被转成`VOR`、`VAND`、`VNOT`、`VAND`等一系列操作来处理，实际上可以只执行`VNOT`操作：
+Triton Not OP的实现，在NPU-IR中，被转成`VOR`、`VAND`、`VNOT`、`VAND`等一系列操作来处理，实际上可以只执行`VNOT`操作：
 
 **mlir代码如下**：
 
@@ -247,11 +247,11 @@ Triton Not OP的实现，在`NPU-IR`中，被转成`VOR`、`VAND`、`VNOT`、`VA
 
 第6行：申请一块大小为`65536xi8`的UB空间；
 
-第7行："输入数据"与"-1"做`or`运算，结果存储到第6行申请的UB空间中；
+第7行：输入数据与-1做`or`运算，结果存储到第6行申请的UB空间中；
 
 第8行：申请一块大小为`65536xi8`的UB空间；
 
-第9行："输入数据"与"-1"做`and`运算，结果存储到第8行申请的UB空间中；
+第9行：输入数据与-1做`and`运算，结果存储到第8行申请的UB空间中；
 
 第10行：再对第9行的结果做`not`运算，将结果存储到第8行申请的UB空间中；
 
@@ -263,7 +263,7 @@ Triton Not OP的实现，在`NPU-IR`中，被转成`VOR`、`VAND`、`VNOT`、`VA
 
 对输入数据`input_data`进行`not`操作，`mlir`翻译成了如下运算：`(input_data|(-1))&(!(input_data&(-1)))`。
 
-原始的数据大小为：65536B，为了完成`(input_data|(-1))&(!(input_data&(-1)))`运算，申请了`5 * 65536B`的UB空间。
+原始的数据大小为65536B，为了完成`(input_data|(-1))&(!(input_data&(-1)))`运算，申请了`5*65536B`的UB空间。
 
 #### triton max_dim0 op在int64类型输入下，先执行PlanMemory，再执行HIVMLowerToLoops，浪费大量UB空间
 
@@ -353,7 +353,7 @@ for i_w in tl.static_range(W):
 
 `tl.make_block_ptr(base, shape, strides, offsets, block_shape, order)`
 
-`order`参数指定内存中元素的迭代顺序，可以用来实现转置。或者，通过设置`strides`参数来指示转置后的步长。实际上，对于矩阵转置，如果我们有一个输入矩阵`A (M, K)`和输出矩阵`B (K, M)`，我们可以让每个线程块处理`B`的一个块，并从`A`中加载对应的转置块。加载时，可以使用`make_block_ptr`从`A`中加载，但步长设置为导致转置加载的步长？或者，更常见的做法是加载一个正常的`A`块，然后使用`tl.trans`转置后再存储到`B`。
+`order`参数指定内存中元素的迭代顺序，可以用来实现转置。或通过设置`strides`参数来指示转置后的步长。实际上，对于矩阵转置，如果我们有一个输入矩阵`A (M, K)`和输出矩阵`B (K, M)`，我们可以让每个线程块处理`B`的一个块，并从`A`中加载对应的转置块。加载时，可以使用`make_block_ptr`从`A`中加载，但步长设置为导致转置加载的步长？或更常见的做法是加载一个正常的`A`块，然后使用`tl.trans`转置后再存储到`B`。
 
 ```python
 import torch
@@ -498,7 +498,7 @@ tl.store(pointer, value)
     import triton
     import triton.language as tl
     + import triton.language.extra.cann.extension as extension
-
+    
     @triton.jit
     def copy_column_major_to_row_major(
         A_ptr, B_ptr,
@@ -508,11 +508,11 @@ tl.store(pointer, value)
         # 获取程序 ID
         pid_m = tl.program_id(0)
         pid_n = tl.program_id(1)
-
+    
         # 计算块起始位置
         start_m = pid_m * BLOCK_SIZE_M
         start_n = pid_n * BLOCK_SIZE_N
-
+    
         # 创建 A 的块指针 (列主序: strides=(1, M))，此时最后一维不连续，会自动扩轴
         A_block_ptr = tl.make_block_ptr(
             base=A_ptr,
@@ -522,7 +522,7 @@ tl.store(pointer, value)
             block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
             order=(0, 1),  # 最内层维度是行（索引 0），因为列主序
         )
-
+    
         # 创建 B 的块指针 (行主序: strides=(N, 1))
         B_block_ptr = tl.make_block_ptr(
             base=B_ptr,
@@ -532,12 +532,12 @@ tl.store(pointer, value)
             block_shape=(BLOCK_SIZE_M, BLOCK_SIZE_N),
             order=(1, 0),  # 最内层维度是列（索引 1），因为行主序
         )
-
+    
         # 加载 A 的块，进行边界检查（超出部分填充 0）
         a = tl.load(A_block_ptr, boundary_check=(0, 1))
     +   # npu
     +   extension.compile_hint(a, "mayDiscretememaccess")
-
+    
         # 存储到 B
         tl.store(B_block_ptr, a, boundary_check=(0, 1))
     ```
@@ -704,21 +704,21 @@ mask = tl.where(cond, value1, value2)
 tl.compile_hint(cond, "bitwise_mask")
 ```
 
-需留意，由于`mask`以`bitmask`的形式表达，因此对应的`mask`指针偏移量也需正确运算。
+需注意，由于`mask`以`bitmask`的形式表达，因此对应的`mask`指针偏移量也需正确运算。
 
 ![image](../../images/user_guide/best_practice1.png)
 
 ![image](../../images/user_guide/best_practice2.png)
 
-```{note}
-使用 `compile_hint` 需要注意本地的 `TA` 版本。
-
-`triton-ascend 3.2.0` 之前的版本：`tl.compile_hint(cond, "bitwise_mask")`
-
-`triton-ascend 3.4.0` 之后的版本需要改成：`tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")`
-
-`bitmask` 功能 `cann9.0` 之后的版本才有，因此需要下载 `cann.9.0` 之后的版本。
-```
+> **说明**：
+>
+> 使用`compile_hint`需要注意本地的`TA`版本。
+>
+> `triton-ascend 3.2.0`之前的版本：`tl.compile_hint(cond, "bitwise_mask")`
+>
+> `triton-ascend 3.4.0`之后的版本需要改成：`tl.extra.cann.extension.compile_hint(cond, "bitwise_mask")`
+>
+> `bitmask`功能`cann9.0`之后的版本才有，因此需要下载`cann.9.0`之后的版本。
 
 **算子示例**：
 
@@ -773,7 +773,15 @@ test_where_lt_case1()
 
 **切分逻辑**：
 
-`bitmask`和切分逻辑绑定的，算子自身在不同场景下有不同的切分逻辑，当中包括但不限于：(1) CV场景下使能1:2性能优化；(2) 融轴；(3) `broadcast`场景；(4) 非硬件支撑的数据类型；(5) Triton算子输入非1的grid切块等等。由于面对不同的场景，切块逻辑各异，我们有一个泛化的组`mask`例子（由`i8 bitmask`组出`i1`的标杆`mask`）供你参考，这个组`mask`逻辑不考虑场景，是从`bitmask`结果的误差推导组`mask`逻辑的。
+`bitmask`与切分逻辑绑定，算子自身在不同场景下有不同的切分逻辑，主要覆盖以下场景：
+
+- CV场景下使能1:2性能优化
+- 融轴
+- `broadcast`场景
+- 非硬件支撑的数据类型
+- Triton算子输入非1的grid切块
+
+因场景分片逻辑不统一，现提供一个泛化的组`mask`样例：通过`i8 bitmask`组出`i1`的标杆`mask`。该组`mask`逻辑不考虑场景，是从`bitmask`结果的误差推导组`mask`逻辑的。
 
 假设这是本来的组`mask`逻辑：
 
@@ -804,7 +812,7 @@ for sub_A in range(A):
 
 通过上述的最佳实践，`bitmask`功能即可通过高度泛化的方法正确实现。
 
-此外，以下亦提供多重切分的逻辑供参考：
+此外，以下提供多重切分的逻辑供参考：
 
 ```python
 # test_bitmask_tile.py
@@ -915,15 +923,15 @@ def test_where_lt_case1(param_list):
     test_common.validate_cmp(dtype, y_cal, y_ref)
 ```
 
-**限制**：
-
-- 由于Triton前端会将`i1`转换为`i8`，如果对其他类型如`i16`/`i32`等进行`bitwise_mask`操作反而会带来性能损耗，因此此功能只支持`i8`类型的`mask`。
+> **注意**：
+>
+> 由于Triton前端会将`i1`转换为`i8`，如果对其他类型如`i16`/`i32`等进行`bitwise_mask`操作反而会带来性能损耗，因此此功能只支持`i8`类型的`mask`。
 
 ### 使用手动对齐提升尾轴不对齐场景的编译器优化效率
 
 **问题描述**：
 
-在Triton算子开发中，当张量的尾轴维度较小（如4）且未对齐到硬件建议的32字节（对应8个`float32`元素）时，编译器后端在处理此类非对齐形状时，往往难以生成最优的连续访存和向量化指令，导致性能无法充分发挥。为获得更好的编译器优化效果，推荐开发者在前端kernel中通过手动填充（padding）或`mask`加载的方式，将数据尾轴维度显式对齐到合适的宽度，从而为编译器提供对齐友好的数据布局。这样能够简化后端的优化决策，显著提升执行效率。
+在Triton算子开发中，当张量的尾轴维度较小（如4）且未对齐到硬件建议的32字节（对应8个`float32`元素）时，编译器后端在处理此类非对齐形状时，往往难以生成最优的连续访存和向量化指令，导致性能无法充分发挥。为获得更好的编译器优化效果，推荐开发者在前端kernel中通过手动填充（padding）或mask加载的方式，将数据尾轴维度显式对齐到合适的宽度，从而为编译器提供对齐友好的数据布局。这样能够简化后端的优化决策，显著提升执行效率。
 
 **算子示例**：
 
@@ -969,14 +977,14 @@ def test_where_lt_case1(param_list):
         pid0 = tl.program_id(0) * group
         pids = pid0 + tl.arange(0, group)
         p_mask = pids < batch_size
-
+    
         # 基于原始 D×D 形状，每次加载 ALIGN 个元素
         off_base = pids[:, None, None] * (D * D)
         row_idx = tl.arange(0, D)[:, None]
         col_idx = tl.arange(0, ALIGN)[None, :]
         offs = row_idx * D + col_idx
         valid_cols = col_idx < D
-
+    
         # 通过掩码将无效列填充为 -inf，实现手动对齐
         # 形状 (group, D, ALIGN)
         mat = tl.load(
@@ -984,7 +992,7 @@ def test_where_lt_case1(param_list):
             mask=p_mask[:, None, None] & valid_cols[None, :, :],
             other=float('-inf')
         )
-
+    
         # 归一化计算（无效列在 exp 后变为 0，不影响结果）
         row_max = tl.max(mat, axis=2)
         mat = tl.exp(mat - row_max[:, :, None])
@@ -993,7 +1001,7 @@ def test_where_lt_case1(param_list):
             mat = mat / (row_sum[:, :, None] + eps)
             col_sum = tl.sum(mat, axis=1)
             mat = mat / (col_sum[:, None, :] + eps)
-
+    
         # 按 ALIGN 对齐宽度写回
         out_flat = tl.reshape(mat, (group, D * ALIGN))
         tl.store(out_ptr + pids[:, None] * (D * ALIGN)
@@ -1003,10 +1011,11 @@ def test_where_lt_case1(param_list):
 
     版本2通过手动将尾轴维度对齐到8，编译器可以直接利用连续、对齐的访存模式生成高效指令，避免了因尾轴不对齐可能引入的额外处理开销，从而提升整体性能。
 
-**限制**：
-
-- 手动对齐要求ALIGN为编译期常量，且应等于硬件建议的对齐宽度。
-- 填充值（如`-inf`）需与后续计算兼容，确保不影响最终结果（例如`exp(-inf) = 0`）。
+    > **注意**：
+    >
+    > - 手动对齐要求ALIGN为编译期常量，且应等于硬件建议的对齐宽度。
+    >
+    > - 填充值（如`-inf`）需与后续计算兼容，确保不影响最终结果（例如`exp(-inf) = 0`）。
 
 ### CV类
 
@@ -1052,17 +1061,17 @@ tl.compile_hint(pv, "hivm.tile_mix_cube_num", 2)
 | --- | --- | --- |
 | `multibuffer` | 设置是否启用乒乓流水 | `False`(默认),`True` |
 | `limit_auto_multi_buffer_of_local_buffer` | 设置乒乓流水在片中 (L1, L0, 及UB) 的作用范围"no-limit"表示不限乒乓流水范围"no-l0c"表示只允许L0缓存外启用乒乓流水 | "no-limit","no-l0c"(默认) |
-| `unit_flag` | 设置`cube`搬出时是否按照`block`搬出，仅限数据对齐场景下使用 | `False`(默认),`True` |
+| `unit_flag` | 设置`cube`搬出时是否按照block搬出，仅限数据对齐场景下使用 | `False`(默认),`True` |
 | `limit_auto_multi_buffer_only_for_local_buffer` | 设置是否在GM workspace中启用CV流水并行，`False`表示启用后续会整改接口，提供更可读的选项 | `False`(默认),`True` |
-| `set_workspace_multibuffer` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置CV并行的并行度使用时需确保数据没有依赖若设置为`N`，则`N`个CV操作并行执行 | 2(默认),4 |
-| `tile_mix_vector_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置当前`vector`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
-| `tile_mix_cube_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效设置当前`cube`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
+| `set_workspace_multibuffer` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置CV并行的并行度使用时需确保数据没有依赖若设置为`N`，则`N`个CV操作并行执行 | 2(默认),4 |
+| `tile_mix_vector_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置当前`vector`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
+| `tile_mix_cube_loop` | 仅在`limit_auto_multi_buffer_only_for_local_buffer=false`的场景下生效。设置当前`cube`的切分数量，数值可由`autotuning`得出，均可为最优 | 1(默认),2,4 |
 
 #### 算子选项规避超时报错
 
 **问题描述**：
 
-导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步，或涉及流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑，以规避算子卡死的问题。
+导致算子卡死的部分原因是与硬件同步相关，其中可能涉及核内/间同步或流水同步。若遇上算子卡死的情况，你可以尝试在调用Kernel时，传入以下入参，修改二进制的同步逻辑以规避算子卡死的问题。
 
 ```python
 # 核同步选项

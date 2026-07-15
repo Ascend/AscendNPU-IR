@@ -6,26 +6,26 @@ Tile Language Ascend（tilelang-ascend）是tile-lang领域特定语言针对华
 
 ![image](../../../images/developer_guide/npuir_architecture.png)
 
-## 安装
+## 环境安装与构建
 
-### 环境准备
+### 基础环境部署
 
 下载[安装包](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002)，安装CANN Toolkit。完整安装说明请参考[相关文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit)。
+
+执行安装命令：
 
 ```bash
 chmod +x Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run
 ./Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run --install
 ```
 
-配置环境变量：
+安装完成后，配置环境变量：
 
 ```bash
 source /path/to/install/Ascend/ascend-toolkit/set_env.sh
 ```
 
-准备Python环境（Python版本在3.7.x到3.11.4之间，含边界），并确保`pip3`可用。
-
-CANN Toolkit安装依赖：
+环境要求Python版本≥3.7.0且≤3.11.4，确保`pip3`工具正常可用。执行以下命令安装Python依赖库：
 
 ```bash
 pip3 install attrs cython 'numpy>=1.19.2,<=1.24.0' decorator sympy cffi pyyaml pathlib2 psutil protobuf==3.20.0 scipy requests absl-py
@@ -37,7 +37,7 @@ pip3 install attrs cython 'numpy>=1.19.2,<=1.24.0' decorator sympy cffi pyyaml p
 export ACL_OP_INIT_MODE=1
 ```
 
-#### 构建
+### TileLang-Ascend源码构建
 
 拉取代码：
 
@@ -46,9 +46,6 @@ git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 ```
 
 运行安装脚本：
-
-> 注意：如果环境中有`gtest`头文件但没有`gtest`的库文件，编译过程可能会引发异常。
-> 可以通过临时移除环境中的`gtest`头文件或者添加库文件，或者`tvm`联合`gtest`一同编译来进行解决。
 
 ```bash
 cd tilelang-ascend
@@ -59,22 +56,19 @@ bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
 # 假定当前目录是 tilelang-ascend，选项可以是：--bishengir-path=./3rdparty/AscendNPU-IR/build/install
 ```
 
+> 注意：如果环境中有`gtest`头文件但没有`gtest`的库文件，编译过程可能会引发异常。
+> 可以通过临时移除环境中的`gtest`头文件或者添加库文件，或者`tvm`联合`gtest`一同编译来进行解决。
+
 然后需要做下面任何一步来使能tilelang的环境设置：
 
 ```bash
+# 方式1：刷新终端环境变量
 source ~/.bashrc
-```
 
-或：
-
-```bash
+# 方式2：手动临时指定Python路径（当前终端生效）
 export PYTHONPATH=/path/to/tilelang-ascend/:$PYTHONPATH
-```
 
-或：
-
-```bash
-open a new terminal
+# 方式3：重启终端全局生效
 ```
 
 安装`torch_npu`：

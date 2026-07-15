@@ -14,7 +14,7 @@
 
 寻找适当的`for`循环，将Cube与Vector指令分开成独立的Work Item，建立每个Work Item之间的数据依赖并将其中需要扩展成`multi-buffer`的`tensor`扩展，将原循环`unroll`后，再将每个Work Item放至单独循环中。
 
-Before:
+变换前：
 
 ```mlir
 scf.for 0 to N step S {
@@ -26,7 +26,7 @@ scf.for 0 to N step S {
 
 ```
 
-After:
+变换后：
 
 ```mlir
 scf.for 0 to N step 3*S {
@@ -52,9 +52,7 @@ scf.for 0 to N step 3*S {
 }
 ```
 
-## 接口说明
-
-### 编译选项
+## 编译选项
 
 | 选项 | 默认值 | 含义 |
 |------|--------|------|
@@ -67,12 +65,14 @@ scf.for 0 to N step 3*S {
 extension.compile_hint(t, "cv_pipeline_lazy_load", True)
 ```
 
-## 约束能力
+## 使用约束
 
-1. Pipeline的循环只有`scf.for`与`scf.if` op拥有region/block，并且其region内只能有cube或vector指令。
-2. 迭代间的数据依赖必须可以被分离至独自的Work Item
-    - 以下情况无法开启cv-pipelining：`v0`与`v1`无法被提取至同一Work Item（因为中间有Cube依赖），但是`arg0`的定义在`v1`，却被`v0`用到。该情况CV-Pipelining不会开启
-    - 若Cube没有用到`v0`，那么`v0`会下沉至`v1`同一个Work Item，CV-Pipelining会生效
+1. 支持Pipeline处理的循环中，仅`scf.for`与`scf.if` op可包含region/block，且上述算子的region内部仅允许存在cube或vector指令。
+2. 迭代间的数据依赖必须能够拆分到各自独立的Work Item中
+    - 无法开启CV-Pipelining场景：若`v0`与`v1`无法被提取至同一Work Item（因为中间有Cube依赖），同时参数`arg0`由`v1`定义却被`v0`使用。
+    - CV-Pipelining可正常生效场景：若Cube未使用`v0`，则`v0`可下沉至`v1`所在的Work Item，此时CV-Pipelining可正常生效。
+
+示例代码：
 
 ```mlir
 scf.for iter_args(%arg0 = %init) {

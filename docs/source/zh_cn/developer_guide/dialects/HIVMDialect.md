@@ -1,4 +1,4 @@
-# 'hivm'方言
+# hivm方言
 
 HIVM（Hybrid Intelligence Virtual Machine）方言，定义了用于异构计算的核心操作、属性与类型系统，涵盖数据搬运、矩阵运算、向量运算及同步机制。
 

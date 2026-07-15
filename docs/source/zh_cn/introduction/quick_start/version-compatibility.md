@@ -11,7 +11,7 @@
 | AscendNPU IR版本 | Gitcode分支 | 依赖CANN版本 | 硬件支持 |
 | --- | --- | --- | --- |
 | `v1.0.0` | `release/v1.0.0` | CANN 8.5.0 | Ascend A2/A3 |
-| `v1.1.0` | `release/v1.1.0` | CANN 9.0.0 | Ascend A2/A3；<br>950系列（`branch feature_a5`） |
+| `v1.1.0` | `release/v1.1.0` | CANN 9.0.0 | Ascend A2/A3；<br>950系列（branch `feature_a5`） |
 
 **重要说明**：
 

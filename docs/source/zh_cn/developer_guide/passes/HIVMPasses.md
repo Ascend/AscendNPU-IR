@@ -87,9 +87,9 @@
 
 该Pass会根据硬件支持能力拆分复合算子，例如硬件不支持直接的f32转i8类型转换时，会拆解为f32转f16、f16转i8两步转换操作。
 
-动态场景下，会为额外分配的缓冲区创建携带buffer_size_in_byte属性的annotation.markOp，该属性值与原始算子的src或dst操作数对应大小一致。
+动态场景下，会为额外分配的缓冲区创建携带`buffer_size_in_byte`属性的`annotation.markOp`，该属性值与原始算子的src或dst操作数对应大小一致。
 
-此外，会展开标量 `arith.fptoui` f32→i64，跳过 `hivm.vector_function` 内核，并在寄存器架构（`isRegBasedArch`）上跳过 reduce-init 播种。
+此外，会展开标量算子`arith.fptoui`（f32转i64），跳过`hivm.vector_function`内核；并在寄存器架构（`isRegBasedArch`）上跳过`reduce-init`播种逻辑。
 
 ## -hivm-enable-multi-buffer
 
@@ -101,7 +101,7 @@
 
 **功能：** 依据步幅对齐标记调整memref的分配对齐方式。
 
-该Pass会根据storage_align注解标记，重新分配memref内存以满足对齐要求。
+该Pass会根据`storage_align`注解标记，重新分配memref内存以满足对齐要求。
 
 ## -hivm-flatten-ops
 
@@ -123,7 +123,7 @@
 
 **功能：** 推断每个函数对应的核心类型。
 
-在 Ascend310B / V300 上跳过 mix-kernel 分析并强制模块 AIV（并对 `mmadL1` 父函数标记 AIC）。gather/scatter 计入 vector 核心类型。
+在Ascend310B / V300上跳过mix-kernel分析并强制模块归属AIV域，同时为mmadL1上层父函数标记AIC。gather和scatter算子归类至Vector核心类型。
 
 ## -hivm-infer-mem-scope
 
@@ -217,7 +217,7 @@
 
 **功能：** 将hivm算子降级为循环实现。
 
-将选定的 HIVM 算子降级为标量 `scf.for` 嵌套。门控包括 i64、硬件不支持的标量操作数、SIMT VF（`hivm.vf_mode = SIMT`），以及在寄存器架构上仅对几何不合法的 index-reduce。SIMT 降级后的循环会打上 `map_for_to_forall` 标记。
+将选定的HIVM算子降级为标量`scf.for`嵌套。触发降级的判定条件包含：数据类型为i64、硬件不兼容标量操作数、向量函数模式为SIMT（`hivm.vf_mode = SIMT`）；针对寄存器架构，仅对几何不合法的`index-reduce`算子执行降级。经SIMT降级后的循环会打上`map_for_to_forall`标记。
 
 ## -hivm-map-forall-to-blocks
 
@@ -281,7 +281,7 @@
 
 **功能：** 通过标量运算优化单点hivm算子。
 
-该Pass借助标量操作完成单点hivm算子的优化，包括 `vdiv`和无符号 `vmax`/`vmin` 等逐元素算子。
+该Pass借助标量操作完成单点hivm算子的优化，包括`vdiv`和无符号`vmax`/`vmin`等逐元素算子。
 
 ## -hivm-plan-memory
 
@@ -307,23 +307,23 @@
 
 ## -hivm-split-mixed-if-conditionals
 
-**功能：** 将混合核类型的 `scf.if` 拆分为按核类型的 if 链。
+**功能：** 将混合核类型的`scf.if`拆分为按核类型的if链。
 
-与架构无关的独立 Pass（不在默认 HIVM pipeline 中）。当 MIX kernel 含混合核
-`scf.if` 时，请在 `-hivm-split-mix-kernel` 之前显式运行；结果会带
-`hivm.cube_only` / `hivm.vec_only` 标记。
+与架构无关的独立Pass（不在默认HIVM pipeline中）。当MIX kernel含混合核
+`scf.if`时，请在`-hivm-split-mix-kernel`之前显式运行；结果会带
+`hivm.cube_only` / `hivm.vec_only`标记。
 
 ## -hivm-mark-tightly-coupled-buffer
 
-**功能：** 为 L1/UB alloc 标记 tightly-coupled-buffer id（Ascend950 / RegBase）。
+**功能：** 为L1/UB alloc标记tightly-coupled-buffer id（Ascend950 / RegBase）。
 
-在 `-hivm-split-mix-kernel` 之前于 MIX 函数上分配 id，使 AIC/AIV 克隆继承相同 id。
+在`-hivm-split-mix-kernel`之前于MIX函数上分配id，使AIC/AIV克隆继承相同id。
 
 ## -hivm-hoist-tightly-coupled-alloc
 
-**功能：** 将 yield 出的 tightly-coupled alloc 上提到外层区域（Ascend950）。
+**功能：** 将yield出的tightly-coupled alloc上提到外层区域（Ascend950）。
 
-保证 CV tightly-coupled buffer 的 multi-buffer 锚点在 AIC/AIV 两侧一致。
+保证CV tightly-coupled buffer的multi-buffer锚点在AIC/AIV两侧一致。
 
 ## -hivm-split-mix-kernel
 
@@ -331,12 +331,12 @@
 
 该Pass会将mix kernel拆分为独立的AICube kernel和AIVector kernel，并将父模块标记为Mix模块。
 
-**注意事项：**
+**注意事项**：
 
 - 若在主机函数内调用Mix kernel，会为最终的Kernel启动生成函数声明；当前不支持在设备函数内调用Mix kernel。
-- 若存在混合核 `scf.if`，请先显式运行 `-hivm-split-mixed-if-conditionals`
-  （独立 Pass，不在默认 pipeline 中）。
-- 在 Ascend950 上，还需先运行 `-hivm-mark-tightly-coupled-buffer`、
+- 若存在混合核`scf.if`，请先显式运行`-hivm-split-mixed-if-conditionals`
+  （独立Pass，不在默认pipeline中）。
+- 在Ascend950上，还需先运行`-hivm-mark-tightly-coupled-buffer`、
   `-hivm-hoist-tightly-coupled-alloc`。
 
 **转换示例：**
