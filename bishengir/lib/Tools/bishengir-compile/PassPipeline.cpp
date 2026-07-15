@@ -376,7 +376,9 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 
   if (!config.getCompileHost()) {
     pm.addPass(hacc::createAppendDeviceSpecPass(
-        hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
+        hacc::AppendTargetDeviceSpecOptions{config.getTarget(),
+                                            config.getCustomAICNumber(),
+                                            config.getCustomAIVNumber()}));
   }
   pm.addPass(createCanonicalizeModulePass());
   triton::LowerTritonPipelineOptions lowerTritonPipelineOptions;
@@ -428,7 +430,9 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   if (!config.getCompileHost()) {
     pm.addPass(hacc::createAppendDeviceSpecPass(
-        hacc::AppendTargetDeviceSpecOptions{config.getTarget()}));
+        hacc::AppendTargetDeviceSpecOptions{config.getTarget(),
+                                            config.getCustomAICNumber(),
+                                            config.getCustomAIVNumber()}));
   }
 
   pm.addPass(createCanonicalizeModulePass());
