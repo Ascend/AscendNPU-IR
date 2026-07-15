@@ -109,6 +109,10 @@ std::unique_ptr<Pass> createGenericUnrollerPass();
 /// Create an auto vectorize verifier pass.
 std::unique_ptr<Pass> createAutoVectorizeVerifierPass();
 
+/// Create an auto vectorizer v2 pass.
+std::unique_ptr<Pass>
+createHFusionAutoVectorizeV2Pass(const AutoVectorizeV2Options &options = {});
+
 /// Register Tree Reduce v2 pass
 std::unique_ptr<Pass> createTreeReduceV2Pass(const TreeReduceV2Options &options = {});
 

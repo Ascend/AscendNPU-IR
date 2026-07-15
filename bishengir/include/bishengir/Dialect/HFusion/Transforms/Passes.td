@@ -129,6 +129,26 @@ def PreVectorizationFusion : Pass<"hfusion-pre-vectorization-fusion", "func::Fun
   ];
 }
 
+def AutoVectorizeV2 : Pass<"hfusion-auto-vectorize-v2", "ModuleOp"> {
+  let summary = "Tile, fuse and vectorize all linalg named ops";
+  let constructor = "mlir::hfusion::createHFusionAutoVectorizeV2Pass()";
+  let dependentDialects = ["linalg::LinalgDialect",
+                           "transform::TransformDialect",
+                           "arith::ArithDialect",
+                           "vector::VectorDialect"];
+  let options = [
+    Option<"vectorLength", "vector-length", "unsigned", "256", "Length of the vector in bytes">,
+    Option<"maxFusedOps", "max-fused-ops", "unsigned", "15",
+           "Maximum number of ops allowed in one fused node.">,
+    Option<"enableVFStackLimit", "enable-vf-stack-limit", "bool", "false",
+           "Enable conservative vector function stack slot limit.">,
+    Option<"enableMultipleConsumerFusion", "enable-multiple-consumer-fusion", "bool", "false",
+           "Enable multiple consumer fusion in AutoVectorizeV2.">,
+    Option<"emitTransformSequence", "emit-transform-sequence", "bool", "false",
+           "Emit AutoVectorizeV2 payload tags and transform sequence without applying it.">,
+  ];
+}
+
 def TreeReduceV2 : Pass<"tree-reduce-v2", "ModuleOp"> {
  	   let summary = "tree-reduce-v2";
  	   let constructor = "mlir::hfusion::createTreeReduceV2Pass()";
@@ -252,7 +272,7 @@ def NormalizeRegBase : Pass<"hfusion-normalize-ops-regbase", "func::FuncOp"> {
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {
   let summary = "Normalize Slice Ops.";
   let options = [
-    Option<"skipAlignedSlice", "skip-aligned-slice", "bool", "false", 
+    Option<"skipAlignedSlice", "skip-aligned-slice", "bool", "false",
            "Skip FoldInsertSliceToConcat pattern for aligned slice.">,
   ];
   let constructor = "mlir::hfusion::createHFusionNormalizeSliceOpsPass()";
