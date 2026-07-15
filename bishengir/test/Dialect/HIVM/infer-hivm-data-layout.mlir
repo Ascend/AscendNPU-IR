@@ -2,7 +2,7 @@
 
 // CHECK: #map = affine_map<()[s0, s1] -> ((s0 + 15) floordiv 16)>
 // CHECK: #map1 = affine_map<()[s0, s1] -> ((s1 + 15) floordiv 16)>
-// CHECK: module {
+// CHECK: module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 // CHECK:   func.func @test_infer_data_layout_basic(%arg0: i32, %arg1: i32, %arg2: i32)
 // CHECK:     %[[APPLY:.*]] = affine.apply #map()
 // CHECK:     %[[APPLY1:.*]] = affine.apply #map1()
@@ -28,7 +28,7 @@
 // CHECK:   }
 // CHECK: }
 
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_infer_data_layout_basic(%arg0 : i32,
                                           %arg1 : i32,
                                           %arg2 : i32) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
@@ -51,7 +51,7 @@ module {
 // CHECK: #map = affine_map<()[s0, s1] -> ((s0 + 15) floordiv 16)>
 // CHECK: #map1 = affine_map<()[s0, s1] -> ((s1 + 15) floordiv 16)>
 // CHECK: #map2 = affine_map<()[s0, s1] -> ((s1 + 7) floordiv 8)>
-// CHECK: module {
+// CHECK: module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 // CHECK:   func.func @test_infer_data_layout_basic_f32(%arg0: i32, %arg1: i32, %arg2: i32)
 // CHECK:     %[[APPLY:.*]] = affine.apply #map()
 // CHECK:     %[[APPLY1:.*]] = affine.apply #map1()
@@ -77,7 +77,7 @@ module {
 // CHECK:   }
 // CHECK: }
 
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_infer_data_layout_basic_f32(%arg0 : i32,
                                           %arg1 : i32,
                                           %arg2 : i32) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
@@ -98,7 +98,7 @@ module {
 
 // -----
 
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   // CHECK-LABEL: test_infer_data_layout_complicated
   func.func @test_infer_data_layout_complicated(%arg0 : i32,
                                                 %arg1 : i32,
@@ -160,7 +160,7 @@ module {
 
 // -----
 
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 // CHECK-LABEL: test_infer_data_layout_hivm_copy
   func.func @test_infer_data_layout_hivm_copy(%arg0: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg1: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg2: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg3: i32, %arg4: i32, %arg5: i32) attributes {func_dyn_memref_args = dense<[true, true, true, false, false, false]> : vector<6xi1>, global_kernel = "local", hacc.entry = "", hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %c16_i32 = arith.constant 16 : i32
@@ -249,6 +249,7 @@ module {
 
 // -----
 // CHECK-LABEL: mm_set_init_out_buffer_nd2nz
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @mm_set_init_out_buffer_nd2nz(%arg0: memref<256x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>, %arg1: memref<128x128xf32, strided<[?, ?], offset: ?>, #hivm.address_space<gm>>, %arg2: i32, %arg3: i1)attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, false, false, false, false, false]> : vector<10xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, mix_mode = "mix"} {
   %cst = arith.constant 2.000000e+00 : f32
   %c128 = arith.constant 128 : index
@@ -270,9 +271,10 @@ func.func @mm_set_init_out_buffer_nd2nz(%arg0: memref<256x128xf32, strided<[?, ?
   hivm.hir.mmadL1 ins(%alloc, %alloc_0, %true, %c0, %c0, %c0 : memref<256x128xf32, #hivm.address_space<cbuf>>, memref<128x128xf32, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%alloc_res : memref<256x128xf32, #hivm.address_space<cc>>)
   return
 }
+}
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   // CHECK-LABEL: test_infer_layout_pointer_cast
   func.func @test_infer_layout_pointer_cast(%lb: i32, %ub: i32, %step: i32, %index: i64, %size: index) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %c128 = arith.constant 128 : index
@@ -295,7 +297,7 @@ module {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   // CHECK-LABEL: test_infer_layout_memref_cast
   func.func @test_infer_layout_memref_cast(%cast:memref<?xf16, #hivm.address_space<gm>>, %lb: i32, %ub: i32, %step: i32, %index: i64) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %c128 = arith.constant 128 : index
@@ -323,6 +325,7 @@ module {
 
 // -----
 // CHECK-LABEL: triton_batch_nd2nz
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @triton_batch_nd2nz(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg4: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, mix_mode = "mix"} {
   %true = arith.constant true
   %c2 = arith.constant 2 : index
@@ -360,9 +363,11 @@ func.func @triton_batch_nd2nz(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_ba
   hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE2>] flag = 0
   return
 }
+}
 
 // -----
 // CHECK-LABEL: invalid_mmadl1_of_tensor_type
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @invalid_mmadl1_of_tensor_type(%arg0 : memref<?xf32>, %arg1 : memref<?xf16>, %arg2 : memref<?xf16>) -> tensor<16x16xf32> {
   %cst_1 = arith.constant 2.000000e+00 : f32
   %c16 = arith.constant 16 : index
@@ -378,10 +383,11 @@ func.func @invalid_mmadl1_of_tensor_type(%arg0 : memref<?xf32>, %arg1 : memref<?
                           outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %5 : tensor<16x16xf32>
 }
+}
 
 // -----
 // CHECK-LABEL: test_infer_data_layout_basic_transb_f16
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_infer_data_layout_basic_transb_f16(%arg0 : i32,
                                           %arg1 : i32,
                                           %arg2 : i32, %arg3: memref<?xf16, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
@@ -403,7 +409,7 @@ module {
 
 // -----
 // CHECK-LABEL: test_infer_data_layout_basic_transa_i8
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_infer_data_layout_basic_transa_i8(%arg0 : i32,
                                           %arg1 : i32,
                                           %arg2 : i32, %arg3: memref<?xi8, #hivm.address_space<gm>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
@@ -424,7 +430,7 @@ module {
 
 // -----
 // CHECK-LABEL: test_simple_mixed_cv
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_simple_mixed_cv(%arg0 : i32,
                                           %arg1 : i32,
                                           %arg2 : i32, %arg3: memref<?xi8, #hivm.address_space<gm>>,
@@ -449,6 +455,7 @@ module {
 
 // -----
 // CHECK-LABEL: _attn_fwd_mix_aic
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg3: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg4: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg5: memref<?xf32, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg6: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32}, %arg7: f32, %arg8: i32, %arg9: i32, %arg10: i32) attributes {WorkspaceArgIdx = 0 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false, false]> : vector<11xi1>, global_kernel = "local", hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, mix_mode = "mix"} {
   %c8_i64 = arith.constant 8 : i64
   %c6_i64 = arith.constant 6 : i64
@@ -562,6 +569,7 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
   hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE2>, <PIPE_FIX>] flag = 0
   return
 }
+}
 
 // -----
 // CHECK: #[[$MAP:.+]] = affine_map<()[s0, s1] -> ((s0 + 15) floordiv 16)>
@@ -614,6 +622,7 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
 // CHECK:           hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 0
 // CHECK:           return
 // CHECK:         }
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8, #hivm.address_space<gm>> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16, #hivm.address_space<gm>> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, hivm.storage_aligned, mix_mode = "aiv", parallel_mode = "simd"} {
   %true = arith.constant true
   %c0 = arith.constant 0 : index
@@ -643,6 +652,7 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
   hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 0
   return
 }
+}
 
 // -----
 // CHECK-LABEL:   func.func @triton_conv3d_mix_aic
@@ -650,6 +660,7 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.Conv3dL1 {groups = 1 : i32, padding = 0 : i32}
 // CHECK:           annotation.mark %{{.*}} : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
 func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>, %arg1: memref<3x2x4x5x12x16xf16, #hivm.address_space<gm>>, %arg2: memref<2x6x12x7x9xf16, #hivm.address_space<gm>>) {
   %true = arith.constant true
   annotation.mark %arg0 {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x8x2x10x13x16xf16, #hivm.address_space<gm>>
@@ -659,6 +670,7 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
       outs(%arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>)
   annotation.mark %arg2 : memref<2x6x12x7x9xf16, #hivm.address_space<gm>>
   return
+}
 }
 
 // -----
@@ -711,7 +723,7 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
 // CHECK:         %[[ALLOC_C:.*]] = memref.alloc(%[[APPLY9]], %[[APPLY8]], %c16_9, %c16_10) {alignment = 64 : i64} : memref<?x?x?x?xf32, #hivm.address_space<cc>>
 // CHECK:         hivm.hir.mmadL1 ins(%[[ALLOC_A]], %[[IF_RES]], %true, %c32, %c64, %c32 : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, memref<?x?x?x?xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[ALLOC_C]] : memref<?x?x?x?xf32, #hivm.address_space<cc>>)
 // CHECK:         return
-  module {
+  module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
     func.func @test_ifop_memref_layout(%cond : i1,
         %gm_buf : memref<64x32xf16, #hivm.address_space<gm>>)
         attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
@@ -794,7 +806,7 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
 // CHECK:         }
 // CHECK:         return
 // CHECK:       }
-  module {
+  module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
     func.func @test_ifop_in_for(%cond : i1, %ub : i32, %step : i32)
         attributes {hivm.func_core_type = #hivm.func_core_type<AIC>} {
       %c32 = arith.constant 32 : index
@@ -822,3 +834,237 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
       return
     }
   }
+
+// -----
+// A rank-reducing collapse of a unit batch dimension is rebuilt after its
+// source changes from three-dimensional ND to five-dimensional zN.
+// CHECK-LABEL: func.func @test_collapse_shape_rewrite
+// CHECK: %[[BATCH:.*]] = arith.constant 1 : index
+// CHECK: %[[A:.*]] = memref.alloc(%[[BATCH]], {{.*}}, {{.*}}, {{.*}}, {{.*}}) : memref<?x?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[COLLAPSED:.*]] = memref.collapse_shape %[[A]] {{.*}} : memref<?x?x?x?x?xf16, #hivm.address_space<cbuf>> into memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
+// CHECK: hivm.hir.mmadL1 ins(%[[COLLAPSED]], {{.*}}, {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>,
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_collapse_shape_rewrite() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>
+  } {
+    %true = arith.constant true
+    %m = arith.constant 32 : index
+    %k = arith.constant 64 : index
+    %n = arith.constant 16 : index
+    %a_batch = memref.alloc() : memref<1x32x64xf16, #hivm.address_space<cbuf>>
+    %a = memref.collapse_shape %a_batch [[0, 1], [2]] :
+        memref<1x32x64xf16, #hivm.address_space<cbuf>> into
+        memref<32x64xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<64x16xf16, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<32x16xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %m, %k, %n :
+                            memref<32x64xf16, #hivm.address_space<cbuf>>,
+                            memref<64x16xf16, #hivm.address_space<cbuf>>,
+                            i1, index, index, index)
+                    outs(%c : memref<32x16xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// Copies with identical ND layouts, or with no inferred layout at all, are
+// preserved without introducing a conversion.
+// CHECK-LABEL: func.func @test_copy_without_conversion
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK-NOT: hivm.hir.nd2nz
+// CHECK: memref.copy %arg0, %arg1 : memref<32x16xf16, #hivm.address_space<gm>> to memref<32x16xf16, #hivm.address_space<gm>>
+// CHECK: %[[SRC:.*]] = memref.alloc() : memref<32x16xf16>
+// CHECK: %[[DST:.*]] = memref.alloc() : memref<32x16xf16>
+// CHECK: memref.copy %[[SRC]], %[[DST]] : memref<32x16xf16> to memref<32x16xf16>
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK-NOT: hivm.hir.nd2nz
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_copy_without_conversion(
+      %src: memref<32x16xf16, #hivm.address_space<gm>>,
+      %dst: memref<32x16xf16, #hivm.address_space<gm>>) attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>
+  } {
+    memref.copy %src, %dst :
+        memref<32x16xf16, #hivm.address_space<gm>> to
+        memref<32x16xf16, #hivm.address_space<gm>>
+    %local_src = memref.alloc() : memref<32x16xf16>
+    %local_dst = memref.alloc() : memref<32x16xf16>
+    memref.copy %local_src, %local_dst :
+        memref<32x16xf16> to memref<32x16xf16>
+    return
+  }
+}
+
+// -----
+// An annotation mark acts as a layout anchor and propagates through view-like
+// operations without rewriting when there is no conflict.
+// CHECK-LABEL: func.func @test_annotation_layout_anchor
+// CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<32x16xf16>
+// CHECK: annotation.mark %[[ALLOC]] {hivm_data_layout = #hivm.data_layout<ND>} : memref<32x16xf16>
+// CHECK: %[[VIEW:.*]] = memref.subview %[[ALLOC]][0, 0] [16, 16] [1, 1] : memref<32x16xf16> to memref<16x16xf16, strided<[16, 1]>>
+// CHECK: annotation.mark %[[VIEW]] : memref<16x16xf16, strided<[16, 1]>>
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_annotation_layout_anchor() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>
+  } {
+    %alloc = memref.alloc() : memref<32x16xf16>
+    annotation.mark %alloc {hivm_data_layout = #hivm.data_layout<ND>} :
+        memref<32x16xf16>
+    %view = memref.subview %alloc[0, 0] [16, 16] [1, 1] :
+        memref<32x16xf16> to memref<16x16xf16, strided<[16, 1]>>
+    annotation.mark %view : memref<16x16xf16, strided<[16, 1]>>
+    return
+  }
+}
+
+// -----
+// Rewriting a transposed operand exercises nZ shape and offset calculation for
+// a subview, including the asymmetric 16-by-32 i8 block dimensions.
+// CHECK-LABEL: func.func @test_transposed_subview_rewrite
+// CHECK: %[[BASE:.*]] = memref.alloc({{.*}}, {{.*}}, {{.*}}, {{.*}}) : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>
+// CHECK: %[[OFF0:.*]] = affine.apply
+// CHECK: %[[OFF1:.*]] = affine.apply
+// CHECK: %[[OFF2:.*]] = affine.apply
+// CHECK: %[[OFF3:.*]] = affine.apply
+// CHECK: %[[VIEW:.*]] = memref.subview %[[BASE]][%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}}] {{.*}} : memref<?x?x?x?xi8, #hivm.address_space<cbuf>> to memref<?x?x?x?xi8, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>
+// CHECK: hivm.hir.mmadL1 {a_transpose} ins(%[[VIEW]], {{.*}} : memref<?x?x?x?xi8, strided<[?, ?, ?, 1], offset: ?>, #hivm.address_space<cbuf>>,
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_transposed_subview_rewrite() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>
+  } {
+    %true = arith.constant true
+    %m = arith.constant 32 : index
+    %k = arith.constant 32 : index
+    %n = arith.constant 16 : index
+    %a_base = memref.alloc() : memref<64x64xi8, #hivm.address_space<cbuf>>
+    %a = memref.subview %a_base[16, 8] [32, 32] [1, 1] :
+        memref<64x64xi8, #hivm.address_space<cbuf>> to
+        memref<32x32xi8, strided<[64, 1], offset: 1032>,
+               #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<32x16xi8, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<32x16xi8, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 {a_transpose} ins(%a, %b, %true, %m, %k, %n :
+                            memref<32x32xi8, strided<[64, 1], offset: 1032>,
+                                   #hivm.address_space<cbuf>>,
+                            memref<32x16xi8, #hivm.address_space<cbuf>>,
+                            i1, index, index, index)
+                    outs(%c : memref<32x16xi8, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// Lock down the current i8 fractal block sizes: 16 rows by 32 columns for
+// inputs and 16 by 16 for the output.
+// CHECK-LABEL: func.func @test_i8_fractal_block_sizes
+// CHECK: %[[C16_A:.*]] = arith.constant 16 : index
+// CHECK: %[[C32_A:.*]] = arith.constant 32 : index
+// CHECK: %[[A:.*]] = memref.alloc({{.*}}, {{.*}}, %[[C16_A]], %[[C32_A]]) : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>
+// CHECK: %[[C16_B:.*]] = arith.constant 16 : index
+// CHECK: %[[C32_B:.*]] = arith.constant 32 : index
+// CHECK: %[[B:.*]] = memref.alloc({{.*}}, {{.*}}, %[[C16_B]], %[[C32_B]]) : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>
+// CHECK: %[[C16_C0:.*]] = arith.constant 16 : index
+// CHECK: %[[C16_C1:.*]] = arith.constant 16 : index
+// CHECK: %[[C:.*]] = memref.alloc({{.*}}, {{.*}}, %[[C16_C0]], %[[C16_C1]]) : memref<?x?x?x?xi8, #hivm.address_space<cc>>
+// CHECK: hivm.hir.mmadL1 ins(%[[A]], %[[B]], {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<?x?x?x?xi8, #hivm.address_space<cbuf>>, memref<?x?x?x?xi8, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[C]] : memref<?x?x?x?xi8, #hivm.address_space<cc>>)
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_i8_fractal_block_sizes() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>
+  } {
+    %true = arith.constant true
+    %m = arith.constant 33 : index
+    %k = arith.constant 65 : index
+    %n = arith.constant 17 : index
+    %a = memref.alloc() : memref<33x65xi8, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<65x17xi8, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<33x17xi8, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %m, %k, %n :
+                            memref<33x65xi8, #hivm.address_space<cbuf>>,
+                            memref<65x17xi8, #hivm.address_space<cbuf>>,
+                            i1, index, index, index)
+                    outs(%c : memref<33x17xi8, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// The pass skips host functions, even when they carry an AIC core type.
+// CHECK-LABEL: func.func @test_host_function_is_unchanged
+// CHECK: %[[A:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[B:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[C:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+// CHECK: hivm.hir.mmadL1 ins(%[[A]], %[[B]], {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<16x16xf16, #hivm.address_space<cbuf>>, memref<16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[C]] : memref<16x16xf32, #hivm.address_space<cc>>)
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_host_function_is_unchanged() attributes {
+      hacc.function_kind = #hacc.function_kind<HOST>,
+      hivm.func_core_type = #hivm.func_core_type<AIC>
+  } {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %a = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 :
+                            memref<16x16xf16, #hivm.address_space<cbuf>>,
+                            memref<16x16xf16, #hivm.address_space<cbuf>>,
+                            i1, index, index, index)
+                    outs(%c : memref<16x16xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// The pass skips AIV functions.
+// CHECK-LABEL: func.func @test_aiv_function_is_unchanged
+// CHECK: %[[A:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[B:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[C:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+// CHECK: hivm.hir.mmadL1 ins(%[[A]], %[[B]], {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<16x16xf16, #hivm.address_space<cbuf>>, memref<16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[C]] : memref<16x16xf32, #hivm.address_space<cc>>)
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_aiv_function_is_unchanged() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIV>
+  } {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %a = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 :
+                            memref<16x16xf16, #hivm.address_space<cbuf>>,
+                            memref<16x16xf16, #hivm.address_space<cbuf>>,
+                            i1, index, index, index)
+                    outs(%c : memref<16x16xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// The pass skips functions without an inferred core type.
+// CHECK-LABEL: func.func @test_missing_core_type_is_unchanged
+// CHECK: %[[A:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[B:.*]] = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+// CHECK: %[[C:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+// CHECK: hivm.hir.mmadL1 ins(%[[A]], %[[B]], {{.*}}, {{.*}}, {{.*}}, {{.*}} : memref<16x16xf16, #hivm.address_space<cbuf>>, memref<16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%[[C]] : memref<16x16xf32, #hivm.address_space<cc>>)
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
+  func.func @test_missing_core_type_is_unchanged() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>
+  } {
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    %a = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<16x16xf16, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 :
+                            memref<16x16xf16, #hivm.address_space<cbuf>>,
+                            memref<16x16xf16, #hivm.address_space<cbuf>>,
+                            i1, index, index, index)
+                    outs(%c : memref<16x16xf32, #hivm.address_space<cc>>)
+    return
+  }
+}

@@ -6,7 +6,7 @@
 // Test distributed custom op with aclshmem_ptr - should inherit layout from input
 
 // CHECK-LABEL: test_distributed_layout_shmem_ptr
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_distributed_layout_shmem_ptr(%arg0: memref<128x32xf16, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %false = arith.constant false
     %c0_i32 = arith.constant 0 : i32
@@ -26,7 +26,7 @@ module {
 // Test distributed custom op with aclshmem_consume_token
 
 // CHECK-LABEL: test_distributed_layout_consume_token
-module {
+module attributes {hacc.target = #hacc.target<"Ascend910B3">} {
   func.func @test_distributed_layout_consume_token(%arg0: memref<128x32xf16, strided<[?, 1], offset: ?>, #hivm.address_space<gm>>) attributes {hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>} {
     %false = arith.constant false
     %c0_i32 = arith.constant 0 : i32
