@@ -34,6 +34,10 @@ def MapForToForall
     "scf::SCFDialect",
     "tensor::TensorDialect"
   ];
+  let options = [
+    Option<"simtMode", "simt-mode", "bool", "false",
+      "Activate for SIMT mode compilation">,
+  ];
 }
 
 def RemoveRedundantLoopInit

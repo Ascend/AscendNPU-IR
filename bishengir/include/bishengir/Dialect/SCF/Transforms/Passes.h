@@ -36,6 +36,8 @@ namespace scf {
 std::unique_ptr<Pass> createLegalizeLoopIterArgsPass();
 
 std::unique_ptr<Pass> createMapForToForallPass();
+std::unique_ptr<Pass>
+createMapForToForallPass(const MapForToForallOptions &options);
 
 std::unique_ptr<Pass> createRemoveRedundantLoopInitPass();
 
