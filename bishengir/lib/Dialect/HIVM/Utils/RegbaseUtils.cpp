@@ -15,7 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements utilities for the HIVM dialect.
+// This file implements RegBase utilities for the HIVM dialect.
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,6 +23,7 @@
 
 namespace mlir {
 namespace hivm {
+
 bool isVFCall(Operation *op) {
   if (auto callOp = dyn_cast<func::CallOp>(op)) {
     if (callOp->hasAttr(hivm::VectorFunctionAttr::name))
@@ -34,5 +35,6 @@ bool isVFCall(Operation *op) {
 bool isVF(func::FuncOp funcOp) {
   return funcOp->hasAttr(hivm::VectorFunctionAttr::name);
 }
+
 } // namespace hivm
 } // namespace mlir

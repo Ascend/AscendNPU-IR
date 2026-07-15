@@ -1,5 +1,6 @@
 //===- Utils.cpp - Utilities to support the HIVM dialect ------------------===//
 //
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -35,12 +36,14 @@
 #include "mlir/Dialect/Tensor/Utils/Utils.h"
 #include "mlir/Dialect/Transform/IR/TransformTypes.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Support/LLVM.h"
@@ -242,9 +245,8 @@ FailureOr<memref::AllocOp> getMemRefAlloc(Value operand) {
 }
 
 /// Return all root memref allocs feeding into a value.
-  /// Recursively traces through scf::IfOp branches and falls back
+/// Recursively traces through scf::IfOp branches and falls back
 /// to getMemRefAlloc for simple def-use chains.
-
 SmallVector<Value> getMemRefAllocs(Value operand) {
   // -- if operand comes from scf.if, collect allocs from all branches --
   if (auto ifOp = operand.getDefiningOp<scf::IfOp>()) {
@@ -1089,12 +1091,14 @@ LoopLikeOpInterface getParentLoop(Value val) {
     return getParentLoop(res);
   }
 
-  auto elseYieldOp = parentIf.elseYield();
-  auto elseYieldOpers = elseYieldOp.getOperands();
-  auto idxElseYielded = getYieldValueIdx(val, elseYieldOpers);
-  if (idxElseYielded.has_value()) {
-    auto res = parentIf.getResults()[*idxElseYielded];
-    return getParentLoop(res);
+  if (!parentIf.getElseRegion().empty()) {
+    auto elseYieldOp = parentIf.elseYield();
+    auto elseYieldOpers = elseYieldOp.getOperands();
+    auto idxElseYielded = getYieldValueIdx(val, elseYieldOpers);
+    if (idxElseYielded.has_value()) {
+      auto res = parentIf.getResults()[*idxElseYielded];
+      return getParentLoop(res);
+    }
   }
 
   return parentLoop;
@@ -1141,6 +1145,59 @@ Value createNestedIndexForOp(OpBuilder &builder, Operation *operation) {
   builder.setInsertionPointToStart(forOp.getBody());
   return createNestedIndexModularUsingLoopInfo(builder, forOp->getLoc(),
                                                loopInfoVec, -1);
+}
+
+static std::optional<BlockArgument> traceBlockArgument(BlockArgument ba) {
+  auto forOp = dyn_cast<scf::ForOp>(ba.getParentBlock()->getParentOp());
+  if (!forOp)
+    return ba;
+
+  for (const auto &[regionArg, initArg] :
+       llvm::zip_equal(forOp.getRegionIterArgs(), forOp.getInitArgs())) {
+    if (regionArg == ba)
+      return traceValueToBlockArgument(initArg);
+  }
+  return std::nullopt;
+}
+
+std::optional<BlockArgument> traceValueToBlockArgument(Value value) {
+  if (auto ba = dyn_cast<BlockArgument>(value))
+    return traceBlockArgument(ba);
+  if (auto subview = value.getDefiningOp<memref::SubViewOp>())
+    return traceValueToBlockArgument(subview.getViewSource());
+  if (auto slice = value.getDefiningOp<tensor::ExtractSliceOp>())
+    return traceValueToBlockArgument(slice.getSource());
+  return std::nullopt;
+}
+
+SmallVector<unsigned> traceVFWriteOpArgIds(func::CallOp callOp) {
+  SymbolRefAttr calleeName = callOp.getCalleeAttr();
+  SymbolTableCollection symbolTable;
+  auto calleeFunc =
+      symbolTable.lookupNearestSymbolFrom<func::FuncOp>(callOp, calleeName);
+  if (!calleeFunc)
+    return {};
+
+  func::ReturnOp returnOp;
+  calleeFunc.walk([&](func::ReturnOp op) {
+    returnOp = op;
+    return WalkResult::interrupt();
+  });
+  if (!returnOp)
+    return {};
+
+  SmallVector<unsigned> writeOpArgIds;
+  for (Value returned : returnOp->getOperands()) {
+    auto maybeWriteOp = traceDefOp<vector::TransferWriteOp>(returned);
+    if (!maybeWriteOp.has_value())
+      continue;
+    auto write = cast<vector::TransferWriteOp>(*maybeWriteOp);
+    auto arg = traceValueToBlockArgument(write.getSource());
+    if (!arg.has_value())
+      continue;
+    writeOpArgIds.push_back(arg->getArgNumber());
+  }
+  return writeOpArgIds;
 }
 
 namespace util {

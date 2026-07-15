@@ -48,12 +48,7 @@ namespace {
 /// has been split by SplitMixKernel (e.g., kernel ->
 /// kernel_mix_aiv/kernel_mix_aic).
 static std::string getBaseKernelNameForHostFunc(StringRef funcName) {
-  std::string name = funcName.str();
-  constexpr size_t kMixSuffixLen = 8; // length of "_mix_aiv" or "_mix_aic"
-  if ((funcName.ends_with("_mix_aiv") || funcName.ends_with("_mix_aic")) &&
-      funcName.size() >= kMixSuffixLen)
-    name.resize(name.size() - kMixSuffixLen);
-  return name;
+  return stripMixFuncSuffix(funcName);
 }
 
 SmallVector<Operation *> collectCreateSyncBlockLockOp(func::FuncOp funcOp) {

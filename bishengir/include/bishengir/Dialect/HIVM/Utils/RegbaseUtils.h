@@ -21,12 +21,14 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Operation.h"
-#include "llvm/Support/Debug.h"
 
 namespace mlir {
 namespace hivm {
+
+/// True when `op` is a `func.call` marked as a vector function.
 bool isVFCall(Operation *op);
 
+/// True when `funcOp` carries the vector-function attribute.
 bool isVF(func::FuncOp funcOp);
 
 } // namespace hivm

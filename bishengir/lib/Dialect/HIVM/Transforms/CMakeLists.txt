@@ -57,6 +57,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   HIVMMapForallToBlocks.cpp
   HIVMOptFuncOutput.cpp
   HIVMOptSinglePoint.cpp
+  HoistTightlyCoupledAlloc.cpp
   InferFuncCoreType.cpp
   InferHIVMDataLayout.cpp
   InferHIVMMemScope.cpp
@@ -82,6 +83,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MarkMultiBuffer.cpp
   MarkSyncBlockLockWithSubblock.cpp
   MarkRealCoreType.cpp
+  MarkTightlyCoupledBuffer.cpp
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
@@ -95,11 +97,13 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RemoveCopyOps.cpp
   SetBufferSize.cpp
   SinkOpToConsumerInLoop.cpp
+  SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SyncBlockHoisting.cpp
   TileAndBindSubBlock.cpp
   TileBatchMMIntoLoop.cpp
   TileCubeVectorLoop.cpp
+  TightlyCoupledBufferUtils.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
 

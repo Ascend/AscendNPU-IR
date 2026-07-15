@@ -36,6 +36,8 @@
 #include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 
+#include <string>
+
 //===----------------------------------------------------------------------===//
 // HIVM Dialect
 //===----------------------------------------------------------------------===//
@@ -157,6 +159,31 @@ constexpr llvm::StringLiteral kPipelinedLoopCoreTypeAttrName =
     "hivm.loop_core_type";
 constexpr llvm::StringLiteral kPreLoadAttrName =
     "preload_num";
+
+/// Suffixes appended by SplitMixKernel when cloning a MIX function into AIC/AIV
+/// copies (e.g. `kernel` -> `kernel_mix_aic` / `kernel_mix_aiv`).
+constexpr llvm::StringLiteral kMixFuncAicSuffix = "_mix_aic";
+constexpr llvm::StringLiteral kMixFuncAivSuffix = "_mix_aiv";
+
+/// Tags attached by SplitMixedIfConditionals on uniform-core `scf.if`s so
+/// SplitMixKernel can filter whole ifs as CUBE or VECTOR.
+constexpr llvm::StringLiteral kCubeOnlyAttrName = "hivm.cube_only";
+constexpr llvm::StringLiteral kVecOnlyAttrName = "hivm.vec_only";
+
+inline bool hasMixFuncSuffix(llvm::StringRef name) {
+  return name.ends_with(kMixFuncAicSuffix) || name.ends_with(kMixFuncAivSuffix);
+}
+
+/// Strip a trailing `_mix_aic` / `_mix_aiv` suffix if present.
+/// Returns an owning string so callers are not tied to the lifetime of `name`
+/// (a bare `StringRef` from `drop_back` would dangle if `name` is temporary).
+inline std::string stripMixFuncSuffix(llvm::StringRef name) {
+  if (name.ends_with(kMixFuncAicSuffix))
+    return name.drop_back(kMixFuncAicSuffix.size()).str();
+  if (name.ends_with(kMixFuncAivSuffix))
+    return name.drop_back(kMixFuncAivSuffix.size()).str();
+  return name.str();
+}
 } // namespace hivm
 } // namespace mlir
 

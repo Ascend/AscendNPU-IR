@@ -305,6 +305,26 @@
 
 ## `-hivm-set-buffer-size`
 
+## `-hivm-split-mixed-if-conditionals`
+
+**功能：** 将混合核类型的 `scf.if` 拆分为按核类型的 if 链。
+
+与架构无关的独立 Pass（不在默认 HIVM pipeline 中）。当 MIX kernel 含混合核
+`scf.if` 时，请在 `-hivm-split-mix-kernel` 之前显式运行；结果会带
+`hivm.cube_only` / `hivm.vec_only` 标记。
+
+## `-hivm-mark-tightly-coupled-buffer`
+
+**功能：** 为 L1/UB alloc 标记 tightly-coupled-buffer id（Ascend950 / RegBase）。
+
+在 `-hivm-split-mix-kernel` 之前于 MIX 函数上分配 id，使 AIC/AIV 克隆继承相同 id。
+
+## `-hivm-hoist-tightly-coupled-alloc`
+
+**功能：** 将 yield 出的 tightly-coupled alloc 上提到外层区域（Ascend950）。
+
+保证 CV tightly-coupled buffer 的 multi-buffer 锚点在 AIC/AIV 两侧一致。
+
 ## `-hivm-split-mix-kernel`
 
 **功能：** 将Mix设备函数拆分为AICube与AIVector两个独立函数。
@@ -314,6 +334,10 @@
 **注意事项：**
 
 - 若在主机函数内调用Mix kernel，会为最终的Kernel启动生成函数声明；当前不支持在设备函数内调用Mix kernel。
+- 若存在混合核 `scf.if`，请先显式运行 `-hivm-split-mixed-if-conditionals`
+  （独立 Pass，不在默认 pipeline 中）。
+- 在 Ascend950 上，还需先运行 `-hivm-mark-tightly-coupled-buffer`、
+  `-hivm-hoist-tightly-coupled-alloc`。
 
 **转换示例：**
 

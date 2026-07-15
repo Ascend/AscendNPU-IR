@@ -1,3 +1,5 @@
+// REQUIRES: hivmc
+// UNSUPPORTED: bishengir_published
 // Test that --save-temps=. produces module.hivm.opt.mlir in the current directory.
 //
 // RUN: bishengir-compile --save-temps=. %s -o %t.o

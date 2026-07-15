@@ -289,6 +289,14 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     pm.addPass(createInsertInferTaskTypeFuncPass());
   }
+  // Mark/hoist tightly-coupled buffers on the MIX function first so the
+  // AIC/AIV clones share consistent buffer ids and multi-buffer anchors
+  // (Ascend950 / RegBase; no-op on other arches).
+  // SplitMixedIfConditionals is a standalone pass (not wired here); run it
+  // explicitly before SplitMixKernel when mixed-core scf.if splitting is
+  // needed.
+  pm.nest<func::FuncOp>().addPass(createMarkTightlyCoupledBufferPass());
+  pm.nest<func::FuncOp>().addPass(createHoistTightlyCoupledAllocPass());
   // Split mix kernel is done before bufferization because it depends on
   // tensor SSA property.
   pm.addPass(createSplitMixKernelPass());
