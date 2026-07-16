@@ -978,6 +978,12 @@ def ComposeCollapseExpand : Pass<"compose-collapse-expand"> {
   let constructor = "mlir::hivm::createComposeCollapseExpandPass()";
 }
 
+def AutoScope : Pass<"auto-scope"> {
+  let summary = "Create scope for gather_load and scatter_store";
+  let constructor = "mlir::hivm::createAutoScopePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scope::ScopeDialect"];
+}
+
 def TileCubeVectorLoop : Pass<"tile-cube-vector-loop", "ModuleOp"> {
   let summary = "Tile cube and vector loops on local buffer";
   let description = [{

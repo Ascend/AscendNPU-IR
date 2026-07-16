@@ -26,6 +26,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   AllocToPointerCast.cpp
   AnnotateVFAlias.cpp
   AutoBlockifyParallelLoop.cpp
+  AutoScope.cpp
   AutoInferBufferSize.cpp
   BindSyncBlockLockArg.cpp
   BindWorkSpaceArg.cpp

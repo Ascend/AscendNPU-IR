@@ -313,6 +313,9 @@ createCVPipeliningPass(const CVPipeliningOptions &options = {});
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 
+// Create scope for gather_load and scatter_store
+std::unique_ptr<Pass> createAutoScopePass();
+
 /// Create a pass to tile cube and vector loop on local buffer.
 std::unique_ptr<Pass>
 createTileCubeVectorLoopPass(const TileCubeVectorLoopOptions &options = {});
