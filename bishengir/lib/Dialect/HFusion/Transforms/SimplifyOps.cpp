@@ -5,11 +5,13 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Conversion/TorchToHFusion/Rewrite.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -823,7 +825,96 @@ public:
   }
 };
 
+/// Linearize a tree of integer `linalg.elemwise_binary<add>` into its leaf
+/// multiset and re-emit repeated leaves as an `elemwise_binary<mul>`:
+///
+///   a + a + ... + a  (k times) + b + ...   ->   k*a + b + ...
+///
+/// Valid only for wrap-around integer arithmetic (invalid for floats)
+///
+/// TODO optimize k*a + a -> (k + 1) * a, and even realize more universal
+/// mathematical expression folding optimization.
+struct CollapseElemwiseAddTreeToMul
+    : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
+  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp root,
+                                PatternRewriter &rewriter) const override {
+    if (root.getFun() != linalg::BinaryFn::add || root.getNumDpsInits() != 1)
+      return failure();
+    auto tensorTy = dyn_cast<RankedTensorType>(root->getResult(0).getType());
+    if (!tensorTy || !tensorTy.hasStaticShape() ||
+        !isa<IntegerType>(tensorTy.getElementType()))
+      return failure();
+    // It will be processed when its user traverses it.
+    if (root->getResult(0).hasOneUse())
+      if (auto user = dyn_cast<linalg::ElemwiseBinaryOp>(
+              *root->getResult(0).getUsers().begin()))
+        if (user.getFun() == linalg::BinaryFn::add &&
+            llvm::is_contained(user.getInputs(), root->getResult(0)))
+          return failure();
+
+    auto isAbsorbableAdd = [&](Value v) -> linalg::ElemwiseBinaryOp {
+      if (auto e = v.getDefiningOp<linalg::ElemwiseBinaryOp>())
+        if (e.getFun() == linalg::BinaryFn::add && v.hasOneUse() &&
+            e->getResult(0).getType() == tensorTy)
+          return e;
+      return {};
+    };
+    // Now it is a root node, optimize it.
+    // 1. Linearize the add.
+    llvm::MapVector<Value, int64_t> leafCounts;
+    SmallVector<linalg::ElemwiseBinaryOp> removeOp;
+    SmallVector<linalg::ElemwiseBinaryOp> worklist{root};
+    while (!worklist.empty()) {
+      linalg::ElemwiseBinaryOp cur = worklist.pop_back_val();
+      if (cur != root)
+        removeOp.push_back(cur);
+      for (Value in : cur.getInputs()) {
+        if (linalg::ElemwiseBinaryOp child = isAbsorbableAdd(in))
+          worklist.push_back(child);
+        else
+          ++leafCounts[in]; // Cannot be folded.
+      }
+    }
+    if (llvm::none_of(leafCounts, [](auto &kv) { return kv.second >= 2; }))
+      return failure();
+
+    // 2. Rewrite.
+    Type elemTy = tensorTy.getElementType();
+    unsigned width = elemTy.getIntOrFloatBitWidth();
+    Location loc = root.getLoc();
+    auto emptyInit = [&]() -> Value {
+      return rewriter.create<tensor::EmptyOp>(loc, tensorTy.getShape(), elemTy);
+    };
+
+    SmallVector<Value> terms;
+    for (auto &kv : leafCounts) {
+      if (kv.second == 1) {
+        terms.push_back(kv.first);
+        continue;
+      }
+      APInt cVal(width, static_cast<uint64_t>(kv.second), /*isSigned=*/false);
+      Value cst = rewriter.create<arith::ConstantOp>(
+          loc, DenseElementsAttr::get(tensorTy,
+                                      rewriter.getIntegerAttr(elemTy, cVal)));
+      terms.push_back(createLinalgBinary<linalg::BinaryFn::mul>(
+          rewriter, loc, kv.first, cst, emptyInit()));
+    }
+    Value sum = terms.front();
+    for (Value term : llvm::drop_begin(terms))
+      sum = createLinalgBinary<linalg::BinaryFn::add>(rewriter, loc, sum, term,
+                                                      emptyInit());
+    rewriter.replaceOp(root, sum);
+    for (linalg::ElemwiseBinaryOp e : removeOp)
+      if (e->use_empty())
+        rewriter.eraseOp(e);
+    return success();
+  }
+};
+
 void populateSimplifyOpsPattern(RewritePatternSet &patterns) {
+  patterns.add<CollapseElemwiseAddTreeToMul>(patterns.getContext());
   patterns.add<MergeConsecutiveCopiesPattern>(patterns.getContext());
   patterns.add<LoopedCastOpPattern>(patterns.getContext());
   patterns.add<CastOpPattern>(patterns.getContext());
