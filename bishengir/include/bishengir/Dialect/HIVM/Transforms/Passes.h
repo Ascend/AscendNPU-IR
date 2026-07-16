@@ -159,6 +159,9 @@ std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
 /// Create a pass to infer task type
 std::unique_ptr<Pass> createInsertInferTaskTypeFuncPass();
 
+/// Create a pass to insert infer-vf-mode callback func for host.
+std::unique_ptr<Pass> createInsertInferVFModeFuncPass();
+
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
 

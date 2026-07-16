@@ -81,6 +81,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InsertFreeLockVarBeforeReturn.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
   InsertInferTaskTypeFunc.cpp
+  InsertInferVFModeFunc.cpp
   InsertInferWorkSpaceSizeFunc.cpp
   InsertInitAndFinishForDebug.cpp
   InsertLoadStoreForMixCV.cpp

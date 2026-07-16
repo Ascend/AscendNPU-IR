@@ -464,6 +464,15 @@ def InsertInferTaskTypeFunc : Pass<"hivm-insert-infer-task-type-func", "ModuleOp
   let dependentDialects = ["func::FuncDialect", "hacc::HACCDialect"];
 }
 
+def InsertInferVFModeFunc : Pass<"hivm-insert-vf-mode-func", "func::FuncOp"> {
+  let summary = "Insert infer-vf-mode callback func for host";
+  let description = "Infer a function's VF mode {SIMD, SIMT, MIX}, "
+                    "and then create host callback to return its VF mode";
+
+  let constructor = "mlir::hivm::createInsertInferVFModeFuncPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def MarkTightlyCoupledBuffer
     : Pass<"hivm-mark-tightly-coupled-buffer", "func::FuncOp"> {
   let summary = "Mark L1/UB allocs with tightly-coupled-buffer attribute.";
