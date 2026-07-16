@@ -211,6 +211,12 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   ];
 }
 
+def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
+  let summary = "Infer vf mode for Ops";
+  let constructor = "mlir::hivm::createInferVFModePass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";

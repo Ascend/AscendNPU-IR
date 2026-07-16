@@ -86,6 +86,9 @@ std::unique_ptr<Pass> createCloneTensorEmptyPass();
 /// Create a pass to infer data layout information for HIVM Ops.
 std::unique_ptr<Pass> createInferHIVMDataLayoutPass();
 
+/// Create a pass to infer vf mode for HIVM Ops.
+std::unique_ptr<Pass> createInferVFModePass();
+
 /// Create a pass to mark multi buffer for HIVM Ops.
 /// If options is {}, enableAuto is false as default.
 /// And this pass contains method for marking workspace multiple buffer, which
