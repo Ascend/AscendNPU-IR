@@ -17,6 +17,7 @@
 
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
+#include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
@@ -440,6 +441,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createAddFFTSToSyncBlockSetOpPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
+  pm.nest<func::FuncOp>().addPass(arith::createNormalizeArithPass());
+  pm.nest<func::FuncOp>().addPass(arith::createLiftArithIndexCastPass());
 }
 
 void buildOptimizeHIVMPipeline(OpPassManager &pm,

@@ -989,6 +989,14 @@ bool utils::isArithOp(Operation *op) {
                         mlir::arith::ArithDialect::getDialectNamespace();
 }
 
+int64_t utils::getVectorSizeByElementType(Type t) {
+  int factor = t.isInteger(64) ? 2 : 1;
+  constexpr unsigned int vectorByteLength = 256;
+  constexpr unsigned int byteSize = 8;
+  return factor * vectorByteLength /
+         ((int64_t)t.getIntOrFloatBitWidth() / byteSize);
+}
+
 bool utils::isAnnotationWithAttr(Operation *op, StringRef name) {
   if (!isa<annotation::MarkOp>(op)) {
     return false;

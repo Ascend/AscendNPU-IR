@@ -358,9 +358,21 @@ def AdaptTritonKernel : Pass<"adapt-triton-kernel", "ModuleOp"> {
   ];
 }
 
+def LegalizeScalarPass : Pass<"hfusion-legalize-scalar", "func::FuncOp"> {
+  let summary = "normalize scalar op to tensor.";
+  let constructor = "mlir::hfusion::createLegalizeScalarPass()";
+  let dependentDialects = ["arith::ArithDialect", "linalg::LinalgDialect", "hfusion::HFusionDialect"];
+}
+
 def LegalizeBF16Pass : Pass<"hfusion-legalize-bf16", "func::FuncOp"> {
   let summary = "normalize BF16 to FP32.";
   let constructor = "mlir::hfusion::createLegalizeBF16Pass()";
+  let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+}
+
+def LegalizeFP8Pass : Pass<"hfusion-legalize-fp8", "func::FuncOp"> {
+  let summary = "normalize FP8 to FP32.";
+  let constructor = "mlir::hfusion::createLegalizeFP8Pass()";
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
 }
 
@@ -517,6 +529,18 @@ def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let summary = "Generalize named ops to generic ops";
   let constructor = "mlir::hfusion::createHFusionGeneralizePass()";
   let dependentDialects = ["linalg::LinalgDialect", "hfusion::HFusionDialect"];
+}
+
+def FoldExtractInsertPair : Pass<"hfusion-fold-extract-insert-pair", "func::FuncOp"> {
+  let summary = "Fold Extract Insert Pair.";
+  let constructor = "mlir::hfusion::createFoldExtractInsertPairPass()";
+}
+
+def PrepareI1Nx1ForVectorization
+    : Pass<"hfusion-prepare-i1-nx1-for-vectorization", "func::FuncOp"> {
+  let summary = "Collapse Nx1 linalg.generic with expanded i1 input before vectorization";
+  let constructor = "mlir::hfusion::createPrepareI1Nx1ForVectorizationPass()";
+  let dependentDialects = ["linalg::LinalgDialect", "tensor::TensorDialect"];
 }
 
 #endif // BISHENGIR_DIALECT_HFUSION_TRANSFORMS_PASSES

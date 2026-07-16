@@ -1,5 +1,6 @@
 add_subdirectory(Analysis)
 add_subdirectory(Annotation)
+add_subdirectory(Arith)
 add_subdirectory(Bufferization)
 add_subdirectory(HACC)
 add_subdirectory(HFusion)

@@ -26,6 +26,7 @@
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
+#include "bishengir/Dialect/Arith/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
@@ -65,6 +66,7 @@ inline void registerAllPasses() {
 
   // Dialect passes
   mlir::annotation::registerAnnotationPasses();
+  mlir::arith::registerBiShengIRArithPasses();
   mlir::hfusion::registerHFusionPasses();
   mlir::hivm::registerHIVMPasses();
   mlir::memref::registerBiShengIRMemRefPasses();

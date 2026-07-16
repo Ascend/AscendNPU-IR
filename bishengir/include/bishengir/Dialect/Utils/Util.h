@@ -294,6 +294,10 @@ std::optional<Value> extractScalarValue(PatternRewriter &rewriter, Location loc,
 /// Return true if op is from arith dialect.
 bool isArithOp(Operation *op);
 
+/// Gets a suitable vector size from the element type. Vector size is fixed
+/// for regbase; returns an integer representing a vector size.
+int64_t getVectorSizeByElementType(Type t);
+
 /// Return true if op is annotation mark op with attr `name`
 bool isAnnotationWithAttr(Operation *op, StringRef name);
 

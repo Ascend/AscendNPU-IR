@@ -20,6 +20,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   DropSymbols.cpp
   EliminateDuplicateFuncs.cpp
   FlattenOps.cpp
+  FoldExtractInsertPair.cpp
   FoldSymbolicDim.cpp
   HFusionGeneralize.cpp
   HoistTensorEmpty.cpp
@@ -31,6 +32,7 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   OpFusion.cpp
   OutlineSingleOp.cpp
   PackTilingData.cpp
+  PrepareI1Nx1ForVectorization.cpp
   ReCacheIO.cpp
   RemoveCacheIO.cpp
   ReorderOpsByBFS.cpp
@@ -39,7 +41,9 @@ add_bishengir_dialect_library(BiShengIRHFusionTransforms
   TilingInterfaceImpl.cpp
   UnfoldSymbolicDim.cpp
   UpliftWhileToFor.cpp
+  LegalizeScalar.cpp
   LegalizeBF16.cpp
+  LegalizeFP8.cpp
   LegalizeBool.cpp
   DowngradeFP64CstOp.cpp
   WrapHostFunc.cpp

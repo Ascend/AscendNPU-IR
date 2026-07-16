@@ -162,8 +162,14 @@ std::unique_ptr<Pass> createInferFuncFusionKind();
 // Create a pass to generate out tensor's shape function
 std::unique_ptr<Pass> createInferOutShapesPass();
 
+/// Create a pass to legalize scalar op
+std::unique_ptr<Pass> createLegalizeScalarPass();
+
 /// Create a pass to legalize bf16 type
 std::unique_ptr<Pass> createLegalizeBF16Pass();
+
+/// Create a pass to legalize fp8 type
+std::unique_ptr<Pass> createLegalizeFP8Pass();
 
 /// Create a pass to legalize bool
 std::unique_ptr<Pass> createLegalizeBoolPass();
@@ -201,6 +207,7 @@ createWrapHostFuncPass(const WrapHostFuncOptions &options = {});
 std::unique_ptr<Pass> createFoldSymbolicDimPass();
 std::unique_ptr<Pass> createUnfoldSymbolicDimPass();
 std::unique_ptr<Pass> createDropSymbolsPass();
+std::unique_ptr<Pass> createFoldExtractInsertPairPass();
 
 /// Create a pass to decompose ops that implemented AggregatedOpInterface.
 std::unique_ptr<Pass> createDecomposePass(const DecomposeOptions &options = {});
@@ -216,6 +223,9 @@ std::unique_ptr<Pass> createUpliftWhileToForPass();
 
 /// Create a pass to generalize named ops to generic ops.
 std::unique_ptr<Pass> createHFusionGeneralizePass();
+
+// Create a pass to prepare i1 Nx1 linalg.generic before vectorization.
+std::unique_ptr<Pass> createPrepareI1Nx1ForVectorizationPass();
 
 //===----------------------------------------------------------------------===//
 // Registration
