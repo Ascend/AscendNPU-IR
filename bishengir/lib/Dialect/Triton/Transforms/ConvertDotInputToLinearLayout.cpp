@@ -407,6 +407,47 @@ static Attribute createFMALinearEncoding(MLIRContext *ctx,
   return LinearEncodingAttr::get(ctx, fmaLL);
 }
 
+static LinearLayout buildAccDerivedOperandLayout(MLIRContext *ctx,
+                                                 const LinearLayout &resultLL,
+                                                 ArrayRef<int64_t> operandShape,
+                                                 unsigned sharedDimIdx) {
+  auto zeroUnsharedDims = [&](StringAttr key, bool dropAllZero) {
+    std::vector<std::vector<int32_t>> newBases;
+    auto it = resultLL.getBases().find(key);
+    if (it == resultLL.getBases().end())
+      return newBases;
+    for (const auto &basis : it->second) {
+      std::vector<int32_t> nb(basis.begin(), basis.end());
+      bool hasSharedContribution = false;
+      for (unsigned d = 0, e = nb.size(); d < e; ++d) {
+        if (d != sharedDimIdx)
+          nb[d] = 0;
+        else if (nb[d] != 0)
+          hasSharedContribution = true;
+      }
+      if (!dropAllZero || hasSharedContribution)
+        newBases.push_back(std::move(nb));
+    }
+    return newBases;
+  };
+
+  auto outNames = llvm::to_vector(resultLL.getOutDimNames());
+  SmallVector<std::pair<StringAttr, int32_t>> outDims;
+  outDims.reserve(outNames.size());
+  for (unsigned d = 0, e = outNames.size(); d < e; ++d)
+    outDims.push_back({outNames[d], static_cast<int32_t>(operandShape[d])});
+
+  auto kRegister = StringAttr::get(ctx, "register");
+  auto kLane = StringAttr::get(ctx, "lane");
+  auto kWarp = StringAttr::get(ctx, "warp");
+  auto kBlock = StringAttr::get(ctx, "block");
+  return LinearLayout({{kRegister, zeroUnsharedDims(kRegister, true)},
+                       {kLane, zeroUnsharedDims(kLane, false)},
+                       {kWarp, zeroUnsharedDims(kWarp, false)},
+                       {kBlock, zeroUnsharedDims(kBlock, false)}},
+                      outDims, /*requireSurjective=*/false);
+}
+
 // ─── Rewrite pattern: Convert dot inputs to FMA-friendly LinearEncoding ──────
 
 struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
@@ -433,19 +474,46 @@ struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
     Value a = dotOp.getA(), b = dotOp.getB(), c = dotOp.getC();
     auto aType = cast<RankedTensorType>(a.getType());
     auto bType = cast<RankedTensorType>(b.getType());
+    int64_t kForA = aType.getShape()[1]; // A[M, K]
+    int64_t kForB = bType.getShape()[0]; // B[K, N]
 
-    // Build separate FMA LinearEncodings for A [M, K] and B [K, N].
-    //
-    // For A: K is both the reduction axis (kDimIdx=1) and the fast register dim
-    //        (fastRegDimIdx=1) — K-innermost, unchanged behaviour.
-    // For B: K is the reduction axis (kDimIdx=0) but N is the fast register dim
-    //        (fastRegDimIdx=1) — N-innermost, so that consecutive B[*, ni]
-    //        elements at a fixed k step are adjacent in the struct ordinal,
-    //        matching the N-tile inner loop in parametricConvertFMADot.
-    Attribute fmaEncA = createFMALinearEncoding(ctx, aType, /*kDimIdx=*/1,
-                                                /*fastRegDimIdx=*/1);
-    Attribute fmaEncB = createFMALinearEncoding(ctx, bType, /*kDimIdx=*/0,
-                                                /*fastRegDimIdx=*/1);
+    Attribute fmaEncA;
+    Attribute fmaEncB;
+
+    if (kForA == 1 && kForB == 1) {
+      auto resultLL = toLinearLayout(resultType);
+      fmaEncA = LinearEncodingAttr::get(
+          ctx, buildAccDerivedOperandLayout(ctx, resultLL, aType.getShape(),
+                                            /*sharedDimIdx=*/0));
+      fmaEncB = LinearEncodingAttr::get(
+          ctx, buildAccDerivedOperandLayout(ctx, resultLL, bType.getShape(),
+                                            /*sharedDimIdx=*/1));
+    } else {
+      // Build separate FMA LinearEncodings for A [M, K] and B [K, N].
+      //
+      // For A: K is both the reduction axis (kDimIdx=1) and the fast register dim
+      //        (fastRegDimIdx=1) — K-innermost, unchanged behaviour.
+      // For B: K is the reduction axis (kDimIdx=0) but N is the fast register dim
+      //        (fastRegDimIdx=1) — N-innermost, so that consecutive B[*, ni]
+      //        elements at a fixed k step are adjacent in the struct ordinal,
+      //        matching the N-tile inner loop in parametricConvertFMADot.
+      //
+      // Degenerate-axis fallback: `buildShuffleCompatibleFMALayout` arranges the
+      // register order by SORTING bases on their `fastRegDimIdx` contribution.
+      // If that axis has extent 1 (e.g. K==1 from size-1 K-tiling, or N==1) it
+      // contributes NO basis vectors, the sort has zero signal, and every
+      // candidate collapses to source order — leaving the operand un-normalized
+      // while the FMA microkernel still assumes the canonical ordinal order.
+      // When the intended fast axis is degenerate, fall back to the other tensor
+      // axis so the operand is still actively arranged into the order the FMA
+      // ordinals assume (A: register-ordinal == mi; B: register-ordinal == ni).
+      unsigned fastRegA = (aType.getShape()[1] == 1) ? 0u : 1u;
+      unsigned fastRegB = (bType.getShape()[1] == 1) ? 0u : 1u;
+      fmaEncA = createFMALinearEncoding(ctx, aType, /*kDimIdx=*/1,
+                                         /*fastRegDimIdx=*/fastRegA);
+      fmaEncB = createFMALinearEncoding(ctx, bType, /*kDimIdx=*/0,
+                                         /*fastRegDimIdx=*/fastRegB);
+    }
 
     // Guard: FMADotUtility requires aElems.size() % K == 0 and
     // bElems.size() % K == 0, where elems = 2^nRegisterBits per thread.
@@ -473,8 +541,6 @@ struct ConvertDotInputToLinearPattern : public OpRewritePattern<DotOp> {
       return ok;
     };
 
-    int64_t kForA = aType.getShape()[1]; // A[M, K]
-    int64_t kForB = bType.getShape()[0]; // B[K, N]
     if (!elemsPerThreadOk(fmaEncA, kForA, "A") ||
         !elemsPerThreadOk(fmaEncB, kForB, "B")) {
       LLVM_DEBUG(
@@ -625,7 +691,7 @@ static Attribute computeBroadcastSrcEncoding(Attribute dstEnc,
                       {kWarp, projectBases(kWarp)},
                       {kBlock, projectBases(kBlock)}},
                      outDims,
-                     /*requireSurjective=*/false);
+                     /*requireSurjective=*/true);
   return LinearEncodingAttr::get(ctx, srcLL);
 }
 
