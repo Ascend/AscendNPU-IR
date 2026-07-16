@@ -71,8 +71,6 @@ bool isExpandShapeOpCanFuseIntoVsstbPatternTranspose(Operation *op);
 
 bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option);
 
-bool isComputeOp(Operation* op);
-
 } // namespace analysis
 } // namespace mlir
 #endif
