@@ -187,6 +187,7 @@ static void preProcess(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createGenericUnrollerPass());
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
   pm.addPass(createLegalizeBoolPass());
@@ -343,6 +344,7 @@ static void postProcess(OpPassManager &pm,
   // - tile reduction may generate unsupported elemwise op requiring normalize
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
   // will only operate on functions with ShallowCV fusion kind
@@ -557,6 +559,7 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
   NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
+  normalizeOptions.enableFastDiv = options.enableFastDiv;
   pm.nest<func::FuncOp>().addPass(
       createHFusionNormalizeOpsPass(normalizeOptions));
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
