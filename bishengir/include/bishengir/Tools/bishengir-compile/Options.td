@@ -486,6 +486,25 @@ def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "true"
 >;
 
+def PartitionAndBindSubBlock : HIVMOptimizationControlOptions<
+  "Operand-parallel partition-and-bind sub-block mode. off: disabled. "
+  "default-pin: enabled, pinning every free op to sub-block 0. "
+  "load-balanced: enabled, spreading across both AIV ",
+  "PartitionAndBindSubBlockMode",
+  "PartitionAndBindSubBlockMode::Off"
+> {
+  let passGroup = ["HIVM"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(PartitionAndBindSubBlockMode::Off, "off",
+             "Disable partition-and-bind sub-block"),
+  clEnumValN(PartitionAndBindSubBlockMode::DefaultPin, "default-pin",
+             "Enable; pin every free op to sub-block 0"),
+  clEnumValN(PartitionAndBindSubBlockMode::LoadBalanced, "load-balanced",
+             "Enable; spread op across both AIV sub-cores"))
+  }];
+}
+
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
   "bool",

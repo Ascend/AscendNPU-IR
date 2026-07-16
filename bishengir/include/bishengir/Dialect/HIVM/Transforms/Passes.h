@@ -33,6 +33,13 @@ enum class CVPipelineMode {
   Dynamic, // dynamic mode pipeling (developing)
 };
 
+/// partition-and-bind-sub-block mode
+enum class PartitionAndBindSubBlockMode {
+  Off = 0,      // disable partition-and-bind sub-block
+  DefaultPin,   // enable; pin every free op to sub-block 0
+  LoadBalanced, // enable; spread op` across both AIV sub-cores
+};
+
 namespace mlir {
 
 namespace hivm {
@@ -288,6 +295,17 @@ std::unique_ptr<Pass> createArithVectorMaskAnalysisPass();
 /// Create a pass to tile and bind sub block for mix cv function.
 std::unique_ptr<Pass>
 createTileAndBindSubBlockPass(const TileAndBindSubBlockOptions &options = {});
+
+/// Create the self-gated operand-parallel sub-block pass. Lowers
+/// `{sub_block = n}` scope.scope regions to `scf.if` lane guards. No options.
+std::unique_ptr<Pass> createPartitionAndBindSubBlockPass(
+    const PartitionAndBindSubBlockOptions &options = {});
+
+/// Create the STAGE-3 pass that cleans up value-returning operand-parallel
+/// sub-block guards (post-bufferization): bubbles metadata-only memref views off
+/// the then-yields, folds the redundant UB->UB copies, and makes each guard
+/// result-free. No options.
+std::unique_ptr<Pass> createSubBlockGuardCleanupPass();
 
 /// Create a pass to bubble up extract slice for hivm ops.
 std::unique_ptr<Pass> createHIVMBubbleUpExtractSlicePass(
