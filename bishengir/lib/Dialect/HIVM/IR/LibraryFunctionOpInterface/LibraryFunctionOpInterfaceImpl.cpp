@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/IR/Builders.h"
@@ -71,8 +72,28 @@ template <typename OpTy> std::string getCumOpLibraryCallName(OpTy op) {
   ShapedType srcVecType = cast<ShapedType>(op.getSrc().getType());
   Type elemType = srcVecType.getElementType();
   int64_t cumDim = op.getCumDims()[0];
-  bool reverse = op.getReverse();
 
+  auto mod = op->template getParentOfType<ModuleOp>();
+  if (mod && hacc::utils::isRegBasedArch(mod)) {
+    int rank = srcVecType.getRank();
+
+    if constexpr (std::is_same_v<OpTy, VCumsumOp> ||
+                  std::is_same_v<OpTy, VCumprodOp>) {
+      std::stringstream ss;
+      ss << baseName.data() << "_" << rank << "d_"
+         << getTypeName(op.getLoc(), elemType) << "_dim" << cumDim;
+      // Cancellation dispatch: a cumsum adjacent to a subtraction (input or
+      // result) tagged with "needs_compensation" routes to a TwoSum-compensated
+      // template symbol (only the f32 shapes that have a "_comp" symbol).
+      if (op->hasAttr("needs_compensation") && elemType.isF32() &&
+          ((rank == 2 && cumDim == 0) ||
+           (rank == 3 && (cumDim == 0 || cumDim == 1))))
+        ss << "_comp";
+      return ss.str();
+    }
+  }
+
+  bool reverse = op.getReverse();
   std::stringstream ss;
   ss << baseName.data() << (cumDim > 0 ? "_ara_" : "_ra_")
      << (reverse ? "reverse_" : "") << getTypeName(op.getLoc(), elemType);
@@ -91,8 +112,13 @@ std::string getVSortOpLibraryCallName(VSortOp sortOp,
   if (needSortIndex) {
     ss << "_with_index";
   }
-
-  ss << "_1d_" << getTypeName(sortOp.getLoc(), elemType);
+  auto mod = sortOp->template getParentOfType<ModuleOp>();
+  if (mod && hacc::utils::isRegBasedArch(mod)) {
+    ss << "_" << srcVecType.getRank() << "d_"
+       << getTypeName(sortOp.getLoc(), elemType);
+  } else {
+    ss << "_1d_" << getTypeName(sortOp.getLoc(), elemType);
+  }
   return ss.str();
 }
 
@@ -309,10 +335,25 @@ std::string getVGatherOpLibraryCallName(VGatherOp concreteOp,
   StringRef baseName = concreteOp.getOpName();
   ShapedType srcVecType = cast<ShapedType>(concreteOp.getSrc().getType());
   Type elemType = srcVecType.getElementType();
-
-  std::stringstream ss;
-  ss << baseName.data() << "_1d_" << getTypeName(concreteOp.getLoc(), elemType);
-  return ss.str();
+  auto mod = concreteOp->template getParentOfType<ModuleOp>();
+  if (mod && hacc::utils::isRegBasedArch(mod)) {
+    int64_t rank = srcVecType.getRank();
+    std::string elemTypeName = getTypeName(concreteOp.getLoc(), elemType);
+    int libCallRank = getOpLibraryCallRankImpl(concreteOp.getOperation(),
+                                               static_cast<int>(rank));
+    ShapedType idxVecType = cast<ShapedType>(concreteOp.getIndices().getType());
+    Type idxElemType = idxVecType.getElementType();
+    std::string idxElemTypeName =
+        getTypeName(concreteOp.getLoc(), idxElemType);
+    // SIMT path: all gather operations use the SIMT template.
+    // Generates: gather_simt_<dim>d_<dtype>_<itype>
+    return concatVectorOpLibraryCallName(baseName.str() + "_simt", libCallRank,
+                                         elemTypeName + "_" + idxElemTypeName);
+  } else {
+    std::stringstream ss;
+    ss << baseName.data() << "_1d_" << getTypeName(concreteOp.getLoc(), elemType);
+    return ss.str();
+  }
 }
 
 std::string getVGatherMaskOpLibraryCallName(VGatherMaskOp concreteOp,
@@ -550,9 +591,19 @@ struct StaticMaxRankExternalModel
   std::string getOpLibraryCallName(Operation *op,
                                    std::optional<bool> isOpsAligned) const {
     ConcreteOp concreteOp = cast<ConcreteOp>(op);
+    auto mod = concreteOp->template getParentOfType<ModuleOp>();
+    auto isRegBased = mod && hacc::utils::isRegBasedArch(mod);
     // Op-specific impl.
+    if (isRegBased) {
+      if constexpr (std::is_same_v<ConcreteOp, VCummaxOp> ||
+                  std::is_same_v<ConcreteOp, VCumminOp>) {
+      return getCumOpLibraryCallName(concreteOp);
+      }
+    }
     if constexpr (std::is_same_v<ConcreteOp, VCumsumOp> ||
-                  std::is_same_v<ConcreteOp, VCumprodOp>) {
+                  std::is_same_v<ConcreteOp, VCumprodOp> ||
+                  std::is_same_v<ConcreteOp, VCummaxOp> ||
+                  std::is_same_v<ConcreteOp, VCumminOp>) {
       return getCumOpLibraryCallName(concreteOp);
     }
     if constexpr (std::is_same_v<ConcreteOp, VSortOp>) {
@@ -593,6 +644,44 @@ struct StaticMaxRankExternalModel
           getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
       return concreteOp.getOpName().str() + hasMaskStr + "_" + libCallDim +
              "_" + srcTypeStr + "_" + offsetTypeStr;
+    }
+    if (isRegBased) {
+      if constexpr (std::is_same_v<ConcreteOp, IndirectLoadOp>) {
+        auto offsetType = cast<ShapedType>(concreteOp.getOffsets().getType());
+        int rank = offsetType.getRank();
+        std::string libCallDim = std::to_string(rank) + "d";
+        Type srcType = concreteOp.getSrc().getType();
+        std::string srcTypeStr =
+            getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+        std::string offsetTypeStr =
+            getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
+        return concreteOp.getOpName().str() +
+               (concreteOp.getIsVolatile() ? "" : "_nonvolatile") + "_" +
+               libCallDim + "_" + srcTypeStr + "_" + offsetTypeStr;
+      }
+      if constexpr (std::is_same_v<ConcreteOp, StrideLoadOp>) {
+        auto dstType = cast<ShapedType>(concreteOp.getDst().getType());
+        int rank = dstType.getRank();
+        std::string libCallDim = std::to_string(rank) + "d";
+        Type srcType = concreteOp.getSrc().getType();
+        std::string srcTypeStr =
+            getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+        std::string indexTypeStr =
+            getTypeName(concreteOp.getLoc(), concreteOp.getOffset().getType());
+        return concreteOp.getOpName().str() + "_" + libCallDim + "_" +
+               srcTypeStr + "_" + indexTypeStr;
+      }
+      if constexpr (std::is_same_v<ConcreteOp, StrideStoreOp>) {
+        auto srcType = cast<ShapedType>(concreteOp.getSrc().getType());
+        int rank = srcType.getRank();
+        std::string libCallDim = std::to_string(rank) + "d";
+        std::string srcTypeStr =
+            getTypeName(concreteOp.getLoc(), srcType.getElementType());
+        std::string indexTypeStr =
+            getTypeName(concreteOp.getLoc(), concreteOp.getOffset().getType());
+        return concreteOp.getOpName().str() + "_" + libCallDim + "_" +
+               srcTypeStr + "_" + indexTypeStr;
+      }
     }
     if constexpr (std::is_same_v<ConcreteOp, EmbeddingGatherOp>) {
       auto idxType = cast<ShapedType>(concreteOp.getIndex().getType());
@@ -677,6 +766,15 @@ struct StaticMaxRankExternalModel
           Type elemType =
               getElementTypeOrSelf(concreteOp.getDpsInputs().back().getType());
           std::string elemTypeName = getTypeName(concreteOp.getLoc(), elemType);
+          if (isRegBased) {
+            hivm::TypeFn casting = hivm::TypeFn::cast_signed;
+            if constexpr (std::is_same_v<ConcreteOp, VDivOp>) {
+              casting = concreteOp.getIsSigned() ? hivm::TypeFn::cast_signed
+                                                  : hivm::TypeFn::cast_unsigned;
+            }
+            elemTypeName = getTypeName(concreteOp.getLoc(), elemType,
+                                       casting);
+          }
           int rank = static_cast<int>(concreteOp.getNumLoops());
           return concatVectorOpLibraryCallName(baseCallName + suffix,
                                                getOpLibraryCallRank(op, rank),
@@ -922,19 +1020,38 @@ std::string NoMaxRankExternalModel<FixpipeOp>::getOpLibraryCallName(
   auto concreteOp = cast<FixpipeOp>(op);
   StringRef baseCallName = concreteOp.getOpName();
   // TODO, support 5HD, and other transform mode
-  StringRef modeName =
-      concreteOp.getDmaMode() == FixpipeDMAMode::NZ2ND ? "nz2nd" : "normal";
+  StringRef modeName = stringifyFixpipeDMAMode(concreteOp.getDmaMode());
 
   Type srcElemType = getElementTypeOrSelf(concreteOp.getSrcOperandType());
   Type dstElemType = getElementTypeOrSelf(concreteOp.getDstOperandType());
   int srcRank = concreteOp.getSrcOperandType().getRank();
   int dstRank = concreteOp.getDstOperandType().getRank();
 
+  auto mod = op->getParentOfType<ModuleOp>();
+  auto isRegBased = mod && hacc::utils::isRegBasedArch(mod);
+
+  Type dstType = concreteOp.getDst().getType();
+  std::string dstScopeName = "";
+  std::string dualStr = "_";
+
+  if (isRegBased) {
+    if (auto memrefTy = dyn_cast<BaseMemRefType>(dstType)) {
+      if (auto dstScope = dyn_cast_if_present<AddressSpaceAttr>(
+              memrefTy.getMemorySpace())) {
+        dstScopeName = kAddressSpace2LibraryName.at(dstScope.getAddressSpace());
+      }
+    }
+    if (auto dualModeAttr = concreteOp.getDualDstModeAttr()) {
+      if (dualModeAttr.getDualDstMode() != FixpipeDualDstMode::NO_DUAL)
+        dualStr = "_dual_";
+    }
+  }
+
   std::stringstream ss;
-  ss << baseCallName.data() << "_" << modeName.data() << "_"
+  ss << baseCallName.data() << "_" << modeName.data() << dualStr
      << getTypeName(concreteOp.getLoc(), srcElemType) << "_to_"
      << getTypeName(concreteOp.getLoc(), dstElemType) << "_" << srcRank << "d"
-     << "_to_" << dstRank << "d";
+     << "_to_" << dstRank << (isRegBased ? "d_" : "d") << dstScopeName;
   return ss.str();
 }
 
@@ -1020,7 +1137,7 @@ std::string NoMaxRankExternalModel<MmadL1Op>::getOpLibraryCallName(
         concreteOp.getLoc(),
         getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
     return baseCallName + "_with_" + biasTypeName + "_bias_" + srcTypeName +
-           "_to_" + dstTypeName;
+           "_to_" + dstTypeName + transName;
   } else {
     return baseCallName + "_" + srcTypeName + "_to_" + dstTypeName + transName;
   }
@@ -1248,6 +1365,20 @@ std::string InferMaxRankExternalModel<VTransposeOp>::getOpLibraryCallName(
 
 namespace {
 template <typename CustomOpT>
+static std::string getHistogramLibraryCallName(CustomOpT op) {
+  ShapedType srcTy = cast<ShapedType>(op.getInputs()[0].getType());
+  Type elemType = srcTy.getElementType();
+  std::stringstream ss;
+  ss << "histogram";
+  if (srcTy.getRank() == 1)
+    ss << "_1d";
+  if (op.getInputs().size() > 2)
+    ss << "_masked";
+  ss << "_" << getTypeName(op->getLoc(), elemType);
+  return ss.str();
+}
+
+template <typename CustomOpT>
 std::string inferCustomOpMaxRank(Operation *op,
                                  std::optional<bool> isOpsAligned) {
   auto concreteOp = cast<CustomOpT>(op);
@@ -1259,6 +1390,8 @@ std::string inferCustomOpMaxRank(Operation *op,
       builtinsCallName{};
 
   if (concreteOp.isBuiltin()) {
+    if (concreteOp.getName() == "__builtin_histogram")
+      return getHistogramLibraryCallName(concreteOp);
     const auto inferBuiltinCallName = builtinsCallName.at(concreteOp.getName());
     return inferBuiltinCallName(isOpsAligned);
   }
@@ -1349,10 +1482,12 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_STATIC_MAX_RANK(VInterleaveOp, 1);
     REGISTER_STATIC_MAX_RANK(VFlipOp, 1);
     REGISTER_STATIC_MAX_RANK(VMulextendedOp, 1);
-    REGISTER_STATIC_MAX_RANK(VGatherOp, 1);
+    REGISTER_STATIC_MAX_RANK(VGatherOp, 5);
     REGISTER_STATIC_MAX_RANK(VGatherMaskOp, 1);
     REGISTER_STATIC_MAX_RANK(VCumprodOp, 1);
     REGISTER_STATIC_MAX_RANK(VCumsumOp, 2);
+    REGISTER_STATIC_MAX_RANK(VCummaxOp, 2);
+    REGISTER_STATIC_MAX_RANK(VCumminOp, 2);
     REGISTER_STATIC_MAX_RANK(VSortOp, 1);
     REGISTER_STATIC_MAX_RANK(VCmpOp, 1);
     REGISTER_STATIC_MAX_RANK(VCastOp, 2);
@@ -1395,6 +1530,9 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_STATIC_MAX_RANK(GatherTOp, 5);
     REGISTER_STATIC_MAX_RANK(IndexPutOp, 5);
     REGISTER_STATIC_MAX_RANK(ScatterTOp, 5);
+    REGISTER_STATIC_MAX_RANK(IndirectLoadOp, 5);
+    REGISTER_STATIC_MAX_RANK(StrideLoadOp, 3);
+    REGISTER_STATIC_MAX_RANK(StrideStoreOp, 3);
   });
 }
 

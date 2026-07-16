@@ -127,10 +127,15 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
   let constructor = "mlir::createConvertHIVMToStandardPass()";
   let dependentDialects =
       ["func::FuncDialect", "memref::MemRefDialect", "scf::SCFDialect", "LLVM::LLVMDialect"];
+
   let options = [
-        Option<"isOpsAligned", "is-ops-aligned", "bool", /*default*/"false",
-               "Regard All Ops already dims aligned except last axis of "
-               "brc and reduce">
+      Option<"isOpsAligned", "is-ops-aligned", "bool", /*default*/"false",
+             "Regard All Ops already dims aligned except last axis of "
+             "brc and reduce">,
+      Option<"markLibCallNoInline", "mark-libcall-noinline", "bool",
+             /*default*/"false",
+             "Mark generated library-call declarations as hacc.noinline "
+             "instead of hacc.always_inline.">
   ];
 }
 

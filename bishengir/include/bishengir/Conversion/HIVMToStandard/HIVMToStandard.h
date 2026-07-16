@@ -38,6 +38,10 @@ void populateHIVMToStandardConversionPatterns(RewritePatternSet &patterns,
 std::unique_ptr<OperationPass<ModuleOp>> createConvertHIVMToStandardPass(
     const ConvertHIVMToStandardOptions &options = {});
 
+struct ConvertHIVMToStandardRegBasePass {
+  static LogicalResult runOnOperation(ModuleOp module, bool isOpsAligned);
+};
+
 } // namespace mlir
 
 #endif // BISHENGIR_CONVERSION_HIVMTOSTANDARD_HIVMTOSTANDARD_H_
