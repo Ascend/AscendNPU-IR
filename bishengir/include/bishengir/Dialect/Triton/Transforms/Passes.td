@@ -149,6 +149,10 @@ def TileDotLoads
            /*default*/"0",
            "SRAM budget (bytes) the StageNonLoadOperandPattern may spend "
            "per dot.  0 disables the budget check (cost model still gates).">,
+    Option<"KTileSize", "k-tile-size", "int",
+           /*default*/"0",
+           "Custom tile size for k tiling of dot operations.  0 enables "
+           "standard calculation for tile size.">,
   ];
   let dependentDialects = [
     "mlir::scf::SCFDialect",

@@ -251,6 +251,23 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
   auto classifyTileSide = [&](ScratchAccess &acc, Value side,
                               int expectAxis) -> bool {
     Value sideStripped = stripConvertLayouts(side);
+    int kAxis = 1 - expectAxis;
+    int otherAxis = expectAxis;
+    int64_t tileSize = offsetsTy.getDimSize(kAxis);
+    int64_t dimOther = offsetsTy.getDimSize(otherAxis);
+
+    if (tileSize == 1) {
+      auto splat = sideStripped.getDefiningOp<triton::SplatOp>();
+      if (!splat || splat.getResult().getType() != offsetsTy) return false;
+      Value res = splat.getSrc();
+      acc.kAxis = kAxis;
+      acc.tileSize = tileSize;
+      acc.dimOther = dimOther;
+      acc.kind = ScratchAccess::DYNAMIC;
+      acc.tileIdx = res;
+      return true;
+    }
+
     auto bcast = sideStripped.getDefiningOp<triton::BroadcastOp>();
     if (!bcast) return false;
     Value bcastSrc = stripConvertLayouts(bcast.getSrc());
@@ -259,11 +276,9 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
     Value expSrc = stripConvertLayouts(exp.getSrc());
 
     // Tile axis is the OTHER axis from `expectAxis`.
-    int kAxis = 1 - expectAxis;
-    int otherAxis = expectAxis;
     acc.kAxis = kAxis;
-    acc.tileSize = offsetsTy.getDimSize(kAxis);
-    acc.dimOther = offsetsTy.getDimSize(otherAxis);
+    acc.tileSize = tileSize;
+    acc.dimOther = dimOther;
 
     // (a) bare make_range -> start = 0; caller reclassifies envelope vs tile.
     if (auto rng = expSrc.getDefiningOp<triton::MakeRangeOp>()) {
@@ -326,11 +341,14 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
   // make_range) to recover its starting index.  Stripe accesses from
   // MStripeDotPattern set `otherStart = s * stripeM`; full-width accesses
   // start at 0.  Returns -1 on parse failure.
-  auto extractOtherStart = [&](Value otherSide) -> int64_t {
+  auto extractOtherStart = [&](Value otherSide, int kAxis) -> int64_t {
     Value v = stripConvertLayouts(otherSide);
-    auto bcast = v.getDefiningOp<triton::BroadcastOp>();
-    if (!bcast) return -1;
-    v = stripConvertLayouts(bcast.getSrc());
+    int64_t tileSize = offsetsTy.getDimSize(kAxis);
+    if (tileSize > 1) {
+      auto bcast = v.getDefiningOp<triton::BroadcastOp>();
+      if (!bcast) return -1;
+      v = stripConvertLayouts(bcast.getSrc());
+    }
     auto exp = v.getDefiningOp<triton::ExpandDimsOp>();
     if (!exp) return -1;
     v = stripConvertLayouts(exp.getSrc());
@@ -354,13 +372,13 @@ static std::optional<ScratchAccess> matchScratchAccess(Value ptrTensor) {
     Value lhs = addi.getLhs();
     Value rhs = addi.getRhs();
     if (classifyTileSide(acc, lhs, expectAxis)) {
-      int64_t os = extractOtherStart(rhs);
+      int64_t os = extractOtherStart(rhs, 1 - expectAxis);
       if (os < 0) return std::nullopt;
       acc.otherStart = os;
       return acc;
     }
     if (classifyTileSide(acc, rhs, expectAxis)) {
-      int64_t os = extractOtherStart(lhs);
+      int64_t os = extractOtherStart(lhs, 1 - expectAxis);
       if (os < 0) return std::nullopt;
       acc.otherStart = os;
       return acc;
