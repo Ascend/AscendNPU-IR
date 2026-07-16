@@ -1200,7 +1200,7 @@ def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
 def KTileSize : SIMTOptimizationControlOptions<
   "Custom tile size for k tiling (must perfectly divide K)",
   "int",
-  "0"
+  "2"
 > {
   bit isSharedWithDownstreamToolchain = 0;
 }
