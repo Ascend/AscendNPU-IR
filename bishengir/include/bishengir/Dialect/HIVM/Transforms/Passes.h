@@ -322,6 +322,8 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
 
+std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
+
 /// Create a pass to tile cube and vector loop on local buffer.
 std::unique_ptr<Pass>
 createTileCubeVectorLoopPass(const TileCubeVectorLoopOptions &options = {});

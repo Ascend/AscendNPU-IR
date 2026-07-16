@@ -994,6 +994,11 @@ def AutoScope : Pass<"auto-scope"> {
   let dependentDialects = ["hivm::HIVMDialect", "scope::ScopeDialect"];
 }
 
+def InsertAllocBasePlaceholder : Pass<"insert-alloc-base-placeholder", "ModuleOp"> {
+  let summary = "Insert placeholder memref.alloc with a dummy size";
+  let constructor = "mlir::hivm::createInsertAllocBasePlaceholderPass()";
+}
+
 def TileCubeVectorLoop : Pass<"tile-cube-vector-loop", "ModuleOp"> {
   let summary = "Tile cube and vector loops on local buffer";
   let description = [{
