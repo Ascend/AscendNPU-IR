@@ -1,6 +1,6 @@
 # Cube与Vector循环切块（Tile Cube and Vector Loop）
 
-本文介绍HIVM中的TileCubeVectorLoop Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./CVOptimization.md)，了解CV编译相关术语。
+本文介绍HIVM中的TileCubeVectorLoop Pass。该Pass针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./cv_optimization.md)，了解CV编译相关术语。
 
 ## 硬件背景
 
@@ -8,7 +8,7 @@
 
 ## 功能介绍
 
-![Effect of using Tile Cube and Vector Loop](../../../../images/developer_guide/TileCubeAndVectorLoop.png)
+![Effect of using Tile Cube and Vector Loop](../../../images/developer_guide/TileCubeAndVectorLoop.png)
 
 对MIX算子中已经完成软件流水（CV Pipelining）的Cube循环和Vector循环，再做一次Tiling切分，把原来一次迭代完成的一整块计算，拆成多次迭代、每次处理更小的一块。该处理方式的设计目标如下：
 

@@ -7,7 +7,7 @@
 昇腾硬件片上内存使用Buffer机制，主要包含Cube（矩阵）计算单元和Vector（矢量）计算单元所涉及的存储单元。软件需要显式控制内存地址，并确保操作地址的对齐。
 
 以Atlas A2训练系列产品 / Atlas A2推理系列产品为例，硬件架构图如下：
-![image](../../../../images/developer_guide/HardwareStructure_zh.png)
+![image](../../../images/developer_guide/HardwareStructure_zh.png)
 
 各类Buffer的对齐要求与功能如下：
 
@@ -106,7 +106,7 @@
   采用Level2的内存分配策略后，C与B复用内存，两者同为Vector指令，而`V_PIPE`本就只能串行执行，因此Vector指令之间复用不会对流水效率造成额外影响。
 
   Level2策略的流水效果对比：
-  ![image](../../../../images/developer_guide/plan_memory_level2.png)
+  ![image](../../../images/developer_guide/plan_memory_level2.png)
 
     - 优势：同流水内的复用不会引入PIPE间额外依赖，整体算子性能更优。
     - 劣势：可复用的解空间小，内存复用成功的概率相对更低。
@@ -137,7 +137,7 @@
   采用Level1策略后，C复用Double Buffer空间时自动开启Double Buffer，`op1`使用A0内存时，`op3`使用的是C1（即A1）内存，因此`op1`无需等待`op3`，依然可以流水并行。
 
   Level1策略的流水效果对比：
-  ![image](../../../../images/developer_guide/plan_memory_level1.png)
+  ![image](../../../images/developer_guide/plan_memory_level1.png)
 
     - 优势：避免Double Buffer场景下流水被打断，保障流水性能。
     - 劣势：额外开启Double Buffer需要额外占用一片内存，会降低整体内存复用的成功率。
@@ -147,7 +147,7 @@
   Level0策略不考虑流水并行约束，只要两个Buffer的生命区间不重叠，即可直接复用内存。
 
   Level0策略的内存使用效果对比：
-  ![image](../../../../images/developer_guide/plan_memory_level0.png)
+  ![image](../../../images/developer_guide/plan_memory_level0.png)
 
     - 优势：能够尽可能地复用内存，复用成功率最高。
     - 劣势：完全不考虑硬件流水并行约束，不合理的复用会导致算子性能下降。

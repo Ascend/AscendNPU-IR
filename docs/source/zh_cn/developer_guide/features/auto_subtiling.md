@@ -1,12 +1,12 @@
 # 自动子块切分（Auto-Subtiling）
 
-本文介绍HIVM中的AutoBindSubBlock Pass。该Pass通过Cube-Vector 1:2切分，针对CV类kernel进行优化。在阅读本文之前，建议先阅读CV Optimization了解CV编译相关术语。
+本文介绍HIVM中的AutoBindSubBlock Pass。该Pass通过Cube-Vector 1:2切分，针对CV类kernel进行优化。在阅读本文之前，建议先阅读[CV Optimization](./cv_optimization.md)，了解CV编译相关术语。
 
 ## 硬件背景
 
 当前昇腾AI加速芯片，AIC与AIV分离，核数1:2。
 
-![image](../../../../images/developer_guide/cvarch.png)
+![image](../../../images/developer_guide/cvarch.png)
 
 在现有生态下，无论是用户编写的算法实现还是社区共享的算子，普遍没有昇腾Cube-Vector 1:2分核处理逻辑。为优化计算效率并实现昇腾亲和性，编译器需具备自动分核能力。该特性旨在自动应用Cube-Vector 1:2分核策略，实现数据切分。
 
@@ -14,11 +14,11 @@
 
 总体实现的思路是：
 
-![image](../../../../images/developer_guide/auto_subtiling2.png)
+![image](../../../images/developer_guide/auto_subtiling2.png)
 
 带来的效果是：
 
-![image](../../../../images/developer_guide/auto_subtiling3.png)
+![image](../../../images/developer_guide/auto_subtiling3.png)
 
 ### 输入输出样例
 
@@ -54,7 +54,7 @@ hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
 
 若切分失败，返回1:1。
 
-![image](../../../../images/developer_guide/auto_subtiling4.png)
+![image](../../../images/developer_guide/auto_subtiling4.png)
 
 <center>图AutoSubtiling 1:2实现思路</center>
 

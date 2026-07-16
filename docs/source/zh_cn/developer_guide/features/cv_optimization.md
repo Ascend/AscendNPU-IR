@@ -38,7 +38,7 @@ Ascend NPU采用异构计算架构，主要包含：
 | **GM** | 全局内存 | 外部DDR |
 
 fixpipe是Cube与Vector之间的数据搬运通道，昇腾芯片的Cube和Vector底层架构是分离的。对于不同版本的芯片来说，存在不同的交互通路。例如对于910系列来说，Cube计算完成后，通过fixpipe将结果从L0C搬运到GM，供后续Vector运算使用。在IR中体现为`hivm.hir.fixpipe`算子；硬件上对应专门的L0C→UB数据通路，可同时完成类型转换、量化等（由fixpipe的`pre_quant`、`pre_relu`等属性控制）。910系列的芯片架构如下：
-![V220架构](../../../../images/developer_guide/cvarch.png)
+![V220架构](../../../images/developer_guide/cvarch.png)
 
 ## 算法原理
 

@@ -64,7 +64,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 
 ### InjectSync
 
-![alt text](../../../../images/developer_guide/auto_sync0.png)
+![alt text](../../../images/developer_guide/auto_sync0.png)
 
 **目的：** 使用内存依赖分析、同步分析、event-id分配以及冗余同步清理（移动/删除冗余同步）在核内插入同步（`set_flag` / `wait_flag`）。
 
@@ -98,7 +98,7 @@ AICore架构详情可查阅官方文档：[基本架构](https://www.hiascend.co
 
 ### GraphSyncSolver
 
-![alt text](../../../../images/developer_guide/auto_sync1.png)
+![alt text](../../../images/developer_guide/auto_sync1.png)
 
 **目的：** 作为Inject-Sync方案的替代方案；使用基于图的算法判断何时插入set/wait成对操作，并分配event IDs。
 

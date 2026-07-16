@@ -4,9 +4,9 @@ Passes
 .. toctree::
    :maxdepth: 2
 
-   HFusionPasses
-   HIVMPasses
-   HACCPasses
-   ScopePasses
-   AnnotationPasses
-   SymbolPasses
+   hfusion_passes
+   hivm_passes
+   hacc_passes
+   scope_passes
+   annotation_passes
+   symbol_passes

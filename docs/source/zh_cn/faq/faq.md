@@ -77,7 +77,7 @@ bishengir-compile input.mlir -enable-hivm-compile -o kernel.o
 链接：<https://www.hiascend.com/developer/software/mindstudio>
 在华为昇腾平台上，使用MindStudio调试Triton Kernel的性能主要依赖于其内置的性能分析工具（Profiler），它可以采集硬件运行时的关键指标，帮助开发者定位kernel执行的瓶颈。
 
-**Torch NPU profiler**：
+**TorchNPU profiler**：
 
 torch_npu.profiler.profile
 是昇腾AI处理器上用于PyTorch训练/推理任务性能分析的核心API接口。它的主要功能是采集并解析模型运行时的性能数据，帮助开发者定位瓶颈并进行优化。
