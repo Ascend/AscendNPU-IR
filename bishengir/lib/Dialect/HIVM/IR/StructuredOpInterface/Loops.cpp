@@ -82,6 +82,7 @@ SmallVector<hivm::IteratorType> getIteratorTypesArrayForGlobalMatmulOps() {
 ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(NZ2NDOp)
 ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(ND2NZOp)
 ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(L12UBOp)
+ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY(LoadMXScaleOp)
 #undef ENABLE_NO_DEFAULT_GET_ITERATOR_TYPES_ARRAY
 
 #define ENABLE_COMMON_INDEXING_MAPS(OP_NAME)                                   \
@@ -187,6 +188,14 @@ SmallVector<hivm::IteratorType> VCumprodOp::getIteratorTypesArray() {
 }
 
 SmallVector<hivm::IteratorType> VCumsumOp::getIteratorTypesArray() {
+  return getCumOpIteratorTypesArray(*this);
+}
+
+SmallVector<hivm::IteratorType> VCummaxOp::getIteratorTypesArray() {
+  return getCumOpIteratorTypesArray(*this);
+}
+
+SmallVector<hivm::IteratorType> VCumminOp::getIteratorTypesArray() {
   return getCumOpIteratorTypesArray(*this);
 }
 
@@ -447,6 +456,39 @@ SmallVector<hivm::IteratorType> BatchMmadL1Op::getIteratorTypesArray() {
     break;
   }
   // Ops, unknown rank
+  return {hivm::IteratorType::kOpaque};
+}
+
+//===----------------------------------------------------------------------===//
+// MmadMxL1Op
+//===----------------------------------------------------------------------===//
+
+SmallVector<hivm::IteratorType> MmadMxL1Op::getIteratorTypesArray() {
+  auto cLayoutAttr = getOperandCLayout();
+  if (failed(cLayoutAttr))
+    return {hivm::IteratorType::kOpaque};
+
+  if (cLayoutAttr.value().getDataLayout() == DataLayout::DOTC_ND) {
+    // For ND layout, assuming axes are (M, N, K).
+    return SmallVector<hivm::IteratorType>{hivm::IteratorType::kParallel,
+                                           hivm::IteratorType::kParallel,
+                                           hivm::IteratorType::kReduction};
+  }
+  if (cLayoutAttr.value().getDataLayout() == DataLayout::zN) {
+    // For zN layout, assuming axes are (N1, M1, M0, N0, K).
+    return SmallVector<hivm::IteratorType>{
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kReduction};
+  }
+
+  if (cLayoutAttr.value().getDataLayout() == DataLayout::nZ) {
+    // For nZ layout, assuming axes are (M1, N1, N0, M0, K).
+    return SmallVector<hivm::IteratorType>{
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kParallel, hivm::IteratorType::kParallel,
+        hivm::IteratorType::kReduction};
+  }
   return {hivm::IteratorType::kOpaque};
 }
 

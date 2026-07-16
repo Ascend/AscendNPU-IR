@@ -73,6 +73,10 @@ ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VExpOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VRsqrtOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VSqrtOp)
 ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VRecOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumprodOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumsumOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCummaxOp)
+ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION(VCumminOp)
 #undef ENABLE_DEFAULT_OP_GET_OPTIONAL_TEMP_BUFFER_IMPLEMENTATION
 
 // Vector Binary Op
@@ -110,6 +114,10 @@ ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VMulextendedOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VPowOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VGatherOp)
 ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VSortOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumprodOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumsumOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCummaxOp)
+ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC(VCumminOp)
 #undef ENABLE_OP_SHOULD_NOT_ALLOC_EXTRA_BUFFER_FOR_SCALAR_OR_OTF_BRC
 
 //===----------------------------------------------------------------------===//
@@ -371,5 +379,37 @@ std::optional<int64_t> VSortOp::getExtraBufferSize() {
 std::optional<int64_t> VXorOp::getExtraBufferSize() {
   std::optional<int64_t> srcAllocTotalSize =
       utils::traceToAllocMaxSize(this->getSrc()[0]);
+  return srcAllocTotalSize;
+}
+
+//===----------------------------------------------------------------------===//
+// VCumsumOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumsumOp::getExtraBufferSize() {
+  std::optional<int64_t> srcAllocTotalSize =
+      utils::traceToAllocMaxSize(this->getSrc());
+  return srcAllocTotalSize;
+}
+
+//===----------------------------------------------------------------------===//
+// VCummaxOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCummaxOp::getExtraBufferSize() {
+  return utils::traceToAllocMaxSize(this->getSrc());
+}
+
+//===----------------------------------------------------------------------===//
+// VCumminOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumminOp::getExtraBufferSize() {
+  return utils::traceToAllocMaxSize(this->getSrc());
+}
+
+//===----------------------------------------------------------------------===//
+// VCumprodOp
+//===----------------------------------------------------------------------===//
+std::optional<int64_t> VCumprodOp::getExtraBufferSize() {
+  std::optional<int64_t> srcAllocTotalSize =
+      utils::traceToAllocMaxSize(this->getSrc());
   return srcAllocTotalSize;
 }

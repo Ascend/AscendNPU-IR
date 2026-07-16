@@ -25,6 +25,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   ${HIVM_VECTOR_BASE}
   ${HIVM_CANONICALIZATIONS}
   ${HIVM_CUSTOM_OP}
+  ${HIVM_VECTORIZE}
   HIVMCanonicalizations.cpp
   HIVMDialect.cpp
   HIVMDialectExtension.cpp

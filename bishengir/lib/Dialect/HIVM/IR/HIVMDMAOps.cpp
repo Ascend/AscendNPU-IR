@@ -20,16 +20,21 @@
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMInterfaces.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/MemRef/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 
 #include "mlir/AsmParser/AsmParser.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "mlir/IR/ValueRange.h"
 
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/VersionTuple.h"
 
 #include "bishengir/Config/bishengir-config.h"
@@ -52,6 +57,7 @@ ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(FixpipeOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(ND2NZOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(NZ2NDOp)
 ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(L12UBOp)
+ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION(LoadMXScaleOp)
 #undef ENABLE_DEFAULT_COPYOP_INTERFACE_IMPLEMENTATION
 
 //===----------------------------------------------------------------------===//
@@ -118,7 +124,9 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, /*pad_mode=*/nullptr,
         /*pad_value=*/nullptr, /*left_padding_num=*/nullptr,
         /*right_padding_num=*/nullptr,
-        /*init_out_buffer=*/false, /*init_condition=*/nullptr);
+        /*init_out_buffer=*/false, /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -127,7 +135,9 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, /*pad_mode=*/nullptr,
         /*pad_value=*/nullptr, left_padding_num,
         /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr);
+        /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -136,7 +146,9 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         /*left_padding_num=*/nullptr,
         /*right_padding_num=*/nullptr, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr);
+        /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -144,7 +156,9 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    Value pad_value, Value left_padding_num) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr,
-        /*init_out_buffer=*/false, /*init_condition=*/nullptr);
+        /*init_out_buffer=*/false, /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -153,7 +167,9 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    bool init_out_buffer) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        /*init_condition=*/nullptr);
+        /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -162,7 +178,9 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    Value right_padding_num) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, right_padding_num, /*init_out_buffer=*/false,
-        /*init_condition=*/nullptr);
+        /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -171,7 +189,31 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    bool init_out_buffer, Value init_condition) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        init_condition);
+        init_condition, /*may_implicit_transpose_with_last_axis=*/false,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
+}
+
+void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
+                   Value pad_value, EvictionPolicyAttr eviction_policy) {
+  build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
+        /*left_padding_num=*/nullptr,
+        /*right_padding_num=*/nullptr,
+        /*init_out_buffer=*/false, /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false, eviction_policy,
+        /*tcoretype=*/nullptr);
+}
+
+void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange res, Value src, Value dst, PadModeAttr pad_mode,
+                   Value pad_value, Value left_padding_num,
+                   EvictionPolicyAttr eviction_policy) {
+  build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
+        left_padding_num,
+        /*right_padding_num=*/nullptr,
+        /*init_out_buffer=*/false, /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/false, eviction_policy,
+        /*tcoretype=*/nullptr);
 }
 
 void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -181,7 +223,10 @@ void LoadOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    bool may_implicit_transpose_with_last_axis) {
   build(odsBuilder, odsState, res, src, dst, pad_mode, pad_value,
         left_padding_num, /*right_padding_num=*/nullptr, init_out_buffer,
-        nullptr, may_implicit_transpose_with_last_axis);
+        /*init_condition=*/nullptr,
+        /*may_implicit_transpose_with_last_axis=*/
+        may_implicit_transpose_with_last_axis,
+        /*eviction_policy=*/nullptr, /*tcoretype=*/nullptr);
 }
 
 static LogicalResult verifyPadMode(LoadOp op) {
@@ -245,7 +290,8 @@ LogicalResult LoadOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) ||
+       llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
 
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
@@ -344,7 +390,8 @@ LogicalResult StoreOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) ||
+       llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
@@ -399,10 +446,10 @@ static LogicalResult checkCopyOpMemSpace(CopyOp &op) {
     auto dstAddrSpace = dstAddrSpaceAttr.getAddressSpace();
 
     static DenseSet<std::pair<AddressSpace, AddressSpace>> kCopySupported{
-        {std::make_pair(AddressSpace::GM, AddressSpace::UB)},
-        {std::make_pair(AddressSpace::UB, AddressSpace::GM)},
         {std::make_pair(AddressSpace::UB, AddressSpace::UB)},
         {std::make_pair(AddressSpace::GM, AddressSpace::L1)},
+        {std::make_pair(AddressSpace::GM, AddressSpace::UB)},
+        {std::make_pair(AddressSpace::UB, AddressSpace::GM)},
         {std::make_pair(AddressSpace::UB, AddressSpace::L1)},
     };
     auto moduleOp = op->getParentOfType<mlir::ModuleOp>();
@@ -520,7 +567,8 @@ LogicalResult CopyOp::verify() {
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
   if (!hacc::utils::isAscend910_95(moduleOp) &&
-      (llvm::isa<mlir::Float8E4M3FNType>(srcType) || llvm::isa<mlir::Float8E5M2Type>(srcType)))
+      (llvm::isa<mlir::Float8E4M3FNType>(srcType) ||
+       llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
   if (srcOperType.getElementType() != dstOperType.getElementType()) {
     return emitOpError("element types of dst and src should be the same!");
@@ -611,6 +659,12 @@ CopyOp::getReassociationExprs(bool isCollapse) {
 // ND2NZOp
 //===----------------------------------------------------------------------===//
 
+void ND2NZOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
 void ND2NZOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                     TypeRange res, Value src, Value dst,
                     UnitAttr dst_continuous) {
@@ -628,33 +682,49 @@ void ND2NZOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 }
 
 //===----------------------------------------------------------------------===//
+// LoadMXScaleOp
+//===----------------------------------------------------------------------===//
+
+void LoadMXScaleOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
+}
+
+//===----------------------------------------------------------------------===//
 // FixpipeOp
 //===----------------------------------------------------------------------===//
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, Value dst,
                       FixpipeDMAModeAttr dma_mode,
-                      FixpipeDualDstModeAttr dual_mode,
+                      FixpipeDualDstModeAttr dual_dst_mode,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
                       Value quant_scale) {
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ ValueRange{},
-        dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
+        dma_mode, /*dual_dst_mode=*/dual_dst_mode, pre_quant, pre_relu,
         channel_split,
-        /*unit_flag_mode=*/ ArrayAttr{}, quant_scale);
+        /*unit_flag_mode=*/ArrayAttr{}, quant_scale);
 }
 
 void FixpipeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       Type result, Value src, Value dst,
                       FixpipeDMAModeAttr dma_mode,
-                      FixpipeDualDstModeAttr dual_mode,
+                      FixpipeDualDstModeAttr dual_dst_mode,
                       FixpipePreQuantModeAttr pre_quant,
                       FixpipePreReluModeAttr pre_relu, BoolAttr channel_split,
                       Value quant_scale) {
-  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ ValueRange{},
-        dma_mode, /*dual_dst_mode=*/dual_mode, pre_quant, pre_relu,
+  build(odsBuilder, odsState, result, src, dst, /*unit_flag_cond=*/ValueRange{},
+        dma_mode, /*dual_dst_mode=*/dual_dst_mode, pre_quant, pre_relu,
         channel_split,
-        /*unit_flag_mode=*/ ArrayAttr{}, quant_scale);
+        /*unit_flag_mode=*/ArrayAttr{}, quant_scale);
+}
+
+void FixpipeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  detail::getEffectsImpl(effects, cast<HIVMStructuredOp>(getOperation()));
 }
 
 enum FixpipeState {
@@ -730,6 +800,10 @@ void getElidedAttrs(FixpipeOp op,
     if (attr && (attr == odsBuilder.getBoolAttr(false)))
       elidedAttrs.push_back("channel_split");
   }
+}
+
+inline static bool isDualDstEnabled(FixpipeDualDstMode dualDstMode) {
+  return dualDstMode != FixpipeDualDstMode::NO_DUAL;
 }
 
 /*
@@ -1141,48 +1215,63 @@ ParseResult FixpipeOp::parse(::mlir::OpAsmParser &parser,
                              unit_flag_condOperandsLoc, result.operands))
     return ::mlir::failure();
   // AttrSizedOperandSegments / Properties: must match ODS-generated build()
-  // (src, dst, unit_flag_cond variadic, optional quant_scale — not in assembly).
-  ::llvm::copy(::llvm::ArrayRef<int32_t>(
-                   {1, 1, static_cast<int32_t>(unit_flag_condOperands.size()), 0}),
-               result.getOrAddProperties<FixpipeOp::Properties>()
-                   .operandSegmentSizes.begin());
+  // (src, dst, unit_flag_cond variadic, optional quant_scale -- not in
+  // assembly).
+  ::llvm::copy(
+      ::llvm::ArrayRef<int32_t>(
+          {1, 1, static_cast<int32_t>(unit_flag_condOperands.size()), 0}),
+      result.getOrAddProperties<FixpipeOp::Properties>()
+          .operandSegmentSizes.begin());
   return ::mlir::success();
 }
 
 LogicalResult FixpipeOp::verify() {
-  mlir::ModuleOp moduleOp = (*this)->getParentOfType<mlir::ModuleOp>();
-  bool is910_95 = hacc::utils::isAscend910_95(moduleOp);
+  auto moduleOp = this->getOperation()->getParentOfType<mlir::ModuleOp>();
+  bool isAscend950 = moduleOp && hacc::utils::isAscend950(moduleOp);
+  bool is910_95 = moduleOp && hacc::utils::isAscend910_95(moduleOp);
+  auto dmaMode = getDmaMode();
+  auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
 
-  // TODO: check that the nz2nd mode is enabled before the dual_dst_mode.
-  // check src and dst of dual_dst_mode.
-  auto dualDstModeAttr = getDualDstModeAttr();
-  if (dualDstModeAttr) {
-    auto dualDstMode = dualDstModeAttr.getDualDstMode();
-    auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
-    auto dstScope = getOptionalHIVMAddressSpace(getDst().getType());
-    bool hasScopeValue = srcScope.has_value() && dstScope.has_value();
-    if (!is910_95 && dualDstMode != FixpipeDualDstMode::NO_DUAL) {
-      return emitOpError(
-          "The current hardware does not support dual_dst_mode is enabled");
-    }
-    if (is910_95 && hasScopeValue &&
-        dualDstMode != FixpipeDualDstMode::NO_DUAL &&
-        (srcScope != hivm::AddressSpace::L0C ||
-         dstScope != hivm::AddressSpace::UB))
-      return emitOpError("if dual_dst_mode is enabled, the data movement must "
-                         "be performed from L0C to UB!");
+  // NZ2DN DMA mode is only supported on Ascend950.
+  if (dmaMode == FixpipeDMAMode::NZ2DN && !isAscend950) {
+    return emitOpError("NZ2DN is only supported on Ascend950!");
+  }
+  // dst=UB is only supported on Ascend950.
+  if (dstScope.has_value() && dstScope.value() == hivm::AddressSpace::UB &&
+      !isAscend950) {
+    return emitOpError("dst=UB is only supported on Ascend950!");
   }
 
+  // For non-910_95 hardware, only NZ2ND and NZ2NZ modes are supported.
   if (!is910_95) {
-    auto DMAModeAttr = getDmaMode();
-    if (DMAModeAttr != FixpipeDMAMode::NZ2ND &&
-        DMAModeAttr != FixpipeDMAMode::NZ2NZ)
+    if (dmaMode != FixpipeDMAMode::NZ2ND && dmaMode != FixpipeDMAMode::NZ2NZ) {
       return emitOpError(
           "The current hardware does not support dma mode is nz2nz");
-
+    }
     if (getChannelSplit())
-      return emitOpError("The current hardware does not channel split");
+      return emitOpError("The current hardware does not support channel split");
   }
+
+  // check src and dst of dual_dst_mode
+  auto dualDstModeAttr = getDualDstModeAttr();
+  if (!dualDstModeAttr) {
+    return success();
+  }
+  auto dualDstMode = dualDstModeAttr.getDualDstMode();
+  if (!isDualDstEnabled(dualDstMode)) {
+    return success();
+  }
+  // dual_dst_mode can only be enabled on Ascend950.
+  if (!isAscend950) {
+    return emitOpError("dual_dst_mode is only supported on Ascend950!");
+  }
+
+  auto srcScope = getOptionalHIVMAddressSpace(getSrc().getType());
+  bool hasScopeValue = srcScope.has_value() && dstScope.has_value();
+  if (hasScopeValue && (srcScope != hivm::AddressSpace::L0C ||
+                        dstScope != hivm::AddressSpace::UB))
+    return emitOpError("if dual_dst_mode is enabled, the data movement must "
+                       "be performed from L0C to UB!");
 
   return success();
 }

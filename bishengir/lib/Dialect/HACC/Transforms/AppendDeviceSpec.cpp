@@ -95,13 +95,14 @@ void AppendDeviceSpec::runOnOperation() {
     moduleOp.emitWarning() << "Overwriting the target by the pass option...";
 
   // If data layout for NPU has already been populated... overwrite it
-  auto maybeSpec = utils::getNPUTargetSpec(moduleOp);
+  auto maybeSpec = hacc::utils::getNPUTargetSpec(moduleOp);
   if (maybeSpec.has_value())
     moduleOp.emitWarning() << "Overwriting the device spec...";
 
   MLIRContext *ctx = &getContext();
+  hacc::utils::setTargetDevice(moduleOp, finalTarget);
   auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, moduleOp->getLoc());
-  utils::setNPUTargetSpec(moduleOp, targetSpec);
+  hacc::utils::setNPUTargetSpec(moduleOp, targetSpec);
 
   llvm::VersionTuple hivmcVersion;
   if (hivmcVersion.tryParse(HIVMCVersion))
@@ -110,9 +111,6 @@ void AppendDeviceSpec::runOnOperation() {
                     hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
   moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,
                     BoolAttr::get(ctx, false));
-
-  // Remove attr if exists
-  moduleOp->removeAttr(TargetAttr::name);
 }
 
 std::unique_ptr<Pass> mlir::hacc::createAppendDeviceSpecPass(

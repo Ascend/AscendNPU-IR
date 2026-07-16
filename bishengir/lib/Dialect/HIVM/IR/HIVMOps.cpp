@@ -121,11 +121,13 @@ int64_t HIVMSubBlockMappingAttr::getMappingId() const {
 }
 
 bool HIVMSubBlockMappingAttr::isLinearMapping() const {
-  llvm::report_fatal_error("HIVMSubBlockMappingAttr does not support linear mapping");
+  llvm::report_fatal_error(
+      "HIVMSubBlockMappingAttr does not support linear mapping");
 }
 
 int64_t HIVMSubBlockMappingAttr::getRelativeIndex() const {
-  llvm::report_fatal_error("HIVMSubBlockMappingAttr does not support relative index");
+  llvm::report_fatal_error(
+      "HIVMSubBlockMappingAttr does not support relative index");
 }
 
 void hivm::populateHIVMAddressSpaceAttributeConversions(
@@ -368,6 +370,23 @@ void hivm::detail::printHIVMStructuredDPSOp(OpAsmPrinter &p, Operation *op,
   printDPSResults(p, op->getResultTypes());
 }
 
+namespace {
+bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
+                         hivm::TypeFn casting) {
+  if (hivm::TypeFn::cast_unsigned == casting)
+    return true;
+
+  switch (val) {
+  case IntegerType::Signless:
+  case IntegerType::Signed:
+    return false;
+  case IntegerType::Unsigned:
+    return true;
+  }
+  llvm_unreachable("Unexpected IntegerType::SignednessSemantics");
+}
+} // namespace
+
 //===----------------------------------------------------------------------===//
 // ConvertLayoutOp
 //===----------------------------------------------------------------------===//
@@ -563,6 +582,39 @@ void IndirectStoreOp::getEffects(
 }
 
 //===----------------------------------------------------------------------===//
+// Debug Op helper
+//===----------------------------------------------------------------------===//
+
+namespace {
+std::string debugCallNameMangleSuffix(Operation *op) {
+  std::string suffix = "";
+  ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
+  if (!moduleOp) {
+    return suffix;
+  }
+  TModuleCoreTypeAttr attr = dyn_cast_or_null<TModuleCoreTypeAttr>(
+      moduleOp->getAttr(TModuleCoreTypeAttr::name));
+  if (attr && attr.getModuleCoreType() == TModuleCoreType::MIX) {
+    // getOpLibraryCallName is called in HIVMToStandard
+    // where mix functions have already been splitted.
+    func::FuncOp funcOp = op->getParentOfType<func::FuncOp>();
+    if (!funcOp) {
+      return suffix;
+    }
+    std::optional<TFuncCoreType> funcCoreType = queryFuncCoreType(funcOp);
+    if (funcCoreType.has_value()) {
+      if (funcCoreType.value() == TFuncCoreType::AIC) {
+        suffix = ".cube";
+      } else if (funcCoreType.value() == TFuncCoreType::AIV) {
+        suffix = ".vector";
+      }
+    }
+  }
+  return suffix;
+}
+} // namespace
+
+//===----------------------------------------------------------------------===//
 // DebugOp
 //===----------------------------------------------------------------------===//
 
@@ -573,13 +625,457 @@ void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 }
 
 void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                    StringRef debugtype, StringRef prefix, bool hex,
-                    Value arg, hivm::TCoreTypeAttr tcoretype) {
+                    StringRef debugtype, StringRef prefix, bool hex, Value arg,
+                    hivm::TCoreTypeAttr tcoretype) {
   build(odsBuilder, odsState, debugtype, prefix, hex, arg, tcoretype, {});
 }
 
 void DebugOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                    StringRef debugtype, StringRef prefix, bool hex,
-                    Value arg, hivm::AddressSpaceAttr memscope) {
+                    StringRef debugtype, StringRef prefix, bool hex, Value arg,
+                    hivm::AddressSpaceAttr memscope) {
   build(odsBuilder, odsState, debugtype, prefix, hex, arg, {}, memscope);
+}
+
+//===----------------------------------------------------------------------===//
+// StrideLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideLoadOp::verify() {
+  auto srcMemrefType = dyn_cast<MemRefType>(getSrc().getType());
+  if (!srcMemrefType)
+    return emitOpError("src must be a memref type");
+
+  auto dstType = getDst().getType();
+  auto dstTensorType = dyn_cast<TensorType>(dstType);
+  auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+  if (!(dstTensorType || dstMemrefType))
+    return emitOpError("dst must be tensor or memref type");
+
+  auto dstRank =
+      dstMemrefType ? dstMemrefType.getRank() : dstTensorType.getRank();
+  if (dstRank < 1 || dstRank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != dstRank ||
+      static_cast<int64_t>(getNumel().size()) != dstRank) {
+    return emitOpError("stride and numel operand counts must match dst rank");
+  }
+
+  auto getIndexType = [&](ValueRange values,
+                          StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  auto srcElementType = srcMemrefType.getElementType();
+  auto dstElementType = dstMemrefType ? dstMemrefType.getElementType()
+                                      : dstTensorType.getElementType();
+  if (dstElementType != srcElementType)
+    return emitOpError(
+        "dst of hivm::StrideLoadOp must have the same element type as src");
+  if (getOther().getType() != srcElementType)
+    return emitOpError("other must have the same element type as src");
+
+  if (getResult()) {
+    if (getResult().getType() != dstType)
+      return emitOpError("result must have the same type as dst");
+  }
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// StrideStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult StrideStoreOp::verify() {
+  auto dstMemrefType = dyn_cast<MemRefType>(getDst().getType());
+  if (!dstMemrefType)
+    return emitOpError("dst must be a memref type");
+
+  auto srcType = getSrc().getType();
+  auto srcTensorType = dyn_cast<TensorType>(srcType);
+  auto srcMemrefType = dyn_cast<MemRefType>(srcType);
+  if (!(srcTensorType || srcMemrefType))
+    return emitOpError("src must be tensor or memref type");
+
+  auto srcRank =
+      srcMemrefType ? srcMemrefType.getRank() : srcTensorType.getRank();
+  if (srcRank < 1 || srcRank > 3)
+    return emitOpError("only support 1-3D");
+
+  if (static_cast<int64_t>(getStride().size()) != srcRank ||
+      static_cast<int64_t>(getNumel().size()) != srcRank) {
+    return emitOpError("stride and numel operand counts must match src rank");
+  }
+
+  auto getIndexType = [&](ValueRange values,
+                          StringRef name) -> FailureOr<Type> {
+    if (values.empty())
+      return emitOpError() << name << " operands must not be empty";
+    Type type = values.front().getType();
+    for (Value value : values) {
+      if (value.getType() != type)
+        return emitOpError() << name << " operands must have the same type";
+    }
+    return type;
+  };
+
+  Type indexType = getOffset().getType();
+  FailureOr<Type> strideType = getIndexType(getStride(), "stride");
+  FailureOr<Type> numelType = getIndexType(getNumel(), "numel");
+  if (failed(strideType) || failed(numelType))
+    return failure();
+  if (indexType != *strideType || indexType != *numelType)
+    return emitOpError(
+        "offset, stride and numel operands must have the same type");
+
+  auto dstElementType = dstMemrefType.getElementType();
+  auto srcElementType = srcMemrefType ? srcMemrefType.getElementType()
+                                      : srcTensorType.getElementType();
+  if (srcElementType != dstElementType)
+    return emitOpError(
+        "src of hivm::StrideStoreOp must have the same element type as dst");
+
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// GatherTOp
+//===----------------------------------------------------------------------===//
+
+void GatherTOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// IndexPutOp
+//===----------------------------------------------------------------------===//
+
+void IndexPutOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// ScatterTOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ScatterTOp::verify() {
+  auto valueType = getValue().getType();
+  auto indexTileType = getIndexTile().getType();
+  auto valueTensorType = dyn_cast<TensorType>(valueType);
+  auto valueMemrefType = dyn_cast<MemRefType>(valueType);
+  if (!(valueTensorType || valueMemrefType)) {
+    return emitOpError("value must be tensor or memref type");
+  }
+  auto indexTileTensorType = dyn_cast<TensorType>(indexTileType);
+  auto indexTileMemrefType = dyn_cast<MemRefType>(indexTileType);
+  if (!(indexTileTensorType || indexTileMemrefType)) {
+    return emitOpError("index_tile must be tensor or memref type");
+  }
+
+  auto valueShape =
+      valueMemrefType ? valueMemrefType.getShape() : valueTensorType.getShape();
+  auto indexTileShape = indexTileMemrefType ? indexTileMemrefType.getShape()
+                                            : indexTileTensorType.getShape();
+
+  if (valueShape != indexTileShape) {
+    return emitOpError("tensor of value and index_tile of hivm::ScatterTOp "
+                       "must have the same shape");
+  }
+
+  return success();
+}
+
+void ScatterTOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexTileMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// AnchorOp
+//===----------------------------------------------------------------------===//
+
+struct AnchorResource
+    : public mlir::SideEffects::Resource::Base<AnchorResource> {
+  mlir::StringRef getName() final { return "<Anchor>"; }
+};
+
+void mlir::hivm::AnchorOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), AnchorResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// LocalLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LocalLoadOp::verify() {
+  auto inputType = getAddr().getType();
+  auto outputType = getResult().getType();
+  if (inputType.getElementType() != outputType.getElementType()) {
+    return emitOpError("input address of hivm::LocalLoadOp must have the same "
+                       "element type as output tensor");
+  }
+  if (inputType.getShape() != outputType.getShape()) {
+    return emitOpError("input address of hivm::LocalLoadOp must have the same "
+                       "shape as output tensor");
+  }
+  return success();
+}
+
+void LocalLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getAddrMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// LocalStoreOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult LocalStoreOp::verify() {
+  auto dstType = getAddr().getType();
+  auto dataType = getData().getType();
+  if (dstType.getElementType() != dataType.getElementType()) {
+    return emitOpError("dst address of hivm::LocalStoreOp must have the same "
+                       "element type as output tensor");
+  }
+  if (dstType.getShape() != dataType.getShape()) {
+    return emitOpError("dst address of hivm::LocalStoreOp must have the same "
+                       "shape as output tensor");
+  }
+  return success();
+}
+
+void LocalStoreOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Write::get(), &getAddrMutable(),
+                       SideEffects::DefaultResource::get());
+}
+
+//===----------------------------------------------------------------------===//
+// IndirectLoadOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult IndirectLoadOp::verify() {
+  auto srcType = getSrc().getType();
+  auto srcMemrefType = dyn_cast<MemRefType>(srcType);
+  if (!srcMemrefType) {
+    return emitError("src must be a memref type");
+  }
+
+  auto offsetsType = getOffsets().getType();
+  auto offsetsTensorType = dyn_cast<TensorType>(offsetsType);
+  auto offsetsMemrefType = dyn_cast<MemRefType>(offsetsType);
+  if (!(offsetsTensorType || offsetsMemrefType)) {
+    return emitOpError("offset must be tensor or memref type");
+  }
+
+  auto dstType = getDst().getType();
+  auto dstTensorType = dyn_cast<TensorType>(dstType);
+  auto dstMemrefType = dyn_cast<MemRefType>(dstType);
+  if (!(dstTensorType || dstMemrefType)) {
+    return emitOpError("dst must be tensor or memref type");
+  }
+
+  auto srcElementType = srcMemrefType.getElementType();
+  auto dstElementType = dstMemrefType ? dstMemrefType.getElementType()
+                                      : dstTensorType.getElementType();
+  if (dstElementType != srcElementType) {
+    return emitOpError(
+        "dst of hivm::IndirectLoadOp must have the same element type as src");
+  }
+
+  auto dstShape =
+      dstMemrefType ? dstMemrefType.getShape() : dstTensorType.getShape();
+  auto offsetShape = offsetsMemrefType ? offsetsMemrefType.getShape()
+                                       : offsetsTensorType.getShape();
+  if (dstShape != offsetShape) {
+    return emitOpError(
+        "dst of hivm::IndirectLoadOp must have the same shape as offsets");
+  }
+
+  if (auto mask = getMask()) {
+    auto maskType = mask.getType();
+    auto maskTensorType = dyn_cast<TensorType>(maskType);
+    auto maskMemrefType = dyn_cast<MemRefType>(maskType);
+    if (!(maskTensorType || maskMemrefType)) {
+      return emitOpError("mask must be tensor or memref type");
+    }
+
+    auto maskShape =
+        maskMemrefType ? maskMemrefType.getShape() : maskTensorType.getShape();
+    if (maskShape != offsetShape) {
+      return emitOpError("mask of hivm::IndirectLoadOp must have the same "
+                         "shape and rank as offsets");
+    }
+  }
+
+  if (auto other = getOther()) {
+    auto otherType = other.getType();
+    auto otherTensorType = dyn_cast<TensorType>(otherType);
+    auto otherMemrefType = dyn_cast<MemRefType>(otherType);
+    if (!(otherTensorType || otherMemrefType)) {
+      return emitOpError("other must be tensor or memref type");
+    }
+
+    auto otherShape = otherMemrefType ? otherMemrefType.getShape()
+                                      : otherTensorType.getShape();
+    if (otherShape != offsetShape) {
+      return emitOpError("other of hfusion::IndirectLoadOp must have the same "
+                         "shape and rank as offsets");
+    }
+
+    auto otherElementType = otherMemrefType ? otherMemrefType.getElementType()
+                                            : otherTensorType.getElementType();
+    if (otherElementType != srcElementType) {
+      return emitOpError("other of hfusion::IndirectLoadOp must have the same "
+                         "element type as src");
+    }
+  }
+  return success();
+}
+
+void IndirectLoadOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getOffsetsMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
+  if (getMask()) {
+    effects.emplace_back(
+        MemoryEffects::Read::get(),
+        &getOperation()->getOpOperand(getODSOperandIndexAndLength(3).first),
+        SideEffects::DefaultResource::get());
+  }
+  if (getOther()) {
+    effects.emplace_back(
+        MemoryEffects::Read::get(),
+        &getOperation()->getOpOperand(getODSOperandIndexAndLength(4).first),
+        SideEffects::DefaultResource::get());
+  }
+}
+
+//===----------------------------------------------------------------------===//
+// EmbeddingGatherOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult EmbeddingGatherOp::verify() {
+  auto srcTy = dyn_cast<MemRefType>(this->getSrc().getType());
+  if (!srcTy) {
+    return emitOpError("src of hivm::EmbeddingGatherOp must be MemrefType!");
+  }
+  auto idxTy = this->getIndex().getType();
+  auto idxMemTy = dyn_cast<MemRefType>(idxTy);
+  auto idxTenTy = dyn_cast<TensorType>(idxTy);
+  if (!idxMemTy && !idxTenTy) {
+    return emitOpError(
+        "idx of hivm::EmbeddingGatherOp must be TensorOrMemRefType!");
+  }
+  auto dstTy = this->getDst().getType();
+  auto dstMemTy = dyn_cast<MemRefType>(dstTy);
+  auto dstTenTy = dyn_cast<TensorType>(dstTy);
+  if (!dstMemTy && !dstTenTy) {
+    return emitOpError(
+        "dst of hivm::EmbeddingGatherOp must be TensorOrMemRefType!");
+  }
+  // TODO: supports more ranks?
+  auto idxRank = idxMemTy ? idxMemTy.getRank() : idxTenTy.getRank();
+  if (!(idxRank >= 1 && idxRank <= 2)) {
+    return emitOpError(
+        "idx of hivm::EmbeddingGatherOp must be of rank [1, 2]!");
+  }
+  auto dstRank = dstMemTy ? dstMemTy.getRank() : dstTenTy.getRank();
+  if (dstRank != idxRank + 1) {
+    return emitOpError("dst of hivm::EmbeddingGatherOp must be idxRank + 1!");
+  }
+
+  auto boundType = dyn_cast<IntegerType>(this->getBound().getType());
+  if (!boundType ||
+      (boundType.getWidth() != 64 && boundType.getWidth() != 32)) {
+    return emitOpError("bound of hivm::EmbeddingGatherOp must be i64|i32!");
+  }
+  auto offsets = this->getOffsets();
+  if (ssize_t(offsets.size()) != dstRank) {
+    return emitOpError("The size of offsets of hivm::EmbeddingGatherOp must be "
+                       "equal to the rank of dst!");
+  }
+  for (auto offset : offsets) {
+    auto offsetType = dyn_cast<IntegerType>(offset.getType());
+    auto bitWidth = offsetType.getWidth();
+    if (!offsetType || (bitWidth != 64 && bitWidth != 32)) {
+      return emitOpError("offsets of hivm::EmbeddingGatherOp must be i64|i32!");
+    }
+  }
+  auto numels = this->getNumels();
+  if (ssize_t(numels.size()) != dstRank) {
+    return emitOpError("The size of numels of hivm::EmbeddingGatherOp must be "
+                       "equal to the rank of dst!");
+  }
+  for (auto numel : numels) {
+    auto numelType = dyn_cast<IntegerType>(numel.getType());
+    auto bitWidth = numelType.getWidth();
+    if (!numelType || (bitWidth != 64 && bitWidth != 32)) {
+      return emitOpError("numels of hivm::EmbeddingGatherOp must be i64|i32!");
+    }
+  }
+
+  return success();
+}
+
+void EmbeddingGatherOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(), &getSrcMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), &getIndexMutable(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable(),
+                       SideEffects::DefaultResource::get());
 }

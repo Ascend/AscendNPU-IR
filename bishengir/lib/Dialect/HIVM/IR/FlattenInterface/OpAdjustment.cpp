@@ -71,6 +71,20 @@ void VCumprodOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
   setCumDims(adjustedDims);
 }
 
+void VCummaxOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
+                                       const FlattenResult &result) {
+  auto &adjustedDims = result.adjustedTargetDims;
+
+  setCumDims(adjustedDims);
+}
+
+void VCumminOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
+                                       const FlattenResult &result) {
+  auto &adjustedDims = result.adjustedTargetDims;
+
+  setCumDims(adjustedDims);
+}
+
 void VPadOp::adjustTargetDimensions([[maybe_unused]] OpBuilder &builder,
                                     const FlattenResult &result) {
   auto &adjustedDims = result.adjustedTargetDims;

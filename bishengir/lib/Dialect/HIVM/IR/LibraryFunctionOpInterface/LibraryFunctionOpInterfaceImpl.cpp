@@ -589,16 +589,76 @@ struct StaticMaxRankExternalModel
       Type srcType = concreteOp.getSrc().getType();
       std::string srcTypeStr =
           getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
-      std::string offsetTypeStr = getTypeName(
-          concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
-      return concreteOp.getOpName().str() + hasMaskStr + "_" + libCallDim + "_" +
-             srcTypeStr + "_" + offsetTypeStr;
+      std::string offsetTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(offsetType));
+      return concreteOp.getOpName().str() + hasMaskStr + "_" + libCallDim +
+             "_" + srcTypeStr + "_" + offsetTypeStr;
+    }
+    if constexpr (std::is_same_v<ConcreteOp, EmbeddingGatherOp>) {
+      auto idxType = cast<ShapedType>(concreteOp.getIndex().getType());
+      int rank = idxType.getRank();
+      std::string libCallDim = std::to_string(rank) + "d";
+      Type srcType = concreteOp.getSrc().getType();
+      std::string srcTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+      std::string idxTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(idxType));
+      return concreteOp.getOpName().str() + "_" + libCallDim + "_" +
+             srcTypeStr + "_" + idxTypeStr;
+    }
+    if constexpr (std::is_same_v<ConcreteOp, GatherTOp>) {
+      auto idxType = cast<ShapedType>(concreteOp.getIndex().getType());
+      int rank = idxType.getRank();
+      std::string libCallDim = std::to_string(rank) + "d";
+      Type srcType = concreteOp.getSrc().getType();
+      std::string srcTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(srcType));
+      Type indexType = concreteOp.getIndex().getType();
+      std::string idxTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(indexType));
+      return concreteOp.getOpName().str() + "_" + libCallDim + "_" +
+             srcTypeStr + "_" + idxTypeStr;
+    }
+    if constexpr (std::is_same_v<ConcreteOp, IndexPutOp>) {
+      auto valueType = dyn_cast<ShapedType>(concreteOp.getValue().getType());
+      if (!valueType)
+        llvm::report_fatal_error("IndexPutOp value must be a ShapedType");
+      int rank = valueType.getRank();
+      std::string libCallDim = std::to_string(rank) + "d";
+      Type dstType = concreteOp.getDst().getType();
+      std::string dstTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(dstType));
+      Type indexType = concreteOp.getIndex().getType();
+      std::string indexTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(indexType));
+      return concreteOp.getOpName().str() + "_" + libCallDim + "_" +
+             dstTypeStr + "_" + indexTypeStr;
+    }
+    if constexpr (std::is_same_v<ConcreteOp, ScatterTOp>) {
+      auto indexTileType =
+          cast<ShapedType>(concreteOp.getIndexTile().getType());
+      int rank = indexTileType.getRank();
+      std::string libCallDim = std::to_string(rank) + "d";
+      std::string indexTileTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(indexTileType));
+
+      Type valueType = concreteOp.getValue().getType();
+      std::string valueTypeStr =
+          getTypeName(concreteOp.getLoc(), getElementTypeOrSelf(valueType));
+
+      return concreteOp.getOpName().str() + "_" + libCallDim + "_" +
+             valueTypeStr + "_" + indexTileTypeStr;
     }
     if constexpr (std::is_same_v<ConcreteOp, DebugOp>) {
       return getDebugOpLibraryCallName(concreteOp, isOpsAligned);
-    } else {
-      // Wrap the default impl. in the else branch because we want to utilize
-      // `if constexpr`
+    }
+    if constexpr (!std::is_same_v<ConcreteOp, DebugOp> &&
+                  !std::is_same_v<ConcreteOp, EmbeddingGatherOp> &&
+                  !std::is_same_v<ConcreteOp, GatherTOp> &&
+                  !std::is_same_v<ConcreteOp, IndexPutOp> &&
+                  !std::is_same_v<ConcreteOp, ScatterTOp>) {
+      // Wrap the default impl. in this if constexpr branch because we want to
+      // utilize `if constexpr`
       std::string baseCallName = concreteOp.getOpName().str();
       std::string suffix = "";
       if (op->hasTrait<OpTrait::ElementwiseNaryOpTrait<2>::Impl>()) {
@@ -1052,7 +1112,8 @@ std::string InferMaxRankExternalModel<VReduceOp>::getOpLibraryCallName(
   // With-index reduce ops only have 2D library registrations
   // (_r_, _ra_, _ar_ with index). 3D-only templates (_ra0a1_, _ara_, _aar_)
   // do not register with-index variants, so we must skip them here.
-  bool isWithIndex = VReduceOp::isWithIndex(concreteOp.getArith().getReduceOp());
+  bool isWithIndex =
+      VReduceOp::isWithIndex(concreteOp.getArith().getReduceOp());
   // Cap rank to 2 so 3D-only paths are unreachable.
   if (isWithIndex && rank > 2) {
     rank = 2;
@@ -1070,7 +1131,7 @@ std::string InferMaxRankExternalModel<VReduceOp>::getOpLibraryCallName(
   if (rank == 1) {
     ss << "_r_";
   } else if (!isWithIndex && ((firstAxis && rank >= dim3Rank) ||
-             (midAxis && (reduceDims[0] <= rank - 3)))) {
+                              (midAxis && (reduceDims[0] <= rank - 3)))) {
     ss << "_ra0a1_";
     rank = dim3Rank;
   } else if (!isWithIndex && midAxis && (reduceDims[0] > rank - 3)) {
@@ -1313,6 +1374,10 @@ void bishengir::hivm::detail::registerLibraryFunctionOpInterfaceExtension(
     REGISTER_STATIC_MAX_RANK(DebugOp, 4);
     REGISTER_NO_MAX_RANK(FinishDebugOp);
     REGISTER_NO_MAX_RANK(InitDebugOp);
+    REGISTER_STATIC_MAX_RANK(EmbeddingGatherOp, 3);
+    REGISTER_STATIC_MAX_RANK(GatherTOp, 5);
+    REGISTER_STATIC_MAX_RANK(IndexPutOp, 5);
+    REGISTER_STATIC_MAX_RANK(ScatterTOp, 5);
   });
 }
 

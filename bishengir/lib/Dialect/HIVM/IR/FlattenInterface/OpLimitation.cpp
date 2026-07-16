@@ -53,6 +53,8 @@ DEFINE_SIMPLE_LIMITED_AXES(VBrcOp, getBroadcastDims)
 DEFINE_SIMPLE_LIMITED_AXES(VReduceOp, getReduceDims)
 DEFINE_SIMPLE_LIMITED_AXES(VCumsumOp, getCumDims)
 DEFINE_SIMPLE_LIMITED_AXES(VCumprodOp, getCumDims)
+DEFINE_SIMPLE_LIMITED_AXES(VCummaxOp, getCumDims)
+DEFINE_SIMPLE_LIMITED_AXES(VCumminOp, getCumDims)
 #undef DEFINE_SIMPLE_LIMITED_AXES
 
 SmallVector<int64_t> VTransposeOp::getLimitedAxes() {

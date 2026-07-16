@@ -102,6 +102,10 @@ def HIVM_DataLayoutFractal : I32EnumAttrCase<"Fractal", 7, "Fractal">;
 def HIVM_DataLayoutNCHW : I32EnumAttrCase<"NCHW", 8, "NCHW">;
 def HIVM_DataLayoutNC1HWC0 : I32EnumAttrCase<"NC1HWC0", 9, "NC1HWC0">;
 def HIVM_DataLayoutC1HWNC0 : I32EnumAttrCase<"C1HWNC0", 10, "C1HWNC0">;
+def HIVM_DataLayoutScaleAND : I32EnumAttrCase<"SCALEA_ND", 11, "SCALEA_ND">;
+def HIVM_DataLayoutScaleBDN : I32EnumAttrCase<"SCALEB_DN", 12, "SCALEB_DN">;
+def HIVM_DataLayoutScaleAzZ : I32EnumAttrCase<"SCALEA_zZ", 13, "SCALEA_zZ">;
+def HIVM_DataLayoutScaleBnN : I32EnumAttrCase<"SCALEB_nN", 14, "SCALEB_nN">;
 
 def HIVM_DataLayoutEnum : HIVM_I32Enum<
   "DataLayout", "HIVM data layout", [
@@ -114,7 +118,11 @@ def HIVM_DataLayoutEnum : HIVM_I32Enum<
     HIVM_DataLayoutFractal,
     HIVM_DataLayoutNCHW,
     HIVM_DataLayoutNC1HWC0,
-    HIVM_DataLayoutC1HWNC0
+    HIVM_DataLayoutC1HWNC0,
+    HIVM_DataLayoutScaleAND,
+    HIVM_DataLayoutScaleBDN,
+    HIVM_DataLayoutScaleAzZ,
+    HIVM_DataLayoutScaleBnN
   ]>;
 
 def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
@@ -409,6 +417,10 @@ def HIVM_RoundModeAttr : HIVM_I32EnumAttr<"round_mode", HIVM_RoundModeEnum> {
     - ODD: round to odd (Von Neumann rounding)
   }];
 }
+
+//===----------------------------------------------------------------------===//
+// UnsignedMode for VCastOp
+//===----------------------------------------------------------------------===//
 
 def HIVM_SI2SI : I32EnumAttrCase<"SI2SI", 0, "si2si">;
 def HIVM_SI2UI : I32EnumAttrCase<"SI2UI", 1, "si2ui">;
@@ -1022,13 +1034,23 @@ def HIVM_LocalMatmul_PerChannelAdd : I32EnumAttrCase<"PerChannelAdd", 1>;
 def HIVM_LocalMatmul_PerChannelAddWithSplitK : I32EnumAttrCase<"PerChannelAddWithSplitK", 2>;
 def HIVM_LocalMatmul_ElementwiseAdd : I32EnumAttrCase<"ElementwiseAdd", 3>;
 def HIVM_LocalMatmul_ElementwiseCrossLoopAdd : I32EnumAttrCase<"ElementwiseCrossLoopAdd", 4>;
+def HIVM_LocalMatmul_PostPerChannelAddWithSplitK : I32EnumAttrCase<"PostPerChannelAddWithSplitK", 5>;
+def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 6>;
 def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
   HIVM_LocalMatmul_NoBias,
   HIVM_LocalMatmul_PerChannelAdd,
   HIVM_LocalMatmul_PerChannelAddWithSplitK,
   HIVM_LocalMatmul_ElementwiseCrossLoopAdd,
-  HIVM_LocalMatmul_ElementwiseAdd
+  HIVM_LocalMatmul_ElementwiseAdd,
+  HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
 ]>;
+
+def HIVM_LocalMatmulMx_DataFormat
+    : HIVM_I32Enum<"HIVMMatmulDataformat", "",
+                   [I32EnumAttrCase<"FP8E5M2_T", 1, "fp8_e5m2_t">,
+                    I32EnumAttrCase<"FP8E4M3_T", 2, "fp8_e4m3_t">,
+                    I32EnumAttrCase<"FP4E2M1_T", 3, "fp4_e2m1_t">]>;
 
 //===----------------------------------------------------------------------===//
 // Metadata
@@ -1302,6 +1324,81 @@ def HIVM_IsDistributedAttr : HIVM_Attr<"IsDistributed", "is_distributed"> {
   let description = [{
     Specifies an op is about distributed.
   }];
+}
+
+//===----------------------------------------------------------------------===//
+// BackupFunction
+//===----------------------------------------------------------------------===//
+
+def HIVM_BackupFunction
+    : HIVM_Attr<"BackupFunction", "backup_function"> {
+  let description = [{HIVM backup  function attribute}];
+}
+
+def HIVM_HasAliaScopesAttr : HIVM_Attr<"HasAliaScopes", "has_alias_scopes"> {
+  let description = [{HIVM has alias scopes attribute}];
+}
+
+def HIVM_MemUniqueAttr : HIVM_Attr<"HIVMMemoryUnique", "mem_unique"> {
+  let description = [{HIVM plan unique memory}];
+}
+
+def HIVM_SharedMemoryAttr : HIVM_Attr<"SharedMemory", "shared_memory"> {
+  let description = [{
+    Shared memory for simt vf.
+  }];
+}
+
+def HIVM_SimtMemScopeHintAttr
+    : HIVM_Attr<"SimtMemScopeHint", "simt_mem_scope_hint"> {
+  let parameters = (ins EnumParameter<HIVM_AddressSpaceEnum>:$addressSpace);
+  let assemblyFormat = "`<` $addressSpace `>`";
+  let description = [{
+    Memory scope hint for SIMT VF arguments before address space
+    materialization.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// Memory Effect
+//===----------------------------------------------------------------------===//
+
+def HIVM_READ : I32EnumAttrCase<"READ", 0, "read">;
+def HIVM_WRITE : I32EnumAttrCase<"WRITE", 1, "write">;
+def HIVM_READ_WRITE : I32EnumAttrCase<"READ_WRITE", 2, "read_write">;
+
+def HIVM_MemoryEffectEnum : HIVM_I32Enum<
+  "MemoryEffect", "hivm memory effect", [
+    HIVM_READ,
+    HIVM_WRITE,
+    HIVM_READ_WRITE
+  ]>;
+
+def HIVM_MemoryEffectAttr : HIVM_Attr<"MemoryEffect", "memory_effect"> {
+  let parameters = (ins EnumParameter<HIVM_MemoryEffectEnum>:$effect);
+  let assemblyFormat = "`<` $effect `>`";
+  let description = [{
+    HIVM memory effect attribute for simt vf.
+  }];
+}
+
+//===----------------------------------------------------------------------===//
+// RemainInL0CAttr
+//===----------------------------------------------------------------------===//
+
+def HIVM_RemainInL0CAttr : HIVM_Attr<"RemainInL0C", "remain_in_l0c"> {
+  let description = [{
+    Indicates that the operation's result should remain in L0C buffer.
+    Used by NormalizeMatmul pass for buffer reuse optimization.
+  }];
+}
+
+def HIVM_MatmulLimitedInCubeAttr
+    : HIVM_Attr<"MatmulLimitedInCube", "matmul_limited_in_cube"> {
+  let description =
+      [{Indicates that the matmul operation can be executed in the AIC alone
+            .It will bypass compiler analysis that might decompose matmul into
+                vector addition because of hardware constraints.}];
 }
 
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD

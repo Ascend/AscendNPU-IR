@@ -71,8 +71,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   bool isATranspose = getATranspose().has_value();
   auto aBlockSizes = getBlockSizes(operA);
   auto mALayoutAttr = DataLayoutAttr::get(
-      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN,
-      nullptr,
+      getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(aBlockSizes)));
   valLayoutMap[operA] = mALayoutAttr;
 
@@ -80,8 +79,7 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   bool isBTranspose = getBTranspose().has_value();
   auto bBlockSizes = getBlockSizes(operB);
   auto mBLayoutAttr = DataLayoutAttr::get(
-      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
-      nullptr,
+      getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN, nullptr,
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(bBlockSizes)));
   valLayoutMap[operB] = mBLayoutAttr;
 
@@ -94,8 +92,8 @@ llvm::SmallDenseMap<Value, DataLayoutAttr> MmadL1Op::getOperandsTargetLayout() {
   valLayoutMap[getC()] = mCLayoutAttr;
 
   if (auto bias = getPerChannelBias()) {
-    auto biasLayoutAttr = DataLayoutAttr::get(getContext(), DataLayout::ND,
-                                              nullptr, nullptr);
+    auto biasLayoutAttr =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
     valLayoutMap[bias] = biasLayoutAttr;
   }
   return valLayoutMap;
@@ -134,7 +132,7 @@ FractalOperandLayouts MmadL1Op::getOperandsTargetFractalLayout() {
 //===----------------------------------------------------------------------===//
 // Conv1DL1Op
 //===----------------------------------------------------------------------===//
- 	 
+
 llvm::SmallDenseMap<Value, DataLayoutAttr>
 Conv1DL1Op::getOperandsCurrentLayout() {
   llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;

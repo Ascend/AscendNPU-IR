@@ -385,7 +385,8 @@ struct VReduceOpReduceRankSubviewPattern
 
     rewriter.create<hivm::VReduceOp>(
         op->getLoc(), TypeRange(), subviewSrcOp, ValueRange(subviewDstRange),
-        op.getTempBuffer(), op.getArithAttr(), newReduceDims, subviewIndicesOp);
+        op.getTempBuffer(), op.getArithAttr(),
+        rewriter.getDenseI64ArrayAttr(newReduceDims), subviewIndicesOp);
     rewriter.eraseOp(op);
     return success();
   }

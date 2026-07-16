@@ -76,6 +76,7 @@ def HACC_ToLLVMIRTranslateAttr : HACC_I32Enum<"HACCToLLVMIRTranslateAttr", "", [
   // For Mix Device Entry Functions
   I32EnumAttrCase<"MIX_ENTRY", 1, "hacc.mix_entry">,
   I32EnumAttrCase<"ALWAYS_INLINE", 2, "hacc.always_inline">,
+  I32EnumAttrCase<"NOINLINE", 3, "hacc.noinline">,
 ]> {
   let cppNamespace = "::mlir::hacc";
 }
@@ -95,6 +96,7 @@ def HACC_kTilingData : I32EnumAttrCase<"kTilingData", 7, "tiling_data">;
 def HACC_kTilingStruct : I32EnumAttrCase<"kTilingStruct", 8, "tiling_struct">;
 def HACC_kMeshArg : I32EnumAttrCase<"kMeshArg", 9, "mesh_arg">;
 def HACC_kSanitizerAddr : I32EnumAttrCase<"kSanitizerAddr", 10, "sanitizer_addr">;
+def HACC_kGMAddr : I32EnumAttrCase<"kGMAddr", 11, "gm_addr">;
 def HACC_kSubWorkspace : I32EnumAttrCase<"kSubWorkspace", 12, "sub_workspace">;
 
 def HACC_KernelArgTypeEnum : HACC_I32Enum<"KernelArgType", "HACC Kernel Arg Category", [
@@ -109,6 +111,7 @@ def HACC_KernelArgTypeEnum : HACC_I32Enum<"KernelArgType", "HACC Kernel Arg Cate
   HACC_kTilingStruct,
   HACC_kMeshArg,
   HACC_kSanitizerAddr,
+  HACC_kGMAddr,
   HACC_kSubWorkspace,
 ]> {}
 
@@ -133,6 +136,7 @@ def HACC_kInferSyncBlockLockNumFunction : I32EnumAttrCase<"kInferSyncBlockLockNu
 def HACC_kInferSyncBlockLockInitFunction : I32EnumAttrCase<"kInferSyncBlockLockInitFunction", 6, "infer_sync_block_lock_init_function">;
 def HACC_kGetTilingStructSizeFunction : I32EnumAttrCase<"kGetTilingStructSizeFunction", 7, "get_tiling_struct_size_function">;
 def HACC_kInferTaskTypeFunction : I32EnumAttrCase<"kInferTaskTypeFunction", 8, "infer_task_type_function">;
+def HACC_kInferVFModeFunction : I32EnumAttrCase<"kInferVFModeFunction", 9, "infer_vf_mode_function">;
 def HACC_HostFuncTypeEnum : HACC_I32Enum<"HostFuncType", "HACC Host function type", [
   HACC_kEntry,
   HACC_kTilingFunction,
@@ -142,6 +146,7 @@ def HACC_HostFuncTypeEnum : HACC_I32Enum<"HostFuncType", "HACC Host function typ
   HACC_kInferSyncBlockLockInitFunction,
   HACC_kGetTilingStructSizeFunction,
   HACC_kInferTaskTypeFunction,
+  HACC_kInferVFModeFunction,
 ]> {}
 
 def HACC_HostFuncTypeAttr : HACC_Attr<"HostFuncType", "host_func_type"> {
@@ -239,6 +244,14 @@ def HACC_InferTaskTypeFunctionAttr
   }];
 }
 
+def HACC_InferVFModeFunctionAttr
+    : HACC_FuncRefAttr<"InferVFModeFunction", "infer_vf_mode_function"> {
+  let description = [{
+    HACC infer vf mode function attribute. This is used to indicate the host
+    get vf mode function of the device function.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Device Target and Specification
 //===----------------------------------------------------------------------===//
@@ -271,6 +284,11 @@ def HACC_DeviceSpecEnum :
     HACC `DeviceSpec` enum class defines the list of hardware specification
     that might be useful to compiler.
   }];
+}
+
+def HACCTargetDeviceSpecTrait
+    : NativeAttrTrait<"HACCTargetDeviceSpecInterface::Trait"> {
+  let cppNamespace = "::mlir::hacc";
 }
 
 def HACC_TargetDeviceSpecAttr :
@@ -412,6 +430,12 @@ def HACC_NoIOAliasAttr
 def HACC_BlockDimAttr : HACC_Attr<"BlockDim", "block_dim"> {
   let description = [{
     HACC block dimension attribute for function.
+  }];
+}
+
+def HACC_SIMTModuleAttr : HACC_Attr<"SIMTModule", "simt_module"> {
+  let description = [{
+    Attribute to indicate simt modules.
   }];
 }
 
