@@ -57,7 +57,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1]>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: bufferization.to_memref
 // CHECK-NOT: hivm.hir.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {

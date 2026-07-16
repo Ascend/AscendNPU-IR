@@ -348,6 +348,15 @@ def HIVM_TPartOfMixAttr : HIVM_Attr<"TPartOfMix", "part_of_mix"> {
   }];
 }
 
+def HIVM_AllowFlattenAttr : HIVM_Attr<"AllowFlatten", "allow_flatten"> {
+  let description = [{
+    Marks a scope whose body is safe for hfusion-flatten-ops /
+    propagate-reshape even when skip-scope is enabled. Used by software
+    atomic_xchg decomposition so multi-rank tensors inside the critical
+    section can be collapsed to reduce UB pressure.
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Pad Mode for LoadOp
 //===----------------------------------------------------------------------===//
