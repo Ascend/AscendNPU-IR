@@ -1013,14 +1013,17 @@ module {
 // -----
 // CHECK-LABEL:   func.func @simple_testcase_unaligned(
 // CHECK:           %[[VAL_2:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_3:.*]] = tensor.empty() : tensor<63xf32>
-// CHECK:           %[[VAL_4:.*]] = hivm.hir.vln ins(%[[random1:.*]] : tensor<63xf32>) outs(%[[VAL_3]] : tensor<63xf32>) -> tensor<63xf32>
-// CHECK:           %[[VAL_5:.*]] = hivm.hir.get_sub_block_idx -> i64
-// CHECK:           %[[VAL_6:.*]] = arith.index_cast %[[VAL_5]] : i64 to index
-// CHECK:           %[[VAL_7:.*]] = arith.cmpi eq, %[[VAL_6]], %[[VAL_2]] : index
-// CHECK:           scf.if %[[VAL_7]] {
-// CHECK:             hivm.hir.store ins(%[[VAL_4]] : tensor<63xf32>) outs(%[[random2:.*]] : memref<63xf32>)
-// CHECK:           } {limit_sub_block_id0}
+// CHECK:           %[[VAL_3:.*]] = arith.constant 1 : index
+// CHECK:           %[[VAL_4:.*]] = arith.constant 2 : index
+// CHECK:           scf.for %[[VAL_5:.*]] = %[[VAL_2]] to %[[VAL_4]] step %[[VAL_3]] {
+// CHECK:             %[[VAL_6:.*]] = affine.apply
+// CHECK:             %[[VAL_7:.*]] = affine.apply
+// CHECK:             %[[VAL_8:.*]] = memref.subview %{{.*}}{{\[}}%[[VAL_6]]] [%[[VAL_7]]] [1] {to_be_bubbled_slice} : memref<63xf32> to memref<?xf32, strided<[1], offset: ?>>
+// CHECK:             %[[VAL_9:.*]] = tensor.extract_slice %{{.*}}{{\[}}%[[VAL_6]]] [%[[VAL_7]]] [1] {to_be_bubbled_slice} : tensor<63xf32> to tensor<?xf32>
+// CHECK:             %[[VAL_10:.*]] = tensor.empty(%[[VAL_7]]) : tensor<?xf32>
+// CHECK:             %[[VAL_11:.*]] = hivm.hir.vln ins(%[[VAL_9]] : tensor<?xf32>) outs(%[[VAL_10]] : tensor<?xf32>) -> tensor<?xf32>
+// CHECK:             hivm.hir.store ins(%[[VAL_11]] : tensor<?xf32>) outs(%[[VAL_8]] : memref<?xf32, strided<[1], offset: ?>>) {tiled_op}
+// CHECK:           } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
 // CHECK:           return
 // CHECK:         }
 module {
@@ -1537,8 +1540,9 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
 // CHECK: scf.if %{{.*}} -> (tensor<8x16xf32>) {
 // CHECK: scf.yield %{{.*}} : tensor<8x16xf32>
 // CHECK: } else {
-// CHECK: %[[WS_STORE:.*]] = hivm.hir.store ins(%{{.*}} : tensor<8x16xf32>) outs(%{{.*}} : tensor<8x16xf32>) -> tensor<8x16xf32>
-// CHECK: scf.yield %[[WS_STORE]] : tensor<8x16xf32>
+// CHECK: %[[WS_STORE:.*]] = hivm.hir.store ins(%{{.*}} : tensor<8x16xf32>) outs(%{{.*}} : tensor<8x16xf32>) {tiled_op} -> tensor<8x16xf32>
+// CHECK: %[[WS_SLICE:.*]] = tensor.extract_slice %[[WS_STORE]]{{\[}}%{{.*}}, 0] [8, 16] [1, 1] {to_be_bubbled_slice} : tensor<8x16xf32> to tensor<8x16xf32>
+// CHECK: scf.yield %[[WS_SLICE]] : tensor<8x16xf32>
 // CHECK: }
 // CHECK: hivm.hir.store ins(%{{.*}} : tensor<8x16xf32>) outs(%{{.*}} : memref<8x16xf32, strided<[16, 1], offset: ?>>) {tiled_op}
 // CHECK-NOT: limit_sub_block_id0

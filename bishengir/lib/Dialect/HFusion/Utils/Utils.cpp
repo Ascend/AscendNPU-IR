@@ -741,6 +741,20 @@ bool hasDynamicShapeOperand(Operation *op) {
   return false;
 }
 
+bool hasCustomOp(Operation *op) {
+  bool found = false;
+
+  op->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (isa<hivm::CustomOp>(op) || isa<hivm::CustomMacroOp>(op)) {
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  return found;
+}
+
 } // namespace util
 } // namespace hfusion
 } // namespace mlir

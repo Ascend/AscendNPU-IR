@@ -33,6 +33,7 @@ namespace hivm {
 static constexpr llvm::StringLiteral usedForDebugOp = "used_for_debug_op";
 
 static constexpr llvm::StringLiteral ExtractLoadStoreAttr = "ExtractedLoadOrStore";
+static constexpr llvm::StringLiteral VgatherDecomposeAttr = "VgatherDecompose";
 
 /// find v in vector valueVec
 std::optional<int> findIdx(SmallVector<Value> valueVec, Value v);

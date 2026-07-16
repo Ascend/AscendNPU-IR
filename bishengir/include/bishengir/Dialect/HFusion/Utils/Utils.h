@@ -324,6 +324,8 @@ hivm::AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
 
 bool hasDynamicShapeOperand(Operation *op);
 
+bool hasCustomOp(Operation *op);
+
 } // namespace util
 
 namespace trig {

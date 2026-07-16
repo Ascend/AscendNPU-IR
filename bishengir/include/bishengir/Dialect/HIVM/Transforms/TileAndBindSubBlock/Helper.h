@@ -56,7 +56,6 @@ bool isMarkedInsertSliceOp(Operation *op);
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
                                         OpFoldResult singleTileSize);
-
 OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
                                         scf::ForOp containingLoop,
                                         Value input, int64_t tileDimension);
@@ -94,7 +93,6 @@ void handleExtractOfExtract(OpFoldResult &offset, OpFoldResult &size,
 int64_t calculateBufferSizeInBytes(ShapedType tiledType,
                                    ArrayRef<int64_t> originShape,
                                    int64_t tilingDim);
-
 } // namespace hivm
 } // namespace mlir
 

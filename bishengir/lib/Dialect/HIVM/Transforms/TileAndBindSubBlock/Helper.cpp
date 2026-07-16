@@ -17,10 +17,12 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
@@ -31,6 +33,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SetOperations.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/LogicalResult.h"
 #include <cstddef>
 #include <optional>
@@ -195,6 +198,8 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
     AffineExpr tileSizeExpr = (1 - builder.getAffineSymbolExpr(0)) * tileSize +
                               (builder.getAffineSymbolExpr(0) * tailsize);
     Value inductionVar = containingLoop.getBody()->getArgument(0);
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(containingLoop.getBody());
     auto finalTileSize = affine::makeComposedAffineApply(
         builder, loc, tileSizeExpr, {getAsOpFoldResult(inductionVar)});
     return getAsOpFoldResult(finalTileSize);
@@ -206,9 +211,14 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
   bindDims(builder.getContext(), dim0);
   auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
                                    dim0.ceilDiv(kSubBlockDim));
-  auto dimSizeOp = builder.create<tensor::DimOp>(loc, input, tileDimension);
+  Value dimVal;
+  if (isa<TensorType>(inputType)) {
+    dimVal = builder.create<tensor::DimOp>(loc, input, tileDimension);
+  } else {
+    dimVal = builder.create<memref::DimOp>(loc, input, tileDimension);
+  }
   auto tileSizeOp = builder.create<affine::AffineApplyOp>(
-      loc, ceilDivMap, ValueRange{dimSizeOp});
+      loc, ceilDivMap, ValueRange{dimVal});
   return getAsOpFoldResult(tileSizeOp);
 }
 
@@ -230,9 +240,10 @@ LogicalResult findCorrespondingSizesOffsetsStrides(
       mixedOffsets.push_back(offsetAtTileDim);
       mixedSize.push_back(tileSize);
       if (!getConstantIntValue(tileSize)) {
-        return failure();
+        newShape.push_back(ShapedType::kDynamic);
+      } else {
+        newShape.push_back(getConstantIntValue(tileSize).value());
       }
-      newShape.push_back(getConstantIntValue(tileSize).value());
     }
   }
   return success();
@@ -249,7 +260,7 @@ getOriginalType(OffsetSizeAndStrideOpInterface offsetSizeAndStrideOp) {
   if (auto op =
           dyn_cast<memref::SubViewOp>(offsetSizeAndStrideOp.getOperation()))
     return op.getSourceType();
-  llvm::report_fatal_error("There should not be such case");
+  llvm_unreachable("There should not be such case");
   return std::nullopt;
 }
 
