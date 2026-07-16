@@ -64,6 +64,12 @@ static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
 
+// Attribute names used by the hivm-mark-disable-load pass and consumed by the
+// MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
+static constexpr llvm::StringLiteral kDisableDCacheAttr = "disableDCache";
+static constexpr llvm::StringLiteral kMarkDCacheVisitedAttr =
+    "markDCacheInvalidatePatternVisited";
+
 static constexpr llvm::StringLiteral kHIVMDataLayoutAttrName =
     "hivm_data_layout";
 
