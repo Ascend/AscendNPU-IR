@@ -29,6 +29,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Verifier.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
@@ -266,6 +267,34 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
   }
 }
 
+static FailureOr<Value>
+rematerializeViewLikeResult(Value value, scope::ScopeOp scopeOp,
+                            const IRMapping &preloadMapping,
+                            IRMapping &viewMapping, OpBuilder &builder) {
+  if (Value mapped = viewMapping.lookupOrNull(value))
+    return mapped;
+
+  Region *definingRegion = value.getParentRegion();
+  if (!definingRegion || !scopeOp.getRegion().isAncestor(definingRegion)) {
+    Value mapped = preloadMapping.lookupOrDefault(value);
+    viewMapping.map(value, mapped);
+    return mapped;
+  }
+
+  Operation *definingOp = value.getDefiningOp();
+  if (!isa<ViewLikeOpInterface>(definingOp))
+    return failure();
+
+  for (Value operand : definingOp->getOperands()) {
+    if (failed(rematerializeViewLikeResult(operand, scopeOp, preloadMapping,
+                                           viewMapping, builder)))
+      return failure();
+  }
+
+  builder.clone(*definingOp, viewMapping);
+  return viewMapping.lookup(value);
+}
+
 static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
                                 PreloadInfo &info, ValueRange loopArgs,
                                 Location loc, OpBuilder &builder) {
@@ -296,6 +325,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
       },
       [&](OpBuilder &b, Location loc) {
         SmallVector<Value> newYields;
+        IRMapping viewMapping;
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
           if (!getLocalBuffer(retRes)) {
@@ -307,7 +337,13 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
               auto newRes = b.clone(*pointerCastOp)->getResult(0);
               newYields.push_back(newRes);
             } else {
-              llvm::report_fatal_error("Unhandled scope result case");
+              // Rematerialize the view chain independently in the skip branch.
+              auto rematerialized = rematerializeViewLikeResult(
+                  retRes, scopeOp, info.mappings[info.preloadNum], viewMapping,
+                  b);
+              if (failed(rematerialized))
+                llvm::report_fatal_error("Unhandled scope result case");
+              newYields.push_back(*rematerialized);
             }
           }
         }
