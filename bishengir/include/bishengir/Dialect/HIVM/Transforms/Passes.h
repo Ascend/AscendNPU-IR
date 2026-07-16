@@ -330,6 +330,7 @@ std::unique_ptr<Pass> createSplitSimtModulePass();
 std::unique_ptr<Pass> createAutoScopePass();
 
 std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
+std::unique_ptr<Pass> createWriteBackSharedPass();
 
 /// Create a pass to tile cube and vector loop on local buffer.
 std::unique_ptr<Pass>

@@ -1013,6 +1013,11 @@ def InsertAllocBasePlaceholder : Pass<"insert-alloc-base-placeholder", "ModuleOp
   let constructor = "mlir::hivm::createInsertAllocBasePlaceholderPass()";
 }
 
+def WriteBackShared : Pass<"write-back-shared", "ModuleOp"> {
+  let summary = "Set the actual size of memref.alloc which represent used shared memory in simt vf";
+  let constructor = "mlir::hivm::createWriteBackSharedPass()";
+}
+
 def TileCubeVectorLoop : Pass<"tile-cube-vector-loop", "ModuleOp"> {
   let summary = "Tile cube and vector loops on local buffer";
   let description = [{
