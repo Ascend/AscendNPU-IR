@@ -67,9 +67,6 @@ public:
         if (candidateBlock.getOps().size() == block.getOperations().size())
           continue;
 
-        // Filter out for ops which make sense for fusion
-        SmallVector<Operation *> computeOps =
-            getComputeOps(candidateBlock.getOps());
         // When a fusion block contains at most one op, the normal fusion
         // path is bypassed (continue).  However, certain ops that are known
         // to be processed by a dedicated downstream pass (e.g. reduce-sum
@@ -79,9 +76,9 @@ public:
         //   - returns true  → outline this single-op block (skip fusion,
         //                     but keep the op isolated for later handling)
         //   - returns false → skip entirely (no outline, no fusion)
-        if (computeOps.size() <= 1) {
-          if (computeOps.empty() ||
-              !shouldSkipFusion(computeOps.front(), option))
+        if (candidateBlock.getOps().size() <= 1) {
+          auto ops = candidateBlock.getOps();
+          if (ops.empty() || !shouldSkipFusion(ops.front(), option))
             continue;
         }
 
@@ -176,15 +173,6 @@ protected:
   VFFusionOutliner outliner;
   VFFusionBlockList analyzedBlocks; // Renamed from fusedBlock
   const VFFusionKindOption option;
-
-private:
-  static SmallVector<Operation *>
-  getComputeOps(SmallVector<Operation *> allOps) {
-    SmallVector<Operation *> res;
-    llvm::copy_if(allOps, std::back_inserter(res),
-                  [](auto *op) { return isComputeOp(op); });
-    return res;
-  }
 };
 
 class AllOpKind : public FusionKindBase {

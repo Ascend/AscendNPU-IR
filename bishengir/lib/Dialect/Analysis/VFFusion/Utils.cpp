@@ -273,9 +273,5 @@ bool shouldSkipFusion(Operation *op, const VFFusionKindOption &option) {
       });
 }
 
-bool isComputeOp(Operation* op) {
-  return !isa<annotation::MarkOp>(op);
-}
-
 
 } // namespace mlir::analysis
