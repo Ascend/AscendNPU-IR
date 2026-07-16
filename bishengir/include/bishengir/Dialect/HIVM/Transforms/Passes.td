@@ -978,6 +978,11 @@ def ComposeCollapseExpand : Pass<"compose-collapse-expand"> {
   let constructor = "mlir::hivm::createComposeCollapseExpandPass()";
 }
 
+def InferSimtVFMemEffect : Pass<"infer-simt-vf-memory-effect"> {
+  let summary = "Infer simt vf func args memory effect";
+  let constructor = "mlir::hivm::createInferSimtVFMemEffectPass()";
+}
+
 def AutoScope : Pass<"auto-scope"> {
   let summary = "Create scope for gather_load and scatter_store";
   let constructor = "mlir::hivm::createAutoScopePass()";

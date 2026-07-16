@@ -313,6 +313,9 @@ createCVPipeliningPass(const CVPipeliningOptions &options = {});
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 
+// Create a pass to infer simt vf func args memory effect.
+std::unique_ptr<Pass> createInferSimtVFMemEffectPass();
+
 // Create scope for gather_load and scatter_store
 std::unique_ptr<Pass> createAutoScopePass();
 
