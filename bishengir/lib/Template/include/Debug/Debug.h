@@ -49,7 +49,7 @@
 
 #define REGISTER_PRINT_TENSOR(dim, type, mem)                                  \
   DECLARE_PRINT_TENSOR(dim, type, mem) {                                       \
-    print_##dim##d_core<type, __##mem##__ type>(prefix, len, arg, hex);        \
+    print_nd_core<type, __##mem##__ type, dim>(prefix, len, arg, hex);         \
   }
 
 #define REGISTER_PRINT_1TO8D_TENSOR(type, mem)                                 \
@@ -86,7 +86,7 @@
 
 #define REGISTER_ASSERT_TENSOR(dim, mem)                                       \
   DECLARE_ASSERT_TENSOR(dim, mem) {                                            \
-    assert_##dim##d_core<__##mem##__ int8_t>(prefix, len, arg);                \
+    assert_nd_core<__##mem##__ int8_t, dim>(prefix, len, arg);                 \
   }
 
 #define REGISTER_ASSERT_1TO4D_TENSOR(mem)                                      \
