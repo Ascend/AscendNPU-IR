@@ -383,9 +383,11 @@ public:
   LogicalResult matchAndRewrite(MmadMxL1Op op,
                                 PatternRewriter &rewriter) const final {
     // inputs
-    SmallVector<Value> libParams{op.getC(),      op.getA(),      op.getB(),
-                                 op.getScaleA(), op.getScaleB(), op.getRealM(),
-                                 op.getRealK(),  op.getRealN()};
+    SmallVector<Value> libParams{op.getC(),           op.getA(),
+                                 op.getB(),           op.getScaleA(),
+                                 op.getScaleB(),      op.getInitCondition(),
+                                 op.getRealM(),       op.getRealK(),
+                                 op.getRealN()};
 
     // additional sync arguments
     SmallVector<Value> additionalArgs;

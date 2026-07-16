@@ -493,11 +493,6 @@ typename std::enable_if<std::is_same_v<MmadLikeOpType, hivm::MmadL1Op> ||
                             std::is_same_v<MmadLikeOpType, hivm::BatchMmadL1Op>,
                         bool>::type
 isSingleChainMmadToMmad(MmadLikeOpType op) {
-  if constexpr (std::is_same_v<MmadLikeOpType, hivm::MmadMxL1Op>) {
-    // TODO: support single-chain accumulation detection for MmadMxL1Op.
-    return false;
-  }
-
   auto maybeMmadLikeOps =
       traceDefOps<MmadLikeOpType>(op.getC(),
                                   /*isSingleChain=*/true,
