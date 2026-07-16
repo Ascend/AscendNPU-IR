@@ -1297,15 +1297,27 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
     }
 
     if (auto subview = dyn_cast<memref::SubViewOp>(user)) {
-      // recursively visit subview result users
-      return VisitInplaceReuseReachable<DstOpType>(
-          subview.getResult(), vfInfo, visited, reachableMap, extraCheck);
+      // Recursively visit subview result users. If this path does not reach
+      // the target, keep checking the other users of `src`.
+      if (VisitInplaceReuseReachable<DstOpType>(
+              subview.getResult(), vfInfo, visited, reachableMap, extraCheck)) {
+        return true;
+      }
+      continue;
     } else if (auto reshapeOp = dyn_cast<memref::CollapseShapeOp>(user)) {
-      return VisitInplaceReuseReachable<DstOpType>(
-          reshapeOp.getResult(), vfInfo, visited, reachableMap, extraCheck);
+      if (VisitInplaceReuseReachable<DstOpType>(reshapeOp.getResult(), vfInfo,
+                                                visited, reachableMap,
+                                                extraCheck)) {
+        return true;
+      }
+      continue;
     } else if (auto reshapeOp = dyn_cast<memref::ExpandShapeOp>(user)) {
-      return VisitInplaceReuseReachable<DstOpType>(
-          reshapeOp.getResult(), vfInfo, visited, reachableMap, extraCheck);
+      if (VisitInplaceReuseReachable<DstOpType>(reshapeOp.getResult(), vfInfo,
+                                                visited, reachableMap,
+                                                extraCheck)) {
+        return true;
+      }
+      continue;
     }
 
     if (!hivm::isVFCall(user)) {
@@ -1951,9 +1963,8 @@ void MemPlan::MemLifeDebugInfo(const StorageEntry *storageEntry) const {
   }
 #ifndef NDEBUG
   for (auto &bufferLife : storageEntry->bufferLifeVec) {
-    LDBG("bufferLife : "
-         << "allocTime : " << bufferLife->allocTime
-         << " , freeTime : " << bufferLife->freeTime << "\n");
+    LDBG("bufferLife : " << "allocTime : " << bufferLife->allocTime
+                         << " , freeTime : " << bufferLife->freeTime << "\n");
   }
   LDBG("\n");
 #endif

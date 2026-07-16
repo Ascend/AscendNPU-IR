@@ -65,7 +65,7 @@ func.func @plan_memory_vf_best_inplace_pair_outlined_vf_1(
 // CHECK: hivm.hir.pointer_cast(%[[F8_OFFSET]]) : memref<31744xf8E4M3FN, #hivm.address_space<ub>>
 // CHECK: hivm.hir.pointer_cast(%[[F32_OFFSET]]) : memref<31744xf32, #hivm.address_space<ub>>
 func.func @plan_memory_vf_best_inplace_pair(
-    %arg3: memref<?xf8E4M3FN, #hivm.address_space<gm>>) 
+    %arg3: memref<?xf8E4M3FN, #hivm.address_space<gm>>)
     attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vf_mode = #hivm.vf_mode<SIMD>} {
   %alloc_0 = memref.alloc() {alignment = 64 : i64} : memref<31744xf32, #hivm.address_space<ub>>
   hivm.hir.debug {debugtype = "print", hex = false, prefix = " x0: ", tcoretype = #hivm.tcore_type<CUBE_OR_VECTOR>} %alloc_0 : memref<31744xf32, #hivm.address_space<ub>>
@@ -630,5 +630,42 @@ func.func @plan_memory_no_inplace_reuse_vf_args_reshape_share_alloc() {
   %collapsed = memref.collapse_shape %expanded [[0], [1, 2]] : memref<64x320x1xbf16, #hivm.address_space<ub>> into memref<64x320xbf16, #hivm.address_space<ub>>
   call @no_inplace_reuse_vf_args_same_alloc_vf(%alloc_3, %alloc_b, %collapsed) {hivm.vector_function} :
     (memref<64xbf16, #hivm.address_space<ub>>, memref<64x320xbf16, #hivm.address_space<ub>>, memref<64x320xbf16, #hivm.address_space<ub>>) -> ()
+  return
+}
+
+// -----
+
+// Test that an unreachable reshape user does not hide another load-reachable
+// user of an input buffer when checking VF inplace reuse.
+func.func @vf_inplace_reuse_reachable_through_load(
+    %arg0: memref<2x32xf32, #hivm.address_space<ub>>,
+    %arg1: memref<2x32xf32, #hivm.address_space<ub>>) attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %0 = vector.transfer_read %arg0[%c0, %c0], %cst {in_bounds = [true, true]} : memref<2x32xf32, #hivm.address_space<ub>>, vector<2x32xf32>
+  vector.transfer_write %0, %arg1[%c0, %c0] {in_bounds = [true, true]} : vector<2x32xf32>, memref<2x32xf32, #hivm.address_space<ub>>
+  return
+}
+
+// CHECK-LABEL: func.func @plan_memory_vf_no_inplace_reuse_with_reshape_user
+// CHECK-DAG: %[[C0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[C256:.*]] = arith.constant 256 : i64
+// CHECK: hivm.hir.pointer_cast(%[[C0]]) : memref<2x32xf32, #hivm.address_space<ub>>
+// CHECK: hivm.hir.pointer_cast(%[[C256]]) : memref<2x32xf32, #hivm.address_space<ub>>
+func.func @plan_memory_vf_no_inplace_reuse_with_reshape_user(
+    %arg0: memref<2x32xf32, #hivm.address_space<gm>>,
+    %arg1: memref<2x32xf32, #hivm.address_space<gm>>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  scf.for %i = %c0 to %c1 step %c1 {
+    %input = memref.alloc() : memref<2x32xf32, #hivm.address_space<ub>>
+    %inputSubview = memref.subview %input[0, 0] [2, 32] [1, 1] : memref<2x32xf32, #hivm.address_space<ub>> to memref<2x32xf32, strided<[32, 1]>, #hivm.address_space<ub>>
+    hivm.hir.load ins(%arg0 : memref<2x32xf32, #hivm.address_space<gm>>) outs(%inputSubview : memref<2x32xf32, strided<[32, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %c0 : index
+    %inputCollapsed = memref.collapse_shape %input [[0, 1]] : memref<2x32xf32, #hivm.address_space<ub>> into memref<64xf32, #hivm.address_space<ub>>
+    %output = memref.alloc() : memref<2x32xf32, #hivm.address_space<ub>>
+    func.call @vf_inplace_reuse_reachable_through_load(%input, %output) {hivm.vector_function} : (memref<2x32xf32, #hivm.address_space<ub>>, memref<2x32xf32, #hivm.address_space<ub>>) -> ()
+    hivm.hir.store ins(%output : memref<2x32xf32, #hivm.address_space<ub>>) outs(%arg1 : memref<2x32xf32, #hivm.address_space<gm>>)
+  }
   return
 }
