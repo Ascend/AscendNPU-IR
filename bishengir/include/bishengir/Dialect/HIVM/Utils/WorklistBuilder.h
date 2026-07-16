@@ -39,7 +39,8 @@ struct WorklistBuildResult {
 
   /// Reverse map: each op to the WorkItem(s) that own it. Multiple WorkItems
   /// can share an op when CUBE_OR_VECTOR helpers are pulled in as deps, or
-  /// (in lazy-loading mode) when the same LoadOp is cloned across stages.
+  /// (in lazy-loading mode) when the same load-like op is cloned across
+  /// stages.
   DenseMap<Operation *, SmallVector<WorkItem *>> opToWorkItemMap;
 
   /// For each `bufferization::to_tensor`, the DPS op that writes its memref.
@@ -56,9 +57,9 @@ struct WorklistBuildResult {
 class WorklistBuilder {
 public:
   /// Loop mode: partition a for-loop's body for CV pipelining.
-  /// `enableLazyLoading=true` permits the same LoadOp (and its backing
-  /// to_tensor) to be pulled into multiple consuming WorkItems instead of
-  /// being shared through expanded multi-buffered tensors.
+  /// `enableLazyLoading=true` permits the same LoadOp or ND2NZOp (and its
+  /// backing to_tensor) to be pulled into multiple consuming WorkItems instead
+  /// of being shared through expanded multi-buffered tensors.
   WorklistBuilder(scf::ForOp loop, int numMultibuffer,
                   bool enableLazyLoading = false);
 
@@ -80,12 +81,13 @@ public:
   /// Returns true if the input op should be treated as lazy-loaded.  Two
   /// shapes of input are accepted (dispatched via `dyn_cast`):
   ///   * `bufferization::ToTensorOp`: the to_tensor must be registered in
-  ///     `outputMemrefMap` and its backing writer must be a LoadOp.  When
-  ///     not registered (or backed by a non-LoadOp), the answer is `false`.
-  ///   * `LoadOp`: the matching to_tensor is found by reverse-looking up the
-  ///     LoadOp in `outputMemrefMap`.  When no match is found, the answer
-  ///     falls back to the kernel-level `enableLazyLoading` (or auto
-  ///     cross-core if the load has a tensor result).
+  ///     `outputMemrefMap` and its backing writer must be load-like (LoadOp or
+  ///     ND2NZOp). When not registered (or backed by another op), the answer
+  ///     is `false`.
+  ///   * `LoadOp` / `ND2NZOp`: the matching to_tensor is found by reverse
+  ///     lookup in `outputMemrefMap`. When no match is found, the answer falls
+  ///     back to the kernel-level `enableLazyLoading` (or auto cross-core if
+  ///     the load-like op has a tensor result).
   ///
   /// The auto cross-core check is a LEGALITY signal: when the load's
   /// tensor result is consumed by both CUBE and VECTOR cores, lazy
@@ -154,7 +156,8 @@ private:
   /// hint overrides the kernel-level lazy-load switch.
   void warnHintOverride(Value v);
   /// Walk targetBlock to diagnose misuse of `cv_pipeline_lazy_load` hints
-  /// (duplicates, non-to_tensor target, non-load-backed target). Non-fatal.
+  /// (duplicates, non-to_tensor target, non-load-like-backed target).
+  /// Non-fatal.
   void diagnoseLazyLoadHints();
 
   // Block to scan for ops.
