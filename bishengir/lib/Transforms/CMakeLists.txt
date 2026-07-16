@@ -3,6 +3,7 @@ add_bishengir_library(BiShengIRTransform
   CanonicalizeModule.cpp
   DeadFunctionElimination.cpp
   EliminateSingleIterationScfFor.cpp
+  DebugMemory.cpp
   InjectIR.cpp
   ExtendedCanonicalizer.cpp
   FuseReductionIntoLoop.cpp
@@ -24,4 +25,5 @@ add_bishengir_library(BiShengIRTransform
   BiShengIRMemRefDialect
   MLIRSCFDialect
   MLIRTensorDialect
+  MLIRAVEDialect
 )
