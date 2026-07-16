@@ -112,13 +112,15 @@ func.func @alloc_excceds_marked_size(%arg0 : index) -> (memref<?x16xi32>) {
 
 // -----
 
-// CHECK: affine_map<()[s0, s1] -> (0, s0 - s1)>
-// CHECK: affine_map<()[s0] -> (16, s0)>
-func.func @distribute_affine_max_over_min(%arg0 : index, %arg1 : index) -> (memref<?xf32>) {
-  %min = affine.min affine_map<()[s0, s1] -> (16, s0 - s1)>()[%arg0, %arg1]
-  %size = affine.max affine_map<()[s0] -> (0, s0)>()[%min]
-  // CHECK: affine.max #map{{.*}}()[%arg0, %arg1]
-  // CHECK: affine.min #map{{.*}}()[%{{.*}}]
-  %alloc = memref.alloc(%size) : memref<?xf32>
-  return %alloc : memref<?xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
+  // CHECK: affine_map<()[s0, s1] -> (0, s0 - s1)>
+  // CHECK: affine_map<()[s0] -> (16, s0)>
+  func.func @distribute_affine_max_over_min(%arg0 : index, %arg1 : index) -> (memref<?xf32>) {
+    %min = affine.min affine_map<()[s0, s1] -> (16, s0 - s1)>()[%arg0, %arg1]
+    %size = affine.max affine_map<()[s0] -> (0, s0)>()[%min]
+    // CHECK: affine.max #map{{.*}}()[%arg0, %arg1]
+    // CHECK: affine.min #map{{.*}}()[%{{.*}}]
+    %alloc = memref.alloc(%size) : memref<?xf32>
+    return %alloc : memref<?xf32>
+  }
 }

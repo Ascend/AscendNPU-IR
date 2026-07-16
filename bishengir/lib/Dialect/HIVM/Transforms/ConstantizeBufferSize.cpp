@@ -410,9 +410,10 @@ void ConstantizeBufferPass::runOnOperation() {
     return;
 
   RewritePatternSet patterns(&getContext());
-  patterns
-      .add<DistributeAffineMaxOverMin, ConstantizeAllocLikeOp<memref::AllocOp>,
-           ConstantizeAllocLikeOp<memref::AllocaOp>>(patterns.getContext());
+  if (hacc::utils::isMemBasedArch(funcOp->getParentOfType<ModuleOp>()))
+    patterns.add<DistributeAffineMaxOverMin>(patterns.getContext());
+  patterns.add<ConstantizeAllocLikeOp<memref::AllocOp>,
+               ConstantizeAllocLikeOp<memref::AllocaOp>>(patterns.getContext());
   (void)applyPatternsGreedily(funcOp, std::move(patterns));
 }
 
