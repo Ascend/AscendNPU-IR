@@ -553,12 +553,6 @@ def EnableHIVMAutoCVBalance : HIVMOptimizationControlOptions<
   "false"
 >;
 
-def EnablePreload : HIVMOptimizationControlOptions<
-  "Enable preload.",
-  "bool",
-  "false"
->;
-
 def EnableLazyLoading : HIVMOptimizationControlOptions<
   "Enable lazy loading in CV pipelining to reduce buffer expansion.",
   "bool",
@@ -578,6 +572,15 @@ llvm::cl::values(
   clEnumValN(CVPipelineMode::Dynamic, "dynamic", "Dynamic-mode pipelining(developing)")
 )
   }];
+}
+
+def EnablePreload : BiShengIRCompileOpt<
+  "Enable preload (skew mode) for CV-pipelining.",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+  let compileOptionCategories = ["hivmOptCategory"];
 }
 
 def EnableHIVMAutoStorageAlign : HIVMOptimizationControlOptions<

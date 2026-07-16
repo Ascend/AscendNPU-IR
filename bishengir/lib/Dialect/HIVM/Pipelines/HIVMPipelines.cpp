@@ -281,8 +281,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   if (!hivmPipelineOptions.disableAutoCVWorkSpaceManage) {
     // Software pipelining Cube and Vector operations
     CVPipeliningOptions pipelineOptions;
-    pipelineOptions.enableSkewMode =
-        hivmPipelineOptions.enablePreload;
+    pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
     pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
   }
 

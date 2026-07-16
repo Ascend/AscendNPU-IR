@@ -72,10 +72,10 @@ struct WorkspaceAllocParams {
 };
 
 struct CVPipelineImpl {
-  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer, bool skewMode,
-                 bool enableLazyLoading)
+  CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer, 
+                 CVPipelineMode pipelineMode, bool enableLazyLoading)
       : pipelineLoop(loop), newLoop(nullptr), builder(loop->getContext()),
-        numMultibuffer(multibuffer), enableSkewMode(skewMode),
+        numMultibuffer(multibuffer), pipelineMode(pipelineMode),
         wlBuilder(cast<scf::ForOp>(loop.getOperation()), multibuffer,
                   enableLazyLoading),
         yieldedVals(loop.getYieldedValues().begin(),
@@ -144,8 +144,8 @@ private:
   // Number of multibuffer/pipeline stages/unroll iterations
   int numMultibuffer;
 
-  // Use skew-mode pipelining instead of the default unroll-mode
-  bool enableSkewMode;
+  // Pipeline mode for CV-pipelining.
+  CVPipelineMode pipelineMode;
 
   // Worklist builder — owns dep-tracking machinery, separator/dependence
   // discovery, lazy-load hint surface, and outputMemrefMap. Held as a member
@@ -420,6 +420,16 @@ static AllocWorkspaceOp getAllocWorkspace(Value v) {
   return nullptr;
 }
 
+/// Get the highest level parent op that is not the containing op
+static Operation *getContainedParent(Operation *containing, Operation *inner) {
+  Operation *parent = inner->getParentOp();
+  while (parent && parent != containing && containing->isAncestor(inner)) {
+    inner = parent;
+    parent = inner->getParentOp();
+  }
+  return inner;
+}
+
 // Implementation of slice operations
 static tensor::InsertSliceOp createInsertSlice(OpBuilder &builder, Location loc,
                                                Value src, Value into,
@@ -561,51 +571,6 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
       operand->set(sliceOp);
     }
     store->erase();
-  }
-}
-
-static void processWorkspaceOutputUsers(
-    OpBuilder &builder, WorkItem *item,
-    const DenseMap<Operation *, SmallVector<WorkItem *>> &opToWorkItemMap,
-    const DenseMap<Value, Value> &expandedWorkspaceMap,
-    SmallVector<std::pair<OpOperand *, Value>> &replaces, scf::ForOp newLoop) {
-  for (Operation *output : item->workspaceOutputs) {
-    for (OpOperand &operand : output->getUses()) {
-      Operation *owner = operand.getOwner();
-      if (opToWorkItemMap.contains(owner))
-        continue;
-      if (!newLoop->isAncestor(owner))
-        // only usr in new loop need to handle
-        continue;
-      Value sliceIdx;
-      builder.setInsertionPoint(owner);
-      if (isa<scf::YieldOp>(owner)) {
-        sliceIdx = builder.create<arith::ConstantIndexOp>(
-            owner->getLoc(), item->multibuffer - 1);
-      } else
-        sliceIdx = owner->getParentOfType<scf::ForOp>().getInductionVar();
-      auto alloc = getAllocWorkspace(operand.get());
-      Value mappedTensor = expandedWorkspaceMap.lookup(alloc);
-      Value slice = createExtractSlice(builder, owner->getLoc(), mappedTensor,
-                                       operand.get().getType(), sliceIdx);
-      replaces.emplace_back(&operand, slice);
-    }
-  }
-}
-
-static void processOutputUsers(
-    OpBuilder &builder, ArrayRef<std::shared_ptr<WorkItem>> worklist,
-    const DenseMap<Operation *, SmallVector<WorkItem *>> &opToWorkItemMap,
-    const DenseMap<Value, Value> &expandedWorkspaceMap, scf::ForOp newLoop) {
-  SmallVector<std::pair<OpOperand *, Value>> replaces;
-  for (auto &item : worklist) {
-    processWorkspaceOutputUsers(builder, item.get(), opToWorkItemMap,
-                                expandedWorkspaceMap, replaces, newLoop);
-  }
-  for (auto [operand, replace] : replaces) {
-    Operation *owner = operand->getOwner();
-    if (newLoop->isAncestor(owner))
-      operand->set(replace);
   }
 }
 
@@ -1430,12 +1395,6 @@ LogicalResult CVPipelineImpl::migrateOps() {
     yieldVals.clear();
   }
 
-  // this needed to be done after all the ops have been migrated
-  // into their own loops: update user of local outputs to extract slices of
-  // the for output in c220
-  processOutputUsers(builder, worklist, opToWorkItemMap, expandedWorkspaceMap_,
-                     newLoop);
-
   builder.setInsertionPointToEnd(newLoop.getBody());
   if (trailingAtomicEffect) {
     builder.create<SetAtomicOp>(pipelineLoop->getLoc(),
@@ -1738,7 +1697,7 @@ LogicalResult CVPipelineImpl::run() {
 
   expandWorkspace(builder);
 
-  if (enableSkewMode) {
+  if (pipelineMode == CVPipelineMode::Skew) {
     return markScopesForPreload();
   }
 
@@ -1782,7 +1741,7 @@ void CVPipeliningPass::runOnOperation() {
   func::FuncOp func = getOperation();
   DenseSet<scf::ForOp> pipelinedLoops;
 
-  if (this->setDepthInUnrollMode == 1 || this->setDepthInUnrollMode == 0)
+  if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
     return;
 
   func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
@@ -1794,7 +1753,7 @@ void CVPipeliningPass::runOnOperation() {
       parentLoop = parentLoop->getParentOfType<scf::ForOp>();
     }
 
-    CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->enableSkewMode,
+    CVPipelineImpl impl(loop, this->pipelineDepth, this->pipelineMode,
                         this->enableLazyLoading);
     if (impl.run().succeeded())
       pipelinedLoops.insert(loop);

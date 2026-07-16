@@ -571,7 +571,6 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
   if (failed(padBuffer))
     return failure();
   auto loc = getLoc();
-
   if (getInitCondition()) {
     scf::IfOp ifOp =
         b.create<scf::IfOp>(getLoc(), TypeRange(), getInitCondition(), false);
