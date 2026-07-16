@@ -23,8 +23,10 @@
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/LoopInvariantCodeMotionUtils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/Casting.h"
@@ -97,7 +99,6 @@ static SmallVector<tensor::ExtractSliceOp> extractChainOf(Value v) {
     chain.push_back(es);
     v = es.getSource();
   }
-  // TODO complete calculation of root, offset, stripes, and other information.
   std::reverse(chain.begin(), chain.end());
   return chain;
 }
@@ -167,7 +168,6 @@ static std::optional<Candidate> analyze(scf::ForOp forOp, unsigned idx) {
     for (OpOperand &use : v.getUses()) {
       Operation *owner = use.getOwner();
       if (owner == forOp.getBody()->getTerminator()) {
-        // TODO now only support same index yield.
         if (use.getOperandNumber() != idx)
           return std::nullopt;
         continue;
@@ -246,8 +246,15 @@ static std::optional<Candidate> analyze(scf::ForOp forOp, unsigned idx) {
   Value yield = forOp.getYieldedValues()[idx];
   cand.yield = yield;
   cand.endedInWrite = yield != arg;
-  if (cand.endedInWrite && !visited.count(yield))
-    return std::nullopt;
+  if (cand.endedInWrite) {
+    if (!visited.count(yield))
+      return std::nullopt;
+    Value u = yield;
+    while (auto ins = u.getDefiningOp<tensor::InsertSliceOp>())
+      u = ins.getSource();
+    if (!u.getDefiningOp<vector::TransferWriteOp>())
+      return std::nullopt;
+  }
   return cand;
 }
 
@@ -376,29 +383,63 @@ static LogicalResult promote(IRRewriter &rewriter, scf::ForOp forOp,
   return success();
 }
 
+static void hoistLoopInvariant(LoopLikeOpInterface loop) {
+  moveLoopInvariantCode(
+      loop.getLoopRegions(),
+      [&](Value v, Region *) { return loop.isDefinedOutsideOfLoop(v); },
+      [&](Operation *op, Region *) {
+        if (auto rd = dyn_cast<vector::TransferReadOp>(op))
+          return isa<RankedTensorType>(rd.getShapedType());
+        return isMemoryEffectFree(op) && isSpeculatable(op);
+      },
+      [&](Operation *op, Region *) { loop.moveOutOfLoop(op); });
+}
+
 } // namespace
 
+/// TODO
+/// 1. The current equivalent dependency on multiple extract_Slice/insert_stice
+///    is that the extract_Slice/insert_stice chains are completely equivalent,
+///    which can be optimized for offset and strips calculations in the future.
+/// 2. If there are only invariant writes in the loop, a sink optimization may
+///    be needed.
+/// 3. Currently relying on canonicalize to remove dead iter_args, if
+///    compilation time is long, consider rewriting scf.for internally in Pass.
+/// 4. There is still room for optimization in scenarios where iter_arg index
+///    and yield index are different.
 void LoopInvariantPromotion::runOnOperation() {
   func::FuncOp func = getOperation();
   // Only optimize the vf function.
   if (!func->hasAttr("hivm.vector_function"))
     return;
 
+  FrozenRewritePatternSet cleanup = [&] {
+    RewritePatternSet patterns(&getContext());
+    scf::ForOp::getCanonicalizationPatterns(patterns, &getContext());
+    return FrozenRewritePatternSet(std::move(patterns));
+  }();
+
   IRRewriter rewriter(&getContext());
   bool changed = true;
   while (changed) {
-    func.walk([](LoopLikeOpInterface loop) { moveLoopInvariantCode(loop); });
+    func.walk([](LoopLikeOpInterface loop) { hoistLoopInvariant(loop); });
+    bool nested = false;
     WalkResult res = func.walk([&](scf::ForOp forOp) {
       for (unsigned i = 0, e = forOp.getNumRegionIterArgs(); i != e; ++i) {
         std::optional<Candidate> cand = analyze(forOp, i);
         if (!cand)
           continue;
-        if (succeeded(promote(rewriter, forOp, *cand)))
+        bool isNested = forOp->getParentOfType<scf::ForOp>() != nullptr;
+        if (succeeded(promote(rewriter, forOp, *cand))) {
+          nested = isNested;
           return WalkResult::interrupt();
+        }
       }
       return WalkResult::advance();
     });
     changed = res.wasInterrupted();
+    if (changed && nested)
+      (void)applyPatternsGreedily(func, cleanup);
   }
 }
 

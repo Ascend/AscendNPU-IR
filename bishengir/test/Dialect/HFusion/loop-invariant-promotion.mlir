@@ -40,12 +40,13 @@ func.func @hoist_loop_carried_acc(%arg0: tensor<64x16xf32>, %init: tensor<16xf32
 
 // CHECK-LABEL: func.func @two_rmw
 //  CHECK-SAME:     %[[ARG0:.*]]: tensor<64x16xf32>, %[[INIT:.*]]: tensor<16xf32>
+//       CHECK:   %[[IN:.*]] = vector.transfer_read %[[INIT]][
 //       CHECK:   %[[ACC0:.*]] = vector.transfer_read %[[INIT]][
 //       CHECK:   %[[LOOP:.*]]:2 = scf.for
 //  CHECK-SAME:       iter_args(%{{.*}} = %[[INIT]], %[[ACC:.*]] = %[[ACC0]])
 //  CHECK-SAME:       -> (tensor<16xf32>, vector<16xf32>)
-//       CHECK:     %[[N0:.*]] = arith.addf %[[ACC]], %{{.*}} : vector<16xf32>
-//       CHECK:     %[[N1:.*]] = arith.mulf %[[N0]], %{{.*}} : vector<16xf32>
+//       CHECK:     %[[N0:.*]] = arith.addf %[[ACC]], %[[IN]] : vector<16xf32>
+//       CHECK:     %[[N1:.*]] = arith.mulf %[[N0]], %[[IN]] : vector<16xf32>
 //   CHECK-NOT:     vector.transfer_write
 //       CHECK:     scf.yield %{{.*}}, %[[N1]] : tensor<16xf32>, vector<16xf32>
 //       CHECK:   }
@@ -387,4 +388,58 @@ func.func @no_attr_skip(%init: tensor<16xf32>, %d: vector<16xf32>) -> tensor<16x
     scf.yield %w : tensor<16xf32>
   }
   return %0 : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @hoist_invariant_read
+//  CHECK-SAME:     %[[A0:.*]]: tensor<64x8xf32>, %[[INV:.*]]: tensor<8xf32>, %[[D:.*]]: vector<8xf32>
+//       CHECK:   %[[IV:.*]] = vector.transfer_read %[[INV]][
+//       CHECK:   scf.for
+//  CHECK-SAME:       iter_args(%[[ACC:.*]] = %[[D]])
+//   CHECK-NOT:     vector.transfer_read %[[INV]]
+//       CHECK:     tensor.extract_slice %[[A0]]
+//       CHECK:     %[[SV:.*]] = vector.transfer_read
+//       CHECK:     %[[N:.*]] = arith.addf %[[ACC]], %[[IV]]
+//       CHECK:     arith.addf %[[N]], %[[SV]]
+//       CHECK:     scf.yield
+
+func.func @hoist_invariant_read(%arg0: tensor<64x8xf32>, %inv: tensor<8xf32>, %d: vector<8xf32>)
+    -> vector<8xf32> attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %r = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %d) -> (vector<8xf32>) {
+    %iv = vector.transfer_read %inv[%c0], %cst {in_bounds = [true]} : tensor<8xf32>, vector<8xf32>
+    %s = tensor.extract_slice %arg0[%i, 0] [1, 8] [1, 1] : tensor<64x8xf32> to tensor<8xf32>
+    %sv = vector.transfer_read %s[%c0], %cst {in_bounds = [true]} : tensor<8xf32>, vector<8xf32>
+    %n = arith.addf %acc, %iv : vector<8xf32>
+    %m = arith.addf %n, %sv : vector<8xf32>
+    scf.yield %m : vector<8xf32>
+  }
+  return %r : vector<8xf32>
+}
+
+// -----
+// CHECK-LABEL: func.func @no_hoist_yield_extract_no_write
+//       CHECK:   scf.for
+//  CHECK-SAME:       -> (tensor<16xf32>)
+//       CHECK:     tensor.extract_slice
+//       CHECK:     vector.transfer_read
+//       CHECK:     "test.sink"
+//       CHECK:     scf.yield
+
+func.func @no_hoist_yield_extract_no_write(%init: tensor<16xf32>) -> tensor<16xf32> attributes {hivm.vector_function} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %r = scf.for %i = %c0 to %c64 step %c1 iter_args(%acc = %init) -> (tensor<16xf32>) {
+    %s = tensor.extract_slice %acc[0] [16] [1] : tensor<16xf32> to tensor<16xf32>
+    %v = vector.transfer_read %s[%c0], %cst : tensor<16xf32>, vector<16xf32>
+    "test.sink"(%v) : (vector<16xf32>) -> ()
+    scf.yield %s : tensor<16xf32>
+  }
+  return %r : tensor<16xf32>
 }
