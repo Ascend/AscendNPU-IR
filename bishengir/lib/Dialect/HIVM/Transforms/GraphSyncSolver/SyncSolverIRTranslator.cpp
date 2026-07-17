@@ -514,7 +514,7 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
   }
   llvm::SetVector<Value> readMemVals, writeMemVals;
   auto handleRWValue = [&](Value val, hivm::MemoryEffect memoryEffect) {
-    for (auto &rwVal : getMemoryOps({val}, calledFuncOp)) {
+    for (auto &rwVal : getMemoryOps({val})) {
       if (auto blockArg = dyn_cast<BlockArgument>(rwVal)) {
         auto callArg = callOp->getOperand(blockArg.getArgNumber());
         if (memoryEffect == MemoryEffect::READ ||
