@@ -42,7 +42,8 @@ FailureOr<SmallVector<OpFoldResult>> computeMixedTargetLayoutShape(
   bool srcIsND = srcLayout.isNDLayout();
   bool dstIsND = dstLayout.isNDLayout();
 
-  // ND -> Fractal conversion
+  // ND -> Fractal (matrix nZ/zN or scale zZ/nN). Scale tile ordering is handled
+  // inside computeMixedNDToFractalShape via dstLayout.isScaleFractalLayout().
   if (srcIsND && !dstIsND) {
     return computeMixedNDToFractalShape(currentShape, srcLayout, dstLayout,
                                         builder, loc);
@@ -62,8 +63,11 @@ void markAsNotPropagatingUp(PatternRewriter &rewriter, ConvertLayoutOp op) {
 }
 
 bool isPropagatingUp(ConvertLayoutOp op) {
-  return (op.getDstLayout().getDataLayout() == DataLayout::Fractal) &&
-         !(op->getAttr(convertLayoutNotToPropagateUp));
+  auto dstLayout = op.getDstLayout().getDataLayout();
+  bool propagatesUp = (dstLayout == DataLayout::Fractal) ||
+                      (dstLayout == DataLayout::SCALEA_zZ) ||
+                      (dstLayout == DataLayout::SCALEB_nN);
+  return propagatesUp && !(op->getAttr(convertLayoutNotToPropagateUp));
 }
 
 bool isPropagatingDown(ConvertLayoutOp op) { return !isPropagatingUp(op); }

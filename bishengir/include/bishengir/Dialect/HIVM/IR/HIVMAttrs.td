@@ -158,7 +158,20 @@ def HIVM_DataLayoutAttr : HIVM_Attr<"DataLayout", "data_layout"> {
         case hivm::DataLayout::DOTA_ND:
         case hivm::DataLayout::DOTB_ND:
         case hivm::DataLayout::DOTC_ND:
+        case hivm::DataLayout::SCALEA_ND:
+        case hivm::DataLayout::SCALEB_DN:
         case hivm::DataLayout::ND:
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    /// True if layout is a fractal MX scale layout.
+    bool isScaleFractalLayout() const {
+      switch (getDataLayout()) {
+        case hivm::DataLayout::SCALEA_zZ:
+        case hivm::DataLayout::SCALEB_nN:
           return true;
         default:
           return false;

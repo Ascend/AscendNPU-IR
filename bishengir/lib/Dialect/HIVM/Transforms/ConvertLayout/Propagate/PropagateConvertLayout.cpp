@@ -64,8 +64,8 @@ struct MoveConvertLayoutToSourceOfUBToCBufCopy
                                 PatternRewriter &rewriter) const override {
     Operation *mmad = nullptr;
     for (auto *user : convertLayout->getUsers()) {
-      mmad = dyn_cast<hivm::MmadL1Op>(user);
-      if (mmad) {
+      if (isa<hivm::LocalMatmulLikeOpInterface>(user)) {
+        mmad = user;
         break;
       }
     }

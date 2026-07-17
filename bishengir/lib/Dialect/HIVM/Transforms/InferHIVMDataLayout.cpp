@@ -404,19 +404,15 @@ DataLayoutInferAndPropagateHelper::computeScaleNDToFractalzZOffset(
     SmallVector<int64_t> kBlockSizes) const {
   OpBuilder::InsertionGuard g(builder);
   int batchIndexBias = static_cast<int>(currentOffset.size() - 2);
-  // a1=M/16, b1=K_scale/(2byte), a0=16, b0=2byte
-  // DOT{A/B/C}_ND:   (a, b) -> zZ: (a/a0, b/b0, a%a0, b%b0)
+  // fractalSizes = [a0, b0] (e.g. [16, 2] for i8).
+  // Scale ND (a, b) -> zZ/nN: (a/a0, b/b0, a%a0, b%b0)
   auto symA = builder.getAffineSymbolExpr(0);
   auto symB = builder.getAffineSymbolExpr(1);
-  // #mapAOuter = affine_map<(symA, symB) -> (symA / a0)>
-  // #mapAInner = affine_map<(symA, symB) ->(symA % a0)>
-  auto constA0 = builder.getAffineConstantExpr(kBlockSizes[1]);
+  auto constA0 = builder.getAffineConstantExpr(kBlockSizes[0]);
   auto mapAOuter = AffineMap::get(0, 2, (symA.floorDiv(constA0)));
   auto mapAInner = AffineMap::get(0, 2, (symA % constA0));
- 
-  // #mapBOuter = affine_map<(symA, symB) -> (symB /b0)>
-  // #mapBInner = affine_map<(symA, symB) -> (symB % b0)>
-  auto constB0 = builder.getAffineConstantExpr(kBlockSizes[0]);
+
+  auto constB0 = builder.getAffineConstantExpr(kBlockSizes[1]);
   auto mapBOuter = AffineMap::get(0, 2, (symB.floorDiv(constB0)));
   auto mapBInner = AffineMap::get(0, 2, (symB % constB0));
 
@@ -503,23 +499,22 @@ DataLayoutInferAndPropagateHelper::computeScaleNDToFractalzZShape(
     SmallVector<int64_t> kBlockSizes) const {
   OpBuilder::InsertionGuard g(builder);
   uint batchIndexBias = currentShape.size() - 2;
-  // ScaleA_ND:   (a1a0, b1b0) -> zZ: (a1=M/16, b1=K_scale/(2byte), a0=16, b0=2byte)
+  // fractalSizes = [a0, b0] matching trailing dims (e.g. [16, 2] for i8).
+  // Scale ND -> zZ/nN: [ceil(M/a0), ceil(K/b0), a0, b0]
   auto symA = builder.getAffineSymbolExpr(0);
   auto symB = builder.getAffineSymbolExpr(1);
-  auto constA0MinusOne = builder.getAffineConstantExpr(kBlockSizes[1] - 1);
-  auto constA0 = builder.getAffineConstantExpr(kBlockSizes[1]);
-  // #mapA = affine_map<(symA, symB) -> ((symA+constA0-1)/constA0)>
+  auto constA0MinusOne = builder.getAffineConstantExpr(kBlockSizes[0] - 1);
+  auto constA0 = builder.getAffineConstantExpr(kBlockSizes[0]);
   auto mapA = AffineMap::get(0, 2, (symA + constA0MinusOne).floorDiv(constA0));
-  // #mapB = affine_map<(symA, symB) -> ((symB+constB0-1)/constB0)>
-  auto constB0MinusOne = builder.getAffineConstantExpr(kBlockSizes[0] - 1);
-  auto constB0 = builder.getAffineConstantExpr(kBlockSizes[0]);
+  auto constB0MinusOne = builder.getAffineConstantExpr(kBlockSizes[1] - 1);
+  auto constB0 = builder.getAffineConstantExpr(kBlockSizes[1]);
   auto mapB = AffineMap::get(0, 2, (symB + constB0MinusOne).floorDiv(constB0));
   Value a = currentShape[0 + batchIndexBias];
   Value b = currentShape[1 + batchIndexBias];
   auto a1 = builder.create<affine::AffineApplyOp>(loc, mapA, ValueRange{a, b});
   auto b1 = builder.create<affine::AffineApplyOp>(loc, mapB, ValueRange{a, b});
-  Value a0 = builder.create<arith::ConstantIndexOp>(loc, kBlockSizes[1]);
-  Value b0 = builder.create<arith::ConstantIndexOp>(loc, kBlockSizes[0]);
+  Value a0 = builder.create<arith::ConstantIndexOp>(loc, kBlockSizes[0]);
+  Value b0 = builder.create<arith::ConstantIndexOp>(loc, kBlockSizes[1]);
   SmallVector<Value> fractalShape{a1.getResult(), b1.getResult(), a0, b0};
   if (batchIndexBias != 0) {
     fractalShape.insert(fractalShape.begin(), currentShape[0]);
@@ -1355,13 +1350,13 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
     }
   }
   case LayoutConversionKind::DOT_SCALE_ND_TO_zZ:
-  case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
-    convertToLoadMXScaleOp(src, dst, originalOp, builder, false);
-    return success();
   case LayoutConversionKind::DOT_SCALE_DN_TO_nN:
-  case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
-    convertToLoadMXScaleOp(src, dst, originalOp, builder, true);
+    // Non-transposed scale loading (ND→zZ / DN→nN).
+    convertToLoadMXScaleOp(src, dst, originalOp, builder, /*isTransposed=*/false);
     return success();
+  case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
+  case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
+    llvm_unreachable("transposed load_scale is not supported");
   default:
     LLVM_DEBUG(llvm::dbgs() << "  No matching HIVM data copy op with "
                                "on-the-fly layout conversion available.\n";);

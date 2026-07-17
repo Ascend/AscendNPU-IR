@@ -322,3 +322,31 @@ func.func @fractal_to_nd_unaligned_static_m130_dynamic_n(%arg0: tensor<?x9x16x16
       : (tensor<?x9x16x16xf16>) -> tensor<130x?xf16>
   return %0 : tensor<130x?xf16>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @scalea_nd_to_fractal_i8
+// CHECK: tensor.expand_shape
+// CHECK: hivm.hir.vtranspose
+// CHECK-SAME: permutation = [0, 2, 1, 3]
+func.func @scalea_nd_to_fractal_i8(%arg0: tensor<208x2xi8>) -> tensor<13x1x16x2xi8> {
+  %0 = hivm.hir.convert_layout %arg0 output_shape [13, 1, 16, 2]
+       {dstLayout = #hivm.data_layout<SCALEA_zZ, fractalSizes = [16, 2]>,
+        srcLayout = #hivm.data_layout<SCALEA_ND>}
+       : (tensor<208x2xi8>) -> tensor<13x1x16x2xi8>
+  return %0 : tensor<13x1x16x2xi8>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @scaleb_dn_to_fractal_i8
+// CHECK: tensor.expand_shape
+// CHECK: hivm.hir.vtranspose
+// CHECK-SAME: permutation = [0, 2, 1, 3]
+func.func @scaleb_dn_to_fractal_i8(%arg0: tensor<224x2xi8>) -> tensor<14x1x16x2xi8> {
+  %0 = hivm.hir.convert_layout %arg0 output_shape [14, 1, 16, 2]
+       {dstLayout = #hivm.data_layout<SCALEB_nN, fractalSizes = [16, 2]>,
+        srcLayout = #hivm.data_layout<SCALEB_DN>}
+       : (tensor<224x2xi8>) -> tensor<14x1x16x2xi8>
+  return %0 : tensor<14x1x16x2xi8>
+}
