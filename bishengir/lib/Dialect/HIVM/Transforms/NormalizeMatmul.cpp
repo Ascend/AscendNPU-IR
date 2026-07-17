@@ -589,6 +589,7 @@ constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
 constexpr StringLiteral kNormalizedInL0C = "normalized_in_L0C";
 constexpr StringLiteral kNormalizedInitOrBias = "normalized_init_or_bias";
 constexpr StringLiteral kMayNotExec = "may_not_exec";
+constexpr StringLiteral kFallBackNotExec = "fallback_not_exec";
 
 // Set on an mmad whose CCF still owes a tail fallback. Emission is deferred to
 // ReuseL0CAddIfPattern, which can see the CCF's consumer and so can tell
@@ -1413,6 +1414,8 @@ void addTailFallback(PatternRewriter &rewriter, Operation &op,
   auto fallbackIf = rewriter.create<scf::IfOp>(
       loc, mmad.getOperation()->getResultTypes(), neverRan,
       /*withElseRegion=*/true);
+  
+  fallbackIf->setAttr(kFallBackNotExec, rewriter.getUnitAttr());
 
   // Then block
   {
@@ -1990,6 +1993,7 @@ struct ReuseL0CAddIfPattern
 
     auto fallbackIf = rewriter.create<scf::IfOp>(
         loc, TypeRange{ccfOutVal.getType()}, ifCond, /*withElseRegion=*/true);
+    fallbackIf->setAttr(kFallBackNotExec, rewriter.getUnitAttr());
 
     // Then block: the CCF never ran, so materialize an explicit zero.
     {
