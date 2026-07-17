@@ -17,6 +17,15 @@ _Generate copy for reassociative reshape that might be non-contiguous_
 
 _Convert Ops from other dialects to HIVM Ops_
 
+Converts `memref.copy` / `bufferization.materialize_in_destination` into
+`hivm.hir.load` / `hivm.hir.store` / `hivm.hir.copy`. Propagates pad value
+(`VBrc` or `pad_const` annotation), left-padding (`offset % num_per_block`),
+`eviction_policy` (default `EvictFirst`), and master-only attributes such as
+`may_implicit_transpose_with_last_axis`. Skips host funcs; skips load/store
+conversion (not `hivm.copy`) for `memref.copy` inside `hivm.vector_function`,
+and skips `memref.copy` / `materialize_in_destination` inside `scf.forall` or
+`materialize_in_destination` inside `hivm.vector_function`.
+
 ## `-cv-pipelining`
 
 _Cube and vector core pipelining for multi-buffer'ed mix-cv ops_

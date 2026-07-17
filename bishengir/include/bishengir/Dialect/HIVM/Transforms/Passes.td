@@ -600,10 +600,12 @@ def MarkStrideAlign : Pass<"hivm-mark-stride-align", "func::FuncOp"> {
   ];
 }
 
-def EnableStrideAlign : Pass<"hivm-enable-stride-align", "func::FuncOp"> {
+def EnableStrideAlign : Pass<"hivm-enable-stride-align", "ModuleOp"> {
   let summary = "Align memref allocations according to stride align marks";
   let description = [{
-    Re-allocate memrefs according to anntations of storage_align marks
+    Re-allocate memrefs according to anntations of storage_align marks.
+    ModuleOp scope is required so FuncOp-parallel nesting cannot race when
+    aligned allocs propagate through func.call into VF callees.
   }];
   let constructor = "mlir::hivm::createEnableStrideAlignPass()";
   let dependentDialects = ["mlir::memref::MemRefDialect",

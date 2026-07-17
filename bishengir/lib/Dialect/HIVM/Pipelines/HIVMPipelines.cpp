@@ -326,7 +326,8 @@ alignStoragePipeline(OpPassManager &pm,
     pm.nest<func::FuncOp>().addPass(createMarkStrideAlignPass());
   }
   pm.nest<func::FuncOp>().addPass(memref::createFoldAllocReshapePass());
-  pm.nest<func::FuncOp>().addPass(createEnableStrideAlignPass());
+  // ModuleOp: Enable may rewrite VF callee signatures via func.call.
+  pm.addPass(createEnableStrideAlignPass());
 }
 
 static void syncBlockLockPipeline(OpPassManager &pm,
@@ -459,6 +460,8 @@ void buildOptimizeHIVMPipeline(OpPassManager &pm,
       scope::createInlineScopePass(InlineScopeOptions{/*forceInline=*/true}));
   pm.addPass(createEnableHIVMCCompatiblePrintPass());
   pm.addPass(annotation::createAnnotationLoweringPass());
+  // Convert non-GM memref.alloc to alloca after annotations are lowered.
+  pm.addPass(createAllocToAllocaPass());
   pm.nest<func::FuncOp>().addPass(createInsertInitAndFinishForDebugPass());
   pm.addPass(createMarkDisableLoadPass());
   syncBlockLockPipeline(pm, SyncBlockLockPipelinePhase::Finalize);

@@ -30,6 +30,7 @@
 #endif // BISHENGIR_BUILD_STANDALONE_IR_ONLY
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <algorithm>
@@ -157,6 +158,41 @@ std::string getPrettyOpName(Operation *op) {
   return os.str();
 }
 } // namespace debugger
+
+void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
+                   SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
+                   int &innerAlignedUnits, int &shapeAccumulation,
+                   int alignTargetDim, int alignUnitsDim) {
+  // The alignment target forces the INNER dimension to get aligned
+  int newAlignedUnits =
+      std::lcm(innerAlignedUnits, alignTargets[alignTargetDim]);
+  if (newAlignedUnits == 0) {
+    alignUnits.clear();
+    return;
+  }
+  if (shapeAccumulation % newAlignedUnits == 0) {
+    // already aligned
+    alignUnits[alignUnitsDim] = 1;
+  } else {
+    if (innerAlignedUnits == 0) {
+      alignUnits.clear();
+      return; // should be impossible case (SecA_DivideByZero)
+    }
+    alignUnits[alignUnitsDim] = newAlignedUnits / innerAlignedUnits;
+  }
+  innerAlignedUnits = newAlignedUnits;
+  if (!ShapedType::isDynamic(shapes[alignTargetDim])) {
+    shapeAccumulation = shapeAccumulation * std::lcm(shapes[alignTargetDim],
+                                                     alignUnits[alignUnitsDim]);
+  }
+}
+
+bool isReduceWithIndex(hivm::ReduceOperation op) {
+  return op == hivm::ReduceOperation::min_with_index_left ||
+         op == hivm::ReduceOperation::min_with_index_right ||
+         op == hivm::ReduceOperation::max_with_index_left ||
+         op == hivm::ReduceOperation::max_with_index_right;
+}
 
 ModuleOp getTopLevelModuleOp(Operation *op) {
   ModuleOp moduleOp = op->getParentOfType<ModuleOp>();
@@ -784,6 +820,13 @@ hivm::AxisKind getOutlinedAxisKind(int dim, int rank) {
 }
 
 } // namespace utils
+
+int64_t utils::getNumPerBlock(Type t) {
+  // Multiply first so i1 (bitWidth=1) does not truncate 1/8 to 0 and divide by
+  // zero. Equivalent to 32 / (bitWidth/8) when bitWidth is a multiple of 8.
+  return (utils::INTR_BYTES_PER_BLOCK * utils::INTR_BITS_PER_BYTE) /
+         getElementTypeOrSelf(t).getIntOrFloatBitWidth();
+}
 
 bool utils::isAllocLikeOp(Value val) {
   return isAllocLikeOp(val.getDefiningOp());

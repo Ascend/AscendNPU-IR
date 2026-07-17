@@ -1,8 +1,18 @@
-//===--- PreMarkStrideAlign.cpp --- Pre-analyze skip-stride-align allocs ----===//
+//===--- PreMarkStrideAlign.cpp --- Pre-analyze skip-stride-align allocs
+//----===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025~2026. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 //
@@ -22,9 +32,11 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 static constexpr const char kDebugType[] = "hivm-pre-mark-stride-align";
 #define DEBUG_TYPE kDebugType
@@ -56,22 +68,21 @@ public:
 //===----------------------------------------------------------------------===//
 
 // Check if a callee block arg is read by vector::TransferReadOp (vload).
+// Walk all users through SubView/View chains (not only the first user).
 static bool isArgUsedByVLoad(func::FuncOp callee, int argIdx) {
   auto barg = callee.getArgument(argIdx);
-  for (Operation *user : barg.getUsers()) {
-    Operation *cur = user;
-    while (cur) {
-      if (isa<memref::SubViewOp, memref::ViewOp>(cur)) {
-        if (cur->getUses().empty()) {
-          break;
-        }
-        cur = *cur->getUsers().begin();
-        continue;
-      }
-      if (isa<vector::TransferReadOp>(cur)) {
-        return true;
-      }
-      break;
+  SmallVector<Operation *> worklist(barg.getUsers().begin(),
+                                    barg.getUsers().end());
+  DenseSet<Operation *> visited;
+  while (!worklist.empty()) {
+    Operation *cur = worklist.pop_back_val();
+    if (!visited.insert(cur).second)
+      continue;
+    if (isa<vector::TransferReadOp>(cur))
+      return true;
+    if (isa<memref::SubViewOp, memref::ViewOp>(cur)) {
+      for (Operation *user : cur->getUsers())
+        worklist.push_back(user);
     }
   }
   return false;
@@ -94,13 +105,11 @@ static bool flowsToVLoadInVF(Value val, ModuleOp moduleOp) {
         continue;
       }
       if (auto callOp = dyn_cast<func::CallOp>(user)) {
-        for (auto [idx, operand] :
-             llvm::enumerate(callOp.getArgOperands())) {
+        for (auto [idx, operand] : llvm::enumerate(callOp.getArgOperands())) {
           if (operand != cur) {
             continue;
           }
-          auto callee =
-              moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
+          auto callee = moduleOp.lookupSymbol<func::FuncOp>(callOp.getCallee());
           if (callee && isArgUsedByVLoad(callee, static_cast<int>(idx))) {
             return true;
           }
@@ -113,8 +122,9 @@ static bool flowsToVLoadInVF(Value val, ModuleOp moduleOp) {
 
 // Check if the root value already has a SkipStrideAlignForVLoad mark.
 static bool hasSkipMark(Value root) {
-  return utils::getAnnotateOpWithAttr(
-      root, hivm::SkipStrideAlignForVLoadAttr::name).has_value();
+  return utils::getAnnotateOpWithAttr(root,
+                                      hivm::SkipStrideAlignForVLoadAttr::name)
+      .has_value();
 }
 
 // Create annotation.mark on the root alloc value to signal
@@ -168,7 +178,6 @@ void PreMarkStrideAlignPass::runOnOperation() {
     markSkipStrideAlignForVLoad(builder, root);
     return WalkResult::advance();
   });
-
 }
 
 std::unique_ptr<Pass> mlir::hivm::createPreMarkStrideAlignPass() {

@@ -16,10 +16,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
-#include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Transforms/AlignBuffer/Util.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Value.h"
 #include "llvm/Support/LogicalResult.h"
 
@@ -1145,6 +1148,91 @@ FailureOrCastVec propagateDefaultOp(RewriterBase &rewriter,
   return UnrealizedCastOpVec{conversionOp};
 }
 
+/// Propagate aligned memref types through func.call into the callee (VF).
+FailureOrCastVec propagateFuncCallOp(RewriterBase &rewriter,
+                                     UnrealizedConversionCastOp conversionOp,
+                                     func::CallOp callOp) {
+  OpBuilder::InsertionGuard g(rewriter);
+  ModuleOp module = callOp->getParentOfType<ModuleOp>();
+  SymbolTable symtab(module);
+  auto callee = symtab.lookup<func::FuncOp>(callOp.getCallee());
+  if (!callee)
+    return FailureOrCastVec{};
+
+  std::optional<unsigned> argIdx;
+  for (auto [idx, opr] : llvm::enumerate(callOp.getArgOperands())) {
+    Operation *definingOp = opr.getDefiningOp();
+    if (definingOp == conversionOp) {
+      argIdx = idx;
+      break;
+    }
+  }
+  if (!argIdx.has_value())
+    return FailureOrCastVec{};
+
+  rewriter.modifyOpInPlace(callOp, [&]() {
+    callOp->setOperand(argIdx.value(), conversionOp.getInputs()[0]);
+  });
+
+  llvm::SmallVector<Type> newInputTypes;
+  llvm::SmallVector<Type> newResultTypes;
+  newInputTypes.append(callOp.getOperandTypes().begin(),
+                       callOp.getOperandTypes().end());
+  newResultTypes.append(callOp.getResultTypes().begin(),
+                        callOp.getResultTypes().end());
+
+  FunctionType oldType = callee.getFunctionType();
+  FunctionType newType =
+      rewriter.getFunctionType(newInputTypes, newResultTypes);
+  callee.setType(newType);
+
+  assert(!callee.empty() && "VF should not be empty");
+  Block &entryBlock = callee.getBody().front();
+  mlir::Location loc = entryBlock.front().getLoc();
+
+  for (unsigned i = 0; i < callee.getNumArguments(); ++i) {
+    BlockArgument arg = entryBlock.getArgument(i);
+    arg.setType(newInputTypes[i]);
+  }
+
+  rewriter.setInsertionPointToStart(&callee.getFunctionBody().front());
+  UnrealizedCastOpVec unrealizedConversions;
+  auto initConversion = rewriter.create<UnrealizedConversionCastOp>(
+      loc, oldType.getInput(argIdx.value()),
+      callee.getArgument(argIdx.value()));
+  unrealizedConversions.push_back(initConversion);
+  rewriter.replaceAllUsesExcept(callee.getArgument(argIdx.value()),
+                                initConversion.getResult(0), initConversion);
+
+  for (int i = 0; i < static_cast<int>(unrealizedConversions.size()); ++i) {
+    UnrealizedConversionCastOp conversion = unrealizedConversions[i];
+    SmallVector<Operation *> users = llvm::to_vector(conversion->getUsers());
+    for (Operation *user : users) {
+      auto res =
+          TypeSwitch<Operation *, FailureOrCastVec>(user)
+              .Case([&](memref::SubViewOp subviewOp) {
+                auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
+                return UnrealizedCastOpVec{res};
+              })
+              .Default([&](Operation *op) {
+                return propagateDefaultOp(rewriter, conversion, op, user);
+              });
+      if (failed(res))
+        return FailureOrCastVec{};
+      for (auto newOp : res.value()) {
+        if (newOp != conversion)
+          unrealizedConversions.push_back(newOp);
+      }
+    }
+  }
+
+  for (auto op : unrealizedConversions)
+    if (op->getUses().empty())
+      rewriter.eraseOp(op);
+
+  return UnrealizedCastOpVec{conversionOp};
+}
+
 mlir::LogicalResult propagateAlignUpFromResult(
     mlir::PatternRewriter &rewriter, OpResult result, annotation::MarkOp markOp,
     ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
@@ -1224,6 +1312,155 @@ bool util::AlignInfo::operator==(const AlignInfo &other) {
 }
 
 bool util::AlignInfo::operator!=(const AlignInfo &other) { return !(*this == other); }
+
+/// Follow aliases / marks to recover a tightly-coupled buffer id, if any.
+static std::optional<int32_t> getTightlyCoupledBufferId(Value value) {
+  SmallVector<Value> worklist{value};
+  llvm::SmallPtrSet<Value, 8> visited;
+  while (!worklist.empty()) {
+    Value cur = worklist.pop_back_val();
+    if (!visited.insert(cur).second)
+      continue;
+
+    if (auto maybeMarkOp = utils::getAnnotateOpWithAttr(
+            cur, hivm::HIVMTightlyCoupledBufferAttr::name)) {
+      auto attr = (*maybeMarkOp)
+                      ->getAttrOfType<hivm::HIVMTightlyCoupledBufferAttr>(
+                          hivm::HIVMTightlyCoupledBufferAttr::name);
+      if (attr && attr.getId().has_value())
+        return attr.getId().value();
+    }
+
+    if (auto *defOp = cur.getDefiningOp()) {
+      if (isa<ViewLikeOpInterface, memref::CastOp>(defOp))
+        worklist.push_back(defOp->getOperand(0));
+    }
+  }
+  return std::nullopt;
+}
+
+static void findWriteOp(Value mem, SmallVector<Operation *> &writeOps) {
+  SmallVector<Value, 8> worklist;
+  worklist.push_back(mem);
+  while (!worklist.empty()) {
+    Value v = worklist.pop_back_val();
+    for (OpOperand &use : v.getUses()) {
+      Operation *user = use.getOwner();
+      if (isa<ViewLikeOpInterface>(user)) {
+        for (Value r : user->getResults())
+          worklist.push_back(r);
+        continue;
+      }
+      if (auto memOp = dyn_cast<MemoryEffectOpInterface>(user)) {
+        if (isa<annotation::MarkOp>(user))
+          continue;
+        SmallVector<MemoryEffects::EffectInstance> effects;
+        memOp.getEffectsOnValue(v, effects);
+        for (auto &e : effects) {
+          if (isa<MemoryEffects::Write>(e.getEffect()))
+            writeOps.push_back(user);
+        }
+      }
+    }
+  }
+
+  Operation *memOp = mem.getDefiningOp();
+  if (!memOp)
+    return;
+  if (auto tightlyCoupledBufferId = getTightlyCoupledBufferId(mem)) {
+    SmallVector<hivm::SyncBlockSetOp> producerSyncSets;
+    if (auto moduleOp = memOp->getParentOfType<ModuleOp>()) {
+      moduleOp.walk([tightlyCoupledBufferId,
+                     &producerSyncSets](hivm::FixpipeOp fixpipeOp) {
+        auto producerBufferId = getTightlyCoupledBufferId(fixpipeOp.getDst());
+        if (!producerBufferId.has_value() ||
+            producerBufferId.value() != tightlyCoupledBufferId.value())
+          return;
+
+        for (Operation *op = fixpipeOp->getNextNode(); op != nullptr;
+             op = op->getNextNode()) {
+          if (auto setOp = dyn_cast<hivm::SyncBlockSetOp>(op)) {
+            producerSyncSets.push_back(setOp);
+            return;
+          }
+          if (op->hasTrait<OpTrait::IsTerminator>())
+            return;
+        }
+      });
+    }
+
+    for (Operation *op = memOp->getNextNode(); op != nullptr;
+         op = op->getNextNode()) {
+      if (auto waitOp = dyn_cast<hivm::SyncBlockWaitOp>(op)) {
+        bool matchingWait = llvm::any_of(
+            producerSyncSets, [&waitOp](hivm::SyncBlockSetOp setOp) {
+              return setOp.getTpipeAttr() == waitOp.getTpipeAttr() &&
+                     setOp.getPipeAttr() == waitOp.getPipeAttr() &&
+                     setOp.getStaticFlagId() == waitOp.getStaticFlagId() &&
+                     setOp.getDynamicFlagId() == waitOp.getDynamicFlagId();
+            });
+        if (matchingWait) {
+          writeOps.push_back(op);
+          break;
+        }
+      }
+
+      if (op->hasTrait<OpTrait::IsTerminator>() ||
+          isa<hivm::SyncBlockSetOp>(op))
+        break;
+    }
+  }
+}
+
+void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
+                                        func::FuncOp &funcOp) {
+  funcOp->walk([&](UnrealizedConversionCastOp conversion) {
+    if (!conversion->hasAttr(propagateFailureName))
+      return WalkResult::skip();
+
+    auto src = conversion.getInputs()[0];
+    SmallVector<Operation *> writeSrc;
+    findWriteOp(src, writeSrc);
+    for (OpOperand &use : conversion->getUses()) {
+      Operation *user = use.getOwner();
+      if (!user->hasAttr(propagateFailureName))
+        continue;
+      auto loc = conversion.getLoc();
+      auto dst = conversion.getOutputs()[0];
+      rewriter.setInsertionPoint(user);
+      auto newDst = utils::createEmptyOp(rewriter, loc, dst);
+      Operation *newCopy =
+          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
+      rewriter.modifyOpInPlace(user, [&] { use.set(newDst); });
+
+      SmallVector<Operation *> writeNewDst;
+      findWriteOp(newDst, writeNewDst);
+      DominanceInfo domInfo(newCopy);
+      for (Operation *writeOp : writeNewDst) {
+        if (writeOp == newCopy)
+          continue;
+        if (domInfo.dominates(newCopy, writeOp)) {
+          rewriter.setInsertionPointAfter(writeOp);
+          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, newDst, src);
+        }
+      }
+      for (Operation *writeOp : writeSrc) {
+        if (domInfo.dominates(newCopy, writeOp)) {
+          rewriter.setInsertionPointAfter(writeOp);
+          rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
+        }
+      }
+    }
+    if (conversion->use_empty())
+      rewriter.eraseOp(conversion);
+    return WalkResult::advance();
+  });
+  funcOp->walk([&](Operation *op) {
+    if (op->hasAttr(propagateFailureName))
+      op->removeAttr(propagateFailureName);
+    return WalkResult::advance();
+  });
+}
 
 void mlir::hivm::populatePropagateAlignUpToRootAllocationPattern(
     RewritePatternSet &patterns, std::string alignDimAttrName,
@@ -1410,17 +1647,17 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                 return propagateUnrealizedConversionCastOp(rewriter, conversion,
                                                            conversionOp);
               })
+              .Case([&](func::CallOp callOp) {
+                return propagateFuncCallOp(rewriter, conversion, callOp);
+              })
               .Default([&rewriter, &conversion, &user](Operation *op) {
                 return propagateDefaultOp(rewriter, conversion, op, user);
               });
-      // Universal fallback (with collapse-specific constrained copy).
+      // Defer CopyOp sync until after all allocations are rewritten
+      // (EnableStrideAlign calls hivm::handlePropagateFailure).
       if (failed(res)) {
-        auto handled = handlePropagateFailure(rewriter, conversion, use);
-        if (failed(handled)) {
-          LDBG("unrealized -> copy rewrite fallback failed; keep unrealized cast at use");
-          return failure();
-        }
-
+        conversion->setAttr(propagateFailureName, rewriter.getUnitAttr());
+        user->setAttr(propagateFailureName, rewriter.getUnitAttr());
         continue;
       }
 

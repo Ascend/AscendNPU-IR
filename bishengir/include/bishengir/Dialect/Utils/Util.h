@@ -61,6 +61,9 @@ constexpr static unsigned int INTR_BITS_PER_BYTE = 8;
 constexpr static unsigned int INTR_BYTES_PER_BLOCK = 32;
 constexpr static unsigned int INTR_BYTES_PER_REPEAT = 256;
 constexpr static unsigned int FRACTAL_BLOCK_NUM = 16;
+
+/// Number of elements that fit in one DMA/UB align block for type `t`.
+int64_t getNumPerBlock(Type t);
 constexpr static int64_t kUBAlignSizeInBits = 32 * 8;
 static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
     "enable_auto_mark_buffer_size";
@@ -543,13 +546,18 @@ template <typename T> FailureOr<T> getArithConstantOpValue(Value value) {
   return v;
 }
 
+void setAlignUnits(const SmallVectorImpl<int> &alignTargets,
+                   SmallVector<int> &alignUnits, ArrayRef<int64_t> shapes,
+                   int &innerAlignedUnits, int &shapeAccumulation,
+                   int alignTargetDim, int alignUnitsDim);
+
 template <typename TensorOrMemRefType,
           typename = typename std::enable_if_t<
               std::is_same_v<TensorOrMemRefType, TensorType> ||
               std::is_same_v<TensorOrMemRefType, MemRefType>>>
-SmallVector<int> collectAlignUnits(ArrayRef<int32_t> alignDims,
-                                   ArrayRef<int32_t> alignBytes,
-                                   TensorOrMemRefType unalignedTy) {
+SmallVector<int>
+collectAlignUnits(ArrayRef<int32_t> alignDims, ArrayRef<int32_t> alignBytes,
+                  TensorOrMemRefType unalignedTy, bool isRegBasedArch = false) {
   int rank = unalignedTy.getRank();
   const unsigned bitWidth = unalignedTy.getElementTypeBitWidth();
   SmallVector<int> alignTargets(rank, 1);
@@ -572,25 +580,28 @@ SmallVector<int> collectAlignUnits(ArrayRef<int32_t> alignDims,
   int shapeAccumulation = 1;
   auto shapes = unalignedTy.getShape();
   SmallVector<int> alignUnits(rank + 1, 1);
-  for (int dim = rank - 1; dim >= 0; --dim) {
-    // The alignment target forces the INNER dimension to get aligned
-    int newAlignedUnits = std::lcm(innerAlignedUnits, alignTargets[dim]);
-    if (newAlignedUnits == 0)
-      return {};
-    if (shapeAccumulation % newAlignedUnits == 0) {
-      // already aligned
-      alignUnits[dim + 1] = 1;
-    } else {
-      if (innerAlignedUnits == 0)
-        return {}; // should be impossible case (SecA_DivideByZero)
-      alignUnits[dim + 1] = newAlignedUnits / innerAlignedUnits;
-    }
-    innerAlignedUnits = newAlignedUnits;
-    if (!ShapedType::isDynamic(shapes[dim])) {
-      shapeAccumulation =
-          shapeAccumulation * std::lcm(shapes[dim], alignUnits[dim + 1]);
+  if constexpr (std::is_same_v<TensorOrMemRefType, MemRefType>) {
+    if (isRegBasedArch && isLastMemrefDimUnitStride(unalignedTy)) {
+      for (int dim = rank - 1; dim >= 0; --dim) {
+        setAlignUnits(alignTargets, alignUnits, shapes, innerAlignedUnits,
+                      shapeAccumulation, dim, dim);
+        if (alignUnits.empty()) {
+          return alignUnits;
+        }
+      }
+      alignUnits[0] = 1;
+      return alignUnits;
     }
   }
+
+  for (int dim = rank - 1; dim >= 0; --dim) {
+    setAlignUnits(alignTargets, alignUnits, shapes, innerAlignedUnits,
+                  shapeAccumulation, dim, dim + 1);
+    if (alignUnits.empty()) {
+      return alignUnits;
+    }
+  }
+
   // The outermost dimension needs no extra alignments
   alignUnits[0] = 1;
   return alignUnits;
@@ -615,6 +626,8 @@ hivm::AxisKind getAxisKind(int dim, int rank);
 // get axis kind after outlining
 hivm::AxisKind getOutlinedAxisKind(int dim, int rank);
 
+bool isReduceWithIndex(hivm::ReduceOperation op);
+
 BitVector arrayToMask(ArrayRef<int64_t> elements, int maskSize);
 
 std::optional<int64_t> traceToAllocMaxSize(mlir::Value memrefVal);
@@ -630,6 +643,9 @@ Value getSlice(OpBuilder &b, Location loc, Value source,
                ArrayRef<OpFoldResult> strides);
 
 bool isAlignedInUB(Type type);
+
+void dumpReassociationIndicesVector(
+    const SmallVector<ReassociationIndices> &reassocVec);
 
 bool isUnstructuredMemAccLoop(Operation *op);
 
@@ -656,20 +672,6 @@ bool isValidTwoDimVectorType(VectorType vType);
 
 /// Return true if transfer write op suits for change to StoreWithStride
 bool isTransferWriteSuitForStoreWithStride(Operation *op);
-
-bool isValidHIVMTileElementType(Type type);
-
-unsigned getHIVMTileSliceMinNumElts(Type type);
-
-bool isValidHIVMTileVectorType(VectorType vType);
-
-bool isValidTwoDimVectorType(VectorType vType);
-
-/// Return true if transfer write op suits for change to StoreWithStride
-bool isTransferWriteSuitForStoreWithStride(Operation *op);
-
-void dumpReassociationIndicesVector(
-    const SmallVector<ReassociationIndices> &reassocVec);
 
 } // namespace utils
 

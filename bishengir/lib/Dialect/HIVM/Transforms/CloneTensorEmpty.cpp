@@ -18,7 +18,9 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -34,20 +36,23 @@ using namespace mlir::hivm;
 
 namespace {
 void copyAnnotationMark(Value src, Value dst, PatternRewriter &rewriter) {
-  for (Operation *user : src.getUsers()) {
+  auto *dstDefiningOp = dst.getDefiningOp();
+  if (!dstDefiningOp)
+    return;
+
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPointAfter(dstDefiningOp);
+  for (Operation *user : llvm::make_early_inc_range(src.getUsers())) {
     auto markOp = dyn_cast<annotation::MarkOp>(user);
-    if (!markOp || markOp.getSrc() != src) 
+    if (!markOp || markOp.getSrc() != src)
       continue;
-    
     // Only copy markOp that contains buffer_size_in_byte attribute
     if (!markOp->hasAttr(hivm::kBufferSizeInByteAttr))
       continue;
-      
     auto clonedMarkOp = rewriter.create<annotation::MarkOp>(
         markOp.getLoc(), dst, markOp.getValues(), markOp.getKeysAttr());
-    for (NamedAttribute attr : markOp->getAttrs()) {
+    for (NamedAttribute attr : markOp->getAttrs())
       clonedMarkOp->setAttr(attr.getName(), attr.getValue());
-    }
   }
 }
 
@@ -107,6 +112,8 @@ struct CloneTensorEmptyLoopPattern : public OpRewritePattern<LoopOp> {
       if (emptyDefOp == nullptr)
         llvm::report_fatal_error("EmptyOp is not found");
       auto clonedOp = rewriter.clone(*emptyDefOp);
+      copyAnnotationMark(emptyDefOp->getResult(0), clonedOp->getResult(0),
+                         rewriter);
       mutableInits[idx].assign(clonedOp->getResult(0));
     }
 
@@ -134,6 +141,42 @@ struct CloneTensorInsert : public OpRewritePattern<tensor::InsertOp> {
   }
 };
 
+// Clone empty tensor operands for VF calls / indirect store so multi-buffer
+// can assign distinct buffers per use site (Ascend950).
+template <typename OpTy>
+struct CloneTensorEmptyOperationPattern : public OpRewritePattern<OpTy> {
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(OpTy op,
+                                PatternRewriter &rewriter) const override {
+    Operation *operation = op.getOperation();
+    if (isa<mlir::func::CallOp>(op) && !isVFCall(operation))
+      return failure();
+    rewriter.setInsertionPoint(operation);
+    bool clonedAny = false;
+    for (size_t idx = 0; idx < operation->getNumOperands(); ++idx) {
+      auto &operand = operation->getOpOperands()[idx];
+      Value value = operand.get();
+      auto definingOp = value.getDefiningOp();
+      if (!isa_and_nonnull<mlir::tensor::EmptyOp>(definingOp))
+        continue;
+      if (!isa<TensorType>(value.getType()))
+        continue;
+      auto clonedProducer = rewriter.clone(*definingOp);
+      copyAnnotationMark(definingOp->getResult(0), clonedProducer->getResult(0),
+                         rewriter);
+      rewriter.modifyOpInPlace(
+          operation, [&]() { operand.set(clonedProducer->getResult(0)); });
+      clonedAny = true;
+    }
+    if (!clonedAny)
+      return failure();
+    auto clonedConsumer = rewriter.clone(*operation);
+    rewriter.replaceOp(operation, clonedConsumer->getResults());
+    return success();
+  }
+};
+
 /// This pass Output clones to different empty tensors based on hivmOp.
 struct CloneTensorEmptyPass
     : public impl::CloneTensorEmptyBase<CloneTensorEmptyPass> {
@@ -153,7 +196,8 @@ void registerAll(RewritePatternSet &patterns) {
   (registerOne<OpTypes>(patterns), ...);
 }
 
-void populateCloneTensorEmptyPattern(RewritePatternSet &patterns) {
+void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
+                                     bool isAscend950) {
   patterns.add<CloneTensorEmptyHIVMStructuredOpPattern<hivm::CopyOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::LoadOp>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::StoreOp>,
@@ -162,8 +206,15 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns) {
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::Conv1DL1Op>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::Conv2DL1Op>,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::Conv3DL1Op>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::CustomOp>,
+               CloneTensorEmptyHIVMStructuredOpPattern<hivm::CustomMacroOp>,
                CloneTensorInsert, CloneTensorEmptyLoopPattern<scf::WhileOp>,
                CloneTensorEmptyLoopPattern<scf::ForOp>>(patterns.getContext());
+  if (isAscend950) {
+    patterns.add<CloneTensorEmptyOperationPattern<func::CallOp>,
+                 CloneTensorEmptyOperationPattern<hivm::IndirectStoreOp>>(
+        patterns.getContext());
+  }
   registerAll<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"
@@ -175,9 +226,15 @@ void CloneTensorEmptyPass::runOnOperation() {
   if (hacc::utils::isHost(funcOp))
     return;
 
+  bool archIs950 = false;
+  if (auto moduleOp = funcOp->getParentOfType<ModuleOp>())
+    archIs950 = hacc::utils::isAscend950(moduleOp);
+
   RewritePatternSet patterns(&getContext());
-  populateCloneTensorEmptyPattern(patterns);
-  (void)applyPatternsGreedily(funcOp, std::move(patterns));
+  populateCloneTensorEmptyPattern(patterns, archIs950);
+  GreedyRewriteConfig config;
+  config.strictMode = GreedyRewriteStrictness::ExistingOps;
+  (void)applyPatternsGreedily(funcOp, std::move(patterns), config);
 }
 
 } // namespace
