@@ -866,6 +866,8 @@ def EnableVFOperandSubstitution : FeatureControlOptions<
   "bool",
   "false"
 > {
+  // Frontend-only: this gates the HIVM pipeline insertion point and must not be
+  // forwarded or registered as a downstream hivmc option.
   let passGroup = ["HIVM"];
 }
 

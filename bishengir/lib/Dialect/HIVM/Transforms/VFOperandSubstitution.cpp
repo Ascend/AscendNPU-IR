@@ -27,11 +27,6 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/SymbolTable.h"
 
-namespace mlir {
-#define GEN_PASS_DEF_VFOPERANDSUBSTITUTION
-#include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
-} // namespace mlir
-
 using namespace mlir;
 using namespace mlir::hivm;
 
@@ -105,7 +100,28 @@ struct Candidate {
 };
 
 struct VFOperandSubstitutionPass
-    : public impl::VFOperandSubstitutionBase<VFOperandSubstitutionPass> {
+    : public PassWrapper<VFOperandSubstitutionPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VFOperandSubstitutionPass)
+
+  VFOperandSubstitutionPass() = default;
+  VFOperandSubstitutionPass(const VFOperandSubstitutionPass &pass)
+      : PassWrapper<VFOperandSubstitutionPass, OperationPass<ModuleOp>>(pass) {
+  }
+
+  StringRef getArgument() const override {
+    return "hivm-vf-operand-substitution";
+  }
+
+  StringRef getDescription() const override {
+    return "Reuse a VF input buffer for its output via callsite operand "
+           "substitution";
+  }
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<arith::ArithDialect, func::FuncDialect,
+                    memref::MemRefDialect, hivm::HIVMDialect>();
+  }
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
     VFInplaceReuseAnalysis analysis(module);

@@ -242,17 +242,6 @@ def HoistTightlyCoupledAlloc
                            "bufferization::BufferizationDialect"];
 }
 
-def VFOperandSubstitution
-    : Pass<"hivm-vf-operand-substitution", "ModuleOp"> {
-  let summary =
-      "Reuse a VF input buffer for its output via callsite operand substitution";
-  let constructor = "mlir::hivm::createVFOperandSubstitutionPass()";
-  let dependentDialects = [
-    "arith::ArithDialect", "func::FuncDialect", "memref::MemRefDialect",
-    "hivm::HIVMDialect"
-  ];
-}
-
 def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";
