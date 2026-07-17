@@ -1,13 +1,8 @@
-// RUN: not bishengir-compile %s --target=Ascend950PR_9579 \
+// RUN: not bishengir-compile %s \
 // RUN:   --enable-auto-multi-buffer=True \
-// RUN:   --enable-auto-bind-sub-block=True \
-// RUN:   --disable-ffts \
-// RUN:   --limit-auto-multi-buffer-of-local-buffer=no-limit \
-// RUN:   --enable-auto-blockify-loop \
 // RUN:   --enable-hfusion-compile=true \
 // RUN:   --enable-triton-kernel-compile=true \
-// RUN:   --mlir-print-ir-after-failure \
-// RUN:   --mlir-print-stacktrace-on-diagnostic 2>&1 | FileCheck %s
+// RUN:   --mlir-print-ir-after-failure 2>&1 | FileCheck %s
 
 // CHECK-COUNT-1: // -----// IR Dump After PlanMemory Failed (hivm-plan-memory) //----- //
 // CHECK-NOT: // -----// IR Dump After PlanMemory Failed (hivm-plan-memory) //----- //
