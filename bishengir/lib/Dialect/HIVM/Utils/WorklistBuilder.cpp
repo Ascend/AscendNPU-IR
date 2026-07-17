@@ -333,6 +333,42 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
   }
 }
 
+// Populates allocs map with workspace memory operations
+static LogicalResult
+markWorkspaceOps(Operation *op,
+                 DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
+                 unsigned multibuffer) {
+  if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
+    if (auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
+            mark.getSrc().getDefiningOp())) {
+      if (allocs.contains(alloc)) {
+        allocs[alloc].multibuffer = multibuffer;
+        allocs[alloc].marker = mark;
+      } else
+        allocs[alloc] = {multibuffer, mark, nullptr};
+      return success();
+    }
+  }
+  if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
+    auto alloc = llvm::dyn_cast_if_present<bishengir::memref_ext::AllocWorkspaceOp>(
+        toTensor.getMemref().getDefiningOp());
+    if (!alloc)
+      return success();
+
+    if (!toTensor.getResult().hasOneUse() ||
+        llvm::range_size(alloc.getResult().getUsers()) != 2)
+      return alloc->emitWarning(
+          "Expecting alloc_workspace and its tensor to only have one user "
+          "(excluding annotation.mark)");
+
+    if (allocs.contains(alloc))
+      allocs[alloc].toTensor = toTensor;
+    else
+      allocs[alloc] = {0, nullptr, toTensor};
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // WorklistBuilder implementation
 //===----------------------------------------------------------------------===//
@@ -1337,6 +1373,14 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   if (!isLoopMode)
     computeLocalOutputs();
 
+  DenseMap<bishengir::memref_ext::AllocWorkspaceOp, WorkspaceAllocParams> workspaceAllocs;
+  if (isLoopMode) {
+    for (Operation &op : targetBlock->getOperations()) {
+      if (failed(markWorkspaceOps(&op, workspaceAllocs, numMultibuffer)))
+        return failure();
+    }
+  }
+
   // Return COPIES rather than moves: post-build consumers (e.g. CVPipelining
   // holding the WorklistBuilder as a member) need wb's state to remain valid
   // for follow-up queries like wb.shouldLazyLoadFor(op).  worklist holds
@@ -1346,6 +1390,7 @@ FailureOr<WorklistBuildResult> WorklistBuilder::build() {
   result.opToWorkItemMap = opToWorkItemMap;
   result.outputMemrefMap = outputMemrefMap;
   result.resolvedMultibuffer = isLoopMode ? numMultibuffer : -1;
+  result.workspaceAllocs = workspaceAllocs;
   return result;
 }
 

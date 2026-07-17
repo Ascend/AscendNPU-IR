@@ -35,7 +35,6 @@
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
-#include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #define DEBUG_TYPE "cv-pipelining"
@@ -65,12 +64,6 @@ enum class LazyLoadHint {
 struct AtomicEffect {
   AtomicKind kind;
   TypeAttr type;
-};
-
-struct WorkspaceAllocParams {
-  unsigned multibuffer;
-  annotation::MarkOp marker;
-  bufferization::ToTensorOp toTensor;
 };
 
 struct CVPipelineImpl {
@@ -542,8 +535,8 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
       builder.create<FixpipeOp>(
           loc, TypeRange{}, fixpipe.getSrc(), newDst, fixpipe.getDmaModeAttr(),
           fixpipe.getDualDstModeAttr(), fixpipe.getSubBlockIdxAttr(),
-          fixpipe.getPreQuantAttr(),
-          fixpipe.getPreReluAttr(), fixpipe.getChannelSplitAttr());
+          fixpipe.getPreQuantAttr(), fixpipe.getPreReluAttr(),
+          fixpipe.getChannelSplitAttr());
 
     // Before forOp so to_tensor dominates in-loop and later consumers.
     builder.setInsertionPoint(forOp);
@@ -828,7 +821,7 @@ void CVPipelineImpl::collectAtomicEffects() {
       op->dump();
     }
   });
-} 
+}
 LogicalResult CVPipelineImpl::collectWorkspaceAllocsForPreload() {
   workspaceAllocs_.clear();
   if (worklist.empty())
@@ -1187,14 +1180,14 @@ Value CVPipelineImpl::createToTensor(OpBuilder &builder, Location loc,
   }
   if (memref.getMemorySpace()) {
     auto newMemRef = MemRefType::get(memref.getShape(), memref.getElementType(),
-                                    memref.getLayout());
+                                     memref.getLayout());
     src = builder.create<memref::MemorySpaceCastOp>(loc, newMemRef, src);
   }
 
   return builder.create<bufferization::ToTensorOp>(loc, src, /*restrict*/ true,
-                                                  /*writable*/ true);
+                                                   /*writable*/ true);
 }
-  
+
 LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
   OpBuilder::InsertionGuard g(builder);
   builder.setInsertionPointToStart(newLoop.getBody());
@@ -1247,7 +1240,7 @@ LogicalResult CVPipelineImpl::expandOutputInits(WorkItem *item) {
             "[cv-pipelining] scf.for output index out of range");
       Value init = forOp.getInits()[resultIdx];
       Operation *initOp = init.getDefiningOp();
-      if (initOp && isa<tensor::EmptyOp>(initOp)) {
+      if (isa_and_nonnull<tensor::EmptyOp>(initOp)) {
         auto origTy = dyn_cast<TensorType>(init.getType());
         if (!origTy)
           return initOp->emitWarning(
@@ -1459,7 +1452,8 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
                                                       Value expanded,
                                                       OpOperand *initOperand,
                                                       Value iv) const {
-  auto subview = dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp());
+  auto subview =
+      dyn_cast<memref::SubViewOp>(initOperand->get().getDefiningOp());
   if (!subview)
     return Value(nullptr);
   if (!isa<memref::AllocOp>(subview.getSource().getDefiningOp())) {
@@ -1532,7 +1526,7 @@ LogicalResult CVPipelineImpl::migrateOps() {
     processWorkspaceOutputs(builder, item.get(), expandedWorkspaceMap_,
                             item->irMap);
 
-    auto argIt =
+    auto *argIt =
         item->forOp.getRegionIterArgs().begin() + item->yieldedOutputs.size();
     auto resIt = item->forOp.getResults().begin() + item->yieldedOutputs.size();
     Value iv = item->forOp.getInductionVar();
