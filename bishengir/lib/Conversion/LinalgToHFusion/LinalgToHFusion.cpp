@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Conversion/LinalgToHFusion/LinalgToHFusion.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -29,10 +30,14 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/TypeRange.h"
+#include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "llvm/ADT/StringRef.h"
+#include <cassert>
 
 namespace mlir {
 #define GEN_PASS_DEF_CONVERTLINALGTOHFUSION
@@ -58,6 +63,9 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
     auto callOp = dyn_cast<func::CallOp>(mapped);
     if (callOp == nullptr)
       return failure();
+
+    bool isRegBasedArch = hacc::utils::isRegBasedArch(callOp->getParentOfType<ModuleOp>());
+
     StringRef funcName = callOp.getCallee();
     if (funcName.starts_with("__hmf_relu")) {
       auto unaryAttr =
@@ -144,6 +152,38 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
           ValueRange{op.getInit()}, ArrayRef{fnAttr});
       return success();
     }
+    if (isRegBasedArch && 
+        (funcName.starts_with("__hmf_rint") ||
+        funcName.starts_with("__hmf_roundf"))) {
+      auto arg = op.getInputs().front();
+      auto roundMode = funcName.starts_with("__hmf_rint")
+                           ? hfusion::RoundMode::RINT
+                           : hfusion::RoundMode::ROUND;
+      auto rounding = rewriter.getAttr<hfusion::RoundModeAttr>(roundMode);
+      auto unsignedAttr = rewriter.getAttr<hfusion::UnsignedModeAttr>(
+          hfusion::UnsignedMode::SI2SI);
+      auto enableOverflow = rewriter.getBoolAttr(true);
+      auto enableSaturate = rewriter.getBoolAttr(true);
+
+      hfusion::TypeFn castIntegerType = hfusion::TypeFn::cast_signed;
+      auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(castIntegerType);
+      rewriter.replaceOpWithNewOp<hfusion::CastOp>(
+          op, TypeRange{arg.getType()}, ValueRange{arg}, ValueRange{arg},
+          rounding, enableOverflow, enableSaturate, castAttr, unsignedAttr);
+      return success();
+    }
+    if (funcName.starts_with("__hmf_roundf")) {
+      assert(!isRegBasedArch);
+
+      auto roundingAttr =
+          rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::ROUND);
+      auto modeAttr = rewriter.getNamedAttr(
+          hfusion::RoundModeAttr::getMnemonic(), roundingAttr);
+      rewriter.replaceOpWithNewOp<hfusion::CastOp>(
+          op, TypeRange(op.getResult()), ValueRange(op.getInputs()[0]),
+          ValueRange(op.getInit()), modeAttr);
+      return success();
+    }
     if (funcName.starts_with("__hmf_tanf") ||
         funcName.starts_with("__hmf_tanDh")) {
       auto unaryAttr =
@@ -190,8 +230,10 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
     if (funcName.starts_with("__hmf_flip")) {
       // There is only one input which becomes the last dimension.
       // So, only need to do flip on the first input in the vector.
+      ValueRange inputs = isRegBasedArch ? 
+        ValueRange{op.getInputs()[0], op.getInputs()[1]} : ValueRange{op.getInputs()[0]};
       rewriter.replaceOpWithNewOp<hfusion::FlipOp>(
-          op, ValueRange{op.getInit()}, ValueRange{op.getInputs()[0]});
+          op, ValueRange{op.getInit()}, inputs);
       return success();
     }
     if (funcName.starts_with("__hmf_powf")) {
@@ -210,16 +252,6 @@ struct LinalgMapToHFusionPattern : public OpRewritePattern<linalg::MapOp> {
       rewriter.replaceOpWithNewOp<hfusion::ElemwiseBinaryOp>(
           op, ValueRange({op.getInputs()[0], op.getInputs()[1]}),
           ValueRange{op.getInit()}, ArrayRef{fnAttr});
-      return success();
-    }
-    if (funcName.starts_with("__hmf_roundf")) {
-      auto roundingAttr =
-          rewriter.getAttr<hfusion::RoundModeAttr>(hfusion::RoundMode::ROUND);
-      auto modeAttr = rewriter.getNamedAttr(
-          hfusion::RoundModeAttr::getMnemonic(), roundingAttr);
-      rewriter.replaceOpWithNewOp<hfusion::CastOp>(
-          op, TypeRange(op.getResult()), ValueRange(op.getInputs()[0]),
-          ValueRange(op.getInit()), modeAttr);
       return success();
     }
     return failure();
@@ -270,6 +302,108 @@ struct LinalgGenericToHFusionArangePattern
   }
 };
 
+struct LinalgGenericToHFusionGatherPattern
+    : public OpRewritePattern<linalg::GenericOp> {
+  using OpRewritePattern<linalg::GenericOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::GenericOp op,
+                                PatternRewriter &rewriter) const final {
+    // hfusion.gather (DPS style):
+    // Inputs: [SourceData, Indices]
+    // Inits/Outs: [Output]
+    if (op.getOutputs().size() != 1 || op.getInputs().size() != 2)
+      return failure();
+
+    // Should iteratorrTypes be [parallel, ..., gather, *]
+    SmallVector<utils::IteratorType> iterators = op.getIteratorTypesArray();
+    int64_t gatherLoopDim = -1;
+    for (size_t i = 0; i < iterators.size(); ++i) {
+      if (iterators[i] == utils::IteratorType::gather) {
+        if (gatherLoopDim != -1)
+          return failure();
+        gatherLoopDim = (int64_t)i;
+      }
+    }
+    if (gatherLoopDim == -1)
+      return failure();
+
+    SmallVector<AffineMap> maps = op.getIndexingMapsArray();
+    AffineMap sourceMap = maps[0];  // Source
+    AffineMap indicesMap = maps[1]; // Indices
+    AffineMap outputMap = maps[2];  // Output
+    if (indicesMap.isFunctionOfDim(gatherLoopDim) ||
+        outputMap.isFunctionOfDim(gatherLoopDim)) {
+      return failure();
+    }
+    if (!sourceMap.isFunctionOfDim(gatherLoopDim))
+      return failure();
+
+    int64_t axis = -1;
+    for (unsigned i = 0; i < sourceMap.getNumResults(); ++i) {
+      if (auto dimExpr = dyn_cast<AffineDimExpr>(sourceMap.getResult(i))) {
+        if (dimExpr.getPosition() == gatherLoopDim) {
+          axis = i;
+          break;
+        }
+      }
+    }
+    if (axis == -1)
+      return failure();
+
+    Block &block = op.getRegion().front();
+    if (block.getNumArguments() != 3)
+      return failure();
+    Value argSrc = block.getArgument(0);
+    Value argIndices = block.getArgument(1);
+    Value argOut = block.getArgument(2);
+
+    auto yieldOp = dyn_cast<linalg::YieldOp>(block.getTerminator());
+    if (!yieldOp || yieldOp.getNumOperands() != 1)
+      return failure();
+    auto selectOp = yieldOp.getOperand(0).getDefiningOp<arith::SelectOp>();
+    if (!selectOp)
+      return failure();
+    if (selectOp.getTrueValue() != argSrc || selectOp.getFalseValue() != argOut)
+      return failure();
+    auto cmpOp = selectOp.getCondition().getDefiningOp<arith::CmpIOp>();
+    if (!cmpOp || cmpOp.getPredicate() != arith::CmpIPredicate::eq)
+      return failure();
+    Value cmpLhs = cmpOp.getLhs();
+    Value cmpRhs = cmpOp.getRhs();
+    Value loopIndexVal = nullptr;
+    if (cmpLhs == argIndices) {
+      loopIndexVal = cmpRhs;
+    } else if (cmpRhs == argIndices) {
+      loopIndexVal = cmpLhs;
+    } else {
+      return failure();
+    }
+
+    Operation *defOp = loopIndexVal.getDefiningOp();
+    if (auto castOp = dyn_cast<arith::IndexCastOp>(defOp)) {
+      defOp = castOp.getIn().getDefiningOp();
+    }
+    auto indexOp = dyn_cast<linalg::IndexOp>(defOp);
+    if (!indexOp)
+      return failure();
+
+    if ((int)indexOp.getDim() != gatherLoopDim)
+      return failure();
+
+    Value source = op.getDpsInputs()[0];
+    Value indices = op.getDpsInputs()[1];
+    Value output = op.getDpsInits()[0];
+    rewriter.replaceOpWithNewOp<hfusion::GatherOp>(
+        op,
+        source,  // Operand 0: Source
+        indices, // Operand 1: Indices
+        output,  // Operand 2: Outs (Init)
+        axis     // Attribute: Axis
+    );
+    return success();
+  }
+};
+
 // handle the atomic op in the form of linalg.generic
 // use hfusion.store to represent the atomic op
 // Input:
@@ -309,19 +443,19 @@ struct AtomicLinalgGenericToHFusionStorePattern
       return failure();
     }
 
+    bool isRegBasedArch = hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>());
+
     auto atomicRef = *linalgAtomicRmwStr;
     hfusion::AtomicKindAttr atomicKind;
     auto *context = rewriter.getContext();
     if (atomicRef.ends_with("add")) {
       atomicKind = AtomicKindAttr::get(context, AtomicKind::ADD);
-    } else if (atomicRef.ends_with("umax")) {
-      atomicKind = AtomicKindAttr::get(context, AtomicKind::UMAX);
-    } else if (atomicRef.ends_with("umin")) {
-      atomicKind = AtomicKindAttr::get(context, AtomicKind::UMIN);
     } else if (atomicRef.ends_with("max")) {
-      atomicKind = AtomicKindAttr::get(context, AtomicKind::MAX);
+      atomicKind = AtomicKindAttr::get(
+          context, atomicRef == "umax" ? AtomicKind::UMAX : AtomicKind::MAX);
     } else if (atomicRef.ends_with("min")) {
-      atomicKind = AtomicKindAttr::get(context, AtomicKind::MIN);
+      atomicKind = AtomicKindAttr::get(
+          context, atomicRef == "umin" ? AtomicKind::UMIN : AtomicKind::MIN);
     } else if (atomicRef.ends_with("and")) {
       atomicKind = AtomicKindAttr::get(context, AtomicKind::AND);
     } else if (atomicRef.ends_with("xor")) {
@@ -334,11 +468,12 @@ struct AtomicLinalgGenericToHFusionStorePattern
       atomicKind = AtomicKindAttr::get(context, AtomicKind::XCHG);
     } else {
       op.emitOpError("unsupported atomic operation: ");
-      llvm::report_fatal_error("Unsupported atomic operation kind in AtomicLinalgGenericToHFusionStorePattern");
+      llvm_unreachable("Not implemented");
     }
+
     bool hasReturn = op.getOutputs().size() > 1;
     TypeRange returnTypes;
-    if (hasReturn) {
+    if (isRegBasedArch && hasReturn) {
       returnTypes = TypeRange(op.getOutputs()[1].getType());
     }
 
@@ -354,9 +489,16 @@ struct AtomicLinalgGenericToHFusionStorePattern
       // hivm.copy only accept tensor/tensor or memref/memref as input/output
       // and the atomicRMW Op might be masked
       // need to turn the input tensor into the same type the dst memref has
-      newOperation = rewriter.create<hfusion::AtomicRMWOp>(
-          op.getLoc(), returnTypes, op.getInputs()[1], op.getInputs()[0],
-          atomicKind);
+      if (isRegBasedArch) {
+        newOperation = rewriter.create<hfusion::StoreOp>(
+            op.getLoc(), ValueRange(op.getInputs()[1]),
+            ValueRange(op.getInputs()[0]));
+        static_cast<StoreOp>(newOperation).setAtomicKindAttr(atomicKind);
+      } else {
+        newOperation = rewriter.create<hfusion::AtomicRMWOp>(
+            op.getLoc(), returnTypes, op.getInputs()[1], op.getInputs()[0],
+            atomicKind);
+      }
     }
     rewriter.eraseOp(op);
     if (hasReturn) {
@@ -372,10 +514,11 @@ struct AtomicLinalgGenericToHFusionStorePattern
 // %reduced:2 = linalg.reduce
 //    ins(%arg0, %arg1 : tensor<256x64xf32>, tensor<256x64xi32>)
 //    outs(%0, %1 : tensor<256xf32>, tensor<256xi32>)
-//    dimensions = [1]  {reduce_mode = "max_with_index"}
+//    dimensions = [1]  {reduce_mode = "max_with_index", tie_break_left =
+//    "true"}
 //
 // Output:
-// %2:2 = hfusion.reduce_with_index <max>
+// %2:2 = hfusion.reduce_with_index {tie_break_left = true} <max>
 //    ins(%arg0, %arg1 : tensor<256x64xf32>, tensor<256x64xi32>)
 //    outs(%0, %1 : tensor<256xf32>, tensor<256xi32>)
 //    dimensions = [1] -> tensor<256xf32>, tensor<256xi32>
@@ -385,21 +528,22 @@ struct LinalgToHFusionReduceWithIndex
 
   LogicalResult matchAndRewrite(linalg::ReduceOp op,
                                 PatternRewriter &rewriter) const final {
-    StringAttr linalgReduceAttr =
-        op->getAttrOfType<StringAttr>(StringRef("reduce_mode"));
+    StringAttr linalgReduceAttr = op->getAttrOfType<StringAttr>("reduce_mode");
     if (!linalgReduceAttr) {
       return failure();
     }
+    
+    bool isRegBasedArch = hacc::utils::isRegBasedArch(op->getParentOfType<ModuleOp>());
 
     bool isUnsigned = checkUnsignedIntInput(op);
     hfusion::ReduceWithIndexKind reduceKind;
     if (linalgReduceAttr == "max_with_index") {
-      if (isUnsigned)
+      if (!isRegBasedArch && isUnsigned)
         reduceKind = hfusion::ReduceWithIndexKind::MAXUI;
       else
         reduceKind = hfusion::ReduceWithIndexKind::MAX;
     } else if (linalgReduceAttr == "min_with_index") {
-      if (isUnsigned)
+      if (!isRegBasedArch && isUnsigned)
         reduceKind = hfusion::ReduceWithIndexKind::MINUI;
       else
         reduceKind = hfusion::ReduceWithIndexKind::MIN;
@@ -407,43 +551,74 @@ struct LinalgToHFusionReduceWithIndex
       return failure();
     }
 
-    StringAttr linalgTieBreakAttr =
-        op->getAttrOfType<StringAttr>(StringRef("tie_break_left"));
-    if (!linalgTieBreakAttr) {
-      return failure();
-    }
+    bool tieBreakLeft = true;
+    bool sourceUnsigned = false;  // regbase-only
+    if (isRegBasedArch) {
+      StringAttr linalgSrcUnsignedAttr =
+          op->getAttrOfType<StringAttr>("unsigned_src");
+      if (!linalgSrcUnsignedAttr)
+        return failure();
 
-    bool tieBreakLeft;
-    if (linalgTieBreakAttr == "false") {
-      tieBreakLeft = false;
-    } else if (linalgTieBreakAttr == "true") {
-      tieBreakLeft = true;
+      sourceUnsigned = (linalgSrcUnsignedAttr == "true");
+
+      if (auto tieBreakLeftAttr =
+              op->getAttrOfType<StringAttr>("tie_break_left")) {
+        tieBreakLeft = (tieBreakLeftAttr == "true");
+      }
     } else {
-      return failure();
+      StringAttr linalgTieBreakAttr =
+          op->getAttrOfType<StringAttr>(StringRef("tie_break_left"));
+      if (!linalgTieBreakAttr) {
+        return failure();
+      }
+
+      if (linalgTieBreakAttr == "false") {
+        tieBreakLeft = false;
+      } else if (linalgTieBreakAttr == "true") {
+        tieBreakLeft = true;
+      } else {
+        return failure();
+      }
     }
 
     SmallVector<Value> inputs;
-    auto inits = llvm::to_vector(op.getInits());
+    ValueRange inits = op.getInits();
     auto reduceKindAttr =
         ReduceWithIndexKindAttr::get(rewriter.getContext(), reduceKind);
+    auto sourceUnsignedAttr =
+        BoolAttr::get(rewriter.getContext(), sourceUnsigned);
     auto tieBreakLeftAttr = BoolAttr::get(rewriter.getContext(), tieBreakLeft);
-    std::optional<Operation *> isIndexInputUnused =
-        utils::getAnnotateOpWithAttr(op.getInputs()[1], "UseIndexInput");
-    if (isIndexInputUnused.has_value()) {
-      inputs = llvm::to_vector(op.getInputs());
+
+    if (!isRegBasedArch) {
+      std::optional<Operation *> isIndexInputUnused =
+          utils::getAnnotateOpWithAttr(op.getInputs()[1], "UseIndexInput");
+      if (isIndexInputUnused.has_value()) {
+        inputs = op.getInputs();
+      } else {
+        inputs.push_back(op.getInputs()[0]);
+      }
     } else {
-      inputs.push_back(op.getInputs()[0]);
+      inputs = op.getInputs();
+      assert(inits.size() == 2);
     }
 
-    auto newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
-        op.getLoc(), TypeRange{inits[0].getType(), inits[1].getType()},
-        /*input*/ inputs, /*outputValue&Index*/ inits,
-        reduceKindAttr, tieBreakLeftAttr, op.getDimensionsAttr());
-    rewriter.replaceOp(op, newOp);
+    if (isRegBasedArch) {
+      rewriter.replaceOpWithNewOp<hfusion::ReduceWithIndexOp>(
+          op, TypeRange{inits[0].getType(), inits[1].getType()},
+          /*input*/ inputs, /*outputValue&Index*/ inits, reduceKindAttr,
+          sourceUnsignedAttr, tieBreakLeftAttr, op.getDimensionsAttr());
+    } else {
+      auto newOp = rewriter.create<hfusion::ReduceWithIndexOp>(
+          op->getLoc(), TypeRange{inits[0].getType(), inits[1].getType()},
+          /*input*/ inputs, /*outputValue&Index*/ inits,
+          reduceKindAttr, tieBreakLeftAttr, op.getDimensionsAttr());
+      rewriter.replaceOp(op, newOp);
+    }
     return success();
   }
 
 private:
+  // membase only
   bool checkUnsignedIntInput(linalg::ReduceOp op) const {
     Block *block = &op.getRegion().front();
     auto inputArg = block->getArgument(0);
@@ -460,8 +635,17 @@ private:
   }
 };
 
-void mlir::hfusion::populateLinalgToHFusionConversionPatterns(
+void mlir::hfusion::populateLinalgToHFusionConversionPatterns_regbase(
     RewritePatternSet &patterns) {
+  patterns
+      .add<LinalgMapToHFusionPattern, LinalgGenericToHFusionArangePattern,
+           AtomicLinalgGenericToHFusionStorePattern,
+           LinalgGenericToHFusionGatherPattern, LinalgToHFusionReduceWithIndex>(
+          patterns.getContext());
+}
+
+ void mlir::hfusion::populateLinalgToHFusionConversionPatterns_membase(
+     RewritePatternSet &patterns) {
   patterns.add<LinalgMapToHFusionPattern, LinalgGenericToHFusionArangePattern,
                AtomicLinalgGenericToHFusionStorePattern,
                LinalgToHFusionReduceWithIndex>(patterns.getContext());
@@ -492,7 +676,10 @@ void LinalgToHFusionConversionPass::runOnOperation() {
   target.addIllegalOp<linalg::GenericOp>();
 
   RewritePatternSet patterns(&getContext());
-  populateLinalgToHFusionConversionPatterns(patterns);
+  if (hacc::utils::isRegBasedArch(cast<ModuleOp>(module)))
+    populateLinalgToHFusionConversionPatterns_regbase(patterns);
+  else
+    populateLinalgToHFusionConversionPatterns_membase(patterns);
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     signalPassFailure();
   }

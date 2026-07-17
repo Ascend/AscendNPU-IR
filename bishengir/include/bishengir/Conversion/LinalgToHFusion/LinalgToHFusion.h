@@ -29,7 +29,8 @@ class Pass;
 #include "bishengir/Conversion/Passes.h.inc"
 
 namespace hfusion {
-void populateLinalgToHFusionConversionPatterns(RewritePatternSet &patterns);
+void populateLinalgToHFusionConversionPatterns_membase(RewritePatternSet &patterns);
+void populateLinalgToHFusionConversionPatterns_regbase(RewritePatternSet &patterns);
 } // namespace hfusion
 
 /// Creates a pass to convert the HFusion dialect to the HIVM dialect.
