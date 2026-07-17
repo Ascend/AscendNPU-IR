@@ -19,7 +19,7 @@ public:
   TuningRetryPolicy(const TuningRetryPolicy &) = delete;
   TuningRetryPolicy &operator=(const TuningRetryPolicy &) = delete;
 
-  void onBeforePipelineAttempt(bool isLastAttempt);
+  void onBeforePipelineAttempt(bool isLastAttempt) const;
 
 private:
   bool restorePrintIrAfterFailureOnLastAttempt_ = false;

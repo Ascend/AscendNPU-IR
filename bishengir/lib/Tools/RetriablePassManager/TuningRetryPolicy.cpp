@@ -33,7 +33,7 @@ TuningRetryPolicy::~TuningRetryPolicy() {
       ->setValue(restorePrintIrAfterFailureOnLastAttempt_);
 }
 
-void TuningRetryPolicy::onBeforePipelineAttempt(bool isLastAttempt) {
+void TuningRetryPolicy::onBeforePipelineAttempt(bool isLastAttempt) const {
   if (!restorePrintIrAfterFailureOnLastAttempt_)
     return;
 
