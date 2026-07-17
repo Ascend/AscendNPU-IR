@@ -480,6 +480,21 @@ llvm::cl::values(
   }];
 }
 
+def PlanMemoryStrategy : HIVMOptimizationControlOptions<
+  "Plan memory strategy for storage entry reorder.",
+  "mlir::hivm::PlanMemoryStrategy",
+  "mlir::hivm::PlanMemoryStrategy::DEFAULT"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+             "Keep original storage entry order without sorting"),
+  clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+             "Sort storage entries by const bits descending, allocate larger buffer first")
+)
+  }];
+}
+
 def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "Enable auto bind sub block.",
   "bool",

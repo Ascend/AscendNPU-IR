@@ -14,6 +14,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "mlir/Pass/Pass.h"
 #include <memory>
 

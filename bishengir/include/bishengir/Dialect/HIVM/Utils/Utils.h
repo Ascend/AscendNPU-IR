@@ -47,6 +47,12 @@ struct ValueComparator {
 
 namespace hivm {
 
+/// Plan memory strategy for storage entry reorder.
+enum class PlanMemoryStrategy {
+  DEFAULT,       // keep original storage entry order without sorting
+  LARGEST_FIRST, // sort by const bits descending, allocate larger buffer first
+};
+
 static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
