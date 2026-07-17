@@ -282,7 +282,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: bufferization.materialize_in_destination %{{.*}} in writable %[[GM]] : (tensor<2x4xi16>, memref<2x4xi16>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: bufferization.to_memref
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -304,7 +304,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: bufferization.materialize_in_destination %{{.*}} in writable %[[GM_SRC]] : (tensor<1xi64>, memref<1xi64>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_10]] : memref<1xi64>)
 // CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK: return
 // CHECK-NOT: bufferization.to_memref
 // CHECK-NOT: hfusion.atomic_xchg

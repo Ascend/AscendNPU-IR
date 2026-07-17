@@ -79,7 +79,7 @@ void populateNormalizeComparisonCleanupPatterns(RewritePatternSet &patterns);
 void populateNormalizeBitwiseComparisonPatterns(RewritePatternSet &patterns);
 void populateNormalizeCmpVnePatterns(RewritePatternSet &patterns);
 void populateNormalizeMulRecPatterns(RewritePatternSet &patterns);
-void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns);
+void populateNormalizeArithmeticPatterns(RewritePatternSet &patterns, bool enableFastDiv);
 void populateNormalizePreFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeFinalArithmeticPatterns(RewritePatternSet &patterns);
 void populateNormalizeModPatterns(RewritePatternSet &patterns);

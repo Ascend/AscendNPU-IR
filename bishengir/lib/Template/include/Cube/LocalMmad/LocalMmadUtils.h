@@ -361,7 +361,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
       memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,  \
       memref_t<__cbuf__ src_type, 4> *l1B,                                     \
       memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                               \
-      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,       \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m, uint32_t k,       \
       uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,    \
       uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
 
@@ -371,7 +371,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
       memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,  \
       memref_t<__cbuf__ src_type, 4> *l1B,                                     \
       memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                               \
-      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,       \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m, uint32_t k,       \
       uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,    \
       uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
 
@@ -382,7 +382,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
       memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,                       \
       memref_t<__cbuf__ src_type, 4> *l1B,                                                          \
       memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                                                    \
-      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,                            \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m, uint32_t k,                            \
       uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,                         \
       uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
 
@@ -393,7 +393,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
       memref_t<__cc__ dst_type, 4> *l0C, memref_t<__cbuf__ src_type, 4> *l1A,  \
       memref_t<__cbuf__ src_type, 4> *l1B,                                     \
       memref_t<__cbuf__ uint8_t, 1> *l1MxScaleA,                               \
-      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, uint32_t m, uint32_t k,       \
+      memref_t<__cbuf__ uint8_t, 1> *l1MxScaleB, bool init, uint32_t m, uint32_t k,       \
       uint32_t n, uint32_t l1AMTE2MTE1EventId, uint32_t l1AMTE1MTE2EventId,    \
       uint32_t l1BMTE2MTE1EventId, uint32_t l1BMTE1MTE2EventId)
 
@@ -403,7 +403,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
+        init, m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
         l1BMTE1MTE2EventId);                                                   \
   }
 
@@ -413,7 +413,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
+        init, m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
         l1BMTE2MTE1EventId, l1BMTE1MTE2EventId);                              \
   }
 
@@ -423,7 +423,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
+        init, m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
         l1BMTE1MTE2EventId, true);                                             \
   }
 
@@ -435,7 +435,7 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
+        init, m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
         l1BMTE2MTE1EventId, l1BMTE1MTE2EventId, true);                        \
   }
 

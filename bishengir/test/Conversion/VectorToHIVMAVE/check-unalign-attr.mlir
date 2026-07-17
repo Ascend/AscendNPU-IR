@@ -299,4 +299,14 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     }
     return
   }
+  // CHECK-LABEL: func.func @test_unaligned_arg_load
+  func.func @test_unaligned_arg_load(%arg0: memref<1x6xf32, strided<[6, 1], offset: ?>, #hivm.address_space<ub>>) -> vector<64xf32> attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function} {
+    %cst_0 = arith.constant 0.000000e+00 : f32
+    %c0 = arith.constant 0 : index
+    %0 = vector.constant_mask [6] : vector<64xi1>
+    %subview = memref.subview %arg0[0, 0] [1, 6] [1, 1] : memref<1x6xf32, strided<[6, 1], offset: ?>, #hivm.address_space<ub>> to memref<6xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+    // CHECK: ave.unaligned_ub_access
+    %1 = vector.transfer_read %subview[%c0], %cst_0, %0 {in_bounds = [true]} : memref<6xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xf32>
+    return %1 : vector<64xf32>
+  }
 }

@@ -291,7 +291,12 @@ def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
     Option<
       "enableHighPrecision", "enable-high-precision", "bool",
       /*default=*/"true",
-      "Enable high precision calculation for sin/cos in HFusion.">
+      "Enable high precision calculation for sin/cos in HFusion.">,
+    Option<
+      "enableFastDiv", "enable-fast-div", "bool",
+      /*default=*/"true",
+      "Enable conversion of div with constant denominator into mul "
+      "excluding cases when reciprocal value is denormal or inf value">
   ];
 }
 def NormalizeSliceOps : Pass<"hfusion-normalize-slice-ops", "func::FuncOp"> {

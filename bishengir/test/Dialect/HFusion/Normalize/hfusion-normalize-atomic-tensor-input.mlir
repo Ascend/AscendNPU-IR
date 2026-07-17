@@ -9,7 +9,7 @@
 // CHECK-NOT: memref.copy %[[TMP]], %{{.*}}
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_tensor_ins_no_return(%arg0: memref<?xi32>, %arg1: tensor<1x1x4x4xi32>) {
@@ -27,7 +27,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: memref.copy %[[GM:.*]], %[[TMP:.*]] : memref<4x4xi32> to memref<4x4xi32>
 // CHECK: bufferization.materialize_in_destination %[[UB:.*]] in writable %[[GM]] : (tensor<4x4xi32>, memref<4x4xi32>) -> ()
 // CHECK: scope.return %{{.*}} : tensor<4x4xi32>
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_tensor_ins_with_return(%arg0: memref<4x4xi32>, %arg1: tensor<4x4xi32>) -> tensor<4x4xi32> {
@@ -43,7 +43,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: memref.copy %{{.*}}, %{{.*}} : memref<1x1x4x4xi32, strided<[16, 16, 4, 1], offset: ?>> to memref<1x1x4x4xi32>
 // CHECK: bufferization.materialize_in_destination %{{.*}} in writable %{{.*}} : (tensor<1x1x4x4xi32>, memref<1x1x4x4xi32, strided<[16, 16, 4, 1], offset: ?>>) -> ()
 // CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_tensor_ins_4d_subview(%arg0: memref<?xi32>, %arg1: tensor<1x1x4x4xi32>) {
@@ -63,7 +63,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: bufferization.materialize_in_destination %[[UB:.*]] in writable %[[GM]] : (tensor<?x?xi32>, memref<?x?xi32, strided<[512, 1], offset: ?>>) -> ()
 // CHECK: %{{.*}} = bufferization.to_tensor %[[TMP]] restrict writable : memref<?x?xi32, strided<[256, 1]>>
 // CHECK: scope.return %{{.*}} : tensor<?x?xi32>
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_XCHG_tensor_ins_dyn_subview_with_return(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2: index, %arg3: index, %arg4: index) -> tensor<?x?xi32> {
@@ -102,7 +102,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: memref.copy %{{.*}}, %{{.*}} : memref<1x1x4x4xi32, strided<[16, 16, 4, 1], offset: ?>> to memref<1x1x4x4xi32>
 // CHECK: bufferization.materialize_in_destination %[[UB:.*]] in writable %{{.*}} : (tensor<1x1x4x4xi32>, memref<1x1x4x4xi32, strided<[16, 16, 4, 1], offset: ?>>) -> ()
 // CHECK: scope.return
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: bufferization.to_memref
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
@@ -126,7 +126,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %{{.*}} = scope.scope : () -> tensor<?x?xi32> {
 // CHECK: bufferization.materialize_in_destination %[[UB:.*]] in writable %{{.*}} : (tensor<?x?xi32>, memref<?x?xi32, strided<[512, 1], offset: ?>>) -> ()
 // CHECK: scope.return %{{.*}} : tensor<?x?xi32>
-// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+// CHECK: } {hivm.allow_flatten, hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: bufferization.to_memref
 // CHECK-NOT: hfusion.atomic_xchg
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {

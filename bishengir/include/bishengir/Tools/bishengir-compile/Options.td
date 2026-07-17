@@ -238,6 +238,15 @@ def DisableHIVMTensorCompile : FeatureControlOptions<
   let passGroup = ["HFUSION", "HIVM"];
 }
 
+def EnableFastDiv : FeatureControlOptions<
+  "Enable conversion of div with constant denominator into mul "
+  "excluding cases when reciprocal value is denormal or inf value",
+  "bool",
+  "true"
+> {
+  let passGroup = ["HFUSION"];
+}
+
 def EnableLegacyInsertLoadStoreForMixCV : FeatureControlOptions<
   "Use legacy InsertLoadStoreForMixCV.",
   "bool",
