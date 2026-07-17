@@ -1,9 +1,5 @@
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9579 -lower-hivm-pipeline="enable-vf-operand-substitution=true" -split-input-file -mlir-disable-threading -mlir-print-ir-before=hivm-plan-memory 2>&1 | FileCheck %s
 
-// Reduced from design/mlir/before_planmemory.mlir: a VF source operand is a
-// runtime-selected UB buffer. With the compile option enabled, the pipeline
-// rewrites the VF output operand to that selected source before PlanMemory.
-
 func.func @vf_reuse_direct(
     %arg0: memref<64x128xf32, #hivm.address_space<ub>>,
     %arg1: memref<64x128xf32, #hivm.address_space<ub>>)
@@ -227,5 +223,24 @@ func.func @negative_source_is_not_select(
        memref<64x128xf32, #hivm.address_space<ub>>) -> ()
   hivm.hir.store ins(%dst : memref<64x128xf32, #hivm.address_space<ub>>)
       outs(%arg1 : memref<64x128xf32, #hivm.address_space<gm>>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @drop_multibuffer_mark_on_store_source(
+// CHECK: hivm.hir.pointer_cast
+// CHECK-NOT: hivm.multi_buffer
+// CHECK: hivm.hir.store
+func.func @drop_multibuffer_mark_on_store_source(
+    %arg0: memref<64xf32, #hivm.address_space<gm>>)
+    attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                hivm.func_core_type = #hivm.func_core_type<AIV>,
+                hivm.vf_mode = #hivm.vf_mode<SIMD>} {
+  %alloc = memref.alloc() : memref<64xf32, #hivm.address_space<ub>>
+  annotation.mark %alloc {hivm.multi_buffer = 2 : i32} :
+      memref<64xf32, #hivm.address_space<ub>>
+  hivm.hir.store ins(%alloc : memref<64xf32, #hivm.address_space<ub>>)
+      outs(%arg0 : memref<64xf32, #hivm.address_space<gm>>)
   return
 }

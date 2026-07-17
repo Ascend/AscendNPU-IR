@@ -19,13 +19,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/SymbolTable.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 using namespace mlir;
 using namespace mlir::hivm;
@@ -90,6 +93,56 @@ static bool hasSyncSetBetween(func::CallOp call, Operation *user) {
     }
   }
   return false;
+}
+
+static memref::AllocOp getRootAlloc(Value value) {
+  Value cur = value;
+  while (Operation *def = cur.getDefiningOp()) {
+    if (auto alloc = dyn_cast<memref::AllocOp>(def)) {
+      return alloc;
+    }
+    if (isa<memref::SubViewOp, memref::CastOp, memref::ReinterpretCastOp,
+            memref::MemorySpaceCastOp, memref::CollapseShapeOp,
+            memref::ExpandShapeOp>(def)) {
+      cur = def->getOperand(0);
+      continue;
+    }
+    break;
+  }
+  return nullptr;
+}
+
+static bool isOnlyStaticMultiBufferMark(annotation::MarkOp markOp) {
+  return markOp.isAnnotatedByStaticAttr(hivm::MultiBufferAttr::name) &&
+         markOp.getAttrNum() == 1;
+}
+
+static void eraseHirStoreSourceMultiBufferMarks(ModuleOp module) {
+  SmallVector<annotation::MarkOp> marksToErase;
+  llvm::SmallPtrSet<Operation *, 8> seenMarks;
+
+  module.walk([&](hivm::StoreOp storeOp) {
+    memref::AllocOp alloc = getRootAlloc(storeOp.getSrc());
+    if (!alloc) {
+      return;
+    }
+
+    for (Operation *user : alloc->getUsers()) {
+      auto markOp = dyn_cast<annotation::MarkOp>(user);
+      if (!markOp || !isOnlyStaticMultiBufferMark(markOp)) {
+        continue;
+      }
+      if (seenMarks.insert(markOp.getOperation()).second) {
+        marksToErase.push_back(markOp);
+      }
+    }
+  });
+
+  for (annotation::MarkOp markOp : marksToErase) {
+    LDBG("erase temporary hivm.multi_buffer mark for hir.store source alloc: "
+         << markOp.getSrc());
+    markOp.erase();
+  }
 }
 
 struct Candidate {
@@ -202,6 +255,8 @@ struct VFOperandSubstitutionPass
         c.dstAlloc.erase();
       }
     }
+
+    eraseHirStoreSourceMultiBufferMarks(module);
   }
 };
 
