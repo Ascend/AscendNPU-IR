@@ -355,55 +355,18 @@ bool IRTranslator::isVectorOpResult(Value value) {
 std::optional<hivm::PIPE>
 IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
                               const llvm::SmallVector<Value> &writeMemInfo) {
-  // TODO: A3/A5 DIFF
-  if (options.isRegBasedArch) {
-    if (!isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op) ||
-        coreType == TCoreType::CUBE_OR_VECTOR) {
-      return {};
-    }
-    if (coreType == TCoreType::VECTOR) {
-      if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op)) {
-        if (isVectorOpResult(insertSliceOp.getDest())) {
-          return PIPE::PIPE_V;
-        }
-      }
-    }
-    if (writeMemInfo.empty()) {
-      return {};
-    }
-    std::optional<hivm::PIPE> pipe;
-    for (auto &memInfoVal : writeMemInfo) {
-      auto addressSpaceOpt = GetBufferSpaceAttr(memInfoVal);
-      if (!addressSpaceOpt.has_value()) {
-        return {};
-      }
-      auto addressSpace = addressSpaceOpt.value().getAddressSpace();
-      std::optional<hivm::PIPE> curPipe;
-      if (isa<hivm::VBrcOp>(op) && (addressSpace == AddressSpace::L1)) {
-        curPipe = PIPE::PIPE_MTE2;
-      }
-      if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
-          (coreType == TCoreType::VECTOR) &&
-          (addressSpace == AddressSpace::L1)) {
-        curPipe = PIPE::PIPE_MTE3;
-      }
-      if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
-          (coreType == TCoreType::VECTOR) &&
-          (addressSpace == AddressSpace::UB)) {
-        curPipe = PIPE::PIPE_V;
-      }
-      if (curPipe.has_value()) {
-        if (pipe.has_value() && curPipe != pipe.value()) {
-          return {};
-        }
-        pipe = curPipe;
-      }
-    }
-    return pipe;
+  if (!isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp>(op) ||
+      coreType == TCoreType::CUBE_OR_VECTOR) {
+    return {};
   }
-
-  if (!isa<hivm::CopyOp, hivm::VBrcOp>(op) ||
-      coreType == TCoreType::CUBE_OR_VECTOR || writeMemInfo.empty()) {
+  if (coreType == TCoreType::VECTOR) {
+    if (auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(op)) {
+      if (isVectorOpResult(insertSliceOp.getDest())) {
+        return PIPE::PIPE_V;
+      }
+    }
+  }
+  if (writeMemInfo.empty()) {
     return {};
   }
   std::optional<hivm::PIPE> pipe;
@@ -414,13 +377,18 @@ IRTranslator::getInferredPipe(Operation *op, TCoreType coreType,
     }
     auto addressSpace = addressSpaceOpt.value().getAddressSpace();
     std::optional<hivm::PIPE> curPipe;
-    if (isa<hivm::CopyOp>(op) && addressSpace == AddressSpace::L1 &&
-        coreType == TCoreType::VECTOR) {
+    if (isa<hivm::VBrcOp>(op) && (addressSpace == AddressSpace::L1)) {
+      curPipe = PIPE::PIPE_MTE2;
+    }
+    if (isa<hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) &&
+        (addressSpace == AddressSpace::L1)) {
       curPipe = PIPE::PIPE_MTE3;
     }
-    if (isa<hivm::VBrcOp>(op) && addressSpace == AddressSpace::L1 &&
-        coreType == TCoreType::VECTOR) {
-      curPipe = PIPE::PIPE_MTE2;
+    if (isa<hivm::VBrcOp, hivm::CopyOp, tensor::InsertSliceOp>(op) &&
+        (coreType == TCoreType::VECTOR) &&
+        (addressSpace == AddressSpace::UB)) {
+      curPipe = PIPE::PIPE_V;
     }
     if (curPipe.has_value()) {
       if (pipe.has_value() && curPipe != pipe.value()) {
@@ -450,8 +418,8 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   auto [readMemOps, writeMemOps] = getReadWriteMemoryOps(op);
   std::optional<hivm::PIPE> pipe;
   if (options.isCrossCoreMode()) {
-    if (isa<hivm::CopyOp, hivm::VBrcOp, tensor::InsertSliceOp,
-            tensor::InsertOp>(op)) {
+    if (isa<hivm::CopyOp, hivm::VBrcOp>(op) || (options.isRegBasedArch && isa<tensor::InsertSliceOp,
+            tensor::InsertOp>(op))) {
       if (auto pipeOpt = getInferredPipe(op, coreTypeVal, writeMemOps)) {
         pipe = pipeOpt.value();
       } else {
