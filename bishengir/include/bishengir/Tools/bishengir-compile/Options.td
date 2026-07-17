@@ -860,6 +860,15 @@ def DisableVFReachableCheck : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def EnableVFOperandSubstitution : FeatureControlOptions<
+  "enable VF callsite operand substitution (reuse a VF input buffer for its "
+  "output when the input is a dynamic select)",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 def DisableFFTS : FeatureControlOptions<
   "Force disabling FFTS.",
   "bool",

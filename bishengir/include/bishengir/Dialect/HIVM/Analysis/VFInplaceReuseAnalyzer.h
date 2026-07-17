@@ -37,6 +37,10 @@ public:
   /// Gets inplace-reuse info (if any) for the vf call inside given funcOp.
   VFCallInplaceReuseInfo *getVFCallInplaceReuseInfo(func::FuncOp funcOp);
 
+  /// Returns the callee argument-index pairs {dstArgIdx, srcArgIdx} that are
+  /// proven inplace reusable inside the vf callee function body.
+  SmallVector<std::pair<unsigned, unsigned>> getInplaceReusableArgPairs(func::FuncOp callee) const;
+
   /// Dumps the inplace-reuse information in a human readable format.
   void dump() const;
 
