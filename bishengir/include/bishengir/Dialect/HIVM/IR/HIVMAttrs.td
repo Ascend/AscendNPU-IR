@@ -726,11 +726,13 @@ def HIVM_ReduceOp_MAX_WITH_INDEX_LEFT : I32EnumAttrCase<"max_with_index_left", 5
 def HIVM_ReduceOp_MAX_WITH_INDEX_RIGHT : I32EnumAttrCase<"max_with_index_right", 6>;
 def HIVM_ReduceOp_MIN_WITH_INDEX_LEFT : I32EnumAttrCase<"min_with_index_left", 7>;
 def HIVM_ReduceOp_MIN_WITH_INDEX_RIGHT : I32EnumAttrCase<"min_with_index_right", 8>;
-def HIVM_ReduceOp_ANY : I32EnumAttrCase<"any", 9>;
-def HIVM_ReduceOp_ALL : I32EnumAttrCase<"all", 10>;
-def HIVM_ReduceOp_XORI : I32EnumAttrCase<"xori", 11>;
-def HIVM_ReduceOp_ORI : I32EnumAttrCase<"ori", 12>;
-def HIVM_ReduceOp_ANDI : I32EnumAttrCase<"andi", 13>;
+def HIVM_ReduceOp_MAX_WITH_INDEX : I32EnumAttrCase<"max_with_index", 9>;
+def HIVM_ReduceOp_MIN_WITH_INDEX : I32EnumAttrCase<"min_with_index", 10>;
+def HIVM_ReduceOp_ANY : I32EnumAttrCase<"any", 11>;
+def HIVM_ReduceOp_ALL : I32EnumAttrCase<"all", 12>;
+def HIVM_ReduceOp_XORI : I32EnumAttrCase<"xori", 13>;
+def HIVM_ReduceOp_ORI : I32EnumAttrCase<"ori", 14>;
+def HIVM_ReduceOp_ANDI : I32EnumAttrCase<"andi", 15>;
 def HIVM_ReduceOp_NONE : I32EnumAttrCase<"none", 0>;
 
 def HIVM_ReduceOpEnum : HIVM_I32Enum<
@@ -743,6 +745,8 @@ def HIVM_ReduceOpEnum : HIVM_I32Enum<
     HIVM_ReduceOp_MAX_WITH_INDEX_RIGHT,
     HIVM_ReduceOp_MIN_WITH_INDEX_LEFT,
     HIVM_ReduceOp_MIN_WITH_INDEX_RIGHT,
+    HIVM_ReduceOp_MAX_WITH_INDEX,
+    HIVM_ReduceOp_MIN_WITH_INDEX,
     HIVM_ReduceOp_ANY,
     HIVM_ReduceOp_ALL,
     HIVM_ReduceOp_XORI,

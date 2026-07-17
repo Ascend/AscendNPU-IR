@@ -36,11 +36,12 @@ namespace mlir {
 class RewritePatternSet;
 
 void populateReductionPatternsAndLegality(RewritePatternSet &patterns,
-                                          ConversionTarget &target);
+                                          ConversionTarget &target,
+                                          bool _isRegBasedArch);
 
 void populateMatmulPatternsAndLegality(
     RewritePatternSet &patterns, ConversionTarget &target,
-    const ConvertHFusionToHIVMOptions &options);
+    const ConvertHFusionToHIVMOptions &options, bool _isRegBasedArch);
 
 } // namespace mlir
 
