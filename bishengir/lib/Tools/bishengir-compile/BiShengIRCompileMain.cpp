@@ -11,6 +11,7 @@
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/PassPipeline.h"
 #include "bishengir/Tools/bishengir-compile/Utility.h"
+#include "bishengir/Tools/RetriablePassManager/TuningRetryPolicy.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/Path.h"
@@ -362,7 +363,10 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
     tryTimes = 1;
   }
   CompileFlow compileFlow = getCompileFlow(config);
+  TuningRetryPolicy tuningRetryPolicy;
   for (int i = 0; i < tryTimes; i++) {
+    const bool isLastAttempt = i + 1 == tryTimes;
+    tuningRetryPolicy.onBeforePipelineAttempt(isLastAttempt);
     LDBG("Attempt number: " << i << " with max buffer count tuning delta: "
                             << config.getHfusionMaxBufferCountTuning());
     ModuleOp hirCompileMode = mod.clone();
