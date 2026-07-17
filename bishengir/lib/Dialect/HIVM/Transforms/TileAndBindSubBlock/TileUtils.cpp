@@ -132,6 +132,59 @@ public:
   }
 };
 
+struct DetachFixpipeDstReadView : public OpRewritePattern<FixpipeOp> {
+public:
+  explicit DetachFixpipeDstReadView(MLIRContext *context)
+      : OpRewritePattern<FixpipeOp>(context, PatternBenefit(2)) {}
+
+  LogicalResult matchAndRewrite(FixpipeOp op,
+                                PatternRewriter &rewriter) const override {
+    auto dstAlloc = traceDefOp<memref::AllocOp>(op.getDst());
+    if (!dstAlloc)
+      return failure();
+
+    annotation::MarkOp finalMarkOp;
+    auto func = op->getParentOfType<func::FuncOp>();
+    func.walk([&](annotation::MarkOp markOp) {
+      auto tensorType = dyn_cast<RankedTensorType>(markOp.getSrc().getType());
+      if (!tensorType || !tensorType.hasStaticShape())
+        return WalkResult::advance();
+
+      auto memorySpaceCasts =
+          traceDefOps<memref::MemorySpaceCastOp>(markOp.getSrc());
+      if (memorySpaceCasts.empty())
+        return WalkResult::advance();
+
+      bool allCastsFromDst = llvm::all_of(
+          memorySpaceCasts, [&](Operation *memorySpaceCast) {
+            auto castOp = cast<memref::MemorySpaceCastOp>(memorySpaceCast);
+            auto castAllocs =
+                traceDefOps<memref::AllocOp>(castOp.getSource());
+            return !castAllocs.empty() &&
+                   llvm::all_of(castAllocs, [&](Operation *castAlloc) {
+                     return castAlloc == *dstAlloc;
+                   });
+          });
+      if (!allCastsFromDst)
+        return WalkResult::advance();
+
+      finalMarkOp = markOp;
+      return WalkResult::interrupt();
+    });
+    if (!finalMarkOp)
+      return failure();
+
+    auto tensorType = cast<RankedTensorType>(finalMarkOp.getSrc().getType());
+    rewriter.setInsertionPoint(finalMarkOp);
+    auto emptyOp = rewriter.create<tensor::EmptyOp>(
+        finalMarkOp.getLoc(), tensorType.getShape(), tensorType.getElementType());
+    rewriter.modifyOpInPlace(finalMarkOp, [&]() {
+      finalMarkOp.getSrcMutable().set(emptyOp.getResult());
+    });
+    return success();
+  }
+};
+
 static FailureOr<int64_t> getHalvedStaticDim(MemRefType type,
                                              int64_t tilingDim) {
   if (tilingDim < 0 || tilingDim >= type.getRank())
@@ -318,6 +371,9 @@ static LogicalResult tileAndSliceOpAIC(
     func::FuncOp func,
     const DenseMap<int32_t, int64_t> &tightlyCoupledBufferToTilingDim) {
   RewritePatternSet patterns(func.getContext());
+  // DetachFixpipeDstReadView is to handle the Op pattern by Preload
+  // Please read UT case: trace_def_ops_fixpipe_readview_mix_aic 
+  patterns.add<DetachFixpipeDstReadView>(func.getContext());
   patterns.add<InsertFixpipeDstPropagateUp>(
       func.getContext(), tightlyCoupledBufferToTilingDim);
   patterns.add<BufferizationPropagateUpPattern,

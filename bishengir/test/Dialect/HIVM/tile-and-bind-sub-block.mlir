@@ -4185,3 +4185,44 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     return
   }
 }
+
+
+// -----
+
+// CHECK-LABEL:   func.func @trace_def_ops_fixpipe_readview_mix_aic(
+// CHECK:           memref.alloc() : memref<32x128xf32, #hivm.address_space<ub>>
+// CHECK:           hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins({{.*}} : tensor<8x4x16x16xf32>) outs({{.*}} : memref<32x128xf32, #hivm.address_space<ub>>) dual_dst_mode = <ROW_SPLIT>
+// CHECK-NOT:       memref.memory_space_cast
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<64x128xf32>
+// CHECK:           annotation.mark %[[EMPTY]] {matmul_at_least_once} : tensor<64x128xf32>
+// CHECK-LABEL:   func.func @trace_def_ops_fixpipe_readview_mix_aiv(
+// CHECK:           hivm.hir.store ins({{.*}} : tensor<32x128xf32>) outs({{.*}} : memref<32x128xf32, strided<[128, 1], offset: ?>>) {tiled_op}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">, hivm.module_core_type = #hivm.module_core_type<MIX>} {
+  func.func @trace_def_ops_fixpipe_readview_mix_aic(%cond: i1) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIC>, hivm.part_of_mix, mix_mode = "mix"} {
+    %src = tensor.empty() : tensor<8x4x16x16xf32>
+    %alloc = memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<64x128xf32, #hivm.address_space<ub>>
+    %cast = memref.memory_space_cast %alloc : memref<64x128xf32, #hivm.address_space<ub>> to memref<64x128xf32>
+    %tensor = bufferization.to_tensor %cast restrict writable : memref<64x128xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%src : tensor<8x4x16x16xf32>) outs(%alloc : memref<64x128xf32, #hivm.address_space<ub>>)
+    %selected = scf.if %cond -> (tensor<64x128xf32>) {
+      %empty = tensor.empty() : tensor<64x128xf32>
+      scf.yield %empty : tensor<64x128xf32>
+    } else {
+      scf.yield %tensor : tensor<64x128xf32>
+    }
+    annotation.mark %selected {matmul_at_least_once} : tensor<64x128xf32>
+    return
+  }
+
+  func.func @trace_def_ops_fixpipe_readview_mix_aiv(%arg0: memref<64x128xf32>) attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.part_of_mix, mix_mode = "mix"} {
+    %alloc = memref.alloc() : memref<64x128xf32, #hivm.address_space<ub>>
+    annotation.mark %alloc {effects = ["write", "read"], hivm.tightly_coupled_buffer = #hivm.tightly_coupled_buffer<0>} : memref<64x128xf32, #hivm.address_space<ub>>
+    %cast = memref.memory_space_cast %alloc : memref<64x128xf32, #hivm.address_space<ub>> to memref<64x128xf32>
+    %tensor = bufferization.to_tensor %cast restrict writable : memref<64x128xf32>
+    %empty = tensor.empty() : tensor<64x128xf32>
+    %result = hivm.hir.vadd ins(%tensor, %tensor : tensor<64x128xf32>, tensor<64x128xf32>) outs(%empty : tensor<64x128xf32>) -> tensor<64x128xf32>
+    hivm.hir.store ins(%result : tensor<64x128xf32>) outs(%arg0 : memref<64x128xf32>)
+    return
+  }
+}
