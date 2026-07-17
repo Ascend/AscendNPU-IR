@@ -1290,6 +1290,134 @@ func.func @bubble_up_insert_extract_different_dim(
 }
 
 // -----
+// CHECK-LABEL: @indirect_load_example(
+// CHECK: extract_slice
+// CHECK: extract_slice
+// CHECK: extract_slice
+// CHECK: hivm.hir.indirect_load
+// CHECK: return
+func.func @indirect_load_example(%arg0: memref<?xf32>, %arg1: tensor<32x64xi64>, %arg2: tensor<32x64xi8>, %arg3: tensor<32x64xf32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %0 = tensor.empty() : tensor<32x64xf32>
+  scf.for %arg4 = %c0 to %c2 step %c1 {
+    %1 = affine.apply affine_map<()[s0] -> (s0 * 16)>()[%arg4]
+    %2 = hivm.hir.indirect_load ins(%arg0 : memref<?xf32>, %arg1 : tensor<32x64xi64>, %arg2 : tensor<32x64xi8>, %arg3 : tensor<32x64xf32>) outs(%0 : tensor<32x64xf32>) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<32x64xf32>
+    %extracted_slice = tensor.extract_slice %2[%1, 0] [16, 64] [1, 1] {to_be_bubbled_slice} : tensor<32x64xf32> to tensor<16x64xf32>
+    annotation.mark %extracted_slice : tensor<16x64xf32>
+  } {map_for_to_forall, mapping = [#hivm.sub_block<x>]}
+  return
+}
+
+// -----
+// CHECK-LABEL: @stride_load_bubble_up_example(
+// CHECK-DAG: %[[NUMEL:.*]] = arith.constant 16 : i64
+// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 52 : i64
+// CHECK-DAG: %[[STRIDE:.*]] = arith.constant 3 : i64
+// CHECK-DAG: %[[OTHER:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK: hivm.hir.stride_load
+// CHECK-SAME: outs(%{{.*}} : tensor<16xf32>)
+// CHECK-SAME: offset(%[[OFFSET]] : i64)
+// CHECK-SAME: other(%[[OTHER]] : f32)
+// CHECK-SAME: strides([%[[STRIDE]] : i64])
+// CHECK-SAME: numels([%[[NUMEL]] : i64])
+// CHECK: return
+func.func @stride_load_bubble_up_example(%src: memref<?xf32>) -> tensor<16xf32> {
+  %offset = arith.constant 4 : i64
+  %other = arith.constant 0.000000e+00 : f32
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  %dst = tensor.empty() : tensor<32xf32>
+  %0 = hivm.hir.stride_load
+    ins(%src : memref<?xf32>)
+    outs(%dst : tensor<32xf32>)
+    offset(%offset : i64)
+    other(%other : f32)
+    strides([%stride : i64])
+    numels([%numel : i64]) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<32xf32>
+  %slice = tensor.extract_slice %0[16] [16] [1] {to_be_bubbled_slice}
+      : tensor<32xf32> to tensor<16xf32>
+  return %slice : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @stride_load_2d_bubble_up_example(
+// CHECK-DAG: %[[NUMEL0:.*]] = arith.constant 2 : i32
+// CHECK-DAG: %[[NUMEL1:.*]] = arith.constant 16 : i32
+// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 87 : i32
+// CHECK-DAG: %[[OTHER:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK-DAG: %[[STRIDE0:.*]] = arith.constant 30 : i32
+// CHECK-DAG: %[[STRIDE1:.*]] = arith.constant 3 : i32
+// CHECK: hivm.hir.stride_load
+// CHECK-SAME: outs(%{{.*}} : tensor<2x16xf32>)
+// CHECK-SAME: offset(%[[OFFSET]] : i32)
+// CHECK-SAME: other(%[[OTHER]] : f32)
+// CHECK-SAME: strides([%[[STRIDE0]], %[[STRIDE1]] : i32, i32])
+// CHECK-SAME: numels([%[[NUMEL0]], %[[NUMEL1]] : i32, i32])
+// CHECK: return
+func.func @stride_load_2d_bubble_up_example(%src: memref<?xf32>) -> tensor<2x16xf32> {
+  %offset = arith.constant 9 : i32
+  %other = arith.constant 0.000000e+00 : f32
+  %stride0 = arith.constant 30 : i32
+  %stride1 = arith.constant 3 : i32
+  %numel0 = arith.constant 8 : i32
+  %numel1 = arith.constant 32 : i32
+  %dst = tensor.empty() : tensor<4x32xf32>
+  %0 = hivm.hir.stride_load
+    ins(%src : memref<?xf32>)
+    outs(%dst : tensor<4x32xf32>)
+    offset(%offset : i32)
+    other(%other : f32)
+    strides([%stride0, %stride1 : i32, i32])
+    numels([%numel0, %numel1 : i32, i32]) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<4x32xf32>
+  %slice = tensor.extract_slice %0[1, 16] [2, 16] [1, 1] {to_be_bubbled_slice}
+      : tensor<4x32xf32> to tensor<2x16xf32>
+  return %slice : tensor<2x16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: @stride_load_3d_bubble_up_example(
+// CHECK-DAG: %[[NUMEL0:.*]] = arith.constant 1 : i32
+// CHECK-DAG: %[[NUMEL1:.*]] = arith.constant 2 : i32
+// CHECK-DAG: %[[NUMEL2:.*]] = arith.constant 4 : i32
+// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 128 : i32
+// CHECK-DAG: %[[OTHER:.*]] = arith.constant 0.000000e+00 : f32
+// CHECK-DAG: %[[STRIDE0:.*]] = arith.constant 100 : i32
+// CHECK-DAG: %[[STRIDE1:.*]] = arith.constant 10 : i32
+// CHECK-DAG: %[[STRIDE2:.*]] = arith.constant 6 : i32
+// CHECK: hivm.hir.stride_load
+// CHECK-SAME: outs(%{{.*}} : tensor<1x2x4xf32>)
+// CHECK-SAME: offset(%[[OFFSET]] : i32)
+// CHECK-SAME: other(%[[OTHER]] : f32)
+// CHECK-SAME: strides([%[[STRIDE0]], %[[STRIDE1]], %[[STRIDE2]] : i32, i32, i32])
+// CHECK-SAME: numels([%[[NUMEL0]], %[[NUMEL1]], %[[NUMEL2]] : i32, i32, i32])
+// CHECK: return
+func.func @stride_load_3d_bubble_up_example(%src: memref<?xf32>) -> tensor<1x2x4xf32> {
+  %offset = arith.constant 6 : i32
+  %other = arith.constant 0.000000e+00 : f32
+  %stride0 = arith.constant 100 : i32
+  %stride1 = arith.constant 10 : i32
+  %stride2 = arith.constant 6 : i32
+  %numel0 = arith.constant 2 : i32
+  %numel1 = arith.constant 4 : i32
+  %numel2 = arith.constant 8 : i32
+  %dst = tensor.empty() : tensor<2x4x8xf32>
+  %0 = hivm.hir.stride_load
+    ins(%src : memref<?xf32>)
+    outs(%dst : tensor<2x4x8xf32>)
+    offset(%offset : i32)
+    other(%other : f32)
+    strides([%stride0, %stride1, %stride2 : i32, i32, i32])
+    numels([%numel0, %numel1, %numel2 : i32, i32, i32]) {hivm.vf_mode = #hivm.vf_mode<SIMT>} -> tensor<2x4x8xf32>
+  %slice = tensor.extract_slice %0[1, 1, 2] [1, 2, 4] [1, 1, 1] {to_be_bubbled_slice}
+      : tensor<2x4x8xf32> to tensor<1x2x4xf32>
+  return %slice : tensor<1x2x4xf32>
+}
+
+// -----
 
 // CHECK-LABEL:   func.func @bubble_up_parallel_dim(
 // CHECK:           %[[VAL_2:.*]] = arith.constant 32 : index

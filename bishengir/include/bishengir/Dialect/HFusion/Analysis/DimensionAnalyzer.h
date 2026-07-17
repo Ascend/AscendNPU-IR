@@ -186,12 +186,11 @@ protected:
 
   void processFlipOp(hfusion::FlipOp op);
   void processSortOp(hfusion::SortOp op);
-  // TODO: Support operations
-  // void processEmbeddingGatherOp(hfusion::EmbeddingGatherOp op);
-  // void processIndirectLoadOp(hfusion::IndirectLoadOp op);
-  // void processStrideLoadOp(hfusion::StrideLoadOp op);
-  // void processIndirectStoreOp(hfusion::IndirectStoreOp op);
-  // void processStrideStoreOp(hfusion::StrideStoreOp op);
+  void processEmbeddingGatherOp(hfusion::EmbeddingGatherOp op);
+  void processIndirectLoadOp(hfusion::IndirectLoadOp op);
+  void processStrideLoadOp(hfusion::StrideLoadOp op);
+  void processIndirectStoreOp(hfusion::IndirectStoreOp op);
+  void processStrideStoreOp(hfusion::StrideStoreOp op);
 
   //===--------------------------------------------------------------------===//
   // Helper function

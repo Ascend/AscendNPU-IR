@@ -196,10 +196,9 @@ private:
     strategies.push_back(std::make_shared<ScopeBubbleUpStrategy>());
     strategies.push_back(std::make_shared<SelectBubbleUpStrategy>());
     strategies.push_back(std::make_shared<FixpipeBubbleUpStrategy>());
-    // TODO: Support Operations
-    // strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<IndirectLoadBubbleUpStrategy>());
     strategies.push_back(std::make_shared<GatherLoadBubbleUpStrategy>());
-    // strategies.push_back(std::make_shared<StrideLoadBubbleUpStrategy>());
+    strategies.push_back(std::make_shared<StrideLoadBubbleUpStrategy>());
     
 
     patterns.add<BubbleUpPattern>(context, std::move(strategies));

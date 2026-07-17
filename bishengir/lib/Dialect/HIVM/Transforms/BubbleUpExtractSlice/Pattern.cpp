@@ -2411,62 +2411,62 @@ MarkEmptySliceBufferSize::matchAndRewrite(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
-// bool IndirectLoadBubbleUpStrategy::isSupportedOperation(
-//     tensor::ExtractSliceOp sliceOp) const {
-//   auto indirectLoadOp =
-//       sliceOp.getSource().getDefiningOp<hivm::IndirectLoadOp>();
-//   return indirectLoadOp && !isDynamicSlice(sliceOp);
-// }
+bool IndirectLoadBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto indirectLoadOp =
+      sliceOp.getSource().getDefiningOp<hivm::IndirectLoadOp>();
+  return indirectLoadOp && !isDynamicSlice(sliceOp);
+}
 
-// LogicalResult
-// IndirectLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-//                                       PatternRewriter &rewriter) const {
-//   auto indirectLoadOp =
-//       sliceOp.getSource().getDefiningOp<hivm::IndirectLoadOp>();
+LogicalResult
+IndirectLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                      PatternRewriter &rewriter) const {
+  auto indirectLoadOp =
+      sliceOp.getSource().getDefiningOp<hivm::IndirectLoadOp>();
 
-//   if (!indirectLoadOp)
-//     return failure();
+  if (!indirectLoadOp)
+    return failure();
 
-//   auto loc = sliceOp.getLoc();
-//   auto offsets = sliceOp.getMixedOffsets();
-//   auto sizes = sliceOp.getMixedSizes();
-//   auto strides = sliceOp.getMixedStrides();
+  auto loc = sliceOp.getLoc();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
 
-//   rewriter.setInsertionPoint(indirectLoadOp);
+  rewriter.setInsertionPoint(indirectLoadOp);
 
-//   auto newOffsets = rewriter.create<tensor::ExtractSliceOp>(
-//       loc, indirectLoadOp.getOffsets(), offsets, sizes, strides);
-//   markCreatedExtractSliceOp(rewriter, newOffsets);
-//   auto newDst = rewriter.create<tensor::ExtractSliceOp>(
-//       loc, indirectLoadOp.getDst(), offsets, sizes, strides);
-//   markCreatedExtractSliceOp(rewriter, newDst);
-//   Value newMask = nullptr;
-//   if (auto mask = indirectLoadOp.getMask()) {
-//     newMask = rewriter.create<tensor::ExtractSliceOp>(loc, mask, offsets,
-//     sizes,
-//                                                       strides);
-//     markCreatedExtractSliceOp(rewriter, newMask.getDefiningOp());
-//   }
-//   Value newOther = nullptr;
-//   if (auto other = indirectLoadOp.getOther()) {
-//     newOther = rewriter.create<tensor::ExtractSliceOp>(loc, other, offsets,
-//                                                        sizes, strides);
-//     markCreatedExtractSliceOp(rewriter, newOther.getDefiningOp());
-//   }
+  auto newOffsets = rewriter.create<tensor::ExtractSliceOp>(
+      loc, indirectLoadOp.getOffsets(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newOffsets);
+  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
+      loc, indirectLoadOp.getDst(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newDst);
+  Value newMask = nullptr;
+  if (auto mask = indirectLoadOp.getMask()) {
+    newMask = rewriter.create<tensor::ExtractSliceOp>(loc, mask, offsets,
+    sizes,
+                                                      strides);
+    markCreatedExtractSliceOp(rewriter, newMask.getDefiningOp());
+  }
+  Value newOther = nullptr;
+  if (auto other = indirectLoadOp.getOther()) {
+    newOther = rewriter.create<tensor::ExtractSliceOp>(loc, other, offsets,
+                                                       sizes, strides);
+    markCreatedExtractSliceOp(rewriter, newOther.getDefiningOp());
+  }
 
-//   auto newOp = rewriter.create<hivm::IndirectLoadOp>(
-//       indirectLoadOp.getLoc(), sliceOp.getType(), indirectLoadOp.getSrc(),
-//       newOffsets, newDst, newMask, newOther);
+  auto newOp = rewriter.create<hivm::IndirectLoadOp>(
+      indirectLoadOp.getLoc(), sliceOp.getType(), indirectLoadOp.getSrc(),
+      newOffsets, newDst, newMask, newOther);
 
-//   for (auto attr : indirectLoadOp->getAttrs()) {
-//     if (!newOp->hasAttr(attr.getName()))
-//       newOp->setAttr(attr.getName(), attr.getValue());
-//   }
-//   rewriter.replaceOp(sliceOp, newOp);
-//   if (indirectLoadOp->use_empty())
-//     rewriter.eraseOp(indirectLoadOp);
-//   return success();
-// }
+  for (auto attr : indirectLoadOp->getAttrs()) {
+    if (!newOp->hasAttr(attr.getName()))
+      newOp->setAttr(attr.getName(), attr.getValue());
+  }
+  rewriter.replaceOp(sliceOp, newOp);
+  if (indirectLoadOp->use_empty())
+    rewriter.eraseOp(indirectLoadOp);
+  return success();
+}
 
 bool GatherLoadBubbleUpStrategy::isSupportedOperation(
     tensor::ExtractSliceOp sliceOp) const {
@@ -2533,106 +2533,106 @@ GatherLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   return success();
 }
 
-// bool StrideLoadBubbleUpStrategy::isSupportedOperation(
-//     tensor::ExtractSliceOp sliceOp) const {
-//   auto strideLoadOp =
-//   sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); int64_t rank =
-//   sliceOp.getType().getRank(); return strideLoadOp && rank >= 1 && rank <= 3
-//   &&
-//          !isDynamicSlice(sliceOp);
-// }
+bool StrideLoadBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  auto strideLoadOp =
+  sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); int64_t rank =
+  sliceOp.getType().getRank(); return strideLoadOp && rank >= 1 && rank <= 3
+  &&
+         !isDynamicSlice(sliceOp);
+}
 
-// LogicalResult
-// StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
-//                                     PatternRewriter &rewriter) const {
-//   auto strideLoadOp =
-//   sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); if (!strideLoadOp)
-//     return failure();
+LogicalResult
+StrideLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                    PatternRewriter &rewriter) const {
+  auto strideLoadOp =
+  sliceOp.getSource().getDefiningOp<hivm::StrideLoadOp>(); if (!strideLoadOp)
+    return failure();
 
-//   auto loc = sliceOp.getLoc();
-//   auto offsets = sliceOp.getMixedOffsets();
-//   auto sizes = sliceOp.getMixedSizes();
-//   auto strides = sliceOp.getMixedStrides();
-//   int64_t rank = sliceOp.getType().getRank();
-//   if (rank < 1 || rank > 3 ||
-//       offsets.size() != static_cast<size_t>(rank) ||
-//       sizes.size() != static_cast<size_t>(rank) ||
-//       strides.size() != static_cast<size_t>(rank) ||
-//       strideLoadOp.getStride().size() != static_cast<size_t>(rank) ||
-//       strideLoadOp.getNumel().size() != static_cast<size_t>(rank))
-//     return failure();
+  auto loc = sliceOp.getLoc();
+  auto offsets = sliceOp.getMixedOffsets();
+  auto sizes = sliceOp.getMixedSizes();
+  auto strides = sliceOp.getMixedStrides();
+  int64_t rank = sliceOp.getType().getRank();
+  if (rank < 1 || rank > 3 ||
+      offsets.size() != static_cast<size_t>(rank) ||
+      sizes.size() != static_cast<size_t>(rank) ||
+      strides.size() != static_cast<size_t>(rank) ||
+      strideLoadOp.getStride().size() != static_cast<size_t>(rank) ||
+      strideLoadOp.getNumel().size() != static_cast<size_t>(rank))
+    return failure();
 
-//   rewriter.setInsertionPoint(strideLoadOp);
+  rewriter.setInsertionPoint(strideLoadOp);
 
-//   auto newDst = rewriter.create<tensor::ExtractSliceOp>(
-//       loc, strideLoadOp.getDst(), offsets, sizes, strides);
-//   markCreatedExtractSliceOp(rewriter, newDst);
+  auto newDst = rewriter.create<tensor::ExtractSliceOp>(
+      loc, strideLoadOp.getDst(), offsets, sizes, strides);
+  markCreatedExtractSliceOp(rewriter, newDst);
 
-//   SmallVector<Value> newStrides;
-//   SmallVector<Value> newNumels;
-//   newStrides.reserve(rank);
-//   newNumels.reserve(rank);
+  SmallVector<Value> newStrides;
+  SmallVector<Value> newNumels;
+  newStrides.reserve(rank);
+  newNumels.reserve(rank);
 
-//   Value newOffset = strideLoadOp.getOffset();
-//   Type indexType = newOffset.getType();
-//   Value zero =
-//       rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
-//       0));
-//   Value one =
-//       rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
-//       1));
-//   for (int64_t i = 0; i < rank; ++i) {
-//     Value oldStride = strideLoadOp.getStride()[i];
-//     Value oldNumel = strideLoadOp.getNumel()[i];
-//     if (!oldStride || !oldNumel || oldStride.getType() != indexType ||
-//         oldNumel.getType() != indexType)
-//       return failure();
+  Value newOffset = strideLoadOp.getOffset();
+  Type indexType = newOffset.getType();
+  Value zero =
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
+      0));
+  Value one =
+      rewriter.create<arith::ConstantOp>(loc, IntegerAttr::get(indexType,
+      1));
+  for (int64_t i = 0; i < rank; ++i) {
+    Value oldStride = strideLoadOp.getStride()[i];
+    Value oldNumel = strideLoadOp.getNumel()[i];
+    if (!oldStride || !oldNumel || oldStride.getType() != indexType ||
+        oldNumel.getType() != indexType)
+      return failure();
 
-//     Value sliceOffset = getValueOrCreateCastToIndexLike(
-//         rewriter, loc, indexType,
-//         getValueOrCreateConstantIndexOp(rewriter, loc, offsets[i]));
-//     Value sliceSize = getValueOrCreateCastToIndexLike(
-//         rewriter, loc, indexType,
-//         getValueOrCreateConstantIndexOp(rewriter, loc, sizes[i]));
-//     Value sliceStride = getValueOrCreateCastToIndexLike(
-//         rewriter, loc, indexType,
-//         getValueOrCreateConstantIndexOp(rewriter, loc, strides[i]));
-//     if (!sliceOffset || !sliceSize || !sliceStride)
-//       return failure();
+    Value sliceOffset = getValueOrCreateCastToIndexLike(
+        rewriter, loc, indexType,
+        getValueOrCreateConstantIndexOp(rewriter, loc, offsets[i]));
+    Value sliceSize = getValueOrCreateCastToIndexLike(
+        rewriter, loc, indexType,
+        getValueOrCreateConstantIndexOp(rewriter, loc, sizes[i]));
+    Value sliceStride = getValueOrCreateCastToIndexLike(
+        rewriter, loc, indexType,
+        getValueOrCreateConstantIndexOp(rewriter, loc, strides[i]));
+    if (!sliceOffset || !sliceSize || !sliceStride)
+      return failure();
 
-//     Value offsetDelta =
-//         rewriter.create<arith::MulIOp>(loc, sliceOffset, oldStride);
-//     newOffset = rewriter.create<arith::AddIOp>(loc, newOffset, offsetDelta);
-//     newStrides.push_back(
-//         rewriter.create<arith::MulIOp>(loc, oldStride, sliceStride));
+    Value offsetDelta =
+        rewriter.create<arith::MulIOp>(loc, sliceOffset, oldStride);
+    newOffset = rewriter.create<arith::AddIOp>(loc, newOffset, offsetDelta);
+    newStrides.push_back(
+        rewriter.create<arith::MulIOp>(loc, oldStride, sliceStride));
 
-//     Value remaining =
-//         rewriter.create<arith::SubIOp>(loc, oldNumel, sliceOffset);
-//     Value positiveRemaining =
-//         rewriter.create<arith::MaxSIOp>(loc, remaining, zero);
-//     Value strideMinusOne =
-//         rewriter.create<arith::SubIOp>(loc, sliceStride, one);
-//     Value ceilNumerator =
-//         rewriter.create<arith::AddIOp>(loc, positiveRemaining,
-//         strideMinusOne);
-//     Value validInSlice =
-//         rewriter.create<arith::DivSIOp>(loc, ceilNumerator, sliceStride);
-//     newNumels.push_back(
-//         rewriter.create<arith::MinSIOp>(loc, validInSlice, sliceSize));
-//   }
+    Value remaining =
+        rewriter.create<arith::SubIOp>(loc, oldNumel, sliceOffset);
+    Value positiveRemaining =
+        rewriter.create<arith::MaxSIOp>(loc, remaining, zero);
+    Value strideMinusOne =
+        rewriter.create<arith::SubIOp>(loc, sliceStride, one);
+    Value ceilNumerator =
+        rewriter.create<arith::AddIOp>(loc, positiveRemaining,
+        strideMinusOne);
+    Value validInSlice =
+        rewriter.create<arith::DivSIOp>(loc, ceilNumerator, sliceStride);
+    newNumels.push_back(
+        rewriter.create<arith::MinSIOp>(loc, validInSlice, sliceSize));
+  }
 
-//   auto newOp = rewriter.create<hivm::StrideLoadOp>(
-//       strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(),
-//       newDst, newOffset, strideLoadOp.getOther(), newStrides, newNumels);
+  auto newOp = rewriter.create<hivm::StrideLoadOp>(
+      strideLoadOp.getLoc(), sliceOp.getType(), strideLoadOp.getSrc(),
+      newDst, newOffset, strideLoadOp.getOther(), newStrides, newNumels);
 
-//   for (auto attr : strideLoadOp->getAttrs()) {
-//     if (!newOp->hasAttr(attr.getName()))
-//       newOp->setAttr(attr.getName(), attr.getValue());
-//   }
-//   rewriter.replaceOp(sliceOp, newOp);
-//   if (strideLoadOp->use_empty())
-//     rewriter.eraseOp(strideLoadOp);
-//   return success();
-// }
+  for (auto attr : strideLoadOp->getAttrs()) {
+    if (!newOp->hasAttr(attr.getName()))
+      newOp->setAttr(attr.getName(), attr.getValue());
+  }
+  rewriter.replaceOp(sliceOp, newOp);
+  if (strideLoadOp->use_empty())
+    rewriter.eraseOp(strideLoadOp);
+  return success();
+}
 
 } // namespace mlir::hivm::detail
