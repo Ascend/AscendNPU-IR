@@ -132,6 +132,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TightlyCoupledBufferUtils.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
+  VFOperandSubstitution.cpp
   AnalyzeArithVectorMask.cpp
   WriteBackShared.cpp
   ADDITIONAL_HEADER_DIRS

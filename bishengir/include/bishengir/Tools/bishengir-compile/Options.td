@@ -852,6 +852,17 @@ def DisableVFReachableCheck : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def EnableVFOperandSubstitution : FeatureControlOptions<
+  "enable VF callsite operand substitution (reuse a VF input buffer for its "
+  "output when the input is a dynamic select)",
+  "bool",
+  "false"
+> {
+  // Frontend-only: this gates the HIVM pipeline insertion point and must not be
+  // forwarded or registered as a downstream hivmc option.
+  let passGroup = ["HIVM"];
+}
+
 #ifdef BISHENGIR_ENABLE_TRITON_COMPILE
 def EnableDotScaledCompile : FeatureControlOptions<
   "Enable dot scaled compile",
