@@ -423,29 +423,41 @@ load2d_transpose_cbuf_to_ca_intrin_core(
         l1BMTE2MTE1EventId, l1BMTE1MTE2EventId);                               \
   }
 
-#define REGISTER_MMA_MX_FP4(src_type, dst_type, bias_type, a_format, b_format) \
+#define REGISTER_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format,        \
+                               b_format, lhs_format, rhs_format)               \
   DECLARE_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format, b_format) {   \
     mmamx_tile_core<src_type, dst_type, bias_type>(                            \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n,                                                         \
-        l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                                \
-        l1BMTE2MTE1EventId, l1BMTE1MTE2EventId, true);                         \
+        init, m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId, l1BMTE2MTE1EventId,   \
+        l1BMTE1MTE2EventId, lhs_format, rhs_format);                           \
   }
 
-#define REGISTER_MMA_MX_FP4_TRANS(src_type, dst_type, bias_type, a_format,     \
-                                  b_format, suffix, ta, tb)                    \
+#define REGISTER_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,  \
+                                     b_format, suffix, ta, tb, lhs_format,     \
+                                     rhs_format)                               \
   DECLARE_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,         \
                               b_format, suffix) {                              \
     mmamx_tile_core<src_type, dst_type, bias_type, ta, tb>(                    \
         l0C, l1A, l1B,                                                         \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleA, 1> *>(l1MxScaleA), \
         reinterpret_cast<memref_t<__cbuf__ ElementMxScaleB, 1> *>(l1MxScaleB), \
-        init, m, k, n,                                                         \
-        l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                                \
-        l1BMTE2MTE1EventId, l1BMTE1MTE2EventId, true);                         \
+        init, m, k, n, l1AMTE2MTE1EventId, l1AMTE1MTE2EventId,                      \
+        l1BMTE2MTE1EventId, l1BMTE1MTE2EventId, lhs_format, rhs_format);       \
   }
+
+#define REGISTER_MMA_MX_FP4(src_type, dst_type, bias_type, a_format, b_format) \
+  REGISTER_MMA_MX_FORMAT(src_type, dst_type, bias_type, a_format, b_format,    \
+                         Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,      \
+                         Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T)
+
+#define REGISTER_MMA_MX_FP4_TRANS(src_type, dst_type, bias_type, a_format,     \
+                                  b_format, suffix, ta, tb)                   \
+  REGISTER_MMA_MX_FORMAT_TRANS(src_type, dst_type, bias_type, a_format,        \
+                               b_format, suffix, ta, tb,                      \
+                               Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T, \
+                               Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T)
 
 extern "C" {
 DECLARE_MMA_TILE(cbuf, cc, 4, half, float, float);
@@ -483,6 +495,26 @@ DECLARE_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta_tb);
 DECLARE_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta);
 DECLARE_MMA_MX_TRANS(float8_e4m3_t, float, float, _tb);
 DECLARE_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta_tb);
+DECLARE_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _ta);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _tb);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                            _ta_tb);
+DECLARE_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _ta);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _tb);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                            _ta_tb);
+DECLARE_MMA_MX_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _ta);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _tb);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                            _ta_tb);
+DECLARE_MMA_MX_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _ta);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _tb);
+DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                            _ta_tb);
 DECLARE_MMA_MX_FORMAT(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t);
 DECLARE_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
                             fp4x2_e2m1_t, _ta);

@@ -1270,6 +1270,7 @@ void populateSetRealMKNPattern(RewritePatternSet &patterns) {
   patterns.add<SetRealMKNPattern>(patterns.getContext());
 }
 
+
 void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
   patterns.add<NormalizeMmadCCFPattern<hivm::MmadL1Op>,
                NormalizeMmadCCFPattern<hivm::BatchMmadL1Op>,
