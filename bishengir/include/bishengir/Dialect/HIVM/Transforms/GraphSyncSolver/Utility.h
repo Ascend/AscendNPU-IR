@@ -467,8 +467,6 @@ getHWAvailableEventIds(SyncMode syncMode,
                        hivm::PIPE setPipe = hivm::PIPE::PIPE_UNASSIGNED,
                        hivm::PIPE waitPipe = hivm::PIPE::PIPE_UNASSIGNED);
 
-std::optional<int64_t> getStaticLoopCount(LoopLikeOpInterface forOp);
-
 // Create a boolean Value that is true for the first iteration of `forOp`.
 Value getIsFirstIterationValue(scf::ForOp forOp, Location loc,
                                IRRewriter &rewriter);
