@@ -45,18 +45,8 @@ func.func @ascend_dpx_wide_load_lowering(%arg0 : !llvm.ptr<1>) -> vector<4xi32> 
 
 // CHECK-LABEL: @ascend_dpx_wide_store_lowering
 func.func @ascend_dpx_wide_store_lowering(%arg0 : !llvm.ptr<1>, %vectorArg : vector<4xi32>, %mask : i1) {
-    // CHECK: scf.if
-    // CHECK: llvm.extractelement
-    // CHECK: llvm.insertelement
-    // CHECK: llvm.extractelement
-    // CHECK: llvm.insertelement
-    // CHECK: llvm.store %{{.*}}, %{{.*}} : vector<2xi32>, !llvm.ptr<1>
-    // CHECK: llvm.getelementptr %{{.*}}[2]
-    // CHECK: llvm.extractelement
-    // CHECK: llvm.insertelement
-    // CHECK: llvm.extractelement
-    // CHECK: llvm.insertelement
-    // CHECK: llvm.store %{{.*}}, %{{.*}} : vector<2xi32>, !llvm.ptr<1>
+    // CHECK: scf.if %arg2
+    // CHECK-NEXT: llvm.store %arg1, %arg0 : vector<4xi32>, !llvm.ptr<1>
     ascend_dpx.store %arg0, %vectorArg, %mask cacheModifier = < L2_CACHE_HINT_NORMAL_FV > : !llvm.ptr<1>, vector<4xi32>
     return
 }
