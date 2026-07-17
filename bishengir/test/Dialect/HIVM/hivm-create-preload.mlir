@@ -717,3 +717,79 @@ module {
   // CHECK: }
   // CHECK: return %[[RESULTS]]#0, %[[RESULTS]]#1 : i32, i32
 }
+// -----
+
+// A scope result that is an arbitrary-depth chain of views rooted at a preload
+// local buffer. The preload skip (else) branch must rematerialize each view
+// instead of aborting with "Unhandled scope result case".
+
+// CHECK-LABEL: func.func @test_nested_subview_local_buffer_result
+func.func @test_nested_subview_local_buffer_result() {
+  %c0 = arith.constant 0 : i32
+  %c16 = arith.constant 16 : i32
+  %c1 = arith.constant 1 : i32
+  %a0 = arith.constant 61696 : i64
+  %a1 = arith.constant 65792 : i64
+  %a2 = arith.constant 69888 : i64
+  // CHECK: scf.for
+  scf.for %i = %c0 to %c16 step %c1  : i32 {
+    // CHECK: %[[BUF:.*]] = hivm.hir.pointer_cast
+    %buf = hivm.hir.pointer_cast(%a0, %a1, %a2) : memref<64x256x1xi1, #hivm.address_space<ub>>
+    annotation.mark %buf {hivm.preload_local_buffer = 1 : i32, hivm.multi_buffer = 3 : i32} : memref<64x256x1xi1, #hivm.address_space<ub>>
+    // CHECK: scf.if
+    // CHECK: } else {
+    // Each preload mapping has its own rotated pointer cast.
+    // CHECK: %[[RE0:.*]] = memref.subview {{.*}}
+    // CHECK: %[[RE1:.*]] = memref.subview %[[RE0]]
+    // CHECK: scf.yield %[[RE1]]
+    %s0 = scope.scope : () -> memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>> {
+      %sv0 = memref.subview %buf[0, 0, 0] [64, 128, 1] [1, 1, 1] : memref<64x256x1xi1, #hivm.address_space<ub>> to memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>>
+      %sv1 = memref.subview %sv0[0, 0, 0] [64, 64, 1] [1, 1, 1] : memref<64x128x1xi1, strided<[256, 1, 1]>, #hivm.address_space<ub>> to memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+      "test.use"(%sv1) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+      scope.return %sv1 : memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>
+    } {no_inline, hivm.preload_num = 0 : i32, hivm.max_preload_num = 2 : i32}
+    "test.consume"(%s0) : (memref<64x64xi1, strided<[256, 1]>, #hivm.address_space<ub>>) -> ()
+  }
+  return
+}
+
+// -----
+
+// Each parent loop must use its own declared preload depth. Collecting preload
+// numbers module-wide would truncate the second loop to depth 2 and drop stage 3.
+
+// CHECK-LABEL: func.func @test_preload_depth_is_per_loop
+func.func @test_preload_depth_is_per_loop() {
+  %c0 = arith.constant 0 : i32
+  %c16 = arith.constant 16 : i32
+  %c1 = arith.constant 1 : i32
+
+  // CHECK-DAG: %[[C18:.*]] = arith.constant 18 : i32
+  // CHECK-DAG: %[[C20:.*]] = arith.constant 20 : i32
+  // CHECK: scf.for {{.*}} to %[[C18]] step
+  scf.for %i = %c0 to %c16 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage1"(%i) : (i32) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 1 : i32,
+      hivm.max_preload_num = 2 : i32
+    }
+  }
+
+  // CHECK: scf.for {{.*}} to %[[C20]] step
+  // CHECK: "test.stage3"
+  scf.for %i = %c0 to %c16 step %c1 : i32 {
+    scope.scope : () -> () {
+      "test.stage3"(%i) : (i32) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 3 : i32,
+      hivm.max_preload_num = 4 : i32
+    }
+  }
+
+  return
+}
