@@ -2119,12 +2119,12 @@ LogicalResult CVPipelineImpl::run() {
     return failure();
   }
 
+  // Both unroll and preload pipelines use the expanded workspace slots.
   expandWorkspace(builder);
 
   // Preload pipeline reuse workitems with cvpipeline.
-  if (pipelineMode == CVPipelineMode::Skew) {
+  if (pipelineMode == CVPipelineMode::Skew)
     return markScopesForPreload();
-  }
 
   if (failed(createNewLoops())) {
     revert();

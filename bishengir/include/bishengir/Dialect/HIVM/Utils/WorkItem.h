@@ -48,8 +48,8 @@ struct WorkItem {
   SmallVector<std::pair<Value, unsigned>> yieldedOutputs;
 
   /// Store-like ops writing CV pipeline intermediates through
-  /// memref_ext.alloc_workspace. Preload-mode CV pipelining expands and slices
-  /// these separately from tensor localOutputs.
+  /// memref_ext.alloc_workspace. CV pipelining expands and slices these
+  /// separately from tensor localOutputs in both unroll and preload modes.
   SmallVector<Operation *> workspaceOutputs;
 
   /// CUBE or VECTOR. CUBE_OR_VECTOR may appear for the block-mode "remainder"
