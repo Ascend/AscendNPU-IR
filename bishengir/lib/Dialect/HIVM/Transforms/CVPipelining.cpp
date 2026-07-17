@@ -84,9 +84,6 @@ struct CVPipelineImpl {
 private:
   void collectAtomicEffects();
 
-  /// Collect the CV-specific workspace metadata needed by expandWorkspace().
-  LogicalResult collectWorkspaceAllocs();
-
   LogicalResult markOutputs();
   /// For each marked counter alloca whose value is incremented inside a
   /// regioned op (e.g. the scf.if after a matmul), clone that op and erase all
@@ -888,61 +885,18 @@ void CVPipelineImpl::expandWorkspace(OpBuilder &builder) {
   }
 }
 
-static LogicalResult
-markWorkspaceOps(Operation *op,
-                 DenseMap<AllocWorkspaceOp, WorkspaceAllocParams> &allocs,
-                 unsigned multibuffer) {
-  if (auto mark = dyn_cast<annotation::MarkOp>(op)) {
-    if (auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
-            mark.getSrc().getDefiningOp())) {
-      if (allocs.contains(alloc)) {
-        allocs[alloc].multibuffer = multibuffer;
-        allocs[alloc].marker = mark;
-      } else
-        allocs[alloc] = {multibuffer, mark, nullptr};
-      return success();
-    }
-  }
-  if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(op)) {
-    auto alloc = llvm::dyn_cast_if_present<AllocWorkspaceOp>(
-        toTensor.getMemref().getDefiningOp());
-    if (!alloc)
-      return success();
-
-    if (!toTensor.getResult().hasOneUse() ||
-        llvm::range_size(alloc.getResult().getUsers()) != 2)
-      return alloc->emitWarning(
-          "Expecting alloc_workspace and its tensor to only have one user "
-          "(excluding annotation.mark)");
-
-    if (allocs.contains(alloc))
-      allocs[alloc].toTensor = toTensor;
-    else
-      allocs[alloc] = {0, nullptr, toTensor};
-  }
-  return success();
-}
-
-LogicalResult CVPipelineImpl::collectWorkspaceAllocs() {
-  for (Operation &op : pipelineLoop.getBody()->getOperations())
-    if (failed(markWorkspaceOps(&op, workspaceAllocs_, numMultibuffer)))
-      return failure();
-  return success();
-}
-
 LogicalResult CVPipelineImpl::markOutputs() {
   for (const auto &item : worklist) {
     for (Operation *op : item->ops) {
-      if (pipelineMode == CVPipelineMode::Skew) {
-        auto dps = dyn_cast<DestinationStyleOpInterface>(op);
-        if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
-          auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
-          if (alloc && workspaceAllocs_.contains(alloc)) {
-            item->workspaceOutputs.push_back(op);
-            continue;
-          }
+      auto dps = dyn_cast<DestinationStyleOpInterface>(op);
+      if (dps && isa<StoreOp, FixpipeOp>(op) && dps.getNumDpsInits() == 1) {
+        auto alloc = getAllocWorkspace(dps.getDpsInitOperand(0)->get());
+        if (alloc && workspaceAllocs_.contains(alloc)) {
+          item->workspaceOutputs.push_back(op);
+          continue;
         }
       }
+      
       if (isa<tensor::EmptyOp>(op))
         continue;
       // With lazy loading (kernel-level switch, per-tensor compile hint,
@@ -2073,10 +2027,8 @@ LogicalResult CVPipelineImpl::run() {
   opToWorkItemMap = buildResult->opToWorkItemMap;
   outputMemrefMap = buildResult->outputMemrefMap;
   numMultibuffer = buildResult->resolvedMultibuffer;
-  if (failed(collectWorkspaceAllocs())) {
-    revert();
-    return failure();
-  }
+  workspaceAllocs_ = buildResult->workspaceAllocs;
+
   if (failed(absorbMergerOpsIntoWorkItems())) {
     revert();
     return failure();

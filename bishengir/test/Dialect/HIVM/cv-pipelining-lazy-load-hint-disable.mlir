@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s
 
 // Test: with the kernel-level enable-lazy-loading switch OFF, an explicit
 // per-tensor `cv_pipeline_lazy_load = false` hint behaves like the default

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s
+// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s
 
 // A loop whose tensor iter_arg is produced on the CUBE core (fixpipe result)
 // and consumed on the VECTOR core (vbrc/insert_slice/transpose/copy chain) the

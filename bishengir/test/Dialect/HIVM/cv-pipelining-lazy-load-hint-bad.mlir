@@ -1,4 +1,4 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s
+// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s
 
 // Test: a single tensor carries two `annotation.mark` ops both tagged with
 // `cv_pipeline_lazy_load` -- the pass keeps the first-wins semantics but
