@@ -8,26 +8,39 @@
 
 #include "bishengir/Tools/RetriablePassManager/TuningRetryPolicy.h"
 
+#include "llvm/Support/CommandLine.h"
+
 using namespace bishengir;
 
 TuningRetryPolicy::TuningRetryPolicy() {
   auto &opts = llvm::cl::getRegisteredOptions();
-  auto it = opts.find("mlir-print-ir-after-failure");
-  if (it == opts.end())
+  if (opts.count("mlir-print-ir-after-failure") == 0)
     return;
 
-  printIrAfterFailureOption = static_cast<llvm::cl::opt<bool> *>(it->second);
-  originalPrintIrAfterFailure = printIrAfterFailureOption->getValue();
-  if (originalPrintIrAfterFailure)
-    printIrAfterFailureOption->setValue(false);
+  restorePrintIrAfterFailureOnLastAttempt_ =
+      static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+          ->getValue();
+  static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+      ->setValue(false);
 }
 
 TuningRetryPolicy::~TuningRetryPolicy() {
-  if (printIrAfterFailureOption)
-    printIrAfterFailureOption->setValue(originalPrintIrAfterFailure);
+  auto &opts = llvm::cl::getRegisteredOptions();
+  if (opts.count("mlir-print-ir-after-failure") == 0)
+    return;
+
+  static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+      ->setValue(restorePrintIrAfterFailureOnLastAttempt_);
 }
 
 void TuningRetryPolicy::onBeforePipelineAttempt(bool isLastAttempt) {
-  if (printIrAfterFailureOption && originalPrintIrAfterFailure)
-    printIrAfterFailureOption->setValue(isLastAttempt);
+  if (!restorePrintIrAfterFailureOnLastAttempt_)
+    return;
+
+  auto &opts = llvm::cl::getRegisteredOptions();
+  if (opts.count("mlir-print-ir-after-failure") == 0)
+    return;
+
+  static_cast<llvm::cl::opt<bool> *>(opts["mlir-print-ir-after-failure"])
+      ->setValue(isLastAttempt);
 }

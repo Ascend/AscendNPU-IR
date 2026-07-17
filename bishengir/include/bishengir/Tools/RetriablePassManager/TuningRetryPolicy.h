@@ -9,8 +9,6 @@
 #ifndef BISHENGIR_TOOLS_RETRIABLEPASSMANAGER_TUNINGRETRYPOLICY_H
 #define BISHENGIR_TOOLS_RETRIABLEPASSMANAGER_TUNINGRETRYPOLICY_H
 
-#include "llvm/Support/CommandLine.h"
-
 namespace bishengir {
 
 class TuningRetryPolicy {
@@ -24,8 +22,7 @@ public:
   void onBeforePipelineAttempt(bool isLastAttempt);
 
 private:
-  llvm::cl::opt<bool> *printIrAfterFailureOption = nullptr;
-  bool originalPrintIrAfterFailure = false;
+  bool restorePrintIrAfterFailureOnLastAttempt_ = false;
 };
 
 } // namespace bishengir
