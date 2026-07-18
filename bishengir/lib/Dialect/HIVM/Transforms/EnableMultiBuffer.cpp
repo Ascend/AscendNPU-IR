@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Utils/MultiBufferLoopAdapter.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
@@ -45,37 +46,6 @@ using namespace mlir::hivm;
 // MultiBufferHelper
 //===----------------------------------------------------------------------===//
 
-struct LoopInfo {
-  Value inductionVar;
-  OpFoldResult lowerBound;
-  OpFoldResult upperBound;
-  OpFoldResult singleStep;
-};
-
-/// Get info of parent and ancestor loop of ptrCastOp.
-/// The info is stored from inner to outer parent loop.
-std::vector<LoopInfo> getLoopsInfo(LoopLikeOpInterface ptrParentLoop) {
-  std::vector<LoopInfo> loopInfoVec;
-  LoopLikeOpInterface curOp = ptrParentLoop;
-  while (isa_and_nonnull<scf::ForOp>(curOp)) {
-    std::optional<Value> inductionVar = curOp.getSingleInductionVar();
-    std::optional<OpFoldResult> lowerBound = curOp.getSingleLowerBound();
-    std::optional<OpFoldResult> upperBound = curOp.getSingleUpperBound();
-    std::optional<OpFoldResult> singleStep = curOp.getSingleStep();
-
-    assert((inductionVar.has_value() && lowerBound.has_value() &&
-            upperBound.has_value() && singleStep.has_value()) &&
-           "iv, lb, ub and step shouldn't be null.");
-
-    loopInfoVec.push_back(
-        {*inductionVar, *lowerBound, *upperBound, *singleStep});
-
-    curOp = curOp->getParentOfType<LoopLikeOpInterface>();
-  }
-
-  return loopInfoVec;
-}
-
 /// Index of yielded value where is alias of targetVal.
 std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
   auto it = std::find(yieldedValues.begin(), yieldedValues.end(), targetVal);
@@ -85,7 +55,6 @@ std::optional<int> getYieldValueIdx(Value targetVal, ValueRange yieldedValues) {
 
   return std::nullopt;
 }
-
 class MultiBufferHelper {
 public:
   explicit MultiBufferHelper(hivm::PointerCastOp &ptrCastOp)
@@ -93,8 +62,10 @@ public:
 
   /// Transformation to do multi-buffering/array expansion to remove
   /// dependencies on the temporary pointerCastOp between consecutive loop
-  /// iterations. It returns the new pointerCastOp if the original pointerCastOp
-  /// was multi-buffered and returns failure() otherwise. Example:
+  /// iterations. It returns the new pointerCastOp if the original
+  /// pointerCastOp was multi-buffered and returns failure() otherwise.
+  /// Example (scf.for; scf.while is fully analogous, body block is
+  /// `whileOp.getAfter().front()`):
   /// ```
   /// scf.for %iv = %c0 to %c16 step %c4 {
   ///   %0 = hivm.hir.pointer_cast(addr1, addr2) [] : memref<4x128xf32>
@@ -102,16 +73,20 @@ public:
   ///   "some_use"(%0) : (memref<4x128xf32>) -> ()
   /// }
   /// ```
-  /// into:
+  /// into (unified alloca-based counter, see MultiBufferLoopAdapter):
   /// ```
-  /// #map = affine_map<()[s0] -> ((s0 floordiv 4) mod 2)>
+  /// %counter = memref.alloca() : memref<1xi64>
+  /// memref.store %c0_i64, %counter[%c0]
   /// %0 = hivm.hir.pointer_cast(addr1) [] : memref<4x128xf32>
   /// %1 = hivm.hir.pointer_cast(addr2) [] : memref<4x128xf32>
   /// scf.for %iv = %c0 to %c16 step %c4 {
-  ///   %2 = affine.apply #map()[%iv]
-  ///   %3 = arith.index_cast %2 : index to i64
-  ///   %4 = ... // Select a value within [%0, %1] based on the value of %3.
-  ///   "some_use"(%4) : (memref<4x128xf32, strided<...>) -> ()
+  ///   %loaded = memref.load %counter[%c0] : memref<1xi64>
+  ///   %idx    = arith.remui %loaded, %c2_i64 : i64
+  ///   %cond   = arith.cmpi eq, %idx, %c1_i64 : i64
+  ///   %sel    = arith.select %cond, %1, %0 : memref<4x128xf32>
+  ///   "some_use"(%sel) : (memref<4x128xf32>) -> ()
+  ///   %next   = arith.addi %loaded, %c1_i64 : i64
+  ///   memref.store %next, %counter[%c0]
   /// }
   /// ```
   LogicalResult extMultiBuffer() {
@@ -283,7 +258,9 @@ struct MultiBufferPattern : public OpRewritePattern<hivm::PointerCastOp> {
       InsertCopyBeforeLoopYield(rewriter, parentLoop, yieldIndex.value());
     }
     while (loopOp) {
-      if (!isa<scf::ForOp>(loopOp))
+      // scf.for and scf.while are both supported (while via alloca-based
+      // counter in MultiBufferLoopAdapter); other LoopLike ops bail out.
+      if (!isa<scf::ForOp, scf::WhileOp>(loopOp))
         return failure();
       loopOp = loopOp->getParentOfType<LoopLikeOpInterface>();
     }

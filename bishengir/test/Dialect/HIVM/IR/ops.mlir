@@ -347,3 +347,16 @@ func.func @test_load_mx_scale(
       outs(%dst : memref<1x1x16x16xi8, #hivm.address_space<cbuf>>)
   return
 }
+
+// -----
+// CHECK-LABEL: func.func @test_multi_buffer_counter
+func.func @test_multi_buffer_counter() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+  scf.for %iv = %c0 to %c4 step %c1 {
+    // CHECK: hivm.hir.multi_buffer_counter -> i64
+    %counter = hivm.hir.multi_buffer_counter -> i64
+  }
+  return
+}

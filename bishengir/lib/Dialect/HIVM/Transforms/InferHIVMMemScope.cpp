@@ -184,7 +184,7 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
           auto argTypes = funcOp.getArgumentTypes().vec();
           for (size_t idx = 0; idx < op->getOperands().size(); idx++) {
             if (op->getOperand(idx) == val) {
-              auto newType = util::getBaseMemRefTypeWithNewScope(
+              auto newType = getBaseMemRefTypeWithNewScope(
                   llvm::dyn_cast<BaseMemRefType>(argTypes[idx]), memrefScope);
               argTypes[idx] = newType;
               if (!funcOp->getRegion(0).empty()) {

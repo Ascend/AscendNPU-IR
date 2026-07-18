@@ -96,6 +96,9 @@ std::unique_ptr<Pass> createEnableMultiBufferPass();
 /// Create a pass to add FFTS (arg0) to every SyncBlockSetOp
 std::unique_ptr<Pass> createAddFFTSToSyncBlockSetOpPass();
 
+/// Create a pass to lower multi-buffer counter anchors.
+std::unique_ptr<Pass> createLowerMultiBufferCounterPass();
+
 /// Create a pass to plan memory.
 std::unique_ptr<Pass>
 createPlanMemoryPass(const PlanMemoryOptions &planMemoryOption = {});

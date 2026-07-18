@@ -43,6 +43,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
   StoreLikeOpInterface.cpp
   ../Utils/Utils.cpp
   ../Utils/RegbaseUtils.cpp
+  ../Utils/MultiBufferLoopAdapter.cpp
   ../Utils/WorklistBuilder.cpp
   ../Utils/MemrefAliasAnalysisState.cpp
 

@@ -139,6 +139,10 @@ void SyncCodegen::updatePlaceHolderOpInsertSync(
   } else if (auto *loopOp = dyn_cast<LoopInstanceElement>(parentScope)) {
     if (auto forOp = dyn_cast<scf::ForOp>(loopOp->elementOp)) {
       terminatorOp = forOp.getRegion().front().getTerminator();
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp->elementOp)) {
+      // For scf.while the body lives in the after region; the before region
+      // only evaluates the condition predicate.
+      terminatorOp = whileOp.getAfter().front().getTerminator();
     }
   }
   assert(terminatorOp != nullptr);

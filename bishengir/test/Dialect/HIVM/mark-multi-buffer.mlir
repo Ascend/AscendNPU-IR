@@ -47,7 +47,11 @@ module {
     %29 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
     scf.for %arg8 = %c0_i32 to %c49152_i32 step %c2048_i32 iter_args(%arg9 = %29) -> (memref<1x2048xf16, #hivm.address_space<ub>>)  : i32 {
       %39 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
-      // CHECK-NOT: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+      // %39 is yielded by the for but is also loaded into inside it, so the
+      // for is its rotation anchor and it gets marked. (Before the
+      // isConsumedInLoop guard getParentLoop climbed past the loop result to
+      // null and the buffer was silently left un-multi-buffered.)
+      // CHECK: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
       hivm.hir.load ins(%arg0 : memref<1x2048xf16, #hivm.address_space<gm>>) outs(%39 : memref<1x2048xf16, #hivm.address_space<ub>>)
 
       scf.yield %39 : memref<1x2048xf16, #hivm.address_space<ub>>
@@ -137,7 +141,11 @@ module {
 
       %31:2 = scf.for %arg8 = %c0_i32 to %c49152_i32 step %c2048_i32 iter_args(%arg10 = %29, %arg11 = %29) -> (memref<1x2048xf16, #hivm.address_space<ub>>, memref<1x2048xf16, #hivm.address_space<ub>>)  : i32 {
         %39 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
-        // CHECK-NOT: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+        // %39 is yielded up the loop nest but is loaded into in the innermost
+        // for, so it anchors there and is marked. %40 is only threaded out via
+        // the yield (never consumed), so it is left unmarked.
+        // CHECK: annotation.mark %{{.*}} {hivm.multi_buffer = 2 : i32}
+        // CHECK-NOT: annotation.mark
         %40 = memref.alloc() : memref<1x2048xf16, #hivm.address_space<ub>>
         hivm.hir.load ins(%arg0 : memref<1x2048xf16, #hivm.address_space<gm>>) outs(%39 : memref<1x2048xf16, #hivm.address_space<ub>>)
 

@@ -441,6 +441,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createAddFFTSToSyncBlockSetOpPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
+  pm.nest<func::FuncOp>().addPass(createLowerMultiBufferCounterPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
   pm.nest<func::FuncOp>().addPass(arith::createNormalizeArithPass());
   pm.nest<func::FuncOp>().addPass(arith::createLiftArithIndexCastPass());

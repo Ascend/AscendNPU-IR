@@ -32,7 +32,7 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
 }
 
 // -----
-module {
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   // CHECK-LABEL: func.func @test_move_nested_debug_through_memory_space_cast
   // The tiled batch matmul loop must be placed before the nested debug loop.
   // CHECK: scf.for

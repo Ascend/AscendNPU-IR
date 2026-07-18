@@ -212,7 +212,13 @@ void CodeGenerator::insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
   if (setFlagOp->checkLastIter) {
     auto *parentLoop = OperationBase::getParentloop(setFlagOp);
     auto forOp = dyn_cast<scf::ForOp>(parentLoop->op);
-    assert(forOp != nullptr);
+    // checkLastIter is a backward-sync optimization that requires a static
+    // last-iteration predicate. Upstream analysis (see SyncAnalysis.cpp ~
+    // line 1006) only sets it for scf.for parents; if we ever land here
+    // with an scf.while parent, the analysis is broken and silently
+    // dropping the conditional would deadlock the kernel.
+    assert(forOp != nullptr &&
+           "checkLastIter must only be set on scf.for parents");
     Value cond = getIsLastIterationValue(forOp, loc, rewriter);
     auto ifOp = rewriter.create<scf::IfOp>(loc, cond);
     rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
@@ -256,7 +262,11 @@ void CodeGenerator::insertWaitFlagOp(IRRewriter &rewriter,
   if (waitFlagOp->checkFirstIter) {
     auto *parentLoop = OperationBase::getParentloop(waitFlagOp);
     auto forOp = dyn_cast<scf::ForOp>(parentLoop->op);
-    assert(forOp != nullptr);
+    // Symmetric to checkLastIter above: this is a backward-sync prologue
+    // optimization gated on the dynamic first-iteration predicate; only
+    // valid for scf.for parents.
+    assert(forOp != nullptr &&
+           "checkFirstIter must only be set on scf.for parents");
     Value cond = getIsFirstIterationValue(forOp, loc, rewriter);
     auto ifOp = rewriter.create<scf::IfOp>(loc, cond);
     rewriter.setInsertionPointToStart(&ifOp.getThenRegion().front());
@@ -421,7 +431,8 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
   }
 
   auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
-  assert(llvm::isa_and_present<scf::ForOp>(multibufferLoop));
+  assert((llvm::isa_and_present<scf::ForOp, scf::WhileOp>(multibufferLoop)) &&
+         "multi-buffer requires scf.for or scf.while parent");
   int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
   int64_t preloadOffset = isa<SetFlagOp>(syncOp)
                               ? syncOp->eventIdInfo.preloadOffset1

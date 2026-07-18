@@ -2685,11 +2685,22 @@ PlanMemoryPass::fixMultibufferEnabledPointerCastOps(Operation *funcOp) const {
   });
 
   for (auto [pointerCastOp, markedOp] : markedOps) {
-    if (auto forOp = dyn_cast<scf::ForOp>(
-            pointerCastOp->getParentOfType<scf::ForOp>())) {
-      pointerCastOp->moveBefore(&forOp.getBody()->front());
-      markedOp->moveAfter(pointerCastOp);
+    auto loopOp = pointerCastOp->getParentOfType<LoopLikeOpInterface>();
+    if (!loopOp)
+      continue;
+    Block *targetBlock = nullptr;
+    if (auto forOp = dyn_cast<scf::ForOp>(loopOp.getOperation())) {
+      targetBlock = forOp.getBody();
+    } else if (auto whileOp = dyn_cast<scf::WhileOp>(loopOp.getOperation())) {
+      // scf.while body lives in the after region; the before region only runs
+      // the condition test, so hoisting pointer_cast there would evaluate it
+      // every guard check, breaking semantics.
+      targetBlock = &whileOp.getAfter().front();
+    } else {
+      continue;
     }
+    pointerCastOp->moveBefore(&targetBlock->front());
+    markedOp->moveAfter(pointerCastOp);
   }
 
   std::vector<PointerCastOp> visitedOps;
