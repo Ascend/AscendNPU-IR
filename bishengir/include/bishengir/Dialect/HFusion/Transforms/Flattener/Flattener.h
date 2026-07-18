@@ -180,12 +180,11 @@ private:
 
   void adjustCastOp(memref::CastOp castOp, OpBuilder &builder);
 
-  // TODO: Support operations
-  // void adjustEmbeddingGatherOp(hfusion::EmbeddingGatherOp embeddingGatherOp,
-  //                              OpBuilder &builder);
+  void adjustEmbeddingGatherOp(hfusion::EmbeddingGatherOp embeddingGatherOp,
+                               OpBuilder &builder);
 
-  // void adjustIndirectLoadOp(hfusion::IndirectLoadOp indirectLoadOp,
-  //                           OpBuilder &builder);
+  void adjustIndirectLoadOp(hfusion::IndirectLoadOp indirectLoadOp,
+                            OpBuilder &builder);
 
   void adjustMemrefLoadOp(memref::LoadOp memrefLoadOp, OpBuilder &builder);
 

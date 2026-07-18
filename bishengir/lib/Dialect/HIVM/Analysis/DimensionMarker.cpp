@@ -269,8 +269,8 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
             processVPadOp(op);
             return true;
           })
-          // TODO: Support hivm::VCummaxOp, hivm::VCumminOp
-          .Case<hivm::VCumsumOp, hivm::VCumprodOp>([this](auto op) {
+          .Case<hivm::VCumsumOp, hivm::VCumprodOp, hivm::VCummaxOp,
+                hivm::VCumminOp>([this](auto op) {
             processVCumOp(op);
             return true;
           })

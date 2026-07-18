@@ -127,10 +127,11 @@ protected:
   void processVInterleaveOp(hivm::VInterleaveOp op);
   void processVDeinterleaveOp(hivm::VDeinterleaveOp op);
   void processVPadOp(hivm::VPadOp op);
-  // TODO: Support hivm::VCummaxOp, hivm::VCumminOp
   template <typename T,
             typename = std::enable_if_t<std::is_same_v<T, hivm::VCumsumOp> ||
-                                        std::is_same_v<T, hivm::VCumprodOp>>>
+                                        std::is_same_v<T, hivm::VCumprodOp> ||
+                                        std::is_same_v<T, hivm::VCummaxOp> ||
+                                        std::is_same_v<T, hivm::VCumminOp>>>
   void processVCumOp(T op);
   void processYieldOp(scf::YieldOp op);
   void processForOp(scf::ForOp op);

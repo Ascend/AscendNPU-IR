@@ -99,19 +99,18 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       .Case<hfusion::CumsumOp, hfusion::CumprodOp>([&](auto cumOp) { processCumOp(cumOp); })
       .Case<hfusion::FlipOp>([&](auto flipOp) { processFlipOp(flipOp); })
       .Case<hfusion::SortOp>([&](auto sortOp) { processSortOp(sortOp); })
-      // TODO: Support operations
-      // .Case<hfusion::EmbeddingGatherOp>([&](auto embeddingGatherOp) {
-      //   processEmbeddingGatherOp(embeddingGatherOp);
-      // })
-      // .Case<hfusion::IndirectLoadOp>(
-      //     [&](auto indirectLoadOp) { processIndirectLoadOp(indirectLoadOp); })
-      // .Case<hfusion::StrideLoadOp>(
-      //     [&](auto strideLoadOp) { processStrideLoadOp(strideLoadOp); })
-      // .Case<hfusion::IndirectStoreOp>([&](auto indirectStoreOp) {
-      //   processIndirectStoreOp(indirectStoreOp);
-      // })
-      // .Case<hfusion::StrideStoreOp>(
-      //     [&](auto strideStoreOp) { processStrideStoreOp(strideStoreOp); })
+      .Case<hfusion::EmbeddingGatherOp>([&](auto embeddingGatherOp) {
+        processEmbeddingGatherOp(embeddingGatherOp);
+      })
+      .Case<hfusion::IndirectLoadOp>(
+          [&](auto indirectLoadOp) { processIndirectLoadOp(indirectLoadOp); })
+      .Case<hfusion::StrideLoadOp>(
+          [&](auto strideLoadOp) { processStrideLoadOp(strideLoadOp); })
+      .Case<hfusion::IndirectStoreOp>([&](auto indirectStoreOp) {
+        processIndirectStoreOp(indirectStoreOp);
+      })
+      .Case<hfusion::StrideStoreOp>(
+          [&](auto strideStoreOp) { processStrideStoreOp(strideStoreOp); })
       .Default([&](Operation *op) {
         // TODO: remove hivm op here, add process of CopyLikeInterface
         bool isParallelRegbased =
@@ -481,77 +480,77 @@ void DimensionAnalyzer::processSortOp(hfusion::SortOp op) {
   }
 }
 
-// void DimensionAnalyzer::processEmbeddingGatherOp(
-//     hfusion::EmbeddingGatherOp op) {
-//   auto gatherResult = op.getResult();
-//   auto indexTable = op.getIndex();
-//   auto opOut = op.getDst();
-//   createDummyRefIfNotExist({gatherResult, indexTable});
-//   LDBG("[Here embedding] " << indexTable);
+void DimensionAnalyzer::processEmbeddingGatherOp(
+    hfusion::EmbeddingGatherOp op) {
+  auto gatherResult = op.getResult();
+  auto indexTable = op.getIndex();
+  auto opOut = op.getDst();
+  createDummyRefIfNotExist({gatherResult, indexTable});
+  LDBG("[Here embedding] " << indexTable);
 
-//   // The embedding_gather semantic: result[b][i][d] = src[index[b][i]][d]
-//   // So result dimensions come from:
-//   // - Batch/sequence dims from index tensor
-//   // - Embedding feature dim from src tensor
+  // The embedding_gather semantic: result[b][i][d] = src[index[b][i]][d]
+  // So result dimensions come from:
+  // - Batch/sequence dims from index tensor
+  // - Embedding feature dim from src tensor
 
-//   auto indexRank = indexTable.getType().getRank();
-//   // 1 or 2 (sequence or batch x sequence)
-//   [[maybe_unused]] auto resultRank = gatherResult.getType().getRank();
-//   // 2 or 3 (index_dims + embedding_dim)
-//   assert(indexRank + 1 == resultRank);
+  auto indexRank = indexTable.getType().getRank();
+  // 1 or 2 (sequence or batch x sequence)
+  [[maybe_unused]] auto resultRank = gatherResult.getType().getRank();
+  // 2 or 3 (index_dims + embedding_dim)
+  assert(indexRank + 1 == resultRank);
 
-//   auto indexRefPtr = getValueDimIndices(indexTable);
-//   auto resultRefPtr = getValueDimIndices(gatherResult);
-//   processValue(opOut, gatherResult);
-//   // Bind index dimensions to corresponding result dimensions
-//   // index[b][i] -> result[b][i][d]
-//   for (unsigned i = 0; i < indexRank; i++) {
-//     // Index dimensions map directly to result dimensions (no mutation)
-//     isConnected_[resultRefPtr[i]].elementKind = ElementKind::NoMutation;
-//     joinShape(indexRefPtr[i], resultRefPtr[i]);
-//     disconnect(resultRefPtr[i], resultRefPtr[i + 1]);
-//   }
+  auto indexRefPtr = getValueDimIndices(indexTable);
+  auto resultRefPtr = getValueDimIndices(gatherResult);
+  processValue(opOut, gatherResult);
+  // Bind index dimensions to corresponding result dimensions
+  // index[b][i] -> result[b][i][d]
+  for (unsigned i = 0; i < indexRank; i++) {
+    // Index dimensions map directly to result dimensions (no mutation)
+    isConnected_[resultRefPtr[i]].elementKind = ElementKind::NoMutation;
+    joinShape(indexRefPtr[i], resultRefPtr[i]);
+    disconnect(resultRefPtr[i], resultRefPtr[i + 1]);
+  }
 
-//   // The last dimension of result is the embedding dimension from src
-//   // This is a "gather" dimension - it comes from src but indexed by index
-//   // values Disconnect batch/sequence dimensions from embedding dimension
-//   // TODO: adjust numels
-// }
+  // The last dimension of result is the embedding dimension from src
+  // This is a "gather" dimension - it comes from src but indexed by index
+  // values Disconnect batch/sequence dimensions from embedding dimension
+  // TODO: adjust numels
+}
 
-// void DimensionAnalyzer::processIndirectLoadOp(
-//     hfusion::IndirectLoadOp indirectLoadOp) {
-//   auto indirectLoadResult = indirectLoadOp.getResult();
-//   createDummyRefIfNotExist({indirectLoadResult});
-//   for (auto opr : indirectLoadOp.getOperands()) {
-//     if (isa<RankedTensorType>(opr.getType())) {
-//       processValue(opr, indirectLoadResult);
-//     }
-//   }
-// }
+void DimensionAnalyzer::processIndirectLoadOp(
+    hfusion::IndirectLoadOp indirectLoadOp) {
+  auto indirectLoadResult = indirectLoadOp.getResult();
+  createDummyRefIfNotExist({indirectLoadResult});
+  for (auto opr : indirectLoadOp.getOperands()) {
+    if (isa<RankedTensorType>(opr.getType())) {
+      processValue(opr, indirectLoadResult);
+    }
+  }
+}
 
-// void DimensionAnalyzer::processStrideLoadOp(hfusion::StrideLoadOp op) {
-//   Value dst = op.getDst();
-//   createDummyRefIfNotExist({dst});
-//   if (op.getResult())
-//     processValue(op.getResult(), dst);
-// }
+void DimensionAnalyzer::processStrideLoadOp(hfusion::StrideLoadOp op) {
+  Value dst = op.getDst();
+  createDummyRefIfNotExist({dst});
+  if (op.getResult())
+    processValue(op.getResult(), dst);
+}
 
-// void DimensionAnalyzer::processIndirectStoreOp(hfusion::IndirectStoreOp op) {
-//   Value input = op.getSrc();
-//   Value offsets = op.getOffsets();
-//   Value mask = op.getMask();
-//   createDummyRefIfNotExist({input, offsets});
-//   processValue(offsets, input);
-//   if (mask) {
-//     createDummyRefIfNotExist({mask});
-//     processValue(mask, input);
-//   }
-// }
+void DimensionAnalyzer::processIndirectStoreOp(hfusion::IndirectStoreOp op) {
+  Value input = op.getSrc();
+  Value offsets = op.getOffsets();
+  Value mask = op.getMask();
+  createDummyRefIfNotExist({input, offsets});
+  processValue(offsets, input);
+  if (mask) {
+    createDummyRefIfNotExist({mask});
+    processValue(mask, input);
+  }
+}
 
-// void DimensionAnalyzer::processStrideStoreOp(hfusion::StrideStoreOp op) {
-//   Value input = op.getSrc();
-//   createDummyRefIfNotExist({input});
-// }
+void DimensionAnalyzer::processStrideStoreOp(hfusion::StrideStoreOp op) {
+  Value input = op.getSrc();
+  createDummyRefIfNotExist({input});
+}
 
 } // namespace detail
 } // namespace hfusion

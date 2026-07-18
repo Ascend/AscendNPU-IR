@@ -112,8 +112,7 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
   if (isVectorOp) {
     computeTilingDimImpl<hivm::StoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::CopyOp>(parallelDimMaps, numStoreOps);
-    // TODO: Support Operations
-    // computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
+    computeTilingDimImpl<hivm::StrideStoreOp>(parallelDimMaps, numStoreOps);
     computeTilingDimImpl<hivm::IndirectStoreOp>(parallelDimMaps, numStoreOps);
     // FIXME: Support reduction dim slicing
     if (isRegbased)

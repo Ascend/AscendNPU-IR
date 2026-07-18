@@ -14,6 +14,7 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
@@ -153,11 +154,13 @@ struct VReduceOpLiftLowestStridePattern
       dstVec.push_back(dstCast);
     }
 
-    rewriter.create<hivm::VReduceOp>(op->getLoc(), TypeRange(), srcCast,
-                                     ValueRange(dstVec), op.getTempBuffer(),
-                                     op.getArithAttr(), op.getReduceDimsAttr(),
-                                     indicesCast);
-
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    Value tempBuffer =
+        hacc::utils::isRegBasedArch(moduleOp) ? Value() : op.getTempBuffer();
+    rewriter.create<hivm::VReduceOp>(
+        op->getLoc(), TypeRange(), srcCast, ValueRange(dstVec), tempBuffer,
+        op.getArithAttr(), op.getUnsignedSrcAttr(), op.getTieBreakLeftAttr(),
+        op.getReduceDimsAttr(), indicesCast);
     // Erase old op
     rewriter.eraseOp(op);
     return success();
@@ -455,6 +458,8 @@ void populateLiftLowestStridePatterns(RewritePatternSet &patterns) {
   >(patterns.getContext());
   (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumsumOp>>(patterns.getContext());
   (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumprodOp>>(patterns.getContext());
+  (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCummaxOp>>(patterns.getContext());
+  (void)patterns.add<CumulativeOpLiftLowestStridePattern<hivm::VCumminOp>>(patterns.getContext());
   registerVectorOps<
 #define GET_OP_LIST
 #include "bishengir/Dialect/HIVM/IR/HIVMVectorOps.cpp.inc"

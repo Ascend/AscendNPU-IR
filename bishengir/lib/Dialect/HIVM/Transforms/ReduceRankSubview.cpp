@@ -14,15 +14,18 @@
 // limitations under the License.
 //
 //===----------------------------------------------------------------------===//
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
+
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/Passes.h"
+
 #include "llvm/Support/Debug.h"
 
 #define DEBUG_TYPE "hivm-reduce-rank-subview"
@@ -119,7 +122,7 @@ MemRefType inferRankReducedResultType(ArrayRef<int64_t> resultShape,
   debugShape(inferredType.getShape(), "inferredType.getShape(): ");
   debugShape(resultShape, "resultShape: ");
 #ifndef NDEBUG
-  for (unsigned dim : dropDims) {
+  for (auto dim : dropDims) {
     LDBG("dropDim: " << dim);
   }
 #endif
@@ -371,8 +374,8 @@ struct VReduceOpReduceRankSubviewPattern
                                             dropDimSet, rewriter);
     Value subviewIndicesOp = nullptr;
     if (op.getIndices()) {
-      getReducedSubviewOp(op.getIndices(), srcMemType, op->getLoc(),
-                                            dropDimSet, rewriter);
+      getReducedSubviewOp(op.getIndices(), srcMemType, op->getLoc(), dropDimSet,
+                          rewriter);
     }
     SmallVector<Value> subviewDstRange;
     for (Value dst : dstRange) {
@@ -383,10 +386,14 @@ struct VReduceOpReduceRankSubviewPattern
     SmallVector<int64_t> newReduceDims =
         adjustDropDims(srcMemType.getRank(), op.getReduceDims(), dropDimSet);
 
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    Value tempBuffer =
+        hacc::utils::isRegBasedArch(moduleOp) ? Value() : op.getTempBuffer();
     rewriter.create<hivm::VReduceOp>(
         op->getLoc(), TypeRange(), subviewSrcOp, ValueRange(subviewDstRange),
-        op.getTempBuffer(), op.getArithAttr(),
-        rewriter.getDenseI64ArrayAttr(newReduceDims), subviewIndicesOp);
+        tempBuffer, op.getArithAttr(), op.getUnsignedSrcAttr(),
+        op.getTieBreakLeftAttr(), rewriter.getDenseI64ArrayAttr(newReduceDims),
+        subviewIndicesOp);
     rewriter.eraseOp(op);
     return success();
   }
