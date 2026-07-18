@@ -382,6 +382,36 @@ func.func @test_mmadL1_multi_root(%condition: i1) attributes {
 
 // -----
 
+// CHECK-LABEL: func.func @test_mmadmxL1(
+func.func @test_mmadmxL1() attributes {
+    hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  // CHECK: %[[A:.*]] = memref.alloc() : memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>
+  %a = memref.alloc() : memref<16x16xf8E4M3FN>
+  // CHECK: %[[B:.*]] = memref.alloc() : memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>
+  %b = memref.alloc() : memref<16x16xf8E4M3FN>
+  // CHECK: %[[SCALE_A:.*]] = memref.alloc() : memref<1xui8, #hivm.address_space<cbuf>>
+  %scale_a = memref.alloc() : memref<1xui8>
+  // CHECK: %[[SCALE_B:.*]] = memref.alloc() : memref<1xui8, #hivm.address_space<cbuf>>
+  %scale_b = memref.alloc() : memref<1xui8>
+  // CHECK: %[[C:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+  %c = memref.alloc() : memref<16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // CHECK: hivm.hir.mmadmxL1 ins(%[[A]], %[[B]], %[[SCALE_A]], %[[SCALE_B]],
+  // CHECK-SAME: memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: memref<1xui8, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: memref<1xui8, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: outs(%[[C]] : memref<16x16xf32, #hivm.address_space<cc>>)
+  hivm.hir.mmadmxL1 ins(%a, %b, %scale_a, %scale_b, %true,
+      %c16, %c16, %c16 : memref<16x16xf8E4M3FN>,
+      memref<16x16xf8E4M3FN>, memref<1xui8>, memref<1xui8>, i1,
+      index, index, index) outs(%c : memref<16x16xf32>)
+  return
+}
+
+// -----
+
 module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
   // CHECK-LABEL: func.func @test_coupled_buffer_aic(
   func.func @test_coupled_buffer_aic() attributes {

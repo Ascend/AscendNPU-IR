@@ -317,6 +317,71 @@ LogicalResult hivm::inferAndPropagateMemScopeForMmadL1(hivm::MmadL1Op op) {
   return success();
 }
 
+LogicalResult hivm::inferAndPropagateMemScopeForMmadMxL1(hivm::MmadMxL1Op op) {
+  if (!op.hasPureBufferSemantics()) {
+    return op->emitOpError("Run infer memory scope after bufferization.");
+  }
+
+  auto *mA = op.getDpsInputOperand(0);
+  auto *mB = op.getDpsInputOperand(1);
+  auto *sA = op.getDpsInputOperand(2);
+  auto *sB = op.getDpsInputOperand(3);
+  auto *mC = op.getDpsInitOperand(0);
+
+  // mA, mB, scaleA, scaleB and mC must originate from an AllocOp.
+  auto allocsA = utils::tracebackMemRefVec(mA->get());
+  auto allocsB = utils::tracebackMemRefVec(mB->get());
+  auto allocsScaleA = utils::tracebackMemRefVec(sA->get());
+  auto allocsScaleB = utils::tracebackMemRefVec(sB->get());
+  auto allocsC = utils::tracebackMemRefVec(mC->get());
+
+  auto l1SpaceAttr =
+      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
+  auto l0cSpaceAttr =
+      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
+
+  MemScopeInferAndPropagateHelper helper;
+
+  // For MmadMxL1Op, operand mA should be in L1.
+  if (failed(setMemSpaceForAllocs(op, helper, allocsA, l1SpaceAttr))) {
+    return op->emitOpError("Failed to infer/propagate memory scope for mA");
+  }
+  LDBG("IR after setting mem scope for mA:\n"
+       << *(op->getParentOfType<ModuleOp>()));
+
+  // For MmadMxL1Op, operand mB should be in L1.
+  if (failed(setMemSpaceForAllocs(op, helper, allocsB, l1SpaceAttr))) {
+    return op->emitOpError("Failed to infer/propagate memory scope for mB");
+  }
+  LDBG("IR after setting mem scope for mB:\n"
+       << *(op->getParentOfType<ModuleOp>()));
+
+  // For MmadMxL1Op, operand scaleA should be in L1.
+  if (failed(setMemSpaceForAllocs(op, helper, allocsScaleA, l1SpaceAttr))) {
+    return op->emitOpError(
+        "Failed to infer/propagate memory scope for scaleA");
+  }
+  LDBG("IR after setting mem scope for scaleA:\n"
+       << *(op->getParentOfType<ModuleOp>()));
+
+  // For MmadMxL1Op, operand scaleB should be in L1.
+  if (failed(setMemSpaceForAllocs(op, helper, allocsScaleB, l1SpaceAttr))) {
+    return op->emitOpError(
+        "Failed to infer/propagate memory scope for scaleB");
+  }
+  LDBG("IR after setting mem scope for scaleB:\n"
+       << *(op->getParentOfType<ModuleOp>()));
+
+  // For MmadMxL1Op, operand mC should be in L0C.
+  if (failed(setMemSpaceForAllocs(op, helper, allocsC, l0cSpaceAttr))) {
+    return op->emitOpError("Failed to infer/propagate memory scope for mC");
+  }
+  LDBG("IR after setting mem scope for mC:\n"
+       << *(op->getParentOfType<ModuleOp>()));
+
+  return success();
+}
+
 template <typename ConvOp>
 LogicalResult hivm::inferAndPropagateMemScopeForConvOp(ConvOp op) {
   if (!op.hasPureBufferSemantics()) {
@@ -636,6 +701,13 @@ void InferHIVMMemScopePass::runOnOperation() {
     // Here shouldn't contain `hivm::BatchMmadL1Op` which has been decomposed.
     func->walk([&](mlir::hivm::MmadL1Op op) {
       if (failed(hivm::inferAndPropagateMemScopeForMmadL1(op)))
+        signalPassFailure();
+    });
+
+    // Set the memory scope of values related to `hivm::MmadMxL1Op` to L1 or
+    // L0C.
+    func->walk([&](mlir::hivm::MmadMxL1Op op) {
+      if (failed(hivm::inferAndPropagateMemScopeForMmadMxL1(op)))
         signalPassFailure();
     });
 
