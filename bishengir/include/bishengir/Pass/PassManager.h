@@ -47,7 +47,7 @@ public:
   BiShengIRPassManager(const BiShengIRCompileConfigBase &config,
                        mlir::MLIRContext *ctx, llvm::StringRef operationName,
                        Nesting nesting)
-      : PassManager(ctx, operationName, nesting), config(&config) {
+      : PassManager(ctx, operationName, nesting) {
     ctx->registerActionHandler([](llvm::function_ref<void()> execute,
                                   const mlir::tracing::Action &action) {
       auto *passAction = llvm::dyn_cast<mlir::PassExecutionAction>(&action);
