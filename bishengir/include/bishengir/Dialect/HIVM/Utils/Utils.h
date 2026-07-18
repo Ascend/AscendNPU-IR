@@ -191,6 +191,7 @@ void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
 void removeMarkOpAttr(annotation::MarkOp markOp, StringRef attrName,
                       RewriterBase &rewriter, bool removeOp = true);
 
+/// Remove a dynamic key/value annotation from markOp (and erase mark if empty).
 void removeMarkOpDynamicAttr(annotation::MarkOp markOp, StringRef attrName,
                              PatternRewriter &rewriter);
 
@@ -458,6 +459,19 @@ SmallVector<MemRefType> getMemRefTypes(TypeRange types);
 
 /// Judge if all MemRefTypes has same rank value
 bool isAllSameRank(const SmallVectorImpl<MemRefType> &memrefTypes);
+
+/// Refine the reassociations into largest possible continuous parts, ensuring
+/// that all memrefTypes can be collapsed together.
+SmallVector<ReassociationIndices> getContinuousReassociation(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &reassociations);
+
+/// Refine the reassociations into continuous parts. Reshape dims (reduce /
+/// broadcast) cannot be collapsed with non-reshape dims.
+SmallVector<ReassociationIndices>
+getContinuousReassociation(const SmallVectorImpl<MemRefType> &memrefTypes,
+                           ArrayRef<int64_t> reshapeDims = {},
+                           ArrayRef<int64_t> permutations = {});
 
 inline int64_t ceilFactor(int64_t x, int64_t y) { return (x + y - 1) / y * y; }
 inline int64_t ceilDiv(int64_t x, int64_t y) { return (x + y - 1) / y; }

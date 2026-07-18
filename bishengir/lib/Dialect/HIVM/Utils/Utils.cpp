@@ -710,11 +710,28 @@ void removeMarkOpAttr(annotation::MarkOp markOp, ::llvm::StringLiteral attrName,
   }
 }
 
+void removeMarkOpAttr(annotation::MarkOp markOp, StringRef attrName,
+                      RewriterBase &rewriter, bool removeOp) {
+  if (markOp == nullptr) {
+    return;
+  }
+  auto attrDict = markOp->getAttrDictionary();
+  if (!attrDict.empty() && attrDict.contains(attrName)) {
+    rewriter.modifyOpInPlace(markOp, [&]() { markOp->removeAttr(attrName); });
+  }
+
+  if (markOp.isAttrEmpty() && removeOp) {
+    rewriter.eraseOp(markOp);
+  }
+}
+
 void removeMarkOpDynamicAttr(annotation::MarkOp markOp, StringRef attrName,
                              PatternRewriter &rewriter) {
   assert(markOp && "markOp shouldn't be null.");
   auto keys = markOp.getKeys();
   auto values = markOp.getValues();
+  if (!keys.has_value())
+    return;
 
   SmallVector<Attribute> newKeys;
   SmallVector<Value> newValues;
@@ -738,21 +755,6 @@ void removeMarkOpDynamicAttr(annotation::MarkOp markOp, StringRef attrName,
   });
   if (newKeys.empty()) {
     removeMarkOpAttr(markOp, "keys", rewriter);
-  }
-}
-
-void removeMarkOpAttr(annotation::MarkOp markOp, StringRef attrName,
-                      RewriterBase &rewriter, bool removeOp) {
-  if (markOp == nullptr) {
-    return;
-  }
-  auto attrDict = markOp->getAttrDictionary();
-  if (!attrDict.empty() && attrDict.contains(attrName)) {
-    rewriter.modifyOpInPlace(markOp, [&]() { markOp->removeAttr(attrName); });
-  }
-
-  if (markOp.isAttrEmpty() && removeOp) {
-    rewriter.eraseOp(markOp);
   }
 }
 
@@ -1567,6 +1569,166 @@ bool isOneDimLikeVecType(VectorType vecType) {
       return false;
   }
   return true;
+}
+
+static bool canCombineOneSide(const SmallVectorImpl<MemRefType> &memrefTypes,
+                              const ReassociationIndices &curIndexGroup,
+                              int indexStartPosition) {
+  return llvm::all_of(memrefTypes, [&](const MemRefType &curMemRef) {
+    ArrayRef<int64_t> curShapes = curMemRef.getShape();
+    int curIndexPosition = indexStartPosition;
+    for (int index : curIndexGroup) {
+      if (index != curIndexPosition) {
+        // do not combine transposed dims
+        return false;
+      }
+      curIndexPosition++;
+      if (curShapes[index] != 1) {
+        // do not combine dim with shape more than 1
+        return false;
+      }
+    }
+    return true;
+  });
+}
+
+/// if the given index group is not transpose reassociations, and the shape of
+/// each memref type corresponding to each index in the reassociation indices
+/// group is 1, the given index group can be combined.
+static bool canCombine(const SmallVectorImpl<MemRefType> &memrefTypes,
+                       const ReassociationIndices &lhs,
+                       const ReassociationIndices &rhs, int64_t lhsStartIndex,
+                       int64_t rhsStartIndex) {
+  // check whether one reassociation index group can be combined to another
+  bool anySideCombinable = canCombineOneSide(memrefTypes, rhs, rhsStartIndex) ||
+                           canCombineOneSide(memrefTypes, lhs, lhsStartIndex);
+  if (!anySideCombinable) {
+    return false;
+  }
+  // check continuous between index groups
+  ReassociationIndices combinedIndexGroup = lhs;
+  combinedIndexGroup.append(rhs);
+  return llvm::all_of(memrefTypes, [&](const MemRefType &curMemRef) {
+    return util::isGuaranteedCollapsibleStrictly(curMemRef,
+                                                 {combinedIndexGroup});
+  });
+}
+
+SmallVector<ReassociationIndices> combineReassociationGroups(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &oldReassociations) {
+  SmallVector<ReassociationIndices> reassociations(oldReassociations.begin(),
+                                                   oldReassociations.end());
+  SmallVector<ReassociationIndices> combinedReassociations;
+  auto *prevIt = reassociations.begin();
+  // used for checking whether contains transposed dim
+  int64_t size = static_cast<int64_t>(reassociations.front().size());
+
+  // combine continuous reassociation index groups
+  for (auto *curIt = reassociations.begin() + 1; curIt < reassociations.end();
+       ++curIt) {
+    if (canCombine(memrefTypes, *prevIt, *curIt, size - prevIt->size(), size)) {
+      // combine current reassociations into current combined group if
+      // possible
+      prevIt->append(*curIt);
+    } else {
+      // otherwise, save current combined group and create a new group
+      combinedReassociations.push_back(*prevIt);
+      prevIt = curIt;
+    }
+    size += static_cast<int64_t>(curIt->size());
+  }
+  // save remained reassociations
+  if (!prevIt->empty()) {
+    combinedReassociations.push_back(*prevIt);
+  }
+  return combinedReassociations;
+}
+
+SmallVector<ReassociationIndices> getContinuousReassociation(
+    const SmallVectorImpl<MemRefType> &memrefTypes,
+    const SmallVectorImpl<ReassociationIndices> &reassociations) {
+  // no more refine if all dims collapsible within origin reassociation groups
+  bool isCollapsedIntraGroup = llvm::all_of(memrefTypes, [&](MemRefType t) {
+    return util::isGuaranteedCollapsibleStrictly(t, reassociations);
+  });
+  if (isCollapsedIntraGroup) {
+    auto combinedReassociations =
+        combineReassociationGroups(memrefTypes, reassociations);
+    return combinedReassociations;
+  }
+
+  // refine reassociations into smaller parts for best effort collapse
+  SmallVector<ReassociationIndices> refinedReassociations;
+  for (const ReassociationIndices &group : reassociations) {
+    if (group.empty()) {
+      continue;
+    }
+    ReassociationIndices refinedGroup{group.front()};
+    const auto *prevIt = group.begin();
+    for (const auto *curIt = prevIt + 1; curIt < group.end();
+         ++curIt, ++prevIt) {
+      assert(*curIt > *prevIt &&
+             "reassociation indices must be ascending order");
+      // pairwise check for collapsible
+      SmallVector<ReassociationIndices> maybeCollapse{{*prevIt, *curIt}};
+      bool pairwiseCollapsed = llvm::all_of(memrefTypes, [&](MemRefType t) {
+        return util::isGuaranteedCollapsibleStrictly(t, maybeCollapse);
+      });
+      if (pairwiseCollapsed) {
+        // if prev and cur reasso indices can be collapsed, add to new group
+        refinedGroup.push_back(*curIt);
+      } else {
+        // if cannot collapse, split cur indice to another new group
+        refinedReassociations.push_back(refinedGroup);
+        refinedGroup.clear();
+        refinedGroup.push_back(*curIt);
+      }
+    }
+    if (!refinedGroup.empty()) {
+      refinedReassociations.push_back(refinedGroup);
+    }
+  }
+
+  // further combine inter-group reassociations
+  return combineReassociationGroups(memrefTypes, refinedReassociations);
+}
+
+SmallVector<ReassociationIndices>
+getContinuousReassociation(const SmallVectorImpl<MemRefType> &memrefTypes,
+                           ArrayRef<int64_t> reshapeDims,
+                           ArrayRef<int64_t> permutations) {
+  if (!isAllSameRank(memrefTypes)) {
+    LDBG("MemrefTypes of operands have different rank");
+    return {};
+  }
+
+  // get reassociations by dividing reshape group
+  SmallVector<ReassociationIndices> reassociations;
+  ReassociationIndices reassociation{0};
+  bool prevIsReshape = std::count(reshapeDims.begin(), reshapeDims.end(), 0);
+  auto rank = memrefTypes[0].getRank();
+  for (int64_t i = 1; i < rank; i++) {
+    bool curIsReshape = std::count(reshapeDims.begin(), reshapeDims.end(), i);
+    if (curIsReshape == prevIsReshape &&
+        (permutations.empty() || permutations[i] == permutations[i - 1] + 1)) {
+      reassociation.push_back(i);
+    } else {
+      reassociations.push_back(reassociation);
+      reassociation.clear();
+      reassociation.push_back(i);
+      prevIsReshape = curIsReshape;
+    }
+  }
+  if (!reassociation.empty()) {
+    reassociations.push_back(reassociation);
+  }
+
+  // cut the un-continuous ones into different group
+  auto continuousReassociations =
+      util::getContinuousReassociation(memrefTypes, reassociations);
+  assert(!continuousReassociations.empty());
+  return continuousReassociations;
 }
 } // namespace util
 } // namespace hivm

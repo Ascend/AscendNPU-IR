@@ -187,6 +187,8 @@ std::unique_ptr<Pass> createAlignAllocSizePass();
 std::unique_ptr<Pass> createPreMarkStrideAlignPass();
 
 // Create a pass to annoate storage_align marks for HIVM ops.
+std::unique_ptr<Pass> createPreMarkStrideAlignPass();
+
 std::unique_ptr<Pass> createMarkStrideAlignPass();
 
 // Create a pass to reallocate memrefs according to storage_align marks

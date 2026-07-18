@@ -28,6 +28,11 @@
 namespace mlir {
 namespace hivm {
 
+// Attribute name used to mark operations that failed during unrealized
+// conversion cast propagation. These marked ops are handled later by
+// handlePropagateFailure.
+constexpr StringRef propagateFailureName = "PropagateFailure";
+
 /// Recursively update annotation mark backward through view-like memref ops
 /// until allocation.
 ///
@@ -118,6 +123,8 @@ calculateAlignedShape(OpBuilder &b, const Location loc,
                       const SmallVector<OpFoldResult> &shape,
                       const SmallVector<int> &alignUnits);
 
+/// Handle ops marked with propagateFailureName after allocation processing.
+void handlePropagateFailure(RewriterBase &rewriter, func::FuncOp &funcOp);
 LogicalResult replaceAndPropagateMemRefType(RewriterBase &rewriter,
                                             const Location loc, Value from,
                                             Value to);
@@ -125,6 +132,9 @@ std::optional<int32_t>
 getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
                   llvm::ArrayRef<ReassociationIndices> continuousReassociations,
                   int64_t startIdx);
+std::optional<int>
+getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
+                  ReassociationIndices reassociations);
 std::optional<int32_t> adjustAlignDim(Operation *op, Value operand,
                                       std::optional<int32_t> alignDim);
 std::pair<llvm::SmallVector<int32_t>, llvm::SmallVector<int32_t>>

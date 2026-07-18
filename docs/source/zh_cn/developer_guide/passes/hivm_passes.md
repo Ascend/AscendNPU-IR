@@ -17,6 +17,15 @@
 
 **功能：** 将其他方言的算子转换为HIVM算子。
 
+将 `memref.copy` / `bufferization.materialize_in_destination` 转为
+`hivm.hir.load` / `hivm.hir.store` / `hivm.hir.copy`；传递 pad 值（`VBrc` 或
+`pad_const`）、左填充（`offset % num_per_block`）、`eviction_policy`（默认
+`EvictFirst`），并保留 master 侧的 `may_implicit_transpose_with_last_axis` 等属性。
+跳过 host 函数；在 `hivm.vector_function` 中不对 `memref.copy` 做 load/store
+转换（仍可转为 `hivm.copy`）；在 `scf.forall` 中跳过 `memref.copy` /
+`materialize_in_destination`；在 `hivm.vector_function` 中跳过
+`materialize_in_destination`。
+
 ## -cv-pipelining
 
 **功能：** 为多缓冲mix-cv操作的Cube与Vector核心开启流水线优化。

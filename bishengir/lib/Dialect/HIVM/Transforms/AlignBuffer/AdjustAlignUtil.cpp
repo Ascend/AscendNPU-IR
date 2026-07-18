@@ -157,6 +157,20 @@ getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
   return std::nullopt;
 }
 
+std::optional<int>
+getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
+                  ReassociationIndices reassociations) {
+  for (auto index : llvm::reverse(reassociations)) {
+    if (llvm::all_of(memRefTypes, [&](MemRefType memRefType) {
+          return memRefType.getShape()[index] == 1;
+        })) {
+      continue;
+    }
+    return index;
+  }
+  return std::nullopt;
+}
+
 bool isLastBrc(hivm::VBrcOp brcOp, FlattenResult &flattenResult) {
   auto flattenedTypes = flattenResult.getOperandTypes(DpsKind::kDpsAll);
   auto flattenedMemrefTypes = util::getMemRefTypes(flattenedTypes);
