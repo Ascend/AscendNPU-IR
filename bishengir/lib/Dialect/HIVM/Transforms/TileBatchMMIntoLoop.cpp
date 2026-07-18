@@ -463,12 +463,10 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
     Value fixpipeDst = subviewMemrefValueWithoutBatch(
         originFixpipe.getLoc(), oriFixpipeDst, indexes[0], rewriter);
 
-    rewriter.create<hivm::FixpipeOp>(
-        originFixpipe.getLoc(), Type{}, /*src=*/matrixToStore,
-        /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
-        originFixpipe.getDualDstModeAttr(), originFixpipe.getSubBlockIdxAttr(),
-        originFixpipe.getPreQuantAttr(),
-        originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
+    auto newFixpipe =
+        cast<hivm::FixpipeOp>(rewriter.clone(*originFixpipe.getOperation()));
+    newFixpipe.getSrcMutable().assign(matrixToStore);
+    newFixpipe.getDstMutable().assign(fixpipeDst);
     return std::nullopt;
   }
 
@@ -481,14 +479,14 @@ rewriteFixpipeThrowOutBatch(Value matrixToStore, SmallVector<Value> indexes,
 
     Value fixpipeDst = extractTensorValueWithoutBatch(
         originFixpipe.getLoc(), forIterArg, indexes[0], rewriter);
-    Type resultType = extractNonBatchType(iterationType);
+    auto resultType =
+        cast<RankedTensorType>(extractNonBatchType(iterationType));
 
-    auto newfixpipe = rewriter.create<hivm::FixpipeOp>(
-        originFixpipe.getLoc(), resultType, /*src=*/matrixToStore,
-        /*dst=*/fixpipeDst, originFixpipe.getDmaModeAttr(),
-        originFixpipe.getDualDstModeAttr(), originFixpipe.getSubBlockIdxAttr(),
-        originFixpipe.getPreQuantAttr(),
-        originFixpipe.getPreReluAttr(), originFixpipe.getChannelSplitAttr());
+    auto newfixpipe =
+        cast<hivm::FixpipeOp>(rewriter.clone(*originFixpipe.getOperation()));
+    newfixpipe.getSrcMutable().assign(matrixToStore);
+    newfixpipe.getDstMutable().assign(fixpipeDst);
+    newfixpipe.getResultTensor().setType(resultType);
 
     Value insert = insertTensorValueWithoutBatch(
         originFixpipe.getLoc(), newfixpipe.getResults()[0], forIterArg,

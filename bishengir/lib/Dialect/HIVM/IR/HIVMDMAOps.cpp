@@ -940,6 +940,7 @@ FixpipeOp assemblyFormat in HIVMC version == 0.2.*
   attr-dict
   `ins` `(` $src `:` type($src) `)`
   `outs` `(` $dst `:` type($dst) `)`
+  (`quant_scale` `=` $quant_scale^ `:` type($quant_scale) )?
   (`dual_dst_mode` `=` $dual_dst_mode^)?
   (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
   (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?
@@ -1068,6 +1069,7 @@ generated with the following assemblyFormat
   attr-dict
   `ins` `(` $src `:` type($src) `)`
   `outs` `(` $dst `:` type($dst) `)`
+  (`quant_scale` `=` $quant_scale^ `:` type($quant_scale) )?
   (`dual_dst_mode` `=` $dual_dst_mode^)?
   (`unit_flag_mode` `(` $unit_flag_mode^ `)` )?
   (`unit_flag_cond` `(` $unit_flag_cond^ `)` )?

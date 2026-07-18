@@ -32,6 +32,76 @@ func.func @test_tile_batchMmadL1(%dst : memref<2x256x256xf16>) {
 }
 
 // -----
+// CHECK-LABEL: func.func @test_preserve_fixpipe_operands_memref(
+func.func @test_preserve_fixpipe_operands_memref(
+    %dst: memref<2x16x16xf32>, %quant_scale: f32, %unit_flag_cond: i1) {
+  %ma = tensor.empty() : tensor<2x16x32xf16>
+  %mb = tensor.empty() : tensor<2x32x16xf16>
+  %mc = tensor.empty() : tensor<2x16x16xf32>
+  %true = arith.constant true
+  %m = arith.constant 16 : index
+  %k = arith.constant 32 : index
+  %n = arith.constant 16 : index
+  %result = hivm.hir.batchMmadL1
+      ins(%ma, %mb, %true, %m, %k, %n : tensor<2x16x32xf16>,
+          tensor<2x32x16xf16>, i1, index, index, index)
+      outs(%mc : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+
+  // CHECK: scf.for
+  // CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
+  // CHECK-SAME: quant_scale = %[[SCALE:.*]] : f32
+  // CHECK-SAME: unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
+  // CHECK-SAME: unit_flag_cond(%[[COND:.*]])
+  hivm.hir.fixpipe {
+    dma_mode = #hivm.dma_mode<nz2nd>,
+    pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>,
+    pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>
+  } ins(%result : tensor<2x16x16xf32>)
+    outs(%dst : memref<2x16x16xf32>)
+    quant_scale = %quant_scale : f32
+    unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
+    unit_flag_cond(%unit_flag_cond)
+  return
+}
+
+// -----
+// CHECK-LABEL: func.func @test_preserve_fixpipe_operands_tensor(
+func.func @test_preserve_fixpipe_operands_tensor(
+    %quant_scale: f32, %unit_flag_cond: i1) -> tensor<2x16x16xf32> {
+  %ma = tensor.empty() : tensor<2x16x32xf16>
+  %mb = tensor.empty() : tensor<2x32x16xf16>
+  %mc = tensor.empty() : tensor<2x16x16xf32>
+  %dst = tensor.empty() : tensor<2x16x16xf32>
+  %true = arith.constant true
+  %m = arith.constant 16 : index
+  %k = arith.constant 32 : index
+  %n = arith.constant 16 : index
+  %result = hivm.hir.batchMmadL1
+      ins(%ma, %mb, %true, %m, %k, %n : tensor<2x16x32xf16>,
+          tensor<2x32x16xf16>, i1, index, index, index)
+      outs(%mc : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+
+  // CHECK: scf.for
+  // CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>, pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>}
+  // CHECK-SAME: outs(%[[FIXPIPE_DST:.*]] : tensor<16x16xf32>)
+  // CHECK-SAME: quant_scale = %[[SCALE:.*]] : f32
+  // CHECK-SAME: unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
+  // CHECK-SAME: unit_flag_cond(%[[COND:.*]])
+  // CHECK-SAME: -> tensor<16x16xf32>
+  // CHECK: tensor.insert_slice %[[FIXPIPE]] into {{.*}} : tensor<16x16xf32> into tensor<2x16x16xf32>
+  %fixpipe = hivm.hir.fixpipe {
+    dma_mode = #hivm.dma_mode<nz2nd>,
+    pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>,
+    pre_relu = #hivm.fixpipe_pre_relu_mode<NORMAL_RELU>
+  } ins(%result : tensor<2x16x16xf32>)
+    outs(%dst : tensor<2x16x16xf32>)
+    quant_scale = %quant_scale : f32
+    unit_flag_mode([#hivm.unit_flag<ENABLED_WITH_UPDATE>])
+    unit_flag_cond(%unit_flag_cond) -> tensor<2x16x16xf32>
+  return %fixpipe : tensor<2x16x16xf32>
+}
+
+// -----
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   // CHECK-LABEL: func.func @test_move_nested_debug_through_memory_space_cast
   // The tiled batch matmul loop must be placed before the nested debug loop.
