@@ -120,7 +120,7 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
   auto propagateFn = [&](OpOperand &user) -> LogicalResult {
     Operation *userDefiningOp = user.getOwner();
     return TypeSwitch<Operation *, LogicalResult>(userDefiningOp)
-        .Case<scf::YieldOp, scope::ReturnOp>([&](Operation *op) {
+        .Case<scf::YieldOp>([&](Operation *op) {
           Operation *parentOp = op->getParentOp();
           auto yieldResult = op->getOperand(user.getOperandNumber());
           auto parentResult = parentOp->getResult(user.getOperandNumber());

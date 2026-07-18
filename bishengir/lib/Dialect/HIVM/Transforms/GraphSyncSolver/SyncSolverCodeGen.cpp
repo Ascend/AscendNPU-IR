@@ -397,7 +397,18 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
     }
   }
 
-  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
+  auto multibufferLoopOp = syncOp->eventIdInfo.multibufferLoop;
+  if (!multibufferLoopOp) {
+    return nullptr;
+  }
+  
+  for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
+    if (syncOp->eventIds[i-1] + 1 != syncOp->eventIds[i]) {
+      return nullptr;
+    }
+  }
+
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   assert(llvm::isa_and_present<scf::ForOp>(multibufferLoop));
   int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
   int64_t preloadOffset = isa<SetFlagOp>(syncOp)

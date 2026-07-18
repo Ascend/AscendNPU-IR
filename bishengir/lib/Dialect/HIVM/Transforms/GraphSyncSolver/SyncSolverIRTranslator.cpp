@@ -450,8 +450,18 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
 
 std::unique_ptr<OperationBase>
 IRTranslator::translateRWLikeOp(Operation *op, OperationBase *parentOp) {
-  if (auto dstOp = dyn_cast<DestinationStyleOpInterface>(op)) {
-    return getDestinationStyleInterfaceOp(dstOp, parentOp);
+  Operation *dstStyleOp = nullptr;
+  if (options.isRegBasedArch) {
+    if (auto dsiOp = dyn_cast<DestinationStyleOpInterface>(op)) {
+      dstStyleOp = dsiOp;
+    }
+  } else if (auto pipeOp = dyn_cast<hivm::OpPipeInterface>(op)) {
+    dstStyleOp = pipeOp;
+  }
+  if (dstStyleOp) {
+    if (auto rwOp = getDestinationStyleInterfaceOp(dstStyleOp, parentOp)) {
+      return rwOp;
+    }
   }
   if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return getLoadStoreOp(storeOp, parentOp);

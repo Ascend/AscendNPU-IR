@@ -82,7 +82,7 @@ void InsertAnchorsAndBackupPass::insertAnchor(Operation *op, OpBuilder &builder,
     builder.setInsertionPointAfter(op);
   }
   builder.create<AnchorOp>(op->getLoc(),
-                           builder.getI64IntegerAttr(nextAnchorId++));
+                           builder.getI64IntegerAttr(nextAnchorId++), nullptr);
 }
 
 void InsertAnchorsAndBackupPass::insertAnchorsInBlock(Block &block,

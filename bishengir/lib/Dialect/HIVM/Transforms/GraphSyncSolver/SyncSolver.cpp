@@ -564,10 +564,8 @@ Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
          parentLoop2->multibufferUnrollNum.value());
   EventIdInfo eventIdInfo;
   eventIdInfo.eventIdNum = parentLoop1->multibufferUnrollNum.value();
-  eventIdInfo.multibufferUnrollLoop1 =
-      cast<LoopLikeOpInterface>(parentLoop1->op);
-  eventIdInfo.multibufferUnrollLoop2 =
-      cast<LoopLikeOpInterface>(parentLoop2->op);
+  eventIdInfo.multibufferUnrollLoop1 = parentLoop1;
+  eventIdInfo.multibufferUnrollLoop2 = parentLoop2;
   return eventIdInfo;
 }
 
@@ -620,60 +618,7 @@ Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
                                parentScope1->preloadNum.value() - 1;
   eventIdInfo.preloadOffset2 = parentScope2->maxPreloadNum.value() -
                                parentScope2->preloadNum.value() - 1;
-  eventIdInfo.multibufferLoop = parentForLoop;
-  return eventIdInfo;
-}
-
-std::optional<EventIdInfo>
-Solver::checkCVMultiBufferPreloadEventIdInfo(RWOperation *rwOp1,
-                                             RWOperation *rwOp2) {
-  assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.isCrossCoreMode()) {
-    return {};
-  }
-  auto *parentScope1 = rwOp1->getParentOfType<Scope>();
-  auto *parentScope2 = rwOp2->getParentOfType<Scope>();
-  while (parentScope1 != nullptr && !parentScope1->maxPreloadNum.has_value()) {
-    parentScope1 = parentScope1->getParentOfType<Scope>();
-  }
-  while (parentScope2 != nullptr && !parentScope2->maxPreloadNum.has_value()) {
-    parentScope2 = parentScope2->getParentOfType<Scope>();
-  }
-  if (!parentScope1 || !parentScope2) {
-    return {};
-  }
-  if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
-    if (!parCond1->isProperAncestor(rwOp2)) {
-      return {};
-    }
-  }
-  if (auto *parCond2 = rwOp2->getParentOfType<Condition>()) {
-    if (!parCond2->isProperAncestor(rwOp1)) {
-      return {};
-    }
-  }
-
-  auto *parentLoop1 = parentScope1->getParentOfType<Loop>();
-  auto *parentLoop2 = parentScope2->getParentOfType<Loop>();
-  if (parentLoop1 == nullptr || parentLoop1 != parentLoop2) {
-    return {};
-  }
-
-  assert(parentScope1->preloadNum.has_value());
-  assert(parentScope2->preloadNum.has_value());
-  assert(parentScope1->maxPreloadNum.value() ==
-         parentScope2->maxPreloadNum.value());
-
-  auto parentForLoop = llvm::dyn_cast_if_present<scf::ForOp>(parentLoop1->op);
-  assert(parentForLoop != nullptr);
-
-  EventIdInfo eventIdInfo;
-  eventIdInfo.eventIdNum = parentScope1->maxPreloadNum.value();
-  eventIdInfo.preloadOffset1 = parentScope1->maxPreloadNum.value() -
-                               parentScope1->preloadNum.value() - 1;
-  eventIdInfo.preloadOffset2 = parentScope2->maxPreloadNum.value() -
-                               parentScope2->preloadNum.value() - 1;
-  eventIdInfo.multibufferLoop = parentForLoop;
+  eventIdInfo.multibufferLoop = parentLoop1;
   return eventIdInfo;
 }
 
