@@ -104,6 +104,7 @@ struct VFOperandSubstitutionPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VFOperandSubstitutionPass)
 
   VFOperandSubstitutionPass() = default;
+  VFOperandSubstitutionPass &operator=(const VFOperandSubstitutionPass &pass) = delete;
   VFOperandSubstitutionPass(const VFOperandSubstitutionPass &pass)
       : PassWrapper<VFOperandSubstitutionPass, OperationPass<ModuleOp>>(pass) {
   }
