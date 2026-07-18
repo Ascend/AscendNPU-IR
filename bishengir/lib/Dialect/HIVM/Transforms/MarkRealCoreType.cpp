@@ -26,6 +26,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/Support/Debug.h"
 #include <cstdint>
 
 namespace mlir {
@@ -44,10 +45,10 @@ struct MarkRealCoreTypePass
 
   explicit MarkRealCoreTypePass(const MarkRealCoreTypeOptions &options)
       : MarkRealCoreTypeBase(options) {}
-
+  ~MarkRealCoreTypePass() override = default;
   void runOnOperation() override;
 
-  bool isOpTypeToBeMarked(Operation *op) {
+  bool isOpTypeToBeMarked(Operation *op) const {
     // scalar-pipe operations.
     if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
             affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp,
@@ -57,6 +58,8 @@ struct MarkRealCoreTypePass
     if (isa<hivm::CustomOp, hivm::CustomMacroOp>(op)) {
       return false;
     }
+    if (isa<hivm::VBrcOp>(op))
+      return false;
     if (isa<hivm::InferCoreTypeInterface>(op)) {
       return true;
     }
@@ -87,7 +90,7 @@ void MarkRealCoreTypePass::runOnOperation() {
     invClonedOpMap[clonedOp] = op;
   }
 
-  DenseMap<uint64_t, Operation *> opToInstructionCounterMap;
+  DenseMap<uint64_t, Operation *> instructionCounterToOpMap;
   DenseMap<Operation *, hivm::TCoreType> instructionCounterToCoreTypeMap;
   static constexpr StringLiteral kInstructionMarkerAttr = "instruction-marker";
 
@@ -99,7 +102,7 @@ void MarkRealCoreTypePass::runOnOperation() {
     if (isa<ModuleOp>(op)) {
       return;
     }
-    opToInstructionCounterMap[instructionCounter] = invClonedOpMap[op];
+    instructionCounterToOpMap[instructionCounter] = invClonedOpMap[op];
     op->setAttr(kInstructionMarkerAttr,
                 builder.getIndexAttr(instructionCounter));
     instructionCounter++;
@@ -113,7 +116,11 @@ void MarkRealCoreTypePass::runOnOperation() {
     return signalPassFailure();
   }
 
-  // get function with aic core type from moudleclone2
+  LLVM_DEBUG({
+    llvm::dbgs() << "canonicalized splitted kernels:\n" << moduleClone << '\n';
+  });
+
+  // get function with aic core type from cloned module.
   moduleClone->walk<WalkOrder::PreOrder>([&](func::FuncOp funcOp) {
     auto funcOpCoreTypeOpt = queryFuncCoreType(funcOp);
     if (!funcOpCoreTypeOpt.has_value()) {
@@ -132,10 +139,10 @@ void MarkRealCoreTypePass::runOnOperation() {
               op->getAttrOfType<IntegerAttr>(kInstructionMarkerAttr)) {
         uint64_t instructionCounter =
             instructionCounterAttr.getValue().getZExtValue();
-        assert(opToInstructionCounterMap.count(instructionCounter) &&
+        assert(instructionCounterToOpMap.count(instructionCounter) &&
                "instructionCounter not found in map!");
         Operation *opInOriginalModule =
-            opToInstructionCounterMap[instructionCounter];
+            instructionCounterToOpMap[instructionCounter];
 
         auto [it, inserted] = instructionCounterToCoreTypeMap.insert(
             {opInOriginalModule, opCoreType});
