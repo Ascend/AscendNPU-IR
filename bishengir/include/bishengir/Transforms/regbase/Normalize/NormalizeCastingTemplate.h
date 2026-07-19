@@ -19,6 +19,7 @@
 #define BISHENGIR_TRANSFORMS_REGBASE_NORMALIZE_NORMALIZECASTINGTEMPLATE_H
 
 #include "bishengir/Transforms/regbase/Normalize/Utils/CastingTemplateHelpers.h"
+#include "bishengir/Dialect/HFusion/Transforms/regbase/RegBaseArchUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -193,8 +194,9 @@ public:
     Value input = Traits::matchFillOp(defOp) ? Traits::getFillInput(defOp)
                                              : Traits::getBroadcastInput(defOp);
     auto defaultRoundMode =
-        hfusion::selectRoundMode<decltype(castOp.getRoundMode())>(
-            getElementTypeOrSelf(srcTy), getElementTypeOrSelf(dstTy));
+        static_cast<decltype(castOp.getRoundMode())>(
+            mlir::hfusion::selectRoundMode<decltype(castOp.getRoundMode())>(
+                getElementTypeOrSelf(srcTy), getElementTypeOrSelf(dstTy)));
     if (defaultRoundMode != castOp.getRoundMode() &&
         !isa<ShapedType>(input.getType()))
       return rewriter.notifyMatchFailure(
@@ -248,8 +250,9 @@ public:
 
     Value input = Traits::getFillInput(defOp);
     auto defaultRoundMode =
-        hfusion::selectRoundMode<decltype(castOp.getRoundMode())>(
-            getElementTypeOrSelf(src.getType()), getElementTypeOrSelf(dstTy));
+        static_cast<decltype(castOp.getRoundMode())>(
+            mlir::hfusion::selectRoundMode<decltype(castOp.getRoundMode())>(
+                getElementTypeOrSelf(src.getType()), getElementTypeOrSelf(dstTy)));
     if (defaultRoundMode == castOp.getRoundMode() ||
         isa<ShapedType>(input.getType()))
       return rewriter.notifyMatchFailure(

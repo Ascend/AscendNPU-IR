@@ -1,5 +1,5 @@
 //===- RegBaseArchUtils.cpp --------------------------------------*- C++ -*-===//
-// TODO-A5: Remove this file after appropriate porting of dependenciesЧ
+// TODO-A5: Remove this file after appropriate porting of dependencies
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,48 +76,5 @@ Operation *createCmpOp(OpBuilder &b, Location loc, Value lhs, Value rhs,
       loc, TypeRange(emptyOp), ValueRange{lhs, rhs}, ValueRange(emptyOp),
       ArrayRef{cmpModeAttr});
 }
-
-template <typename T> T selectRoundMode(Type inType, Type outType) {
-  if (inType.isFloat8E5M2() || inType.isFloat8E4M3FN() ||
-    outType.isFloat8E5M2() || outType.isFloat8E4M3FN())
-    return T::RINT;
-  if (inType.isF32()) {
-    if (outType.isF16() || outType.isBF16() || outType.isF32() ||
-        outType.isFloat8E4M3FN() || outType.isFloat8E5M2()) {
-      return T::RINT;
-        }
-  }
-
-  if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16() || inType.isFloat8E4M3FN() ||
-        inType.isFloat8E5M2()) {
-      return T::RINT;
-        }
-  }
-
-  if (inType.isInteger(8) && // for bit width of 8 and 16 use RINT mode
-      outType.isF16()) {
-    return T::RINT;
-      }
-
-  if (inType.isInteger(16) && outType.isInteger(8)) {
-    return T::TRUNCWITHOVERFLOW;
-  }
-
-  if (isa<mlir::FloatType>(inType) && outType.isInteger()) {
-    return T::TRUNC;
-  }
-
-  if (inType.isInteger() && isa<mlir::FloatType>(outType)) {
-    return T::TRUNC;
-  }
-
-  if (inType.isInteger() && outType.isInteger()) {
-    return T::RINT;
-  }
-  llvm_unreachable("unsupported type cast.");
-}
-
-template hfusion::RoundMode selectRoundMode(Type inType, Type outType);
 
 } // namespace mlir::hfusion

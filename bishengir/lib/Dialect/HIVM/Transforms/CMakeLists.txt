@@ -5,6 +5,7 @@ file(GLOB INJECT_SYNC ${CMAKE_CURRENT_SOURCE_DIR}/InjectSync/*.cpp)
 file(GLOB INSERT_LOAD_STORE_FOR_MIX_CV ${CMAKE_CURRENT_SOURCE_DIR}/InsertLoadStoreForMixCV/*.cpp)
 file(GLOB NDDMA CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/NDDMA/*.cpp)
 file(GLOB TILING ${CMAKE_CURRENT_SOURCE_DIR}/Tiling/*.cpp)
+file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/regbase/Normalize/*.cpp)
 set(TILE_AND_BIND_SUB_BLOCK
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/Helper.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TileAndBindSubBlock/TileUtils.cpp)
@@ -18,6 +19,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ${NDDMA}
   ${TILING}
   ${TILE_AND_BIND_SUB_BLOCK}
+  ${NORMALIZE}
   AddFFTSToSyncBlockSetOp.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp

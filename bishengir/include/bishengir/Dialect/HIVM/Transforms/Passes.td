@@ -69,6 +69,25 @@ def NormalizeBitwiseSelect : Pass<"hivm-normalize-bitwise-select"> {
   ];
 }
 
+def HIVMNormalize : Pass<"hivm-normalize-ops", "func::FuncOp"> {
+  let summary = "Normalize HIVM";
+  let constructor = "mlir::hivm::createHIVMNormalizeOpsPass()";
+  let dependentDialects = [
+    "annotation::AnnotationDialect",
+    "arith::ArithDialect",
+    "hivm::HIVMDialect",
+    "tensor::TensorDialect",
+    "bufferization::BufferizationDialect",
+    "memref::MemRefDialect",
+  ];
+  let options = [
+    Option<
+      "enableHighPrecision", "enable-high-precision", "bool",
+      /*default=*/"true",
+      "Enable high precision calculation for sin/cos in HIVM.">
+  ];
+}
+
 def TritonGlobalKernelArgsToHIVMOp
     : Pass<"triton-global-kernel-args-to-hivm-op", "func::FuncOp"> {
   let summary = "";

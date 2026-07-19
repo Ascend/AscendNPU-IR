@@ -271,8 +271,74 @@ LogicalResult VCastOp::verify() {
   /// modes.
   /// considering cast i4 to i16 only supports rint, so cast i4 to i8 only
   /// supports rint mode.
+  /// Keep verifier-only cast whitelists aligned with real lowering support.
+  /// These two unsigned i8 <-> i16 entries (uint8_t_to_uint16_t_rintmode and
+  /// uint16_t_to_uint8_t_truncwithoverflowmode) rely on NormalizeCastLowering
+  /// to rewrite the path after VCastOp verification succeeds.
 
-  const std::set<std::string> softSupportedCast{
+  static const std::set<std::string> kRegBasedSoftCasts{
+      "float_to_bool_truncmode",
+      "float_to_int8_t_roundmode",
+      "float_to_int8_t_rintmode",
+      "float_to_int8_t_floormode",
+      "float_to_int8_t_ceilmode",
+      "float_to_int8_t_truncmode",
+      "int8_t_to_float_truncmode",
+      "float_to_int16_t_truncwithoverflowmode",
+      "float_to_int32_t_truncwithoverflowmode",
+      "float_to_float8_e5m2_t_rintmode",
+      "bfloat16_t_to_bool_rintmode",
+      "int4_t_to_int8_t_rintmode",
+      "half_to_bool_rintmode",
+      "float_to_bool_rintmode",
+      "int8_t_to_bool_rintmode",
+      "int16_t_to_bool_rintmode",
+      "int32_t_to_bool_rintmode",
+      "int64_t_to_bool_rintmode",
+      "bool_to_int8_t_rintmode",
+      "bool_to_float_rintmode",
+      "bool_to_half_rintmode",
+      "bool_to_int32_t_rintmode",
+      "bool_to_float_truncmode",
+      "bool_to_half_truncmode",
+      "bool_to_bfloat16_t_truncmode",
+      "bool_to_int16_t_rintmode",
+      "bool_to_int32_t_rintmode",
+      "bool_to_uint16_t_rintmode",
+      "bool_to_uint32_t_rintmode",
+      "bool_to_bfloat16_t_rintmode",
+      "bool_to_int64_t_rintmode",
+      "half_to_half_ceilmode",
+      "half_to_half_floormode",
+      "bfloat16_t_to_bfloat16_t_ceilmode",
+      "bfloat16_t_to_bfloat16_t_floormode",
+      "int16_t_to_int32_t_rintmode",
+      "int8_t_to_int32_t_rintmode",
+      "int8_t_to_int16_t_rintmode",
+      "int8_t_to_bfloat16_t_rintmode",
+      "int8_t_to_int16_t_roundmode",
+      "int8_t_to_half_roundmode",
+      "int32_t_to_int64_t_roundmode",
+      "int32_t_to_int8_t_truncwithoverflowmode",
+      "int32_t_to_int8_t_truncmode",
+      "int16_t_to_int8_t_truncwithoverflowmode",
+      "int16_t_to_int8_t_truncmode",
+      "int32_t_to_int16_t_truncwithoverflowmode",
+      "int64_t_to_int32_t_truncwithoverflowmode",
+      "int64_t_to_int16_t_rintmode",
+      "int64_t_to_int8_t_rintmode",
+      "int64_t_to_half_truncmode",
+      "uint32_t_to_float_rintmode",
+      "uint32_t_to_bfloat16_t_rintmode",
+      "float_to_float8_e4m3_t_rintmode",
+      "uint8_t_to_uint16_t_rintmode",
+      "uint16_t_to_uint8_t_truncwithoverflowmode",
+      "uint8_t_to_uint32_t_rintmode",
+      "uint32_t_to_uint64_t_rintmode",
+      "float8_e4m3_t_to_float_rintmode",
+      "float8_e5m2_t_to_float_rintmode"};
+
+  static const std::set<std::string> kMemBasedSoftCasts{
       "float_to_int8_t_roundmode",
       "float_to_int8_t_rintmode",
       "float_to_int8_t_floormode",
@@ -305,6 +371,11 @@ LogicalResult VCastOp::verify() {
       "int16_t_to_int8_t_truncwithoverflowmode",
       "int32_t_to_int16_t_truncwithoverflowmode",
       "int64_t_to_int32_t_truncwithoverflowmode"};
+
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  bool isRegBased = moduleOp && hacc::utils::isRegBasedArch(moduleOp);
+  const auto &softSupportedCast =
+      isRegBased ? kRegBasedSoftCasts : kMemBasedSoftCasts;
 
   std::string castNameWithMode = getCastName(true);
   // check whether supports the cast operation.
