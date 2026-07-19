@@ -21,6 +21,7 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_PIPELINES_PASSES_H
 #define BISHENGIR_DIALECT_HFUSION_PIPELINES_PASSES_H
 
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"

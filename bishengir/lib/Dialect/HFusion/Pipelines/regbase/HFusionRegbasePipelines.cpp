@@ -77,20 +77,19 @@ struct TreeReduceEnableFlags {
   bool enableAR;
 };
 
-// TODO(regbase)
-// static TreeReduceEnableFlags getTreeReduceEnableFlags(TreeReduceMode mode) {
-//   switch (mode) {
-//   case TreeReduceMode::Off:
-//     return {false, false};
-//   case TreeReduceMode::RA:
-//     return {true, false};
-//   case TreeReduceMode::AR:
-//     return {false, true};
-//   case TreeReduceMode::All:
-//     return {true, true};
-//   }
-//   return {true, false};
-// }
+static TreeReduceEnableFlags getTreeReduceEnableFlags(TreeReduceMode mode) {
+  switch (mode) {
+  case TreeReduceMode::Off:
+    return {false, false};
+  case TreeReduceMode::RA:
+    return {true, false};
+  case TreeReduceMode::AR:
+    return {false, true};
+  case TreeReduceMode::All:
+    return {true, true};
+  }
+  return {true, false};
+}
 
 static DenseMap<int, std::vector<std::string>> phaseToDisabledMap = {
     {NoRestriction, {}},
@@ -417,19 +416,13 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   // pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
 
-  // TODO(regbase)
-  // // Prepare tree reduce options for RA / AR control.
-  // TreeReduceEnableFlags treeReduceFlags =
-  //     getTreeReduceEnableFlags(hfusionOptions.enableTreeReduceMode);
-  // TreeReduceV2Options treeReduceOptions;
-  // treeReduceOptions.enableRA = treeReduceFlags.enableRA;
-  // treeReduceOptions.enableAR = treeReduceFlags.enableAR;
+  TreeReduceEnableFlags treeReduceFlags =
+      getTreeReduceEnableFlags(hfusionOptions.enableTreeReduceMode);
   if (enableSIMDVFFusion(hfusionOptions)) {
     VFFusionOptions vfFusionOptions;
-    // TODO(regbase)
-    // vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
-    // vfFusionOptions.enableRA = treeReduceFlags.enableRA;
-    // vfFusionOptions.enableAR = treeReduceFlags.enableAR;
+    vfFusionOptions.fusionMode = hfusionOptions.vfFusionMode;
+    vfFusionOptions.enableRA = treeReduceFlags.enableRA;
+    vfFusionOptions.enableAR = treeReduceFlags.enableAR;
     vfFusionOptions.enableVFStackLimit = hfusionOptions.enableVFStackLimit;
     pm.addPass(analysis::createVFFusionPass(vfFusionOptions));
     canonicalizationPipeline(pm, hfusionOptions);

@@ -34,6 +34,13 @@ enum class MultiBufferStrategy {
   CUBE_NO_L0C,
 };
 
+enum class CVPipelineMode {
+  Off,
+  Unroll,
+  Skew,
+  Dynamic,
+};
+
 namespace mlir {
 
 namespace hivm {

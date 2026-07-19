@@ -47,13 +47,6 @@ class BiShengIRCompileInternalStateOpt<
   string defaultVal
 > : BiShengIRCompileOpt<desc, ty, defaultVal>, InternalStateOption;
 
-// A5 options whose implementation/types have not been migrated to A3 yet.
-// This intentionally does not inherit Option, so bishengir-options-tblgen keeps
-// the record name for future migration but emits no C++ option surface.
-class A5UnmigratedOptionStub {
-  list<string> optionScope = ["A5_ONLY"];
-}
-
 //===----------------------------------------------------------------------===//
 // Shared / Public Options
 // Ordered to match A3's bishengir-compile/Options.td.
@@ -555,12 +548,20 @@ def EnableLazyLoading : HIVMOptimizationControlOptions<
   "false"
 >;
 
-// TODO: Restore this A5 option when A5 CVPipelineMode and the matching HIVM
-// CV-pipelining pipeline wiring are migrated to A3. A3 currently exposes
-// preload/skew through EnablePreload and the CVPipelining pass uses
-// enableSkewMode/setDepthInUnrollMode, so generating this enum option would
-// reference an unmigrated type and imply unsupported behavior.
-def SetCVPipelineMode : A5UnmigratedOptionStub;
+def SetCVPipelineMode : HIVMOptimizationControlOptions<
+  "Cube-Vector pipelining mode.",
+  "CVPipelineMode",
+  "CVPipelineMode::Unroll"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(CVPipelineMode::Off, "off", "Disable Cube-Vector pipelining"),
+  clEnumValN(CVPipelineMode::Unroll, "unroll", "Standard unroll-mode pipelining"),
+  clEnumValN(CVPipelineMode::Skew, "skew", "Skew/preload-mode pipelining"),
+  clEnumValN(CVPipelineMode::Dynamic, "dynamic", "Dynamic-mode pipelining(developing)")
+)
+  }];
+}
 
 def EnableHIVMAutoStorageAlign : HIVMOptimizationControlOptions<
   "Enable mark/enable storage align.",
@@ -909,13 +910,46 @@ def EnableVFStackLimit : FeatureControlOptions<
   let passGroup = ["HFUSION"];
 }
 
-// TODO: Restore this A5 option when the A5 VFFusion implementation and
-// mlir::analysis::FusionMode are migrated to A3.
-def VfFusionMode : A5UnmigratedOptionStub;
+def VfFusionMode : FeatureControlOptions<
+  "VF fusion mode(max-parallel | all-op | n-most-op |). default is max-parallel",
+  "mlir::analysis::FusionMode",
+  "mlir::analysis::FusionMode::MaxParallel"
+> {
+  let passGroup = ["HFUSION"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::analysis::FusionMode::MaxParallel, "max-parallel",
+             "Fuse for max parallel"),
+  clEnumValN(mlir::analysis::FusionMode::AllOp, "all-op",
+             "Fuse all vector operations"),
+  clEnumValN(mlir::analysis::FusionMode::NMostOp, "n-most-op",
+             "Fuse at most N operations"),
+  clEnumValN(mlir::analysis::FusionMode::UBAwareOp, "ub-aware-op",
+             "Fuse with UB budget awareness")
+)
+  }];
+}
 
-// TODO: Restore this A5 option when the A5 TreeReduce pipeline mode and
-// mlir::hfusion::TreeReduceMode are migrated to A3.
-def EnableTreeReduceMode : A5UnmigratedOptionStub;
+def EnableTreeReduceMode : FeatureControlOptions<
+  "TreeReduce processing mode. Also controls which reduce-sum ops are "
+  "skipped in VFFusion pass to avoid conflicts.",
+  "mlir::hfusion::TreeReduceMode",
+  "mlir::hfusion::TreeReduceMode::RA"
+> {
+  let passGroup = ["HFUSION"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hfusion::TreeReduceMode::Off, "off",
+             "Disable TreeReduce RA/AR processing"),
+  clEnumValN(mlir::hfusion::TreeReduceMode::RA, "ra",
+             "Enable TreeReduce RA (row-reduction, dim=0) processing"),
+  clEnumValN(mlir::hfusion::TreeReduceMode::AR, "ar",
+             "Enable TreeReduce AR (column-reduction, dim=1) processing"),
+  clEnumValN(mlir::hfusion::TreeReduceMode::All, "all",
+             "Enable TreeReduce RA and AR processing")
+)
+  }];
+}
 
 def HfusionEnableMultipleConsumerFusion : FeatureControlOptions<
   "Enable multiple consumer fusion in AutoVectorizeV2",

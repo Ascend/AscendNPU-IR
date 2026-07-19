@@ -107,27 +107,25 @@ void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &hivmPipelineOp
   // Backward compatibility: --enable-preload=true overrides
   // --enablecv-pipeline-mode to skew
   if (options.enablePreload) {
-    // TODO(regbase)
-    // if (options.setCVPipelineMode != CVPipelineMode::Skew) {
-    //   llvm::WithColor::warning(llvm::errs())
-    //       << "warning: --enable-preload=true overrides "
-    //          "--enablecv-pipeline-mode; forcing 'Skew'.\n";
-    //   options.setCVPipelineMode = CVPipelineMode::Skew;
-    // }
+    if (options.setCVPipelineMode != CVPipelineMode::Skew) {
+      llvm::WithColor::warning(llvm::errs())
+          << "warning: --enable-preload=true overrides "
+             "--enablecv-pipeline-mode; forcing 'Skew'.\n";
+      options.setCVPipelineMode = CVPipelineMode::Skew;
+    }
   }
 
-  // TODO(regbase)
-  // // When cv-pipelining is off, disable workspace multibuffer entirely
-  // // so downstream passes do not allocate extra buffer slots for CV software
-  // // pipelining that will not be applied.
-  // if (options.setCVPipelineMode == CVPipelineMode::Off &&
-  //     options.setWorkspaceMultibuffer != 0) {
-  //   llvm::WithColor::warning(llvm::errs())
-  //       << "warning: --enablecv-pipeline-mode=Off disables "
-  //          "workspace multibuffer; forcing "
-  //          "--set-workspace-multibuffer=0.\n";
-  //   options.setWorkspaceMultibuffer = 0;
-  // }
+  // When cv-pipelining is off, disable workspace multibuffer entirely
+  // so downstream passes do not allocate extra buffer slots for CV software
+  // pipelining that will not be applied.
+  if (options.setCVPipelineMode == CVPipelineMode::Off &&
+      options.setWorkspaceMultibuffer != 0) {
+    llvm::WithColor::warning(llvm::errs())
+        << "warning: --enablecv-pipeline-mode=Off disables "
+           "workspace multibuffer; forcing "
+           "--set-workspace-multibuffer=0.\n";
+    options.setWorkspaceMultibuffer = 0;
+  }
 }
 
 void setupHIVMAVEPipelineOptions(
