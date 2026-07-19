@@ -16,12 +16,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/Config.h"
+#include "bishengir/Tools/Utils/Utils.h"
+
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/ManagedStatic.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h" // report_fatal_error
 
 using namespace bishengir;
 using namespace llvm;
@@ -175,6 +180,12 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
 
   // Warning: please do not modify this part unless you know what you're doing.
   for (auto &[optStr, opt] : opts) {
+    // Skip options that were not explicitly set by the user, matching A5
+    // behavior. Without this check, all registered options (with their default
+    // values) are forwarded to hivmc-a5, producing a diverging argument list.
+    if (opt->getNumOccurrences() == 0)
+      continue;
+
     std::string optValue = "";
 
 #define GEN_OPTION_COLLECTION
@@ -224,6 +235,84 @@ void BiShengIRCompileMainConfig::collectHIVMCArgs() {
   clOptionsConfig->setHIVMCArgs(collectedArgs);
 }
 
+
+void BiShengIRCompileMainConfig::collectHIVMCArgs(
+    BiShengIRCompileMainConfig &config) {
+  std::vector<std::string> collectedArgs;
+  auto &opts = cl::getRegisteredOptions();
+
+  bool isRegBase =
+      mlir::hacc::utils::isRegBasedArch(clOptionsConfig->getTarget());
+  bool collectA3OnlyOptions = !isRegBase;
+  bool collectA5OnlyOptions = isRegBase;
+  // Referenced from generated code, disable unused variable warning.
+  (void)collectA3OnlyOptions;
+  (void)collectA5OnlyOptions;
+
+  for (auto &[optStr, opt] : opts) {
+    if (opt->getNumOccurrences() == 0)
+      continue;
+
+    std::string optValue = "";
+
+#define GEN_OPTION_COLLECTION
+#include "bishengir/Tools/bishengir-compile/CompileOptions.cpp.inc"
+
+    if (optValue.empty())
+      continue;
+
+    collectedArgs.push_back(optStr.str() + "=" + optValue);
+  }
+
+  for (auto &args : config.getHIVMCArgs()) {
+    if (args.empty())
+      continue;
+
+    for (auto arg : llvm::split(args, " "))
+      if (!arg.empty())
+      collectedArgs.push_back(arg.str());
+  }
+
+  std::vector<std::string> filteredArgs;
+  for (const auto &arg : collectedArgs) {
+    llvm::StringRef argRef(arg);
+    if (argRef.starts_with("--link-aicore-bitcode=") ||
+        argRef.starts_with("link-aicore-bitcode="))
+      continue;
+    filteredArgs.push_back(arg);
+  }
+  collectedArgs = std::move(filteredArgs);
+
+  std::vector<std::string> linkPaths;
+  for (const auto &path : config.getLinkAicoreBitcode()) {
+    if (!path.empty())
+      linkPaths.push_back(path);
+  }
+  if (!linkPaths.empty()) {
+    std::string linkOpt = "link-aicore-bitcode=";
+    for (size_t i = 0; i < linkPaths.size(); ++i) {
+      if (i > 0)
+        linkOpt += ',';
+      linkOpt += linkPaths[i];
+    }
+    collectedArgs.push_back(std::move(linkOpt));
+  }
+
+  config.setHIVMCArgs(collectedArgs);
+}
+
+bool BiShengIRCompileMainConfig::isSharedWithDownstreamToolchain(
+    llvm::StringRef argName) {
+  auto &opts = cl::getRegisteredOptions();
+  auto it = opts.find(argName);
+  if (it == opts.end())
+    return true;
+
+  return llvm::any_of(it->second->Categories, [](const cl::OptionCategory *cat) {
+    return cat == &sharedWithDownstreamToolchainCategory;
+  });
+}
+
 void BiShengIRCompileMainConfig::registerCLOptions() {
   // Make sure that the options struct has been initialized.
   *clOptionsConfig;
@@ -232,4 +321,24 @@ void BiShengIRCompileMainConfig::registerCLOptions() {
 BiShengIRCompileMainConfig BiShengIRCompileMainConfig::createFromCLOptions() {
   BiShengIRCompileMainConfig::collectHIVMCArgs();
   return *clOptionsConfig;
+}
+
+BiShengIRCompileMainConfig
+BiShengIRCompileMainConfig::createFromCLOptions(bool regbase) {
+  if (regbase) {
+    BiShengIRCompileMainConfig::collectHIVMCArgs(*clOptionsConfig);
+    // Enforce <= 3 items
+    if (clOptionsConfig->getSimtTritonGrid().size() > 3) {
+      report_fatal_error(
+          "Invalid --simt-triton-grid: at most 3 elements allowed x,y,z.\n");
+    }
+    StringTmpPath path(clOptionsConfig->getOutputFile());
+    llvm::cantFail(llvm::errorCodeToError(canonicalizePath(path)),
+                   "failed to canonicalize output file path.");
+    clOptionsConfig->setOutputFile(path.str().str());
+    return *clOptionsConfig;
+  } else {
+    BiShengIRCompileMainConfig::collectHIVMCArgs();
+    return *clOptionsConfig;
+  }
 }

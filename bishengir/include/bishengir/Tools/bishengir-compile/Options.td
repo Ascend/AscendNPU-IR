@@ -663,6 +663,7 @@ llvm::cl::values(
 )
   }];
   let compileOptionCategories = ["targetCategory"];
+  let passGroup = ["HIVM"];
   bit isSharedWithDownstreamToolchain = 1;
 }
 
@@ -964,6 +965,7 @@ def SharedMemDynamicSize : FeatureControlOptions<
 > {
   bit isSharedWithDownstreamToolchain = 1;
 }
+#endif
 
 def EnableSimdSimtMixCompile : HIVMOptimizationControlOptions<
   "Enable simd-simt mix kernel compile",
@@ -973,7 +975,6 @@ def EnableSimdSimtMixCompile : HIVMOptimizationControlOptions<
   let passGroup = [];
   bit isSharedWithDownstreamToolchain = 1;
 }
-#endif
 
 //===----------------------------------------------------------------------===//
 // DFX Control Options
