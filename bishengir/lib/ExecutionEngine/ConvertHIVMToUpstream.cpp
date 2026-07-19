@@ -1124,6 +1124,7 @@ struct ConvertHIVMToUpstream
 } // namespace
 
 std::unique_ptr<Pass>
-mlir::execution_engine::createConvertHIVMToUpstreamPass() {
-  return std::make_unique<ConvertHIVMToUpstream>();
+mlir::execution_engine::createConvertHIVMToUpstreamPass(
+    const ExecutionEngineHIVMToUpstreamConversionOptions &options) {
+  return std::make_unique<ConvertHIVMToUpstream>(options);
 }

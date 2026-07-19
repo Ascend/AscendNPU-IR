@@ -1,14 +1,8 @@
-//===- PassPipeline.cpp - BiShengIR regbase pass pipeline ------------------===//
+//===- PassPipeline.cpp - BiShengIR pass pipeline -------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
-//
-//===----------------------------------------------------------------------===//
-//
-// RegBase (A5) pass pipeline implementation. Migrated from AscendNPU-IR-Dev.
-// Passes that depend on dialects/transforms not yet available in A3 are
-// commented out with TODO(regbase-migration) markers for gradual integration.
 //
 //===----------------------------------------------------------------------===//
 
@@ -16,46 +10,31 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
-// TODO(regbase-migration): HIVMAVEToStandard not yet available in A3.
-//   Dependency: bishengir/Conversion/HIVMAVEToStandard (HIVMAVE dialect lowering).
-// #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
-// TODO(regbase-migration): FixCallUnknownLoc not yet available in A3.
-//   Dependency: bishengir/Conversion/FixCallUnknownLoc.
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 // #include "bishengir/Conversion/FixCallUnknownLoc/FixCallUnknownLoc.h"
-// TODO(regbase-migration): HIVMAVEToAVEIntrin not yet available in A3.
-//   Dependency: bishengir/Conversion/HIVMAVEToAVEIntrin.
-// #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
+#include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
+#include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
+#include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
+#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
-// TODO(regbase-migration): AscendDPX not yet available in A3.
-//   Dependency: bishengir/Dialect/AscendDPX (DPX dialect and transforms).
 // #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
-// TODO(regbase-migration): bishengir/Dialect/HACC/Pipelines/Passes.h not in A3.
-//   buildLowerHACCToLLVMPipeline is declared in HACCPipelines.cpp but not in a
-//   public header in A3. Host-compile path commented out below.
-// #include "bishengir/Dialect/HACC/Pipelines/Passes.h"
+#include "bishengir/Dialect/HACC/Pipelines/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Pipelines/ConvertToHIVMPipeline.h"
-#include "bishengir/Dialect/HIVM/Pipelines/Passes.h"
+#include "bishengir/Dialect/HIVM/Pipelines/regbase/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
-// TODO(regbase-migration): HIVMAVE pipelines not yet available in A3.
-//   Dependency: bishengir/Dialect/HIVMAVE (HIVMAVE dialect and pipelines).
-// #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
+#include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
-// TODO(regbase-migration): Triton pipelines not yet available in A3.
-//   Dependency: bishengir/Dialect/Triton (Triton dialect, pipelines, transforms).
+#include "bishengir/Dialect/Tensor/Transforms/Passes.h"
 // #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
 // #include "bishengir/Dialect/Triton/Transforms/Passes.h"
-// TODO(regbase-migration): ExecutionEngine not yet available in A3.
-//   Dependency: bishengir/ExecutionEngine (execution engine passes).
-// #include "bishengir/ExecutionEngine/Passes.h"
+#include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
-// TODO(regbase-migration): InjectIRInstrumentation not yet available in A3.
-//   Dependency: bishengir/Transforms/InjectIRInstrumentation.h.
 // #include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "bishengir/Transforms/Passes.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
@@ -74,6 +53,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/WithColor.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <memory>
 #include <set>
@@ -82,83 +62,139 @@
 #include "bishengir/Dialect/Torch/Pipelines/Passes.h"
 #endif
 
+#include "mlir/CAPI/Utils.h"
+#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
+#include "mlir/Conversion/ArithToEmitC/ArithToEmitCPass.h"
+#include "mlir/Conversion/Passes.h"
+#include "mlir/Dialect/Arith/Transforms/Passes.h"
+#include "mlir/Dialect/LLVMIR/Transforms/Passes.h"
+#include "mlir/Dialect/MemRef/Transforms/Passes.h"
+#include "mlir/Support/FileUtilities.h"
+#include "mlir/Target/LLVMIR/ModuleTranslation.h"
+#include "mlir/Transforms/Passes.h"
+
 using namespace mlir;
 
 namespace bishengir {
 namespace regbase {
 
 // Helper function to set up HFusionPipelineOptions
-static void
-setupHFusionPipelineOptions(hfusion::HFusionPipelineOptions &hfusionPipelineOptions,
-                            const BiShengIRCompileMainConfig &config) {
+void setupHFusionPipelineOptions(
+    hfusion::HFusionPipelineOptions &hfusionPipelineOptions,
+    const BiShengIRCompileMainConfig &config) {
   auto &options = hfusionPipelineOptions;
 #define GEN_HFUSION_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
-  // TODO(regbase-migration): insertFFTS and target fields are not available
-  //   in A3's HFusionPipelineOptions. These are set via the GEN macro when
-  //   the corresponding Options.td entries are migrated.
-  // hfusionPipelineOptions.insertFFTS =
-  //     !hfusionPipelineOptions.disableFFTS &&
-  //     mlir::hacc::utils::isFFTSSupportedArch(config.getTarget());
-  // hfusionPipelineOptions.target =
-  //     mlir::hacc::stringifyTargetDeviceEnum(config.getTarget());
+  hfusionPipelineOptions.insertFFTS =
+      !hfusionPipelineOptions.disableFFTS &&
+      hacc::utils::isFFTSSupportedArch(config.getTarget());
+  hfusionPipelineOptions.target =
+      hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
 }
 
-static void
-setupHIVMPipelineOptions(hivm::HIVMPipelineOptions &hivmPipelineOptions,
-                         const BiShengIRCompileMainConfig &config) {
+void setupHIVMPipelineOptions(hivm::regbase::HIVMPipelineOptions &hivmPipelineOptions,
+                              const BiShengIRCompileMainConfig &config) {
   auto &options = hivmPipelineOptions;
 #define GEN_HIVM_OPTION_SETUP
 #include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
-  // TODO(regbase-migration): target, setCVPipelineMode, and CVPipelineMode
-  //   are not available in A3's HIVMPipelineOptions. The CV pipeline mode
-  //   guard below will be restored when these fields are migrated.
-  // hivmPipelineOptions.target =
-  //     mlir::hacc::stringifyTargetDeviceEnum(config.getTarget());
+  hivmPipelineOptions.target = config.getTarget();
 
-  // TODO(regbase-migration): isUBAwareVfFusion depends on VfFusionMode which is
-  // an A5UnmigratedOptionStub in A3. When the VFFusion implementation is
-  // migrated, restore this UB-aware VF fusion guard.
-  // if (config.isUBAwareVfFusion() && hivmPipelineOptions.enableVfMergeLevel > 0)
-  //   hivmPipelineOptions.enableVfMergeLevel = 0;
+  // UB-aware fusion splits groups to avoid overflow; disable later VF merging
+  // so the split is preserved through the HIVM pipeline.
+  if (config.isUBAwareVfFusion() && hivmPipelineOptions.enableVfMergeLevel > 0)
+    hivmPipelineOptions.enableVfMergeLevel = 0;
 
-  // TODO(regbase-migration): CV pipeline mode guards below depend on
-  //   setCVPipelineMode and CVPipelineMode which are not in A3's options.
-  //   Restore when these options are migrated.
-  // if (options.enablePreload) {
-  //   if (options.setCVPipelineMode != CVPipelineMode::Skew) {
-  //     ...
-  //   }
-  // }
+  // Backward compatibility: --enable-preload=true overrides
+  // --enablecv-pipeline-mode to skew
+  if (options.enablePreload) {
+    // TODO(regbase)
+    // if (options.setCVPipelineMode != CVPipelineMode::Skew) {
+    //   llvm::WithColor::warning(llvm::errs())
+    //       << "warning: --enable-preload=true overrides "
+    //          "--enablecv-pipeline-mode; forcing 'Skew'.\n";
+    //   options.setCVPipelineMode = CVPipelineMode::Skew;
+    // }
+  }
+
+  // TODO(regbase)
+  // // When cv-pipelining is off, disable workspace multibuffer entirely
+  // // so downstream passes do not allocate extra buffer slots for CV software
+  // // pipelining that will not be applied.
   // if (options.setCVPipelineMode == CVPipelineMode::Off &&
   //     options.setWorkspaceMultibuffer != 0) {
-  //   ...
+  //   llvm::WithColor::warning(llvm::errs())
+  //       << "warning: --enablecv-pipeline-mode=Off disables "
+  //          "workspace multibuffer; forcing "
+  //          "--set-workspace-multibuffer=0.\n";
+  //   options.setWorkspaceMultibuffer = 0;
   // }
 }
 
-// TODO(regbase-migration): setupHIVMAVEPipelineOptions not yet available.
-//   Dependency: HIVMAVE dialect and HIVMAVEPipelineOptions.
-//   Expected location in A5: bishengir/lib/Tools/bishengir-compile/PassPipeline.cpp:133-190
-#if 0
-static void
-setupHIVMAVEPipelineOptions(hivmave::HIVMAVEPipelineOptions &hivmAVEPipelineOptions,
-                            const BiShengIRCompileMainConfig &config) {
+void setupHIVMAVEPipelineOptions(
+    hivmave::HIVMAVEPipelineOptions &hivmAVEPipelineOptions,
+    const BiShengIRCompileMainConfig &config) {
   hivmAVEPipelineOptions.enableTritonKernelCompile =
       config.getEnableTritonKernelCompile();
   hivmAVEPipelineOptions.enableMixedCV = config.shouldEnableMixedCV();
   hivmAVEPipelineOptions.enableLayoutOptimization =
       config.shouldEnableLayoutOptimization();
-  // ... (full implementation in A5)
+  hivmAVEPipelineOptions.simtVFDynamicSize = config.getSimtVFDynamicSize();
+  hivmAVEPipelineOptions.enableAutoBlockifyLoop =
+      config.getEnableAutoBlockifyLoop();
+  hivmAVEPipelineOptions.enableAutoMultiBuffer =
+      config.getEnableAutoMultiBuffer();
+  hivmAVEPipelineOptions.limitAutoMultiBufferOnlyForLocalBuffer =
+      config.getLimitAutoMultiBufferOnlyForLocalBuffer();
+  hivmAVEPipelineOptions.limitAutoMultiBufferOfLocalBuffer =
+      config.getLimitAutoMultiBufferOfLocalBuffer();
+  hivmAVEPipelineOptions.limitMixAutoMultiBufferBuffer =
+      config.getLimitAutoMultiBufferBuffer();
+  hivmAVEPipelineOptions.disableMultiBufferOnUB =
+      config.getDisableMultiBufferOnUB();
+  hivmAVEPipelineOptions.disableMultiBufferOnL0C =
+      config.getDisableMultiBufferOnL0C();
+  hivmAVEPipelineOptions.disableMultiBufferOnL1 =
+      config.getDisableMultiBufferOnL1();
+  hivmAVEPipelineOptions.enableAutoBindSubBlock =
+      config.getEnableAutoBindSubBlock();
+  hivmAVEPipelineOptions.enableAutoStorageAlign =
+      config.getEnableHIVMAutoStorageAlign();
+  hivmAVEPipelineOptions.enableGlobalWorkspaceReuse =
+      config.getEnableHIVMGlobalWorkspaceReuse();
+  hivmAVEPipelineOptions.enableHIVMInjectBarrierAllSync =
+      config.getEnableHIVMInjectBarrierAllSync();
+  hivmAVEPipelineOptions.workspaceMultiBufferNum =
+      config.getSetWorkspaceMultibuffer();
+  hivmAVEPipelineOptions.enableAutoCVBalance =
+      config.getEnableHIVMAutoCVBalance();
+  hivmAVEPipelineOptions.enableInjectBlockAllSync =
+      config.getEnableHIVMInjectBlockAllSync();
+  hivmAVEPipelineOptions.disableAutoInjectBlockSync =
+      config.getDisableAutoInjectBlockSync();
+  hivmAVEPipelineOptions.enableHIVMGraphSyncSolver =
+      config.getEnableHIVMGraphSyncSolver();
+  hivmAVEPipelineOptions.enableUnitFlagSync =
+      config.getEnableHIVMUnitFlagSync();
+  hivmAVEPipelineOptions.enableCodeMotion = config.getEnableCodeMotion();
+  hivmAVEPipelineOptions.target =
+      hacc::stringifyTargetDeviceEnum(config.getTarget()).str();
+  hivmAVEPipelineOptions.enableVfMergeLevel = config.getEnableVfMergeLevel();
+  hivmAVEPipelineOptions.useDPX = config.getUseDPX();
+  hivmAVEPipelineOptions.enableND2NZOnVector =
+      config.getEnableHivmNd2nzOnVector();
+  hivmAVEPipelineOptions.enableFusedMultiplyAdd =
+      config.getEnableFusedMultiplyAdd();
+  hivmAVEPipelineOptions.enablePrintMemoryAllocatedSize =
+      config.getEnablePrintMemoryAllocatedSize();
+  hivmAVEPipelineOptions.maxReductionSplitNum = config.getMaxReductionSplit();
 }
-#endif
 
 void buildSIMTPipeline(OpPassManager &pm,
                        const BiShengIRCompileMainConfig &config) {
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
 
-  // TODO(regbase-migration): TritonRemapPass not yet available in A3.
-  //   Dependency: bishengir/Dialect/Triton (Triton dialect).
+  // TODO(regbase)
   // auto tritonGridDim = config.getSimtTritonGrid();
   // bishengir::TritonRemapOptions options;
   // if (!tritonGridDim.empty()) {
@@ -167,17 +203,26 @@ void buildSIMTPipeline(OpPassManager &pm,
   // }
   // if (tritonGridDim.size() > 1)
   //   options.gridDimY = static_cast<int>(tritonGridDim[1]);
+
   // if (tritonGridDim.size() > 2)
   //   options.gridDimZ = static_cast<int>(tritonGridDim[2]);
-  //
+
+  // TODO(regbase)
   // // TODO: When DPX covers all remapper features correctly, remove
   // // createTritonRemapPass completely.
   // if (!config.getUseDPX())
   //   pm.addPass(bishengir::triton::createTritonRemapPass(options));
+  
+  // TODO(regbase)
+  // CanonicalizerOptions canonicalizerOptions;
+  // pm.addPass(createCanonicalizerPass(canonicalizerOptions));
+  pm.addPass(createCanonicalizerPass());
 
-  pm.addPass(createCanonicalizerPass());
   pm.addPass(createCSEPass());
+  // TODO(regbase)
+  // pm.addPass(createCanonicalizerPass(canonicalizerOptions));
   pm.addPass(createCanonicalizerPass());
+
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(createConvertControlFlowToLLVMPass());
   pm.addPass(createArithToLLVMConversionPass());
@@ -187,120 +232,83 @@ void buildSIMTPipeline(OpPassManager &pm,
 
 void buildBiShengHIRAVEToLLVMPipeline(
     OpPassManager &pm, const BiShengIRCompileMainConfig &config) {
-  // TODO(regbase-migration): buildLowerHACCToLLVMPipeline not available in A3
-  //   (declared in HACCPipelines.cpp but no public header in A3). Host-compile
-  //   path disabled until HACC pipeline headers are properly exported.
-  // if (config.getCompileHost()) {
-  //   hacc::buildLowerHACCToLLVMPipeline(pm, config.getHostOutputFile());
-  //   return;
-  // }
+  if (config.getCompileHost()) {
+    hacc::buildLowerHACCToLLVMPipeline(pm, config.getHostOutputFile());
+    return;
+  }
 
-  // TODO(regbase-migration): HIVMAVE pipeline not yet available in A3.
-  //   Dependency: bishengir/Dialect/HIVMAVE (HIVMAVE dialect and pipelines).
-  // if (config.getEnableHIVMCompile()) {
-  //   hivmave::HIVMAVEPipelineOptions hivmAVEPipelineOptions;
-  //   setupHIVMAVEPipelineOptions(hivmAVEPipelineOptions, config);
-  //   hivmave::buildLowerAVEPipelines(pm, hivmAVEPipelineOptions);
-  // }
+  if (config.getEnableHIVMCompile()) {
+    hivmave::HIVMAVEPipelineOptions hivmAVEPipelineOptions;
+    setupHIVMAVEPipelineOptions(hivmAVEPipelineOptions, config);
+    hivmave::buildLowerAVEPipelines(pm, hivmAVEPipelineOptions);
+  }
 
-  // TODO(regbase-migration): LowerToLLVM pipeline - some passes not available.
-  //   buildLowerToLLVMPipeline has been stubbed for A3 compatibility.
-  // if (config.getLowerToLLVM()) {
-  //   buildLowerToLLVMPipeline(pm, config);
-  // }
+  if (config.getLowerToLLVM()) {
+    buildLowerToLLVMPipeline(pm, config);
+  }
 }
 
-/// Build the pipeline to lower BiShengHIR to LLVM Dialect IR.
-/// Many passes in this pipeline depend on A5-specific dialects and conversions
-/// that have not yet been migrated to A3. The implementation below preserves
-/// the regbase-compatible subset.
+/// Build the pipeline to lower BiShengHIR to LLVM Dialect IR
 void buildLowerToLLVMPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
 
-  // TODO(regbase-migration): DebugMemoryPass not yet available in A3.
-  //   Dependency: bishengir/Transforms (DebugMemory pass).
-  // const bool ascendDebugPrint =
-  //     StringRef(getenv("ASCEND_DEBUG_PRINT")) == "ALL";
-  // if (ascendDebugPrint) {
-  //   DebugMemoryOptions debugMemoryOptions;
-  //   pm.addPass(createDebugMemoryPass(debugMemoryOptions));
-  // }
+  const bool ascendDebugPrint =
+      StringRef(getenv("ASCEND_DEBUG_PRINT")) == "ALL";
+  if (ascendDebugPrint) {
+    // TODO(regbase)
+    // DebugMemoryOptions debugMemoryOptions;
+    // pm.addPass(createDebugMemoryPass(debugMemoryOptions));
+  }
 
-  // TODO(regbase-migration): AnnotationLoweringPass not yet available in A3.
-  //   Dependency: bishengir/Dialect/Annotation conversion paths.
-  // pm.addPass(annotation::createAnnotationLoweringPass());
+  pm.addPass(annotation::createAnnotationLoweringPass());
+  pm.addPass(hivm::createAllocToAllocaPass());
 
-  // TODO(regbase-migration): AllocToAllocaPass not yet available in A3.
-  //   Dependency: bishengir/Dialect/HIVM (hivm::createAllocToAllocaPass).
-  // pm.addPass(hivm::createAllocToAllocaPass());
+  // TODO: How does host/device separation compilation flow for triton
+  //       compilation look like?
+  // if (config.shouldCompileTriton())
+  //   pm.nest<func::FuncOp>().addPass(hivm::createInsertInferVFModeFuncPass());
 
-  // TODO(regbase-migration): InsertInitAndFinishForDebugPass not available.
-  //   Dependency: bishengir/Dialect/HIVM transforms.
-  // pm.nest<func::FuncOp>().addPass(
-  //     hivm::createInsertInitAndFinishForDebugPass());
-
-  // HIVM to Standard conversion - core lowering path.
+  pm.nest<func::FuncOp>().addPass(
+      hivm::createInsertInitAndFinishForDebugPass());
   ConvertHIVMToStandardOptions hivmToStdOptions;
-  // TODO(regbase-migration): isOpsAligned and markLibCallNoInline
-  //   not available in A3's ConvertHIVMToStandardOptions. Use defaults.
-
-  // TODO(regbase-migration): MarkDisableLoadPass not available.
+  hivmToStdOptions.isOpsAligned = config.getEnableHIVMAutoStorageAlign();
+  // TODO(regbase)
+  // hivmToStdOptions.markLibCallNoInline = config.getEnableLibCallNoInline();
   // pm.addPass(hivm::createMarkDisableLoadPass());
-
-  // TODO(regbase-migration): addSyncBlockLockFinalizePasses not available.
   // hivm::addSyncBlockLockFinalizePasses(pm);
-
   pm.addPass(createConvertHIVMToStandardPass(hivmToStdOptions));
-
-  // TODO(regbase-migration): ConvertHIVMAVEToStandardPass not available in A3.
-  //   Dependency: bishengir/Conversion/HIVMAVEToStandard.
-  // pm.addPass(createConvertHIVMAVEToStandardPass());
-
-  // TODO(regbase-migration): FixCallUnknownLocPass not available in A3.
-  //   Dependency: bishengir/Conversion/FixCallUnknownLoc.
+  pm.addPass(createConvertHIVMAVEToStandardPass());
+  // TOD(regbase)
   // pm.nest<func::FuncOp>().addPass(createFixCallUnknownLocPass());
-
   pm.addPass(memref::createExpandStridedMetadataPass());
+  pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
+  pm.addPass(hivmave::createHoistVstasPass());
+  if (config.getPureSimt() && config.getUseDPX()) {
+    // TODO(regbase)
+    // auto tritonGridDim = config.getSimtTritonGrid();
+    // bishengir::TritonRemapOptions options;
+    // options.isSimdSimtMixCompile = config.getEnableSimdSimtMixCompile();
+    // if (!tritonGridDim.empty()) {
+    //   options.gridDimX = static_cast<int>(tritonGridDim[0]);
+    //   options.useGridFlag = true;
+    // }
+    // if (tritonGridDim.size() > 1)
+    //   options.gridDimY = static_cast<int>(tritonGridDim[1]);
 
-  // TODO(regbase-migration): ConvertHIVMAVEToAVEIntrinPass not available in A3.
-  //   Dependency: bishengir/Conversion/HIVMAVEToAVEIntrin.
-  // pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
-
-  // TODO(regbase-migration): HoistVstasPass not available in A3.
-  //   Dependency: bishengir/Dialect/HIVMAVE.
-  // pm.addPass(hivmave::createHoistVstasPass());
-
-  // TODO(regbase-migration): DPX/SIMT-specific passes not available in A3.
-  //   Dependency: AscendDPX dialect, Triton dialect.
-  // if (config.getPureSimt() && config.getUseDPX()) {
-  //   auto tritonGridDim = config.getSimtTritonGrid();
-  //   bishengir::TritonRemapOptions options;
-  //   options.isSimdSimtMixCompile = config.getEnableSimdSimtMixCompile();
-  //   if (!tritonGridDim.empty()) {
-  //     options.gridDimX = static_cast<int>(tritonGridDim[0]);
-  //     options.useGridFlag = true;
-  //   }
-  //   if (tritonGridDim.size() > 1)
-  //     options.gridDimY = static_cast<int>(tritonGridDim[1]);
-  //   if (tritonGridDim.size() > 2)
-  //     options.gridDimZ = static_cast<int>(tritonGridDim[2]);
-  //   pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
-  //   pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
-  //   if (config.getEnableSIMTFastDiv())
-  //     pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
-  // }
+    // if (tritonGridDim.size() > 2)
+    //   options.gridDimZ = static_cast<int>(tritonGridDim[2]);
+    // pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
+    // pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
+    // if (config.getEnableSIMTFastDiv())
+    //   pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
+  }
   // pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
   // pm.addPass(bishengir::triton::createDecomposeFRemPass());
-
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(createLowerAffinePass());
   pm.addPass(arith::createArithExpandOpsPass());
 }
 
-// TODO(regbase-migration): buildDelayedHFusionRegBaseVectorizePipeline
-//   partially not available. ExecutionEngine conversion and
-//   createInferFuncCoreTypePass are not in A3.
-#if 0
 static void buildDelayedHFusionRegBaseVectorizePipeline(
     mlir::OpPassManager &pm, const BiShengIRCompileMainConfig &config,
     bool shouldInferFuncCoreType = true) {
@@ -315,11 +323,9 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
   bool hasExplicitEnableFlatten =
       enableFlattenOpt != registeredOptions.end() &&
       enableFlattenOpt->second->getNumOccurrences() != 0;
-  // TODO(regbase-migration): shouldEnableMixedCV not available in A3 Config.
-  //   Use inline check.
-  // if (hfusionConfig.shouldEnableMixedCV() && !hasExplicitEnableFlatten) {
-  //   hfusionConfig.setEnableFlatten(false);
-  // }
+  if (hfusionConfig.shouldEnableMixedCV() && !hasExplicitEnableFlatten) {
+    hfusionConfig.setEnableFlatten(false);
+  }
 
   HIVMAggregatedDecomposeOpOptions decomposeOption;
   decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
@@ -327,20 +333,15 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
       mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
   hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   setupHFusionPipelineOptions(hfusionPipelineOptions, hfusionConfig);
-
-  // TODO(regbase-migration): ExecutionEngine pass not available.
-  // ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
-  // upstreamOptions.convertToNamedOp =
-  //     hacc::utils::isRegBasedArch(config.getTarget());
-  // pm.addPass(
-  //     mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
-
-  hfusion::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
-
-  // TODO(regbase-migration): InferFuncCoreTypePass not available.
-  // if (shouldInferFuncCoreType) {
-  //   pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
-  // }
+  ExecutionEngineHIVMToUpstreamConversionOptions upstreamOptions;
+  upstreamOptions.convertToNamedOp =
+      hacc::utils::isRegBasedArch(config.getTarget());
+  pm.addPass(
+      mlir::execution_engine::createConvertHIVMToUpstreamPass(upstreamOptions));
+  hfusion::regbase::buildHFusionRegBasePipeline(pm, hfusionPipelineOptions);
+  if (shouldInferFuncCoreType) {
+    pm.addPass(mlir::hivm::createInferFuncCoreTypePass());
+  }
 
   ConvertHFusionToHIVMOptions hfs2hivmOptions;
   hfs2hivmOptions.mmMapMode = config.getEnableTritonKernelCompile()
@@ -348,34 +349,64 @@ static void buildDelayedHFusionRegBaseVectorizePipeline(
                                   : hfusion::MmMapMode::CoreOp;
   pm.addPass(createHFusionToHIVMConversionPass(hfs2hivmOptions));
 }
-#endif
 
 void buildFinalHIVMPipelines(mlir::OpPassManager &pm,
                              const BiShengIRCompileMainConfig &config) {
   if (config.getEnableHIVMCompile()) {
-    hivm::HIVMPipelineOptions hivmPipelineOptions;
+    hivm::regbase::HIVMPipelineOptions hivmPipelineOptions;
     setupHIVMPipelineOptions(hivmPipelineOptions, config);
-
-    // TODO(regbase-migration): buildDelayedHFusionRegBaseVectorizePipeline
-    //   not available due to missing ExecutionEngine and InferFuncCoreTypePass.
-    // if (config.getEnableSimdSimtMixCompile()) {
-    //   buildDelayedHFusionRegBaseVectorizePipeline(
-    //       pm, config, /*shouldInferFuncCoreType=*/true);
-    // }
-
-    // In A3, the HIVM optimization pipeline is named buildOptimizeHIVMPipeline
-    // instead of A5's buildLowerHIVMPipelines.
-    hivm::buildOptimizeHIVMPipeline(pm, hivmPipelineOptions);
+    if (config.getEnableSimdSimtMixCompile()) {
+      buildDelayedHFusionRegBaseVectorizePipeline(
+          pm, config, /*shouldInferFuncCoreType=*/true);
+    }
+    hivm::regbase::buildLowerHIVMPipelines(pm, hivmPipelineOptions);
   }
 }
 
-// TODO(regbase-migration): buildBiShengTTIRPipeline not yet available in A3.
-//   Dependency: whole Triton dialect and lowering pipeline.
-//   Expected location in A5: bishengir/lib/Tools/bishengir-compile/PassPipeline.cpp:391-408
-#if 0
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+// Helper function to set up LowerTritonPipelineOptions
+void setupLowerTritonPipelineOptions(
+    triton::LowerTritonPipelineOptions &options,
+    const BiShengIRCompileMainConfig &config) {
+  options.numWarps = config.getNumWarps();
+  options.threadsPerWarp = config.getThreadsPerWarp();
+  options.enableSIMTFastDiv = config.getEnableSIMTFastDiv();
+  options.useDPX = config.getUseDPX();
+  options.disableDecomposeReduction = config.getDisableDecomposeReduction();
+  options.disableReorderInstruction = config.getDisableReorderInstruction();
+  options.enableSinkDPXLoad = config.getEnableSinkDPXLoad();
+  options.enableOptimizeMath = config.getEnableOptimizeMath();
+  options.tritonMetadataOutput = config.getTritonMetadataOutput();
+  options.enableSIMTAutoBlockify = config.getEnableAutoBlockifyLoop();
+  options.superBlockFactor = config.getSuperBlockFactor();
+  if (!llvm::isPowerOf2_32(options.superBlockFactor))
+    llvm::report_fatal_error(
+        "super-block-factor must be a power of 2 and >= 1, got " +
+        Twine(options.superBlockFactor));
+  options.superBlockBarrier = config.getSuperBlockBarrier();
+#if BSPUB_DAVINCI_BISHENGIR
+  if (config.getSharedMemDynamicSize() < 122880 ||
+      config.getSharedMemDynamicSize() > 221184)
+    llvm::report_fatal_error(
+        "shared-mem-dynamic-size should range from 122880 to 221184.");
+  // max size of shared memory available for simt vf.
+  options.sharedDynamicSize = config.getSharedMemDynamicSize();
+  // encode our own compile optimization
+  options.enableBishengirSimtOptimization =
+      config.getEnableBishengirSimtOptimization();
+  options.enableSimtReorderInstruction =
+      config.getEnableSimtReorderInstruction();
+#endif
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+  options.protonGPUCompileConfig = getProtonGPUCompileConfig();
+#endif
+}
+
 void buildBiShengTTIRPipeline(OpPassManager &pm,
                               const BiShengIRCompileMainConfig &config) {
   if (config.getEnableSimdSimtMixCompile()) {
+    // Materialize SIMT mem scopes only after split so the main module can stay
+    // free of address-spaced memrefs before delayed reg-based vectorization.
     pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
     pm.addPass(createHIVMToTritonGPUConversionPass());
   }
@@ -393,8 +424,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
 
 void buildBiShengHIRFinishPipeline(mlir::OpPassManager &pm,
                                    const BiShengIRCompileMainConfig &config) {
-  // TODO(regbase-migration): createWriteBackSharedPass not available in A3.
-  //   Dependency: bishengir/Dialect/HIVM (WriteBackShared pass).
+  // TODO(regbase)
   // pm.addPass(hivm::createWriteBackSharedPass());
 }
 
@@ -406,7 +436,6 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   }
 
   pm.addPass(createCanonicalizeModulePass());
-
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
   if (config.getEnableTorchCompile()) {
     TorchToNamedOpPipelineOptions torchToNamedOpOptions;
@@ -416,46 +445,51 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
   }
 #endif
 
+  hfusion::HFusionPipelineOptions hfusionPipelineOptions;
   if (config.getEnableHfusionCompile()) {
-    auto hfusionPipelineOptions =
-        std::make_unique<hfusion::HFusionPipelineOptions>();
-    setupHFusionPipelineOptions(*hfusionPipelineOptions, config);
-
-    // TODO(regbase-migration): SIMD/SIMT mix compile not yet available.
-    //   When enabled, delay reg-based vectorization until SIMT code is split.
-    // if (config.getEnableSimdSimtMixCompile()) {
-    //   hfusionPipelineOptions->disableHfusionVectorize = true;
-    // }
-
-    hfusion::buildHFusionPipelines(pm, *hfusionPipelineOptions);
+    setupHFusionPipelineOptions(hfusionPipelineOptions, config);
+    if (config.getEnableSimdSimtMixCompile()) {
+      // Delay reg-based vectorization until SIMT code is split out and we can
+      // re-run it only on the main module.
+      hfusionPipelineOptions.disableHfusionVectorize = true;
+    }
+    hfusion::regbase::buildHFusionPipelines(pm, hfusionPipelineOptions);
   }
 
   if (config.getEnableHIVMCompile()) {
     // Build convert to HIVM Dialect pipeline.
-    auto convertToHIVMOptions =
-        std::make_unique<hivm::ConvertToHIVMPipelineOptions>();
-    convertToHIVMOptions->enableTritonKernelCompile =
+    hivm::regbase::ConvertToHIVMPipelineOptions convertToHIVMOptions;
+    convertToHIVMOptions.enableTritonKernelCompile =
         config.getEnableTritonKernelCompile();
-    // TODO(regbase-migration): enableRegBaseHIVMPipe not available in A3's
-    //   ConvertToHIVMPipelineOptions. RegBase flag is inferred from target.
-    // convertToHIVMOptions->enableRegBaseHIVMPipe =
-    //     mlir::hacc::utils::isRegBasedArch(config.getTarget());
-    hivm::buildConvertToHIVMPipeline(pm, *convertToHIVMOptions);
-    // In A3, the HIVM optimization pipeline (buildOptimizeHIVMPipeline) already
-    // includes tensor optimization passes, so the separate
-    // buildHIVMTensorOptimizations call from A5 is not needed here.
-    // hivm::buildHIVMTensorOptimizations(pm, hivmPipelineOptions);
-
-    // TODO(regbase-migration): Mixed CV decompose + delayed vectorize
-    //   not yet available (depends on ExecutionEngine pass and
-    //   shouldEnableMixedCV which is not in A3 Config).
-    // if (config.shouldEnableMixedCV()) {
-    //   ...
-    // }
-
-    // TODO(regbase-migration): SIMD/SIMT mix compile scope/split passes
-    //   not yet available (depends on getEnableSimdSimtMixCompile which
-    //   is not available in A3 Config).
+    convertToHIVMOptions.enableRegBaseHIVMPipe =
+        hacc::utils::isRegBasedArch(config.getTarget());
+    hivm::regbase::HIVMPipelineOptions hivmPipelineOptions;
+    setupHIVMPipelineOptions(hivmPipelineOptions, config);
+    hivm::regbase::buildConvertToHIVMPipeline(pm, convertToHIVMOptions);
+    hivm::regbase::buildHIVMTensorOptimizations(pm, hivmPipelineOptions);
+    if (config.shouldEnableMixedCV()) {
+      HIVMAggregatedDecomposeOpOptions decomposeOption;
+      decomposeOption.decomposePhase = bishengir::DecomposePhase::NO_CONSTRAINT;
+      pm.nest<func::FuncOp>().addPass(
+          mlir::hivm::createHIVMAggregatedDecomposeOpPass(decomposeOption));
+      // delay vectorization after split simd/simt
+      if (!config.getEnableSimdSimtMixCompile())
+        buildDelayedHFusionRegBaseVectorizePipeline(
+            pm, config, /*shouldInferFuncCoreType=*/true);
+    }
+    if (config.getEnableSimdSimtMixCompile()) {
+      // TODO(regbase)
+      // pm.addPass(hivm::createAutoScopePass());
+      // pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
+      pm.addPass(scope::createOutlineScopePass());
+      // pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
+      // pm.addPass(hivm::createInferSimtVFMemEffectPass());
+      // Infer per-argument mem scope hints from the mixed call boundary first;
+      // actual address space rewrites are deferred until each SIMT module is
+      // split out and lowered independently.
+      // pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
+      // pm.addPass(hivm::createSplitSimtModulePass());
+    }
   }
 }
 
@@ -472,55 +506,37 @@ public:
       : PassWrapper<BiShengIRCompilePass, OperationPass<ModuleOp>>(pass) {}
   StringRef getArgument() const override { return "bishengir-compile-regbase"; }
   StringRef getDescription() const override {
-    return "Compile BiShengIR module to binary (regbase/A5 pipeline).";
+    return "Compile BiShengIR module to binary with the regbase pipeline.";
   }
 
   void runOnOperation() override {
     ModuleOp moduleOp = getOperation();
     BiShengIRCompileMainConfig config;
+    // Use generated metadata from Options.td to map pass options back to the
+    // compile config.
+#define GEN_PASS_OPTION_TO_CONFIG
+#include "bishengir/Tools/bishengir-compile/ConfigUtils.cpp.inc"
     config.setOutputFile(outputFile);
-
-    // Collect pass options directly and pass them as HIVMC args.
-    // This approach follows A3's BiShengIRCompilePass pattern instead of
-    // A5's printAsTextualPipeline-based approach (which depends on
-    // MLIR C API utilities not available in A3's MLIR version).
-    SmallVector<Pass::Option<bool> *> sharedWithHIVMCompileBool = {
-        &enableAutoBindSubBlock,
-        &enableAutoBlockifyLoop,
-        &enableAutoMultiBuffer,
-        &enableBinRelocation,
-        &enableCodeMotion,
-        &enableDebugInfo,
-        &enableHIVMCompile,
-        &enableStaticBarePtr,
-        &enableTritonKernelCompile,
+    std::string arg;
+    std::vector<std::string> args;
+    std::set<std::string> skip = {" ", "{", "}", getArgument().str()};
+    auto callback = [&arg, &args, skip](MlirStringRef str, void *data) {
+      std::string sData = std::string(str.data, str.data + str.length);
+      if (skip.count(sData) != 0) {
+        if (!arg.empty() && (arg[0] != 'o' || arg[1] != '=')) {
+          args.push_back("-" + arg);
+        }
+        arg.clear();
+      } else {
+        arg += sData;
+      }
     };
 
-    SmallVector<Pass::Option<unsigned> *> sharedWithHIVMCompileUnsigned = {
-        &setWorkspaceMultibuffer,
-        &tileMixVectorLoop,
-        &tileMixCubeLoop,
-    };
-
-    std::vector<std::string> collectedArgs;
-    for (auto &opt : sharedWithHIVMCompileBool) {
-      std::string arg =
-          opt->getArgStr().str() + "=" + (opt->getValue() ? "true" : "false");
-      collectedArgs.push_back(arg);
-    }
-    for (auto &opt : sharedWithHIVMCompileUnsigned) {
-      std::string arg =
-          opt->getArgStr().str() + "=" + std::to_string(opt->getValue());
-      collectedArgs.push_back(arg);
-    }
-    // Add target option
-    collectedArgs.push_back("target=" +
-                            mlir::hacc::stringifyTargetDeviceEnum(target.getValue()).str());
-    for (const std::string &arg : this->hivmcArgs) {
-      collectedArgs.push_back(arg);
-    }
-
-    config.setHIVMCArgs(collectedArgs);
+    mlir::detail::CallbackOstream stream(callback, nullptr);
+    this->printAsTextualPipeline(stream);
+    config.setClArgs(args);
+    // TODO now
+    BiShengIRCompileMainConfig::collectHIVMCArgs(config);
 
     if (failed(runRegBasePipeline(moduleOp, config))) {
       signalPassFailure();

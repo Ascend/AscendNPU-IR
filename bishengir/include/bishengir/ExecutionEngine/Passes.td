@@ -103,6 +103,9 @@ def ExecutionEngineHIVMToUpstreamConversion : Pass<"execution-engine-convert-hiv
     "memref::MemRefDialect",
     "tensor::TensorDialect",
   ];
+  let options =
+      [Option<"convertToNamedOp", "convert-to-named-op", "bool",
+      "true", "Convert hir operations to named ones">];
 }
 def ExecutionEngineHFusionToUpstreamConversion : Pass<"execution-engine-convert-hfusion-to-upstream"> {
   let summary = "Convert HFusion operations to upstream dialect's equivalent for execution engine";

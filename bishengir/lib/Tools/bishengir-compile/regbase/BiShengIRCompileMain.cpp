@@ -16,6 +16,7 @@
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 #include "bishengir/Tools/bishengir-compile/regbase/PassPipeline.h"
+#include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "mlir/Support/FileUtilities.h"
 #include "llvm/Support/FileSystem.h"
@@ -133,10 +134,8 @@ skipOptions(const std::vector<std::string> &options,
   return result;
 }
 
-/// Get the HIVMC binary name for regbase pipeline.
 static StringRef getHIVMCName() {
-  // In A3, the downstream compiler is named "hivmc" (vs "hivmc-a5" in A5).
-  const char *kBiShengIRHIVMBinaryName = "hivmc";
+  const char *kBiShengIRHIVMBinaryName = "hivmc-a5";
   return kBiShengIRHIVMBinaryName;
 }
 
@@ -188,9 +187,11 @@ runExternalHIVMC(ModuleOp &module,
 
   auto hivmcOptions = config.getHIVMCArgsDashDash();
   llvm::append_range(arguments, hivmcOptions);
-  // TODO(regbase-migration): getClArgs not available in A3 Config.
-  //   CLI argument forwarding from the wrapper binary to hivmc is limited
-  //   to the explicitly collected HIVMC args for now.
+  for (const auto &arg : regbase::filterSharedHIVMCOptions(config.getClArgs())) {
+    auto argName = StringRef(arg).ltrim('-').split('=').first;
+    if (!regbase::hasCLIArg(arguments, argName))
+      arguments.push_back(arg);
+  }
 
   arguments.push_back("-o");
   arguments.push_back(outputFile);
@@ -202,9 +203,16 @@ runExternalHIVMC(ModuleOp &module,
                                      "hfusion-enable-multiple-consumer-fusion",
                                      "disable-tightly-coupled-buffer-reuse",
                                      "enable-hivm-cross-core-gss",
+                                     "enable-tree-reduce-v2",
                                      "vf-fusion-mode",
                                      "disable-vf-reachable-check",
-                                     "enable-sink-dpx-load"};
+                                     "enable-sink-dpx-load",
+                                     // hivmc-a5 does not recognize
+                                     // --enable-lir-compile (it is an A3
+                                     // bishengir-compile-only flag). Drop it
+                                     // before forwarding to hivmc-a5 in the
+                                     // RegBase path.
+                                     "enable-lir-compile"};
   auto skippedArgs = skipOptions(arguments, blacklist);
 
   SmallVector<StringRef> argumentsRef(skippedArgs.begin(), skippedArgs.end());
@@ -251,6 +259,7 @@ static bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
   }
   return result;
 }
+#endif
 
 static bool runSIMDToLLVMCompile(ModuleOp module,
                                  BiShengIRCompileMainConfig &config) {
@@ -258,7 +267,6 @@ static bool runSIMDToLLVMCompile(ModuleOp module,
                             config, "BiShengSIMD")
       .succeeded();
 }
-#endif
 
 } // namespace
 
@@ -269,11 +277,11 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     return failure();
   }
 
-  // VF fusion may cause ub overflow. When that happens we fall back through
-  // the vector-side tiers (VFFusion / VF-reachable-check / tight-coupled
-  // buffer), all of which are only meaningful when the offender is UB, so
-  // they are gated on hasUboverflow.
+  // Track each address-space overflow independently so fallback can disable the
+  // matching multi-buffer knob before trying coarser vector-side mitigations.
   bool hasUboverflow = false;
+  bool hasCcOverflow = false;
+  bool hasCbufOverflow = false;
   MLIRContext *ctx = mod->getContext();
   mlir::DiagnosticEngine &diagEngine = ctx->getDiagEngine();
   std::vector<Diagnostic> collectedDiagnostics;
@@ -291,6 +299,12 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
       if (msg.find("ub overflow") != std::string::npos) {
         hasUboverflow = true;
       }
+      if (msg.find("cc overflow") != std::string::npos) {
+        hasCcOverflow = true;
+      }
+      if (msg.find("cbuf overflow") != std::string::npos) {
+        hasCbufOverflow = true;
+      }
     }
     collectedDiagnostics.emplace_back(std::move(diag));
   });
@@ -304,7 +318,9 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
   // so each fallback policy is composable and explicit. Planned policies:
   //   - OpFusion retry policy: bump tiling-max-counter each attempt, up to 5
   //     retries (the current default branch).
-  //   - AutoBlockify retry policy: progressively disable hoisting.
+  //   - AutoBlockify retry policy: progressively disable hoisting and then
+  //     multi-buffer.
+  //   - MultiBuffer retry policy: disable auto-multi-buffer.
   // Once the retryPassManager exists, the tryTimes / nested-if logic below
   // should be replaced by composing those policies.
   if (config.getEnableTuningMode()) {
@@ -316,6 +332,8 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     ModuleOp hirCompileMode = mod.clone();
     bool success = true;
     hasUboverflow = false;
+    hasCcOverflow = false;
+    hasCbufOverflow = false;
 
     // TODO(regbase-migration): SIMD/SIMT mix compile not yet available.
     //   Depends on Triton pipeline and SIMT module split.
@@ -355,25 +373,60 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
               succeeded(runPipelineRegBase(hirCompileMode,
                                            regbase::buildFinalHIVMPipelines,
                                            config, "buildFinalHIVMPipelines"));
-    if (!success && hasUboverflow) {
-      // Vector-side fallback tiers for UB overflow. These do not touch
-      // multi-buffer and are tried in order until one is applicable.
-      bool clear = false;
-      if (config.getEnableVFFusion()) {
+    bool hasMemoryOverflow = hasUboverflow || hasCcOverflow || hasCbufOverflow;
+    if (!success && hasMemoryOverflow) {
+      bool flippedAnyMultiBufferKnob = false;
+      if (config.getEnableAutoMultiBuffer()) {
+        if (hasUboverflow && !config.getDisableMultiBufferOnUB()) {
+          LDBG("ub overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled UB (Vector) multi buffer");
+          config.setDisableMultiBufferOnUB(true);
+          flippedAnyMultiBufferKnob = true;
+        }
+        if (hasCcOverflow && !config.getDisableMultiBufferOnL0C()) {
+          LDBG("cc overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled L0C multi buffer");
+          config.setDisableMultiBufferOnL0C(true);
+          flippedAnyMultiBufferKnob = true;
+        }
+        if (hasCbufOverflow && !config.getDisableMultiBufferOnL1()) {
+          LDBG("cbuf overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled L1 (cbuf) multi buffer");
+          config.setDisableMultiBufferOnL1(true);
+          flippedAnyMultiBufferKnob = true;
+        }
+      }
+      if (flippedAnyMultiBufferKnob) {
+        collectedDiagnostics.clear();
+      } else if (config.getEnableAutoMultiBuffer()) {
+        LDBG("memory overflow (ub/cc/cbuf) detected at attempt "
+             << (i + 1) << "/" << tryTimes
+             << ", per-buffer knobs exhausted, fallback with disabled auto "
+                "multi buffer");
+        collectedDiagnostics.clear();
+        config.setEnableAutoMultiBuffer(false);
+      } else if (hasUboverflow && config.getEnableVFFusion()) {
         LDBG("ub overflow detected at attempt "
              << (i + 1) << "/" << tryTimes
              << ", fallback with disabled vffusion");
-        clear = true;
         config.setEnableVFFusion(false);
-      } else if (!config.getDisableVFReachableCheck()) {
+        collectedDiagnostics.clear();
+      } else if (hasUboverflow && !config.getDisableVFReachableCheck()) {
         LDBG("ub overflow detected at attempt "
              << (i + 1) << "/" << tryTimes
              << ", fallback with disabled VF reachable check");
-        clear = true;
         config.setDisableVFReachableCheck(true);
-      }
-      if (clear && i + 1 < tryTimes)
         collectedDiagnostics.clear();
+      } else if (hasUboverflow && !config.getDisableTightCoupledBuffer()) {
+        LDBG("ub overflow detected at attempt "
+             << (i + 1) << "/" << tryTimes
+             << ", fallback with MixCV GM path");
+        config.setDisableTightCoupledBuffer(true);
+        collectedDiagnostics.clear();
+      }
     }
 
     if (!success) {
@@ -392,7 +445,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     // } else if (config.getPureSimt()) {
     //   success = success && runSIMTToLLVMCompile(hirCompileMode, config);
     // } else {
-    //   success = success && runSIMDToLLVMCompile(hirCompileMode, config);
+    success = success && runSIMDToLLVMCompile(hirCompileMode, config);
     // }
 
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
@@ -403,7 +456,7 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     }
 
     // increase max buffers by 2 in HFusion auto schedule
-    config.increaseMaxBufferCountTuning(2);
+    config.increaseHfusionMaxBufferCountTuning(2);
   }
 
   // Restore to the default handler.
