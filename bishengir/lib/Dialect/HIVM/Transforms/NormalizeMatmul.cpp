@@ -658,6 +658,15 @@ CCFInfo getOutermostCCFInfo(Operation *op, CCFInfo info) {
     info.inVal = forOp.getInitArgs()[argIdx];
     info.outVal = forOp->getResult(argIdx);
     info.insertPointOp = forOp;
+
+    // If the forOp result has annotation.mark {matmul_at_least_once},
+    // the matmul inside is guaranteed to execute at least once, so we
+    // can override mayNotExec to false regardless of loop bounds.
+    auto maybeMarkOp =
+        utils::getAnnotateOpWithAttr(info.outVal, "matmul_at_least_once");
+    if (maybeMarkOp.has_value()) {
+      info.mayNotExec = false;
+    }
   } else if (auto ifOp = dyn_cast<scf::IfOp>(parentOp)) {
     if (!ifOp.elseBlock())
       return CCFInfo::getFailure(info);
@@ -1065,6 +1074,12 @@ public:
     bool skipOptimize = ccfInfo.isFailure;
     bool mayNotExec = ccfInfo.mayNotExec;
     bool isUsingCounter = false;
+
+    // Erase the annotation.mark {matmul_at_least_once} after consuming it.
+    if (auto markOp =
+            utils::getAnnotateOpWithAttr(outerOutVal, "matmul_at_least_once"))
+      rewriter.eraseOp(*markOp);
+
     // get bias Info
     BrcBiasInfo biasInfo = getBrcBiasMode<T>(ccfInfo, op);
     LDBG("BiasMode:" << biasInfo.brcBiasMode);
