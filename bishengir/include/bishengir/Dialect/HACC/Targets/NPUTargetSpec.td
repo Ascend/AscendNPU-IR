@@ -35,6 +35,12 @@ class TargetSpec <string name> {
   // Size of unified buffer in bits.
   int UbSize = ?;
 
+  // Minimal size of data cache for simt in bits
+  int MinimalDCacheSize = 0;
+
+  // Maximum size of data cache for simt in bits
+  int MaximumDCacheSize = 0;
+
   // Size of L1 buffer in bits.
   int L1Size = ?;
 
@@ -55,6 +61,9 @@ class TargetSpec <string name> {
 
   // Align size of L0c buffer in bits.
   int L0cAlignSize = ?;
+
+  // Arch
+  string Arch = ?;
 }
 
 //===----------------------------------------------------------------------===//
@@ -70,6 +79,7 @@ class Ascend910B_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
+  let Arch = "dav-c220";
 }
 
 def Ascend910B1Spec : Ascend910B_BaseSpec<"Ascend910B1"> {
@@ -114,37 +124,38 @@ def Ascend910B2CSpec : Ascend910B_BaseSpec<"Ascend910B2C"> {
 
 class Ascend310B_BaseSpec <string name> : TargetSpec<name> {
   let UbSize = 2097152; // bits = 256KB
-  let L1Size = 4194304; // bits = 512KB
+  let L1Size = 8388608; // bits = 1024KB
   let L0aSize = 524288; // bits = 64KB
   let L0bSize = 524288; // bits = 64KB
-  let L0cSize = 2097152; // bits = 256KB
+  let L0cSize = 1048576; // bits = 128KB
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
+  let Arch = "dav-m300";
 }
 
 def Ascend310B1Spec : Ascend310B_BaseSpec<"Ascend310B1"> {
-  let AiCoreCount = 32;
-  let CubeCoreCount = 32;
-  let VectorCoreCount = 64;
+  let AiCoreCount = 1;
+  let CubeCoreCount = 1;
+  let VectorCoreCount = 1;
 }
 
 def Ascend310B2Spec : Ascend310B_BaseSpec<"Ascend310B2"> {
-  let AiCoreCount = 32;
-  let CubeCoreCount = 32;
-  let VectorCoreCount = 64;
+  let AiCoreCount = 1;
+  let CubeCoreCount = 1;
+  let VectorCoreCount = 1;
 }
 
 def Ascend310B3Spec : Ascend310B_BaseSpec<"Ascend310B3"> {
-  let AiCoreCount = 32;
-  let CubeCoreCount = 32;
-  let VectorCoreCount = 64;
+  let AiCoreCount = 1;
+  let CubeCoreCount = 1;
+  let VectorCoreCount = 1;
 }
 
 def Ascend310B4Spec : Ascend310B_BaseSpec<"Ascend310B4"> {
-  let AiCoreCount = 32;
-  let CubeCoreCount = 32;
-  let VectorCoreCount = 64;
+  let AiCoreCount = 1;
+  let CubeCoreCount = 1;
+  let VectorCoreCount = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -160,6 +171,7 @@ class Ascend910_93_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
+  let Arch = "dav-c220";
 }
 
 def Ascend910_9362_Spec : Ascend910_93_BaseSpec<"Ascend910_9362"> {
@@ -204,6 +216,8 @@ def Ascend910_9392_Spec : Ascend910_93_BaseSpec<"Ascend910_9392"> {
 
 class Ascend950_BaseSpec <string name> : TargetSpec<name> {
   let UbSize = 2031616; // bits = 248KB, reserve 8KB for compiler
+  let MinimalDCacheSize = 262144; // bits = 32KB
+  let MaximumDCacheSize = 983040; // bits = 120KB
   let L1Size = 4194304; // bits = 512KB
   let L0aSize = 524288; // bits = 64KB
   let L0bSize = 524288; // bits = 64KB
@@ -211,6 +225,7 @@ class Ascend950_BaseSpec <string name> : TargetSpec<name> {
   let UbAlignSize = 256; // bits = 32B
   let L1AlignSize = 256; // bits = 32B
   let L0cAlignSize = 4096; // bits = 512B
+  let Arch = "dav-c310";
 }
 
 def Ascend910_950z_Spec : Ascend950_BaseSpec<"Ascend910_950z"> {
