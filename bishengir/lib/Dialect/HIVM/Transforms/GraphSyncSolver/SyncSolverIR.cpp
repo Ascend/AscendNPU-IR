@@ -99,6 +99,11 @@ std::string PointerLikeInfo::str() {
     ret += comma.get();
     ret += std::to_string(allocateSize.value());
   }
+  ret += comma.get();
+  ret += std::string("isWorkSpace=") + (isWorkSpace ? "true" : "false");
+  ret += comma.get();
+  ret += std::string("isTightlyCoupledBuffer=") +
+         (isTightlyCoupledBuffer ? "true" : "false");
   ret += ")";
   return ret;
 }
