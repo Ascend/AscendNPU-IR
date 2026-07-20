@@ -57,3 +57,29 @@ func.func @test_cumsum_test_cumsum_compensated(%src:tensor<32x32xf32>) -> tensor
   %res = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%temp, %broadcasted : tensor<32x32xf32>, tensor<32x32xf32>) outs(%0 : tensor<32x32xf32>) -> tensor<32x32xf32>
   return %res : tensor<32x32xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @test_fp_bitwise_vand_f16
+// CHECK: linalg.generic
+// CHECK: arith.bitcast {{.*}} : f16 to i16
+// CHECK: arith.bitcast {{.*}} : f16 to i16
+// CHECK: arith.andi
+// CHECK: arith.bitcast {{.*}} : i16 to f16
+func.func @test_fp_bitwise_vand_f16(%lhs: tensor<16xf16>, %rhs: tensor<16xf16>, %dst: tensor<16xf16>) -> tensor<16xf16> {
+  %0 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%lhs, %rhs : tensor<16xf16>, tensor<16xf16>) outs(%dst : tensor<16xf16>) -> tensor<16xf16>
+  return %0 : tensor<16xf16>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_fp_bitwise_vor_bf16
+// CHECK: linalg.generic
+// CHECK: arith.bitcast {{.*}} : bf16 to i16
+// CHECK: arith.bitcast {{.*}} : bf16 to i16
+// CHECK: arith.ori
+// CHECK: arith.bitcast {{.*}} : i16 to bf16
+func.func @test_fp_bitwise_vor_bf16(%lhs: tensor<16xbf16>, %rhs: tensor<16xbf16>, %dst: tensor<16xbf16>) -> tensor<16xbf16> {
+  %0 = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%lhs, %rhs : tensor<16xbf16>, tensor<16xbf16>) outs(%dst : tensor<16xbf16>) -> tensor<16xbf16>
+  return %0 : tensor<16xbf16>
+}

@@ -29,6 +29,7 @@ add_bishengir_extension_library(BiShengIRExecutionEngineTransforms
   ${conversion_libs}
   ${dialect_libs}
   BiShengIRHACCUtils
+  BiShengIRHFusionTransforms
   MLIRPass
   BiShengIRTransform
 )
