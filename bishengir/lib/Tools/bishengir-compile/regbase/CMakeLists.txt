@@ -6,7 +6,20 @@ set(triton_libs)
 set(triton_deps)
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
   list(APPEND triton_libs TritonAggregateLib)
-  list(APPEND triton_deps ProtonToProtonGPUIncGen)
+  # Explicitly list all proton IncGen targets whose generated .h.inc files are
+  # pulled in (via InitAllDialects.h -> RegisterTritonDialects.h) when
+  # compiling bishengir-compile.cpp. Without these, ninja may schedule the
+  # .cpp.o build before tablegen runs under RelWithDebInfo builds.
+  list(APPEND triton_deps
+    ProtonTableGen
+    ProtonAttrDefsIncGen
+    ProtonGPUTableGen
+    ProtonGPUAttrDefsIncGen
+    ProtonGPUTypesIncGen
+    ProtonToProtonGPUIncGen
+    ProtonGPUConversionPassIncGen
+    ProtonGPUTransformsIncGen
+  )
 endif()
 
 add_bishengir_library(BiShengIRRegBaseCompileLib
