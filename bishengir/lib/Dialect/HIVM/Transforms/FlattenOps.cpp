@@ -107,7 +107,8 @@ class FlattenOpsRewritePattern
           .adjustTargetDimensions(rewriter, res.value());
     });
     rewriter.replaceOp(op, clonedOperation);
-    LDBG(*clonedOperation->getParentOp());
+    LDBG((clonedOperation->getParentOp() ? *(clonedOperation->getParentOp())
+                                         : *clonedOperation));
     return failure();
   }
 };

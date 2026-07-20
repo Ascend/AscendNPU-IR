@@ -190,8 +190,7 @@ FailureOr<Value> traceReshapeOrSliceOnlyOneUser(Value input);
 Value traceReshapeOrSliceOnlyOneUserOrSelf(Value input);
 
 /// Whether is scalar-vector binary op.
-template <typename SrcOp>
-bool isSVOp(SrcOp op) {
+template <typename SrcOp> bool isSVOp(SrcOp op) {
   llvm::SmallVector<Value> inputs = op.getDpsInputs();
   if (inputs.size() != 2) {
     return false;
@@ -298,10 +297,11 @@ Value divWithRoundMode(OpBuilder &builder, Location loc, Type resType,
                        hfusion::RoundMode roundingMode,
                        std::optional<Operation **> divOp = std::nullopt);
 
-Value divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Type resType,
-                                Value src0, Value src1, Value resTensor,
-                                hfusion::RoundMode roundingMode, hfusion::TypeFn castIntegerType,
-                                std::optional<Operation **> divOp = std::nullopt);
+Value divWithRoundModeAndCastType(
+    OpBuilder &builder, Location loc, Type resType, Value src0, Value src1,
+    Value resTensor, hfusion::RoundMode roundingMode,
+    hfusion::TypeFn castIntegerType,
+    std::optional<Operation **> divOp = std::nullopt);
 
 bool isFillOp(Operation *op);
 
@@ -343,7 +343,13 @@ hivm::AlignKind deduceAlignmentForMemRefType(MemRefType vecType);
 
 bool hasDynamicShapeOperand(Operation *op);
 
+bool hasComplexControlFlow(Operation *op);
+
 bool hasCustomOp(Operation *op);
+
+bool hasScope(Operation *funcOp);
+
+bool hasUnpropagateableCase(Operation *op, bool skipScope);
 
 bool isFromFunctionArg(mlir::Value v);
 
@@ -390,7 +396,7 @@ const float INVTRIG_P0 = 0.16668899232596927f;
 const float INVTRIG_P1 = 0.073496900982905745f;
 const float INVTRIG_P2 = 0.059274584886282809f;
 } // namespace trig
- 
+
 // ============================================================================
 // lgamma constants (Lanczos approximation with g=7, n=8)
 // Reference: torch-mlir/stablehlo ChloLegalizeToStablehlo.cpp

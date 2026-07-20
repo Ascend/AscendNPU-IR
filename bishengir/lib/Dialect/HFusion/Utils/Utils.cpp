@@ -20,6 +20,7 @@
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/IR/HFusionImpl.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "llvm/ADT/TypeSwitch.h"
@@ -195,10 +196,11 @@ LogicalResult hfusion::simplifyVxorToVnot(PatternRewriter &rewriter,
                                           hfusion::ElemwiseBinaryOp op) {
   if (isConstantAllOne(op.getOperand(1))) {
     // XOR with all ones values can be optimized as NOT operation
-    auto vnotOp = hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn, hfusion::UnaryFnAttr> (
-      rewriter, op.getLoc(), hfusion::UnaryFn::vnot,
-      ValueRange(op.getOperand(0)), ValueRange(op.getOperand(0))
-    );
+    auto vnotOp =
+        hfusion::createUnaryOp<hfusion::ElemwiseUnaryOp, hfusion::UnaryFn,
+                               hfusion::UnaryFnAttr>(
+            rewriter, op.getLoc(), hfusion::UnaryFn::vnot,
+            ValueRange(op.getOperand(0)), ValueRange(op.getOperand(0)));
 
     rewriter.replaceOp(op, vnotOp);
     return success();
@@ -748,6 +750,60 @@ bool hasDynamicShapeOperand(Operation *op) {
   return false;
 }
 
+bool hasComplexControlFlow(Operation *op) {
+  // blacklist for not flattening ops whose semantics depend on their
+  // logical iteration rank.
+  bool isComplex = false;
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::StrideLoadOp strideLoadOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::StrideStoreOp strideStoreOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::GatherTOp gatherTOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::IndexPutOp indexPutTOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  op->walk<WalkOrder::PreOrder>(
+      [&](hfusion::ScatterTOp scatterTOp) -> WalkResult {
+        isComplex = true;
+        return WalkResult::interrupt();
+      });
+
+  if (isComplex) {
+    return true;
+  }
+
+  return isComplex;
+}
+
 bool hasCustomOp(Operation *op) {
   bool found = false;
 
@@ -759,6 +815,29 @@ bool hasCustomOp(Operation *op) {
     return WalkResult::advance();
   });
 
+  return found;
+}
+
+bool hasScope(Operation *funcOp) {
+  bool found = false;
+
+  funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {
+    if (auto scopeOp = dyn_cast<scope::ScopeOp>(op)) {
+      // TODO: remove this constraint when we can support propagate across scope
+      found = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+
+  return found;
+}
+
+bool hasUnpropagateableCase(Operation *const op, bool skipScope) {
+  bool found = hasCustomOp(op) || hasComplexControlFlow(op);
+  if (skipScope) {
+    found |= hasScope(op);
+  }
   return found;
 }
 
@@ -1277,7 +1356,8 @@ void hfusion::offsetArangeOp(OpBuilder &builder, Operation *tiledOp,
       assert(val.getType() == builder.getIndexType());
       offsetVal = val;
     } else
-      llvm::report_fatal_error("Expecting integer attribute or value as offset");
+      llvm::report_fatal_error(
+          "Expecting integer attribute or value as offset");
     Value stride = std::get<1>(offsetStride);
     Value dimOffset =
         builder.createOrFold<arith::MulIOp>(loc, offsetVal, stride);
@@ -1370,10 +1450,12 @@ Value hfusion::divWithRoundMode(OpBuilder &builder, Location loc, Type resType,
   return res;
 }
 
-Value hfusion::divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Type resType,
-                                Value src0, Value src1, Value resTensor,
-                                hfusion::RoundMode roundingMode, hfusion::TypeFn castIntegerType,
-                                std::optional<Operation **> divOp) {
+Value hfusion::divWithRoundModeAndCastType(OpBuilder &builder, Location loc,
+                                           Type resType, Value src0, Value src1,
+                                           Value resTensor,
+                                           hfusion::RoundMode roundingMode,
+                                           hfusion::TypeFn castIntegerType,
+                                           std::optional<Operation **> divOp) {
   Type elemType = getElementTypeOrSelf(src0.getType());
   Value castF32X = src0;
   Value castF32Y = src1;
@@ -1381,8 +1463,10 @@ Value hfusion::divWithRoundModeAndCastType(OpBuilder &builder, Location loc, Typ
   // step 1: x_f32 = cast(x) -> f32
   //         y_f32 = cast(y) -> f32
   if (!elemType.isF32()) {
-    castF32X = hfusion::castTo(builder, src0, builder.getF32Type(), castIntegerType);
-    castF32Y = hfusion::castTo(builder, src1, builder.getF32Type(), castIntegerType); 
+    castF32X =
+        hfusion::castTo(builder, src0, builder.getF32Type(), castIntegerType);
+    castF32Y =
+        hfusion::castTo(builder, src1, builder.getF32Type(), castIntegerType);
   }
 
   // step 2: div_f32 = x_f32 / y_f32

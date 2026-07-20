@@ -1331,3 +1331,65 @@ func.func @test_cumprod_2(%arg0: tensor<1x1x4x1xf16>) -> tensor<1x1x4x1xf16> {
   %0 = hfusion.cumprod %arg0 : tensor<1x1x4x1xf16> cum_dims = [2] reverse = false -> tensor<1x1x4x1xf16>
   return %0 : tensor<1x1x4x1xf16>
 }
+
+// -----
+
+// REGBASE-LABEL: embedding_and_fill(
+// REGBASE: hfusion.embedding_gather
+// REGBASE-SAME: -> tensor<1x50x8xf32>
+func.func @embedding_and_fill(
+    %arg3: memref<?xf32>,
+    %reshape: tensor<1x50xi64>,
+    %23: i64,
+    %6: i64,
+    %7: i64
+) -> (tensor<1x50x8xf32>, tensor<1x8xf32>) {
+  %cst_0 = arith.constant 0.000000e+00 : f32
+  %c0_i64 = arith.constant 0 : i64
+  %c8_i64 = arith.constant 8 : i64
+  %c1353406_i64 = arith.constant 1353406 : i64
+  %24 = tensor.empty() : tensor<1x50x8xf32>
+  %25 = hfusion.embedding_gather
+    ins(%arg3 : memref<?xf32>,
+        %reshape : tensor<1x50xi64>,
+        %c1353406_i64 : i64,
+        [%23, %c0_i64, %c0_i64 : i64, i64, i64],
+        [%6, %7, %c8_i64 : i64, i64, i64])
+    outs(%24 : tensor<1x50x8xf32>) -> tensor<1x50x8xf32>
+  %26 = tensor.empty() : tensor<1x8xf32>
+  %27 = linalg.fill ins(%cst_0 : f32) outs(%26 : tensor<1x8xf32>) -> tensor<1x8xf32>
+  return %25, %27 : tensor<1x50x8xf32>, tensor<1x8xf32>
+}
+
+// -----
+
+// REGBASE-LABEL: func.func @tensor_insert_unit(
+// REGBASE-SAME:                  %[[ARG0:.*]]: f32,
+// REGBASE-SAME:                  %[[ARG1:.*]]: tensor<f32>
+// REGBASE-NEXT:    tensor.insert %[[ARG0]] into %[[ARG1]][] : tensor<f32>
+func.func @tensor_insert_unit(%arg0: f32, %arg1: tensor<f32>) -> tensor<f32> {
+    %inserted = tensor.insert %arg0 into %arg1[] : tensor<f32>
+    return %inserted : tensor<f32>
+}
+
+// -----
+
+// REGBASE-LABEL:   func.func @tensor_insert(
+// REGBASE-SAME:  %[[ARG_0:.*]]: f32,
+// REGBASE-SAME:  %[[ARG_1:.*]]: tensor<3x4xf32>) -> tensor<3x4xf32> {
+// REGBASE: %[[FLATTENED_1:.*]] = tensor.collapse_shape %[[ARG_1]] {{\[\[}}0, 1]] : tensor<3x4xf32> into tensor<12xf32>
+// REGBASE: %[[CST_2:.*]] = arith.constant 2 : index
+// REGBASE: %[[CST_0:.*]] = arith.constant 0 : index
+// REGBASE: %[[CST_1:.*]] = arith.constant 1 : index
+// REGBASE: %[[CST_4:.*]] = arith.constant 4 : index
+// REGBASE: %[[MUL_2:.*]] = arith.muli %[[CST_2]], %[[CST_1]] : index
+// REGBASE: %[[ADD_MUL_2:.*]] = arith.addi %[[CST_0]], %[[MUL_2]] : index
+// REGBASE: %[[MUL_4:.*]] = arith.muli %[[CST_1]], %[[CST_4]] : index
+// REGBASE: %[[MUL_8:.*]] = arith.muli %[[CST_2]], %[[MUL_4]] : index
+// REGBASE: %[[ADD_10:.*]] = arith.addi %[[ADD_MUL_2]], %[[MUL_8]] : index
+// REGBASE: tensor.insert %[[ARG_0]] into %[[FLATTENED_1]]{{\[}}%[[ADD_10]]] : tensor<12xf32>
+func.func @tensor_insert(%arg0: f32, %arg1: tensor<3x4xf32>) -> tensor<3x4xf32> {
+    %c2 = arith.constant 2 : index
+    %inserted = tensor.insert %arg0 into %arg1[%c2, %c2] : tensor<3x4xf32>
+    return %inserted : tensor<3x4xf32>
+}
