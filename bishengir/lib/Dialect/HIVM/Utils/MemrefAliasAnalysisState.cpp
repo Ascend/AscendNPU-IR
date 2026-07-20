@@ -60,12 +60,19 @@ void MemrefAliasAnalysisState::printAlias() {
   LDBG("=== Memref Alias Analysis State ===");
 
   for (auto it = aliasInfo.begin(), e = aliasInfo.end(); it != e; ++it) {
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     if (!it->isLeader())
       continue;
-
     Value leader = it->getData();
     LDBG("Alias Set (Leader: " << leader << "):");
     for (auto memberIt = aliasInfo.member_begin(it);
+#else
+    if (!(*it)->isLeader())
+      continue;
+    Value leader = (*it)->getData();
+    LDBG("Alias Set (Leader: " << leader << "):");
+    for (auto memberIt = aliasInfo.member_begin(**it);
+#endif
          memberIt != aliasInfo.member_end(); ++memberIt) {
       Value val = *memberIt;
       LDBG("  - " << val);

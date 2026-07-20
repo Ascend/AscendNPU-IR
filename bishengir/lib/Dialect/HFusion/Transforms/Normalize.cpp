@@ -900,8 +900,13 @@ struct NormalizeSignBitOp : public OpRewritePattern<SignBitOp> {
                               ValueRange{emptyInt1})
                           .getResult(0);
 
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value maskScalar =
         rewriter.create<arith::ConstantIntOp>(loc, maskVal, intType);
+#else
+    Value maskScalar =
+        rewriter.create<arith::ConstantIntOp>(loc, intType, maskVal);
+#endif
     Value emptyInt2 = rewriter.create<tensor::EmptyOp>(
         loc, intTensorType.getShape(), intType);
     auto vandAttr = hfusion::BinaryFnAttr::get(rewriter.getContext(),
@@ -915,7 +920,11 @@ struct NormalizeSignBitOp : public OpRewritePattern<SignBitOp> {
                                   rewriter.getNamedAttr("fun", vandAttr)})
                           .getResult(0);
 
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value zeroScalar = rewriter.create<arith::ConstantIntOp>(loc, 0, intType);
+#else
+    Value zeroScalar = rewriter.create<arith::ConstantIntOp>(loc, intType, 0);
+#endif
     auto i1TensorType = inputTensorType.clone(rewriter.getI1Type());
     Value emptyI1 = rewriter.create<tensor::EmptyOp>(
         loc, i1TensorType.getShape(), rewriter.getI1Type());
