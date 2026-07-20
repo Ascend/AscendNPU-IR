@@ -93,6 +93,9 @@ std::unique_ptr<Pass> createCloneTensorEmptyPass();
 /// Create a pass to infer data layout information for HIVM Ops.
 std::unique_ptr<Pass> createInferHIVMDataLayoutPass();
 
+/// Create a pass to infer vf mode for HIVM Ops.
+std::unique_ptr<Pass> createInferVFModePass();
+
 /// Create a pass to mark multi buffer for HIVM Ops.
 /// If options is {}, enableAuto is false as default.
 /// And this pass contains method for marking workspace multiple buffer, which
@@ -162,6 +165,9 @@ std::unique_ptr<Pass> createHIVMOptFuncOutputPass();
 
 /// Create a pass to infer task type
 std::unique_ptr<Pass> createInsertInferTaskTypeFuncPass();
+
+/// Create a pass to insert infer-vf-mode callback func for host.
+std::unique_ptr<Pass> createInsertInferVFModeFuncPass();
 
 // Create a pass to split davinci aicore and aivector kernel
 std::unique_ptr<Pass> createSplitMixKernelPass();
@@ -320,6 +326,25 @@ createCVPipeliningPass(const CVPipeliningOptions &options = {});
 // Create a pass to compose expands and collapses ops
 std::unique_ptr<Pass> createComposeCollapseExpandPass();
 
+// Create a pass to infer simt vf func args memory effect.
+std::unique_ptr<Pass> createInferSimtVFMemEffectPass();
+
+// Create a pass to infer simt vf func args memory scope hints.
+std::unique_ptr<Pass> createInferSimtVFMemScopeHintPass();
+
+// Create a pass to materialize explicit memory scopes inside split simt
+// modules.
+std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
+
+// Split simt module for every simt vf
+std::unique_ptr<Pass> createSplitSimtModulePass();
+
+// Create scope for gather_load and scatter_store
+std::unique_ptr<Pass> createAutoScopePass();
+
+std::unique_ptr<Pass> createInsertAllocBasePlaceholderPass();
+std::unique_ptr<Pass> createWriteBackSharedPass();
+
 /// Create a pass to tile cube and vector loop on local buffer.
 std::unique_ptr<Pass>
 createTileCubeVectorLoopPass(const TileCubeVectorLoopOptions &options = {});
@@ -332,6 +357,9 @@ std::unique_ptr<Pass> createSinkOpToConsumerInLoopPass();
 
 std::unique_ptr<Pass> createPropagateConvertLayoutPass(
     const PropagateConvertLayoutOptions &options = {});
+
+// Create a pass to insert memory semantic for simt vf.
+std::unique_ptr<Pass> createInsertMemSemanticForSimtVFPass();
 
 /// Create a pass to insert convert layout operations for matmul ops
 std::unique_ptr<Pass> createInsertConvertLayoutPass();

@@ -211,6 +211,12 @@ def InferHIVMDataLayout : Pass<"hivm-infer-data-layout", "func::FuncOp"> {
   ];
 }
 
+def InferVFMode : Pass<"hivm-infer-vf-mode", "func::FuncOp"> {
+  let summary = "Infer vf mode for Ops";
+  let constructor = "mlir::hivm::createInferVFModePass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
+}
+
 def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
   let summary = "Plan memory for HIVM Ops";
   let constructor = "mlir::hivm::createPlanMemoryPass()";
@@ -456,6 +462,15 @@ def InsertInferTaskTypeFunc : Pass<"hivm-insert-infer-task-type-func", "ModuleOp
   }];
   let constructor = "mlir::hivm::createInsertInferTaskTypeFuncPass()";
   let dependentDialects = ["func::FuncDialect", "hacc::HACCDialect"];
+}
+
+def InsertInferVFModeFunc : Pass<"hivm-insert-vf-mode-func", "func::FuncOp"> {
+  let summary = "Insert infer-vf-mode callback func for host";
+  let description = "Infer a function's VF mode {SIMD, SIMT, MIX}, "
+                    "and then create host callback to return its VF mode";
+
+  let constructor = "mlir::hivm::createInsertInferVFModeFuncPass()";
+  let dependentDialects = ["hivm::HIVMDialect"];
 }
 
 def MarkTightlyCoupledBuffer
@@ -978,6 +993,46 @@ def ComposeCollapseExpand : Pass<"compose-collapse-expand"> {
   let constructor = "mlir::hivm::createComposeCollapseExpandPass()";
 }
 
+def InferSimtVFMemEffect : Pass<"infer-simt-vf-memory-effect"> {
+  let summary = "Infer simt vf func args memory effect";
+  let constructor = "mlir::hivm::createInferSimtVFMemEffectPass()";
+}
+
+def InferSimtVFMemScopeHint
+    : Pass<"infer-simt-vf-memory-scope-hint", "ModuleOp"> {
+  let summary = "Infer memory scope hints for simt vf arguments";
+  let constructor = "mlir::hivm::createInferSimtVFMemScopeHintPass()";
+  let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
+def MaterializeSimtVFMemScope
+    : Pass<"materialize-simt-vf-memory-scope", "ModuleOp"> {
+  let summary = "Materialize explicit memory scopes inside split simt modules";
+  let constructor = "mlir::hivm::createMaterializeSimtVFMemScopePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "memref::MemRefDialect"];
+}
+
+def SplitSimtModule : Pass<"split-simt-module"> {
+  let summary = "Split simt module for every simt vf";
+  let constructor = "mlir::hivm::createSplitSimtModulePass()";
+}
+
+def AutoScope : Pass<"auto-scope"> {
+  let summary = "Create scope for gather_load and scatter_store";
+  let constructor = "mlir::hivm::createAutoScopePass()";
+  let dependentDialects = ["hivm::HIVMDialect", "scope::ScopeDialect"];
+}
+
+def InsertAllocBasePlaceholder : Pass<"insert-alloc-base-placeholder", "ModuleOp"> {
+  let summary = "Insert placeholder memref.alloc with a dummy size";
+  let constructor = "mlir::hivm::createInsertAllocBasePlaceholderPass()";
+}
+
+def WriteBackShared : Pass<"write-back-shared", "ModuleOp"> {
+  let summary = "Set the actual size of memref.alloc which represent used shared memory in simt vf";
+  let constructor = "mlir::hivm::createWriteBackSharedPass()";
+}
+
 def TileCubeVectorLoop : Pass<"tile-cube-vector-loop", "ModuleOp"> {
   let summary = "Tile cube and vector loops on local buffer";
   let description = [{
@@ -1026,6 +1081,11 @@ def PropagateConvertLayout : Pass<"hivm-propagate-convert-layout", "func::FuncOp
                  Option<"enableElementwisePropagate", "enable-elementwise-propagate", "bool",
                         /*default=*/"false",
                         "Enable elementwise convert layout propagation patterns.">];
+}
+
+def InsertMemSemanticForSimtVF : Pass<"insert-memory-semantic-for-simtvf"> {
+  let summary = "Insert memory semantic for simt vf";
+  let constructor = "mlir::hivm::createInsertMemSemanticForSimtVFPass()";
 }
 
 def ConvertLayoutToTranspose : Pass<"hivm-convert-layout-to-transpose", "func::FuncOp"> {

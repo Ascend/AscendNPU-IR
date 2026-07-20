@@ -756,7 +756,6 @@ def IndirectLoadOp : HIVM_StructuredOp<"indirect_load",[
           return getDstMutable();
       }
   }];
-
   let hasVerifier = 1;
 }
 

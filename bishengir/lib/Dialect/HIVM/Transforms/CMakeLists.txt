@@ -26,6 +26,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   AllocToPointerCast.cpp
   AnnotateVFAlias.cpp
   AutoBlockifyParallelLoop.cpp
+  AutoScope.cpp
   AutoInferBufferSize.cpp
   BindSyncBlockLockArg.cpp
   BindWorkSpaceArg.cpp
@@ -67,14 +68,20 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InferFuncCoreType.cpp
   InferHIVMDataLayout.cpp
   InferHIVMMemScope.cpp
+  InferVFMode.cpp
+  InferSimtVFMemEffect.cpp
+  InferSimtVFMemScopeHint.cpp
   InitEntryKernel.cpp
   InjectBlockSync.cpp
   InlineFixpipe.cpp
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
+  InsertAllocBasePlaceholder.cpp
+  InsertMemSemanticForSimtVF.cpp
   InsertFreeLockVarBeforeReturn.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp
   InsertInferTaskTypeFunc.cpp
+  InsertInferVFModeFunc.cpp
   InsertInferWorkSpaceSizeFunc.cpp
   InsertInitAndFinishForDebug.cpp
   InsertLoadStoreForMixCV.cpp
@@ -91,6 +98,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   MarkSyncBlockLockWithSubblock.cpp
   MarkRealCoreType.cpp
   MarkTightlyCoupledBuffer.cpp
+  MaterializeSimtVFMemScope.cpp
   MemoryDisplay.cpp
   NormalizeBitwiseSelect.cpp
   NormalizeConvOps.cpp
@@ -106,6 +114,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   RemoveCopyOps.cpp
   SetBufferSize.cpp
   SinkOpToConsumerInLoop.cpp
+  SplitSimtModule.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SyncBlockHoisting.cpp
@@ -116,6 +125,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
   AnalyzeArithVectorMask.cpp
+  WriteBackShared.cpp
   ADDITIONAL_HEADER_DIRS
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Transforms
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HIVM/Utils
