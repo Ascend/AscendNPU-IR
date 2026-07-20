@@ -1,6 +1,6 @@
 // REQUIRES: execution-engine
 // RUN: bishengir-opt --execution-engine-convert-hfusion-to-upstream --execution-engine-convert-hivm-to-upstream %s --split-input-file | FileCheck %s
-// RUN: bishengir-opt --lower-for-cpu-runner-pipeline %s --split-input-file
+// RUN: bishengir-opt --lower-for-cpu-runner-pipeline="convert-to-named-op=false" %s --split-input-file
 
 func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x10xf32>, %c: tensor<5x?x10xf32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 
@@ -188,13 +188,7 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
 
 func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  outs({{.*}}: tensor<5x?x10xf32>, tensor<5x1x1xf32>)
-    // CHECK-NEXT:  ^bb0(%[[in:.*]]: f32, %{{.*}}: f32, %[[out:.*]]: f32)
-    // CHECK-NEXT:      %[[res:.*]] = arith.mulf
-    // CHECK-DAG-SAME:      %[[in]]
-    // CHECK-DAG-SAME:      %[[out]]
-    // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
+    // CHECK: %{{.*}} = hfusion.cumprod %arg0 : tensor<5x?x10xf32> cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
     %0 = hivm.hir.vcumprod ins(%a: tensor<5x?x10xf32>) outs(%a: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
 
     // CHECK: linalg.generic
@@ -206,13 +200,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
     hivm.hir.vcumprod ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1] reverse = false
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  outs({{.*}}: tensor<5x?x10xf32>, tensor<5x1x1xf32>)
-    // CHECK-NEXT:  ^bb0(%[[in:.*]]: f32, %{{.*}}: f32, %[[out:.*]]: f32)
-    // CHECK-NEXT:      %[[res:.*]] = arith.addf
-    // CHECK-DAG-SAME:      %[[in]]
-    // CHECK-DAG-SAME:      %[[out]]
-    // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
+    // CHECK: %{{.*}} = hfusion.cumsum %arg0 : tensor<5x?x10xf32> cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
     %1 = hivm.hir.vcumsum ins(%a: tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
 
     // CHECK: linalg.generic

@@ -735,7 +735,7 @@ struct RewriteVModOp : public OpRewritePattern<From> {
 };
 
 template <typename FromOp, typename ToIOp, typename ToFOp, int64_t identity>
-struct RewriteVCumOp : public OpRewritePattern<FromOp> {
+struct RewriteVCumOpToGeneric : public OpRewritePattern<FromOp> {
 
   using OpRewritePattern<FromOp>::OpRewritePattern;
 
@@ -795,6 +795,25 @@ struct RewriteVCumOp : public OpRewritePattern<FromOp> {
       rewriter.replaceOp(op, genericOp.getResult(0));
     else
       rewriter.eraseOp(op);
+    return success();
+  }
+};
+
+template <typename FromOp, typename ToOp>
+struct RewriteVCumOpToHFusion : public OpRewritePattern<FromOp> {
+
+  using OpRewritePattern<FromOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(FromOp op,
+                                PatternRewriter &rewriter) const final {
+    if (op.getResult().empty())
+      return failure();
+    rewriter.replaceOpWithNewOp<ToOp>(
+        op,
+        op.getDst().getType(),
+        op.getSrc(),
+        op.getCumDims(),
+        op.getReverse());
     return success();
   }
 };
@@ -1395,9 +1414,15 @@ struct ConvertHIVMToUpstream
                  RewriteVBitwiseOp<hivm::VShLOp, arith::ShLIOp>,
                  RewriteVBitwiseOp<hivm::VShROp, arith::ShRSIOp>>(&ctx);
     patterns
-        .add<RewriteVCumOp<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,
-             RewriteVCumOp<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(
+        .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,
+            RewriteVCumOpToGeneric<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(
             &ctx);
+    if (convertToNamedOp) {
+      patterns
+          .add<RewriteVCumOpToHFusion<hivm::VCumprodOp, hfusion::CumprodOp>,
+               RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>>(
+              &ctx);
+    }
     patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
                  RewriteVConcatOp, RewriteVReduceOp, RewriteLoadOp,
                  RewriteCastOp, RewriteVCmpOp,
