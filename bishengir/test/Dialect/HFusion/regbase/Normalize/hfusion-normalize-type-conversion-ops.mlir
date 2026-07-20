@@ -1,6 +1,6 @@
 // REQUIRES: regbase
 // TODO: enable this testcase after migrating third-party/llvm
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 // CHECK-LABEL: @test_NormalizeToTargetType_broadcast_i1
 // CHECK: %[[CAST16:.*]] = hfusion.cast {{.*}} ins({{.*}} : tensor<8xi1>) outs({{.*}} : tensor<8xf16>) -> tensor<8xf16>
 // CHECK: %[[BROADCAST16:.*]] = linalg.broadcast ins(%[[CAST16]] : tensor<8xf16>) outs({{.*}} : tensor<8x16xf16>) dimensions = [1]

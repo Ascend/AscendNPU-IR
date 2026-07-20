@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeCastLowering_cast_f32_to_i1
 // CHECK: %[[arg4:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[arg2:.*]], %[[cst:.*]] : tensor<2x256x12x257xf32>, f32) outs(%[[arg5:.*]] : tensor<2x256x12x257xi1>) -> tensor<2x256x12x257xi1>

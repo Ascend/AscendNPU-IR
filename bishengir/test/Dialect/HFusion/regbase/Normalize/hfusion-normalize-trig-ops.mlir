@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase="enable-high-precision=true" %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true enable-high-precision=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 // High-precision sin/cos coverage lives in this file.
 // Low-precision sin/cos coverage is in hfusion-normalize-trig-low-precision-ops.mlir.
 

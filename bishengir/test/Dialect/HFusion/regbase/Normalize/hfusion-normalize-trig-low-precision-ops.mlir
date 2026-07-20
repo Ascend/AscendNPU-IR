@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase="enable-high-precision=false" %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true enable-high-precision=false" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeSin_hfusion_sin_ops(
 // CHECK-SAME: %[[VAL_0:.*]]: tensor<5x1xf32>) -> tensor<5x1xf32> {

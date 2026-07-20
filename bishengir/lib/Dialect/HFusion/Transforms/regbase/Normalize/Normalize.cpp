@@ -18,11 +18,6 @@
 #include "bishengir/Dialect/HFusion/Transforms/regbase/NormalizePatterns.h"
 #include "bishengir/Dialect/HFusion/Transforms/regbase/RegBaseArchUtils.h"
 
-namespace mlir {
-#define GEN_PASS_DEF_NORMALIZEREGBASE
-#include "bishengir/Dialect/HFusion/Transforms/Passes.h.inc"
-} // namespace mlir
-
 #define DEBUG_TYPE "hfusion-normalize-ops"
 
 namespace mlir::hfusion {
@@ -74,24 +69,6 @@ LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision) {
   RewritePatternSet patterns(op->getContext());
   populateNormalizeHFusionRegBasePatterns(patterns, enableHighPrecision);
   return applyPatternsGreedily(op, std::move(patterns));
-}
-
-namespace {
-struct NormalizeHFusionRegBasePass
-    : public impl::NormalizeRegBaseBase<NormalizeHFusionRegBasePass> {
-  explicit NormalizeHFusionRegBasePass(const NormalizeRegBaseOptions &options)
-      : NormalizeRegBaseBase(options) {}
-
-  void runOnOperation() final {
-    if (failed(runNormalizeRegBase(getOperation(), enableHighPrecision)))
-      signalPassFailure();
-  }
-};
-} // namespace
-
-std::unique_ptr<Pass>
-createHFusionNormalizeOpsRegBasePass(const NormalizeRegBaseOptions &options) {
-  return std::make_unique<NormalizeHFusionRegBasePass>(options);
 }
 
 } // namespace mlir::hfusion
