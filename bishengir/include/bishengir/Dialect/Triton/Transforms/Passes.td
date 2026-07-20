@@ -287,6 +287,15 @@ def RewriteSliceOpToTriton
                             "mlir::triton::TritonDialect"];
 }
 
+def ExpandGatherOpSources 
+  : Pass<"expand-gather-op-sources", "mlir::ModuleOp"> {
+    let summary = "Expands tt.gather op sources to the indices tensor sizes if smaller when num warps > 1 and num elements in indices tensor > 32";
+    let constructor = "bishengir::triton::createExpandGatherOpSourcesPass()";
+    let dependentDialects = [
+      "mlir::triton::TritonDialect",
+    ];
+}
+
 def PopulateSharedMemoryOffsetToDPX : Pass<"populate-shared-memory-offset-to-dpx", "mlir::triton::FuncOp"> {
   let summary = "Convert tt.call_scalar to ascend_dpx.call_scalar with allocation offset";
   let constructor = "bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass()";

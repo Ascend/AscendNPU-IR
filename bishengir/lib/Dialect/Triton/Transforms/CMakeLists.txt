@@ -5,6 +5,7 @@ if(BISHENGIR_ENABLE_TRITON_COMPILE)
     AdaptGPUKernel.cpp
     DecomposeReduction.cpp
     DumpFractalLayout.cpp
+    ExpandGatherOpSourcesPass.cpp
     FixFusedCatPass.cpp
     GetTritonMetadata.cpp
     LegalizeF16ForTriton.cpp

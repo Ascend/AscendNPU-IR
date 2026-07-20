@@ -146,6 +146,9 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(mlir::triton::createTritonRewriteTensorPointer());
   pm.addPass(mlir::triton::createTritonRewriteTensorDescriptorToPointer());
   pm.addPass(bishengir::triton::createRewriteSliceOpToTritonPass());
+  if (options.numWarps > 1) {
+    pm.addPass(bishengir::triton::createExpandGatherOpSourcesPass());
+  }
   pm.addPass(bishengir::triton::createRemoveAnnotationMarkPass());
   // Convert TTIR to TTGIR
   // TODO: Adapt target for NPU
