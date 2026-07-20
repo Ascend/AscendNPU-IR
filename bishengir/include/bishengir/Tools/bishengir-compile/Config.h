@@ -19,9 +19,19 @@
 #define BISHENGIR_TOOLS_BISHENGIR_COMPILE_CONFIG_H
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HFusion/Pipelines/Passes.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Tools/BiShengIRConfigBase/Config.h"
+#include "llvm/ADT/StringRef.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 namespace bishengir {
 
@@ -40,27 +50,67 @@ public:
 
   /// Register the options as global LLVM command line options.
   static void registerCLOptions();
-
+  
   /// Create a new config with the default set from the CL options.
   static BiShengIRCompileMainConfig createFromCLOptions();
+  static BiShengIRCompileMainConfig createFromCLOptions(bool regbase);
 
   /// Collect compile arguments that will be passed to hivmc.
   static void collectHIVMCArgs();
+  static void collectHIVMCArgs(BiShengIRCompileMainConfig &config);
+  static bool isSharedWithDownstreamToolchain(llvm::StringRef argName);
 
 #include "bishengir/Tools/bishengir-compile/CompileConfigs.cpp.inc"
 
-  /// Update max buffer count tuning delta.
-  BiShengIRCompileMainConfig &increaseMaxBufferCountTuning(int64_t delta) {
+  /// Update max buffer count tuning delta (increments the tuning counter,
+  /// matching A5's increaseHfusionMaxBufferCountTuning).
+  BiShengIRCompileMainConfig &increaseHfusionMaxBufferCountTuning(int64_t delta) {
     hfusionMaxBufferCountTuningFlag += delta;
     return *this;
   }
 
+  bool isUBAwareVfFusion() const {
+    return getVfFusionMode() == mlir::analysis::FusionMode::UBAwareOp;
+  }
+  
+  BiShengIRCompileMainConfig &updateMaxInputParamsSizeInBytes(size_t size) {
+    deviceMaxInputParamSizeInBytesFlag =
+        std::max(size, deviceMaxInputParamSizeInBytesFlag);
+    return *this;
+  }
+
+  BiShengIRCompileMainConfig &setClArgs(std::vector<std::string> args) {
+    clArgsFlag = std::move(args);
+    return *this;
+  }
+  std::vector<std::string> getClArgs() const { return clArgsFlag; }
+
+  bool hasSimtStackLimit() const { return getSimtStackLimit() >= 0; }
+
   std::vector<std::string> getHIVMCArgsDashDash() const {
     std::vector<std::string> args;
     for (auto &arg : getHIVMCArgs()) {
+      if (llvm::StringRef(arg).starts_with("-")) {
+        args.push_back(arg);
+        continue;
+      }
       args.push_back("--" + arg);
     }
     return args;
+  }
+
+  /// Returns true if Mixed CV compilation should be enabled.
+  /// This gates the delayed RegBase vectorize pipeline after
+  /// convert-to-hivm + tensor optimizations for Ascend950 targets.
+  bool shouldEnableMixedCV() const {
+    return getEnableMixedCV() &&
+           mlir::hacc::utils::isAscend950(getTarget());
+  }
+
+  /// Returns true if layout optimization should be enabled (Ascend950 only).
+  bool shouldEnableLayoutOptimization() const {
+    return getEnableLayoutOptimization() &&
+           mlir::hacc::utils::isAscend950(getTarget());
   }
 
   /// Set the path of the bishengir-compile executable (e.g. argv[0]).
@@ -70,6 +120,9 @@ public:
     return *this;
   }
   std::string getExecutablePath() const { return executablePath; }
+
+protected:
+  std::vector<std::string> clArgsFlag;
 
 private:
   std::string executablePath;

@@ -228,14 +228,14 @@ def FlattenOps : Pass<"hfusion-flatten-ops", "func::FuncOp"> {
               "Whether to skip the host function or not">,
        Option<"multiDynamicShape", "multi-dynamic-shape", "bool", /*default=*/"true",
               "Whether to collapse multiple dynamic shape or not">,
-       Option<"registerBased", "register-based", "bool", /*default=*/"false",
-              "Whether to use register based flattening mode">,
-       Option<"usePreOrderWalkTraversal", "use-preorder-walk-traversal", "bool",
-              /*default=*/"true",
-              "Use operation walk<PreOrder> traversal instead of BFS in "
-              "dimension analyzer">,
-       Option<"skipScope", "skip-scope", "bool", /*default=*/"true",
-              "Whether to skip the current pass when scope exists">];
+      Option<"registerBased", "register-based", "bool", /*default=*/"false",
+             "Whether to use register-based flatten for RegBase targets">,
+      Option<"usePreOrderWalkTraversal", "use-preorder-walk-traversal", "bool",
+             /*default=*/"true",
+             "Use operation walk<PreOrder> traversal instead of BFS in "
+             "dimension analyzer">,
+      Option<"skipScope", "skip-scope", "bool", /*default=*/"true",
+             "Whether to skip the current pass when scope exists">];
 }
 
 def TensorResToOutParams

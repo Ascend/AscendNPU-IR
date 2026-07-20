@@ -27,6 +27,7 @@
 #include "bishengir/Pass/PassManager.h"
 #include "bishengir/Tools/Utils/Utils.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
+#include "bishengir/Tools/bishengir-compile/regbase/Driver.h"
 #include "bishengir/Version/Version.h"
 
 #include "mlir/InitAllDialects.h"
@@ -36,7 +37,6 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/SourceMgr.h"
 
@@ -61,21 +61,21 @@ static bool hasRegBaseTarget(int argc, char **argv) {
       target = argv[++i];
     else
       continue;
-    if (mlir::hacc::utils::isAscend950(target))
+    if (mlir::hacc::utils::isRegBasedArch(target))
       return true;
   }
   return false;
 }
 
-static int runBishengirCompile91095(int argc, char **argv) {
-  llvm::SmallVector<llvm::StringRef> arguments;
-  arguments.push_back(""); // placeholder, replaced by execute with full path
-  for (int i = 1; i < argc; ++i)
-    arguments.push_back(argv[i]);
-  if (failed(bishengir::execute("bishengir-compile-a5",
-                                bishengir::getBiShengInstallPath(), arguments)))
-    return EXIT_FAILURE;
-  return EXIT_SUCCESS;
+static int runBishengirCompile91095(int argc, char **argv) { 
+  llvm::SmallVector<llvm::StringRef> arguments; 
+  arguments.push_back(""); // placeholder, replaced by execute with full path 
+  for (int i = 1; i < argc; ++i) 
+    arguments.push_back(argv[i]); 
+  if (failed(bishengir::execute("bishengir-compile-a5", 
+                                bishengir::getBiShengInstallPath(), arguments))) 
+    return EXIT_FAILURE; 
+  return EXIT_SUCCESS; 
 }
 
 static void printVersion(llvm::raw_ostream &os) {
@@ -100,12 +100,16 @@ static void registerAndParseCLIOptions(int argc, char **argv) {
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
 
-  // If --target=Ascend910_95* or --target=Ascend950* is specified, delegate to
-  // bishengir-compile-91095.
-  // TODO: this will be removed after bihengir-compile and bishengir-compile-a5
-  // are merged.
-  if (hasRegBaseTarget(argc, argv))
+  // If --target=Ascend910_95* or --target=Ascend950* is specified, delegate to	 
+  // bishengir-compile-91095.	 
+  // TODO: this will be removed after bihengir-compile and bishengir-compile-a5	 
+  // are merged. 
+  if (hasRegBaseTarget(argc, argv)) 
     return runBishengirCompile91095(argc, argv);
+
+  std::vector<std::string> originalCLArgs;
+  for (int i = 1; i < argc; ++i)
+    originalCLArgs.emplace_back(argv[i]);
 
   // Register dialects.
   mlir::DialectRegistry registry;
@@ -120,12 +124,16 @@ int main(int argc, char **argv) {
   mlir::registerAllExtensions(registry);
   bishengir::registerAllExtensions(registry);
 
+  // Register translations.
+  mlir::registerAllToLLVMIRTranslations(registry);
+
   // Parse command line.
   registerAndParseCLIOptions(argc, argv);
 
   // Create config from command line options.
+  bool regbase = hasRegBaseTarget(argc, argv);
   bishengir::BiShengIRCompileMainConfig config =
-      bishengir::BiShengIRCompileMainConfig::createFromCLOptions();
+      bishengir::BiShengIRCompileMainConfig::createFromCLOptions(regbase);
   config.setExecutablePath(bishengir::getExecutablePath(
       argv[0], reinterpret_cast<void *>(&bishengirCompileExecutableAnchor)));
   // Check the validity of intput/output options
@@ -157,6 +165,11 @@ int main(int argc, char **argv) {
     return EXIT_FAILURE;
   }
   mlir::ModuleOp module = moduleRef.release();
+
+  // regbase pipeline entry
+  if (regbase)
+    return bishengir::regbase::runRegBaseCompile(module, config,
+                                                 originalCLArgs);
 
   auto res = runBiShengIRPipeline(module, config);
   if (failed(res)) {

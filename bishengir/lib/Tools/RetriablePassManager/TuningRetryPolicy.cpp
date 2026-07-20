@@ -66,7 +66,7 @@ std::optional<RetryRecoveryAction> TuningRetryPolicy::onFailure(
   if (tuningRetriesUsed_ + 1 >= kMaxAttempts)
     return std::nullopt;
 
-  config.increaseMaxBufferCountTuning(kBufferCountTuningDelta);
+  config.increaseHfusionMaxBufferCountTuning(kBufferCountTuningDelta);
   ++tuningRetriesUsed_;
 
   LLVM_DEBUG(llvm::dbgs()

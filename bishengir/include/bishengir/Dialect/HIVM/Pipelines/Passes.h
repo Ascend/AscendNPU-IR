@@ -21,7 +21,10 @@
 #ifndef BISHENGIR_DIALECT_HIVM_PIPELINES_PASSES_H
 #define BISHENGIR_DIALECT_HIVM_PIPELINES_PASSES_H
 
+#include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
+#include "bishengir/Dialect/HACC/Targets/NPUTargetSpec.h.inc"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "llvm/ADT/StringRef.h"
 #include "mlir/Pass/PassOptions.h"
 
 namespace mlir {

@@ -5,7 +5,7 @@ add_bishengir_dialect_library(BiShengIRHACCPipelines
   ${MLIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HACC
 
   LINK_LIBS PUBLIC
-  BiShengIRLLVMTransforms
+  BishengIRLLVMTransforms
   BiShengIRHACCDialect
   BiShengIRHACCTransforms
   MLIRPass

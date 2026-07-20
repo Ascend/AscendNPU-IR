@@ -10,8 +10,10 @@ add_bishengir_dialect_library(MLIRHIVMAVEPipelines
   BiShengIRMemRefTransforms
   BiShengIRSCFTransforms
   BiShengIRTransform
+  MLIRAnalyzeArithVectorMask
   MLIRArithDialect
   BiShengIRHIVMTransforms
+  MLIRHIVMAVETransforms
   MLIRMathDialect
   BiShengIRMathExtDialect
   BiShengIRMemRefDialect

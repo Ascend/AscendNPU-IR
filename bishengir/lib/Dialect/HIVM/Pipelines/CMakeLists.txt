@@ -23,3 +23,5 @@ add_bishengir_dialect_library(BiShengIRHIVMPipelines
   MLIRPass
   MLIRTransforms
 )
+
+add_subdirectory(regbase)

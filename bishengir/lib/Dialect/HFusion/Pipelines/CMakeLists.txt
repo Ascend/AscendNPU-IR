@@ -5,6 +5,7 @@ add_bishengir_dialect_library(BiShengIRHFusionPipelines
   ${BISHENGIR_MAIN_INCLUDE_DIR}/bishengir/Dialect/HFusion
 
   LINK_LIBS PUBLIC
+  BiShengIRHACCUtils
   BiShengIRTensorTransforms
   MLIRBufferizationTransforms
   MLIRFuncTransforms
@@ -17,3 +18,5 @@ add_bishengir_dialect_library(BiShengIRHFusionPipelines
   BiShengIRGPUToHFusion
   BiShengIRTransform
 )
+
+add_subdirectory(regbase)

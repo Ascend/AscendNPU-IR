@@ -25,6 +25,9 @@
 /* If set, enable conversion and compile from Torch Dialect. */
 #cmakedefine01 BISHENGIR_ENABLE_TORCH_CONVERSIONS
 
+/* If set, enable conversion and compile from Triton Dialect. */
+#cmakedefine01 BISHENGIR_ENABLE_TRITON_COMPILE
+
 /* If set, enables BiShengIR pass manager command line options to MLIR. */
 #cmakedefine01 BISHENGIR_ENABLE_PM_CL_OPTIONS
 

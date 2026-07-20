@@ -31,6 +31,10 @@ struct ConvertToHIVMPipelineOptions
     : public mlir::PassPipelineOptions<ConvertToHIVMPipelineOptions> {
 #define GEN_HFUSION_TO_HIVM_OPTION_REGISTRATION
 #include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
+
+  PassOptions::Option<bool> enableRegBaseHIVMPipe{
+      *this, "enable-regbase-hivmpipe",
+      llvm::cl::desc("Enable hivmpipeline on RegBase"), llvm::cl::init(false)};
 };
 
 //===----------------------------------------------------------------------===//

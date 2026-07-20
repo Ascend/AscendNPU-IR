@@ -21,6 +21,7 @@
 #ifndef BISHENGIR_DIALECT_HFUSION_PIPELINES_PASSES_H
 #define BISHENGIR_DIALECT_HFUSION_PIPELINES_PASSES_H
 
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassOptions.h"
@@ -28,10 +29,24 @@
 namespace mlir {
 namespace hfusion {
 
+/// TreeReduce processing mode
+enum class TreeReduceMode {
+  Off, // disable TreeReduce RA/AR processing
+  RA,  // row-reduction, dim=0
+  AR,  // column-reduction, dim=1
+  All, // enable both RA and AR processing
+};
+
 struct HFusionPipelineOptions
     : public mlir::PassPipelineOptions<HFusionPipelineOptions> {
 #define GEN_HFUSION_OPTION_REGISTRATION
 #include "bishengir/Tools/bishengir-compile/PassPipelineOptions.cpp.inc"
+
+  PassOptions::Option<std::string> target{
+      *this, "target", llvm::cl::desc("Target device name"),
+      llvm::cl::init("Ascend910B1")};
+
+  bool insertFFTS{true};
 
   PassOptions::Option<std::string> externalTilingFuncPath{
       *this, "external-tiling-func-path",
@@ -42,6 +57,21 @@ void buildHFusionPipelines(OpPassManager &pm,
                            const HFusionPipelineOptions &options);
 
 void registerLowerHFusionPipelines();
+
+namespace regbase {
+void buildHFusionPipelines(OpPassManager &pm,
+                            const HFusionPipelineOptions &options);
+
+/// Build the HFusion pipeline for RegBase (Ascend950) targets.
+/// This is used by the delayed RegBase vectorize path when Mixed CV is enabled.
+void buildHFusionRegBasePipeline(OpPassManager &pm,
+                                 const HFusionPipelineOptions &options);
+
+/// Check if SIMD VF Fusion is enabled (Triton + VFFusion).
+bool enableSIMDVFFusion(const HFusionPipelineOptions &options);
+
+void registerLowerHFusionPipelines();
+} // namespace regbase
 } // namespace hfusion
 } // namespace mlir
 
