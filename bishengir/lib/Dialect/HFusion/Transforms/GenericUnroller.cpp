@@ -566,9 +566,7 @@ struct HandleReduceWithIndexOpPattern : public OpRewritePattern<hfusion::ReduceW
     if (!op->hasAttrOfType<BoolAttr>("unsigned_src")) {
       return failure();
     }
-    if (auto uSrc = op->getAttrOfType<BoolAttr>("unsigned_src"); !uSrc.getValue()) {
-      return failure();
-    }
+    bool unsignedCmp = op->getAttrOfType<BoolAttr>("unsigned_src").getValue();
 
     SmallVector<unsigned> reduceDims;
     op.getReductionDims(reduceDims);
@@ -581,7 +579,7 @@ struct HandleReduceWithIndexOpPattern : public OpRewritePattern<hfusion::ReduceW
       op,
       dim,
       kind == hfusion::ReduceWithIndexKind::MAX,
-      /*unsignedCmp=*/ true);
+      unsignedCmp);
   }
 };
 

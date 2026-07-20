@@ -1,4 +1,4 @@
-//===- LowerHIVMToLLVM.cpp ------------------------------------------------===//
+//===------------------ ConvertHIVMToUpstream.cpp -------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -449,8 +449,8 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
     const bool unsignedSource = op.getUnsignedSrc();
     Operation *reduceOp;
     auto createReduceWithIndexOp = [&](hfusion::ReduceWithIndexKind reduceKind,
-                                        bool isTieBreakLeft,
-                                        bool isUnsignedSrc) -> Operation * {
+                                       bool isTieBreakLeft,
+                                       bool isUnsignedSrc) -> Operation * {
       return rewriter.create<hfusion::ReduceWithIndexOp>(
           loc, ValueRange(dstsWithoutDims).getTypes(), srcs, dstsWithoutDims,
           rewriter.getAttr<hfusion::ReduceWithIndexKindAttr>(reduceKind),
@@ -458,6 +458,7 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
           BoolAttr::get(op->getContext(), isTieBreakLeft),
           op.getReduceDimsAttr());
     };
+
     switch (reduceOperation) {
     case hivm::ReduceOperation::min_with_index_left:
       reduceOp =
