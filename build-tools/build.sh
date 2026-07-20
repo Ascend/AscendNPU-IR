@@ -13,7 +13,6 @@ readonly ENABLE_PROJECTS="mlir;llvm"
 readonly LONG_OPTS=(
   "add-cmake-options:"
   "bisheng-compiler:"
-  "build-bishengir-template"
   "build-shmem-template"
   "bishengir-publish"
   "build:"
@@ -182,7 +181,6 @@ usage() {
       --bishengir-publish                  Whether to disable features that we don't want to expose to users. (Default: OFF)
       --enable-pydsl                       Enable the PyDSL(BiShengTile) project.
       --build-bishengir-doc                Whether to build BiShengIR documentation. (Default: OFF)
-      -t, --build-bishengir-template       Build BiShengIR Template (Default: OFF)
       --build-shmem-template               Build shmem Template (Default: OFF)
                                            If this option is set, must set --bisheng-compiler option.
       --coverage                           Build with gcov-compatible coverage instrumentation
@@ -336,7 +334,10 @@ while true; do
     break
     ;;
   *)
-    break
+    # Unknown options are rejected by getopt above, so reaching here means the
+    # option is declared in LONG_OPTS but has no case arm.
+    echo "${SCRIPT_NAME}: internal error: option '$1' is declared but not handled" >&2
+    exit 1
     ;;
   esac
 done
