@@ -327,6 +327,29 @@ VFInplaceReuseAnalysis::getVFCallInplaceReuseInfo(func::FuncOp funcOp) {
   return it == caller2info.end() ? nullptr : &it->second;
 }
 
+SmallVector<std::pair<unsigned, unsigned>>
+VFInplaceReuseAnalysis::getInplaceReusableArgPairs(func::FuncOp callee) const {
+  SmallVector<std::pair<unsigned, unsigned>> pairs;
+  auto it = callee2info.find(callee);
+  if (it == callee2info.end()) {
+    return pairs;
+  }
+  for (const auto &[writeArg, readArgs] : it->second) {
+    auto dstArg = dyn_cast<BlockArgument>(writeArg);
+    if (!dstArg) {
+      continue;
+    }
+    for (Value readArg : readArgs) {
+      auto srcArg = dyn_cast<BlockArgument>(readArg);
+      if (!srcArg) {
+        continue;
+      }
+      pairs.emplace_back(dstArg.getArgNumber(), srcArg.getArgNumber());
+    }
+  }
+  return pairs;
+}
+
 /// Dumps the inplace-reuse information in a human readable format.
 void VFInplaceReuseAnalysis::dump() const { print(llvm::errs()); }
 
