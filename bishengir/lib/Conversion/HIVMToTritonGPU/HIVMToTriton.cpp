@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
+#include "HIVMToTritonUtils.h"
 #include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -166,13 +167,11 @@ buildSubviewPointerTensor(ConversionPatternRewriter &rewriter, Location loc,
   //                            subviewResultTy.getShape().end());
 
   Value source = subviewOp.getSource();
-  auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
-  if (!baseMemrefTy)
-    return failure();
+  MemRefType sourceMemrefTy = subviewOp.getSourceType();
 
   SmallVector<int64_t> sourceStrides;
   int64_t sourceOffset;
-  if (failed(getStridesAndOffset(baseMemrefTy, sourceStrides, sourceOffset)))
+  if (failed(getStridesAndOffset(sourceMemrefTy, sourceStrides, sourceOffset)))
     return failure();
 
   SmallVector<OpFoldResult> mixedStrides;
@@ -194,8 +193,19 @@ buildSubviewPointerTensor(ConversionPatternRewriter &rewriter, Location loc,
       linearizeSubviewOffsets(rewriter, loc, subviewOffsets, sourceStrides);
   SmallVector<OpFoldResult> mixedOffsets{linearOffset};
 
-  return buildReinterpretCastTensorPointers(rewriter, loc, source, baseMemrefTy,
-                                            mixedOffsets, mixedStrides, subviewResultTy.getShape());
+  Value base = source;
+  // A zero-offset parent reinterpret_cast does not change the linear base, so
+  // use its raw source as the pointer base. Non-zero and dynamic parent offsets
+  // are rejected by the pass-level nested-view check before this helper runs.
+  if (auto parentCast = source.getDefiningOp<memref::ReinterpretCastOp>()) {
+    auto staticOffsets = parentCast.getStaticOffsets();
+    if (staticOffsets.size() == 1 && staticOffsets.front() == 0)
+      base = parentCast.getSource();
+  }
+
+  return buildReinterpretCastTensorPointers(
+      rewriter, loc, base, cast<MemRefType>(base.getType()), mixedOffsets,
+      mixedStrides, subviewResultTy.getShape());
 }
 
 class GetBlockIdxOpPattern : public OpRewritePattern<hivm::GetBlockIdxOp> {
@@ -798,82 +808,6 @@ static Value buildTensorPointers(ConversionPatternRewriter &rewriter,
       .getResult();
 }
 
-FailureOr<Value>
-buildMemRefTensorPointers(ConversionPatternRewriter &rewriter, Location loc,
-                          Value originalValue, Value convertedValue,
-                          MemRefType memrefTy, ArrayRef<int64_t> shape,
-                          llvm::function_ref<Value()> getLinearOffsets) {
-  if (auto castOp =
-          originalValue.getDefiningOp<memref::ReinterpretCastOp>()) {
-    Value base = castOp.getSource();
-    auto baseMemrefTy = dyn_cast<MemRefType>(base.getType());
-    if (!baseMemrefTy)
-      return failure();
-
-    SmallVector<OpFoldResult> mixedOffsets = castOp.getMixedOffsets();
-    SmallVector<OpFoldResult> mixedStrides = castOp.getMixedStrides();
-    return buildReinterpretCastTensorPointers(
-        rewriter, loc, base, baseMemrefTy, mixedOffsets, mixedStrides, shape);
-  }
-
-  if (auto subviewOp = originalValue.getDefiningOp<memref::SubViewOp>()) {
-    // Require unit strides on the subview itself
-    for (auto svStride : subviewOp.getMixedStrides()) {
-      if (!isConstantIntValue(svStride, 1))
-        return failure();
-    }
-
-    // Per-dim strides come from the SubView source: prefer the strides of
-    // an upstream ReinterpretCast (so the base pointer is the raw memref);
-    // otherwise read the strided layout from the source memref type.
-    Value source = subviewOp.getSource();
-    SmallVector<OpFoldResult> mixedStrides;
-    if (auto srcCast = source.getDefiningOp<memref::ReinterpretCastOp>()) {
-      mixedStrides = srcCast.getMixedStrides();
-      source = srcCast.getSource();
-    } else {
-      auto sourceMemrefTy = dyn_cast<MemRefType>(source.getType());
-      if (!sourceMemrefTy)
-        return failure();
-      auto layout =
-          dyn_cast<StridedLayoutAttr>(sourceMemrefTy.getLayout());
-      if (!layout)
-        return failure();
-      for (int64_t s : layout.getStrides())
-        mixedStrides.push_back(rewriter.getIndexAttr(s));
-    }
-
-    auto baseMemrefTy = dyn_cast<MemRefType>(source.getType());
-    if (!baseMemrefTy)
-      return failure();
-
-    auto subviewOffsets = subviewOp.getMixedOffsets();
-    if (subviewOffsets.size() != mixedStrides.size())
-      return failure();
-
-    SmallVector<int64_t> intStrides;
-    intStrides.reserve(mixedStrides.size());
-    for (auto ms : mixedStrides) {
-      auto s = getConstantIntValue(ms);
-      if (!s)
-        return failure();
-      intStrides.push_back(*s);
-    }
-
-    OpFoldResult linearOffset =
-        linearizeSubviewOffsets(rewriter, loc, subviewOffsets, intStrides);
-    SmallVector<OpFoldResult> mixedOffsets{linearOffset};
-    return buildReinterpretCastTensorPointers(rewriter, loc, source,
-                                              baseMemrefTy, mixedOffsets,
-                                              mixedStrides, shape);
-  }
-
-  Value offsets =
-      calcStridedOffsets(rewriter, loc, memrefTy, shape, getLinearOffsets());
-  return buildTensorPointers(rewriter, loc, convertedValue, memrefTy, shape,
-                             offsets);
-}
-
 // Maps HIVM atomic kinds to the corresponding Triton RMW operations.
 // Returns `std::nullopt` for atomic kinds that do not have a Triton mapping.
 static std::optional<triton::RMWOp> toTritonRMWOp(hivm::AtomicKind kind) {
@@ -948,15 +882,8 @@ public:
       return rewriter.notifyMatchFailure(op, "cannot resolve shape");
     SmallVector<int64_t> shape = *shapeOr;
 
-    Value linearOffsets;
-    auto getLinearOffsets = [&]() -> Value {
-      if (!linearOffsets)
-        linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
-      return linearOffsets;
-    };
-
     FailureOr<Value> maybeSrcPtrs = buildMemRefTensorPointers(
-        rewriter, loc, op.getSrc(), src, srcMemrefTy, shape, getLinearOffsets);
+        rewriter, loc, op.getSrc(), src, srcMemrefTy, shape);
     if (failed(maybeSrcPtrs))
       return rewriter.notifyMatchFailure(op,
                                          "failed to materialize source pointers");
@@ -972,44 +899,28 @@ public:
     // Scan dst users for to_tensor
     SmallVector<bufferization::ToTensorOp> toTensorUsers;
     bool hasOtherUsers = false;
-    bool hasbufferization = false;
     for (Operation *user : op.getDst().getUsers()) {
       if (user == op.getOperation())
         continue;
       if (isa<UnrealizedConversionCastOp>(user))
         continue;
       if (auto tt = dyn_cast<bufferization::ToTensorOp>(user)) {
-        hasbufferization = true;
         toTensorUsers.push_back(tt);
       } else
         hasOtherUsers = true;
     }
 
-    // Replace to_tensor users
-    if (!toTensorUsers.empty()) {
-      for (auto tt : toTensorUsers)
-        rewriter.replaceOp(tt, loadedTensor);
-    }
-
-    if (hasOtherUsers && hasbufferization) {
-      return op->emitError(
-          "hivm.load's dst should only be used by bufferization.to_tensor");
-    }
-
-    // Store to dst if needed
     if (toTensorUsers.empty()) {
-      FailureOr<Value> maybeDstPtrs =
-          buildMemRefTensorPointers(rewriter, loc, op.getDst(), dst,
-                                    dstMemrefTy, shape, getLinearOffsets);
-      if (failed(maybeDstPtrs))
-        return rewriter.notifyMatchFailure(
-            op, "failed to materialize destination pointers");
-      Value dstPtrs = *maybeDstPtrs;
-
-      rewriter.create<triton::StoreOp>(
-          loc, dstPtrs, loadedTensor, Value(), llvm::ArrayRef<int32_t>{},
-          triton::CacheModifier::NONE, triton::EvictionPolicy::NORMAL);
+      return op->emitError(
+          "hivm.load's dst must be consumed by bufferization.to_tensor");
     }
+    if (hasOtherUsers) {
+      return op->emitError(
+          "hivm.load's dst must only be used by bufferization.to_tensor");
+    }
+
+    for (auto tt : toTensorUsers)
+      rewriter.replaceOp(tt, loadedTensor);
 
     rewriter.eraseOp(op);
     return success();
@@ -1116,16 +1027,8 @@ public:
         return failure();
 
       auto shape = srcTensorTy.getShape();
-      Value linearOffsets;
-      auto getLinearOffsets = [&]() -> Value {
-        if (!linearOffsets)
-          linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
-        return linearOffsets;
-      };
-
-      FailureOr<Value> maybeDstPtrs =
-          buildMemRefTensorPointers(rewriter, loc, op.getDst(), dst,
-                                    dstMemrefTy, shape, getLinearOffsets);
+      FailureOr<Value> maybeDstPtrs = buildMemRefTensorPointers(
+          rewriter, loc, op.getDst(), dst, dstMemrefTy, shape);
       if (failed(maybeDstPtrs))
         return rewriter.notifyMatchFailure(
             op, "failed to materialize destination pointers");
@@ -1375,6 +1278,44 @@ struct HIVMToTTReduceOp: public OpRewritePattern<hivm::VReduceOp> {
 };
 
 } // namespace
+
+FailureOr<Value> mlir::hivm::buildMemRefTensorPointers(
+    ConversionPatternRewriter &rewriter, Location loc, Value originalValue,
+    Value convertedValue, MemRefType memrefTy, ArrayRef<int64_t> shape) {
+  if (auto castOp =
+          originalValue.getDefiningOp<memref::ReinterpretCastOp>()) {
+    Value base = castOp.getSource();
+    auto baseMemrefTy = dyn_cast<MemRefType>(base.getType());
+    if (!baseMemrefTy)
+      return failure();
+
+    SmallVector<OpFoldResult> mixedOffsets = castOp.getMixedOffsets();
+    SmallVector<OpFoldResult> mixedStrides = castOp.getMixedStrides();
+    return buildReinterpretCastTensorPointers(
+        rewriter, loc, base, baseMemrefTy, mixedOffsets, mixedStrides, shape);
+  }
+
+  if (auto subviewOp = originalValue.getDefiningOp<memref::SubViewOp>()) {
+    if (!llvm::equal(shape, subviewOp.getType().getShape()))
+      return failure();
+    return buildSubviewPointerTensor(rewriter, loc, subviewOp);
+  }
+
+  // The generic fallback only materializes static layout descriptors. Dynamic
+  // layouts must be handled while their original view op is available.
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(getStridesAndOffset(memrefTy, strides, offset)) ||
+      offset == ShapedType::kDynamic ||
+      llvm::is_contained(strides, ShapedType::kDynamic))
+    return failure();
+
+  Value linearOffsets = createLinearOffsetTensor(rewriter, loc, shape);
+  Value offsets =
+      calcStridedOffsets(rewriter, loc, memrefTy, shape, linearOffsets);
+  return buildTensorPointers(rewriter, loc, convertedValue, memrefTy, shape,
+                             offsets);
+}
 
 void mlir::hivm::populateHIVMToTritonPatterns(RewritePatternSet &patterns) {
   auto *context = patterns.getContext();

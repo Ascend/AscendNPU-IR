@@ -115,22 +115,16 @@ module {
 // CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %4 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: tt.store %5, %3 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %7 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %9 = tt.load %8 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %10 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %13 = tt.atomic_rmw add, acq_rel, gpu, %12, %9 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
+// CHECK-NEXT: %7 = tt.atomic_rmw add, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
 
 func.func @check_store_atomicadd(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%arg0: memref<16xi32>)
-  hivm.hir.store ins(%arg0: memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <add>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
+  hivm.hir.store ins(%0 : tensor<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <add>
   return
 }
 
@@ -140,22 +134,16 @@ func.func @check_store_atomicadd(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 // CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %4 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: tt.store %5, %3 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %7 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %9 = tt.load %8 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %10 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %13 = tt.atomic_rmw max, acq_rel, gpu, %12, %9 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
+// CHECK-NEXT: %7 = tt.atomic_rmw max, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
 
 func.func @check_store_atomicmax(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%arg0: memref<16xi32>)
-  hivm.hir.store ins(%arg0: memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <max>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
+  hivm.hir.store ins(%0 : tensor<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <max>
   return
 }
 
@@ -165,22 +153,16 @@ func.func @check_store_atomicmax(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 // CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %4 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: tt.store %5, %3 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %7 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %9 = tt.load %8 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %10 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %13 = tt.atomic_rmw min, acq_rel, gpu, %12, %9 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
+// CHECK-NEXT: %7 = tt.atomic_rmw min, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
 
 func.func @check_store_atomicmin(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%arg0: memref<16xi32>)
-  hivm.hir.store ins(%arg0: memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <min>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
+  hivm.hir.store ins(%0 : tensor<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <min>
   return
 }
 
@@ -190,22 +172,16 @@ func.func @check_store_atomicmin(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 // CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %4 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: tt.store %5, %3 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %7 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %9 = tt.load %8 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %10 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %13 = tt.atomic_rmw and, acq_rel, gpu, %12, %9 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
+// CHECK-NEXT: %7 = tt.atomic_rmw and, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
 
 func.func @check_store_atomicand(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%arg0: memref<16xi32>)
-  hivm.hir.store ins(%arg0: memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <and>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
+  hivm.hir.store ins(%0 : tensor<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <and>
   return
 }
 
@@ -215,22 +191,16 @@ func.func @check_store_atomicand(%arg0: memref<16xi32> , %arg1: memref<16xi32>, 
 // CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %4 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: tt.store %5, %3 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %7 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %9 = tt.load %8 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %10 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %13 = tt.atomic_rmw or, acq_rel, gpu, %12, %9 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
+// CHECK-NEXT: %7 = tt.atomic_rmw or, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
 
 func.func @check_store_atomicor(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%arg0: memref<16xi32>)
-  hivm.hir.store ins(%arg0: memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <or>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
+  hivm.hir.store ins(%0 : tensor<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <or>
   return
 }
 
@@ -240,22 +210,16 @@ func.func @check_store_atomicor(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %
 // CHECK-NEXT: %1 = tt.splat %arg5 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
 // CHECK-NEXT: %2 = tt.addptr %1, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
 // CHECK-NEXT: %3 = tt.load %2 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %4 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %5 = tt.addptr %4, %0 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: tt.store %5, %3 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %6 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %7 = tt.splat %arg0 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %8 = tt.addptr %7, %6 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %9 = tt.load %8 : tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %10 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
-// CHECK-NEXT: %11 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
-// CHECK-NEXT: %12 = tt.addptr %11, %10 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
-// CHECK-NEXT: %13 = tt.atomic_rmw xor, acq_rel, gpu, %12, %9 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
+// CHECK-NEXT: %4 = tt.make_range {end = 16 : i32, start = 0 : i32} : tensor<16xi32>
+// CHECK-NEXT: %5 = tt.splat %arg10 : !tt.ptr<i32> -> tensor<16x!tt.ptr<i32>>
+// CHECK-NEXT: %6 = tt.addptr %5, %4 : tensor<16x!tt.ptr<i32>>, tensor<16xi32>
+// CHECK-NEXT: %7 = tt.atomic_rmw xor, acq_rel, gpu, %6, %3 : (tensor<16x!tt.ptr<i32>>, tensor<16xi32>) -> tensor<16xi32>
 // CHECK-NEXT: tt.return
 
 func.func @check_store_atomicxor(%arg0: memref<16xi32> , %arg1: memref<16xi32>, %arg2: memref<16xi32>) {
   hivm.hir.load ins(%arg1 : memref<16xi32>) outs(%arg0: memref<16xi32>)
-  hivm.hir.store ins(%arg0: memref<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <xor>
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<16xi32>
+  hivm.hir.store ins(%0 : tensor<16xi32>) outs(%arg2 : memref<16xi32>) atomic = <xor>
   return
 }
 

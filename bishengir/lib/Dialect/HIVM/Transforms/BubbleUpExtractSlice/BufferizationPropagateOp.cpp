@@ -160,6 +160,22 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpSubView(
   if (failed(maybeSlicedType))
     return failure();
   auto slicedType = maybeSlicedType.value();
+  // When the tiling offset is dynamic, keep offset:? on the sliced UCC type
+  // even for identity layouts. PostProcess later turns the UCC into a parent
+  // subview with that dynamic offset; consumers inferred against a static
+  // offset layout would then fail memref.subview verification.
+  if (!getConstantIntValue(tiledOffset)) {
+    int64_t offset = 0;
+    SmallVector<int64_t> strides;
+    if (succeeded(getStridesAndOffset(slicedType, strides, offset)) &&
+        !ShapedType::isDynamic(offset)) {
+      slicedType = MemRefType::get(
+          slicedType.getShape(), slicedType.getElementType(),
+          StridedLayoutAttr::get(slicedType.getContext(),
+                                 ShapedType::kDynamic, strides),
+          slicedType.getMemorySpace());
+    }
+  }
   auto srcUp =
       createBubblePropagatorUpLink(subViewOp.getSource(), slicedType,
                                    tiledOffset, tiledSize, tilingDim, rewriter);
@@ -180,7 +196,12 @@ LogicalResult BufferizationPropagateUpPattern::propagateUpSubView(
       reducedShape, newSrcType, offsets, sizes, strides);
   auto newOp = rewriter.create<memref::SubViewOp>(
       loc, cast<MemRefType>(newSubViewType), newSrc, offsets, sizes, strides);
+  LDBG("Propagated up through subview " << subViewOp);
   rewriter.replaceOp(propagateOp, newOp);
+  // The original subview is often left dead after the UCC is replaced, but
+  // other users may still consume it (e.g. shared buffers during bubble-up).
+  if (subViewOp->use_empty())
+    rewriter.eraseOp(subViewOp);
   return success();
 }
 
@@ -245,6 +266,7 @@ LogicalResult BufferizationPropagateDownPattern::propagateDownMarkOp(
   Value newValue = propagateOp.getInputs()[0];
   rewriter.modifyOpInPlace(markOp, [&]() { use.set(newValue); });
   LDBG("Propagated down through annotation.mark " << markOp);
+  rewriter.eraseOp(propagateOp);
   return success();
 }
 

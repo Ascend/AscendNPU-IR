@@ -275,6 +275,14 @@ def PlanMemory : Pass<"hivm-plan-memory", "ModuleOp"> {
     Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
            /*default=*/"false",
            "Disable VF reachable check, default : false">,
+    Option<"planMemoryStrategy", "plan-memory-strategy", "::mlir::hivm::PlanMemoryStrategy",
+           "mlir::hivm::PlanMemoryStrategy::DEFAULT",
+           "Plan memory strategy for storage entry reorder",
+           [{::llvm::cl::values(
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+                          "keep original storage entry order without sorting"),
+               clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+                          "sort storage entries by const bits descending, allocate larger buffer first"))}]>,
   ];
 }
 
@@ -982,6 +990,55 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
       "enableTile", "enable-tile", "bool",
       /*default=*/"true",
       "Enable TileAndBindSubBlock pass">];
+}
+
+def PartitionAndBindSubBlock
+    : Pass<"hivm-partition-and-bind-sub-block", "ModuleOp"> {
+  let summary =
+      "Lower {sub_block = n} scope.scope regions to operand-parallel guards";
+  let constructor = "mlir::hivm::createPartitionAndBindSubBlockPass()";
+  let options = [
+    Option<"enableLoadBalanced", "enable-load-balanced", "bool",
+           /*default=*/"false",
+           "Sub-block binding method. false: pin every free op to sub-block 0"
+           "true: spread independent fixpipe across both sub-cores">
+  ];
+  let dependentDialects = [
+    "scope::ScopeDialect",
+    "hivm::HIVMDialect",
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "tensor::TensorDialect",
+    "func::FuncDialect"
+  ];
+}
+
+def SubBlockGuardCleanup
+    : Pass<"hivm-sub-block-guard-cleanup", "ModuleOp"> {
+  let summary =
+      "Clean up value-returning operand-parallel sub-block guards";
+  let description = [{
+    STAGE 3 of operand-parallel sub-block partition. Runs after bufferization +
+    DropEquivalentBufferResults. Cleans up each value-returning
+    `scf.if (get_sub_block_idx() == n) -> memref { ...; yield %out } else
+    { yield %init }` via three single-concern components: (1) bubble metadata-only
+    memref views (expand_shape/collapse_shape/cast) off the then-yields so the
+    then-output is a bare alloc (formerly a separate pre-bufferize pass); (2) fold
+    the redundant UB->UB copies bufferization left in the then block -- both the
+    scope-OUTPUT reconciliation copy and the read-only INPUT staging copy; (3)
+    make the guard result-free by hoisting the then-branch's own output alloc
+    above the guard and dropping the else. The dead else-init allocs then DCE
+    away. Guards are matched structurally by their `get_sub_block_idx() == const`
+    predicate (bufferization drops discardable attrs but leaves this index-domain
+    condition intact); only partition guards stay result-bearing here.
+  }];
+  let constructor = "mlir::hivm::createSubBlockGuardCleanupPass()";
+  let dependentDialects = [
+    "hivm::HIVMDialect",
+    "scf::SCFDialect",
+    "arith::ArithDialect",
+    "memref::MemRefDialect"
+  ];
 }
 
 def HIVMBubbleUpExtractSlice : Pass<"hivm-bubble-up-extract-slice", "func::FuncOp"> {

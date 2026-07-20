@@ -480,11 +480,45 @@ llvm::cl::values(
   }];
 }
 
+def PlanMemoryStrategy : HIVMOptimizationControlOptions<
+  "Plan memory strategy for storage entry reorder.",
+  "mlir::hivm::PlanMemoryStrategy",
+  "mlir::hivm::PlanMemoryStrategy::DEFAULT"
+> {
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(mlir::hivm::PlanMemoryStrategy::DEFAULT, "default",
+             "Keep original storage entry order without sorting"),
+  clEnumValN(mlir::hivm::PlanMemoryStrategy::LARGEST_FIRST, "largest-first",
+             "Sort storage entries by const bits descending, allocate larger buffer first")
+)
+  }];
+}
+
 def EnableAutoBindSubBlock : HIVMOptimizationControlOptions<
   "Enable auto bind sub block.",
   "bool",
   "true"
 >;
+
+def PartitionAndBindSubBlock : HIVMOptimizationControlOptions<
+  "Operand-parallel partition-and-bind sub-block mode. off: disabled. "
+  "default-pin: enabled, pinning every free op to sub-block 0. "
+  "load-balanced: enabled, spreading across both AIV ",
+  "PartitionAndBindSubBlockMode",
+  "PartitionAndBindSubBlockMode::Off"
+> {
+  let passGroup = ["HIVM"];
+  let additionalOptFlags = [{
+llvm::cl::values(
+  clEnumValN(PartitionAndBindSubBlockMode::Off, "off",
+             "Disable partition-and-bind sub-block"),
+  clEnumValN(PartitionAndBindSubBlockMode::DefaultPin, "default-pin",
+             "Enable; pin every free op to sub-block 0"),
+  clEnumValN(PartitionAndBindSubBlockMode::LoadBalanced, "load-balanced",
+             "Enable; spread op across both AIV sub-cores"))
+  }];
+}
 
 def EnableCodeMotion : HIVMOptimizationControlOptions<
   "Enable code-motion/subset-hoist.",
@@ -1195,6 +1229,14 @@ def EnableSinkDPXLoad : SIMTOptimizationControlOptions<
   "true"
 > {
   bit isSharedWithDownstreamToolchain = 1;
+}
+
+def KTileSize : SIMTOptimizationControlOptions<
+  "Custom tile size for k tiling (must perfectly divide K)",
+  "int",
+  "2"
+> {
+  bit isSharedWithDownstreamToolchain = 0;
 }
 
 def EnableOptimizeMath : SIMTOptimizationControlOptions<

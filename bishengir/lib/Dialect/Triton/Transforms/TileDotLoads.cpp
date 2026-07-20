@@ -1261,14 +1261,14 @@ struct TileInfo {
   int64_t numTiles = 0;
 };
 
-static TileInfo chooseTile(triton::DotOp dot) {
+static TileInfo chooseTile(triton::DotOp dot, int KTileSize) {
   auto aTy = cast<RankedTensorType>(dot.getA().getType());
   auto dTy = cast<RankedTensorType>(dot.getResult().getType());
   int64_t M = dTy.getDimSize(0);
   int64_t N = dTy.getDimSize(1);
   int64_t K = aTy.getDimSize(1);
 
-  if (M * K * N <= kMKNBudget)
+  if (M * K * N <= kMKNBudget && (KTileSize <= 0 || KTileSize == K))
     return {};
 
   // Look through a single `tt.trans` between load and dot operand.
@@ -1291,13 +1291,24 @@ static TileInfo chooseTile(triton::DotOp dot) {
   if (!isTileableLoad(aInfo.load, K) || !isTileableLoad(bInfo.load, K))
     return {};
 
-  int64_t maxKTile = kMKNBudget / std::max(int64_t(1), M * N);
-  int64_t kTile = static_cast<int64_t>(floorPow2(static_cast<uint64_t>(maxKTile > 0 ? maxKTile : 1)));
-  kTile = std::min(kTile, K);
-  while (kTile > 1 && K % kTile != 0)
-    kTile /= 2;
-  if (kTile <= 0 || kTile >= K)
+  int64_t kTile;
+
+  if (KTileSize <= 0) {
+    int64_t maxKTile = kMKNBudget / std::max(int64_t(1), M * N);
+    kTile = static_cast<int64_t>(floorPow2(static_cast<uint64_t>(maxKTile > 0 ? maxKTile : 1)));
+    kTile = std::min(kTile, K);
+    while (kTile > 1 && K % kTile != 0)
+      kTile /= 2;
+    if (kTile <= 0 || kTile >= K)
+      return {};
+  } else if (K % KTileSize != 0) {
+    LLVM_DEBUG(DBGS() << "  -> skip (KTileSize=" << KTileSize
+                      << " does not divide K=" << K << ")" << '\n');
     return {};
+  } else {
+    kTile = KTileSize;
+  }
+  
   return {TileStrategy::K, kTile, K / kTile};
 }
 
@@ -1307,6 +1318,10 @@ static TileInfo chooseTile(triton::DotOp dot) {
 
 struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
   using OpRewritePattern<triton::DotOp>::OpRewritePattern;
+  int KTileSize;
+
+  explicit TileDotPattern(MLIRContext *ctx, int KTileSize = 0)
+      : OpRewritePattern<triton::DotOp>(ctx), KTileSize(KTileSize) {}
 
   LogicalResult matchAndRewrite(triton::DotOp dot,
                                 PatternRewriter &rewriter) const override {
@@ -1322,7 +1337,7 @@ struct TileDotPattern : public OpRewritePattern<triton::DotOp> {
                       << "] MKN=" << M * K * N << " budget=" << kMKNBudget
                       << '\n');
 
-    TileInfo info = chooseTile(dot);
+    TileInfo info = chooseTile(dot, KTileSize);
     if (info.strategy == TileStrategy::None) {
       LLVM_DEBUG(DBGS() << "  -> skip (MKN within budget, only one operand is a load, "
                         << "or no tileable load)" << '\n');
@@ -1678,9 +1693,10 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
   /// Per-dot SHM budget in bytes; 0 disables the budget check (cost model
   /// still gates). Wired from the pass's `smem-budget-bytes` option.
   int64_t smemBudgetBytes;
+  int KTileSize = 0; // 0 = auto-pick K-tile size
 
-  StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes)
-      : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes) {
+  StageNonLoadOperandPattern(MLIRContext *ctx, int64_t smemBudgetBytes, int KTileSize = 0)
+      : OpRewritePattern<triton::DotOp>(ctx), smemBudgetBytes(smemBudgetBytes), KTileSize(KTileSize) {
   }
 
   LogicalResult matchAndRewrite(triton::DotOp dot,
@@ -1696,7 +1712,7 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
     int64_t K = aTy.getDimSize(1);
     if (bTy.getDimSize(0) != K)
       return failure();
-    if (M * K * N <= kMKNBudget)
+    if (M * K * N <= kMKNBudget && (KTileSize <= 0 || KTileSize == K))
       return failure();
 
     auto aLoad = dot.getA().getDefiningOp<triton::LoadOp>();
@@ -1706,16 +1722,25 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
       return failure();
 
     // Largest power-of-two divisor of K with per-tile M*kTile*N <= budget.
-    int64_t maxKTile = kMKNBudget / std::max<int64_t>(1, M * N);
-    int64_t kTile =
-        static_cast<int64_t>(floorPow2(static_cast<uint64_t>(std::max<int64_t>(1, maxKTile))));
-    kTile = std::min(kTile, K);
-    while (kTile > 1 && K % kTile != 0)
-      kTile /= 2;
-    if (kTile <= 0 || kTile >= K) {
-      LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> couldn't pick a kTile that "
-                        << "divides K and stays in budget" << '\n');
+    int64_t kTile;
+    if (KTileSize <= 0) {
+      int64_t maxKTile = kMKNBudget / std::max<int64_t>(1, M * N);
+      kTile =
+          static_cast<int64_t>(floorPow2(static_cast<uint64_t>(std::max<int64_t>(1, maxKTile))));
+      kTile = std::min(kTile, K);
+      while (kTile > 1 && K % kTile != 0)
+        kTile /= 2;
+      if (kTile <= 0 || kTile >= K) {
+        LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> couldn't pick a kTile that "
+                          << "divides K and stays in budget" << '\n');
+        return failure();
+      }
+    } else if (K % KTileSize != 0) {
+      LLVM_DEBUG(DBGS() << "  -> skip (KTileSize=" << KTileSize
+                        << " does not divide K=" << K << ")" << '\n');
       return failure();
+    } else {
+      kTile = KTileSize;
     }
 
     // Load-side operands must be block-ptr style (chunking uses tt.advance).
@@ -1844,8 +1869,10 @@ struct StageNonLoadOperandPattern : public OpRewritePattern<triton::DotOp> {
                       << '\n');
     if (!decision.stageThroughSmem) {
       LLVM_DEBUG(DBGS() << "[StageNonLoadOperand]   -> cost model says staging is not "
-                        << "profitable; skipping" << '\n');
-      return failure();
+                        << "profitable" << '\n');
+      if (KTileSize <= 0) {
+        return failure();
+      }
     }
 
     
@@ -2245,7 +2272,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
     // K-tile the now-zero-accumulator dots.
     {
       RewritePatternSet p(&getContext());
-      p.add<TileDotPattern>(&getContext());
+      p.add<TileDotPattern>(&getContext(), this->KTileSize);
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 
@@ -2259,7 +2286,7 @@ struct TileDotLoadsPass : public impl::TileDotLoadsBase<TileDotLoadsPass> {
     // Stage non-load operands of over-budget dots through scratch SHM.
     {
       RewritePatternSet p(&getContext());
-      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes);
+      p.add<StageNonLoadOperandPattern>(&getContext(), this->smemBudgetBytes, this->KTileSize);
       (void)applyPatternsGreedily(getOperation(), std::move(p));
     }
 

@@ -281,6 +281,8 @@ hivmWorkspacePipeline(OpPassManager &pm,
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
@@ -351,6 +353,16 @@ static void hivmPreBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createBindWorkSpaceArgPass());
 
   pm.addPass(createInferFuncCoreTypePass());
+
+  if (hivmPipelineOptions.partitionAndBindSubBlock !=
+      PartitionAndBindSubBlockMode::Off) {
+    PartitionAndBindSubBlockOptions partitionOptions;
+    partitionOptions.enableLoadBalanced =
+        hivmPipelineOptions.partitionAndBindSubBlock ==
+        PartitionAndBindSubBlockMode::LoadBalanced;
+    pm.addPass(createPartitionAndBindSubBlockPass(partitionOptions));
+  }
+
   // AutoBlockifyParallelLoopPass needs to be after infer core type because
   // num. of physical blocks we loop on is dependent on core type
   if (hivmPipelineOptions.enableTritonKernelCompile &&
@@ -405,6 +417,8 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.disableVFReachableCheck =
       hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
@@ -591,6 +605,8 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
   planMemoryOption.disableVFReachableCheck =
       hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
@@ -661,6 +677,9 @@ void buildHIVMTensorOptimizations(
 void buildLowerHIVMPipelines(OpPassManager &pm,
                              const HIVMPipelineOptions &hivmPipelineOptions) {
   bufferizationPipeline(pm, hivmPipelineOptions);
+  if (hivmPipelineOptions.partitionAndBindSubBlock !=
+      PartitionAndBindSubBlockMode::Off)
+    pm.addPass(createSubBlockGuardCleanupPass());
   hivmPostBufferizationOptimizationPipeline(pm, hivmPipelineOptions);
   // Optimizations that relies on scope should be done after this point. Inline
   // all `scope.scope` ops.

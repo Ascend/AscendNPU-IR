@@ -122,4 +122,50 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     "some_consume"(%result) : (tensor<128x128xf32>) -> ()
     return
   }
+
+  // CHECK-LABEL: func.func @preload_outputless_atomic
+  // CHECK: scf.for
+  // CHECK-NOT: hivm.hir.set_atomic
+  // CHECK: scope.scope : () -> () {
+  // CHECK:   hivm.hir.mmadL1
+  // CHECK:   hivm.hir.set_atomic kind = <add>[type = f32]
+  // CHECK:   hivm.hir.fixpipe
+  // CHECK-NEXT:   hivm.hir.set_atomic kind = <none>[type = f32]
+  // CHECK:   scope.return
+  // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<CUBE>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 1 : i32, no_inline}
+  // CHECK: scope.scope : () -> () {
+  // CHECK:   hivm.hir.vexp
+  // CHECK:   hivm.hir.store
+  // CHECK:   scope.return
+  // CHECK: } {hivm.loop_core_type = #hivm.tcore_type<VECTOR>, hivm.max_preload_num = 2 : i32, hivm.preload_num = 0 : i32, no_inline}
+  func.func @preload_outputless_atomic(
+      %a: tensor<16x16xf16>,
+      %b: tensor<16x16xf16>,
+      %vector_in: tensor<16x16xf32>,
+      %cube_out: memref<16x16xf32>,
+      %vector_out: memref<16x16xf32>) attributes {
+        hacc.entry,
+        hacc.function_kind = #hacc.function_kind<DEVICE>,
+        hivm.func_core_type = #hivm.func_core_type<MIX>,
+        mix_mode = "mix"
+      } {
+    %c0 = arith.constant 0 : i32
+    %step = arith.constant 1 : i32
+    %bound = "some_op"() : () -> i32
+    %true = arith.constant true
+    %c16 = arith.constant 16 : index
+    scf.for %i = %c0 to %bound step %step : i32 {
+      %dot_init = tensor.empty() : tensor<16x16xf32>
+      %dot = hivm.hir.mmadL1 ins(%a, %b, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%dot_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      hivm.hir.set_atomic kind = <add>[type = f32]
+      hivm.hir.fixpipe ins(%dot : tensor<16x16xf32>) outs(%cube_out : memref<16x16xf32>)
+      hivm.hir.set_atomic kind = <none>[type = f32]
+
+      %vector_init = tensor.empty() : tensor<16x16xf32>
+      %vector = hivm.hir.vexp ins(%vector_in : tensor<16x16xf32>) outs(%vector_init : tensor<16x16xf32>) -> tensor<16x16xf32>
+      hivm.hir.store ins(%vector : tensor<16x16xf32>) outs(%vector_out : memref<16x16xf32>)
+      scf.yield
+    }
+    return
+  }
 }

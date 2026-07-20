@@ -548,7 +548,6 @@ static void cleanupPreloadWorkspaceMarks(Operation &op) {
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
   DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
-  DenseSet<int64_t> preloadNumSet;
   moduleOp->walk([&](scope::ScopeOp scopeOp) {
     if (auto maxPreloadNumAttr = scopeOp->getAttrOfType<IntegerAttr>(
             hivm::MaxPreloadNumAttr::name)) {
@@ -564,7 +563,6 @@ void CreatePreloadPass::runOnOperation() {
       assert(preloadNum < static_cast<int64_t>(preloadVec.size()) &&
              "MaxPreloadNumAttr must be set");
       preloadVec[preloadNum] = scopeOp;
-      preloadNumSet.insert(preloadNum);
     }
   });
 
@@ -573,8 +571,15 @@ void CreatePreloadPass::runOnOperation() {
 
   for (auto &[forOp, scopes] : preload) {
     LDBG("Processing preload:\n" << forOp);
-    scopes.resize(preloadNumSet.size(), nullptr);
-    rewritePreloadLoop(forOp, scopes, preloadNumSet.size());
+    auto scopeIt = llvm::find_if(scopes, [](scope::ScopeOp scopeOp) {
+      return static_cast<bool>(scopeOp);
+    });
+    assert(scopeIt != scopes.end() && "Expected at least one preload scope");
+    auto maxPreloadNumAttr = (*scopeIt)->getAttrOfType<IntegerAttr>(
+        hivm::MaxPreloadNumAttr::name);
+    assert(maxPreloadNumAttr && "MaxPreloadNumAttr must be set");
+    rewritePreloadLoop(forOp, scopes,
+                       static_cast<size_t>(maxPreloadNumAttr.getInt()));
   }
 
   cleanupPreloadWorkspaceMarks(*moduleOp);

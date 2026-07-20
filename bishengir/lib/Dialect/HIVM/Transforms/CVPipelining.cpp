@@ -1660,6 +1660,10 @@ LogicalResult CVPipelineImpl::migrateOpsForPreload(OpBuilder &builder) {
 }
 
 LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
+  for (Operation &op : *pipelineLoop.getBody())
+    if (isa<SetAtomicOp>(op))
+      toErase.insert(&op);
+
   int32_t preloadNum = static_cast<int32_t>(worklist.size()) - 1;
   for (auto &item : worklist) {
     // Reset insertion point after we're done with this item
@@ -1672,22 +1676,12 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
 
     // TCB local outputs are backed by local buffers and are rebuilt as
     // tensor views after the scope.
-    bool hasTCBLocalOutput = false;
     SmallVector<Value> returnTensors{};
-    for (auto &localOutput : item->localOutputs) {
-      if (isTCBLocalOutput(localOutput)) {
-        hasTCBLocalOutput = true;
-      } else {
+    for (auto &localOutput : item->localOutputs)
+      if (!isTCBLocalOutput(localOutput))
         returnTensors.push_back(localOutput.first);
-      }
-    }
     for (auto &yieldedOutput : item->yieldedOutputs) {
       returnTensors.push_back(yieldedOutput.first);
-    }
-    if (returnTensors.empty() && item->workspaceOutputs.empty() &&
-        !hasTCBLocalOutput) {
-      preloadNum--;
-      continue;
     }
 
     builder.setInsertionPoint(parentFor.getBody()->getTerminator());
@@ -1735,7 +1729,15 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
       toErase.insert(&op);
       if (tcbToTensorOps.contains(&op))
         continue;
+      auto atomicIt = atomicEffectMap.find(&op);
+      if (atomicIt != atomicEffectMap.end()) {
+        const AtomicEffect &effect = atomicIt->getSecond();
+        builder.create<SetAtomicOp>(op.getLoc(), effect.kind, effect.type);
+      }
       builder.clone(op, scopeMap);
+      if (atomicIt != atomicEffectMap.end())
+        builder.create<SetAtomicOp>(op.getLoc(), AtomicKind::NONE,
+                                    atomicIt->getSecond().type);
     }
     item->irMap = scopeMap;
 
@@ -1790,6 +1792,13 @@ LogicalResult CVPipelineImpl::createNewLoopsForPreloadWithScopes() {
 
     item->scopeOp = newScopeOp;
     preloadNum--;
+  }
+
+  if (trailingAtomicEffect) {
+    builder.setInsertionPoint(pipelineLoop.getBody()->getTerminator());
+    builder.create<SetAtomicOp>(pipelineLoop->getLoc(),
+                                trailingAtomicEffect->kind,
+                                trailingAtomicEffect->type);
   }
 
   return success();

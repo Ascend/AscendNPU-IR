@@ -11,6 +11,8 @@ file(GLOB TILE_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
 file(GLOB NORMALIZE ${CMAKE_CURRENT_SOURCE_DIR}/Normalize/*.cpp)
 file(GLOB NDDMA CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/NDDMA/*.cpp)
+file(GLOB PARTITION_AND_BIND_SUB_BLOCK CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/PartitionAndBindSubBlock/*.cpp)
 
 add_bishengir_dialect_library(MLIRHIVMTransforms
   ${ALIGN_BUFFER}
@@ -22,6 +24,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   ${TILE_AND_BIND_SUB_BLOCK}
   ${NORMALIZE}
   ${NDDMA}
+  ${PARTITION_AND_BIND_SUB_BLOCK}
   Normalize/NormalizeMath.cpp
   AllocExtraBuffer.cpp
   AllocToAlloca.cpp

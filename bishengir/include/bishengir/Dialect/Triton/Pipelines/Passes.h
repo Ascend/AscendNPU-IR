@@ -53,6 +53,10 @@ struct LowerTritonPipelineOptions
       *this, "enable-optimize-math",
       llvm::cl::desc("enable optimize math pass"),
       llvm::cl::init(false)};
+  PassOptions::Option<int> KTileSize{
+      *this, "k-tile-size",
+      llvm::cl::desc("custom tile size for k tiling (must perfectly divide K)"),
+      llvm::cl::init(0)};
   PassOptions::Option<bool> enableSimtReorderInstruction{
       *this, "enable-simt-reorder-instruction",
       llvm::cl::desc("enable simt reorder instruction pattern"),

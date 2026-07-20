@@ -119,6 +119,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   // GPU` receives via `shared` below.
   bishengir::TileDotLoadsOptions tileDotLoadsOpts;
   tileDotLoadsOpts.smemBudgetBytes = options.sharedDynamicSize;
+  tileDotLoadsOpts.KTileSize = options.KTileSize;
   pm.addNestedPass<mlir::triton::FuncOp>(
       bishengir::triton::createTileDotLoadsPass(tileDotLoadsOpts));
   pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
@@ -135,7 +136,6 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   }
   pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
   pm.addNestedPass<mlir::triton::FuncOp>(
-      
       bishengir::triton::createLegalizeF16ForTritonPass());
   pm.addPass(createCSEPass());
   pm.addPass(createSCCPPass());
@@ -172,13 +172,11 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(bishengir::triton::createConvertSharedPtrToMemDescPass());
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
-      
         bishengir::triton::createSIMTFastDivPass());
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
   if (options.enableSIMTFastDiv && options.useDPX)
     pm.addNestedPass<mlir::triton::FuncOp>(
-      
         bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass());
   pm.addPass(createConvertIndexToLLVMPass());
   pm.addPass(mlir::triton::proton::createConvertProtonToProtonGPUPass(
@@ -196,7 +194,6 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   pm.addPass(createCSEPass());
   pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
   pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
-  pm.addPass(createConvertSCFToCFPass());
   if (options.enableSinkDPXLoad) {	 
     pm.addPass(createCSEPass());
     pm.addPass(mlir::triton::ascend::createSinkDPXLoad());
