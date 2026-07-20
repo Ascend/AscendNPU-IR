@@ -377,7 +377,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r4:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c4]] :
-    // CHECK:       arith.maxnumf
+    // CHECK:       arith.maximumf
     // CHECK: %[[o2:.*]] = tensor.expand_shape %[[r4]]
     %2 = hivm.hir.vreduce <any> ins(%a: tensor<5x?x10xf32>) outs(%1: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -397,7 +397,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r6:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c6]] :
-    // CHECK:       arith.maxnumf
+    // CHECK:       arith.maximumf
     // CHECK: %[[o3:.*]] = tensor.expand_shape %[[r6]]
     %3 = hivm.hir.vreduce <max> ins(%a: tensor<5x?x10xf32>) outs(%2: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -415,7 +415,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
 
     // CHECK-DAG: %[[c8:.*]] = tensor.collapse_shape %[[o3]]
     // CHECK-DAG: %[[c9:.*]] = tensor.collapse_shape %[[c]]
-    // CHECK: %[[r8:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true} <max>
+    // CHECK: %[[r8:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max>
     // CHECK-SAME:      ins(%[[a]] :
     // CHECK-SAME:      outs(%[[c8]], %[[c9]] :
     // CHECK-DAG: %[[o4:.*]] = tensor.expand_shape %[[r8]]#0
@@ -427,7 +427,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK-DAG: %[[t10:.*]] = bufferization.to_tensor %[[g]]
     // CHECK-DAG: %[[c10:.*]] = tensor.collapse_shape %[[t9]]
     // CHECK-DAG: %[[c11:.*]] = tensor.collapse_shape %[[t10]]
-    // CHECK: %[[r9:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false} <max>
+    // CHECK: %[[r9:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false, unsigned_src = false} <max>
     // CHECK-SAME:      ins(%[[t8]] :
     // CHECK-SAME:      outs(%[[c10]], %[[c11]] :
     // CHECK-DAG: %[[e8:.*]] = tensor.expand_shape %[[r9]]#0
@@ -480,7 +480,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
 
     // CHECK-DAG: %[[c16:.*]] = tensor.collapse_shape %[[o6]]
     // CHECK-DAG: %[[c17:.*]] = tensor.collapse_shape %[[id1]]
-    // CHECK: %[[r14:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false} <min>
+    // CHECK: %[[r14:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false, unsigned_src = false} <min>
     // CHECK-SAME:      ins(%[[a]], %[[id_t]] :
     // CHECK-SAME:      outs(%[[c16]], %[[c17]] :
     // CHECK-DAG: tensor.expand_shape %[[r14]]#0
@@ -493,7 +493,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK-DAG: %[[t18:.*]] = bufferization.to_tensor %[[g]]
     // CHECK-DAG: %[[c18:.*]] = tensor.collapse_shape %[[t17]]
     // CHECK-DAG: %[[c19:.*]] = tensor.collapse_shape %[[t18]]
-    // CHECK: %[[r15:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true} <min>
+    // CHECK: %[[r15:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <min>
     // CHECK-SAME:      ins(%[[t15]], %[[t16]] :
     // CHECK-SAME:      outs(%[[c18]], %[[c19]] :
     // CHECK-DAG: %[[e14:.*]] = tensor.expand_shape %[[r15]]#0

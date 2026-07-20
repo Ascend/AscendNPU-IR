@@ -22,6 +22,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Utils/ReshapeOpsUtils.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Iterators.h"
 #include "mlir/IR/Verifier.h"
@@ -188,10 +189,17 @@ public:
           if (isScalarOnly[operand->getOperandNumber()])
             return input;
 
+          const auto shapedInputType = dyn_cast<ShapedType>(input.getType());
+          SmallVector<int64_t> operandBrcDims;
+          if (shapedInputType) {
+            for (auto dim : brcDims) {
+              if (shapedInputType.getShape()[dim] == 1)
+                operandBrcDims.push_back(dim);
+            }
+          }
+
           // Ignore inputs that don't require broadcast
-          if (const auto inputType = dyn_cast<ShapedType>(input.getType());
-              inputType &&
-              (brcDims.empty() || inputType.getShape()[brcDims[0]] != 1))
+          if (shapedInputType && operandBrcDims.empty())
             return input;
 
           isBroadcastNeeded = true;
@@ -203,7 +211,7 @@ public:
 
           auto brc = rewriter.create<hivm::VBrcOp>(
               loc, isTensor ? TypeRange(newInput.getType()) : TypeRange(),
-              input, newInput, rewriter.getDenseI64ArrayAttr(brcDims));
+              input, newInput, rewriter.getDenseI64ArrayAttr(operandBrcDims));
 
           return isTensor ? brc.getResult()[0] : Value(newInput);
         });
@@ -251,9 +259,17 @@ public:
   FailureOr<SmallVector<Value>>
   preprocessOperands(PatternRewriter &rewriter,
                      hivm::HIVMStructuredOp op) const {
-    if (!op.hasPureBufferSemantics() && !op.hasPureTensorSemantics())
-      return op.emitError(
-          "has to be composed of either pure tensors or pure memrefs");
+    if (!op.hasPureBufferSemantics() && !op.hasPureTensorSemantics()) {
+      OpOperand *initOperand = op.getDpsInitOperand(0);
+      if (op.getNumDpsInits() == 1 &&
+          isa<MemRefType>(initOperand->get().getType())) {
+        Value tensor = rewriter.create<bufferization::ToTensorOp>(
+            op->getLoc(), initOperand->get());
+        initOperand->set(tensor);
+      } else
+        return op.emitError(
+            "has to be composed of either pure tensors or pure memrefs");
+    }
 
     auto broadcastOperands = inlineBroadcast(rewriter, op);
     if (!broadcastOperands.empty())
@@ -419,37 +435,45 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
 
     const auto dstsWithoutDims =
         llvm::map_to_vector(dsts, [&](Value dst) -> Value {
-          const auto reassociation = reshape_utils::getReAssociation(
-              op.getReduceDims(), cast<ShapedType>(dst.getType()).getRank());
+          const auto dstRank = cast<ShapedType>(dst.getType()).getRank();
+          const auto reducedRank = dstRank - op.getReduceDims().size();
+          const auto reassociation = reducedRank == 0
+              ? SmallVector<SmallVector<int64_t, 2>>{}
+              : reshape_utils::getReAssociation(
+                  op.getReduceDims(), dstRank);
           return rewriter.create<tensor::CollapseShapeOp>(loc, dst,
                                                           reassociation);
         });
 
     const auto reduceOperation = op.getArith().getReduceOp();
+    const bool unsignedSource = op.getUnsignedSrc();
     Operation *reduceOp;
     auto createReduceWithIndexOp = [&](hfusion::ReduceWithIndexKind reduceKind,
-                                       bool isTieBreakLeft) -> Operation * {
+                                        bool isTieBreakLeft,
+                                        bool isUnsignedSrc) -> Operation * {
       return rewriter.create<hfusion::ReduceWithIndexOp>(
           loc, ValueRange(dstsWithoutDims).getTypes(), srcs, dstsWithoutDims,
           rewriter.getAttr<hfusion::ReduceWithIndexKindAttr>(reduceKind),
-          rewriter.getBoolAttr(isTieBreakLeft), op.getReduceDimsAttr());
+          BoolAttr::get(op->getContext(), isUnsignedSrc),
+          BoolAttr::get(op->getContext(), isTieBreakLeft),
+          op.getReduceDimsAttr());
     };
     switch (reduceOperation) {
     case hivm::ReduceOperation::min_with_index_left:
       reduceOp =
-          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MIN, true);
+          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MIN, true, unsignedSource);
       break;
     case hivm::ReduceOperation::min_with_index_right:
       reduceOp =
-          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MIN, false);
+          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MIN, false, unsignedSource);
       break;
     case hivm::ReduceOperation::max_with_index_left:
       reduceOp =
-          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MAX, true);
+          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MAX, true, unsignedSource);
       break;
     case hivm::ReduceOperation::max_with_index_right:
       reduceOp =
-          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MAX, false);
+          createReduceWithIndexOp(hfusion::ReduceWithIndexKind::MAX, false, unsignedSource);
       break;
     default:
       auto status = success();
@@ -479,8 +503,8 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
             case hivm::ReduceOperation::any:
             case hivm::ReduceOperation::max:
               if (isa<FloatType>(elementType))
-                results = {builder.create<arith::MaxNumFOp>(loc, operands[0],
-                                                            operands[1])};
+                results = {builder.create<arith::MaximumFOp>(loc, operands[0],
+                                                             operands[1])};
               else if (const auto intType = dyn_cast<IntegerType>(elementType);
                        intType && !intType.isUnsigned())
                 results = {builder.create<arith::MaxSIOp>(loc, operands[0],
@@ -531,8 +555,11 @@ struct RewriteVReduceOp : public OpRewritePattern<hivm::VReduceOp> {
         llvm::zip_equal(ValueRange(dsts).getTypes(), reduceOp->getResults()),
         [&](auto zippedResult) -> Value {
           auto [originalResType, newReduceRes] = zippedResult;
-          const auto reassociation = reshape_utils::getReAssociation(
-              op.getReduceDims(), cast<ShapedType>(originalResType).getRank());
+          const auto resRank = cast<ShapedType>(newReduceRes.getType()).getRank();
+          const auto reassociation = resRank == 0
+              ? SmallVector<SmallVector<int64_t, 2>>{}
+              : reshape_utils::getReAssociation(
+                  op.getReduceDims(), cast<ShapedType>(originalResType).getRank());
           return rewriter.create<tensor::ExpandShapeOp>(
               loc, originalResType, newReduceRes, reassociation);
         });
@@ -577,6 +604,25 @@ struct RewriteVBrcOp : public OpRewritePattern<hivm::VBrcOp> {
                                          utils::IteratorType::parallel),
         [](OpBuilder &rewriter, Location loc, ValueRange operands) {
           rewriter.create<linalg::YieldOp>(loc, operands[0]);
+        });
+    return success();
+    }
+};
+
+template <typename From, typename To>
+struct RewriteVModOp : public OpRewritePattern<From> {
+  using OpRewritePattern<From>::OpRewritePattern;
+  LogicalResult matchAndRewrite(From op,
+                                PatternRewriter &rewriter) const final {
+    const auto resultType = cast<ShapedType>(op.getDst()[0].getType());
+    rewriter.replaceOpWithNewOp<linalg::GenericOp>(
+        op, op.getResultTypes(), op.getSrc(), op.getDst(),
+        op.getIndexingMapsArray(),
+        SmallVector<utils::IteratorType>(resultType.getRank(),
+                                         utils::IteratorType::parallel),
+        [](OpBuilder &rewriter, Location loc, ValueRange operands) {
+          auto result = rewriter.create<To>(loc, operands[0], operands[1]);
+          rewriter.create<linalg::YieldOp>(loc, ValueRange({result}));
         });
     return success();
   }
@@ -1018,6 +1064,88 @@ struct RewriteUsingTypeConverter {
   const TypeConverter &typeConverter;
 };
 
+struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
+  using OpRewritePattern<hivm::VCmpOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(hivm::VCmpOp op,
+                                PatternRewriter &rewriter) const final {
+    Location loc = op.getLoc();
+    hivm::CompareMode hivmMode = op.getCompareMode();
+    hfusion::CompareFn hsMode = mapCompareModeHiVMToHFusion(hivmMode);
+    auto *ctx = op.getContext();
+    auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hsMode);
+    auto dpsOp = dyn_cast<mlir::DestinationStyleOpInterface>(op.getOperation());
+    if (!dpsOp)
+      return failure();
+    auto inputs = dpsOp.getDpsInputs();
+    auto inits = dpsOp.getDpsInits();
+    auto newOp = rewriter.create<hfusion::CompareOp>(
+        loc, dpsOp->getResultTypes(), inputs, inits, cmpFnAttr);
+    rewriter.replaceOp(op, newOp->getResults());
+    return success();
+  }
+
+private:
+  hfusion::CompareFn
+  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode) const {
+    switch (hivmCmpMode) {
+    case hivm::CompareMode::EQ:
+      return hfusion::CompareFn::veq;
+    case hivm::CompareMode::NE:
+      return hfusion::CompareFn::vne;
+    case hivm::CompareMode::LE:
+      return hfusion::CompareFn::vle;
+    case hivm::CompareMode::LT:
+      return hfusion::CompareFn::vlt;
+    case hivm::CompareMode::GE:
+      return hfusion::CompareFn::vge;
+    case hivm::CompareMode::GT:
+      return hfusion::CompareFn::vgt;
+    }
+    llvm_unreachable("Unknown hivm::CompareMode in HiVM -> HFusion mapping");
+  }
+};
+
+struct RewriteCastOp : public OpRewritePattern<hivm::VCastOp> {
+
+  using OpRewritePattern<hivm::VCastOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::VCastOp op,
+                                PatternRewriter &rewriter) const final {
+    hivm::RoundMode hvRndMode = op.getRoundMode();
+    hfusion::RoundMode hsRndMode = mapRoundModeHivmToHFusion(hvRndMode);
+    auto src = op.getSrc();
+    auto dst = op.getDst();
+    auto roundingAttr = rewriter.getAttr<hfusion::RoundModeAttr>(hsRndMode);
+    auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
+                                          roundingAttr);
+    rewriter.replaceOpWithNewOp<hfusion::CastOp>(
+        op, ValueRange{src}, ValueRange{dst}, ArrayRef{modeAttr});
+    return success();
+  }
+
+private:
+  hfusion::RoundMode
+  mapRoundModeHivmToHFusion(hivm::RoundMode hvRndMode) const {
+    switch (hvRndMode) {
+    case (hivm::RoundMode::RINT):
+      return hfusion::RoundMode::RINT;
+    case (hivm::RoundMode::ROUND):
+      return hfusion::RoundMode::ROUND;
+    case (hivm::RoundMode::CEIL):
+      return hfusion::RoundMode::CEIL;
+    case (hivm::RoundMode::FLOOR):
+      return hfusion::RoundMode::FLOOR;
+    case (hivm::RoundMode::TRUNC):
+      return hfusion::RoundMode::TRUNC;
+    case (hivm::RoundMode::ODD):
+      return hfusion::RoundMode::ODD;
+    case (hivm::RoundMode::TRUNCWITHOVERFLOW):
+      return hfusion::RoundMode::TRUNCWITHOVERFLOW;
+    }
+    llvm_unreachable("unsupported hivm::RoundMode");
+  }
+};
+
 struct ConvertHIVMToUpstream
     : public impl::ExecutionEngineHIVMToUpstreamConversionBase<
           ConvertHIVMToUpstream> {
@@ -1079,6 +1207,10 @@ struct ConvertHIVMToUpstream
 
     RewritePatternSet patterns(&ctx);
     patterns
+        .add<EraseOpPattern<hivm::SetMaskNormOp>,
+             EraseOpPattern<hivm::SetFlagOp>, EraseOpPattern<hivm::WaitFlagOp>,
+             EraseOpPattern<hivm::PipeBarrierOp>>(&ctx);
+    patterns
         .add<RewriteFromGenericToGeneric<hivm::VAbsOp, linalg::AbsOp>,
              RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
              RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
@@ -1107,7 +1239,10 @@ struct ConvertHIVMToUpstream
              RewriteVCumOp<hivm::VCumsumOp, arith::AddIOp, arith::AddFOp, 0>>(
             &ctx);
     patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
-                 RewriteVConcatOp, RewriteVReduceOp, RewriteLoadOp>(&ctx);
+                 RewriteVConcatOp, RewriteVReduceOp, RewriteLoadOp,
+                 RewriteCastOp, RewriteVCmpOp,
+                 RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
+                 RewriteVModOp<hivm::VModOp, arith::RemSIOp>>(&ctx);
 
     ConversionTarget target(ctx);
     target.addIllegalDialect<hivm::HIVMDialect>();
