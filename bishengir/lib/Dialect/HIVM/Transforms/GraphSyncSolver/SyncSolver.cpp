@@ -331,12 +331,6 @@ bool Solver::checkCVPipeliningMemConflict(RWOperation *rwOp1,
     if (!memInfo1->pointerLikeInfo || !memInfo2->pointerLikeInfo) {
       return false;
     }
-    if (!(memInfo1->pointerLikeInfo->isWorkSpace &&
-          memInfo2->pointerLikeInfo->isWorkSpace) &&
-        !(memInfo1->pointerLikeInfo->isTightlyCoupledBuffer &&
-          memInfo2->pointerLikeInfo->isTightlyCoupledBuffer)) {
-      return false;
-    }
     if (memInfo1->pointerLikeInfo->addresses !=
         memInfo2->pointerLikeInfo->addresses) {
       return false;
