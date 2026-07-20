@@ -536,6 +536,10 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     // convert hfusion::MatMulMxOp to hivm::MmadMxL1Op
     OpBuilder::InsertionGuard guard(rewriter);
     MmadL1InfoCollector<hfusion::MatMulMxOp> info(op);
+    
+    // Get L0C init condition (same logic as MmadL1Op).
+    info.extractInitCondition(rewriter);
+    
     auto zeroCst = rewriter.create<arith::ConstantOp>(op->getLoc(),
                                                       rewriter.getIndexAttr(0));
     auto lhsFmt = op.getLhsFormat();

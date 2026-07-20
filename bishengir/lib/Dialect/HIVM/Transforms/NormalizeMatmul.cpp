@@ -46,7 +46,7 @@ using namespace mlir::hivm;
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 bool isSatisfiedBrcForPerChannel(hivm::VBrcOp brcOp,
-                                        Operation *hookOp = nullptr);
+                                 Operation *hookOp = nullptr);
 namespace {
 
 constexpr StringLiteral kAlreadySetRealMKN = "already_set_real_mkn";
@@ -910,6 +910,9 @@ bool couldReuse(Value outerInVal) {
   if (auto mmadOp = outerInVal.getDefiningOp<hivm::MmadL1Op>()) {
     return true;
   }
+  if (auto mmadMxOp = outerInVal.getDefiningOp<hivm::MmadMxL1Op>()) {
+    return true;
+  }
 
   // check the user of previous L0C is output from mmadL1 in CCF
   if (Operation *defOp = outerInVal.getDefiningOp()) {
@@ -962,10 +965,13 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
   Value outerInVal = ccfinfo.inVal;
   BrcBiasInfo info;
   if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
-    if (isSatisfiedBrcForPerChannel(brcOp)) {
-      info.perChannelValue = getBiasInputForPerChannelAdd(outerInVal);
-      info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
-      return info;
+    // MmadMxL1Op doesn't support per-channel bias, skip this optimization
+    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
+      if (isSatisfiedBrcForPerChannel(brcOp)) {
+        info.perChannelValue = getBiasInputForPerChannelAdd(outerInVal);
+        info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
+        return info;
+      }
     }
     if (isConstZero(brcOp.getSrc())) {
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
@@ -978,10 +984,13 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
     if (auto addOp = dyn_cast<hivm::VAddOp>(*outerInVal.getUsers().begin())) {
       for (Value src : addOp.getSrc()) {
         if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
-          if (isSatisfiedBrcForPerChannel(brcOp)) {
-            info.perChannelValue = getBiasInputForPerChannelAdd(src);
-            info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
-            return info;
+          // MmadMxL1Op doesn't support per-channel bias with split-K either
+          if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
+            if (isSatisfiedBrcForPerChannel(brcOp)) {
+              info.perChannelValue = getBiasInputForPerChannelAdd(src);
+              info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
+              return info;
+            }
           }
         }
       }
@@ -1006,8 +1015,6 @@ public:
   LogicalResult matchAndRewrite(T op,
                                 PatternRewriter &rewriter) const override {
     // TODO: need to be reverted when Affinity GMM supported
-    if (!op.supportsNormalizeMmadCCF())
-      return failure();
     auto moduleOp = op->template getParentOfType<ModuleOp>();
     bool isDisableHfusionVectorize = false;
     if (moduleOp) {
@@ -1128,15 +1135,17 @@ public:
     }
 
     // If it could be merged with bias
-    if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
-        biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
-      tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
-      // remove vadd
-      if (biasInfo.addOp) {
-        rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0],
-                                    insertPointOp->getResults()[0]);
+    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
+      if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
+          biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+        tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
+        // remove vadd
+        if (biasInfo.addOp) {
+          rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0],
+                                      insertPointOp->getResults()[0]);
+        }
+        tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
       }
-      tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
     }
     tmpNewMmad->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
     setNormalizedInL0CWithIndex(rewriter, *insertPointOp, outerOutVal);
@@ -1264,6 +1273,7 @@ void populateSetRealMKNPattern(RewritePatternSet &patterns) {
 void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
   patterns.add<NormalizeMmadCCFPattern<hivm::MmadL1Op>,
                NormalizeMmadCCFPattern<hivm::BatchMmadL1Op>,
+               NormalizeMmadCCFPattern<hivm::MmadMxL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::MmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::MmadMxL1Op>>(
