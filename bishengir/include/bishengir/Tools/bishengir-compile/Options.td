@@ -469,7 +469,7 @@ def DisableMultiBufferOnL1 : HIVMOptimizationControlOptions<
 def LimitAutoMultiBufferBuffer : HIVMOptimizationControlOptions<
   "When enable-auto-multi-buffer = true, limit it to only cube, only vector or no limit.",
   "MultiBufferStrategy",
-  "MultiBufferStrategy::NO_LIMIT"
+  "MultiBufferStrategy::ONLY_CUBE"
 > {
   let additionalOptFlags = [{
 llvm::cl::values(
