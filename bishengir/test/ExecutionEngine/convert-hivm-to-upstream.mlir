@@ -173,8 +173,10 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
 // COMMON-LABEL: func.func @shift_like_lowering
 func.func @shift_like_lowering(%a: tensor<5x10xi32>, %b: tensor<5x10xi32>, %dst: tensor<5x10xi32>) -> (tensor<5x10xi32>, tensor<5x10xi32>) attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 
-    // COMMON: linalg.map
-    // COMMON-SAME:  arith.shli
+    // CHECK-FALSE: linalg.generic
+    // CHECK-FALSE: arith.shli
+    // CHECK-TRUE-NOT: linalg.generic
+    // CHECK-TRUE-NOT: linalg.map
     %0 = hivm.hir.vshl ins(%a, %b: tensor<5x10xi32>, tensor<5x10xi32>) outs(%dst: tensor<5x10xi32>) -> tensor<5x10xi32>
 
     // COMMON: linalg.map
@@ -182,6 +184,17 @@ func.func @shift_like_lowering(%a: tensor<5x10xi32>, %b: tensor<5x10xi32>, %dst:
     %1 = hivm.hir.vshr ins(%a, %b: tensor<5x10xi32>, tensor<5x10xi32>) outs(%dst: tensor<5x10xi32>) -> tensor<5x10xi32>
 
     func.return %0, %1: tensor<5x10xi32>, tensor<5x10xi32>
+}
+
+// -----
+// COMMON-LABEL: @vshl_lowering
+func.func @vshl_lowering(%a: tensor<64xi32>, %c: i32, %d: tensor<64xi32>) -> tensor<64xi32> {
+    // CHECK-TRUE: hfusion.elemwise_binary {fun = #hfusion.binary_fn<shli>}
+    // CHECK-TRUE-NOT: linalg.map
+    // CHECK-FALSE: linalg.generic
+    // CHECK-FALSE: arith.shli
+    %0 = hivm.hir.vshl ins(%a, %c : tensor<64xi32>, i32) outs(%d : tensor<64xi32>) -> tensor<64xi32>
+    return %0 : tensor<64xi32>
 }
   
 // -----
