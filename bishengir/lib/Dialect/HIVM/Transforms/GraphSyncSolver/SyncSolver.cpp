@@ -324,6 +324,9 @@ bool Solver::checkCVPipeliningMemConflict(RWOperation *rwOp1,
   assert(!memConflicts.empty());
   for (auto [memInfo1, memInfo2] : memConflicts) {
     if (memInfo1->value == memInfo2->value) {
+      if (options.isIntraCoreMode()) {
+        continue;
+      }
       if (memInfo1->allocLikeInfo && memInfo2->allocLikeInfo) {
         continue;
       }
@@ -678,7 +681,7 @@ std::optional<EventIdInfo>
 Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                      RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.isCrossCoreMode() || !options.enableCVPatterns) {
+  if (!options.enableCVPatterns) {
     return {};
   }
   if (!checkCVPreloadingMemConflict(rwOp1, rwOp2)) {
@@ -693,7 +696,7 @@ Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   while (parentScope2 != nullptr && !parentScope2->preloadNum.has_value()) {
     parentScope2 = parentScope2->getParentOfType<Scope>();
   }
-  if (!parentScope1 || !parentScope2) {
+  if (!parentScope1 || !parentScope2 || parentScope1 == parentScope2) {
     return {};
   }
   if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
@@ -1375,8 +1378,7 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   //   waitOcc
   //   op2
   // } {preload=x}
-  if (options.isCrossCoreMode() && eventIdInfo.has_value() &&
-      eventIdInfo->cvPreloadingInfo.has_value()) {
+  if (eventIdInfo.has_value() && eventIdInfo->cvPreloadingInfo.has_value()) {
     assert(setOcc->op != nullptr && waitOcc->op != nullptr);
     auto *scopeOp1 = llvm::dyn_cast_if_present<Scope>(setOcc->op);
     auto *scopeOp2 = llvm::dyn_cast_if_present<Scope>(waitOcc->op);
