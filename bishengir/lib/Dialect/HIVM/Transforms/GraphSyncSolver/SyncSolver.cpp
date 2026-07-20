@@ -545,7 +545,7 @@ Solver::getMultiBufferEventIdInfo(Occurrence *occ1, Occurrence *occ2,
     // TODO: This still matches the multibuffer loop through the MLIR loop op
     // (LoopLikeOpInterface) rather than the solver occurrence; unify it with the
     // solver loop nest once the a5 PR is merged.
-    Operation *multibufferLoopOp = multibufferLoop.getOperation();
+    Operation *multibufferLoopOp = multibufferLoop->op;
     auto *setParentLoop = setOcc->getParentOfType<Loop>();
     auto *waitParentLoop = waitOcc->getParentOfType<Loop>();
     if (!setParentLoop || !setParentLoop->op ||
