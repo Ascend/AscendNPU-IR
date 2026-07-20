@@ -661,15 +661,18 @@ Solver::checkCVMultiBufferUnrollEventIdInfo(RWOperation *rwOp1,
       return {};
     }
   }
-  auto *parentCVUnrolledLoop1 = parentLoop1->getParentOfType<Loop>();
-  auto *parentCVUnrolledLoop2 = parentLoop2->getParentOfType<Loop>();
-  if (parentCVUnrolledLoop1 == nullptr ||
-      parentCVUnrolledLoop1 != parentCVUnrolledLoop2) {
-    return {};
+  if (options.isRegBasedArch) {
+    auto *parentCVUnrolledLoop1 = parentLoop1->getParentOfType<Loop>();
+    auto *parentCVUnrolledLoop2 = parentLoop2->getParentOfType<Loop>();
+    if (parentCVUnrolledLoop1 == nullptr ||
+        parentCVUnrolledLoop1 != parentCVUnrolledLoop2) {
+      return {};
+    }
+    if (!parentCVUnrolledLoop1->isCVUnrolledLoop) {
+      return {};
+    }
   }
-  if (!parentCVUnrolledLoop1->isCVUnrolledLoop) {
-    return {};
-  }
+
   assert(parentLoop1->multibufferUnrollNum.value() ==
          parentLoop2->multibufferUnrollNum.value());
   // dynamic loop: eventId -> attr, disable repeat flag id
