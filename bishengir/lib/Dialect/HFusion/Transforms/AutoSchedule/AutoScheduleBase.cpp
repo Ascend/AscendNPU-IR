@@ -175,6 +175,7 @@ func::FuncOp createEmptyHostTilingFunction(func::FuncOp deviceFunc,
                         /*results=*/
                         SmallVector<Type>());
   // Clone the arg attributes as well.
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
   auto hostTilingFunc = opBuilder.create<func::FuncOp>(
       deviceFunc.getLoc(),
       /*sym_name=*/
@@ -184,6 +185,17 @@ func::FuncOp createEmptyHostTilingFunction(func::FuncOp deviceFunc,
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/deviceFunc.getArgAttrsAttr(),
       /*res_attrs=*/ArrayAttr());
+#else
+  auto hostTilingFunc = opBuilder.create<func::FuncOp>(
+      deviceFunc.getLoc(),
+      /*sym_name=*/
+      hacc::constructHostFunctionName(
+          deviceFunc.getSymName().str(), hacc::HostFuncType::kTilingFunction),
+      /*function_type=*/t,
+      /*sym_visibility=*/StringAttr(),
+      /*arg_attrs=*/deviceFunc.getArgAttrsAttr(),
+      /*res_attrs=*/ArrayAttr());
+#endif
   hostTilingFunc.addEntryBlock();
 
   hacc::utils::setHost(hostTilingFunc);

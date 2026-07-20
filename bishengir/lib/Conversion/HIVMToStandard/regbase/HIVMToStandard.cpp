@@ -629,7 +629,11 @@ protected:
 
   Value constant(PatternRewriter &rewriter, Location loc, int64_t i,
                  Type t) const {
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     return rewriter.create<arith::ConstantIntOp>(loc, i, t);
+#else
+    return rewriter.create<arith::ConstantIntOp>(loc, t, i);
+#endif
   }
 
   virtual SmallVector<Value>

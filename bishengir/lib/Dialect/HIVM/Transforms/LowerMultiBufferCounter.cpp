@@ -97,8 +97,13 @@ void LowerMultiBufferCounterPass::runOnOperation() {
     // Fresh loop: function-scoped alloca + zero-init at the entry block.
     rewriter.setInsertionPointToStart(&funcOp.getBody().front());
     auto alloca = rewriter.create<memref::AllocaOp>(counterOp.getLoc(), memTy);
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value zero = rewriter.create<arith::ConstantIntOp>(
         counterOp.getLoc(), /*value=*/0, i64Ty);
+#else
+    Value zero = rewriter.create<arith::ConstantIntOp>(
+        counterOp.getLoc(), i64Ty, /*value=*/0);
+#endif
     Value initIdx =
         rewriter.create<arith::ConstantIndexOp>(counterOp.getLoc(), 0);
     rewriter.create<memref::StoreOp>(counterOp.getLoc(), zero,
@@ -115,8 +120,13 @@ void LowerMultiBufferCounterPass::runOnOperation() {
     // Body-tail increment/store keeps the counter monotonically increasing.
     Operation *terminator = body->getTerminator();
     rewriter.setInsertionPoint(terminator);
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value one = rewriter.create<arith::ConstantIntOp>(
         terminator->getLoc(), /*value=*/1, i64Ty);
+#else
+    Value one = rewriter.create<arith::ConstantIntOp>(
+        terminator->getLoc(), i64Ty, /*value=*/1);
+#endif
     Value next =
         rewriter.create<arith::AddIOp>(terminator->getLoc(), counterVal, one);
     Value storeIdx =
