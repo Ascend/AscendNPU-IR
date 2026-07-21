@@ -1385,9 +1385,24 @@ struct RewriteCastOp : public OpRewritePattern<hivm::VCastOp> {
             *mlir::RegisteredOperationName::lookup(
                 hfusion::CastOp::getOperationName(), rewriter.getContext())),
         castAttr);
+
+    SmallVector<NamedAttribute> attrs{castNamedAttr, modeAttr};
+    if (auto enableSaturate = op->getAttrOfType<BoolAttr>("enable_saturate"))
+      attrs.emplace_back(rewriter.getStringAttr("enable_saturate"),
+                         enableSaturate);
+    if (auto enableOverflow = op->getAttrOfType<BoolAttr>("enable_overflow"))
+      attrs.emplace_back(rewriter.getStringAttr("enable_overflow"),
+                         enableOverflow);
+    if (auto unsignedModeAttr =
+            op->getAttrOfType<hivm::UnsignedModeAttr>(hivm::UnsignedModeAttr::name))
+      attrs.emplace_back(
+          rewriter.getStringAttr(hfusion::UnsignedModeAttr::name),
+          hfusion::UnsignedModeAttr::get(
+              rewriter.getContext(),
+              static_cast<hfusion::UnsignedMode>(unsignedModeAttr.getValue())));
+
     rewriter.replaceOpWithNewOp<hfusion::CastOp>(
-        op, ValueRange{src}, ValueRange{dst},
-        ArrayRef{castNamedAttr, modeAttr});
+        op, ValueRange{src}, ValueRange{dst}, ArrayRef(attrs));
     return success();
   }
 
