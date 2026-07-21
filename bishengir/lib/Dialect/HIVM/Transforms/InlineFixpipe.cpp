@@ -320,7 +320,12 @@ public:
                                 PatternRewriter &rewriter) const override {
     auto mmadLikeOpRes = op.getResultTensors()[0];
 
-    if (op.shouldDecomposeBiasByElementAdd()) {
+    // shouldDecomposeBiasByElementAdd is true for ElementwiseAdd regardless of
+    // init; NormalizeMatmul only decomposes when init is const false, or
+    // non-const on reg-based. Skip fixpipe only in those cases (not init=true).
+    if (op.shouldDecomposeBiasByElementAdd() &&
+        (op.isInitConstant(false) ||
+         (!op.isInitConstant() && isRegBasedArch(op)))) {
       // the op will decompose to mmadL1 + vadd, so fixpipe cannot be inserted
       // now, and fixpipe should be inserted after the decomposition
       return failure();

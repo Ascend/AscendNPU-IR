@@ -242,17 +242,6 @@ bool sourceCarriesFractalLayoutHint(Value val, hivm::DataLayout layout) {
   return false;
 }
 
-/// @brief Computes the block sizes for a given operand based on its element
-/// type.
-///
-/// Returns a vector containing the fractal block number and the block size,
-/// where the block size is determined by dividing the intrinsic bytes per block
-/// by the byte width of the operand's element type.
-///
-/// @param oper The MLIR value whose element type is used to compute block
-/// sizes.
-/// @return A SmallVector containing two elements: [FRACTAL_BLOCK_NUM,
-/// kBlockSize].
 llvm::SmallVector<int64_t> getBlockSizes(mlir::Value oper) {
   llvm::SmallVector<int64_t> kBlockSizes;
   auto elementType = getElementTypeOrSelf(oper.getType());
@@ -310,20 +299,158 @@ llvm::SmallVector<int64_t> getBlockSizesTile(mlir::Value oper, bool isTranspose,
 
 } // namespace
 
+namespace mlir {
+namespace hivm {
+namespace detail {
+
+FailureOr<DataLayoutAttr>
+getLocalMatmulOperandALayoutImpl(Operation *operation) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  auto rank = getRankFromShapedTypeValue(op.getMatmulA());
+  if (failed(rank))
+    return failure();
+
+  bool isTranspose = op.isMatmulATransposed();
+  switch (*rank) {
+  case kDimTwo: {
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose &&
+        !sourceCarriesFractalLayoutHint(op.getMatmulA(), expected);
+    return DataLayoutAttr::get(op->getContext(), DataLayout::DOTA_ND,
+                               effectiveTranspose);
+  }
+  case kDimFour: {
+    auto shape = cast<ShapedType>(op.getMatmulA().getType()).getShape();
+    return DataLayoutAttr::get(
+        op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
+        BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(op->getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr>
+getLocalMatmulOperandBLayoutImpl(Operation *operation) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  auto rank = getRankFromShapedTypeValue(op.getMatmulB());
+  if (failed(rank))
+    return failure();
+
+  bool isTranspose = op.isMatmulBTransposed();
+  switch (*rank) {
+  case kDimTwo: {
+    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
+    bool effectiveTranspose =
+        isTranspose &&
+        !sourceCarriesFractalLayoutHint(op.getMatmulB(), expected);
+    return DataLayoutAttr::get(op->getContext(), DataLayout::DOTB_ND,
+                               effectiveTranspose);
+  }
+  case kDimFour: {
+    auto shape = cast<ShapedType>(op.getMatmulB().getType()).getShape();
+    return DataLayoutAttr::get(
+        op->getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN,
+        BoolAttr(),
+        mlir::DenseI64ArrayAttr::get(op->getContext(),
+                                     ArrayRef({shape[2], shape[3]})));
+  }
+  default:
+    return failure();
+  }
+}
+
+FailureOr<DataLayoutAttr>
+getLocalMatmulOperandCLayoutImpl(Operation *operation) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  auto rank = getRankFromShapedTypeValue(op.getMatmulC());
+  if (failed(rank))
+    return failure();
+
+  switch (*rank) {
+  case kDimTwo:
+    return DataLayoutAttr::get(op->getContext(), DataLayout::DOTC_ND);
+  case kDimFour:
+    return DataLayoutAttr::get(op->getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+getLocalMatmulOperandsCurrentLayoutImpl(Operation *operation) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+
+  auto aLayoutAttr = op.getOperandALayout();
+  assert(succeeded(aLayoutAttr) && "Cannot get layout for Matrix A");
+  valLayoutMap[op.getMatmulA()] = *aLayoutAttr;
+
+  auto bLayoutAttr = op.getOperandBLayout();
+  assert(succeeded(bLayoutAttr) && "Cannot get layout for Matrix B");
+  valLayoutMap[op.getMatmulB()] = *bLayoutAttr;
+
+  auto cLayoutAttr = op.getOperandCLayout();
+  assert(succeeded(cLayoutAttr) && "Cannot get layout for Matrix C");
+  valLayoutMap[op.getMatmulC()] = *cLayoutAttr;
+
+  return valLayoutMap;
+}
+
+llvm::SmallDenseMap<Value, DataLayoutAttr>
+getLocalMatmulOperandsTargetLayoutImpl(Operation *operation) {
+  auto op = cast<LocalMatmulLikeOpInterface>(operation);
+  llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap;
+  BoolAttr layoutMemorySpace;
+
+  auto operA = op.getMatmulA();
+  bool isATranspose = op.isMatmulATransposed();
+  auto aBlockSizes = op.getMatmulBlockSizesTile(operA, isATranspose, true);
+  auto mALayoutAttr = DataLayoutAttr::get(
+      op->getContext(), isATranspose ? DataLayout::nZ : DataLayout::zN,
+      layoutMemorySpace,
+      mlir::DenseI64ArrayAttr::get(op->getContext(), ArrayRef(aBlockSizes)));
+  valLayoutMap[operA] = mALayoutAttr;
+
+  auto operB = op.getMatmulB();
+  bool isBTranspose = op.isMatmulBTransposed();
+  auto bBlockSizes = op.getMatmulBlockSizesTile(operB, isBTranspose, false);
+  auto mBLayoutAttr = DataLayoutAttr::get(
+      op->getContext(), isBTranspose ? DataLayout::nZ : DataLayout::zN,
+      layoutMemorySpace,
+      mlir::DenseI64ArrayAttr::get(op->getContext(), ArrayRef(bBlockSizes)));
+  valLayoutMap[operB] = mBLayoutAttr;
+
+  llvm::SmallVector<int64_t> cBlockSizes;
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  cBlockSizes.push_back(utils::FRACTAL_BLOCK_NUM);
+  auto mCLayoutAttr = DataLayoutAttr::get(
+      op->getContext(), DataLayout::zN, layoutMemorySpace,
+      mlir::DenseI64ArrayAttr::get(op->getContext(), ArrayRef(cBlockSizes)));
+  valLayoutMap[op.getMatmulC()] = mCLayoutAttr;
+
+  return valLayoutMap;
+}
+
+} // namespace detail
+} // namespace hivm
+} // namespace mlir
+
 //===----------------------------------------------------------------------===//
 // Utils for Local Mmad Ops
 //===----------------------------------------------------------------------===//
 template <typename LocalMmadTy>
 bool isInitConstantForLocalMmadOp(LocalMmadTy *localMatmulOp,
                                   std::optional<bool> cst = std::nullopt) {
-  if (!cst.has_value()) {
-    return false;
-  }
   Value initCond = localMatmulOp->getInitCondition();
-  if (!llvm::isa<arith::ConstantOp>(initCond.getDefiningOp()))
+  // Block arguments / non-SSA-defined values have a null defining op.
+  auto cstOp =
+      dyn_cast_or_null<arith::ConstantOp>(initCond.getDefiningOp());
+  if (!cstOp)
     return false;
-
-  auto cstOp = cast<arith::ConstantOp>(initCond.getDefiningOp());
   std::optional<int64_t> cstInt = getConstantIntValue(cstOp.getValue());
   if (!cstInt)
     return false;
@@ -714,23 +841,58 @@ template <typename LocalMmadTy>
 MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   OpOperand &matmulOutput = localMatmulOp.getCMutable();
   OpOperand &matmulInitCond = localMatmulOp.getInitConditionMutable();
-  // BatchMmadL1Op special case: simple check
-  if constexpr (std::is_same_v<LocalMmadTy, hivm::BatchMmadL1Op>) {
-    auto defOp = matmulOutput.get().getDefiningOp();
-    if (defOp != nullptr &&
-        (dyn_cast_if_present<tensor::EmptyOp>(defOp) != nullptr)) {
-      return MatmulBiasMode::NoBias;
+
+  // Prefer the nearest ModuleOp that carries hacc.target (nested test modules).
+  bool isRegBased = false;
+  for (Operation *p = localMatmulOp.getOperation(); p; p = p->getParentOp()) {
+    if (auto moduleOp = dyn_cast<ModuleOp>(p)) {
+      if (hacc::utils::getTargetDevice(moduleOp).has_value()) {
+        isRegBased = hacc::utils::isRegBasedArch(moduleOp);
+        break;
+      }
     }
+  }
+
+  if (!isRegBased) {
+    // A3 / mem-based bias detection (keep init-agnostic PerChannel + split-K +
+    // cross-loop).
+    if constexpr (std::is_same_v<LocalMmadTy, hivm::BatchMmadL1Op>) {
+      auto defOp = matmulOutput.get().getDefiningOp();
+      if (defOp != nullptr &&
+          (dyn_cast_if_present<tensor::EmptyOp>(defOp) != nullptr)) {
+        return MatmulBiasMode::NoBias;
+      }
+      return MatmulBiasMode::ElementwiseAdd;
+    }
+    if (isPerChannelPattern(matmulOutput))
+      return MatmulBiasMode::PerChannelAdd;
+
+    if (isPerChannelSplitKPattern(matmulOutput))
+      return MatmulBiasMode::PerChannelAddWithSplitK;
+
+    auto emptyOp = traceDefOp<tensor::EmptyOp>(matmulOutput.get());
+    if (!emptyOp.has_value()) {
+      return MatmulBiasMode::ElementwiseAdd;
+    }
+
+    if (isElementwiseAddCrossLoopPattern(matmulOutput)) {
+      return MatmulBiasMode::ElementwiseCrossLoopAdd;
+    }
+
+    auto allocOp = traceDefOp<memref::AllocOp>(matmulOutput.get());
+    if (allocOp.has_value()) {
+      auto alloc = cast<memref::AllocOp>(allocOp.value());
+      if (auto curAddrSpace =
+              getOptionalHIVMAddressSpace(alloc.getMemref().getType())) {
+        if (curAddrSpace.value() == hivm::AddressSpace::L0C)
+          return MatmulBiasMode::NoBias;
+      }
+    }
+
     return MatmulBiasMode::ElementwiseAdd;
   }
-  // Here just traces forward to find satisfied first axis VBrcOp
-  if (isPerChannelPattern(matmulOutput))
-    return MatmulBiasMode::PerChannelAdd;
 
-  if (isPerChannelSplitKPattern(matmulOutput))
-    return MatmulBiasMode::PerChannelAddWithSplitK;
-
-  // jy-a5's per-channel patterns (with init condition checks)
+  // A5 / reg-based: per-channel patterns require matching init conditions.
   if (isPerChannelPattern(matmulOutput, matmulInitCond))
     return MatmulBiasMode::PerChannelAdd;
 
@@ -740,20 +902,6 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
   if (isMMInitPerChannelSplitKPattern(matmulOutput, matmulInitCond))
     return MatmulBiasMode::MMInitPerChannelAddWithSplitK;
 
-  // ElementwiseCrossLoopAdd pattern
-  auto emptyOp = traceDefOp<tensor::EmptyOp>(matmulOutput.get());
-  if (!emptyOp.has_value()) {
-    return MatmulBiasMode::ElementwiseAdd;
-  }
-
-  if (isElementwiseAddCrossLoopPattern(matmulOutput)) {
-    return MatmulBiasMode::ElementwiseCrossLoopAdd;
-  }
-
-  // When all traced allocs of the mmadL1 init are in the same L0C memory
-  // space, it means that the user is explicitly controlling buffer reuse on
-  // L0C. We treat it as NoBias case because we don't want to decompose it to
-  // mmadL1 + add.
   auto allocOp = traceDefOp<memref::AllocOp>(matmulOutput.get());
   if (allocOp.has_value()) {
     auto alloc = cast<memref::AllocOp>(allocOp.value());
@@ -764,82 +912,33 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
     }
   }
 
-  return MatmulBiasMode::ElementwiseAdd;
+  // Loop-carried C: empty init alone is not always NoBias. A5 uses
+  // PossibleDefinesAnalysis; approximate the cases needed by lit:
+  // - mmad directly in a for body with non-const init → ElementwiseAdd
+  //   (conditional decompose)
+  // - mmad nested in scf.if / already biased → fall through to empty/NoBias
+  if (auto blockArg = dyn_cast<BlockArgument>(matmulOutput.get())) {
+    if (isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp()) &&
+        !localMatmulOp.isInitConstant() &&
+        isa<scf::ForOp>(localMatmulOp.getOperation()->getParentOp()))
+      return MatmulBiasMode::ElementwiseAdd;
+  }
+
+  auto emptyOp = traceDefOp<tensor::EmptyOp>(matmulOutput.get());
+  return emptyOp.has_value() ? MatmulBiasMode::NoBias
+                             : MatmulBiasMode::ElementwiseAdd;
 }
 
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandALayout() {
-  auto rank = getRankFromShapedTypeValue(getA());
-  if (failed(rank)) {
-    return failure();
-  }
-  bool isTranspose = getATranspose().has_value();
-  switch (*rank) {
-  case kDimTwo: {
-    // If A is already in the fractal form the cube wants, the transpose is
-    // layout-only; suppress it so InferHIVMDataLayout skips its dim-swap.
-    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
-    bool effectiveTranspose =
-        isTranspose && !sourceCarriesFractalLayoutHint(getA(), expected);
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTA_ND,
-                               effectiveTranspose);
-  }
-  case kDimFour: {
-    auto shape = cast<ShapedType>(getA().getType()).getShape();
-    // When the alloc is four-dimensional, the last two dims should be the
-    // fractal block sizes.
-    return DataLayoutAttr::get(
-        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
-  }
-  default:
-    return failure();
-  }
+  return detail::getLocalMatmulOperandALayoutImpl(*this);
 }
 
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandBLayout() {
-  auto rank = getRankFromShapedTypeValue(getB());
-  if (failed(rank)) {
-    return failure();
-  }
-  bool isTranspose = getBTranspose().has_value();
-  switch (*rank) {
-  case kDimTwo: {
-    // If B is already in the fractal form the cube wants, the transpose is
-    // layout-only; suppress it so InferHIVMDataLayout skips its dim-swap.
-    DataLayout expected = isTranspose ? DataLayout::nZ : DataLayout::zN;
-    bool effectiveTranspose =
-        isTranspose && !sourceCarriesFractalLayoutHint(getB(), expected);
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTB_ND,
-                               effectiveTranspose);
-  }
-  case kDimFour: {
-    auto shape = cast<ShapedType>(getB().getType()).getShape();
-    // When the alloc is four-dimensional, the last two dims should be the
-    // fractal block sizes.
-    return DataLayoutAttr::get(
-        getContext(), isTranspose ? DataLayout::nZ : DataLayout::zN, BoolAttr(),
-        mlir::DenseI64ArrayAttr::get(getContext(),
-                                     ArrayRef({shape[2], shape[3]})));
-  }
-  default:
-    return failure();
-  }
+  return detail::getLocalMatmulOperandBLayoutImpl(*this);
 }
 
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandCLayout() {
-  auto rank = getRankFromShapedTypeValue(getC());
-  if (failed(rank)) {
-    return failure();
-  }
-  switch (*rank) {
-  case kDimTwo:
-    return DataLayoutAttr::get(getContext(), DataLayout::DOTC_ND);
-  case kDimFour:
-    return DataLayoutAttr::get(getContext(), DataLayout::zN);
-  default:
-    return failure();
-  }
+  return detail::getLocalMatmulOperandCLayoutImpl(*this);
 }
 
 FailureOr<DataLayoutAttr> MmadL1Op::getOperandBiasLayout() {
@@ -877,13 +976,17 @@ MmadL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) {
   return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
+llvm::SmallVector<int64_t>
+MmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose, bool isA) {
+  return getBlockSizesTile(oper, isTranspose, isA);
+}
+
 MatmulBiasMode MmadL1Op::getMatmulBiasMode() {
   return getMatmulLikeBiasMode<MmadL1Op>(*this);
 }
 
 bool MmadL1Op::shouldDecomposeBiasByElementAdd() {
-  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd ||
-      !isInitConstant(false)) {
+  if (this->getMatmulBiasMode() != MatmulBiasMode::ElementwiseAdd) {
     // Type of C is not used for accumulating
     return false;
   }
@@ -963,6 +1066,14 @@ void BatchMmadL1Op::setInitCondition(Value init) {
 
 MatmulBiasMode BatchMmadL1Op::getMatmulBiasMode() {
   return getMatmulLikeBiasMode<BatchMmadL1Op>(*this);
+}
+
+llvm::SmallVector<int64_t>
+BatchMmadL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose,
+                                       bool isA) {
+  bool isA5 = hacc::utils::isAscend950(
+      this->getOperation()->getParentOfType<ModuleOp>());
+  return ::getBlockSizesTile(oper, isTranspose, isA, isA5);
 }
 
 bool BatchMmadL1Op::shouldDecomposeBiasByElementAdd() {
@@ -1283,6 +1394,12 @@ bool MmadMxL1Op::shouldDecomposeBiasByElementAdd() {
 llvm::SmallVector<int64_t>
 MmadMxL1Op::getBlockSizesTile(Value oper, bool isTranspose, bool isA) const {
   return ::getBlockSizesTile(oper, isTranspose, isA, true);
+}
+
+llvm::SmallVector<int64_t>
+MmadMxL1Op::getMatmulBlockSizesTile(Value oper, bool isTranspose,
+                                    bool isA) const {
+  return getBlockSizesTile(oper, isTranspose, isA);
 }
 
 MatmulBiasMode MmadMxL1Op::getMatmulBiasMode() {

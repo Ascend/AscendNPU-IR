@@ -59,6 +59,7 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [AttrSizedOperandSegments,
      CubeCoreTypeTrait,
+     HIVMLocalMatmulLikeOpInterface,
      HIVMUnitFlagEnabledInterface,
      MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
     ], traits)> {
@@ -110,6 +111,11 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd();
     bool shouldDecomposeBiasByCrossLoopElementAdd();
+    bool supportsPerChannelBias() { return true; }
+    bool supportsScaleOperands() { return false; }
+    bool usesBoolAttrForTargetLayout() { return false; }
+    llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
+        Value oper, bool isTranspose, bool isA);
     int getNumSyncRelatedArgs();
     // Needed for lower-hivm-to-std, should be updated if input operands got changed.
     SmallVector<Value> getInputOperands(bool includeSyncRelatedArgs = true);
@@ -207,6 +213,7 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
     [CubeCoreTypeTrait,
+     HIVMLocalMatmulLikeOpInterface,
      MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
     ], traits)> {
   let arguments = (ins Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
@@ -223,6 +230,12 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
                        Arg<ShapedTypeOf<[AnyFloat]>, "Matrix C">:$c,
                        OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$lhsFormat,
                        OptionalAttr<HIVM_LocalMatmulMx_DataFormat>:$rhsFormat,
+                       Arg<OptionalAttr<UnitAttr>, [{
+                        Matrix A is transposed before load
+                       }]>:$a_transpose,
+                       Arg<OptionalAttr<UnitAttr>, [{
+                        Matrix B is transposed before load
+                       }]>:$b_transpose,
                        Arg<Variadic<I64>, [{
                         Arguments required by mma_tile to insert 
                         synchronization instructions, they are 
@@ -239,6 +252,11 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     int getNumSyncRelatedArgs() { return 4; }
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd();
+    bool supportsPerChannelBias() { return false; }
+    bool supportsScaleOperands() { return true; }
+    bool usesBoolAttrForTargetLayout() { return true; }
+    llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
+        Value oper, bool isTranspose, bool isA) const;
   }];
   string localMmadBaseDes = [{
     The computation logic is:
@@ -247,7 +265,10 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     ```
   }];
   let assemblyFormat = [{
-    attr-dict `ins` `(`
+    attr-dict
+    (`a_transpose` $a_transpose^)?
+    (`b_transpose` $b_transpose^)?
+    `ins` `(`
     $a
     `,` $b
     `,` $scaleA

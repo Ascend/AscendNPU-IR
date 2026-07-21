@@ -32,6 +32,7 @@ include "bishengir/Dialect/HIVM/Interfaces/FlattenInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/LibraryFunctionOpInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/OpPipeInterface.td"
 include "bishengir/Dialect/HIVM/Interfaces/VectorizableOpInterface.td"
+include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.td"
 
 def HIVMCoreTypeInterface : OpInterface<"CoreTypeInterface"> {
   let description = [{
