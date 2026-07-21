@@ -885,4 +885,26 @@ void shrinkReassocIdxByDroppedDims(
 
 } // namespace mlir
 
+namespace mlir {
+
+namespace triton {
+
+inline const char AttrEnableBishengirSimtOptimizationName[] =
+    "ttg.enable-bishengir-simt-optimization";
+
+namespace util {
+LLVM::LLVMFuncOp createLLVMFuncDecl(OpBuilder &b, Location loc, StringRef name,
+                                    LLVM::LLVMFunctionType fnTy);
+
+// return a int that controls the optimization given a passname
+int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName);
+
+Value allocateSharedMemory(LLVM::LLVMFuncOp vf, OpBuilder &builder,
+                           Location loc);
+
+} // namespace util
+} // namespace triton
+
+} // namespace mlir
+
 #endif

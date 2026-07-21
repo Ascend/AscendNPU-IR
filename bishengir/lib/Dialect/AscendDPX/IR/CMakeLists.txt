@@ -1,4 +1,4 @@
-add_bishengir_dialect_library(MLIRAscendDPXDialect
+add_bishengir_dialect_library(BiShengIRAscendDPXDialect
   AscendDPXDialect.cpp
 
   ADDITIONAL_HEADER_DIRS

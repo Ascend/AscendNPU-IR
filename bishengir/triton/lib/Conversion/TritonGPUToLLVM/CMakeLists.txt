@@ -32,7 +32,7 @@ add_triton_library(TritonGPUToLLVM
     MLIRGPUToNVVMTransforms
     MLIRGPUToROCDLTransforms
     MLIRGPUTransforms
-    MLIRAscendDPXDialect
+    BiShengIRAscendDPXDialect
     TritonAnalysis
     TritonIR
     TritonGPUIR

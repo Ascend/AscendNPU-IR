@@ -21,6 +21,10 @@
 #include "bishengir/Tools/bishengir-compile/Config.h"
 #include "bishengir/Tools/Utils/Utils.h"
 
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+#endif
+
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/CommandLine.h"
@@ -30,6 +34,16 @@
 
 using namespace bishengir;
 using namespace llvm;
+using namespace mlir::triton;
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+static proton::ConvertProtonToProtonGPUOptions protonGPUCompileConfig;
+
+namespace bishengir {
+const proton::ConvertProtonToProtonGPUOptions &getProtonGPUCompileConfig() {
+  return protonGPUCompileConfig;
+}
+} // namespace bishengir
 
 namespace {
 static cl::OptionCategory featCtrlCategory("BiShengIR Feature Control Options");

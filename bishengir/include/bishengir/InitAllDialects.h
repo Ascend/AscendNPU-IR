@@ -33,6 +33,8 @@
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Symbol/IR/Symbol.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/TritonExt/IR/TritonExtAttrs.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 
@@ -54,6 +56,10 @@
 #include "torch-mlir/Dialect/TorchConversion/IR/TorchConversionDialect.h"
 #endif
 
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "RegisterTritonDialects.h"
+#endif
+
 namespace bishengir {
 
 /// Add all the hivm-specific dialects to the provided registry.
@@ -67,7 +73,8 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::mathExt::MathExtDialect,
                   mlir::scope::ScopeDialect,
                   mlir::symbol::SymbolDialect,
-                  bishengir::memref_ext::MemRefExtDialect>();
+                  bishengir::memref_ext::MemRefExtDialect,
+                  bishengir::triton_ext::TritonExtDialect>();
   // clang-format on
 
 #if BISHENGIR_ENABLE_TORCH_CONVERSIONS
@@ -76,6 +83,11 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
                   mlir::torch::TorchConversion::TorchConversionDialect,
                   mlir::torch::TMTensor::TMTensorDialect>();
   // clang-format on
+#endif
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+  registerTritonDialects(registry);
+  triton::registerGetTritonMetadataPass();
 #endif
 
 #if (!BISHENGIR_BUILD_STANDALONE_IR_ONLY)

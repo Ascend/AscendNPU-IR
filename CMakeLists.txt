@@ -125,15 +125,26 @@ include_directories(${MLIR_MAIN_INCLUDE_DIR})
 include_directories(${MLIR_INCLUDE_DIR})
 include_directories(${BISHENGIR_MAIN_INCLUDE_DIR})
 include_directories(${BISHENGIR_INCLUDE_DIR})
+
 if(BISHENGIR_ENABLE_TRITON_COMPILE)
-  include_directories(${BISHENGIR_SRC_DIR}/triton/include)
-  include_directories(${BISHENGIR_BINARY_DIR}/bishengir/triton/include)
-  include_directories(${BISHENGIR_SRC_DIR}/triton/third_party)
-  include_directories(${BISHENGIR_SRC_DIR}/triton/third_party/nvidia/include)
+  set(LLVM_EXTERNAL_TRITON_SOURCE_DIR "${BISHENGIR_SRC_DIR}/triton")
+  cmake_path(ABSOLUTE_PATH LLVM_EXTERNAL_TRITON_SOURCE_DIR
+             BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  set(TRITON_MAIN_SRC_DIR ${LLVM_EXTERNAL_TRITON_SOURCE_DIR})
+  set(TRITON_MLIR_INCLUDE_DIRS ${LLVM_EXTERNAL_TRITON_SOURCE_DIR}/include)
+  set(TRITON_TABLEGEN_OUTPUT_DIR ${BISHENGIR_BINARY_DIR}/bishengir/triton/include)
+  # for triton
+  include_directories(${TRITON_TABLEGEN_OUTPUT_DIR})
+  include_directories(${TRITON_MLIR_INCLUDE_DIRS})
+  # for nvidia
+  include_directories(${TRITON_MAIN_SRC_DIR}/third_party)
+  include_directories(${TRITON_MAIN_SRC_DIR}/third_party/nvidia/include)
   include_directories(${BISHENGIR_BINARY_DIR}/bishengir/triton/third_party)
-  include_directories(${BISHENGIR_SRC_DIR}/triton/third_party/proton/Dialect/include)
+  # for proton
+  include_directories(${TRITON_MAIN_SRC_DIR}/third_party/proton/Dialect/include)
   include_directories(${BISHENGIR_BINARY_DIR}/bishengir/triton/third_party/proton/Dialect/include)
-  include_directories(${BISHENGIR_SRC_DIR}/triton/bin)
+  # for RegisterTritonDialects.h
+  include_directories(${TRITON_MAIN_SRC_DIR}/bin)
 endif()
 
 # Adding tblgen tools here as calling add_tablegen sets some variables in

@@ -1,0 +1,61 @@
+set(BS_FEAT_SOURCES)
+if(BISHENGIR_ENABLE_TRITON_COMPILE)
+  list(APPEND BS_FEAT_SOURCES
+    AdaptTritonIRKernel.cpp
+    AdaptGPUKernel.cpp
+    DecomposeReduction.cpp
+    DumpFractalLayout.cpp
+    FixFusedCatPass.cpp
+    GetTritonMetadata.cpp
+    LegalizeF16ForTriton.cpp
+    LLVMTritonRemap.cpp
+    OptimizeLayouts.cpp
+    OptimizeLayoutsAnalysis.cpp
+    OptimizeLoads.cpp
+    RemoveAnnotationMark.cpp
+    RewriteSliceOpToTriton.cpp
+    SetBishengirSimtOptAttr.cpp
+    PopulateSharedMemoryOffsetToDPX.cpp
+    SIMTAutoBlockify.cpp
+    SIMTFastDiv.cpp
+    LoopRestructureArangeOptimization.cpp
+    EnableAscendDPXMMA.cpp
+    ConvertSharedPtrToMemDesc.cpp
+    FlattenMemDescArgs.cpp
+    ConvertDotInputToLinearLayout.cpp
+    TileDotLoads.cpp
+    SharedMemConflictModel.cpp
+    OptimizeMath.cpp
+    HoistAndFuseDotChains.cpp
+  )
+endif()
+
+add_bishengir_dialect_library(BiShengIRTritonTransforms
+  PARTIAL_SOURCES_INTENDED
+  DecomposeFRem.cpp
+  ${BS_FEAT_SOURCES}
+
+  DEPENDS
+  BiShengIRTritonTransformsIncGen
+  BiShengIRTritonOpsIncGen
+  MLIRLLVMPassIncGen
+
+  LINK_LIBS PUBLIC
+  BiShengIRAnnotationDialect
+  BiShengIRTritonExtension
+  TritonGPUIR
+  BiShengIRTritonExtIR
+  BiShengIRDialectUtils
+  BiShengIRSCFTransformOps
+  BiShengIRAscendDPXDialect
+  BiShengIRHIVMTransformOps
+  BiShengIRHACCDialect
+  BiShengIRHACCUtils
+  MLIRLLVMDialect
+  MLIRSCFDialect
+  MLIRNVVMDialect
+  BiShengIRHIVMDialect
+  MLIRIR
+  MLIRDialect
+  MLIRPass
+)

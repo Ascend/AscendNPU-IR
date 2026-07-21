@@ -18,6 +18,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRef/IR/MemRefImpl.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -1774,4 +1775,125 @@ void utils::dumpReassociationIndicesVector(
     llvm::dbgs() << name << reassocVec[i] << "\n";
   }
 }
+} // namespace mlir
+
+namespace mlir {
+
+namespace triton {
+namespace util {
+// Create a private llvm.func declaration
+LLVM::LLVMFuncOp createLLVMFuncDecl(OpBuilder &b, Location loc, StringRef name,
+                                    LLVM::LLVMFunctionType fnTy) {
+  auto decl = b.create<LLVM::LLVMFuncOp>(loc, name, fnTy);
+  auto haccAlwaysInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
+      hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
+  decl->setAttr(haccAlwaysInlineAttr, b.getUnitAttr());
+  decl->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(), b.getUnitAttr());
+  decl->setAttr(mlir::SymbolTable::getVisibilityAttrName(),
+                b.getStringAttr("private"));
+  MLIRContext *ctx = decl.getContext();
+  decl->setAttr(mlir::hivm::TFuncCoreTypeAttr::name,
+                hivm::TFuncCoreTypeAttr::get(ctx, hivm::TFuncCoreType::AIV));
+  return decl;
+}
+
+int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName) {
+  // get module
+  ModuleOp module = nullptr;
+  if (isa<ModuleOp>(opCtx) || opCtx->hasAttr(hacc::SIMTModuleAttr::name)) {
+    module = cast<ModuleOp>(opCtx);
+  } else {
+    module = opCtx->getParentOfType<ModuleOp>();
+  }
+
+  if (!module) {
+    if (auto maybeModule = llvm::dyn_cast_or_null<ModuleOp>(opCtx))
+      module = maybeModule;
+    else {
+      llvm::errs()
+          << "[getPassColumnDigit] Warning: enclosing ModuleOp not found\n";
+      return 0;
+    }
+  }
+
+  // get attribute
+  Attribute rawAttr = module->getAttr(AttrEnableBishengirSimtOptimizationName);
+  if (!rawAttr) {
+    return 0;
+  }
+  std::string digitStr;
+  if (auto intAttr = mlir::dyn_cast<IntegerAttr>(rawAttr)) {
+    llvm::SmallString<32> buf;
+    intAttr.getValue().toString(buf, /*Radix=*/10, /*Signed=*/false);
+    digitStr.assign(buf.begin(), buf.end());
+  } else if (auto strAttr = mlir::dyn_cast<StringAttr>(rawAttr)) {
+    digitStr = strAttr.getValue().str();
+  } else {
+    return 0;
+  }
+
+  if (digitStr.empty()) {
+    return 0;
+  }
+
+  // TODO: add here to control your new passes
+  // idx =  0 (ones),  1 (tens),  2 (hundreds)......
+  int idx = 0;
+  if (passName == "decompose-reduction") {
+    // decompose reduction pass is now non-optional
+    // the index is kept for backward compatibility
+    idx = 0;
+  } else if (passName == "optimize-layouts")
+    idx = 1;
+  else if (passName == "convert-triton-gpu-to-llvm")
+    idx = 2;
+  else if (passName == "reduce-op")
+    idx = 3;
+  else if (passName == "optimize-loads")
+    idx = 4;
+  else if (passName == "loop-restructure-arange-optimization")
+    idx = 5;
+  else {
+    idx = 0;
+  }
+
+  if (static_cast<size_t>(idx) >= digitStr.size())
+    return 0;
+
+  size_t pos = digitStr.size() - 1 - static_cast<size_t>(idx);
+  char c = digitStr[pos];
+  return static_cast<int>(c - '0');
+}
+
+Value allocateSharedMemory(LLVM::LLVMFuncOp vf, OpBuilder &builder,
+                           Location loc) {
+  // Try to find the base address from the arguments at first. If it is not
+  // exist, the base address of the shared memory starts from 0
+  Value sharedMemAddr = nullptr;
+  for (auto [idx, value] : llvm::enumerate(vf.getArguments())) {
+    auto dictAttr = vf.getArgAttrDict(idx);
+    if (!dictAttr)
+      continue;
+
+    if (dictAttr.get(hivm::SharedMemoryAttr::name)) {
+      sharedMemAddr = value;
+      break;
+    }
+  }
+
+  if (!sharedMemAddr) {
+    Value c0 = builder.create<LLVM::ConstantOp>(
+        vf->getLoc(), builder.getI64Type(), builder.getI64IntegerAttr(0));
+    auto intToPtr = builder.create<LLVM::IntToPtrOp>(
+        vf->getLoc(), LLVM::LLVMPointerType::get(builder.getContext(), 6), c0);
+    intToPtr->setAttr(hivm::SharedMemoryAttr::name, builder.getUnitAttr());
+    sharedMemAddr = intToPtr;
+  }
+
+  return sharedMemAddr;
+}
+
+} // namespace util
+} // namespace triton
+
 } // namespace mlir
