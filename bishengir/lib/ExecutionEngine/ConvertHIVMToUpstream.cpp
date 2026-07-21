@@ -1253,13 +1253,22 @@ struct RewriteCastOp : public OpRewritePattern<hivm::VCastOp> {
                                 PatternRewriter &rewriter) const final {
     hivm::RoundMode hvRndMode = op.getRoundMode();
     hfusion::RoundMode hsRndMode = mapRoundModeHivmToHFusion(hvRndMode);
+    hivm::TypeFn hvCastFn = op.getCast();
+    hfusion::TypeFn hsCastFn = mapCastTypeFnHivmToHFusion(hvCastFn);
     auto src = op.getSrc();
     auto dst = op.getDst();
     auto roundingAttr = rewriter.getAttr<hfusion::RoundModeAttr>(hsRndMode);
     auto modeAttr = rewriter.getNamedAttr(hfusion::RoundModeAttr::getMnemonic(),
                                           roundingAttr);
+    auto castAttr = rewriter.getAttr<hfusion::TypeFnAttr>(hsCastFn);
+    auto castNamedAttr = rewriter.getNamedAttr(
+        hfusion::CastOp::getCastAttrName(
+            *mlir::RegisteredOperationName::lookup(
+                hfusion::CastOp::getOperationName(), rewriter.getContext())),
+        castAttr);
     rewriter.replaceOpWithNewOp<hfusion::CastOp>(
-        op, ValueRange{src}, ValueRange{dst}, ArrayRef{modeAttr});
+        op, ValueRange{src}, ValueRange{dst},
+        ArrayRef{castNamedAttr, modeAttr});
     return success();
   }
 
@@ -1283,6 +1292,19 @@ private:
       return hfusion::RoundMode::TRUNCWITHOVERFLOW;
     }
     llvm_unreachable("unsupported hivm::RoundMode");
+  }
+
+  hfusion::TypeFn
+  mapCastTypeFnHivmToHFusion(hivm::TypeFn hvCastFn) const {
+    switch (hvCastFn) {
+    case (hivm::TypeFn::cast_signed):
+      return hfusion::TypeFn::cast_signed;
+    case (hivm::TypeFn::cast_unsigned):
+      return hfusion::TypeFn::cast_unsigned;
+    case (hivm::TypeFn::bitcast):
+      return hfusion::TypeFn::bitcast;
+    }
+    llvm_unreachable("unsupported hivm::TypeFn");
   }
 };
 
