@@ -312,6 +312,24 @@ func.func @propagate_existing_scope(
 
 // -----
 
+// Verify that an existing UB address space on an alloc is propagated to its
+// users rather than being treated as already complete.
+
+// CHECK-LABEL: func.func @propagate_existing_alloc_scope(
+func.func @propagate_existing_alloc_scope() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+  %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+  // CHECK: builtin.unrealized_conversion_cast %[[ALLOC]]
+  // CHECK-SAME: to memref<16xf32, #hivm.address_space<ub>>
+  %bridge = builtin.unrealized_conversion_cast %alloc :
+      memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @propagate_extract_strided_metadata(
 // CHECK-SAME: %[[ARG:.*]]: memref<16xf32, #hivm.address_space<gm>>
 func.func @propagate_extract_strided_metadata(%arg0: memref<16xf32>)

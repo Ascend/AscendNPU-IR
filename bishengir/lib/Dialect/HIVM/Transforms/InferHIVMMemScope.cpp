@@ -670,11 +670,15 @@ hivm::inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
 LogicalResult hivm::inferAndPropagateMemScopeForAlloc(memref::AllocOp op, hivm::AddressSpace space) {
   LDBG("Begin infer and propagate memory scope for: " << *op);
   auto memorySpace = op.getType().getMemorySpace();
+  MemScopeInferAndPropagateHelper helper;
   if (memorySpace) {
-    return success();
+    auto addressSpace = cast<hivm::AddressSpaceAttr>(memorySpace);
+    if (addressSpace.getAddressSpace() != hivm::AddressSpace::UB &&
+        addressSpace.getAddressSpace() != hivm::AddressSpace::L1)
+      return success();
+    return helper.Run(op, addressSpace);
   }
 
-  MemScopeInferAndPropagateHelper helper;
   auto spaceAttr = AddressSpaceAttr::get(op->getContext(), space);
   if (failed(helper.Run(op, spaceAttr))) {
     return op->emitOpError("Failed to propagate memory scope for allocOp");
