@@ -774,6 +774,47 @@ struct RewriteVBrcOp : public OpRewritePattern<hivm::VBrcOp> {
   }
 };
 
+struct RewriteVDivOp final
+    : public GenericPreprocessAndRewrite<hivm::VDivOp> {
+  using Base = GenericPreprocessAndRewrite<hivm::VDivOp>;
+  using Base::Base;
+
+  LogicalResult rewriteFromGeneric(hivm::VDivOp op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
+    if (op.getIsSigned()) {
+      rewriter.replaceOpWithNewOp<linalg::DivOp>(op, op.getResultTypes(),
+                                      preprocessedOperands, op.getDpsInits());
+    } else {
+      rewriter.replaceOpWithNewOp<linalg::DivUnsignedOp>(op, op.getResultTypes(),
+                                      preprocessedOperands, op.getDpsInits());
+    }
+    return success();
+  }
+};
+
+struct RewriteNamedVDivOp final
+    : public GenericPreprocessAndRewrite<hivm::VDivOp> {
+  using Base = GenericPreprocessAndRewrite<hivm::VDivOp>;
+  using Base::Base;
+
+  LogicalResult rewriteFromGeneric(hivm::VDivOp op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
+    linalg::BinaryFn equivalentFn = linalg::BinaryFn::div;
+    if (!op.getIsSigned()) {
+      equivalentFn = linalg::BinaryFn::div_unsigned;
+    }
+
+    rewriter.replaceOpWithNewOp<linalg::ElemwiseBinaryOp>(
+        op, op.getResultTypes(), preprocessedOperands, op.getDst(),
+        ArrayRef{rewriter.getNamedAttr(
+            "fun", rewriter.getAttr<linalg::BinaryFnAttr>(equivalentFn))});
+
+    return success();
+  }
+};
+
 template <typename From, typename To>
 struct RewriteVModOp : public OpRewritePattern<From> {
   using OpRewritePattern<From>::OpRewritePattern;
@@ -1510,7 +1551,6 @@ struct ConvertHIVMToUpstream
              RewriteFromGenericToGeneric<hivm::VAddOp, linalg::AddOp>,
              RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
              RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
-             RewriteFromGenericToGeneric<hivm::VDivOp, linalg::DivOp>,
              RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
              RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
              RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
@@ -1532,8 +1572,10 @@ struct ConvertHIVMToUpstream
     if (convertToNamedOp) {
       patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
                                      hfusion::BinaryFn::shli>>(&ctx);
+      patterns.add<RewriteNamedVDivOp>(&ctx);
     } else {
       patterns.add<RewriteVModOp<hivm::VShLOp, arith::ShLIOp>>(&ctx);
+      patterns.add<RewriteVDivOp>(&ctx);
     }
     patterns
         .add<RewriteVCumOpToGeneric<hivm::VCumprodOp, arith::MulIOp, arith::MulFOp, 1>,

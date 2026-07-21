@@ -21,7 +21,8 @@ func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x
     // COMMON: linalg.mul
     %3 = hivm.hir.vmul ins(%1, %2: tensor<5x?x10xf32>, tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
  
-    // COMMON: linalg.div
+    // CHECK-TRUE: linalg.elemwise_binary
+    // CHECK-FALSE: linalg.div
     %4 = hivm.hir.vdiv ins(%2, %3: tensor<5x?x10xf32>, tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
  
     // COMMON: linalg.max
@@ -82,7 +83,8 @@ func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x
     // COMMON: linalg.mul
     hivm.hir.vmul ins(%c, %d: memref<5x?x10xf32>, memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
  
-    // COMMON: linalg.div
+    // CHECK-TRUE: linalg.elemwise_binary
+    // CHECK-FALSE: linalg.div
     hivm.hir.vdiv ins(%c, %d: memref<5x?x10xf32>, memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
  
     // COMMON: linalg.max
