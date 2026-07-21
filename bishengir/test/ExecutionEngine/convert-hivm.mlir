@@ -415,7 +415,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r10:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c12]] :
-    // CHECK:       arith.minnumf
+    // CHECK:       arith.minimumf
     // CHECK: %[[o5:.*]] = tensor.expand_shape %[[r10]]
     %5 = hivm.hir.vreduce <all> ins(%a: tensor<5x?x10xf32>) outs(%4: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -435,7 +435,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r12:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c14]] :
-    // CHECK:       arith.minnumf
+    // CHECK:       arith.minimumf
     // CHECK: %[[o6:.*]] = tensor.expand_shape %[[r12]]
     %6 = hivm.hir.vreduce <min> ins(%a: tensor<5x?x10xf32>) outs(%5: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
