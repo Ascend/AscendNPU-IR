@@ -21,6 +21,7 @@
 
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -167,15 +168,15 @@ bool isAccumulation(Operation *op) {
   return false;
 }
 
-static FixpipeOp insertFixpipe(PatternRewriter &rewriter,
-                               Operation *point, Value src) {
+static FixpipeOp insertFixpipe(PatternRewriter &rewriter, Operation *point,
+                               Value src) {
 
   rewriter.setInsertionPointAfter(point);
 
   auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
   MLIRContext *ctx = rewriter.getContext();
   FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
 
   auto fixpipe = rewriter.create<FixpipeOp>(
       point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
@@ -270,8 +271,7 @@ public:
         if (stopOp && *stopOp == mmad) {
           LDBG("Inserting fix pipe for " << scffor);
 
-          auto fixpipe =
-              insertFixpipe(rewriter, mmad, mmad->getResults()[0]);
+          auto fixpipe = insertFixpipe(rewriter, mmad, mmad->getResults()[0]);
           fixpipe->setAttr(fixpipeDoNotMoveOutOfScfFor,
                            rewriter.getBoolAttr(true));
           mmad->setAttr(mmadFixpipeForResultAlreadyInserted,
@@ -287,6 +287,29 @@ public:
     return changed ? success() : failure();
   }
 };
+
+static bool isRegBasedArch(Operation *op);
+
+/// Check whether every meaningful user reaches a fixpipe, tracing through
+/// extract_slice chains. This covers branch fan-out where a single-user-chain
+/// query cannot detect that fixpipes have already been inserted.
+static bool allUsersReachFixpipe(Value value) {
+  SmallVector<Operation *> users;
+  for (Operation *user : value.getUsers()) {
+    if (isa<tensor::DimOp, annotation::MarkOp>(user))
+      continue;
+    users.push_back(user);
+  }
+  if (users.empty())
+    return false;
+  return llvm::all_of(users, [](Operation *user) {
+    if (isa<hivm::FixpipeOp>(user))
+      return true;
+    if (auto extractSlice = dyn_cast<tensor::ExtractSliceOp>(user))
+      return allUsersReachFixpipe(extractSlice.getResult());
+    return false;
+  });
+}
 
 /// Insert fixpipe when there is hivm::MmadL1Op or hivm::BatchMmadL1Op.
 template <typename OpType>
@@ -306,8 +329,13 @@ public:
     if (op->getAttr(mmadFixpipeForResultAlreadyInserted))
       return failure();
 
+    if (isRegBasedArch(op) && allUsersReachFixpipe(mmadLikeOpRes))
+      return failure();
+
     auto isMatchedOp = [](Operation *op, Value v) {
       LDBG("Matching this current op " << *op);
+      if (isa<hivm::FixpipeOp>(op))
+        return true;
       if (isLocalMatmulInit(op, v)) {
         // no need to insert fixpipe because the single user can directly use
         // result stay in local buffer.
@@ -321,7 +349,8 @@ public:
     int resultIndx = 0;
     Operation *insertAfterOp = nullptr;
     if (isAccumulation(op)) {
-      // only insert fixpipe outside of the for loop when it is an accumulation loop
+      // only insert fixpipe outside of the for loop when it is an accumulation
+      // loop
       insertAfterOp = getInsertPoint(op, resultIndx);
     } else {
       insertAfterOp = op;
@@ -371,8 +400,9 @@ public:
             /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
             /*channel_split=*/nullptr);
         for (OpOperand *operand : inLoopVecOperands) {
-          rewriter.modifyOpInPlace(operand->getOwner(),
-              [&]() { operand->set(innerFixpipe.getResultTensor()); });
+          rewriter.modifyOpInPlace(operand->getOwner(), [&]() {
+            operand->set(innerFixpipe.getResultTensor());
+          });
         }
         LDBG("Insert in-loop fixpipe for Vector consumer of accumulation mmad");
       }
@@ -447,12 +477,18 @@ public:
     rewriter.replaceAllUsesExcept(insertAfterOp->getResult(resultIndx),
                                   fixpipeOp.getResultTensor(), fixpipeOp);
 
-    op->setAttr(mmadFixpipeForResultAlreadyInserted, rewriter.getBoolAttr(true));
+    op->setAttr(mmadFixpipeForResultAlreadyInserted,
+                rewriter.getBoolAttr(true));
     return success();
   }
 };
 
+static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp);
+
 std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
+  if (!isVcastInlinableIntoFixpipe(castOp))
+    return std::nullopt;
+
   auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
   auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
   if (inputType.isF32() && outputType.isF16()) {
@@ -470,6 +506,43 @@ std::optional<FixpipePreQuantMode> getQuantMode(hivm::VCastOp castOp) {
 /// when all the activationOps are ready, there should be relu, leaky-relu and
 /// p-relu
 bool isActivationOp(Operation *op) { return isa<hivm::VReluOp>(op); }
+
+static bool isRegBasedArch(Operation *op) {
+  auto module = op->getParentOfType<ModuleOp>();
+  return module && hacc::utils::isRegBasedArch(module);
+}
+
+static bool hasCompatibleShape(Value lhs, Value rhs) {
+  auto lhsType = dyn_cast<ShapedType>(lhs.getType());
+  auto rhsType = dyn_cast<ShapedType>(rhs.getType());
+  if (!lhsType || !rhsType || !lhsType.hasRank() || !rhsType.hasRank())
+    return false;
+  if (lhsType.getRank() != rhsType.getRank())
+    return false;
+  return succeeded(
+      verifyCompatibleShape(lhsType.getShape(), rhsType.getShape()));
+}
+
+/// Fixpipe pre-quant cannot implement integer narrowing casts that disable
+/// saturation (for example, trunc-with-overflow semantics).
+static bool isVcastInlinableIntoFixpipe(hivm::VCastOp castOp) {
+  if (!isRegBasedArch(castOp))
+    return true;
+
+  auto inputType = getElementTypeOrSelf(castOp.getSrc()[0].getType());
+  auto outputType = getElementTypeOrSelf(castOp.getDst()[0].getType());
+  if (!inputType.isIntOrIndex() || !outputType.isIntOrIndex())
+    return true;
+
+  int64_t srcBitWidth = inputType.getIntOrFloatBitWidth();
+  int64_t dstBitWidth = outputType.getIntOrFloatBitWidth();
+  if (srcBitWidth <= dstBitWidth || outputType.isInteger(1))
+    return true;
+
+  if (auto enableSaturate = castOp->getAttrOfType<BoolAttr>("enable_saturate"))
+    return enableSaturate.getValue();
+  return true;
+}
 
 template <typename OpType>
 std::optional<FixpipePreReluMode> getReluMode(OpType op) {
@@ -489,6 +562,8 @@ Type getInitType(Value v, hivm::FixpipePreQuantMode quant,
     return rewriter.getBF16Type();
   if (quant == FixpipePreQuantMode::S322I8)
     return rewriter.getI8Type();
+  if (quant == FixpipePreQuantMode::QF322F32_PRE)
+    return rewriter.getF32Type();
   llvm::report_fatal_error("unsupported QuantMode");
 }
 
@@ -496,7 +571,7 @@ int64_t getSiftedUsersNum(Value v) {
   const DenseSet<Operation *> container(v.getUsers().begin(),
                                         v.getUsers().end());
   auto filteredRange = llvm::make_filter_range(container, [](Operation *op) {
-    return !isa<tensor::DimOp>(op) && !isa<hivm::DebugOp>(op);
+    return !isa<annotation::MarkOp, hivm::DebugOp, tensor::DimOp>(op);
   });
   return DenseSet<Operation *>(filteredRange.begin(), filteredRange.end())
       .size();
@@ -513,7 +588,10 @@ int64_t getSiftedUsersNum(Value v) {
 // Potential optimization is to fuse condition 1&2&3 into fixpipe.
 struct InlineFixpipeOpPattern : public OpRewritePattern<FixpipeOp> {
 public:
-  using OpRewritePattern<FixpipeOp>::OpRewritePattern;
+  InlineFixpipeOpPattern(MLIRContext *context, bool inlineQuantScale)
+      : OpRewritePattern<FixpipeOp>(context),
+        inlineQuantScale(inlineQuantScale) {}
+
   LogicalResult matchAndRewrite(FixpipeOp op,
                                 PatternRewriter &rewriter) const override {
     if (!op.getResultTensor())
@@ -576,8 +654,20 @@ private:
         inlineFixPipeWithStoreOp(rewriter, loc, op, storeOp,
                                  op.getDpsInputOperand(0)->get());
       }
+    } else if (auto vMulOp = dyn_cast<hivm::VMulOp>(curOp);
+               vMulOp && isRegBasedArch(op) && inlineQuantScale &&
+               isUserQuantScaleInlinable(op, vMulOp)) {
+      matched = true;
+      inlineFixPipeWithQuantScale(rewriter, op, vMulOp);
+    } else if (isUserTransposeInlinable(op, curOp)) {
+      matched = true;
+      inlineFixPipeWithTranspose(rewriter, op, cast<hivm::VTransposeOp>(curOp));
     } else if (auto extractSliceOp =
-                   dyn_cast_if_present<tensor::ExtractSliceOp>(curOp)) {
+                   dyn_cast_if_present<tensor::ExtractSliceOp>(curOp);
+               extractSliceOp &&
+               (!isRegBasedArch(op) ||
+                hasCompatibleShape(op.getSource(),
+                                   extractSliceOp.getSource()))) {
       // change to fixpipe op + extract_slice to extract_slice + fixpipe op
       if (op->getBlock() == extractSliceOp->getBlock()) {
         // only swap when fixpipe op and extract slice op are in same block,
@@ -587,7 +677,11 @@ private:
         swapFixpipeAndExtractSliceOp(rewriter, loc, op, extractSliceOp);
       }
     } else if (auto insertSliceOp =
-                   dyn_cast_if_present<tensor::InsertSliceOp>(curOp)) {
+                   dyn_cast_if_present<tensor::InsertSliceOp>(curOp);
+               insertSliceOp &&
+               (!isRegBasedArch(op) ||
+                hasCompatibleShape(op.getSource(),
+                                   insertSliceOp.getSource()))) {
       // change to fixpipe op + insert_slice + store op to insert_slice +
       // fixpipe op + store op, and besides store op, there is no anther user
       // for insert_slice
@@ -618,12 +712,15 @@ private:
     Value fixpipeInit =
         utils::createEmptyOp(rewriter, loc, castOp.getResult()[0]);
     MLIRContext *ctx = rewriter.getContext();
+    bool regBased = isRegBasedArch(op);
     FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+        regBased ? op.getDmaModeAttr()
+                 : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
     auto newFixpipeOp = rewriter.create<FixpipeOp>(
         loc, fixpipeInit.getType(), /*src=*/newFixpipeSrcTensor,
-        /*dst=*/fixpipeInit, dmaModeAttr, FixpipeDualDstModeAttr{},
-        op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr);
+        /*dst=*/fixpipeInit, dmaModeAttr, op.getDualDstModeAttr(),
+        op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr,
+        op.getChannelSplitAttr(), op.getQuantScale());
     rewriter.replaceAllUsesWith(castOp.getResult()[0],
                                 newFixpipeOp.getResultTensor());
     rewriter.eraseOp(castOp);
@@ -652,8 +749,8 @@ private:
         AtomicKindAttr::get(op->getContext(), ::mlir::hivm::AtomicKind::NONE);
     auto newFixpipeOp = rewriter.create<hivm::FixpipeOp>(
         loc, TypeRange{}, fixpipeSrcTensor, dst, op.getDmaModeAttr(),
-        FixpipeDualDstModeAttr{}, op.getSubBlockIdxAttr(), op.getPreQuantAttr(),
-        op.getPreReluAttr());
+        op.getDualDstModeAttr(), op.getSubBlockIdxAttr(), op.getPreQuantAttr(),
+        op.getPreReluAttr(), op.getChannelSplitAttr(), op.getQuantScale());
     if (storeAttr) {
       auto typeAttr =
           TypeAttr::get(mlir::cast<ShapedType>(dst.getType()).getElementType());
@@ -665,6 +762,76 @@ private:
     rewriter.eraseOp(storeOp);
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeEnd");
+  }
+
+  bool isUserQuantScaleInlinable(hivm::FixpipeOp op,
+                                 hivm::VMulOp vMulOp) const {
+    auto dualDstMode = op.getDualDstModeAttr();
+    if ((dualDstMode &&
+         dualDstMode.getDualDstMode() != FixpipeDualDstMode::NO_DUAL) ||
+        op.getQuantScale())
+      return false;
+    if (!vMulOp->hasOneUse())
+      return false;
+    if (!traceDownStoreOpWithSingleChain(vMulOp.getResult()[0]))
+      return false;
+
+    unsigned fixpipeOperand =
+        vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op ? 0 : 1;
+    Value quantScale = vMulOp.getDpsInputOperand(1 - fixpipeOperand)->get();
+    return utils::isScalarLike(quantScale);
+  }
+
+  bool isUserTransposeInlinable(hivm::FixpipeOp op, Operation *user) const {
+    if (!isRegBasedArch(op))
+      return false;
+    auto transpose = dyn_cast<hivm::VTransposeOp>(user);
+    if (!transpose || op.getDmaMode() != FixpipeDMAMode::NZ2ND)
+      return false;
+    ArrayRef<int64_t> permutation = transpose.getPermutation();
+    return permutation.size() == 2 && permutation[0] == 1 &&
+           permutation[1] == 0;
+  }
+
+  void inlineFixPipeWithQuantScale(PatternRewriter &rewriter,
+                                   hivm::FixpipeOp op,
+                                   hivm::VMulOp vMulOp) const {
+    unsigned fixpipeOperand =
+        vMulOp.getDpsInputOperand(0)->get().getDefiningOp() == op ? 0 : 1;
+    Value quantScale = vMulOp.getDpsInputOperand(1 - fixpipeOperand)->get();
+    Value dst = vMulOp.getDpsInitOperand(0)->get();
+
+    auto preQuant = op.getPreQuant();
+    if (preQuant == FixpipePreQuantMode::NO_QUANT &&
+        getElementTypeOrSelf(op.getSrcOperandType()).isF32() &&
+        getElementTypeOrSelf(dst.getType()).isF32()) {
+      preQuant = FixpipePreQuantMode::QF322F32_PRE;
+    }
+
+    rewriter.setInsertionPointAfter(vMulOp);
+    auto newFixpipe = rewriter.create<FixpipeOp>(
+        op.getLoc(), dst.getType(), op.getSource(), dst, op.getDmaModeAttr(),
+        op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
+        FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant),
+        op.getPreReluAttr(), op.getChannelSplitAttr(), quantScale);
+    rewriter.replaceOp(vMulOp, newFixpipe.getResultTensor());
+    rewriter.eraseOp(op);
+    LDBG("InlineFixpipeWithQuantScale");
+  }
+
+  void inlineFixPipeWithTranspose(PatternRewriter &rewriter, hivm::FixpipeOp op,
+                                  hivm::VTransposeOp transpose) const {
+    rewriter.setInsertionPointAfter(transpose);
+    auto dmaMode =
+        FixpipeDMAModeAttr::get(rewriter.getContext(), FixpipeDMAMode::NZ2DN);
+    auto newFixpipe = rewriter.create<FixpipeOp>(
+        op.getLoc(), transpose.getResult()[0].getType(), op.getSource(),
+        transpose.getDst(), dmaMode, op.getDualDstModeAttr(),
+        op.getSubBlockIdxAttr(), op.getPreQuantAttr(), op.getPreReluAttr(),
+        op.getChannelSplitAttr(), op.getQuantScale());
+    rewriter.replaceOp(transpose, newFixpipe.getResultTensor());
+    rewriter.eraseOp(op);
+    LDBG("InlineFixpipeWithTranspose");
   }
 
   void
@@ -690,13 +857,15 @@ private:
         getInitType(newExtractSliceResult, op.getPreQuant(), rewriter));
 
     MLIRContext *ctx = rewriter.getContext();
+    bool regBased = isRegBasedArch(op);
     FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+        regBased ? op.getDmaModeAttr()
+                 : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
     auto newFixpipeOp = rewriter.create<FixpipeOp>(
         extractSliceOp.getLoc(), fixpipeInit.getType(),
         /*src=*/newExtractSliceResult, /*dst=*/fixpipeInit, dmaModeAttr,
-        FixpipeDualDstModeAttr{}, op.getSubBlockIdxAttr(), quantModeAttr,
-        reluModeAttr);
+        op.getDualDstModeAttr(), op.getSubBlockIdxAttr(), quantModeAttr,
+        reluModeAttr, op.getChannelSplitAttr(), op.getQuantScale());
     rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithExtractSliceReshape");
@@ -720,12 +889,15 @@ private:
         rewriter, insertSliceOp.getLoc(), newInsertSliceResult,
         getInitType(newInsertSliceResult, op.getPreQuant(), rewriter));
     MLIRContext *ctx = rewriter.getContext();
+    bool regBased = isRegBasedArch(op);
     FixpipeDMAModeAttr dmaModeAttr =
-        FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
+        regBased ? op.getDmaModeAttr()
+                 : FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
     auto newFixpipeOp = rewriter.create<FixpipeOp>(
         insertSliceOp.getLoc(), TypeRange{fixpipeInit}, newInsertSliceResult,
-        fixpipeInit, dmaModeAttr, FixpipeDualDstModeAttr{},
-        op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr);
+        fixpipeInit, dmaModeAttr, op.getDualDstModeAttr(),
+        op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr,
+        op.getChannelSplitAttr(), op.getQuantScale());
     rewriter.replaceOp(insertSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithInsertSliceOpReshape");
@@ -768,6 +940,8 @@ private:
     }
     LDBG("moveFixpipeOutOfScfFor");
   }
+
+  const bool inlineQuantScale;
 };
 
 //===----------------------------------------------------------------------===//
@@ -833,10 +1007,9 @@ public:
 
     rewriter.modifyOpInPlace(op, [&]() {
       op.getArgMutable().assign(workSpaceTensor);
-      op.setMemscopeAttr(hivm::AddressSpaceAttr::get(
-        ctx, hivm::AddressSpace::GM));
-      op.setTcoretypeAttr(hivm::TCoreTypeAttr::get(
-        ctx, hivm::TCoreType::CUBE));
+      op.setMemscopeAttr(
+          hivm::AddressSpaceAttr::get(ctx, hivm::AddressSpace::GM));
+      op.setTcoretypeAttr(hivm::TCoreTypeAttr::get(ctx, hivm::TCoreType::CUBE));
     });
     LDBG("InsertFixpipeForDevicePrint");
     return success();
@@ -851,20 +1024,21 @@ public:
   }
 };
 
-void populateInlineFixpipePatterns(RewritePatternSet &patterns) {
+void populateInlineFixpipePatterns(RewritePatternSet &patterns,
+                                   bool inlineQuantScale) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
-  patterns.add<InlineFixpipeOpPattern>(ctx);
+  patterns.add<InlineFixpipeOpPattern>(ctx, inlineQuantScale);
   patterns.add<InsertFixpipeForIterArgMMAD>(ctx);
 }
 
 void InlineFixpipe::runOnOperation() {
   RewritePatternSet patterns(&getContext());
-  populateInlineFixpipePatterns(patterns);
+  populateInlineFixpipePatterns(patterns, inlineQuantScale);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
@@ -872,7 +1046,8 @@ void InlineFixpipe::runOnOperation() {
   RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
   MLIRContext *ctx = insertFixpipeForDevicePrintPattern.getContext();
   insertFixpipeForDevicePrintPattern.add<InsertFixpipeForDevicePrint>(ctx);
-  if (failed(applyPatternsGreedily(getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
+  if (failed(applyPatternsGreedily(
+          getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
     signalPassFailure();
   }
 }
