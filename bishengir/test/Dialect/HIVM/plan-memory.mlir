@@ -996,6 +996,33 @@ module {
 }
 
 // -----
+
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  func.func @test_multi_buffer_not_on_alloc(%src_gm: memref<16x1xf16, #hivm.address_space<gm>>,
+                                        %dst_gm: memref<16x1xf16, #hivm.address_space<gm>>) {
+    // CHECK-NOT: memref.alloc()
+    // CHECK: %[[CONST0:.*]] = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    scf.for %i0 = %c0 to %c16 step %c4 {
+      // CHECK: hivm.hir.pointer_cast(%[[CONST0]])
+      %src_ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+      %subview = memref.subview %src_ub[0, 0] [16, 1] [1, 1] :
+         memref<16x16xf16, #hivm.address_space<ub>> to
+         memref<16x1xf16, strided<[16, 1]>, #hivm.address_space<ub>>
+      annotation.mark %subview {hivm.multi_buffer = 2 : i32} : memref<16x1xf16, strided<[16, 1]>, #hivm.address_space<ub>>
+      hivm.hir.load ins(%src_gm : memref<16x1xf16, #hivm.address_space<gm>>)
+                    outs(%subview : memref<16x1xf16, strided<[16, 1]>, #hivm.address_space<ub>>)
+      hivm.hir.store ins(%subview : memref<16x1xf16, strided<[16, 1]>, #hivm.address_space<ub>>)
+                     outs(%dst_gm: memref<16x1xf16,#hivm.address_space<gm>>)
+    }
+    return
+  }
+}
+
+// -----
+
 module {
   // CHECK-LABEL: func.func @test_mem_plan_multi_address
   func.func @test_mem_plan_multi_address(%src_gm: memref<16xf16, #hivm.address_space<gm>>,

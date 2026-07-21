@@ -61,3 +61,17 @@ module {
     return
   }
 }
+
+// -----
+
+module attributes {hacc.target = #hacc.target<"Ascend910B1">} {
+  // EXPECTED: Pass succeeds
+  func.func @test_mem_global_workspace_without_load(%arg0: tensor<16x16x16xf16>) -> tensor<16x16x16xf16> {
+    %alloc = memref.alloc() : memref<16x16x16xf16, #hivm.address_space<ub>>
+    annotation.mark %alloc {mem_unique} : memref<16x16x16xf16, #hivm.address_space<ub>>
+    %0 = memref.memory_space_cast %alloc : memref<16x16x16xf16, #hivm.address_space<ub>> to memref<16x16x16xf16>
+    %1 = bufferization.to_tensor %0 restrict writable : memref<16x16x16xf16>
+    %2 = hivm.hir.load ins(%arg0 : tensor<16x16x16xf16>) outs (%1: tensor<16x16x16xf16>) -> tensor<16x16x16xf16>
+    return %1 : tensor<16x16x16xf16>
+  }
+}
