@@ -62,8 +62,6 @@ def VFFusion : Pass<"vf-fusion", "mlir::ModuleOp"> {
               [{::llvm::cl::values(
                clEnumValN(analysis::FusionMode::AllOp, "all-op",
                           "Fuse all vector operations"),
-               clEnumValN(analysis::FusionMode::NMostOp, "n-most-op",
-                          "Fuse at most N number of operations"),
                clEnumValN(analysis::FusionMode::MaxParallel, "max-parallel",
                           "Fuse operations for max parallel"),
                clEnumValN(analysis::FusionMode::UBAwareOp, "ub-aware-op",

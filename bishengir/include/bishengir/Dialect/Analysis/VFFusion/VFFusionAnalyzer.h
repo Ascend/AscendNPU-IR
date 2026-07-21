@@ -278,27 +278,6 @@ public:
 };
 
 //===----------------------------------------------------------------------===//
-// NMostOpKindAnalyzer
-//===----------------------------------------------------------------------===//
-
-class NMostOpKindAnalyzer : public VFFusionAnalyzerBase<NMostOpKindAnalyzer> {
-public:
-  NMostOpKindAnalyzer() = delete;
-
-  bool isFusibleImpl(int xIndex, int yIndex);
-  LogicalResult fuseImpl(Block &block);
-
-  NMostOpKindAnalyzer(const VFFusionKindOption &option,
-                      const size_t maxNumberOp)
-      : VFFusionAnalyzerBase<NMostOpKindAnalyzer>(option), N(maxNumberOp) {};
-  ~NMostOpKindAnalyzer() override = default;
-
-private:
-  // max number operations fusible ops including the ops inside regions.
-  const size_t N;
-};
-
-//===----------------------------------------------------------------------===//
 // MaxParallelAnalyzer
 //===----------------------------------------------------------------------===//
 

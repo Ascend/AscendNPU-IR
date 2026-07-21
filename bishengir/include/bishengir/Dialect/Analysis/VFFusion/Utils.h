@@ -19,7 +19,7 @@
 namespace mlir {
 namespace analysis {
 
-enum class FusionMode { AllOp, NMostOp, MaxParallel, UBAwareOp };
+enum class FusionMode { AllOp, MaxParallel, UBAwareOp };
 
 struct VFFusionKindOption {
   VFFusionKindOption(const bool enableOutlineCF, const bool enableOutlineMemref,
