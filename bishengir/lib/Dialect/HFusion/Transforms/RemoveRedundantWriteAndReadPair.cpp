@@ -44,10 +44,22 @@ struct FoldTransferReadAfterWriteAndInsertSlice
     if (readOp.hasOutOfBoundsDim() ||
         !llvm::isa<RankedTensorType>(readOp.getShapedType()))
       return failure();
-    auto defInsertSlice = readOp.getSource().getDefiningOp<tensor::InsertSliceOp>();
-    if (!defInsertSlice)
-      return failure();
-    auto defWrite = defInsertSlice.getSource().getDefiningOp<vector::TransferWriteOp>();
+
+    // Forward the transfer_write vector to the transfer_read. Two shapes:
+    //   (a) write -> insert_slice -> read:
+    //     %w = vector.transfer_write %v, %slice   %ins = tensor.insert_slice %w
+    //     %r = vector.transfer_read %ins
+    //   (b) write -> read (direct result):
+    //     %w = vector.transfer_write %v, %slice
+    //     %r = vector.transfer_read %w
+    vector::TransferWriteOp defWrite;
+    if (auto defInsertSlice =
+            readOp.getSource().getDefiningOp<tensor::InsertSliceOp>()) {
+      defWrite = defInsertSlice.getSource().getDefiningOp<vector::TransferWriteOp>();
+    } else if (auto directWrite =
+                   readOp.getSource().getDefiningOp<vector::TransferWriteOp>()) {
+      defWrite = directWrite;
+    }
     if (!defWrite)
       return failure();
     if (readOp.getIndices() != defWrite.getIndices() ||
