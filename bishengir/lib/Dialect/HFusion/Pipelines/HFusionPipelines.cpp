@@ -268,13 +268,14 @@ static void postProcess(OpPassManager &pm,
   }
   pm.addPass(createAddFFTSAddrPass(addFFTSAddrOpt));
   pm.addPass(createHoistTensorEmptyPass());
-  // TODO: triton compiler do tiddy flatten as well for performance
-  // decompose linalg.transpose into multiple ones that contains only two
-  // permutation axes
-  DecomposeOptions decomposeOptions;
-  decomposeOptions.hfusionDecomposePhase =
-      bishengir::DecomposePhase::AFTER_HFUSION_FLATTEN;
-  pm.nest<func::FuncOp>().addPass(createDecomposePass(decomposeOptions));
+  if (!options.enableTritonKernelCompile) {
+    // decompose linalg.transpose into multiple ones that contains only two
+    // permutation axes
+    DecomposeOptions decomposeOptions;
+    decomposeOptions.hfusionDecomposePhase =
+        bishengir::DecomposePhase::AFTER_HFUSION_FLATTEN;
+    pm.nest<func::FuncOp>().addPass(createDecomposePass(decomposeOptions));
+  }
 }
 
 void buildHFusionPipelines(OpPassManager &pm,
