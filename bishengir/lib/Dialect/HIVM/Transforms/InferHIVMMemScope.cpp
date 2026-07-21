@@ -23,8 +23,8 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
-
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -49,8 +49,6 @@ bool isSingleResultPropagatableMemrefOp(Operation *op) {
   if (!op)
     return false;
   if (isa<ViewLikeOpInterface>(op))
-    return true;
-  if (isa<bishengir::memref_ext::AllocWorkspaceOp>(op))
     return true;
   if (isa<memref::TransposeOp, hivm::BitcastOp, arith::SelectOp>(op))
     return true;
@@ -120,7 +118,7 @@ MemScopeInferAndPropagateHelper::propagateMemScopeToUsers(Value val) {
   auto propagateFn = [&](OpOperand &user) -> LogicalResult {
     Operation *userDefiningOp = user.getOwner();
     return TypeSwitch<Operation *, LogicalResult>(userDefiningOp)
-        .Case<scf::YieldOp>([&](Operation *op) {
+        .Case<scf::YieldOp, scope::ReturnOp>([&](Operation *op) {
           Operation *parentOp = op->getParentOp();
           auto yieldResult = op->getOperand(user.getOperandNumber());
           auto parentResult = parentOp->getResult(user.getOperandNumber());
