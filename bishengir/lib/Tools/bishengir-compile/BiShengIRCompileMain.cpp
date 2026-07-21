@@ -95,19 +95,19 @@ void addBitcodeAttrsToModule(ModuleOp module, StringRef executablePath,
         createAttr(ctx, mlir::StringAttr::get(ctx, canonicalPath.str().str())));
   };
 
-  addIfExists("meta_op.aic.bc", mlir::hivm::AIC_BITCODEAttr::name,
+  addIfExists("meta_op.aic.c220.bc", mlir::hivm::AIC_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::AIC_BITCODEAttr::get(c, s);
               });
-  addIfExists("meta_op.aiv.bc", mlir::hivm::AIV_BITCODEAttr::name,
+  addIfExists("meta_op.aiv.c220.bc", mlir::hivm::AIV_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::AIV_BITCODEAttr::get(c, s);
               });
-  addIfExists("meta_op.mix.aic.bc", mlir::hivm::MIX_AIC_BITCODEAttr::name,
+  addIfExists("meta_op.mix.aic.c220.bc", mlir::hivm::MIX_AIC_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::MIX_AIC_BITCODEAttr::get(c, s);
               });
-  addIfExists("meta_op.mix.aiv.bc", mlir::hivm::MIX_AIV_BITCODEAttr::name,
+  addIfExists("meta_op.mix.aiv.c220.bc", mlir::hivm::MIX_AIV_BITCODEAttr::name,
               [](MLIRContext *c, mlir::StringAttr s) -> mlir::Attribute {
                 return mlir::hivm::MIX_AIV_BITCODEAttr::get(c, s);
               });

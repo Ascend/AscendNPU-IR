@@ -35,7 +35,7 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
         else ()
             list(APPEND bisheng_args --cce-aicore-arch=dav-c220-cube)
             list(APPEND bisheng_args --cce-enable-sanitizer)
-            set(bc_arch_suffix "")
+            set(bc_arch_suffix ".c220")
         endif ()
         list(APPEND bisheng_args --cce-enable-print)
         if (${core_type} STREQUAL "aic")
@@ -50,7 +50,7 @@ function(compile_single_cpp_to_bc cpp_with_path core_type platform_type)
         else ()
             list(APPEND bisheng_args --cce-aicore-arch=dav-c220-vec)
             list(APPEND bisheng_args --cce-enable-sanitizer)
-            set(bc_arch_suffix "")
+            set(bc_arch_suffix ".c220")
         endif ()
         list(APPEND bisheng_args --cce-enable-print)
         if (${core_type} STREQUAL "aiv")
@@ -130,16 +130,16 @@ function(compile_shmem_to_bc cpp_with_path core_type platform_type)
     if ((${core_type} STREQUAL "aic") OR (${core_type} STREQUAL "mix_aic"))
         list(APPEND bisheng_args "--cce-aicore-arch=${aicore_arch}-cube")
         if (${core_type} STREQUAL "aic")
-            string(REGEX REPLACE "\\.cpp" ".aic.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE "\\.cpp" ".aic.c220.bc" bc_name ${cpp_name})
         else ()
-            string(REGEX REPLACE "\\.cpp" ".mix.aic.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE "\\.cpp" ".mix.aic.c220.bc" bc_name ${cpp_name})
         endif ()
     elseif ((${core_type} STREQUAL "aiv") OR (${core_type} STREQUAL "mix_aiv"))
         list(APPEND bisheng_args "--cce-aicore-arch=${aicore_arch}-vec")
         if (${core_type} STREQUAL "aiv")
-            string(REGEX REPLACE "\\.cpp" ".aiv.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE "\\.cpp" ".aiv.c220.bc" bc_name ${cpp_name})
         else ()
-            string(REGEX REPLACE "\\.cpp" ".mix.aiv.bc" bc_name ${cpp_name})
+            string(REGEX REPLACE "\\.cpp" ".mix.aiv.c220.bc" bc_name ${cpp_name})
         endif ()
     else ()
         message(FATAL_ERROR "Core type must be aic/mix_aic/aiv/mix_aiv or host.")
@@ -267,78 +267,92 @@ function(compile_cpp_to_bc)
     endforeach ()
 endfunction()
 
+# Link all bitcode files of a given architecture into meta_op files.
+# `arch` is the arch suffix in the .bc filenames ("" for c220, "c310" for c310).
+# `output_suffix` is the suffix appended to output meta_op filenames
+# ("" for c220, ".c310" for c310).
+function(link_one_arch_to_meta_op arch output_suffix)
+    set(BITCODE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lib")
+
+    if("${arch}" STREQUAL "")
+        set(aic_glob "*.aic.bc")
+        set(aiv_glob "*.aiv.bc")
+        set(mix_aic_glob "*.mix.aic.bc")
+        set(mix_aiv_glob "*.mix.aiv.bc")
+    else()
+        set(aic_glob "*.aic.${arch}.bc")
+        set(aiv_glob "*.aiv.${arch}.bc")
+        set(mix_aic_glob "*.mix.aic.${arch}.bc")
+        set(mix_aiv_glob "*.mix.aiv.${arch}.bc")
+    endif()
+
+    file(GLOB_RECURSE aic_op_list     "${CMAKE_CURRENT_BINARY_DIR}/${aic_glob}")
+    file(GLOB_RECURSE aiv_op_list     "${CMAKE_CURRENT_BINARY_DIR}/${aiv_glob}")
+    file(GLOB_RECURSE mix_aic_op_list "${CMAKE_CURRENT_BINARY_DIR}/${mix_aic_glob}")
+    file(GLOB_RECURSE mix_aiv_op_list "${CMAKE_CURRENT_BINARY_DIR}/${mix_aiv_glob}")
+    list(REMOVE_ITEM aic_op_list ${mix_aic_op_list})
+    list(REMOVE_ITEM aiv_op_list ${mix_aiv_op_list})
+
+    set(output_aic_file_name     "${BITCODE_OUTPUT_DIR}/meta_op.aic${output_suffix}.bc")
+    set(output_aiv_file_name     "${BITCODE_OUTPUT_DIR}/meta_op.aiv${output_suffix}.bc")
+    set(output_mix_aic_file_name "${BITCODE_OUTPUT_DIR}/meta_op.mix.aic${output_suffix}.bc")
+    set(output_mix_aiv_file_name "${BITCODE_OUTPUT_DIR}/meta_op.mix.aiv${output_suffix}.bc")
+
+    foreach(pair "aic_op_list;${output_aic_file_name};${aic_glob}"
+                 "aiv_op_list;${output_aiv_file_name};${aiv_glob}"
+                 "mix_aic_op_list;${output_mix_aic_file_name};${mix_aic_glob}"
+                 "mix_aiv_op_list;${output_mix_aiv_file_name};${mix_aiv_glob}")
+        list(GET pair 0 list_var)
+        list(GET pair 1 out_file)
+        list(GET pair 2 glob_pat)
+        set(current_files ${${list_var}})
+        if(NOT current_files)
+            message(STATUS "No ${glob_pat} files found, skip linking ${out_file}")
+            continue()
+        endif()
+        set(link_args ${current_files} "-o" ${out_file})
+        string(REGEX REPLACE ";" " " link_command "${LLVM_LINK_TOOL} ${link_args}")
+        message("-- command of link multi ${glob_pat} to ${out_file} is ${link_command}")
+        execute_process(
+                COMMAND ${LLVM_LINK_TOOL} ${link_args}
+                RESULT_VARIABLE llvm_link_result
+        )
+        if(NOT llvm_link_result EQUAL 0)
+            message(FATAL_ERROR "llvm-link failed for ${out_file} with exit code ${llvm_link_result}")
+        endif()
+        if (NOT EXISTS "${out_file}")
+            message(FATAL_ERROR "llvm-link failed, \
+please check ${out_file} exist or not!")
+        endif ()
+        execute_process(
+                COMMAND rm ${current_files}
+        )
+    endforeach()
+endfunction()
+
 function(link_all_to_meta_op)
     set(BITCODE_OUTPUT_DIR "${CMAKE_BINARY_DIR}/lib")
     file(MAKE_DIRECTORY ${BITCODE_OUTPUT_DIR})
 
-    file(GLOB_RECURSE all_aic_op_list "${CMAKE_CURRENT_BINARY_DIR}/*.aic.bc")
-    file(GLOB_RECURSE all_aiv_op_list "${CMAKE_CURRENT_BINARY_DIR}/*.aiv.bc")
-    file(GLOB_RECURSE all_mix_aic_op_list "${CMAKE_CURRENT_BINARY_DIR}/*.mix.aic.bc")
-    file(GLOB_RECURSE all_mix_aiv_op_list "${CMAKE_CURRENT_BINARY_DIR}/*.mix.aiv.bc")
-    list(REMOVE_ITEM all_aic_op_list ${all_mix_aic_op_list})
-    list(REMOVE_ITEM all_aiv_op_list ${all_mix_aiv_op_list})
+    # c220 (Ascend910B / A3): use .c220 suffix.
+    link_one_arch_to_meta_op("c220" ".c220")
+
+    # c310 (Ascend910D / A5): use .c310 suffix.
+    link_one_arch_to_meta_op("c310" ".c310")
+
+    # Link host bitcode (arch-agnostic).
     file(GLOB_RECURSE all_host_op_list "${CMAKE_CURRENT_BINARY_DIR}/*.host.bc")
-    set(output_aic_file_name "${BITCODE_OUTPUT_DIR}/meta_op.aic.bc")
-    set(output_aiv_file_name "${BITCODE_OUTPUT_DIR}/meta_op.aiv.bc")
-    set(output_mix_aic_file_name "${BITCODE_OUTPUT_DIR}/meta_op.mix.aic.bc")
-    set(output_mix_aiv_file_name "${BITCODE_OUTPUT_DIR}/meta_op.mix.aiv.bc")
     set(output_host_file_name "${BITCODE_OUTPUT_DIR}/host.bc")
-
-    set(aic_link_args ${all_aic_op_list} "-o" ${output_aic_file_name})
-    set(aiv_link_args ${all_aiv_op_list} "-o" ${output_aiv_file_name})
-    set(mix_aic_link_args ${all_mix_aic_op_list} "-o" ${output_mix_aic_file_name})
-    set(mix_aiv_link_args ${all_mix_aiv_op_list} "-o" ${output_mix_aiv_file_name})
     set(host_link_args ${all_host_op_list} "-o" ${output_host_file_name})
-
-    string(REGEX REPLACE ";" " " aic_link_command "${LLVM_LINK_TOOL} ${aic_link_args}")
-    message("-- command of link multi .aic.bc to meta_op.aic.bc is ${aic_link_command}")
-    execute_process(
-            COMMAND ${LLVM_LINK_TOOL} ${aic_link_args}
-    )
-
-    string(REGEX REPLACE ";" " " aiv_link_command "${LLVM_LINK_TOOL} ${aiv_link_args}")
-    message("-- command of link multi .aiv.bc to meta_op.aiv.bc is ${aiv_link_command}")
-    execute_process(
-            COMMAND ${LLVM_LINK_TOOL} ${aiv_link_args}
-    )
-
-    string(REGEX REPLACE ";" " " mix_aic_link_command "${LLVM_LINK_TOOL} ${mix_aic_link_args}")
-    message("-- command of link multi .mix.aic.bc to meta_op.mix.aic.bc is ${mix_aic_link_command}")
-    execute_process(
-            COMMAND ${LLVM_LINK_TOOL} ${mix_aic_link_args}
-    )
-
-    string(REGEX REPLACE ";" " " mix_aiv_link_command "${LLVM_LINK_TOOL} ${mix_aiv_link_args}")
-    message("-- command of link multi .mix.aiv.bc to meta_op.mix.aiv.bc is ${mix_aiv_link_command}")
-    execute_process(
-            COMMAND ${LLVM_LINK_TOOL} ${mix_aiv_link_args}
-    )
-
     string(REGEX REPLACE ";" " " host_link_command "${LLVM_LINK_TOOL} ${host_link_args}")
     message("-- command of link multi .host.bc to host.bc is ${host_link_command}")
     execute_process(
             COMMAND ${LLVM_LINK_TOOL} ${host_link_args}
+            RESULT_VARIABLE host_link_result
     )
-
-    if (NOT EXISTS "${output_aic_file_name}")
-        message(FATAL_ERROR "llvm-link failed, \
-please check ${output_aic_file_name} exist or not!")
-    endif ()
-
-    if (NOT EXISTS "${output_aiv_file_name}")
-        message(FATAL_ERROR "llvm-link failed, \
-please check ${output_aiv_file_name} exist or not!")
-    endif ()
-
-    if (NOT EXISTS "${output_mix_aic_file_name}")
-        message(FATAL_ERROR "llvm-link failed, \
-please check ${output_mix_aic_file_name} exist or not!")
-    endif ()
-
-    if (NOT EXISTS "${output_mix_aiv_file_name}")
-        message(FATAL_ERROR "llvm-link failed, \
-please check ${output_mix_aiv_file_name} exist or not!")
-    endif ()
+    if(NOT host_link_result EQUAL 0)
+        message(FATAL_ERROR "llvm-link failed for ${output_host_file_name} with exit code ${host_link_result}")
+    endif()
 
     if (NOT EXISTS "${output_host_file_name}")
         message(FATAL_ERROR "llvm-link failed, \
@@ -346,10 +360,6 @@ please check ${output_host_file_name} exist or not!")
     endif ()
 
     execute_process(
-            COMMAND rm ${all_aic_op_list}
-            COMMAND rm ${all_aiv_op_list}
-            COMMAND rm ${all_mix_aic_op_list}
-            COMMAND rm ${all_mix_aiv_op_list}
             COMMAND rm ${all_host_op_list}
     )
 
@@ -371,10 +381,14 @@ please check ${BISHENG_TOOL} or ${LLVM_LINK_TOOL} exist or not!")
     link_all_to_meta_op()
 
     install(FILES
-            ${CMAKE_BINARY_DIR}/lib/meta_op.aic.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.bc
-            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.aic.c220.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c220.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c220.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c220.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.aic.c310.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.aiv.c310.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aic.c310.bc
+            ${CMAKE_BINARY_DIR}/lib/meta_op.mix.aiv.c310.bc
             ${CMAKE_BINARY_DIR}/lib/host.bc
             DESTINATION lib
             COMPONENT bishengir-publish-products)
