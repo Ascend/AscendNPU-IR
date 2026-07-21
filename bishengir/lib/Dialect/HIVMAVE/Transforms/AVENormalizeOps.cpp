@@ -39,16 +39,14 @@ static std::optional<hivmave::VecMemType> getVecMemType(Type vector) {
   auto vecType = dyn_cast<VectorType>(vector);
   if (!vecType)
     return std::nullopt;
-  // todo: wait define in llvm-project
-  return std::nullopt;
-  // auto layout =
-  // dyn_cast_or_null<hivmave::VectorLayoutAttr>(vecType.getLayout()); if
-  // (!layout)
-  //   return std::nullopt;
-  // auto memAttr = dyn_cast<hivmave::VecMemTypeAttr>(layout.getMem());
-  // if (!memAttr)
-  //   return std::nullopt;
-  // return memAttr.getValue();
+  auto layout =
+      dyn_cast_or_null<hivmave::VectorLayoutAttr>(vecType.getLayout());
+  if (!layout)
+    return std::nullopt;
+  auto memAttr = dyn_cast<hivmave::VecMemTypeAttr>(layout.getMem());
+  if (!memAttr)
+    return std::nullopt;
+  return memAttr.getValue();
 }
 
 /// Before conversion:

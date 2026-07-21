@@ -63,7 +63,6 @@ void eliminateNormalOp(Operation *op, IRRewriter &rewriter) {
   for (auto res : op->getResults()) {
     if (auto vecRes = dyn_cast<VectorType>(res.getType())) {
       isTarget = true;
-      // todo: wait define in llvm-project
       results.push_back(vecRes.cloneWith({}));
     } else {
       results.push_back(res.getType());
