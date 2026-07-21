@@ -315,6 +315,38 @@ struct RewriteFromGenericToGeneric final
   }
 };
 
+template <typename From, typename FloatTo, linalg::BinaryFn signedFn,
+          linalg::BinaryFn unsignedFn>
+struct RewriteSignedAwareBinaryToLinalg final
+    : public GenericPreprocessAndRewrite<From> {
+  using Base = GenericPreprocessAndRewrite<From>;
+  using Base::Base;
+
+  LogicalResult rewriteFromGeneric(From op,
+                                   SmallVector<Value> &&preprocessedOperands,
+                                   PatternRewriter &rewriter) const final {
+    Type elementType =
+        getElementTypeOrSelf(preprocessedOperands.front().getType());
+    if (isa<FloatType>(elementType)) {
+      rewriter.replaceOpWithNewOp<FloatTo>(op, op.getResultTypes(),
+                                           preprocessedOperands,
+                                           op.getDpsInits());
+      return success();
+    }
+
+    bool isSigned = op.getIsSigned();
+    if (auto intType = dyn_cast<IntegerType>(elementType))
+      isSigned = isSigned && !intType.isUnsigned();
+
+    linalg::BinaryFn fun = isSigned ? signedFn : unsignedFn;
+    rewriter.replaceOpWithNewOp<linalg::ElemwiseBinaryOp>(
+        op, op.getResultTypes(), preprocessedOperands, op.getDst(),
+        ArrayRef{rewriter.getNamedAttr(
+            "fun", rewriter.getAttr<linalg::BinaryFnAttr>(fun))});
+    return success();
+  }
+};
+
 template <typename From>
 struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
   using Base = RewriteUsingMapOp<From>;
@@ -1222,7 +1254,8 @@ struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
                                 PatternRewriter &rewriter) const final {
     Location loc = op.getLoc();
     hivm::CompareMode hivmMode = op.getCompareMode();
-    hfusion::CompareFn hsMode = mapCompareModeHiVMToHFusion(hivmMode);
+    hfusion::CompareFn hsMode =
+        mapCompareModeHiVMToHFusion(hivmMode, op.getIsSigned());
     auto *ctx = op.getContext();
     auto cmpFnAttr = hfusion::CompareFnAttr::get(ctx, hsMode);
     auto dpsOp = dyn_cast<mlir::DestinationStyleOpInterface>(op.getOperation());
@@ -1238,20 +1271,21 @@ struct RewriteVCmpOp : public OpRewritePattern<hivm::VCmpOp> {
 
 private:
   hfusion::CompareFn
-  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode) const {
+  mapCompareModeHiVMToHFusion(hivm::CompareMode hivmCmpMode,
+                              bool isSigned) const {
     switch (hivmCmpMode) {
     case hivm::CompareMode::EQ:
       return hfusion::CompareFn::veq;
     case hivm::CompareMode::NE:
       return hfusion::CompareFn::vne;
     case hivm::CompareMode::LE:
-      return hfusion::CompareFn::vle;
+      return isSigned ? hfusion::CompareFn::vle : hfusion::CompareFn::vule;
     case hivm::CompareMode::LT:
-      return hfusion::CompareFn::vlt;
+      return isSigned ? hfusion::CompareFn::vlt : hfusion::CompareFn::vult;
     case hivm::CompareMode::GE:
-      return hfusion::CompareFn::vge;
+      return isSigned ? hfusion::CompareFn::vge : hfusion::CompareFn::vuge;
     case hivm::CompareMode::GT:
-      return hfusion::CompareFn::vgt;
+      return isSigned ? hfusion::CompareFn::vgt : hfusion::CompareFn::vugt;
     }
     llvm_unreachable("Unknown hivm::CompareMode in HiVM -> HFusion mapping");
   }
@@ -1477,8 +1511,6 @@ struct ConvertHIVMToUpstream
              RewriteFromGenericToGeneric<hivm::VSubOp, linalg::SubOp>,
              RewriteFromGenericToGeneric<hivm::VMulOp, linalg::MulOp>,
              RewriteFromGenericToGeneric<hivm::VDivOp, linalg::DivOp>,
-             RewriteFromGenericToGeneric<hivm::VMaxOp, linalg::MaxOp>,
-             RewriteFromGenericToGeneric<hivm::VMinOp, linalg::MinOp>,
              RewriteFromGenericToGeneric<hivm::VExpOp, linalg::ExpOp>,
              RewriteFromGenericToGeneric<hivm::VLnOp, linalg::LogOp>,
              RewriteFromGenericToGeneric<hivm::VRsqrtOp, linalg::RsqrtOp>,
@@ -1513,7 +1545,13 @@ struct ConvertHIVMToUpstream
                RewriteVCumOpToHFusion<hivm::VCumsumOp, hfusion::CumsumOp>>(
               &ctx);
     }
-    patterns.add<RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
+    patterns.add<RewriteSignedAwareBinaryToLinalg<hivm::VMaxOp, linalg::MaxOp,
+                                         linalg::BinaryFn::max_signed,
+                                         linalg::BinaryFn::max_unsigned>,
+                 RewriteSignedAwareBinaryToLinalg<hivm::VMinOp, linalg::MinOp,
+                                         linalg::BinaryFn::min_signed,
+                                         linalg::BinaryFn::min_unsigned>,
+                 RewriteVBrcOp, RewriteVTransposeOp, RewriteVArangeOp,
                  RewriteVConcatOp, RewriteVReduceOp, RewriteLoadOp,
                  RewriteCastOp, RewriteVCmpOp,
                  RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
