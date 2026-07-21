@@ -13,6 +13,7 @@
 
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1327,6 +1328,30 @@ struct RewriteDeinterleave : public OpRewritePattern<hivm::VDeinterleaveOp> {
   }
 };
 
+struct HIVMToHfusionBitcastOp : public OpRewritePattern<hivm::BitcastOp> {
+  using OpRewritePattern<hivm::BitcastOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hivm::BitcastOp op,
+                                PatternRewriter &rewriter) const final {
+    Value input = op.getOperand();
+    Value output = op.getResult();
+    ShapedType inputType = dyn_cast_if_present<ShapedType>(input.getType());
+    if (!inputType)
+      return failure();
+    Type outputElemType = getElementTypeOrSelf(output.getType());
+    Type resultType = inputType.clone(outputElemType);
+    Value emptyTensor = mlir::tensor::createTensorEmptyOpWithTargetElemType(
+        rewriter, op.getLoc(), input, outputElemType);
+
+    auto hfusionBitcastOp = rewriter.create<hfusion::BitcastOp>(
+        op.getLoc(), TypeRange{resultType}, ValueRange{input},
+        ValueRange{emptyTensor});
+
+    rewriter.replaceOp(op, hfusionBitcastOp.getResults().front());
+    return success();
+  }
+};
+
 struct ConvertHIVMToUpstream
     : public impl::ExecutionEngineHIVMToUpstreamConversionBase<
           ConvertHIVMToUpstream> {
@@ -1433,7 +1458,7 @@ struct ConvertHIVMToUpstream
                  RewriteCastOp, RewriteVCmpOp,
                  RewriteVModOp<hivm::VModUIOp, arith::RemUIOp>,
                  RewriteVModOp<hivm::VModOp, arith::RemSIOp>, RewriteInterleave,
-                 RewriteDeinterleave>(&ctx);
+                 RewriteDeinterleave, HIVMToHfusionBitcastOp>(&ctx);
 
     ConversionTarget target(ctx);
     target.addIllegalDialect<hivm::HIVMDialect>();
