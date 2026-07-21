@@ -662,6 +662,8 @@ struct ForOpLegalization : public OpRewritePattern<scf::ForOp> {
 
 ModuleOp getTopLevelModuleOp(Operation *op);
 
+int64_t getArgumentIndex(Value value);
+
 bool isValidHIVMTileElementType(Type type);
 
 unsigned getHIVMTileSliceMinNumElts(Type type);

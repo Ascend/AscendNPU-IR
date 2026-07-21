@@ -154,3 +154,243 @@ func.func @flip_kernel_2d(%arg0: memref<512x8xf32>) -> (tensor<512x8xf32>) {
   %1 = call @triton_flip(%0, %c1_i64) : (tensor<512x8xf32>, i64) -> tensor<512x8xf32>
   return %1 : tensor<512x8xf32>
 }
+
+// -----
+
+// CHECK-LABEL: @triton_kernel_cummaxop
+// CHECK: hfusion.cummax
+// CHECK: hfusion.cummax
+// CHECK: hfusion.cummax
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_cummax_0(tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+func.func private @triton_cummax_1(tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+func.func private @triton_cummax_2(tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+func.func @triton_kernel_cummaxop(%arg0: memref<4x6x8xf32>) -> (tensor<4x6x8xf32>, tensor<4x6x8xf32>, tensor<4x6x8xf32>) {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xf32>
+  %1 = call @triton_cummax_0(%0, %c0_i32, %c0_i32) : (tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+  %2 = call @triton_cummax_1(%0, %c1_i32, %c0_i32) : (tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+  %3 = call @triton_cummax_2(%0, %c2_i32, %c0_i32) : (tensor<4x6x8xf32>, i32, i32) -> tensor<4x6x8xf32>
+  return %1, %2, %3 : tensor<4x6x8xf32>, tensor<4x6x8xf32>, tensor<4x6x8xf32>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @triton_kernel_cumminop
+// CHECK: hfusion.cummin
+// CHECK: hfusion.cummin
+// CHECK: hfusion.cummin
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_cummin_0(tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+func.func private @triton_cummin_1(tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+func.func private @triton_cummin_2(tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+func.func @triton_kernel_cumminop(%arg0: memref<4x6x8xi16>) -> (tensor<4x6x8xi16>, tensor<4x6x8xi16>, tensor<4x6x8xi16>) {
+  %c0_i32 = arith.constant 0 : i32
+  %c1_i32 = arith.constant 1 : i32
+  %c2_i32 = arith.constant 2 : i32
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xi16>
+  %1 = call @triton_cummin_0(%0, %c0_i32, %c0_i32) : (tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+  %2 = call @triton_cummin_1(%0, %c1_i32, %c0_i32) : (tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+  %3 = call @triton_cummin_2(%0, %c2_i32, %c0_i32) : (tensor<4x6x8xi16>, i32, i32) -> tensor<4x6x8xi16>
+  return %1, %2, %3 : tensor<4x6x8xi16>, tensor<4x6x8xi16>, tensor<4x6x8xi16>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @triton_kernel_cummax_propagate_nan
+// CHECK: hfusion.cummax %{{.*}} {propagate_nan = false}
+// CHECK: hfusion.cummax %{{.*}} :
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_cummax_nonan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func private @triton_cummax_propnan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func @triton_kernel_cummax_propagate_nan(%arg0: memref<4x6x8xf32>) -> (tensor<4x6x8xf32>, tensor<4x6x8xf32>) {
+  %c0_i32 = arith.constant 0 : i32
+  %false = arith.constant false
+  %true = arith.constant true
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xf32>
+  %1 = call @triton_cummax_nonan_0(%0, %c0_i32, %c0_i32, %false) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  %2 = call @triton_cummax_propnan_0(%0, %c0_i32, %c0_i32, %true) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  return %1, %2 : tensor<4x6x8xf32>, tensor<4x6x8xf32>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @triton_kernel_cummin_propagate_nan
+// CHECK: hfusion.cummin %{{.*}} {propagate_nan = false}
+// CHECK: hfusion.cummin %{{.*}} :
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_cummin_nonan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func private @triton_cummin_propnan_0(tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+func.func @triton_kernel_cummin_propagate_nan(%arg0: memref<4x6x8xf32>) -> (tensor<4x6x8xf32>, tensor<4x6x8xf32>) {
+  %c0_i32 = arith.constant 0 : i32
+  %false = arith.constant false
+  %true = arith.constant true
+  %0 = bufferization.to_tensor %arg0 restrict writable : memref<4x6x8xf32>
+  %1 = call @triton_cummin_nonan_0(%0, %c0_i32, %c0_i32, %false) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  %2 = call @triton_cummin_propnan_0(%0, %c0_i32, %c0_i32, %true) : (tensor<4x6x8xf32>, i32, i32, i1) -> tensor<4x6x8xf32>
+  return %1, %2 : tensor<4x6x8xf32>, tensor<4x6x8xf32>
+}
+}
+
+// -----
+
+// CHECK-LABEL: @triton_kernel_indirect_load
+// CHECK: hfusion.indirect_load
+// CHECK: hfusion.indirect_load
+// CHECK: hfusion.indirect_load
+// CHECK: hfusion.indirect_load
+// CHECK: hfusion.indirect_load
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_indirect_load_0(memref<?xf32>, tensor<4x32xi32>) -> tensor<4x32xf32>
+func.func private @triton_indirect_load_1(memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi8>) -> tensor<4x32xf32>
+func.func private @triton_indirect_load_2(memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi8>, tensor<4x32xf32>) -> tensor<4x32xf32>
+func.func private @triton_indirect_load_3(memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi8>, tensor<4x32xf32>) -> tensor<4x32xf32>
+func.func private @triton_indirect_load_4(memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi1>, tensor<4x32xf32>) -> tensor<4x32xf32>
+func.func @triton_kernel_indirect_load(%arg0: memref<?xf32>, %arg1: memref<4x32xi32>, %arg2: memref<4x32xi8>, %arg3: memref<4x32xi1>){
+  %c0_f32 = arith.constant 0.0 : f32
+  %c1_f32 = arith.constant 1.0 : f32
+  %c2_i32 = arith.constant 0 : i32
+  %b0 = tensor.empty() : tensor<4x32xf32>
+  %t0_f32 = linalg.fill ins(%c0_f32 : f32) outs(%b0 : tensor<4x32xf32>) -> tensor<4x32xf32>
+  %b1 = tensor.empty() : tensor<4x32xf32>
+  %t1_f32 = linalg.fill ins(%c1_f32 : f32) outs(%b1 : tensor<4x32xf32>) -> tensor<4x32xf32>
+  %b2 = tensor.empty() : tensor<4x32xi32>
+  %t2_i32 = linalg.fill ins(%c2_i32 : i32) outs(%b2 : tensor<4x32xi32>) -> tensor<4x32xi32>
+  %0 = bufferization.to_tensor %arg1 restrict writable : memref<4x32xi32>
+  %1 = bufferization.to_tensor %arg2 restrict writable : memref<4x32xi8>
+  %bool_i1 = bufferization.to_tensor %arg3 restrict writable : memref<4x32xi1>
+  %2 = call @triton_indirect_load_0(%arg0, %0) : (memref<?xf32>, tensor<4x32xi32>) -> tensor<4x32xf32>
+  %3 = call @triton_indirect_load_1(%arg0, %0, %1) : (memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi8>) -> tensor<4x32xf32>
+  %4 = call @triton_indirect_load_2(%arg0, %0, %1, %t0_f32) : (memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi8>, tensor<4x32xf32>) -> tensor<4x32xf32>
+  %5 = call @triton_indirect_load_3(%arg0, %0, %1, %t1_f32) : (memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi8>, tensor<4x32xf32>) -> tensor<4x32xf32>
+  %6 = call @triton_indirect_load_4(%arg0, %0, %bool_i1, %t1_f32) : (memref<?xf32>, tensor<4x32xi32>, tensor<4x32xi1>, tensor<4x32xf32>) -> tensor<4x32xf32>
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL func.func @embeddinggather_test
+// CHECK: DirectlyUsedGMArgIdxList = [0]
+// CHECK: hfusion.embedding_gather
+// CHECK-SAME: tensor<16x400x32xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func private @triton_embedding_gather(memref<?xf32>, tensor<16x400xi32>, i32, i32, i32, i32, i32, i32, i32, i32) -> tensor<16x400x32xf32>
+  func.func @embeddinggather_test(%arg0 : memref<?xf32>, %arg1 : tensor<16x400xi32>, %arg2 : tensor<16x400x32xf32>) {
+    %c0 = arith.constant 0 : i32
+    %c32 = arith.constant 32 : i32
+    %c4000 = arith.constant 4000 : i32
+    %c9000 = arith.constant 9000 : i32
+    %0 = func.call @triton_embedding_gather(%arg0, %arg1, %c9000, %c32, %c0, %c0, %c0, %c32, %c4000, %c32) : (memref<?xf32>, tensor<16x400xi32>, i32, i32, i32, i32, i32, i32, i32, i32) -> tensor<16x400x32xf32>
+    func.return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @triton_kernel_indirect_store
+// CHECK: hfusion.indirect_store
+// CHECK: hfusion.indirect_store
+// CHECK: hfusion.indirect_store
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_indirect_store_0(memref<?xf32>, tensor<2x32xi32>, tensor<2x32xf32>)
+func.func private @triton_indirect_store_1(memref<?xf32>, tensor<2x32xi32>, tensor<2x32xf32>, tensor<2x32xi8>)
+func.func private @triton_indirect_store_2(memref<?xf32>, tensor<2x32xi32>, tensor<2x32xf32>, tensor<2x32xi1>)
+func.func @triton_kernel_indirect_store(%dst: memref<?xf32>, %offset: tensor<2x32xi32>, %src: tensor<2x32xf32>, %mask_bool: tensor<2x32xi1>, %mask_i8: tensor<2x32xi8>){
+  call @triton_indirect_store_0(%dst, %offset, %src) : (memref<?xf32>, tensor<2x32xi32>, tensor<2x32xf32>) -> ()
+  call @triton_indirect_store_1(%dst, %offset, %src, %mask_i8) : (memref<?xf32>, tensor<2x32xi32>, tensor<2x32xf32>, tensor<2x32xi8>) -> ()
+  call @triton_indirect_store_2(%dst, %offset, %src, %mask_bool) : (memref<?xf32>, tensor<2x32xi32>, tensor<2x32xf32>, tensor<2x32xi1>) -> ()
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL func.func @gather_out_to_ub_test
+// CHECK: hfusion.gatherT
+// CHECK-SAME: tensor<2x2xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func private @triton__gather_out_to_ub(memref<?xf32>, tensor<2x2xi64>, i64, i32, i64, i64, i32, i32, i32, i32) -> tensor<2x2xf32>
+  func.func @gather_out_to_ub_test(%arg0 : memref<?xf32>, %arg1 : tensor<2x2xi64>){
+    %c4_i64 = arith.constant 4 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c2_i64 = arith.constant 2 : i64
+    %c0_i32 = arith.constant 0 : i32
+    %c2_i32 = arith.constant 2 : i32
+    %1 = call @triton__gather_out_to_ub(%arg0, %arg1, %c4_i64, %c0_i32, %c2_i64, %c1_i64, %c2_i32, %c2_i32, %c0_i32, %c0_i32) : (memref<?xf32>, tensor<2x2xi64>, i64, i32, i64, i64, i32, i32, i32, i32) -> tensor<2x2xf32>
+    return
+    }
+}
+
+// -----
+
+// CHECK-LABEL func.func @index_put_test
+// CHECK: hfusion.index_put
+// CHECK-SAME: tensor<2x2xf32>
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+  func.func private @triton_index_put(memref<?xf32>, tensor<2xi64>, tensor<2x2xf32>, i32, i64, i64, i64, i64, i64, i64, i64)
+  func.func @index_put_test(%arg0 : memref<?xf32>, %arg1 : tensor<2xi64>, %arg2 : tensor<2x2xf32>) {
+    %c0_i64 = arith.constant 0 : i64
+    %c0_i32 = arith.constant 0 : i32
+    %c2_i64 = arith.constant 2 : i64
+    %c4_i64 = arith.constant 4 : i64
+    call @triton_index_put(%arg0, %arg1, %arg2, %c0_i32, %c2_i64, %c4_i64, %c2_i64, %c0_i64, %c0_i64, %c0_i64, %c0_i64) : (memref<?xf32>, tensor<2xi64>, tensor<2x2xf32>, i32, i64, i64, i64, i64, i64, i64, i64) -> ()
+    func.return
+  }
+}
+
+// -----
+
+// CHECK-LABEL: @scatterT_test
+// CHECK: hfusion.scatterT
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_scatter_ub_to_out_0(memref<4x32xf32>, tensor<4x32xf32>, tensor<4x32xi32>, i32, i32, i32, i32, i32, i32, i32, i32)
+
+func.func @scatterT_test(%arg0: memref<4x32xf32>, %arg1: tensor<4x32xf32>,%arg2: tensor<4x32xi32>) attributes {global_kernel = "local"} {
+  %c0_i32  = arith.constant 0  : i32
+  %c1_i32  = arith.constant 1  : i32
+  %c4_i32  = arith.constant 4  : i32
+  %c32_i32 = arith.constant 32 : i32
+
+  call @triton_scatter_ub_to_out_0(%arg0, %arg1, %arg2, %c32_i32, %c1_i32, %c32_i32, %c1_i32, %c4_i32, %c32_i32, %c0_i32, %c0_i32) : (memref<4x32xf32>, tensor<4x32xf32>, tensor<4x32xi32>, i32, i32, i32, i32, i32, i32, i32, i32) -> ()
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL: @stride_load_test
+// CHECK: hfusion.stride_load
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_stride_load_0(memref<?xf32>, i64, f32, i64, i64) -> tensor<32xf32>
+
+func.func @stride_load_test(%arg0: memref<?xf32>) attributes {global_kernel = "local"} {
+  %offset = arith.constant 4 : i64
+  %other = arith.constant 0.000000e+00 : f32
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  %0 = call @triton_stride_load_0(%arg0, %offset, %other, %stride, %numel) : (memref<?xf32>, i64, f32, i64, i64) -> tensor<32xf32>
+  return
+}
+}
+
+// -----
+
+// CHECK-LABEL: @stride_store_test
+// CHECK: hfusion.stride_store
+module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
+func.func private @triton_stride_store_0(memref<?xf32>, tensor<32xf32>, i64, i64, i64)
+
+func.func @stride_store_test(%arg0: memref<?xf32>, %arg1: tensor<32xf32>) attributes {global_kernel = "local"} {
+  %offset = arith.constant 4 : i64
+  %stride = arith.constant 3 : i64
+  %numel = arith.constant 32 : i64
+  call @triton_stride_store_0(%arg0, %arg1, %offset, %stride, %numel) : (memref<?xf32>, tensor<32xf32>, i64, i64, i64) -> ()
+  return
+}
+}

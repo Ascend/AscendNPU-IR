@@ -132,4 +132,24 @@ def EliminateSingleIterationScfFor
   ];
 }
 
+//===----------------------------------------------------------------------===//
+// DebugMemory
+//===----------------------------------------------------------------------===//
+
+def DebugMemory : Pass<"debug-memory", "mlir::ModuleOp"> {
+  let summary = "Debug Memory";
+  let description = [{
+    Debug Memory
+  }];
+  let constructor = "bishengir::createDebugMemoryPass()";
+  let dependentDialects = ["mlir::LLVM::LLVMDialect"];
+
+  let options = [Option<"actionsList",
+                        "actions", "std::string", "",
+                        "Debug actions list">,
+                 Option<"cacheFilePath",
+                        "cache-file-path", "std::string", "",
+                        "Cache file path">];
+}
+
 #endif //BISHENGIR_TRANSFORMS_PASSES_H

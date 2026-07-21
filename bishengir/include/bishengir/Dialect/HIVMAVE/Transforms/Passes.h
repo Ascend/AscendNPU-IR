@@ -69,6 +69,9 @@ std::unique_ptr<Pass> createComplexReductionIntermediateLoweringPass();
 // Create a pass to analyze vector layout attribute
 std::unique_ptr<Pass> createAnalyzeVectorLayoutPass();
 
+// Create a pass to analyze alignment bitiwidth
+std::unique_ptr<Pass> createAnalyzeAlignmentBitwidthPass();
+
 // Create a pass to remove vector layout attribute
 std::unique_ptr<Pass> createRemoveVectorLayoutAttrPass();
 

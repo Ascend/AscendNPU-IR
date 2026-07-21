@@ -1625,6 +1625,30 @@ std::optional<int64_t> utils::traceToAllocMaxSize(mlir::Value memrefVal) {
          static_cast<int>(originalMemRefType.getElementTypeBitWidth());
 }
 
+int64_t utils::getArgumentIndex(Value value) {
+  Block *block = nullptr;
+  if (auto arg = dyn_cast<BlockArgument>(value)) {
+    block = arg.getOwner();
+  } else if (auto opResult = dyn_cast<OpResult>(value)) {
+    block = opResult.getOwner()->getBlock();
+  }
+
+  if (!block)
+    return -1;
+
+  auto funcOp = dyn_cast<FunctionOpInterface>(block->getParentOp());
+  if (!funcOp)
+    return -1;
+
+  if (auto arg = dyn_cast<BlockArgument>(value)) {
+    if (arg.getOwner() == &funcOp.getFunctionBody().front()) {
+      return arg.getArgNumber();
+    }
+  }
+
+  return -1;
+}
+
 namespace utils {
 
 bool isValidHIVMTileElementType(Type type) {
