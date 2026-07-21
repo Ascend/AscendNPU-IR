@@ -271,7 +271,7 @@ void Flattener::collapseMemrefArg(Value arg, OpBuilder &builder) {
     LLVM_DEBUG(llvm::dbgs() << "checking *defOp: " << *defOp << "\n";);
     if (defOp == collapseOp)
       return false;
-    if (isa<memref::DimOp>(defOp))
+    if (isa<memref::DimOp>(defOp) || isa<memref::ExtractStridedMetadataOp>(defOp))
       return false;
     // If this arg is directly returned, no need to reshape
     if (isTailOperation(defOp) || isHeadOperation(defOp)) {
