@@ -187,6 +187,18 @@ computeMixedNDToFractalShape(ArrayRef<OpFoldResult> currentShape,
   AffineMap f0Map = getCeilDivMap(params.fractalSize.first, ctx);
   AffineMap f1Map = getCeilDivMap(params.fractalSize.second, ctx);
 
+  // Scale zZ/nN keeps ND axis order in the tile counts:
+  //   [ceil(a/f0), ceil(b/f1), f0, f1]
+  // Matrix Fractal (nZ/zN) swaps the outer tile axes to match the NZ permute:
+  //   [ceil(b/f1), ceil(a/f0), f0, f1]
+  if (dstLayout.isScaleFractalLayout()) {
+    OpFoldResult aTiles =
+        affine::makeComposedFoldedAffineApply(builder, loc, f0Map, {params.a});
+    OpFoldResult bTiles =
+        affine::makeComposedFoldedAffineApply(builder, loc, f1Map, {params.b});
+    return assembleFractalShape(aTiles, bTiles, params, ctx);
+  }
+
   OpFoldResult bTiles =
       affine::makeComposedFoldedAffineApply(builder, loc, f0Map, {params.a});
   OpFoldResult aTiles =

@@ -21,6 +21,8 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
+#include <optional>
+
 #define DEBUG_TYPE "hivm-insert-convert-layout"
 
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
@@ -36,34 +38,125 @@ using namespace mlir::hivm;
 
 namespace {
 
-struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
-  using OpRewritePattern<MmadL1Op>::OpRewritePattern;
+/// Rank-4 tensors are already in fractal layout for InsertConvertLayout.
+bool isAlreadyConverted(Value val) {
+  if (!val)
+    return false;
+  if (auto shapedType = dyn_cast<ShapedType>(val.getType()))
+    return shapedType.getRank() == 4;
+  return false;
+}
 
-  LogicalResult matchAndRewrite(MmadL1Op op,
+/// Collapse DOT*_ND layout aliases to the generic ND layout used by
+/// ConvertLayoutOp for matrix operands. Scale layouts (SCALEA_ND / SCALEB_DN)
+/// are also mapped here for callers that want a generic ND view; callers that
+/// must preserve scale-specific src layouts for load_scale fusion should skip
+/// this helper for those operands.
+DataLayoutAttr normalizeToND(MLIRContext *ctx, DataLayoutAttr layout) {
+  switch (layout.getDataLayout()) {
+  case hivm::DataLayout::DOTA_ND:
+  case hivm::DataLayout::DOTB_ND:
+  case hivm::DataLayout::DOTC_ND:
+  case hivm::DataLayout::SCALEA_ND:
+  case hivm::DataLayout::SCALEB_DN:
+    return DataLayoutAttr::get(ctx, hivm::DataLayout::ND);
+  default:
+    return layout;
+  }
+}
+
+/// Insert convert_layout(srcLayout→dstLayout) on `input` when needed and assign
+/// the converted value to `targetOperand`. Scale ND layouts are preserved on
+/// the ConvertLayoutOp so downstream load_scale fusion can match them.
+LogicalResult convertAndAssignOperand(PatternRewriter &rewriter, Location loc,
+                                      Value input, OpOperand &targetOperand,
+                                      DataLayoutAttr srcLayout,
+                                      DataLayoutAttr dstLayout) {
+  if (isAlreadyConverted(input)) {
+    LDBG("Input already in fractal layout, no conversion needed");
+    targetOperand.assign(input);
+    return success();
+  }
+
+  if (srcLayout == dstLayout) {
+    LDBG("Source and target layouts are the same, no conversion needed");
+    targetOperand.assign(input);
+    return success();
+  }
+
+  auto inputType = cast<ShapedType>(input.getType());
+  auto inputShape = llvm::map_to_vector(
+      inputType.getShape(), [&rewriter](auto val) -> OpFoldResult {
+        return getAsIndexOpFoldResult(rewriter.getContext(), val);
+      });
+
+  auto mixedShape = computeMixedTargetLayoutShape(inputShape, srcLayout,
+                                                  dstLayout, rewriter, loc);
+  if (failed(mixedShape)) {
+    LDBG("Failed to infer fractal type");
+    return mixedShape;
+  }
+  Type convertedType = RankedTensorType::get(
+      decomposeMixedValues(*mixedShape).first, inputType.getElementType());
+
+  DataLayoutAttr convertSrcLayout = srcLayout;
+  switch (srcLayout.getDataLayout()) {
+  case hivm::DataLayout::SCALEA_ND:
+  case hivm::DataLayout::SCALEB_DN:
+    break;
+  default:
+    convertSrcLayout = normalizeToND(rewriter.getContext(), srcLayout);
+    break;
+  }
+
+  LDBG("Creating ConvertLayoutOp: " << convertSrcLayout << " -> " << dstLayout);
+  auto converted = rewriter.create<ConvertLayoutOp>(
+      loc, convertedType, input, convertSrcLayout, dstLayout);
+  targetOperand.assign(converted);
+  return success();
+}
+
+/// Insert ND↔fractal convert_layout around local matmul-like ops (mmadL1 /
+/// mmadmxL1) that implement OpWithLayoutInterface.
+struct InsertConvertLayoutAroundLocalMatmul
+    : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
+  using OpInterfaceRewritePattern<
+      LocalMatmulLikeOpInterface>::OpInterfaceRewritePattern;
+
+  LogicalResult matchAndRewrite(LocalMatmulLikeOpInterface op,
                                 PatternRewriter &rewriter) const override {
-    // Cast to interface to get layout info
     auto opWithLayout = dyn_cast<OpWithLayoutInterface>(op.getOperation());
     if (!opWithLayout) {
       return rewriter.notifyMatchFailure(
           op, "op doesn't implement OpWithLayoutInterface");
     }
 
-    Value aMatrix = op.getA();
-    Value bMatrix = op.getB();
-    Value cMatrix = op.getC();
+    Value aMatrix = op.getMatmulA();
+    Value bMatrix = op.getMatmulB();
+    Value cMatrix = op.getMatmulC();
 
-    // Check if already converted (rank 4 check is still a heuristic)
-    if (isAlreadyConverted(aMatrix) && isAlreadyConverted(bMatrix) &&
-        isAlreadyConverted(cMatrix)) {
+    std::optional<MmadMxL1Op> mxOp;
+    if (auto casted = dyn_cast<MmadMxL1Op>(op.getOperation()))
+      mxOp = casted;
+
+    Value scaleA = mxOp ? mxOp->getScaleA() : Value{};
+    Value scaleB = mxOp ? mxOp->getScaleB() : Value{};
+
+    bool alreadyConverted =
+        isAlreadyConverted(aMatrix) && isAlreadyConverted(bMatrix) &&
+        isAlreadyConverted(cMatrix);
+    if (mxOp)
+      alreadyConverted = alreadyConverted && isAlreadyConverted(scaleA) &&
+                         isAlreadyConverted(scaleB);
+    if (alreadyConverted)
       return rewriter.notifyMatchFailure(op, "already converted");
-    }
 
+    // TODO: Refactor away from Value→layout maps. Looking up by SSA value is
+    // incorrect when the same value is used for more than one operand.
     llvm::SmallDenseMap<Value, DataLayoutAttr> currentLayoutMap =
         opWithLayout.getOperandsCurrentLayout();
-    LDBG("Checking " << op);
     auto targetLayoutMap = opWithLayout.getOperandsTargetFractalLayout();
 
-    // Get layouts from the interface
     DataLayoutAttr srcLayoutA = currentLayoutMap.lookup(aMatrix);
     DataLayoutAttr dstLayoutA =
         dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.a);
@@ -74,120 +167,89 @@ struct InsertConvertLayoutAroundMmadL1 : public OpRewritePattern<MmadL1Op> {
     DataLayoutAttr dstLayoutC =
         dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.c);
 
-    LDBG("A matrix - src: " << srcLayoutA << ", dst: " << dstLayoutA);
-    LDBG("B matrix - src: " << srcLayoutB << ", dst: " << dstLayoutB);
-    LDBG("C matrix - src: " << srcLayoutC << ", dst: " << dstLayoutC);
-
-    // Validate we got all layouts
-    if (!srcLayoutA || !dstLayoutA || !srcLayoutB || !dstLayoutB ||
-        !srcLayoutC || !dstLayoutC) {
-      return rewriter.notifyMatchFailure(op,
-                                         "missing layout info for operands");
+    DataLayoutAttr srcLayoutScaleA;
+    DataLayoutAttr dstLayoutScaleA;
+    DataLayoutAttr srcLayoutScaleB;
+    DataLayoutAttr dstLayoutScaleB;
+    if (mxOp) {
+      srcLayoutScaleA = currentLayoutMap.lookup(scaleA);
+      dstLayoutScaleA =
+          dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.scaleA);
+      srcLayoutScaleB = currentLayoutMap.lookup(scaleB);
+      dstLayoutScaleB =
+          dyn_cast_or_null<DataLayoutAttr>(targetLayoutMap.scaleB);
     }
 
-    auto newOp = cast<MmadL1Op>(rewriter.clone(*op));
+    if (!srcLayoutA || !dstLayoutA || !srcLayoutB || !dstLayoutB ||
+        !srcLayoutC || !dstLayoutC ||
+        (mxOp && (!srcLayoutScaleA || !dstLayoutScaleA || !srcLayoutScaleB ||
+                  !dstLayoutScaleB))) {
+      llvm::report_fatal_error(
+          "InsertConvertLayout: missing layout info for local matmul operands");
+    }
+
+    Operation *newOp = rewriter.clone(*op.getOperation());
     rewriter.setInsertionPoint(newOp);
-
     Location loc = op.getLoc();
-    // Convert operands to target layout if needed
-    if (failed(convertAndAssignOperand(rewriter, loc, aMatrix,
-                                       newOp.getAMutable(), srcLayoutA,
-                                       dstLayoutA)))
-      return rewriter.notifyMatchFailure(op, "failed to convert A matrix");
 
-    if (failed(convertAndAssignOperand(rewriter, loc, bMatrix,
-                                       newOp.getBMutable(), srcLayoutB,
-                                       dstLayoutB)))
-      return rewriter.notifyMatchFailure(op, "failed to convert B matrix");
+    auto convertOperand = [&](OpOperand &operand, DataLayoutAttr src,
+                              DataLayoutAttr dst,
+                              StringRef name) -> LogicalResult {
+      if (failed(convertAndAssignOperand(rewriter, loc, operand.get(), operand,
+                                         src, dst)))
+        return rewriter.notifyMatchFailure(op, "failed to convert " + name);
+      return success();
+    };
 
-    if (failed(convertAndAssignOperand(rewriter, loc, cMatrix,
-                                       newOp.getCMutable(), srcLayoutC,
-                                       dstLayoutC)))
-      return rewriter.notifyMatchFailure(op, "failed to convert C matrix");
+    if (mxOp) {
+      auto newMx = cast<MmadMxL1Op>(newOp);
+      if (failed(convertOperand(newMx.getAMutable(), srcLayoutA, dstLayoutA,
+                                "A matrix")))
+        return failure();
+      if (failed(convertOperand(newMx.getBMutable(), srcLayoutB, dstLayoutB,
+                                "B matrix")))
+        return failure();
+      if (failed(convertOperand(newMx.getScaleAMutable(), srcLayoutScaleA,
+                                dstLayoutScaleA, "ScaleA")))
+        return failure();
+      if (failed(convertOperand(newMx.getScaleBMutable(), srcLayoutScaleB,
+                                dstLayoutScaleB, "ScaleB")))
+        return failure();
+      if (failed(convertOperand(newMx.getCMutable(), srcLayoutC, dstLayoutC,
+                                "C matrix")))
+        return failure();
+    } else if (auto newMmad = dyn_cast<MmadL1Op>(newOp)) {
+      if (failed(convertOperand(newMmad.getAMutable(), srcLayoutA, dstLayoutA,
+                                "A matrix")))
+        return failure();
+      if (failed(convertOperand(newMmad.getBMutable(), srcLayoutB, dstLayoutB,
+                                "B matrix")))
+        return failure();
+      if (failed(convertOperand(newMmad.getCMutable(), srcLayoutC, dstLayoutC,
+                                "C matrix")))
+        return failure();
+    } else {
+      auto newBatch = cast<BatchMmadL1Op>(newOp);
+      if (failed(convertOperand(newBatch.getAMutable(), srcLayoutA, dstLayoutA,
+                                "A matrix")))
+        return failure();
+      if (failed(convertOperand(newBatch.getBMutable(), srcLayoutB, dstLayoutB,
+                                "B matrix")))
+        return failure();
+      if (failed(convertOperand(newBatch.getCMutable(), srcLayoutC, dstLayoutC,
+                                "C matrix")))
+        return failure();
+    }
 
-    // Update result type and convert back
-    newOp.getResult(0).setType(newOp.getC().getType());
+    newOp->getResult(0).setType(
+        cast<LocalMatmulLikeOpInterface>(newOp).getMatmulC().getType());
     rewriter.setInsertionPointAfter(newOp);
 
-    srcLayoutC = normalizeToND(rewriter.getContext(), srcLayoutC,
-                               {hivm::DataLayout::DOTC_ND});
-
-    // Convert result back: from target layout (zN) to source layout (dotC_ND)
+    srcLayoutC = normalizeToND(rewriter.getContext(), srcLayoutC);
     auto ndResult = rewriter.create<ConvertLayoutOp>(
-        loc, cMatrix.getType(), newOp.getResult(0),
-        dstLayoutC,  // from target layout (e.g., zN)
-        srcLayoutC); // back to source layout (e.g., dotC_ND)
+        loc, cMatrix.getType(), newOp->getResult(0), dstLayoutC, srcLayoutC);
 
     rewriter.replaceOp(op, ndResult);
-
-    LDBG("=== MmadL1Op conversion complete ===");
-    return success();
-  }
-
-private:
-  static bool isAlreadyConverted(Value val) {
-    if (auto shapedType = dyn_cast<ShapedType>(val.getType()))
-      return shapedType.getRank() == 4;
-    return false;
-  }
-
-  /// Normalizes a DataLayoutAttr to ND if it matches any of the specified
-  /// layouts.
-  static DataLayoutAttr
-  normalizeToND(MLIRContext *ctx, DataLayoutAttr layout,
-                ArrayRef<hivm::DataLayout> layoutsToNormalize) {
-    if (llvm::is_contained(layoutsToNormalize, layout.getDataLayout())) {
-      auto newDataLayout = DataLayoutAttr::get(ctx, hivm::DataLayout::ND);
-      LDBG("new data layout " << newDataLayout);
-      return newDataLayout;
-    }
-    return layout;
-  }
-
-  /// Converts input to target layout if needed and assigns to the target
-  /// operand.
-  static LogicalResult convertAndAssignOperand(PatternRewriter &rewriter,
-                                               Location loc, Value input,
-                                               OpOperand &targetOperand,
-                                               DataLayoutAttr srcLayout,
-                                               DataLayoutAttr dstLayout) {
-    if (isAlreadyConverted(input)) {
-      LDBG("Input already in fractal layout, no conversion needed");
-      targetOperand.assign(input);
-      return success();
-    }
-
-    // Skip conversion if source and target layouts are the same
-    if (srcLayout == dstLayout) {
-      LDBG("Source and target layouts are the same, no conversion needed");
-      targetOperand.assign(input);
-      return success();
-    }
-
-    auto inputType = cast<ShapedType>(input.getType());
-    auto inputShape = llvm::map_to_vector(
-        inputType.getShape(), [&rewriter](auto val) -> OpFoldResult {
-          return getAsIndexOpFoldResult(rewriter.getContext(), val);
-        });
-
-    auto mixedShape = computeMixedTargetLayoutShape(inputShape, srcLayout,
-                                                    dstLayout, rewriter, loc);
-    if (failed(mixedShape)) {
-      LDBG("Failed to infer fractal type");
-      return mixedShape;
-    }
-    Type convertedType = RankedTensorType::get(
-        decomposeMixedValues(*mixedShape).first, inputType.getElementType());
-
-    srcLayout =
-        normalizeToND(rewriter.getContext(), srcLayout,
-                      {hivm::DataLayout::DOTA_ND, hivm::DataLayout::DOTB_ND,
-                       hivm::DataLayout::DOTC_ND});
-
-    LDBG("Creating ConvertLayoutOp: " << srcLayout << " -> " << dstLayout);
-    auto converted = rewriter.create<ConvertLayoutOp>(loc, convertedType, input,
-                                                      srcLayout, dstLayout);
-    targetOperand.assign(converted);
     return success();
   }
 };
@@ -200,14 +262,11 @@ struct InsertConvertLayoutPass
     MLIRContext *context = &getContext();
 
     RewritePatternSet patterns(context);
-
-    // Add all transformation patterns
-    patterns.add<InsertConvertLayoutAroundMmadL1>(context);
+    patterns.add<InsertConvertLayoutAroundLocalMatmul>(context);
     GreedyRewriteConfig config;
     config.strictMode = GreedyRewriteStrictness::ExistingOps;
 
     LDBG("Applying patterns with greedy rewrite");
-    // Apply patterns with greedy rewrite
     if (failed(applyPatternsGreedily(module, std::move(patterns), config))) {
       LDBG("Pattern application failed");
       signalPassFailure();
