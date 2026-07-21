@@ -21,6 +21,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Value.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/SmallSet.h"
@@ -530,9 +531,13 @@ public:
 
   template <typename DstOpType> std::optional<bool> get(Value key);
 
+  void unite(Value val1, Value val2);
 private:
   DenseMap<Value, bool> storeReachable;
   DenseMap<Value, bool> loadReachable;
+
+  DenseMap<Value, Value> parent;
+  Value find(Value val);
 };
 
 class MemPlan {
