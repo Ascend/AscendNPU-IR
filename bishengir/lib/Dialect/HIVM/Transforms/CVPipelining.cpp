@@ -18,14 +18,20 @@
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/TileUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/Utils/regbase/WorklistBuilder.h"
+#include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -38,7 +44,7 @@
 using llvm::dbgs;
 namespace mlir {
 using namespace hivm;
-
+#include "bishengir/Dialect/Utils/Util.h"
 #define GEN_PASS_DEF_CVPIPELINING
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 
@@ -50,64 +56,6 @@ static constexpr llvm::StringLiteral VecOnlyAttrName = "pipeline.veconly";
 
 namespace {
 
-struct AtomicEffect {
-  AtomicKind kind;
-  TypeAttr type;
-};
-
-struct WorkspaceAllocParams {
-  unsigned multibuffer;
-  annotation::MarkOp marker;
-  bufferization::ToTensorOp toTensor;
-};
-
-struct WorkItem {
-  // Values that are referred by other work items later will be stored in this
-  // list. Everything here requires the tensor types to be expanded by
-  // Multibuffer times, e.g. <16xf16> into <2x16xf16>
-  SmallVector<std::pair<Value, Value>> localOutputs;
-
-  DenseSet<Operation *> ops;
-
-  // Values that are yielded in the parent for loop
-  SmallVector<std::pair<Value, unsigned>> yieldedOutputs;
-
-  // Vector or Cube, other types shouldn't end up in here
-  TCoreType core;
-
-  // After unrolling the parent for loop, the upper bound for "reroll"ed loops
-  // are computed and inserted here. Created in "unrollOuterLoop"
-  Value upperBound;
-
-  // The for op corresponding to the multibuffering, constructed in
-  // "constructPipelineLoop"
-  scf::ForOp forOp;
-
-  // Reconstructed original induction variable
-  Value reconstructedIV;
-
-  // ScopeOp for single cube or vector
-  scope::ScopeOp scopeOp;
-
-  // The containing for loop
-  scf::ForOp parentFor;
-
-  // Number of multibuffer
-  unsigned multibuffer;
-
-  // Guesstimate of runtime cost of this work item
-  float cost;
-
-  // Workspace outputs for store/fixpipe operations
-  SmallVector<Operation *> workspaceOutputs;
-
-  // Unified IR mapping
-  IRMapping irMap;
-
-#ifndef NDEBUG
-  int id;
-#endif
-};
 
 struct CVPipelineImpl {
   CVPipelineImpl(LoopLikeOpInterface loop, int multibuffer, bool skewMode,
@@ -1594,7 +1542,7 @@ LogicalResult CVPipelineImpl::expandOutputInitsForPreload(WorkItem *item) {
     LLVM_DEBUG(dbgs() << "[Preload expand localOutputs] alloc: "; alloc.dump());
     LLVM_DEBUG(dbgs() << "[Preload expand localOutputs] expanded: ";
                expanded.dump());
-    item->ops.erase(alloc);
+    item->ops.remove(alloc);
     alloc->erase();
   }
   return success();
@@ -2232,28 +2180,67 @@ LogicalResult CVPipelineImpl::run() {
 }
 
 void CVPipeliningPass::runOnOperation() {
-  func::FuncOp func = getOperation();
-  DenseSet<scf::ForOp> pipelinedLoops;
+  auto mod = dyn_cast<ModuleOp>(getOperation());
+  if ((mod && !hacc::utils::isRegBasedArch(mod))) {
+    func::FuncOp func = getOperation();
+    DenseSet<scf::ForOp> pipelinedLoops;
 
-  if (this->setDepthInUnrollMode == 1 || this->setDepthInUnrollMode == 0)
-    return;
+    if (this->setDepthInUnrollMode == 1 || this->setDepthInUnrollMode == 0)
+      return;
 
-  func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
-    auto parentLoop = loop->getParentOfType<scf::ForOp>();
+    func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
+      auto parentLoop = loop->getParentOfType<scf::ForOp>();
 
-    while (parentLoop) {
-      if (pipelinedLoops.contains(parentLoop))
-        return;
-      parentLoop = parentLoop->getParentOfType<scf::ForOp>();
+      while (parentLoop) {
+        if (pipelinedLoops.contains(parentLoop))
+          return;
+        parentLoop = parentLoop->getParentOfType<scf::ForOp>();
+      }
+
+      CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->enableSkewMode,
+                          this->enableLazyLoading);
+      if (impl.run().succeeded())
+        pipelinedLoops.insert(loop);
+    });
+
+    removeWorkspaceMultiBufferMarks(func);
+  } else {
+      // First find loop to operate on
+    func::FuncOp func = getOperation();
+    SmallVector<scf::ForOp> pipelineCandidates;
+
+    // Disabled via options
+    if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
+      return;
+
+    // Disable CVP once batchmatmul is found
+    SmallVector<func::FuncOp> funcOps{func};
+    if (hasBatchMatmulLoopInAicFuncs(funcOps))
+      return;
+
+    // We want to work on the innermost loop first, so post order walk
+    func->walk<WalkOrder::PostOrder>([&pipelineCandidates](scf::ForOp loop) {
+      pipelineCandidates.push_back(loop);
+    });
+
+    DenseSet<scf::ForOp> pipelinedNest;
+    for (auto loop : pipelineCandidates) {
+      // Don't attempt pipeline if nested loop succeeded already
+      if (pipelinedNest.contains(loop))
+        continue;
+
+      auto parentLoop = loop->getParentOfType<scf::ForOp>();
+      CVPipelineRegbaseImpl impl(loop, this->pipelineDepth, this->pipelineMode,
+                          this->enableLazyLoading);
+
+      // Mark all parent loops to not attempt pipelining to save compile time
+      if (impl.run().succeeded())
+        while (parentLoop) {
+          pipelinedNest.insert(parentLoop);
+          parentLoop = parentLoop->getParentOfType<scf::ForOp>();
+        }
     }
-
-    CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->enableSkewMode,
-                        this->enableLazyLoading);
-    if (impl.run().succeeded())
-      pipelinedLoops.insert(loop);
-  });
-
-  removeWorkspaceMultiBufferMarks(func);
+  }
 }
 
 std::unique_ptr<Pass>

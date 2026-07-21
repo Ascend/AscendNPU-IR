@@ -51,6 +51,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConvertLayout/Propagate/PropagateConvertLayoutScfWhile.cpp
   ConvertLayout/Propagate/PropagateConvertLayoutExtractSlice.cpp
   CreatePreload.cpp
+  regbase/CVPipelining.cpp
   CVPipelining.cpp
   EnableHIVMCCompatiblePrint.cpp
   EnableMultiBuffer.cpp
