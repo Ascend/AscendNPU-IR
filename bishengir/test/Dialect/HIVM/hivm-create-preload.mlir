@@ -290,3 +290,58 @@ func.func @test_preload_depth_is_per_loop() {
 
   return
 }
+
+// -----
+
+// A view returned by a scope must use the preload-local buffer selected for
+// each mapping, rather than becoming one shared conditional result.
+
+// CHECK-LABEL: func.func @test_preload_local_view_uses_mapping
+func.func @test_preload_local_view_uses_mapping() {
+  %c0_i64 = arith.constant 0 : i64
+  %c128_i64 = arith.constant 128 : i64
+  %c0 = arith.constant 0 : i32
+  %c4 = arith.constant 4 : i32
+  %c1 = arith.constant 1 : i32
+
+  scf.for %i = %c0 to %c4 step %c1 : i32 {
+    %buffer = hivm.hir.pointer_cast(%c0_i64, %c128_i64)
+      : memref<2x64xi1, #hivm.address_space<ub>>
+    annotation.mark %buffer {
+      hivm.multi_buffer = 2 : i32,
+      hivm.preload_local_buffer = 1 : i32
+    } : memref<2x64xi1, #hivm.address_space<ub>>
+
+    %view = scope.scope : () -> memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>> {
+      "test.produce"(%i) : (i32) -> ()
+      %subview = memref.subview %buffer[0, 0] [1, 64] [1, 1]
+        : memref<2x64xi1, #hivm.address_space<ub>>
+          to memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>>
+      scope.return %subview
+        : memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>>
+    } {
+      no_inline,
+      hivm.preload_num = 1 : i32,
+      hivm.max_preload_num = 2 : i32
+    }
+
+    scope.scope : () -> () {
+      "test.consume"(%view)
+        : (memref<1x64xi1, strided<[64, 1]>, #hivm.address_space<ub>>) -> ()
+      scope.return
+    } {
+      no_inline,
+      hivm.preload_num = 0 : i32,
+      hivm.max_preload_num = 2 : i32
+    }
+  }
+  return
+}
+
+// CHECK: %[[MAPPING1_BUFFER:.*]] = hivm.hir.pointer_cast
+// CHECK: %[[MAPPING0_BUFFER:.*]] = hivm.hir.pointer_cast
+// CHECK: scf.if {{.*}} {
+// CHECK:   "test.produce"
+// CHECK: }
+// CHECK: %[[MAPPING0_VIEW:.*]] = memref.subview %[[MAPPING0_BUFFER]]
+// CHECK: "test.consume"(%[[MAPPING0_VIEW]])
