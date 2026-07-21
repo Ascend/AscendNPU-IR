@@ -427,8 +427,7 @@ inline Value getBiasInputForPerChannelAdd(Value v) {
 /// %3 = hivm.hir.mmadL1 ins(*, bias = %1) outs(%2 : tensor<16x32xf32>) ->
 ///        tensor<16x32xf32>
 /// ```
-template <typename T, typename = std::enable_if_t<
-                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
+template <typename T>
 LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
                                                T op) {
   auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
@@ -474,8 +473,7 @@ LogicalResult decomposeMatmulWithPerChannelAdd(PatternRewriter &rewriter,
 /// }
 /// some_use(%1)
 /// ```
-template <typename T, typename = std::enable_if_t<
-                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
+template <typename T>
 LogicalResult
 decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T op) {
   auto matmulOutput = op.getC();
@@ -492,7 +490,7 @@ decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T o
   for (int64_t i = 0; i < static_cast<int64_t>(addInputs.size()); i++) {
     if (traceDefOp<hivm::VBrcOp>(addInputs[i]).has_value()) {
       brcInputIndex = i;
-    } else if (traceDefOp<hivm::MmadL1Op>(addInputs[i]).has_value()) {
+    } else if (traceDefOp<T>(addInputs[i]).has_value()) {
       matmulInputIndex = i;
     }
   }
@@ -534,8 +532,7 @@ decomposeMatmulWithPostPerChannelAddWithSplitKAdd(PatternRewriter &rewriter, T o
 /// }
 /// some_use(%1)
 /// ```
-template <typename T, typename = std::enable_if_t<
-                          !std::is_same_v<T, hivm::MmadMxL1Op>>>
+template <typename T>
 LogicalResult
 decomposeMatmulWithMMInitPerChannelAddWithSplitK(PatternRewriter &rewriter, T op) {
   auto perChannelValue = getBiasInputForPerChannelAdd(op.getC());
@@ -965,13 +962,10 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
   Value outerInVal = ccfinfo.inVal;
   BrcBiasInfo info;
   if (auto brcOp = outerInVal.getDefiningOp<hivm::VBrcOp>()) {
-    // MmadMxL1Op doesn't support per-channel bias, skip this optimization
-    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
-      if (isSatisfiedBrcForPerChannel(brcOp)) {
-        info.perChannelValue = getBiasInputForPerChannelAdd(outerInVal);
-        info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
-        return info;
-      }
+    if (isSatisfiedBrcForPerChannel(brcOp)) {
+      info.perChannelValue = getBiasInputForPerChannelAdd(outerInVal);
+      info.brcBiasMode = MatmulBiasMode::PerChannelAdd;
+      return info;
     }
     if (isConstZero(brcOp.getSrc())) {
       info.brcBiasMode = MatmulBiasMode::ZeroInitNoAccumulation;
@@ -984,13 +978,10 @@ template <typename T> BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo, T op) {
     if (auto addOp = dyn_cast<hivm::VAddOp>(*outerInVal.getUsers().begin())) {
       for (Value src : addOp.getSrc()) {
         if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
-          // MmadMxL1Op doesn't support per-channel bias with split-K either
-          if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
-            if (isSatisfiedBrcForPerChannel(brcOp)) {
-              info.perChannelValue = getBiasInputForPerChannelAdd(src);
-              info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
-              return info;
-            }
+          if (isSatisfiedBrcForPerChannel(brcOp)) {
+            info.perChannelValue = getBiasInputForPerChannelAdd(src);
+            info.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
+            return info;
           }
         }
       }
@@ -1135,17 +1126,15 @@ public:
     }
 
     // If it could be merged with bias
-    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
-      if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
-          biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
-        tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
-        // remove vadd
-        if (biasInfo.addOp) {
-          rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0],
-                                      insertPointOp->getResults()[0]);
-        }
-        tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
+    if (biasInfo.brcBiasMode == MatmulBiasMode::PerChannelAdd ||
+        biasInfo.brcBiasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+      tmpNewMmad.getPerChannelBiasMutable().assign(biasInfo.perChannelValue);
+      // remove vadd
+      if (biasInfo.addOp) {
+        rewriter.replaceAllUsesWith(biasInfo.addOp->getResults()[0],
+                                    insertPointOp->getResults()[0]);
       }
+      tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
     }
     tmpNewMmad->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
     setNormalizedInL0CWithIndex(rewriter, *insertPointOp, outerOutVal);
@@ -1235,21 +1224,17 @@ public:
       LDBG("decompose matmul with elemwise add");
       return decomposeMatmulWithElementwiseAdd<T>(rewriter, op);
     }
-    if constexpr (!std::is_same_v<T, hivm::MmadMxL1Op>) {
-      if (biasMode == MatmulBiasMode::PerChannelAdd) {
-        LDBG("decompose matmul with per channel add");
-        return decomposeMatmulWithPerChannelAdd<T>(rewriter, op);
-      }
-      if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
-        LDBG("decompose matmul with post per channel add with split k add");
-        return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter,
-                                                                    op);
-      }
-      if (biasMode == MatmulBiasMode::MMInitPerChannelAddWithSplitK) {
-        LDBG("decompose matmul with mm init per channel add with split k add");
-        return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter,
-                                                                   op);
-      }
+    if (biasMode == MatmulBiasMode::PerChannelAdd) {
+      LDBG("decompose matmul with per channel add");
+      return decomposeMatmulWithPerChannelAdd<T>(rewriter, op);
+    }
+    if (biasMode == MatmulBiasMode::PostPerChannelAddWithSplitK) {
+      LDBG("decompose matmul with post per channel add with split k add");
+      return decomposeMatmulWithPostPerChannelAddWithSplitKAdd<T>(rewriter, op);
+    }
+    if (biasMode == MatmulBiasMode::MMInitPerChannelAddWithSplitK) {
+      LDBG("decompose matmul with mm init per channel add with split k add");
+      return decomposeMatmulWithMMInitPerChannelAddWithSplitK<T>(rewriter, op);
     }
 
     Value mmadResult = op.getResults()[0];

@@ -682,7 +682,7 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
                 op->getLoc(), op->getResultTypes(), inputA, inputB,
                 op.getScaleA(), op.getScaleB(), initCondition, zeroCst,
                 zeroCst, zeroCst, init, lhsAttr, rhsAttr, transposeA,
-                transposeB, ValueRange{})
+                transposeB, /*per_channel_bias=*/Value{})
             .getOperation();
 
     rewriter.replaceOp(op, newResult);

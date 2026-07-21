@@ -388,6 +388,22 @@ LogicalResult hivm::inferAndPropagateMemScopeForMmadMxL1(hivm::MmadMxL1Op op) {
   }
   LDBG("IR after setting mem scope for mC:\n"
        << *(op->getParentOfType<ModuleOp>()));
+
+  if (auto bias = op.getPerChannelBias()) {
+    auto allocBias = utils::tracebackMemRefToAlloc(bias);
+    if (!allocBias.has_value()) {
+      emitError(op.getLoc())
+          << "Cannot find root memref.alloc for bias of this op.";
+      return failure();
+    }
+
+    // For MmadMxL1Op, operand bias should be in L1.
+    if (failed(helper.Run(allocBias.value(), l1SpaceAttr))) {
+      return op->emitOpError("Failed to infer/propagate memory scope for bias");
+    }
+    LDBG("IR after setting mem scope for bias:\n"
+         << *(op->getParentOfType<ModuleOp>()));
+  }
  
   return success();
 }
