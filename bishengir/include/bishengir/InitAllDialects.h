@@ -87,6 +87,7 @@ inline void registerAllDialects(mlir::DialectRegistry &registry) {
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
   registerTritonDialects(registry);
+  registerConvertProtonAscendGPUToLLVMPass();
   triton::registerGetTritonMetadataPass();
 #endif
 

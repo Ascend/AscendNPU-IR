@@ -36,6 +36,12 @@ using namespace mlir;
 
 namespace bishengir {
 
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+/// Defined in BiShengIRCompileConfig.cpp.
+const mlir::triton::proton::ConvertProtonToProtonGPUOptions &
+getProtonGPUCompileConfig();
+#endif
+
 // Helper function to set up HFusionPipelineOptions
 void setupHFusionPipelineOptions(hfusion::HFusionPipelineOptions &options,
                                  const BiShengIRCompileMainConfig &config) {

@@ -15,6 +15,7 @@ add_subdirectory(ArithToHIVMAVE)
 add_subdirectory(VectorToHIVMAVE)
 add_subdirectory(HIVMAVEToAVEIntrin)
 add_subdirectory(HIVMAVEToStandard)
+add_subdirectory(ProtonAscendGPUToLLVM)
 
 if(BISHENGIR_ENABLE_TORCH_CONVERSIONS)
   add_subdirectory(TorchToHFusion)
