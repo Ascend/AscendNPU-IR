@@ -34,8 +34,6 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -69,7 +67,21 @@ void markIfSubBlockReguarded(Operation &op) {
 }
 
 Value deriveElseInit(OpBuilder &builder, Location loc, Value yieldedValue,
-                     Type resultType, scf::IfOp ifOp) {
+                     Value scopeResult, Type resultType, scf::IfOp ifOp) {
+  // Loop-carried result: when the guarded scope result feeds an scf.for
+  // result/iter_arg, the non-owning sub-core's else branch must yield the
+  // incoming iter_arg.
+  for (OpOperand &use : scopeResult.getUses()) {
+    auto yield = dyn_cast<scf::YieldOp>(use.getOwner());
+    if (!yield)
+      continue;
+    if (auto forOp = dyn_cast<scf::ForOp>(yield->getParentOp())) {
+      Value iterArg = forOp.getRegionIterArg(use.getOperandNumber());
+      if (iterArg.getType() == resultType)
+        return iterArg;
+    }
+  }
+
   if (Operation *def = yieldedValue.getDefiningOp()) {
     if (auto dpsOp = dyn_cast<DestinationStyleOpInterface>(def)) {
       if (auto opResult = dyn_cast<OpResult>(yieldedValue)) {
@@ -104,71 +116,11 @@ Value deriveElseInit(OpBuilder &builder, Location loc, Value yieldedValue,
                                          tensorType.getElementType());
 }
 
-/// Trace a memref value back through view-like ops and memory_space_cast to the
-/// underlying buffer value (the alloc / block arg it ultimately aliases).
-Value traceBufferBase(Value v) {
-  for (;;) {
-    if (auto view = v.getDefiningOp<ViewLikeOpInterface>()) {
-      v = view.getViewSource();
-      continue;
-    }
-    if (auto cast = v.getDefiningOp<memref::MemorySpaceCastOp>()) {
-      v = cast.getSource();
-      continue;
-    }
-    break;
-  }
-  return v;
-}
-
-bool isSharedDst(Value writeTarget) {
-  Value base = traceBufferBase(writeTarget);
-  if (isa<BlockArgument>(base))
-    return true; // func-arg / GM buffer.
-
-  std::optional<hivm::AddressSpace> as =
-      hivm::getOptionalHIVMAddressSpace(base.getType());
-  return as.has_value() && *as != hivm::AddressSpace::UB;
-}
-
-bool writesNonPrivateBuffer(Operation &op) {
-  if (auto effOp = dyn_cast<MemoryEffectOpInterface>(&op)) {
-    llvm::SmallVector<MemoryEffects::EffectInstance, 4> effects;
-    effOp.getEffects(effects);
-    for (const MemoryEffects::EffectInstance &eff : effects) {
-      if (!isa<MemoryEffects::Write>(eff.getEffect()))
-        continue;
-      Value v = eff.getValue();
-      if (!v)
-        return true; // write with no pinned value -> conservative, guard once.
-      if (isSharedDst(v))
-        return true;
-    }
-    return false;
-  }
-
-  for (Value operand : op.getOperands()) {
-    if (!isa<ShapedType>(operand.getType()))
-      continue;
-    if (isa<BlockArgument>(traceBufferBase(operand)))
+bool isInsideLoweredGuard(const llvm::DenseSet<Operation *> &loweredScopeGuards,
+                          Operation *op) {
+  for (Operation *p = op->getParentOp(); p; p = p->getParentOp())
+    if (loweredScopeGuards.contains(p))
       return true;
-  }
-  return false;
-}
-
-bool writesAnyBuffer(Operation *op) {
-  auto effOp = dyn_cast<MemoryEffectOpInterface>(op);
-  if (!effOp)
-    return false;
-  llvm::SmallVector<MemoryEffects::EffectInstance, 4> effects;
-  effOp.getEffects(effects);
-  for (const MemoryEffects::EffectInstance &eff : effects) {
-    if (!isa<MemoryEffects::Write>(eff.getEffect()))
-      continue;
-    Value v = eff.getValue();
-    if (v && isa<ShapedType>(v.getType()))
-      return true;
-  }
   return false;
 }
 
@@ -245,30 +197,26 @@ LogicalResult SubBlockLowering::run() {
       return failure();
   }
 
-  llvm::SmallVector<std::pair<Operation *, Core>, 8> outsideWork;
-  for (Operation &op : func.getFunctionBody().front()) {
-
-    if (isa<scope::ScopeOp>(op))
-      continue;
-
-    if (op.hasTrait<OpTrait::IsTerminator>() ||
-        loweredScopeGuards.contains(&op))
-      continue;
-    if (isCubeOrSharedOp(&op))
-      continue;
-
-    if (op.getResults().empty() && !writesAnyBuffer(&op))
-      continue;
-    Core core = assignment.coreOf(&op);
-    if (!isSingleCore(core)) {
-      // A result-less op that writes a non-private (shared/GM) buffer must be
-      // bound to a single core
-      if (op.getResults().empty() && writesNonPrivateBuffer(op))
-        return failure();
-      continue;
-    }
-    outsideWork.emplace_back(&op, core);
-  }
+  llvm::SmallVector<std::pair<Operation *, Core>, 16> outsideWork;
+  func.walk([&](Operation *op) {
+    if (isInsideAtomicSimtScope(op))
+      return;
+    if (op->hasTrait<OpTrait::IsTerminator>())
+      return;
+    if (isa<scope::ScopeOp>(op) && !isAtomicSimtScope(op))
+      return;
+    if (loweredScopeGuards.contains(op) || isCubeOrSharedOp(op))
+      return;
+    if (isInsideLoweredGuard(loweredScopeGuards, op))
+      return;
+    if (op->getResults().empty() && !writesAnyBuffer(op))
+      return;
+    Core core = assignment.coreOf(op);
+    // A `Both` op is shared/replicated -- it stays unguarded on both sub-cores.
+    if (!isSingleCore(core))
+      return;
+    outsideWork.emplace_back(op, core);
+  });
 
   for (auto &[op, core] : outsideWork) {
     if (failed(guardOutsideScopeOp(*op, core)))
@@ -376,9 +324,10 @@ LogicalResult SubBlockLowering::lowerSupernode(const Supernode &node) {
   OpBuilder elseBuilder = OpBuilder::atBlockEnd(elseBlock);
   llvm::SmallVector<Value, 4> elseYields;
   elseYields.reserve(thenYields.size());
-  for (auto [yielded, resTy] :
-       llvm::zip(thenYields, scopeOp.getResultTypes())) {
-    Value init = deriveElseInit(elseBuilder, loc, yielded, resTy, ifOp);
+  for (auto [yielded, scopeRes, resTy] :
+       llvm::zip(thenYields, scopeOp.getResults(), scopeOp.getResultTypes())) {
+    Value init =
+        deriveElseInit(elseBuilder, loc, yielded, scopeRes, resTy, ifOp);
     if (!init)
       return failure(); // unsupported (non-tensor / mismatched) result.
     elseYields.push_back(init);
@@ -415,6 +364,32 @@ LogicalResult SubBlockLowering::guardOutsideScopeOp(Operation &op,
     OpBuilder thenBuilder = ifOp.getThenBodyBuilder();
     Operation *cloned = thenBuilder.clone(op);
     markIfSubBlockReguarded(*cloned);
+    op.erase();
+    return success();
+  }
+
+  // An atomic simt scope is guarded whole: clone it into the then-branch and
+  // yield a per-result init in the else.
+  if (isAtomicSimtScope(&op)) {
+    Value cond = buildSubBlockEqCond(builder, loc, *coreIdx);
+    auto ifOp = builder.create<scf::IfOp>(loc, op.getResultTypes(), cond,
+                                          /*withElseRegion=*/true);
+    OpBuilder elseBuilder(&ifOp.getElseRegion().front(),
+                          ifOp.getElseRegion().front().end());
+    llvm::SmallVector<Value, 4> simtElseYields;
+    simtElseYields.reserve(op.getNumResults());
+    for (auto [res, resTy] : llvm::zip(op.getResults(), op.getResultTypes())) {
+      Value init = deriveElseInit(elseBuilder, loc, res, res, resTy, ifOp);
+      if (!init)
+        return failure();
+      simtElseYields.push_back(init);
+    }
+    elseBuilder.create<scf::YieldOp>(loc, simtElseYields);
+    OpBuilder thenBuilder = ifOp.getThenBodyBuilder();
+    Operation *cloned = thenBuilder.clone(op);
+    cloned->walk([](Operation *o) { markIfSubBlockReguarded(*o); });
+    thenBuilder.create<scf::YieldOp>(loc, cloned->getResults());
+    op.replaceAllUsesWith(ifOp.getResults());
     op.erase();
     return success();
   }
