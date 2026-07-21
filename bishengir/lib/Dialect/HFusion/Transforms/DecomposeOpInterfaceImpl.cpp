@@ -428,6 +428,163 @@ public:
   }
 };
 
+struct CumsumDecomposeInterface
+    : public bishengir::BiShengIRAggregatedOpInterface::ExternalModel<
+          CumsumDecomposeInterface, hfusion::CumsumOp> {
+private:
+  Value createZero(OpBuilder &rewriter, Location loc, Type elemTy) const {
+    if (auto floatTy = dyn_cast<FloatType>(elemTy))
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getFloatAttr(floatTy, 0.0));
+    if (auto intTy = dyn_cast<IntegerType>(elemTy))
+      return rewriter.create<arith::ConstantOp>(
+          loc, rewriter.getIntegerAttr(intTy, 0));
+    llvm_unreachable("unsupported element type for hfusion.cumsum decompose");
+  }
+
+  Value createAdd(OpBuilder &rewriter, Location loc, Value lhs,
+                  Value rhs) const {
+    Type elemTy = lhs.getType();
+    if (isa<FloatType>(elemTy))
+      return rewriter.create<arith::AddFOp>(loc, lhs, rhs);
+    if (isa<IntegerType>(elemTy))
+      return rewriter.create<arith::AddIOp>(loc, lhs, rhs);
+    llvm_unreachable("unsupported element type for hfusion.cumsum decompose");
+  }
+
+  Value emitCumsumOnAxis(OpBuilder &rewriter, Location loc, Value src,
+                         Value resultTensor, ArrayRef<int64_t> shape,
+                         Type elemTy, int64_t cumDim, bool reverse,
+                         SmallVector<Value> &indices) const {
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value upper = rewriter.create<arith::ConstantIndexOp>(loc, shape[cumDim]);
+    Value zero = createZero(rewriter, loc, elemTy);
+
+    auto scanFor = rewriter.create<scf::ForOp>(
+        loc, c0, upper, c1, ValueRange{zero, resultTensor});
+
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(scanFor.getBody());
+
+      Value scanIndex = scanFor.getInductionVar();
+      if (reverse) {
+        Value lastIndex =
+            rewriter.create<arith::ConstantIndexOp>(loc, shape[cumDim] - 1);
+        scanIndex = rewriter.create<arith::SubIOp>(loc, lastIndex, scanIndex);
+      }
+      indices[cumDim] = scanIndex;
+
+      Value inputElem = rewriter.create<tensor::ExtractOp>(loc, src, indices);
+      Value accumulated =
+          createAdd(rewriter, loc, scanFor.getRegionIterArgs()[0], inputElem);
+      Value updatedTensor = rewriter.create<tensor::InsertOp>(
+          loc, accumulated, scanFor.getRegionIterArgs()[1], indices);
+
+      rewriter.create<scf::YieldOp>(loc,
+                                    ValueRange{accumulated, updatedTensor});
+    }
+
+    indices[cumDim] = Value();
+    return scanFor.getResult(1);
+  }
+
+  Value emitOuterLoops(OpBuilder &rewriter, Location loc, Value src,
+                       Value resultTensor, ArrayRef<int64_t> shape,
+                       Type elemTy, int64_t cumDim, bool reverse, int64_t dim,
+                       SmallVector<Value> &indices) const {
+    int64_t rank = static_cast<int64_t>(shape.size());
+    if (dim == rank)
+      return emitCumsumOnAxis(rewriter, loc, src, resultTensor, shape, elemTy,
+                              cumDim, reverse, indices);
+
+    if (dim == cumDim)
+      return emitOuterLoops(rewriter, loc, src, resultTensor, shape, elemTy,
+                            cumDim, reverse, dim + 1, indices);
+
+    Value c0 = rewriter.create<arith::ConstantIndexOp>(loc, 0);
+    Value c1 = rewriter.create<arith::ConstantIndexOp>(loc, 1);
+    Value upper = rewriter.create<arith::ConstantIndexOp>(loc, shape[dim]);
+
+    auto outerFor =
+        rewriter.create<scf::ForOp>(loc, c0, upper, c1,
+                                    ValueRange{resultTensor});
+
+    {
+      OpBuilder::InsertionGuard guard(rewriter);
+      rewriter.setInsertionPointToStart(outerFor.getBody());
+
+      indices[dim] = outerFor.getInductionVar();
+      Value updated =
+          emitOuterLoops(rewriter, loc, src, outerFor.getRegionIterArgs()[0],
+                         shape, elemTy, cumDim, reverse, dim + 1, indices);
+      indices[dim] = Value();
+
+      rewriter.create<scf::YieldOp>(loc, updated);
+    }
+
+    return outerFor.getResult(0);
+  }
+
+public:
+  FailureOr<SmallVector<Value>> decomposeOperation(Operation *op,
+                                                   OpBuilder &rewriter) const {
+    auto cumsumOp = dyn_cast<hfusion::CumsumOp>(op);
+    if (!cumsumOp)
+      return failure();
+
+    Location loc = op->getLoc();
+    Value src = cumsumOp.getInput();
+    auto srcTy = dyn_cast<RankedTensorType>(src.getType());
+    auto resultTy =
+        dyn_cast<RankedTensorType>(cumsumOp.getResult().getType());
+    if (!srcTy || !resultTy)
+      return failure();
+
+    if (cumsumOp->getNumResults() != 1)
+      return failure();
+
+    int64_t rank = srcTy.getRank();
+    if (rank <= 0)
+      return failure();
+
+    ArrayRef<int64_t> cumDims = cumsumOp.getCumDims();
+    if (cumDims.size() != 1)
+      return failure();
+
+    int64_t cumDim = cumDims[0];
+    if (cumDim < 0 || cumDim >= rank)
+      return failure();
+
+    ArrayRef<int64_t> shape = srcTy.getShape();
+    for (int64_t dimSize : shape) {
+      if (dimSize == ShapedType::kDynamic || dimSize <= 0)
+        return failure();
+    }
+
+    Type elemTy = srcTy.getElementType();
+    if (!isa<FloatType>(elemTy) && !isa<IntegerType>(elemTy))
+      return failure();
+
+    if (shape[cumDim] == 1)
+      return SmallVector<Value>{src};
+
+    Value initTensor = rewriter.create<tensor::EmptyOp>(
+        loc, resultTy.getShape(), resultTy.getElementType());
+    SmallVector<Value> indices(rank);
+    Value result =
+        emitOuterLoops(rewriter, loc, src, initTensor, shape, elemTy, cumDim,
+                       cumsumOp.getReverse(), /*dim=*/0, indices);
+
+    return SmallVector<Value>{result};
+  }
+
+  bishengir::DecomposePhase getDecomposePhase(Operation *op) const {
+    return bishengir::DecomposePhase::BEFORE_LOWER_TO_LOOPS;
+  }
+};
+
     // SortDecomposeInterface implements the decomposition logic for
     // hfusion.sort. It lowers the high-level sort operation into nested loops
     // (scf.for) using a bubble sort algorithm specifically targeting the last
@@ -651,6 +808,7 @@ public:
         +[](MLIRContext *ctx, hfusion::HFusionDialect *dialect) {
           hfusion::IsInfOp::attachInterface<IsInfDecomposeInterface>(*ctx);
           hfusion::FlipOp::attachInterface<FlipDecomposeInterface>(*ctx);
+          hfusion::CumsumOp::attachInterface<CumsumDecomposeInterface>(*ctx);
           hfusion::SortOp::attachInterface<SortDecomposeInterface>(*ctx);
           hfusion::AtomicXchgOp::attachInterface<AtomicXchgDecomposeInterface>(*ctx);
         });
