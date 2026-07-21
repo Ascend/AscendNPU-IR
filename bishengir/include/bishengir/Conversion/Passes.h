@@ -36,6 +36,7 @@
 #include "bishengir/Conversion/MathToHFusion/MathToHFusion.h"
 #include "bishengir/Conversion/ProtonAscendGPUToLLVM/ProtonAscendGPUToLLVM.h"
 #include "bishengir/Conversion/TensorToHFusion/TensorToHFusion.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/TritonAscendGPUToLLVM.h"
 #include "bishengir/Conversion/TensorToHIVM/TensorToHIVM.h"
 #include "mlir/Pass/Pass.h"
 

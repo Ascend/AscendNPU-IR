@@ -193,6 +193,24 @@ def ConvertHFusionToVector : Pass<"convert-hfusion-to-vector", "func::FuncOp"> {
   ];
 }
 
+def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Convert TritonAscendGPU to LLVM";
+  let description = [{
+    Convert TritonAscendGPU operations to LLVM dialect.
+  }];
+  let constructor = "mlir::triton::createConvertTritonAscendGPUToLLVMPass()";
+  
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect",
+    "mlir::NVVM::NVVMDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::cf::ControlFlowDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::ascend_dpx::AscendDPXDialect"
+  ];
+}
+
 def ConvertProtonAscendGPUToLLVM :
     Pass<"convert-proton-ascend-gpu-to-llvm", "mlir::ModuleOp"> {
   let summary = "Convert ProtonGPU to LLVM";
