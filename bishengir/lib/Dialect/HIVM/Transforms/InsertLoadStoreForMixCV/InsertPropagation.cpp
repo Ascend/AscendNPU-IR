@@ -19,6 +19,8 @@
 
 #include "bishengir/Dialect/HIVM/IR/CustomOp/CustomOpUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
+#include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
@@ -80,10 +82,10 @@ bool InsertPropagationPattern::isPropagatorInserted(Operation *op) const {
         return user->hasAttr(kPropagateDownAttr);
       });
   bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
-    auto *op = opr.getDefiningOp();
+    auto *oprOp = opr.getDefiningOp();
     if (!isa<ShapedType>(opr.getType()))
       return true;
-    return op && op->hasAttr(kPropagateUpAttr);
+    return oprOp && oprOp->hasAttr(kPropagateUpAttr);
   });
   return upPropInserted || downPropInserted;
 }
@@ -224,6 +226,211 @@ InsertPropagationPattern::handleSpecialCase(Operation *op,
     return failure();
 
   return std::nullopt;
+}
+
+//===----------------------------------------------------------------------===//
+// A5InsertionPattern
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+A5InsertionPattern::matchAndRewrite(Operation *op,
+                                    PatternRewriter &rewriter) const {
+  if (isPropagatorInserted(op))
+    return failure();
+
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<tensor::InsertSliceOp>([&](Operation *op) {
+        PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
+                                            rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                              rewriter);
+        return success();
+      })
+      .Case<hivm::VBrcOp>([&](auto op) {
+        PropagatorUtil::createPropagatorsUp(op, TCoreType::CUBE_AND_VECTOR,
+                                            rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                              rewriter);
+        return success();
+      })
+      .Case<func::CallOp>([&](auto callOp) {
+        if (!isVFCall(callOp))
+          return failure();
+        PropagatorUtil::createPropagatorsUp(callOp, TCoreType::VECTOR,
+                                            hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(callOp, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::LoadOp>([&](auto op) {
+        auto *srcOp = &op.getSrcMutable();
+        auto *dstOp = &op.getDstMutable();
+        if (PropagatorUtil::getUpPropagator(srcOp))
+          return failure();
+        PropagatorUtil::createPropagatorUp(srcOp, hivm::AddressSpace::GM,
+                                           rewriter);
+        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
+                                           rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                              rewriter);
+        return success();
+      })
+      .Case<hivm::GatherLoadOp>([&](auto op) {
+        PropagatorUtil::createPropagatorUp(&op.getBaseMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getIndicesMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        for (auto &mask : op.getMaskMutable())
+          PropagatorUtil::createPropagatorUp(&mask, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        for (auto &other : op.getOtherMutable())
+          PropagatorUtil::createPropagatorUp(&other, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::ScatterStoreOp>([&](auto op) {
+        PropagatorUtil::createPropagatorUp(&op.getIndicesMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDataMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        for (auto &mask : op.getMaskMutable())
+          PropagatorUtil::createPropagatorUp(&mask, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getBaseMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, hivm::AddressSpace::GM,
+                                              rewriter);
+        return success();
+      })
+      .Case<hivm::IndirectLoadOp>([&](auto op) {
+        if (op->use_empty())
+          return failure();
+        auto *srcOp = &op.getSrcMutable();
+        PropagatorUtil::createPropagatorUp(srcOp, hivm::AddressSpace::GM,
+                                           rewriter);
+        for (auto &input : op.getDpsInputOperands()) {
+          if (input == srcOp)
+            continue;
+          PropagatorUtil::createPropagatorUp(input, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        }
+        auto *dstOp = &op.getDstMutable();
+        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::StrideLoadOp>([&](auto op) {
+        if (op->use_empty())
+          return failure();
+        PropagatorUtil::createPropagatorUp(&op.getSrcMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Case<hivm::StrideStoreOp>([&](auto op) {
+        PropagatorUtil::createPropagatorUp(&op.getSrcMutable(),
+                                           TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        PropagatorUtil::createPropagatorUp(&op.getDstMutable(),
+                                           hivm::AddressSpace::GM, rewriter);
+        PropagatorUtil::createPropagatorsDown(op, hivm::AddressSpace::GM,
+                                              rewriter);
+        return success();
+      })
+      .Case<hivm::IndirectStoreOp>([&](auto op) {
+        auto *srcOp = &op.getSrcMutable();
+        PropagatorUtil::createPropagatorUp(srcOp, TCoreType::VECTOR,
+                                           hivm::AddressSpace::UB, rewriter);
+        for (auto &input : op.getDpsInputOperands()) {
+          if (input == srcOp)
+            continue;
+          PropagatorUtil::createPropagatorUp(input, TCoreType::VECTOR,
+                                             hivm::AddressSpace::UB, rewriter);
+        }
+        auto *dstOp = &op.getDstMutable();
+        PropagatorUtil::createPropagatorUp(dstOp, hivm::AddressSpace::GM,
+                                           rewriter);
+        PropagatorUtil::createPropagatorsDown(op, hivm::AddressSpace::GM,
+                                              rewriter);
+        return success();
+      })
+      .Case<hivm::CustomOp>([&](hivm::CustomOp op) {
+        PropagatorUtil::insertPropagatorsForCustomLikeOp({op.getPipe()}, op,
+                                                         rewriter);
+        return success();
+      })
+      .Case<hivm::CustomMacroOp>([&](hivm::CustomMacroOp op) {
+        PropagatorUtil::insertPropagatorsForCustomLikeOp(
+            {op.getInPipe(), op.getOutPipe()}, op, rewriter);
+        return success();
+      })
+      .Default([&](auto *op) { return failure(); });
+}
+
+bool A5InsertionPattern::isPropagatorInserted(Operation *op) const {
+  bool downPropInserted =
+      !op->use_empty() && llvm::all_of(op->getUsers(), [](auto *user) {
+        return user->hasAttr(kPropagateDownAttr);
+      });
+  bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
+    auto *oprOp = opr.getDefiningOp();
+    if (!isa<ShapedType>(opr.getType()))
+      return true;
+    return oprOp && oprOp->hasAttr(kPropagateUpAttr);
+  });
+  return upPropInserted || downPropInserted;
+}
+
+//===----------------------------------------------------------------------===//
+// TightCoupledBufferInsertionPattern
+//===----------------------------------------------------------------------===//
+
+LogicalResult TightCoupledBufferInsertionPattern::matchAndRewrite(
+    Operation *op, PatternRewriter &rewriter) const {
+  if (isPropagatorInserted(op))
+    return failure();
+
+  return TypeSwitch<Operation *, LogicalResult>(op)
+      .Case<hivm::FixpipeOp>([&](auto op) {
+        auto *dstOp = &op.getDstMutable();
+        if (op->use_empty())
+          return failure();
+        PropagatorUtil::createPropagatorUp(dstOp, TCoreType::CUBE_AND_VECTOR,
+                                           rewriter);
+        PropagatorUtil::createPropagatorsDown(op, TCoreType::CUBE_AND_VECTOR,
+                                              hivm::AddressSpace::UB, rewriter);
+        return success();
+      })
+      .Default([&](auto *op) { return failure(); });
+}
+
+bool TightCoupledBufferInsertionPattern::isPropagatorInserted(
+    Operation *op) const {
+  bool downPropInserted =
+      !op->use_empty() && llvm::all_of(op->getUsers(), [](auto *user) {
+        return user->hasAttr(kPropagateDownAttr);
+      });
+  bool upPropInserted = llvm::all_of(op->getOperands(), [](auto opr) {
+    auto *oprOp = opr.getDefiningOp();
+    if (!isa<ShapedType>(opr.getType()))
+      return true;
+    return oprOp && oprOp->hasAttr(kPropagateUpAttr);
+  });
+  return upPropInserted || downPropInserted;
 }
 
 } // namespace mlir::hivm

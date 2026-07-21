@@ -515,6 +515,7 @@ PropagateUpPattern::matchAndRewrite(UnrealizedConversionCastOp propagateOp,
         return PropagatorUtil::propagateUpForCustomLikeOp(op, propagateOp,
                                                           rewriter);
       })
+      .Case([&](tensor::EmptyOp emptyOp) { return failure(); })
       .Default([&](Operation *op) {
         if (step == PropagationStep::LOCAL &&
             !llvm::all_of(op->getResultTypes(),

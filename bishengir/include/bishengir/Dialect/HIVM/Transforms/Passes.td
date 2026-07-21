@@ -740,10 +740,13 @@ def InsertLoadStoreForMixCV
                            "bishengir::memref_ext::MemRefExtDialect",
                            "bufferization::BufferizationDialect",
                            "annotation::AnnotationDialect"];
-  let options = [Option<
-    "enableLegacy", "enable-legacy", "bool",
-    /*default=*/"false",
-    "Run legacy logic for insert load store op for mix cv">];
+  let options = [Option<"enableLegacy", "enable-legacy", "bool",
+                        /*default=*/"false",
+                        "Run legacy logic for insert load store op for mix cv">,
+                 Option<"disableTightCoupledBuffer",
+                        "disable-tight-coupled-buffer", "bool",
+                        /*default=*/"false",
+                        "Disable Tight Coupled Buffer Allocation">];
 }
 
 def InsertLoadStoreForScalar

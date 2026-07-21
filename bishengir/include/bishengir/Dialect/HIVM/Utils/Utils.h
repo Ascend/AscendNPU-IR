@@ -324,11 +324,11 @@ void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
                                           Value src);
 
-// Create local workspace of current block (static shape only).
-Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
-                                ArrayRef<int64_t> shape, Type elementType);
+Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
+                          MemRefType memrefType, ValueRange dynamicDims,
+                          ArrayRef<int64_t> staticAllocSize, Type elemType);
 
-// Create local workspace of current block
+// Create local workspace of current block (static shape only).
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,
                                 ArrayRef<int64_t> shape, Type elementType);
 

@@ -26,6 +26,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/Visitors.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 #include <utility>
@@ -36,8 +37,60 @@
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
 namespace mlir::hivm {
+namespace {
+/// Peel `builtin.unrealized_conversion_cast` chains used as propagation
+/// markers so `getTensorDynamicValues` does not build `tensor.dim` / size
+/// producers that depend on downstream UB/L1 buffers or other users of the
+/// same cast (avoids alloc operand cycles and dominance failures).
+Value peelTensorShapeSourceForAllocSizes(Value tensorValue) {
+  Value v = tensorValue;
+  while (auto ucc =
+             dyn_cast_or_null<UnrealizedConversionCastOp>(v.getDefiningOp()))
+    v = ucc.getOperand(0);
+  return v;
+}
+} // namespace
 
 namespace PropagatorUtil {
+namespace {
+
+bool isCustomLikeGMAddrOperand(const Operation *op, OpOperand &operand) {
+  std::optional<SmallVector<size_t>> gmAddrArgsIndices;
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+    gmAddrArgsIndices = customOp.getGMAddrArgsIndices();
+  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
+    gmAddrArgsIndices = macroOp.getGMAddrArgsIndices();
+  }
+  if (!gmAddrArgsIndices)
+    return false;
+  return llvm::is_contained(*gmAddrArgsIndices, operand.getOperandNumber());
+}
+
+bool isCustomLikeTempBuffer(const Operation *op, OpOperand &operand) {
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+    for (auto &tempBuffer : customOp.getTempBuffersMutable())
+      if (tempBuffer == operand)
+        return true;
+  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
+    for (auto &tempBuffer : macroOp.getTempBuffersMutable())
+      if (tempBuffer == operand)
+        return true;
+  }
+  return false;
+}
+
+void forEachCustomLikeTempBuffer(Operation *op,
+                                 llvm::function_ref<void(OpOperand &)> fn) {
+  if (auto customOp = dyn_cast<hivm::CustomOp>(op)) {
+    for (auto &tempBuffer : customOp.getTempBuffersMutable())
+      fn(tempBuffer);
+  } else if (auto macroOp = dyn_cast<hivm::CustomMacroOp>(op)) {
+    for (auto &tempBuffer : macroOp.getTempBuffersMutable())
+      fn(tempBuffer);
+  }
+}
+
+} // namespace
 
 std::pair<TCoreType, hivm::AddressSpace>
 getPropagationInfoForPipe(hivm::PIPE pipe) {
@@ -78,8 +131,14 @@ void insertPropagatorsForCustomLikeOp(llvm::ArrayRef<hivm::PIPE> pipes,
   };
 
   // In-pipe scope: values consumed by the kernel.
-  for (auto *input : structuredOp.getDpsInputOperands())
+  for (auto *input : structuredOp.getDpsInputOperands()) {
+    // GM address operands must stay on GM (e.g. indirect atomics).
+    if (isCustomLikeGMAddrOperand(op, *input)) {
+      tagOperandUp(input, TCoreType::CUBE_OR_VECTOR, hivm::AddressSpace::GM);
+      continue;
+    }
     tagOperandUp(input, info.inCoreType, info.inAddressSpace);
+  }
   forEachCustomLikeTempBuffer(op, [&](OpOperand &tempBuffer) {
     tagOperandUp(&tempBuffer, info.inCoreType, info.inAddressSpace);
   });
@@ -104,7 +163,7 @@ propagateDownForCustomLikeOp(Operation *op, OpOperand *use,
     createPropagatorsDown(structuredOp, propagateOp, rewriter);
     return success();
   }
-  if (structuredOp.isDpsInput(use) || isCustomLikeTempBuffer(op, use)) {
+  if (structuredOp.isDpsInput(use) || isCustomLikeTempBuffer(op, *use)) {
     createPropagatorUp(use, propagateOp, rewriter);
     return success();
   }
@@ -399,6 +458,89 @@ hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter) {
   return loadOp;
 }
 
+/// Creates a memref allocation with the specified address space.
+AllocationResult
+createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
+                             ArrayRef<int64_t> shape, Type elemType,
+                             ValueRange dynamicSizes, AddressSpace addrSpace,
+                             ArrayRef<int64_t> maybeStaticAllocSize) {
+  MLIRContext *ctx = rewriter.getContext();
+
+  auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
+  auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
+  auto plainType = MemRefType::get(shape, elemType);
+
+  Value alloc = createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
+                                    maybeStaticAllocSize, elemType);
+
+  Value cast =
+      rewriter.create<memref::MemorySpaceCastOp>(loc, plainType, alloc);
+
+  return {alloc, cast};
+}
+
+/// Creates a UB (Unified Buffer) allocation matching `tensorValue`'s shape,
+/// including dynamic extents.
+AllocationResult createUBAllocation(PatternRewriter &rewriter, Location loc,
+                                    Value tensorValue,
+                                    ArrayRef<int64_t> maybeStaticTotalSize) {
+  auto tensorType = cast<RankedTensorType>(tensorValue.getType());
+  Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
+  SmallVector<Value> dynamicSizes =
+      hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
+  return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
+                                      tensorType.getElementType(), dynamicSizes,
+                                      AddressSpace::UB, maybeStaticTotalSize);
+}
+
+/// Creates an L1 allocation matching `tensorValue`'s shape, including dynamic
+/// extents.
+AllocationResult createL1Allocation(PatternRewriter &rewriter, Location loc,
+                                    Value tensorValue,
+                                    ArrayRef<int64_t> maybeStaticTotalSize) {
+  auto tensorType = cast<RankedTensorType>(tensorValue.getType());
+  Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
+  SmallVector<Value> dynamicSizes =
+      hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
+  return createAddressSpaceAllocation(rewriter, loc, tensorType.getShape(),
+                                      tensorType.getElementType(), dynamicSizes,
+                                      AddressSpace::L1, maybeStaticTotalSize);
+}
+
+std::tuple<AllocationResult, bufferization::ToTensorOp>
+insertTightCoupledBufferToL1(Value value, Location loc,
+                             PatternRewriter &rewriter,
+                             ArrayRef<int64_t> maybeStaticTotalSize) {
+  rewriter.setInsertionPointAfterValue(value);
+  auto tensorType = cast<RankedTensorType>(value.getType());
+  auto allocationResult =
+      createL1Allocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto [l1Memref, plainMemref] = allocationResult;
+
+  auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, plainMemref,
+      /*restrict=*/true, /*writable=*/true);
+  return std::make_tuple(allocationResult, toTensorOp);
+}
+
+std::tuple<AllocationResult, bufferization::ToTensorOp>
+insertTightCoupledBufferToUB(Value value, Location loc,
+                             PatternRewriter &rewriter,
+                             ArrayRef<int64_t> maybeStaticTotalSize) {
+  rewriter.setInsertionPointAfterValue(value);
+  auto resultType = cast<RankedTensorType>(value.getType());
+
+  auto coupledBuffer =
+      createUBAllocation(rewriter, loc, value, maybeStaticTotalSize);
+  auto [ubMemref, plainMemref] = coupledBuffer;
+
+  // Convert memref back to tensor for users
+  auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
+      loc, resultType, plainMemref,
+      /*restrict=*/true, /*writable=*/true);
+  return std::make_tuple(coupledBuffer, toTensorOp);
+}
+
 std::pair<hivm::StoreOp, hivm::LoadOp>
 insertStoreAndLoad(Value value, Location loc, PatternRewriter &rewriter,
                    std::optional<hivm::AddressSpace> dstAddressSpace) {
@@ -476,8 +618,10 @@ static WalkResult verifyFail(Value upOp, Operation *downOp, StringRef msg,
 }
 
 static WalkResult verifyUpPropagator(UnrealizedConversionCastOp upPropOp) {
-  auto downPropOp =
-      upPropOp.getInputs()[0].getDefiningOp<UnrealizedConversionCastOp>();
+  auto srcUpPropVal = upPropOp.getInputs()[0];
+  if (srcUpPropVal.getDefiningOp<tensor::EmptyOp>())
+    return WalkResult::advance();
+  auto downPropOp = srcUpPropVal.getDefiningOp<UnrealizedConversionCastOp>();
   if (!downPropOp || !downPropOp->hasAttr(kPropagateDownAttr)) {
     if (upPropOp.getInputs()[0].getType().isIntOrIndexOrFloat())
       return WalkResult::advance();
@@ -511,7 +655,7 @@ static WalkResult verifyDownPropagator(UnrealizedConversionCastOp downPropOp) {
 }
 
 LogicalResult verifyPropagation(func::FuncOp funcOp) {
-  auto walkResult = funcOp.walk([&](Operation *op) {
+  auto walkResult = funcOp.walk([&](Operation *op) -> WalkResult {
     if (auto uccOp = dyn_cast<UnrealizedConversionCastOp>(op)) {
       LDBG("Verifying propagator: " << *op);
       if (op->hasAttr(kPropagateUpAttr))
