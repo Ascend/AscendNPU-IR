@@ -3117,6 +3117,87 @@ private:
   }
 };
 
+/// normalize cosh(x) implementation
+///
+/// Formula:
+///   cosh(x) = (exp(x) + exp(-x)) / 2
+struct NormalizeCoshOp : public OpRewritePattern<hfusion::ElemwiseUnaryOp> {
+public:
+  using OpRewritePattern<hfusion::ElemwiseUnaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::ElemwiseUnaryOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.hasPureTensorSemantics())
+      return failure();
+    if (op.getFun() != hfusion::UnaryFn::cosh)
+      return failure();
+
+    Value src = op.getInputs()[0];
+    auto inType = getElementTypeOrSelf(src.getType());
+    if (!inType.isF16() && !inType.isF32())
+      llvm::report_fatal_error("only support input Type is f16 or f32");
+
+    if (inType.isF16()) {
+      src = hfusion::castTo(rewriter, src, rewriter.getF32Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    Value res = buildCosh(rewriter, op->getLoc(), src);
+
+    if (inType.isF16()) {
+      res = hfusion::castTo(rewriter, res, rewriter.getF16Type(),
+                            hfusion::RoundMode::ROUND);
+    }
+
+    rewriter.replaceOp(op, res);
+    return success();
+  }
+
+private:
+  Value buildCosh(PatternRewriter &rewriter, Location loc, Value src) const {
+    auto elementType = getElementTypeOrSelf(src.getType());
+
+    Value negOne = createScalarConst(rewriter, loc, elementType, -1.0f);
+    Value half = createScalarConst(rewriter, loc, elementType, 0.5f);
+
+    auto exp0Empty = utils::createEmptyOp(rewriter, loc, src);
+    Value exp0 = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
+                     rewriter, loc, linalg::UnaryFn::exp, ValueRange{src},
+                     ValueRange{exp0Empty})
+                     ->getResult(0);
+
+    auto negXEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value negX =
+        hfusion::createBinaryOp<linalg::ElemwiseBinaryOp, linalg::BinaryFn,
+                                linalg::BinaryFnAttr>(
+            rewriter, loc, linalg::BinaryFn::mul, ValueRange{src, negOne},
+            ValueRange{negXEmpty})
+            ->getResult(0);
+
+    auto exp1Empty = utils::createEmptyOp(rewriter, loc, src);
+    Value exp1 = hfusion::createUnaryOp<linalg::ElemwiseUnaryOp,
+                                        linalg::UnaryFn, linalg::UnaryFnAttr>(
+                     rewriter, loc, linalg::UnaryFn::exp, ValueRange{negX},
+                     ValueRange{exp1Empty})
+                     ->getResult(0);
+
+    auto addEmpty = utils::createEmptyOp(rewriter, loc, src);
+    Value add = hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                        linalg::BinaryFn, linalg::BinaryFnAttr>(
+                    rewriter, loc, linalg::BinaryFn::add,
+                    ValueRange{exp0, exp1}, ValueRange{addEmpty})
+                    ->getResult(0);
+
+    auto resEmpty = utils::createEmptyOp(rewriter, loc, src);
+    return hfusion::createBinaryOp<linalg::ElemwiseBinaryOp,
+                                   linalg::BinaryFn, linalg::BinaryFnAttr>(
+               rewriter, loc, linalg::BinaryFn::mul, ValueRange{add, half},
+               ValueRange{resEmpty})
+        ->getResult(0);
+  }
+};
+
 /// normalize expm1(x) to exp(x) - 1
 /// eg.
 /// y = hfusion elemwise unary {expm1} (x)
@@ -9737,6 +9818,7 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
   patterns.add<NormalizeExp2Op>(patterns.getContext());
   patterns.add<NormalizeExpM1Op>(patterns.getContext());
   patterns.add<NormalizeSinhOp>(patterns.getContext());
+  patterns.add<NormalizeCoshOp>(patterns.getContext());
   patterns.add<NormalizeErfOp>(patterns.getContext());
   patterns.add<NormalizeBrcCast>(patterns.getContext());
   patterns.add<NormalizefillCastToTensorBrc>(patterns.getContext());
