@@ -108,6 +108,12 @@ init_variables() {
   ENABLE_ASSERTION="OFF"
   PYTHON_BINDING="OFF"
   BUILD_TORCH_MLIR="OFF"
+  BUILD_TRITON="ON"
+  ENABLE_LLD="OFF"
+  ENABLE_WERROR="OFF"
+  MLIR_WERROR="OFF"
+  BISHENGIR_WERROR="OFF"
+  SHARED_LIBS="OFF"
   CCACHE_BUILD="ON"
   SAFETY_OPTIONS=""
   SAFETY_LD_OPTIONS=""
@@ -403,6 +409,34 @@ parse_arguments() {
                 SKIP_RPATH_OPTION="TRUE"
                 shift
                 ;;
+            --disable-werror)
+                ENABLE_WERROR="OFF"
+                shift
+                ;;
+            --disable-mlir-werror)
+                MLIR_WERROR="OFF"
+                shift
+                ;;
+            --disable-bishengir-werror)
+                BISHENGIR_WERROR="OFF"
+                shift
+                ;;
+            --enable-lld)
+                ENABLE_LLD="ON"
+                shift
+                ;;
+            --build-triton)
+                BUILD_TRITON="ON"
+                shift
+                ;;
+            --disable-build-triton)
+                BUILD_TRITON="OFF"
+                shift
+                ;;
+            --shared-libs)
+                SHARED_LIBS="ON"
+                shift
+                ;;
             --torch-mlir-source-dir)
                 if [[ -z "$2" || "$2" == -* ]]; then
                     echo "Error: --torch-mlir-source-dir requires an argument"
@@ -529,6 +563,12 @@ cmake_generate() {
                       -DLLVM_EXTERNAL_TORCH_MLIR_SOURCE_DIR=${TORCH_MLIR_SOURCE_DIR}"
   fi
 
+  local triton_options=""
+  if [ "${BUILD_TRITON}" = "ON" ]; then
+    triton_options="-DBISHENGIR_ENABLE_TRITON_COMPILE=ON"
+  fi
+
+
   # set the default for CCACHE_BUILD to off if ccache is not installed
   local build_ccache_build=""
   if ! command -v ccache >/dev/null 2>&1; then
@@ -614,9 +654,15 @@ cmake_generate() {
     -DLLVM_EXTERNAL_BISHENGIR_SOURCE_DIR="${BISHENGIR_SOURCE_DIR}" \
     -DLLVM_TARGETS_TO_BUILD="${LLVM_BUILD_TARGETS}" \
     ${torch_mlir_option} \
+    ${triton_options} \
     ${PYTHON_OPTIONS} \
     -DLLVM_ENABLE_ASSERTIONS="${ENABLE_ASSERTION}" \
+    -DLLVM_ENABLE_LLD="${ENABLE_LLD}" \
+    -DLLVM_ENABLE_WERROR="${ENABLE_WERROR}" \
+    -DMLIR_ENABLE_WERROR="${MLIR_WERROR}" \
+    -DBISHENGIR_ENABLE_WERROR="${BISHENGIR_WERROR}" \
     -DMLIR_ENABLE_BINDINGS_PYTHON="${PYTHON_BINDING}" \
+    -DBUILD_SHARED_LIBS="${SHARED_LIBS}" \
     -DLLVM_CCACHE_BUILD="${build_ccache_build}" \
     -DCMAKE_C_FLAGS="${C_FLAGS}" \
     -DCMAKE_CXX_FLAGS="${CXX_FLAGS}" \

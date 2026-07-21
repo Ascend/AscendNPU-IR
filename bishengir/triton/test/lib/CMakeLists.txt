@@ -1,0 +1,6 @@
+add_subdirectory(Analysis)
+add_subdirectory(Dialect)
+add_subdirectory(Instrumentation)
+if(NOT BISHENGIR_ENABLE_TRITON_COMPILE)
+  add_subdirectory(Proton)
+endif()
