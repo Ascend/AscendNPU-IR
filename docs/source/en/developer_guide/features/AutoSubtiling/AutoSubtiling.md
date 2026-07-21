@@ -1,6 +1,8 @@
 # Auto-Subtiling
 
-## Hardware background
+This document describes the AutoBindSubBlock pass in HIVM. This pass optimizes Cube-Vector (CV) kernels through CV 1:2 tiling. Before reading this document, you are advised to read CV Optimization to understand its terms.
+
+## Hardware Background
 
 During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
@@ -8,7 +10,7 @@ During Ascend chip evolution, AIC and AIV were separated with a 1:2 core ratio.
 
 In the current ecosystem, neither user-written kernels nor community operators typically implement Ascend Cube–Vector 1:2 sub-block logic. To improve compute efficiency and Ascend affinity, the compiler needs automatic sub-block (subtiling) capability. This feature applies a Cube–Vector 1:2 subtiling strategy and performs the corresponding data splitting.
 
-## Algorithm overview
+## Algorithm Principle
 
 The overall approach is:
 
@@ -18,9 +20,9 @@ Effects:
 
 ![image](../../../../images/developer_guide/auto_subtiling3.png)
 
-### Input/output example
+### Input/output Example
 
-Original Code
+Original code
 
 ```mlir
 %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
@@ -30,7 +32,7 @@ Original Code
 hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
 ```
 
-Vector Auto 1:2 Feature Enabled Successfully
+Vector auto 1:2 feature enabled successfully
 
 ```mlir
 %0 = hivm.hir.get_sub_block_idx -> i64
@@ -43,7 +45,7 @@ Vector Auto 1:2 Feature Enabled Successfully
 hivm.hir.store ins(%t1: tensor<32xf16>) outs(%output_slice : memref<32xf16>)
 ```
 
-### Implementation idea
+### Implementation Idea
 
 1. Split Store data in half via extract-slice and for-loop.
 2. Bubble up the extract-slice using the BubbleUpExtractSlice pattern.
@@ -54,13 +56,13 @@ If subtiling fails, the compiler falls back to 1:1.
 
 ![image](../../../../images/developer_guide/auto_subtiling4.png)
 
-Figure: Auto-subtiling 1:2 implementation.
+Figure: Auto-subtiling 1:2 implementation
 
 ### Design
 
 #### Dimension analyzer (axis selection)
 
-The Dimension Analyzer chooses a **parallel axis** for splitting by analyzing all operators in the target kernel.
+The Dimension Analyzer chooses a parallel axis for splitting by analyzing all operators in the target kernel.
 
 #### Why choose a parallel axis
 
@@ -74,8 +76,9 @@ Before each StoreOp/leaf node, an ExtractSliceOp for 1:2 splitting is inserted a
 
 A BubbleUp strategy is implemented per op type. Supported op types include:
 
-- BroadcastOp, ReduceOp, ExpandOp (specific shapes), CollapseOp (specific shapes)
-- ElementwiseOp, LoopOp, ExtractSliceOp (specific cases), InsertSliceOp (specific cases)
+BroadcastOp, ReduceOp, ExpandOp (specific shapes), CollapseOp (specific shapes)
+
+ElementwiseOp, LoopOp, ExtractSliceOp (specific cases), InsertSliceOp (specific cases)
 
 Additional op types can be supported by adding matchAndRewrite patterns.
 
@@ -83,8 +86,9 @@ Additional op types can be supported by adding matchAndRewrite patterns.
 
 Behavior is controlled by:
 
-- `--enable-auto-bind-sub-block=True` — enable this feature (default)
-- `--enable-auto-bind-sub-block=False` — disable this feature
+--`--enable-auto-bind-sub-block=True` — enable this feature (default)
+
+--`--enable-auto-bind-sub-block=False` — disable this feature
 
 ## Constraints and fallback
 
@@ -97,7 +101,7 @@ Common reasons for falling back to 1:1:
 
 ### Fallback example
 
-Original Code
+Original code
 
 ```mlir
 %t0 = hivm.hir.vexp ins(%src: tensor<64xf16>)
@@ -107,7 +111,7 @@ Original Code
 hivm.hir.store ins(%t1: tensor<64xf16>) outs(%output : memref<64xf16>)
 ```
 
-Auto 1:2 Enablement Failed, With if condition, only core 0 is operational
+Auto 1:2 enablement failed. With `if` condition, only core 0 is operational
 
 ```mlir
 %0 = hivm.hir.get_sub_block_idx

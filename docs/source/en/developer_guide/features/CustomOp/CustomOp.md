@@ -4,11 +4,11 @@
 
 AscendNPU-IR already supports a rich operator set for upstream models. However, in certain scenarios, there are needs to define their own operators to perform custom computations:
 
-- Supported operators' combination couldn't fulfill desired computations.
-- Vendor wants the custom operator to be private.
+- Supported operators' combination could not fulfill desired computations.
+- The vendor wants custom operators to be private.
 - Combining multiple operators could not reach optimal performance.
 
-Custom operator allows users to freely use the interfaces provided by AscendNPU-IR to provide their own operators that compiles with other operators.
+Custom operators allow users to freely use the APIs provided by AscendNPU-IR to provide their own operators that compiles with other operators.
 
 ### Hardware Background
 
@@ -18,28 +18,27 @@ N/A
 
 N/A
 
-### Interface Description
+### API Description
 
-Generic interface for custom op as following:
+Generic API for custom op:
 
-- name : unique op name.
+- **name**: unique op name.
 
-         Note : there are names reserved for builtins, usually starts with "__builtin".
-                Compiler will link these builtins to self-contained template library,
-                which comes together within bishengir-compile.
+         Note : there are names reserved for builtins, usually starting with "__builtin".
+                Compiler will link these builtins to self-contained template library, 
+                which comes together within bishengir-compile. 
 
                 For normal names/cases, user needs to specify implementation location/compilation commands,
                 and all the necessary information.
 
-- inputs : input parameters.
-- outputs : output results, designated "init" operands, which act as initial values for the results
-            of the operation or the init locations to which the results of the op will be written.
+- **inputs**: input parameters.
+- **outputs**: output results, designated "init" operands, which act as initial values for the results of the operation 
+              or the init locations to which the results of the op will be written.
 
-In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes
-to retrieve necessary information:
+In order to adapt to future enhancements quickly and dynamically, custom op relies on attributes to retrieve necessary information:
 
-- CoreType : which core type to execute on, refer to TCoreTypeAttr.
-- Pipe     : which pipe to execute on, refer to PipeAttr (for `hivm.hir.custom`).
+- **CoreType**: which core type to execute on. Refer to TCoreTypeAttr.
+- **Pipe**: which pipe to execute on. Refer to PipeAttr.
 - InPipe   : input pipe for macro custom op, refer to PipeAttr (`hivm.pipe_in`).
 - OutPipe  : output pipe for macro custom op, refer to PipeAttr (`hivm.pipe_out`).
 - VFMode   : which mode to run on vector units, refer to VFModeAttr.
@@ -354,8 +353,8 @@ Mark ops that only read inputs and write declared outputs:
 Python script: `test_custom_op.py`
 
 ```python
-# For more detail of Triton custom op design, please refer to
-# https://gitcode.com/Ascend/triton-ascend/pull/988 for more details
+# For more details of Triton custom op design, refer to
+# https://gitcode.com/Ascend/triton-ascend/pull/988
 
 import triton
 import triton.language as tl

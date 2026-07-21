@@ -1,34 +1,36 @@
-# Debug options
+# Debug Options
 
-## Debug: DEBUG OP overview
+## Debug: DEBUG OP Overview
 
 When developing or porting operators with AscendNPU IR (e.g. Triton frontend + AscendNPU IR compile/run), debugging is essential. AscendNPU IR provides two main debug ops at different abstraction levels:
 
-- **HFusion** **`PrintOp`**: Used during graph compilation and fusion to print intermediate tensors and results.
-- **HIVM** **`DebugOp`**: Used at the lower HIVM level to print intermediate tensors and results.
+**HFusion PrintOp**: Used during graph compilation and fusion to print intermediate tensors and results.
 
-This section describes these ops and how to use them, using the **Triton** frontend as an example.
+**HIVM DebugOp**: Used at the lower HIVM level to print intermediate tensors and results.
 
-### AscendNPU IR debug ops
+This section describes these ops and how to use them, using the **Triton frontend** as an example.
 
-Printing relies on the Bisheng compiler’s `cce::printf` interface. To enable printing:
+### AscendNPU IR Debug Ops
+
+Printing relies on the Bisheng compiler's `cce::printf` interface. To enable printing:
 
 1. Enable the macro `__CCE_ENABLE_PRINT__` (e.g. for Triton: `export TRITON_DEVICE_PRINT=1`).
 2. Build the AscendNPU IR meta op library with `--cce-enable-print` (currently enabled by default).
 
-#### HFusion: PrintOp
+#### hfusion: PrintOp
 
-**Interface**:
+##### API
 
 ```mlir
-# hex: whether to print values in hex (default decimal)
-# %0: tensor to print, 1D size 8, dtype=int64
+// hex: whether to print values in hex (default decimal)
+// %0: tensor to print, 1D size 8, dtype=int64
 hfusion.print " x: " {hex = xxx} %0 : tensor<8xi64>
 ```
 
-**Usage**:
+##### Usage
 
-You can insert `PrintOp` during HFusion passes or when building IR by hand. Example: to print the result of a load, add `hfusion.print` in the HFusion IR:
+You can insert `PrintOp` during HFusion passes or when building IR by hand.
+Example: To print the result of a load, add `hfusion.print` in the HFusion IR:
 
 ```mlir
 func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg2: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg3: i32, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -43,20 +45,21 @@ func.func @vector_kernel(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<syn
 
 #### HIVM: DebugOp
 
-**Interface**:
+##### API
 
 ```mlir
-# debugtype: "print" or "assert"
-# hex: print in hex or decimal
-# prefix: string printed before the value
-# tcoretype: CUBE or VECTOR core
-# %0: tensor to print, 1D size 8, dtype=int64
+// debugtype: "print" or "assert"
+// hex: whether to print values in hex (default decimal)
+// prefix: string printed before the value
+// tcoretype: CUBE or VECTOR core
+// %0: tensor to print, 1D size 8, dtype=int64
 hivm.hir.debug {debugtype = "xxx", hex = xxx, prefix = " xxx: ", tcoretype = #hivm.tcore_type<xxx>} %0 : tensor<8xi64>
 ```
 
-**Usage**:
+##### Usage
 
-You can add `DebugOp` during HIVM passes or in hand-written HIVM IR. Example: to print the result of a load, add `hivm.hir.debug` in the HIVM IR:
+You can add `DebugOp` during HIVM passes or in hand-written HIVM IR.
+Example: To print the result of a load, add `hivm.hir.debug` in the HIVM IR:
 
 ```mlir
 func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xi64> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, false, false, false, false]> : vector<8xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
@@ -72,28 +75,29 @@ func.func @vector_kernel(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_ad
 }
 ```
 
-### Triton integration
+### Triton Integration
 
-Multiple frontends integrate with AscendNPU IR; here we describe Triton. The other methods include TileLang, FlagTree, DLCompiler, and TLE, can also follow Triton's pattern.
+Multiple frontends integrate with AscendNPU IR; here we describe Triton. The other methods including TileLang, FlagTree, DLCompiler, and TLE, can also follow Triton's pattern.
 
-Triton debug-related ops:
+Triton debug-related ops are classified into the following types:
 
-- **static_assert**: Compile-time assertion
-- **static_print**: Compile-time print
-- **device_assert**: Runtime device assertion
-- **device_print**: Runtime device print
+* **static_assert**: static compile-time assertion
+* **static_print**: static compile-time print
+* **device_assert**: runtime device assertion
+* **device_print**: runtime device print
 
 #### static_assert
 
-**API**:
+##### API
 
-```text
+```python
 # condition: bool – compile-time constant boolean
 # message: str – optional message when assertion fails
 triton.language.static_assert(condition: bool, message: str = "") -> None
 ```
 
-**Example**:
+##### Example
+
 You can verify the correctness of the functionality by running `python3 <file>.py`
 
 ```python
@@ -121,20 +125,21 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-**Assertion effect**:
+##### Assertion effect
 
 ![image](../../images/user_guide/debug_option1.png)
 
 #### static_print
 
-**API**:
+##### API
 
-```text
+```python
 # message: str – message to print; can include compile-time constants
 triton.language.static_print(message: str) -> None
 ```
 
-**Example**:
+##### Example
+
 You can verify the correctness of the functionality by running `python3 <file>.py`
 
 ```python
@@ -162,7 +167,7 @@ if __name__ == "__main__":
     vector(x, y)
 ```
 
-**Print effect**:
+#### Printing effect
 
 ```text
 [warning]: tiling struct [GMMTilingData] is conflict with one in tiling grating tiling
@@ -172,17 +177,20 @@ Dumping intermediate results to /root/.triton/dump/KHviKCdUEjStublnqGQietpeng6Si
 
 #### device_assert
 
-Note: set `export TRITON_DEBUG=1` and `export TRITON_DEVICE_PRINT=1` before use.
+Note: set `export TRITON_DEBUG=1 and export TRITON_DEVICE_PRINT=1` before before using this function.
 
-**API**:
+##### API
 
-```text
+```python
 # condition: bool – condition to assert (must be a boolean tensor)
-# message: str – optional message on failure
+# message: str – optional message when assertion fails
+
+# Triton Language API
 triton.language.device_assert(condition: bool, message: str = "") -> None
 ```
 
-**Example**:
+##### Example
+
 You can verify the correctness of the functionality by running `python3 <file>.py`
 
 ```python
@@ -213,24 +221,27 @@ if __name__ == "__main__":
     test_assert()
 ```
 
-**Assertion effect**:
+##### Assertion effect
 
 ![image](../../images/user_guide/debug_option3.png)
 
 #### device_print
 
-Note: set `export TRITON_DEVICE_PRINT=1` before use.
+Note: Set `export TRITON_DEVICE_PRINT=1` before using this function.
 
-**API**:
+##### API
 
-```text
-# prefix: str – string printed before the value(s)
-# *args – tensors or scalars to print
-# hex: bool – print in hex (default False)
+```python
+# prefix: str – string printed before the values
+# *args - tensors or scalars to print
+# hex: bool – print in hex or decimal
+
+# Triton Language API
 triton.language.device_print(prefix, *args, hex=False) -> None
 ```
 
-**Example**:
+##### Example
+
 You can verify the correctness of the functionality by running `python3 <file>.py`
 
 ```python
@@ -258,7 +269,7 @@ if __name__ == "__main__":
     test_print()
 ```
 
-**Print effect**:
+##### Printing effect
 
 ![image](../../images/user_guide/debug_option4.png)
 
@@ -266,18 +277,18 @@ if __name__ == "__main__":
 
 ### mssanitizer
 
-Command-line tool for Triton kernel memory errors, race conditions, and uninitialized access. Set `export TRITON_ENABLE_SANITIZER=true` before use.
+The command-line tool detects the Triton kernel memory, race conditions, and uninitialized access. Set `export TRITON_ENABLE_SANITIZER=true` before using this function.
 
-**Usage**:
+#### Usage
 
 ```bash
-# Run your Triton kernel as usual
+# Start the Triton kernel directly.
 mssanitizer python test.py
 ```
 
-**Example**:
+#### Example
 
-The following Triton add example uses an incorrect `offsets` calculation to show mssanitizer detection:
+The following Triton add example uses an incorrect offsets calculation to show mssanitizer detection:
 
 ```python
 import torch
@@ -325,48 +336,48 @@ Running `mssanitizer python3 test_add.py` produces console output where mssaniti
 
 ![image](../../images/user_guide/debug_option5.png)
 
-For more on mssanitizer, see [MindStudio operator development tools](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html).
+Note: For more information about mssanitizer detection, see [MindStudio Operator Development Tools](https://www.hiascend.com/document/detail/en/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0039.html).
 
 ### msprof
 
-Command-line profiling tool for Triton kernel performance collection and analysis.
+The command-line profiling tool collects and analyzes Triton kernel performance data.
 
-**Usage**:
+#### Usage
 
 ```bash
 # Full-network on-device profiling
 # --output: directory for profiling data (default: current dir)
-# --application: command to run
+# --application: command executing on the entire network
 msprof --output=xxx --application=""
 
 # Single-operator on-device profiling
-# --kernel-name: kernel name (supports prefix match)
+# --output: directory for profiling data (default: current dir)
+# --application: command executing on a single operator
+# --kernel-name: kernel name to collect (supports prefix match)
 # --aic-metrics: enable metrics (Roofline, Occupancy, MemoryDetail, etc.)
 msprof op --output=xxx --application="" --kernel-name=xxx --aic-metrics=xxx
 
-# Single Operator Simulation Tuning
-# --core-id - Specify the IDs of partial logical cores to parse simulation data of designated cores
-# --kernel-name - Specify the name of the operator to be collected; fuzzy matching by operator name prefix is supported
-# --soc-version - Specify the simulator type
-# --output - Storage path for collected performance data; data is saved in the current directory by default
+# Single-operator simulation tuning
+# --core-id: IDs of some logical cores to parse their simulation data
+# --kernel-name: kernel name to collect (supports prefix match)
+# --soc-version: simulator type
+# --output: directory for profiling data (default: current dir)
 msprof op simulator --core-id=xxx --kernel-name=xxx --soc-version=Ascendxxx --output=xxx
 ```
 
-**Common performance analysis outputs**:
+#### Common performance analysis charts
 
-- **trace.json**: Open in chrome://tracing/ for instruction pipeline view.
-
+- **trace.json**: Open in `chrome://tracing/` for instruction pipeline view.
     ![image](../../images/user_guide/debug_option6.png)
 
-- **visualize_data.bin**: Open in Mind Studio Insight to visualize instruction execution on the Ascend AI processor.
-
+- **visualize_data.bin**: Open in MindStudio Insight to visualize instruction execution on the Ascend AI processor.
     ![image](../../images/user_guide/debug_option7.png)
 
-For more analysis options, see [MindStudio operator development tools](https://www.hiascend.com/document/detail/zh/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html).
+Note: For more information about performance analysis charts, see [MindStudio Operator Development Tools](https://www.hiascend.com/document/detail/en/mindstudio/830/ODtools/Operatordevelopmenttools/atlasopdev_16_0136.html).
 
-**Triton kernel pipeline collection**:
+#### Triton kernel pipeline collection
 
-Using the following add kernel as an example to collect pipeline data:
+The following uses add kernel as an example to collect pipeline data:
 
 ```python
 import torch
@@ -410,14 +421,7 @@ if __name__ == "__main__":
     output_triton = add(x, y)
 ```
 
-Run:
+Run `msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py`. This creates an OPPROF with a timestamp directory in the current path.
 
-```bash
-msprof op simulator --kernel-name="add_kernel" --soc-version=Ascend910B4 --core-id=0 --output=./ python3 test_add.py
-```
-
-This creates an OPPROF with a timestamp directory in the current path.
-
-Open the `simulator/visualize_data.bin` file in Mind Studio Insight to view the pipeline for the selected core (e.g. core 0), the two types of commonly used performance pipeline diagrams (trace.json/visualize_data.bin) described earlier can both be found in the `./OPPROF_<Timestamp>/simulator` directory.
-
+Open the `simulator/visualize_data.bin` file in MindStudio Insight to view the pipeline for the selected core (e.g. core 0), the two types of commonly used performance pipeline charts (`trace.json/visualize_data.bin`) described earlier can be both found in the `./OPPROF_<Timestamp>/simulator` directory.
 ![image](../../images/user_guide/debug_option9.png)

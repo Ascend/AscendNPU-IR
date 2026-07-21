@@ -2,7 +2,7 @@
 
 Tile Language Ascend (**tilelang-ascend**) is a specialized variant of the tile-lang domain-specific language, specifically optimized for Huawei Ascend NPU (Neural Processing Unit) architecture. Built upon the foundation of tile-lang's Pythonic syntax and [TVM](https://tvm.apache.org/) compiler infrastructure, tilelang-ascend enables developers to efficiently create high-performance AI compute kernels tailored for Ascend processors, including operations like GEMM, vector operations, and attention mechanisms. Tilelang-ascend allows developers to focus on productivity without sacrificing the low-level optimizations necessary for state-of-the-art performance on the NPU.
 
-Within the TileLang ecosystem, we have developed an NPU Intermediate Representation (AscendNPU IR) infrastructure specifically for Ascend, enabling seamless integration into the open-source AI compiler ecosystem based on MLIR. This effort not only enhances the openness and extensibility of the compiler stack but also provides developers with a more flexible and efficient pathway for custom operator development. The compiler backend supports two technical routes: [AscendNPU IR](https://github.com/tile-ai/tilelang-mlir-ascend) and [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto).
+Within the TileLang ecosystem, we have developed an NPU Intermediate Representation (AscendNPU IR) infrastructure specifically for Ascend, enabling seamless integration into the open-source AI compiler ecosystem based on MLIR. This effort not only enhances the openness and extensibility of the compiler stack but also provides developers with a more flexible and efficient pathway for custom operator development. The compiler backend supports two technical routes: [AscendNPU IR](https://github.com/tile-ai/tilelang-ascend/tree/npuir) and [Ascend C & PTO](https://github.com/tile-ai/tilelang-ascend/tree/ascendc_pto)
 
 ![image](../../../images/developer_guide/npuir_architecture.png)
 
@@ -10,9 +10,9 @@ Within the TileLang ecosystem, we have developed an NPU Intermediate Representat
 
 ### Environment Setup
 
-Install the Ascend Toolkit.
+Install Ascend Toolkit.
 
-[Download the installation package](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002), install`Ascend-cann-toolkit`.For complete installation instructions, refer to the [relevant documentation](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit).
+[Download the installation package](https://www.hiascend.com/developer/download/community/result?cann=8.3.RC1.alpha002), and install `Ascend-cann-toolkit`. For complete installation instructions, refer to the [relevant documentation](https://www.hiascend.com/document/detail/en/CANNCommunityEdition/83RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Debian&Software=cannToolKit).
 
 ```bash
 chmod +x Ascend-cann-toolkit_{ascend-cann-toolkit version}_linux-aarch64.run
@@ -27,13 +27,13 @@ source /path/to/install/Ascend/ascend-toolkit/set_env.sh
 
 Prepare a Python environment with Python version between 3.7.*x* and 3.11.4 (inclusive) and ensure that `pip3` is available.
 
-   Ascend Toolkit Installation Requirements
+   Ascend Toolkit installation requirements
 
    ```bash
    pip3 install attrs cython 'numpy>=1.19.2,<=1.24.0' decorator sympy cffi pyyaml pathlib2 psutil protobuf==3.20.0 scipy requests absl-py
    ```
 
-Set Environment Variables
+Set environment variables.
 
 ```bash
 export ACL_OP_INIT_MODE=1
@@ -41,25 +41,24 @@ export ACL_OP_INIT_MODE=1
 
 #### Build
 
-Pull the code
+Pull the code.
 
 ```bash
-git clone https://github.com/tile-ai/tilelang-mlir-ascend.git --recursive
+git clone https://github.com/tile-ai/tilelang-ascend.git --recursive -b npuir
 ```
 
-Run the installation script
+Run the installation script.
 
-> Note: If you environment has gtest include file but has not gtest lib file, the build process may cause some weird problem. 
-> please remove the gtest include file or add the lib file or build gtest with tvm.
+> Note: If your environment has the gtest include file but does not have the gtest lib file, the build process may cause some weird problem.
+> Remove the gtest include file or add the lib file or build gtest with TVM.
 
 ```bash
-cd tilelang-mlir-ascend
+cd tilelang-ascend
 # build AscendNPU-IR in 3rdparty
 bash install_npuir.sh
-# Alternative way of building with local AscendNPU-IR
+# Alternatively, use the local AscendNPU-IR.
 bash install_npuir.sh --bishengir-path=/path/to/AscendNPU-IR/build/install
-# For example, --bishengir-path=./3rdparty/AscendNPU-IR/build/install
-# Assuming that current directory is tilelang-ascend
+# Assuming that current directory is tilelang-ascend, for example, --bishengir-path=./3rdparty/AscendNPU-IR/build/install
 ```
 
 Then do one of the following to apply tilelang settings in your environment:
@@ -76,7 +75,7 @@ or
 open a new terminal
 ```
 
-Install torch_npu
+Install torch_npu.
 
 ```bash
 pip install pybind11 torch_npu
@@ -84,7 +83,7 @@ pip install pybind11 torch_npu
 
 ## Quick Start
 
-This code implements a vector addition kernel using TileLang, a domain-specific language for NPU (Neural Processing Unit) programming. It defines a parallel kernel that adds two float32 vectors of length 4096 on the NPU by loading data into on-chip unified buffers, performing element-wise addition via a low-level NPU instruction (`npuir_add`), and writing the result back to global memory. The test function compares the kernel’s output against PyTorch’s native vector addition to verify correctness. The example runs on NPU device 6 and demonstrates basic TileLang workflow: kernel definition, compilation to AscendNPU IR, and execution with PyTorch tensors.
+This code implements a vector addition kernel using TileLang, a domain-specific language for NPU (Neural Processing Unit) programming. It defines a parallel kernel that adds two float32 vectors of length 4096 on the NPU by loading data into on-chip unified buffers, performing elementwise addition via a low-level NPU instruction (`npuir_add`), and writing the result back to global memory. The test function compares the kernel's output against PyTorch's native vector addition to verify correctness. The example runs on an NPU device and demonstrates basic TileLang workflow: kernel definition, compilation to AscendNPU IR, and execution with PyTorch tensors.
 
 ### TileLang Kernel (vector addition)
 
@@ -188,7 +187,7 @@ if __name__ == "__main__":
     test_vec_add()
 ```
 
-After run `python3 test_tilelang.py`, we can see the result
+After run `python3 test_tilelang.py`, we can see the result.
 
 ```bash
 Reference result (PyTorch):
@@ -199,7 +198,7 @@ tensor([-0.9222,  1.9638,  0.6157,  ...,  0.4924,  0.3776, -0.2921])
 
 ### AscendNPU-IR (vector addition)
 
-When `export TILELANG_DUMP_IR=1` is set, TVM IR and AscendNPU IR will be dumped, the AscendNPU IR part is like the following text:
+When `export TILELANG_DUMP_IR=1` is set, TVM IR and AscendNPU IR will be dumped. The AscendNPU IR part is like the following text:
 
 ```mlir
 module attributes {hivm.module_core_type = #hivm.module_core_type<AIV>, memref.memref_as_ptr} {

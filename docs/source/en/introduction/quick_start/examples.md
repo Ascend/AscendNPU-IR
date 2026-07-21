@@ -1,10 +1,10 @@
-# Compile and run example
+# Compile and Run Example
 
 This example shows how to compile IR to a device binary with `bishengir-compile` and run it on device using CANN runtime (registration and launch).
 
 **Prerequisites**: Complete [Build and install](installing_guide.md), ensure `bishengir-compile` is on PATH, and install CANN and run `set_env.sh`.
 
-## IR compilation
+## IR Compilation
 
 Prepare VecAdd MLIR (or convert from another IR):
 
@@ -24,7 +24,7 @@ module {
 }
 ```
 
-Generate the device binary:
+Use `bishengir-compile` to generate the device binary:
 
 ```bash
 # Compile Command
@@ -33,7 +33,7 @@ bishengir-compile add.mlir -enable-hivm-compile -o kernel.o
 
 The resulting `kernel.o` is the operator binary that runs on the NPU.
 
-## Runtime registration and execution
+## Runtime Registration and Execution
 
 The C++ code below implements CANN runtime kernel registration and launch. Build it together with `kernel.o` to run on device.
 
@@ -203,9 +203,9 @@ int main() {
 Build the executable (`main.cpp` reads `kernel.o` from the current directory and registers/invokes the kernel):
 
 ```bash
-# Load CANN environment first (omit if already in shell config); path may vary, see Build and Install
+# Load CANN environment first (omit if already in shell config); path may vary. See Build and Install.
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
-# Configure include and library paths, If CANN is installed elsewhere, set ASCEND_HOME_PATH or use the variable from set_env.sh
+# Configure include and library paths. If CANN is installed elsewhere, set ASCEND_HOME_PATH or use the variable from set_env.sh
 RT_INC=${ASCEND_HOME_PATH}/include
 PROF_INC=${ASCEND_HOME_PATH}/include/experiment/msprof
 PKG_INC=${ASCEND_HOME_PATH}/pkg_inc

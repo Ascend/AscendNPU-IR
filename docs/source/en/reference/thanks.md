@@ -1,4 +1,4 @@
-# Related projects and thanks
+# Related Projects and Thanks
 
 This document lists open-source projects and ecosystems closely related to AscendNPU IR and thanks the LLVM/MLIR and other communities.
 
@@ -16,4 +16,4 @@ Triton-Ascend brings Triton programming to Ascend, so Triton code runs efficient
 
 ## [TileLang-Ascend](https://github.com/tile-ai/tilelang-ascend)
 
-TileLang is a domain-specific language for tensor computation; TileLang-Ascend is its Ascend-oriented version. By using AscendNPU IR as the backend, TileLang-Ascend leverages AscendNPU IR’s Ascend-aware optimizations to generate high-performance Ascend operators.
+TileLang is a domain-specific language for tensor computation; TileLang-Ascend is its Ascend-oriented version. By using AscendNPU IR as the backend, TileLang-Ascend leverages AscendNPU IR's Ascend-aware optimizations to generate high-performance Ascend operators.
