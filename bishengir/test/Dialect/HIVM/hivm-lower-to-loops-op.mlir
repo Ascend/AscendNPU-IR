@@ -1274,19 +1274,12 @@ func.func @test_decompose_argmin_float(%src: memref<2x5x7xf16, strided<[96, 16, 
 
 module {
   // CHECK-LABEL: func @test_cumsum_1d_i64
-  // CHECK: %[[CST1:.*]] = arith.constant 1 : index
-  // CHECK: %[[CST16:.*]] = arith.constant 16 : index
-  // CHECK: %[[CST0:.*]] = arith.constant 0 : index
-  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi64>
-  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<16xi64>
-  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[CST0]]] : memref<16xi64>
-  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[CST0]]] : memref<16xi64>
-  // CHECK: scf.for %[[arg0:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
-  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[arg0]]] : memref<16xi64>
-  // CHECK: %[[arg1:.*]] = arith.subi %[[arg0]], %[[CST1]] : index
-  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[arg1]]] : memref<16xi64>
-  // CHECK: %[[dst:.*]] = arith.addi %[[input]], %[[cum]] : i64
-  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[arg0]]] : memref<16xi64>
+  // i64 1D dim0 cumsum is routed to the SIMT Sklansky library call by
+  // VCumsumOp::shouldLowerToScalarLoops (i64 vector registers are unsupported
+  // on hardware), so hivm-lower-to-loops must leave the op intact here.
+  // CHECK-NOT: scf.for
+  // CHECK: hivm.hir.vcumsum
+  // CHECK: return
   func.func @test_cumsum_1d_i64() {
     %src = memref.alloc() : memref<16xi64>
     %dst = memref.alloc() : memref<16xi64>
@@ -1541,20 +1534,12 @@ module {
 // -----
 module {
   // CHECK-LABEL: func @test_cumsum_1d_i64_reverse
-  // CHECK: %[[CST1:.*]] = arith.constant 1
-  // CHECK: %[[CST16:.*]] = arith.constant 16
-  // CHECK: %[[CST15:.*]] = arith.constant 15
-  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xi64>
-  // CHECK: %[[ALLOC_0:.*]] = memref.alloc() : memref<16xi64>
-  // CHECK: %[[input0:.*]] = memref.load %[[ALLOC]][%[[CST15]]] : memref<16xi64>
-  // CHECK: memref.store %[[input0]], %[[ALLOC_0]][%[[CST15]]] : memref<16xi64>
-  // CHECK: scf.for %[[arg0:.*]] = %[[CST1]] to %[[CST16]] step %[[CST1]]
-  // CHECK: %[[index:.*]] = arith.subi %[[CST15]], %[[arg0]] : index
-  // CHECK: %[[input:.*]] = memref.load %[[ALLOC]][%[[index]]] : memref<16xi64>
-  // CHECK: %[[next:.*]] = arith.addi %[[index]], %[[CST1]] : index
-  // CHECK: %[[cum:.*]] = memref.load %[[ALLOC_0]][%[[next]]] : memref<16xi64>
-  // CHECK: %[[dst:.*]] = arith.addi %[[input]], %[[cum]] : i64
-  // CHECK: memref.store %[[dst]], %[[ALLOC_0]][%[[index]]] : memref<16xi64>
+  // See test_cumsum_1d_i64: i64 1D dim0 cumsum is lowered via the SIMT library
+  // call, not hivm-lower-to-loops scalar loops. reverse=true keeps the same
+  // gate (cum_dims[0] == 0, rank == 1, i64).
+  // CHECK-NOT: scf.for
+  // CHECK: hivm.hir.vcumsum
+  // CHECK: return
   func.func @test_cumsum_1d_i64_reverse() {
     %src = memref.alloc() : memref<16xi64>
     %dst = memref.alloc() : memref<16xi64>
@@ -1750,5 +1735,41 @@ module {
     hivm.hir.vcumprod ins(%src : memref<2x16xi32>) outs(%dst : memref<2x16xi32>) cum_dims = [1] reverse = false
     return
   }
+}
+
+//===----------------------------------------------------------------------===//
+// Test VCumsum SIMT-library dispatch gate
+//===----------------------------------------------------------------------===//
+// i64 vector registers are unsupported on hardware; the 1D dim0 path is
+// routed to the SIMT Sklansky library call by VCumsumOp::shouldLowerToScalarLoops.
+// The bc template only instantiates (src,dst) ∈ {(i64,i64), (i32,i64)}, so the
+// gate only returns false (= "leave for library call") for those two pairs.
+// Other i64-dst mixed types (i1/i8/i16/u8/u16/u32 src) fall through to the
+// scalar-loop fallback. Production i16→i64 cumsum is rewritten upstream by
+// Triton's promote pass (i16→i32) + cast_signed (i32→i64) and lands on the
+// supported (i32,i64) case below — direct i16→i64 vcumsum does not arise.
+
+// -----
+
+// Same-type i64 1D dim0: dispatched to the SIMT library (symbol exists).
+// CHECK-LABEL: func @test_cumsum_1d_i64_dispatched_to_simt
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.vcumsum
+// CHECK: return
+func.func @test_cumsum_1d_i64_dispatched_to_simt(%src: memref<16xi64>, %dst: memref<16xi64>) attributes {hacc.entry} {
+  hivm.hir.vcumsum ins(%src : memref<16xi64>) outs(%dst : memref<16xi64>) cum_dims = [0] reverse = false
+  return
+}
+
+// -----
+
+// Mixed i32 → i64 1D dim0: dispatched to the SIMT library (folded cast symbol).
+// CHECK-LABEL: func @test_cumsum_1d_i32_to_i64_dispatched_to_simt
+// CHECK-NOT: scf.for
+// CHECK: hivm.hir.vcumsum
+// CHECK: return
+func.func @test_cumsum_1d_i32_to_i64_dispatched_to_simt(%src: memref<16xi32>, %dst: memref<16xi64>) attributes {hacc.entry} {
+  hivm.hir.vcumsum ins(%src : memref<16xi32>) outs(%dst : memref<16xi64>) cum_dims = [0] reverse = false
+  return
 }
 

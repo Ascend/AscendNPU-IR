@@ -97,6 +97,30 @@ static bool shouldCumOpWithTempLowerToScalarLoops(HIVMOP op) {
 }
 
 bool VCumsumOp::shouldLowerToScalarLoops() {
+  if (!hasPureBufferSemantics()) {
+    return false;
+  }
+  auto cumDims = getCumDims();
+  if (cumDims.size() > 1) {
+    return false;
+  }
+  auto elemType = getElementTypeOrSelf(getDst());
+  // i64 vector register is unsupported on hardware; the 1D dim0 path uses the
+  // SIMT Sklansky library call (warp scan + cross-block carry) instead.
+  // Gate on the (src,dst) pairs that actually have a bc symbol:
+  //   (i64,i64)    -> cumsum_1d_int64_t_dim0
+  //   (i32,i64)    -> cumsum_1d_int32_t_to_int64_t_dim0
+  // Other i64-dst mixes (i1/i8/i16/u8/u16/u32 src) would fall through the
+  // library-call path and fail at link time (no bc symbol), so they stay on
+  // the scalar-loop fallback here.
+  auto srcType = dyn_cast<ShapedType>(getSrc().getType());
+  if (elemType.isInteger(64) && srcType && srcType.getRank() == 1 &&
+      !cumDims.empty() && cumDims[0] == 0) {
+    auto srcElemType = getElementTypeOrSelf(getSrc());
+    if (srcElemType.isInteger(64) || srcElemType.isInteger(32)) {
+      return false;
+    }
+  }
   return shouldCumOpWithTempLowerToScalarLoops(*this);
 }
 

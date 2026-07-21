@@ -346,6 +346,7 @@ DECLARE_CUMSUM(1, uint32_t, 0);
 DECLARE_CUMSUM(1, half, 0);
 DECLARE_CUMSUM(1, float, 0);
 DECLARE_CUMSUM(1, bfloat16_t, 0);
+DECLARE_CUMSUM(1, int64_t, 0);
 
 DECLARE_CUMSUM(2, int8_t, 0);
 DECLARE_CUMSUM(2, uint8_t, 0);

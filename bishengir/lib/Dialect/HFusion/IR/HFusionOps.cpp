@@ -2721,6 +2721,60 @@ void GatherOp::getCanonicalizationPatterns(RewritePatternSet &results,
 // CumsumOp
 //===----------------------------------------------------------------------===//
 
+namespace {
+// Fold hfusion.cast i32→i64 into the following cumsum so the SIMT library call
+// reads i32 directly and the separate cast kernel is dropped (1D dim0 only).
+struct CumsumFuseSextInput : public OpRewritePattern<CumsumOp> {
+  using OpRewritePattern<CumsumOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CumsumOp op,
+                                PatternRewriter &rewriter) const override {
+    // Match cumsum(i64) whose producer is cast_signed i32 → i64, same shape.
+    auto inputType = dyn_cast<RankedTensorType>(op.getInput().getType());
+    auto outputType = dyn_cast<RankedTensorType>(op.getOutput().getType());
+    if (!inputType || !outputType ||
+        !inputType.getElementType().isInteger(64) ||
+        !outputType.getElementType().isInteger(64))
+      return failure();
+
+    // Only 1D dim0 has the fused SIMT symbol.
+    auto cumDims = op.getCumDims();
+    if (cumDims.size() != 1 || cumDims[0] != 0 || inputType.getRank() != 1 ||
+        !inputType.getShape().equals(outputType.getShape()))
+      return failure();
+
+    // Producer must be a sign-extending hfusion.cast i32 → i64.
+    auto producer = op.getInput().getDefiningOp<hfusion::CastOp>();
+    if (!producer)
+      return failure();
+    if (producer.getCast() != hfusion::TypeFn::cast_signed)
+      return failure();
+    if (producer.getInputs().empty())
+      return failure();
+    auto origInput = producer.getInputs()[0];
+    auto producerInputType =
+        dyn_cast<RankedTensorType>(origInput.getType());
+    if (!producerInputType ||
+        !producerInputType.getElementType().isInteger(32) ||
+        !producerInputType.getShape().equals(inputType.getShape()))
+      return failure();
+
+    rewriter.modifyOpInPlace(op, [&]() {
+      op->setOperand(0, origInput);
+    });
+    // Erase the cast if it is now dead.
+    if (producer->use_empty())
+      rewriter.eraseOp(producer);
+    return success();
+  }
+};
+} // namespace
+
+void CumsumOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                           MLIRContext *context) {
+  results.add<CumsumFuseSextInput>(context);
+}
+
 LogicalResult CumsumOp::verify() { return verifyCumOp(*this); }
 
 //===----------------------------------------------------------------------===//

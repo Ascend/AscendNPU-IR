@@ -1922,8 +1922,7 @@ def VCumprodOp : HIVM_VectorOp<"vcumprod",
 //===----------------------------------------------------------------------===//
 
 def VCumsumOp : HIVM_VectorOp<"vcumsum",
-    [SameOperandsElementType,
-     StaticMaxRankTrait<2>,
+    [StaticMaxRankTrait<2>,
      OperElemTypeConstraints<[0], [I1, I8, I16, I32, I64, F16, F32, BF16]>,
      DeclareOpInterfaceMethods<HIVMStructuredOpInterface,
        ["getIteratorTypesArray"]>,
