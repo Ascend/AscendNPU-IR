@@ -7,7 +7,7 @@ add_bishengir_conversion_library(BiShengIRHIVMToTritonGPU
 
   BufferizationToTriton.cpp
   AffineToTriton.cpp
-  ReinterpretCastOpReplacementPattern.cpp
+  MemrefToTriton.cpp
   FuncToTriton.cpp
   HIVMToTritonGPU.cpp
   HIVMToTriton.cpp
