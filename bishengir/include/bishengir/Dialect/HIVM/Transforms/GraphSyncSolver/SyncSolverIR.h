@@ -46,6 +46,7 @@ enum struct OpType {
   LOOP,
   LOOP_END,
   MMAD_SCOPE,
+  MMAD_MX_SCOPE,
   CONDITION,
   SCOPE_END,
   SYNC_OP,
@@ -60,6 +61,8 @@ enum struct OpType {
   MMAD_LOAD_L0A_OPERATION,
   MMAD_LOAD_L0B_OPERATION,
   MMAD_LOAD_BIAS_OPERATION,
+  MMAD_LOAD_L0A_MX_OPERATION,
+  MMAD_LOAD_L0B_MX_OPERATION,
   RW_OPERATION_END
 };
 
@@ -246,6 +249,19 @@ public:
   }
 };
 
+class MmadMxL1LoopOp : public Scope {
+private:
+public:
+  MmadL0Operation *mmadL0Op{nullptr};
+
+  MmadMxL1LoopOp(Operation *op, OperationBase *parentOp)
+      : Scope(OpType::MMAD_MX_SCOPE, op, parentOp) {};
+
+  static bool classof(const OperationBase *e) {
+    return e->opType == OpType::MMAD_MX_SCOPE;
+  }
+};
+
 class Condition : public Scope {
 
 private:
@@ -404,6 +420,38 @@ public:
 
   static bool classof(const OperationBase *e) {
     return e->opType == OpType::MMAD_LOAD_BIAS_OPERATION;
+  }
+};
+
+class LoadL0AMxOp : public RWOperation {
+private:
+public:
+  LoadL0AMxOp(Operation *op, OperationBase *parentOp,
+                 hivm::TCoreType coreType, hivm::PIPE pipeRead,
+                 hivm::PIPE pipeWrite,
+                 const llvm::SmallVector<Value> &readMemVals,
+                 const llvm::SmallVector<Value> &writeMemVals)
+      : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
+                    writeMemVals, OpType::MMAD_LOAD_L0A_MX_OPERATION) {}
+
+  static bool classof(const OperationBase *e) {
+    return e->opType == OpType::MMAD_LOAD_L0A_MX_OPERATION;
+  }
+};
+
+class LoadL0BMxOp : public RWOperation {
+private:
+public:
+  LoadL0BMxOp(Operation *op, OperationBase *parentOp,
+                 hivm::TCoreType coreType, hivm::PIPE pipeRead,
+                 hivm::PIPE pipeWrite,
+                 const llvm::SmallVector<Value> &readMemVals,
+                 const llvm::SmallVector<Value> &writeMemVals)
+      : RWOperation(op, parentOp, coreType, pipeRead, pipeWrite, readMemVals,
+                    writeMemVals, OpType::MMAD_LOAD_L0B_MX_OPERATION) {}
+
+  static bool classof(const OperationBase *e) {
+    return e->opType == OpType::MMAD_LOAD_L0B_MX_OPERATION;
   }
 };
 
