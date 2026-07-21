@@ -330,23 +330,23 @@ struct RewriteUsingMapOp : public GenericPreprocessAndRewrite<From> {
     assert(op.getDst().size() == 1);
     rewriter.replaceOpWithNewOp<linalg::MapOp>(
         op, preprocessedOperands, op.getDst()[0],
-        [this](OpBuilder &rewriter, const Location loc, ValueRange operands) {
+        [this, &op](OpBuilder &rewriter, const Location loc, ValueRange operands) {
           rewriter.create<linalg::YieldOp>(
-              loc, ValueRange(rewriteFromMap(rewriter, loc, operands)));
+              loc, ValueRange(rewriteFromMap(rewriter, loc, operands, op)));
         });
     return success();
   }
 
   virtual Value rewriteFromMap(OpBuilder &rewriter, Location loc,
-                               ValueRange operands) const = 0;
+                               ValueRange operands, FromOp& op) const = 0;
 };
 
-template <typename FromOp, typename ToOp>
-struct RewriteVBitwiseOp final : public RewriteUsingMapOp<FromOp> {
+template <typename FromOp>
+struct RewriteVBitwiseOp : public RewriteUsingMapOp<FromOp> {
   using RewriteUsingMapOp<FromOp>::RewriteUsingMapOp;
 
   Value rewriteFromMap(OpBuilder &rewriter, const Location loc,
-                       ValueRange operands) const final {
+                       ValueRange operands, FromOp& fromOp) const final {
     assert(operands.size() == 2);
     Value lhs = operands[0], rhs = operands[1];
 
@@ -357,11 +357,34 @@ struct RewriteVBitwiseOp final : public RewriteUsingMapOp<FromOp> {
           loc, rewriter.getIntegerType(floatType.getWidth()), rhs);
     }
 
-    Value result = rewriter.create<ToOp>(loc, lhs, rhs);
+    Value result = createToOp(rewriter, loc, lhs, rhs, fromOp);
 
     if (const auto type = dyn_cast<FloatType>(operands[0].getType()))
       result = rewriter.create<arith::BitcastOp>(loc, type, result);
     return result;
+  }
+
+  virtual Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp &fromOp) const = 0;
+};
+
+template <typename FromOp, typename ToOp>
+struct RewriteVBitwiseLogicOp final : public RewriteVBitwiseOp<FromOp> {
+  using RewriteVBitwiseOp<FromOp>::RewriteVBitwiseOp;
+
+  Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
+    return rewriter.create<ToOp>(loc, lhs, rhs);
+  }
+};
+
+template <typename SignedOp, typename UnsignedOp>
+struct RewriteVBitwiseShiftOp final : public RewriteVBitwiseOp<hivm::VShROp> {
+  using RewriteVBitwiseOp<hivm::VShROp>::RewriteVBitwiseOp;
+
+  Value createToOp(OpBuilder &rewriter, const Location loc, Value lhs, Value rhs, FromOp& fromOp) const override {
+    if (fromOp.getIsSigned()) {
+      return rewriter.create<SignedOp>(loc, lhs, rhs);
+    }
+    return rewriter.create<UnsignedOp>(loc, lhs, rhs);
   }
 };
 
@@ -1469,10 +1492,11 @@ struct ConvertHIVMToUpstream
                                    hfusion::UnaryFn::relu>,
                  RewriteElemwiseOp<hivm::VNotOp, hfusion::ElemwiseUnaryOp,
                                    hfusion::UnaryFn::vnot>>(&ctx);
-    patterns.add<RewriteVBitwiseOp<hivm::VAndOp, arith::AndIOp>,
-                 RewriteVBitwiseOp<hivm::VOrOp, arith::OrIOp>,
-                 RewriteVBitwiseOp<hivm::VXorOp, arith::XOrIOp>,
-                 RewriteVBitwiseOp<hivm::VShROp, arith::ShRSIOp>>(&ctx);
+    patterns.add<RewriteVBitwiseLogicOp<hivm::VAndOp, arith::AndIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VOrOp, arith::OrIOp>,
+                 RewriteVBitwiseLogicOp<hivm::VXorOp, arith::XOrIOp>,
+                 RewriteVBitwiseShiftOp<arith::ShRSIOp, arith::ShRUIOp>>(&ctx);
+
     if (convertToNamedOp) {
       patterns.add<RewriteElemwiseOp<hivm::VShLOp, hfusion::ElemwiseBinaryOp,
                                      hfusion::BinaryFn::shli>>(&ctx);
