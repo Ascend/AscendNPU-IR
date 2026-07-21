@@ -2407,3 +2407,15 @@ func.func @test_reuse_l0C(%arg0: memref<128x128xf16, #hivm.address_space<gm>>, %
   }
   return
 }
+
+// -----
+// CHECK: warning: [hivm-plan-memory] There reused some dma buffers in ub address space, which may stall pipe. Not reusing dma buffer needs 2097152 bits while 1572864 bits available!
+func.func @test_reuse_dma_buffer_warning(%arg0: memref<16x32x128xf16, #hivm.address_space<gm>>, %arg1: memref<16x32x128xf16, #hivm.address_space<gm>>) {
+  %alloc = memref.alloc() : memref<16x32x128xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%arg0 : memref<16x32x128xf16, #hivm.address_space<gm>>) outs(%alloc : memref<16x32x128xf16, #hivm.address_space<ub>>)
+  hivm.hir.store ins(%alloc : memref<16x32x128xf16, #hivm.address_space<ub>>) outs(%arg0 : memref<16x32x128xf16, #hivm.address_space<gm>>)
+  %alloc_0 = memref.alloc() : memref<16x32x128xf16, #hivm.address_space<ub>>
+  hivm.hir.load ins(%arg1 : memref<16x32x128xf16, #hivm.address_space<gm>>) outs(%alloc_0 : memref<16x32x128xf16, #hivm.address_space<ub>>)
+  hivm.hir.store ins(%alloc_0 : memref<16x32x128xf16, #hivm.address_space<ub>>) outs(%arg1 : memref<16x32x128xf16, #hivm.address_space<gm>>)
+  return
+}

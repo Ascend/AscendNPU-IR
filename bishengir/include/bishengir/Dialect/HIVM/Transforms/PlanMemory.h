@@ -12,10 +12,10 @@
 #include "bishengir/Dialect/HACC/IR/HACCInterfaces.h"
 #include "bishengir/Dialect/HIVM/Analysis/VFInplaceReuseAnalyzer.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/HIVM/Transforms/OptMemPlanForPipeline.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -425,8 +425,7 @@ private:
                                 scope::ReturnOp returnOp);
 
   /// Update preload buffer info from mark op.
-  void UpdatePreloadBuffers(annotation::MarkOp markOp,
-                            memref::AllocOp allocOp);
+  void UpdatePreloadBuffers(annotation::MarkOp markOp, memref::AllocOp allocOp);
 
   /// Check if a buffer is a preload buffer.
   bool IsPreloadBuffer(Value buffer);
@@ -527,11 +526,9 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 /// MemPlan::IsInplaceReuseReachable when it called with the same value.
 class InplaceReuseReachableMap {
 public:
-  template <typename DstOpType>
-  void put(Value key, bool val);
+  template <typename DstOpType> void put(Value key, bool val);
 
-  template <typename DstOpType>
-  std::optional<bool> get(Value key);
+  template <typename DstOpType> std::optional<bool> get(Value key);
 
 private:
   DenseMap<Value, bool> storeReachable;
@@ -540,9 +537,9 @@ private:
 
 class MemPlan {
 public:
-MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
-           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
-           int simtVFDynamicSize, bool disableVFReachableCheck,
+  MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
+          bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
+          int simtVFDynamicSize, bool disableVFReachableCheck,
            PlanMemoryStrategy planMemoryStrategy)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
@@ -592,8 +589,8 @@ MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
     syncBlockPositions = std::move(positions);
   }
 
-  inline void SetCVMixIdReuseAllowedPairs(
-      DenseSet<std::pair<int32_t, int32_t>> pairs) {
+  inline void
+  SetCVMixIdReuseAllowedPairs(DenseSet<std::pair<int32_t, int32_t>> pairs) {
     cvMixIdReuseAllowedPairs = std::move(pairs);
   }
 
@@ -660,12 +657,9 @@ private:
   /// Start plan.
   PlanStatus PlanMemAddressOfWholeLocalBuffer();
 
-  /// Plan memory only by level0 to report failure info.
-  void PlanMemAddressForLevel0(StorageEntry *rootStorageEntry);
-
-  /// Determine if the current space is enough to allocate all buffers.
-  bool IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
-                                 size_t restBufferSize, size_t alignUnit);
+  /// Plan memory for single spaceLevel and return maxAllocBits
+  uint64_t PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
+                                        int specLevel);
 
   /// Adjust the allocation order of rootStoreEntry to prioritize the allocation
   /// of buffers corresponding to DMA.
@@ -818,7 +812,8 @@ private:
                                const StorageEntry *e) const;
 
   /// Assign otherbuffer storage entry address(es). Assigns
-  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each i.
+  /// otherBufferRelationEntries[i]->bitsOffset = otherBufferOffsets[i] for each
+  /// i.
   void PlanRelationOtherBufferEntryAddress(
       llvm::ArrayRef<uint64_t> otherBufferOffsets, StorageEntry *e);
 
