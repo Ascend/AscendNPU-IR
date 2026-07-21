@@ -15,6 +15,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/IR/Verifier.h"
 #include "llvm/Support/Debug.h"
 
 using namespace mlir;
@@ -29,12 +30,14 @@ namespace hfusion {
 void FusedNode::addProducer(Operation *op) {
   producers.insert(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
+  consolidateToTail();
+  updateConflicts(op);
 }
 
 void FusedNode::addLeaf(Operation *op) {
   leaf.insert(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
-  consolidateToTail(op->getBlock());
+  consolidateToTail();
   updateConflicts(op);
 }
 
@@ -94,56 +97,47 @@ bool FusedNode::canAccept(Operation *candidate, AcceptContext actx) const {
 // Helpers for consolidateToTail
 //===----------------------------------------------------------------------===//
 
-static void
-visitUsersOfLeafNodeRecursively(Operation *op, Operation *lastLeafNode,
-                                Block *block,
-                                DenseSet<Operation *> &usersToBeMovedSet) {
-  DominanceInfo domInfo;
-  for (Operation *user : op->getUsers()) {
-    if (!user || user->hasTrait<OpTrait::IsTerminator>() ||
-        domInfo.properlyDominates(lastLeafNode, user)) {
-      continue;
-    }
-    while (!isOpInBlock(user, block)) {
-      user = user->getParentOp();
-    }
-    if (usersToBeMovedSet.contains(user)) {
-      continue;
-    }
-    usersToBeMovedSet.insert(user);
-    visitUsersOfLeafNodeRecursively(user, lastLeafNode, block,
-                                    usersToBeMovedSet);
-  }
+static void climbedForwardSlice(Operation *op,
+                                SetVector<Operation *> &forwardSlice,
+                                const DominanceInfo &domInfo,
+                                Operation *fusedLoop) {
+  while (op->getParentOp() != fusedLoop->getParentOp())
+    op = op->getParentOp();
+  if (forwardSlice.count(op) || domInfo.dominates(fusedLoop, op))
+    return;
+  for (Operation *userOp : op->getUsers())
+    climbedForwardSlice(userOp, forwardSlice, domInfo, fusedLoop);
+  forwardSlice.insert(op);
 }
 
-void FusedNode::consolidateToTail(Block *block) const {
-  SmallVector<Operation *> leafNodeGroup{leafOps()};
-  if (leafNodeGroup.size() == 1)
+// NOTE: Called after each addLeaf/addProducer, so DominanceInfo is recomputed
+// per call. Fused-node sizes are bounded by maxFusedOps (small), so the
+// overhead is negligible in practice.
+void FusedNode::consolidateToTail() const {
+  SmallVector<Operation *> opGroup{ops().begin(), ops().end()};
+  if (opGroup.size() == 1)
     return;
 
-  llvm::sort(leafNodeGroup,
-             [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
-  Operation *lastLeafNode = leafNodeGroup.back();
-  DenseSet<Operation *> usersToBeMovedSet;
-  for (Operation *leafNode : llvm::drop_end(leafNodeGroup)) {
-    visitUsersOfLeafNodeRecursively(leafNode, lastLeafNode, block,
-                                    usersToBeMovedSet);
-  }
-  SmallVector<Operation *> usersToBeMoved(usersToBeMovedSet.begin(),
-                                          usersToBeMovedSet.end());
-  llvm::sort(usersToBeMoved,
-             [](Operation *a, Operation *b) { return a->isBeforeInBlock(b); });
+  // Sort in reverse block order so that opGroup.front() is the last op in the
+  // block and iteration proceeds from back to front, gathering each earlier op
+  // and its forward-slice users toward the tail of the block.
+  llvm::sort(opGroup,
+             [](Operation *a, Operation *b) { return b->isBeforeInBlock(a); });
+  Operation *firstOp = opGroup.front();
+  Operation *lastOp = opGroup.front();
 
-  Operation *prevMovedLeafNode = lastLeafNode;
-  for (Operation *leafNodeToBeMoved : llvm::drop_end(leafNodeGroup)) {
-    leafNodeToBeMoved->moveBefore(prevMovedLeafNode);
-    prevMovedLeafNode = leafNodeToBeMoved;
+  DominanceInfo domInfo(opGroup.back());
+  for (auto *curr : llvm::drop_begin(opGroup)) {
+    SetVector<Operation *> forwardSlice;
+    climbedForwardSlice(curr, forwardSlice, domInfo, firstOp);
+
+    for (auto *userOp : drop_end(forwardSlice))
+      userOp->moveAfter(lastOp);
+    curr->moveBefore(firstOp);
+    firstOp = curr;
   }
-  Operation *prevMovedUser = lastLeafNode;
-  for (Operation *userToBeMoved : usersToBeMoved) {
-    userToBeMoved->moveAfter(prevMovedUser);
-    prevMovedUser = userToBeMoved;
-  }
+  if (failed(verify(opGroup.back()->getParentOp())))
+    llvm::report_fatal_error("consolidateToTail produced invalid IR");
 }
 
 void FusedNode::updateConflicts(Operation *newOp) const {

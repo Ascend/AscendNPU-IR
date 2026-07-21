@@ -107,7 +107,7 @@ private:
   bool canFitStack(Operation *candidate) const;
   bool hasRankReducing() const;
 
-  void consolidateToTail(Block *block) const;
+  void consolidateToTail() const;
   void updateConflicts(Operation *newOp) const;
 };
 
