@@ -56,6 +56,10 @@ enum class PlanMemoryStrategy {
 static constexpr llvm::StringLiteral kMappingAttrName = "mapping";
 static constexpr llvm::StringLiteral kMapForToForallAttrName =
     "map_for_to_forall";
+// Marks the serial loop created by SIMTVFSubTiling so generic HIVM tiling
+// helpers can treat it like other tiling loops.
+constexpr llvm::StringLiteral kSimtVFTileLoopAttrName =
+    "hivm.simt_vf_tile_loop";
 
 // Attribute names used by the hivm-mark-disable-load pass and consumed by the
 // MemRef-to-LLVM lowering to emit non-cached (ld_dev) load instructions.
@@ -199,6 +203,9 @@ void removeMarkOpDynamicAttr(annotation::MarkOp markOp, StringRef attrName,
 
 // Check whether current for loop is subblock binded.
 bool isSubBlockBindedFor(scf::ForOp op);
+
+// Find containing HIVM tiling loop of current op.
+FailureOr<scf::ForOp> findContainingTilingLoop(Operation *op);
 
 // Find containing subblock loop of current op.
 FailureOr<scf::ForOp> findContainingSubblockLoop(Operation *op);

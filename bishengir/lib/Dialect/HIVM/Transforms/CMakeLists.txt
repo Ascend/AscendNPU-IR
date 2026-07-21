@@ -119,6 +119,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   SinkOpToConsumerInLoop.cpp
   InferSimtVFMemScopeHint.cpp
   MaterializeSimtVFMemScope.cpp
+  SIMTVFSubTiling.cpp
   SplitMixedIfConditionals.cpp
   SplitMixKernel.cpp
   SplitSimtModule.cpp
