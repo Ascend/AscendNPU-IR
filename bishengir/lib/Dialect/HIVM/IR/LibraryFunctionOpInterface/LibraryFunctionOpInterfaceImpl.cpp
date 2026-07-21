@@ -1186,7 +1186,14 @@ std::string NoMaxRankExternalModel<MmadMxL1Op>::getOpLibraryCallName(
       concreteOp.getLoc(),
       getElementTypeOrSelf(concreteOp.getDpsInits()[0].getType()));
 
-  auto finalName = baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+  std::string finalName = baseCallName;
+  if (concreteOp.getPerChannelBias()) {
+    auto biasTypeName = getTypeName(
+        concreteOp.getLoc(),
+        getElementTypeOrSelf(concreteOp.getPerChannelBias().getType()));
+    finalName += "_with_" + biasTypeName + "_bias";
+  }
+  finalName += "_" + srcTypeName + "_to_" + dstTypeName;
   if (concreteOp.getATranspose().has_value())
     finalName += "_ta";
   if (concreteOp.getBTranspose().has_value())
@@ -1300,6 +1307,10 @@ std::string NoMaxRankExternalModel<ND2NZOp>::getOpLibraryCallName(
   for (Operation *nextOp : concreteOp.getDst().getUsers()) {
     if (auto mmadl1Op = llvm::dyn_cast<hivm::MmadL1Op>(nextOp)) {
       if (mmadl1Op.getPerChannelBias() == concreteOp.getDst())
+        callName = callName + "_forbias";
+    }
+    if (auto mmadMxOp = llvm::dyn_cast<hivm::MmadMxL1Op>(nextOp)) {
+      if (mmadMxOp.getPerChannelBias() == concreteOp.getDst())
         callName = callName + "_forbias";
     }
   }

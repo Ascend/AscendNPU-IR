@@ -20,7 +20,7 @@ func.func @test_elemwise_unary_ops(
 }
 
 // -----
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+module {
   // CHECK-LABEL: func.func @test_matmulscale_formatted_i8_transpose
   // CHECK-NOT: hfusion.bitcast
   // CHECK-NOT: linalg.transpose
@@ -50,7 +50,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 }
 
 // -----
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+module {
   // CHECK-LABEL: func.func @test_matmulscale_do_not_inline_format_mismatch
   // CHECK: hivm.hir.bitcast %{{.*}} : tensor<4x8xi8> -> tensor<4x8xf8E5M2>
   // CHECK: hivm.hir.bitcast %{{.*}} : tensor<8x16xi8> -> tensor<8x16xf8E5M2>
@@ -76,7 +76,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 }
 
 // -----
-module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+module {
   // CHECK-LABEL: func.func @test_matmulscale_do_not_inline_partial_bitcast
   // CHECK: hivm.hir.bitcast %{{.*}} : tensor<4x8xi8> -> tensor<4x8xf8E5M2>
   // CHECK: hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32} ins({{.*}} : tensor<4x8xf8E5M2>, tensor<8x16xf8E5M2>
