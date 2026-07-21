@@ -140,6 +140,18 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// AscendDPXToHIVMRegbaseIntrins
+//===----------------------------------------------------------------------===//
+
+def ConvertAscendDPXToHIVMRegbaseIntrins : Pass<"convert-ascend-dpx-to-hivmregbaseintrins", "ModuleOp"> {
+  let summary = "Convert the operations from Ascend DPX into HIVM Regbase Intrins";
+  let constructor = "mlir::createConvertAscendDPXToHIVMRegbaseIntrinPass()";
+  let dependentDialects =
+      ["LLVM::LLVMDialect", "scf::SCFDialect", "arith::ArithDialect",
+       "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "hivm::HIVMDialect"];
+}
+
+//===----------------------------------------------------------------------===//
 // TensorToHFusion
 //===----------------------------------------------------------------------===//
 
