@@ -28,6 +28,7 @@ add_bishengir_library(MLIRBiShengIRCompileLib
   ${dialect_libs}
   ${extension_libs}
   BiShengIRPass
+  BiShengIRRetriablePassManager
   BishengIRTransform
   MLIRHIVMAVEPipelines
   ${triton_libs}

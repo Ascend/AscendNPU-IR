@@ -607,6 +607,9 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.disableVFReachableCheck;
   planMemoryOption.planMemoryStrategy =
       hivmPipelineOptions.planMemoryStrategy;
+  if (hivmPipelineOptions.enableVFOperandSubstitution) {
+    pm.addPass(createVFOperandSubstitutionPass());
+  }
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2

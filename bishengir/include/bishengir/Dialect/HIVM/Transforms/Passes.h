@@ -287,6 +287,9 @@ std::unique_ptr<Pass> createHIVMInlineOTFLoadStorePass();
 // Create a pass to annotate alias info within VF
 std::unique_ptr<Pass> createAnnotateVFAliasPass();
 
+/// Create a pass to reuse a VF input buffer for its output
+std::unique_ptr<Pass> createVFOperandSubstitutionPass();
+
 /// Create a pass to remove CopyOps.
 std::unique_ptr<Pass> createRemoveCopyOpsPass();
 

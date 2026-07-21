@@ -127,6 +127,7 @@ add_bishengir_dialect_library(MLIRHIVMTransforms
   TileBatchMMIntoLoop.cpp
   TritonGlobalKernelArgsToHIVMOp.cpp
   UnitFlagInfoBase.cpp
+  VFOperandSubstitution.cpp
   WriteBackShared.cpp
   AnalyzeArithVectorMask.cpp
   ADDITIONAL_HEADER_DIRS
