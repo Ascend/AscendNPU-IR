@@ -79,6 +79,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   InlineLoadCopy.cpp
   InlineOTFBroadcast.cpp
   InsertAllocBasePlaceholder.cpp
+  InsertCVTightCoupledBuffer.cpp
   InsertMemSemanticForSimtVF.cpp
   InsertFreeLockVarBeforeReturn.cpp
   InsertInferSyncBlockLockNumAndInitFunc.cpp

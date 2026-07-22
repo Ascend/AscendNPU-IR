@@ -59,6 +59,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 
 #include <cassert>
@@ -897,7 +898,7 @@ Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
     markOp->setAttr(hivm::kBufferSizeInByteAttr,
                     rewriter.getI64IntegerAttr(allocSizeInByte));
   } else {
-    llvm_unreachable(
+    llvm::report_fatal_error(
         "Warning: Cannot calculate static size from mmadL1 shape\n");
   }
   return alloc;
