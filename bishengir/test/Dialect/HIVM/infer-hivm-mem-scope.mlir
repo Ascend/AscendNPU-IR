@@ -312,6 +312,24 @@ func.func @propagate_existing_scope(
 
 // -----
 
+// Verify that an existing UB address space on an alloc is propagated to its
+// users rather than being treated as already complete.
+
+// CHECK-LABEL: func.func @propagate_existing_alloc_scope(
+func.func @propagate_existing_alloc_scope() attributes {
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      hivm.func_core_type = #hivm.func_core_type<AIV>} {
+  // CHECK: %[[ALLOC:.*]] = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+  %alloc = memref.alloc() : memref<16xf32, #hivm.address_space<ub>>
+  // CHECK: builtin.unrealized_conversion_cast %[[ALLOC]]
+  // CHECK-SAME: to memref<16xf32, #hivm.address_space<ub>>
+  %bridge = builtin.unrealized_conversion_cast %alloc :
+      memref<16xf32, #hivm.address_space<ub>> to memref<16xf32>
+  return
+}
+
+// -----
+
 // CHECK-LABEL: func.func @propagate_extract_strided_metadata(
 // CHECK-SAME: %[[ARG:.*]]: memref<16xf32, #hivm.address_space<gm>>
 func.func @propagate_extract_strided_metadata(%arg0: memref<16xf32>)
@@ -377,6 +395,36 @@ func.func @test_mmadL1_multi_root(%condition: i1) attributes {
   hivm.hir.mmadL1 ins(%lhs, %rhs, %transpose, %c16, %c16, %c16 :
       memref<16x16xf16>, memref<16x16xf16>, i1, index, index, index)
       outs(%output : memref<16x16xf32>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_mmadmxL1(
+func.func @test_mmadmxL1() attributes {
+    hacc.function_kind = #hacc.function_kind<DEVICE>} {
+  // CHECK: %[[A:.*]] = memref.alloc() : memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>
+  %a = memref.alloc() : memref<16x16xf8E4M3FN>
+  // CHECK: %[[B:.*]] = memref.alloc() : memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>
+  %b = memref.alloc() : memref<16x16xf8E4M3FN>
+  // CHECK: %[[SCALE_A:.*]] = memref.alloc() : memref<1xui8, #hivm.address_space<cbuf>>
+  %scale_a = memref.alloc() : memref<1xui8>
+  // CHECK: %[[SCALE_B:.*]] = memref.alloc() : memref<1xui8, #hivm.address_space<cbuf>>
+  %scale_b = memref.alloc() : memref<1xui8>
+  // CHECK: %[[C:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<cc>>
+  %c = memref.alloc() : memref<16x16xf32>
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  // CHECK: hivm.hir.mmadmxL1 ins(%[[A]], %[[B]], %[[SCALE_A]], %[[SCALE_B]],
+  // CHECK-SAME: memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: memref<16x16xf8E4M3FN, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: memref<1xui8, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: memref<1xui8, #hivm.address_space<cbuf>>,
+  // CHECK-SAME: outs(%[[C]] : memref<16x16xf32, #hivm.address_space<cc>>)
+  hivm.hir.mmadmxL1 ins(%a, %b, %scale_a, %scale_b, %true,
+      %c16, %c16, %c16 : memref<16x16xf8E4M3FN>,
+      memref<16x16xf8E4M3FN>, memref<1xui8>, memref<1xui8>, i1,
+      index, index, index) outs(%c : memref<16x16xf32>)
   return
 }
 
