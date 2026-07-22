@@ -18,10 +18,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverCodeGen.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIR.h"
-
-#include "bishengir/Dialect/HIVM/IR/HIVM.h"
-#include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
@@ -139,8 +135,9 @@ Location CodeGenerator::getProperLoc(OperationBase *opBase) {
   return opBase->op->getLoc();
 }
 
-void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
-                                  BarrierOp *barrierOp, bool insertAfterOp) {
+void CodeGenerator::insertBlockAllOp(IRRewriter &rewriter,
+                                     OperationBase *opBase,
+                                     BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (barrierOp->pipe != PIPE::PIPE_ALL) {
     llvm::report_fatal_error(
@@ -165,14 +162,20 @@ void CodeGenerator::insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
   auto pipeAllAttr = PipeAttr::get(ctx, PIPE::PIPE_ALL);
 
   rewriter.create<PipeBarrierOp>(loc, pipeAllAttr);
-  rewriter.create<hivm::SyncBlockSetOp>(loc, vectorCoreAttr, pipeSAttr,
-                                        pipeSAttr, intraBlockSyncFlagIdAttr1);
-  rewriter.create<hivm::SyncBlockWaitOp>(loc, cubeCoreAttr, pipeSAttr,
-                                         pipeSAttr, intraBlockSyncFlagIdAttr1);
-  rewriter.create<hivm::SyncBlockSetOp>(loc, cubeCoreAttr, pipeSAttr, pipeSAttr,
-                                        intraBlockSyncFlagIdAttr2);
-  rewriter.create<hivm::SyncBlockWaitOp>(loc, vectorCoreAttr, pipeSAttr,
-                                         pipeSAttr, intraBlockSyncFlagIdAttr2);
+  if (!barrierOp->coreType.has_value() ||
+      barrierOp->coreType == TCoreType::VECTOR) {
+    rewriter.create<hivm::SyncBlockSetOp>(loc, vectorCoreAttr, pipeSAttr,
+                                          pipeSAttr, intraBlockSyncFlagIdAttr1);
+    rewriter.create<hivm::SyncBlockWaitOp>(
+        loc, vectorCoreAttr, pipeSAttr, pipeSAttr, intraBlockSyncFlagIdAttr2);
+  }
+  if (!barrierOp->coreType.has_value() ||
+      barrierOp->coreType == TCoreType::CUBE) {
+    rewriter.create<hivm::SyncBlockWaitOp>(
+        loc, cubeCoreAttr, pipeSAttr, pipeSAttr, intraBlockSyncFlagIdAttr1);
+    rewriter.create<hivm::SyncBlockSetOp>(loc, cubeCoreAttr, pipeSAttr,
+                                          pipeSAttr, intraBlockSyncFlagIdAttr2);
+  }
 }
 
 // Insert a PipeBarrierOp at the resolved insertion point and location.
@@ -180,7 +183,7 @@ void CodeGenerator::insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                                     BarrierOp *barrierOp, bool insertAfterOp) {
   assert(opBase != nullptr && barrierOp != nullptr);
   if (options.isCrossCoreMode()) {
-    insertBlockOp(rewriter, opBase, barrierOp, insertAfterOp);
+    insertBlockAllOp(rewriter, opBase, barrierOp, insertAfterOp);
     return;
   }
   setProperInsertionPoint(rewriter, opBase, insertAfterOp);
@@ -384,18 +387,19 @@ Value CodeGenerator::getNestedIndexModular(IRRewriter &rewriter,
 Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                                        SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  if (!syncOp->eventIdInfo.multibufferLoop) {
+
+  auto multibufferLoopOp = syncOp->eventIdInfo.multibufferLoop;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
-
+  
   for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
-    if (syncOp->eventIds[i - 1] + 1 != syncOp->eventIds[i]) {
+    if (syncOp->eventIds[i-1] + 1 != syncOp->eventIds[i]) {
       return nullptr;
     }
   }
 
-  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
-  assert(llvm::isa_and_present<scf::ForOp>(multibufferLoop));
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
   int64_t preloadOffset = isa<SetFlagOp>(syncOp)
                               ? syncOp->eventIdInfo.preloadOffset1
@@ -410,7 +414,6 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 
   Value counter = getNestedIndexModular(rewriter, multibufferLoop, eventIdNum,
                                         preloadOffset);
-  assert(isa_and_present<OpResult>(counter));
 
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointAfter(counter.getDefiningOp());
@@ -426,11 +429,13 @@ Value CodeGenerator::getMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
                                             SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  if (!syncOp->eventIdInfo.multibufferLoop) {
+
+  auto multibufferLoopOp = syncOp->eventIdInfo.multibufferLoop;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
 
-  auto multibufferLoop = syncOp->eventIdInfo.multibufferLoop;
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   assert((llvm::isa_and_present<scf::ForOp, scf::WhileOp>(multibufferLoop)) &&
          "multi-buffer requires scf.for or scf.while parent");
   int64_t eventIdNum = static_cast<int64_t>(syncOp->eventIds.size());
@@ -457,10 +462,17 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
   if (syncOp->eventIds.size() == 2) {
     counter = rewriter.create<arith::IndexCastOp>(
         counter.getLoc(), rewriter.getI1Type(), counter);
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value firstID = rewriter.create<arith::ConstantIntOp>(
         loc, syncOp->eventIds[0], rewriter.getI64Type());
     Value secondID = rewriter.create<arith::ConstantIntOp>(
         loc, syncOp->eventIds[1], rewriter.getI64Type());
+#else
+    Value firstID = rewriter.create<arith::ConstantIntOp>(
+        loc, rewriter.getI64Type(), syncOp->eventIds[0]);
+    Value secondID = rewriter.create<arith::ConstantIntOp>(
+        loc, rewriter.getI64Type(), syncOp->eventIds[1]);
+#endif
     bufferSelected = rewriter.create<arith::SelectOp>(
         loc, rewriter.getI64Type(), counter, firstID, secondID);
   } else {
@@ -488,10 +500,10 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
 Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
                                                          SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  auto multibufferLoop = isa<SetFlagOp>(syncOp)
-                             ? syncOp->eventIdInfo.multibufferUnrollLoop1
-                             : syncOp->eventIdInfo.multibufferUnrollLoop2;
-  if (!multibufferLoop) {
+  auto multibufferLoopOp = isa<SetFlagOp>(syncOp)
+                               ? syncOp->eventIdInfo.multibufferUnrollLoop1
+                               : syncOp->eventIdInfo.multibufferUnrollLoop2;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
   for (size_t i = 1; i < syncOp->eventIds.size(); i++) {
@@ -499,9 +511,12 @@ Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
       return nullptr;
     }
   }
+
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   auto forOp = dyn_cast<scf::ForOp>(multibufferLoop.getOperation());
   assert(forOp && forOp->hasAttr(kMultibufferUnrollAttrName));
   assert(scf::utils::isNormalized(forOp));
+
   auto loc = forOp->getLoc();
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(forOp.getBody());
@@ -517,15 +532,18 @@ Value CodeGenerator::getCVMultiBufferSelectOpConsecutive(IRRewriter &rewriter,
 Value CodeGenerator::getCVMultiBufferSelectOp(IRRewriter &rewriter,
                                               SetWaitOp *syncOp) {
   assert(syncOp != nullptr);
-  auto multibufferLoop = isa<SetFlagOp>(syncOp)
-                             ? syncOp->eventIdInfo.multibufferUnrollLoop1
-                             : syncOp->eventIdInfo.multibufferUnrollLoop2;
-  if (!multibufferLoop) {
+  auto multibufferLoopOp = isa<SetFlagOp>(syncOp)
+                               ? syncOp->eventIdInfo.multibufferUnrollLoop1
+                               : syncOp->eventIdInfo.multibufferUnrollLoop2;
+  if (!multibufferLoopOp) {
     return nullptr;
   }
+
+  auto multibufferLoop = dyn_cast<LoopLikeOpInterface>(multibufferLoopOp->op);
   auto forOp = dyn_cast<scf::ForOp>(multibufferLoop.getOperation());
   assert(forOp && forOp->hasAttr(kMultibufferUnrollAttrName));
   assert(scf::utils::isNormalized(forOp));
+
   auto loc = forOp->getLoc();
   PatternRewriter::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(forOp.getBody());
@@ -577,8 +595,13 @@ Value CodeGenerator::getEventIdValue(IRRewriter &rewriter, SetWaitOp *setWaitOp,
     return getMultiBufferSelectOp(rewriter, setWaitOp);
   }
   rewriter.setInsertionPointToStart(&funcOp.getBody().front());
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
   return rewriter.create<arith::ConstantIntOp>(loc, setWaitOp->eventIds[0],
                                                rewriter.getI64Type());
+#else
+  return rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(),
+                                               setWaitOp->eventIds[0]);
+#endif
 }
 
 // Attempt to attach sync args to MmadL1 ops by recognizing special load L0 / L1
@@ -640,8 +663,13 @@ Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
 void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
   for (auto &[mmadL1Op, syncArgs] : mmadl1SyncArgsMap) {
     rewriter.setInsertionPoint(mmadL1Op);
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     auto defaultValue = rewriter.create<arith::ConstantIntOp>(
         mmadL1Op->getLoc(), -1, rewriter.getI64Type());
+#else
+    auto defaultValue = rewriter.create<arith::ConstantIntOp>(
+        mmadL1Op->getLoc(), rewriter.getI64Type(), -1);
+#endif
     if (options.isMemBasedArch) {
       syncArgs.kLoopDBCond = getLoopDBCond(rewriter, mmadL1Op.getOperation());
     }

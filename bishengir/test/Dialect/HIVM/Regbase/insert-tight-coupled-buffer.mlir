@@ -101,8 +101,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 
   // CHECK:   %[[TRUE:.*]] = arith.constant true
   // CHECK:   %[[C16:.*]] = arith.constant 16 : index
-  // CHECK:   %[[ARG0_LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false core_type = <VECTOR> -> tensor<16x16xf16>
-  // CHECK:   %[[ARG0_LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK:   %[[ARG0_LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"}
+  // CHECK:   %[[ARG0_LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) {"inserted-load"}
   // CHECK:   %[[VBRC:.*]] = hivm.hir.vbrc {hivm.tcore_type = #hivm.tcore_type<VECTOR>} ins(%[[CST:.*]] : f16) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK:   %[[EXTRACT:.*]] = tensor.extract_slice %[[ARG0_LOAD0]][0, 0] [%[[ARG2]], %[[ARG2]]] [1, 1] : tensor<16x16xf16> to tensor<?x?xf16>
   // CHECK:   %[[INSERT:.*]] = tensor.insert_slice %[[EXTRACT]] into %[[VBRC]][0, 0] [%[[ARG2]], %[[ARG2]]] [1, 1] : tensor<?x?xf16> into tensor<16x16xf16>
@@ -150,8 +150,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-DAG:   %[[TRUE:.*]] = arith.constant true
   // CHECK-DAG:   %[[C0:.*]] = arith.constant 0 : index
   // CHECK-DAG:   %[[C1:.*]] = arith.constant 1 : index
-  // CHECK:   %[[LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false core_type = <VECTOR> -> tensor<16x16xf16>
-  // CHECK:   %[[LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK:   %[[LOAD0:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} 
+  // CHECK:   %[[LOAD1:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"}
   // CHECK:   %[[FOR_RES:.*]] = scf.for %{{.*}} = %[[C0]] to %[[C16]] step %[[C1]] iter_args(%{{.*}} = %[[EMPTY0:.*]]) -> (tensor<16x16xf16>) {
   // CHECK:     %{{.*}} = tensor.empty() : tensor<16x16xf16>
   // CHECK:     scf.yield %{{.*}} : tensor<16x16xf16>
@@ -403,9 +403,9 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_fixpipe_to_mmadl1_tight_coupled(%arg0: tensor<16x16xf32>, %arg1: tensor<16x16xf32>, %arg2: tensor<16x16xf32>, %arg3: tensor<16x16xf32>) -> tensor<16x16xf32> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {
     %true = arith.constant true
     %c16 = arith.constant 16 : index
-    // CHECK: %[[ARG0_LOAD:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf32>
-    // CHECK: %[[ARG1_LOAD:.*]] = hivm.hir.load ins(%[[ARG1]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf32>
-    // CHECK: %[[ARG2_LOAD:.*]] = hivm.hir.load ins(%[[ARG2]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf32>
+    // CHECK: %[[ARG0_LOAD:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"inserted-load"}
+    // CHECK: %[[ARG1_LOAD:.*]] = hivm.hir.load ins(%[[ARG1]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"inserted-load"}
+    // CHECK: %[[ARG2_LOAD:.*]] = hivm.hir.load ins(%[[ARG2]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) {"inserted-load"}
     // CHECK: %[[MMAD_OUT:.*]] = hivm.hir.mmadL1 {{.*}} ins(%[[ARG1_LOAD]], %[[ARG2_LOAD]]
     %0 = hivm.hir.mmadL1 {already_set_real_mkn, fixpipe_already_inserted = true} ins(%arg1, %arg2, %true, %c16, %c16, %c16 : tensor<16x16xf32>, tensor<16x16xf32>, i1, index, index, index) outs(%arg3 : tensor<16x16xf32>) -> tensor<16x16xf32>
     // CHECK-NEXT: %[[UB_ALLOC:.*]] = memref.alloc() : memref<16x16xf32, #hivm.address_space<ub>>
@@ -501,7 +501,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func.func @test_marked_to_tensor_b_operand(
   // CHECK-SAME: %[[ARG0:.*]]: tensor<16x16xf16>, %[[ARG1:.*]]: memref<16x64xf16>
-  // CHECK: %[[ARG0_LOAD:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[ARG0_LOAD:.*]] = hivm.hir.load ins(%[[ARG0]] : tensor<16x16xf16>) outs(%{{.*}} : tensor<16x16xf16>) {"inserted-load"}
   // CHECK: %[[B_TENSOR:.*]] = bufferization.to_tensor %[[B_MEM:.*]] restrict writable : memref<16x64xf16>
   // CHECK: annotation.mark %[[B_TENSOR]] {MayImplicitTransposeWithLastAxis} : tensor<16x64xf16>
   // CHECK: %[[EXPAND:.*]] = tensor.expand_shape %[[B_TENSOR]] {{\[\[0\], \[1, 2\]\]}} output_shape {{\[16, 4, 16\]}} : tensor<16x64xf16> into tensor<16x4x16xf16>

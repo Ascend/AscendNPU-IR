@@ -446,12 +446,12 @@ module {
 // CHECK:           %{{.*}} = memref.view %{{.*}}{{\[}}%{{.*}}][] : memref<?xi8, #hivm.address_space<gm>> to memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = affine.apply #[[$ATTR_1]](){{\[}}%{{.*}}]
 // CHECK:           %{{.*}} = memref.view %{{.*}}{{\[}}%{{.*}}][] : memref<?xi8, #hivm.address_space<gm>> to memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<128x64xf32, #hivm.address_space<cc>>
 // CHECK:           hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>, memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<128x64xf32, #hivm.address_space<cc>>)
 // CHECK:           %{{.*}} = memref.subview %{{.*}}[0, 0] [126, 64] [1, 1] : memref<128x64xf32, #hivm.address_space<cc>> to memref<126x64xf32, strided<[64, 1]>, #hivm.address_space<cc>>
@@ -507,12 +507,12 @@ func.func @triton_conv1d_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<1x2x32x32x8xf32, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<1x2x32x32x8xf32, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = memref_ext.alloc_workspace() from %{{.*}} offset = [%{{.*}}] : from memref<?xi8, #hivm.address_space<gm>> to memref<2x3x3x16x8xf32, #hivm.address_space<gm>>
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<2x3x3x16x8xf32, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x3x3x16x8xf32, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x3x3x16x8xf32, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<912x16xf32, #hivm.address_space<cc>>
 // CHECK:           hivm.hir.Conv2dL1 {fixpipe_already_inserted = true, groups = 1 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : memref<1x2x32x32x8xf32, #hivm.address_space<cbuf>>, memref<2x3x3x16x8xf32, #hivm.address_space<cbuf>>, i1) outs(%{{.*}} : memref<912x16xf32, #hivm.address_space<cc>>)
 // CHECK:           %{{.*}} = memref.subview %{{.*}}[0, 0] [900, 16] [1, 1] : memref<912x16xf32, #hivm.address_space<cc>> to memref<900x16xf32, strided<[16, 1]>, #hivm.address_space<cc>>

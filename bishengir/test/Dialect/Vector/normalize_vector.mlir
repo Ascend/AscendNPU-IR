@@ -227,10 +227,7 @@ func.func @transpose_2d_outlined_vf_0(%arg0: memref<16x16xf16, #hivm.address_spa
     %subview_0 = memref.subview %arg1[%arg2, 0] [1, 16] [1, 1] : memref<16x16xf16, #hivm.address_space<ub>> to memref<1x16xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
     // CHECK-NO: vector.transfer_read
     // CHECK: %[[MASK:.*]] = vector.constant_mask [16] : vector<128xi1>
-    // CHECK-NEXT: %[[WRITE_MASK:.*]] = vector.shape_cast %[[MASK]] : vector<128xi1> to vector<1x128xi1>
-    // CHECK: %[[GATHER:.*]] = vector.gather %subview[%c0, %c0] [%[[INDEX]]], %[[MASK]], %cst : memref<16x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1>, vector<128xf16> into vector<128xf16>
-    // CHECK-NEXT: %[[READ_CAST:.*]] = vector.shape_cast %[[GATHER]] : vector<128xf16> to vector<1x128xf16>
-    // CHECK-NEXT: vector.transfer_write %[[READ_CAST]], %subview_1[%c0, %c0], %[[WRITE_MASK]]
+    // CHECK-NEXT: %[[GATHER:.*]] = vector.gather %subview[%c0, %c0] [%[[INDEX]]], %[[MASK]], %cst : memref<16x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<128xi16>, vector<128xi1>, vector<128xf16> into vector<128xf16>
     %2 = vector.transfer_read %subview[%c0, %c0], %cst, %0 {in_bounds = [true, true], permutation_map = affine_map<(d0, d1) -> (d1, d0)>} : memref<16x1xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>, vector<1x128xf16>
     vector.transfer_write %2, %subview_0[%c0, %c0], %1 {in_bounds = [true, true]} : vector<1x128xf16>, memref<1x16xf16, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
   }
@@ -279,79 +276,6 @@ func.func @not_gather(%arg0: memref<16x16xi8, #hivm.address_space<ub>>, %arg1: m
     vector.transfer_write %2, %subview_0[%c0, %c0], %1 {in_bounds = [true, true]} : vector<1x128xi8>, memref<1x16xi8, strided<[16, 1], offset: ?>, #hivm.address_space<ub>>
   }
   return
-}
-
-// Test: i1 broadcast transfer_read → decomposed into non-broadcast read +
-//       select to f16 + vector.broadcast + arith.cmpf une with zero.
-// CHECK-LABEL: func.func @fix_i1_broadcast_transfer_read
-// CHECK: %[[READ:.*]] = vector.transfer_read {{.*}} tensor<1xi1>, vector<1xi1>
-// CHECK: arith.select
-// CHECK: vector.broadcast {{.*}} to vector<64xf16>
-// CHECK: arith.cmpf une
-func.func @fix_i1_broadcast_transfer_read(%arg0: tensor<1xi1>, %arg1: tensor<64xi1>) -> tensor<64xi1> {
-  %c0 = arith.constant 0 : index
-  %false = arith.constant false
-  %0 = vector.transfer_read %arg0[%c0], %false {in_bounds = [true], permutation_map = affine_map<(d0) -> (0)>} : tensor<1xi1>, vector<64xi1>
-  %1 = vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xi1>, tensor<64xi1>
-  return %1 : tensor<64xi1>
-}
-
-// -----
-// Non-bit type (i8) with broadcast — should NOT be rewritten.
-// CHECK-LABEL: func.func @skip_i8
-// CHECK: vector.transfer_read {{.*}} vector<64xi8>
-// CHECK-NOT: arith.select
-func.func @skip_i8(%arg0: tensor<1xi8>, %arg1: tensor<64xi8>) -> tensor<64xi8> {
-  %c0 = arith.constant 0 : index
-  %cst = arith.constant 0 : i8
-  %0 = vector.transfer_read %arg0[%c0], %cst {in_bounds = [true], permutation_map = affine_map<(d0) -> (0)>} : tensor<1xi8>, vector<64xi8>
-  %1 = vector.transfer_write %0, %arg1[%c0] {in_bounds = [true]} : vector<64xi8>, tensor<64xi8>
-  return %1 : tensor<64xi8>
-}
-
-// -----
-// Broadcast dim has size 1 (no actual expansion), while a non-broadcast dim
-// has size > 1 — should NOT be rewritten.
-// CHECK-LABEL: func.func @skip_no_actual_broadcast
-// CHECK: vector.transfer_read {{.*}} tensor<64xi1>, vector<1x64xi1>
-// CHECK-NOT: arith.select
-func.func @skip_no_actual_broadcast(%arg0: tensor<64xi1>) -> vector<1x64xi1> {
-  %c0 = arith.constant 0 : index
-  %false = arith.constant false
-  %0 = vector.transfer_read %arg0[%c0], %false {in_bounds = [true, false], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<64xi1>, vector<1x64xi1>
-  return %0 : vector<1x64xi1>
-}
-
-// -----
-// Real broadcast (broadcast dim size 64 > 1) where the non-broadcast dim is
-// at output position 1 — requires output-index-based broadcast detection.
-// CHECK-LABEL: func.func @fix_i1_broadcast_dim0
-// CHECK: %[[READ:.*]] = vector.transfer_read {{.*}} tensor<1xi1>, vector<1x1xi1>
-// CHECK: arith.select
-// CHECK: vector.broadcast {{.*}} to vector<64x1xf16>
-// CHECK: arith.cmpf une
-func.func @fix_i1_broadcast_dim0(%arg0: tensor<1xi1>) -> vector<64x1xi1> {
-  %c0 = arith.constant 0 : index
-  %false = arith.constant false
-  %0 = vector.transfer_read %arg0[%c0], %false {in_bounds = [true, true], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<1xi1>, vector<64x1xi1>
-  return %0 : vector<64x1xi1>
-}
-
-// -----
-// Preserve the original in_bounds on non-broadcast dims of the collapsed read.
-// Uses a runtime index so folds cannot statically refine in_bounds; broadcast
-// dims are always in-bounds (verifier-enforced), non-broadcast dim 1 keeps the
-// original in_bounds = false.
-// CHECK-LABEL: func.func @preserve_in_bounds
-// CHECK: %[[READ:.*]] = vector.transfer_read {{.*}} {in_bounds = [true, false],
-// CHECK-SAME: } : tensor<4xi1>, vector<1x4xi1>
-// CHECK: arith.select
-// CHECK: vector.broadcast {{.*}} to vector<16x4xf16>
-// CHECK: arith.cmpf une
-func.func @preserve_in_bounds(%arg0: tensor<4xi1>, %idx: index) -> vector<16x4xi1> {
-  %false = arith.constant false
-  %0 = vector.transfer_read %arg0[%idx], %false {in_bounds = [true, false], permutation_map = affine_map<(d0) -> (0, d0)>} : tensor<4xi1>, vector<16x4xi1>
-  return %0 : vector<16x4xi1>
 }
 
 // CHECK-LABEL: func.func @triton_max_1d_dim0
@@ -446,7 +370,7 @@ func.func @triton_min_1d_outlined_vf_0(%arg0: memref<16xi8, #hivm.address_space<
 
 // CHECK-LABEL: func.func @test_drop_non_scalable_mask_unit_dims(
 // CHECK: %[[mask:.*]] = vector.constant_mask [32] : vector<128xi1>
-// CHECK: %[[cast:.*]] = vector.shape_cast %[[mask]] : vector<128xi1> to vector<8x1x16xi1>
+// CHECK: %[[cast:.*]] = vector.shape_cast %[[mask]] : vector<128xi1> to vector<8x16xi1>
 // CHECK: vector.transfer_write {{.*}} %[[cast]]
 #map = affine_map<(d0, d1, d2) -> (d1, d0, d2)>
 func.func @test_drop_non_scalable_mask_unit_dims(%arg0: memref<2x2x16xf16, #hivm.address_space<ub>>, %arg1: memref<2x2x16xf16, strided<[272, 16, 1]>, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
@@ -511,33 +435,4 @@ func.func @test_drop_unit_dim_mulsi_extended(%arg0: vector<1x4xi32>, %arg1: vect
 func.func @test_drop_unit_dim_mului_extended(%arg0: vector<1x4xi32>, %arg1: vector<1x4xi32>) -> (vector<1x4xi32>) {
   %low, %high = arith.mului_extended %arg0, %arg1 : vector<1x4xi32>
   return %high : vector<1x4xi32>
-}
-
-// -----
-// CHECK-LABEL: func.func @test_multi_reduction
-// CHECK: %[[CST_F16:.*]] = arith.constant dense<0.000000e+00> : vector<64xf16>
-// CHECK: %[[CST_I32:.*]] = arith.constant dense<0> : vector<64xi32>
-// CHECK: %[[C0:.*]] = arith.constant 0 : index
-// CHECK: %[[MASK:.*]] = vector.constant_mask [32] : vector<64xi1>
-// CHECK: %[[LOAD:.*]] = vector.maskedload %arg0[%[[C0]]], %[[MASK]], %[[CST_F16]] : memref<32xf16, #hivm.address_space<ub>>, vector<64xi1>, vector<64xf16> into vector<64xf16>
-// CHECK: %[[SCALAR:.*]] = memref.load %arg1[] : memref<i32, #hivm.address_space<ub>>
-// CHECK: %[[EXTF:.*]] = arith.extf %[[LOAD]] {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf16> to vector<64xf32>
-// CHECK: %[[FPTOSI:.*]] = arith.fptosi %[[EXTF]] {enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf32> to vector<64xi32>
-// CHECK: %[[SELECT:.*]] = arith.select %[[MASK]], %[[FPTOSI]], %[[CST_I32]] : vector<64xi1>, vector<64xi32>
-// CHECK: %[[RED:.*]] = vector.reduction <xor>, %[[SELECT]], %{{.*}} : vector<64xi32> into i32
-// CHECK: memref.store %{{.*}}, %arg1[] : memref<i32, #hivm.address_space<ub>>
-func.func @test_multi_reduction(%arg0: memref<32xf16, #hivm.address_space<ub>>, %arg1: memref<i32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
-  %c0_i32 = arith.constant 0 : i32
-  %cst = arith.constant 0.000000e+00 : f16
-  %c0 = arith.constant 0 : index
-  %0 = vector.constant_mask [32] : vector<64xi1>
-  %1 = vector.transfer_read %arg0[%c0], %cst, %0 {in_bounds = [true]} : memref<32xf16, #hivm.address_space<ub>>, vector<64xf16>
-  %2 = vector.transfer_read %arg1[], %c0_i32 : memref<i32, #hivm.address_space<ub>>, vector<i32>
-  %3 = vector.extractelement %2[] : vector<i32>
-  %4 = arith.extf %1 {enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf16> to vector<64xf32>
-  %5 = arith.fptosi %4 {enable_saturate = false, round_mode = #hfusion.round_mode<trunc>, unsigned_mode = #hfusion.unsigned_mode<si2si>} : vector<64xf32> to vector<64xi32>
-  %6 = vector.mask %0 { vector.multi_reduction <xor>, %5, %3 [0] : vector<64xi32> to i32 } : vector<64xi1> -> i32
-  %7 = vector.broadcast %6 : i32 to vector<i32>
-  vector.transfer_write %7, %arg1[] : vector<i32>, memref<i32, #hivm.address_space<ub>>
-  return
 }

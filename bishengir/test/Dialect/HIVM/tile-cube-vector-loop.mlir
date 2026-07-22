@@ -646,7 +646,7 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
  	       // CHECK-CUBE:           %[[SRC_SUBVIEW:.*]] = memref.subview %[[SUBVIEW_OUTER]][%[[IV_INNER]], 0] [%[[BOUNDED]], 128] [1, 1]
  	       // CHECK-CUBE:           %[[SRC_TENSOR:.*]] = bufferization.to_tensor %[[SRC_SUBVIEW]] restrict
  	       // CHECK-CUBE:           %[[SLICE_A:.*]] = tensor.extract_slice %{{.*}}[%[[IV_INNER]], 0] [64, 128] [1, 1]
- 	       // CHECK-CUBE:           %[[LOAD_RES:.*]] = hivm.hir.load ins(%[[SRC_TENSOR]] : tensor<?x128xbf16>) outs(%[[SLICE_A]] : tensor<64x128xbf16>) {cube_producer_to_fuse_0_group_0} pad_mode = <PadValue> pad_value = %{{.*}} : bf16 left_padding_num = %{{.*}} : index init_out_buffer = true init_condition = %[[COND]] : i1 may_implicit_transpose_with_last_axis = false -> tensor<64x128xbf16>
+	       // CHECK-CUBE:           %[[LOAD_RES:.*]] = hivm.hir.load ins(%[[SRC_TENSOR]] : tensor<?x128xbf16>) outs(%[[SLICE_A]] : tensor<64x128xbf16>) {cube_producer_to_fuse_0_group_0} pad_mode = <PadValue> pad_value = %{{.*}} : bf16 left_padding_num = %{{.*}} : index init_out_buffer = true init_condition = %[[COND]] : i1 -> tensor<64x128xbf16>
  	       %loaded_tensor = hivm.hir.load ins(%tensor_in : tensor<?x128xbf16>) outs(%empty_tensor_out : tensor<256x128xbf16>) pad_mode = <PadValue> pad_value = %cst : bf16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %is_partial : i1 may_implicit_transpose_with_last_axis = false -> tensor<256x128xbf16>
  	       %84 = tensor.empty() : tensor<256x256xf32>
  	       // CHECK-CUBE:           %[[BOUNDED_MMAD:.*]] = affine.min #[[$MAP_MMAD]]()[%[[OTHER_SIZE]]]

@@ -974,8 +974,13 @@ private:
 
     // Return the tiling size
     opBuilder.setInsertionPointToStart(entryBlock);
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     auto tilingStructSizeV = opBuilder.create<arith::ConstantIntOp>(
         opBuilder.getUnknownLoc(), tilingStructSize, returnType);
+#else
+    auto tilingStructSizeV = opBuilder.create<arith::ConstantIntOp>(
+        opBuilder.getUnknownLoc(), returnType, tilingStructSize);
+#endif
     opBuilder.create<func::ReturnOp>(opBuilder.getUnknownLoc(),
                                      SmallVector<Value>{tilingStructSizeV});
 

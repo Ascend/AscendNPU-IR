@@ -282,7 +282,7 @@ func.func @test_NormalizeI32Cmp_ne_no_i64_cast(
 // CHECK: %[[rhs_empty:.*]] = tensor.empty() : tensor<32xi16>
 // CHECK: %[[rhs_cast:.*]] = hivm.hir.vcast ins(%[[rhs_f16]] : tensor<32xf16>) outs(%[[rhs_empty]] : tensor<32xi16>) round_mode = <trunc> -> tensor<32xi16>
 // CHECK: %[[shift_empty:.*]] = tensor.empty() : tensor<32xi16>
-// CHECK: %[[shift:.*]] = hivm.hir.vshr ins(%[[lhs_cast]], %[[rhs_cast]] : tensor<32xi16>, tensor<32xi16>) outs(%[[shift_empty]] : tensor<32xi16>) round : true -> tensor<32xi16>
+// CHECK: %[[shift:.*]] = hivm.hir.vshr ins(%[[lhs_cast]], %[[rhs_cast]] : tensor<32xi16>, tensor<32xi16>) outs(%[[shift_empty]] : tensor<32xi16>) -> tensor<32xi16>
 // CHECK: %[[res_empty:.*]] = tensor.empty() : tensor<32xi8>
 // CHECK: %[[res:.*]] = hivm.hir.vcast ins(%[[shift]] : tensor<32xi16>) outs(%[[res_empty]] : tensor<32xi8>) round_mode = <truncwithoverflow> -> tensor<32xi8>
 // CHECK: return %[[res]]

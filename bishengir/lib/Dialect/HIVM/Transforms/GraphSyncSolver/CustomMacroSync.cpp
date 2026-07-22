@@ -169,14 +169,24 @@ Value materializeSyncRelatedArg(
 
   if (auto it = resolvedIds.find(macroOp); it != resolvedIds.end()) {
     if (slotIdx < it->second.size() && it->second[slotIdx] >= 0) {
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
       return rewriter.create<arith::ConstantIntOp>(
           macroOp->getLoc(), it->second[slotIdx], rewriter.getI64Type());
+#else
+      return rewriter.create<arith::ConstantIntOp>(
+          macroOp->getLoc(), rewriter.getI64Type(), it->second[slotIdx]);
+#endif
     }
   }
 
   if (auto pinned = getSlotPinnedEventId(slot)) {
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     return rewriter.create<arith::ConstantIntOp>(macroOp->getLoc(), *pinned,
                                                  rewriter.getI64Type());
+#else
+    return rewriter.create<arith::ConstantIntOp>(macroOp->getLoc(),
+                                                 rewriter.getI64Type(), *pinned);
+#endif
   }
 
   return defaultValue;
@@ -371,8 +381,13 @@ void CustomMacroSyncCodegenState::populateSyncRelatedArgs(
     auto slotValues = collectedArgs.lookup(customMacroOp);
 
     rewriter.setInsertionPoint(customMacroOp);
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     auto defaultValue = rewriter.create<arith::ConstantIntOp>(
         customMacroOp->getLoc(), -1, rewriter.getI64Type());
+#else
+    auto defaultValue = rewriter.create<arith::ConstantIntOp>(
+        customMacroOp->getLoc(), rewriter.getI64Type(), -1);
+#endif
     llvm::SmallVector<Value> newArgs(numSlots, defaultValue);
 
     for (auto [idx, slot] :

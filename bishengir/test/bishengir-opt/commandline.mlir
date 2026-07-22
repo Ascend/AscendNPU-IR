@@ -28,7 +28,6 @@
 // CHECK-SAME: math
 // CHECK-SAME: memref
 // CHECK-SAME: ml_program
-// CHECK-SAME: nvgpu
 // CHECK-SAME: nvvm
 // CHECK-SAME: omp
 // CHECK-SAME: pdl

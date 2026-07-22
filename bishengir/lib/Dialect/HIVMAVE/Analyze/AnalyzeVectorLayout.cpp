@@ -86,15 +86,13 @@ void setResultVecTypeAttr(Operation *op, RewriterBase &rewriter,
       if (states.contains(res)) {
         auto attr = createVecLayoutAttr(op->getContext(), states[res]);
         DBG(llvm::dbgs() << "set result state: " << states[res];);
-        // todo: wait define in llvm-project
-        // newResultTypes.push_back(vecType.cloneWith(attr));
+        newResultTypes.push_back(vecType.cloneWith(attr));
         continue;
       }
       if (fallbackState.has_value()) {
         auto attr = createVecLayoutAttr(op->getContext(), *fallbackState);
         DBG(llvm::dbgs() << "set result fallback state: " << *fallbackState;);
-        // todo: wait define in llvm-project
-        // newResultTypes.push_back(vecType.cloneWith(attr));
+        newResultTypes.push_back(vecType.cloneWith(attr));
         continue;
       }
     }
@@ -146,10 +144,9 @@ void legalizeCallOp(func::CallOp callOp, IRRewriter &rewriter) {
   SmallVector<Value> newOperands;
   for (auto operand : callOp->getOperands()) {
     if (auto vecType = dyn_cast<VectorType>(operand.getType())) {
-      // todo: wait define in llvm-project
-      // auto newOperand = rewriter.create<hivmave::VectorLayoutCastOp>(
-      //     callOp->getLoc(), vecType.cloneWith({}), operand);
-      // newOperands.push_back(newOperand);
+      auto newOperand = rewriter.create<hivmave::VectorLayoutCastOp>(
+          callOp->getLoc(), vecType.cloneWith({}), operand);
+      newOperands.push_back(newOperand);
     } else {
       newOperands.push_back(operand);
     }
@@ -182,14 +179,13 @@ void legalizeCallOp(func::CallOp callOp, IRRewriter &rewriter) {
       default:
         assert(0);
       }
-      // todo: wait define in llvm-project
-      // auto newRes = rewriter.create<hivmave::VectorLayoutCastOp>(
-      //     newCallOp.getLoc(),
-      //     vecType.cloneWith(createVecLayoutAttr(newCallOp->getContext(), s)),
-      //     res);
-      // rewriter.replaceUsesWithIf(res, newRes, [&](OpOperand &use) {
-      //   return use.getOwner() != newRes;
-      // });
+      auto newRes = rewriter.create<hivmave::VectorLayoutCastOp>(
+          newCallOp.getLoc(),
+          vecType.cloneWith(createVecLayoutAttr(newCallOp->getContext(), s)),
+          res);
+      rewriter.replaceUsesWithIf(res, newRes, [&](OpOperand &use) {
+        return use.getOwner() != newRes;
+      });
     }
   }
 }
@@ -289,8 +285,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                        << getState(res);
         } else { llvm::dbgs() << "====Find solve: " << probS; });
     DBG(llvm::dbgs() << "========Inputs: [\n";
-        for (auto [v, sv]
-             : newIns) llvm::dbgs()
+        for (auto [v, sv] : newIns) llvm::dbgs()
         << "========\t" << sv << "->" << v << "\n";
         llvm::dbgs() << "]";);
     DenseMap<Value, State> ins;
@@ -383,8 +378,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFDeInterleaveOp, hivmave::VFInterleaveOp>(
                 [&](auto op) { return solveLayoutChangeProblem(op); })
-            .Case<hivmave::VFVCIOp>(
-                [&](auto op) { return solveProblem(op); })
+            .Case<hivmave::VFVCIOp>([&](auto op) { return solveProblem(op); })
             // Any op that falls through to Default is not an explicitly handled
             // operation in the TypeSwitch. It could be a non-HIVMAVE dialect op
             // (e.g. arith.addi), a HIVMAVE op not yet registered here, or a
@@ -799,12 +793,10 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16_2VL):
-      return {
-          wrapThis(FunctionType::INTLV2,
-                   {{mask, State::B16}, {index, State::B16}}),
-          wrapThis(FunctionType::NONE,
-                   {{mask, State::B32},
-                    {index, State::B16_2VL}})};
+      return {wrapThis(FunctionType::INTLV2,
+                       {{mask, State::B16}, {index, State::B16}}),
+              wrapThis(FunctionType::NONE,
+                       {{mask, State::B32}, {index, State::B16_2VL}})};
     case COMB_CASE(32, State::B16_2VL):
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B32}, {index, State::B32}})};
@@ -867,7 +859,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
         return {};
       }
     }
-    
+
     if (layoutChange.value() == hivmave::Layout_Change::UNCHANGED)
       return solveProblemDefault(op);
 
@@ -918,22 +910,21 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     // Check for null layout attribute first. dyn_cast<void(VectorLayoutAttr)>
     // on a null/absent Attribute triggers an assertion in llvm::dyn_cast,
     // so we must verify the layout is present before casting.
-    // todo: wait define in llvm-project
-    // if (auto layout = resVecType.getLayout()) {
-    //   if (auto layoutAttr =
-    //           dyn_cast<hivmave::VectorLayoutAttr>(layout)) {
-    //     auto memTypeAttr =
-    //         dyn_cast<hivmave::VecMemTypeAttr>(layoutAttr.getMem());
-    //     if (memTypeAttr) {
-    //       State resState = memTypeAttr.getValue();
-    //       // Converge: both result and source are constrained to the
-    //       // type-encoded layout. If downstream resolved to a different
-    //       // state, wrapThis will detect the conflict and prune.
-    //       return {wrapThis(FunctionType::NONE,
-    //                       {{res, resState}, {src, resState}})};
-    //     }
-    //   }
-    // }
+    if (auto layout = resVecType.getLayout()) {
+      if (auto layoutAttr =
+              dyn_cast<hivmave::VectorLayoutAttr>(layout)) {
+        auto memTypeAttr =
+            dyn_cast<hivmave::VecMemTypeAttr>(layoutAttr.getMem());
+        if (memTypeAttr) {
+          State resState = memTypeAttr.getValue();
+          // Converge: both result and source are constrained to the
+          // type-encoded layout. If downstream resolved to a different
+          // state, wrapThis will detect the conflict and prune.
+          return {wrapThis(FunctionType::NONE,
+                          {{res, resState}, {src, resState}})};
+        }
+      }
+    }
 
     // No layout attribute on result -> this is the "exit" side of a
     // constrainVectorLayout pair. The src has its layout encoded in its type.
@@ -942,75 +933,74 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
     // res_state) combinations to determine the appropriate INTLV/DINTLV
     // FunctionType. No constraint propagation to src.
     auto srcVecType = cast<VectorType>(src.getType());
-    // todo: wait define in llvm-project
-    // if (auto srcLayout = srcVecType.getLayout()) {
-    //   if (auto srcLayoutAttr =
-    //           dyn_cast<hivmave::VectorLayoutAttr>(srcLayout)) {
-    //     auto srcMemTypeAttr =
-    //         dyn_cast<hivmave::VecMemTypeAttr>(srcLayoutAttr.getMem());
-    //     if (srcMemTypeAttr) {
-    //       State srcState = srcMemTypeAttr.getValue();
-    //       State resState = getState(res);
-    //       switch (COMB_CASE(srcState, resState)) {
-    //       // === Same layout -> NONE ===
-    //       case COMB_CASE(State::B8, State::B8):
-    //       case COMB_CASE(State::B16, State::B16):
-    //       case COMB_CASE(State::B32, State::B32):
-    //       case COMB_CASE(State::B8_2VL, State::B8_2VL):
-    //       case COMB_CASE(State::B16_2VL, State::B16_2VL):
-    //       case COMB_CASE(State::B8_4VL, State::B8_4VL):
-    //         return {wrapThis(FunctionType::NONE, {{src, srcState}})};
+    if (auto srcLayout = srcVecType.getLayout()) {
+      if (auto srcLayoutAttr =
+              dyn_cast<hivmave::VectorLayoutAttr>(srcLayout)) {
+        auto srcMemTypeAttr =
+            dyn_cast<hivmave::VecMemTypeAttr>(srcLayoutAttr.getMem());
+        if (srcMemTypeAttr) {
+          State srcState = srcMemTypeAttr.getValue();
+          State resState = getState(res);
+          switch (COMB_CASE(srcState, resState)) {
+          // === Same layout -> NONE ===
+          case COMB_CASE(State::B8, State::B8):
+          case COMB_CASE(State::B16, State::B16):
+          case COMB_CASE(State::B32, State::B32):
+          case COMB_CASE(State::B8_2VL, State::B8_2VL):
+          case COMB_CASE(State::B16_2VL, State::B16_2VL):
+          case COMB_CASE(State::B8_4VL, State::B8_4VL):
+            return {wrapThis(FunctionType::NONE, {{src, srcState}})};
 
-    //       // === src denser -> res sparser (src_eff < res_eff) -> DINTLV ===
-    //       case COMB_CASE(State::B8, State::B16):
-    //       case COMB_CASE(State::B8, State::B8_2VL):
-    //         return {wrapThis(FunctionType::DINTLV2, {{src, srcState}})};
-    //       case COMB_CASE(State::B8, State::B32):
-    //       case COMB_CASE(State::B8, State::B8_4VL):
-    //       case COMB_CASE(State::B8, State::B16_2VL):
-    //         return {wrapThis(FunctionType::DINTLV4, {{src, srcState}})};
-    //       case COMB_CASE(State::B16, State::B32):
-    //       case COMB_CASE(State::B16, State::B8_4VL):
-    //       case COMB_CASE(State::B16, State::B16_2VL):
-    //         return {wrapThis(FunctionType::DINTLV2, {{src, srcState}})};
+          // === src denser -> res sparser (src_eff < res_eff) -> DINTLV ===
+          case COMB_CASE(State::B8, State::B16):
+          case COMB_CASE(State::B8, State::B8_2VL):
+            return {wrapThis(FunctionType::DINTLV2, {{src, srcState}})};
+          case COMB_CASE(State::B8, State::B32):
+          case COMB_CASE(State::B8, State::B8_4VL):
+          case COMB_CASE(State::B8, State::B16_2VL):
+            return {wrapThis(FunctionType::DINTLV4, {{src, srcState}})};
+          case COMB_CASE(State::B16, State::B32):
+          case COMB_CASE(State::B16, State::B8_4VL):
+          case COMB_CASE(State::B16, State::B16_2VL):
+            return {wrapThis(FunctionType::DINTLV2, {{src, srcState}})};
 
-    //       // === src sparser -> res denser (src_eff > res_eff) -> INTLV ===
-    //       case COMB_CASE(State::B8_2VL, State::B8):
-    //       case COMB_CASE(State::B16, State::B8):
-    //         return {wrapThis(FunctionType::INTLV2, {{src, srcState}})};
-    //       case COMB_CASE(State::B32, State::B8):
-    //       case COMB_CASE(State::B8_4VL, State::B8):
-    //       case COMB_CASE(State::B16_2VL, State::B8):
-    //         return {wrapThis(FunctionType::INTLV4, {{src, srcState}})};
-    //       case COMB_CASE(State::B32, State::B16):
-    //       case COMB_CASE(State::B32, State::B8_2VL):
-    //       case COMB_CASE(State::B8_4VL, State::B16):
-    //       case COMB_CASE(State::B8_4VL, State::B8_2VL):
-    //       case COMB_CASE(State::B16_2VL, State::B16):
-    //       case COMB_CASE(State::B16_2VL, State::B8_2VL):
-    //         return {wrapThis(FunctionType::INTLV2, {{src, srcState}})};
+          // === src sparser -> res denser (src_eff > res_eff) -> INTLV ===
+          case COMB_CASE(State::B8_2VL, State::B8):
+          case COMB_CASE(State::B16, State::B8):
+            return {wrapThis(FunctionType::INTLV2, {{src, srcState}})};
+          case COMB_CASE(State::B32, State::B8):
+          case COMB_CASE(State::B8_4VL, State::B8):
+          case COMB_CASE(State::B16_2VL, State::B8):
+            return {wrapThis(FunctionType::INTLV4, {{src, srcState}})};
+          case COMB_CASE(State::B32, State::B16):
+          case COMB_CASE(State::B32, State::B8_2VL):
+          case COMB_CASE(State::B8_4VL, State::B16):
+          case COMB_CASE(State::B8_4VL, State::B8_2VL):
+          case COMB_CASE(State::B16_2VL, State::B16):
+          case COMB_CASE(State::B16_2VL, State::B8_2VL):
+            return {wrapThis(FunctionType::INTLV2, {{src, srcState}})};
 
-    //       // === Same eff width, src sparse -> res dense -> INTLV ===
-    //       case COMB_CASE(State::B8_2VL, State::B16):
-    //       case COMB_CASE(State::B16_2VL, State::B32):
-    //         return {wrapThis(FunctionType::INTLV2, {{src, srcState}})};
-    //       case COMB_CASE(State::B8_4VL, State::B32):
-    //         return {wrapThis(FunctionType::INTLV4, {{src, srcState}})};
+          // === Same eff width, src sparse -> res dense -> INTLV ===
+          case COMB_CASE(State::B8_2VL, State::B16):
+          case COMB_CASE(State::B16_2VL, State::B32):
+            return {wrapThis(FunctionType::INTLV2, {{src, srcState}})};
+          case COMB_CASE(State::B8_4VL, State::B32):
+            return {wrapThis(FunctionType::INTLV4, {{src, srcState}})};
 
-    //       // === Same eff width, src dense -> res sparse -> DINTLV ===
-    //       case COMB_CASE(State::B16, State::B8_2VL):
-    //       case COMB_CASE(State::B32, State::B16_2VL):
-    //         return {wrapThis(FunctionType::DINTLV2, {{src, srcState}})};
-    //       case COMB_CASE(State::B32, State::B8_4VL):
-    //         return {wrapThis(FunctionType::DINTLV4, {{src, srcState}})};
+          // === Same eff width, src dense -> res sparse -> DINTLV ===
+          case COMB_CASE(State::B16, State::B8_2VL):
+          case COMB_CASE(State::B32, State::B16_2VL):
+            return {wrapThis(FunctionType::DINTLV2, {{src, srcState}})};
+          case COMB_CASE(State::B32, State::B8_4VL):
+            return {wrapThis(FunctionType::DINTLV4, {{src, srcState}})};
 
-    //       // Unrecognized combination -> fallback
-    //       default:
-    //         return {wrapThis(FunctionType::NONE, {{src, srcState}})};
-    //       }
-    //     }
-    //   }
-    // }
+          // Unrecognized combination -> fallback
+          default:
+            return {wrapThis(FunctionType::NONE, {{src, srcState}})};
+          }
+        }
+      }
+    }
     // Fallback: no constraint propagation
     return {wrapThis(FunctionType::NONE, {})};
   }
@@ -1054,7 +1044,7 @@ public:
           os << "  " << res.getType() << "\n";
         }
         os << "Candidates in the solution space: " << failedSolves.size()
-            << "\n";
+           << "\n";
         if (!failedSolves.empty()) {
           os << "Input states from last valid candidates:\n";
           DenseSet<Value> visited;
@@ -1068,24 +1058,25 @@ public:
         }
         os << "\nPossible causes and solutions:\n";
         os << "  1. The operation may not have been lowered to the HIVMAVE "
-               "dialect before VectorLayout analysis.\n";
+              "dialect before VectorLayout analysis.\n";
         os << "     -> If using -analyze-vector-layout standalone: lower all "
-               "vector ops to HIVMAVE first.\n";
+              "vector ops to HIVMAVE first.\n";
         os << "     -> If running end-to-end: an upstream pass failed to "
-               "lower this op. Op: " << failedOp->getName() << "\n";
+              "lower this op. Op: "
+           << failedOp->getName() << "\n";
         os << "  2. The operation type may not be handled in solveProblem "
-               "TypeSwitch.\n";
+              "TypeSwitch.\n";
         os << "     -> Add a new Case for " << failedOp->getName()
-            << " in solveProblem().\n";
+           << " in solveProblem().\n";
         os << "  3. The specific VecMemType combination is not supported by "
-               "this op.\n";
+              "this op.\n";
         os << "     -> Check COMB_CASE branches in the corresponding "
-               "solveProblem function.\n";
+              "solveProblem function.\n";
         os << "  4. Conflicting layout requirements from multiple consumers.\n";
         os << "     -> Check if the operands/results have incompatible layout "
-               "constraints.\n";
+              "constraints.\n";
         os << "  5. Unsupported element bitwidth (only 1/8/16/32 are "
-               "supported).\n";
+              "supported).\n";
         os << "     -> Verify all vector types have supported bitwidths.\n";
         os << "======================================================\n";
       }
@@ -1115,9 +1106,8 @@ public:
         // Exit side: result has no layout. Set it to the solver-resolved
         // state so downstream ops (e.g. preg.xor) see consistent types.
         auto castVecType = cast<VectorType>(op->getResult(0).getType());
-        // todo: wait define in llvm-project
-        // if (!castVecType.getLayout())
-        //   setResultVecTypeAttr(op, rewriter, inputs);
+        if (!castVecType.getLayout())
+          setResultVecTypeAttr(op, rewriter, inputs);
       } else if (auto forOp = dyn_cast<scf::ForOp>(op))
         setForOpLayoutAttr(forOp, rewriter);
       else if (auto callOp = dyn_cast<func::CallOp>(op))

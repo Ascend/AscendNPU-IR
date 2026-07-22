@@ -333,41 +333,39 @@ struct Unroll64F32ForLoopPattern : public OpRewritePattern<scf::ForOp> {
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
                                 PatternRewriter &rewriter) const override {
-    // todo: wait define in llvm-project
-    return failure();
-    // SmallVector<VFTruncFOp, 2> vtruncfOps;
-    // SmallVector<VFStoreWithStrideOp, 2> oldStoreOps;
-    // getStoreWithStrideAfterTruncOps(vtruncfOps, oldStoreOps, forOp.getBody());
-    // if (oldStoreOps.size() == 1 && forOp->getAttr("unroll_for_vsstb")) {
-    //   forOp->removeAttr("unroll_for_vsstb");
-    //   auto outerFor = forOp->getParentOfType<scf::ForOp>();
-    //   // Unrolll
-    //   auto unrollResult =
-    //       loopUnrollByFactor(forOp, /*unrollFactor=*/2, /*annotateFn=*/nullptr);
-    //   if (failed(unrollResult)) {
-    //     return failure();
-    //   }
-    //   Block *unrolledBody = nullptr;
-    //   if (!unrollResult->epilogueLoopOp.has_value() &&
-    //       !unrollResult->mainLoopOp.has_value()) {
-    //     unrolledBody = outerFor.getBody();
-    //   } else if (unrollResult->mainLoopOp.has_value()) {
-    //     unrolledBody = unrollResult->mainLoopOp->getBody();
-    //   } else if (unrollResult->epilogueLoopOp.has_value()) {
-    //     unrolledBody = unrollResult->epilogueLoopOp->getBody();
-    //   }
-    //   if (!unrolledBody) {
-    //     return failure();
-    //   }
-    //   getStoreWithStrideAfterTruncOps(vtruncfOps, oldStoreOps, unrolledBody);
-    // } else if (forOp->getAttr("unroll_for_vsstb")) {
-    //   forOp->removeAttr("unroll_for_vsstb");
-    //   return failure();
-    // } else if (oldStoreOps.size() != 2) {
-    //   return failure();
-    // }
+    SmallVector<VFTruncFOp, 2> vtruncfOps;
+    SmallVector<VFStoreWithStrideOp, 2> oldStoreOps;
+    getStoreWithStrideAfterTruncOps(vtruncfOps, oldStoreOps, forOp.getBody());
+    if (oldStoreOps.size() == 1 && forOp->getAttr("unroll_for_vsstb")) {
+      forOp->removeAttr("unroll_for_vsstb");
+      auto outerFor = forOp->getParentOfType<scf::ForOp>();
+      // Unrolll
+      auto unrollResult =
+          loopUnrollByFactor(forOp, /*unrollFactor=*/2, /*annotateFn=*/nullptr);
+      if (failed(unrollResult)) {
+        return failure();
+      }
+      Block *unrolledBody = nullptr;
+      if (!unrollResult->epilogueLoopOp.has_value() &&
+          !unrollResult->mainLoopOp.has_value()) {
+        unrolledBody = outerFor.getBody();
+      } else if (unrollResult->mainLoopOp.has_value()) {
+        unrolledBody = unrollResult->mainLoopOp->getBody();
+      } else if (unrollResult->epilogueLoopOp.has_value()) {
+        unrolledBody = unrollResult->epilogueLoopOp->getBody();
+      }
+      if (!unrolledBody) {
+        return failure();
+      }
+      getStoreWithStrideAfterTruncOps(vtruncfOps, oldStoreOps, unrolledBody);
+    } else if (forOp->getAttr("unroll_for_vsstb")) {
+      forOp->removeAttr("unroll_for_vsstb");
+      return failure();
+    } else if (oldStoreOps.size() != 2) {
+      return failure();
+    }
 
-    // return rewriteTruncAndStore(rewriter, vtruncfOps, oldStoreOps);
+    return rewriteTruncAndStore(rewriter, vtruncfOps, oldStoreOps);
   }
 };
 

@@ -90,13 +90,29 @@ static std::optional<hivm::PointerCastOp> getLocalBuffer(Value v) {
   return std::nullopt;
 }
 
+static std::optional<size_t> getMultiBufferNum(Value value) {
+  auto markOp = utils::getAnnotateOpWithAttr(value, hivm::MultiBufferAttr::name);
+  if (!markOp) {
+    return std::nullopt;
+  }
+
+  auto attr = (*markOp)->getAttrOfType<IntegerAttr>(hivm::MultiBufferAttr::name);
+  if (!attr || attr.getInt() == 0) {
+    return std::nullopt;
+  }
+
+  return static_cast<size_t>(attr.getInt());
+}
+
 static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
                               size_t preloadNum, PreloadInfo &info,
                               OpBuilder &b) {
-  SmallVector<Value> addrs(info.maxPreloadNum);
+  size_t bufferNum = getMultiBufferNum(op).value_or(info.maxPreloadNum);
+  SmallVector<Value> addrs(bufferNum);
+
+  size_t preloadIdx = preloadNum % bufferNum;
   for (auto [i, addr] : llvm::enumerate(op.getAddrs())) {
-    auto shiftedIdx =
-        (info.maxPreloadNum - preloadNum - 1 + i) % info.maxPreloadNum;
+    auto shiftedIdx = (bufferNum - preloadIdx - 1 + i) % bufferNum;
     addrs[shiftedIdx] = addr;
   }
   auto newPointerCastOp =
@@ -105,18 +121,48 @@ static Value cloneLocalBuffer(Value oldValue, hivm::PointerCastOp op,
   return newPointerCastOp;
 }
 
-static Value cloneWorkspaceSubview(memref::SubViewOp subviewOp,
-                                   size_t preloadNum, PreloadInfo &info,
-                                   OpBuilder &b) {
+static bool hasPreloadWorkspaceMark(Value value) {
+  if (!value)
+    return false;
+
+  if (utils::getAnnotateOpWithAttr(value, hivm::PreloadWorkspaceAttr::name)
+          .has_value()) {
+    return true;
+  }
+
+  if (Operation *defOp = value.getDefiningOp()) {
+    return defOp->hasAttr(hivm::PreloadWorkspaceAttr::name);
+  }
+
+  return false;
+}
+
+static bool isPreloadWorkspaceSubview(memref::SubViewOp subviewOp) {
+  // The preload-workspace mark is placed on the subview op itself by the
+  // producer (see CVPipelining::createAttrForPreloadWS). Also accept a marked
+  // source so subviews derived from an already-marked workspace are detected.
+  return subviewOp->hasAttr(hivm::PreloadWorkspaceAttr::name) ||
+         hasPreloadWorkspaceMark(subviewOp.getSource());
+}
+
+static Value
+cloneWorkspaceSubview(memref::SubViewOp subviewOp, size_t preloadNum,
+                      PreloadInfo &info, OpBuilder &b) {
   auto offsets = subviewOp.getMixedOffsets();
   auto loc = subviewOp.getLoc();
-  auto indVar = info.mappings[info.preloadNum].lookup(info.indVar);
+
+  auto indVar = info.mappings[preloadNum].lookup(info.indVar);
+
   Value offset = b.create<arith::DivSIOp>(indVar.getLoc(), indVar, info.step);
-  offset = b.create<arith::RemSIOp>(offset.getLoc(), offset, info.maxPreloadValue);
-  offset = b.create<arith::IndexCastOp>(offset.getLoc(), b.getIndexType(), offset);
+  offset = b.create<arith::RemSIOp>(offset.getLoc(), offset,
+                                    info.maxPreloadValue);
+  offset = b.create<arith::IndexCastOp>(offset.getLoc(), b.getIndexType(),
+                                        offset);
   offsets[0] = offset;
+
   auto src = info.mappings[preloadNum].lookupOrDefault(subviewOp.getSource());
   Value newResult;
+
   if (subviewOp.getSourceType().getRank() == subviewOp.getType().getRank()) {
     newResult = b.create<memref::SubViewOp>(loc, src, offsets,
                                             subviewOp.getMixedSizes(),
@@ -129,11 +175,14 @@ static Value cloneWorkspaceSubview(memref::SubViewOp subviewOp,
         loc, cast<MemRefType>(newResType), src, offsets,
         subviewOp.getMixedSizes(), subviewOp.getMixedStrides());
   }
+
   auto adaptorOp =
       b.create<UnrealizedConversionCastOp>(loc, subviewOp.getType(), newResult);
+
   adaptorOp->setAttr("preload_adaptor", b.getUnitAttr());
   LDBG("Mapping " << subviewOp << '\n' << adaptorOp);
   info.mappings[preloadNum].map(subviewOp.getResult(), adaptorOp->getResult(0));
+
   return adaptorOp->getResult(0);
 }
 
@@ -160,15 +209,18 @@ preprocessLoopArgs(scf::ForOp forOp, SmallVector<Value> &newInitArgs,
 
 static Value getPreloadCondition(const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
-  Value cond;
-  auto indVar = info.mappings[info.preloadNum].lookup(info.indVar);
-  Value lb =
-      b.create<arith::ConstantOp>(loc, b.getIntegerAttr(info.ub.getType(), 0));
-  lb = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sle, lb, indVar);
-  Value ub =
-      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, info.ub);
-  cond = b.create<arith::AndIOp>(loc, lb, ub);
-  return cond;
+  auto &mapping = info.mappings[info.preloadNum];
+
+  Value indVar = mapping.lookup(info.indVar);
+  Value lb = mapping.lookupOrDefault(info.lb);
+  Value ub = mapping.lookupOrDefault(info.ub);
+
+  Value lowerCond =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::sge, indVar, lb);
+  Value upperCond =
+      b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::slt, indVar, ub);
+
+  return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
 }
 
 static void rewriteScopeReturnOp(ValueRange returnResults,
@@ -189,8 +241,8 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
     if (auto pointerCastOp = dyn_cast<hivm::PointerCastOp>(&op);
         pointerCastOp && getLocalBuffer(pointerCastOp)) {
       cloneLocalBuffer(pointerCastOp, pointerCastOp, info.preloadNum, info, b);
-    } else if (op.hasAttr(hivm::PreloadWorkspaceAttr::name)) {
-      auto subviewOp = cast<memref::SubViewOp>(&op);
+    } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&op);
+              subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
       cloneWorkspaceSubview(subviewOp, info.preloadNum, info, b);
     } else if (auto forOp = dyn_cast<scf::ForOp>(&op)) {
       auto &mapping = info.mappings[info.preloadNum];
@@ -330,8 +382,8 @@ static void rewritePreloadLoop(scf::ForOp forOp,
                 }
                 continue;
               }
-            } else if (bodyOp.hasAttr(hivm::PreloadWorkspaceAttr::name)) {
-              auto subviewOp = cast<memref::SubViewOp>(&bodyOp);
+            } else if (auto subviewOp = dyn_cast<memref::SubViewOp>(&bodyOp);
+                      subviewOp && isPreloadWorkspaceSubview(subviewOp)) {
               for (int64_t preloadNum = maxPreloadNum - 1; preloadNum >= 0;
                    preloadNum--) {
                 cloneWorkspaceSubview(subviewOp, preloadNum, info, b);
@@ -454,6 +506,13 @@ struct PropagateAdaptor : public OpRewritePattern<UnrealizedConversionCastOp> {
   }
 };
 
+static void cleanupPreloadWorkspaceMarks(Operation &op) {
+  op.walk([&](annotation::MarkOp markOp) {
+    if (utils::isAnnotationWithAttr(markOp, hivm::PreloadWorkspaceAttr::name))
+      markOp->removeAttr(hivm::PreloadWorkspaceAttr::name);
+  });
+}
+
 void CreatePreloadPass::runOnOperation() {
   auto moduleOp = getOperation();
   DenseMap<scf::ForOp, SmallVector<scope::ScopeOp, 4>> preload;
@@ -486,6 +545,8 @@ void CreatePreloadPass::runOnOperation() {
     rewritePreloadLoop(forOp, scopes, preloadNumSet.size());
   }
 
+  cleanupPreloadWorkspaceMarks(*moduleOp);
+
   RewritePatternSet patterns(&getContext());
   patterns.add<PropagateAdaptor>(&getContext());
   if (failed(applyPatternsGreedily(moduleOp, std::move(patterns)))) {
@@ -496,7 +557,7 @@ void CreatePreloadPass::runOnOperation() {
 
   PassManager pm(&getContext());
   pm.addPass(createCSEPass());
-  pm.addPass(bishengir::createExtendedCanonicalizerPass());
+  pm.addPass(createCanonicalizerPass());
   pm.addPass(scope::createInlineScopePass());
 
   if (failed(pm.run(moduleOp))) {

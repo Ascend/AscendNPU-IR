@@ -819,15 +819,12 @@ Value hivmave::constrainVectorLayout(Value src, VecMemType targetLayout,
       VecMemTypeAttr::get(builder.getContext(), targetLayout));
 
   // First cast: None -> targetLayout
-  // todo: wait define in llvm-project
-  // auto castToLayout = builder.create<VectorLayoutCastOp>(
-  //     src.getLoc(), vecType.cloneWith(layoutAttr), src);
+  auto castToLayout = builder.create<VectorLayoutCastOp>(
+      src.getLoc(), vecType.cloneWith(layoutAttr), src);
 
   // Second cast: targetLayout -> None
-  // todo: wait define in llvm-project
-  // auto castToNone = builder.create<VectorLayoutCastOp>(
-  //     src.getLoc(), vecType.cloneWith({}), castToLayout.getResult());
+  auto castToNone = builder.create<VectorLayoutCastOp>(
+      src.getLoc(), vecType.cloneWith({}), castToLayout.getResult());
 
-  // return castToNone.getResult();
-  return nullptr;
+  return castToNone.getResult();
 }

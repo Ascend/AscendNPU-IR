@@ -16,23 +16,23 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
- 
+
 namespace mlir {
 #define GEN_PASS_DEF_REMOVEVECTORLAYOUTATTR
 #include "bishengir/Dialect/HIVMAVE/Transforms/Passes.h.inc"
 } // namespace mlir
 
 #define DEBUG_TYPE "remove-vector-layout-attr"
- 
+
 using namespace mlir;
- 
+
 namespace {
- 
+
 void eliminateForOp(scf::ForOp op, IRRewriter &rewriter) {
   auto forOp = cast<scf::ForOp>(op);
   Block *oldLoopBody = forOp.getBody();
   rewriter.setInsertionPointAfter(op);
- 
+
   auto newForOp = rewriter.create<scf::ForOp>(
       forOp.getLoc(), forOp.getLowerBound(), forOp.getUpperBound(),
       forOp.getStep(), forOp.getInitArgs());
@@ -56,21 +56,21 @@ void eliminateForOp(scf::ForOp op, IRRewriter &rewriter) {
   }
   rewriter.replaceOp(op, replacements);
 }
- 
+
 void eliminateNormalOp(Operation *op, IRRewriter &rewriter) {
   bool isTarget = false;
   SmallVector<Type> results;
   for (auto res : op->getResults()) {
     if (auto vecRes = dyn_cast<VectorType>(res.getType())) {
       isTarget = true;
-      // todo: wait define in llvm-project
-      // results.push_back(vecRes.cloneWith({}));
+      results.push_back(vecRes.cloneWith({}));
     } else {
       results.push_back(res.getType());
     }
   }
-  if (!isTarget) return;
- 
+  if (!isTarget)
+    return;
+
   rewriter.setInsertionPoint(op);
   OperationState state(op->getLoc(), op->getName());
   state.addOperands(op->getOperands());
@@ -79,38 +79,39 @@ void eliminateNormalOp(Operation *op, IRRewriter &rewriter) {
   auto replacer = rewriter.create(state);
   rewriter.replaceOp(op, replacer);
 }
- 
-void eliminateVectorLayoutCastOp (hivmave::VectorLayoutCastOp op, IRRewriter &rewriter) {
+
+void eliminateVectorLayoutCastOp(hivmave::VectorLayoutCastOp op,
+                                 IRRewriter &rewriter) {
   rewriter.replaceOp(op, op->getOperand(0));
 }
- 
+
 struct RemoveVectorLayoutAttrPass
     : public impl::RemoveVectorLayoutAttrBase<RemoveVectorLayoutAttrPass> {
   using RemoveVectorLayoutAttrBase<
       RemoveVectorLayoutAttrPass>::RemoveVectorLayoutAttrBase;
- 
+
 public:
   void runOnOperation() override;
 };
- 
+
 void RemoveVectorLayoutAttrPass::runOnOperation() {
   auto funcOp = getOperation();
   IRRewriter rewriter(funcOp.getContext());
   SmallVector<Operation *> ops;
   funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) { ops.push_back(op); });
- 
+
   for (auto op : ops) {
     if (isa<func::FuncOp>(op) || isa<func::CallOp>(op))
       continue;
     else if (auto castOp = dyn_cast<hivmave::VectorLayoutCastOp>(op))
       eliminateVectorLayoutCastOp(castOp, rewriter);
-    else if (auto forOp = dyn_cast< scf::ForOp>(op)) 
+    else if (auto forOp = dyn_cast<scf::ForOp>(op))
       eliminateForOp(forOp, rewriter);
     else
       eliminateNormalOp(op, rewriter);
   }
 }
- 
+
 } // namespace
 std::unique_ptr<Pass> hivmave::createRemoveVectorLayoutAttrPass() {
   return std::make_unique<RemoveVectorLayoutAttrPass>();

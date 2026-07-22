@@ -34,9 +34,22 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SetVector.h"
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 
 namespace mlir {
 namespace hivm {
+
+struct AtomicEffect {
+  AtomicKind kind;
+  TypeAttr type;
+};
+
+struct WorkspaceAllocParams {
+  unsigned multibuffer;
+  annotation::MarkOp marker;
+  bufferization::ToTensorOp toTensor;
+};
 
 struct WorkItem {
   /// Values crossing work-item boundaries (original, expanded). The expanded
@@ -61,6 +74,10 @@ struct WorkItem {
   /// work item that absorbs flexibly-typed ops.
   TCoreType core;
 
+  // After unrolling the parent for loop, the upper bound for "reroll"ed loops
+  // are computed and inserted here. Created in "unrollOuterLoop"
+  Value upperBound;
+
   // ===========================================================================
   // CV-pipelining codegen state (loop mode only). Block-mode consumers leave
   // these default-constructed.
@@ -78,6 +95,15 @@ struct WorkItem {
 
   /// ScopeOp wrapper for skew-mode preload pipelining.
   scope::ScopeOp scopeOp;
+
+  // The containing for loop
+  scf::ForOp parentFor;
+
+  // Number of multibuffer
+  unsigned multibuffer;
+
+  // Guesstimate of runtime cost of this work item
+  float cost;
 
 #ifndef NDEBUG
   int id = -1;

@@ -155,7 +155,7 @@ func.func @test_load_pad_fold(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093xf32> 
     //CHECK-DAG: %[[cst_0i:.*]] = arith.constant 0 : index
     //CHECK-DAG: %[[source:.*]] = tensor.collapse_shape {{.*}}
     //CHECK-DAG: %[[empty:.*]] = tensor.empty() : tensor<4093xf32>
-    //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_2046]]  : index init_out_buffer = false right_padding_num = %[[cst_0i]] : index may_implicit_transpose_with_last_axis = false -> tensor<4093xf32>
+    //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_2046]]  : index right_padding_num = %[[cst_0i]] : index -> tensor<4093xf32>
     //CHECK: return %[[padload]] : tensor<4093xf32>
     %right = arith.constant 0 : index
     %cst = arith.constant 0.000000e+00 : f32
@@ -175,7 +175,7 @@ func.func @test_load_pad_one_side(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093xf
     //CHECK-DAG: %[[cst_2046:.*]] = arith.constant 2046 : index
     //CHECK-DAG: %[[source:.*]] = tensor.collapse_shape {{.*}}
     //CHECK-DAG: %[[empty:.*]] = tensor.empty() : tensor<4093xf32>
-    //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 init_out_buffer = false right_padding_num = %[[cst_2046]]  : index may_implicit_transpose_with_last_axis = false -> tensor<4093xf32>
+    //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 right_padding_num = %[[cst_2046]]  : index -> tensor<4093xf32>
     //CHECK: return %[[padload]] : tensor<4093xf32>
     %cst = arith.constant 0.000000e+00 : f32
     %0 = tensor.empty() : tensor<2047xf32>
@@ -195,7 +195,7 @@ func.func @test_load_pad_left_dynamic_right_static(%arg0 : tensor<1x1x2047xf32>)
   //CHECK-DAG: %[[cst_0i:.*]] = arith.constant 0 : index
   //CHECK-DAG: %[[source:.*]] = tensor.collapse_shape {{.*}}
   //CHECK-DAG: %[[empty:.*]] = tensor.empty() : tensor<4093xf32>
-  //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_0i]]  : index init_out_buffer = false right_padding_num = %[[cst_2046]]  : index may_implicit_transpose_with_last_axis = false -> tensor<4093xf32>
+  //CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_0i]]  : index right_padding_num = %[[cst_2046]]  : index -> tensor<4093xf32>
   //CHECK: return %[[padload]] : tensor<4093xf32>
   %left = arith.constant 0 : index
   %cst = arith.constant 0.000000e+00 : f32
@@ -216,7 +216,7 @@ func.func @test_load_pad_both_dynamic(%arg0 : tensor<1x1x2047xf32>) -> tensor<40
 //CHECK-DAG: %[[cst_1026:.*]] = arith.constant 1026 : index
 //CHECK-DAG: %[[source:.*]] = tensor.collapse_shape {{.*}}
 //CHECK-DAG: %[[empty:.*]] = tensor.empty() : tensor<4093xf32>
-//CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_1020]]  : index init_out_buffer = false right_padding_num = %[[cst_1026]]  : index may_implicit_transpose_with_last_axis = false -> tensor<4093xf32>
+//CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]]  : f32 left_padding_num = %[[cst_1020]]  : index right_padding_num = %[[cst_1026]]  : index -> tensor<4093xf32>
 //CHECK: return %[[padload]] : tensor<4093xf32>
 %left = arith.constant 1020 : index
 %right = arith.constant 1026 : index  
@@ -237,7 +237,7 @@ func.func @test_load_pad_zero_cases(%arg0 : tensor<1x1x2047xf32>) -> tensor<4093
 // CHECK-DAG: %[[pad_i:.*]] = arith.constant 0 : index
 // CHECK-DAG: %[[source:.*]] = tensor.collapse_shape {{.*}}
 // CHECK-DAG: %[[empty:.*]] = tensor.empty() : tensor<4093xf32>
-// CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]] : f32 left_padding_num = %[[pad_i]] : index init_out_buffer = false right_padding_num = %[[pad_i]] : index may_implicit_transpose_with_last_axis = false -> tensor<4093xf32>
+// CHECK-DAG: %[[padload:.*]] = hivm.hir.load ins(%[[source]] : tensor<2047xf32>) outs(%[[empty]] : tensor<4093xf32>) pad_mode = <PadValue> pad_value = %[[cst_0]] : f32 left_padding_num = %[[pad_i]] : index right_padding_num = %[[pad_i]] : index -> tensor<4093xf32>
 // CHECK: return %[[padload]] : tensor<4093xf32>
 %cst_f = arith.constant 0.000000e+00 : f32          
 %right_dyn = arith.constant 0 : index             

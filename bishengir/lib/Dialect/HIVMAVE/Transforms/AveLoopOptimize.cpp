@@ -52,34 +52,31 @@ struct WideVextfUnrollInterleavePattern : public OpRewritePattern<scf::ForOp> {
 
   LogicalResult matchAndRewrite(scf::ForOp forOp,
                                 PatternRewriter &rewriter) const override {
-    // todo: wait define in llvm-project
-    return failure();
-    // // check if loop should be unrolled
-    // if (!shouldUnroll(forOp))
-    //   return failure();
+    // check if loop should be unrolled
+    if (!shouldUnroll(forOp))
+      return failure();
 
-    // // perform loop unrolling by factor 2
-    // auto unrollResult =
-    //     loopUnrollByFactor(forOp, /*unrollFactor=*/2,
-    //     /*annotateFn=*/nullptr);
-    // if (failed(unrollResult)) {
-    //   return failure();
-    // }
+    // perform loop unrolling by factor 2
+    auto unrollResult =
+        loopUnrollByFactor(forOp, /*unrollFactor=*/2, /*annotateFn=*/nullptr);
+    if (failed(unrollResult)) {
+      return failure();
+    }
 
-    // // get the unrolled loop body
-    // Block *unrolledBody = nullptr;
-    // if (unrollResult->mainLoopOp) {
-    //   unrolledBody = unrollResult->mainLoopOp->getBody();
-    // } else if (unrollResult->epilogueLoopOp) {
-    //   unrolledBody = unrollResult->epilogueLoopOp->getBody();
-    // } else {
-    //   unrolledBody = forOp->getBlock();
-    // }
+    // get the unrolled loop body
+    Block *unrolledBody = nullptr;
+    if (unrollResult->mainLoopOp) {
+      unrolledBody = unrollResult->mainLoopOp->getBody();
+    } else if (unrollResult->epilogueLoopOp) {
+      unrolledBody = unrollResult->epilogueLoopOp->getBody();
+    } else {
+      unrolledBody = forOp->getBlock();
+    }
 
-    // if (!unrolledBody)
-    //   return failure();
+    if (!unrolledBody)
+      return failure();
 
-    // return success();
+    return success();
   }
 
 private:

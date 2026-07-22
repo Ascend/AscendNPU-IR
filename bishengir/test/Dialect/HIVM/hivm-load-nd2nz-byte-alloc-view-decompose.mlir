@@ -15,7 +15,7 @@ func.func @test_load_byte_alloc_view_static(%arg0: memref<256x128xf32, #hivm.add
   %view = memref.view %alloc[%c0][] : memref<131072xi8, #hivm.address_space<ub>> to memref<256x128xf32, #hivm.address_space<ub>>
   // LOAD: %[[PAD_VIEW:.*]] = memref.view %[[ALLOC:.*]][{{.*}}][] : memref<131072xi8, #hivm.address_space<ub>> to memref<32768xf32, #hivm.address_space<ub>>
   // LOAD: hivm.hir.vbrc ins(%{{.*}} : f32) outs(%[[PAD_VIEW]] : memref<32768xf32, #hivm.address_space<ub>>)
-  // LOAD: hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>) outs(%view : memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index init_out_buffer = false
+  // LOAD: hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>) outs(%view : memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index
   hivm.hir.load ins(%arg0: memref<256x128xf32, #hivm.address_space<gm>>) outs(%view: memref<256x128xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %c0 : index init_out_buffer = true
   return
 }
@@ -34,7 +34,7 @@ func.func @test_load_byte_alloc_view_dyn(%arg0: memref<?x?xf32, #hivm.address_sp
   // LOAD: %[[NUM_ELEMS:.*]] = arith.divsi %{{.*}}, %{{.*}} : index
   // LOAD: %[[PAD_VIEW:.*]] = memref.view %[[ALLOC:.*]][{{.*}}][%[[NUM_ELEMS]]] : memref<?xi8, #hivm.address_space<ub>> to memref<?xf32, #hivm.address_space<ub>>
   // LOAD: hivm.hir.vbrc ins(%{{.*}} : f32) outs(%[[PAD_VIEW]] : memref<?xf32, #hivm.address_space<ub>>)
-  // LOAD: hivm.hir.load ins(%arg0 : memref<?x?xf32, #hivm.address_space<gm>>) outs(%view : memref<?x?xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index init_out_buffer = false
+  // LOAD: hivm.hir.load ins(%arg0 : memref<?x?xf32, #hivm.address_space<gm>>) outs(%view : memref<?x?xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index
   hivm.hir.load ins(%arg0: memref<?x?xf32, #hivm.address_space<gm>>) outs(%view: memref<?x?xf32, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %c0 : index init_out_buffer = true
   return
 }
@@ -49,7 +49,7 @@ func.func @test_load_byte_alloc_view_subview(%arg0: memref<256x128xf32, #hivm.ad
   %subview = memref.subview %view[0, 0] [256, 128] [1, 1] : memref<256x128xf32, #hivm.address_space<ub>> to memref<256x128xf32, strided<[128, 1]>, #hivm.address_space<ub>>
   // LOAD: %[[PAD_VIEW:.*]] = memref.view %[[ALLOC:.*]][{{.*}}][] : memref<131072xi8, #hivm.address_space<ub>> to memref<32768xf32, #hivm.address_space<ub>>
   // LOAD: hivm.hir.vbrc ins(%{{.*}} : f32) outs(%[[PAD_VIEW]] : memref<32768xf32, #hivm.address_space<ub>>)
-  // LOAD: hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>) outs(%subview : memref<256x128xf32, strided<[128, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index init_out_buffer = false
+  // LOAD: hivm.hir.load ins(%arg0 : memref<256x128xf32, #hivm.address_space<gm>>) outs(%subview : memref<256x128xf32, strided<[128, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index
   hivm.hir.load ins(%arg0: memref<256x128xf32, #hivm.address_space<gm>>) outs(%subview: memref<256x128xf32, strided<[128, 1]>, #hivm.address_space<ub>>) pad_mode = <PadValue> pad_value = %cst : f32 left_padding_num = %c0 : index init_out_buffer = true
   return
 }
@@ -67,7 +67,7 @@ func.func @test_nd2nz_byte_alloc_view_static(%arg0: memref<8x16x16x8xf32, #hivm.
   %view = memref.view %alloc[%c0][] : memref<16384xi8, #hivm.address_space<cbuf>> to memref<8x16x16x8xf32, #hivm.address_space<cbuf>>
   // ND2NZ: %[[PAD_VIEW:.*]] = memref.view %[[ALLOC:.*]][{{.*}}][] : memref<16384xi8, #hivm.address_space<cbuf>> to memref<4096xf32, #hivm.address_space<cbuf>>
   // ND2NZ: hivm.hir.vbrc ins(%{{.*}} : f32) outs(%[[PAD_VIEW]] : memref<4096xf32, #hivm.address_space<cbuf>>)
-  // ND2NZ: hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<8x16x16x8xf32, #hivm.address_space<gm>>) outs(%view : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = false
+  // ND2NZ: hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<8x16x16x8xf32, #hivm.address_space<gm>>) outs(%view : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<8x16x16x8xf32, #hivm.address_space<gm>>) outs(%view : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32
   return
 }
@@ -88,7 +88,7 @@ func.func @test_nd2nz_byte_alloc_view_dyn(%arg0: memref<?x?x?x?xf32, #hivm.addre
   // ND2NZ: %[[NUM_ELEMS:.*]] = arith.divsi %{{.*}}, %{{.*}} : index
   // ND2NZ: %[[PAD_VIEW:.*]] = memref.view %[[ALLOC:.*]][{{.*}}][%[[NUM_ELEMS]]] : memref<?xi8, #hivm.address_space<cbuf>> to memref<?xf32, #hivm.address_space<cbuf>>
   // ND2NZ: hivm.hir.vbrc ins(%{{.*}} : f32) outs(%[[PAD_VIEW]] : memref<?xf32, #hivm.address_space<cbuf>>)
-  // ND2NZ: hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%view : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>) init_out_buffer = false
+  // ND2NZ: hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%view : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<?x?x?x?xf32, #hivm.address_space<gm>>) outs(%view : memref<?x?x?x?xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32
   return
 }
@@ -104,7 +104,7 @@ func.func @test_nd2nz_byte_alloc_view_if(%arg0: memref<8x16x16x8xf32, #hivm.addr
   // ND2NZ: scf.if
   // ND2NZ: hivm.hir.vbrc ins(%{{.*}} : f32) outs(%[[PAD_VIEW]] : memref<4096xf32, #hivm.address_space<cbuf>>)
   // ND2NZ: } {hivm.unlikely_condition}
-  // ND2NZ: hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<8x16x16x8xf32, #hivm.address_space<gm>>) outs(%view : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = false
+  // ND2NZ: hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<8x16x16x8xf32, #hivm.address_space<gm>>) outs(%view : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>)
   hivm.hir.nd2nz {dst_continuous} ins(%arg0 : memref<8x16x16x8xf32, #hivm.address_space<gm>>) outs(%view : memref<8x16x16x8xf32, #hivm.address_space<cbuf>>) init_out_buffer = true pad_value = %cst : f32 init_condition = %cond : i1
   return
 }

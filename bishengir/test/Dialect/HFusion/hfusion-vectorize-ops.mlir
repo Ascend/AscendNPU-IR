@@ -14,7 +14,7 @@
 // CHECK: %[[add:.*]] = arith.addf %[[mul]], %[[read3]]
 // CHECK: %[[write1:.*]] = vector.transfer_write %[[add]]
 // CHECK: return %[[write0]], %[[write1]]
-func.func @test_elemwise_0(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>, %arg2: tensor<64xf32>, %arg3: tensor<64xf32>) -> (tensor<64xf32>, tensor<64xf32>)
+func.func @test_elemwise_0(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>, %arg2: tensor<64xf32>, %arg3: tensor<64xf32>) -> (tensor<64xf32>, tensor<64xf32>) 
 attributes {vector_mode = "simd"} {
   %0 = tensor.empty() : tensor<64xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg0, %arg1 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
@@ -33,8 +33,8 @@ module {
 func.func @test_callee_0(%arg0: tensor<64xf32>) -> tensor<64xf32>
 attributes {vector_mode = "simd"} {
   %0 = tensor.empty() : tensor<64xf32>
-  %1 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>}
-                              ins(%arg0 : tensor<64xf32>)
+  %1 = linalg.elemwise_unary {fun = #linalg.unary_fn<exp>} 
+                              ins(%arg0 : tensor<64xf32>) 
                               outs(%0 : tensor<64xf32>) -> tensor<64xf32>
   return %1 : tensor<64xf32>
 }
@@ -52,10 +52,8 @@ func.func @test_caller_0(%arg0: tensor<64xf32>) -> tensor<64xf32> {
 // -----
 
 // CHECK-LABEL: func.func @test_elemwise_reduce_0(
-// CHECK: %[[expanded:.*]] = tensor.expand_shape {{.*}} into tensor<1x4x1x16xf32>
-// CHECK: %[[collapsed:.*]] = tensor.collapse_shape %[[expanded]] {{.*}} into tensor<4x1x16xf32>
-// CHECK: %[[read:.*]] = vector.transfer_read %[[collapsed]]
-// CHECK: %[[trunc:.*]] = arith.truncf %[[read]] {{.*}} : vector<4x1x16xf32> to vector<4x1x16xf16>
+// CHECK: %[[shapecast:.*]] = vector.shape_cast {{.*}} vector<1x64xf32> to vector<4x1x16xf32>
+// CHECK: %[[trunc:.*]] = arith.truncf %[[shapecast]] {{.*}} : vector<4x1x16xf32> to vector<4x1x16xf16>
 // CHECK: vector.transfer_write %[[trunc]], {{.*}} vector<4x1x16xf16>, tensor<4x1x16xf16>
 // CHECK: vector.multi_reduction {{.*}} [1] : vector<1x64xf32> to vector<1xf32>
 // CHECK: vector.transfer_write {{.*}} : vector<1xf32>, tensor<1xf32>
@@ -85,7 +83,7 @@ func.func @test_elemwise_reduce_0(%arg0: tensor<8x64x16xf16>, %arg1: tensor<64xf
     %inserted_slice_4 = tensor.insert_slice %9 into %inserted_slice[4, %1, 0] [4, 1, 16] [1, 1, 1] : tensor<4x1x16xf16> into tensor<8x64x16xf16>
     %10 = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%5, %6 : tensor<1x64xf32>, tensor<1x64xf32>) outs(%2 : tensor<1x64xf32>) -> tensor<1x64xf32>
     %11 = tensor.empty() : tensor<1xf32>
-    %reduced = linalg.reduce ins(%10 : tensor<1x64xf32>) outs(%11 : tensor<1xf32>) dimensions = [1]
+    %reduced = linalg.reduce ins(%10 : tensor<1x64xf32>) outs(%11 : tensor<1xf32>) dimensions = [1] 
       (%in: f32, %init: f32) {
         %12 = arith.addf %in, %init : f32
         linalg.yield %12 : f32
@@ -107,7 +105,7 @@ func.func @test_elemwise_reduce_0(%arg0: tensor<8x64x16xf16>, %arg1: tensor<64xf
 // CHECK: vector.transfer_write %[[read]], %[[dst]]
 // CHECK: %[[res:.*]] = bufferization.to_tensor %[[dst]] restrict writable : memref<64xf32>
 // CHECK: return {{.*}}, %[[res]]
-func.func @insert_copy_for_return_func_arg_0(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>) -> (tensor<64xf32>, tensor<64xf32>)
+func.func @insert_copy_for_return_func_arg_0(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>) -> (tensor<64xf32>, tensor<64xf32>) 
 attributes {noinline, outline = true, vector_mode = "simd"} {
   %0 = tensor.empty() : tensor<64xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg0, %arg1 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
@@ -138,7 +136,7 @@ attributes {noinline, outline = true, vector_mode = "simd"} {
 // CHECK-MANUAL-SCOPE-LABEL: func.func @test_return_arg_has_manual_scope_0
 // CHECK-MANUAL-SCOPE: %[[res:.*]] = bufferization.to_tensor {{.*}} restrict writable : memref<64xf32>
 // CHECK-MANUAL-SCOPE: return {{.*}}, %[[res]]
-func.func @test_return_arg_has_manual_scope_0(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>) -> (tensor<64xf32>, tensor<64xf32>)
+func.func @test_return_arg_has_manual_scope_0(%arg0: tensor<64xf32>, %arg1: tensor<64xf32>) -> (tensor<64xf32>, tensor<64xf32>) 
 attributes {outline = true, vector_mode = "simd"} {
   %0 = tensor.empty() : tensor<64xf32>
   %1 = linalg.elemwise_binary {fun = #linalg.binary_fn<sub>} ins(%arg0, %arg1 : tensor<64xf32>, tensor<64xf32>) outs(%0 : tensor<64xf32>) -> tensor<64xf32>
