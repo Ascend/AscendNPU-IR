@@ -629,7 +629,7 @@ protected:
 
   Value constant(PatternRewriter &rewriter, Location loc, int64_t i,
                  Type t) const {
-    return rewriter.create<arith::ConstantIntOp>(loc, i, t);
+    return rewriter.create<arith::ConstantIntOp>(loc, t, i);
   }
 
   virtual SmallVector<Value>
