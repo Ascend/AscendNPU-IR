@@ -119,11 +119,6 @@ def HIVMLocalMatmulLikeOpInterface
       /*methodName=*/"shouldDecomposeBiasByElementAdd",
       /*args=*/(ins)>,
     InterfaceMethod<
-      /*desc=*/"Return whether per-channel bias optimizations are supported.",
-      /*retTy=*/"bool",
-      /*methodName=*/"supportsPerChannelBias",
-      /*args=*/(ins)>,
-    InterfaceMethod<
       /*desc=*/"Return whether scale operands are present.",
       /*retTy=*/"bool",
       /*methodName=*/"supportsScaleOperands",

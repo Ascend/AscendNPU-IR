@@ -243,8 +243,7 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
     realM = (*realMK)[0 + batchIndexBias];
   }
 
-  if (matmulOp.supportsPerChannelBias() &&
-      utils::getAnnotateOpWithAttr(matmulOp.getMatmulA(), kDotPadOnlyK)
+  if (utils::getAnnotateOpWithAttr(matmulOp.getMatmulA(), kDotPadOnlyK)
           .has_value()) {
     auto cType = dyn_cast<RankedTensorType>(matmulOp.getMatmulC().getType());
     if (cType && cType.hasStaticShape()) {
