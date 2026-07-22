@@ -136,12 +136,12 @@ public:
     }
 
     const bool isAnyToF8 = (!inType.isF32()) &&
-                           (outType.isFloat8E4M3FN() || outType.isFloat8E5M2());
+                           (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType));
     if (isAnyToF8) {
       return replaceWith(castInToF32ToOut<Traits>(op, rewriter));
     }
 
-    const bool isF8ToAny = (inType.isFloat8E4M3FN() || inType.isFloat8E5M2()) &&
+    const bool isF8ToAny = (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType)) &&
                            (!outType.isF32());
     if (isF8ToAny) {
       return replaceWith(castInToF32ToOut<Traits>(op, rewriter));

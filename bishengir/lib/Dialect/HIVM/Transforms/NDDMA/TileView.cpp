@@ -82,7 +82,11 @@ bool TileView::isContiguous() const {
 
   SmallVector<int64_t> strides;
   int64_t offset = ShapedType::kDynamic;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (failed(getStridesAndOffset(viewType, strides, offset))) {
+#else
+  if (failed(viewType.getStridesAndOffset(strides, offset))) {
+#endif
     return false;
   }
 

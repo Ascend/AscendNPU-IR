@@ -181,7 +181,11 @@ protected:
   void processYieldOp(scf::YieldOp op);
 
   void processToTensorOp(bufferization::ToTensorOp op);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   void processToMemrefOp(bufferization::ToMemrefOp op);
+#else
+  void processToBufferOp(bufferization::ToBufferOp op);
+#endif
   void processSubviewOp(memref::SubViewOp op);
 
   void processFlipOp(hfusion::FlipOp op);

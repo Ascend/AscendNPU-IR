@@ -264,9 +264,17 @@ struct InsertCopyForReturnFuncArg : public OpRewritePattern<func::ReturnOp> {
           MemRefType::get(shapedType.getShape(), shapedType.getElementType());
       // copy out with bufferization to avoid folding the copy
       auto srcMemref =
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
           rewriter.create<bufferization::ToMemrefOp>(loc, memrefType, arg);
+#else
+          rewriter.create<bufferization::ToBufferOp>(loc, memrefType, arg);
+#endif
       auto dstMemref =
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
           rewriter.create<bufferization::ToMemrefOp>(loc, memrefType, emptyOp);
+#else
+          rewriter.create<bufferization::ToBufferOp>(loc, memrefType, emptyOp);
+#endif
       rewriter.create<linalg::CopyOp>(loc, ValueRange{srcMemref},
                                       ValueRange{dstMemref});
       auto returnTensor = rewriter.create<bufferization::ToTensorOp>(

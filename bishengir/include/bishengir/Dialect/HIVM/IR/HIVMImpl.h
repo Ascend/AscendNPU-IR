@@ -348,7 +348,11 @@ void traceDefOpsImpl(Value v, bool isSingleChain, TraceResultMode traceMode,
     traceSource(tensorCollapseShape.getSrc());
   } else if (auto subViewOp = v.getDefiningOp<memref::SubViewOp>()) {
     traceSource(subViewOp.getViewSource());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToMemrefOp>()) {
+#else
+  } else if (auto toMemrefOp = v.getDefiningOp<bufferization::ToBufferOp>()) {
+#endif
     traceSource(toMemrefOp.getOperand());
   } else if (auto toTensorOp = v.getDefiningOp<bufferization::ToTensorOp>()) {
     traceSource(toTensorOp.getOperand());

@@ -175,8 +175,13 @@ private:
   void adjustToTensorOp(bufferization::ToTensorOp toTensorOp,
                         OpBuilder &builder);
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   void adjustToMemrefOp(bufferization::ToMemrefOp toMemrefOp,
                         OpBuilder &builder);
+#else
+  void adjustToBufferOp(bufferization::ToBufferOp toMemrefOp,
+                        OpBuilder &builder);
+#endif
 
   void adjustCastOp(memref::CastOp castOp, OpBuilder &builder);
 

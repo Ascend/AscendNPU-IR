@@ -271,8 +271,13 @@ struct TransferWriteOpPattern
     if (!utils::isTransferWriteSuitForStoreWithStride(writeOp)) {
       return false;
     }
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getSource().getType());
     auto [strides, offset] = getStridesAndOffset(memrefTy);
+#else
+    auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getBase().getType());
+    auto [strides, offset] = memrefTy.getStridesAndOffset();
+#endif
     auto loc = writeOp.getLoc();
     Value strideConst = rewriter.create<arith::ConstantOp>(
         writeOp.getLoc(), rewriter.getIndexAttr(strides[0]));
@@ -579,7 +584,7 @@ private:
         loc, i8Type, rewriter.getIntegerAttr(i8Type, 0));
     Value cstZeroVec =
         rewriter.create<hivmave::VFBroadcastScalarOp>(loc, i8VecTy, cstZero);
-    if (resDtype.isFloat8E4M3FN() || resDtype.isFloat8E5M2()) {
+    if (isa<Float8E4M3FNType>(resDtype) || isa<Float8E5M2Type>(resDtype)) {
       cstZeroVec = rewriter.create<arith::BitcastOp>(loc, vecTy, cstZeroVec);
     }
     auto resEven = rewriter.create<hivmave::VFDeInterleaveOp>(

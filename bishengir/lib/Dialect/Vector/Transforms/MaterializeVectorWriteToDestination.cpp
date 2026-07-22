@@ -57,8 +57,13 @@ struct FoldInsertSliceToTransferWrite
 
     // 2. transfer_write dst should not be tensor.extract_slice, which means
     // this pattern already applied
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     if (transferWriteOp.getSource().getDefiningOp<tensor::ExtractSliceOp>())
       return failure();
+#else
+    if (transferWriteOp.getBase().getDefiningOp<tensor::ExtractSliceOp>())
+      return failure();
+#endif
 
     rewriter.setInsertionPoint(transferWriteOp);
 

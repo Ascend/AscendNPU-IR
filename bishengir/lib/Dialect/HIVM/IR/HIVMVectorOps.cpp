@@ -527,7 +527,7 @@ LogicalResult VReduceOp::verify() {
     Type srcType = this->getSrc().getType();
     ShapedType srcVecType = cast<ShapedType>(srcType);
     Type eleType = srcVecType.getElementType();
-    if (eleType.isFloat8E4M3FN() || eleType.isFloat8E5M2()) {
+    if (isa<Float8E4M3FNType>(eleType) || isa<Float8E5M2Type>(eleType)) {
       return this->emitError("fp8 is not supported.");
     }
   }

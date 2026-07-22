@@ -73,8 +73,13 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
       .Case<scf::YieldOp>([&](auto yieldOp) { processYieldOp(yieldOp); })
       .Case<bufferization::ToTensorOp>(
           [&](auto toTensorOp) { processToTensorOp(toTensorOp); })
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       .Case<bufferization::ToMemrefOp>(
           [&](auto toMemrefOp) { processToMemrefOp(toMemrefOp); })
+#else
+      .Case<bufferization::ToBufferOp>(
+          [&](auto toMemrefOp) { processToBufferOp(toMemrefOp); })
+#endif
       .Case<memref::CastOp>([&](memref::CastOp castOp) {
         auto src = castOp.getSource();
         auto res = castOp.getResult();
@@ -396,6 +401,7 @@ void DimensionAnalyzer::processToTensorOp(bufferization::ToTensorOp op) {
   processValue(opr, res);
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 void DimensionAnalyzer::processToMemrefOp(bufferization::ToMemrefOp op) {
   LDBG("Processing ToMemrefOp " << op);
   auto opr = op.getOperand();
@@ -403,6 +409,15 @@ void DimensionAnalyzer::processToMemrefOp(bufferization::ToMemrefOp op) {
   createDummyRefIfNotExist({opr, res});
   processValue(opr, res);
 }
+#else
+void DimensionAnalyzer::processToBufferOp(bufferization::ToBufferOp op) {
+  LDBG("Processing ToBufferOp " << op);
+  auto opr = op.getOperand();
+  auto res = op.getBuffer();
+  createDummyRefIfNotExist({opr, res});
+  processValue(opr, res);
+}
+#endif
 
 void DimensionAnalyzer::processSubviewOp(memref::SubViewOp slicingOp) {
   auto src = slicingOp.getSource();

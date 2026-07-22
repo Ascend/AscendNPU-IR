@@ -300,7 +300,11 @@ static Value traceValueDef(Value v) {
         TypeSwitch<Operation *, Value>(defining)
             .Case<tensor::ReshapeOp, tensor::ExtractSliceOp,
                   tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
                   bufferization::ToTensorOp, bufferization::ToMemrefOp,
+#else
+                  bufferization::ToTensorOp, bufferization::ToBufferOp,
+#endif
                   memref::CastOp, memref::CollapseShapeOp,
                   memref::ExpandShapeOp, memref::MemorySpaceCastOp,
                   memref::ReinterpretCastOp, memref::ReshapeOp, memref::ViewOp,
@@ -672,7 +676,11 @@ Value CVPipelineImpl::createSubview(OpBuilder &builder, Location loc,
   strides.append(targetTy.getRank() + 1, const1);
   int64_t offset;
   SmallVector<int64_t> layoutStrides;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
+#else
+  if (targetTy.getStridesAndOffset(layoutStrides, offset).failed()) {
+#endif
     pipelineLoop->emitWarning("[cv-pipelining] unexpected memref layout");
     return nullptr;
   }
@@ -1682,7 +1690,11 @@ FailureOr<Value> CVPipelineImpl::updateMaskingSubview(OpBuilder &builder,
   int64_t offset;
   auto targetTy = cast<MemRefType>(initOperand->get().getType());
   SmallVector<int64_t> layoutStrides;
+  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (getStridesAndOffset(targetTy, layoutStrides, offset).failed()) {
+  #else
+  if (targetTy.getStridesAndOffset(layoutStrides, offset).failed()) {
+  #endif
     subview->emitWarning("[cv-pipelining] unexpected memref layout");
     return failure();
   }

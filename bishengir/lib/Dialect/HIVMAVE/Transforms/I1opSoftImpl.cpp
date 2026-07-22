@@ -40,7 +40,11 @@ struct LinearizedI1Access {
 static SmallVector<int64_t> getStaticStrides(MemRefType memRefTy) {
   SmallVector<int64_t> strides(memRefTy.getRank());
   int64_t offset = 0;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (succeeded(getStridesAndOffset(memRefTy, strides, offset)))
+#else
+  if (succeeded(memRefTy.getStridesAndOffset(strides, offset)))
+#endif
     return strides;
 
   int64_t runningStride = 1;

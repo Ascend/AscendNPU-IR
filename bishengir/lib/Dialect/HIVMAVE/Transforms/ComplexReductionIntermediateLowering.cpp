@@ -53,7 +53,7 @@ static Value createConstantBroadcastOp(VectorType vecTy, Type elemType,
   }
   Operation *brcOp = nullptr;
   // Check if the tile element type is FP8 (f8e4m3fn or f8e5m2)
-  if ((elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) &&
+  if ((isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) &&
       vecTy.getRank() <= 1) {
     if (!vecTy || vecTy.getShape().size() != 1) {
       auto zeroAttr = rewriter.getZeroAttr(elemType);

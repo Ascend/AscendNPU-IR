@@ -186,10 +186,10 @@ Operation *hivm_regbaseintrins::buildVldsOp(Value basePtr, Value offset,
   if (elementType.isBF16())
     return rewriter.create<hivm_regbaseintrins::Vldsx1V128BF16InstrOp>(
         basePtr.getLoc(), resVecType, basePtr, offset, distVal, pVal);
-  if (elementType.isFloat8E4M3FN())
+  if (isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::Vldsx1V256F8E4InstrOp>(
         basePtr.getLoc(), resVecType, basePtr, offset, distVal, pVal);
-  if (elementType.isFloat8E5M2())
+  if (isa<Float8E5M2Type>(elementType))
     return rewriter.create<hivm_regbaseintrins::Vldsx1V256F8E5InstrOp>(
         basePtr.getLoc(), resVecType, basePtr, offset, distVal, pVal);
   llvm_unreachable("Invalid vlds element type.");
@@ -226,10 +226,10 @@ Operation *hivm_regbaseintrins::buildVldusOp(Value basePtr, Value alignData,
   if (elementType.isSignedInteger(64) || elementType.isSignlessInteger(64))
     return rewriter.create<hivm_regbaseintrins::VldusS64InstrOp>(
         loc, resultTypes, basePtr, alignData);
-  if (elementType.isFloat8E4M3FN())
+  if (isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::VldusF8E4InstrOp>(
         loc, resultTypes, basePtr, alignData);
-  if (elementType.isFloat8E5M2())
+  if (isa<Float8E5M2Type>(elementType))
     return rewriter.create<hivm_regbaseintrins::VldusF8E5InstrOp>(
         loc, resultTypes, basePtr, alignData);
   if (elementType.isBF16())
@@ -278,10 +278,10 @@ Operation *hivm_regbaseintrins::buildVldusPostOp(Value basePtr, Value alignData,
   if (elementType.isSignedInteger(64) || elementType.isSignlessInteger(64))
     return rewriter.create<hivm_regbaseintrins::VldusPostS64InstrOp>(
         loc, resultTypes, basePtr, alignData, cceVL);
-  if (elementType.isFloat8E4M3FN())
+  if (isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::VldusPostF8E4InstrOp>(
         loc, resultTypes, basePtr, alignData, cceVL);
-  if (elementType.isFloat8E5M2())
+  if (isa<Float8E5M2Type>(elementType))
     return rewriter.create<hivm_regbaseintrins::VldusPostF8E5InstrOp>(
         loc, resultTypes, basePtr, alignData, cceVL);
   if (elementType.isBF16())
@@ -410,11 +410,11 @@ Operation *hivm_regbaseintrins::buildVstsOp(Value srcRegister, Value basePtr,
     return rewriter.create<hivm_regbaseintrins::Vstsx1V128BF16InstrOp>(
         basePtr.getLoc(), srcRegister, basePtr, offset, distVal, cstZero,
         predicateVector);
-  if (elementType.isFloat8E4M3FN())
+  if (isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::Vstsx1V256F8E4InstrOp>(
         basePtr.getLoc(), srcRegister, basePtr, offset, distVal, cstZero,
         predicateVector);
-  if (elementType.isFloat8E5M2())
+  if (isa<Float8E5M2Type>(elementType))
     return rewriter.create<hivm_regbaseintrins::Vstsx1V256F8E5InstrOp>(
         basePtr.getLoc(), srcRegister, basePtr, offset, distVal, cstZero,
         predicateVector);
@@ -493,10 +493,10 @@ Operation *hivm_regbaseintrins::buildVstusPostOp(Value srcRegister,
   if (elementType.isBF16())
     return rewriter.create<hivm_regbaseintrins::VstusPostBF16InstrOp>(
         loc, resultTypes, srcRegister, basePtr, eleSize, tmp);
-  if (elementType.isFloat8E4M3FN())
+  if (isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::VstusPostF8E4InstrOp>(
         loc, resultTypes, srcRegister, basePtr, eleSize, tmp);
-  if (elementType.isFloat8E5M2())
+  if (isa<Float8E5M2Type>(elementType))
     return rewriter.create<hivm_regbaseintrins::VstusPostF8E5InstrOp>(
         loc, resultTypes, srcRegister, basePtr, eleSize, tmp);
   std::string res = "";
@@ -719,7 +719,7 @@ Operation *hivm_regbaseintrins::buildVdupOp(Value srcRegister,
       elementType.isSignedInteger(8) || elementType.isSignlessInteger(8) ||
       elementType.isUnsignedInteger(8) || elementType.isF32() ||
       elementType.isF16() || elementType.isBF16() ||
-      elementType.isFloat8E5M2() || elementType.isFloat8E4M3FN())
+      isa<Float8E5M2Type>(elementType) || isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::VdupZInstrOp>(
         srcRegister.getLoc(), resVecType, srcRegister, predicateVector, cstOne);
   llvm_unreachable("Invalid vsts element type.");

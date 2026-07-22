@@ -41,7 +41,7 @@ bool isF16ElemType(Type type) {
 
 bool isF8ElemType(Type type) {
   Type elemType = getElementTypeOrSelf(type);
-  return elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2();
+  return isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType);
 }
 
 template <typename srcType>

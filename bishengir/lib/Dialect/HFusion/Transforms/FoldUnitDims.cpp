@@ -1725,8 +1725,16 @@ struct RepairMemRefCastPattern : public OpRewritePattern<memref::CastOp> {
 
     SmallVector<int64_t> srcStrides, resStrides;
     int64_t srcOffset, resOffset;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     if (failed(getStridesAndOffset(srcType, srcStrides, srcOffset)) ||
+#else
+    if (failed(srcType.getStridesAndOffset(srcStrides, srcOffset)) ||
+#endif
+        #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
         failed(getStridesAndOffset(resType, resStrides, resOffset)))
+        #else
+        failed(resType.getStridesAndOffset(resStrides, resOffset)))
+        #endif
       return failure();
 
     auto newLayout =
@@ -1756,8 +1764,16 @@ struct RepairMemorySpaceCastPattern
     if (srcType.getShape() == resType.getShape()) {
       SmallVector<int64_t> srcStrides, resStrides;
       int64_t srcOffset, resOffset;
+      #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
+      #else
+      if (succeeded(srcType.getStridesAndOffset(srcStrides, srcOffset)) &&
+      #endif
+          #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
           succeeded(getStridesAndOffset(resType, resStrides, resOffset)) &&
+          #else
+          succeeded(resType.getStridesAndOffset(resStrides, resOffset)) &&
+          #endif
           srcStrides == resStrides && srcOffset == resOffset)
         return failure();
     }
