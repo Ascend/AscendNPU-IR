@@ -32,11 +32,14 @@ void OptMemPlanForDma::build(func::FuncOp func) {
         return WalkResult::interrupt();
       }
       if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_MTE2) {
-        UpdateDmaBuffers(hivmStructuredOp.getDpsInits());
+        Updatepipe2DmaBuffers(hivm::PIPE::PIPE_MTE2,
+                              hivmStructuredOp.getDpsInits());
       } else if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_MTE3) {
-        UpdateDmaBuffers(hivmStructuredOp.getDpsInputs());
+        Updatepipe2DmaBuffers(hivm::PIPE::PIPE_MTE3,
+                              hivmStructuredOp.getDpsInputs());
       } else if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_FIX) {
-        UpdateDmaBuffers(hivmStructuredOp.getDpsInputs());
+        Updatepipe2DmaBuffers(hivm::PIPE::PIPE_FIX,
+                              hivmStructuredOp.getDpsInputs());
       }
     } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
       UpdateScalarBuffers(loadOp);
@@ -61,26 +64,26 @@ OptMemPlanForDma::VerifyExistHivmPipe(hivm::OpPipeInterface hivmPipeOp) const {
   return success();
 }
 
-void OptMemPlanForDma::UpdateDmaBuffers(SmallVector<Value> dpsOperand) {
+void OptMemPlanForDma::Updatepipe2DmaBuffers(hivm::PIPE pipe,
+                                             SmallVector<Value> dpsOperand) {
   for (Value operand : dpsOperand) {
     auto memorySpaceAttr = GetBufferSpaceAttr(operand);
     if (!isLocalBuffer(memorySpaceAttr)) {
       continue;
     }
-    DmaBuffers.insert(utils::tracebackMemRef(operand));
+    pipe2DmaBuffers[pipe].insert(utils::tracebackMemRef(operand));
   }
 }
 
+bool OptMemPlanForDma::IsDmaBuffer(hivm::PIPE pipe, const Value buf) const {
+  auto it = pipe2DmaBuffers.find(pipe);
+  return it != pipe2DmaBuffers.end() && it->second.contains(buf);
+}
+
 bool OptMemPlanForDma::IsDmaBuffer(const Value buf) const {
-  if (DmaBuffers.empty()) {
-    return false;
-  }
-  for (auto buffer : DmaBuffers) {
-    if (buffer == buf) {
-      return true;
-    }
-  }
-  return false;
+  return IsDmaBuffer(hivm::PIPE::PIPE_MTE2, buf) ||
+         IsDmaBuffer(hivm::PIPE::PIPE_MTE3, buf) ||
+         IsDmaBuffer(hivm::PIPE::PIPE_FIX, buf);
 }
 
 bool OptMemPlanForDma::BufferPipeConflict(const Value buf1,
