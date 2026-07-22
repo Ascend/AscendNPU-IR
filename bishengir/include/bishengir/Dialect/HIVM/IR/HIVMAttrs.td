@@ -1051,6 +1051,9 @@ def HIVM_LocalMatmul_ElementwiseAdd : I32EnumAttrCase<"ElementwiseAdd", 3>;
 def HIVM_LocalMatmul_ElementwiseCrossLoopAdd : I32EnumAttrCase<"ElementwiseCrossLoopAdd", 4>;
 def HIVM_LocalMatmul_PostPerChannelAddWithSplitK : I32EnumAttrCase<"PostPerChannelAddWithSplitK", 5>;
 def HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK : I32EnumAttrCase<"MMInitPerChannelAddWithSplitK", 6>;
+// A5 / reg-based CCF modes (appended; do not renumber A3 values above).
+def HIVM_LocalMatmul_ZeroInitNoAccumulation : I32EnumAttrCase<"ZeroInitNoAccumulation", 7>;
+def HIVM_LocalMatmul_ReuseL0c : I32EnumAttrCase<"ReuseL0C", 8>;
 def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode for local matmul op", [
   HIVM_LocalMatmul_NoBias,
   HIVM_LocalMatmul_PerChannelAdd,
@@ -1058,7 +1061,9 @@ def HIVM_LocalMatmul_BiasModeEnum : HIVM_I32Enum<"MatmulBiasMode", "bias mode fo
   HIVM_LocalMatmul_ElementwiseCrossLoopAdd,
   HIVM_LocalMatmul_ElementwiseAdd,
   HIVM_LocalMatmul_PostPerChannelAddWithSplitK,
-  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK
+  HIVM_LocalMatmul_MMInitPerChannelAddWithSplitK,
+  HIVM_LocalMatmul_ZeroInitNoAccumulation,
+  HIVM_LocalMatmul_ReuseL0c
 ]>;
 
 def HIVM_LocalMatmulMx_DataFormat
