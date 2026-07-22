@@ -18,7 +18,7 @@
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
 #include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/Transforms/Passes.h"
-// #include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
+#include "bishengir/Dialect/AscendDPX/Transforms/Passes.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HACC/Pipelines/Passes.h"
 #include "bishengir/Dialect/HACC/Transforms/Passes.h"
@@ -31,8 +31,8 @@
 #include "bishengir/Dialect/HIVMAVE/Pipelines/Passes.h"
 #include "bishengir/Dialect/Scope/Transforms/Passes.h"
 #include "bishengir/Dialect/Tensor/Transforms/Passes.h"
-// #include "bishengir/Dialect/Triton/Pipelines/Passes.h"
-// #include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Dialect/Triton/Pipelines/Passes.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
 #include "bishengir/ExecutionEngine/Passes.h"
 #include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
 // #include "bishengir/Transforms/InjectIRInstrumentation.h"
@@ -74,9 +74,16 @@
 #include "mlir/Transforms/Passes.h"
 
 using namespace mlir;
+using namespace mlir::triton;
 
 namespace bishengir {
 namespace regbase {
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+/// Defined in BiShengIRCompileConfig.cpp.
+const mlir::triton::proton::ConvertProtonToProtonGPUOptions &
+getProtonGPUCompileConfig();
+#endif
 
 // Helper function to set up HFusionPipelineOptions
 void setupHFusionPipelineOptions(
@@ -406,7 +413,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
     pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
-    pm.addPass(createHIVMToTritonGPUConversionPass());
+    // pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 
   if (!config.getCompileHost()) {

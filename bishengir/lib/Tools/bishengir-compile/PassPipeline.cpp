@@ -28,11 +28,16 @@
 #include "bishengir/Dialect/Torch/Pipelines/Passes.h"
 #endif
 
+// This wasn't necessary in dev/regbase because they are included in
+// TritonPipelines
+#include "proton/Dialect/include/Conversion/ProtonToProtonGPU/Passes.h"
+
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "llvm/Support/CommandLine.h"
 
 using namespace mlir;
+using namespace mlir::triton;
 
 namespace bishengir {
 

@@ -24,6 +24,7 @@
 #define BISHENGIR_INITALLDIALECTS_H
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Conversion/Passes.h"
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/IR/HACC.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"

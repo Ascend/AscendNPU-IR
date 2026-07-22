@@ -2117,7 +2117,7 @@ private:
     Value blockZ = builder.create<LLVM::ConstantOp>(
         loc, int64Ty, builder.getI64IntegerAttr(1));
 
-    Value newIdx = builder.create<GetBlockIdx>(loc, int64Ty);
+    Value newIdx = builder.create<GetBlockIdxOp>(loc, int64Ty);
     auto [gridX, gridY, gridZ] = getGridDims(wrapperFuncOp, builder, loc);
     // get grid x,y,z from linear grid id using x
     // px = pid % Gx

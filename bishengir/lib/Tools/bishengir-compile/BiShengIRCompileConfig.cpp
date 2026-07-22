@@ -44,6 +44,7 @@ const proton::ConvertProtonToProtonGPUOptions &getProtonGPUCompileConfig() {
   return protonGPUCompileConfig;
 }
 } // namespace bishengir
+#endif
 
 namespace {
 static cl::OptionCategory featCtrlCategory("BiShengIR Feature Control Options");

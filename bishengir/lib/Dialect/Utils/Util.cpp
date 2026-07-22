@@ -722,6 +722,18 @@ bool isUnstructuredMemAccLoop(Operation *op) {
   return forOp->hasAttr("ExtractedLoadOrStore");
 }
 
+bool isBefore(Operation *before, Operation *after) {
+  if (before->getBlock() == after->getBlock()) {
+    return before->isBeforeInBlock(after);
+  }
+
+  auto afterParentOp = after->getParentOp();
+  if (afterParentOp == nullptr) {
+    return false;
+  }
+  return isBefore(before, afterParentOp);
+}
+
 int64_t getNumPerRepeat(Type t) {
   unsigned tBits = getElementTypeOrSelf(t).getIntOrFloatBitWidth();
   unsigned tBytes = llvm::divideCeil(tBits, INTR_BITS_PER_BYTE);

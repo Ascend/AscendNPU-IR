@@ -182,7 +182,7 @@ struct AdaptGPUKernelPass
     Value blockZ = builder.create<LLVM::ConstantOp>(
         loc, int64Ty, builder.getI64IntegerAttr(1));
 
-    Value newIdx = builder.create<hivm::GetBlockIdxInstrOp>(loc, int64Ty);
+    Value newIdx = builder.create<hivm::GetBlockIdxOp>(loc, int64Ty);
     auto [gridX, gridY, gridZ] = getGridDims(wrapperFuncOp, builder, loc);
     Value px;
     Value py;

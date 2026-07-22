@@ -71,6 +71,7 @@ static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
 static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
+static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 const llvm::StringLiteral padConst = "pad_const";
 
@@ -625,6 +626,9 @@ hivm::AxisKind getAxisKind(int dim, int rank);
 
 // get axis kind after outlining
 hivm::AxisKind getOutlinedAxisKind(int dim, int rank);
+
+/// check two operation's sequence
+bool isBefore(Operation *before, Operation *after);
 
 bool isReduceWithIndex(hivm::ReduceOperation op);
 
