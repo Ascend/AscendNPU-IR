@@ -21,6 +21,7 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
 #include <climits>
@@ -71,6 +72,7 @@ private:
   bool enableMultiBuffer{false};
   SyncMode syncMode{SyncMode::TEST_INTRA_CORE_MODE};
   std::unique_ptr<std::mt19937> randGenerator;
+  llvm::DenseMap<const Scope *, int> countersMap;
 
   int idx{0};
   llvm::DenseMap<CorePipeInfo,
@@ -100,11 +102,12 @@ public:
 
   // Helper to toggle running as test mode (external use).
   static void runTestMode(const SmallVector<int64_t> &options);
-
+  
 private:
   void reset() {
     idx = 0;
     pipelineQue.clear();
+    countersMap.clear();
   }
 
   int getRand() { return getRand(0, INT_MAX); }
@@ -146,7 +149,8 @@ private:
 
   // Walk the generated IR and place operations into pipeline queues for
   // simulation.
-  void fillPipelines(const OperationBase *op, int loopCnt = 0, int loopIdx = 0);
+  void fillPipelines(const OperationBase *op,
+                     const Scope *counterScope = nullptr, int loopCnt = 0);
 
   // Simulate execution of queued pipeline operations, checking for memory/sync
   // conflicts.

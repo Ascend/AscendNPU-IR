@@ -188,6 +188,7 @@ public:
   Body body;
   std::optional<int64_t> preloadNum;
   std::optional<int64_t> maxPreloadNum;
+  bool haveCounter = false;
 
 public:
   Scope(const OpType &opType = OpType::SCOPE, Operation *op = nullptr,

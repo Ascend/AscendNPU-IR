@@ -54,6 +54,7 @@ void SyncTester::generateRandTest(Scope *scopeOp,
       auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
       loopOp->isParallel =
           isTrueWithProbability(parallel_loop_prob_a, parallel_loop_prob_b);
+      loopOp->haveCounter = true;
       auto loopBlock = std::make_unique<Scope>();
       loopBlock->parentOp = loopOp.get();
       generateRandTest(loopBlock.get(), pointerOps, pipesVec, remOpNum,
@@ -74,6 +75,7 @@ void SyncTester::generateRandTest(Scope *scopeOp,
                isTrueWithProbability(scope_while_loop_prob_a,
                                      scope_while_loop_prob_b)) {
       auto loopOp = std::make_unique<Loop>(nullptr, scopeOp);
+      loopOp->haveCounter = true;
       auto beforeBlock = std::make_unique<Scope>();
       beforeBlock->parentOp = loopOp.get();
       generateRandTest(beforeBlock.get(), pointerOps, pipesVec, remOpNum,
@@ -192,8 +194,8 @@ std::unique_ptr<OperationBase> SyncTester::getGeneratedRandomTest() {
 
 // Walk generated IR and populate per-pipeline queues. The produced queues are
 // consumed by runSimulation to emulate runtime ordering and check conflicts.
-void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
-                               int loopIdx) {
+void SyncTester::fillPipelines(const OperationBase *op,
+                               const Scope *counterScope, int loopCnt) {
 
   assert(op != nullptr);
   bool doubled = loopCnt > 0;
@@ -204,12 +206,7 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
   }
 
   if (auto *setWaitOp = dyn_cast<const SetWaitOp>(op)) {
-    if (setWaitOp->checkFirstIter && (loopIdx % loop_unrolling_num != 0)) {
-      return;
-    }
-    if (setWaitOp->checkLastIter && ((loopIdx + 1) % loop_unrolling_num != 0)) {
-      return;
-    }
+    assert(!setWaitOp->checkFirstIter && !setWaitOp->checkLastIter);
   }
 
   if (isa<FunctionBlock>(op) &&
@@ -218,19 +215,29 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
     return;
   }
 
+  int loopIdx = 0;
+  if (counterScope != nullptr) {
+    loopIdx = countersMap[counterScope];
+  }
+
   if (auto *loopOp = dyn_cast<const Loop>(op)) {
-    int numIter = (enableMultiBuffer || !doubled) ? loop_unrolling_num : 1;
-    if (loopOp->isParallel) {
-      numIter = 1;
-    }
+    assert(loopOp->haveCounter);
     if (isTrueWithProbability(dead_loop_prob_a, dead_loop_prob_b)) {
-      numIter = 0;
+      return;
     }
+
+    int numIter = 1;
+    if (!loopOp->isParallel) {
+      numIter = (enableMultiBuffer || !doubled) ? loop_unrolling_num : 1;
+    }
+
+    auto &loopCounter = countersMap[loopOp];
     for (int i = 0; i < numIter; i++) {
       for (auto &op : loopOp->body) {
         assert(isa<Scope>(op));
-        fillPipelines(op.get(), loopCnt + 1, loopIdx * loop_unrolling_num + i);
+        fillPipelines(op.get(), loopOp, loopCnt + 1);
       }
+      loopCounter++;
     }
     // if (loopOp->body.size() > 1) {
     //   fillPipelines(loopOp->body.front().get(), loopCnt + 1,
@@ -241,16 +248,17 @@ void SyncTester::fillPipelines(const OperationBase *op, int loopCnt,
 
   if (auto *condOp = dyn_cast<const Condition>(op)) {
     if (isTrueWithProbability(true_branch_prob_a, true_branch_prob_b)) {
-      fillPipelines(condOp->getTrueScope(), loopCnt, loopIdx);
+      fillPipelines(condOp->getTrueScope(), counterScope, loopCnt);
     } else if (condOp->hasFalseScope()) {
-      fillPipelines(condOp->getFalseScope(), loopCnt, loopIdx);
+      fillPipelines(condOp->getFalseScope(), counterScope, loopCnt);
     }
     return;
   }
 
   if (auto *scopeOp = dyn_cast<const Scope>(op)) {
     for (auto &op : scopeOp->body) {
-      fillPipelines(op.get(), loopCnt, loopIdx);
+      fillPipelines(op.get(), (scopeOp->haveCounter ? scopeOp : counterScope),
+                    loopCnt);
     }
     return;
   }
