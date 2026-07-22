@@ -230,6 +230,8 @@ struct TransferReadOpPattern : public OpRewritePattern<vector::TransferReadOp> {
 
     hivmave::VFLoadOp loadOp = rewriter.create<hivmave::VFLoadOp>(
         loc, resVecType, source, readOp.getIndices());
+    if (Attribute attr = readOp->getAttr(utils::wasBoolToInt8))
+      loadOp->setAttr(utils::wasBoolToInt8, attr);
 
     auto moduleOp = readOp->getParentOfType<mlir::ModuleOp>();
     bool archIs950 = hacc::utils::isAscend950(moduleOp);
