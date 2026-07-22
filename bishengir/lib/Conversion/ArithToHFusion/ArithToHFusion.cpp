@@ -216,7 +216,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       if (inType.isF32() && outType.isF32())
         return hfusion::RoundMode::RINT;
       if (isRegBasedArch && (inType.isF32() || inType.isF16() || inType.isBF16())
-          && (outType.isFloat8E4M3FN() || outType.isFloat8E5M2()))
+          && (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
         return hfusion::RoundMode::RINT;
       llvm_unreachable("unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
@@ -224,7 +224,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
         return hfusion::RoundMode::RINT;
       if (inType.isBF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
-      if (isRegBasedArch && (inType.isFloat8E4M3FN() || inType.isFloat8E5M2())
+      if (isRegBasedArch && (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType))
           && (outType.isF32() || outType.isF16() || outType.isBF16()))
         return hfusion::RoundMode::RINT;
       llvm_unreachable("unsupported datatype for arith::ExtFOp to hfusion");

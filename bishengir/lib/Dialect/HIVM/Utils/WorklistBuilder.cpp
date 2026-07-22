@@ -73,7 +73,11 @@ static Value traceValueDef(Value v) {
         TypeSwitch<Operation *, Value>(defining)
             .Case<tensor::ReshapeOp, tensor::ExtractSliceOp,
                   tensor::CollapseShapeOp, tensor::ExpandShapeOp,
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
                   bufferization::ToTensorOp, bufferization::ToMemrefOp,
+#else
+                  bufferization::ToTensorOp, bufferization::ToBufferOp,
+#endif
                   memref::CastOp, memref::CollapseShapeOp,
                   memref::ExpandShapeOp, memref::MemorySpaceCastOp,
                   memref::ReinterpretCastOp, memref::ReshapeOp, memref::ViewOp,

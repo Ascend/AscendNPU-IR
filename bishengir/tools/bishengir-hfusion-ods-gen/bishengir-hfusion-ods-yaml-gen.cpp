@@ -704,7 +704,7 @@ ArrayAttr {0}::getIndexingMaps() {{
   MLIRContext *context = getContext();
   auto symbolBindings = getSymbolBindings(*this);
   SmallVector<AffineMap> maps;
-  {2}
+  {1}
   cached = Builder(context).getAffineMapArrayAttr(maps);
   getOperation()->setAttr(memoizeAttr, cached);
   return cached;
@@ -1011,7 +1011,7 @@ exprs.push_back(getAffineConstantExpr(cst{1}, context));
         // TODO: This needs to be memoized and/or converted to non-parser based
         // C++ codegen prior to real use.
         os << llvm::formatv(structuredOpIndexingMapsFormat, className,
-                            dimIdentsStr, interleaveToString(stmts, "\n  "));
+                            interleaveToString(stmts, "\n  "));
       }
     } else {
       os << llvm::formatv(rankPolyStructuredOpIndexingMapsFormat, className);
@@ -1137,8 +1137,8 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
 
     // Handle enable_saturate attribute
     {
-      auto it = llvm::find_if(args, [&](HFusionOperandDef &a){
-          return a.kind == HFusionOperandDefKind::EnableSaturateAttr;
+      auto it = llvm::find_if(args, [&](HFusionOperandDef &a) {
+        return a.kind == HFusionOperandDefKind::EnableSaturateAttr;
       });
       if (it != args.end()) {
         attrs.push_back(llvm::formatv(R"(
@@ -1209,13 +1209,13 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
                                              *expression.scalarFn->fnName));
           }
           if (!expression.scalarFn->attrNames.empty()) {
-            for (const auto& curAttrName : expression.scalarFn->attrNames) {
+            for (const auto &curAttrName : expression.scalarFn->attrNames) {
               if (llvm::none_of(args, [&](HFusionOperandDef &arg) {
                     return isFunctionAttribute(arg.kind) &&
                            arg.name == curAttrName;
                   })) {
-                emitError(genContext.getLoc()) << "missing function attribute "
-                                               << curAttrName;
+                emitError(genContext.getLoc())
+                    << "missing function attribute " << curAttrName;
               }
               funcType.push_back(llvm::formatv("{0}Val", curAttrName));
             }
@@ -1251,9 +1251,10 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
 
           // Call the function builder.
           std::string cppIdent = llvm::formatv("value{0}", ++localCounter);
-          stmts.push_back(llvm::formatv(
-              "Value {0} = helper.build{1}({2}, {3});", cppIdent, enumName,
-              interleaveToString(funcType, ", "), interleaveToString(operandCppValues, ", ")));
+          stmts.push_back(
+              llvm::formatv("Value {0} = helper.build{1}({2}, {3});", cppIdent,
+                            enumName, interleaveToString(funcType, ", "),
+                            interleaveToString(operandCppValues, ", ")));
           return cppIdent;
         }
         emitError(genContext.getLoc()) << "unknown ScalarExpression type";
@@ -1263,16 +1264,16 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
           generateExpression(assignment->value);
       if (!cppValue)
         return failure();
-      
+
       // Handle EnableSaturateAttr.
-      auto it = llvm::find_if(args, [&](HFusionOperandDef &a){
-            return a.kind == HFusionOperandDefKind::EnableSaturateAttr;
+      auto it = llvm::find_if(args, [&](HFusionOperandDef &a) {
+        return a.kind == HFusionOperandDefKind::EnableSaturateAttr;
       });
       if (it != args.end()) {
-        stmts.push_back(llvm::formatv(
-              "helper.buildEnableSaturate({0}, {1});", it->name + "Val", *cppValue));
+        stmts.push_back(llvm::formatv("helper.buildEnableSaturate({0}, {1});",
+                                      it->name + "Val", *cppValue));
       }
-        
+
       stmts.push_back(llvm::formatv("yields.push_back({0});", *cppValue));
     }
 

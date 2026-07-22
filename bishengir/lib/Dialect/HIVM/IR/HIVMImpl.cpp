@@ -594,9 +594,9 @@ std::string getTypeName(Location loc, Type type,
     }
   }
   if (auto fType = dyn_cast<FloatType>(type)) {
-    if (fType.isFloat8E4M3FN())
+    if (isa<Float8E4M3FNType>(fType))
       return "float8_e4m3_t";
-    if (fType.isFloat8E5M2())
+    if (isa<Float8E5M2Type>(fType))
       return "float8_e5m2_t";
     switch (BitWidth(fType.getWidth())) {
     case BitWidth::B16:

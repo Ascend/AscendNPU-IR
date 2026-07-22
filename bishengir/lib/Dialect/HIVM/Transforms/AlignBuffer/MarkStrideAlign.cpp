@@ -109,7 +109,11 @@ LogicalResult markAlignedDim(OpBuilder &builder, Operation *markedOp, Value arg,
 static bool isNotTailJumpOrStrideAlign(MemRefType type) {
   int64_t offset;
   SmallVector<int64_t> strides;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto successStrides = getStridesAndOffset(type, strides, offset);
+#else
+  auto successStrides = type.getStridesAndOffset(strides, offset);
+#endif
   int64_t dim = type.getRank();
   int64_t hwAlignBits =
       static_cast<int64_t>(util::getHWAlignBytes(type.getMemorySpace()) * 8);
@@ -129,7 +133,11 @@ static bool isNotTailJumpOrStrideAlign(MemRefType type) {
 static bool isSubLowDimStrideAlign(MemRefType type) {
   int64_t offset;
   SmallVector<int64_t> strides;
+  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto successStrides = getStridesAndOffset(type, strides, offset);
+  #else
+  auto successStrides = type.getStridesAndOffset(strides, offset);
+  #endif
   int64_t dim = type.getRank();
   int64_t hwAlignBits =
       static_cast<int64_t>(util::getHWAlignBytes(type.getMemorySpace()) * 8);

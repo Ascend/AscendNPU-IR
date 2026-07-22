@@ -596,14 +596,14 @@ hivm::RoundMode mlir::hivm::NormalizeTraitsBase::selectNormalizeRoundMode(
     Type inType, Type outType) {
   if (inType.isF32()) {
     if (outType.isF16() || outType.isBF16() || outType.isF32() ||
-        outType.isFloat8E4M3FN() || outType.isFloat8E5M2()) {
+        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
       return hivm::RoundMode::RINT;
     }
   }
 
   if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16() || inType.isFloat8E4M3FN() ||
-        inType.isFloat8E5M2()) {
+    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
+        isa<Float8E5M2Type>(inType)) {
       return hivm::RoundMode::RINT;
     }
   }

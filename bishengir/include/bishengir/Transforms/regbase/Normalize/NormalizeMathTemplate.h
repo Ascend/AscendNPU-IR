@@ -473,7 +473,7 @@ public:
       return success();
     }
 
-    if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+    if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
       rewriter.replaceOp(
           op, rewriteModType(rewriter, op, x, y, elemType, rewriter.getF32Type()));
       return success();

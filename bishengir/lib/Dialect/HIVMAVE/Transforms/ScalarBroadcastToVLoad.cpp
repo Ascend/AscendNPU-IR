@@ -72,8 +72,8 @@ struct ScalarBroadcastToVLoadPattern
       if (!pattern)
         return failure();
       loadPatternAttr = LoadDistAttr::get(rewriter.getContext(), *pattern);
-    } else if (elemType.isInteger(8) || elemType.isFloat8E4M3FN() ||
-               elemType.isFloat8E5M2()) {
+    } else if (elemType.isInteger(8) || isa<Float8E4M3FNType>(elemType) ||
+               isa<Float8E5M2Type>(elemType)) {
       auto pattern = symbolizeLoadDist("BRC_B8");
       if (!pattern)
         return failure();

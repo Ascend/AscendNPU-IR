@@ -35,9 +35,9 @@ template <typename FP8Type, typename = std::enable_if_t<
                                 std::is_same_v<Float8E5M2Type, FP8Type>>>
 static bool isFP8(Type type) {
   if constexpr (std::is_same_v<FP8Type, Float8E4M3FNType>) {
-    return type.isFloat8E4M3FN();
+    return isa<Float8E4M3FNType>(type);
   } else if constexpr (std::is_same_v<FP8Type, Float8E5M2Type>) {
-    return type.isFloat8E5M2();
+    return isa<Float8E5M2Type>(type);
   } else {
     llvm_unreachable("Unexpected FP8 type");
     return false;
@@ -61,8 +61,8 @@ static Type getFP8Ty(PatternRewriter &rewriter) {
 // TODO-A5: requires proper Dialect/Utils/Util.h porting
 template <typename T>
 static T selectRoundMode(Type inType, Type outType) {
-  if (inType.isFloat8E5M2() || inType.isFloat8E4M3FN() ||
-      outType.isFloat8E5M2() || outType.isFloat8E4M3FN())
+  if (isa<Float8E5M2Type>(inType) || isa<Float8E4M3FNType>(inType) ||
+      isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType))
     return T::RINT;
   return mlir::utils::selectRoundMode<T>(inType, outType);
 }

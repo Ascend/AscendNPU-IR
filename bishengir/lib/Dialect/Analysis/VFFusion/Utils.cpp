@@ -75,7 +75,7 @@ bool isVsstbPatternTransposeOp(Operation *op) {
 
   auto elemType = inputType.getElementType();
   if (!(elemType.isBF16() || elemType.isF16() || elemType.isF32() ||
-        elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2())) {
+        isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType))) {
     return false;
   }
 

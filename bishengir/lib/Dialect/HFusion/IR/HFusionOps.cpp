@@ -3605,6 +3605,7 @@ MatMulMxOp::decomposeOperation(OpBuilder &builder) {
           ->getResult(0);
 
   // Multiply input and scale
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto linalgFnAttr = builder.getNamedAttr(
       "fun", builder.getAttr<linalg::BinaryFnAttr>(linalg::BinaryFn::mul));
   Value emptyA = builder.create<tensor::EmptyOp>(location, aType, ValueRange{});
@@ -3619,6 +3620,23 @@ MatMulMxOp::decomposeOperation(OpBuilder &builder) {
                          location, ValueRange{b, scaleBTransposed},
                          ValueRange{emptyB}, linalgFnAttr)
                      ->getResult(0);
+#else
+  auto linalgKindAttr = builder.getNamedAttr(
+      "kind", linalg::ElementwiseKindAttr::get(
+          builder.getContext(), linalg::ElementwiseKind::mul));
+  Value emptyA = builder.create<tensor::EmptyOp>(location, aType, ValueRange{});
+  Value emptyB = builder.create<tensor::EmptyOp>(location, bType, ValueRange{});
+  Value aFinal = builder
+                     .create<linalg::ElementwiseOp>(
+                         location, ValueRange{a, scaleACollapsed},
+                         ValueRange{emptyA}, linalgKindAttr)
+                     ->getResult(0);
+  Value bFinal = builder
+                     .create<linalg::ElementwiseOp>(
+                         location, ValueRange{b, scaleBTransposed},
+                         ValueRange{emptyB}, linalgKindAttr)
+                     ->getResult(0);
+#endif
 
   // Replace hfusion.matmul_mx with linalg.matmul
   return SmallVector<Value>{

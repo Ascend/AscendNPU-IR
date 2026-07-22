@@ -32,12 +32,21 @@ public:
   bool isAlias(Value v1, Value v2);
 
 private:
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   using EquivalenceClassRangeType = llvm::iterator_range<
       llvm::EquivalenceClasses<Value, ValueComparator>::member_iterator>;
   /// Check that aliasInfo for `v` exists and return a reference to it.
   EquivalenceClassRangeType getAliases(Value v) const;
 
   llvm::EquivalenceClasses<Value, ValueComparator> aliasInfo;
+#else
+  using EquivalenceClassRangeType = llvm::iterator_range<
+      llvm::EquivalenceClasses<Value>::member_iterator>;
+  /// Check that aliasInfo for `v` exists and return a reference to it.
+  EquivalenceClassRangeType getAliases(Value v) const;
+
+  llvm::EquivalenceClasses<Value> aliasInfo;
+#endif
 };
 } // namespace utils
 } // namespace mlir

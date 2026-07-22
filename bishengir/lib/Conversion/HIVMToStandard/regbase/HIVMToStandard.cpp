@@ -928,7 +928,7 @@ private:
     if (op.getPadValue()) {
       padValue = op.getPadValue();
       Type elemType = getElementTypeOrSelf(op.getSrc().getType());
-      if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+      if (isa<Float8E4M3FNType>(elemType) || isa<Float8E5M2Type>(elemType)) {
         auto constantOp = rewriter.create<arith::ConstantOp>(
             op.getLoc(), rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
         padValue = constantOp.getResult();
@@ -944,7 +944,7 @@ private:
                                       rewriter.getIntegerType(width));
               })
               .Case([&](FloatType floatType) {
-                if (floatType.isFloat8E4M3FN() || floatType.isFloat8E5M2()) {
+                if (isa<Float8E4M3FNType>(floatType) || isa<Float8E5M2Type>(floatType)) {
                   auto constantOp = rewriter.create<arith::ConstantOp>(
                       op.getLoc(),
                       rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));

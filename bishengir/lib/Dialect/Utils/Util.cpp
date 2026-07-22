@@ -1654,8 +1654,8 @@ namespace utils {
 bool isValidHIVMTileElementType(Type type) {
   return type.isInteger(1) || type.isInteger(8) || type.isInteger(16) ||
          type.isInteger(32) || type.isInteger(64) || type.isF16() ||
-         type.isF32() || type.isBF16() || type.isFloat8E4M3FN() ||
-         type.isFloat8E5M2();
+         type.isF32() || type.isBF16() || isa<Float8E4M3FNType>(type) ||
+         isa<Float8E5M2Type>(type);
 }
 
 unsigned getHIVMTileSliceMinNumElts(Type type) {
@@ -1706,13 +1706,21 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
     return false;
   }
   auto writeOp = cast<vector::TransferWriteOp>(op);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getSource().getType());
+#else
+  auto memrefTy = mlir::dyn_cast<MemRefType>(writeOp.getBase().getType());
+#endif
   LLVM_DEBUG(DBGS() << "transferOp: " << writeOp << "\n");
   if (!memrefTy) {
     return false;
   }
   ArrayRef<int64_t> shape = memrefTy.getShape();
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto [strides, offset] = getStridesAndOffset(memrefTy);
+#else
+  auto [strides, offset] = memrefTy.getStridesAndOffset();
+#endif
   if (shape.size() < 2) {
     LLVM_DEBUG(DBGS() << "fail because of shape is 1");
     return false;
@@ -1738,8 +1746,8 @@ bool utils::isTransferWriteSuitForStoreWithStride(Operation *op) {
 
   // support I8, I16, I32, BF16, F16, F32, F8E4M3FN, F8E5M2
   auto elementType = memrefTy.getElementType();
-  bool isSupportedFloat = elementType.isFloat8E4M3FN() ||
-                          elementType.isFloat8E5M2() || elementType.isBF16() ||
+  bool isSupportedFloat = isa<Float8E4M3FNType>(elementType) ||
+                          isa<Float8E5M2Type>(elementType) || elementType.isBF16() ||
                           elementType.isF16() || elementType.isF32();
   bool isSupportedInt = elementType.isInteger(32) ||
                         elementType.isInteger(16) || elementType.isInteger(8);

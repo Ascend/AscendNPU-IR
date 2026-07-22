@@ -51,7 +51,11 @@ static Value createLiftedOperand(PatternRewriter &rewriter, Location loc,
   }
 
   auto mem = cast<MemRefType>(operand.getType());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto [stridesLong, offsetLong] = getStridesAndOffset(mem);
+#else
+  auto [stridesLong, offsetLong] = mem.getStridesAndOffset();
+#endif
   SmallVector<int64_t> sizesVec(mem.getShape());
   sizesVec.push_back(1);
   SmallVector<int64_t> stridesVec(stridesLong);

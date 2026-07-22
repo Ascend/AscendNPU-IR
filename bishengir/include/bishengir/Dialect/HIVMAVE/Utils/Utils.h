@@ -153,7 +153,11 @@ bool checkVectorStoreContinuity(SourceOp op) {
       SmallVector<int64_t> strides;
       int64_t offset;
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       if (failed(getStridesAndOffset(srcType, strides, offset))) {
+#else
+      if (failed(srcType.getStridesAndOffset(strides, offset))) {
+#endif
         return false;
       }
 

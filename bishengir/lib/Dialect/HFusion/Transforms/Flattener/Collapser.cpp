@@ -788,7 +788,11 @@ Flattener::getConstantStrides(MemRefType memrefType) {
   SmallVector<int64_t> strides;
   int64_t offset;
   LogicalResult hasStaticInformation =
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       getStridesAndOffset(memrefType, strides, offset);
+#else
+      memrefType.getStridesAndOffset(strides, offset);
+#endif
   if (failed(hasStaticInformation)) {
     return std::nullopt;
   }
@@ -1211,6 +1215,7 @@ void Flattener::adjustToTensorOp(bufferization::ToTensorOp op,
   op.getResult().setType(newType);
 }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
                                  mlir::OpBuilder &builder) {
   auto oldType = cast<MemRefType>(op.getMemref().getType());
@@ -1221,6 +1226,18 @@ void Flattener::adjustToMemrefOp(bufferization::ToMemrefOp op,
   LDBG("operation result " << op << " " << newType << "\n");
   op.getMemref().setType(newType);
 }
+#else
+void Flattener::adjustToBufferOp(bufferization::ToBufferOp op,
+                                 mlir::OpBuilder &builder) {
+  auto oldType = cast<MemRefType>(op.getBuffer().getType());
+  // TODO: adjust the layout instead of using identity
+  MemRefType newType = MemRefType::Builder(oldType)
+                           .setShape(utils::getShape(op.getOperand().getType()))
+                           .setLayout(MemRefLayoutAttrInterface());
+  LDBG("operation result " << op << " " << newType << "\n");
+  op.getBuffer().setType(newType);
+}
+#endif
 
 void Flattener::adjustCastOp(memref::CastOp castOp, mlir::OpBuilder &builder) {
   auto srcType = cast<MemRefType>(castOp.getSource().getType());
@@ -1238,8 +1255,16 @@ void Flattener::adjustCastOp(memref::CastOp castOp, mlir::OpBuilder &builder) {
   int64_t srcOffset, oldResOffset;
 
   MemRefType newResType;
+  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (succeeded(getStridesAndOffset(srcType, srcStrides, srcOffset)) &&
+  #else
+  if (succeeded(srcType.getStridesAndOffset(srcStrides, srcOffset)) &&
+  #endif
+      #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       succeeded(getStridesAndOffset(oldResType, oldResStrides, oldResOffset))) {
+      #else
+      succeeded(oldResType.getStridesAndOffset(oldResStrides, oldResOffset))) {
+      #endif
     auto newLayout =
         StridedLayoutAttr::get(castOp->getContext(), oldResOffset, srcStrides);
     newResType = MemRefType::get(srcType.getShape(), srcType.getElementType(),
@@ -1491,8 +1516,13 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
     return success();
   }
 
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (auto toMemrefOp = dyn_cast<bufferization::ToMemrefOp>(op)) {
     adjustToMemrefOp(toMemrefOp, builder);
+#else
+  if (auto toMemrefOp = dyn_cast<bufferization::ToBufferOp>(op)) {
+    adjustToBufferOp(toMemrefOp, builder);
+#endif
     return success();
   }
 
@@ -1725,7 +1755,11 @@ FailureOr<Operation *> Flattener::expandForTail(OpTy &tensorOutOp,
     }
     SmallVector<int64_t> targetStrides;
     int64_t targetOffset;
+    #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     if (failed(getStridesAndOffset(cast<MemRefType>(expandedType),
+    #else
+    if (failed(cast<MemRefType>(expandedType.getStridesAndOffset(),
+    #endif
                                    targetStrides, targetOffset))) {
       return failure();
     }

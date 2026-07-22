@@ -317,7 +317,11 @@ void removeModuleCoreTypeAttr(ModuleOp mod);
 /// Constraints: Skip tensor::CollapseShapeOp/ExpandShapeOp
 /// Constraints: Skip memref::CollapseShapeOp/ExpandShapeOp
 /// Constraints: Skip memref::SubViewOp/ViewOp/ReinterpretCastOp
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
 /// Constraints: Skip bufferization::ToMemrefOp
+#else
+/// Constraints: Skip bufferization::ToBufferOp
+#endif
 void getOpUsers(Operation *op, SmallVector<Operation *, 8> &userOps);
 
 /// Get dynamic values of the tensor.

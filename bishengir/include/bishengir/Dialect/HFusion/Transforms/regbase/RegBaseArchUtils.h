@@ -37,19 +37,19 @@ Operation *createCmpOp(OpBuilder &b, Location loc, Value lhs, Value rhs,
                        CompareFn cmpFn);
 
 template <typename T> T selectRoundMode(Type inType, Type outType) {
-  if (inType.isFloat8E5M2() || inType.isFloat8E4M3FN() ||
-    outType.isFloat8E5M2() || outType.isFloat8E4M3FN())
+  if (isa<Float8E5M2Type>(inType) || isa<Float8E4M3FNType>(inType) ||
+    isa<Float8E5M2Type>(outType) || isa<Float8E4M3FNType>(outType))
     return T::RINT;
   if (inType.isF32()) {
     if (outType.isF16() || outType.isBF16() || outType.isF32() ||
-        outType.isFloat8E4M3FN() || outType.isFloat8E5M2()) {
+        isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)) {
       return T::RINT;
         }
   }
 
   if (outType.isF32()) {
-    if (inType.isF16() || inType.isBF16() || inType.isFloat8E4M3FN() ||
-        inType.isFloat8E5M2()) {
+    if (inType.isF16() || inType.isBF16() || isa<Float8E4M3FNType>(inType) ||
+        isa<Float8E5M2Type>(inType)) {
       return T::RINT;
         }
   }

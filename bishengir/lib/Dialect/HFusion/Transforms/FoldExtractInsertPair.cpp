@@ -138,8 +138,11 @@ public:
     if (!transferWriteOp)
       return rewriter.notifyMatchFailure(
           insertOp, "source is not defined by vector.transfer_write");
-
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     auto tensorValue = transferWriteOp.getSource();
+#else
+    auto tensorValue = transferWriteOp.getBase();
+#endif
     auto extractSliceOp = tensorValue.getDefiningOp<tensor::ExtractSliceOp>();
     if (!extractSliceOp)
       return rewriter.notifyMatchFailure(

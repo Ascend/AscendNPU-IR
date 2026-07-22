@@ -119,7 +119,11 @@ bool isLastDimUnContinuous(Value value) {
   MemRefType memref = cast<MemRefType>(value.getType());
   int64_t offset;
   SmallVector<int64_t> strides;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (failed(getStridesAndOffset(memref, strides, offset))) {
+#else
+  if (failed(memref.getStridesAndOffset(strides, offset))) {
+#endif
     // not sure about uncontinuous if failed to get strides
     return false;
   }

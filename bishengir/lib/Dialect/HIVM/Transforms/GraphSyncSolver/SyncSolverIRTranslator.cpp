@@ -566,10 +566,18 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
     } else if (auto tensorExtractOp = dyn_cast<tensor::ExtractOp>(op)) {
       handleRWValue(tensorExtractOp.getTensor(), MemoryEffect::READ);
     } else if (auto transferReadOp = dyn_cast<vector::TransferReadOp>(op)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       handleRWValue(transferReadOp.getSource(), MemoryEffect::READ);
+#else
+      handleRWValue(transferReadOp.getBase(), MemoryEffect::READ);
+#endif
     } else if (auto transferWriteOp = dyn_cast<vector::TransferWriteOp>(op)) {
       handleRWValue(transferWriteOp.getVector(), MemoryEffect::READ);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       handleRWValue(transferWriteOp.getSource(), MemoryEffect::WRITE);
+#else
+      handleRWValue(transferWriteOp.getBase(), MemoryEffect::WRITE);
+#endif
     } else if (auto gatherOp = dyn_cast<vector::GatherOp>(op)) {
       handleRWValue(gatherOp.getBase(), MemoryEffect::READ);
     }

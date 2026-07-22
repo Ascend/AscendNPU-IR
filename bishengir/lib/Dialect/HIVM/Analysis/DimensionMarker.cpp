@@ -315,7 +315,12 @@ bool DimensionAnalyzer::processOperation(Operation *op, Value current) {
                 isa_and_nonnull<CopyOpInterface>(op) ||
                 utils::isAllocLikeOp(op) ||
                 isa<memref::MemorySpaceCastOp, bufferization::ToTensorOp,
-                    bufferization::ToMemrefOp>(op)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
+                    bufferization::ToMemrefOp
+#else
+                    bufferization::ToBufferOp
+#endif
+                    >(op)) {
               processParallelOp(op, current);
               return true;
             }

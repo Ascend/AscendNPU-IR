@@ -78,7 +78,11 @@ void InsertMemSemanticForSimtVFPass::dealWithReferenceOutOfScope(
     builder.setInsertionPoint(scopeOp);
     auto memrefType =
         MemRefType::get(tensorType.getShape(), tensorType.getElementType());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     auto memrefVal = builder.create<bufferization::ToMemrefOp>(
+#else
+    auto memrefVal = builder.create<bufferization::ToBufferOp>(
+#endif
         scopeOp->getLoc(), memrefType, val);
 
     // Transfer data from simd(UB) to simt(Register)

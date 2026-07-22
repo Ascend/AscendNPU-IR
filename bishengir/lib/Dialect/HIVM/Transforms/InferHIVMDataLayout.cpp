@@ -1222,7 +1222,11 @@ struct ExpandLoad1D : public OpRewritePattern<hivm::LoadOp> {
 
     int64_t offset;
     SmallVector<int64_t, 1> strides;
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     if (failed(getStridesAndOffset(srcType, strides, offset))) {
+#else
+    if (failed(srcType.getStridesAndOffset(strides, offset))) {
+#endif
       LLVM_DEBUG(llvm::dbgs() << "  Failed to get strides/offset for src.\n");
       return failure();
     }

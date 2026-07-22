@@ -230,7 +230,11 @@ bool sourceCarriesFractalLayoutHint(Value val, hivm::DataLayout layout) {
     if (auto attr = def->getAttrOfType<StringAttr>("hivm.fractal_layout"))
       return attr.getValue() == layoutName;
     if (auto toTensor = dyn_cast<bufferization::ToTensorOp>(def)) {
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       cur = toTensor.getMemref();
+#else
+      cur = toTensor.getBuffer();
+#endif
       continue;
     }
     if (auto vlop = dyn_cast<ViewLikeOpInterface>(def)) {

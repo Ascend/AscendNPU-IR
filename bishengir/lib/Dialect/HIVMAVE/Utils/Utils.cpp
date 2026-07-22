@@ -274,7 +274,11 @@ bool static isOffsetAligned(Value memrefVal,
                             llvm::SmallVector<mlir::OpFoldResult, 4u> indices,
                             int64_t hwAlignBits, int64_t elemBits) {
   auto srcMemRefType = mlir::cast<MemRefType>(memrefVal.getType());
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto [srcStrides, srcOffset] = getStridesAndOffset(srcMemRefType);
+#else
+  auto [srcStrides, srcOffset] = srcMemRefType.getStridesAndOffset();
+#endif
   for (size_t i = 0; i < indices.size(); i++) {
     bool isOffsetAlign = false;
     if (auto v = dyn_cast<Value>(indices[i])) {

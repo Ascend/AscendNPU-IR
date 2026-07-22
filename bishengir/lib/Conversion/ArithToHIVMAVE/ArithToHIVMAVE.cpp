@@ -640,7 +640,7 @@ struct ConstantOpToHivmBroadcastLowering
     }
     Operation *brcOp = nullptr;
     // Check if the tile element type is FP8 (f8e4m3fn or f8e5m2)
-    if ((tileElementType.isFloat8E4M3FN() || tileElementType.isFloat8E5M2()) &&
+    if ((isa<Float8E4M3FNType>(tileElementType) || isa<Float8E5M2Type>(tileElementType)) &&
         tileType.getRank() <= 1) {
       auto resType = constantOp.getResult().getType();
       VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
@@ -1700,7 +1700,7 @@ struct SelectOpPattern : public OpConversionPattern<arith::SelectOp> {
 
     // Check if the result type is FP8: f8e5m2 or f8e4m3fn
     auto resDtype = resVecType.getElementType();
-    if (resDtype.isFloat8E5M2() || resDtype.isFloat8E4M3FN()) {
+    if (isa<Float8E5M2Type>(resDtype) || isa<Float8E4M3FNType>(resDtype)) {
       auto vecSize = resVecType.getShape();
       // Create i8 vector type
       auto i8VecTy = VectorType::get({vecSize}, rewriter.getI8Type());

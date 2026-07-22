@@ -657,7 +657,7 @@ struct HIVMBroadCastScalarOpLowering : public ConvertOpToLLVMPattern<OpTy> {
       auto i8Type = IntegerType::get(rewriter.getContext(), 8);
       auto i8VecTy =
           VectorType::get(SmallVector<int64_t>{vecTy.getNumElements()}, i8Type);
-      if (elementType.isFloat8E4M3FN() || elementType.isFloat8E5M2() ||
+      if (isa<Float8E4M3FNType>(elementType) || isa<Float8E5M2Type>(elementType) ||
           scalar.getType().isFloat8E4M3FN() || scalar.getType().isFloat8E5M2()) {
         i8Value = rewriter.create<LLVM::BitcastOp>(loc, i8Type, scalar);
       } else if (scalar.getType().getIntOrFloatBitWidth() == 16) {
@@ -992,11 +992,11 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
       auto result = rewriter.create<Vldsx1V128BF16InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
-    } else if (elementType.isFloat8E4M3FN()) {
+    } else if (isa<Float8E4M3FNType>(elementType)) {
       auto result = rewriter.create<Vldsx1V256F8E4InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
-    } else if (elementType.isFloat8E5M2()) {
+    } else if (isa<Float8E5M2Type>(elementType)) {
       auto result = rewriter.create<Vldsx1V256F8E5InstrOp>(loc, vtype, dataPtr,
                                                            offset, dist, mode);
       rewriter.replaceOp(load, result);
@@ -1176,11 +1176,11 @@ struct HIVMStoreOpLowering : public ConvertOpToLLVMPattern<VFMaskedStoreOp> {
       auto result = rewriter.create<Vstsx1V128BF16InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
-    } else if (dElemType.isFloat8E4M3FN()) {
+    } else if (isa<Float8E4M3FNType>(dElemType)) {
       auto result = rewriter.create<Vstsx1V256F8E4InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
-    } else if (dElemType.isFloat8E5M2()) {
+    } else if (isa<Float8E5M2Type>(dElemType)) {
       auto result = rewriter.create<Vstsx1V256F8E5InstrOp>(
           loc, data, dataPtr, offset, dist, mode, mask);
       rewriter.replaceOp(store, result);
@@ -1263,11 +1263,11 @@ struct HIVMStoreStrideOpLowering
       auto result = rewriter.create<VsstbV128BF16InstrOp>(
           loc, data, dataPtr, strideConfig, mode, mask);
       rewriter.replaceOp(store, result);
-    } else if (dElemType.isFloat8E5M2()) {
+    } else if (isa<Float8E5M2Type>(dElemType)) {
       auto result = rewriter.create<Vsstb1V256F8E5InstrOp>(
           loc, data, dataPtr, strideConfig, mode, mask);
       rewriter.replaceOp(store, result);
-    } else if (dElemType.isFloat8E4M3FN()) {
+    } else if (isa<Float8E4M3FNType>(dElemType)) {
       auto result = rewriter.create<Vsstb1V256F8E4InstrOp>(
           loc, data, dataPtr, strideConfig, mode, mask);
       rewriter.replaceOp(store, result);
@@ -1352,14 +1352,14 @@ struct HIVMGatherOpLowering : public ConvertOpToLLVMPattern<VFGatherOp> {
           loc, gatherType, dataPtr, indexVec, mask);
       Value resI8 = rewriter.create<LLVM::BitcastOp>(loc, vtype, result);
       rewriter.replaceOp(gather, resI8);
-    } else if (elementType.isFloat8E4M3FN()) {
+    } else if (isa<Float8E4M3FNType>(elementType)) {
       VectorType gatherType =
           VectorType::get({128}, rewriter.getIntegerType(16));
       Value result = rewriter.create<VGatherV256F8E4InstrOp>(
           loc, gatherType, dataPtr, indexVec, mask);
       Value resF8E4 = rewriter.create<LLVM::BitcastOp>(loc, vtype, result);
       rewriter.replaceOp(gather, resF8E4);
-    } else if (elementType.isFloat8E5M2()) {
+    } else if (isa<Float8E5M2Type>(elementType)) {
       VectorType gatherType =
           VectorType::get({128}, rewriter.getIntegerType(16));
       Value result = rewriter.create<VGatherV256F8E5InstrOp>(
@@ -1600,7 +1600,7 @@ struct HIVMSelectOpLowering : public ConvertOpToLLVMPattern<VFSelectOp> {
         elementType.isBF16() || elementType.isF16() ||
         elementType.isUnsignedInteger(32) || elementType.isSignedInteger(32) ||
         elementType.isSignlessInteger(32) || elementType.isF32() ||
-        elementType.isFloat8E4M3FN() || elementType.isFloat8E5M2()) {
+        isa<Float8E4M3FNType>(elementType) || isa<Float8E5M2Type>(elementType)) {
       result = rewriter.create<VselInstrOp>(loc, vlType, trueValue, falseValue,
                                             mask);
     } else {
@@ -2056,9 +2056,9 @@ struct HIVMBroadcastScalarOpLowering
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else if (srcType.isF32()) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
-    } else if (srcType.isFloat8E4M3FN()) {
+    } else if (isa<Float8E4M3FNType>(srcType)) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
-    } else if (srcType.isFloat8E5M2()) {
+    } else if (isa<Float8E5M2Type>(srcType)) {
       vbr = rewriter.create<VbrInstrOp>(loc, vlType, src);
     } else {
       return rewriter.notifyMatchFailure(broadcast, "cannot legalize op");
@@ -2098,7 +2098,7 @@ static Value vdupLowerToIntrin(VFBroadcastVectorOp vecBrcOp,
       elementType.isF16() || elementType.isUnsignedInteger(32) ||
       elementType.isSignedInteger(32) || elementType.isSignlessInteger(32) ||
       elementType.isF32() || elementType.isBF16() ||
-      elementType.isFloat8E5M2() || elementType.isFloat8E4M3FN()) {
+      isa<Float8E5M2Type>(elementType) || isa<Float8E4M3FNType>(elementType)) {
     vdup = rewriter.create<IntrOpTy>(loc, newType, src, mask, pModeCst);
   }
   return vdup;
@@ -2165,10 +2165,10 @@ struct HIVMTypeConvertionOpLowering
         if (inElemType.isBF16()) {
           newOp = rewriter.create<VcvtffBF162F32InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
-        } else if (inElemType.isFloat8E4M3FN()) {
+        } else if (isa<Float8E4M3FNType>(inElemType)) {
           newOp = rewriter.create<VcvtffF8E4M32F32InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
-        } else if (inElemType.isFloat8E5M2()) {
+        } else if (isa<Float8E5M2Type>(inElemType)) {
           newOp = rewriter.create<VcvtffF8E5M22F32InstrOp>(
               loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
         } else if (inElemType.isF16()) {
@@ -2349,11 +2349,11 @@ struct HIVMTypeConvertionOpLowering
         newOp = rewriter.create<VcvtffF322F16InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-      else if (outElemType.isFloat8E4M3FN())
+      else if (isa<Float8E4M3FNType>(outElemType))
         newOp = rewriter.create<VcvtffF322F8E4M3InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
-      else if (outElemType.isFloat8E5M2())
+      else if (isa<Float8E5M2Type>(outElemType))
         newOp = rewriter.create<VcvtffF322F8E5M2InstrOp>(
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getRnd()),
             cstValue(srcOp.getSat()), cstValue(srcOp.getPart()));
@@ -2705,8 +2705,8 @@ private:
                                        Value src2, Type elemType) const {
     if (elemType.isInteger(32) || elemType.isInteger(16) ||
         elemType.isInteger(8) || elemType.isF32() || elemType.isF16() ||
-        elemType.isBF16() || elemType.isFloat8E4M3FN() ||
-        elemType.isFloat8E5M2()) {
+        elemType.isBF16() || isa<Float8E4M3FNType>(elemType) ||
+        isa<Float8E5M2Type>(elemType)) {
       return rewriter.create<VintlvInstrOp>(loc, intlvType, src1, src2);
     }
     return nullptr;
@@ -2791,8 +2791,8 @@ private:
                                          Type elemType) const {
     if (elemType.isInteger(32) || elemType.isInteger(16) ||
         elemType.isInteger(8) || elemType.isF32() || elemType.isF16() ||
-        elemType.isBF16() || elemType.isFloat8E4M3FN() ||
-        elemType.isFloat8E5M2()) {
+        elemType.isBF16() || isa<Float8E4M3FNType>(elemType) ||
+        isa<Float8E5M2Type>(elemType)) {
       return rewriter.create<VDintlvInstrOp>(loc, deintlvType, src1, src2);
     }
     return nullptr;

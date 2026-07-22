@@ -932,8 +932,16 @@ Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
       rewriter, loc, targetShapes, elementType);
 
   // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   auto toTensor = rewriter.create<bufferization::ToTensorOp>(
       loc, localWorkSpace, true, true);
+#else
+  auto tensorType = RankedTensorType::get(targetShapes, elementType);
+  auto toTensor = rewriter.create<bufferization::ToTensorOp>(
+      loc, tensorType, localWorkSpace,
+      /*restrict=*/mlir::UnitAttr::get(rewriter.getContext()),
+      /*writable=*/mlir::UnitAttr::get(rewriter.getContext()));
+#endif
   return toTensor;
 }
 
@@ -1226,7 +1234,11 @@ SmallVector<unsigned> traceVFWriteOpArgIds(func::CallOp callOp) {
     if (!maybeWriteOp.has_value())
       continue;
     auto write = cast<vector::TransferWriteOp>(*maybeWriteOp);
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
     auto arg = traceValueToBlockArgument(write.getSource());
+#else
+    auto arg = traceValueToBlockArgument(write.getBase());
+#endif
     if (!arg.has_value())
       continue;
     writeOpArgIds.push_back(arg->getArgNumber());

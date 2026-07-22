@@ -325,7 +325,11 @@ std::optional<int32_t> adjustReduceAlignDim(hivm::VReduceOp reduceOp,
   SmallVector<int64_t> flattenDstStrides;
 
   auto haveDstStrides =
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       getStridesAndOffset(flattenDstMemRef, flattenDstStrides, flattenDstOffset)
+#else
+      flattenDstMemRef.getStridesAndOffset(flattenDstStrides, flattenDstOffset)
+#endif
           .succeeded();
   if (haveDstStrides && (flattenDstStrides[0] == 1) &&
       static_cast<unsigned int>(lastReduceDimSize) *
@@ -396,7 +400,11 @@ adjustDeInterleaveAlignDim(hivm::VDeinterleaveOp deinterleaveOp, Value operand,
   int64_t srcOffset;
   SmallVector<int64_t> srcStrides;
   [[maybe_unused]] auto successStrides =
+#ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
       getStridesAndOffset(flattenSrcMemrefType, srcStrides, srcOffset);
+#else
+      flattenSrcMemrefType.getStridesAndOffset(srcStrides, srcOffset);
+#endif
   assert(succeeded(successStrides));
   if (static_cast<uint64_t>(srcStrides.back()) !=
       deinterleaveOp.getChannelNum()) {
@@ -469,7 +477,11 @@ std::optional<int32_t> adjustInlineBrcOp(HIVMStructuredOp hivmOp, Value operand,
 
   int64_t offset;
   SmallVector<int64_t> strides;
+  #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   if (getStridesAndOffset(operMemType, strides, offset).failed()) {
+  #else
+  if (operMemType.getStridesAndOffset(strides, offset).failed()) {
+  #endif
     return alignDim;
   }
 

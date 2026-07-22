@@ -309,7 +309,7 @@ static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
 #endif
   const auto *enumName = "TargetDevice";
   OS << formatv("::llvm::StringRef stringify{0}Enum({0} dev){{\n", enumName);
-  OS << formatv("  switch (dev) {{\n", enumName);
+  OS << "  switch (dev) {\n";
   for (auto [idx, record] : llvm::enumerate(records)) {
     auto deviceName = record->getValueAsString(kName);
     OS << formatv("    case {0}::{1}: return \"{1}\";\n", enumName, deviceName);
@@ -330,7 +330,7 @@ static void emitDeviceTargetToArch(const std::vector<Record *> &records,
 #endif
   const auto *enumName = "TargetDevice";
   OS << formatv("std::string getArch({0} dev){{\n", enumName);
-  OS << formatv("  switch (dev) {{\n", enumName);
+  OS << "  switch (dev) {\n";
   for (auto [idx, record] : llvm::enumerate(records)) {
     auto deviceName = record->getValueAsString(kName);
     auto archString = record->getValueAsOptionalString(kArch);
