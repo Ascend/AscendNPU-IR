@@ -1,6 +1,6 @@
 // REQUIRES: execution-engine
 // RUN: bishengir-opt --execution-engine-convert-hfusion-to-upstream --execution-engine-convert-hivm-to-upstream %s --split-input-file | FileCheck %s
-// RUN: bishengir-opt --lower-for-cpu-runner-pipeline %s --split-input-file
+// RUN: bishengir-opt --lower-for-cpu-runner-pipeline="convert-to-named-op=false" %s --split-input-file
 
 func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x10xf32>, %c: tensor<5x?x10xf32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 
@@ -16,7 +16,7 @@ func.func @tensor_direct_linalg_lowering(%a: tensor<1x?x10xf32>, %b: tensor<?x5x
     // CHECK: linalg.mul
     %3 = hivm.hir.vmul ins(%1, %2: tensor<5x?x10xf32>, tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
 
-    // CHECK: linalg.div
+    // CHECK: linalg.elemwise_binary
     %4 = hivm.hir.vdiv ins(%2, %3: tensor<5x?x10xf32>, tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
 
     // CHECK: linalg.max
@@ -75,7 +75,7 @@ func.func @memref_direct_linalg_lowering(%a: memref<1x?x10xf32>, %b: memref<?x5x
     // CHECK: linalg.mul
     hivm.hir.vmul ins(%c, %d: memref<5x?x10xf32>, memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
 
-    // CHECK: linalg.div
+    // CHECK: linalg.elemwise_binary
     hivm.hir.vdiv ins(%c, %d: memref<5x?x10xf32>, memref<5x?x10xf32>) outs(%c: memref<5x?x10xf32>)
 
     // CHECK: linalg.max
@@ -188,13 +188,7 @@ func.func @bitwise_like_lowering(%a: tensor<?x5x10xf32>, %aT: tensor<5x?x10xf32>
 
 func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  outs({{.*}}: tensor<5x?x10xf32>, tensor<5x1x1xf32>)
-    // CHECK-NEXT:  ^bb0(%[[in:.*]]: f32, %{{.*}}: f32, %[[out:.*]]: f32)
-    // CHECK-NEXT:      %[[res:.*]] = arith.mulf
-    // CHECK-DAG-SAME:      %[[in]]
-    // CHECK-DAG-SAME:      %[[out]]
-    // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
+    // CHECK: %{{.*}} = hfusion.cumprod %arg0 : tensor<5x?x10xf32> cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
     %0 = hivm.hir.vcumprod ins(%a: tensor<5x?x10xf32>) outs(%a: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
 
     // CHECK: linalg.generic
@@ -206,13 +200,7 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
     // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
     hivm.hir.vcumprod ins(%b: memref<5x?x10xi32>) outs(%b: memref<5x?x10xi32>) cum_dims = [1] reverse = false
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  outs({{.*}}: tensor<5x?x10xf32>, tensor<5x1x1xf32>)
-    // CHECK-NEXT:  ^bb0(%[[in:.*]]: f32, %{{.*}}: f32, %[[out:.*]]: f32)
-    // CHECK-NEXT:      %[[res:.*]] = arith.addf
-    // CHECK-DAG-SAME:      %[[in]]
-    // CHECK-DAG-SAME:      %[[out]]
-    // CHECK-NEXT:      linalg.yield %[[res]], %[[res]]
+    // CHECK: %{{.*}} = hfusion.cumsum %arg0 : tensor<5x?x10xf32> cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
     %1 = hivm.hir.vcumsum ins(%a: tensor<5x?x10xf32>) outs(%0: tensor<5x?x10xf32>) cum_dims = [0] reverse = false -> tensor<5x?x10xf32>
 
     // CHECK: linalg.generic
@@ -229,40 +217,25 @@ func.func @cumulative_like_lowering(%a: tensor<5x?x10xf32>, %b: memref<5x?x10xi3
 
 // -----
 
-// CHECK-DAG: #[[IdentityMap:.*]] = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
-// CHECK-DAG: #[[NonIndexingMap:.*]] = affine_map<(d0, d1, d2) -> ()>
-// CHECK-DAG: #[[ZeroDim1Map:.*]] = affine_map<(d0, d1, d2) -> (d0, 0, d2)>
-// CHECK-DAG: #[[ZeroDim01Map:.*]] = affine_map<(d0, d1, d2) -> (0, 0, d2)>
-
 // CHECK: @brc_lowering
 func.func @brc_lowering(%a: tensor<1x1x10xf32>, %b: tensor<5x?x10xf32>, %c: memref<5x1x10xi32>, %d: memref<5x?x10xi32>) -> tensor<5x?x10xf32> attributes {hacc.function_kind = #hacc.function_kind<HOST>, hacc.host_func_type = #hacc.host_func_type<host_entry>} {
 
     %c0_f = arith.constant 0.: f32
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  indexing_maps = [#[[ZeroDim01Map]], #[[IdentityMap]]]
-    // CHECK-NEXT:  ^bb0(%[[in:[^:]*]]: f32
-    // CHECK-NEXT:      linalg.yield %[[in]]
+    // CHECK: %[[collapsed:.*]] = tensor.collapse_shape %{{.*}}
+    // CHECK: %[[broadcasted:.*]] = linalg.broadcast ins(%[[collapsed]] : tensor<10xf32>) outs(%{{.*}} : tensor<5x?x10xf32>) dimensions = [0, 1]
     %0 = hivm.hir.vbrc ins(%a: tensor<1x1x10xf32>) outs(%b: tensor<5x?x10xf32>) broadcast_dims = [0, 1] -> tensor<5x?x10xf32>
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  indexing_maps = [#[[NonIndexingMap]], #[[IdentityMap]]]
-    // CHECK-NEXT:  ^bb0(%[[in:[^:]*]]: f32
-    // CHECK-NEXT:      linalg.yield %[[in]]
+    // CHECK: linalg.fill ins(%{{.*}} : f32) outs(%{{.*}} : tensor<5x?x10xf32>)
     %1 = hivm.hir.vbrc ins(%c0_f: f32) outs(%0: tensor<5x?x10xf32>) -> tensor<5x?x10xf32>
 
     %c0_i = arith.constant 0: i32
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  indexing_maps = [#[[ZeroDim1Map]], #[[IdentityMap]]]
-    // CHECK-NEXT:  ^bb0(%[[in:[^:]*]]: i32
-    // CHECK-NEXT:      linalg.yield %[[in]]
+    // CHECK: %[[collapse_shape:.*]] = memref.collapse_shape %{{.*}}
+    // CHECK: linalg.broadcast ins(%[[collapse_shape]] : memref<5x10xi32>) outs(%{{.*}} : memref<5x?x10xi32>) dimensions = [1]
     hivm.hir.vbrc ins(%c: memref<5x1x10xi32>) outs(%d: memref<5x?x10xi32>) broadcast_dims = [1]
 
-    // CHECK: linalg.generic
-    // CHECK-SAME:  indexing_maps = [#[[NonIndexingMap]], #[[IdentityMap]]]
-    // CHECK-NEXT:  ^bb0(%[[in:[^:]*]]: i32
-    // CHECK-NEXT:      linalg.yield %[[in]]
+    // CHECK: linalg.fill ins(%{{.*}} : i32) outs(%{{.*}} : memref<5x?x10xi32>)
     hivm.hir.vbrc ins(%c0_i: i32) outs(%d: memref<5x?x10xi32>)
 
     func.return %1: tensor<5x?x10xf32>
@@ -377,7 +350,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r4:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c4]] :
-    // CHECK:       arith.maxnumf
+    // CHECK:       arith.maximumf
     // CHECK: %[[o2:.*]] = tensor.expand_shape %[[r4]]
     %2 = hivm.hir.vreduce <any> ins(%a: tensor<5x?x10xf32>) outs(%1: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -397,7 +370,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r6:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c6]] :
-    // CHECK:       arith.maxnumf
+    // CHECK:       arith.maximumf
     // CHECK: %[[o3:.*]] = tensor.expand_shape %[[r6]]
     %3 = hivm.hir.vreduce <max> ins(%a: tensor<5x?x10xf32>) outs(%2: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -415,7 +388,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
 
     // CHECK-DAG: %[[c8:.*]] = tensor.collapse_shape %[[o3]]
     // CHECK-DAG: %[[c9:.*]] = tensor.collapse_shape %[[c]]
-    // CHECK: %[[r8:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true} <max>
+    // CHECK: %[[r8:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <max>
     // CHECK-SAME:      ins(%[[a]] :
     // CHECK-SAME:      outs(%[[c8]], %[[c9]] :
     // CHECK-DAG: %[[o4:.*]] = tensor.expand_shape %[[r8]]#0
@@ -427,7 +400,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK-DAG: %[[t10:.*]] = bufferization.to_tensor %[[g]]
     // CHECK-DAG: %[[c10:.*]] = tensor.collapse_shape %[[t9]]
     // CHECK-DAG: %[[c11:.*]] = tensor.collapse_shape %[[t10]]
-    // CHECK: %[[r9:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false} <max>
+    // CHECK: %[[r9:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false, unsigned_src = false} <max>
     // CHECK-SAME:      ins(%[[t8]] :
     // CHECK-SAME:      outs(%[[c10]], %[[c11]] :
     // CHECK-DAG: %[[e8:.*]] = tensor.expand_shape %[[r9]]#0
@@ -442,7 +415,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r10:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c12]] :
-    // CHECK:       arith.minnumf
+    // CHECK:       arith.minimumf
     // CHECK: %[[o5:.*]] = tensor.expand_shape %[[r10]]
     %5 = hivm.hir.vreduce <all> ins(%a: tensor<5x?x10xf32>) outs(%4: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -462,7 +435,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK: %[[r12:.*]] = linalg.reduce
     // CHECK-SAME:          ins(%[[a]] :
     // CHECK-SAME:          outs(%[[c14]] :
-    // CHECK:       arith.minnumf
+    // CHECK:       arith.minimumf
     // CHECK: %[[o6:.*]] = tensor.expand_shape %[[r12]]
     %6 = hivm.hir.vreduce <min> ins(%a: tensor<5x?x10xf32>) outs(%5: tensor<5x1x10xf32>) reduce_dims = [1] -> tensor<5x1x10xf32>
 
@@ -480,7 +453,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
 
     // CHECK-DAG: %[[c16:.*]] = tensor.collapse_shape %[[o6]]
     // CHECK-DAG: %[[c17:.*]] = tensor.collapse_shape %[[id1]]
-    // CHECK: %[[r14:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false} <min>
+    // CHECK: %[[r14:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = false, unsigned_src = false} <min>
     // CHECK-SAME:      ins(%[[a]], %[[id_t]] :
     // CHECK-SAME:      outs(%[[c16]], %[[c17]] :
     // CHECK-DAG: tensor.expand_shape %[[r14]]#0
@@ -493,7 +466,7 @@ func.func @reduce_lowering(%a: tensor<5x?x10xf32>, %ai: tensor<5x?x10xi32>, %id_
     // CHECK-DAG: %[[t18:.*]] = bufferization.to_tensor %[[g]]
     // CHECK-DAG: %[[c18:.*]] = tensor.collapse_shape %[[t17]]
     // CHECK-DAG: %[[c19:.*]] = tensor.collapse_shape %[[t18]]
-    // CHECK: %[[r15:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true} <min>
+    // CHECK: %[[r15:[^:]*]]:2 = hfusion.reduce_with_index {tie_break_left = true, unsigned_src = false} <min>
     // CHECK-SAME:      ins(%[[t15]], %[[t16]] :
     // CHECK-SAME:      outs(%[[c18]], %[[c19]] :
     // CHECK-DAG: %[[e14:.*]] = tensor.expand_shape %[[r15]]#0
@@ -595,11 +568,7 @@ func.func @memref_load_lowering(%src: memref<5x?x?xi32>, %dst: memref<5x?x?xi32>
     // CHECK: %[[main_subview1:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[src_dim1]]]
     // CHECK: memref.copy %[[src]], %[[main_subview1]]
     // CHECK: %[[right_subview1:.*]] = memref.subview %[[dst]][0, 0, %[[src_dim1]]] [5, {{[^,]*}}, %[[right_pad1]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview1]]
-    // CHECK-NEXT: ^bb0(%[[in1:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in1]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview1]] : {{.*}})
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadValue> pad_value = %c0: i32
 
     // CHECK: %[[src_dim2:.*]] = memref.dim %[[src]]
@@ -607,19 +576,11 @@ func.func @memref_load_lowering(%src: memref<5x?x?xi32>, %dst: memref<5x?x?xi32>
     // CHECK: %[[dst_dim2:.*]] = memref.dim %[[dst]]
     // CHECK: %[[right_pad2:.*]] = arith.subi %[[dst_dim2]], %[[right_offset1]]
     // CHECK: %[[left_subview1:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[left_subview1]]
-    // CHECK-NEXT:  ^bb0(%[[in2:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in2]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[left_subview1]] : {{.*}})
     // CHECK: %[[main_subview2:.*]] = memref.subview %[[dst]][0, 0, %[[fifth]]] [5, {{[^,]*}}, %[[src_dim2]]]
     // CHECK: memref.copy %[[src]], %[[main_subview2]]
     // CHECK: %[[right_subview2:.*]] = memref.subview %[[dst]][0, 0, %[[right_offset1]]] [5, {{[^,]*}}, %[[right_pad2]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview2]]
-    // CHECK-NEXT: ^bb0(%[[in3:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in3]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview2]] : {{.*}})
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadValue> pad_value = %c0: i32 left_padding_num = %fifth_d2: index
 
     // CHECK: %[[src_dim3:.*]] = memref.dim %[[src]]
@@ -628,37 +589,21 @@ func.func @memref_load_lowering(%src: memref<5x?x?xi32>, %dst: memref<5x?x?xi32>
     // CHECK: %[[left_pad1:.*]] = arith.subi %[[dst_dim3]], %[[total_src2]]
     // CHECK: %[[right_offset2:.*]] = arith.addi %[[left_pad1]], %[[src_dim3]]
     // CHECK: %[[left_subview1:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[left_pad1]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[left_subview1]]
-    // CHECK-NEXT:  ^bb0(%[[in4:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in4]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[left_subview1]] : {{.*}})
     // CHECK: %[[main_subview3:.*]] = memref.subview %[[dst]][0, 0, %[[left_pad1]]] [5, {{[^,]*}}, %[[src_dim3]]]
     // CHECK: memref.copy %[[src]], %[[main_subview3]]
     // CHECK: %[[right_subview3:.*]] = memref.subview %[[dst]][0, 0, %[[right_offset2]]] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview3]]
-    // CHECK-NEXT: ^bb0(%[[in5:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in5]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview3]] : {{.*}})
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadValue> pad_value = %c0: i32 right_padding_num = %fifth_d2: index
 
     // CHECK: %[[src_dim4:.*]] = memref.dim %[[src]]
     // CHECK: %[[right_offset3:.*]] = arith.addi %[[src_dim4]], %[[fifth]]
     // CHECK: %[[left_subview2:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[left_subview2]]
-    // CHECK-NEXT:  ^bb0(%[[in6:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in6]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[left_subview2]] : {{.*}})
     // CHECK: %[[main_subview4:.*]] = memref.subview %[[dst]][0, 0, %[[fifth]]] [5, {{[^,]*}}, %[[src_dim4]]]
     // CHECK: memref.copy %[[src]], %[[main_subview4]]
     // CHECK: %[[right_subview4:.*]] = memref.subview %[[dst]][0, 0, %[[right_offset3]]] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview4]]
-    // CHECK-NEXT: ^bb0(%[[in7:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in7]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview4]] : {{.*}})
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadValue> pad_value = %c0: i32 left_padding_num = %fifth_d2: index right_padding_num = %two_fifth_d2: index
 
     // CHECK: %[[src_dim5:.*]] = memref.dim %[[src]]
@@ -668,11 +613,9 @@ func.func @memref_load_lowering(%src: memref<5x?x?xi32>, %dst: memref<5x?x?xi32>
     // CHECK: %[[main_subview5:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[src_dim5]]]
     // CHECK: memref.copy %[[src]], %[[main_subview5]]
     // CHECK: %[[right_subview5:.*]] = memref.subview %[[dst]][0, 0, %[[src_dim5]]] [5, {{[^,]*}}, %[[right_pad3]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview1]]
-    // CHECK-SAME: outs(%[[right_subview5]]
-    // CHECK-NEXT: ^bb0(%[[in8:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in8]]
+    // CHECK: %[[collapse1:.*]] = memref.collapse_shape %[[pad_subview1]]
+    // CHECK: linalg.broadcast ins(%[[collapse1]] : {{.*}}) outs(%[[right_subview5]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadFirstElem>
 
     // CHECK: %[[src_dim6:.*]] = memref.dim %[[src]]
@@ -681,19 +624,15 @@ func.func @memref_load_lowering(%src: memref<5x?x?xi32>, %dst: memref<5x?x?xi32>
     // CHECK: %[[right_pad4:.*]] = arith.subi %[[dst_dim6]], %[[right_offset4]]
     // CHECK: %[[pad_subview2:.*]] = memref.subview %[[src]][0, 0, 0] [5, {{[^,]*}}, 1]
     // CHECK: %[[left_subview3:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview2]]
-    // CHECK-SAME: outs(%[[left_subview3]]
-    // CHECK-NEXT:  ^bb0(%[[in9:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in9]]
+    // CHECK: %[[collapse2:.*]] = memref.collapse_shape %[[pad_subview2]]
+    // CHECK: linalg.broadcast ins(%[[collapse2]] : {{.*}}) outs(%[[left_subview3]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[main_subview6:.*]] = memref.subview %[[dst]][0, 0, %[[two_fifth]]] [5, {{[^,]*}}, %[[src_dim6]]]
     // CHECK: memref.copy %[[src]], %[[main_subview6]]
     // CHECK: %[[right_subview6:.*]] = memref.subview %[[dst]][0, 0, %[[right_offset4]]] [5, {{[^,]*}}, %[[right_pad4]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview2]]
-    // CHECK-SAME: outs(%[[right_subview6]]
-    // CHECK-NEXT: ^bb0(%[[in10:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in10]]
+    // CHECK: %[[collapse2b:.*]] = memref.collapse_shape %[[pad_subview2]]
+    // CHECK: linalg.broadcast ins(%[[collapse2b]] : {{.*}}) outs(%[[right_subview6]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadFirstElem> left_padding_num = %two_fifth_d2: index
 
     // CHECK: %[[src_dim7:.*]] = memref.dim %[[src]]
@@ -703,38 +642,30 @@ func.func @memref_load_lowering(%src: memref<5x?x?xi32>, %dst: memref<5x?x?xi32>
     // CHECK: %[[right_offset5:.*]] = arith.addi %[[left_pad2]], %[[src_dim7]]
     // CHECK: %[[pad_subview3:.*]] = memref.subview %[[src]][0, 0, 0] [5, {{[^,]*}}, 1]
     // CHECK: %[[left_subview4:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[left_pad2]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview3]]
-    // CHECK-SAME: outs(%[[left_subview4]]
-    // CHECK-NEXT:  ^bb0(%[[in11:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in11]]
+    // CHECK: %[[collapse3:.*]] = memref.collapse_shape %[[pad_subview3]]
+    // CHECK: linalg.broadcast ins(%[[collapse3]] : {{.*}}) outs(%[[left_subview4]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[main_subview7:.*]] = memref.subview %[[dst]][0, 0, %[[left_pad2]]] [5, {{[^,]*}}, %[[src_dim7]]]
     // CHECK: memref.copy %[[src]], %[[main_subview7]]
     // CHECK: %[[right_subview7:.*]] = memref.subview %[[dst]][0, 0, %[[right_offset5]]] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview3]]
-    // CHECK-SAME: outs(%[[right_subview7]]
-    // CHECK-NEXT: ^bb0(%[[in12:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in12]]
+    // CHECK: %[[collapse3b:.*]] = memref.collapse_shape %[[pad_subview3]]
+    // CHECK: linalg.broadcast ins(%[[collapse3b]] : {{.*}}) outs(%[[right_subview7]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadFirstElem> right_padding_num = %two_fifth_d2: index
 
     // CHECK: %[[src_dim8:.*]] = memref.dim %[[src]]
     // CHECK: %[[right_offset6:.*]] = arith.addi %[[src_dim8]], %[[two_fifth]]
     // CHECK: %[[pad_subview4:.*]] = memref.subview %[[src]][0, 0, 0] [5, {{[^,]*}}, 1]
     // CHECK: %[[left_subview5:.*]] = memref.subview %[[dst]][0, 0, 0] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview4]]
-    // CHECK-SAME: outs(%[[left_subview5]]
-    // CHECK-NEXT:  ^bb0(%[[in13:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in13]]
+    // CHECK: %[[collapse4:.*]] = memref.collapse_shape %[[pad_subview4]]
+    // CHECK: linalg.broadcast ins(%[[collapse4]] : {{.*}}) outs(%[[left_subview5]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[main_subview8:.*]] = memref.subview %[[dst]][0, 0, %[[two_fifth]]] [5, {{[^,]*}}, %[[src_dim8]]]
     // CHECK: memref.copy %[[src]], %[[main_subview8]]
     // CHECK: %[[right_subview8:.*]] = memref.subview %[[dst]][0, 0, %[[right_offset6]]] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview4]]
-    // CHECK-SAME: outs(%[[right_subview8]]
-    // CHECK-NEXT: ^bb0(%[[in14:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in14]]
+    // CHECK: %[[collapse4b:.*]] = memref.collapse_shape %[[pad_subview4]]
+    // CHECK: linalg.broadcast ins(%[[collapse4b]] : {{.*}}) outs(%[[right_subview8]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     hivm.hir.load ins(%src: memref<5x?x?xi32>) outs(%dst: memref<5x?x?xi32>) pad_mode = <PadFirstElem> left_padding_num = %two_fifth_d2: index right_padding_num = %fifth_d2: index
 
     func.return
@@ -771,11 +702,7 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[main_subview1:.*]] = memref.subview %[[dst1]][0, 0, 0] [5, {{[^,]*}}, %[[src_dim1]]]
     // CHECK: memref.copy %[[src1]], %[[main_subview1]]
     // CHECK: %[[right_subview1:.*]] = memref.subview %[[dst1]][0, 0, %[[src_dim1]]] [5, {{[^,]*}}, %[[right_pad1]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview1]]
-    // CHECK-NEXT: ^bb0(%[[in1:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in1]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview1]] : {{.*}})
     // CHECK: %[[tensor_dst2:.*]] = bufferization.to_tensor %[[dst1]] restrict
     %2 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%1: tensor<5x?x?xf32>) pad_mode = <PadValue> pad_value = %c0: f32 -> tensor<5x?x?xf32>
 
@@ -787,19 +714,11 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[dst_dim2:.*]] = memref.dim %[[dst2]]
     // CHECK: %[[right_pad2:.*]] = arith.subi %[[dst_dim2]], %[[right_offset1]]
     // CHECK: %[[left_subview1:.*]] = memref.subview %[[dst2]][0, 0, 0] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[left_subview1]]
-    // CHECK-NEXT:  ^bb0(%[[in2:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in2]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[left_subview1]] : {{.*}})
     // CHECK: %[[main_subview2:.*]] = memref.subview %[[dst2]][0, 0, %[[fifth]]] [5, {{[^,]*}}, %[[src_dim2]]]
     // CHECK: memref.copy %[[src2]], %[[main_subview2]]
     // CHECK: %[[right_subview2:.*]] = memref.subview %[[dst2]][0, 0, %[[right_offset1]]] [5, {{[^,]*}}, %[[right_pad2]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview2]]
-    // CHECK-NEXT: ^bb0(%[[in3:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in3]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview2]] : {{.*}})
     // CHECK: %[[tensor_dst3:.*]] = bufferization.to_tensor %[[dst2]] restrict
     %3 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%2: tensor<5x?x?xf32>) pad_mode = <PadValue> pad_value = %c0: f32 left_padding_num = %fifth_d2: index -> tensor<5x?x?xf32>
 
@@ -812,19 +731,11 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[left_pad1:.*]] = arith.subi %[[dst_dim3]], %[[total_src2]]
     // CHECK: %[[right_offset2:.*]] = arith.addi %[[left_pad1]], %[[src_dim3]]
     // CHECK: %[[left_subview1:.*]] = memref.subview %[[dst3]][0, 0, 0] [5, {{[^,]*}}, %[[left_pad1]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[left_subview1]]
-    // CHECK-NEXT:  ^bb0(%[[in4:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in4]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[left_subview1]] : {{.*}})
     // CHECK: %[[main_subview3:.*]] = memref.subview %[[dst3]][0, 0, %[[left_pad1]]] [5, {{[^,]*}}, %[[src_dim3]]]
     // CHECK: memref.copy %[[src3]], %[[main_subview3]]
     // CHECK: %[[right_subview3:.*]] = memref.subview %[[dst3]][0, 0, %[[right_offset2]]] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview3]]
-    // CHECK-NEXT: ^bb0(%[[in5:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in5]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview3]] : {{.*}})
     // CHECK: %[[tensor_dst4:.*]] = bufferization.to_tensor %[[dst3]] restrict
     %4 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%3: tensor<5x?x?xf32>) pad_mode = <PadValue> pad_value = %c0: f32 right_padding_num = %fifth_d2: index -> tensor<5x?x?xf32>
 
@@ -834,19 +745,11 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[src_dim4:.*]] = memref.dim %[[src4]]
     // CHECK: %[[right_offset3:.*]] = arith.addi %[[src_dim4]], %[[fifth]]
     // CHECK: %[[left_subview2:.*]] = memref.subview %[[dst4]][0, 0, 0] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[left_subview2]]
-    // CHECK-NEXT:  ^bb0(%[[in6:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in6]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[left_subview2]] : {{.*}})
     // CHECK: %[[main_subview4:.*]] = memref.subview %[[dst4]][0, 0, %[[fifth]]] [5, {{[^,]*}}, %[[src_dim4]]]
     // CHECK: memref.copy %[[src4]], %[[main_subview4]]
     // CHECK: %[[right_subview4:.*]] = memref.subview %[[dst4]][0, 0, %[[right_offset3]]] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[c0]]
-    // CHECK-SAME: outs(%[[right_subview4]]
-    // CHECK-NEXT: ^bb0(%[[in7:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in7]]
+    // CHECK: linalg.fill ins(%[[c0]] : {{.*}}) outs(%[[right_subview4]] : {{.*}})
     // CHECK: %[[tensor_dst5:.*]] = bufferization.to_tensor %[[dst4]] restrict
     %5 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%4: tensor<5x?x?xf32>) pad_mode = <PadValue> pad_value = %c0: f32 left_padding_num = %fifth_d2: index right_padding_num = %two_fifth_d2: index -> tensor<5x?x?xf32>
 
@@ -860,11 +763,9 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[main_subview5:.*]] = memref.subview %[[dst5]][0, 0, 0] [5, {{[^,]*}}, %[[src_dim5]]]
     // CHECK: memref.copy %[[src5]], %[[main_subview5]]
     // CHECK: %[[right_subview5:.*]] = memref.subview %[[dst5]][0, 0, %[[src_dim5]]] [5, {{[^,]*}}, %[[right_pad3]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview1]]
-    // CHECK-SAME: outs(%[[right_subview5]]
-    // CHECK-NEXT: ^bb0(%[[in8:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in8]]
+    // CHECK: %[[collapse1:.*]] = memref.collapse_shape %[[pad_subview1]]
+    // CHECK: linalg.broadcast ins(%[[collapse1]] : {{.*}}) outs(%[[right_subview5]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[tensor_dst6:.*]] = bufferization.to_tensor %[[dst5]] restrict
     %6 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%5: tensor<5x?x?xf32>) pad_mode = <PadFirstElem> -> tensor<5x?x?xf32>
 
@@ -877,19 +778,15 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[right_pad4:.*]] = arith.subi %[[dst_dim6]], %[[right_offset4]]
     // CHECK: %[[pad_subview2:.*]] = memref.subview %[[src6]][0, 0, 0] [5, {{[^,]*}}, 1]
     // CHECK: %[[left_subview3:.*]] = memref.subview %[[dst6]][0, 0, 0] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview2]]
-    // CHECK-SAME: outs(%[[left_subview3]]
-    // CHECK-NEXT:  ^bb0(%[[in9:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in9]]
+    // CHECK: %[[collapse2:.*]] = memref.collapse_shape %[[pad_subview2]]
+    // CHECK: linalg.broadcast ins(%[[collapse2]] : {{.*}}) outs(%[[left_subview3]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[main_subview6:.*]] = memref.subview %[[dst6]][0, 0, %[[two_fifth]]] [5, {{[^,]*}}, %[[src_dim6]]]
     // CHECK: memref.copy %[[src6]], %[[main_subview6]]
     // CHECK: %[[right_subview6:.*]] = memref.subview %[[dst6]][0, 0, %[[right_offset4]]] [5, {{[^,]*}}, %[[right_pad4]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview2]]
-    // CHECK-SAME: outs(%[[right_subview6]]
-    // CHECK-NEXT: ^bb0(%[[in10:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in10]]
+    // CHECK: %[[collapse2b:.*]] = memref.collapse_shape %[[pad_subview2]]
+    // CHECK: linalg.broadcast ins(%[[collapse2b]] : {{.*}}) outs(%[[right_subview6]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[tensor_dst7:.*]] = bufferization.to_tensor %[[dst6]] restrict
     %7 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%6: tensor<5x?x?xf32>) pad_mode = <PadFirstElem> left_padding_num = %two_fifth_d2: index -> tensor<5x?x?xf32>
 
@@ -903,19 +800,15 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[right_offset5:.*]] = arith.addi %[[left_pad2]], %[[src_dim7]]
     // CHECK: %[[pad_subview3:.*]] = memref.subview %[[src7]][0, 0, 0] [5, {{[^,]*}}, 1]
     // CHECK: %[[left_subview4:.*]] = memref.subview %[[dst7]][0, 0, 0] [5, {{[^,]*}}, %[[left_pad2]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview3]]
-    // CHECK-SAME: outs(%[[left_subview4]]
-    // CHECK-NEXT:  ^bb0(%[[in11:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in11]]
+    // CHECK: %[[collapse3:.*]] = memref.collapse_shape %[[pad_subview3]]
+    // CHECK: linalg.broadcast ins(%[[collapse3]] : {{.*}}) outs(%[[left_subview4]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[main_subview7:.*]] = memref.subview %[[dst7]][0, 0, %[[left_pad2]]] [5, {{[^,]*}}, %[[src_dim7]]]
     // CHECK: memref.copy %[[src7]], %[[main_subview7]]
     // CHECK: %[[right_subview7:.*]] = memref.subview %[[dst7]][0, 0, %[[right_offset5]]] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview3]]
-    // CHECK-SAME: outs(%[[right_subview7]]
-    // CHECK-NEXT: ^bb0(%[[in12:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in12]]
+    // CHECK: %[[collapse3b:.*]] = memref.collapse_shape %[[pad_subview3]]
+    // CHECK: linalg.broadcast ins(%[[collapse3b]] : {{.*}}) outs(%[[right_subview7]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[tensor_dst8:.*]] = bufferization.to_tensor %[[dst7]] restrict
     %8 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%7: tensor<5x?x?xf32>) pad_mode = <PadFirstElem> right_padding_num = %two_fifth_d2: index -> tensor<5x?x?xf32>
 
@@ -926,19 +819,15 @@ func.func @tensor_load_lowering(%src: tensor<5x?x?xf32>, %dst: tensor<5x?x?xf32>
     // CHECK: %[[right_offset6:.*]] = arith.addi %[[src_dim8]], %[[two_fifth]]
     // CHECK: %[[pad_subview4:.*]] = memref.subview %[[src8]][0, 0, 0] [5, {{[^,]*}}, 1]
     // CHECK: %[[left_subview5:.*]] = memref.subview %[[dst8]][0, 0, 0] [5, {{[^,]*}}, %[[two_fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview4]]
-    // CHECK-SAME: outs(%[[left_subview5]]
-    // CHECK-NEXT:  ^bb0(%[[in13:[^:]*]]
-    // CHECK-NEXT:    linalg.yield %[[in13]]
+    // CHECK: %[[collapse4:.*]] = memref.collapse_shape %[[pad_subview4]]
+    // CHECK: linalg.broadcast ins(%[[collapse4]] : {{.*}}) outs(%[[left_subview5]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[main_subview8:.*]] = memref.subview %[[dst8]][0, 0, %[[two_fifth]]] [5, {{[^,]*}}, %[[src_dim8]]]
     // CHECK: memref.copy %[[src8]], %[[main_subview8]]
     // CHECK: %[[right_subview8:.*]] = memref.subview %[[dst8]][0, 0, %[[right_offset6]]] [5, {{[^,]*}}, %[[fifth]]]
-    // CHECK: linalg.generic
-    // CHECK-SAME: ins(%[[pad_subview4]]
-    // CHECK-SAME: outs(%[[right_subview8]]
-    // CHECK-NEXT: ^bb0(%[[in14:[^:]*]]
-    // CHECK-NEXT:  linalg.yield %[[in14]]
+    // CHECK: %[[collapse4b:.*]] = memref.collapse_shape %[[pad_subview4]]
+    // CHECK: linalg.broadcast ins(%[[collapse4b]] : {{.*}}) outs(%[[right_subview8]] : {{.*}})
+    // CHECK-SAME: dimensions = [2]
     // CHECK: %[[tensor_dst9:.*]] = bufferization.to_tensor %[[dst8]] restrict
     %9 = hivm.hir.load ins(%src: tensor<5x?x?xf32>) outs(%8: tensor<5x?x?xf32>) pad_mode = <PadFirstElem> left_padding_num = %two_fifth_d2: index right_padding_num = %fifth_d2: index -> tensor<5x?x?xf32>
 

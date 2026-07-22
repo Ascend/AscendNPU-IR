@@ -45,7 +45,9 @@ void execution_engine::buildCPURunnerPipeline(
 
   // Conversion to upstream dialect Passes
   pm.addPass(createConvertHFusionToUpstreamPass());
-  pm.addPass(createConvertHIVMToUpstreamPass());
+  ExecutionEngineHIVMToUpstreamConversionOptions hivmUpstreamOpts;
+  hivmUpstreamOpts.convertToNamedOp = options.convertToNamedOp;
+  pm.addPass(createConvertHIVMToUpstreamPass(hivmUpstreamOpts));
 
   // Decompose tensor.concat into slices before bufferization
   pm.addNestedPass<func::FuncOp>(tensor::createDecomposeTensorConcatPass());
