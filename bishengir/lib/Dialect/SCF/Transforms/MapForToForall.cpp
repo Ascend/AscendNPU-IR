@@ -318,7 +318,7 @@ void ForToForallPass::runOnOperation() {
   MLIRContext *context = &getContext();
   RewritePatternSet patterns(context);
 
-  auto mod = dyn_cast<ModuleOp>(getOperation());
+  auto mod = getOperation()->getParentOfType<ModuleOp>();
   if ((mod && hacc::utils::isRegBasedArch(mod)) && options.simtMode)
     patterns.insert<InsertToInsertSliceRewritePattern>(patterns.getContext());
   patterns.insert<ForToForallRewritePattern>(patterns.getContext());
