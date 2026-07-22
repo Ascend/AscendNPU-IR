@@ -254,11 +254,6 @@ findBestFusedNodeForProducer(Block *block, Operation *producer,
   FusableOpInfo &producerInfo = ctx.getInfo(producer);
   if (!bestFusedNode->canFuseProducer(producer))
     return nullptr;
-  // If the closest fuseNode is conflict with the producer, give up fusing.
-  if (llvm::any_of(bestFusedNode->ops(), [&](Operation *fusedOp) {
-        return producerInfo.conflictList.contains(fusedOp);
-      }))
-    return nullptr;
   int numUsersInBestFusedNode = 0;
   for (auto user : DenseSet<Operation *>(producer->getUsers().begin(),
                                          producer->getUsers().end())) {

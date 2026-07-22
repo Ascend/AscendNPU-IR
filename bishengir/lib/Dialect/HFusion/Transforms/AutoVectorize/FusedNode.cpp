@@ -35,7 +35,7 @@ void FusedNode::addLeaf(Operation *op) {
   leaf.insert(op);
   ctx.getInfo(op).fusedNode = shared_from_this();
   consolidateToTail(op->getBlock());
-  updateConflicts(op->getBlock());
+  updateConflicts(op);
 }
 
 bool FusedNode::hasCommonAxis(Operation *op) const {
@@ -146,20 +146,25 @@ void FusedNode::consolidateToTail(Block *block) const {
   }
 }
 
-void FusedNode::updateConflicts(Block *block) const {
+void FusedNode::updateConflicts(Operation *newOp) const {
+  Block *block = newOp->getBlock();
+  ctx.dissolvePivot(newOp, this, block);
+
   DenseSet<Operation *> upstreamOps;
   DenseSet<Operation *> visitedUpstreamOps;
   DenseSet<Operation *> downstreamOps;
   DenseSet<Operation *> visitedDownstreamOps;
-  for (Operation *leafNode : leafOps()) {
-    findUpstreamFusableOpOf(leafNode, block, upstreamOps, visitedUpstreamOps);
-    findDownstreamFusableOpOf(leafNode, block, downstreamOps,
-                              visitedDownstreamOps);
+  for (Operation *op : ops()) {
+    findUpstreamFusableOpOf(op, block, upstreamOps, visitedUpstreamOps);
+    findDownstreamFusableOpOf(op, block, downstreamOps, visitedDownstreamOps);
+  }
+  for (Operation *op : ops()) {
+    upstreamOps.erase(op);
+    downstreamOps.erase(op);
   }
   for (auto upstreamOp : upstreamOps) {
     for (auto downstreamOp : downstreamOps) {
-      ctx.getInfo(upstreamOp).conflictList.insert(downstreamOp);
-      ctx.getInfo(downstreamOp).conflictList.insert(upstreamOp);
+      ctx.addGroupConflict(upstreamOp, downstreamOp, this);
     }
   }
 }

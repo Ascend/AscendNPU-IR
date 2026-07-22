@@ -108,7 +108,7 @@ private:
   bool hasRankReducing() const;
 
   void consolidateToTail(Block *block) const;
-  void updateConflicts(Block *block) const;
+  void updateConflicts(Operation *newOp) const;
 };
 
 } // namespace hfusion
