@@ -299,7 +299,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
     %gm_subview_a = memref.subview %gm_a[0, 0] [%real_m, %real_k] [1, 1] : memref<?x?xi8> to memref<?x?xi8, strided<[?, 1]>>
     %alloc_a = memref.alloc(%tile_m, %tile_k) : memref<?x?xi8>
     %subview_a = memref.subview %alloc_a[0, 0] [%real_m, %real_k] [1, 1] : memref<?x?xi8> to memref<?x?xi8, strided<[?, 1]>>
-    // CHECK: init_out_buffer = false
+    // CHECK-NOT: init_out_buffer
     // CHECK-NOT: init_condition
     hivm.hir.load ins(%gm_subview_a : memref<?x?xi8, strided<[?, 1]>>) outs(%subview_a : memref<?x?xi8, strided<[?, 1]>>)
       pad_mode = <PadValue>
@@ -314,7 +314,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
     %gm_subview_b = memref.subview %gm_b[0, 0] [%real_k, %real_n] [1, 1] : memref<?x?xi8> to memref<?x?xi8, strided<[?, 1]>>
     %alloc_b = memref.alloc(%tile_k, %tile_n) : memref<?x?xi8>
     %subview_b = memref.subview %alloc_b[0, 0] [%real_k, %real_n] [1, 1] : memref<?x?xi8> to memref<?x?xi8, strided<[?, 1]>>
-    // CHECK: init_out_buffer = false
+    // CHECK-NOT: init_out_buffer
     // CHECK-NOT: init_condition
     hivm.hir.load ins(%gm_subview_b : memref<?x?xi8, strided<[?, 1]>>) outs(%subview_b : memref<?x?xi8, strided<[?, 1]>>)
       pad_mode = <PadValue>

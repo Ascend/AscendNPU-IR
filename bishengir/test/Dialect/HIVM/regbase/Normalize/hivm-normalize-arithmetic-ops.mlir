@@ -277,7 +277,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[EMPTY2:.*]] = tensor.empty() : tensor<4x2xi64>
 // CHECK: %[[MUL:.*]] = hivm.hir.vmul ins(%[[CAST0]], %[[CAST1]] : tensor<4x2xi64>, tensor<4x2xi64>) outs(%[[EMPTY2]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<4x2xi64>
-// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) round : true -> tensor<4x2xi64>
+// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<4x2xi32>
 // CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[SHR]] : tensor<4x2xi64>) outs(%[[EMPTY4]] : tensor<4x2xi32>) round_mode = <truncwithoverflow> -> tensor<4x2xi32>
 // CHECK: return %[[RES]]
@@ -322,7 +322,7 @@ module attributes {hacc.target = #hacc.target<"Ascend910B4">} {
 // CHECK: %[[EMPTY3:.*]] = tensor.empty() : tensor<4x2xi64>
 // CHECK: %[[SHL:.*]] = hivm.hir.vshl ins(%[[MUL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY3]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY4:.*]] = tensor.empty() : tensor<4x2xi64>
-// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[SHL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY4]] : tensor<4x2xi64>) round : true -> tensor<4x2xi64>
+// CHECK: %[[SHR:.*]] = hivm.hir.vshr ins(%[[SHL]], %[[C32]] : tensor<4x2xi64>, i64) outs(%[[EMPTY4]] : tensor<4x2xi64>) -> tensor<4x2xi64>
 // CHECK: %[[EMPTY5:.*]] = tensor.empty() : tensor<4x2xi32>
 // CHECK: %[[RES:.*]] = hivm.hir.vcast ins(%[[SHR]] : tensor<4x2xi64>) outs(%[[EMPTY5]] : tensor<4x2xi32>) round_mode = <truncwithoverflow> -> tensor<4x2xi32>
 // CHECK: return %[[RES]]

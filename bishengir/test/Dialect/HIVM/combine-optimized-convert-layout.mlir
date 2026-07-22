@@ -127,7 +127,7 @@ func.func @fold_direct_load_annotation_mark(%arg0: memref<16x16xf16, strided<[?,
 // CHECK-NOT: hivm.hir.load
 // CHECK-NOT: hivm.hir.convert_layout
 // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<8x4x16x8xf32>
-// CHECK: %[[RES:.*]] = hivm.hir.nd2nz {dst_continuous} ins(%{{.*}} : tensor<64x64xf32>) outs(%[[EMPTY]] : tensor<8x4x16x8xf32>) init_out_buffer = false -> tensor<8x4x16x8xf32>
+// CHECK: %[[RES:.*]] = hivm.hir.nd2nz {dst_continuous} ins(%{{.*}} : tensor<64x64xf32>) outs(%[[EMPTY]] : tensor<8x4x16x8xf32>) -> tensor<8x4x16x8xf32>
 // CHECK: return %[[RES]] : tensor<8x4x16x8xf32>
 func.func @fold_tensor_load_convert_layout(%src: tensor<64x64xf32>, %l1_init: tensor<64x64xf32>) -> tensor<8x4x16x8xf32> {
   %load = hivm.hir.load ins(%src : tensor<64x64xf32>) outs(%l1_init : tensor<64x64xf32>) {"inserted-load"} core_type = <CUBE> -> tensor<64x64xf32>

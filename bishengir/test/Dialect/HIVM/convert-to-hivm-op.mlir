@@ -98,7 +98,7 @@ func.func @do_not_set_init_out_buffer(%arg0: memref<256x128xf32, strided<[?, ?],
   }
   %subview = memref.subview %arg0[0, 0] [256, %0] [1, 1] : memref<256x128xf32, strided<[?, ?], offset: ?>> to memref<256x?xf32, strided<[?, ?], offset: ?>>
   %subview_0 = memref.subview %alloc[0, 0] [256, %0] [1, 1] : memref<256x128xf32> to memref<256x?xf32, strided<[128, 1]>>
-  // CHECK: hivm.hir.load ins({{.*}} : memref<256x?xf32, strided<[?, ?], offset: ?>>) outs({{.*}} : memref<256x?xf32, strided<[128, 1]>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index init_out_buffer = false
+  // CHECK: hivm.hir.load ins({{.*}} : memref<256x?xf32, strided<[?, ?], offset: ?>>) outs({{.*}} : memref<256x?xf32, strided<[128, 1]>>) pad_mode = <PadValue> pad_value = {{.*}} : f32 left_padding_num = {{.*}} : index
   memref.copy %subview, %subview_0 : memref<256x?xf32, strided<[?, ?], offset: ?>> to memref<256x?xf32, strided<[128, 1]>>
   %1 = bufferization.to_tensor %alloc restrict writable : memref<256x128xf32>
   return %1 : tensor<256x128xf32>
@@ -282,7 +282,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK-LABEL: @memref_copy_dyn_offset_non_const
 // CHECK: %[[C8:.*]] = arith.constant 8 : index
 // CHECK: %[[LEFTPADNUM:.*]] = arith.remui %[[RAWOFFSET:.*]], %[[C8]] : index
-// CHECK: hivm.hir.load {{.*}} left_padding_num = %[[LEFTPADNUM]] : index {{.*}} eviction_policy = <EvictFirst>
+// CHECK: hivm.hir.load {{.*}} left_padding_num = %[[LEFTPADNUM]] : index eviction_policy = <EvictFirst>
 func.func @memref_copy_dyn_offset_non_const(%arg2: memref<?xf32>, %offset0: index, %offset1: index, %size: index) {
   %reinterpret_cast_3 = memref.reinterpret_cast %arg2 to offset: [%offset0], sizes: [9598], strides: [1] : memref<?xf32> to memref<9598xf32, strided<[1], offset: ?>>
   %alloc_4 = memref.alloc() : memref<9598xf32>
