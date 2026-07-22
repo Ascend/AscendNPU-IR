@@ -48,7 +48,10 @@ PIPE CustomOp::getPipe() {
   return PIPE::PIPE_UNASSIGNED;
 }
 
-const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{};
+const DenseMap<StringRef, CustomOp::BuiltinInfo> CustomOp::kBuiltins{
+    {"__builtin_histogram",
+     CustomOp::BuiltinInfo{TCoreType::VECTOR, PIPE::PIPE_V, VFMode::SIMT}},
+};
 
 void CustomMacroOp::setInPipe(PIPE pipe) {
   getOperation()->setAttr(inPipeName, PipeAttr::get(getContext(), pipe));

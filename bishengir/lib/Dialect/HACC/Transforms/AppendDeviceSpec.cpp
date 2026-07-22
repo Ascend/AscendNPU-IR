@@ -56,8 +56,17 @@ getNPUTargetSpecAttr(MLIRContext *context, TargetDevice target, Location loc) {
 
   ImplicitLocOpBuilder builder(loc, context);
   SmallVector<DataLayoutEntryInterface> entries;
+  const bool isRegBase = hacc::utils::isRegBasedArch(target);
   for (uint32_t i = 0; i <= getMaxEnumValForDeviceSpec(); i++) {
     auto specEntry = static_cast<DeviceSpec>(i);
+    // MINIMAL_D_CACHE_SIZE / MAXIMUM_D_CACHE_SIZE / ARCH are regbase-only
+    // (introduced by A5). The external hivmc shipped with CANN for membase
+    // targets cannot parse them, so skip them on membase arch.
+    if (!isRegBase &&
+        (specEntry == DeviceSpec::MINIMAL_D_CACHE_SIZE ||
+         specEntry == DeviceSpec::MAXIMUM_D_CACHE_SIZE ||
+         specEntry == DeviceSpec::ARCH))
+      continue;
     entries.push_back(DataLayoutEntryAttr::get(
         builder.getStringAttr(stringifyEnum(specEntry)),
         maybeSpec.value()->getSpecEntry(specEntry, builder)));
@@ -104,13 +113,15 @@ void AppendDeviceSpec::runOnOperation() {
   auto targetSpec = getNPUTargetSpecAttr(ctx, finalTarget, moduleOp->getLoc());
   hacc::utils::setNPUTargetSpec(moduleOp, targetSpec);
 
-  llvm::VersionTuple hivmcVersion;
-  if (hivmcVersion.tryParse(HIVMCVersion))
-    hivmcVersion = llvm::VersionTuple(0, 0, 0);
-  moduleOp->setAttr(hacc::HIVMCVersionAttr::name,
-                    hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
-  moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,
-                    BoolAttr::get(ctx, false));
+  if (hacc::utils::isMemBasedArch(moduleOp)) {
+    llvm::VersionTuple hivmcVersion;
+    if (hivmcVersion.tryParse(HIVMCVersion))
+      hivmcVersion = llvm::VersionTuple(0, 0, 0);
+    moduleOp->setAttr(hacc::HIVMCVersionAttr::name,
+                      hacc::HIVMCVersionAttr::get(ctx, hivmcVersion));
+    moduleOp->setAttr(hacc::HIVMCCompatiblePrintAttr::name,
+                      BoolAttr::get(ctx, false));
+  }
 }
 
 std::unique_ptr<Pass> mlir::hacc::createAppendDeviceSpecPass(

@@ -244,6 +244,42 @@ def PlanMemory : Pass<"hivm-plan-memory", "func::FuncOp"> {
   ];
 }
 
+def PlanMemoryRegBase : Pass<"hivm-plan-memory-regbase", "ModuleOp"> {
+  let summary = "Plan memory for HIVM Ops on A5";
+  let constructor = "mlir::hivm::createPlanMemoryRegBasePass()";
+  let dependentDialects = ["hivm::HIVMDialect", ];
+  let options = [
+    Option<"memMode", "mem-plan-mode", "hivm::MemPlanMode",
+           "hivm::MemPlanMode::LOCAL_MEM_PLAN",
+           "plan mem mode (default is LOCAL_MEM_PLAN)",
+           [{::llvm::cl::values(
+               clEnumValN(hivm::MemPlanMode::LOCAL_MEM_PLAN, "local-mem-plan",
+                          "plan mem mode is for memref.alloc"),
+               clEnumValN(
+                   hivm::MemPlanMode::GLOBAL_WORKSPACE_PLAN,
+                   "global-work-space-plan",
+                   "plan mem mode is for memref_ext.alloc_workspace"))}]>,
+    Option<"enableGlobalReuse", "enable-global-workspace-reuse", "bool",
+           /*default=*/"false",
+           "Enable global workspace reuse ,default : false">,
+    Option<"enablePrintMemoryAllocatedSize", "enable-print-memory-allocated-size", "bool",
+           /*default=*/"false",
+           "Enable print memory allocated size, default : false">,
+    Option<"restrictInplaceAsISA", "restrict-inplace-as-isa", "bool",
+           /*default=*/"false",
+           "restrict memory inplace as isa, default : false">,
+    Option<"simtVFDynamicSize", "simt-vf-dynamic-size", "int",
+           /*default=*/"216",
+           "Dynamic ub size(KB) for simt VF, default : 216">,
+    Option<"disableTightlyCoupledBufferReuse", "disable-tightly-coupled-buffer-reuse", "bool",
+           /*default=*/"false",
+           "Disable tightly coupled buffer reuse, default : false">,
+    Option<"disableVFReachableCheck", "disable-vf-reachable-check", "bool",
+           /*default=*/"false",
+           "Disable VF reachable check, default : false">,
+  ];
+}
+
 def InjectSync : Pass<"hivm-inject-sync", "func::FuncOp"> {
   let summary = "auto inject sync ";
   let constructor = "mlir::hivm::createInjectSyncPass()";

@@ -30,6 +30,7 @@
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/ValueRange.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -39,19 +40,34 @@
 #include "llvm/Support/ErrorHandling.h"
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
 #include <set>
 #include <string>
-#include <type_traits>
 #include <utility>
-
-namespace mlir {
-#define GEN_PASS_DEF_CONVERTHIVMTOSTANDARD
-#include "bishengir/Conversion/Passes.h.inc"
-} // namespace mlir
 
 using namespace mlir;
 using namespace mlir::hivm;
+
+namespace {
+
+static const DenseMap<std::pair<AddressSpace, AddressSpace>,
+                      std::pair<bool, bool>>
+    kSrcDstNeedPading{
+        {std::make_pair(AddressSpace::UB, AddressSpace::UB),
+         std::pair{false, false}},
+        {std::make_pair(AddressSpace::UB, AddressSpace::L1),
+         std::pair{false, false}},
+        {std::make_pair(AddressSpace::GM, AddressSpace::L1),
+         std::pair{true, false}}, // V2
+        {std::make_pair(AddressSpace::UB, AddressSpace::GM),
+         std::pair{false, false}}, // V2
+        {std::make_pair(AddressSpace::GM, AddressSpace::UB),
+         std::pair{true, true}}, // DMA OUT TO UB
+    };
+
+static const DenseMap<hivm::EvictionPolicy, uint32_t> EvictionPolicyMap{
+    {hivm::EvictionPolicy::EvictFirst, 0},
+    {hivm::EvictionPolicy::EvictLast, 1},
+};
 
 static MemRefType makeStridedLayoutAndShapeDynamic(MemRefType type) {
   return MemRefType::Builder(type)
@@ -103,6 +119,7 @@ createTypeCanonicalizedMemRefOperands(OpBuilder &b, Location loc,
   }
   return res;
 }
+static bool gMarkLibCallNoInline = false;
 
 static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
                                   ModuleOp mod, const std::string &libCallName,
@@ -124,43 +141,53 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     funcOp->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                     UnitAttr::get(ctx));
 
-    auto haccAlwaysInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
-        hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
-    funcOp->setAttr(haccAlwaysInlineAttr, rewriter.getUnitAttr());
-
     funcOp.setPrivate();
 
-    // label a func core type attribute to the lib call decl, based on either
+    // Determine the func core type of the lib call decl, based on either
     // special cases such as debug helper functions or the core
     // type of original op.
+    std::optional<hivm::TFuncCoreType> funcCoreType;
     if (llvm::StringRef(libCallName).starts_with("_mlir_ciface_init_debug") ||
         llvm::StringRef(libCallName).starts_with("_mlir_ciface_finish_debug")) {
-      funcOp->setAttr(
-          mlir::hivm::TFuncCoreTypeAttr::name,
-          hivm::TFuncCoreTypeAttr::get(funcOp->getContext(),
-                                       hivm::TFuncCoreType::AIC_OR_AIV));
+      funcCoreType = hivm::TFuncCoreType::AIC_OR_AIV;
     } else if (auto infer = dyn_cast<CoreTypeInterface>(op)) {
       auto coreTypeMaybe = infer.getCoreType();
       if (coreTypeMaybe) {
-        hivm::TFuncCoreType fc{};
         switch (coreTypeMaybe.value()) {
         case hivm::TCoreType::CUBE:
-          fc = hivm::TFuncCoreType::AIC;
+          funcCoreType = hivm::TFuncCoreType::AIC;
           break;
         case hivm::TCoreType::VECTOR:
-          fc = hivm::TFuncCoreType::AIV;
+          funcCoreType = hivm::TFuncCoreType::AIV;
           break;
         case hivm::TCoreType::CUBE_OR_VECTOR:
         case hivm::TCoreType::CUBE_AND_VECTOR:
-          llvm::report_fatal_error(
+          llvm_unreachable(
               "standard library call shouldn't have mix core type!");
           break;
         }
-
-        funcOp->setAttr(mlir::hivm::TFuncCoreTypeAttr::name,
-                        hivm::TFuncCoreTypeAttr::get(op->getContext(), fc));
       }
     }
+
+    if (funcCoreType)
+      funcOp->setAttr(
+          mlir::hivm::TFuncCoreTypeAttr::name,
+          hivm::TFuncCoreTypeAttr::get(op->getContext(), *funcCoreType));
+
+    // Only mark AIV (cube) lib calls as noinline; AIC (vector) lib calls are
+    // always inlined.
+    bool markNoInline =
+        gMarkLibCallNoInline && funcCoreType == hivm::TFuncCoreType::AIV;
+
+    auto haccInlineAttr = hacc::stringifyHACCToLLVMIRTranslateAttr(
+        markNoInline ? hacc::HACCToLLVMIRTranslateAttr::NOINLINE
+                     : hacc::HACCToLLVMIRTranslateAttr::ALWAYS_INLINE);
+    funcOp->setAttr(haccInlineAttr, rewriter.getUnitAttr());
+
+    if (markNoInline)
+      funcOp->setAttr(
+          hacc::HACCFuncTypeAttr::name,
+          hacc::HACCFuncTypeAttr::get(ctx, hacc::HACCFuncType::DEVICE));
   }
 
   return rewriter.create<func::CallOp>(
@@ -179,7 +206,6 @@ static void replaceWithLibCall(PatternRewriter &rewriter, OpType op,
 
   rewriter.replaceOp(op, call);
 }
-
 static Type inferRankReducedResultType(ArrayRef<int64_t> resultShape,
                                        MemRefType sourceRankedTensorType,
                                        ArrayRef<int64_t> offsets,
@@ -286,8 +312,9 @@ reduceMemrefsToNestedForUsingAxes(PatternRewriter &rewriter, Location loc,
         }
       }
 
-      MemRefType reducedType = cast<MemRefType>(inferRankReducedResultType(
-          reducedSize, vecType, viewOffset, viewSize, viewStride, reducedAxes));
+      MemRefType reducedType =
+          cast<MemRefType>(inferRankReducedResultType(
+              reducedSize, vecType, viewOffset, viewSize, viewStride, reducedAxes));
 
       reducedVals.push_back(rewriter.create<memref::SubViewOp>(
           loc, reducedType, val, viewOffset, viewSize, viewStride));
@@ -342,7 +369,6 @@ static SmallVector<Value> reduceMemrefsToNestedFor(PatternRewriter &rewriter,
 // Patterns to convert a HIVMOp to func.call @external library
 // implementation.
 //===----------------------------------------------------------------------===//
-namespace mlir::hivm {
 class MmadL1OpToLibraryCallPattern : public OpRewritePattern<hivm::MmadL1Op> {
 public:
   using OpRewritePattern<hivm::MmadL1Op>::OpRewritePattern;
@@ -361,8 +387,7 @@ public:
     libParams.append(additionalArgs.begin(), additionalArgs.end());
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -386,35 +411,43 @@ private:
   }
 };
 
-class Conv1DL1OpToLibraryCallPattern
-    : public OpRewritePattern<hivm::Conv1DL1Op> {
+class MMmadMxL1OpToLibraryCallPattern
+    : public OpRewritePattern<hivm::MmadMxL1Op> {
 public:
-  using OpRewritePattern<hivm::Conv1DL1Op>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hivm::Conv1DL1Op op,
+  using OpRewritePattern<hivm::MmadMxL1Op>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(MmadMxL1Op op,
                                 PatternRewriter &rewriter) const final {
-    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+    // inputs
+    SmallVector<Value> libParams{op.getC(),      op.getA(),      op.getB(),
+                                 op.getScaleA(), op.getScaleB(), op.getRealM(),
+                                 op.getRealK(),  op.getRealN()};
+
+    // additional sync arguments
+    SmallVector<Value> additionalArgs;
+    genAdditionalFunctionArgs(op, additionalArgs, rewriter);
+    libParams.append(additionalArgs.begin(), additionalArgs.end());
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
-};
 
-class Conv2DL1OpToLibraryCallPattern
-    : public OpRewritePattern<hivm::Conv2DL1Op> {
-public:
-  using OpRewritePattern<hivm::Conv2DL1Op>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hivm::Conv2DL1Op op,
-                                PatternRewriter &rewriter) const final {
-    SmallVector<Value> libParams = op.getLibraryCallOperands(rewriter);
+private:
+  void genAdditionalFunctionArgs(MmadMxL1Op op,
+                                 SmallVector<Value> &additionalArgs,
+                                 PatternRewriter &rewriter) const {
+    if (op.getSyncRelatedArgs().empty()) {
+      auto negOneDefaultValue = rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getI64Type(), rewriter.getI64IntegerAttr(-1));
+      op.getSyncRelatedArgsMutable().assign(ValueRange(
+          SmallVector<Value>(op.getNumSyncRelatedArgs(), negOneDefaultValue)));
+    }
 
-    replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       libParams, {});
-    return success();
+    auto syncRelatedArgs = op.getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(additionalArgs));
   }
 };
 
@@ -430,8 +463,7 @@ public:
     }
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -441,12 +473,11 @@ class LoadMXScaleOpToLibraryCallPattern
     : public OpRewritePattern<hivm::LoadMXScaleOp> {
 public:
   using OpRewritePattern<hivm::LoadMXScaleOp>::OpRewritePattern;
-
   LogicalResult matchAndRewrite(LoadMXScaleOp op,
                                 PatternRewriter &rewriter) const final {
+
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -459,8 +490,7 @@ class NZ2NDOpToLibraryCallPattern : public OpRewritePattern<hivm::NZ2NDOp> {
                                 PatternRewriter &rewriter) const final {
     // TODO: merge this with ND2NZOpToLibraryCallPattern
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -473,8 +503,7 @@ class L12UBOpToLibraryCallPattern : public OpRewritePattern<hivm::L12UBOp> {
                                 PatternRewriter &rewriter) const final {
     // TODO: merge this with L12UBOpToLibraryCallPattern
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        op->getOperands(), {});
     return success();
   }
@@ -488,16 +517,14 @@ public:
     SmallVector<Value> additionalArgs;
     genAdditionalFunctionArgs(op, additionalArgs, rewriter);
 
-    SmallVector<Value> libCallOperands = op->getOperands();
-    libCallOperands.resize(2); // src, dst
-
+    SmallVector<Value> libCallOperands;
+    libCallOperands.push_back(op.getSrc());
+    libCallOperands.push_back(op.getDst());
     libCallOperands.append(additionalArgs);
 
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       libCallOperands,
-                       /*resultTypes=*/{});
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       libCallOperands, /*resultTypes=*/{});
     return success();
   }
 
@@ -541,6 +568,7 @@ private:
     const uint32_t preQuantVal = static_cast<uint32_t>(op.getPreQuant());
     Value preQuant =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), preQuantVal, 64);
+    Value quantScale = op.getQuantScale();
     const uint32_t preReluVal = static_cast<uint32_t>(op.getPreRelu());
     Value preRelu =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), preReluVal, 64);
@@ -550,6 +578,15 @@ private:
 
     genPreQuant(op, rewriter, preQuant);
     additionalArgs.push_back(preQuant);
+    if (quantScale) {
+      if (quantScale.getType() != rewriter.getF32Type())
+        quantScale = rewriter.create<arith::ExtFOp>(op->getLoc(),
+                                                     rewriter.getF32Type(),
+                                                     quantScale);
+      additionalArgs.push_back(quantScale);
+    } else
+      additionalArgs.push_back(rewriter.create<arith::ConstantOp>(
+          op->getLoc(), rewriter.getF32FloatAttr(1.0)));
     additionalArgs.push_back(preRelu);
     additionalArgs.push_back(channelSplit);
     additionalArgs.push_back(unitFlagMode);
@@ -560,22 +597,7 @@ private:
       Value dualDstMode =
           rewriter.create<arith::ConstantIntOp>(op->getLoc(), dualDstVal, 8);
       additionalArgs.push_back(dualDstMode);
-    } else if (dstIsUB(op)) {
-      // Single-destination L0C->UB fixpipe: the target sub-block is a bool
-      // argument (0 -> sub-block 0's UB, 1 -> sub-block 1's).
-      bool subBlockId = op.getSubBlockIdx() != FixpipeSubBlock::SUB_BLOCK_0;
-      additionalArgs.push_back(rewriter.create<arith::ConstantOp>(
-          op->getLoc(), rewriter.getBoolAttr(subBlockId)));
     }
-  }
-
-  /// True when the fixpipe destination is a UB memref
-  static bool dstIsUB(FixpipeOp op) {
-    auto memref = dyn_cast<BaseMemRefType>(op.getDst().getType());
-    if (!memref)
-      return false;
-    auto space = dyn_cast_if_present<AddressSpaceAttr>(memref.getMemorySpace());
-    return space && space.getAddressSpace() == hivm::AddressSpace::UB;
   }
 };
 
@@ -590,6 +612,7 @@ public:
       MLIRContext *context, PatternBenefit benefit = 1,
       ArrayRef<StringRef> generatedNames = {})
       : OpRewritePattern<SourceOp>(context, benefit, generatedNames) {}
+
   virtual ~MultiDimOpToLibraryCallPattern() = default;
 
 protected:
@@ -623,70 +646,55 @@ protected:
   }
 };
 
-template <typename CumOp>
-class CumOpToLibraryCallPattern : public MultiDimOpToLibraryCallPattern<CumOp> {
+// Library-call lowering shared by cum ops that carry an optional temp buffer
+// and lower to `<op>_<rank>d_<dtype>_dim<cumDim>` template functions
+// (vcumsum/vcummax/vcummin).
+template <typename CumOpWithTemp>
+class CumOpWithTempToLibraryCallPattern
+    : public MultiDimOpToLibraryCallPattern<CumOpWithTemp> {
 public:
-  explicit CumOpToLibraryCallPattern(MLIRContext *context,
-                                     PatternBenefit benefit = 1,
-                                     ArrayRef<StringRef> generatedNames = {})
-      : MultiDimOpToLibraryCallPattern<CumOp>(context, benefit,
-                                              generatedNames) {}
+  explicit CumOpWithTempToLibraryCallPattern(
+      MLIRContext *context, PatternBenefit benefit = 1,
+      ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<CumOpWithTemp>(context, benefit,
+                                                      generatedNames) {}
 
-  LogicalResult matchAndRewrite(CumOp op,
+  LogicalResult matchAndRewrite(CumOpWithTemp op,
                                 PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
-    assert(op.hasPureBufferSemantics() &&
-           "Operating on tensor, please bufferize.");
+    assert(op.hasPureBufferSemantics() && "Operating on tensor, please bufferize.");
 
     auto src = op.getSrc();
     auto dst = op.getDst();
     ModuleOp mod = op->template getParentOfType<ModuleOp>();
-    MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
-    int rank = srcVecType.getRank();
-    llvm::ArrayRef<int64_t> cumDims = op.getCumDims();
-    assert(!cumDims.empty() && "cumDims shouldn't be empty.");
-    if (cumDims.size() > 1) {
-      return op.emitError("cum dimensions array is not decomposed yet");
-    }
-    int64_t cumDim = cumDims[0];
-    if (cumDim == rank - 1) {
-      return op.emitError("cum dimension with last dimension should be "
-                          "decomposed to scalar operation");
+    SmallVector<Value> operands = {src, dst};
+
+    auto tempBuffer = op.getTempBuffer();
+    if (tempBuffer) {
+      operands.push_back(tempBuffer);
+    } else {
+      operands.push_back(dst);
     }
 
-    // For loop axes would be used to create forOp.
-    auto axes = getForLoopAxes(cumDim, rank);
-    SmallVector<Value> operands = reduceMemrefsToNestedForUsingAxes(
-        rewriter, op.getLoc(), {src, dst}, axes);
+    rewriter.setInsertionPoint(op);
 
-    rewriter.setInsertionPointAfter(
-        operands[operands.size() - 1].getDefiningOp());
+    bool isReverse = op.getReverse();
+    Value isReverseValue = rewriter.create<mlir::arith::ConstantOp>(
+        op->getLoc(), rewriter.getBoolAttr(isReverse));
+    operands.push_back(isReverseValue);
 
-    auto libCallName =
-        libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    // cummax/cummin take a trailing propagateNan flag selecting the float NaN
+    // semantics (max/minimum vs max/minnum). cumsum has no such argument.
+    if constexpr (std::is_same_v<CumOpWithTemp, hivm::VCummaxOp> ||
+                  std::is_same_v<CumOpWithTemp, hivm::VCumminOp>) {
+      Value propagateNanValue = rewriter.create<mlir::arith::ConstantOp>(
+          op->getLoc(), rewriter.getBoolAttr(op.getPropagateNan()));
+      operands.push_back(propagateNanValue);
+    }
+
+    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     createLibCall(rewriter, op, mod, libCallName, operands, {});
     rewriter.eraseOp(op);
     return success();
-  }
-
-private:
-  /// The for loop axes would be used to create forOp.
-  std::set<int> getForLoopAxes(int64_t cumDim, int maxRank) const {
-    std::set<int> res;
-    /// in ra condition, the rank of memref after convert to standard is 2,
-    // and
-    // the cumsum dim should be the first xis, and the 'a' dimension is the
-    // last axis
-    std::set<int> keepAxes{static_cast<int>(cumDim), maxRank - 1};
-    if (cumDim > 0) {
-      keepAxes.insert(cumDim - 1);
-    }
-    for (int idx = 0; idx < maxRank; ++idx) {
-      if (keepAxes.count(idx) == 0) {
-        res.insert(idx);
-      }
-    }
-    return res;
   }
 };
 
@@ -722,8 +730,7 @@ public:
       libParams.push_back(op.getTilingParams());
     }
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -763,8 +770,7 @@ public:
       libParams.push_back(op.getCommParams());
     }
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -810,8 +816,7 @@ public:
       libParams.push_back(op.getCommParams());
     }
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
                        libParams, {});
     return success();
   }
@@ -829,16 +834,14 @@ public:
 
   LogicalResult matchAndRewrite(CopyOpType op,
                                 PatternRewriter &rewriter) const final {
-    auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     MemRefType srcType = dyn_cast<MemRefType>(op.getSrcOperandType());
 
     int64_t rank = srcType.getRank();
-    std::string fnName =
-        opWithLibCall.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
-    int maxOpRank = opWithLibCall.getOpLibraryMaxRank().value();
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
     if (rank <= maxOpRank) {
       // Directly create library calls when doing 1d/2d/3d copy.
       replaceWithLibCall(rewriter, op, fnName,
@@ -901,11 +904,10 @@ private:
                   .getResult();
     inputOperands.push_back(leftPaddingNum);
   }
-
-  void appendExtraOperands(PatternRewriter &rewriter, CopyOpType op,
-                           SmallVector<Value> &inputOperands) const {
-    if constexpr (std::is_same_v<CopyOpType, hivm::CopyOp> ||
-                  std::is_same_v<CopyOpType, hivm::LoadOp>) {
+  void addPadOperands(PatternRewriter &rewriter, CopyOpType op,
+                      SmallVector<Value> &inputOperands,
+                      std::pair<bool, bool> pad) const {
+    if (pad.first) {
       Value padMode;
       if (op.getPadMode()) {
         padMode = this->constantI32(
@@ -915,36 +917,88 @@ private:
         padMode = this->constantI32(rewriter, op->getLoc(), 0);
       }
       inputOperands.push_back(padMode);
-
-      if (isCopyToCbuf(op))
-        return;
-
-      Value padValue;
-      if (op.getPadValue()) {
-        padValue = op.getPadValue();
-      } else {
-        Type elemType = getElementTypeOrSelf(op.getSrc().getType());
-        padValue =
-            llvm::TypeSwitch<Type, Value>(elemType)
-                .Case([&](IntegerType intType) {
-                  // TODO: fix to use int type after support uint op
-                  auto width = cast<mlir::IntegerType>(intType).getWidth();
-                  return this->constant(rewriter, op->getLoc(), 0,
-                                        rewriter.getIntegerType(width));
-                })
-                .Case([&](FloatType floatType) {
-                  return rewriter.create<arith::ConstantOp>(
-                      op.getLoc(), rewriter.getFloatAttr(floatType, 0.0));
-                })
-                .Default([](Type) {
-                  llvm::report_fatal_error("Unsupported type of pad value!");
-                  return Value{};
-                });
+    }
+    if (!pad.second)
+      return;
+    Value padValue;
+    if (op.getPadValue()) {
+      padValue = op.getPadValue();
+      Type elemType = getElementTypeOrSelf(op.getSrc().getType());
+      if (elemType.isFloat8E4M3FN() || elemType.isFloat8E5M2()) {
+        auto constantOp = rewriter.create<arith::ConstantOp>(
+            op.getLoc(), rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
+        padValue = constantOp.getResult();
       }
-      inputOperands.push_back(padValue);
+    } else {
+      Type elemType = getElementTypeOrSelf(op.getSrc().getType());
+      padValue =
+          llvm::TypeSwitch<Type, Value>(elemType)
+              .Case([&](IntegerType intType) {
+                // TODO: fix to use int type after support uint op
+                auto width = cast<mlir::IntegerType>(intType).getWidth();
+                return this->constant(rewriter, op.getLoc(), 0,
+                                      rewriter.getIntegerType(width));
+              })
+              .Case([&](FloatType floatType) {
+                if (floatType.isFloat8E4M3FN() || floatType.isFloat8E5M2()) {
+                  auto constantOp = rewriter.create<arith::ConstantOp>(
+                      op.getLoc(),
+                      rewriter.getFloatAttr(rewriter.getF32Type(), 0.0));
+                  return constantOp.getResult();
+                } else {
+                  auto constantOp = rewriter.create<arith::ConstantOp>(
+                      op.getLoc(), rewriter.getFloatAttr(floatType, 0.0));
+                  return constantOp.getResult();
+                }
+              })
+              .Default([](Type) {
+                llvm_unreachable("Unsupported type of pad value!");
+                return Value{};
+              });
+    }
+    inputOperands.push_back(padValue);
 
+    if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      calculatePaddingNum(rewriter, op, inputOperands);
+    }
+  }
+
+  void addEvictionOperands(PatternRewriter &rewriter, CopyOpType op,
+                           SmallVector<Value> &inputOperands) const {
+    hivm::EvictionPolicy policy = hivm::EvictionPolicy::EvictFirst;
+
+    if (auto evictAttr = op.getEvictionPolicyAttr()) {
+      policy = evictAttr.getPolicy();
+      if (!EvictionPolicyMap.contains(policy)) {
+        op->emitWarning() << "Only support EvictFirst & EvictLast Policy for "
+                             "now, fallback to EvictFirst instead.\n";
+        policy = hivm::EvictionPolicy::EvictFirst;
+      }
+    }
+
+    Value evictionPolicy =
+        this->constantI32(rewriter, op->getLoc(), EvictionPolicyMap.at(policy));
+    inputOperands.push_back(evictionPolicy);
+  }
+
+  void appendExtraOperands(PatternRewriter &rewriter, CopyOpType op,
+                           SmallVector<Value> &inputOperands) const {
+    if constexpr (std::is_same_v<CopyOpType, hivm::CopyOp> ||
+                  std::is_same_v<CopyOpType, hivm::LoadOp>) {
+      auto dstMemSpaceAttr =
+          cast<MemRefType>(op.getDst().getType()).getMemorySpace();
+      auto dstAddrSpace =
+          dyn_cast<AddressSpaceAttr>(dstMemSpaceAttr).getAddressSpace();
+      auto srcMemSpaceAttr =
+          cast<MemRefType>(op.getSrc().getType()).getMemorySpace();
+      auto srcAddrSpace =
+          dyn_cast<AddressSpaceAttr>(srcMemSpaceAttr).getAddressSpace();
+      auto iter = kSrcDstNeedPading.find({srcAddrSpace, dstAddrSpace});
+      if (iter != kSrcDstNeedPading.end()) {
+        addPadOperands(rewriter, op, inputOperands, iter->second);
+      }
       if constexpr (std::is_same_v<CopyOpType, hivm::LoadOp>) {
-        calculatePaddingNum(rewriter, op, inputOperands);
+        addEvictionOperands(rewriter, op, inputOperands);
       }
     }
     if constexpr (std::is_same_v<CopyOpType, hivm::StoreOp>) {
@@ -964,6 +1018,9 @@ private:
     }
   }
 
+  // Remove compile warning: 'hides overloaded virtual function'.
+  using MultiDimOpToLibraryCallPattern<CopyOpType>::getLibraryCallOperands;
+
   /// Copyop need special treatment due to the need to convert PadMode attribute
   /// into a operand
   SmallVector<Value>
@@ -974,6 +1031,40 @@ private:
     inputOperands = {copyOp.getSrc(), copyOp.getDst()};
     appendExtraOperands(rewriter, copyOp, inputOperands);
     return inputOperands;
+  }
+};
+
+class FlipOpToLibraryCallPattern
+    : public MultiDimOpToLibraryCallPattern<hivm::VFlipOp> {
+public:
+  explicit FlipOpToLibraryCallPattern(MLIRContext *context,
+                                      PatternBenefit benefit = 1,
+                                      ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<hivm::VFlipOp>(context, benefit,
+                                                      generatedNames) {}
+  LogicalResult matchAndRewrite(hivm::VFlipOp op,
+                                PatternRewriter &rewriter) const final {
+    assert(op.hasPureBufferSemantics() &&
+           "Operating on tensor, please bufferize.");
+
+    MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
+    uint64_t rank = static_cast<uint64_t>(srcVecType.getRank());
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    SmallVector<Value> operands = {op.getSrc(), op.getDst()};
+    auto axisRange = llvm::seq<int>(0, rank);
+    std::set<int> reducedAxes(axisRange.begin(), axisRange.end());
+    auto flipAxis = op.getFlipAxis();
+    reducedAxes.erase(static_cast<int>(flipAxis));
+
+    if (!reducedAxes.empty()) {
+      operands = reduceMemrefsToNestedForUsingAxes(rewriter, op.getLoc(),
+                                                   operands, reducedAxes);
+      rewriter.setInsertionPointAfter(operands.back().getDefiningOp());
+    }
+
+    replaceWithLibCall(rewriter, op, fnName, operands, {});
+
+    return success();
   }
 };
 
@@ -1003,22 +1094,18 @@ public:
                                                      generatedNames) {}
 
   LogicalResult matchAndRewrite(HIVMVectorOp op,
-                                PatternRewriter &rewriter) const final {
+                                PatternRewriter &rewriter) const override {
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
-    auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     int64_t rank = op.getNumLoops();
-    int maxOpRank = opWithLibCall.getOpLibraryMaxRank().value();
-    std::string fnName =
-        opWithLibCall.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (rank <= maxOpRank) {
+      auto operandVec = this->getLibraryCallOperands(rewriter, op);
       // Directly create library calls when doing 1d/2d/3d/4d vector ops.
-      replaceWithLibCall(rewriter, op, fnName,
-                         this->getLibraryCallOperands(rewriter, op), {});
+      replaceWithLibCall(rewriter, op, fnName, operandVec, {});
       return success();
     }
-    // All subsequent ops need to be reconstructed to first complete the
-    // external throw and then call getLibraryCallOperands.
     SmallVector<Value> reducedVals = reduceMemrefsToNestedFor(
         rewriter, op.getLoc(),
         this->getLibraryCallOperands(rewriter, op,
@@ -1048,27 +1135,28 @@ public:
     return success();
   }
 
-private:
-  // TODO: Whitelist needs to be unified and rectified
+protected:
   static constexpr bool isElementwiseOp() {
-    return static_cast<bool>(
-        std::is_same<HIVMVectorOp, hivm::VAddOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VMulOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VSubOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VDivOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VMaxOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VMinOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VOrOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VAndOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VXorOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VExpOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VAbsOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VLnOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VReluOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VRsqrtOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VSqrtOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VRecOp>::value ||
-        std::is_same<HIVMVectorOp, hivm::VNotOp>::value);
+    if constexpr (std::is_same<HIVMVectorOp, hivm::VAddOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VMulOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VSubOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VDivOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VMaxOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VMinOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VOrOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VAndOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VXorOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VExpOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VAbsOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VLnOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VReluOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VRsqrtOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VSqrtOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VRecOp>::value ||
+                  std::is_same<HIVMVectorOp, hivm::VNotOp>::value) {
+      return true;
+    }
+    return false;
   }
 
   SmallVector<Value>
@@ -1093,6 +1181,31 @@ private:
   }
 };
 
+class VGatherOpToLibraryCallPattern
+    : public VectorOpToLibraryCallPattern<hivm::VGatherOp> {
+public:
+  using VectorOpToLibraryCallPattern::VectorOpToLibraryCallPattern;
+
+private:
+  SmallVector<Value>
+  getLibraryCallOperands(PatternRewriter &rewriter, Operation *op,
+                         bool includeExtraBuffer = true) const override {
+    auto gatherOp = cast<hivm::VGatherOp>(op);
+    SmallVector<Value> operands =
+        VectorOpToLibraryCallPattern<hivm::VGatherOp>::getLibraryCallOperands(
+            rewriter, op, includeExtraBuffer);
+    // All gather operations pass the axis as a runtime operand for the SIMT template.
+    int64_t axis = cast<ShapedType>(gatherOp.getSrc().getType()).getRank() - 1;
+    auto axisAttr = gatherOp.getGatherAxis();
+    if (axisAttr.has_value() && static_cast<int64_t>(*axisAttr) != -1) {
+      axis = static_cast<int64_t>(*axisAttr);
+    }
+    Value axisVal = rewriter.create<arith::ConstantIntOp>(op->getLoc(), axis, 32);
+    operands.push_back(axisVal);
+    return operands;
+  }
+};
+
 class VArangeOpToLibraryCallPattern
     : public MultiDimOpToLibraryCallPattern<hivm::VArangeOp> {
 public:
@@ -1104,23 +1217,24 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VArangeOp op,
                                 PatternRewriter &rewriter) const final {
-    auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     int64_t rank = op.getNumLoops();
-    int maxOpRank = opWithLibCall.getOpLibraryMaxRank().value();
-    std::string fnName =
-        opWithLibCall.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (rank <= maxOpRank) {
       auto operandVec = this->getLibraryCallOperands(rewriter, op);
       if (!op.getOffset()) {
-        Value arangeOffset =
+        Value ArangeOffset =
             rewriter.create<arith::ConstantIndexOp>(op.getLoc(), 0);
-        operandVec.insert(operandVec.begin() + 1, arangeOffset);
+        operandVec.insert(operandVec.begin() + 1, ArangeOffset);
       }
       // Directly create library calls when doing 1d/2d/3d/4d vector ops.
-      replaceWithLibCall(rewriter, op, fnName, operandVec, {});
+      replaceWithLibCall(rewriter, op, fnName,
+                         this->getLibraryCallOperands(rewriter, op), {});
     } else {
+      // All subsequent ops need to be reconstructed to first complete the
+      // external throw and then call getLibraryCallOperands.
       SmallVector<Value> reducedVals = reduceMemrefsToNestedFor(
           rewriter, op.getLoc(),
           this->getLibraryCallOperands(rewriter, op,
@@ -1186,14 +1300,12 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VCastOp op,
                                 PatternRewriter &rewriter) const final {
-    auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     MemRefType srcType = cast<MemRefType>(op.getSingleSrc().getType());
     int64_t rank = srcType.getRank();
-    int maxOpRank = opWithLibCall.getOpLibraryMaxRank().value();
-    std::string fnName =
-        opWithLibCall.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
     if (rank <= maxOpRank) {
       // Directly create library calls when doing 1d/2d/3d/4d cast ops.
@@ -1230,6 +1342,9 @@ private:
     inputOperands.push_back(roundNum);
   }
 
+  // Remove compile warning: 'hides overloaded virtual function'.
+  using MultiDimOpToLibraryCallPattern::getLibraryCallOperands;
+
   // Castop need special treatment due to the need to convert PadMode attribute
   // into a operand passed into func. Also update inputOperands with operands.
   SmallVector<Value>
@@ -1258,13 +1373,12 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VBrcOp op,
                                 PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     Type srcType = op.getSrc().getType();
     MemRefType dstVecType = cast<MemRefType>(op.getDst().getType());
     int rank = dstVecType.getRank();
-    int maxLibraryRank = libraryOp.inferOpLibraryMaxRank();
+    int maxLibraryRank = cast<OpWithLibraryFunction>(op.getOperation()).inferOpLibraryMaxRank();
     int exceedRank = rank - maxLibraryRank;
     int rankRangeShift = 0;
     int rankRangeEnd = exceedRank;
@@ -1287,15 +1401,23 @@ public:
       }
     }
 
+    // TODO: Add legalize fp8 pass
+    //  modify if src if fp8
+    auto BitCastFp8 = [&op, &rewriter](Value &val) {
+      rewriter.setInsertionPoint(op);
+      auto I8Ty = rewriter.getIntegerType(8);
+      return rewriter.create<arith::BitcastOp>(val.getLoc(), I8Ty, val);
+    };
+    auto src = op.getOperand(0);
+    if (src.getType().isFloat8E4M3FN() || src.getType().isFloat8E5M2())
+      op->setOperand(0, BitCastFp8(src));
     // TODO: Unify the logic with deduceAlignmentForDPSInitOperand
-    AlignKind alignKind;
-    if (isScalarLike(srcType)) {
-      alignKind = AlignKind::ALIGN;
-    } else {
-      alignKind = isBrcOpAligned(op, broadcastDim, dstVecType.getRank());
-    }
-    std::string libFnName = libraryOp.getOpLibraryCallName(
-        isOpsAligned_ && alignKind == AlignKind::ALIGN);
+    AlignKind alignKind =
+        isBrcOpAligned(op, broadcastDim, dstVecType.getRank());
+    std::string libFnName =
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(isOpsAligned_ &&
+                                  alignKind == AlignKind::ALIGN);
 
     // replace without nested loop creation
     if (exceedRank <= 0) {
@@ -1345,7 +1467,6 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VReduceOp op,
                                 PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
 
@@ -1364,58 +1485,37 @@ public:
 
     int reducedRank = rank;
     SmallVector<Value> convertedVals;
-    SmallVector<Value> memrefValsMaybe = {op.getSrc()};
-    if (op.getIndices()) {
-      memrefValsMaybe.push_back(op.getIndices());
-    }
-    memrefValsMaybe.push_back(op.getDstValue());
-    bool isWithIndex = op.isWithIndex();
-    if (isWithIndex) {
+    SmallVector<Value> memrefValsMaybe = {op.getSrc(), op.getDstValue()};
+    auto arith = op.getArithAttr();
+    if (op.isWithIndex(arith.getReduceOp())) {
       memrefValsMaybe.push_back(op.getDstIndex());
+      // tie_break_left attribute is required for reduce_with_index
+      std::optional<bool> maybeTieBreakLeft = op.getTieBreakLeft();
+      if (!maybeTieBreakLeft.has_value()) {
+        return op.emitError("tie_break_left is not defined");
+      }
     }
-
-    // With-index reduce ops only have 2D library support
-    // (_ra_/_ar_ with index). 3D templates (_ra0a1_/_ara_/_aar_) do not
-    // register with-index variants, so peel to rank 2 for with-index cases.
-    int targetRank = isWithIndex ? 2 : 3;
 
     if (midAxis) {
-      // Mid-axis: collect non-reduce axes and peel them outward.
-      // When rank <= targetRank, no peeling is needed — the library
-      // handles it directly (e.g., _ara_ for rank-3 non-index).
-      int numToPeel = std::max(0, rank - targetRank);
-
-      std::set<int> loopIndices;
-      for (int i = 0;
-           i < rank && static_cast<int>(loopIndices.size()) < numToPeel;
-           i++) {
-        if (i != reduceIdx) {
-          loopIndices.insert(i);
-        }
+      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                               memrefValsMaybe, 0, reduceIdx);
+      reducedRank = reducedRank - reduceIdx;
+      if (reducedRank > 3) {
+        return op.emitError("Unsupported reduce template.");
       }
-      if (!loopIndices.empty()) {
-        convertedVals = reduceMemrefsToNestedForUsingAxes(
-          rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
-        reducedRank = rank - static_cast<int>(loopIndices.size());
-      }
-    } else {
-      // First/last axis: peel outer dimensions down to targetRank.
-      if (firstAxis && rank > targetRank) {
-        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                                 memrefValsMaybe, 1,
-                                                 rank - targetRank + 1);
-        reducedRank = targetRank;
-      } else if (lastAxis && rank > targetRank) {
-        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
-                                                 memrefValsMaybe, 0,
-                                                 rank - targetRank);
-        reducedRank = targetRank;
-      }
+    } else if (firstAxis && rank > 3) {
+      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                               memrefValsMaybe, 1, rank - 2);
+      reducedRank = 3;
+    } else if (lastAxis && rank > 2) {
+      convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                               memrefValsMaybe, 0, rank - 2);
+      reducedRank = 2;
     }
 
     if (reducedRank == rank) {
       std::string libFnName =
-          libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+          cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
       SmallVector<Value> operands = getLibraryCallOperands(rewriter, op);
       replaceWithLibCall(rewriter, op, libFnName, operands, {});
       return success();
@@ -1424,13 +1524,15 @@ public:
     rewriter.setInsertionPointAfter(
         convertedVals[convertedVals.size() - 1].getDefiningOp());
     std::string libFnName =
-        libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+        cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
 
-    auto tempBuffer = op.getTempBuffer();
-    if (tempBuffer) {
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (hacc::utils::isRegBasedArch(moduleOp)) {
+      // no need tmp_buf in reg-based reduce op library
+    } else if (auto tempBuffer = op.getTempBuffer()) {
       convertedVals.push_back(tempBuffer);
     } else {
-      // tmp_buf is required in the reduce scene op library.
+      // tmp_buf is required in the mem-based reduce scene op library.
       createDummyBuffer(rewriter, op, convertedVals);
     }
 
@@ -1464,8 +1566,10 @@ private:
     return success();
   }
 
-  // Reduceop need special treatment due to the op library requires
-  // initvalue to
+  // Remove compile warning: 'hides overloaded virtual function'.
+  using MultiDimOpToLibraryCallPattern::getLibraryCallOperands;
+
+  // Reduceop need special treatment due to the op library requires initvalue to
   // initialize the tmp buffer.
   SmallVector<Value>
   getLibraryCallOperands(PatternRewriter &rewriter, Operation *op,
@@ -1474,21 +1578,21 @@ private:
     SmallVector<Value> inputOperands =
         MultiDimOpToLibraryCallPattern::getLibraryCallOperands(rewriter,
                                                                reduceOp);
-    if (reduceOp.getIndices()) {
-      auto indices = std::move(inputOperands.back());
-      inputOperands.pop_back();
-      auto *it = inputOperands.begin() + 1;
-      inputOperands.insert(it, indices);
+
+    auto moduleOp = op->getParentOfType<ModuleOp>();
+    if (hacc::utils::isRegBasedArch(moduleOp)) {
+      // no need tmp_buf in reg-based reduce op library
+    } else {
+      auto bufSizeMaybe = getExtraBufferSizeForReduceOp(
+          op, mlir::hivm::util::BufferSizeUnit::ELEMENT);
+      if (!bufSizeMaybe) {
+        // tmp_buf is required in the mem-based reduce scene op library.
+        createDummyBuffer(rewriter, op, inputOperands);
+      }
     }
-    auto bufSizeMaybe = getExtraBufferSizeForReduceOp(
-        op, mlir::hivm::util::BufferSizeUnit::ELEMENT);
-    if (!bufSizeMaybe) {
-      // tmp_buf is required in the reduce scene op library.
-      createDummyBuffer(rewriter, op, inputOperands);
-    }
+
     if (failed(appendInitValue(rewriter, reduceOp, inputOperands)))
       return {};
-
     return inputOperands;
   }
 };
@@ -1504,17 +1608,15 @@ public:
 
   LogicalResult matchAndRewrite(hivm::VTransposeOp op,
                                 PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
 
     auto src = op.getSrc();
     auto dst = op.getDst();
     ModuleOp mod = op->getParentOfType<ModuleOp>();
-    auto libCallName =
-        libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    auto libCallName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     auto perm = op.getPermutation();
-    auto dim = libraryOp.inferOpLibraryMaxRank();
+    auto dim = cast<OpWithLibraryFunction>(op.getOperation()).inferOpLibraryMaxRank();
     if (static_cast<int>(perm.size()) == dim) {
       SmallVector<Value> operands = getLibraryCallOperands(rewriter, op);
       createLibCall(rewriter, op, mod, libCallName, operands, {});
@@ -1561,8 +1663,7 @@ private:
     if (hivm::util::isTransposeWithLastAxis(permutation) &&
         !hivm::util::isTransposeAdjacentAxes(transposeAxes) &&
         permutation.size() > maxRank) {
-      // if permutation = [0, 4, 2, 3, 1], we need to throw out axes 0, 2,
-      // and
+      // if permutation = [0, 4, 2, 3, 1], we need to throw out axes 0, 2, and
       // call transpose 3d lib
       const int lastSecondAxis = static_cast<int>(permutation.size()) - 2;
       res.erase(lastSecondAxis);
@@ -1581,13 +1682,11 @@ public:
                                                             generatedNames) {}
   LogicalResult matchAndRewrite(hivm::VInterleaveOp op,
                                 PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
     assert(op.hasPureBufferSemantics() &&
            "Operating on tensor, please bufferize.");
     int64_t rank = op.getNumLoops();
-    int maxOpRank = libraryOp.getOpLibraryMaxRank().value();
-    std::string fnName =
-        libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+    int maxOpRank = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryMaxRank().value();
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (rank <= maxOpRank) {
       // Directly create library calls when doing 1d interleave op.
       replaceWithLibCall(rewriter, op, fnName,
@@ -1615,6 +1714,51 @@ public:
   }
 };
 
+class SortOpToLibraryCallPattern
+    : public MultiDimOpToLibraryCallPattern<hivm::VSortOp> {
+public:
+  explicit SortOpToLibraryCallPattern(MLIRContext *context,
+                                      PatternBenefit benefit = 1,
+                                      ArrayRef<StringRef> generatedNames = {})
+      : MultiDimOpToLibraryCallPattern<hivm::VSortOp>(context, benefit,
+                                                      generatedNames) {}
+  LogicalResult matchAndRewrite(hivm::VSortOp op,
+                                PatternRewriter &rewriter) const final {
+    assert(op.hasPureBufferSemantics() &&
+           "Operating on tensor, please bufferize.");
+
+    std::string fnName = cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+
+    replaceWithLibCall(rewriter, op, fnName,
+                       this->getLibraryCallOperands(rewriter, op), {});
+    return success();
+  }
+
+private:
+  void appendExtraOperands(PatternRewriter &rewriter, hivm::VSortOp op,
+                           SmallVector<Value> &inputOperands) const {
+    auto descending = op.getDescending();
+    Value descendingInt = rewriter.create<arith::ConstantOp>(
+        op->getLoc(), rewriter.getI8IntegerAttr(descending));
+    inputOperands.push_back(descendingInt);
+  }
+
+  // Sortop need special treatment due to the op library requires initvalue
+  // to
+  // initialize the tmp buffer.
+  SmallVector<Value>
+  getLibraryCallOperands(PatternRewriter &rewriter, Operation *op,
+                         bool includeExtraBuffer = true) const override {
+    auto vsortOp = cast<hivm::VSortOp>(op);
+    SmallVector<Value> inputOperands =
+        MultiDimOpToLibraryCallPattern::getLibraryCallOperands(rewriter,
+                                                               vsortOp);
+    appendExtraOperands(rewriter, vsortOp, inputOperands);
+
+    return inputOperands;
+  }
+};
+
 class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
   using OpRewritePattern<hivm::DebugOp>::OpRewritePattern;
 
@@ -1624,7 +1768,6 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
 
   LogicalResult matchAndRewrite(hivm::DebugOp op,
                                 PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
     SmallVector<Value> funcOperands;
 
     // Convert the prefix attribute to two arguments of the called func
@@ -1649,7 +1792,7 @@ class DebugOpToLibraryCallPattern : public OpRewritePattern<hivm::DebugOp> {
 
     // dispatch to different lib calls for assert/print
     std::string libCallName =
-        libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
+        cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
     if (op.getDebugtype() == HIVMDebugTypePrint) {
       // Convert the hex attr to an argument of the print lib call
       auto hexBool = op.getHex();
@@ -1699,124 +1842,13 @@ class CustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpT> {
   }
 };
 
-class SortOpToLibraryCallPattern
-    : public MultiDimOpToLibraryCallPattern<hivm::VSortOp> {
-public:
-  explicit SortOpToLibraryCallPattern(MLIRContext *context,
-                                      PatternBenefit benefit = 1,
-                                      ArrayRef<StringRef> generatedNames = {})
-      : MultiDimOpToLibraryCallPattern<hivm::VSortOp>(context, benefit,
-                                                      generatedNames) {}
-  LogicalResult matchAndRewrite(hivm::VSortOp op,
-                                PatternRewriter &rewriter) const final {
-    auto libraryOp = cast<OpWithLibraryFunction>(op.getOperation());
-    assert(op.hasPureBufferSemantics() &&
-           "Operating on tensor, please bufferize.");
-
-    MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
-    int64_t rank = srcVecType.getRank();
-    int maxOpRank = libraryOp.getOpLibraryMaxRank().value();
-    std::string fnName =
-        libraryOp.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
-
-    if (rank <= maxOpRank) {
-      // Directly create library calls when doing 1d sort ops.
-      replaceWithLibCall(rewriter, op, fnName,
-                         this->getLibraryCallOperands(rewriter, op), {});
-    } else {
-      SmallVector<Value> memrefValsMaybe = {op.getSrc(), op.getDstValue()};
-      if (op.getDst().size() == 2) {
-        memrefValsMaybe.push_back(op.getDstIndex());
-      }
-      SmallVector<Value> reducedVals = reduceMemrefsToNestedFor(
-          rewriter, op.getLoc(), memrefValsMaybe, 0, rank - maxOpRank);
-      rewriter.setInsertionPointAfter(
-          reducedVals[reducedVals.size() - 1].getDefiningOp());
-
-      auto tempBuffer = op.getTempBuffer();
-      if (tempBuffer) {
-        reducedVals.push_back(tempBuffer);
-      }
-      appendExtraOperands(rewriter, op, reducedVals);
-
-      ModuleOp mod = op->template getParentOfType<ModuleOp>();
-      createLibCall(rewriter, op, mod, fnName, reducedVals, {});
-      rewriter.eraseOp(op);
-    }
-    return success();
-  }
-
-private:
-  void appendExtraOperands(PatternRewriter &rewriter, hivm::VSortOp op,
-                           SmallVector<Value> &inputOperands) const {
-    auto descending = op.getDescending();
-    Value descendingInt = rewriter.create<arith::ConstantOp>(
-        op->getLoc(), rewriter.getI8IntegerAttr(descending));
-    inputOperands.push_back(descendingInt);
-  }
-
-  // Sortop need special treatment due to the op library requires initvalue
-  // to
-  // initialize the tmp buffer.
-  SmallVector<Value>
-  getLibraryCallOperands(PatternRewriter &rewriter, Operation *op,
-                         bool includeExtraBuffer = true) const override {
-    auto vsortOp = cast<hivm::VSortOp>(op);
-    SmallVector<Value> inputOperands =
-        MultiDimOpToLibraryCallPattern::getLibraryCallOperands(rewriter,
-                                                               vsortOp);
-    appendExtraOperands(rewriter, vsortOp, inputOperands);
-
-    return inputOperands;
-  }
-};
-
-class FlipOpToLibraryCallPattern
-    : public MultiDimOpToLibraryCallPattern<hivm::VFlipOp> {
-public:
-  explicit FlipOpToLibraryCallPattern(MLIRContext *context,
-                                      PatternBenefit benefit = 1,
-                                      ArrayRef<StringRef> generatedNames = {})
-      : MultiDimOpToLibraryCallPattern<hivm::VFlipOp>(context, benefit,
-                                                      generatedNames) {}
-  LogicalResult matchAndRewrite(hivm::VFlipOp op,
-                                PatternRewriter &rewriter) const final {
-    auto opWithLibCall = cast<OpWithLibraryFunction>(op.getOperation());
-    assert(op.hasPureBufferSemantics() &&
-           "Operating on tensor, please bufferize.");
-
-    MemRefType srcVecType = cast<MemRefType>(op.getSrc().getType());
-    uint64_t rank = static_cast<uint64_t>(srcVecType.getRank());
-    std::string fnName =
-        opWithLibCall.getOpLibraryCallName(/*isOpsAligned=*/std::nullopt);
-    SmallVector<Value> memrefValsMaybe = {op.getSrc(), op.getDst()};
-    std::set<int> reducedAxes;
-    for (uint64_t curAxis = 0; curAxis < rank; curAxis++) {
-      if (curAxis != op.getFlipAxis()) {
-        reducedAxes.insert(curAxis);
-      }
-    }
-
-    if (!reducedAxes.empty()) {
-      memrefValsMaybe = reduceMemrefsToNestedForUsingAxes(
-          rewriter, op.getLoc(), memrefValsMaybe, reducedAxes);
-      rewriter.setInsertionPointAfter(memrefValsMaybe.back().getDefiningOp());
-    }
-
-    replaceWithLibCall(rewriter, op, fnName, memrefValsMaybe, {});
-
-    return success();
-  }
-};
-
 template <typename T>
 class PlainOpToLibraryCallPattern : public OpRewritePattern<T> {
   using OpRewritePattern<T>::OpRewritePattern;
   LogicalResult matchAndRewrite(T op, PatternRewriter &rewriter) const final {
     replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       /*inputOperands=*/{}, {});
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       {}, {});
     return success();
   }
 };
@@ -1837,30 +1869,37 @@ public:
     return success();
   }
 };
-
-class IndirectStoreOpToLibraryCallPattern
-    : public OpRewritePattern<hivm::IndirectStoreOp> {
+template <typename OpTy>
+class SIMTOpToLibraryCallPattern : public OpRewritePattern<OpTy> {
 public:
-  using OpRewritePattern<hivm::IndirectStoreOp>::OpRewritePattern;
-  LogicalResult matchAndRewrite(hivm::IndirectStoreOp op,
+  using OpRewritePattern<OpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(OpTy op,
                                 PatternRewriter &rewriter) const final {
-    replaceWithLibCall(
-        rewriter, op,
-        cast<OpWithLibraryFunction>(op.getOperation())
-            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-        op->getOperands(), {});
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       op->getOperands(), {});
     return success();
   }
 };
-} // namespace mlir::hivm
 
-void mlir::hivm::populateHIVMToStandardConversionPatterns(
+template <typename CustomOpTy>
+class SimpleCustomOpToLibraryCallPattern : public OpRewritePattern<CustomOpTy> {
+public:
+  using OpRewritePattern<CustomOpTy>::OpRewritePattern;
+  LogicalResult matchAndRewrite(CustomOpTy op,
+                                PatternRewriter &rewriter) const final {
+    replaceWithLibCall(rewriter, op,
+                       cast<OpWithLibraryFunction>(op.getOperation()).getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+                       op->getOperands(), {});
+    return success();
+  }
+};
+
+void populateHIVMToStandardConversionPatternsRegBase(
     RewritePatternSet &patterns, bool isOpsAligned) {
   // clang-format off
-  patterns.add<
-               MmadL1OpToLibraryCallPattern,
-               Conv1DL1OpToLibraryCallPattern,
-               Conv2DL1OpToLibraryCallPattern,
+  patterns.add<MmadL1OpToLibraryCallPattern,
+               MMmadMxL1OpToLibraryCallPattern,
                ND2NZOpToLibraryCallPattern,
                LoadMXScaleOpToLibraryCallPattern,
                NZ2NDOpToLibraryCallPattern,
@@ -1872,7 +1911,6 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                CopyOpToLibraryCallPattern<hivm::CopyOp>,
                CopyOpToLibraryCallPattern<hivm::LoadOp>,
                CopyOpToLibraryCallPattern<hivm::StoreOp>,
-               IndirectStoreOpToLibraryCallPattern,
                VectorOpToLibraryCallPattern<hivm::VAddOp>,
                VectorOpToLibraryCallPattern<hivm::VMulOp>,
                VectorOpToLibraryCallPattern<hivm::VSubOp>,
@@ -1897,51 +1935,46 @@ void mlir::hivm::populateHIVMToStandardConversionPatterns(
                VectorOpToLibraryCallPattern<hivm::VDeinterleaveOp>,
                VectorOpToLibraryCallPattern<hivm::VMulextendedOp>,
                VectorOpToLibraryCallPattern<hivm::VPowOp>,
-               VectorOpToLibraryCallPattern<hivm::VGatherOp>,
-               VectorOpToLibraryCallPattern<hivm::VGatherMaskOp>,
+               VGatherOpToLibraryCallPattern,
                VArangeOpToLibraryCallPattern,
                VCastOpToLibraryCallPattern,
                ReduceOpToLibraryCallPattern,
-               CumOpToLibraryCallPattern<hivm::VCumsumOp>,
-               CumOpToLibraryCallPattern<hivm::VCumprodOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumsumOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCummaxOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumminOp>,
+               CumOpWithTempToLibraryCallPattern<hivm::VCumprodOp>,
                TransposeOpToLibraryCallPattern,
                DebugOpToLibraryCallPattern,
-               CustomOpToLibraryCallPattern<hivm::CustomOp>,
-               CustomOpToLibraryCallPattern<hivm::CustomMacroOp>,
                VInterleaveOpToLibraryCallPattern,
                PlainOpToLibraryCallPattern<hivm::InitDebugOp>,
                PlainOpToLibraryCallPattern<hivm::FinishDebugOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockLockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::SyncBlockUnlockOp>,
                SyncBlockOpToLibraryCallPattern<hivm::FreeLockVarOp>,
-               SortOpToLibraryCallPattern,
-               FlipOpToLibraryCallPattern
+               SIMTOpToLibraryCallPattern<hivm::EmbeddingGatherOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndirectLoadOp>,
+               SIMTOpToLibraryCallPattern<hivm::StrideLoadOp>,
+               SIMTOpToLibraryCallPattern<hivm::StrideStoreOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndirectStoreOp>,
+               SIMTOpToLibraryCallPattern<hivm::GatherTOp>,
+               SIMTOpToLibraryCallPattern<hivm::IndexPutOp>,
+               SIMTOpToLibraryCallPattern<hivm::ScatterTOp>,
+               CustomOpToLibraryCallPattern<hivm::CustomOp>,
+               CustomOpToLibraryCallPattern<hivm::CustomMacroOp>,
+               FlipOpToLibraryCallPattern,
+               SortOpToLibraryCallPattern
                >
                (patterns.getContext());
   // clang-format on
   patterns.add<BrcOpToLibraryCallPattern>(patterns.getContext(), isOpsAligned);
 }
 
-namespace {
-struct ConvertHIVMToStandardPass
-    : public impl::ConvertHIVMToStandardBase<ConvertHIVMToStandardPass> {
-  explicit ConvertHIVMToStandardPass(
-      const ConvertHIVMToStandardOptions &options)
-      : ConvertHIVMToStandardBase(options) {}
-
-  void runOnOperation() override;
-};
 } // namespace
 
-void ConvertHIVMToStandardPass::runOnOperation() {
-  auto module = getOperation();
-  if (hacc::utils::isRegBasedArch(module)) {
-    if (failed(ConvertHIVMToStandardRegBasePass::runOnOperation(
-            module, isOpsAligned)))
-      signalPassFailure();
-    return;
-  }
-  ConversionTarget target(getContext());
+LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
+    ModuleOp module, bool isOpsAligned) {
+  gMarkLibCallNoInline = false;
+  ConversionTarget target(*module->getContext());
   target.addLegalDialect<func::FuncDialect, memref::MemRefDialect,
                          arith::ArithDialect, scf::SCFDialect,
                          LLVM::LLVMDialect>();
@@ -1952,7 +1985,6 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::Conv1DL1Op,
                       hivm::Conv2DL1Op,
                       hivm::ND2NZOp,
-                      hivm::LoadMXScaleOp,
                       hivm::NZ2NDOp,
                       hivm::FixpipeOp,
                       hivm::MatmulOp,
@@ -1987,6 +2019,8 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::VReduceOp,
                       hivm::VCumsumOp,
                       hivm::VCumprodOp,
+                      hivm::VCummaxOp,
+                      hivm::VCumminOp,
                       hivm::VTransposeOp,
                       hivm::VShLOp,
                       hivm::VShROp,
@@ -2002,31 +2036,24 @@ void ConvertHIVMToStandardPass::runOnOperation() {
                       hivm::SyncBlockLockOp,
                       hivm::SyncBlockUnlockOp,
                       hivm::FreeLockVarOp,
-                      hivm::VSortOp
+                      hivm::VSortOp,
+                      hivm::IndirectLoadOp,
+                      hivm::StrideLoadOp,
+                      hivm::StrideStoreOp,
+                      hivm::IndirectStoreOp,
+                      hivm::GatherTOp,
+                      hivm::EmbeddingGatherOp,
+                      hivm::IndexPutOp,
+                      hivm::ScatterTOp
                       >();
 
   // clang-format on
 
-  RewritePatternSet patterns(&getContext());
-  SmallVector<func::FuncOp> deviceFuncs;
-  module->walk([&](func::FuncOp func) {
-    if (hacc::utils::isDevice(func)) {
-      deviceFuncs.push_back(func);
-    }
-  });
-
-  for (auto deviceFunc : deviceFuncs) {
-    patterns.clear();
-    populateHIVMToStandardConversionPatterns(
-        patterns,
-        /*isOpsAligned=*/deviceFunc->hasAttr(hivm::StrideAlignDimsAttr::name) ||
-            this->isOpsAligned);
-    if (failed(
-            applyPartialConversion(deviceFunc, target, std::move(patterns)))) {
-      signalPassFailure();
-    }
+  RewritePatternSet patterns(module->getContext());
+  populateHIVMToStandardConversionPatternsRegBase(patterns, isOpsAligned);
+  if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
+    return failure();
   }
-
   // Add canonicalization patterns for subviewOp and forOp.
   RewritePatternSet canonicalPatterns(module->getContext());
   memref::SubViewOp::getCanonicalizationPatterns(
@@ -2034,14 +2061,14 @@ void ConvertHIVMToStandardPass::runOnOperation() {
   scf::ForOp::getCanonicalizationPatterns(canonicalPatterns,
                                           canonicalPatterns.getContext());
   if (failed(applyPatternsGreedily(module, std::move(canonicalPatterns)))) {
-    return signalPassFailure();
+    return failure();
   }
 
   // mark DebugOp's global strings as AIC_OR_AIV
   // this cannot be done after LLVM::createGlobalString because that function
   // doesn't return the LLVM::GlobalOp itself (getDefiningOp() doesn't refer to
   // that Op either)
-  getOperation()->walk([](LLVM::GlobalOp globalOp) {
+  module->walk([](LLVM::GlobalOp globalOp) {
     if (globalOp.getSymName().starts_with("_debug_prefix_")) {
       globalOp->setAttr(
           mlir::hivm::TFuncCoreTypeAttr::name,
@@ -2050,9 +2077,5 @@ void ConvertHIVMToStandardPass::runOnOperation() {
     }
     return WalkResult::advance();
   });
-}
-
-std::unique_ptr<OperationPass<ModuleOp>> mlir::createConvertHIVMToStandardPass(
-    const ConvertHIVMToStandardOptions &options) {
-  return std::make_unique<ConvertHIVMToStandardPass>(options);
+  return success();
 }
