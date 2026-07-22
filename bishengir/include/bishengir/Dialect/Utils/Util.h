@@ -60,6 +60,7 @@ static constexpr llvm::StringLiteral kEnableAutoMarkBufferSize =
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
+static constexpr llvm::StringLiteral wasBoolToInt8 = "was_bool_to_int8";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 const llvm::StringLiteral padConst = "pad_const";
