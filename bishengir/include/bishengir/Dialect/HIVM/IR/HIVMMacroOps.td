@@ -137,7 +137,8 @@ class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
     bool isInitFirstLoopIter();
     void setInitCondition(Value init);
     MatmulBiasMode getMatmulBiasMode();
-    bool shouldDecomposeBiasByElementAdd() const;
+    bool shouldDecomposeBiasByElementAdd();
+    bool shouldDecomposeBiasByCrossLoopElementAdd();
     bool supportsScaleOperands() { return false; }
     bool usesBoolAttrForTargetLayout() { return false; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(
@@ -260,7 +261,7 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     void setInitCondition(Value init);
     int getNumSyncRelatedArgs() { return 4; }
     MatmulBiasMode getMatmulBiasMode();
-    bool shouldDecomposeBiasByElementAdd() const;
+    bool shouldDecomposeBiasByElementAdd();
     bool supportsScaleOperands() { return true; }
     bool usesBoolAttrForTargetLayout() { return true; }
     llvm::SmallVector<int64_t> getMatmulBlockSizesTile(

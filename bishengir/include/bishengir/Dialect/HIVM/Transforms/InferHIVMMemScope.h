@@ -18,6 +18,7 @@
 #define BISHENGIR_DIALECT_HIVM_TRANSFORMS_INFERHIVMMEMSCOPE_H
 
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -42,13 +43,11 @@ private:
                              const AddressSpaceAttr &targetMemScope);
 };
 
-/// Infer, propagate, and set memory scope information to MmadL1Op.
-/// \note MmadL1Op should be bufferized beforehand.
-LogicalResult inferAndPropagateMemScopeForMmadL1(MmadL1Op op);
-
-/// Infer, propagate, and set memory scope information to MmadMxL1Op.
-/// \note MmadMxL1Op should be bufferized beforehand.
-LogicalResult inferAndPropagateMemScopeForMmadMxL1(MmadMxL1Op op);
+/// Infer, propagate, and set memory scope information for local matmul-like
+/// ops (MmadL1Op and MmadMxL1Op).
+/// \note The op should be bufferized beforehand. BatchMmadL1Op is unsupported.
+LogicalResult
+inferAndPropagateMemScopeForLocalMatmulLike(LocalMatmulLikeOpInterface op);
 
 /// Infer, propagate, and set memory scope information to ConvOp.
 /// \note ConvOp should be bufferized beforehand.
