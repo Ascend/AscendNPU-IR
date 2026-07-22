@@ -282,12 +282,44 @@ static void rewriteBody(Block *body, PreloadInfo &info, OpBuilder &b) {
   }
 }
 
+static Value lookThroughScopeResult(Value value) {
+  while (auto scopeOp = value.getDefiningOp<scope::ScopeOp>()) {
+    auto returnOp =
+        cast<scope::ReturnOp>(scopeOp.getRegion().front().getTerminator());
+    value = returnOp.getResults()[cast<OpResult>(value).getResultNumber()];
+  }
+  return value;
+}
+
+static void emitRematerializationError(Operation *definingOp,
+                                       scope::ScopeOp scopeOp) {
+  if (!definingOp) {
+    scopeOp.emitOpError(
+        "cannot rematerialize a preload scope result through an internal "
+        "block argument");
+  } else {
+    definingOp->emitOpError(
+        "is not a supported view while rematerializing a preload scope "
+        "result");
+  }
+}
+
 static FailureOr<Value>
 rematerializeViewLikeResult(Value value, scope::ScopeOp scopeOp,
                             const IRMapping &preloadMapping,
                             IRMapping &viewMapping, OpBuilder &builder) {
   if (Value mapped = viewMapping.lookupOrNull(value))
     return mapped;
+
+  Value source = lookThroughScopeResult(value);
+  if (source != value) {
+    auto rematerialized = rematerializeViewLikeResult(
+        source, scopeOp, preloadMapping, viewMapping, builder);
+    if (failed(rematerialized))
+      return failure();
+    viewMapping.map(value, *rematerialized);
+    return *rematerialized;
+  }
 
   Region *definingRegion = value.getParentRegion();
   if (!definingRegion || !scopeOp.getRegion().isAncestor(definingRegion)) {
@@ -297,8 +329,10 @@ rematerializeViewLikeResult(Value value, scope::ScopeOp scopeOp,
   }
 
   Operation *definingOp = value.getDefiningOp();
-  if (!isa<ViewLikeOpInterface>(definingOp))
+  if (!definingOp || !isa<ViewLikeOpInterface>(definingOp)) {
+    emitRematerializationError(definingOp, scopeOp);
     return failure();
+  }
 
   for (Value operand : definingOp->getOperands()) {
     if (failed(rematerializeViewLikeResult(operand, scopeOp, preloadMapping,
@@ -465,28 +499,44 @@ static void rewritePreloadLoop(scf::ForOp forOp,
           auto returnResults = cast<scope::ReturnOp>(
                                    scopeOp.getRegion().front().getTerminator())
                                    .getResults();
-          auto newResIter = newOp.result_begin();
-          for (auto [scopeRes, retRes] :
-               llvm::zip_equal(scopeOp->getResults(), returnResults)) {
-            if (auto localBuffer = getLocalBuffer(retRes)) {
+          auto scopeResIter = scopeOp.result_begin();
+          SmallVector<IRMapping> viewMappings(info.mappings.size());
+          for (auto newRes : newOp->getResults()) {
+            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
+            while (maybeLocalBuffer.has_value()) {
               for (auto &mapping : info.mappings)
-                mapping.map(scopeRes, mapping.lookup(localBuffer.value()));
-            } else if (Operation *viewOp =
-                           getRematerializableViewOp(retRes, scopeOp)) {
-              for (auto &mapping : info.mappings) {
-                Operation *clonedView = b.clone(*viewOp, mapping);
-                mapping.map(scopeRes, clonedView->getResult(0));
-              }
-            } else {
-              assert(newResIter != newOp.result_end() &&
-                     "Missing rewritten scope result");
-              for (auto &mapping : info.mappings)
-                mapping.map(scopeRes, *newResIter);
-              ++newResIter;
+                mapping.map(*scopeResIter,
+                            mapping.lookup(maybeLocalBuffer.value()));
+              ++scopeResIter;
+              maybeLocalBuffer = getLocalBuffer(*scopeResIter);
             }
+
+            Value scopeRes = *scopeResIter;
+            auto resultNumber = cast<OpResult>(scopeRes).getResultNumber();
+            Value returnResult = returnResults[resultNumber];
+            Value source = lookThroughScopeResult(returnResult);
+            if (!isa_and_nonnull<ViewLikeOpInterface>(source.getDefiningOp())) {
+              for (auto &mapping : info.mappings)
+                mapping.map(scopeRes, newRes);
+            } else {
+              for (auto [mapping, viewMapping] :
+                   llvm::zip_equal(info.mappings, viewMappings)) {
+                auto rematerialized = rematerializeViewLikeResult(
+                    returnResult, scopeOp, mapping, viewMapping, b);
+                assert(succeeded(rematerialized) &&
+                       "Failed to rematerialize checked scope result");
+                mapping.map(scopeRes, *rematerialized);
+              }
+            }
+            ++scopeResIter;
           }
-          assert(newResIter == newOp.result_end() &&
-                 "Unexpected rewritten scope result");
+          for (; scopeResIter != scopeOp.result_end(); ++scopeResIter) {
+            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
+            for (auto &mapping : info.mappings)
+              mapping.map(*scopeResIter,
+                          mapping.lookup(maybeLocalBuffer.value()));
+            ++scopeResIter;
+          }
         }
 
         SmallVector<Value> newYields;
