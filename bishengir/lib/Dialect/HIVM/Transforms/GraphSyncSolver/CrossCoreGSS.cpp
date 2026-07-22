@@ -97,9 +97,10 @@ void CrossCoreGSSPass::runOnOperation() {
     return;
   }
 
-  bool isMemBasedArch = true;
-  bool isRegBasedArch = false;
-  assert(isMemBasedArch != isRegBasedArch);
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
+  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
+  assert(isMemBasedArch != isRegBasedArch);;
 
   if (this->forceIsRegBased) {
     isMemBasedArch = false;

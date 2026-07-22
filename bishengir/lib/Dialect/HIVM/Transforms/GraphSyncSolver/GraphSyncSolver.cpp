@@ -63,8 +63,9 @@ void GraphSyncSolverPass::runOnOperation() {
     return;
   }
 
-  bool isMemBasedArch = true;
-  bool isRegBasedArch = false;
+  auto moduleOp = funcOp->getParentOfType<ModuleOp>();
+  bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
+  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   assert(isMemBasedArch != isRegBasedArch);
   
   if (isRegBasedArch && funcOp->hasAttr(hivm::VectorFunctionAttr::name)) {
