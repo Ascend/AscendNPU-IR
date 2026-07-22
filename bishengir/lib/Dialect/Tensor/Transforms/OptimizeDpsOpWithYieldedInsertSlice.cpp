@@ -63,6 +63,15 @@ static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
 /// must not redirect uses that are not part of the load/data path.
 static bool hasUnexpectedUserInLoop(Value toTensorMemref, Value allocRoot,
                                     scf::ForOp forOp) {
+  // When the same memref feeds multiple to_tensor ops inside the loop,
+  // replaceAllUsesWith would redirect all to_tensors to the first
+  // matched big-alloc subview. Bail out.
+  int toTensorCount = 0;
+  for (Operation *user : toTensorMemref.getUsers())
+    if (isa<bufferization::ToTensorOp>(user) && forOp->isAncestor(user) &&
+        ++toTensorCount > 1)
+      return true;
+
   SmallVector<Value> workList = {allocRoot};
   llvm::SmallPtrSet<Value, 8> visited;
   while (!workList.empty()) {
@@ -215,8 +224,7 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
       memref::AllocOp allocOp;
       Value memcast;
       int resultIdx;
-      Value vbrcScalar = nullptr;   // scalar src of vbrc if iter_arg init is vbrc
-      Value reuseToTensor = nullptr; // init is already-hoisted to_tensor → reuse
+      Value vbrcScalar = nullptr; // scalar src of vbrc if iter_arg init is vbrc
     };
     SmallVector<InsertSliceInfo> infos;
 
@@ -253,14 +261,21 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
                                   allocOp.getResult(), forOp))
         return failure();
 
-      // Guard: iter_arg init must be a "fresh" buffer (tensor.empty,
-      // scalar vbrc, or already-hoisted to_tensor). If the init carries
-      // external data (e.g. call result, another forOp result), skip
-      // this iter_arg — greedy convergence will retry after upstream
-      // for-loops are hoisted first.
+      // When the same memref feeds more than one iter_arg via
+      // different insert_slices, the first info's replaceAllUsesWith
+      // would redirect the to_tensor to the first big-alloc subview,
+      // starving subsequent big allocs of fill data. Reject the entire
+      // forOp for this pattern.
+      if (llvm::any_of(infos, [&](const InsertSliceInfo &existing) {
+            return existing.memcast == toTensorOp.getMemref();
+          }))
+        return failure();
+
+      // Guard: iter_arg init must be a "fresh" buffer (tensor.empty or
+      // scalar vbrc). If the init carries external data (call result,
+      // block arg, another forOp result, etc.), skip this iter_arg.
       Value initArg = forOp.getInitArgs()[idx];
       Value vbrcScalar = nullptr;
-      Value reuseToTensor = nullptr;
 
       if (isa_and_nonnull<tensor::EmptyOp>(initArg.getDefiningOp())) {
         // Fresh empty tensor — will create new big alloc.
@@ -269,20 +284,17 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
         auto src = vbrcOp.getSrc();
         if (isa<FloatType, IntegerType>(src.getType()))
           vbrcScalar = src;
-      } else if (auto reuseTT =
-                     initArg.getDefiningOp<bufferization::ToTensorOp>()) {
-        // Already hoisted by a previous forOp — reuse the existing
-        // big alloc instead of creating a new one.
-        reuseToTensor = initArg;
+        else
+          continue; // Non-scalar vbrc (e.g. tensor broadcast) — cannot replicate
       } else {
         // Init carries external data (call result, block arg, etc.).
-        // Cannot safely discard — skip and wait for convergence.
+        // Cannot safely discard — skip this iter_arg.
         continue;
       }
 
       infos.push_back(
           {insertOp, toTensorOp, allocOp, toTensorOp.getMemref(), static_cast<int>(idx),
-           vbrcScalar, reuseToTensor});
+           vbrcScalar});
     }
 
     if (infos.empty())
@@ -297,27 +309,6 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
     SmallVector<Value> toTensorResults;
 
     for (auto &info : infos) {
-      if (info.reuseToTensor) {
-        // Reuse the big alloc already created by a previously hoisted
-        // forOp. The init arg is a to_tensor whose memref is the shared
-        // big buffer — both for loops write to subviews of this buffer.
-        auto reuseTT =
-            cast<bufferization::ToTensorOp>(info.reuseToTensor.getDefiningOp());
-        Value bigMemref = reuseTT.getMemref();
-
-        // Trace back through memspace_cast to find the raw alloc for
-        // annotation.mark placement.
-        Value rawAlloc = bigMemref;
-        while (auto castOp =
-                   rawAlloc.getDefiningOp<memref::MemorySpaceCastOp>())
-          rawAlloc = castOp.getSource();
-
-        bigMemcasts.push_back(bigMemref);
-        bigAllocResults.push_back(rawAlloc);
-        toTensorResults.push_back(info.reuseToTensor);
-        continue;
-      }
-
       auto tensorType =
           cast<RankedTensorType>(iterArgs[info.resultIdx].getType());
       auto allocMemRefType = cast<MemRefType>(info.allocOp.getType());
