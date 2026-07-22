@@ -31,6 +31,7 @@
 #include "bishengir/Conversion/HIVMAVEToAVEIntrin/HIVMAVEToAVEIntrin.h"
 #include "bishengir/Conversion/HIVMAVEToStandard/HIVMAVEToStandard.h"
 #include "bishengir/Conversion/HIVMToStandard/HIVMToStandard.h"
+#include "bishengir/Conversion/HIVMToTritonGPU/HIVMToTritonGPU.h"
 #include "bishengir/Conversion/LinalgToHFusion/LinalgToHFusion.h"
 #include "bishengir/Conversion/LowerMemRefExt/LowerMemRefExt.h"
 #include "bishengir/Conversion/MathToHFusion/MathToHFusion.h"

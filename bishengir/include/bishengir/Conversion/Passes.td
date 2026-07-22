@@ -140,6 +140,27 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// HIVMToTritonGPU
+//===----------------------------------------------------------------------===//
+
+def ConvertHIVMToTritonGPU : Pass<"convert-hivm-to-tritongpu"> {
+  let summary = "Convert hivm ops to triton ops";
+  let constructor = "mlir::createHIVMToTritonGPUConversionPass()";
+  let dependentDialects = [
+    "mlir::triton::TritonDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect"
+  ];
+  let options = [
+    Option<"allowReturnValue", "allow-return-value", "bool",
+           /*default=*/"false",
+           "When allow return value, the FuncOpPattern will not work."
+             "This option is only for testing purposes, because in formal"
+             "scenarios, the simt vf does not support return values.">,
+  ];
+}
+
+//===----------------------------------------------------------------------===//
 // AscendDPXToHIVMRegbaseIntrins
 //===----------------------------------------------------------------------===//
 
@@ -211,7 +232,7 @@ def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "ml
     Convert TritonAscendGPU operations to LLVM dialect.
   }];
   let constructor = "mlir::triton::createConvertTritonAscendGPUToLLVMPass()";
-  
+
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
     "mlir::NVVM::NVVMDialect",
