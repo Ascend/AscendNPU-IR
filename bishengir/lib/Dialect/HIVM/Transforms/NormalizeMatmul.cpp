@@ -247,11 +247,15 @@ inline Value getBiasInputForPerChannelAdd(Value v) {
   if (auto expandShapeOp = src.getDefiningOp<tensor::ExpandShapeOp>())
     src = extractMmadBiasFromPotentialUnitDimExpand(src);
 
-  // Consider fp16 to fp32 inner conversion form l1ToBias
-  if (auto castOp = src.getDefiningOp<hivm::VCastOp>())
-    if (getElementTypeOrSelf(castOp.getSingleSrc().getType()).isF16() &&
-        getElementTypeOrSelf(castOp.getSingleDst().getType()).isF32())
-      src = castOp.getSingleSrc();
+  if (utils::getAnnotateOpWithAttr(matmulOp.getMatmulA(), kDotPadOnlyK)
+          .has_value()) {
+    auto cType = dyn_cast<RankedTensorType>(matmulOp.getMatmulC().getType());
+    if (cType && cType.hasStaticShape()) {
+      const size_t l1MIdx = isBatchMmad ? 1 : 0;
+      int64_t l1M = cType.getShape()[l1MIdx + batchIndexBias];
+      realM = rewriter.create<arith::ConstantIndexOp>(loc, l1M);
+    }
+  }
 
   if (auto expandShapeOp = src.getDefiningOp<tensor::ExpandShapeOp>())
     src = extractMmadBiasFromPotentialUnitDimExpand(src);
