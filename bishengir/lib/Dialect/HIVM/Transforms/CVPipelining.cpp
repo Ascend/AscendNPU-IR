@@ -1618,6 +1618,7 @@ LogicalResult CVPipelineImpl::createNewLoops() {
       builder.create<arith::ConstantIndexOp>(loc, numMultibuffer);
   newLoop =
       builder.create<scf::ForOp>(loc, lb, ub, newStep, pipelineLoop.getInits());
+  newLoop->setAttr(hivm::kCVUnrolledLoopName, builder.getUnitAttr());
   if (newLoop->getNumResults() == 0)
     newLoop.getBody()->getTerminator()->erase();
 

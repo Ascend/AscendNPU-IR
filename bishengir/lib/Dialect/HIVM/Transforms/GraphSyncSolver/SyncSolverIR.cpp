@@ -19,6 +19,8 @@
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/MemInfo.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/Utility.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/StringExtras.h"
 #include <string>
 
@@ -34,6 +36,7 @@ std::string getOpTypeStr(OpType opType) {
   const llvm::DenseMap<OpType, std::string> conv = {
       {OpType::OPERATION, "OperationBase"},
       {OpType::PLACE_HOLDER, "PlaceHolder"},
+      {OpType::ANCHOR, "Anchor"},
       {OpType::SCOPE, "Scope"},
       {OpType::FUNCTION, "Function"},
       {OpType::FUNCTION_BLOCK, "FunctionBlock"},
@@ -66,7 +69,16 @@ struct Comma {
   }
 };
 
-std::string PointerLikeInfo::str() const {
+std::string FuncArgInfo::str() {
+  std::string ret = "FuncArgInfo(";
+  ret += this->funcOp.getSymName();
+  ret += ", ";
+  ret += std::to_string(this->argNum);
+  ret += ")";
+  return ret;
+}
+
+std::string PointerLikeInfo::str() {
   std::string ret = "PointerLikeInfo(";
   Comma comma;
   if (addressSpace.has_value()) {
@@ -91,12 +103,20 @@ std::string PointerLikeInfo::str() const {
   return ret;
 }
 
-std::string MemInfo::str() const {
-  std::string ret = "MemInfo(";
+std::string MemInfo::str() {
+  std::string ret = "MemInfo";
+  if (this->pipe) {
+    ret += "<" + stringifyPIPE(this->pipe.value()).str() + ">";
+  }
+  ret += "(";
   Comma comma;
   if (this->value) {
     ret += comma.get();
-    ret += op2str(value);
+    ret += op2str(this->value);
+  }
+  if (this->funcArgInfo) {
+    ret += comma.get();
+    ret += this->funcArgInfo->str();
   }
   if (this->pointerLikeInfo) {
     ret += comma.get();
@@ -115,6 +135,15 @@ std::string PlaceHolder::str(int indent, bool recursive) const {
            : llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType))) +
       std::to_string(this->id);
   return std::string(indent, ' ') + opStr;
+}
+
+std::string Anchor::str(int indent, bool recursive) const {
+  std::string ret =
+      std::string(indent, ' ') +
+      llvm::convertToCamelFromSnakeCase(getOpTypeStr(this->opType)) +
+      std::to_string(this->id);
+  ret += " (anchor-id=" + std::to_string(this->anchorId) + ")";
+  return ret;
 }
 
 std::string Scope::str(int indent, bool recursive) const {
@@ -197,7 +226,7 @@ std::string RWOperation::str(int indent, bool recursive) const {
   std::string pipesStr;
   if (this->pipeRead != this->pipeWrite) {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">, <" +
-               stringifyPIPE(this->pipeRead).str() + ">]";
+               stringifyPIPE(this->pipeWrite).str() + ">]";
   } else {
     pipesStr = "[<" + stringifyPIPE(this->pipeRead).str() + ">]";
   }
@@ -304,7 +333,12 @@ std::string BarrierOp::str(int indent, bool recursive) const {
   if (this->debugId.has_value()) {
     ret += " [" + std::to_string(this->debugId.value()) + "]";
   }
-  ret += " [<" + stringifyPIPE(this->pipe).str() + ">]";
+  ret += " [";
+  ret += "<" + stringifyPIPE(this->pipe).str() + ">";
+  if (this->coreType.has_value()) {
+    ret += ", <" + stringifyTCoreType(this->coreType.value()).str() + ">";
+  }
+  ret += "]";
   return ret;
 }
 

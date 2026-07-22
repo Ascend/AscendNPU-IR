@@ -36,6 +36,7 @@ add_bishengir_dialect_library(BiShengIRHIVMTransforms
   ConstantizeBufferSize.cpp
   ConvertNonContiguousReshapeToCopy.cpp
   ConvertToHIVMOp.cpp
+  InsertAnchorsAndBackup.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutToFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutFromFractalsUtils.cpp
   ConvertLayout/ShapeConversion/ConvertLayoutOffsetUtils.cpp

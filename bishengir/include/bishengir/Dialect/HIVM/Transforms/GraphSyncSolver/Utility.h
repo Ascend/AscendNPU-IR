@@ -145,6 +145,18 @@ struct SyncSolverOptions {
   // Ignore workspace function arguments.
   bool intraCoreIgnoreWorkSpaceFunctionArguments{false};
 
+  // Build unrolled sync IR.
+  bool buildUnrolledSyncIR{true};
+
+  // Ignore non-anchor ops when building sync IR.
+  bool ignoreNonAnchorOps{false};
+
+  // Skip unrolling anchor ops.
+  bool skipUnrollingAnchorOps{true};
+
+  // Enable block-all mode.
+  bool enableBlockAllMode{false};
+
   SyncSolverOptions(SyncMode syncMode, bool isMemBasedArch, bool isRegBasedArch)
       : syncMode(syncMode), isMemBasedArch(isMemBasedArch),
         isRegBasedArch(isRegBasedArch) {

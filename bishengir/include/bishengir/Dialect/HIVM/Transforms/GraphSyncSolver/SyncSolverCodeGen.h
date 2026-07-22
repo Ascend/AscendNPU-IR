@@ -51,6 +51,9 @@ public:
   // handling.
   llvm::DenseSet<RWOperation *> unitFlagFeaturedOps;
 
+  // Map sync ops to before/after operations.
+  SyncMap syncMapBefore, syncMapAfter;
+
 private:
   bool resultFuncIrWasGenerated{false};
 
@@ -73,10 +76,8 @@ private:
   // Mapping to cache loop DB conditions used during codegen insertion.
   llvm::DenseMap<LoopLikeOpInterface, Value> loopDBCondMap;
 
-  SyncMap syncMapBefore, syncMapAfter;
-
 public:
-  CodeGenerator() = delete;
+  CodeGenerator(const SyncSolverOptions &options) : options(options) {}
 
   CodeGenerator(std::unique_ptr<Solver> solver) : options(solver->options) {
     init(std::move(solver));
@@ -106,8 +107,8 @@ private:
   void setProperInsertionPoint(IRRewriter &rewriter, OperationBase *opBase,
                                bool insertAfterOp);
 
-  void insertBlockOp(IRRewriter &rewriter, OperationBase *opBase,
-                     BarrierOp *barrierOp, bool insertAfterOp);
+  void insertBlockAllOp(IRRewriter &rewriter, OperationBase *opBase,
+                        BarrierOp *barrierOp, bool insertAfterOp);
 
   void insertBarrierOp(IRRewriter &rewriter, OperationBase *opBase,
                        BarrierOp *barrierOp, bool insertAfterOp);

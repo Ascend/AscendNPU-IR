@@ -175,6 +175,20 @@ int OperationBase::getDepth() const {
   return ret;
 }
 
+OperationBase *OperationBase::getParentWithOp(Operation *op,
+                                              bool assertExists) {
+  assert(op != nullptr);
+  OperationBase *opBase = this;
+  while (opBase != nullptr) {
+    if (opBase->op != nullptr && opBase->op == op) {
+      return opBase;
+    }
+    opBase = opBase->parentOp;
+  }
+  assert(!assertExists);
+  return nullptr;
+}
+
 OperationBase *OperationBase::getNthParent(int dist) {
   OperationBase *op = this;
   while (dist--) {
