@@ -87,14 +87,14 @@ void setResultVecTypeAttr(Operation *op, RewriterBase &rewriter,
         auto attr = createVecLayoutAttr(op->getContext(), states[res]);
         DBG(llvm::dbgs() << "set result state: " << states[res];);
         // todo: wait define in llvm-project
-        newResultTypes.push_back(vecType.cloneWith(attr));
+        // newResultTypes.push_back(vecType.cloneWith(attr));
         continue;
       }
       if (fallbackState.has_value()) {
         auto attr = createVecLayoutAttr(op->getContext(), *fallbackState);
         DBG(llvm::dbgs() << "set result fallback state: " << *fallbackState;);
         // todo: wait define in llvm-project
-        newResultTypes.push_back(vecType.cloneWith(attr));
+        // newResultTypes.push_back(vecType.cloneWith(attr));
         continue;
       }
     }
@@ -289,7 +289,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                        << getState(res);
         } else { llvm::dbgs() << "====Find solve: " << probS; });
     DBG(llvm::dbgs() << "========Inputs: [\n";
-        for (auto [v, sv] : newIns) llvm::dbgs()
+        for (auto [v, sv]
+             : newIns) llvm::dbgs()
         << "========\t" << sv << "->" << v << "\n";
         llvm::dbgs() << "]";);
     DenseMap<Value, State> ins;
@@ -382,7 +383,8 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
                 [&](auto op) { return solveProblem(op); })
             .Case<hivmave::VFDeInterleaveOp, hivmave::VFInterleaveOp>(
                 [&](auto op) { return solveLayoutChangeProblem(op); })
-            .Case<hivmave::VFVCIOp>([&](auto op) { return solveProblem(op); })
+            .Case<hivmave::VFVCIOp>(
+                [&](auto op) { return solveProblem(op); })
             // Any op that falls through to Default is not an explicitly handled
             // operation in the TypeSwitch. It could be a non-HIVMAVE dialect op
             // (e.g. arith.addi), a HIVMAVE op not yet registered here, or a
@@ -797,10 +799,12 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B16}, {index, State::B16}})};
     case COMB_CASE(16, State::B16_2VL):
-      return {wrapThis(FunctionType::INTLV2,
-                       {{mask, State::B16}, {index, State::B16}}),
-              wrapThis(FunctionType::NONE,
-                       {{mask, State::B32}, {index, State::B16_2VL}})};
+      return {
+          wrapThis(FunctionType::INTLV2,
+                   {{mask, State::B16}, {index, State::B16}}),
+          wrapThis(FunctionType::NONE,
+                   {{mask, State::B32},
+                    {index, State::B16_2VL}})};
     case COMB_CASE(32, State::B16_2VL):
       return {wrapThis(FunctionType::NONE,
                        {{mask, State::B32}, {index, State::B32}})};
@@ -863,7 +867,7 @@ struct TreeSolve : public std::enable_shared_from_this<TreeSolve> {
         return {};
       }
     }
-
+    
     if (layoutChange.value() == hivmave::Layout_Change::UNCHANGED)
       return solveProblemDefault(op);
 
@@ -1050,7 +1054,7 @@ public:
           os << "  " << res.getType() << "\n";
         }
         os << "Candidates in the solution space: " << failedSolves.size()
-           << "\n";
+            << "\n";
         if (!failedSolves.empty()) {
           os << "Input states from last valid candidates:\n";
           DenseSet<Value> visited;
@@ -1064,25 +1068,24 @@ public:
         }
         os << "\nPossible causes and solutions:\n";
         os << "  1. The operation may not have been lowered to the HIVMAVE "
-              "dialect before VectorLayout analysis.\n";
+               "dialect before VectorLayout analysis.\n";
         os << "     -> If using -analyze-vector-layout standalone: lower all "
-              "vector ops to HIVMAVE first.\n";
+               "vector ops to HIVMAVE first.\n";
         os << "     -> If running end-to-end: an upstream pass failed to "
-              "lower this op. Op: "
-           << failedOp->getName() << "\n";
+               "lower this op. Op: " << failedOp->getName() << "\n";
         os << "  2. The operation type may not be handled in solveProblem "
-              "TypeSwitch.\n";
+               "TypeSwitch.\n";
         os << "     -> Add a new Case for " << failedOp->getName()
-           << " in solveProblem().\n";
+            << " in solveProblem().\n";
         os << "  3. The specific VecMemType combination is not supported by "
-              "this op.\n";
+               "this op.\n";
         os << "     -> Check COMB_CASE branches in the corresponding "
-              "solveProblem function.\n";
+               "solveProblem function.\n";
         os << "  4. Conflicting layout requirements from multiple consumers.\n";
         os << "     -> Check if the operands/results have incompatible layout "
-              "constraints.\n";
+               "constraints.\n";
         os << "  5. Unsupported element bitwidth (only 1/8/16/32 are "
-              "supported).\n";
+               "supported).\n";
         os << "     -> Verify all vector types have supported bitwidths.\n";
         os << "======================================================\n";
       }

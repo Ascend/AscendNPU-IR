@@ -129,17 +129,12 @@ Value MultiBufferLoopAdapter::getModuloIndex(OpBuilder &builder,
   ensureCounterMaterialized(builder);
   Location loc = loop_->getLoc();
   Type i64Ty = builder.getI64Type();
-#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) &&                          \
-    !defined(BSPUB_DAVINCI_BISHENGIR_A5)
   Value modVal =
       builder.create<arith::ConstantIntOp>(loc, /*value=*/modular, i64Ty);
-#else
-  Value modVal =
-      builder.create<arith::ConstantIntOp>(loc, i64Ty, /*value=*/modular);
-#endif
   Value remui = builder.create<arith::RemUIOp>(loc, cachedCounter_, modVal);
   // Cast i64 -> index for parity with the prior affine.apply API.
-  return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(), remui);
+  return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
+                                            remui);
 }
 
 void MultiBufferLoopAdapter::finalizeIncrement(OpBuilder &builder) {

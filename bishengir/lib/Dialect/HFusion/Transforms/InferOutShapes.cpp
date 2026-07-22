@@ -90,7 +90,6 @@ func::FuncOp copyShapeFunction(MLIRContext *context, func::FuncOp srcFunc) {
   OpBuilder builder(context);
   FunctionType funcType = srcFunc.getFunctionType();
   // Clone the arg attributes as well.
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
   auto newFunc = builder.create<func::FuncOp>(
       srcFunc.getLoc(),
       /*sym_name=*/
@@ -101,18 +100,6 @@ func::FuncOp copyShapeFunction(MLIRContext *context, func::FuncOp srcFunc) {
       /*sym_visibility=*/StringAttr(),
       /*arg_attrs=*/srcFunc.getArgAttrsAttr(),
       /*res_attrs=*/ArrayAttr());
-#else
-  auto newFunc = builder.create<func::FuncOp>(
-      srcFunc.getLoc(),
-      /*sym_name=*/
-      hacc::constructHostFunctionName(
-          srcFunc.getName().str(),
-          hacc::HostFuncType::kInferOutputShapeFunction),
-      /*function_type=*/funcType,
-      /*sym_visibility=*/StringAttr(),
-      /*arg_attrs=*/srcFunc.getArgAttrsAttr(),
-      /*res_attrs=*/ArrayAttr());
-#endif
   // regbase-only
   if (auto moduleOp = srcFunc->getParentOfType<ModuleOp>();
       moduleOp && hacc::utils::isRegBasedArch(moduleOp)) {

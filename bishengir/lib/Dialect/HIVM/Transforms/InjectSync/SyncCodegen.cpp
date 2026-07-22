@@ -191,15 +191,9 @@ void SyncCodegen::UpdateSyncTemplateInterForBackPipeMPipeMTE1DB(
                  "expected BwdPipeMPipeMTE1SyncPtr eventIds to be of size 1");
   IRRewriter rewriter(func_->getContext());
   rewriter.setInsertionPointToStart(&func_.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
   auto backPipeMPipeMTE1DBEvent = rewriter.create<arith::ConstantIntOp>(
       nowCompound->elementOp->getLoc(),
       nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds[0], rewriter.getI64Type());
-#else
-  auto backPipeMPipeMTE1DBEvent = rewriter.create<arith::ConstantIntOp>(
-      nowCompound->elementOp->getLoc(), rewriter.getI64Type(),
-      nowCompound->BwdPipeMPipeMTE1SyncPtr->eventIds[0]);
-#endif
   // mmadL1 Sync IR two updates, namely BackPipeMPipeMTE1DBEvent0 and
   // BackPipeMPipeMTE1DBEvent1.
   if (nowCompound->macroOpInstanceId == 0) {
@@ -218,13 +212,8 @@ void SyncCodegen::InitDefaultSyncTemplateInterForMmadL1Op(
   }
   IRRewriter rewriter(func_->getContext());
   rewriter.setInsertionPointToStart(&func_.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
   auto defaultValue = rewriter.create<arith::ConstantIntOp>(
       mmadL1Op.getOperation()->getLoc(), -1, rewriter.getI64Type());
-#else
-  auto defaultValue = rewriter.create<arith::ConstantIntOp>(
-      mmadL1Op.getOperation()->getLoc(), rewriter.getI64Type(), -1);
-#endif
   SyncTemplateInter syncTemplateInter(defaultValue);
   mmadL12SyncTemplateInter[mmadL1Op] = syncTemplateInter;
   if (checkAllParentLoopsAreForLoops(mmadL1Op)) {
@@ -474,13 +463,8 @@ bool SyncCodegen::NeedLowerSyncToTemplate(IRRewriter &rewriter, Operation *op,
     checkCondition(sync->eventIds.size() == 1,
                    "sync operation expected to have exactly 1 eventId");
     rewriter.setInsertionPointToStart(&func_.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     eventId = rewriter.create<arith::ConstantIntOp>(loc, sync->eventIds[0],
                                                     rewriter.getI64Type());
-#else
-    eventId = rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(),
-                                                    sync->eventIds[0]);
-#endif
   }
   auto mmadL1Op = dyn_cast<hivm::MmadL1Op>(op);
   auto iter = mmadL12SyncTemplateInter.find(mmadL1Op);
@@ -613,13 +597,8 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
       // Create constants for each event ID
       SmallVector<Value> eventValues;
       for (int eventId : sync->eventIds) {
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
         eventValues.push_back(rewriter.create<arith::ConstantIntOp>(
             locDefineOp, static_cast<int64_t>(eventId), rewriter.getI64Type()));
-#else
-        eventValues.push_back(rewriter.create<arith::ConstantIntOp>(
-            locDefineOp, rewriter.getI64Type(), static_cast<int64_t>(eventId)));
-#endif
       }
 
       // Build selections using the reused counter variable
@@ -628,13 +607,8 @@ Value SyncCodegen::GetBufferSelected(IRRewriter &rewriter, Operation *op,
       //   if (counter == i) selected = eventValues[i] else keep previous
       Value selectedValue = eventValues[0];
       for (unsigned i = 1; i < eventValues.size(); ++i) {
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
         Value iVal = rewriter.create<arith::ConstantIntOp>(
             locDefineOp, static_cast<int64_t>(i), rewriter.getI64Type());
-#else
-        Value iVal = rewriter.create<arith::ConstantIntOp>(
-            locDefineOp, rewriter.getI64Type(), static_cast<int64_t>(i));
-#endif
         Value cond = rewriter.create<arith::CmpIOp>(
             locDefineOp, arith::CmpIPredicate::eq, counter, iVal);
         selectedValue = rewriter.create<arith::SelectOp>(

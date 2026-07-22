@@ -39,6 +39,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -84,7 +85,8 @@ public:
            "ElemwiseOpConvertor only converts elemwise op");
   }
 
-  template <typename opType> Operation *create() {
+  template <typename opType>
+  Operation *create() {
     auto dpsOp = cast<DestinationStyleOpInterface>(op);
     Location loc = dpsOp->getLoc();
     auto resultTypes = dpsOp->getResultTypes();
@@ -133,7 +135,8 @@ hivm::CompareMode mapCompareModeHFusionToHiVM(hfusion::CompareFn hsCmpMode) {
   }
 }
 
-template <> Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
+template <>
+Operation *ElemwiseOpConvertor::create<hivm::VCmpOp>() {
   auto dpsOp = cast<DestinationStyleOpInterface>(op);
   hfusion::CompareFn hsCmpMode = cast<hfusion::CompareOp>(op).getCompareFn();
   hivm::CompareMode hvCmpMode = mapCompareModeHFusionToHiVM(hsCmpMode);
@@ -173,7 +176,8 @@ hivm::TypeFn mapCastHFusionToHiVM(hfusion::TypeFn casting) {
   }
 }
 
-template <> Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
+template <>
+Operation *ElemwiseOpConvertor::create<hivm::VCastOp>() {
   auto dpsOp = cast<DestinationStyleOpInterface>(op);
   auto castOp = cast<hfusion::CastOp>(op);
   hivm::RoundMode roundMode = mapRoundModeHFusionToHiVM(castOp.getRoundMode());
@@ -569,8 +573,7 @@ struct LinalgToHIVMTransposeOp : public OpRewritePattern<linalg::TransposeOp> {
       return op.emitOpError(
           "linalg::TansposeOp should have pure buffer or tensor Semantics!");
     }
-    Value outputValue =
-        op.hasPureBufferSemantics() ? op.getInit() : op.getResult().getBase();
+    Value outputValue = op.hasPureBufferSemantics() ? op.getInit() : op.getResult().getBase();
 
     Operation *withoutAlignMarkOp = nullptr;
     for (auto *user : outputValue.getUsers()) {
@@ -590,9 +593,10 @@ struct LinalgToHIVMTransposeOp : public OpRewritePattern<linalg::TransposeOp> {
 
     auto resultTypeRange =
         op.hasPureBufferSemantics() ? TypeRange() : TypeRange(op.getResult());
-    rewriter.replaceOpWithNewOp<hivm::VTransposeOp>(
-        op, resultTypeRange, op.getInput(), op.getInit(),
-        op.getPermutationAttr(), disableAlign);
+    rewriter.replaceOpWithNewOp<hivm::VTransposeOp>(op, resultTypeRange,
+                                                    op.getInput(), op.getInit(),
+                                                    op.getPermutationAttr(),
+                                                    disableAlign);
     return success();
   }
 };
@@ -651,8 +655,7 @@ struct HFusionToHIVMGatherOp : public OpRewritePattern<hfusion::GatherOp> {
 //===----------------------------------------------------------------------===//
 // HFusionToHIVMGatherMaskOp
 //===----------------------------------------------------------------------===//
-struct HFusionToHIVMGatherMaskOp
-    : public OpRewritePattern<hfusion::GatherMaskOp> {
+struct HFusionToHIVMGatherMaskOp : public OpRewritePattern<hfusion::GatherMaskOp> {
   using OpRewritePattern<hfusion::GatherMaskOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hfusion::GatherMaskOp op,
@@ -667,7 +670,12 @@ struct HFusionToHIVMGatherMaskOp
                                : TypeRange(op->getResultTypes());
     mlir::ValueRange dstOperands = op.getInit();
     rewriter.replaceOpWithNewOp<hivm::VGatherMaskOp>(
-        op, resultTypeRange, op.getSrc(), op.getMask(), dstOperands);
+        op,
+        resultTypeRange,
+        op.getSrc(),
+        op.getMask(),
+        dstOperands
+    );
 
     return success();
   }
@@ -978,8 +986,7 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
     rewriter.replaceOpWithNewOp<HIVMOP>(op, op->getResultTypes(), op.getInput(),
-                                        dsts[0], op.getCumDims(),
-                                        op.getReverse());
+                                        dsts[0], op.getCumDims(), op.getReverse());
     return success();
   }
 };
@@ -988,8 +995,7 @@ struct HFusionToHIVMCumOp : public OpRewritePattern<HFUSIONOP> {
 // HFusionToHIVM AtomicRMWOp, AtomicCasOp and AtomicXchgOp
 // ===----------------------------------------------------------------------===//
 
-struct HFusionToHIVMAtomicRMWOp
-    : public OpRewritePattern<hfusion::AtomicRMWOp> {
+struct HFusionToHIVMAtomicRMWOp : public OpRewritePattern<hfusion::AtomicRMWOp> {
   using OpRewritePattern<hfusion::AtomicRMWOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(hfusion::AtomicRMWOp op,
@@ -999,8 +1005,7 @@ struct HFusionToHIVMAtomicRMWOp
             tensor::getOrCreateDestinations(rewriter, op.getLoc(), op, dsts)))
       return failure();
     auto hivmAtomicOp = rewriter.create<hivm::AtomicRMWOp>(
-        op->getLoc(), op->getResultTypes(), op.getInput(), op.getDst(),
-        mapAtomicKindHFusionToHiVM(op.getAtomicKind()));
+        op->getLoc(), op->getResultTypes(), op.getInput(), op.getDst(), mapAtomicKindHFusionToHiVM(op.getAtomicKind()));
     rewriter.replaceOp(op, hivmAtomicOp);
     return success();
   }
@@ -1056,13 +1061,8 @@ struct HFusionToHIVMConv1DOp : public OpRewritePattern<hfusion::Conv1DOp> {
     auto bias = op.getBias();
     auto group = op.getGroups();
     auto padding = op.getPadding();
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
-#else
-    Value initCondition =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), int1Type, 1);
-#endif
     rewriter.replaceOpWithNewOp<hivm::Conv1DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, padding, group);
@@ -1085,13 +1085,8 @@ struct HFusionToHIVMConv2DOp : public OpRewritePattern<hfusion::Conv2DOp> {
     auto bias = op.getBias();
     auto group = op.getGroups();
     auto padding = op.getPaddingAttr();
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
-#else
-    Value initCondition =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), int1Type, 1);
-#endif
     rewriter.replaceOpWithNewOp<hivm::Conv2DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, padding, group);
@@ -1114,13 +1109,8 @@ struct HFusionToHIVMConv3DOp : public OpRewritePattern<hfusion::Conv3DOp> {
     auto bias = op.getBias();
     auto group = op.getGroups();
     auto padding = op.getPaddingAttr();
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value initCondition =
         rewriter.create<arith::ConstantIntOp>(op->getLoc(), 1, int1Type);
-#else
-    Value initCondition =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), int1Type, 1);
-#endif
     rewriter.replaceOpWithNewOp<hivm::Conv3DL1Op>(op, resType, input, weight,
                                                   bias, init, initCondition,
                                                   ValueRange{}, padding, group);
@@ -1162,8 +1152,8 @@ struct HFusionToHIVMGatherLoadOp
 
     if (auto evict = op.getEvictAttr()) {
       auto attrVal = static_cast<hivm::EvictionPolicy>(evict.getPolicy());
-      newOp->setAttr("evict",
-                     hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
+      newOp->setAttr(
+          "evict", hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
     }
     if (auto cache = op.getCacheAttr()) {
       auto attrVal = static_cast<hivm::CacheModifier>(cache.getPolicy());
@@ -1193,8 +1183,8 @@ struct HFusionToHIVMScatterStoreOp
 
     if (auto evict = op.getEvictAttr()) {
       auto attrVal = static_cast<hivm::EvictionPolicy>(evict.getPolicy());
-      newOp->setAttr("evict",
-                     hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
+      newOp->setAttr(
+          "evict", hivm::EvictionPolicyAttr::get(op->getContext(), attrVal));
     }
     if (auto cache = op.getCacheAttr()) {
       auto attrVal = static_cast<hivm::CacheModifier>(cache.getPolicy());
@@ -1337,7 +1327,7 @@ public:
 
     Operation *moduleOp = getOperation();
     auto *ctx = &getContext();
-    moduleOp->walk([&, this](func::FuncOp funcOp) {
+    moduleOp->walk([&,this](func::FuncOp funcOp) {
       if (hacc::utils::isHost(funcOp))
         // avoid convert host op to hivm op
         return;
@@ -1357,12 +1347,11 @@ public:
     });
 
     moduleOp->walk([&](hivm::MmadL1Op op) {
-      std::optional<Operation *> tileCubeMarkOp = utils::getAnnotateOpWithAttr(
-          op.getResult(0), hivm::TileMixCubeNumAttr::name);
+      std::optional<Operation *> tileCubeMarkOp =
+          utils::getAnnotateOpWithAttr(op.getResult(0), hivm::TileMixCubeNumAttr::name);
       if (tileCubeMarkOp.has_value()) {
         IntegerAttr tileCubeAttrVal =
-            tileCubeMarkOp.value()->getAttrOfType<IntegerAttr>(
-                hivm::TileMixCubeNumAttr::name);
+          tileCubeMarkOp.value()->getAttrOfType<IntegerAttr>(hivm::TileMixCubeNumAttr::name);
         op->setAttr(hivm::TileMixCubeNumAttr::name, tileCubeAttrVal);
       }
     });
@@ -1376,6 +1365,7 @@ public:
       if (markOp.isAnnotatedBy("enable_i4"))
         markOp.erase();
     });
+
   }
 };
 } // namespace

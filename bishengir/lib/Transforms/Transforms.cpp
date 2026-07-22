@@ -188,13 +188,8 @@ static SmallVector<Value> createEqualZeroOp(const SmallVector<Value> &targets,
     // cast to i64 because arith CmpIOp does not support index type operand
     Value castResult =
         rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), target);
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value zero =
         rewriter.create<arith::ConstantIntOp>(loc, 0, rewriter.getI64Type());
-#else
-    Value zero =
-        rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(), 0);
-#endif
     Value cond = rewriter.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                 castResult, zero);
     results.push_back(cond);

@@ -457,17 +457,10 @@ Value CodeGenerator::getMultiBufferSelectOp(IRRewriter &rewriter,
   if (syncOp->eventIds.size() == 2) {
     counter = rewriter.create<arith::IndexCastOp>(
         counter.getLoc(), rewriter.getI1Type(), counter);
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     Value firstID = rewriter.create<arith::ConstantIntOp>(
         loc, syncOp->eventIds[0], rewriter.getI64Type());
     Value secondID = rewriter.create<arith::ConstantIntOp>(
         loc, syncOp->eventIds[1], rewriter.getI64Type());
-#else
-    Value firstID = rewriter.create<arith::ConstantIntOp>(
-        loc, rewriter.getI64Type(), syncOp->eventIds[0]);
-    Value secondID = rewriter.create<arith::ConstantIntOp>(
-        loc, rewriter.getI64Type(), syncOp->eventIds[1]);
-#endif
     bufferSelected = rewriter.create<arith::SelectOp>(
         loc, rewriter.getI64Type(), counter, firstID, secondID);
   } else {
@@ -584,13 +577,8 @@ Value CodeGenerator::getEventIdValue(IRRewriter &rewriter, SetWaitOp *setWaitOp,
     return getMultiBufferSelectOp(rewriter, setWaitOp);
   }
   rewriter.setInsertionPointToStart(&funcOp.getBody().front());
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
   return rewriter.create<arith::ConstantIntOp>(loc, setWaitOp->eventIds[0],
                                                rewriter.getI64Type());
-#else
-  return rewriter.create<arith::ConstantIntOp>(loc, rewriter.getI64Type(),
-                                               setWaitOp->eventIds[0]);
-#endif
 }
 
 // Attempt to attach sync args to MmadL1 ops by recognizing special load L0 / L1
@@ -652,13 +640,8 @@ Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
 void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
   for (auto &[mmadL1Op, syncArgs] : mmadl1SyncArgsMap) {
     rewriter.setInsertionPoint(mmadL1Op);
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     auto defaultValue = rewriter.create<arith::ConstantIntOp>(
         mmadL1Op->getLoc(), -1, rewriter.getI64Type());
-#else
-    auto defaultValue = rewriter.create<arith::ConstantIntOp>(
-        mmadL1Op->getLoc(), rewriter.getI64Type(), -1);
-#endif
     if (options.isMemBasedArch) {
       syncArgs.kLoopDBCond = getLoopDBCond(rewriter, mmadL1Op.getOperation());
     }

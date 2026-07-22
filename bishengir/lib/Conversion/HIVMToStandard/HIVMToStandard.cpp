@@ -606,11 +606,7 @@ protected:
 
   Value constant(PatternRewriter &rewriter, Location loc, int64_t i,
                  Type t) const {
-#ifndef BSPUB_DAVINCI_BISHENGIR_A5
     return rewriter.create<arith::ConstantIntOp>(loc, i, t);
-#else
-    return rewriter.create<arith::ConstantIntOp>(loc, t, i);
-#endif
   }
 
   virtual SmallVector<Value>
@@ -1391,25 +1387,28 @@ public:
 
       std::set<int> loopIndices;
       for (int i = 0;
-           i < rank && static_cast<int>(loopIndices.size()) < numToPeel; i++) {
+           i < rank && static_cast<int>(loopIndices.size()) < numToPeel;
+           i++) {
         if (i != reduceIdx) {
           loopIndices.insert(i);
         }
       }
       if (!loopIndices.empty()) {
         convertedVals = reduceMemrefsToNestedForUsingAxes(
-            rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
+          rewriter, op.getLoc(), memrefValsMaybe, loopIndices);
         reducedRank = rank - static_cast<int>(loopIndices.size());
       }
     } else {
       // First/last axis: peel outer dimensions down to targetRank.
       if (firstAxis && rank > targetRank) {
-        convertedVals = reduceMemrefsToNestedFor(
-            rewriter, op.getLoc(), memrefValsMaybe, 1, rank - targetRank + 1);
+        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                                 memrefValsMaybe, 1,
+                                                 rank - targetRank + 1);
         reducedRank = targetRank;
       } else if (lastAxis && rank > targetRank) {
-        convertedVals = reduceMemrefsToNestedFor(
-            rewriter, op.getLoc(), memrefValsMaybe, 0, rank - targetRank);
+        convertedVals = reduceMemrefsToNestedFor(rewriter, op.getLoc(),
+                                                 memrefValsMaybe, 0,
+                                                 rank - targetRank);
         reducedRank = targetRank;
       }
     }
@@ -1845,10 +1844,11 @@ public:
   using OpRewritePattern<hivm::IndirectStoreOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(hivm::IndirectStoreOp op,
                                 PatternRewriter &rewriter) const final {
-    replaceWithLibCall(rewriter, op,
-                       cast<OpWithLibraryFunction>(op.getOperation())
-                           .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
-                       op->getOperands(), {});
+    replaceWithLibCall(
+        rewriter, op,
+        cast<OpWithLibraryFunction>(op.getOperation())
+            .getOpLibraryCallName(/*isOpsAligned=*/std::nullopt),
+        op->getOperands(), {});
     return success();
   }
 };
