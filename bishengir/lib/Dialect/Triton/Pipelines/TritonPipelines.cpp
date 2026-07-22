@@ -1,0 +1,230 @@
+//===- TritonPipelines.cpp - BiShengIR Triton pipelines ------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
+#include "bishengir/Config/bishengir-config.h"
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+#include "Conversion/ProtonGPUToLLVM/Passes.h"
+#include "Conversion/ProtonToProtonGPU/Passes.h"
+#include "NVGPUToLLVM/NVGPUToLLVMPass.h"
+#include "NVGPUToLLVM/Passes.h"
+#include "TritonNVIDIAGPUToLLVM/Passes.h"
+#include "bishengir/Conversion/TritonAscendGPUToLLVM/Passes.h"
+#include "triton/Conversion/TritonGPUToLLVM/Passes.h"
+#include "triton/Conversion/TritonToTritonGPU/Passes.h"
+#include "triton/Dialect/Triton/Transforms/Passes.h"
+#include "triton/Dialect/TritonGPU/Transforms/Passes.h"
+#include "triton/Dialect/TritonNvidiaGPU/Transforms/Passes.h"
+#endif
+
+#include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/Triton/Pipelines/Passes.h"
+#include "bishengir/Dialect/Triton/Transforms/Passes.h"
+#include "bishengir/Tools/bishengir-compile/BiShengIRCompile.h"
+#include "mlir/Conversion/Passes.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
+
+using namespace mlir;
+
+/// This is constructed based on triton/third_party/nvidia/backend/compiler.py
+
+#define ADD_CANONICALIZER_PASS                                                 \
+  CanonicalizerOptions options;                                                \
+  options.enableExtendedPattern = true;                                        \
+  std::vector<std::string> disabledPatterns{};                                 \
+  options.disabledPatterns = disabledPatterns;                                 \
+  pm.addPass(createCanonicalizerPass(options))
+
+#define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS                             \
+  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
+
+
+namespace {
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+
+void buildTritonGPUOptimizationPipeline(
+    OpPassManager &pm,
+    const bishengir::triton::LowerTritonPipelineOptions &tritonOptions) {
+  pm.addPass(triton::gpu::createTritonGPUCoalesce());
+  pm.addPass(bishengir::triton::createConvertDotInputToLinearLayoutPass());
+  pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
+  pm.addPass(mlir::triton::gpu::createTritonGPUOptimizeThreadLocality());
+  pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
+  pm.addPass(mlir::triton::createTritonLoopAwareCSE());
+  pm.addPass(mlir::triton::gpu::createTritonGPUFuseNestedLoops());
+  ADD_CANONICALIZER_PASS;
+  pm.addPass(mlir::triton::createTritonLoopInvariantCodeMotion());
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  pm.addPass(mlir::triton::gpu::createTritonGPUCombineTensorSelectAndIf());
+  pm.addPass(mlir::triton::gpu::createTritonGPUScheduleLoops());
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+  pm.addPass(mlir::triton::createTritonLoopAwareCSE());
+  pm.addPass(triton::gpu::createTritonGPURemoveLayoutConversions());
+  pm.addPass(mlir::triton::gpu::createTritonGPUReduceDataDuplication());
+  if (!tritonOptions.disableReorderInstruction) {
+#if BSPUB_DAVINCI_BISHENGIR
+    mlir::triton::gpu::TritonGPUReorderInstructionsOptions reorderInstructionsOptions;
+    reorderInstructionsOptions.enableSimtReorderInstruction = tritonOptions.enableSimtReorderInstruction;
+    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass(reorderInstructionsOptions));
+#else
+    pm.addPass(mlir::triton::gpu::createTritonGPUReorderInstructionsPass());
+#endif
+  }
+  if (!tritonOptions.disableDecomposeReduction)
+    pm.addPass(bishengir::triton::createDecomposeReductionPass());
+  pm.addPass(bishengir::triton::createOptimizeLayoutsPass());
+  pm.addPass(mlir::triton::createTritonLoopAwareCSE());
+  pm.addPass(createSymbolDCEPass());
+  pm.addPass(createSCCPPass());
+  pm.addPass(createCSEPass());
+  ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS;
+}
+
+#endif
+
+} // namespace
+
+namespace bishengir {
+namespace triton {
+
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+void buildLowerTritonPipeline(OpPassManager &pm,
+                              const LowerTritonPipelineOptions &options) {
+  bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
+  optionsSimtOpt.enableBishengirSimtOptimization =
+      options.enableBishengirSimtOptimization;
+  pm.addPass(
+      bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));
+  AdaptTritonIRKernelOptions adaptOpt;
+  adaptOpt.superBlockBarrier = options.superBlockBarrier;
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createAdaptTritonIRKernelPass(adaptOpt));
+  if (options.enableSIMTAutoBlockify)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createSIMTAutoBlockifyPass(
+            options.superBlockFactor));
+  pm.addPass(bishengir::triton::createOptimizeLoadsPass());
+  pm.addPass(bishengir::triton::createLoopRestructureArangeOptimizationPass());
+  // Thread the launch-time SHM size into TileDotLoads so its cost-model
+  // gate (StageNonLoadOperandPattern) can reject staging plans that would
+  // overflow the kernel's SHM budget.  Same value `ConvertTritonToTriton-
+  // GPU` receives via `shared` below.
+  bishengir::TileDotLoadsOptions tileDotLoadsOpts;
+  tileDotLoadsOpts.smemBudgetBytes = options.sharedDynamicSize;
+  tileDotLoadsOpts.KTileSize = options.KTileSize;
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createTileDotLoadsPass(tileDotLoadsOpts));
+  pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
+  // Hoist loop-invariant tt.trans out of K-tile loops, then fuse any
+  // adjacent K-tile loops with identical bounds whose chains are
+  // independent.
+  bishengir::HoistAndFuseDotChainsOptions hoistFuseOpts;
+  hoistFuseOpts.smemBudgetBytes = options.sharedDynamicSize;
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createHoistAndFuseDotChainsPass(hoistFuseOpts));
+  if (options.enableOptimizeMath) {
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createOptimizeMathPass());
+  }
+  pm.addPass(bishengir::triton::createEnableAscendDPXMMAPass());
+  pm.addNestedPass<mlir::triton::FuncOp>(
+      bishengir::triton::createLegalizeF16ForTritonPass());
+  pm.addPass(createCSEPass());
+  pm.addPass(createSCCPPass());
+  {
+    ADD_CANONICALIZER_PASS;
+  }
+  pm.addPass(bishengir::triton::createFixFusedCatPass());
+  pm.addPass(mlir::triton::createTritonRewriteTensorPointer());
+  pm.addPass(mlir::triton::createTritonRewriteTensorDescriptorToPointer());
+  pm.addPass(bishengir::triton::createRewriteSliceOpToTritonPass());
+  pm.addPass(bishengir::triton::createRemoveAnnotationMarkPass());
+  // Convert TTIR to TTGIR
+  // TODO: Adapt target for NPU
+  mlir::triton::ConvertTritonToTritonGPUOptions convertTritonToTritonGPUOpt;
+  convertTritonToTritonGPUOpt.target = "cuda:80";
+  convertTritonToTritonGPUOpt.numWarps = options.numWarps;
+  convertTritonToTritonGPUOpt.threadsPerWarp = options.threadsPerWarp;
+#if BSPUB_DAVINCI_BISHENGIR
+  // max size of shared memory available for simt vf.
+  convertTritonToTritonGPUOpt.shared = options.sharedDynamicSize;
+  convertTritonToTritonGPUOpt.superBlockFactor = options.superBlockFactor;
+#endif
+  pm.addPass(mlir::triton::createConvertTritonToTritonGPU(
+      convertTritonToTritonGPUOpt));
+  // Optimize TTGIR — runs ConvertDotInputToLinearLayout (CDITL) which assigns
+  // FMA-friendly LinearEncoding to each dot's operands.  We deliberately
+  // schedule ConvertSharedPtrToMemDesc AFTER this pipeline so the SHM-staging
+  // local_load can produce the dot's chosen LinearEncoding directly (no
+  // extra `ttg.convert_layout` from blocked → linear), and the SHM swizzle
+  // can be picked knowing the load-side target layout.
+  buildTritonGPUOptimizationPipeline(pm, options);
+  // Convert tt.load/tt.store with ptr<6> to ttg.local_load/local_store.
+  // Runs post-CDITL on purpose: see comment above.
+  pm.addPass(bishengir::triton::createConvertSharedPtrToMemDescPass());
+  if (options.enableSIMTFastDiv && options.useDPX)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createSIMTFastDivPass());
+  pm.addPass(createConvertSCFToCFPass());
+  pm.addPass(mlir::triton::ascend::createAllocateAscendSharedMemory());
+  if (options.enableSIMTFastDiv && options.useDPX)
+    pm.addNestedPass<mlir::triton::FuncOp>(
+        bishengir::triton::createPopulateSharedMemoryOffsetToDPXPass());
+  pm.addPass(createConvertIndexToLLVMPass());
+  pm.addPass(mlir::triton::proton::createConvertProtonToProtonGPUPass(
+      options.protonGPUCompileConfig.metricType,
+      options.protonGPUCompileConfig.samplingStrategy,
+      options.protonGPUCompileConfig.samplingOptions,
+      options.protonGPUCompileConfig.granularity,
+      options.protonGPUCompileConfig.bufferStrategy,
+      options.protonGPUCompileConfig.bufferType,
+      options.protonGPUCompileConfig.bufferSize,
+      options.protonGPUCompileConfig.maxSharedMemSize,
+      options.protonGPUCompileConfig.profileScratchSize,
+      options.protonGPUCompileConfig.profileScratchAlignment,
+      options.protonGPUCompileConfig.clockExtension));
+  pm.addPass(createCSEPass());
+  pm.addPass(mlir::triton::proton::gpu::createAllocateProtonSharedMemoryPass());
+  pm.addPass(mlir::triton::createConvertTritonAscendGPUToLLVMPass());
+  if (options.enableSinkDPXLoad) {	 
+    pm.addPass(createCSEPass());
+    pm.addPass(mlir::triton::ascend::createSinkDPXLoad());
+  }
+  pm.addPass(bishengir::triton::createFlattenMemDescArgsPass());
+  pm.addPass(createCSEPass());
+  pm.addPass(bishengir::triton::proton::gpu::createAllocateProtonAscendGlobalScratchBufferPass());
+  pm.addPass(bishengir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass());
+  std::unique_ptr<OperationPass<ModuleOp>> convertTritonGPUToLLVMPass =
+      mlir::triton::createConvertTritonGPUToLLVMPass(70, 73);
+  pm.addPass(std::unique_ptr<mlir::Pass>(
+      dyn_cast<mlir::Pass>(convertTritonGPUToLLVMPass.release())));
+  pm.addPass(createCanonicalizerPass());
+  pm.addPass(createGetTritonMetadataPass({options.tritonMetadataOutput}));
+  pm.addPass(createArithToLLVMConversionPass());
+}
+#endif
+
+//===----------------------------------------------------------------------===//
+// Pipeline registration.
+//===----------------------------------------------------------------------===//
+
+void registerLowerTritonPipeline() {
+#if BISHENGIR_ENABLE_TRITON_COMPILE
+  PassPipelineRegistration<LowerTritonPipelineOptions>(
+      "lower-triton-pipeline", "Lower Triton to LLVM",
+      [](OpPassManager &pm, const LowerTritonPipelineOptions &options) {
+        buildLowerTritonPipeline(pm, options);
+      });
+#endif
+}
+
+} // namespace triton
+} // namespace bishengir

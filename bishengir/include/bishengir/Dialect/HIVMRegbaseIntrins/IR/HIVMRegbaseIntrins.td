@@ -2822,6 +2822,11 @@ def CoreIdOp : HIVMRegbaseIntrinsSIMT_Ops<"core_id", "tpe_get_COREID">;
 def SyncThreadsOp : HIVMRegbaseIntrinsSIMT_IntrOp<"sync_threads", "sync_workitems", 0> {
   let assemblyFormat = "attr-dict";
 }
+def ThreadFenceBlockOp
+    : HIVMRegbaseIntrinsSIMT_IntrOp<"thread_fence_block",
+                                    "fenceblock_workitems", 0> {
+  let assemblyFormat = "attr-dict";
+}
 
 class ReduceOp<string mnemonic, Type opType> : 
   HIVMRegbaseIntrins_Op<mnemonic, [], [], [], 1> {

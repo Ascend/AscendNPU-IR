@@ -10,9 +10,9 @@ add_bishengir_dialect_library(AscendDPXTransforms
   MLIRLLVMPassIncGen
 
   LINK_LIBS PUBLIC
-  MLIRAscendDPXDialect
-  MLIRHACCDialect
-  MLIRHACCUtils
+  BiShengIRAscendDPXDialect
+  BiShengIRHACCDialect
+  BiShengIRHACCUtils
   MLIRLLVMDialect
   MLIRIR
   MLIRDialect

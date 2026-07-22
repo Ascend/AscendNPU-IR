@@ -1,3 +1,4 @@
+add_subdirectory(TritonAscendGPUToLLVM)
 set(LLVM_TARGET_DEFINITIONS Passes.td)
 if(BISHENGIR_ENABLE_TORCH_CONVERSIONS)
   mlir_tablegen(Passes.h.inc -gen-pass-decls -name Conversion -DBISHENGIR_ENABLE_TORCH_CONVERSIONS)

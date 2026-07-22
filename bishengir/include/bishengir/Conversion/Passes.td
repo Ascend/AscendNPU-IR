@@ -140,6 +140,39 @@ def ConvertHIVMToStandard : Pass<"convert-hivm-to-std", "ModuleOp"> {
 }
 
 //===----------------------------------------------------------------------===//
+// HIVMToTritonGPU
+//===----------------------------------------------------------------------===//
+
+def ConvertHIVMToTritonGPU : Pass<"convert-hivm-to-tritongpu"> {
+  let summary = "Convert hivm ops to triton ops";
+  let constructor = "mlir::createHIVMToTritonGPUConversionPass()";
+  let dependentDialects = [
+    "mlir::triton::TritonDialect",
+    "memref::MemRefDialect",
+    "scf::SCFDialect"
+  ];
+  let options = [
+    Option<"allowReturnValue", "allow-return-value", "bool",
+           /*default=*/"false",
+           "When allow return value, the FuncOpPattern will not work."
+             "This option is only for testing purposes, because in formal"
+             "scenarios, the simt vf does not support return values.">,
+  ];
+}
+
+//===----------------------------------------------------------------------===//
+// AscendDPXToHIVMRegbaseIntrins
+//===----------------------------------------------------------------------===//
+
+def ConvertAscendDPXToHIVMRegbaseIntrins : Pass<"convert-ascend-dpx-to-hivmregbaseintrins", "ModuleOp"> {
+  let summary = "Convert the operations from Ascend DPX into HIVM Regbase Intrins";
+  let constructor = "mlir::createConvertAscendDPXToHIVMRegbaseIntrinPass()";
+  let dependentDialects =
+      ["LLVM::LLVMDialect", "scf::SCFDialect", "arith::ArithDialect",
+       "hivm_regbaseintrins::HIVMRegbaseIntrinsDialect", "hivm::HIVMDialect"];
+}
+
+//===----------------------------------------------------------------------===//
 // TensorToHFusion
 //===----------------------------------------------------------------------===//
 
@@ -190,6 +223,62 @@ def ConvertHFusionToVector : Pass<"convert-hfusion-to-vector", "func::FuncOp"> {
     "vector::VectorDialect",
     "hivm::HIVMDialect",
     "hfusion::HFusionDialect",
+  ];
+}
+
+def ConvertTritonAscendGPUToLLVM : Pass<"convert-triton-ascend-gpu-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Convert TritonAscendGPU to LLVM";
+  let description = [{
+    Convert TritonAscendGPU operations to LLVM dialect.
+  }];
+  let constructor = "mlir::triton::createConvertTritonAscendGPUToLLVMPass()";
+
+  let dependentDialects = [
+    "mlir::LLVM::LLVMDialect",
+    "mlir::NVVM::NVVMDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::cf::ControlFlowDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::ascend_dpx::AscendDPXDialect"
+  ];
+}
+
+def ConvertProtonAscendGPUToLLVM :
+    Pass<"convert-proton-ascend-gpu-to-llvm", "mlir::ModuleOp"> {
+  let summary = "Convert ProtonGPU to LLVM";
+  let description = [{
+    Convert ProtonGPU to LLVM using Ascend-specific lowering patterns.
+  }];
+  let constructor = "bishengir::triton::proton::gpu::createConvertProtonAscendGPUToLLVMPass()";
+
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::math::MathDialect",
+    "mlir::gpu::GPUDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::LLVM::LLVMDialect",
+    "mlir::ascend_dpx::AscendDPXDialect",
+    "mlir::triton::TritonDialect",
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::proton::ProtonDialect",
+    "mlir::triton::proton::gpu::ProtonGPUDialect"
+  ];
+}
+
+def AllocateProtonAscendGlobalScratchBufferPass :
+    Pass<"allocate-proton-ascend-global-scratch-buffer", "mlir::ModuleOp"> {
+  let summary = "Update metadata for proton global scratch buffer allocation (Ascend)";
+  let description = [{
+    Ascend-specific version of the proton global scratch buffer allocation pass.
+    This pass updates the amount of global memory used by proton intra kernel
+    profiling, using NVVM kernel attributes for function identification.
+  }];
+  let constructor = "bishengir::triton::proton::gpu::createAllocateProtonAscendGlobalScratchBufferPass()";
+
+  let dependentDialects = [
+    "mlir::triton::proton::ProtonDialect",
+    "mlir::triton::proton::gpu::ProtonGPUDialect"
   ];
 }
 

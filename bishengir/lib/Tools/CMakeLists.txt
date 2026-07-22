@@ -1,5 +1,8 @@
 add_subdirectory(bishengir-compile)
 add_subdirectory(bishengir-compile/regbase)
+if(BISHENGIR_ENABLE_TRITON_COMPILE)
+  add_subdirectory(bishengir-triton-libs)
+endif()
 add_subdirectory(ConfigOptions)
 add_subdirectory(RetriablePassManager)
 add_subdirectory(Utils)

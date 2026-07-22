@@ -71,6 +71,7 @@ static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
 static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
+static const llvm::StringLiteral simtVFSuffix = "_vf_simt";
 static constexpr llvm::StringLiteral elementAlignmentBitWidth =
     "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
@@ -628,6 +629,9 @@ hivm::AxisKind getAxisKind(int dim, int rank);
 // get axis kind after outlining
 hivm::AxisKind getOutlinedAxisKind(int dim, int rank);
 
+/// check two operation's sequence
+bool isBefore(Operation *before, Operation *after);
+
 bool isReduceWithIndex(hivm::ReduceOperation op);
 
 BitVector arrayToMask(ArrayRef<int64_t> elements, int maskSize);
@@ -884,6 +888,28 @@ void shrinkReassocIdxByDroppedDims(
     SmallVector<ReassociationIndices> &reassocIdxVec,
     llvm::SmallBitVector &droppedDims);
 } // namespace reshape_utils
+
+} // namespace mlir
+
+namespace mlir {
+
+namespace triton {
+
+inline const char AttrEnableBishengirSimtOptimizationName[] =
+    "ttg.enable-bishengir-simt-optimization";
+
+namespace util {
+LLVM::LLVMFuncOp createLLVMFuncDecl(OpBuilder &b, Location loc, StringRef name,
+                                    LLVM::LLVMFunctionType fnTy);
+
+// return a int that controls the optimization given a passname
+int getPassColumnDigit(Operation *opCtx, llvm::StringRef passName);
+
+Value allocateSharedMemory(LLVM::LLVMFuncOp vf, OpBuilder &builder,
+                           Location loc);
+
+} // namespace util
+} // namespace triton
 
 } // namespace mlir
 
