@@ -48,6 +48,13 @@ def HIVMLocalMatmulLikeOpInterface
       /*methodBody=*/"",
       /*defaultImplementation=*/[{ return $_op.getC(); }]>,
     InterfaceMethod<
+      /*desc=*/"Return the optional per-channel bias operand.",
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"getMatmulPerChannelBias",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ return $_op.getPerChannelBias(); }]>,
+    InterfaceMethod<
       /*desc=*/"Return the local matmul init condition operand.",
       /*retTy=*/"::mlir::Value",
       /*methodName=*/"getMatmulInitCondition",
