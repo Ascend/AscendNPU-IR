@@ -100,6 +100,20 @@ def HIVMLocalMatmulLikeOpInterface
       /*methodName=*/"setInitCondition",
       /*args=*/(ins "::mlir::Value":$init)>,
     InterfaceMethod<
+      /*desc=*/"Set the local matmul C/init operand.",
+      /*retTy=*/"void",
+      /*methodName=*/"setMatmulC",
+      /*args=*/(ins "::mlir::Value":$c),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ $_op.getCMutable().assign(c); }]>,
+    InterfaceMethod<
+      /*desc=*/"Set the optional per-channel bias operand.",
+      /*retTy=*/"void",
+      /*methodName=*/"setPerChannelBias",
+      /*args=*/(ins "::mlir::Value":$bias),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ $_op.getPerChannelBiasMutable().assign(bias); }]>,
+    InterfaceMethod<
       /*desc=*/"Set the real-M/K/N operands.",
       /*retTy=*/"void",
       /*methodName=*/"setMatmulRealMKN",
