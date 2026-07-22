@@ -139,13 +139,15 @@ public:
   }
 };
 
+#define DEBUG_VA_IMPL(prefix, ...) prefix, ##__VA_ARGS__
+
 #if defined(DEBUG_LLVM_LOG_DEBUG_COUT)
 #define DEBUG_LLVM_LOG_DEBUG(...) \
-  DebugMemoryLoger::get().dbgInfo("[DEBUG ASCEND]" __VA_OPT__(,' ',) __VA_ARGS__); \
+  DebugMemoryLoger::get().dbgInfo(DEBUG_VA_IMPL("[DEBUG ASCEND] ", __VA_ARGS__)); \
   std::cout << std::endl;
 #else
 #define DEBUG_LLVM_LOG_DEBUG(...) \
-  DebugMemoryLoger::get().dbgInfo("[DEBUG ASCEND]" __VA_OPT__(,' ',) __VA_ARGS__); \
+  DebugMemoryLoger::get().dbgInfo(DEBUG_VA_IMPL("[DEBUG ASCEND] ", __VA_ARGS__)); \
   llvm::dbgs() << "\n";
 #endif
 
@@ -161,8 +163,8 @@ public:
   llvm::dbgs() << "\n";
 #endif
 
-#define DEBUG_LLVM_LOG_INFO(...) DebugMemoryLoger::get().logInfo("[INFO ASCEND]" __VA_OPT__(,' ',) __VA_ARGS__)
-#define DEBUG_LLVM_LOG_ERROR(...) DebugMemoryLoger::get().logError("[ERROR ASCEND]" __VA_OPT__(,' ',) __VA_ARGS__)
+#define DEBUG_LLVM_LOG_INFO(...) DebugMemoryLoger::get().logInfo(DEBUG_VA_IMPL("[INFO ASCEND] ", __VA_ARGS__))
+#define DEBUG_LLVM_LOG_ERROR(...) DebugMemoryLoger::get().logError(DEBUG_VA_IMPL("[ERROR ASCEND] ", __VA_ARGS__))
 #define DEBUG_LLVM_LOG_FUNC(moduleOp, functionName) DebugMemoryLoger::get().dumpFunction(moduleOp, functionName)
 #define DEBUG_LLVM_LOG_OP(op) DebugMemoryLoger::get().dumpOp(op)
 

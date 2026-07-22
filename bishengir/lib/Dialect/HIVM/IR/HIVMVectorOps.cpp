@@ -395,8 +395,8 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       TypeRange result, Value src, ValueRange dst,
                       hivm::ReduceOpAttr arith, DenseI64ArrayAttr reduce_dims) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, arith,
-        /*unsigned_src=*/nullptr,
-        /*tie_break_left=*/nullptr, reduce_dims,
+        /*unsigned_src=*/BoolAttr(),
+        /*tie_break_left=*/BoolAttr(), reduce_dims,
         /*indices=*/nullptr);
 }
 
@@ -405,8 +405,8 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       hivm::ReduceOpAttr arith, DenseI64ArrayAttr reduce_dims,
                       Value indices) {
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, arith,
-        /*unsigned_src=*/nullptr,
-        /*tie_break_left=*/nullptr, reduce_dims, indices);
+        /*unsigned_src=*/BoolAttr(),
+        /*tie_break_left=*/BoolAttr(), reduce_dims, indices);
 }
 
 void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -414,8 +414,8 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       Value temp_buffer, hivm::ReduceOpAttr arith,
                       DenseI64ArrayAttr reduce_dims) {
   build(odsBuilder, odsState, result, src, dst, temp_buffer, arith,
-        /*unsigned_src=*/nullptr,
-        /*tie_break_left=*/nullptr, reduce_dims, /*indices=*/nullptr);
+        /*unsigned_src=*/BoolAttr(),
+        /*tie_break_left=*/BoolAttr(), reduce_dims, /*indices=*/nullptr);
 }
 
 void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
@@ -423,8 +423,8 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                       Value temp_buffer, hivm::ReduceOpAttr arith,
                       DenseI64ArrayAttr reduce_dims, Value indices) {
   build(odsBuilder, odsState, result, src, dst, temp_buffer, arith,
-        /*unsigned_src=*/nullptr,
-        /*tie_break_left=*/nullptr, reduce_dims, indices);
+        /*unsigned_src=*/BoolAttr(),
+        /*tie_break_left=*/BoolAttr(), reduce_dims, indices);
 }
 
 static LogicalResult verifyVReduceDims(VReduceOp op) {
