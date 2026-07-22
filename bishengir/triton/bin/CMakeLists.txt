@@ -1,5 +1,40 @@
 get_property(triton_libs GLOBAL PROPERTY TRITON_LIBS)
 
+set_property(GLOBAL PROPERTY TRITON_DIALECT_REGISTRATION_DEPS
+  GluonTransformsIncGen
+  LLVMIRIncGen
+  NVGPUConversionPassIncGen
+  NVGPUAttrDefsIncGen
+  NVGPUTableGen
+  NVHopperTransformsIncGen
+  NVWSAttrDefsIncGen
+  NVWSTableGen
+  NVWSTransformsIncGen
+  ProtonAttrDefsIncGen
+  ProtonGPUAttrDefsIncGen
+  ProtonGPUConversionPassIncGen
+  ProtonGPUTableGen
+  ProtonGPUTransformsIncGen
+  ProtonGPUTypesIncGen
+  ProtonTableGen
+  ProtonToProtonGPUIncGen
+  TritonConversionPassIncGen
+  TritonGPUAttrDefsIncGen
+  TritonGPUConversionPassIncGen
+  TritonGPUTableGen
+  TritonGPUTransformsIncGen
+  TritonGPUTypeInterfacesIncGen
+  TritonInstrumentTableGen
+  TritonInstrumentTransformsIncGen
+  TritonNVIDIAGPUConversionPassIncGen
+  TritonNvidiaGPUAttrDefsIncGen
+  TritonNvidiaGPUOpInterfacesIncGen
+  TritonNvidiaGPUTableGen
+  TritonNvidiaGPUTransformsIncGen
+  TritonTableGen
+  TritonTransformsIncGen
+)
+
 add_llvm_executable(triton-opt triton-opt.cpp PARTIAL_SOURCES_INTENDED)
 
 set(TRITON_LINK_LIBS)
