@@ -865,22 +865,42 @@ traceForPotentialMatrixC(Value v, Block *storeBlock) {
 SmallVector<Value> getTensorDynamicValues(OpBuilder &builder, Location loc,
                                           Value src) {
   SmallVector<Value> dynamicSizes;
-  if (auto reifiableOp = dyn_cast<tensor::EmptyOp>(src.getDefiningOp())) {
-    ReifiedRankedShapedTypeDims outputShapes;
-    if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
-      dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
-    } else {
-      for (auto dimValue : outputShapes[0]) {
-        if (!getConstantIntValue(dimValue).has_value()) {
-          dynamicSizes.push_back(
-              getValueOrCreateConstantIndexOp(builder, loc, dimValue));
+  if (auto *defOp = src.getDefiningOp()) {
+    if (auto reifiableOp = dyn_cast<tensor::EmptyOp>(defOp)) {
+      ReifiedRankedShapedTypeDims outputShapes;
+      if (failed(reifyResultShapes(builder, reifiableOp, outputShapes))) {
+        dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
+      } else {
+        for (auto dimValue : outputShapes[0]) {
+          if (!getConstantIntValue(dimValue).has_value()) {
+            dynamicSizes.push_back(
+                getValueOrCreateConstantIndexOp(builder, loc, dimValue));
+          }
         }
       }
+      return dynamicSizes;
     }
-  } else {
-    dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
   }
+  dynamicSizes = tensor::createDynamicDimValues(builder, loc, src);
   return dynamicSizes;
+}
+
+Value createAllocWithMark(PatternRewriter &rewriter, Location loc,
+                          MemRefType memrefType, ValueRange dynamicDims,
+                          ArrayRef<int64_t> staticAllocSize, Type elemType) {
+  Value alloc = rewriter.create<memref::AllocOp>(loc, memrefType, dynamicDims);
+  auto maybeStaticTotalSize =
+      utils::getStaticTotalSizeInBits(staticAllocSize, elemType);
+  if (maybeStaticTotalSize.has_value()) {
+    int64_t allocSizeInByte = maybeStaticTotalSize.value() / utils::kBitsToByte;
+    auto markOp = rewriter.create<annotation::MarkOp>(loc, alloc);
+    markOp->setAttr(hivm::kBufferSizeInByteAttr,
+                    rewriter.getI64IntegerAttr(allocSizeInByte));
+  } else {
+    llvm_unreachable(
+        "Warning: Cannot calculate static size from mmadL1 shape\n");
+  }
+  return alloc;
 }
 
 Value createAllocLocalWorkSpace(OpBuilder &builder, Location loc,

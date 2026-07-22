@@ -161,8 +161,13 @@ static void hivmAutoInsertLdStForMixCVPipeline(
     OpPassManager &pm, const HIVMPipelineOptions &hivmPipelineOptions) {
   InsertLoadStoreForMixCVOptions options;
   options.enableLegacy = hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
+  options.disableTightCoupledBuffer =
+      hivmPipelineOptions.disableTightCoupledBuffer;
+  // Non-triton paths keep the legacy insert-load-store behavior.
+  // Triton A5 kernels leave enableLegacy false and Select the propagator
+  // path via isA5Target() (module hacc.target / pass --target).
   if (!hivmPipelineOptions.enableTritonKernelCompile)
-      options.enableLegacy = true;
+    options.enableLegacy = true;
   if (options.enableLegacy) {
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForMixCVPass(options));

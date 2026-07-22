@@ -23,10 +23,17 @@
 namespace mlir {
 namespace hivm {
 
+enum InsertionPriority : uint8_t {
+  DefaultInsertion = 1,
+  RegbaseInsertion = 2,
+  TightCoupledBufferInsertion = 3
+};
+
 struct InsertPropagationPattern : public RewritePattern {
 public:
   explicit InsertPropagationPattern(MLIRContext *context)
-      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/1, context) {}
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/DefaultInsertion,
+                       context) {}
 
   LogicalResult matchAndRewrite(Operation *op,
                                 PatternRewriter &rewriter) const override;
@@ -41,6 +48,32 @@ private:
                                          PatternRewriter &rewriter) const;
   std::optional<LogicalResult>
   handleSpecialCase(Operation *op, PatternRewriter &rewriter) const;
+};
+
+struct A5InsertionPattern : public RewritePattern {
+public:
+  explicit A5InsertionPattern(MLIRContext *context)
+      : RewritePattern(MatchAnyOpTypeTag(), /*benefit=*/RegbaseInsertion,
+                       context) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override;
+
+private:
+  bool isPropagatorInserted(Operation *op) const;
+};
+
+struct TightCoupledBufferInsertionPattern : public RewritePattern {
+public:
+  explicit TightCoupledBufferInsertionPattern(MLIRContext *context)
+      : RewritePattern(MatchAnyOpTypeTag(),
+                       /*benefit=*/TightCoupledBufferInsertion, context) {}
+
+  LogicalResult matchAndRewrite(Operation *op,
+                                PatternRewriter &rewriter) const override;
+
+private:
+  bool isPropagatorInserted(Operation *op) const;
 };
 
 } // namespace hivm

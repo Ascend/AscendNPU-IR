@@ -863,6 +863,29 @@ class HIVM_CustomOp<string mnemonic, list<Trait> traits = []>
             InlineModeAttr::get(getContext(), inlineMode));
       }
 
+      static constexpr StringLiteral kGMAddrArgIndicesAttrName = "gm_addr_args_indices";
+
+      std::optional<SmallVector<size_t>> getGMAddrArgsIndices() const {
+        if (const auto indicesAttr =
+            (*this)->template getAttrOfType<DenseI32ArrayAttr>(
+              kGMAddrArgIndicesAttrName)) {
+          SmallVector<size_t> res;
+          for (int32_t i : indicesAttr.asArrayRef())
+            res.emplace_back(static_cast<size_t>(i));
+          return res;
+        }
+
+        return {};
+      }
+
+      void setGMAddrArgsIndices(const SmallVector<size_t>& indices) {
+        SmallVector<int32_t> i32Indices;
+        for (size_t i : indices)
+          i32Indices.emplace_back(static_cast<int32_t>(i));
+        getOperation()->setAttr(kGMAddrArgIndicesAttrName,
+            DenseI32ArrayAttr::get(getContext(), i32Indices));
+      }
+
       // Returns true when VFMode attribute must be present (see HIVMOps.cpp).
       bool requiresVFMode();
 

@@ -28,7 +28,15 @@
 namespace mlir {
 namespace hivm {
 
+enum PropagatePriority : uint8_t {
+  DefaultPropagateDown = 40,
+  RegbasePropagateDown = 41,
+  DefaultPropagateUp = 30,
+  RegbasePropagateUp = 31,
+};
+
 enum class PropagationStep {
+  L0C,
   LOCAL,
   GM,
   UB,
@@ -73,7 +81,9 @@ public:
   using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
 
   explicit PropagateDownPattern(MLIRContext *ctx, PropagationStep step)
-      : OpRewritePattern(ctx, /*benefit=*/3), step(step) {}
+      : OpRewritePattern(ctx,
+                         /*benefit=*/PropagatePriority::DefaultPropagateDown),
+        step(step) {}
 
 private:
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
@@ -119,7 +129,9 @@ public:
   using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
 
   explicit PropagateUpPattern(MLIRContext *ctx, PropagationStep step)
-      : OpRewritePattern(ctx, /*benefit=*/2), step(step) {}
+      : OpRewritePattern(ctx,
+                         /*benefit=*/PropagatePriority::DefaultPropagateUp),
+        step(step) {}
 
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp propagateOp,
                                 PatternRewriter &rewriter) const override;

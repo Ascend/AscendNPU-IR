@@ -779,11 +779,9 @@ def EnableTritonIRCompile : FeatureControlOptions<
 }
 #endif
 
-def DisableTightCoupledBuffer : FeatureControlOptions<
-  "Disable Tight Coupled Buffer Allocation",
-  "bool",
-  "false"
-> {
+def DisableTightCoupledBuffer
+    : FeatureControlOptions<"Disable Tight Coupled Buffer Allocation", "bool",
+                            "false"> {
   let passGroup = ["HFUSION", "HIVM"];
 }
 
