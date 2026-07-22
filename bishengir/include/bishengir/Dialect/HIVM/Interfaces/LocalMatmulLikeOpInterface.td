@@ -21,6 +21,9 @@ def HIVMLocalMatmulLikeOpInterface
   let description = [{
     Interface for local matmul-like ops that share A/B/C, init-condition,
     real-MKN, bias-mode, and layout behavior.
+
+    Ops implementing this interface should use `HIVMLocalMatmulLikeOpTraits`,
+    which bundles the common traits required alongside this interface.
   }];
   let methods = [
     InterfaceMethod<

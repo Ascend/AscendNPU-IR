@@ -79,11 +79,8 @@ def HIVM_LocalMmadLikeOperands : HIVM_LocalMmadLikeOperandDags;
 
 class HIVM_LocalMmadOp<string mnemonic, list<Trait> traits = []> :
   HIVM_MacroOp<mnemonic, !listconcat(
-    [AttrSizedOperandSegments,
-     CubeCoreTypeTrait,
-     HIVMLocalMatmulLikeOpInterface,
+    [HIVMLocalMatmulLikeOpTraits,
      HIVMUnitFlagEnabledInterface,
-     MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
     ], traits)> {
   let arguments = !con((ins
       Arg<TensorOrMemref, "Matrix A">:$a,
@@ -212,12 +209,7 @@ def BatchMmadL1Op : HIVM_LocalMmadOp<"batchMmadL1",
 //===----------------------------------------------------------------------===//
  
 class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
-  HIVM_MacroOp<mnemonic, !listconcat(
-    [AttrSizedOperandSegments,
-     CubeCoreTypeTrait,
-     HIVMLocalMatmulLikeOpInterface,
-     MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
-    ], traits)> {
+  HIVM_MacroOp<mnemonic, !listconcat([HIVMLocalMatmulLikeOpTraits], traits)> {
   let arguments = !con((ins
       Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix A">:$a,
       Arg<ShapedTypeOf<[F8E4M3FN, F8E5M2, UI8, I8]>, "Matrix B">:$b,
