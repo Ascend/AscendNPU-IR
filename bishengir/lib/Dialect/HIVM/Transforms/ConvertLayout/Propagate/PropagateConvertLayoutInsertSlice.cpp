@@ -1,8 +1,17 @@
 //===-------------------- PropagateConvertLayoutInsertSlice.cpp -----------===//
 //
-// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://llvm.org/LICENSE.txt for license information.
-// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+// Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,6 +31,43 @@ using namespace mlir;
 using namespace mlir::hivm;
 
 namespace {
+
+LogicalResult checkInsertSliceTileAlignment(tensor::InsertSliceOp insertSliceOp,
+                                            DataLayoutAttr dstLayout,
+                                            PatternRewriter &rewriter,
+                                            ConvertLayoutOp convertOp) {
+  auto sourceType =
+      dyn_cast<RankedTensorType>(insertSliceOp.getSource().getType());
+  auto destType = dyn_cast<RankedTensorType>(insertSliceOp.getDest().getType());
+  if (!sourceType || !destType || sourceType.getRank() != destType.getRank())
+    return rewriter.notifyMatchFailure(
+        convertOp, "rank-reduced insert_slice is not supported");
+
+  int64_t rank = destType.getRank();
+  if (rank != 2 && rank != 3)
+    return rewriter.notifyMatchFailure(
+        convertOp, "insert_slice must have rank two or three");
+
+  FailureOr<FractalSize> blockSizes = dstLayout.getFractalBlockSizes();
+  if (failed(blockSizes))
+    return rewriter.notifyMatchFailure(convertOp,
+                                       "failed to get fractal block sizes");
+
+  int64_t spatialStart = rank == 3 ? 1 : 0;
+  SmallVector<OpFoldResult> offsets = insertSliceOp.getMixedOffsets();
+  SmallVector<OpFoldResult> sizes = insertSliceOp.getMixedSizes();
+  for (int64_t dim = spatialStart; dim < rank; ++dim) {
+    int64_t blockSize =
+        dim == spatialStart ? blockSizes->first : blockSizes->second;
+    std::optional<int64_t> offset = getConstantIntValue(offsets[dim]);
+    std::optional<int64_t> size = getConstantIntValue(sizes[dim]);
+    if (!offset || !size || *offset % blockSize != 0 || *size % blockSize != 0)
+      return rewriter.notifyMatchFailure(
+          convertOp,
+          "insert_slice offsets and sizes must be statically tile-aligned");
+  }
+  return success();
+}
 
 FailureOr<Value> createUpConvertLayoutForOperand(PatternRewriter &rewriter,
                                                  Location loc,
@@ -85,6 +131,11 @@ struct PropagateConvertLayoutUpThroughInsertSlice
     Location loc = insertSliceOp.getLoc();
     auto srcLayout = convertOp.getSrcLayoutAttr();
     auto dstLayout = convertOp.getDstLayoutAttr();
+
+    if (failed(checkInsertSliceTileAlignment(insertSliceOp, dstLayout, rewriter,
+                                             convertOp)))
+      return rewriter.notifyMatchFailure(
+          convertOp, "insert_slice offsets or sizes are not tile-aligned");
 
     rewriter.setInsertionPoint(insertSliceOp);
 
