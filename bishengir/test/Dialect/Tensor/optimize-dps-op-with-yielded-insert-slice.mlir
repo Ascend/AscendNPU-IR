@@ -301,3 +301,65 @@ func.func @func_call_user_no_hoist_2(%lb: index, %ub: index, %step: index) -> te
   }
   return %res : tensor<128x128xbf16>
 }
+
+// -----
+
+// Verify the pattern does NOT fire when the iter_arg init carries
+// external data (e.g. a func.call result). The init is not a fresh
+// empty/vbrc/to_tensor buffer, so the pass skips to avoid discarding
+// the external data.
+// CHECK-LABEL: func.func @init_with_call_result_no_hoist(
+// CHECK-NOT: memref.alloc() : memref<128x128xbf16>
+func.func private @init_producer() -> tensor<128x128xbf16>
+func.func @init_with_call_result_no_hoist(%lb: index, %ub: index, %step: index) -> tensor<128x128xbf16> {
+  %init = call @init_producer() : () -> tensor<128x128xbf16>
+  %cst = arith.constant 0.000000e+00 : bf16
+  %res = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) -> (tensor<128x128xbf16>) {
+    %offset = "some_calculation"(%arg0) : (index) -> (index)
+    %alloc = memref.alloc() : memref<32x128xbf16>
+    linalg.fill ins(%cst : bf16) outs(%alloc : memref<32x128xbf16>)
+    %t = bufferization.to_tensor %alloc restrict writable : memref<32x128xbf16>
+    %inserted = tensor.insert_slice %t into %arg1[%offset, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+    scf.yield %inserted : tensor<128x128xbf16>
+  }
+  return %res : tensor<128x128xbf16>
+}
+
+// -----
+
+// Two chained for loops: for2's init is for1's result. After greedy
+// convergence (for1 hoisted first, for2 then sees a to_tensor init),
+// both loops share the same big alloc.
+// CHECK-LABEL: func.func @two_chained_fors_share_alloc(
+//  CHECK-SAME:     %[[LB:.*]]: index, %[[UB:.*]]: index, %[[STEP:.*]]: index)
+func.func @two_chained_fors_share_alloc(%lb: index, %ub: index, %step: index) -> tensor<128x128xbf16> {
+  %init = tensor.empty() : tensor<128x128xbf16>
+  %cst = arith.constant 0.000000e+00 : bf16
+  // CHECK: %[[BIG_ALLOC:.*]] = memref.alloc() : memref<128x128xbf16>
+  // CHECK: %[[BIG_TENSOR:.*]] = bufferization.to_tensor %[[BIG_ALLOC]]
+  // CHECK: scf.for %{{.*}} = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[ARG1:.*]] = %{{.*}})
+  %res1 = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %init) -> (tensor<128x128xbf16>) {
+    %offset = "some_calculation"(%arg0) : (index) -> (index)
+    %alloc = memref.alloc() : memref<32x128xbf16>
+    linalg.fill ins(%cst : bf16) outs(%alloc : memref<32x128xbf16>)
+    %t = bufferization.to_tensor %alloc restrict writable : memref<32x128xbf16>
+    %inserted = tensor.insert_slice %t into %arg1[%offset, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+    // CHECK: scf.yield %[[ARG1]]
+    scf.yield %inserted : tensor<128x128xbf16>
+  }
+  // CHECK: scf.for %{{.*}} = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[ARG2:.*]] =
+  // CHECK-SAME:   %[[BIG_TENSOR]]
+  // CHECK-NOT: memref.alloc() : memref<128x128xbf16>
+  // CHECK: %[[SV2:.*]] = memref.subview %[[BIG_ALLOC]]
+  %res2 = scf.for %arg0 = %lb to %ub step %step iter_args(%arg1 = %res1) -> (tensor<128x128xbf16>) {
+    %offset = "some_calculation"(%arg0) : (index) -> (index)
+    %alloc = memref.alloc() : memref<32x128xbf16>
+    linalg.fill ins(%cst : bf16) outs(%alloc : memref<32x128xbf16>)
+    %t = bufferization.to_tensor %alloc restrict writable : memref<32x128xbf16>
+    %inserted = tensor.insert_slice %t into %arg1[%offset, 0] [32, 128] [1, 1] : tensor<32x128xbf16> into tensor<128x128xbf16>
+    // CHECK: scf.yield %[[ARG2]]
+    scf.yield %inserted : tensor<128x128xbf16>
+  }
+  // CHECK: return %[[BIG_TENSOR]]
+  return %res2 : tensor<128x128xbf16>
+}
