@@ -724,3 +724,46 @@ module {
     return
   }
 }
+
+// -----
+// 4D Fractal A zN [K1,M1,16,16] — genuine 4D alloc (no convert_layout to strip).
+// Verifies that blockedFractalLayout seeds Fractal layout and the kDimFour
+// branch extracts fractalSizes from shape[2],shape[3].
+// CHECK-LABEL: func.func @test_infer_layout_fractal_A_zN
+module {
+  func.func @test_infer_layout_fractal_A_zN() {
+    %true = arith.constant true
+    %cst_64 = arith.constant 64 : index
+    %cst_320 = arith.constant 320 : index
+    %a = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
+    %acc = memref.alloc() : memref<64x32xf16, #hivm.address_space<cc>>
+    // 4D A [K1=2,M1=4,16,16]: M=dim1*dim2=64, K=dim0*dim3=32
+    // 4D B [K1=4,N1=2,16,16]: K=dim1*dim2=32, N=dim0*dim3=32
+    // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %cst_64, %cst_320, %cst_64 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%acc : memref<64x32xf16, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// 4D Fractal B zN [N1,K1,16,16] — genuine 4D alloc for B, 2D for A.
+// Verifies kDimFour branch on B side only.
+// CHECK-LABEL: func.func @test_infer_layout_fractal_B_zN
+module {
+  func.func @test_infer_layout_fractal_B_zN() {
+    %true = arith.constant true
+    %cst_64 = arith.constant 64 : index
+    %cst_320 = arith.constant 320 : index
+    %a = memref.alloc() : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+    %acc = memref.alloc() : memref<64x32xf16, #hivm.address_space<cc>>
+    // 4D A [K1=4,M1=2,16,16]: M=dim1*dim2=32, K=dim0*dim3=64
+    // 4D B [N1=2,K1=4,16,16]: K=dim1*dim2=64, N=dim0*dim3=32
+    // CHECK: hivm.hir.mmadL1
+    // CHECK-SAME: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %cst_64, %cst_320, %cst_64 : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%acc : memref<64x32xf16, #hivm.address_space<cc>>)
+    return
+  }
+}

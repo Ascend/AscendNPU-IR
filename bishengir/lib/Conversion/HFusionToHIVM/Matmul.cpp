@@ -46,17 +46,7 @@ class MmadL1InfoCollector {
 public:
   explicit MmadL1InfoCollector(const T op) : op_(op) {
     mmadL1A_ = op_.getDpsInputOperand(0)->get();
-    if (auto l1ATransposeOp =
-            mmadL1A_.getDefiningOp<linalg::TransposeOp>()) {
-      transposeA_ = true;
-      mmadL1A_ = l1ATransposeOp.getInput();
-    }
     mmadL1B_ = op_.getDpsInputOperand(1)->get();
-    if (auto l1BTransposeOp =
-            mmadL1B_.getDefiningOp<linalg::TransposeOp>()) {
-      transposeB_ = true;
-      mmadL1B_ = l1BTransposeOp.getInput();
-    }
 
     if constexpr (!std::is_same_v<T, hfusion::MatMulMxOp>) {
       std::string inputPrecisionStr{"input_precision"};
@@ -330,8 +320,8 @@ struct MadLikeMapping<linalg::BatchMatmulOp> {
 /// Rewriting rule that combines Linalg Ops to create hivm mmadl1 like op
 ///   - linalg::MatmulOp is mapped to hivm::MmadL1Op while
 ///     linalg::BatchMatmulOp is mapped to hivm::BatchMmadL1Op.
-///   - If linalg::TransposeOp is the producer of L1 Tensors, transpose
-///     attribute will be added to hivm::MmadL1Op.
+///   - Transpose folding into mmadL1 a_transpose/b_transpose is handled
+///     by NormalizeMatmul (FoldVtransposePattern / FoldFractalVtransposePattern).
 ///   - Init condition is extracted from the IR.
 ///   - A new init tensor is created and inserted before the outermost K loop.
 template <typename T>

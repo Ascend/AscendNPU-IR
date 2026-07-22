@@ -1231,8 +1231,8 @@ module {
 // -----
 module {
   // CHECK-LABEL: func.func @test_matmulscale_transpose
-  // CHECK-NOT: linalg.transpose
-  // CHECK: hivm.hir.mmadmxL1 {{.*}}a_transpose{{.*}}b_transpose
+  // CHECK: hivm.hir.vtranspose
+  // CHECK: hivm.hir.mmadmxL1
   func.func @test_matmulscale_transpose(%arg0: memref<8x4xf8E5M2>, %arg1: memref<16x8xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>) -> tensor<4x16xf32> {
     %0 = bufferization.to_tensor %arg0 : memref<8x4xf8E5M2>
     %1 = bufferization.to_tensor %arg1 : memref<16x8xf8E5M2>

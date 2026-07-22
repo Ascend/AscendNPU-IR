@@ -17,8 +17,9 @@
 // CHECK: bufferization.materialize_in_destination %[[RET1]] in restrict writable %[[ALLOC_C]]
 // CHECK: %[[ALLOC_A_T:.*]] = memref.alloc() : memref<128x256xf16>
 // CHECK: %[[TENSOR_A_T:.*]] = bufferization.to_tensor %[[ALLOC_A_T]] restrict writable : memref<128x256xf16>
-// CHECK: %[[RET2:.*]] = hivm.hir.mmadL1 {a_transpose} ins(%[[TENSOR_A_T]], %[[TENSOR_B]], %false, %[[STUB_0]], %[[STUB_0]], %[[STUB_0]] :
-// CHECK-SAME:               tensor<128x256xf16>, tensor<128x256xf16>, i1, index, index, index)
+// CHECK: %[[VT:.*]] = hivm.hir.vtranspose ins(%[[TENSOR_A_T]] : tensor<128x256xf16>)
+// CHECK: %[[RET2:.*]] = hivm.hir.mmadL1 ins(%[[VT]], %[[TENSOR_B]], %false, %[[STUB_0]], %[[STUB_0]], %[[STUB_0]] :
+// CHECK-SAME:               tensor<256x128xf16>, tensor<128x256xf16>, i1, index, index, index)
 // CHECK-SAME:                                        outs(%[[INIT1]] : tensor<256x256xf32>) -> tensor<256x256xf32>
 // CHECK: bufferization.materialize_in_destination %[[RET2]] in restrict writable %[[ALLOC_C]]
 // CHECK: return
@@ -171,4 +172,60 @@ func.func @test_mmadL1_iter_arg_extra_user() -> tensor<128x128xf32> {
     scf.yield %next : tensor<128x128xf32>
   }
   return %ret : tensor<128x128xf32>
+}
+
+// -----
+// linalg.transpose feeding into linalg.matmul — transpose should NOT be absorbed
+// by MmadL1InfoCollector (removed in fractal refactor, handled by FoldFractalVtransposePattern)
+// CHECK-LABEL: func.func @test_matmul_with_transpose_A
+// CHECK: hivm.hir.mmadL1
+module {
+  func.func @test_matmul_with_transpose_A(%A_T: tensor<320x80xf16>, %B: tensor<320x160xf16>) -> tensor<80x160xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %out = tensor.empty() : tensor<80x160xf32>
+    %A_empty = tensor.empty() : tensor<80x320xf16>
+    %A = linalg.transpose ins(%A_T : tensor<320x80xf16>) outs(%A_empty : tensor<80x320xf16>) permutation = [1, 0]
+    %fill = linalg.fill ins(%cst : f32) outs(%out : tensor<80x160xf32>) -> tensor<80x160xf32>
+    %res = linalg.matmul {input_precision = "ieee"} ins(%A, %B : tensor<80x320xf16>, tensor<320x160xf16>)
+                          outs(%fill : tensor<80x160xf32>) -> tensor<80x160xf32>
+    return %res : tensor<80x160xf32>
+  }
+}
+
+// -----
+// linalg.transpose + linalg.matmul — B transpose should NOT be absorbed
+// into mmadL1; a separate hivm.hir.vtranspose is emitted instead
+// CHECK-LABEL: func.func @test_matmul_with_transpose_B
+// CHECK: hivm.hir.vtranspose
+// CHECK: hivm.hir.mmadL1
+// CHECK-NOT: b_transpose
+module {
+  func.func @test_matmul_with_transpose_B(%A: tensor<160x320xf16>, %B_T: tensor<80x320xf16>) -> tensor<160x80xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %acc = tensor.empty() : tensor<160x80xf32>
+    %filled = linalg.fill ins(%cst : f32) outs(%acc : tensor<160x80xf32>) -> tensor<160x80xf32>
+    %empty_B = tensor.empty() : tensor<320x80xf16>
+    %B = linalg.transpose ins(%B_T : tensor<80x320xf16>) outs(%empty_B : tensor<320x80xf16>) permutation = [1, 0]
+    %res = linalg.matmul ins(%A, %B : tensor<160x320xf16>, tensor<320x80xf16>) outs(%filled : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %res : tensor<160x80xf32>
+  }
+}
+
+// -----
+// linalg.transpose + linalg.matmul — A transpose should NOT be absorbed
+// into mmadL1; a separate hivm.hir.vtranspose is emitted instead
+// CHECK-LABEL: func.func @test_matmul_with_transpose_A_nd
+// CHECK: hivm.hir.vtranspose
+// CHECK: hivm.hir.mmadL1
+// CHECK-NOT: a_transpose
+module {
+  func.func @test_matmul_with_transpose_A_nd(%A_T: tensor<320x160xf16>, %B: tensor<320x80xf16>) -> tensor<160x80xf32> {
+    %cst = arith.constant 0.000000e+00 : f32
+    %out = tensor.empty() : tensor<160x80xf32>
+    %fill = linalg.fill ins(%cst : f32) outs(%out : tensor<160x80xf32>) -> tensor<160x80xf32>
+    %empty_A = tensor.empty() : tensor<160x320xf16>
+    %A = linalg.transpose ins(%A_T : tensor<320x160xf16>) outs(%empty_A : tensor<160x320xf16>) permutation = [1, 0]
+    %res = linalg.matmul ins(%A, %B : tensor<160x320xf16>, tensor<320x80xf16>) outs(%fill : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %res : tensor<160x80xf32>
+  }
 }
