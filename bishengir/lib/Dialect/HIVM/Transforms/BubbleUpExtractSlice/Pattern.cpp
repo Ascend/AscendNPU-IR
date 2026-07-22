@@ -99,22 +99,19 @@ createNewParentOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
   SmallVector<OpFoldResult, 4> newSrcSizes;
   SmallVector<int64_t, 4> newSrcShape;
   rewriter.setInsertionPoint(childOp);
-  auto maybeSubBlockLoop = findContainingSubblockLoop(childOp);
-  if (failed(maybeSubBlockLoop))
+  auto maybeTilingLoop = findContainingTilingLoop(childOp);
+  if (failed(maybeTilingLoop))
     return failure();
 
-  // We have an assumption here that HIVMBubbleUp is only serving
-  // HIVMTileAndBindSubBlock 1:2. Since we only work on marked extractSlice,
-  // it's safe for now.
   auto size =
       getSingleTileSize(rewriter, childOp->getLoc(), parentOp.getSource(),
-                        tilingDim, maybeSubBlockLoop.value());
+                        tilingDim, maybeTilingLoop.value());
   if (failed(size))
     return failure();
 
-  rewriter.setInsertionPointToStart(maybeSubBlockLoop.value().getBody());
+  rewriter.setInsertionPointToStart(maybeTilingLoop.value().getBody());
   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(), maybeSubBlockLoop.value(),
+      rewriter, childOp->getLoc(), maybeTilingLoop.value(),
       parentOp.getSource(), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
@@ -153,18 +150,20 @@ createNewChildOpAfterBubbledUp(RewriterBase &rewriter, size_t tilingDim,
   SmallVector<OpFoldResult, 4> newViewOffsets;
   SmallVector<OpFoldResult, 4> newViewSizes;
   SmallVector<int64_t, 4> newViewShape;
-  auto newSize = getSingleTileSize(
-      rewriter, childOp->getLoc(), createdNewParent->getResult(0), tilingDim,
-      childOp->template getParentOfType<scf::ForOp>());
+  auto maybeTilingLoop = findContainingTilingLoop(childOp);
+  if (failed(maybeTilingLoop))
+    return failure();
+  auto containingLoop = maybeTilingLoop.value();
+  auto newSize = getSingleTileSize(rewriter, childOp->getLoc(),
+                                   createdNewParent->getResult(0), tilingDim,
+                                   containingLoop);
   if (failed(newSize))
     return failure();
 
-  rewriter.setInsertionPointToStart(
-      childOp->template getParentOfType<scf::ForOp>().getBody());
-  auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, childOp->getLoc(),
-      childOp->template getParentOfType<scf::ForOp>(),
-      createdNewParent->getResult(0), tilingDim);
+  rewriter.setInsertionPointToStart(containingLoop.getBody());
+  auto newOffsetAtTileDim =
+      calculateOffsetAtTilingDim(rewriter, childOp->getLoc(), containingLoop,
+                                 createdNewParent->getResult(0), tilingDim);
 
   auto rankType = cast<ShapedType>(childOp.getSourceType());
   if (failed(findCorrespondingSizesOffsetsStrides(
@@ -490,7 +489,7 @@ LogicalResult ExpandBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
     }
 
     // Calculate the offset at tilingDim
-    auto maybeContainingLoop = findContainingSubblockLoop(expandOp);
+    auto maybeContainingLoop = findContainingTilingLoop(expandOp);
     if (tilingDim == -1 || failed(maybeContainingLoop)) {
       return failure();
     }
@@ -849,20 +848,19 @@ createNewInsertForExtractOfInsertSameDim(RewriterBase &rewriter,
   SmallVector<OpFoldResult, 4> newInsertOffsets;
   SmallVector<OpFoldResult, 4> newInsertSizes;
   SmallVector<int64_t, 4> newInsertShape;
-  auto maybeSubBlockLoop = findContainingSubblockLoop(sliceOp);
-  if (failed(maybeSubBlockLoop))
+  auto maybeTilingLoop = findContainingTilingLoop(sliceOp);
+  if (failed(maybeTilingLoop))
     return failure();
   auto size =
       getSingleTileSize(rewriter, sliceOp->getLoc(), parentInsertOp.getSource(),
-                        tilingDim, maybeSubBlockLoop.value());
+                        tilingDim, maybeTilingLoop.value());
   if (failed(size))
     return failure();
   auto rankType = cast<ShapedType>(parentInsertOp.getSourceType());
 
-  rewriter.setInsertionPointToStart(
-      sliceOp->getParentOfType<scf::ForOp>().getBody());
+  rewriter.setInsertionPointToStart(maybeTilingLoop.value().getBody());
   auto newOffsetAtTileDim = calculateOffsetAtTilingDim(
-      rewriter, sliceOp->getLoc(), sliceOp->getParentOfType<scf::ForOp>(),
+      rewriter, sliceOp->getLoc(), maybeTilingLoop.value(),
       parentInsertOp.getSource(), tilingDim);
   if (failed(findCorrespondingSizesOffsetsStrides(
           rewriter, rankType, tilingDim, newOffsetAtTileDim, size.value(),
@@ -1253,7 +1251,7 @@ tryCollapseBubbleUpGeneral(tensor::ExtractSliceOp sliceOp,
       for (int64_t inDim : group) {
         if (inDim == leftmostNonUnitDim) {
           // Calculate the offset at tilingDim
-          auto maybeContainingLoop = findContainingSubblockLoop(collapseOp);
+          auto maybeContainingLoop = findContainingTilingLoop(collapseOp);
           if (failed(maybeContainingLoop)) {
             return failure();
           }

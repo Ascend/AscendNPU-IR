@@ -220,12 +220,27 @@ static Value getPreloadCondition(const PreloadInfo &info, Location loc,
   return b.create<arith::AndIOp>(loc, lowerCond, upperCond);
 }
 
+static Operation *getRematerializableViewOp(Value value,
+                                             scope::ScopeOp scopeOp) {
+  Operation *definingOp = value.getDefiningOp();
+  if (!definingOp || !isa<ViewLikeOpInterface>(definingOp))
+    return nullptr;
+  if (!llvm::all_of(definingOp->getOperands(), [&](Value operand) {
+        Operation *operandDefiningOp = operand.getDefiningOp();
+        return !operandDefiningOp ||
+               !scopeOp->isAncestor(operandDefiningOp);
+      }))
+    return nullptr;
+  return definingOp;
+}
+
 static void rewriteScopeReturnOp(ValueRange returnResults,
+                                 scope::ScopeOp scopeOp,
                                  const PreloadInfo &info, Location loc,
                                  OpBuilder &b) {
   SmallVector<Value> newReturns;
   for (auto res : returnResults) {
-    if (!getLocalBuffer(res)) {
+    if (!getLocalBuffer(res) && !getRematerializableViewOp(res, scopeOp)) {
       res = info.mappings[info.preloadNum].lookupOrDefault(res);
       newReturns.push_back(res);
     }
@@ -306,7 +321,8 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
       [&](OpBuilder &b, Location loc) {
         SmallVector<Type> newScopeResultTypes;
         for (auto res : returnResults) {
-          if (!getLocalBuffer(res))
+          if (!getLocalBuffer(res) &&
+              !getRematerializableViewOp(res, scopeOp))
             newScopeResultTypes.push_back(res.getType());
         }
         auto newOp =
@@ -319,7 +335,7 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
 
         b.setInsertionPointToEnd(bodyBlock);
         rewriteBody(&scopeBody, info, b);
-        rewriteScopeReturnOp(returnResults, info, loc, b);
+        rewriteScopeReturnOp(returnResults, scopeOp, info, loc, b);
         b.setInsertionPointAfter(newOp);
         b.create<scf::YieldOp>(loc, newOp->getResults());
       },
@@ -328,7 +344,8 @@ static scf::IfOp rewriteScopeOp(Value cond, scope::ScopeOp scopeOp,
         IRMapping viewMapping;
         for (auto [res, retRes] :
              llvm::zip_equal(scopeOp->getResults(), returnResults)) {
-          if (!getLocalBuffer(retRes)) {
+          if (!getLocalBuffer(retRes) &&
+              !getRematerializableViewOp(retRes, scopeOp)) {
             if (res.hasOneUse() && isa<scf::YieldOp>(*res.user_begin())) {
               auto oprNum = res.use_begin()->getOperandNumber();
               newYields.push_back(loopArgs[oprNum]);
@@ -435,27 +452,31 @@ static void rewritePreloadLoop(scf::ForOp forOp,
           Value cond = getPreloadCondition(info, loc, b);
 
           auto newOp = rewriteScopeOp(cond, scopeOp, info, args, loc, b);
-          auto scopeResIter = scopeOp.result_begin();
-          for (auto newRes : newOp->getResults()) {
-            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
-            while (maybeLocalBuffer.has_value()) {
+          auto returnResults = cast<scope::ReturnOp>(
+                                   scopeOp.getRegion().front().getTerminator())
+                                   .getResults();
+          auto newResIter = newOp.result_begin();
+          for (auto [scopeRes, retRes] :
+               llvm::zip_equal(scopeOp->getResults(), returnResults)) {
+            if (auto localBuffer = getLocalBuffer(retRes)) {
               for (auto &mapping : info.mappings)
-                mapping.map(*scopeResIter,
-                            mapping.lookup(maybeLocalBuffer.value()));
-              ++scopeResIter;
-              maybeLocalBuffer = getLocalBuffer(*scopeResIter);
+                mapping.map(scopeRes, mapping.lookup(localBuffer.value()));
+            } else if (Operation *viewOp =
+                           getRematerializableViewOp(retRes, scopeOp)) {
+              for (auto &mapping : info.mappings) {
+                Operation *clonedView = b.clone(*viewOp, mapping);
+                mapping.map(scopeRes, clonedView->getResult(0));
+              }
+            } else {
+              assert(newResIter != newOp.result_end() &&
+                     "Missing rewritten scope result");
+              for (auto &mapping : info.mappings)
+                mapping.map(scopeRes, *newResIter);
+              ++newResIter;
             }
-            for (auto &mapping : info.mappings)
-              mapping.map(*scopeResIter, newRes);
-            ++scopeResIter;
           }
-          for (; scopeResIter != scopeOp.result_end(); ++scopeResIter) {
-            auto maybeLocalBuffer = getLocalBuffer(*scopeResIter);
-            for (auto &mapping : info.mappings)
-              mapping.map(*scopeResIter,
-                          mapping.lookup(maybeLocalBuffer.value()));
-            ++scopeResIter;
-          }
+          assert(newResIter == newOp.result_end() &&
+                 "Unexpected rewritten scope result");
         }
 
         SmallVector<Value> newYields;

@@ -47,7 +47,7 @@ inline RoundModeAttr getRoundAttr(mlir::OpBuilder &b, Type srcType,
 /// - For I1: I1 -> F16 -> broadcast -> F16 -> I1 (via comparison with 0.0)
 /// - For I8: I8 -> F16 -> broadcast -> F16 -> I8 (via cast)
 mlir::FailureOr<llvm::SmallVector<mlir::Value>>
-VBrcOp::decomposeOperation(mlir::OpBuilder &b) {
+VBrcOp::decomposeOperation(mlir::PatternRewriter &b) {
   const Type srcType = getSrc().getType();
   const Type srcElemType = getElementTypeOrSelf(srcType);
   const Type dstElemType = b.getF16Type();
@@ -90,7 +90,7 @@ VBrcOp::decomposeOperation(mlir::OpBuilder &b) {
 /// Here we specify VConcat's decompose behavior
 /// VConcat will get erased and become Copy ops
 /// from inputs of concat to subviews of it's output
-FailureOr<SmallVector<Value>> VConcatOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VConcatOp::decomposeOperation(PatternRewriter &b) {
   if (hasPureTensorSemantics()) {
     return failure();
   }
@@ -250,7 +250,7 @@ decomposeMemRefDeinterleave(VDeinterleaveOp &op, mlir::OpBuilder &b) {
 } // namespace mlir::hivm
 
 mlir::FailureOr<llvm::SmallVector<mlir::Value>>
-VDeinterleaveOp::decomposeOperation(mlir::OpBuilder &b) {
+VDeinterleaveOp::decomposeOperation(mlir::PatternRewriter &b) {
   // only apply pattern for hivm.deinterleave on shaped type of i8
   const Type srcType = getSrc().getType();
   if (!getElementTypeOrSelf(srcType).isInteger(8))
@@ -266,7 +266,7 @@ VDeinterleaveOp::decomposeOperation(mlir::OpBuilder &b) {
 // LoadOp
 //===----------------------------------------------------------------------===//
 
-FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(PatternRewriter &b) {
   if (!hasPureBufferSemantics())
     return failure();
   if (!getInitOutBuffer())
@@ -312,7 +312,7 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
 // ND2NZOp
 //===----------------------------------------------------------------------===//
 
-FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(PatternRewriter &b) {
   if (!hasPureBufferSemantics())
     return failure();
   if (!getInitOutBuffer())
@@ -388,7 +388,7 @@ FailureOr<SmallVector<Value>> ND2NZOp::decomposeOperation(OpBuilder &b) {
       return emitOpError("hivm.slice_load annotation.mark has no subview "
                          "value — expected the page-load subview as a value");
     vbrcTarget = markOp.getValues().front();
-    markOp->erase();
+    b.eraseOp(markOp);
   }
 
   if (getInitCondition()) {
@@ -754,7 +754,7 @@ private:
 };
 } // namespace
 
-FailureOr<SmallVector<Value>> VPadOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VPadOp::decomposeOperation(PatternRewriter &b) {
   return VPadOpDecomposer::run(*this, b);
 }
 
@@ -835,7 +835,7 @@ FailureOr<SmallVector<Value>> decomposeMultiAxesVReduceOp(hivm::VReduceOp op,
 }
 } // namespace mlir::hivm
 
-FailureOr<SmallVector<Value>> VReduceOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> VReduceOp::decomposeOperation(PatternRewriter &b) {
   const int reduceDimSize = static_cast<int>(getReduceDims().size());
   if (reduceDimSize < 2) {
     return failure();

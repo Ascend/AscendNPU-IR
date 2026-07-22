@@ -110,6 +110,11 @@ FailureOr<memref::AllocOp> getMemRefForOpResult(OpResult result) {
         return failure();
       });
 }
+
+bool isTilingBoundFor(scf::ForOp op) {
+  return isSubBlockBindedFor(op) ||
+         op->hasAttrOfType<UnitAttr>(kSimtVFTileLoopAttrName);
+}
 } // namespace
 
 LogicalResult inferAndPropagateMemScopeForPointerCast(hivm::PointerCastOp op) {
@@ -580,6 +585,17 @@ bool isSubBlockBindedFor(scf::ForOp op) {
     return false;
 
   return true;
+}
+
+FailureOr<scf::ForOp> findContainingTilingLoop(Operation *op) {
+  auto parentOp = op->getParentOfType<scf::ForOp>();
+  if (!parentOp)
+    return failure();
+  // Shared tiling helpers are used by both sub-block tiling and SIMT
+  // sub-tiling, so walk upward until either kind of loop is found.
+  if (isTilingBoundFor(parentOp))
+    return parentOp;
+  return findContainingTilingLoop(parentOp);
 }
 
 FailureOr<scf::ForOp> findContainingSubblockLoop(Operation *op) {

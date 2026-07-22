@@ -29,7 +29,7 @@ def BiShengIRAggregatedOpInterface : OpInterface<"BiShengIRAggregatedOpInterface
       /*retType=*/"mlir::FailureOr<llvm::SmallVector<mlir::Value>>",
       /*methodName=*/"decomposeOperation",
       /*args=*/(ins
-          "mlir::OpBuilder &":$b),
+          "mlir::PatternRewriter &":$b),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
         return {};

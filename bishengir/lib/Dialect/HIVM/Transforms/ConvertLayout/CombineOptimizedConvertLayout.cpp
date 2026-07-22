@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
@@ -86,6 +87,90 @@ ND2NZOp createND2NZFromLoad(PatternRewriter &rewriter, Location loc,
       loadOp.getInitCondition());
 }
 
+/// ND → Fractal matrix layout conversion can fuse into `hivm.hir.nd2nz`.
+bool isMatrixND2NZConversion(ConvertLayoutOp op) {
+  return op.getSrcLayout().getDataLayout() == DataLayout::ND &&
+         op.getDstLayout().getDataLayout() == DataLayout::Fractal;
+}
+
+/// Non-transposed scale conversions that can fuse into `hivm.hir.load_scale`
+/// (`is_transposed = false`): SCALEA_ND→SCALEA_zZ and SCALEB_DN→SCALEB_nN.
+/// Transposed scale loading (ND→nN / DN→zZ) is not supported.
+bool isScaleLoadMXConversion(ConvertLayoutOp op) {
+  auto src = op.getSrcLayout().getDataLayout();
+  auto dst = op.getDstLayout().getDataLayout();
+  return (src == DataLayout::SCALEA_ND && dst == DataLayout::SCALEA_zZ) ||
+         (src == DataLayout::SCALEB_DN && dst == DataLayout::SCALEB_nN);
+}
+
+/// load_scale wraps two i8 scales as one half, so the GM source must have a
+/// statically contiguous last dim whose size is divisible by 2.
+LogicalResult verifyLoadMXScaleSource(Value src, PatternRewriter &rewriter,
+                                      Operation *op) {
+  auto shapedTy = dyn_cast<ShapedType>(src.getType());
+  if (!shapedTy || shapedTy.getRank() < 1)
+    return rewriter.notifyMatchFailure(op, "load_scale source is not shaped");
+
+  int64_t lastDim = shapedTy.getDimSize(shapedTy.getRank() - 1);
+  if (ShapedType::isDynamic(lastDim) || lastDim % 2 != 0)
+    return rewriter.notifyMatchFailure(
+        op, "load_scale requires a static last dim divisible by 2");
+
+  // Ranked tensors have no strided layout; only memrefs need a unit-stride check.
+  if (isa<RankedTensorType>(src.getType()))
+    return success();
+
+  auto memrefTy = cast<MemRefType>(src.getType());
+  int64_t offset;
+  SmallVector<int64_t> strides;
+  if (failed(getStridesAndOffset(memrefTy, strides, offset)))
+    return rewriter.notifyMatchFailure(
+        op, "cannot determine strides for load_scale source");
+  if (ShapedType::isDynamic(strides.back()) || strides.back() != 1)
+    return rewriter.notifyMatchFailure(
+        op, "load_scale requires a contiguous last dim (unit stride)");
+  return success();
+}
+
+/// Create fused memref DMA for a matched load+convert_layout rewrite.
+using CreateFusedMemrefDmaFn =
+    llvm::function_ref<void(PatternRewriter &, Location, LoadOp, Value /*src*/,
+                            Value /*dst*/)>;
+
+/// Create fused tensor DMA; returns the fused op result.
+using CreateFusedTensorDmaFn = llvm::function_ref<Value(
+    PatternRewriter &, Location, LoadOp, Value /*empty*/,
+    RankedTensorType /*resultTy*/)>;
+
+void createND2NZMemrefDma(PatternRewriter &rewriter, Location loc,
+                          LoadOp loadOp, Value src, Value dst) {
+  createND2NZFromLoad(rewriter, loc, loadOp, src, dst, TypeRange());
+}
+
+Value createND2NZTensorDma(PatternRewriter &rewriter, Location loc,
+                           LoadOp loadOp, Value empty,
+                           RankedTensorType resultTy) {
+  return createND2NZFromLoad(rewriter, loc, loadOp, loadOp.getSrc(), empty,
+                             TypeRange(resultTy))
+      .getResult(0);
+}
+
+void createLoadMXScaleMemrefDma(PatternRewriter &rewriter, Location loc,
+                                LoadOp /*loadOp*/, Value src, Value dst) {
+  // Supported scale fusions are always non-transposed.
+  rewriter.create<LoadMXScaleOp>(loc, TypeRange(), src, dst,
+                                 /*isTransposed=*/false);
+}
+
+Value createLoadMXScaleTensorDma(PatternRewriter &rewriter, Location loc,
+                                 LoadOp loadOp, Value empty,
+                                 RankedTensorType resultTy) {
+  return rewriter
+      .create<LoadMXScaleOp>(loc, TypeRange(resultTy), loadOp.getSrc(), empty,
+                             /*isTransposed=*/false)
+      .getResult(0);
+}
+
 LogicalResult verifyLoadDominatesConvertLayout(LoadOp loadOp,
                                                ConvertLayoutOp op,
                                                PatternRewriter &rewriter) {
@@ -97,6 +182,230 @@ LogicalResult verifyLoadDominatesConvertLayout(LoadOp loadOp,
     return rewriter.notifyMatchFailure(
         op, "load op does not dominate convert_layout");
 
+  return success();
+}
+
+struct DirectLoadConvertMatch {
+  bufferization::ToTensorOp toTensorOp;
+  LoadOp loadOp;
+  ConvertLayoutProducerUseInfo useInfo;
+};
+
+/// Match convert_layout <- to_tensor(%alloc) where %alloc has a single LoadOp
+/// destination user (the common Triton GM load path).
+FailureOr<DirectLoadConvertMatch>
+matchDirectLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter) {
+  auto toTensorOp =
+      op.getSource().getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensorOp)
+    return rewriter.notifyMatchFailure(
+        op, "source is not from a to_tensor operation");
+
+  Value toTensorMemref = toTensorOp.getMemref();
+  int32_t userCount = 0;
+  LoadOp loadOp = nullptr;
+  for (Operation *user : toTensorMemref.getUsers()) {
+    if (user == toTensorOp)
+      continue;
+    userCount++;
+    if (isa<LoadOp>(user)) {
+      loadOp = cast<LoadOp>(user);
+      continue;
+    }
+    return rewriter.notifyMatchFailure(
+        user, "Unwanted user of convert_layout to_tensor memref");
+  }
+  if (userCount > 1 || !loadOp)
+    return rewriter.notifyMatchFailure(
+        toTensorMemref.getDefiningOp(),
+        "More than one user of to_tensor memref");
+
+  if (failed(verifyLoadDominatesConvertLayout(loadOp, op, rewriter)))
+    return failure();
+
+  return DirectLoadConvertMatch{
+      toTensorOp, loadOp,
+      getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op)};
+}
+
+/// Rewrite a matched direct-load convert_layout into fused DMA + to_tensor.
+LogicalResult
+rewriteDirectLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
+                               DirectLoadConvertMatch match,
+                               CreateFusedMemrefDmaFn createFusedDma) {
+  auto resultTensorType = cast<RankedTensorType>(op.getType());
+  auto memrefDestType = MemRefType::get(resultTensorType.getShape(),
+                                        resultTensorType.getElementType());
+  rewriter.setInsertionPointAfter(match.loadOp);
+  auto allocOp = rewriter.create<memref::AllocOp>(op.getLoc(), memrefDestType);
+  createFusedDma(rewriter, op.getLoc(), match.loadOp, match.loadOp.getSource(),
+                 allocOp.getResult());
+
+  auto newToTensorOp =
+      rewriter.create<bufferization::ToTensorOp>(op.getLoc(), allocOp);
+  newToTensorOp->setAttrs(match.toTensorOp->getAttrs());
+  rewriter.replaceOp(op, newToTensorOp.getResult());
+
+  if (match.useInfo.canEraseProducerChain) {
+    repointAnnotationMarks(rewriter, match.useInfo.annotationUsers,
+                           match.toTensorOp.getResult(),
+                           newToTensorOp.getResult());
+    Value oldMemref = match.toTensorOp.getMemref();
+    auto oldAllocOp = oldMemref.getDefiningOp<memref::AllocOp>();
+    rewriter.eraseOp(match.loadOp);
+    rewriter.eraseOp(match.toTensorOp);
+    if (oldAllocOp && oldAllocOp->use_empty())
+      rewriter.eraseOp(oldAllocOp);
+  }
+  return success();
+}
+
+struct SubviewLoadConvertMatch {
+  bufferization::ToTensorOp toTensorOp;
+  memref::AllocOp origAllocOp;
+  memref::SubViewOp subviewOut;
+  LoadOp loadOp;
+  ConvertLayoutProducerUseInfo useInfo;
+};
+
+FailureOr<SubviewLoadConvertMatch>
+matchSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter) {
+  auto toTensorOp =
+      op.getSource().getDefiningOp<bufferization::ToTensorOp>();
+  if (!toTensorOp)
+    return rewriter.notifyMatchFailure(
+        op, "source is not from a to_tensor operation");
+
+  ConvertLayoutProducerUseInfo useInfo =
+      getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
+
+  Value allocMemref = toTensorOp.getMemref();
+  auto origAllocOp = allocMemref.getDefiningOp<memref::AllocOp>();
+  if (!origAllocOp)
+    return rewriter.notifyMatchFailure(
+        op, "to_tensor source is not a memref.alloc");
+
+  memref::SubViewOp subviewOut = nullptr;
+  for (Operation *user : allocMemref.getUsers()) {
+    if (user == toTensorOp)
+      continue;
+    if (auto sv = dyn_cast<memref::SubViewOp>(user)) {
+      if (subviewOut)
+        return rewriter.notifyMatchFailure(
+            user, "multiple subview users of alloc not yet supported");
+      subviewOut = sv;
+      continue;
+    }
+    return rewriter.notifyMatchFailure(
+        user, "unexpected non-subview user of alloc");
+  }
+  if (!subviewOut)
+    return rewriter.notifyMatchFailure(op, "no subview user found on alloc");
+
+  LoadOp loadOp = nullptr;
+  for (Operation *user : subviewOut.getResult().getUsers()) {
+    if (auto load = dyn_cast<LoadOp>(user)) {
+      if (loadOp)
+        return rewriter.notifyMatchFailure(
+            user, "multiple LoadOp users of subview_out not supported");
+      loadOp = load;
+      continue;
+    }
+    return rewriter.notifyMatchFailure(
+        user, "unexpected non-LoadOp user of subview_out");
+  }
+  if (!loadOp)
+    return rewriter.notifyMatchFailure(
+        op, "no LoadOp found using subview_out as destination");
+  if (failed(verifyLoadDominatesConvertLayout(loadOp, op, rewriter)))
+    return failure();
+
+  return SubviewLoadConvertMatch{toTensorOp, origAllocOp, subviewOut, loadOp,
+                                 useInfo};
+}
+
+LogicalResult
+rewriteSubviewLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
+                                SubviewLoadConvertMatch match,
+                                CreateFusedMemrefDmaFn createFusedDma) {
+  auto srcLayout = op.getSrcLayout();
+  auto dstLayout = op.getDstLayout();
+  auto resultTensorType = cast<RankedTensorType>(op.getType());
+  auto fractalAllocType = MemRefType::get(resultTensorType.getShape(),
+                                          resultTensorType.getElementType());
+
+  auto ndOffsets = match.subviewOut.getMixedOffsets();
+  auto ndSizes = match.subviewOut.getMixedSizes();
+  rewriter.setInsertionPointAfter(match.loadOp);
+
+  auto fractalSizesOrFailure = computeMixedTargetLayoutShape(
+      ndSizes, srcLayout, dstLayout, rewriter, op.getLoc());
+  if (failed(fractalSizesOrFailure))
+    return rewriter.notifyMatchFailure(
+        op, "failed to compute fractal subview sizes");
+
+  auto fractalOffsetsOrFailure = computeTargetLayoutOffset(
+      ndOffsets, srcLayout, dstLayout, rewriter, op.getLoc());
+  if (failed(fractalOffsetsOrFailure))
+    return rewriter.notifyMatchFailure(
+        op, "failed to compute fractal subview offsets");
+
+  SmallVector<OpFoldResult> fractalStrides(resultTensorType.getRank(),
+                                           rewriter.getIndexAttr(1));
+  auto newAllocOp = rewriter.create<memref::AllocOp>(
+      match.origAllocOp.getLoc(), fractalAllocType);
+  auto newSubviewOut = rewriter.create<memref::SubViewOp>(
+      match.subviewOut.getLoc(), newAllocOp.getResult(),
+      *fractalOffsetsOrFailure, *fractalSizesOrFailure, fractalStrides);
+
+  createFusedDma(rewriter, op.getLoc(), match.loadOp, match.loadOp.getSource(),
+                 newSubviewOut.getResult());
+
+  auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
+      match.toTensorOp.getLoc(), newAllocOp);
+  newToTensorOp->setAttrs(match.toTensorOp->getAttrs());
+  rewriter.replaceOp(op, newToTensorOp.getResult());
+
+  if (match.useInfo.canEraseProducerChain) {
+    repointAnnotationMarks(rewriter, match.useInfo.annotationUsers,
+                           match.toTensorOp.getResult(),
+                           newToTensorOp.getResult());
+    rewriter.eraseOp(match.loadOp);
+    rewriter.eraseOp(match.subviewOut);
+    rewriter.eraseOp(match.toTensorOp);
+    if (match.origAllocOp->use_empty())
+      rewriter.eraseOp(match.origAllocOp);
+  }
+  return success();
+}
+
+/// Shared rewrite for pure-tensor LoadOp + convert_layout → fused DMA.
+LogicalResult
+rewriteTensorLoadConvertLayout(ConvertLayoutOp op, PatternRewriter &rewriter,
+                               CreateFusedTensorDmaFn createFusedDma) {
+  auto loadOp = op.getSource().getDefiningOp<LoadOp>();
+  if (!loadOp)
+    return rewriter.notifyMatchFailure(op, "source is not a LoadOp");
+  if (!loadOp.hasPureTensorSemantics())
+    return rewriter.notifyMatchFailure(op, "load is not tensor-based");
+
+  ConvertLayoutProducerUseInfo useInfo =
+      getConvertLayoutProducerUseInfo(loadOp.getResult(0), op);
+  auto resultTensorType = cast<RankedTensorType>(op.getType());
+  rewriter.setInsertionPointAfter(loadOp);
+  auto emptyOp =
+      rewriter.create<tensor::EmptyOp>(op.getLoc(), op.getMixedOutputShape(),
+                                       resultTensorType.getElementType());
+
+  Value fusedResult = createFusedDma(rewriter, op.getLoc(), loadOp,
+                                     emptyOp.getResult(), resultTensorType);
+
+  rewriter.replaceOp(op, fusedResult);
+  if (useInfo.canEraseProducerChain) {
+    repointAnnotationMarks(rewriter, useInfo.annotationUsers,
+                           loadOp.getResult(0), fusedResult);
+    rewriter.eraseOp(loadOp);
+  }
   return success();
 }
 
@@ -151,94 +460,38 @@ LogicalResult verifyLoadDominatesConvertLayout(LoadOp loadOp,
 // movement and layout conversion in a single fused operation.
 //===----------------------------------------------------------------------===//
 
-struct FoldToTensorConvertLayoutPattern
+struct FoldDirectLoadToND2NZPattern
     : public OpRewritePattern<ConvertLayoutOp> {
-  FoldToTensorConvertLayoutPattern(MLIRContext *context)
-      : OpRewritePattern(context) {}
+  using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
-    // Get the source tensor of the convert_layout
-    Value convertSrc = op.getSource();
-
-    // Check if source comes from a to_tensor operation
-    auto toTensorOp = convertSrc.getDefiningOp<bufferization::ToTensorOp>();
-
-    if (!toTensorOp)
-      return rewriter.notifyMatchFailure(
-          op, "source is not from a to_tensor operation");
-
-    auto toTensorMemref = toTensorOp.getMemref();
-    int32_t userCount = 0;
-    LoadOp loadOp = nullptr;
-    for (auto user : toTensorMemref.getUsers()) {
-      if (user == toTensorOp)
-        continue;
-      userCount++;
-      if (isa<LoadOp>(user)) {
-        loadOp = cast<LoadOp>(user);
-        continue;
-      }
-      return rewriter.notifyMatchFailure(
-          user, "Unwanted user of cbuf convert layout");
-    }
-
-    if (userCount > 1 || loadOp == nullptr) {
-      LDBG(toTensorMemref);
-      return rewriter.notifyMatchFailure(
-          toTensorMemref.getDefiningOp(),
-          "More than one user of to tensor memref");
-    }
-
-    // Verify this is ND -> fractal conversion
-    auto srcLayout = op.getSrcLayout();
-
-    if (srcLayout.getDataLayout() != DataLayout::ND)
-      return rewriter.notifyMatchFailure(op, "source layout is not ND");
-
-    // Multi-use to_tensor is allowed: fold only this convert_layout and keep
-    // original ND path for other users.
-    // Only erase original ND producer chain if no other users besides this
-    // convert_layout and annotation.mark ops.
-    ConvertLayoutProducerUseInfo useInfo =
-        getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
-
-    if (failed(verifyLoadDominatesConvertLayout(loadOp, op, rewriter)))
+    if (!isMatrixND2NZConversion(op))
+      return rewriter.notifyMatchFailure(op, "not an ND→Fractal conversion");
+    auto match = matchDirectLoadConvertLayout(op, rewriter);
+    if (failed(match))
       return failure();
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
+                                          createND2NZMemrefDma);
+  }
+};
 
-    rewriter.setInsertionPointAfter(loadOp);
-    // Get the result tensor type (fractal shape)
-    auto resultTensorType = cast<RankedTensorType>(op.getType());
-    auto memrefDestType = MemRefType::get(resultTensorType.getShape(),
-                                          resultTensorType.getElementType());
-    auto allocOp =
-        rewriter.create<memref::AllocOp>(op.getLoc(), memrefDestType);
+struct FoldDirectLoadToLoadMXScalePattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
 
-    // Create ND2NZ op: fuses load + layout conversion
-    createND2NZFromLoad(rewriter, op.getLoc(), loadOp, loadOp.getSource(),
-                        allocOp.getResult(), TypeRange());
-
-    auto newToTensorOp =
-        rewriter.create<bufferization::ToTensorOp>(op.getLoc(), allocOp);
-    newToTensorOp->setAttrs(toTensorOp->getAttrs());
-
-    // Replace only this convert_layout.
-    rewriter.replaceOp(op, newToTensorOp.getResult());
-
-    // Single-use or annotation-only case: old ND chain is now dead, erase it.
-    // Re-point any annotation.mark ops to the new fractal tensor first.
-    // Multi-use case: keep load/to_tensor/memref alloc for other users.
-    if (useInfo.canEraseProducerChain) {
-      repointAnnotationMarks(rewriter, useInfo.annotationUsers,
-                             toTensorOp.getResult(), newToTensorOp.getResult());
-      auto oldAllocOp = toTensorMemref.getDefiningOp<memref::AllocOp>();
-      rewriter.eraseOp(loadOp);
-      rewriter.eraseOp(toTensorOp);
-      if (oldAllocOp && oldAllocOp->use_empty())
-        rewriter.eraseOp(oldAllocOp);
-    }
-
-    return success();
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isScaleLoadMXConversion(op))
+      return rewriter.notifyMatchFailure(
+          op, "not a SCALEA_ND→SCALEA_zZ / SCALEB_DN→SCALEB_nN conversion");
+    auto match = matchDirectLoadConvertLayout(op, rewriter);
+    if (failed(match))
+      return failure();
+    if (failed(verifyLoadMXScaleSource(match->loadOp.getSource(), rewriter, op)))
+      return failure();
+    return rewriteDirectLoadConvertLayout(op, rewriter, *match,
+                                          createLoadMXScaleMemrefDma);
   }
 };
 
@@ -309,200 +562,73 @@ struct FoldToTensorConvertLayoutPattern
 // The fractal offsets/sizes shown above assume nZ layout; for zN, the
 // dimension ordering differs (see FractalLayoutType enum).
 //===----------------------------------------------------------------------===//
-struct FoldToTensorConvertLayoutSubviewPattern
+struct FoldSubviewLoadToND2NZPattern
     : public OpRewritePattern<ConvertLayoutOp> {
-  FoldToTensorConvertLayoutSubviewPattern(MLIRContext *context)
-      : OpRewritePattern(context) {}
+  using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
-    Value convertSrc = op.getSource();
-    auto toTensorOp = convertSrc.getDefiningOp<bufferization::ToTensorOp>();
-    if (!toTensorOp)
-      return rewriter.notifyMatchFailure(
-          op, "source is not from a to_tensor operation");
-
-    // Multi-use to_tensor is allowed: fold only this convert_layout and keep
-    // original ND path for other users.
-    // Only erase original ND producer chain if no other users besides this
-    // convert_layout and annotation.mark ops.
-    ConvertLayoutProducerUseInfo useInfo =
-        getConvertLayoutProducerUseInfo(toTensorOp.getResult(), op);
-
-    Value allocMemref = toTensorOp.getMemref();
-    auto origAllocOp = allocMemref.getDefiningOp<memref::AllocOp>();
-    if (!origAllocOp)
-      return rewriter.notifyMatchFailure(
-          op, "to_tensor source is not a memref.alloc");
-
-    memref::SubViewOp subviewOut = nullptr;
-    for (auto user : allocMemref.getUsers()) {
-      if (user == toTensorOp)
-        continue;
-      if (auto sv = dyn_cast<memref::SubViewOp>(user)) {
-        if (subviewOut)
-          return rewriter.notifyMatchFailure(
-              user, "multiple subview users of alloc not yet supported");
-        subviewOut = sv;
-        continue;
-      }
-      return rewriter.notifyMatchFailure(
-          user, "unexpected non-subview user of alloc (use Pattern 1 for "
-                "direct LoadOp)");
-    }
-
-    if (!subviewOut)
-      return rewriter.notifyMatchFailure(op, "no subview user found on alloc");
-
-    LoadOp loadOp = nullptr;
-    for (auto user : subviewOut.getResult().getUsers()) {
-      if (auto load = dyn_cast<LoadOp>(user)) {
-        if (loadOp)
-          return rewriter.notifyMatchFailure(
-              user, "multiple LoadOp users of subview_out not supported");
-        loadOp = load;
-        continue;
-      }
-      return rewriter.notifyMatchFailure(
-          user, "unexpected non-LoadOp user of subview_out");
-    }
-
-    if (!loadOp)
-      return rewriter.notifyMatchFailure(
-          op, "no LoadOp found using subview_out as destination");
-
-    if (failed(verifyLoadDominatesConvertLayout(loadOp, op, rewriter)))
+    if (!isMatrixND2NZConversion(op))
+      return rewriter.notifyMatchFailure(op, "not an ND→Fractal conversion");
+    auto match = matchSubviewLoadConvertLayout(op, rewriter);
+    if (failed(match))
       return failure();
+    return rewriteSubviewLoadConvertLayout(op, rewriter, *match,
+                                           createND2NZMemrefDma);
+  }
+};
 
-    auto srcLayout = op.getSrcLayout();
-    auto dstLayout = op.getDstLayout();
+struct FoldSubviewLoadToLoadMXScalePattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
 
-    if (srcLayout.getDataLayout() != DataLayout::ND)
-      return rewriter.notifyMatchFailure(op, "source layout is not ND");
-
-    auto blockSizesOrFailure = dstLayout.getFractalBlockSizes();
-    if (failed(blockSizesOrFailure))
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isScaleLoadMXConversion(op))
       return rewriter.notifyMatchFailure(
-          op, "failed to extract block sizes from destination layout");
-
-    // Derive from convert_layout result type (guaranteed to match).
-    auto resultTensorType = cast<RankedTensorType>(op.getType());
-    auto fractalAllocType = MemRefType::get(resultTensorType.getShape(),
-                                            resultTensorType.getElementType());
-
-    auto ndOffsets = subviewOut.getMixedOffsets();
-    auto ndSizes = subviewOut.getMixedSizes();
-    rewriter.setInsertionPointAfter(loadOp);
-
-    auto fractalSizesOrFailure = computeMixedNDToFractalShape(
-        ndSizes, srcLayout, dstLayout, rewriter, op.getLoc());
-    if (failed(fractalSizesOrFailure))
-      return rewriter.notifyMatchFailure(
-          op, "failed to compute fractal subview sizes");
-
-    auto fractalOffsetsOrFailure = computeTargetLayoutOffset(
-        ndOffsets, srcLayout, dstLayout, rewriter, op.getLoc());
-    if (failed(fractalOffsetsOrFailure))
-      return rewriter.notifyMatchFailure(
-          op, "failed to compute fractal subview offsets");
-
-    SmallVector<OpFoldResult> fractalStrides(resultTensorType.getRank(),
-                                             rewriter.getIndexAttr(1));
-
-    auto newAllocOp = rewriter.create<memref::AllocOp>(origAllocOp.getLoc(),
-                                                       fractalAllocType);
-    auto newSubviewOut = rewriter.create<memref::SubViewOp>(
-        subviewOut.getLoc(), newAllocOp.getResult(), *fractalOffsetsOrFailure,
-        *fractalSizesOrFailure, fractalStrides);
-
-    //     Source (ins) is subview_in — unchanged, still in ND layout.
-    //     Dest (outs) is the new fractal subview of the fractal alloc.
-    Value loadSrc = loadOp.getSource(); // subview_in (ND layout, unchanged)
-    createND2NZFromLoad(rewriter, op.getLoc(), loadOp, loadSrc,
-                        newSubviewOut.getResult(), TypeRange());
-
-    auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
-        toTensorOp.getLoc(), newAllocOp);
-    newToTensorOp->setAttrs(toTensorOp->getAttrs());
-
-    // Replace only this convert_layout.
-    rewriter.replaceOp(op, newToTensorOp.getResult());
-
-    // Single-use or annotation-only case: old ND chain is dead and can be
-    // erased. Re-point any annotation.mark ops to the new fractal tensor first.
-    // Multi-use case: preserve old chain for remaining users.
-    if (useInfo.canEraseProducerChain) {
-      repointAnnotationMarks(rewriter, useInfo.annotationUsers,
-                             toTensorOp.getResult(), newToTensorOp.getResult());
-      rewriter.eraseOp(loadOp);     // user of subview_out
-      rewriter.eraseOp(subviewOut); // user of origAllocOp
-      rewriter.eraseOp(toTensorOp); // user of origAllocOp
-      if (origAllocOp->use_empty())
-        rewriter.eraseOp(origAllocOp);
-    }
-
-    return success();
+          op, "not a SCALEA_ND→SCALEA_zZ / SCALEB_DN→SCALEB_nN conversion");
+    auto match = matchSubviewLoadConvertLayout(op, rewriter);
+    if (failed(match))
+      return failure();
+    if (failed(verifyLoadMXScaleSource(match->loadOp.getSource(), rewriter, op)))
+      return failure();
+    return rewriteSubviewLoadConvertLayout(op, rewriter, *match,
+                                           createLoadMXScaleMemrefDma);
   }
 };
 
 //===----------------------------------------------------------------------===//
-// Fold Tensor Load + ConvertLayout into ND2NZ
-//
-// Fuses tensor loads, under the assumption that hivm.hir.load was loaded
-// manually from global memory. (hivm.hir.store)
-//
-// Matches:
-//   %load = hivm.hir.load ins(%src : tensor<MxN>) outs(%init : tensor<MxN>)
-//             -> tensor<MxN>
-//   %conv = hivm.hir.convert_layout %load {ND -> Fractal}
-//
-// Transforms to:
-//   %empty = tensor.empty() : tensor<fractal_shape>
-//   %result = hivm.hir.nd2nz {dst_continuous} ins(%src) outs(%empty)
-//             -> tensor<fractal_shape>
+// Fold Tensor Load + ConvertLayout into ND2NZ / LoadMXScale
 //===----------------------------------------------------------------------===//
 
-struct FoldTensorLoadConvertLayoutPattern
+struct FoldTensorLoadToND2NZPattern
     : public OpRewritePattern<ConvertLayoutOp> {
-  FoldTensorLoadConvertLayoutPattern(MLIRContext *context)
-      : OpRewritePattern(context) {}
+  using OpRewritePattern::OpRewritePattern;
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
+    if (!isMatrixND2NZConversion(op))
+      return rewriter.notifyMatchFailure(op, "not an ND→Fractal conversion");
+    return rewriteTensorLoadConvertLayout(op, rewriter, createND2NZTensorDma);
+  }
+};
+
+struct FoldTensorLoadToLoadMXScalePattern
+    : public OpRewritePattern<ConvertLayoutOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(ConvertLayoutOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!isScaleLoadMXConversion(op))
+      return rewriter.notifyMatchFailure(
+          op, "not a SCALEA_ND→SCALEA_zZ / SCALEB_DN→SCALEB_nN conversion");
     auto loadOp = op.getSource().getDefiningOp<LoadOp>();
     if (!loadOp)
       return rewriter.notifyMatchFailure(op, "source is not a LoadOp");
-
-    if (!loadOp.hasPureTensorSemantics())
-      return rewriter.notifyMatchFailure(op, "load is not tensor-based");
-
-    if (op.getSrcLayout().getDataLayout() != DataLayout::ND)
-      return rewriter.notifyMatchFailure(op, "source layout is not ND");
-
-    if (op.getDstLayout().getDataLayout() != DataLayout::Fractal)
-      return rewriter.notifyMatchFailure(op,
-                                         "destination layout is not Fractal");
-
-    ConvertLayoutProducerUseInfo useInfo =
-        getConvertLayoutProducerUseInfo(loadOp.getResult(0), op);
-
-    auto resultTensorType = cast<RankedTensorType>(op.getType());
-    rewriter.setInsertionPointAfter(loadOp);
-    auto emptyOp =
-        rewriter.create<tensor::EmptyOp>(op.getLoc(), op.getMixedOutputShape(),
-                                         resultTensorType.getElementType());
-    ND2NZOp nd2nzOp =
-        createND2NZFromLoad(rewriter, op.getLoc(), loadOp, loadOp.getSrc(),
-                            emptyOp.getResult(), TypeRange(resultTensorType));
-
-    rewriter.replaceOp(op, nd2nzOp.getResult(0));
-    if (useInfo.canEraseProducerChain) {
-      repointAnnotationMarks(rewriter, useInfo.annotationUsers,
-                             loadOp.getResult(0), nd2nzOp.getResult(0));
-      rewriter.eraseOp(loadOp);
-    }
-
-    return success();
+    if (failed(verifyLoadMXScaleSource(loadOp.getSrc(), rewriter, op)))
+      return failure();
+    return rewriteTensorLoadConvertLayout(op, rewriter,
+                                          createLoadMXScaleTensorDma);
   }
 };
 
@@ -753,12 +879,15 @@ struct FoldFixpipeConvertLayoutPattern
 void populateCombineOptimizedConvertLayoutPatterns(RewritePatternSet &patterns,
                                                    MLIRContext *context) {
   ConvertLayoutOp::getCanonicalizationPatterns(patterns, context);
-  patterns.add<FoldToTensorConvertLayoutPattern>(context);
-  patterns.add<FoldToTensorConvertLayoutSubviewPattern>(context);
-  patterns.add<FoldFixpipeConvertLayoutPattern>(context);
-  patterns.add<FoldConvertLayoutFixpipePattern>(context);
-  patterns.add<FoldConvertLayoutExtractSliceFixpipePattern>(context);
-  patterns.add<FoldTensorLoadConvertLayoutPattern>(context);
+  patterns.add<FoldDirectLoadToND2NZPattern,
+               FoldDirectLoadToLoadMXScalePattern,
+               FoldSubviewLoadToND2NZPattern,
+               FoldSubviewLoadToLoadMXScalePattern,
+               FoldTensorLoadToND2NZPattern,
+               FoldTensorLoadToLoadMXScalePattern,
+               FoldFixpipeConvertLayoutPattern,
+               FoldConvertLayoutFixpipePattern,
+               FoldConvertLayoutExtractSliceFixpipePattern>(context);
 }
 
 //===----------------------------------------------------------------------===//

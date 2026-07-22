@@ -20,6 +20,9 @@ struct FractalOperandLayouts {
   Attribute c;
   // Null attribute indicates the op does not have per-channel bias.
   Attribute bias;
+  // Null attribute indicates the op does not have MX scale operands.
+  Attribute scaleA;
+  Attribute scaleB;
 };
 } // namespace hivm
 } // namespace mlir

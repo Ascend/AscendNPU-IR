@@ -90,12 +90,15 @@ LayoutConversionInfo extractConversionInfo(ConvertLayoutOp op) {
                               hasBatch, op.getLoc()};
 }
 
-const SmallVector<int64_t> kFractalLayoutPermutation = {2, 0, 1, 3};
+/// Matrix Fractal (nZ/zN): expand [Mt,f0,Nt,f1] then permute to [Nt,Mt,f0,f1].
+const SmallVector<int64_t> kMatrixNZLayoutPermutation = {2, 0, 1, 3};
+/// Scale Fractal (zZ/nN): expand [Mt,f0,Kt,f1] then permute to [Mt,Kt,f0,f1].
+const SmallVector<int64_t> kScaleZZLayoutPermutation = {0, 2, 1, 3};
 const SmallVector<int64_t> kStaged3DPermutation = {1, 0, 2};
 
 /// Align `size` up to multiple of `tile`: ceilDiv(size, tile) * tile
-static OpFoldResult alignUpOFR(PatternRewriter &rewriter, Location loc,
-                               OpFoldResult size, int64_t tile) {
+OpFoldResult alignUpOFR(PatternRewriter &rewriter, Location loc,
+                        OpFoldResult size, int64_t tile) {
   MLIRContext *ctx = rewriter.getContext();
   AffineExpr d0 = getAffineDimExpr(0, ctx);
   auto map = AffineMap::get(
@@ -104,25 +107,45 @@ static OpFoldResult alignUpOFR(PatternRewriter &rewriter, Location loc,
   return affine::makeComposedFoldedAffineApply(rewriter, loc, map, {size});
 }
 
-static SmallVector<OpFoldResult> getZeroOffsets(PatternRewriter &rewriter,
-                                                int64_t rank) {
+SmallVector<OpFoldResult> getZeroOffsets(PatternRewriter &rewriter,
+                                         int64_t rank) {
   SmallVector<OpFoldResult> v(rank, rewriter.getIndexAttr(0));
   return v;
 }
 
-static SmallVector<OpFoldResult> getUnitStrides(PatternRewriter &rewriter,
-                                                int64_t rank) {
+SmallVector<OpFoldResult> getUnitStrides(PatternRewriter &rewriter,
+                                         int64_t rank) {
   SmallVector<OpFoldResult> v(rank, rewriter.getIndexAttr(1));
   return v;
 }
 
-struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
-  using OpRewritePattern::OpRewritePattern;
-  // If more rewrite options are added, replace this bool with a dedicated
-  // options struct and thread it through pattern construction.
-  explicit CanonicalToFractalDecompose(MLIRContext *context,
-                                       bool use3dTranspose)
-      : OpRewritePattern<ConvertLayoutOp>(context),
+bool isMatrixNDToFractal(ConvertLayoutOp op) {
+  return checkFractalLayout(op, hivm::DataLayout::ND, hivm::DataLayout::Fractal);
+}
+
+bool isScaleNDToFractal(ConvertLayoutOp op) {
+  auto srcLayout = op.getSrcLayoutAttr();
+  auto dstLayout = op.getDstLayoutAttr();
+  if (!srcLayout || !dstLayout)
+    return false;
+  auto srcDL = srcLayout.getDataLayout();
+  auto dstDL = dstLayout.getDataLayout();
+  return (srcDL == hivm::DataLayout::SCALEA_ND &&
+          dstDL == hivm::DataLayout::SCALEA_zZ) ||
+         (srcDL == hivm::DataLayout::SCALEB_DN &&
+          dstDL == hivm::DataLayout::SCALEB_nN);
+}
+
+/// Shared ND → fractal decompose for matrix Fractal and scale zZ/nN layouts.
+/// The expand+vtranspose body is identical; only the layout matcher and the
+/// 4D permutation differ.
+struct NDToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
+  using LayoutMatcher = bool (*)(ConvertLayoutOp);
+
+  NDToFractalDecompose(MLIRContext *context, LayoutMatcher matcher,
+                       ArrayRef<int64_t> permutation, bool use3dTranspose)
+      : OpRewritePattern<ConvertLayoutOp>(context), matcher(matcher),
+        layoutPermutation(permutation.begin(), permutation.end()),
         use3dTranspose(use3dTranspose) {}
 
   LogicalResult
@@ -130,8 +153,7 @@ struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
                          Value source,
                          ArrayRef<OpFoldResult> resultShape) const {
     auto reassociation = buildReassociation();
-    auto inversedPermutation =
-        utils::inversePermutation(kFractalLayoutPermutation);
+    auto inversedPermutation = utils::inversePermutation(layoutPermutation);
     auto mixedExpandedShape =
         applyShapePermutation(resultShape, inversedPermutation);
 
@@ -147,7 +169,7 @@ struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
 
     auto transposeOp = rewriter.create<hivm::VTransposeOp>(
         op.getLoc(), TypeRange(emptyTensor.getType()), expandOp.getResult(),
-        emptyTensor, rewriter.getDenseI64ArrayAttr(kFractalLayoutPermutation));
+        emptyTensor, rewriter.getDenseI64ArrayAttr(layoutPermutation));
     rewriter.replaceOp(op, transposeOp.getResult());
     return success();
   }
@@ -262,10 +284,8 @@ struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
 
   LogicalResult matchAndRewrite(ConvertLayoutOp op,
                                 PatternRewriter &rewriter) const override {
-
-    if (!checkFractalLayout(op, hivm::DataLayout::ND,
-                            hivm::DataLayout::Fractal))
-      return rewriter.notifyMatchFailure(op, "not a ND -> Fractal conversion");
+    if (!matcher(op))
+      return rewriter.notifyMatchFailure(op, "layout conversion not matched");
 
     LayoutConversionInfo info = extractConversionInfo(op);
     if (info.hasBatch)
@@ -278,6 +298,8 @@ struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
       return paddedSrc;
 
     auto resultShape = op.getMixedOutputShape();
+    // Staged 3D transpose only applies to matrix Fractal; scale zZ/nN always
+    // uses the 4D expand + permute path.
     if (!use3dTranspose)
       return rewriteWith4DTranspose(op, rewriter, paddedSrc.value(),
                                     resultShape);
@@ -285,6 +307,8 @@ struct CanonicalToFractalDecompose : public OpRewritePattern<ConvertLayoutOp> {
   }
 
 private:
+  LayoutMatcher matcher;
+  SmallVector<int64_t> layoutPermutation;
   bool use3dTranspose = true;
 };
 
@@ -302,7 +326,7 @@ struct FractalToCanonicalDecompose : public OpRewritePattern<ConvertLayoutOp> {
       return rewriter.notifyMatchFailure(
           op, "Batch matmul is currently not supported");
 
-    auto permutation = utils::inversePermutation(kFractalLayoutPermutation);
+    auto permutation = utils::inversePermutation(kMatrixNZLayoutPermutation);
     auto emptyMixedShape =
         tensor::getMixedSizes(rewriter, info.loc, op.getSource());
     auto mixedExpandedShape =
@@ -338,7 +362,12 @@ struct FractalToCanonicalDecompose : public OpRewritePattern<ConvertLayoutOp> {
 void populateConvertLayoutToTranspose(RewritePatternSet &patterns,
                                       MLIRContext *context,
                                       bool use3dTranspose) {
-  patterns.add<CanonicalToFractalDecompose>(context, use3dTranspose);
+  patterns.add<NDToFractalDecompose>(context, isMatrixNDToFractal,
+                                     ArrayRef(kMatrixNZLayoutPermutation),
+                                     use3dTranspose);
+  patterns.add<NDToFractalDecompose>(context, isScaleNDToFractal,
+                                     ArrayRef(kScaleZZLayoutPermutation),
+                                     /*use3dTranspose=*/false);
   patterns.add<FractalToCanonicalDecompose>(context);
 }
 } // namespace

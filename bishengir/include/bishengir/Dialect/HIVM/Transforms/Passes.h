@@ -364,6 +364,10 @@ std::unique_ptr<Pass> createInferSimtVFMemScopeHintPass();
 // modules.
 std::unique_ptr<Pass> createMaterializeSimtVFMemScopePass();
 
+// Create a pass to serially split oversized SIMT VF tiles.
+std::unique_ptr<Pass>
+createSIMTVFSubTilingPass(const SIMTVFSubTilingOptions &options = {});
+
 // Create a pass to insert convert layout operations for matmul ops
 std::unique_ptr<Pass> createInsertConvertLayoutPass();
 std::unique_ptr<Pass> createPropagateConvertLayoutPass(

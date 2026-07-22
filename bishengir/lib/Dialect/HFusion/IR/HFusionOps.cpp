@@ -2312,7 +2312,7 @@ void ArangeOp::getEffects(
 /// isFiniteOp decompose:
 /// eg.
 /// isFiniteOp = !(isnanOp(x) || isinfOp(x))
-FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> IsFiniteOp::decomposeOperation(PatternRewriter &b) {
   auto loc = getLoc();
   auto input = getInput();
 
@@ -2537,7 +2537,7 @@ LogicalResult GatherOp::verify() {
 ///       extract = tensor.extract src[i, idx, k]
 ///       insert = tensor.insert extract into dest[i, j, k]
 ///
-FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(PatternRewriter &b) {
   // According to numpy.take_along_axis (which triton.gather calls), the
   // dimensions that are not the gather axis are just broadcasts of the index
   OpBuilder::InsertionGuard guard(b);
@@ -3360,10 +3360,10 @@ inline Value histogramUpdate(OpBuilder &b, Location loc, Value hist,
 /// elements, checking their validity, and updating the histogram counts
 /// conditionally.
 ///
-/// @param b OpBuilder used to construct the decomposed operations.
+/// @param b PatternRewriter used to construct the decomposed operations.
 /// @return Success: A vector containing the final histogram tensor.
 ///         Failure: If decomposition encounters an error.
-FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
+FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(PatternRewriter &b) {
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPoint(getOperation());
 
@@ -3524,7 +3524,7 @@ LogicalResult MatMulMxOp::verify() {
 ///   ins(%b, %transposed : tensor<64x64xf16>, tensor<64x64xf16>) outs(%34 : tensor<64x64xf16>) -> tensor<64x64xf16>
 /// %37 = linalg.matmul ins(%35, %36 : tensor<64x64xf16>, tensor<64x64xf16>)
 ///   outs(%1 : tensor<64x64xf32>) -> tensor<64x64xf32>
-FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(OpBuilder &builder) {
+FailureOr<SmallVector<Value>> MatMulMxOp::decomposeOperation(PatternRewriter &builder) {
   Value a = getInputA();
   auto aType = cast<RankedTensorType>(a.getType());
 

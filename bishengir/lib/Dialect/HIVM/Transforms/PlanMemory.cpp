@@ -24,6 +24,7 @@
 
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/LogicalResult.h"
+#include "llvm/Support/WithColor.h"
 #include <algorithm>
 
 #define DEBUG_TYPE "hivm-plan-memory"
@@ -1319,26 +1320,6 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
       }
       continue;
     }
-
-    if (!hivm::isVFCall(user)) {
-      // not reachable if user is neither subview op nor vf call
-      continue;
-    }
-
-    // src is reachable if any of the reusable vf operands is reachable
-    for (Value reuseOperand : vfInfo->getInplaceReusableOperands(user, src)) {
-      LDBG("continue to visit vf inplace reusable operand: " << reuseOperand
-                                                             << "\n");
-      // check reachablility from source alloc
-      auto reuseAlloc = utils::tracebackMemRefToAlloc(reuseOperand);
-      if (!reuseAlloc.has_value()) {
-        continue;
-      }
-      if (VisitInplaceReuseReachable<DstOpType>(
-              reuseAlloc.value(), vfInfo, visited, reachableMap, extraCheck)) {
-        return true;
-      }
-    }
   }
 
   // not reachable for all paths
@@ -1351,6 +1332,7 @@ bool VisitInplaceReuseReachable(Value src, VFCallInplaceReuseInfo *vfInfo,
 
 template <typename DstOpType>
 void InplaceReuseReachableMap::put(Value key, bool val) {
+  key = find(key);
   if constexpr (std::is_same_v<DstOpType, hivm::StoreOp>) {
     storeReachable[key] = val;
   } else if constexpr (std::is_same_v<DstOpType, hivm::LoadOp>) {
@@ -1362,6 +1344,7 @@ void InplaceReuseReachableMap::put(Value key, bool val) {
 
 template <typename DstOpType>
 std::optional<bool> InplaceReuseReachableMap::get(Value key) {
+  key = find(key);
   if constexpr (std::is_same_v<DstOpType, hivm::StoreOp>) {
     auto iter = storeReachable.find(key);
     if (iter != storeReachable.end()) {
@@ -1378,12 +1361,39 @@ std::optional<bool> InplaceReuseReachableMap::get(Value key) {
   return std::nullopt;
 }
 
+Value InplaceReuseReachableMap::find(Value val) {
+  auto iter = parent.find(val);
+  if (iter == parent.end()) {
+    return parent[val] = val;
+  }
+  Value p = iter->getSecond();
+  if (val == p)
+    return p;
+  return parent[val] = find(p);
+}
+
+void InplaceReuseReachableMap::unite(Value gen, Value kill) {
+  Value genRoot = find(gen);
+  Value killRoot = find(kill);
+  if (genRoot == killRoot)
+    return;
+
+  // propagate killRoot's reachability to genRoot before union
+  auto killLoad = get<hivm::LoadOp>(killRoot);
+  auto killStore = get<hivm::StoreOp>(killRoot);
+  if (killLoad && killLoad.value())
+    put<hivm::LoadOp>(genRoot, true);
+  if (killStore && killStore.value())
+    put<hivm::StoreOp>(genRoot, true);
+
+  parent[killRoot] = genRoot;
+}
+
 /// Determines whether the value `src` is reachable to an operand of a
 /// `DstOpType` operation.
 ///
 /// Recursively traces the use chain of `src` through:
-/// 1. `memref.subview`
-/// 2. Other vf operands that support inplace reuse
+/// 1. `memref.subview` / `memref.collapse_shape` / `memref.expand_shape`
 template <typename DstOpType>
 bool MemPlan::IsInplaceReuseReachable(
     Value src, InplaceReuseReachableMap &reachableMap) const {
@@ -1409,11 +1419,9 @@ bool MemPlan::IsReuseVFCall(Value gen, Value kill,
   //
   // Note that we can still do inplace-reuse if it is only reachable from
   // one-side, because there will be synchronization inside other vf functions.
-  if (IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value(), reachableMap) &&
-      IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value(), reachableMap)) {
-    return false;
-  }
-  return true;
+  auto genReachableStore = IsInplaceReuseReachable<hivm::StoreOp>(genAlloc.value(), reachableMap);
+  auto killReachableLoad = IsInplaceReuseReachable<hivm::LoadOp>(killAlloc.value(), reachableMap);
+  return !genReachableStore || !killReachableLoad;
 }
 
 SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
@@ -1432,8 +1440,6 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
     Operation *op = it->first->operation;
     bool isVFCallReusable = vfInplaceReuseInfo && hivm::isVFCall(op) &&
                             !VFCallInplaceReuseInfo::hasAliasArgRisk(op);
-    std::optional<ValuePair> bestVFInplacePair;
-    int64_t bestVFInplaceBits = -1;
     DenseMap<ValuePair, bool> vfReuseCache;
 
     auto isVFInplacePair = [&](Value genBuffer, Value killBuffer) {
@@ -1453,17 +1459,13 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
           .first->second;
     };
 
-    auto updateBestVFInplacePair = [&](Value genBuffer, Value killBuffer,
-                                       int64_t genBits) {
-      // select gen buffer with largest bits for best inplace-reuse benefit
-      if (genBits <= bestVFInplaceBits) {
-        return;
-      }
-      bestVFInplacePair = {genBuffer, killBuffer};
-      bestVFInplaceBits = genBits;
-    };
+    SmallVector<Value> sortedGen(it->second.gen.begin(), it->second.gen.end());
+    llvm::stable_sort(sortedGen, [&](Value a, Value b) {
+      return bufferInfos[a].constBits > bufferInfos[b].constBits;
+    });
 
-    for (const Value &genBuffer : it->second.gen) {
+    DenseSet<Value> reusedKill;
+    for (const Value &genBuffer : sortedGen) {
       auto genBufferIter = bufferInfos.find(genBuffer);
       assert(genBufferIter != bufferInfos.end() &&
              "genBuffer should be find in bufferInfos");
@@ -1479,6 +1481,8 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
             killBufferIter->second.memoryUnique) {
           continue;
         }
+        if (reusedKill.contains(killBuffer))
+          continue;
 
         int64_t genBits = genBufferIter->second.constBits;
         int64_t killBits = killBufferIter->second.constBits;
@@ -1487,20 +1491,21 @@ SmallVector<ValuePair> MemPlan::GenerateInplaceList() {
         }
 
         if (isVFInplacePair(genBuffer, killBuffer)) {
-          updateBestVFInplacePair(genBuffer, killBuffer, genBits);
-          continue;
+          reusedKill.insert(killBuffer);
+          reachableMap.unite(genBuffer, killBuffer);
+          inplaceList.emplace_back(genBuffer, killBuffer);
+          break;
         }
 
         if (!IsReuseHIVMOp(op, genBuffer, killBuffer)) {
           continue;
         }
 
+        reusedKill.insert(killBuffer);
+        reachableMap.unite(genBuffer, killBuffer);
         inplaceList.emplace_back(genBuffer, killBuffer);
         break;
       }
-    }
-    if (bestVFInplacePair.has_value()) {
-      inplaceList.push_back(bestVFInplacePair.value());
     }
     // Nodes in inplace are only processed once.
     hasTouchOp[operationSeq->operation] = true;
@@ -1768,19 +1773,6 @@ void MemPlan::ExpandMultiBufferStorageEntry() {
   }
 }
 
-bool MemPlan::IsEnoughForBuffersNoReuse(StorageEntry *rootStorageEntry,
-                                        size_t restBufferSize,
-                                        size_t alignUnit) {
-  auto iter =
-      bufferScope2RequiredSize.find(rootStorageEntry->bufInfo->bufferScope);
-  assert(iter != bufferScope2RequiredSize.end());
-  if (iter->second <= restBufferSize) {
-    PlanBuffersWithoutReuse(rootStorageEntry, alignUnit);
-    return true;
-  }
-  return false;
-}
-
 void MemPlan::PlanBuffersWithoutReuse(StorageEntry *rootStorageEntry,
                                       size_t alignUnit) {
   uint offset = 0;
@@ -1808,21 +1800,21 @@ void MemPlan::MergeSameScopeSE() {
   }
 
   // set bufferScope2RequiredSize for all StorageEntry
-  for (auto &rootStorageEntry : memscope2rootStorageEntry) {
-    auto bufferSpaceInfo = GetBufferSpaceInfo(rootStorageEntry.first);
-    size_t accumulateSize = AlignUp(rootStorageEntry.second->bufInfo->constBits,
-                                    bufferSpaceInfo.first);
-    for (auto &childrenStorageEntry : rootStorageEntry.second->mergedChildren) {
+  for (auto [memScope, rootStorageEntry] : memscope2rootStorageEntry) {
+    auto bufferSpaceInfo = GetBufferSpaceInfo(memScope);
+    size_t accumulateSize =
+        AlignUp(rootStorageEntry->bufInfo->constBits, bufferSpaceInfo.first);
+    for (auto &childrenStorageEntry : rootStorageEntry->mergedChildren) {
       size_t curStorageSize = AlignUp(childrenStorageEntry->bufInfo->constBits,
                                       bufferSpaceInfo.first);
       accumulateSize = accumulateSize + curStorageSize;
     }
-    bufferScope2RequiredSize[rootStorageEntry.first] = accumulateSize;
+    bufferScope2RequiredSize[memScope] = accumulateSize;
   }
 }
 
-void mlir::hivm::MemPlan::PlanMemAddressForLevel0(
-    StorageEntry *rootStorageEntry) {
+uint64_t MemPlan::PlanMemAddressForSingleLevel(StorageEntry *rootStorageEntry,
+                                               int specLevel) {
   // get the buffer info for a given scope.
   auto bufferSpaceInfo =
       GetBufferSpaceInfo(rootStorageEntry->bufInfo->bufferScope);
@@ -1833,8 +1825,9 @@ void mlir::hivm::MemPlan::PlanMemAddressForLevel0(
   MemBoundList outline;
   PlanRecHis history;
   SpecInfo si;
-  si.specLevel = SPEC_LEVEL_0;
-  si.maxLevel = SPEC_LEVEL_0;
+  si.specLevel = specLevel;
+  si.maxLevel = specLevel;
+  si.minLevel = specLevel;
   int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
   outline.push_back(
       std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
@@ -1859,44 +1852,47 @@ void mlir::hivm::MemPlan::PlanMemAddressForLevel0(
     maxAllocBits =
         std::max(maxAllocBits, child->bitsOffset + child->alignedConstBits);
   }
-  failApplyBufferInfo[rootStorageEntry->bufInfo->bufferScope] = maxAllocBits;
+  return maxAllocBits;
 }
 
 PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
   // Start plan
-  for (auto &it : memscope2rootStorageEntry) {
-    StorageEntry *rootStorageEntry = it.second;
+  for (auto [memScope, rootStorageEntry] : memscope2rootStorageEntry) {
     assert(rootStorageEntry && "Root StorageEntry should not be null");
     // get the buffer info for a given scope.
-    auto bufferSpaceInfo =
-        GetBufferSpaceInfo(rootStorageEntry->bufInfo->bufferScope);
+    auto bufferSpaceInfo = GetBufferSpaceInfo(memScope);
     size_t align = bufferSpaceInfo.first;
     size_t maxBits = bufferSpaceInfo.second;
-    if (rootStorageEntry->mergedChildren.empty()) {
-      // Only one buffer needs to be allocated within the same scope, allocate
-      // directly.
-      uint64_t needAlignedBits =
-          AlignUp(rootStorageEntry->bufInfo->constBits, align);
-      if (needAlignedBits > maxBits) {
-        failApplyBufferInfo[rootStorageEntry->bufInfo->bufferScope] =
-            needAlignedBits;
-        return PlanStatus::PLAN_FAILED;
-      }
-      rootStorageEntry->bitsOffset = 0;
-      rootStorageEntry->alignedConstBits = needAlignedBits;
-      continue;
-    }
-    if (IsEnoughForBuffersNoReuse(rootStorageEntry, maxBits, align)) {
+    // No reuse plan
+    auto iter = bufferScope2RequiredSize.find(memScope);
+    assert(iter != bufferScope2RequiredSize.end());
+    if (iter->second <= maxBits) {
       ReportMemLifeDebugInfo(rootStorageEntry);
+      PlanBuffersWithoutReuse(rootStorageEntry, align);
+      LDBG("\nApply no reuse plan strategy for " << memScope << " memScope\n");
       continue;
+    } else if (rootStorageEntry->mergedChildren.empty()) {
+      failApplyBufferInfo[memScope] = iter->second;
+      return PlanStatus::PLAN_FAILED;
     }
-    rootStorageEntry = GetReorderRootStorageEntry(rootStorageEntry);
-    ReportMemLifeDebugInfo(rootStorageEntry);
-    // memory outline in a given buffer scope.
+
     MemBoundList outline;
     PlanRecHis history;
     SpecInfo si;
     si.specLevel = si.maxLevel;
+    // No reuse dma buffer plan
+    rootStorageEntry = GetReorderRootStorageEntry(rootStorageEntry);
+    ReportMemLifeDebugInfo(rootStorageEntry);
+    LDBG("\nTry no pipe stall plan strategy for " << memScope << " memScope\n");
+    auto maxAllocBits =
+        PlanMemAddressForSingleLevel(rootStorageEntry, si.maxLevel);
+    if (maxAllocBits <= maxBits) {
+      ReportAllocatedEntryDebugInfo(rootStorageEntry, false);
+      continue;
+    }
+    memscope2allocatedEntry.erase(memScope);
+    // memory outline in a given buffer scope.
+    LDBG("\nTry multi level plan strategy for " << memScope << " memScope\n");
     int childrenNum = static_cast<int>(rootStorageEntry->mergedChildren.size());
     outline.push_back(
         std::make_shared<MemoryBound>(BufferLifeVec(), 0, maxBits, nullptr));
@@ -1929,7 +1925,8 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
         }
         if (as == PlanStatus::PLAN_FAILED) {
           ReportAllocatedEntryDebugInfo(rootStorageEntry, true);
-          PlanMemAddressForLevel0(rootStorageEntry);
+          failApplyBufferInfo[memScope] =
+              PlanMemAddressForSingleLevel(rootStorageEntry, SPEC_LEVEL_0);
           return as;
         }
       }
@@ -1939,6 +1936,10 @@ PlanStatus MemPlan::PlanMemAddressOfWholeLocalBuffer() {
       curEntry = rootStorageEntry->mergedChildren[si.childIdx];
     }
     ReportAllocatedEntryDebugInfo(rootStorageEntry, false);
+    llvm::WithColor::warning(llvm::outs())
+        << "[hivm-plan-memory] There reused some dma buffers in " << memScope
+        << " address space, which may stall pipe. Not reusing dma buffer needs "
+        << maxAllocBits << " bits while " << maxBits << " bits available!\n";
   }
   planStatus = PlanStatus::PLAN_SUCCESS;
   return planStatus;
@@ -2831,6 +2832,7 @@ LogicalResult MemPlan::DynamicSetUbSpaceSize(
         return failure();
       }
       ubSpaceSize = simtVFUbSize;
+      LDBG("Simt mode dynamically set ub space size: " << ubSpaceSize << "\n");
       return success();
     }
   }

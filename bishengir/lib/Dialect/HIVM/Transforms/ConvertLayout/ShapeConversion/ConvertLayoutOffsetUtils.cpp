@@ -145,7 +145,11 @@ static FailureOr<SmallVector<OpFoldResult>> computeNDToFractalOffsetImpl(
 
   OpFoldResult a1Idx, b1Idx, a0Idx, b0Idx;
   computeFractalIndices(params, builder, loc, a1Idx, b1Idx, a0Idx, b0Idx);
-  SmallVector<OpFoldResult> fractalOffset = {b1Idx, a1Idx, a0Idx, b0Idx};
+  // Scale zZ/nN keeps ND axis order; matrix Fractal swaps outer tile axes.
+  SmallVector<OpFoldResult> fractalOffset =
+      dstLayout.isScaleFractalLayout()
+          ? SmallVector<OpFoldResult>{a1Idx, b1Idx, a0Idx, b0Idx}
+          : SmallVector<OpFoldResult>{b1Idx, a1Idx, a0Idx, b0Idx};
   // Add batch dimension if present
   if (params.batchIndexBias) {
     fractalOffset.insert(fractalOffset.begin(), params.batch);
@@ -164,8 +168,10 @@ FailureOr<SmallVector<OpFoldResult>> computeTargetLayoutOffset(
 
   if (!srcLayout || !dstLayout)
     llvm::report_fatal_error("Layout cannot be found!");
-  if (srcLayout.getDataLayout() != DataLayout::ND || dstLayout.getDataLayout()
-      != DataLayout::Fractal)
+  bool srcIsND = srcLayout.isNDLayout();
+  bool dstIsFractal = dstLayout.getDataLayout() == DataLayout::Fractal ||
+                      dstLayout.isScaleFractalLayout();
+  if (!srcIsND || !dstIsFractal)
     llvm::report_fatal_error("Source and destination layout is incorrect!");
 
   return computeNDToFractalOffsetImpl(
