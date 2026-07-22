@@ -18,13 +18,13 @@
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
-check_3d_ubuf_stride_align(memref_t<__ubuf__ T, 3> *ub) {
+check_3d_ubuf_stride_align(memref_t<__ubuf__ T, 3> *ub, int64_t left_padding_num = 0) {
   auto stride0_ub = ub->strides[0];
   auto stride1_ub = ub->strides[1];
   auto stride2_ub = ub->strides[2];
   auto size0_ub = ub->sizes[0];
   auto size1_ub = ub->sizes[1];
-  auto size2_ub = ub->sizes[2];
+  auto size2_ub = ub->sizes[2] + left_padding_num;
   return (((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1 || size0_ub == 1) &&
            (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1 || size1_ub == 1) &&
            (isSizeAlignedToBlock<T>(stride2_ub) || stride2_ub == 1 || size2_ub == 1)));
@@ -91,7 +91,7 @@ load_gm_to_ubuf_3d_core(memref_t<__gm__ T, 3> *src,
     pad_value = 0;
   }
 
-  if (!check_3d_ubuf_stride_align(dst)) {
+  if (!check_3d_ubuf_stride_align(dst, left_padding_num)) {
     load_gm_to_ubuf_3d_by_scalar<T>(src, dst, left_padding_num, pad_value);
     return;
   }
