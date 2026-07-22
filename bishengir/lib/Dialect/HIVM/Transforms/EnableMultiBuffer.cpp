@@ -122,8 +122,13 @@ public:
     //     if (idx == i) selected = bufi else keep previous
     Value selectedBuffer = newPtrCastOps[0];
     for (unsigned i = 1; i < factor; ++i) {
+#ifndef BSPUB_DAVINCI_BISHENGIR_A5
       Value iVal = builder.create<arith::ConstantIntOp>(
           loc, static_cast<int64_t>(i), idxType);
+#else
+      Value iVal = builder.create<arith::ConstantIntOp>(
+          loc, idxType, static_cast<int64_t>(i));
+#endif
       Value cond = builder.create<arith::CmpIOp>(loc, arith::CmpIPredicate::eq,
                                                  modularIdx, iVal);
       selectedBuffer = builder.create<arith::SelectOp>(

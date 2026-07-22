@@ -1511,8 +1511,8 @@ func.func @test_decompose_vdeinterleave_b64(%src: memref<32xi64>, %dst_even: mem
 // CHECK-SAME:                                       %[[SRC:.*]]: memref<32xf16>,
 // CHECK-SAME:                                       %[[EVEN:.*]]: memref<16xf16>,
 // CHECK-SAME:                                       %[[ODD:.*]]: memref<16xf16>) {
-// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[EVEN]] : memref<16xf16>) channel_num = 2 index_mode = <CHANNEL_0>
-// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[ODD]] : memref<16xf16>) channel_num = 2 index_mode = <CHANNEL_1>
+// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[EVEN]] : memref<16xf16>) index_mode = <CHANNEL_0>
+// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[ODD]] : memref<16xf16>) index_mode = <CHANNEL_1>
 // CHECK:           return
 // CHECK:         }
 func.func @test_decompose_vdeinterleave_single_f16(%src: memref<32xf16>, %even_dst: memref<16xf16>,

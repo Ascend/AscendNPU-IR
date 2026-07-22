@@ -796,7 +796,7 @@ func.func @test_NormalizeVPowf_hivm_vpow_zero(%arg0: tensor<16xf32>, %dst: tenso
 // CHECK: %[[POS_ONE:.*]] = arith.constant 1.000000e+00 : f32
 // CHECK: %[[NEG_ONE:.*]] = arith.constant -1 : i32
 // CHECK: %[[BITCAST0:.*]] = hivm.hir.bitcast %arg0 : tensor<16xf32> -> tensor<16xi32>
-// CHECK: %[[SHIFT:.*]] = hivm.hir.vshr ins(%[[BITCAST0]], {{.*}} : tensor<16xi32>, i32) outs({{.*}} : tensor<16xi32>) round : true -> tensor<16xi32>
+// CHECK: %[[SHIFT:.*]] = hivm.hir.vshr ins(%[[BITCAST0]], {{.*}} : tensor<16xi32>, i32) outs({{.*}} : tensor<16xi32>) -> tensor<16xi32>
 // CHECK: %[[NEG_COND:.*]] = hivm.hir.vcmp ins(%[[SHIFT]], %[[NEG_ONE]] : tensor<16xi32>, i32) outs({{.*}} : tensor<16xi1>) -> tensor<16xi1>
 // CHECK: %[[EXP_FLOOR:.*]] = hivm.hir.vcast ins(%arg1 : tensor<16xf32>) outs({{.*}} : tensor<16xf32>) round_mode = <floor> -> tensor<16xf32>
 // CHECK: %[[IS_INT:.*]] = hivm.hir.vcmp ins(%[[EXP_FLOOR]], %arg1 : tensor<16xf32>, tensor<16xf32>) outs({{.*}} : tensor<16xi1>) -> tensor<16xi1>

@@ -4,7 +4,7 @@
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1
 // CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
 // CHECK: %[[EMPTY:.*]] = tensor.empty() : tensor<16x16xf16>
-// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[FIXPIPE]] : tensor<16x16xf16>) outs(%[[EMPTY]] : tensor<16x16xf16>) {"inserted-load"} init_out_buffer = false may_implicit_transpose_with_last_axis = false core_type = <VECTOR> -> tensor<16x16xf16>
+// CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[FIXPIPE]] : tensor<16x16xf16>) outs(%[[EMPTY]] : tensor<16x16xf16>) {"inserted-load"}
 // CHECK: hivm.hir.vmul ins(%[[LOAD]], 
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   func.func @test_fixpipe_load_to_vector(%arg0: tensor<16x16xf16>, %arg1: tensor<16x16xf16>) -> tensor<16x16xf16> attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>} {

@@ -15,7 +15,7 @@ func.func @no_insert_store_between_extract_and_non_vector_non_cube_user(%input_i
     %subview_5 = memref.subview %reinterpret_cast_1[%26, 0] [1, 768] [1, 1] : memref<16384x768xf16, strided<[768, 1]>> to memref<1x768xf16, strided<[768, 1], offset: ?>>
     %subview_6 = memref.subview %alloc_2[%arg10, 0] [1, 768] [1, 1] : memref<52x768xf16> to memref<1x768xf16, strided<[768, 1], offset: ?>>
     annotation.mark %subview_6 {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x768xf16, strided<[768, 1], offset: ?>>
-    hivm.hir.load ins(%subview_5 : memref<1x768xf16, strided<[768, 1], offset: ?>>) outs(%subview_6 : memref<1x768xf16, strided<[768, 1], offset: ?>>) left_padding_num = %c0 : index init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    hivm.hir.load ins(%subview_5 : memref<1x768xf16, strided<[768, 1], offset: ?>>) outs(%subview_6 : memref<1x768xf16, strided<[768, 1], offset: ?>>) left_padding_num = %c0 : index
   }
   return
 }
@@ -60,7 +60,7 @@ func.func @insert_load_between_fixpipe_and_vector(%arg0 : memref<?xf16>, %arg1 :
   %2 = tensor.empty() : tensor<16x16xf16>
   // CHECK: %[[VAL2:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%{{.*}} : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[VAL3:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[VAL3]] : tensor<16x16xf16>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[VAL3]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[VAL5:.*]] = hivm.hir.vmul ins(%[[VAL4]], %{{.*}} : tensor<16x16xf16>, f16) outs(%{{.*}} : tensor<16x16xf16>) -> tensor<16x16xf16>
   %3 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%1 : tensor<16x16xf32>)
                                outs(%fixpipe_tmp0_tensor : tensor<16x16xf16>) -> tensor<16x16xf16>
@@ -96,7 +96,7 @@ func.func @insert_store_between_vector_and_load(%arg0 : memref<?xf32>) {
 // CHECK: %[[VAL1:.*]] = hivm.hir.vmul ins(%{{.*}}, %{{.*}} : tensor<16x16xf32>, f32) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 // CHECK: %[[VAL2:.*]] = tensor.empty() : tensor<16x16xf32>
 // CHECK: %[[VAL3:.*]] = hivm.hir.store ins(%[[VAL1]] : tensor<16x16xf32>) outs(%[[VAL2]] : tensor<16x16xf32>) -> tensor<16x16xf32>
-// CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%[[VAL3]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf32>
+// CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%[[VAL3]] : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
 func.func @insert_load_store_between_vector_and_cube(%arg0 : memref<?xf32>) {
   %cst_1 = arith.constant 2.000000e+00 : f32
   %c16 = arith.constant 16 : index
@@ -139,9 +139,9 @@ func.func @insert_load_between_fixpipe_and_madl1(%arg0 : memref<?xf32>, %arg1 : 
         ins(%5 : tensor<16x16xf32>) outs(%7 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[F_VAL:.*]] = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>}
   // CHECK: %[[VAL1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[VAL2:.*]] = hivm.hir.load ins(%[[F_VAL]] : tensor<16x16xf16>) outs(%[[VAL1]] : tensor<16x16xf16>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[VAL2:.*]] = hivm.hir.load ins(%[[F_VAL]] : tensor<16x16xf16>) outs(%[[VAL1]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[VAL3:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%[[F_VAL]] : tensor<16x16xf16>) outs(%[[VAL3]] : tensor<16x16xf16>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[VAL4:.*]] = hivm.hir.load ins(%[[F_VAL]] : tensor<16x16xf16>) outs(%[[VAL3]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   %9 = hivm.hir.mmadL1 ins(%8, %8, %init_condition, %c16, %c16, %c16 :
                                  tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index)
                            outs(%0 : tensor<16x16xf32>) -> tensor<16x16xf32>
@@ -234,7 +234,7 @@ func.func @insert_load_between_discrete_load_and_madl1(%arg0 : memref<?xf32>, %a
   } {ExtractedLoadOrStore}
   // CHECK: %[[VAL0:.*]] = hivm.hir.store ins(%{{.*}} : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
   // CHECK: %[[VAL1:.*]] = tensor.empty() : tensor<16x16xf32>
-  // CHECK: %[[VAL2:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf32>
+  // CHECK: %[[VAL2:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf32>) outs(%{{.*}} : tensor<16x16xf32>) -> tensor<16x16xf32>
   // CHECK: %[[VAL3:.*]] = tensor.empty() : tensor<16x16xf32>
   // CHECK: hivm.hir.mmadL1 ins(%[[VAL2]], %[[VAL3]]
   %4 = tensor.empty() : tensor<16x16xf32>
@@ -258,7 +258,7 @@ func.func @insert_store_load_between_implicit_transposeb_and_mmad(%arg0: memref<
   // CHECK: %[[EMPTY0:.*]] = tensor.empty() : tensor<16x16xf16>
   // CHECK: %[[STORE:.*]] = hivm.hir.store ins(%[[TENSORB:.*]] : tensor<16x16xf16>) outs(%[[EMPTY0:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE:.*]] : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE:.*]] : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   annotation.mark %1 {MayImplicitTransposeWithLastAxis} : tensor<16x16xf16>
   %2 = tensor.empty() : tensor<16x16xf32>
   %3 = hivm.hir.mmadL1 ins(%0, %1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%2 : tensor<16x16xf32>) -> tensor<16x16xf32>
@@ -274,7 +274,7 @@ func.func @insert_load_between_fixpipe_and_mmad(%arg0: memref<16x16xf16>, %arg1:
   %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
   %2 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   %3 = tensor.empty() : tensor<16x16xf32>
   %4 = hivm.hir.mmadL1 ins(%0, %2, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%3 : tensor<16x16xf32>) -> tensor<16x16xf32>
   return %4 : tensor<16x16xf32>
@@ -288,7 +288,7 @@ func.func @insert_load_between_fixpipe_and_vector(%arg0: memref<16x16xf16>, %arg
   %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
   %2 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   %3 = tensor.empty() : tensor<16x16xf16>
   %4 = hivm.hir.vexp ins(%2 : tensor<16x16xf16>) outs(%3 : tensor<16x16xf16>) -> tensor<16x16xf16>
   return %4 : tensor<16x16xf16>
@@ -302,7 +302,7 @@ func.func @insert_load_between_fixpipe_and_tensor_extract(%arg0: memref<16x16xf1
   %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
   %2 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   %3 = tensor.extract %2[%c0, %c0] : tensor<16x16xf16>
   return %3 : f16
 }
@@ -314,7 +314,7 @@ func.func @insert_load_between_store_and_vector(%arg0: memref<16x16xf16>, %arg1:
   %1 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
   %2 = hivm.hir.store ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK: %[[EMPTY1:.*]] = tensor.empty() : tensor<16x16xf16>
-  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) init_out_buffer = false  may_implicit_transpose_with_last_axis = false -> tensor<16x16xf16>
+  // CHECK: %[[LOAD:.*]] = hivm.hir.load ins(%{{.*}} : tensor<16x16xf16>) outs(%[[EMPTY1:.*]] : tensor<16x16xf16>) -> tensor<16x16xf16>
   %3 = tensor.empty() : tensor<16x16xf16>
   %4 = hivm.hir.vexp ins(%2 : tensor<16x16xf16>) outs(%3 : tensor<16x16xf16>) -> tensor<16x16xf16>
   return %4 : tensor<16x16xf16>
@@ -328,7 +328,7 @@ func.func @insert_load_between_vector_and_load(%arg0: memref<16x16xf16>, %arg1: 
   %2 = hivm.hir.vexp ins(%0 : tensor<16x16xf16>) outs(%1 : tensor<16x16xf16>) -> tensor<16x16xf16>
   // CHECK-NOT: hivm.hir.store
   %3 = bufferization.to_tensor %arg1 restrict writable : memref<16x16xf16>
-  %4 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) init_out_buffer = false -> tensor<16x16xf16>
+  %4 = hivm.hir.load ins(%3 : tensor<16x16xf16>) outs(%2 : tensor<16x16xf16>) -> tensor<16x16xf16>
   return %4 : tensor<16x16xf16>
 }
 
@@ -343,7 +343,7 @@ func.func @test_no_store_on_load_outs(%src_memref: memref<64x8xf32, strided<[8, 
   %dst_subview = memref.subview %vec_memref[0, 0] [64, 8] [1, 1] : memref<64x32xf32> to memref<64x8xf32, strided<[32, 1]>>
   // CHECK-NOT: hivm.hir.store
   // CHECK: hivm.hir.load ins(%arg0 : memref<64x8xf32, strided<[8, 1]>>) outs(%[[DST_SUBVIEW:.*]] : memref<64x8xf32, strided<[32, 1]>>)
-  hivm.hir.load ins(%src_memref : memref<64x8xf32, strided<[8, 1]>>) outs(%dst_subview : memref<64x8xf32, strided<[32, 1]>>) left_padding_num = %c0 : index init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%src_memref : memref<64x8xf32, strided<[8, 1]>>) outs(%dst_subview : memref<64x8xf32, strided<[32, 1]>>) left_padding_num = %c0 : index
   return
 }
 
@@ -393,7 +393,7 @@ module {
     %c0_i32 = arith.constant 0 : i32
     %1 = scf.for %arg2 = %c0_i32 to %c32_i32 step %c8_i32 iter_args(%arg3 = %arg0) -> (tensor<128x64xf32>)  : i32 {
       // CHECK: %[[STORE:.*]] = hivm.hir.store ins(%arg3 : tensor<128x64xf32>) outs(%1 : tensor<128x64xf32>) -> tensor<128x64xf32>
-      // %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<128x64xf32>) outs(%3 : tensor<128x64xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<128x64xf32>
+      // %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<128x64xf32>) outs(%3 : tensor<128x64xf32>) -> tensor<128x64xf32>
       // %6 = hivm.hir.mmadL1 ins(%[[LOAD]], %arg1, %true, %c0, %c0, %c0 : tensor<128x64xf32>, tensor<64x64xf32>, i1, index, index, index) outs(%5 : tensor<128x64xf32>) -> tensor<128x64xf32>
 
       %2 = tensor.empty() : tensor<128x64xf32>
@@ -496,7 +496,7 @@ module {
     }
     // CHECK-NOT: %[[store:.*]] = hivm.hir.store
     %5 = tensor.empty() : tensor<3x16x16xf32>
-    %6 = hivm.hir.load ins(%4 : tensor<3x16x16xf32>) outs(%5 : tensor<3x16x16xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x16x16xf32>
+    %6 = hivm.hir.load ins(%4 : tensor<3x16x16xf32>) outs(%5 : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
     %7 = tensor.empty() : tensor<3x16x16xf32>
     %8 = hivm.hir.vadd ins(%6, %2 : tensor<3x16x16xf32>, tensor<3x16x16xf32>) outs(%7 : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
     %reinterpret_cast_4 = memref.reinterpret_cast %arg2 to offset: [0], sizes: [3, 16, 16], strides: [256, 16, 1] : memref<?xf32> to memref<3x16x16xf32, strided<[256, 16, 1]>>
@@ -573,7 +573,7 @@ func.func @test_index_select_simd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<fft
   annotation.mark %1 {logical_block_num} : i32
   %reinterpret_cast = memref.reinterpret_cast %arg6 to offset: [0], sizes: [3], strides: [1] : memref<?xi32> to memref<3xi32, strided<[1]>>
   %alloc = memref.alloc() : memref<3xi32>
-  hivm.hir.load ins(%reinterpret_cast : memref<3xi32, strided<[1]>>) outs(%alloc : memref<3xi32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%reinterpret_cast : memref<3xi32, strided<[1]>>) outs(%alloc : memref<3xi32>)
   // CHECK: hivm.hir.load
   %2 = bufferization.to_tensor %alloc restrict writable : memref<3xi32>
   %reinterpret_cast_0 = memref.reinterpret_cast %arg3 to offset: [0], sizes: [6, 4], strides: [4, 1] : memref<?xf32> to memref<6x4xf32, strided<[4, 1]>>
@@ -584,7 +584,7 @@ func.func @test_index_select_simd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<fft
     %subview = memref.subview %reinterpret_cast_0[%7, 0] [1, 4] [1, 1] : memref<6x4xf32, strided<[4, 1]>> to memref<1x4xf32, strided<[4, 1], offset: ?>>
     %subview_5 = memref.subview %alloc_1[%arg11, 0] [1, 4] [1, 1] : memref<3x4xf32> to memref<1x4xf32, strided<[4, 1], offset: ?>>
     annotation.mark %subview_5 {hivm.stride_align_dims = array<i32: 0>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<1x4xf32, strided<[4, 1], offset: ?>>
-    hivm.hir.load ins(%subview : memref<1x4xf32, strided<[4, 1], offset: ?>>) outs(%subview_5 : memref<1x4xf32, strided<[4, 1], offset: ?>>) left_padding_num = %c0 : index init_out_buffer = false may_implicit_transpose_with_last_axis = false
+    hivm.hir.load ins(%subview : memref<1x4xf32, strided<[4, 1], offset: ?>>) outs(%subview_5 : memref<1x4xf32, strided<[4, 1], offset: ?>>) left_padding_num = %c0 : index
     // CHECK: hivm.hir.load
   } {hivm.parallel_loop}
   %3 = bufferization.to_tensor %alloc_1 restrict writable {index_select_simd} : memref<3x4xf32>
@@ -592,7 +592,7 @@ func.func @test_index_select_simd(%arg0: i64 {hacc.arg_type = #hacc.arg_type<fft
   // CHECK: hivm.hir.load
   %reinterpret_cast_2 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [4, 3], strides: [3, 1] : memref<?xf32> to memref<4x3xf32, strided<[3, 1]>>
   %alloc_3 = memref.alloc() : memref<4x3xf32>
-  hivm.hir.load ins(%reinterpret_cast_2 : memref<4x3xf32, strided<[3, 1]>>) outs(%alloc_3 : memref<4x3xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%reinterpret_cast_2 : memref<4x3xf32, strided<[3, 1]>>) outs(%alloc_3 : memref<4x3xf32>)
   // CHECK: hivm.hir.load
   %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<4x3xf32>
   %5 = tensor.empty() : tensor<3x3xf32>
@@ -613,7 +613,7 @@ func.func @insert_load_store_between_cross_loop_vector_and_cube_batchMmad(%arg0:
   %c0_i32 = arith.constant 0 : i32
   %1 = scf.for %arg2 = %c0_i32 to %c32_i32 step %c8_i32 iter_args(%arg3 = %arg0) -> (tensor<2x128x64xf32>)  : i32 {
     // CHECK: %[[STORE:.*]] = hivm.hir.store ins(%arg3 : tensor<2x128x64xf32>) outs(%1 : tensor<2x128x64xf32>) -> tensor<2x128x64xf32>
-    // %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<2x128x64xf32>) outs(%3 : tensor<2x128x64xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x128x64xf32>
+    // %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<2x128x64xf32>) outs(%3 : tensor<2x128x64xf32>) -> tensor<2x128x64xf32>
     // %6 = hivm.hir.batchMmadL1 ins(%[[LOAD]], %arg1, %true, %c0, %c0, %c0 : tensor<2x128x64xf32>, tensor<2x64x64xf32>, i1, index, index, index) outs(%5 : tensor<2x128x64xf32>) -> tensor<2x128x64xf32>
 
     %2 = tensor.empty() : tensor<2x128x64xf32>
@@ -649,7 +649,7 @@ func.func @mix_cv_batch(%arg2: memref<?xf32>, %arg3: memref<?xf16>, %arg4: memre
   %5 = tensor.empty() : tensor<3x16x16xf32>
   %6 = hivm.hir.fixpipe {enable_nz2nd} ins(%4 : tensor<3x16x16xf32>) outs(%5 : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
   %7 = tensor.empty() : tensor<3x16x16xf32>
-  // CHECK: [[VAR:%.*]] = hivm.hir.load ins(%6 : tensor<3x16x16xf32>) outs(%7 : tensor<3x16x16xf32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<3x16x16xf32>
+  // CHECK: [[VAR:%.*]] = hivm.hir.load ins(%6 : tensor<3x16x16xf32>) outs(%7 : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
   // CHECK: [[EMPTY:%.*]] = tensor.empty() : tensor<3x16x16xf32>
   // CHECK: [[RES:%.*]] = hivm.hir.vadd ins([[VAR]], %2 : tensor<3x16x16xf32>, tensor<3x16x16xf32>) outs([[EMPTY]] : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
   %8 = hivm.hir.vadd ins(%6, %2 : tensor<3x16x16xf32>, tensor<3x16x16xf32>) outs(%7 : tensor<3x16x16xf32>) -> tensor<3x16x16xf32>
@@ -670,7 +670,7 @@ func.func @test_tensor_insert(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2:
   %0 = tensor.empty() : tensor<2x2xi32>
   %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [0], sizes: [2, 2], strides: [2, 1] : memref<?xi32> to memref<2x2xi32, strided<[2, 1]>>
   %alloc = memref.alloc() : memref<2x2xi32>
-  hivm.hir.load ins(%reinterpret_cast : memref<2x2xi32, strided<[2, 1]>>) outs(%alloc : memref<2x2xi32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%reinterpret_cast : memref<2x2xi32, strided<[2, 1]>>) outs(%alloc : memref<2x2xi32>)
   %1 = bufferization.to_tensor %alloc restrict writable : memref<2x2xi32>
   // CHECK:  %[[INSERTED:.*]] = tensor.insert %[[VALUE:.*]] into %[[EMPTY:.*]]{{\[}}%[[CONST_0:.*]], %[[CONST_0]]] : tensor<2x2xi32>
   // CHECK:  %[[INSERTED_0:.*]] = tensor.insert %[[VALUE:.*]] into %[[INSERTED]]{{\[}}%[[CONST_0]], %[[CONST_1:.*]]] : tensor<2x2xi32>
@@ -682,7 +682,7 @@ func.func @test_tensor_insert(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2:
   %inserted_2 = tensor.insert %c3_i32 into %inserted_1[%c1, %c1] : tensor<2x2xi32>
   %2 = tensor.empty() : tensor<2x2xi32>
   // CHECK:  %[[STORE:.*]] = hivm.hir.store ins(%[[INSERTED_2]] : tensor<2x2xi32>) outs(%[[EMPTY_0:.*]] : tensor<2x2xi32>) -> tensor<2x2xi32>
-  // CHECK:  %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<2x2xi32>) outs(%[[EMPTY_1:.*]] : tensor<2x2xi32>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2xi32>
+  // CHECK:  %[[LOAD:.*]] = hivm.hir.load ins(%[[STORE]] : tensor<2x2xi32>) outs(%[[EMPTY_1:.*]] : tensor<2x2xi32>) -> tensor<2x2xi32>
   // %[[MMADL1:.*]] = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%[[BUFFER:.*]], %[[LOAD]], %[[TRUE:.*]], %[[CONST_2:.*]], %[[CONST_2]], %[[CONST_2]] : tensor<2x2xi32>, tensor<2x2xi32>, i1, index, index, index) outs(%[[VAL_24]] : tensor<2x2xi32>) -> tensor<2x2xi32>
   %3 = hivm.hir.mmadL1 {fixpipe_already_inserted = true} ins(%1, %inserted_2, %true, %c2, %c2, %c2 : tensor<2x2xi32>, tensor<2x2xi32>, i1, index, index, index) outs(%2 : tensor<2x2xi32>) -> tensor<2x2xi32>
   %reinterpret_cast_3 = memref.reinterpret_cast %arg1 to offset: [0], sizes: [2, 2], strides: [2, 1] : memref<?xi32> to memref<2x2xi32, strided<[2, 1]>>
@@ -694,12 +694,12 @@ func.func @test_tensor_insert(%arg0: memref<?xi32>, %arg1: memref<?xi32>, %arg2:
 // -----
 // CHECK-LABEL: func.func @test_conv1d(
 // CHECK: %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) -> tensor<2x2x1x128x16xf16>
-// CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<2x2x1x128x16xf16>
+// CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<2x2x1x128x16xf16>) outs(%{{.*}} : tensor<2x2x1x128x16xf16>) -> tensor<2x2x1x128x16xf16>
 // CHECK: %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1x1x3x32x16xf16>) outs(%{{.*}} : tensor<1x1x3x32x16xf16>) -> tensor<1x1x3x32x16xf16>
-// CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x3x32x16xf16>) outs(%{{.*}} : tensor<1x1x3x32x16xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<1x1x3x32x16xf16>
+// CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<1x1x3x32x16xf16>) outs(%{{.*}} : tensor<1x1x3x32x16xf16>) -> tensor<1x1x3x32x16xf16>
 // CHECK: %{{.*}} = hivm.hir.Conv1dL1 {fixpipe_already_inserted = true, groups = 2 : i32, outputAlreadyNormalized, padding = 0 : i32} ins(%{{.*}}, %{{.*}}, %{{.*}} : tensor<2x2x1x128x16xf16>, tensor<1x1x3x32x16xf16>, i1) outs(%{{.*}} : tensor<128x64xf32>) -> tensor<128x64xf32>
 // CHECK: %{{.*}} = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<F322F16>} ins(%{{.*}} : tensor<126x64xf32>) outs(%{{.*}} : tensor<126x64xf16>) -> tensor<126x64xf16>
-// CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<126x64xf16>) outs(%{{.*}} : tensor<126x64xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false -> tensor<126x64xf16>
+// CHECK: %{{.*}} = hivm.hir.load ins(%{{.*}} : tensor<126x64xf16>) outs(%{{.*}} : tensor<126x64xf16>) -> tensor<126x64xf16>
 func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_address>}, %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>}, %arg2: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>}, %arg3: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg4: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg5: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 0 : i32}, %arg6: memref<?xf16> {tt.divisibility = 16 : i32, tt.tensor_kind = 1 : i32}, %arg7: i32, %arg8: i32, %arg9: i32) attributes {SyncBlockLockArgIdx = 0 : i64, WorkspaceArgIdx = 1 : i64, func_dyn_memref_args = dense<[false, true, true, true, true, true, true, false, false, false]> : vector<10xi1>, hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>, mix_mode = "aiv", parallel_mode = "simd"} {
   %true = arith.constant true
   hivm.hir.set_mask_norm
@@ -708,15 +708,15 @@ func.func @test_conv1d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   annotation.mark %1 {logical_block_num} : i32
   %reinterpret_cast = memref.reinterpret_cast %arg3 to offset: [0], sizes: [2, 32, 128], strides: [4096, 128, 1] : memref<?xf16> to memref<2x32x128xf16, strided<[4096, 128, 1]>>
   %alloc = memref.alloc() : memref<2x32x128xf16>
-  hivm.hir.load ins(%reinterpret_cast : memref<2x32x128xf16, strided<[4096, 128, 1]>>) outs(%alloc : memref<2x32x128xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%reinterpret_cast : memref<2x32x128xf16, strided<[4096, 128, 1]>>) outs(%alloc : memref<2x32x128xf16>)
   %2 = bufferization.to_tensor %alloc restrict writable : memref<2x32x128xf16>
   %reinterpret_cast_0 = memref.reinterpret_cast %arg4 to offset: [0], sizes: [32, 16, 3], strides: [48, 3, 1] : memref<?xf16> to memref<32x16x3xf16, strided<[48, 3, 1]>>
   %alloc_1 = memref.alloc() : memref<32x16x3xf16>
-  hivm.hir.load ins(%reinterpret_cast_0 : memref<32x16x3xf16, strided<[48, 3, 1]>>) outs(%alloc_1 : memref<32x16x3xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%reinterpret_cast_0 : memref<32x16x3xf16, strided<[48, 3, 1]>>) outs(%alloc_1 : memref<32x16x3xf16>)
   %3 = bufferization.to_tensor %alloc_1 restrict writable : memref<32x16x3xf16>
   %reinterpret_cast_2 = memref.reinterpret_cast %arg5 to offset: [0], sizes: [32], strides: [1] : memref<?xf16> to memref<32xf16, strided<[1]>>
   %alloc_3 = memref.alloc() : memref<32xf16>
-  hivm.hir.load ins(%reinterpret_cast_2 : memref<32xf16, strided<[1]>>) outs(%alloc_3 : memref<32xf16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+  hivm.hir.load ins(%reinterpret_cast_2 : memref<32xf16, strided<[1]>>) outs(%alloc_3 : memref<32xf16>)
   %4 = bufferization.to_tensor %alloc_3 restrict writable : memref<32xf16>
   %expanded = tensor.expand_shape %2 [[0], [1, 2], [3]] output_shape [2, 2, 16, 128] : tensor<2x32x128xf16> into tensor<2x2x16x128xf16>
   %5 = tensor.empty() : tensor<2x2x128x16xf16>

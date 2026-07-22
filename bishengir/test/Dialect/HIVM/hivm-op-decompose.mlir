@@ -520,7 +520,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
   // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_FIX>] flag = 10
   // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_FIX>] flag = 13 ffts_base_addr = %c0_i64 sync_instr_mode = <INTER_BLOCK_SYNCHRONIZATION>
   // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_FIX>, <PIPE_FIX>] flag = 13
-  // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE3>] flag = 11 ffts_base_addr = %c0_i64 sync_instr_mode = <INTRA_BLOCK_SYNCHRONIZATION>
+  // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_MTE3>] flag = 11 ffts_base_addr = %c0_i64
     hivm.hir.sync_block[#hivm.sync_block_mode<ALL>, 1 : i16]
                 ffts_base_addr = %ffts_base_addr
                 tcube_pipe=#hivm.pipe<PIPE_FIX>
@@ -530,7 +530,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @kernel_mix_aiv() attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %ffts_base_addr = arith.constant 0 : i64
   // CHECK: hivm.hir.pipe_barrier[<PIPE_MTE3>]
-  // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_FIX>] flag = 10 ffts_base_addr = %c0_i64 sync_instr_mode = <INTRA_BLOCK_SYNCHRONIZATION>
+  // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_FIX>] flag = 10 ffts_base_addr = %c0_i64
   // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_MTE3>] flag = 11
     hivm.hir.sync_block[#hivm.sync_block_mode<ALL>, 1 : i16]
                 ffts_base_addr = %ffts_base_addr
@@ -549,7 +549,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 10
     // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 13 ffts_base_addr = %c0_i64 sync_instr_mode = <INTER_BLOCK_SYNCHRONIZATION>
     // CHECK: hivm.hir.sync_block_wait[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 13
-    // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 11 ffts_base_addr = %c0_i64 sync_instr_mode = <INTRA_BLOCK_SYNCHRONIZATION>
+    // CHECK: hivm.hir.sync_block_set[<CUBE>, <PIPE_FIX>, <PIPE_S>] flag = 11 ffts_base_addr = %c0_i64
     hivm.hir.sync_block[#hivm.sync_block_mode<ALL>, 1 : i16]
                 ffts_base_addr = %ffts_base_addr
                 tcube_pipe=#hivm.pipe<PIPE_ALL>
@@ -559,7 +559,7 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
   func.func @kernel_mix_aiv() attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
     %ffts_base_addr = arith.constant 0 : i64
     // CHECK: hivm.hir.pipe_barrier[<PIPE_ALL>]
-    // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 10 ffts_base_addr = %c0_i64 sync_instr_mode = <INTRA_BLOCK_SYNCHRONIZATION>
+    // CHECK: hivm.hir.sync_block_set[<VECTOR>, <PIPE_MTE3>, <PIPE_S>] flag = 10 ffts_base_addr = %c0_i64
     // CHECK: hivm.hir.sync_block_wait[<VECTOR>, <PIPE_FIX>, <PIPE_S>] flag = 11
     hivm.hir.sync_block[#hivm.sync_block_mode<ALL>, 1 : i16]
                 ffts_base_addr = %ffts_base_addr
@@ -1827,8 +1827,8 @@ func.func @test_vcmp_b64_eq_vs() {
 // CHECK-SAME:                                       %[[SRC:.*]]: memref<32xf16>,
 // CHECK-SAME:                                       %[[EVEN:.*]]: memref<16xf16>,
 // CHECK-SAME:                                       %[[ODD:.*]]: memref<16xf16>) {
-// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[EVEN]] : memref<16xf16>) channel_num = 2 index_mode = <CHANNEL_0>
-// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[ODD]] : memref<16xf16>) channel_num = 2 index_mode = <CHANNEL_1>
+// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[EVEN]] : memref<16xf16>) index_mode = <CHANNEL_0>
+// CHECK:           hivm.hir.vdeinterleave ins(%[[SRC]] : memref<32xf16>) outs(%[[ODD]] : memref<16xf16>) index_mode = <CHANNEL_1>
 // CHECK:           return
 // CHECK:         }
 func.func @test_decompose_vdeinterleave_double_f16(%src: memref<32xf16>, %even_dst: memref<16xf16>,
@@ -1844,7 +1844,7 @@ func.func @test_decompose_vdeinterleave_double_f16(%src: memref<32xf16>, %even_d
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
-// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vand ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
@@ -1861,7 +1861,7 @@ func.func @test_decompose_atomic_and_op(%arg0: memref<?xi8> {hacc.arg_type = #ha
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
-// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vor ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
@@ -1878,7 +1878,7 @@ func.func @test_decompose_atomic_or_op(%arg0: memref<?xi8> {hacc.arg_type = #hac
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
-// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vxor ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
@@ -1895,7 +1895,7 @@ func.func @test_decompose_atomic_xor_op(%arg0: memref<?xi8> {hacc.arg_type = #ha
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi32>
-// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi32>) outs(%[[ALLOC0]] : memref<16xi32>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xi32>
 // CHECK: hivm.hir.vxor ins({{.*}}, %[[ALLOC0]] : memref<16xi32>, memref<16xi32>) outs(%[[ALLOC1]] : memref<16xi32>)
 // CHECK: hivm.hir.store ins(%[[ALLOC1]] : memref<16xi32>) outs(%arg2 : memref<16xi32>)
@@ -1915,7 +1915,7 @@ func.func @test_decompose_atomic_xor_dyn_op(%arg0: memref<?xi8> {hacc.arg_type =
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<256xi16>
-// CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST]] : memref<256xi16, strided<[1]>>) outs(%[[ALLOC_1]] : memref<256xi16>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST]] : memref<256xi16, strided<[1]>>) outs(%[[ALLOC_1]] : memref<256xi16>)
 // CHECK: %[[ALLOC_2:.*]] = memref.alloc() : memref<256xi1>
 // CHECK: %[[ALLOC_3:.*]] = memref.alloc() : memref<256xi8>
 // CHECK: hivm.hir.vcmp ins(%[[ALLOC_1]], %[[ALLOC_0]] : memref<256xi16>, memref<256xi16>) outs(%[[ALLOC_3]] : memref<256xi8>)
@@ -1963,7 +1963,7 @@ func.func @atomic_xchg(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC_1:.*]] = memref.alloc() : memref<8x4x2x4x4xi32>
-// CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST]] : memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>) outs(%[[ALLOC_1]] : memref<8x4x2x4x4xi32>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%[[REINTERPRET_CAST]] : memref<8x4x2x4x4xi32, strided<[128, 32, 16, 4, 1]>>) outs(%[[ALLOC_1]] : memref<8x4x2x4x4xi32>)
 // CHECK: %[[ALLOC_2:.*]] = memref.alloc() : memref<8x4x2x4x4xi1>
 // CHECK: hivm.hir.vcmp ins(%[[ALLOC_1]], %[[ALLOC]] : memref<8x4x2x4x4xi32>, memref<8x4x2x4x4xi32>) outs(%[[ALLOC_2]] : memref<8x4x2x4x4xi1>)
 // CHECK: %[[ALLOC_3:.*]] = memref.alloc() : memref<8x4x2x4x4xi32>
@@ -1983,7 +1983,7 @@ func.func @atomic_cas(%arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_b
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi8>
-// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xf16>
 // CHECK: hivm.hir.vcast ins(%{{.*}} : memref<16xi8>) outs(%[[ALLOC1]] : memref<16xf16>) cast = <cast_unsigned>
 // CHECK: %[[ALLOC2:.*]]  = memref.alloc() : memref<16xf16>
@@ -2006,7 +2006,7 @@ func.func @test_decompose_atomic_max_ui8(%arg0: memref<?xi8> {hacc.arg_type = #h
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[ALLOC0:.*]] = memref.alloc() : memref<16xi8>
-// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>) init_out_buffer = false
+// CHECK: hivm.hir.load ins(%arg2 : memref<16xi8>) outs(%[[ALLOC0]] : memref<16xi8>)
 // CHECK: %[[ALLOC1:.*]] = memref.alloc() : memref<16xf16>
 // CHECK: hivm.hir.vcast ins(%{{.*}} : memref<16xi8>) outs(%[[ALLOC1]] : memref<16xf16>) cast = <cast_unsigned>
 // CHECK: %[[ALLOC2:.*]]  = memref.alloc() : memref<16xf16>
@@ -2032,7 +2032,7 @@ func.func @test_decompose_atomic_min_ui8(%arg0: memref<?xi8> {hacc.arg_type = #h
 // CHECK: %[[VAL_5:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_5]] : memref<1xi64>)
 // CHECK: %[[VAL_6:.*]] = memref.alloc() : memref<256xi16>
-// CHECK: hivm.hir.load ins(%[[VAL_4]] : memref<256xi16, strided<[1]>>) outs(%[[VAL_6]] : memref<256xi16>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK: hivm.hir.load ins(%[[VAL_4]] : memref<256xi16, strided<[1]>>) outs(%[[VAL_6]] : memref<256xi16>)
 // CHECK: %[[VAL_8:.*]] = memref.alloc() : memref<256xi16>
 // CHECK: hivm.hir.vsel ins(%[[ARG2:.*]], %[[VAL_3]], %[[VAL_6]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[VAL_8]] : memref<256xi16>)
 // CHECK: hivm.hir.vsel ins(%[[ARG2]], %[[VAL_6]], %[[VAL_3]] : memref<256xi1>, memref<256xi16>, memref<256xi16>) outs(%[[VAL_3]] : memref<256xi16>)

@@ -1,5 +1,7 @@
 // RUN: bishengir-opt %s --hfusion-auto-vectorize-v2 2>&1 | FileCheck %s
 
+// UNSUPPORTED: bishengir_published
+
 // CHECK: warning: AutoVectorizeV2 failed; falling back to legacy HFusionAutoVectorize pass
 
 #map = affine_map<(d0) -> (d0)>

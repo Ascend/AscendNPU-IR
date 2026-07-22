@@ -589,12 +589,12 @@ func.func @_attn_fwd_mix_aic(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_bas
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<NC1HWC0>} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK:           hivm.hir.load ins(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<2x2x1x128x16xf16, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = memref_ext.alloc_workspace() from %{{.*}} offset = [%{{.*}}] : from memref<?xi8, #hivm.address_space<gm>> to memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
 // CHECK:           annotation.mark %{{.*}} {hivm_data_layout = #hivm.data_layout<C1HWNC0>} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>
 // CHECK:           hivm.hir.sync_block_wait[<CUBE>, <PIPE_MTE3>, <PIPE_S>] flag = 1
 // CHECK:           %{{.*}} = memref.alloc() {alignment = 64 : i64} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>) init_out_buffer = false may_implicit_transpose_with_last_axis = false
+// CHECK:           hivm.hir.load ins(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<gm>>) outs(%{{.*}} : memref<1x1x3x32x16xf16, #hivm.address_space<cbuf>>)
 // CHECK:           %{{.*}} = arith.constant 128 : index
 // CHECK:           %{{.*}} = arith.constant 64 : index
 // CHECK:           %{{.*}} = affine.apply #[[$MAP]]()[%{{.*}}, %{{.*}}]
@@ -694,7 +694,7 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
 // CHECK:           %c16_14 = arith.constant 16 : index
 // CHECK:           %c16_15 = arith.constant 16 : index
 // CHECK:           %[[ALLOC_IF:.*]] = memref.alloc(%[[APPLY3]], %[[APPLY2]], %c16_14, %c16_15) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<64x32xf16, #hivm.address_space<gm>>) outs(%[[ALLOC_IF]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
+// CHECK:           hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<64x32xf16, #hivm.address_space<gm>>) outs(%[[ALLOC_IF]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>)
 // CHECK:           scf.yield %[[ALLOC_IF]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
 // CHECK:         } else {
 // CHECK:           %c64_12 = arith.constant 64 : index
@@ -704,7 +704,7 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
 // CHECK:           %c16_14 = arith.constant 16 : index
 // CHECK:           %c16_15 = arith.constant 16 : index
 // CHECK:           %[[ALLOC_ELSE:.*]] = memref.alloc(%[[APPLY5]], %[[APPLY4]], %c16_14, %c16_15) {alignment = 64 : i64} : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
-// CHECK:           hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<64x32xf16, #hivm.address_space<gm>>) outs(%[[ALLOC_ELSE]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>) init_out_buffer = false
+// CHECK:           hivm.hir.nd2nz {dst_continuous} ins(%arg1 : memref<64x32xf16, #hivm.address_space<gm>>) outs(%[[ALLOC_ELSE]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>)
 // CHECK:           scf.yield %[[ALLOC_ELSE]] : memref<?x?x?x?xf16, #hivm.address_space<cbuf>>
 // CHECK:         }
 // CHECK:         %c32_3 = arith.constant 32 : index
@@ -753,7 +753,7 @@ func.func @triton_conv3d_mix_aic(%arg0: memref<2x8x2x10x13x16xf16, #hivm.address
       return
     }
   }
-  
+
   // -----
 // CHECK-LABEL: func.func @test_ifop_in_for
 // CHECK-SAME:                                %arg0: i1, %arg1: i32, %arg2: i32)

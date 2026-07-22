@@ -71,6 +71,8 @@ static constexpr llvm::StringLiteral kMemrefAsPtr = "memref.memref_as_ptr";
 static constexpr llvm::StringLiteral maskOpIdx = "mask_op_idx";
 static constexpr llvm::StringLiteral reachedMaskOpsIdx = "reached_mask_ops_idx";
 static constexpr llvm::StringLiteral maskBitWidth = "mask_bit_width";
+static constexpr llvm::StringLiteral elementAlignmentBitWidth =
+    "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 const llvm::StringLiteral padConst = "pad_const";
 
