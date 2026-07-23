@@ -90,11 +90,12 @@ SmallVector<int64_t> getReturnValueTopologicalOrdering(
       [](const std::pair<Value, int64_t> &v) { return std::get<1>(v); });
 }
 
-transform::SequenceOp initScheduleSequence(OpBuilder &opBuilder) {
+transform::SequenceOp initScheduleSequence(OpBuilder &opBuilder,
+                                           Location loc) {
   OpBuilder::InsertionGuard g(opBuilder);
   // create transform sequence op with name
   auto seqOp = opBuilder.create<transform::SequenceOp>(
-      opBuilder.getUnknownLoc(), TypeRange(),
+      loc, TypeRange(),
       transform::FailurePropagationMode::Propagate,
       opBuilder.getType<transform::AnyOpType>(),
       [](OpBuilder &b, Location nested, Value rootH) {
@@ -703,7 +704,7 @@ LogicalResult SchedulerBase::initSchedule(TilingKey key, OpBuilder &opBuilder) {
 
   // Step 4. Insert transform sequence right after the to-be-scheduled kernel.
   opBuilder.setInsertionPointAfter(toBeScheduleKernel);
-  auto seqOp = initScheduleSequence(opBuilder);
+  auto seqOp = initScheduleSequence(opBuilder, toBeScheduleKernel->getLoc());
   auto *transformBody = seqOp.getBodyBlock();
   // Set insertion point to transform sequence body
   opBuilder.setInsertionPointToStart(transformBody);

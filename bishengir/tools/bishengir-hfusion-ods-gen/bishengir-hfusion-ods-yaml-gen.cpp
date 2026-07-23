@@ -1070,7 +1070,8 @@ void {0}::regionBuilder(ImplicitLocOpBuilder &b,
                         Block &block, ArrayRef<NamedAttribute> attrs) {{
   assert({1} > 0 && block.getNumArguments() == {1} &&
          "{0} regionBuilder expects {1} (>=0) args");
-  RegionBuilderHelper helper(block.getArgument(0).getContext(), block);
+  RegionBuilderHelper helper(block.getArgument(0).getContext(), block,
+                             b.getLoc());
   SmallVector<Value> yields;
   {2}
   {3}
