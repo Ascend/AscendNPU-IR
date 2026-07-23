@@ -108,8 +108,14 @@ void InjectSyncAnalysis::AutoInjectSync(bool enableUnitFlag,
 
 void InjectSyncPass::runOnOperation() {
   auto func = getOperation();
+  auto moduleOp = func->getParentOfType<ModuleOp>();
+  bool isMemBasedArch = hacc::utils::isMemBasedArch(moduleOp);
+  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
   if (hacc::utils::isHost(func))
     return;
+  if (isRegBasedArch && func->hasAttr(hivm::VectorFunctionAttr::name)) {
+    return;
+  }
   InjectSyncAnalysis injectsyncAnalysis(func);
   if (syncMode == SyncMode::BARRIERALL) {
     injectsyncAnalysis.InjectSyncAll();
