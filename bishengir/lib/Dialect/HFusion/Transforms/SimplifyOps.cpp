@@ -8,6 +8,7 @@
 #include "bishengir/Conversion/TorchToHFusion/Rewrite.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HFusion/Utils/Utils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -825,6 +826,133 @@ public:
   }
 };
 
+/// Check if a value is a scalar constant (arith.constant with scalar type).
+/// Looks through FillOp and CastOp chains.
+static bool isScalarConstant(Value v) {
+  auto type = getElementTypeOrSelf(v);
+  if (isa<FloatType>(type)) {
+    APFloat val(cast<FloatType>(type).getFloatSemantics());
+    if (matchPattern(v, m_ConstantFloat(&val)))
+      return true;
+  } else if (type.isIntOrIndex()) {
+    APInt val;
+    if (matchPattern(v, m_ConstantInt(&val)))
+      return true;
+  }
+
+  auto defineOp = v.getDefiningOp();
+  if (!defineOp)
+    return false;
+
+  auto resIdx = cast<OpResult>(v).getResultNumber();
+  if (auto fillOp = dyn_cast<linalg::FillOp>(defineOp))
+    return isScalarConstant(fillOp.getOperand(resIdx));
+  if (auto castOp = dyn_cast<hfusion::CastOp>(defineOp))
+    return isScalarConstant(castOp.getOperand(resIdx));
+
+  return false;
+}
+
+/// If \p elemOp is an elemwise_binary<mul>(matmul_result, constant) or
+/// elemwise_binary<sub>(0, matmul_result), return the matmul result and the
+/// scalar constant operand. For sub(0, x), the constant is conceptually -1.
+/// Returns {nullptr, nullptr} on failure.
+static std::pair<Value, Value>
+getScaledOperand(linalg::ElemwiseBinaryOp elemOp) {
+  if (elemOp.getFun() == linalg::BinaryFn::mul) {
+    for (int i = 0; i < 2; ++i) {
+      if (isScalarConstant(elemOp.getInputs()[i]))
+        return {elemOp.getInputs()[1 - i], elemOp.getInputs()[i]};
+    }
+  } else if (elemOp.getFun() == linalg::BinaryFn::sub) {
+    if (isConstZero(elemOp.getInputs()[0]))
+      return {elemOp.getInputs()[1], nullptr}; // sentinel: negate
+  }
+  return {nullptr, nullptr};
+}
+
+/// Hoist scalar multiplication from a matmul result into the matmul's LHS
+/// input.
+///
+/// Converts:
+///   %c = linalg.matmul ins(%a, %b) outs(%init)
+///   %s = linalg.elemwise_binary<mul>(%c, %k)       // or sub(0, %c)
+///
+/// Into:
+///   %sa = linalg.elemwise_binary<mul>(%a, %k)      // or mul(%a, -1)
+///   %c  = linalg.matmul ins(%sa, %b) outs(%init)
+///
+/// This is profitable because scaling a smaller input matrix is cheaper than
+/// scaling the output, and it enables further fusion opportunities upstream.
+struct HoistScalarMulFromMatmulPattern
+    : public OpRewritePattern<linalg::ElemwiseBinaryOp> {
+  using OpRewritePattern<linalg::ElemwiseBinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(linalg::ElemwiseBinaryOp elemOp,
+                                PatternRewriter &rewriter) const override {
+    auto [matmulResult, scalarConst] = getScaledOperand(elemOp);
+    if (!matmulResult)
+      return failure();
+
+    // The matmul result must come from a matmul-like op
+    auto *matmulOp = matmulResult.getDefiningOp();
+    if (!matmulOp || !hfusion::isMatmulOps(matmulOp))
+      return failure();
+
+    // The matmul result should have a single use (the scaling) to avoid
+    // introducing extra computation
+    if (!matmulResult.hasOneUse())
+      return failure();
+
+    auto linalgMatmul = cast<linalg::LinalgOp>(matmulOp);
+    Value lhs = linalgMatmul.getDpsInputs()[0];
+
+    // Insert before the matmul to maintain SSA dominance
+    Location loc = elemOp.getLoc();
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.setInsertionPoint(matmulOp);
+
+    auto lhsType = cast<RankedTensorType>(lhs.getType());
+    Type lhsElemType = lhsType.getElementType();
+
+    // If the scalar constant exists, its element type must match the LHS
+    // element type. Mixed-precision matmuls (e.g. f16 inputs -> f32 output)
+    // would produce an invalid mul if we hoist the output-typed constant to
+    // the input side.
+    if (scalarConst) {
+      Type scalarElemType = getElementTypeOrSelf(scalarConst.getType());
+      if (scalarElemType != lhsElemType)
+        return failure();
+    }
+
+    Value emptyTensor = rewriter.create<tensor::EmptyOp>(
+        loc, lhsType.getShape(), lhsElemType);
+
+    // For sub(0, x), scalarConst is nullptr — create a -1 constant
+    if (!scalarConst) {
+      if (isa<FloatType>(lhsElemType)) {
+        scalarConst = rewriter.create<arith::ConstantOp>(
+            loc, lhsElemType, rewriter.getFloatAttr(lhsElemType, -1.0));
+      } else {
+        scalarConst = rewriter.create<arith::ConstantOp>(
+            loc, lhsElemType, rewriter.getIntegerAttr(lhsElemType, -1));
+      }
+    }
+
+    Value scaledLhs = createLinalgBinary<linalg::BinaryFn::mul>(
+        rewriter, loc, lhs, scalarConst, emptyTensor);
+
+    // Replace the LHS of the matmul with the scaled version
+    rewriter.modifyOpInPlace(matmulOp, [&]() {
+      linalgMatmul.getDpsInputOperand(0)->set(scaledLhs);
+    });
+
+    // Replace the scaling op with the matmul result directly
+    rewriter.replaceOp(elemOp, matmulResult);
+    return success();
+  }
+};
+
 /// Linearize a tree of integer `linalg.elemwise_binary<add>` into its leaf
 /// multiset and re-emit repeated leaves as an `elemwise_binary<mul>`:
 ///
@@ -914,6 +1042,7 @@ struct CollapseElemwiseAddTreeToMul
 };
 
 void populateSimplifyOpsPattern(RewritePatternSet &patterns) {
+  patterns.add<HoistScalarMulFromMatmulPattern>(patterns.getContext());
   patterns.add<CollapseElemwiseAddTreeToMul>(patterns.getContext());
   patterns.add<MergeConsecutiveCopiesPattern>(patterns.getContext());
   patterns.add<LoopedCastOpPattern>(patterns.getContext());
