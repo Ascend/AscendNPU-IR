@@ -598,6 +598,7 @@ static void hivmPostBufferizationOptimizationPipeline(
   hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
+  pm.nest<func::FuncOp>().addPass(createLowerMultiBufferCounterPass());
   pm.nest<func::FuncOp>().addPass(createLiftLowestStridePass());
   canonicalizationHIVMPipeline(pm);
   if (!hivmPipelineOptions.enableDirectHIVMLowering &&
