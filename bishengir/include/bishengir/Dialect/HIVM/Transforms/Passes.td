@@ -1280,4 +1280,9 @@ def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"
     "scf::SCFDialect",
   ];
 }
+
+def VFOperandSubstitution: Pass<"vf-operand-substitution", "ModuleOp"> {
+  let summary = "VFOperandSubstitution";
+  let constructor = "mlir::hivm::createVFOperandSubstitutionPass()";
+}
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD
