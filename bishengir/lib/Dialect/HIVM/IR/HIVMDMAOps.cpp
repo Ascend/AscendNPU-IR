@@ -289,7 +289,9 @@ LogicalResult LoadOp::verify() {
 
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
-  if (!hacc::utils::isAscend910_95(moduleOp) &&
+  if (hacc::utils::hasTargetAttr(moduleOp) &&
+      !(hacc::utils::isAscend910_95(moduleOp) ||
+        hacc::utils::isRegBasedArch(moduleOp)) &&
       (llvm::isa<mlir::Float8E4M3FNType>(srcType) ||
        llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
@@ -389,7 +391,9 @@ LogicalResult StoreOp::verify() {
 
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
-  if (!hacc::utils::isAscend910_95(moduleOp) &&
+  if (hacc::utils::hasTargetAttr(moduleOp) &&
+      !(hacc::utils::isAscend910_95(moduleOp) ||
+        hacc::utils::isRegBasedArch(moduleOp)) &&
       (llvm::isa<mlir::Float8E4M3FNType>(srcType) ||
        llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");
@@ -566,7 +570,9 @@ LogicalResult CopyOp::verify() {
 
   auto moduleOp =
       this->getOperation()->template getParentOfType<mlir::ModuleOp>();
-  if (!hacc::utils::isAscend910_95(moduleOp) &&
+  if (hacc::utils::hasTargetAttr(moduleOp) &&
+      !(hacc::utils::isAscend910_95(moduleOp) ||
+        hacc::utils::isRegBasedArch(moduleOp)) &&
       (llvm::isa<mlir::Float8E4M3FNType>(srcType) ||
        llvm::isa<mlir::Float8E5M2Type>(srcType)))
     return emitOpError("Current hardware doesn't support fp8 type");

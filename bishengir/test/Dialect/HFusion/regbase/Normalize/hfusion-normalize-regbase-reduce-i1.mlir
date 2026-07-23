@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" -split-input-file %s | FileCheck %s
 
 // CHECK-LABEL: @test_reduce_i1_add_to_select_max_compare
 // CHECK: hfusion.select

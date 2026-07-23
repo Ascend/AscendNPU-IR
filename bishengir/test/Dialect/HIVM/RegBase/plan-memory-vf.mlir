@@ -1,4 +1,3 @@
-﻿// REQUIRES: regbase
 // REQUIRES: asserts
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase -split-input-file -verify-diagnostics | FileCheck %s
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_950z -hivm-plan-memory-regbase --debug-only="vf-inplace-reuse" -split-input-file -verify-diagnostics 2>&1 | FileCheck %s -check-prefix=CHECK-DEBUG

@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-NOT: hfusion.cast
 func.func @test_Normalize_bcst_i1(%arg0: tensor<64xi1>, %arg1: tensor<64x128xi32>) -> tensor<64x128xi1> {

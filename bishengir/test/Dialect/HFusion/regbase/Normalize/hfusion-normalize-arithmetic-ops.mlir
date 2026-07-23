@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeRSqrt_hfusion_rsqrt_to_hfusion_sqrt
 // CHECK-SAME: (%[[arg0:.*]]: tensor<5x1xf32>)

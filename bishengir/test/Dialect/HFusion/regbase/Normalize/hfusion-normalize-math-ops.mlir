@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeAnyToF32UnaryRec_normalize_rec_i16_to_f32(
 // CHECK: hfusion.cast {{.*}} ins({{.*}} : tensor<1x2xi16>) outs({{.*}} : tensor<1x2xf32>)

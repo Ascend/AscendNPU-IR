@@ -26,6 +26,7 @@
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -9777,11 +9778,14 @@ void populateNormalizeHFusionPatterns(RewritePatternSet &patterns) {
 namespace {
 struct NormalizeHFusionPass : public impl::NormalizeBase<NormalizeHFusionPass> {
 public:
+  explicit NormalizeHFusionPass(const NormalizeOptions &options)
+      : NormalizeBase(options) {}
+
   void runOnOperation() final {
     ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
-    if (hacc::utils::isRegBasedArch(moduleOp)) {
+    if (hacc::utils::isRegBasedArch(moduleOp) || useRegBase) {
       if (failed(runNormalizeRegBase(getOperation(),
-                                     /*enableHighPrecision=*/true)))
+                                     enableHighPrecision)))
         signalPassFailure();
       return;
     }
@@ -9794,6 +9798,7 @@ public:
 };
 } // namespace
 
-std::unique_ptr<Pass> mlir::hfusion::createHFusionNormalizeOpsPass() {
-  return std::make_unique<NormalizeHFusionPass>();
+std::unique_ptr<Pass>
+mlir::hfusion::createHFusionNormalizeOpsPass(const NormalizeOptions &options) {
+  return std::make_unique<NormalizeHFusionPass>(options);
 }

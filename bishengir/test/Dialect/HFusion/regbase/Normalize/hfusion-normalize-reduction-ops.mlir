@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: @test_NormalizeArgMinMax_normalize_reduce_with_index_ra_to_ar
 // CHECK: %[[res0:.*]] = tensor.empty() : tensor<32x128xf32>

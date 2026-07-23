@@ -205,10 +205,10 @@ static void preProcess(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createHFusionNormalizeSliceOpsPass());
   pm.nest<func::FuncOp>().addPass(createGenericUnrollerPass());
 
-  NormalizeRegBaseOptions normalizeOptions;
+  NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   pm.nest<func::FuncOp>().addPass(
-      createHFusionNormalizeOpsRegBasePass(normalizeOptions));
+      createHFusionNormalizeOpsPass(normalizeOptions));
 
   pm.addPass(createLegalizeBoolPass());
   pm.nest<func::FuncOp>().addPass(createSimplifyOpsPass());
@@ -217,7 +217,7 @@ static void preProcess(OpPassManager &pm,
   // normalize should be called after inline-brc pass:
   //  a) convert scalar-vector ops to vector-scalar ops
   pm.nest<func::FuncOp>().addPass(
-      createHFusionNormalizeOpsRegBasePass(normalizeOptions));
+      createHFusionNormalizeOpsPass(normalizeOptions));
 }
 
 static void preFlattenPass(OpPassManager &pm,
@@ -365,10 +365,10 @@ static void postProcess(OpPassManager &pm,
   
   // normalize should be called after auto schedule:
   // - tile reduction may generate unsupported elemwise op requiring normalize
-  NormalizeRegBaseOptions normalizeOptions;
+  NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   pm.nest<func::FuncOp>().addPass(
-      createHFusionNormalizeOpsRegBasePass(normalizeOptions));
+      createHFusionNormalizeOpsPass(normalizeOptions));
 
   // will only operate on functions with ShallowCV fusion kind
   AddFFTSAddrOptions addFFTSAddrOpt;
@@ -568,10 +568,10 @@ void buildHFusionRegBasePipeline(OpPassManager &pm,
 
   pm.nest<func::FuncOp>().addPass(tensor::createFoldTensorEmptyPass());
 
-  NormalizeRegBaseOptions normalizeOptions;
+  NormalizeOptions normalizeOptions;
   normalizeOptions.enableHighPrecision = options.enableHighPrecision;
   pm.nest<func::FuncOp>().addPass(
-      createHFusionNormalizeOpsRegBasePass(normalizeOptions));
+      createHFusionNormalizeOpsPass(normalizeOptions));
 
   pm.nest<func::FuncOp>().addPass(createHFusionInlineBrcPass());
   hfusionAutoVectorizePipeline(pm, options);

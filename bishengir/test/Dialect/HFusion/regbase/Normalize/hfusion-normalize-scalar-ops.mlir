@@ -1,4 +1,4 @@
-// RUN: bishengir-opt --hfusion-normalize-ops-regbase %s -split-input-file -verify-diagnostics | FileCheck %s
+// RUN: bishengir-opt --hfusion-normalize-ops="use-regbase=true" %s -split-input-file -verify-diagnostics | FileCheck %s
 
 // CHECK-LABEL: func.func @test_NormalizeScalarLikeTensor_scalar_like_tensor_conversion_hfusion_elemwise_unary_absi
 // CHECK: %c5_i32 = arith.constant 5 : i32

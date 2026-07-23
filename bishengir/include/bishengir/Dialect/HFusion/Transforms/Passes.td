@@ -279,15 +279,11 @@ def SimplifyOps : Pass<"hfusion-simplify-ops", "func::FuncOp"> {
 def Normalize : Pass<"hfusion-normalize-ops", "func::FuncOp"> {
   let summary = "Normalize Hfusion";
   let constructor = "mlir::hfusion::createHFusionNormalizeOpsPass()";
-  let dependentDialects = ["hfusion::HFusionDialect"];
-}
-
-def NormalizeRegBase : Pass<"hfusion-normalize-ops-regbase", "func::FuncOp"> {
-  let summary = "Normalize Hfusion for RegBased architecture";
-  let constructor = "mlir::hfusion::createHFusionNormalizeOpsRegBasePass()";
   let dependentDialects = ["hfusion::HFusionDialect", "hivm::HIVMDialect",
                            "bufferization::BufferizationDialect"];
   let options = [
+    Option<"useRegBase", "use-regbase", "bool", /*default=*/"false",
+           "Forcefully use RegBase normalize implementation.">,
     Option<"enableHighPrecision", "enable-high-precision", "bool",
            /*default=*/"true",
            "Enable high precision calculation for sin/cos in HFusion.">

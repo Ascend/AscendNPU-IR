@@ -163,14 +163,11 @@ createOutlineSingleOpPass(const OutlineSingleOpOptions &options = {});
 std::unique_ptr<Pass> createSimplifyOpsPass();
 
 /// Create a pass to normalize operations.
-std::unique_ptr<Pass> createHFusionNormalizeOpsPass();
+std::unique_ptr<Pass>
+createHFusionNormalizeOpsPass(const NormalizeOptions &options = {});
 
 /// Run the RegBase normalize.
 LogicalResult runNormalizeRegBase(Operation *op, bool enableHighPrecision);
-
-/// Create a pass to normalize operations for RegBased architectures.
-std::unique_ptr<Pass>
-createHFusionNormalizeOpsRegBasePass(const NormalizeRegBaseOptions &options = {});
 
 /// Create a pass to normalize slice operations, including
 /// extract_slice/insert_slice.

@@ -168,6 +168,16 @@ bool isAscend310B(ModuleOp op);
 
 bool isAscend950(ModuleOp op);
 
+/// Returns true if the module already has hacc.target set.
+///
+/// MLIR verifiers are invoked at parse time, before any passes have run.
+/// At that point hacc-append-device-spec hasn't added hacc.target yet, that's
+/// why an additional check is required.
+inline bool hasTargetAttr(mlir::ModuleOp moduleOp) {
+  return moduleOp && moduleOp->getAttrOfType<hacc::TargetAttr>(
+                         hacc::TargetAttr::name);
+}
+
 bool isRegBasedArch(ModuleOp op);
 
 } // namespace utils
