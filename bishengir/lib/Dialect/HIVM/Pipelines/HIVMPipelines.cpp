@@ -279,6 +279,10 @@ hivmWorkspacePipeline(OpPassManager &pm,
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
@@ -409,6 +413,12 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
@@ -593,6 +603,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
   planMemoryOption.planMemoryStrategy =
       hivmPipelineOptions.planMemoryStrategy;
   if (hivmPipelineOptions.enableVFOperandSubstitution) {

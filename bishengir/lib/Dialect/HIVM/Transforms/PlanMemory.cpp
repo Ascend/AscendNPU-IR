@@ -3021,7 +3021,7 @@ PlanMemoryPass::PlanMemoryForFuncOp(
     MemPlan memPlan(this->memMode, this->enableGlobalReuse,
                     this->enablePrintMemoryAllocatedSize,
                     this->restrictInplaceAsISA, this->simtVFDynamicSize,
-                    this->planMemoryStrategy);
+                    this->disableVFReachableCheck, this->planMemoryStrategy);
     if (failed(memPlan.InitMemSpecsFromModule(funcOp))) {
       return std::nullopt;
     }
