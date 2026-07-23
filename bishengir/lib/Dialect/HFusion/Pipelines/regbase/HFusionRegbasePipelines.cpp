@@ -116,17 +116,10 @@ canonicalizationPipeline(OpPassManager &pm,
                          const HFusionPipelineOptions &hfusionOptions,
                          DisableCanonicalizationPhase phase = NoRestriction) {
   pm.addPass(createCSEPass());
-
-  // TODO(regbase)
-  // CanonicalizerOptions options;
-  // options.enableExtendedPattern = true;
-  // options.disabledPatterns = phaseToDisabledMap[phase];
-  // pm.addPass(createCanonicalizerPass(options));
-
   CanonicalizerOptions options;
+  options.enableExtendedPattern = true;
   options.disabledPatterns = phaseToDisabledMap[phase];
-  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
-
+  pm.addPass(createCanonicalizerPass(options));
   pm.nest<func::FuncOp>().addPass(tensor::createNormalizeTensorOpsPass(
       /*skipAlignedSlice=*/hfusionOptions.enableTritonKernelCompile));
 }
