@@ -19,7 +19,7 @@ func.func @test_extract(%arg0: memref<8xi32>, %arg1: memref<16x16xf16>, %arg2: m
   // CHECK: tensor.extract %{{.*}}[] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
   // CHECK: memref_ext.alloc_workspace() : memref<i32>
   // CHECK: bufferization.to_tensor %{{.*}} restrict writable : memref<i32>
-  // CHECK: hivm.hir.store ins(%{{.*}} : tensor<i32>) outs(%{{.*}} : tensor<i32>) {"inserted-store"} -> tensor<i32>
+  // CHECK: hivm.hir.store ins(%{{.*}} : tensor<i32>) outs(%{{.*}} : tensor<i32>) {"hivm.inserted-store"} -> tensor<i32>
   // CHECK: annotation.mark %{{.*}} {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<i32>
   // CHECK: tensor.extract %{{.*}}[] {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
   // CHECK: annotation.mark %{{.*}} {"DuplicateTensorExtractForCube::replacementLabel" = 1 : i32} keys = [] values = [%{{.*}} : i32] : i32
@@ -52,7 +52,7 @@ func.func @test_indirect(%arg0: memref<8xi32>, %arg1: memref<16x16xf16>, %arg2: 
   // CHECK: tensor.extract %{{.*}}[] {"DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
   // CHECK: memref_ext.alloc_workspace() : memref<i32>
   // CHECK: bufferization.to_tensor %{{.*}} restrict writable : memref<i32>
-  // CHECK: hivm.hir.store ins(%{{.*}} : tensor<i32>) outs(%{{.*}} : tensor<i32>) {"inserted-store"} -> tensor<i32>
+  // CHECK: hivm.hir.store ins(%{{.*}} : tensor<i32>) outs(%{{.*}} : tensor<i32>) {"hivm.inserted-store"} -> tensor<i32>
   // CHECK: annotation.mark %{{.*}} {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<i32>
   // CHECK: tensor.extract %{{.*}}[] {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<i32>
   // CHECK: annotation.mark %{{.*}} {"DuplicateTensorExtractForCube::replacementLabel" = 1 : i32} keys = [] values = [%{{.*}} : i32] : i32
@@ -86,7 +86,7 @@ func.func @test_extract_i1(%arg0: memref<1xi16>, %arg1: memref<16x16xf32>, %arg2
   // CHECK: %{{.*}} = hivm.hir.vcast ins(%{{.*}} : tensor<1xi1>) outs(%{{.*}} : tensor<1xi8>) -> tensor<1xi8>
   // CHECK: %{{.*}} = memref_ext.alloc_workspace() : memref<1xi8>
   // CHECK: %{{.*}} = bufferization.to_tensor %{{.*}} restrict writable : memref<1xi8>
-  // CHECK: %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1xi8>) outs(%{{.*}} : tensor<1xi8>) {"inserted-store"} -> tensor<1xi8>
+  // CHECK: %{{.*}} = hivm.hir.store ins(%{{.*}} : tensor<1xi8>) outs(%{{.*}} : tensor<1xi8>) {"hivm.inserted-store"} -> tensor<1xi8>
   // CHECK: annotation.mark %{{.*}} {hivm.tcore_type = #hivm.tcore_type<VECTOR>} : tensor<1xi8>
   // CHECK: %{{.*}} = tensor.extract %{{.*}}[%{{.*}}] {"DuplicateTensorExtractForCube::newExtractLabel" = 1 : i32, "DuplicateTensorExtractForCube::visitedLabel" = 1 : i32} : tensor<1xi8>
   // CHECK: %{{.*}} = arith.trunci %{{.*}} : i8 to i1

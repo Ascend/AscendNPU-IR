@@ -667,6 +667,10 @@ std::string ND2NZOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
       if (mmadl1Op.getPerChannelBias() == getDst())
         callName = callName + "_forbias";
     }
+    if (auto mmadMxOp = llvm::dyn_cast<hivm::MmadMxL1Op>(nextOp)) {
+      if (mmadMxOp.getPerChannelBias() == getDst())
+        callName = callName + "_forbias";
+    }
   }
   Type eleType = getElementTypeOrSelf(this->getDpsInputs()[0].getType());
   auto elemTypeName = hivm::detail::getTypeName(this->getLoc(), eleType);

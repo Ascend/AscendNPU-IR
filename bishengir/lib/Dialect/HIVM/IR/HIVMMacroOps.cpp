@@ -1173,6 +1173,41 @@ MixGroupMatmulOp::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
 // MmadMxL1Op
 //===----------------------------------------------------------------------===//
 
+void MmadMxL1Op::build(OpBuilder &odsBuilder, OperationState &odsState,
+                       TypeRange result_tensors, Value a, Value b, Value scaleA,
+                       Value scaleB, Value init_condition, Value real_m,
+                       Value real_k, Value real_n, Value c,
+                       IntegerAttr lhsFormat, IntegerAttr rhsFormat,
+                       UnitAttr a_transpose, UnitAttr b_transpose,
+                       Value per_channel_bias) {
+  build(odsBuilder, odsState, result_tensors, a, b, scaleA, scaleB,
+        init_condition, real_m, real_k, real_n, c,
+        /*sync_related_args*/ ValueRange{}, per_channel_bias, lhsFormat,
+        rhsFormat, a_transpose, b_transpose);
+}
+
+SmallVector<Value>
+MmadMxL1Op::getInputOperands(bool includeSyncRelatedArgs /*=true*/) {
+  SmallVector<Value> retOperands;
+  retOperands.push_back(getA());
+  retOperands.push_back(getB());
+  retOperands.push_back(getScaleA());
+  retOperands.push_back(getScaleB());
+  retOperands.push_back(getInitCondition());
+  retOperands.push_back(getRealM());
+  retOperands.push_back(getRealK());
+  retOperands.push_back(getRealN());
+  if (getPerChannelBias()) {
+    retOperands.push_back(getPerChannelBias());
+  }
+  if (includeSyncRelatedArgs) {
+    auto syncRelatedArgs = getSyncRelatedArgs();
+    std::copy(syncRelatedArgs.begin(), syncRelatedArgs.end(),
+              std::back_inserter(retOperands));
+  }
+  return retOperands;
+}
+
 llvm::SmallDenseMap<Value, DataLayoutAttr>
 MmadMxL1Op::getOperandsTargetLayout() {
   llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap =
@@ -1191,6 +1226,12 @@ MmadMxL1Op::getOperandsTargetLayout() {
       getContext(), DataLayout::SCALEB_nN, BoolAttr(),
       mlir::DenseI64ArrayAttr::get(getContext(), ArrayRef(scaleBBlockSizes)));
   valLayoutMap[operScaleB] = scaleBLayoutAttr;
+
+  if (auto bias = getPerChannelBias()) {
+    auto biasLayoutAttr =
+        DataLayoutAttr::get(getContext(), DataLayout::ND, nullptr, nullptr);
+    valLayoutMap[bias] = biasLayoutAttr;
+  }
 
   return valLayoutMap;
 }
@@ -1290,6 +1331,22 @@ FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandCLayout() const {
   return detail::getLocalMatmulOperandCLayoutImpl(*this);
 }
 
+FailureOr<DataLayoutAttr> MmadMxL1Op::getOperandBiasLayout() {
+  auto rank = getRankFromShapedTypeValue(getPerChannelBias());
+  if (failed(rank)) {
+    return failure();
+  }
+  switch (*rank) {
+  case kDimOne:
+  case kDimTwo:
+    return DataLayoutAttr::get(getContext(), DataLayout::ND);
+  case kDimFour:
+    return DataLayoutAttr::get(getContext(), DataLayout::zN);
+  default:
+    return failure();
+  }
+}
+
 llvm::SmallDenseMap<Value, DataLayoutAttr>
 MmadMxL1Op::getOperandsCurrentLayout() {
   llvm::SmallDenseMap<Value, DataLayoutAttr> valLayoutMap =
@@ -1302,6 +1359,12 @@ MmadMxL1Op::getOperandsCurrentLayout() {
   auto scaleBLayoutAttr = getOperandScaleBLayout();
   assert(succeeded(scaleBLayoutAttr) && "Cannot get layout for Matrix C");
   valLayoutMap[this->getScaleB()] = *scaleBLayoutAttr;
+
+  if (getPerChannelBias()) {
+    auto biasLayoutAttr = getOperandBiasLayout();
+    assert(succeeded(biasLayoutAttr) && "Cannot get layout for bias");
+    valLayoutMap[getPerChannelBias()] = *biasLayoutAttr;
+  }
 
   return valLayoutMap;
 }
@@ -1323,7 +1386,14 @@ std::string MmadMxL1Op::getOpLibraryCallName(std::optional<bool> isOpsAligned) {
   auto dstTypeName = hivm::detail::getTypeName(
       this->getLoc(), getElementTypeOrSelf(this->getDpsInits()[0].getType()));
 
-  auto finalName = baseCallName + "_" + srcTypeName + "_to_" + dstTypeName;
+  std::string finalName = baseCallName;
+  if (getPerChannelBias()) {
+    auto biasTypeName = hivm::detail::getTypeName(
+        this->getLoc(),
+        getElementTypeOrSelf(this->getPerChannelBias().getType()));
+    finalName += "_with_" + biasTypeName + "_bias";
+  }
+  finalName += "_" + srcTypeName + "_to_" + dstTypeName;
   if (getATranspose().has_value())
     finalName += "_ta";
   if (getBTranspose().has_value())

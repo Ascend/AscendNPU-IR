@@ -79,4 +79,24 @@ module attributes {dlti.target_system_spec = #dlti.target_system_spec<"NPU" : #h
     }
     return
   }
+  // CHECK-LABEL: @test_pge_h_unaligned_store
+  // PgePattern::H must resolve to the full vector element count (like ALL),
+  // so the unaligned f32 store gets element size 64 * 4 = 256 bytes.
+  // Without the getNumfromPgePattern fix, H falls through to the default
+  // case and yields an overflowed -4 instead.
+  // CHECK: %[[ELEMSIZE:.*]] = llvm.mlir.constant(256 : i32) : i32
+  // CHECK: "hivm_regbaseintrins.intr.hivm.vstus.post.f32"(%{{.*}}, %{{.*}}, %[[ELEMSIZE]], %{{.*}})
+  func.func @test_pge_h_unaligned_store(%arg0: memref<512xf32, #hivm.address_space<ub>>, %arg1: memref<512xf32, #hivm.address_space<ub>>) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>, hivm.vector_function, no_inline} {
+    %c0 = arith.constant 0 : index
+    %c512 = arith.constant 512 : index
+    %c64 = arith.constant 64 : index
+    scf.for %arg2 = %c0 to %c512 step %c64 {
+      %subview = memref.subview %arg0[%arg2] [64] [1] : memref<512xf32, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+      %subview_0 = memref.subview %arg1[%arg2] [64] [1] : memref<512xf32, #hivm.address_space<ub>> to memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>
+      %res = ave.hir.vload <NORM> %subview[%c0] {functionType = #ave.func_dist_type<norm>} : memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>> into vector<64xf32, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>
+      %mask = ave.hir.pge <H> {functionType = #ave.func_dist_type<pb32>} : vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>
+      ave.hir.masked_store <NORM_B32> %subview_0[%c0], %mask, %res {ave.unaligned_ub_access = #ave.unaligned_ub_access, functionType = #ave.func_dist_type<norm>, hivm.is_continuous} : memref<64xf32, strided<[1], offset: ?>, #hivm.address_space<ub>>, vector<64xi1, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>, vector<64xf32, #ave.vector_layout<{mem = #ave.vec_mem_type<b32>}>>
+    }
+    return
+  }
 }

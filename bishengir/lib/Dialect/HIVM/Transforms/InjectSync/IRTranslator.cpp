@@ -8,8 +8,10 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/IRTranslator.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/InjectSync/SyncCommon.h"
+#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -143,6 +145,11 @@ void IRTranslator::RecursionIR(Region *region) {
 }
 
 bool IRTranslator::isSkippableOp(Operation *op) const {
+  // TODO: Remove this after inject sync support SSBUF alloc
+  if (auto pointerCastOp = llvm::dyn_cast<PointerCastOp>(op);
+      pointerCastOp && isOpTouchSsbufferOnly(pointerCastOp)) {
+    return true;
+  }
   return isa<func::ReturnOp, annotation::MarkOp, memref::DimOp, hivm::DebugOp,
              memref::GetGlobalOp, func::CallOp, hivm::SyncBlockLockOp,
              hivm::SyncBlockUnlockOp, memref::ExtractAlignedPointerAsIndexOp,

@@ -66,6 +66,8 @@ struct InsertCVTightCoupledBufferPass
           InsertCVTightCoupledBufferPass> {
   using Base::Base;
   void runOnOperation() override;
+  LogicalResult insertTightlyCoupledBuffer();
+  LogicalResult verifyTightCoupledBufferInsertion(func::FuncOp funcOp) const;
 };
 
 enum class InsertMode { MoveToUb = 0, MoveToL1 };
@@ -708,7 +710,148 @@ void populateInsertCVTightCoupledBufferPattern(RewritePatternSet &patterns) {
       patterns.getContext());
 }
 
+/// Replaces inserted `tensor.empty` placeholders with tightly coupled buffers.
+struct ReplaceEmptyOpByTightlyCoupledBuffer
+    : public OpRewritePattern<tensor::EmptyOp> {
+  using OpRewritePattern<tensor::EmptyOp>::OpRewritePattern;
+  LogicalResult matchAndRewrite(tensor::EmptyOp emptyOp,
+                                PatternRewriter &rewriter) const override {
+    if (!emptyOp->hasAttr(AddressSpaceAttr::name)) {
+      return failure();
+    }
+    AddressSpaceAttr addressSpace =
+        cast<AddressSpaceAttr>(emptyOp->getAttr(AddressSpaceAttr::name));
+    if (!emptyOp->hasAttr(hivm::kInsertedTensorAttr::name))
+      return failure();
+
+    for (auto &use : llvm::make_early_inc_range(emptyOp->getUses())) {
+      // create tight coupled buffer
+      std::tuple<AllocationResult, bufferization::ToTensorOp>
+          tightCoupledBuffer = insertTightCoupledBuffer(
+              emptyOp, rewriter, addressSpace.getAddressSpace());
+      auto plainMemref = std::get<0>(tightCoupledBuffer).plainMemref;
+      // TODO: mark tightly coupled buffer to remove MarkTightlyCoupledBuffer
+      // pass
+      use.assign(plainMemref);
+
+      // remove result
+      auto *userOp = use.getOwner();
+      rewriter.setInsertionPoint(userOp);
+      rewriter.create(userOp->getLoc(),
+                      StringAttr::get(rewriter.getContext(),
+                                      userOp->getName().getStringRef()),
+                      userOp->getOperands(), TypeRange{}, userOp->getAttrs());
+
+      rewriter.replaceAllOpUsesWith(userOp, get<1>(tightCoupledBuffer));
+      rewriter.eraseOp(userOp);
+    }
+
+    return success();
+  }
+
+private:
+  /// Holds allocated memref and its plain (no address space) cast.
+  struct AllocationResult {
+    Value spacedMemref; // Memref with address space attribute
+    Value plainMemref;  // Memref without address space (after cast)
+  };
+
+  /// Creates a memref allocation with the specified address space.
+  AllocationResult
+  createAddressSpaceAllocation(PatternRewriter &rewriter, Location loc,
+                               ArrayRef<int64_t> shape, Type elemType,
+                               ValueRange dynamicSizes, AddressSpace addrSpace,
+                               ArrayRef<int64_t> maybeStaticAllocSize) const {
+    MLIRContext *ctx = rewriter.getContext();
+
+    auto spaceAttr = AddressSpaceAttr::get(ctx, addrSpace);
+    auto spacedType = MemRefType::get(shape, elemType, nullptr, spaceAttr);
+    auto plainType = MemRefType::get(shape, elemType);
+
+    Value alloc = createAllocWithMark(rewriter, loc, spacedType, dynamicSizes,
+                                      maybeStaticAllocSize, elemType);
+
+    Value cast =
+        rewriter.create<memref::MemorySpaceCastOp>(loc, plainType, alloc);
+
+    return {alloc, cast};
+  }
+
+  Value peelTensorShapeSourceForAllocSizes(Value tensorValue) const {
+    Value v = tensorValue;
+    while (auto ucc =
+               dyn_cast_or_null<UnrealizedConversionCastOp>(v.getDefiningOp()))
+      v = ucc.getOperand(0);
+    return v;
+  }
+
+  /// Creates an allocation matching `tensorValue`'s shape, including dynamic
+  /// extents.
+  AllocationResult createAllocation(PatternRewriter &rewriter,
+                                    tensor::EmptyOp emptyOp,
+                                    hivm::AddressSpace addressSpace) const {
+    auto tensorValue = emptyOp.getResult();
+    auto loc = emptyOp->getLoc();
+    rewriter.setInsertionPointAfterValue(tensorValue);
+    auto tensorType = cast<RankedTensorType>(tensorValue.getType());
+    Value shapeSource = peelTensorShapeSourceForAllocSizes(tensorValue);
+    SmallVector<Value> dynamicSizes =
+        hivm::getTensorDynamicValues(rewriter, loc, shapeSource);
+    return createAddressSpaceAllocation(
+        rewriter, loc, tensorType.getShape(), tensorType.getElementType(),
+        dynamicSizes, addressSpace, tensorValue.getType().getShape());
+  }
+
+  std::tuple<AllocationResult, bufferization::ToTensorOp>
+  insertTightCoupledBuffer(tensor::EmptyOp emptyOp, PatternRewriter &rewriter,
+                           hivm::AddressSpace addressSpace) const {
+    auto resultType = cast<RankedTensorType>(emptyOp.getType());
+
+    auto coupledBuffer = createAllocation(rewriter, emptyOp, addressSpace);
+
+    // Convert memref back to tensor for users
+    auto toTensorOp = rewriter.create<bufferization::ToTensorOp>(
+        emptyOp->getLoc(), resultType, coupledBuffer.plainMemref,
+        /*restrict=*/true, /*writable=*/true);
+    return std::make_tuple(coupledBuffer, toTensorOp);
+  }
+};
+
+LogicalResult InsertCVTightCoupledBufferPass::verifyTightCoupledBufferInsertion(
+    func::FuncOp funcOp) const {
+  auto walkResult = funcOp->walk([](tensor::EmptyOp emptyOp) -> WalkResult {
+    if (emptyOp->hasAttr(hivm::kInsertedTensorAttr::name))
+      return WalkResult::interrupt();
+    return WalkResult::advance();
+  });
+  return llvm::failure(walkResult.wasInterrupted());
+}
+
+// TODO: merge this function with insertWorkspaceForMixCv pass
+LogicalResult InsertCVTightCoupledBufferPass::insertTightlyCoupledBuffer() {
+  OpBuilder builder(&getContext());
+  auto context = &getContext();
+  auto funcOp = getOperation();
+
+  RewritePatternSet patterns(context);
+  patterns.add<ReplaceEmptyOpByTightlyCoupledBuffer>(context);
+  if (failed(applyPatternsGreedily(funcOp, std::move(patterns)))) {
+    return failure();
+  }
+
+  if (failed(verifyTightCoupledBufferInsertion(funcOp)))
+    return failure();
+
+  return success();
+}
+
 void InsertCVTightCoupledBufferPass::runOnOperation() {
+  if (failed(insertTightlyCoupledBuffer()))
+    return signalPassFailure();
+
+  if (onlyInsertTightlyCoupledBuffer)
+    return;
+
   auto funcOp = getOperation();
 
   // VectorFunction is on AIV core, none of cube ops exist.
@@ -743,6 +886,7 @@ void InsertCVTightCoupledBufferPass::runOnOperation() {
   }
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInsertCVTightCoupledBufferPass() {
-  return std::make_unique<InsertCVTightCoupledBufferPass>();
+std::unique_ptr<Pass> mlir::hivm::createInsertCVTightCoupledBufferPass(
+    const InsertCVTightCoupledBufferOptions &options) {
+  return std::make_unique<InsertCVTightCoupledBufferPass>(options);
 }

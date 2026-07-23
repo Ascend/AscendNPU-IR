@@ -1639,3 +1639,24 @@ func.func @test_cv_mmad_vector_consumer_no_nz2nz(%arg0: tensor<16x16xf16>, %arg1
   hivm.hir.store ins(%casted : tensor<16x16xf16>) outs(%arg2 : memref<16x16xf16>)
   return
 }
+
+// -----
+// s_C_int8: int8 fractal C fixpipe with [16,32] block sizes.
+// CHECK-LABEL: func.func @test_int8_fractal_c_nz2nz_fixpipe
+// CHECK: hivm.hir.fixpipe
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @test_int8_fractal_c_nz2nz_fixpipe(%gm: memref<2x10x16x32xi8, #hivm.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %a = arith.constant dense<0> : tensor<10x10x16x32xi8>
+    %b = arith.constant dense<0> : tensor<2x10x32x32xi8>
+    %c = tensor.empty() : tensor<160x64xi32>
+    %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<10x10x16x32xi8>, tensor<2x10x32x32xi8>, i1, index, index, index) outs(%c : tensor<160x64xi32>) -> tensor<160x64xi32>
+    %fractal = hivm.hir.convert_layout %mmad output_shape [2, 10, 16, 32] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>, srcLayout = #hivm.data_layout<ND>} : (tensor<160x64xi32>) -> tensor<2x10x16x32xi32>
+    %strided = memref.cast %gm : memref<2x10x16x32xi8, #hivm.address_space<gm>> to memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>
+    hivm.hir.fixpipe ins(%fractal : tensor<2x10x16x32xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----

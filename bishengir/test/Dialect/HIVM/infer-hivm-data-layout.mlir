@@ -767,3 +767,71 @@ module {
     return
   }
 }
+// -----
+// case2_bc_fractal: fractal→fractal copy skips nd2nz.
+// Both src and dst are 4D fractal memrefs in UB → direct copy, no nd2nz inserted.
+// CHECK-LABEL: func.func @test_infer_layout_fractal_copy_no_nd2nz
+// CHECK: hivm.hir.copy
+// CHECK-NOT: hivm.hir.nd2nz
+module {
+  func.func @test_infer_layout_fractal_copy_no_nd2nz(%src: memref<5x10x16x16xf16, #hivm.address_space<ub>>, %dst: memref<5x10x16x16xf16, #hivm.address_space<ub>>) {
+    hivm.hir.copy ins(%src : memref<5x10x16x16xf16, #hivm.address_space<ub>>) outs(%dst : memref<5x10x16x16xf16, #hivm.address_space<ub>>)
+    return
+  }
+}
+
+// -----
+// case1_a_fractal: mixed A fractal + B ND mmadL1.
+// A is 4D memref in cbuf, B is 4D memref also in cbuf.
+// Verifies kDimFour branch for both operands.
+// CHECK-LABEL: func.func @test_infer_layout_mixed_fractal_A_ND_B
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, memref<2x4x16x16xf16, #hivm.address_space<cbuf>>
+module {
+  func.func @test_infer_layout_mixed_fractal_A_ND_B(%a: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, %b: memref<2x4x16x16xf16, #hivm.address_space<cbuf>>) {
+    %true = arith.constant true
+    %c64 = arith.constant 64 : index
+    %cst = arith.constant 320 : index
+    %c = memref.alloc() : memref<64x64xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %c64, %cst, %c64 : memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, memref<2x4x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%c : memref<64x64xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// case3_afrac_trans: Fractal A nZ (transposed) layout inference.
+// 4D memref [M1=4,K1=2,16,16] with transpose → nZ layout, M=dim0*dim3, K=dim1*dim2.
+// CHECK-LABEL: func.func @test_infer_layout_fractal_nZ_A
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
+module {
+  func.func @test_infer_layout_fractal_nZ_A() {
+    %true = arith.constant true
+    %c64 = arith.constant 64 : index
+    %cst = arith.constant 320 : index
+    %a = memref.alloc() : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<64x32xf32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %c64, %cst, %cst : memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, memref<4x2x16x16xf16, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%c : memref<64x32xf32, #hivm.address_space<cc>>)
+    return
+  }
+}
+
+// -----
+// s_C_int8: int8 fractal A + B with [16,32] and [32,32] block sizes.
+// Verifies Fractal layout with non-square block sizes in kDimFour branch.
+// CHECK-LABEL: func.func @test_infer_layout_fractal_int8_blocks
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: memref<2x4x16x32xi8, #hivm.address_space<cbuf>>, memref<1x2x32x32xi8, #hivm.address_space<cbuf>>
+module {
+  func.func @test_infer_layout_fractal_int8_blocks() {
+    %true = arith.constant true
+    %c64 = arith.constant 64 : index
+    %cst = arith.constant 320 : index
+    %a = memref.alloc() : memref<2x4x16x32xi8, #hivm.address_space<cbuf>>
+    %b = memref.alloc() : memref<1x2x32x32xi8, #hivm.address_space<cbuf>>
+    %c = memref.alloc() : memref<64x64xi32, #hivm.address_space<cc>>
+    hivm.hir.mmadL1 ins(%a, %b, %true, %c64, %cst, %c64 : memref<2x4x16x32xi8, #hivm.address_space<cbuf>>, memref<1x2x32x32xi8, #hivm.address_space<cbuf>>, i1, index, index, index) outs(%c : memref<64x64xi32, #hivm.address_space<cc>>)
+    return
+  }
+}

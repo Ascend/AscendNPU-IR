@@ -125,6 +125,43 @@ module {
 
 // -----
 module {
+  // CHECK-LABEL: test_mmadmxL1_fp8_format
+  func.func @test_mmadmxL1_fp8_format() {
+    %ma = memref.alloc() : memref<256x128xi8>
+    %mb = memref.alloc() : memref<128x256xi8>
+    %scaleA = memref.alloc() : memref<256x4xui8>
+    %scaleB = memref.alloc() : memref<256x4xui8>
+    %mc = memref.alloc() : memref<256x256xf32>
+    %init = arith.constant 1 : i1
+    %c256 = arith.constant 256 : index
+    %c128 = arith.constant 128 : index
+
+    // CHECK: call @mmadmxL1_int8_t_to_float_lhs_format_fp8_e5m2_t_rhs_format_fp8_e5m2_t
+    hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32}
+      ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256 :
+          memref<256x128xi8>, memref<128x256xi8>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index)
+      outs(%mc : memref<256x256xf32>)
+
+    // CHECK: call @mmadmxL1_int8_t_to_float_lhs_format_fp8_e4m3_t_rhs_format_fp8_e4m3_t
+    hivm.hir.mmadmxL1 {lhsFormat = 2 : i32, rhsFormat = 2 : i32}
+      ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256 :
+          memref<256x128xi8>, memref<128x256xi8>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index)
+      outs(%mc : memref<256x256xf32>)
+
+    // CHECK: call @mmadmxL1_int8_t_to_float_lhs_format_fp8_e5m2_t_rhs_format_fp8_e4m3_t
+    hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 2 : i32}
+      ins(%ma, %mb, %scaleA, %scaleB, %init, %c256, %c128, %c256 :
+          memref<256x128xi8>, memref<128x256xi8>,
+          memref<256x4xui8>, memref<256x4xui8>, i1, index, index, index)
+      outs(%mc : memref<256x256xf32>)
+    return
+  }
+}
+
+// -----
+module {
   // CHECK-LABEL: test_nd2nz
   // CHECK-NOT: hivm
   func.func @test_nd2nz() {

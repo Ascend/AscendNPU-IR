@@ -212,11 +212,22 @@ insertStore(Value value, Location loc, PatternRewriter &rewriter,
 /// Insert a load that rematerializes `value` with matching element type.
 hivm::LoadOp insertLoad(Value value, Location loc, PatternRewriter &rewriter);
 
+/// Insert a fixpipe that rematerializes `value` with matching element type.
+hivm::FixpipeOp insertFixpipe(Value value, Location loc,
+                              PatternRewriter &rewriter,
+                              bool inferFixpipeDmaMode);
+
 /// Insert tight coupled buffer to L1 that rematerializes `value` with matching element type.
 std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToL1(Value value, Location loc, PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize);
 
 /// Insert tight coupled buffer to UB that rematerializes `value` with matching element type.
 std::tuple<AllocationResult, bufferization::ToTensorOp> insertTightCoupledBufferToUB(Value value, Location loc, PatternRewriter &rewriter, ArrayRef<int64_t> maybeStaticTotalSize);
+
+/// Insert empty op that rematerializes `value` with matching element type.
+tensor::EmptyOp insertTensor(Value value, Location loc,
+                             PatternRewriter &rewriter,
+                             ArrayRef<int64_t> maybeStaticTotalSize,
+                             hivm::AddressSpace addressSpace);
 
 /// Convenience helper to insert store followed by load for `value`.
 std::pair<hivm::StoreOp, hivm::LoadOp> insertStoreAndLoad(

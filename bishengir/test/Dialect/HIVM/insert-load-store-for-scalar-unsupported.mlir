@@ -7,7 +7,7 @@
 // CHECK-SAME: tensor<16x16xi1>
 // CHECK: hivm.hir.store
 // CHECK-SAME: tensor<16x16xi8>
-// CHECK-SAME: "inserted-store"
+// CHECK-SAME: "hivm.inserted-store"
 // CHECK: DuplicateTensorExtractForCube::replacementLabel
 // CHECK: hivm.hir.mmadL1
 func.func @extract_i1_direct_load_for_cube_init(

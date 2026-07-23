@@ -217,6 +217,8 @@ TCCC *libFuncName<FastLogfOp> = "_mlir_ciface_simt_fast_log_float";
 TCCC *libFuncName<FastPowfOp> = "_mlir_ciface_simt_fast_pow_float";
 TCCC *libFuncName<FastSinfOp> = "_mlir_ciface_simt_fast_sin_float";
 TCCC *libFuncName<FastTanfOp> = "_mlir_ciface_simt_fast_tan_float";
+TCCC *libFuncName<FastTanhfOp> = "_mlir_ciface_simt_fast_tanh_float";
+TCCC *libFuncName<Float2HalfRnOp> = "_mlir_ciface_simt_float2half_rn_float";
 TCCC *libFuncName<FdimOp> = "_mlir_ciface_simt_fdim_float";
 TCCC *libFuncName<FinitefOp> = "_mlir_ciface_simt_finite_float";
 TCCC *libFuncName<Float2IntRnOp> = "_mlir_ciface_simt_float2int_rn_float";
@@ -238,6 +240,7 @@ TCCC *libFuncName<Float2UllRuOp> = "_mlir_ciface_simt_float2ull_ru_float";
 TCCC *libFuncName<FloatAsIntOp> = "_mlir_ciface_simt_float_as_int_float";
 TCCC *libFuncName<FloatAsUintOp> = "_mlir_ciface_simt_float_as_uint_float";
 TCCC *libFuncName<FmodOp> = "_mlir_ciface_simt_fmod_float";
+TCCC *libFuncName<Half2FloatOp> = "_mlir_ciface_simt_half2float_half";
 TCCC *libFuncName<GammaOp> = "_mlir_ciface_simt_gamma_float";
 TCCC *libFuncNameI32<HaddOp> = "_mlir_ciface_simt_hadd_int32_t";
 TCCC *libFuncName<HypotOp> = "_mlir_ciface_simt_hypot_float";
@@ -267,6 +270,10 @@ TCCC *libFuncName<Log10Op> = "_mlir_ciface_simt_log10_float";
 TCCC *libFuncName<Log1pOp> = "_mlir_ciface_simt_log1p_float";
 TCCC *libFuncNameF16<Log1pOp> = "_mlir_ciface_simt_log1p_half";
 TCCC *libFuncName<Log2Op> = "_mlir_ciface_simt_log2_float";
+TCCC *libFuncName<MaxOp> = "_mlir_ciface_simt_fmax_float";
+TCCC *libFuncNameI32<MaxOp> = "_mlir_ciface_simt_max_int32_t";
+TCCC *libFuncName<MinOp> = "_mlir_ciface_simt_fmin_float";
+TCCC *libFuncNameI32<MinOp> = "_mlir_ciface_simt_min_int32_t";
 TCCC *libFuncName<LogbOp> = "_mlir_ciface_simt_logb_float";
 TCCC *libFuncNameI32<Mul24Op> = "_mlir_ciface_simt_mul24_int32_t";
 TCCC *libFuncNameI32<MulhiOp> = "_mlir_ciface_simt_mulhi_int32_t";
@@ -275,6 +282,7 @@ TCCC *libFuncName<MulRnOp> = "_mlir_ciface_simt_mul_rn_float";
 TCCC *libFuncName<MulRuOp> = "_mlir_ciface_simt_mul_ru_float";
 TCCC *libFuncName<MulRzOp> = "_mlir_ciface_simt_mul_rz_float";
 TCCC *libFuncName<NearbyintOp> = "_mlir_ciface_simt_nearbyint_float";
+TCCC *libFuncName<NanfOp> = "_mlir_ciface_simt_nan_float";
 TCCC *libFuncName<NextafterOp> = "_mlir_ciface_simt_nextafter_float";
 TCCC *libFuncName<Norm3dOp> = "_mlir_ciface_simt_norm3d_float";
 TCCC *libFuncName<Norm4dOp> = "_mlir_ciface_simt_norm4d_float";
@@ -457,6 +465,7 @@ LibCallLowering<Exp10Op>,
 LibCallLowering<Expm1Op>,
 LibCallLowering<FastCosfOp>,
 LibCallLowering<FastDividefOp>,
+LibCallLowering<Float2HalfRnOp>,
 LibCallLowering<FastExp10fOp>,
 LibCallLowering<FastExpfOp>,
 LibCallLowering<FastLog10fOp>,
@@ -465,6 +474,7 @@ LibCallLowering<FastLogfOp>,
 LibCallLowering<FastPowfOp>,
 LibCallLowering<FastSinfOp>,
 LibCallLowering<FastTanfOp>,
+LibCallLowering<FastTanhfOp>,
 LibCallLowering<FdimOp>,
 LibCallLowering<FinitefOp>,
 LibCallLowering<Float2IntRdOp>,
@@ -479,6 +489,7 @@ LibCallLowering<Float2UintRdOp>,
 LibCallLowering<Float2UintRnOp>,
 LibCallLowering<Float2UintRuOp>,
 LibCallLowering<Float2UintRzOp>,
+LibCallLowering<Half2FloatOp>,
 LibCallLowering<Float2UllRdOp>,
 LibCallLowering<Float2UllRnOp>,
 LibCallLowering<Float2UllRuOp>,
@@ -505,6 +516,8 @@ LibCallLowering<LdExpOp>,
 LibCallLowering<LgammaOp>,
 LibCallLowering<Ll2FloatRdOp>,
 LibCallLowering<Ll2FloatRnOp>,
+LibCallLowering<MaxOp>,
+LibCallLowering<MinOp>,
 LibCallLowering<Ll2FloatRuOp>,
 LibCallLowering<Ll2FloatRzOp>,
 LibCallLowering<LlrintOp>,
@@ -513,6 +526,7 @@ LibCallLowering<Log10Op>,
 LibCallLowering<Log1pOp>,
 LibCallLowering<Log2Op>,
 LibCallLowering<LogbOp>,
+LibCallLowering<NanfOp>,
 LibCallLowering<Mul24Op>,
 LibCallLowering<MulhiOp>,
 LibCallLowering<MulRdOp>,

@@ -630,6 +630,11 @@ private:
                            return rewriter.create<ascend_dpx::Y1Op>(
                                loc, elemTy, operand);
                          })
+                   .Case("__hmf_half2float_fp16",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Half2FloatOp>(
+                               loc, elemTy, operand);
+                         })
                    .Case("__hmf_int_as_float_fp32",
                          [&] {
                            return rewriter.create<ascend_dpx::IntAsFloatOp>(
@@ -675,6 +680,11 @@ private:
                            return rewriter.create<ascend_dpx::FastTanfOp>(
                                loc, elemTy, operand);
                          })
+                   .Case("__hmf_fast_tanh_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::FastTanhfOp>(
+                               loc, elemTy, operand);
+                         })
                    .Case("__hmf_fast_exp10_fp32",
                          [&] {
                            return rewriter.create<ascend_dpx::FastExp10fOp>(
@@ -683,6 +693,11 @@ private:
                    .Case("__hmf_fast_log10_fp32",
                          [&] {
                            return rewriter.create<ascend_dpx::FastLog10fOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_float2half_rn_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::Float2HalfRnOp>(
                                loc, elemTy, operand);
                          })
                    .Case("__hmf_float2int_rn_fp32",
@@ -843,6 +858,11 @@ private:
                    .Case("__hmf_ull2float_ru_fp32",
                          [&] {
                            return rewriter.create<ascend_dpx::Ull2FloatRuOp>(
+                               loc, elemTy, operand);
+                         })
+                   .Case("__hmf_nanf_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::NanfOp>(
                                loc, elemTy, operand);
                          })
                    .Case("__hmf_reciprocal_fp32",
@@ -1097,6 +1117,26 @@ private:
                             return rewriter.create<ascend_dpx::YnOp>(
                                 loc, elemTy, lhs, rhs);
                           })
+                   .Case("__hmf_fmax_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::MaxOp>(
+                               loc, elemTy, lhs, rhs);
+                         })
+                   .Case("__hmf_fmin_fp32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::MinOp>(
+                               loc, elemTy, lhs, rhs);
+                         })
+                   .Case("__hmf_max_i32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::MaxOp>(
+                               loc, elemTy, lhs, rhs);
+                         })
+                   .Case("__hmf_min_i32",
+                         [&] {
+                           return rewriter.create<ascend_dpx::MinOp>(
+                               loc, elemTy, lhs, rhs);
+                         })
                    .Default(nullptr)) {
         return binaryOp();
       }

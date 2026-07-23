@@ -382,12 +382,14 @@ public:
 
   LogicalResult matchAndRewrite(MmadMxL1Op op,
                                 PatternRewriter &rewriter) const final {
-    // inputs
+    // inputs: C first (dst), then A/B/scales/init/mkn, optional bias, sync
     SmallVector<Value> libParams{op.getC(),           op.getA(),
                                  op.getB(),           op.getScaleA(),
                                  op.getScaleB(),      op.getInitCondition(),
                                  op.getRealM(),       op.getRealK(),
                                  op.getRealN()};
+    if (auto bias = op.getPerChannelBias())
+      libParams.push_back(bias);
 
     // additional sync arguments
     SmallVector<Value> additionalArgs;
