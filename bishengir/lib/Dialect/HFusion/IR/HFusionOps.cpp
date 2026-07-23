@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/MathExt/IR/MathExt.h"
 #include "bishengir/Dialect/Utils/Util.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -65,6 +66,8 @@
 
 using namespace mlir;
 using namespace mlir::hfusion;
+
+static constexpr llvm::StringLiteral kVgatherDecomposeAttr = "VgatherDecompose";
 
 namespace {
 
@@ -2881,6 +2884,13 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
   if (gatherAxis == rank - 1 && !srcElmTy.isInteger(64))
     return failure();
 
+  ModuleOp moduleOp = getOperation()->getParentOfType<ModuleOp>();
+  bool isRegBasedArch = hacc::utils::isRegBasedArch(moduleOp);
+  if (gatherAxis != rank - 1) {
+    if (isRegBasedArch)
+      return failure();
+  }
+
   Value cst0 = b.create<arith::ConstantIndexOp>(loc, 0);
   Value cst1 = b.create<arith::ConstantIndexOp>(loc, 1);
   Value idxGatherDimSize = b.create<tensor::DimOp>(loc, idx, gatherAxis);
@@ -2893,6 +2903,8 @@ FailureOr<SmallVector<Value>> GatherOp::decomposeOperation(OpBuilder &b) {
     Value iterArg =
         loopNest.empty() ? init : loopNest.back().getRegionIterArg(0);
     auto forOp = b.create<scf::ForOp>(loc, cst0, upperBound, cst1, iterArg);
+    if (isRegBasedArch)
+      forOp->setAttr(kVgatherDecomposeAttr, UnitAttr::get(b.getContext()));
     if (!loopNest.empty())
       b.create<scf::YieldOp>(loc, forOp.getResult(0));
     loopNest.push_back(forOp);

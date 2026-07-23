@@ -783,8 +783,10 @@ def VDivOp : HIVM_ElementwiseBinaryOp<
     OpBuilder<(ins "TypeRange":$result,
                    "ValueRange":$src,
                    "ValueRange":$dst,
-                   CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
-                   CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>
+                   CArg<"bool", "true">:$isSigned,
+                   CArg<"bool", "false">:$isHP,
+                   CArg<"ArrayRef<int64_t>", "{}">:$transpose,
+                   CArg<"ArrayRef<int64_t>", "{}">:$broadcast)>
   ];
   let extraAssemblyFormat = [{
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
@@ -819,16 +821,15 @@ def VMaxOp : HIVM_ElementwiseBinaryOp<"vmax",
       DefaultValuedAttr<BoolAttr, "true">:$is_signed,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast);
-  let builders = [
-    OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
-                   "ValueRange":$dst,
-                   CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
-                   CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>
-  ];
+  let builders = [OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
+      "ValueRange":$dst, CArg<"bool", "true">:$is_signed,
+      CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
+      CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>];
   let assemblyFormat = [{
       attr-dict `ins` `(` $src `:` type($src) `)`
       `outs` `(` $dst  `:` type($dst) `)`
       (`temp_buffer` `(` $temp_buffer^ `:` type($temp_buffer) `)`)?
+      (`is_signed` `=` $is_signed^)?
       (`broadcast` `=` $broadcast^)?
       (`transpose` `=` $transpose^)?
       (`->` type($result)^)?
@@ -861,12 +862,10 @@ def VMinOp : HIVM_ElementwiseBinaryOp<"vmin",
       DefaultValuedAttr<BoolAttr, "true">:$is_signed,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$transpose,
       DefaultValuedAttr<DenseI64ArrayAttr, "{}">:$broadcast);
-  let builders = [
-    OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
-                   "ValueRange":$dst,
-                   CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
-                   CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>
-  ];
+  let builders = [OpBuilder<(ins "TypeRange":$result, "ValueRange":$src,
+      "ValueRange":$dst, CArg<"bool", "true">:$is_signed,
+      CArg<"DenseI64ArrayAttr", "nullptr">:$transpose,
+      CArg<"DenseI64ArrayAttr", "nullptr">:$broadcast)>];
   let assemblyFormat = [{
       attr-dict `ins` `(` $src `:` type($src) `)`
       `outs` `(` $dst  `:` type($dst) `)`
@@ -1130,7 +1129,12 @@ def VCmpOp : HIVM_ElementwiseBinaryOp<"vcmp",
     OpBuilder<(ins "TypeRange":$result, "ValueRange":$src, "ValueRange":$dst,
                    "hivm::CompareModeAttr":$compare_mode,
                    "DenseI64ArrayAttr":$transpose,
-                   "DenseI64ArrayAttr":$broadcast)>
+                   "DenseI64ArrayAttr":$broadcast)>,
+    OpBuilder<(ins "TypeRange":$result, "ValueRange":$src, "ValueRange":$dst,
+                   "bool":$is_signed,
+                   CArg<"hivm::CompareMode", "CompareMode::EQ">:$compare_mode,
+                   CArg<"DenseI64ArrayAttr", "{}">:$transpose,
+                   CArg<"DenseI64ArrayAttr", "{}">:$broadcast)>
   ];
   let extraClassDeclaration = elemwiseOpBaseDecls;
 }
@@ -1352,7 +1356,16 @@ def VReduceOp : HIVM_VectorOp<"vreduce",
     OpBuilder<(ins "TypeRange":$result, "Value":$src,
                    "ValueRange":$dst, "Value":$temp_buffer,
                    "hivm::ReduceOpAttr":$arith,
-                   "DenseI64ArrayAttr":$reduce_dims, "Value":$indices)>
+                   "DenseI64ArrayAttr":$reduce_dims, "Value":$indices)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src,
+                   "ValueRange":$dst, "hivm::ReduceOpAttr":$arith,
+                   "BoolAttr":$unsigned_src,
+                   "DenseI64ArrayAttr":$reduce_dims)>,
+    OpBuilder<(ins "TypeRange":$result, "Value":$src,
+                   "ValueRange":$dst, "hivm::ReduceOpAttr":$arith,
+                   "BoolAttr":$unsigned_src,
+                   "BoolAttr":$tie_break_left,
+                   "DenseI64ArrayAttr":$reduce_dims)>
   ];
   let hasCanonicalizer = 1;
   let hasVerifier = 1;

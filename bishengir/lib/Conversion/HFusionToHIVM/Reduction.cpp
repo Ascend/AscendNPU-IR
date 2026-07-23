@@ -17,17 +17,70 @@
 
 #include "bishengir/Conversion/HFusionToHIVM/HFusionToHIVM.h"
 #include "bishengir/Conversion/HFusionToHIVM/Utils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/IR/HFusion.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/TypeUtilities.h"
+#include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace mlir;
+
+static thread_local bool isRegBasedArch{false};
+
+static BoolAttr getReduceTieBreakLeftAttr(Operation *op) {
+  if (auto reduceWithIndexOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
+    // hfusion.reduce_with_index has to have 'tie_break_left' attr
+    return reduceWithIndexOp.getTieBreakLeftAttr();
+  }
+  // set default value for backward complatibility
+  return {};
+}
+
+static BoolAttr getReduceUnsignedSourceAttr(Operation *op) {
+  auto *ctx = op->getContext();
+  if (auto reduceWithIndexOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
+    // hfusion.reduce_with_index has to have 'unsigned_src' attr
+    return reduceWithIndexOp.getUnsignedSrcAttr();
+  }
+  if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
+    Block &body = reduceOp.getCombiner().front();
+    auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
+    if (!yieldOp || yieldOp.getValues().size() != 1)
+      return BoolAttr::get(ctx, false);
+
+    Operation *bodyOp = yieldOp.getValues()[0].getDefiningOp();
+    if (!bodyOp)
+      return BoolAttr::get(ctx, false);
+
+    Type elemType = getElementTypeOrSelf(reduceOp.getInputs()[0].getType());
+    if (elemType.isInteger() &&
+        (isa<arith::MaxUIOp>(bodyOp) || isa<arith::MinUIOp>(bodyOp)))
+      return BoolAttr::get(ctx, true);
+  }
+  // set default value for backward complatibility
+  return BoolAttr::get(ctx, false);
+}
+
+static hivm::ReduceOperation
+getReduceWithIndexKind(hfusion::ReduceWithIndexOp reduceOp) {
+  auto reduceKind = reduceOp.getReduceKindAttr().getReduceWithIndexKind();
+  if (reduceKind == hfusion::ReduceWithIndexKind::MAX) {
+    return hivm::ReduceOperation::max_with_index;
+  } else if (reduceKind == hfusion::ReduceWithIndexKind::MIN) {
+    return hivm::ReduceOperation::min_with_index;
+  } else {
+    reduceOp.emitOpError("unsupported reduce with index operation: ");
+    return hivm::ReduceOperation::none;
+  }
+}
 
 static hivm::ReduceOperation
 getReduceWithIndexOpAttr(hfusion::ReduceWithIndexOp reduceOp) {
@@ -36,13 +89,13 @@ getReduceWithIndexOpAttr(hfusion::ReduceWithIndexOp reduceOp) {
   if (reduceKind == hfusion::ReduceWithIndexKind::MAX) {
     return tieBreakLeft ? hivm::ReduceOperation::max_with_index_left
                         : hivm::ReduceOperation::max_with_index_right;
-  }
-  if (reduceKind == hfusion::ReduceWithIndexKind::MIN) {
+  } else if (reduceKind == hfusion::ReduceWithIndexKind::MIN) {
     return tieBreakLeft ? hivm::ReduceOperation::min_with_index_left
                         : hivm::ReduceOperation::min_with_index_right;
+  } else {
+    reduceOp.emitOpError("unsupported reduce with index operation: ");
+    llvm::report_fatal_error("Not implemented");
   }
-  reduceOp.emitOpError("unsupported reduce with index operation: ");
-  llvm::report_fatal_error("Not implemented");
 }
 
 static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
@@ -50,7 +103,7 @@ static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
   auto *ctx = op->getContext();
 
   if (auto reduceOp = dyn_cast<hfusion::ReduceWithIndexOp>(op)) {
-    kind = getReduceWithIndexOpAttr(reduceOp);
+    kind = isRegBasedArch ? getReduceWithIndexKind(reduceOp) : getReduceWithIndexOpAttr(reduceOp);
   } else if (auto reduceOp = dyn_cast<linalg::ReduceOp>(op)) {
     Block &body = reduceOp.getCombiner().front();
     auto yieldOp = dyn_cast<linalg::YieldOp>(body.getTerminator());
@@ -75,10 +128,12 @@ static hivm::ReduceOpAttr getReduceOpAttr(Operation *op) {
     } else if (isa<arith::MulFOp>(bodyOp) || isa<arith::MulIOp>(bodyOp)) {
       kind = hivm::ReduceOperation::prod;
     } else if (isa<arith::MaximumFOp>(bodyOp) || isa<arith::MaxSIOp>(bodyOp) ||
-               isa<arith::MaxNumFOp>(bodyOp)) {
+               isa<arith::MaxNumFOp>(bodyOp) ||
+               (isRegBasedArch && isa<arith::MaxUIOp>(bodyOp))) {
       kind = hivm::ReduceOperation::max;
     } else if (isa<arith::MinimumFOp>(bodyOp) || isa<arith::MinSIOp>(bodyOp) ||
-               isa<arith::MinNumFOp>(bodyOp)) {
+               isa<arith::MinNumFOp>(bodyOp) ||
+               (isRegBasedArch && isa<arith::MinUIOp>(bodyOp))) {
       kind = hivm::ReduceOperation::min;
     } else {
       reduceOp.emitOpError("unsupported reduce operation: ");
@@ -137,13 +192,23 @@ struct LinalgToHIVMReduceLikeOp : public OpRewritePattern<ReduceOpTy> {
       }
     }
 
-    // If there are no indices input from HFusion/Linalg reduce op, then the hivm
-    // reduce op will create it's own indeices input.
+    // For reduce with index op that has index as input, note that the index is
+    // not used in the hivm op because hivm op creates its own index.
     auto indices = (reduceOpInputs.size() > 1) ? reduceOpInputs[1] : nullptr;
-    auto hivmOp = rewriter.create<hivm::VReduceOp>(
-        reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
-        ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
-        reduceOp.getDimensionsAttr(), indices);
+    auto hivmOp = isRegBasedArch
+        ? rewriter.create<hivm::VReduceOp>(
+            reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
+            ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
+            getReduceUnsignedSourceAttr(reduceOp),
+            getReduceTieBreakLeftAttr(reduceOp), reduceOp.getDimensionsAttr())
+        : rewriter.create<hivm::VReduceOp>(
+            reduceOp.getLoc(), TypeRange(resTypeVec), reduceOpInputs[0],
+            ValueRange(expandShapeOps), getReduceOpAttr(reduceOp),
+            reduceOp.getDimensionsAttr(), indices);
+
+    if (isRegBasedArch && reduceOp->hasAttr("already_initialize_init"))
+      hivmOp->setDiscardableAttr("already_initialize_init",
+                                 UnitAttr::get(rewriter.getContext()));
 
     Value firstCollapseSrc =
         hasPureTensor ? hivmOp.getResult()[0] : hivmOp.getDstValue();
@@ -177,7 +242,9 @@ struct LinalgToHIVMReduceLikeOp : public OpRewritePattern<ReduceOpTy> {
 } // namespace
 
 void mlir::populateReductionPatternsAndLegality(RewritePatternSet &patterns,
-                                                ConversionTarget &target) {
+                                                ConversionTarget &target,
+                                                bool _isRegBasedArch) {
+  isRegBasedArch = _isRegBasedArch;
   MLIRContext *context = patterns.getContext();
   target.addIllegalOp<linalg::ReduceOp, hfusion::ReduceWithIndexOp>();
   patterns.add<LinalgToHIVMReduceLikeOp<linalg::ReduceOp>,

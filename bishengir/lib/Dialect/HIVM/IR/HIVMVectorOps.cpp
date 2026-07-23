@@ -111,10 +111,15 @@ ENABLE_VECTOR_BINARY_AND_UNARY_OP_BUILD_WITH_TMPBUFF(VRecOp)
 
 void VMaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
-  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
-        /*is_signed=*/BoolAttr::get(odsBuilder.getContext(), true), transpose,
-        broadcast);
+                   bool isSigned, DenseI64ArrayAttr transpose,
+                   DenseI64ArrayAttr broadcast) {
+  if (!transpose)
+    transpose = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+  if (!broadcast)
+    broadcast = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
+        isSigned, transpose, broadcast);
 }
 
 //===----------------------------------------------------------------------===//
@@ -123,10 +128,15 @@ void VMaxOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 void VMinOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
-  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
-        /*is_signed=*/BoolAttr::get(odsBuilder.getContext(), true), transpose,
-        broadcast);
+                   bool isSigned, DenseI64ArrayAttr transpose,
+                   DenseI64ArrayAttr broadcast) {
+  if (!transpose)
+    transpose = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+  if (!broadcast)
+    broadcast = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
+        isSigned, transpose, broadcast);
 }
 
 //===----------------------------------------------------------------------===//
@@ -135,11 +145,12 @@ void VMinOp::build(OpBuilder &odsBuilder, OperationState &odsState,
 
 void VDivOp::build(OpBuilder &odsBuilder, OperationState &odsState,
                    TypeRange result, ValueRange src, ValueRange dst,
-                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
-  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
-        /*isSigned=*/BoolAttr::get(odsBuilder.getContext(), true),
-        /*isHP=*/BoolAttr::get(odsBuilder.getContext(), false), transpose,
-        broadcast);
+                   bool isSigned, bool isHP, ArrayRef<int64_t> transpose,
+                   ArrayRef<int64_t> broadcast) {
+  auto transposeAttr = odsBuilder.getDenseI64ArrayAttr(transpose);
+  auto broadcastAttr = odsBuilder.getDenseI64ArrayAttr(broadcast);
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
+        isSigned, isHP, transposeAttr, broadcastAttr);
 }
 
 //===----------------------------------------------------------------------===//
@@ -425,6 +436,22 @@ void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, result, src, dst, temp_buffer, arith,
         /*unsigned_src=*/BoolAttr(),
         /*tie_break_left=*/BoolAttr(), reduce_dims, indices);
+}
+
+void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, ValueRange dst,
+                      hivm::ReduceOpAttr arith, BoolAttr unsignedSrc,
+                      DenseI64ArrayAttr reduce_dims) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, arith,
+        unsignedSrc, /*tie_break_left=*/nullptr, reduce_dims, /*indices=*/nullptr);
+}
+
+void VReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                      TypeRange result, Value src, ValueRange dst,
+                      hivm::ReduceOpAttr arith, BoolAttr unsignedSrc,
+                      BoolAttr tieBreakLeft, DenseI64ArrayAttr reduce_dims) {
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr, arith,
+        unsignedSrc, tieBreakLeft, reduce_dims, /*indices=*/nullptr);
 }
 
 static LogicalResult verifyVReduceDims(VReduceOp op) {
@@ -1326,4 +1353,17 @@ void VCmpOp::build(OpBuilder &odsBuilder, OperationState &odsState,
   build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/nullptr,
         /*is_signed=*/odsBuilder.getBoolAttr(true), compare_mode, transpose,
         broadcast);
+}
+
+void VCmpOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                   TypeRange result, ValueRange src, ValueRange dst,
+                   bool is_signed, hivm::CompareMode compare_mode,
+                   DenseI64ArrayAttr transpose, DenseI64ArrayAttr broadcast) {
+  if (!transpose)
+    transpose = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+  if (!broadcast)
+    broadcast = DenseI64ArrayAttr::get(odsBuilder.getContext(), {});
+
+  build(odsBuilder, odsState, result, src, dst, /*temp_buffer=*/Value(),
+        is_signed, compare_mode, transpose, broadcast);
 }
