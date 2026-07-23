@@ -341,14 +341,8 @@ copy_matrix_cc_to_cbuf_normal_4d_to_4d_core(
   uint16_t src_n_size = l0c->sizes[0] * l0c->sizes[3];
   // We assume fully contiguous and use m,n to compute strides
   uint16_t src_stride = src_m_size; //in unit of C0
-
-  uint16_t dst_m_size = cbuf->sizes[1] * cbuf->sizes[2];
-  #if defined(__DAV_C310__)
-  uint16_t C0 = channel_split ? FRACTAL_BLOCK_NUM / 2 : FRACTAL_BLOCK_NUM;
-  uint16_t dst_stride = dst_m_size * C0; // in unit of element (in A5)
-  #else
-  uint16_t dst_stride = dst_m_size; // in unit of datablock (in A2/A3)
-  #endif
+  uint16_t C0 = (channel_split) ? (FRACTAL_BLOCK_NUM / 2) : FRACTAL_BLOCK_NUM;
+  uint16_t dst_stride = dst_m_size * C0; // in unit of element
 
   set_pre_quant_scale<DST_TYPE>(quant_scale);
 
