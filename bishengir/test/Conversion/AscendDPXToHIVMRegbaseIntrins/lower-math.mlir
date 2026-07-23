@@ -444,6 +444,8 @@ func.func @ascend_dpx_new_unary_ops_f32(%arg1 : f32) {
     %32 = ascend_dpx.fast_expf %arg1 : (f32) -> f32
     // CHECK: @_mlir_ciface_simt_fast_tan_float(%[[ARG]])
     %33 = ascend_dpx.fast_tanf %arg1 : (f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fast_tanh_float(%[[ARG]])
+    %fast_tanh = ascend_dpx.fast_tanhf %arg1 : (f32) -> f32
     // CHECK: @_mlir_ciface_simt_fast_exp10_float(%[[ARG]])
     %34 = ascend_dpx.fast_exp10f %arg1 : (f32) -> f32
     // CHECK: @_mlir_ciface_simt_fast_log10_float(%[[ARG]])
@@ -592,5 +594,25 @@ func.func @ascend_dpx_quaternary_norm_ops_f32(%arg1 : f32, %arg2 : f32, %arg3 : 
 func.func @ascend_dpx_finitef_check(%arg1 : f32) {
     // CHECK: @_mlir_ciface_simt_finite_float(%[[ARG]])
     %1 = ascend_dpx.finitef %arg1 : (f32) -> i1
+    return
+}
+
+// CHECK-LABEL: @ascend_dpx_requested_ops
+// CHECK-SAME: %[[F32A:.*]]: f32, %[[F32B:.*]]: f32, %[[I32A:.*]]: i32, %[[I32B:.*]]: i32, %[[F16:.*]]: f16, %[[TAG:.*]]: !llvm.ptr
+func.func @ascend_dpx_requested_ops(%f32a : f32, %f32b : f32, %i32a : i32, %i32b : i32, %f16 : f16, %tag : !llvm.ptr) {
+    // CHECK: @_mlir_ciface_simt_float2half_rn_float(%[[F32A]])
+    %0 = ascend_dpx.float2half_rn %f32a : (f32) -> f16
+    // CHECK: @_mlir_ciface_simt_half2float_half(%[[F16]])
+    %1 = ascend_dpx.half2float %f16 : (f16) -> f32
+    // CHECK: @_mlir_ciface_simt_fmax_float(%[[F32A]], %[[F32B]])
+    %2 = ascend_dpx.max %f32a, %f32b : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_fmin_float(%[[F32A]], %[[F32B]])
+    %3 = ascend_dpx.min %f32a, %f32b : (f32, f32) -> f32
+    // CHECK: @_mlir_ciface_simt_max_int32_t(%[[I32A]], %[[I32B]])
+    %4 = ascend_dpx.max %i32a, %i32b : (i32, i32) -> i32
+    // CHECK: @_mlir_ciface_simt_min_int32_t(%[[I32A]], %[[I32B]])
+    %5 = ascend_dpx.min %i32a, %i32b : (i32, i32) -> i32
+    // CHECK: @_mlir_ciface_simt_nan_float(%[[TAG]])
+    %6 = ascend_dpx.nanf %tag : (!llvm.ptr) -> f32
     return
 }
