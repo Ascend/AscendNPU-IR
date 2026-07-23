@@ -547,11 +547,13 @@ class MemPlan {
 public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
-          int simtVFDynamicSize, PlanMemoryStrategy planMemoryStrategy)
+          int simtVFDynamicSize, bool disableVFReachableCheck,
+          PlanMemoryStrategy planMemoryStrategy)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
         restrictInplaceAsISA(restrictInplaceAsISA),
         simtVFDynamicSize(simtVFDynamicSize),
+        disableVFReachableCheck(disableVFReachableCheck),
         planMemoryStrategy(planMemoryStrategy), vfInplaceReuseInfo(nullptr) {}
 
   LogicalResult plan(bool emitErrors = true);
@@ -620,6 +622,9 @@ private:
 
   // Dynamic ub size(KB) for simt VF. Default is 216
   int simtVFDynamicSize;
+
+  /// Disable VF reachable check. Default is false
+  bool disableVFReachableCheck;
 
   /// Strategy for reordering storage entries during plan memory.
   PlanMemoryStrategy planMemoryStrategy;
