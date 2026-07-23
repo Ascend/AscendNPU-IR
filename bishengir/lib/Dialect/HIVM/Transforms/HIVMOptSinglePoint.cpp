@@ -262,8 +262,6 @@ void HIVMOptSinglePointOpPass::runOnOperation() {
       SinglePointEltVecOp<hivm::VAddOp, arith::AddFOp, arith::AddIOp, None>,
       SinglePointEltVecOp<hivm::VSubOp, arith::SubFOp, arith::SubIOp, None>,
       SinglePointEltVecOp<hivm::VMulOp, arith::MulFOp, arith::MulIOp, None>,
-      SinglePointEltVecOp<hivm::VDivOp, arith::DivFOp, arith::DivSIOp,
-                          arith::DivUIOp>,
       SinglePointEltVecOp<hivm::VAbsOp, math::AbsFOp, math::AbsIOp, None>,
       SinglePointEltVecOp<hivm::VSqrtOp, math::SqrtOp, math::SqrtOp, None>,
       SinglePointEltVecOp<hivm::VMaxOp, arith::MaximumFOp, arith::MaxSIOp,
