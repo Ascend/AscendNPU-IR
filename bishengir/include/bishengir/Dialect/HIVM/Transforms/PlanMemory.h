@@ -55,8 +55,7 @@ constexpr const int SPEC_LEVEL_0 = 0;
 /// continuous instructions caused by plan, offset = 1.
 constexpr const int SPEC_LEVEL_1 = 1;
 
-/// do not reuse the buffer in same loop when pipe conflicts between vector and
-/// dma.
+/// do not reuse the buffer in same loop when pipe conflicts between vector and dma.
 constexpr const int SPEC_LEVEL_2 = 2;
 
 /// do not reuse buffer when pipe conflicts.
@@ -437,9 +436,8 @@ private:
                                    const SetVector<Value> &preloadBufferValues);
 
   /// Update kill info of preload buffers to their enclosing loop op.
-  void
-  UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
-                               const SetVector<Value> &preloadBufferValues);
+  void UpdatePreloadBuffersKillInfo(OpInfo *opInfo,
+                                    const SetVector<Value> &preloadBufferValues);
 
   /// Extend preload buffer lifetime from scope to parent for.
   void UpdatePreloadBuffersGenKillMap();
@@ -529,15 +527,14 @@ using StorageEntryPair = std::pair<const StorageEntry *, const StorageEntry *>;
 /// MemPlan::IsInplaceReuseReachable when it called with the same value.
 class InplaceReuseReachableMap {
 public:
-  template <PIPE Pipe> void put(Value key, bool val);
+  template <typename DstOpType> void put(Value key, bool val);
 
-  template <PIPE Pipe> std::optional<bool> get(Value key);
+  template <typename DstOpType> std::optional<bool> get(Value key);
 
   void unite(Value val1, Value val2);
-
 private:
-  DenseMap<Value, bool> mte3Reachable;
-  DenseMap<Value, bool> mte2Reachable;
+  DenseMap<Value, bool> storeReachable;
+  DenseMap<Value, bool> loadReachable;
 
   DenseMap<Value, Value> parent;
   Value find(Value val);
@@ -548,7 +545,7 @@ public:
   MemPlan(MemPlanMode planMode, bool enableGlobalReuse,
           bool enablePrintMemoryAllocatedSize, bool restrictInplaceAsISA,
           int simtVFDynamicSize, bool disableVFReachableCheck,
-          PlanMemoryStrategy planMemoryStrategy)
+           PlanMemoryStrategy planMemoryStrategy)
       : planMode(planMode), enableGlobalReuse(enableGlobalReuse),
         enablePrintMemoryAllocatedSize(enablePrintMemoryAllocatedSize),
         restrictInplaceAsISA(restrictInplaceAsISA),
@@ -796,11 +793,14 @@ private:
 
   /// the vf call `op` that can reuse dst address `gen` and src address `kill`
   /// in limited situation
-  bool IsReuseVFCall(Value gen, Value kill);
+  bool IsReuseVFCall(Value gen, Value kill,
+                     InplaceReuseReachableMap &reachableMap) const;
 
-  /// Determines whether the value `src` is reachable to an operand of an
-  /// operation with pipe type `Pipe`.
-  template <PIPE Pipe> bool IsInplaceReuseReachable(Value allocValue);
+  /// Determines whether the value `src` is reachable to an operand of a
+  /// `DstOpType` operation.
+  template <typename DstOpType>
+  bool IsInplaceReuseReachable(Value src,
+                               InplaceReuseReachableMap &reachableMap) const;
 
   /// Get overlap buffer life.
   DenseMap<ValuePair, BufferLife>
@@ -896,9 +896,6 @@ private:
 
   /// Memory dma pipe first plan optimization.
   OptMemPlanForDma dmaFirstPipelineOpt;
-
-  /// Inplace reuse reachable map for checking if a buffer is used by hivmPipeOp
-  InplaceReuseReachableMap reachableMap;
 
   /// Map from the storage entry pair to its pipeDma conflict info.
   DenseMap<StorageEntryPair, bool> pipeDmaConflictMap;
