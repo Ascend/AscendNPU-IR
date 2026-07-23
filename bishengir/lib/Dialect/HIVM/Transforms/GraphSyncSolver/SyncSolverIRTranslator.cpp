@@ -281,6 +281,29 @@ IRTranslator::getLoadStoreOp(OP loadStoreOp, OperationBase *parentOp) {
   return rwOp;
 }
 
+std::unique_ptr<OperationBase>
+IRTranslator::getDebugOp(DebugOp debugOp, OperationBase *parentOp) {
+  auto op = debugOp.getOperation();
+  auto pipe = hivm::PIPE::PIPE_S;
+  auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;
+  if (options.isCrossCoreMode()) {
+    auto coreType = hivm::getCoreType(op);
+    assert(llvm::succeeded(coreType));
+    assert(coreType.value() != hivm::TCoreType::CUBE_OR_VECTOR);
+    coreTypeVal = coreType.value();
+  }
+  llvm::SmallVector<Value> readMemVals;
+  llvm::SmallVector<Value> writeMemVals;
+
+  Value val = debugOp.getArg();
+  if (isa<ShapedType>(val.getType())) {
+    readMemVals = getMemoryOps({val});
+  }
+  auto rwOp = std::make_unique<RWOperation>(op, parentOp, coreTypeVal, pipe,
+                                            pipe, readMemVals, writeMemVals);
+  return rwOp;
+}
+
 // Decompose specific MmadL1 ops into a small inline sequence in the IR for
 // easier sync handling.
 std::unique_ptr<OperationBase>
@@ -463,6 +486,9 @@ IRTranslator::translateRWLikeOp(Operation *op, OperationBase *parentOp) {
       return rwOp;
     }
   }
+  if (auto debugOp = dyn_cast<DebugOp>(op)) {
+    return getDebugOp(debugOp, parentOp);
+  }
   if (auto storeOp = dyn_cast<memref::StoreOp>(op)) {
     return getLoadStoreOp(storeOp, parentOp);
   }
@@ -514,7 +540,9 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
   ModuleOp module = funcOp->getParentOfType<ModuleOp>();
   SymbolTable symtab(module);
   auto calledFuncOp = symtab.lookup<func::FuncOp>(callOp.getCallee());
-  if (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name)) {
+  if (!calledFuncOp ||
+      (!calledFuncOp->hasAttr(hivm::VectorFunctionAttr::name) &&
+       !hivm::util::isSIMTVF(calledFuncOp))) {
     return nullptr;
   }
   llvm::SetVector<Value> readMemVals, writeMemVals;
@@ -534,9 +562,13 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
     }
   };
 
-  // handle function arguments annotated with memory effect attributes
-  for (auto [i, arg] : llvm::enumerate(calledFuncOp.getArguments())) {
-    // get the attribute by name for i-th argument
+  // handle function arguments annotated with memory effect attributes.
+  // Use `getNumArguments()` (function-type based) so this also works for
+  // private declarations (e.g., outlined SIMT VFs whose body has been
+  // moved to a Triton submodule). The caller-side `callArg` is inserted
+  // directly here; the final `getMemoryOps(readMemVals.takeVector())`
+  // below traces back to the canonical memory root in the caller.
+  for (unsigned i = 0, n = calledFuncOp.getNumArguments(); i < n; ++i) {
     auto memEffectAttr =
         calledFuncOp.getArgAttr(i, hivm::MemoryEffectAttr::name);
     if (!memEffectAttr) {
@@ -544,13 +576,13 @@ IRTranslator::getCallOp(func::CallOp callOp, OperationBase *parentOp) {
     }
     auto effect = cast<hivm::MemoryEffectAttr>(memEffectAttr).getEffect();
     auto callArg = callOp->getOperand(i);
-    // logic based on the attribute value
-    if (effect == hivm::MemoryEffect::READ) {
-      handleRWValue(callArg, MemoryEffect::READ);
-    } else if (effect == hivm::MemoryEffect::WRITE) {
-      handleRWValue(callArg, MemoryEffect::WRITE);
-    } else if (effect == hivm::MemoryEffect::READ_WRITE) {
-      handleRWValue(callArg, MemoryEffect::READ_WRITE);
+    if (effect == hivm::MemoryEffect::READ ||
+        effect == hivm::MemoryEffect::READ_WRITE) {
+      readMemVals.insert(callArg);
+    }
+    if (effect == hivm::MemoryEffect::WRITE ||
+        effect == hivm::MemoryEffect::READ_WRITE) {
+      writeMemVals.insert(callArg);
     }
   }
 
