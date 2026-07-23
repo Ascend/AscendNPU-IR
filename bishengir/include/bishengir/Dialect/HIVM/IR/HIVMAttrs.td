@@ -1360,4 +1360,14 @@ def HIVM_IsDistributedAttr : HIVM_Attr<"IsDistributed", "is_distributed"> {
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// InsertedAttr
+//===----------------------------------------------------------------------===//
+
+def HIVM_Inserted_Tensor : HIVM_Attr<"kInsertedTensor", "inserted-tensor"> {}
+def HIVM_Inserted_Copy : HIVM_Attr<"kInsertedCopy", "inserted-copy"> {}
+def HIVM_Inserted_Load : HIVM_Attr<"kInsertedLoad", "inserted-load"> {}
+def HIVM_Inserted_Store : HIVM_Attr<"kInsertedStore", "inserted-store"> {}
+def HIVM_Inserted_Fixpipe : HIVM_Attr<"kInsertedFixpipe", "inserted-fixpipe"> {}
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMATTRS_TD

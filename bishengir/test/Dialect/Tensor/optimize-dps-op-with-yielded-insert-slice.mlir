@@ -76,7 +76,7 @@ func.func @load_problem(%lb: index, %ub: index, %step: index) -> tensor<18x111x3
     // CHECK: tensor.extract_slice
     // CHECK: tensor<18x111x3xf32> to tensor<111x3xf32>
     // CHECK-NOT: tensor<18x111x3xf32> to tensor<1x111x3xf32>
-    %16 = hivm.hir.load ins(%load_src0 : tensor<111x3xf32>) outs(%load_dst : tensor<111x3xf32>) {"inserted-load"} core_type = <VECTOR> -> tensor<111x3xf32>
+    %16 = hivm.hir.load ins(%load_src0 : tensor<111x3xf32>) outs(%load_dst : tensor<111x3xf32>) {"hivm.inserted-load"} core_type = <VECTOR> -> tensor<111x3xf32>
     %inserted_slice = tensor.insert_slice %16 into %arg1[%value, 0, 0] [1, 111, 3] [1, 1, 1] : tensor<111x3xf32> into tensor<18x111x3xf32>
     scf.yield %inserted_slice : tensor<18x111x3xf32>
   }
