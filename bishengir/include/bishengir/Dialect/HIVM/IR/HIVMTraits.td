@@ -191,4 +191,15 @@ def UniformReassociationFlattenTrait : NativeOpTrait<"UniformReassociationFlatte
 def CollapsibleConsecutiveTargetDimsTrait
     : NativeOpTrait<"CollapsibleConsecutiveTargetDimsTrait", [HIVMStructuredOpInterface, UniformReassociationFlattenTrait]>;
 
+//===----------------------------------------------------------------------===//
+// Local matmul-like op trait bundle
+//===----------------------------------------------------------------------===//
+
+def HIVMLocalMatmulLikeOpTraits : TraitList<[
+  AttrSizedOperandSegments,
+  CubeCoreTypeTrait,
+  MacroOpPipeTrait<"PIPE::PIPE_MTE1, PIPE::PIPE_M">,
+  HIVMLocalMatmulLikeOpInterface,
+]>;
+
 #endif // BISHENGIR_DIALECT_HIVM_IR_HIVMTRAITS_TD

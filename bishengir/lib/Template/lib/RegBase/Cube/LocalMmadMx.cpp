@@ -55,6 +55,142 @@ CATLASS_DEVICE inline uint32_t pingpongIdToEventId(uint32_t pingPongId) {
   return 6 + (!pingPongId ? EVENT_ID0 : EVENT_ID1);
 }
 
+enum class HIVMMatmulDataformat : uint32_t {
+  FP8E5M2_T = 1,
+  FP8E4M3_T = 2,
+  FP4E2M1_T = 3,
+};
+
+CATLASS_DEVICE inline bool isFp4Format(HIVMMatmulDataformat format) {
+  return format == HIVMMatmulDataformat::FP4E2M1_T;
+}
+
+CATLASS_DEVICE inline uint32_t getMxFormatKFactor(HIVMMatmulDataformat format) {
+  return isFp4Format(format) ? 2 : 1;
+}
+
+template <class ElementAFp8, class ArchTag, class LayoutTagL1A,
+          class LayoutTagL0A, class TensorMxScale>
+CATLASS_DEVICE void copyTransposedAInFp8Format(
+    __cbuf__ int8_t *l1A, uint32_t l1M, uint32_t l1K, uint32_t actualM,
+    uint32_t kL0Actual, uint32_t kL0Idx, uint32_t l0K, uint32_t pingPongId,
+    TensorMxScale const &tensorTileL1MxScaleA) {
+  using LayoutL1AFp8 = detail::TagToLayout_t<ElementAFp8, LayoutTagL1A>;
+  using LayoutL0AFp8 = detail::TagToLayout_t<ElementAFp8, LayoutTagL0A>;
+  using TensorL1AFp8 =
+      tla::Tensor<AscendCBisheng::LocalTensor<ElementAFp8>, LayoutL1AFp8,
+                  tla::Coord<tla::_0, tla::_0>, AscendCBisheng::TPosition::A1>;
+  using TensorL0AFp8 =
+      tla::Tensor<AscendCBisheng::LocalTensor<ElementAFp8>, LayoutL0AFp8,
+                  tla::Coord<tla::_0, tla::_0>, AscendCBisheng::TPosition::A2>;
+  using CopyL1ToL0AFp8 =
+      Gemm::Tile::TileCopyTla<ArchTag, TensorL1AFp8, TensorL0AFp8>;
+
+  AscendCBisheng::LocalTensor<ElementAFp8> l1ATensorFp8{
+      AscendCBisheng::TPosition::A1, (uint32_t)reinterpret_cast<int64_t>(l1A),
+      l1M * l1K};
+  AscendCBisheng::LocalTensor<ElementAFp8> l0ATensorFp8{
+      AscendCBisheng::TPosition::A2, 0, ArchTag::L0A_SIZE};
+
+  auto tensorL1AFp8 = tla::MakeTensor(
+      l1ATensorFp8, tla::MakeLayout<ElementAFp8, LayoutTagL1A>(l1M, l1K),
+      Arch::PositionL1{});
+  auto l0ATileFp8 =
+      l0ATensorFp8[pingPongId * (ArchTag::L0A_SIZE / 2) /
+                   sizeof(ElementAFp8)];
+  auto tensorL0AFp8 = tla::MakeTensor(
+      l0ATileFp8,
+      tla::MakeLayout<ElementAFp8, LayoutTagL0A>(actualM, kL0Actual),
+      Arch::PositionL0A{});
+  auto tensorTileL1AFp8 =
+      GetTile(tensorL1AFp8, tla::MakeCoord(0, kL0Idx * l0K),
+              tla::MakeShape(actualM, kL0Actual));
+
+  CopyL1ToL0AFp8 copyL1ToL0AFp8;
+  copyL1ToL0AFp8(tensorL0AFp8, tensorTileL1AFp8, tensorTileL1MxScaleA);
+}
+
+template <class ArchTag, class LayoutTagL1A, class LayoutTagL0A,
+          class CopyL1ToL0A, class TensorL0A, class TensorL1A,
+          class TensorMxScale>
+CATLASS_DEVICE void copyTransposedAByFormat(
+    CopyL1ToL0A &copyL1ToL0A, TensorL0A const &tensorL0A,
+    TensorL1A const &tensorTileL1A, TensorMxScale const &tensorTileL1MxScaleA,
+    HIVMMatmulDataformat lhsFormat, __cbuf__ int8_t *l1A, uint32_t l1M,
+    uint32_t l1K, uint32_t actualM, uint32_t kL0Actual, uint32_t kL0Idx,
+    uint32_t l0K, uint32_t pingPongId) {
+  if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
+    copyTransposedAInFp8Format<float8_e5m2_t, ArchTag, LayoutTagL1A,
+                               LayoutTagL0A>(l1A, l1M, l1K, actualM,
+                                             kL0Actual, kL0Idx, l0K,
+                                             pingPongId, tensorTileL1MxScaleA);
+  } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
+    copyTransposedAInFp8Format<float8_e4m3_t, ArchTag, LayoutTagL1A,
+                               LayoutTagL0A>(l1A, l1M, l1K, actualM,
+                                             kL0Actual, kL0Idx, l0K,
+                                             pingPongId, tensorTileL1MxScaleA);
+  } else {
+    copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+  }
+}
+
+// A5 mad_mx has no separate bias operand. Bias table address is packed into
+// Xd[63:32], with C address in Xd[31:0] (same as AscendC MmadCal).
+template <class ElementACC>
+CATLASS_DEVICE __cc__ ElementACC *packCWithBiasAddr(__cc__ ElementACC *l0CPhyAddr,
+                                                    uint64_t biasAddr,
+                                                    bool hasBias) {
+  if (!hasBias)
+    return l0CPhyAddr;
+  uint64_t xd = (reinterpret_cast<uint64_t>(l0CPhyAddr) & 0xffffffffULL) |
+                ((biasAddr & 0xffffffffULL) << 32);
+  return reinterpret_cast<__cc__ ElementACC *>(xd);
+}
+
+template <class ElementACC, class L0CPhyAddr, class L0APhyAddr,
+          class L0BPhyAddr>
+CATLASS_DEVICE void madMxByFormat(L0CPhyAddr l0CPhyAddr, L0APhyAddr l0APhyAddr,
+                                  L0BPhyAddr l0BPhyAddr, uint32_t actualM,
+                                  uint32_t kL0Actual, uint32_t actualN,
+                                  uint8_t unitFlag, bool initC,
+                                  HIVMMatmulDataformat lhsFormat,
+                                  HIVMMatmulDataformat rhsFormat,
+                                  uint64_t biasAddr = 0, bool hasBias = false) {
+  // With bias: C comes from bias table (cmatrixSource=true), so initC is false.
+  const bool cmatrixSource = hasBias;
+  const bool cmatrixInitVal = initC && !hasBias;
+  auto *cAddr = packCWithBiasAddr<ElementACC>(
+      (__cc__ ElementACC *)l0CPhyAddr, biasAddr, hasBias);
+  if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T &&
+      rhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
+    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e5m2_t *)l0APhyAddr,
+              (__cb__ float8_e5m2_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
+              unitFlag, true, cmatrixSource, cmatrixInitVal);
+  } else if (lhsFormat == HIVMMatmulDataformat::FP8E5M2_T &&
+             rhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
+    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e5m2_t *)l0APhyAddr,
+              (__cb__ float8_e4m3_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
+              unitFlag, true, cmatrixSource, cmatrixInitVal);
+  } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T &&
+             rhsFormat == HIVMMatmulDataformat::FP8E5M2_T) {
+    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e4m3_t *)l0APhyAddr,
+              (__cb__ float8_e5m2_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
+              unitFlag, true, cmatrixSource, cmatrixInitVal);
+  } else if (lhsFormat == HIVMMatmulDataformat::FP8E4M3_T &&
+             rhsFormat == HIVMMatmulDataformat::FP8E4M3_T) {
+    INTRINSIC(mad_mx, cAddr, (__ca__ float8_e4m3_t *)l0APhyAddr,
+              (__cb__ float8_e4m3_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
+              unitFlag, true, cmatrixSource, cmatrixInitVal);
+  } else if (lhsFormat == HIVMMatmulDataformat::FP4E2M1_T &&
+             rhsFormat == HIVMMatmulDataformat::FP4E2M1_T) {
+    INTRINSIC(mad_mx, cAddr, (__ca__ fp4x2_e2m1_t *)l0APhyAddr,
+              (__cb__ fp4x2_e2m1_t *)l0BPhyAddr, actualM, kL0Actual, actualN,
+              unitFlag, true, cmatrixSource, cmatrixInitVal);
+  } else {
+    // Mixed FP8/FP4 formats are not registered by the template library.
+  }
+}
+
 template <class ElementA, class ElementB, class ElementBias, class ElementACC,
           bool TA, bool TB, bool HF32>
 CATLASS_DEVICE void
@@ -65,7 +201,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
          uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
          uint32_t l1BMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
-         bool enable_unit_flag) {
+         bool enable_unit_flag, bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
   }
@@ -104,8 +240,6 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
                   tla::Coord<tla::_0, tla::_0>, AscendCBisheng::TPosition::CO1>;
   using CopyL1ToL0A = Gemm::Tile::TileCopyTla<ArchTag, TensorL1A, TensorL0A>;
   using CopyL1ToL0B = Gemm::Tile::TileCopyTla<ArchTag, TensorL1B, TensorL0B>;
-  using TileMmad = Gemm::Tile::TileMmadTla<ArchTag, ElementA, LayoutTagL1A>;
-  TileMmad tileMmad;
   CopyL1ToL0A copyL1ToL0A;
   CopyL1ToL0B copyL1ToL0B;
 
@@ -242,16 +376,42 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     }
 
     const bool initC = isL1FirstK && (kL0Idx == 0);
+    if constexpr (!std::is_void_v<ElementBias>) {
+      if (hasBias && initC) {
+        AscendCBisheng::LocalTensor<ElementBias> l1BiasTensor{
+            AscendCBisheng::TPosition::A1,
+            (uint32_t)reinterpret_cast<int64_t>(l1Bias), actualN};
+        auto layoutBiasInL1 = tla::MakeLayout(actualN);
+        auto tensorL1Bias =
+            tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
+        using TensorL1Bias = tla::Tensor<
+            AscendCBisheng::LocalTensor<ElementBias>,
+            detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
+            tla::Coord<tla::_0>, AscendCBisheng::TPosition::A1>;
+        using TensorL0Bias = tla::Tensor<
+            AscendCBisheng::LocalTensor<ElementACC>,
+            detail::TagToLayout_t<ElementACC, layout::VectorLayout>,
+            tla::Coord<tla::_0>, AscendCBisheng::TPosition::C2>;
+        using CopyL1ToBT = Gemm::Tile::TileCopyTla<ArchTag, TensorL1Bias, TensorL0Bias>;
+        CopyL1ToBT copyL1ToBT;
+        copyL1ToBT(tensorL0Bias, tensorL1Bias);
+      }
+    }
 
     // Notify to do mmad
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
     AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
 
-    INTRINSIC(mad_mx, (__cc__ ElementACC *)tensorL0C.data().GetPhyAddr(),
+    const bool applyBias = hasBias && initC;
+    auto *cAddr = packCWithBiasAddr<ElementACC>(
+        (__cc__ ElementACC *)tensorL0C.data().GetPhyAddr(),
+        applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0, applyBias);
+    INTRINSIC(mad_mx, cAddr,
               (__ca__ ElementA *)tensorL0A.data().GetPhyAddr(),
               (__cb__ ElementB *)tensorL0B.data().GetPhyAddr(), actualM,
               kL0Actual, actualN,
-              /* unitFlag = */ 0b00, true, false, initC);
+              /* unitFlag = */ 0b00, true, /* cmatrixSource = */ applyBias,
+              /* cmatrixInitVal = */ initC && !applyBias);
 
     // Notify to move the next L0B tile
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
@@ -277,7 +437,8 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
          uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
          uint32_t l1BMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
-         bool enable_unit_flag, bool is_fp4) {
+         bool enable_unit_flag, HIVMMatmulDataformat lhsFormat,
+         HIVMMatmulDataformat rhsFormat, bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
   }
@@ -330,11 +491,13 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   AscendCBisheng::LocalTensor<ElementMxScaleA> l1MxScaleATensor{
       AscendCBisheng::TPosition::A1,
       (uint32_t)reinterpret_cast<int64_t>(l1MxScaleA),
-      l1M * l1K * 2 / MX_SCALE_GROUP_NUM};
+      l1M * l1K * getMxFormatKFactor(lhsFormat) /
+          MX_SCALE_GROUP_NUM};
   AscendCBisheng::LocalTensor<ElementMxScaleB> l1MxScaleBTensor{
       AscendCBisheng::TPosition::A1,
       (uint32_t)reinterpret_cast<int64_t>(l1MxScaleB),
-      l1K * l1N * 2 / MX_SCALE_GROUP_NUM};
+      l1K * l1N * getMxFormatKFactor(rhsFormat) /
+          MX_SCALE_GROUP_NUM};
   AscendCBisheng::LocalTensor<ElementA> l0ATensor{AscendCBisheng::TPosition::A2,
                                                   0, ArchTag::L0A_SIZE};
   AscendCBisheng::LocalTensor<ElementB> l0BTensor{AscendCBisheng::TPosition::B2,
@@ -351,12 +514,13 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   auto tensorL1B = tla::MakeTensor(l1BTensor, layoutBInL1, Arch::PositionL1{});
   auto layoutMxScaleAInL1 =
       tla::MakeMxScaleLayout<ElementMxScaleA, LayoutTagL1MxScaleA, false>(
-          l1M, l1K * 2 / MX_SCALE_GROUP_NUM);
+          l1M, l1K * getMxFormatKFactor(lhsFormat) / MX_SCALE_GROUP_NUM);
   auto tensorL1MxScaleA =
       tla::MakeTensor(l1MxScaleATensor, layoutMxScaleAInL1, Arch::PositionL1{});
   auto layoutMxScaleBInL1 =
       tla::MakeMxScaleLayout<ElementMxScaleB, LayoutTagL1MxScaleB, true>(
-          l1K * 2 / MX_SCALE_GROUP_NUM, l1N);
+          l1K * getMxFormatKFactor(rhsFormat) / MX_SCALE_GROUP_NUM,
+          l1N);
   auto tensorL1MxScaleB =
       tla::MakeTensor(l1MxScaleBTensor, layoutMxScaleBInL1, Arch::PositionL1{});
   auto layoutInL0C = tla::MakeLayoutL0C(actualM, actualN);
@@ -378,7 +542,7 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
                             RoundUp<L1BAlignHelper::N_ALIGNED>(actualN) /
                             L0B_ELE_NUM_PER_C0 * L0B_ELE_NUM_PER_C0));
 
-  actualK *= 2;
+  actualK *= getMxFormatKFactor(lhsFormat);
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
   uint32_t pingPongId = 1;
@@ -427,7 +591,10 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // the same transpose/tail handling as the data tile.
     // FIXME: this need to refactor back into one without if branch.
     if constexpr (TA) {
-      copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+      copyTransposedAByFormat<ArchTag, LayoutTagL1A, LayoutTagL0A>(
+          copyL1ToL0A, tensorL0A, tensorTileL1A, tensorTileL1MxScaleA,
+          lhsFormat, reinterpret_cast<__cbuf__ int8_t *>(l1A), l1M, l1K,
+          actualM, kL0Actual, kL0Idx, l0K, pingPongId);
     } else {
       copyL1ToL0A(tensorL0A, tensorTileL1A);
       copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
@@ -456,6 +623,27 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     }
 
     bool initC = isL1FirstK && (kL0Idx == 0);
+    if constexpr (!std::is_void_v<ElementBias>) {
+      if (hasBias && initC) {
+        AscendCBisheng::LocalTensor<ElementBias> l1BiasTensor{
+            AscendCBisheng::TPosition::A1,
+            (uint32_t)reinterpret_cast<int64_t>(l1Bias), actualN};
+        auto layoutBiasInL1 = tla::MakeLayout(actualN);
+        auto tensorL1Bias =
+            tla::MakeTensor(l1BiasTensor, layoutBiasInL1, Arch::PositionL1{});
+        using TensorL1Bias = tla::Tensor<
+            AscendCBisheng::LocalTensor<ElementBias>,
+            detail::TagToLayout_t<ElementBias, layout::VectorLayout>,
+            tla::Coord<tla::_0>, AscendCBisheng::TPosition::A1>;
+        using TensorL0Bias = tla::Tensor<
+            AscendCBisheng::LocalTensor<ElementACC>,
+            detail::TagToLayout_t<ElementACC, layout::VectorLayout>,
+            tla::Coord<tla::_0>, AscendCBisheng::TPosition::C2>;
+        using CopyL1ToBT = Gemm::Tile::TileCopyTla<ArchTag, TensorL1Bias, TensorL0Bias>;
+        CopyL1ToBT copyL1ToBT;
+        copyL1ToBT(tensorL0Bias, tensorL1Bias);
+      }
+    }
 
     // Notify to do mmad
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_M>(EVENT_ID0);
@@ -472,28 +660,13 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     //   }
     // }
 
-    // if (l1Bias != nullptr) {
-    //   if (initC) {
-    //     tileMmad(tensorL0C, tensorL0A, tensorL0B, tensorL0Bias, actualM,
-    //              actualN, kL0Actual, initC, unitFlag);
-    //   } else {
-    //     tileMmad(tensorL0C, tensorL0A, tensorL0B, actualM, actualN,
-    //     kL0Actual,
-    //              initC, unitFlag);
-    //   }
-    // } else {
-    // tileMmad(tensorL0C, tensorL0A, tensorL0B, actualM, actualN, kL0Actual,
-    //          initC, unitFlag);
-    // }
-
-    if (is_fp4) {
-      INTRINSIC(mad_mx, (__cc__ ElementACC *)tensorL0C.data().GetPhyAddr(),
-                (__ca__ fp4x2_e2m1_t *)tensorL0A.data().GetPhyAddr(),
-                (__cb__ fp4x2_e2m1_t *)tensorL0B.data().GetPhyAddr(), actualM,
-                kL0Actual, actualN, unitFlag, true, false, initC);
-    } else {
-      // TODO need support when b8 as input be it's actually fp8 in format
-    }
+    const bool applyBias = hasBias && initC;
+    madMxByFormat<ElementACC>(
+        tensorL0C.data().GetPhyAddr(), tensorL0A.data().GetPhyAddr(),
+        tensorL0B.data().GetPhyAddr(), actualM, kL0Actual, actualN, unitFlag,
+        initC, lhsFormat, rhsFormat,
+        applyBias ? (uint64_t)tensorL0Bias.data().GetPhyAddr() : 0,
+        applyBias);
 
     // Notify to move the next L0B tile
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
@@ -532,7 +705,29 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
       m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
-      l1b_wait_mmad_l1_event, init, true, false);
+      l1b_wait_mmad_l1_event, init, true, false, false);
+}
+
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
+__aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
+    memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
+    memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+    memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
+    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
+    int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
+                          false>(
+      mc->aligned + mc->offset, ma->aligned + ma->offset,
+      mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
+      l1MxScaleB->aligned + l1MxScaleB->offset, bias->aligned + bias->offset,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
+      m, k, n, mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event,
+      mmad_l1_wait_l1b_event, l1b_wait_mmad_l1_event, init, true, false, true);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
@@ -542,12 +737,12 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ SRC_TYPE, 4> *ma,
                 memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                 memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, 
-                bool init,
-                int64_t m, int64_t k, int64_t n, 
-                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event, 
-                int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event, 
-                bool isFp4) {
+                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
+                int64_t m, int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
+                int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
+                int64_t l1b_wait_mmad_l1_event,
+                Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+                Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -558,7 +753,34 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
       m, k, n,
       mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
-      l1b_wait_mmad_l1_event, init, true, false, isFp4);
+      l1b_wait_mmad_l1_event, init, true, false, lhsFormat, rhsFormat, false);
+}
+
+template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
+          bool TA = false, bool TB = false>
+__aicore__ __attribute__((always_inline)) void
+mmamx_tile_bias(memref_t<__cc__ DST_TYPE, 4> *mc,
+                memref_t<__cbuf__ SRC_TYPE, 4> *ma,
+                memref_t<__cbuf__ SRC_TYPE, 4> *mb,
+                memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
+                memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
+                int64_t m, int64_t k, int64_t n,
+                memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
+                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
+                int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+                Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
+                Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
+  Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
+                          false>(
+      mc->aligned + mc->offset, ma->aligned + ma->offset,
+      mb->aligned + mb->offset, l1MxScaleA->aligned + l1MxScaleA->offset,
+      l1MxScaleB->aligned + l1MxScaleB->offset, bias->aligned + bias->offset,
+      (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
+      (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
+      (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
+      m, k, n, mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event,
+      mmad_l1_wait_l1b_event, l1b_wait_mmad_l1_event, init, true, false,
+      lhsFormat, rhsFormat, true);
 }
 
 #endif // CATLASS_GEMM_L1MMAD_HPP
@@ -566,17 +788,160 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
 extern "C" {
 REGISTER_MMA_MX(float8_e5m2_t, float, float);
 REGISTER_MMA_MX(float8_e4m3_t, float, float);
+REGISTER_MMA_MX_BIAS(float8_e5m2_t, float, float);
+REGISTER_MMA_MX_BIAS(float8_e4m3_t, float, float);
 REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta, true, false);
 REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _tb, false, true);
 REGISTER_MMA_MX_TRANS(float8_e5m2_t, float, float, _ta_tb, true, true);
 REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta, true, false);
 REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _tb, false, true);
 REGISTER_MMA_MX_TRANS(float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e5m2_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float, float, _ta, true, false);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float, float, _tb, false, true);
+REGISTER_MMA_MX_BIAS_TRANS(float8_e4m3_t, float, float, _ta_tb, true, true);
+REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _ta,
+                             true, false,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t, _tb,
+                             false, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                             _ta_tb, true, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                                  _ta, true, false,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                                  _tb, false, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e5m2_t,
+                                  _ta_tb, true, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _ta,
+                             true, false,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t, _tb,
+                             false, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                             _ta_tb, true, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                                  _ta, true, false,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                                  _tb, false, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e5m2_t, fp8_e4m3_t,
+                                  _ta_tb, true, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _ta,
+                             true, false,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t, _tb,
+                             false, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                             _ta_tb, true, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                                  _ta, true, false,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                                  _tb, false, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e5m2_t,
+                                  _ta_tb, true, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E5M2_T);
+REGISTER_MMA_MX_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                       Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _ta,
+                             true, false,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t, _tb,
+                             false, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                             _ta_tb, true, true,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                             Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                                  _ta, true, false,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                                  _tb, false, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp8_e4m3_t, fp8_e4m3_t,
+                                  _ta_tb, true, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP8E4M3_T);
 REGISTER_MMA_MX_FP4(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t);
+REGISTER_MMA_MX_BIAS_FORMAT(int8_t, float, float, fp4x2_e2m1_t, fp4x2_e2m1_t,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+                            Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
 REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
                           fp4x2_e2m1_t, _ta, true, false);
 REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
                           fp4x2_e2m1_t, _tb, false, true);
 REGISTER_MMA_MX_FP4_TRANS(int8_t, float, float, fp4x2_e2m1_t,
                           fp4x2_e2m1_t, _ta_tb, true, true);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                                  fp4x2_e2m1_t, _ta, true, false,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                                  fp4x2_e2m1_t, _tb, false, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
+REGISTER_MMA_MX_BIAS_FORMAT_TRANS(int8_t, float, float, fp4x2_e2m1_t,
+                                  fp4x2_e2m1_t, _ta_tb, true, true,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T,
+                                  Catlass::Gemm::HIVMMatmulDataformat::FP4E2M1_T);
 }

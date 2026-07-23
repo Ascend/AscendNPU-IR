@@ -21,6 +21,9 @@ def HIVMLocalMatmulLikeOpInterface
   let description = [{
     Interface for local matmul-like ops that share A/B/C, init-condition,
     real-MKN, bias-mode, and layout behavior.
+
+    Ops implementing this interface should use `HIVMLocalMatmulLikeOpTraits`,
+    which bundles the common traits required alongside this interface.
   }];
   let methods = [
     InterfaceMethod<
@@ -44,6 +47,13 @@ def HIVMLocalMatmulLikeOpInterface
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{ return $_op.getC(); }]>,
+    InterfaceMethod<
+      /*desc=*/"Return the optional per-channel bias operand.",
+      /*retTy=*/"::mlir::Value",
+      /*methodName=*/"getMatmulPerChannelBias",
+      /*args=*/(ins),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ return $_op.getPerChannelBias(); }]>,
     InterfaceMethod<
       /*desc=*/"Return the local matmul init condition operand.",
       /*retTy=*/"::mlir::Value",
@@ -97,6 +107,20 @@ def HIVMLocalMatmulLikeOpInterface
       /*methodName=*/"setInitCondition",
       /*args=*/(ins "::mlir::Value":$init)>,
     InterfaceMethod<
+      /*desc=*/"Set the local matmul C/init operand.",
+      /*retTy=*/"void",
+      /*methodName=*/"setMatmulC",
+      /*args=*/(ins "::mlir::Value":$c),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ $_op.getCMutable().assign(c); }]>,
+    InterfaceMethod<
+      /*desc=*/"Set the optional per-channel bias operand.",
+      /*retTy=*/"void",
+      /*methodName=*/"setPerChannelBias",
+      /*args=*/(ins "::mlir::Value":$bias),
+      /*methodBody=*/"",
+      /*defaultImplementation=*/[{ $_op.getPerChannelBiasMutable().assign(bias); }]>,
+    InterfaceMethod<
       /*desc=*/"Set the real-M/K/N operands.",
       /*retTy=*/"void",
       /*methodName=*/"setMatmulRealMKN",
@@ -117,11 +141,6 @@ def HIVMLocalMatmulLikeOpInterface
       /*desc=*/"Return whether bias should be decomposed by elementwise add.",
       /*retTy=*/"bool",
       /*methodName=*/"shouldDecomposeBiasByElementAdd",
-      /*args=*/(ins)>,
-    InterfaceMethod<
-      /*desc=*/"Return whether per-channel bias optimizations are supported.",
-      /*retTy=*/"bool",
-      /*methodName=*/"supportsPerChannelBias",
       /*args=*/(ins)>,
     InterfaceMethod<
       /*desc=*/"Return whether scale operands are present.",

@@ -11,6 +11,7 @@
 #include "bishengir/Dialect/HIVM/IR/CustomOp/DistributedTransformUtils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
+#include "bishengir/Dialect/HIVM/Interfaces/LocalMatmulLikeOpInterface.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/MemRefExt/IR/MemRefExt.h"
@@ -19,10 +20,13 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/TypeSwitch.h"
+
+#include <cassert>
 
 #define DEBUG_TYPE "hivm-infer-mem-scope"
 #define LDBG(X) LLVM_DEBUG(llvm::dbgs() << X << "\n")
@@ -253,38 +257,77 @@ private:
 };
 } // namespace
 
-LogicalResult hivm::inferAndPropagateMemScopeForMmadL1(hivm::MmadL1Op op) {
-  if (!op.hasPureBufferSemantics()) {
-    return op->emitOpError("Run infer memory scope after bufferization.");
+LogicalResult hivm::inferAndPropagateMemScopeForLocalMatmulLike(
+    LocalMatmulLikeOpInterface op) {
+  Operation *mmadOp = op.getOperation();
+  assert(!isa<BatchMmadL1Op>(mmadOp) &&
+         "BatchMmadL1Op should be decomposed before inferring memory scope");
+
+  auto dpsOp = cast<DestinationStyleOpInterface>(mmadOp);
+  if (!dpsOp.hasPureBufferSemantics()) {
+    return mmadOp->emitOpError("Run infer memory scope after bufferization.");
   }
-
-  auto *mA = op.getDpsInputOperand(0);
-  auto *mB = op.getDpsInputOperand(1);
-  auto *mC = op.getDpsInitOperand(0);
-
-  // mA, mB and mC must originate from an AllocOP
-  auto allocsA = utils::tracebackMemRefVec(mA->get());
-  auto allocsB = utils::tracebackMemRefVec(mB->get());
-  auto allocsC = utils::tracebackMemRefVec(mC->get());
 
   MemScopeInferAndPropagateHelper helper;
   auto l1SpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
-  // For MmadL1Op, operand mA should be in L1.
-  if (failed(setMemSpaceForAllocs(op, helper, allocsA, l1SpaceAttr)))
-    return op->emitOpError("Failed to infer/propagate memory scope for mA");
-
-  // For MmadL1Op, operand mB should be in L1.
-  if (failed(setMemSpaceForAllocs(op, helper, allocsB, l1SpaceAttr)))
-    return op->emitOpError("Failed to infer/propagate memory scope for mB");
-
+      AddressSpaceAttr::get(mmadOp->getContext(), hivm::AddressSpace::L1);
   auto l0cSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
-  // For MmadL1Op, operand mC should be in L0C.
-  if (failed(setMemSpaceForAllocs(op, helper, allocsC, l0cSpaceAttr)))
-    return op->emitOpError("Failed to infer/propagate memory scope for mC");
+      AddressSpaceAttr::get(mmadOp->getContext(), hivm::AddressSpace::L0C);
 
-  if (auto bias = op.getPerChannelBias()) {
+  // mA, mB and mC must originate from an AllocOP
+  auto allocsA = utils::tracebackMemRefVec(op.getMatmulA());
+  auto allocsB = utils::tracebackMemRefVec(op.getMatmulB());
+  auto allocsC = utils::tracebackMemRefVec(op.getMatmulC());
+
+  // For local matmul-like ops, operand mA should be in L1.
+  if (failed(setMemSpaceForAllocs(mmadOp, helper, allocsA, l1SpaceAttr)))
+    return mmadOp->emitOpError(
+        "Failed to infer/propagate memory scope for mA");
+
+  // For local matmul-like ops, operand mB should be in L1.
+  if (failed(setMemSpaceForAllocs(mmadOp, helper, allocsB, l1SpaceAttr)))
+    return mmadOp->emitOpError(
+        "Failed to infer/propagate memory scope for mB");
+
+  // For local matmul-like ops, operand mC should be in L0C.
+  if (failed(setMemSpaceForAllocs(mmadOp, helper, allocsC, l0cSpaceAttr)))
+    return mmadOp->emitOpError(
+        "Failed to infer/propagate memory scope for mC");
+
+  if (op.supportsScaleOperands()) {
+    auto mmadMx = cast<MmadMxL1Op>(mmadOp);
+    auto allocScaleA = utils::tracebackMemRefToAlloc(mmadMx.getScaleA());
+    auto allocScaleB = utils::tracebackMemRefToAlloc(mmadMx.getScaleB());
+
+    if (!allocScaleA.has_value()) {
+      emitError(op.getLoc())
+          << "Cannot find root memref.alloc for scaleA of this op.";
+      return failure();
+    }
+    if (!allocScaleB.has_value()) {
+      emitError(op.getLoc())
+          << "Cannot find root memref.alloc for ScaleB of this op.";
+      return failure();
+    }
+
+    // For MmadMxL1Op, operand ScaleA should be in L1.
+    if (failed(helper.Run(*allocScaleA, l1SpaceAttr))) {
+      return mmadOp->emitOpError(
+          "Failed to infer/propagate memory scope for mB");
+    }
+    LDBG("IR after setting mem scope for scale A:\n"
+         << *(mmadOp->getParentOfType<ModuleOp>()));
+
+    // For MmadMxL1Op, operand ScaleB should be in L1.
+    if (failed(helper.Run(*allocScaleB, l1SpaceAttr))) {
+      return mmadOp->emitOpError(
+          "Failed to infer/propagate memory scope for mB");
+    }
+    LDBG("IR after setting mem scope for scale B:\n"
+         << *(mmadOp->getParentOfType<ModuleOp>()));
+  }
+
+  if (Value bias = op.getMatmulPerChannelBias()) {
     auto allocBias = utils::tracebackMemRefToAlloc(bias);
     if (!allocBias.has_value()) {
       emitError(op.getLoc())
@@ -292,103 +335,14 @@ LogicalResult hivm::inferAndPropagateMemScopeForMmadL1(hivm::MmadL1Op op) {
       return failure();
     }
 
-    // For MmadL1Op, operand bias should be in L1.
     if (failed(helper.Run(allocBias.value(), l1SpaceAttr))) {
-      return op->emitOpError("Failed to infer/propagate memory scope for bias");
+      return mmadOp->emitOpError(
+          "Failed to infer/propagate memory scope for bias");
     }
     LDBG("IR after setting mem scope for bias:\n"
-         << *(op->getParentOfType<ModuleOp>()));
+         << *(mmadOp->getParentOfType<ModuleOp>()));
   }
 
-  return success();
-}
-
-LogicalResult hivm::inferAndPropagateMemScopeForMmadMxL1(hivm::MmadMxL1Op op) {
-  if (!op.hasPureBufferSemantics()) {
-    return op->emitOpError("Run infer memory scope after bufferization.");
-  }
- 
-  auto *mA = op.getDpsInputOperand(0);
-  auto *mB = op.getDpsInputOperand(1);
-  auto *sA = op.getDpsInputOperand(2);
-  auto *sB = op.getDpsInputOperand(3);
-  auto *mC = op.getDpsInitOperand(0);
- 
-  // mA, mB and mC must originate from an AllocOP
-  auto allocA = utils::tracebackMemRefToAlloc(mA->get());
-  auto allocB = utils::tracebackMemRefToAlloc(mB->get());
-  auto allocScaleA = utils::tracebackMemRefToAlloc(sA->get());
-  auto allocScaleB = utils::tracebackMemRefToAlloc(sB->get());
-  auto allocC = utils::tracebackMemRefToAlloc(mC->get());
- 
-  if (!allocA.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for mA of this op.";
-    return failure();
-  }
-  if (!allocB.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for mB of this op.";
-    return failure();
-  }
-  if (!allocScaleA.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for scaleA of this op.";
-    return failure();
-  }
-  if (!allocScaleB.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for ScaleB of this op.";
-    return failure();
-  }
-  if (!allocC.has_value()) {
-    emitError(op.getLoc())
-        << "Cannot find root memref.alloc for mC of this op.";
-    return failure();
-  }
- 
-  auto l1SpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L1);
-  auto l0cSpaceAttr =
-      AddressSpaceAttr::get(op->getContext(), hivm::AddressSpace::L0C);
- 
-  MemScopeInferAndPropagateHelper helper;
- 
-  // For MmadMxL1Op, operand mA should be in L1.
-  if (failed(helper.Run(*allocA, l1SpaceAttr))) {
-    return op->emitOpError("Failed to infer/propagate memory scope for mA");
-  }
-  LDBG("IR after setting mem scope for mA:\n"
-       << *(op->getParentOfType<ModuleOp>()));
- 
-  // For MmadMxL1Op, operand mB should be in L1.
-  if (failed(helper.Run(*allocB, l1SpaceAttr))) {
-    return op->emitOpError("Failed to infer/propagate memory scope for mB");
-  }
-  LDBG("IR after setting mem scope for mB:\n"
-       << *(op->getParentOfType<ModuleOp>()));
- 
-  // For MmadMxL1Op, operand ScaleA should be in L1.
-  if (failed(helper.Run(*allocScaleA, l1SpaceAttr))) {
-    return op->emitOpError("Failed to infer/propagate memory scope for mB");
-  }
-  LDBG("IR after setting mem scope for scale A:\n"
-       << *(op->getParentOfType<ModuleOp>()));
- 
-  // For MmadMxL1Op, operand ScaleB should be in L1.
-  if (failed(helper.Run(*allocScaleB, l1SpaceAttr))) {
-    return op->emitOpError("Failed to infer/propagate memory scope for mB");
-  }
-  LDBG("IR after setting mem scope for scale B:\n"
-       << *(op->getParentOfType<ModuleOp>()));
- 
-  // For MmadMxL1Op, operand mC should be in L0C.
-  if (failed(helper.Run(*allocC, l0cSpaceAttr))) {
-    return op->emitOpError("Failed to infer/propagate memory scope for mC");
-  }
-  LDBG("IR after setting mem scope for mC:\n"
-       << *(op->getParentOfType<ModuleOp>()));
- 
   return success();
 }
 
@@ -637,15 +591,18 @@ void InferHIVMMemScopePass::runOnOperation() {
   }
   // Infer and propagate memory scope for device functions.
   for (auto func : deviceFuncList) {
-    // Set the memory scope of values related to `hivm::MmadL1Op` to L1 or L0C.
-    // Here shouldn't contain `hivm::BatchMmadL1Op` which has been decomposed.
-    func->walk([&](mlir::hivm::MmadL1Op op) {
-      if (failed(hivm::inferAndPropagateMemScopeForMmadL1(op)))
-        op->emitWarning("Failed to infer/propagate memory scope for MmadL1Op");
-    });
-    func->walk([&](mlir::hivm::MmadMxL1Op op) {
-      if (failed(hivm::inferAndPropagateMemScopeForMmadMxL1(op)))
-        signalPassFailure();
+    // Set the memory scope of local matmul-like ops to L1 or L0C.
+    // BatchMmadL1Op should have been decomposed before this pass.
+    func->walk([&](LocalMatmulLikeOpInterface op) {
+      if (isa<BatchMmadL1Op>(op.getOperation()))
+        return;
+      if (failed(hivm::inferAndPropagateMemScopeForLocalMatmulLike(op))) {
+        if (isa<MmadMxL1Op>(op.getOperation()))
+          signalPassFailure();
+        else
+          op.getOperation()->emitWarning(
+              "Failed to infer/propagate memory scope for local matmul op");
+      }
     });
     // Set device function arguments' memory scope to GM.
     if (failed(hivm::inferAndPropagateMemScopeForFunc(func)))
