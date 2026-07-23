@@ -549,12 +549,14 @@ public:
         return builder.create<arith::AndIOp>(arg0.getLoc(), arg0, arg1);
       llvm::report_fatal_error("unsupported type for vand");
     case BinaryFn::minf:
-      if (allFloatingPoint)
-        return builder.create<arith::MinNumFOp>(arg0.getLoc(), arg0, arg1);
+      if (allFloatingPoint) {
+        return builder.create<arith::MinimumFOp>(arg0.getLoc(), arg0, arg1);
+      }
       llvm::report_fatal_error("unsupported type for vmin");
     case BinaryFn::maxf:
-      if (allFloatingPoint)
-        return builder.create<arith::MaxNumFOp>(arg0.getLoc(), arg0, arg1);
+      if (allFloatingPoint) {
+        return builder.create<arith::MaximumFOp>(arg0.getLoc(), arg0, arg1);
+      }
       llvm::report_fatal_error("unsupported type for vmax");
     case BinaryFn::minnumf:
       if (allFloatingPoint)

@@ -29,6 +29,6 @@ module attributes {transform.with_named_sequence} {
 //       CHECK:     scf.for %[[IV1:[a-zA-Z0-9]+]] = %[[C0]] to %[[D1]] step %[[C1]]
 //   CHECK-DAG:         %[[LHS:.+]] = memref.load %[[ARG0]][%[[IV0]], %[[IV1]]]
 //   CHECK-DAG:         %[[RHS:.+]] = memref.load %[[ARG1]][%[[IV0]], %[[IV1]]]
-//       CHECK:         %[[MAXF:.+]] = arith.maxnumf %[[LHS]], %[[RHS]]
+//       CHECK:         %[[MAXF:.+]] = arith.maximumf %[[LHS]], %[[RHS]]
 //       CHECK:         memref.store %[[MAXF]], %[[ARG2]][%[[IV0]], %[[IV1]]]
 //   CHECK-NOT:   hfusion.elemwise_binary ins(%arg0, %arg1 : memref<?x?xf32>, memref<?x?xf32>)
