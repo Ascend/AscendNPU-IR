@@ -19,11 +19,11 @@
 
 template <typename T>
 __aiv__ __attribute__((always_inline)) bool
-check_2d_ubuf_stride_align(memref_t<__ubuf__ T, 2> *ub) {
+check_2d_ubuf_stride_align(memref_t<__ubuf__ T, 2> *ub, int64_t left_padding_num = 0) {
   auto stride0_ub = ub->strides[0];
   auto stride1_ub = ub->strides[1];
   auto size0_ub = ub->sizes[0];
-  auto size1_ub = ub->sizes[1];
+  auto size1_ub = ub->sizes[1] + left_padding_num;
   return (((isSizeAlignedToBlock<T>(stride0_ub) || stride0_ub == 1 || size0_ub == 1) &&
            (isSizeAlignedToBlock<T>(stride1_ub) || stride1_ub == 1 || size1_ub == 1)));
 }
@@ -123,7 +123,7 @@ load_gm_to_ubuf_2d_core(memref_t<__gm__ T, 2> *src,
     pad_value = 0;
   }
 
-  if (!check_2d_ubuf_stride_align(dst)) {
+  if (!check_2d_ubuf_stride_align(dst, left_padding_num)) {
     load_gm_to_ubuf_2d_by_scalar<T>(src, dst, left_padding_num, pad_value);
     return;
   }
