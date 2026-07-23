@@ -334,6 +334,14 @@ bool isLocalBuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
   llvm_unreachable("Currently only support (UB | L1 | L0C) allocation");
 }
 
+bool isSsbuffer(std::optional<AddressSpaceAttr> memorySpaceAttr) {
+  if (!memorySpaceAttr.has_value()) {
+    return false;
+  }
+  
+  return memorySpaceAttr.value().getAddressSpace() == AddressSpace::SSBUF;
+}
+
 SmallVector<Value> getOpTouchBuffer(Operation *op) {
   SmallVector<Value> touchBuffer;
   touchBuffer.insert(touchBuffer.end(), op->getResults().begin(),
@@ -365,6 +373,18 @@ bool isOpTouchGlobalBuffer(Operation *op) {
     }
   }
   return false;
+}
+
+bool isOpTouchSsbufferOnly(Operation *op) {
+  auto touchBuffer = getOpTouchBuffer(op);
+  for (Value buffer : touchBuffer) {
+    auto bufferSpace = GetBufferSpaceAttr(buffer);
+    if (bufferSpace.has_value() &&
+        bufferSpace.value().getAddressSpace() != hivm::AddressSpace::SSBUF) {
+      return false;
+    }
+  }
+  return true;
 }
 
 //===----------------------------------------------------------------------===//

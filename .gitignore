@@ -8,3 +8,5 @@ __pycache__/
 *.orig
 *.rej
 .codemate
+compile_commands.json
+
