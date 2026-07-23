@@ -617,15 +617,12 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
   // TODO: move DecomposeI32ScalarExtOp etc. to interface
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
-
-  // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
-  hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
-
   // Preload code transformation for CV pipelining
   if (hivmPipelineOptions.enablePreload) {
     pm.addPass(createCreatePreloadPass());
   }
-
+  // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
+  hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLowerMultiBufferCounterPass());
