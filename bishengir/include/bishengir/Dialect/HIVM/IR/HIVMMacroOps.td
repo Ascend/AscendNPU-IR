@@ -61,7 +61,11 @@ class HIVM_LocalMmadLikeOperandDags {
     Arg<Variadic<I64>, [{
       Arguments required by mma_tile to insert
       synchronization instructions, they are
-      managed by inject-sync passes.
+      managed by Graph Sync Solver or InjectSync.
+      MmadL1Op: 4 Wait/Set pairs (A, B) + kLoopDBCond + 2 bwd events.
+      MmadMxL1Op: 8 independent Wait/Set event IDs —
+        Wait(MTE2→MTE1):  A[0], ScaleA[1], B[2], ScaleB[3]
+        Set (MTE1→MTE2):  A[4], ScaleA[5], B[6], ScaleB[7]
     }]>:$sync_related_args
   );
 
@@ -230,7 +234,7 @@ class HIVM_LocalMmadMxOp<string mnemonic, list<Trait> traits = []> :
     }
     bool isInitConstant(std::optional<bool> cst = std::nullopt);
     void setInitCondition(Value init);
-    int getNumSyncRelatedArgs() { return 4; }
+    int getNumSyncRelatedArgs() { return 8; }
     MatmulBiasMode getMatmulBiasMode();
     bool shouldDecomposeBiasByElementAdd() const;
     bool supportsScaleOperands() { return true; }

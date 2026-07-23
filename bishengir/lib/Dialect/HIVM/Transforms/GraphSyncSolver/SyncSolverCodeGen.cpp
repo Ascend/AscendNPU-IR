@@ -207,6 +207,9 @@ void CodeGenerator::insertSetFlagOp(IRRewriter &rewriter, OperationBase *opBase,
   if (llvm::succeeded(handleMmadL1SyncOps(rewriter, opBase, setFlagOp))) {
     return;
   }
+  if (llvm::succeeded(handleMmadMxL1SyncOps(rewriter, opBase, setFlagOp))) {
+    return;
+  }
   customMacroCodegen.recordBoundaryArgIfNeeded(
       opBase, setFlagOp, rewriter, [&](SetWaitOp *setWaitOp, Location loc) {
         return getEventIdValue(rewriter, setWaitOp, loc);
@@ -255,6 +258,9 @@ void CodeGenerator::insertWaitFlagOp(IRRewriter &rewriter,
     return;
   }
   if (llvm::succeeded(handleMmadL1SyncOps(rewriter, opBase, waitFlagOp))) {
+    return;
+  }
+  if (llvm::succeeded(handleMmadMxL1SyncOps(rewriter, opBase, waitFlagOp))) {
     return;
   }
   customMacroCodegen.recordBoundaryArgIfNeeded(
@@ -662,6 +668,55 @@ llvm::LogicalResult CodeGenerator::handleMmadL1SyncOps(IRRewriter &rewriter,
   return llvm::success();
 }
 
+// Attempt to attach sync args to MmadMxL1 ops by recognizing special load
+// L0 / L1 patterns for A, B, ScaleA, ScaleB independently.
+llvm::LogicalResult CodeGenerator::handleMmadMxL1SyncOps(
+    IRRewriter &rewriter, OperationBase *opBase, SyncOp *syncOp) {
+  if (opBase->parentOp == nullptr || opBase->parentOp->parentOp == nullptr) {
+    return llvm::failure();
+  }
+  hivm::MmadMxL1Op mmadMxL1Op;
+  if (auto *mmadMxL1Loop =
+          dyn_cast<MmadMxL1LoopOp>(opBase->parentOp->parentOp)) {
+    mmadMxL1Op = llvm::dyn_cast<hivm::MmadMxL1Op>(mmadMxL1Loop->op);
+    assert(mmadMxL1Op != nullptr);
+  }
+  if (mmadMxL1Op == nullptr) {
+    return llvm::failure();
+  }
+  assert(isa<LoadL0AOp>(opBase) || isa<LoadL0BOp>(opBase) ||
+         isa<LoadL0AMxOp>(opBase) || isa<LoadL0BMxOp>(opBase));
+  assert(isa<SetFlagOp>(syncOp) || isa<WaitFlagOp>(syncOp));
+  if (auto *setFlagOp = dyn_cast<SetFlagOp>(syncOp)) {
+    if (isa<LoadL0AOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l1AWaitL0Event =
+          getEventIdValue(rewriter, setFlagOp, mmadMxL1Op->getLoc());
+    else if (isa<LoadL0AMxOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l1ScaleAWaitL0Event =
+          getEventIdValue(rewriter, setFlagOp, mmadMxL1Op->getLoc());
+    else if (isa<LoadL0BOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l1BWaitL0Event =
+          getEventIdValue(rewriter, setFlagOp, mmadMxL1Op->getLoc());
+    else if (isa<LoadL0BMxOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l1ScaleBWaitL0Event =
+          getEventIdValue(rewriter, setFlagOp, mmadMxL1Op->getLoc());
+  } else if (auto *waitFlagOp = dyn_cast<WaitFlagOp>(syncOp)) {
+    if (isa<LoadL0AOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l0WaitL1AEvent =
+          getEventIdValue(rewriter, waitFlagOp, mmadMxL1Op->getLoc());
+    else if (isa<LoadL0AMxOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l0WaitL1ScaleAEvent =
+          getEventIdValue(rewriter, waitFlagOp, mmadMxL1Op->getLoc());
+    else if (isa<LoadL0BOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l0WaitL1BEvent =
+          getEventIdValue(rewriter, waitFlagOp, mmadMxL1Op->getLoc());
+    else if (isa<LoadL0BMxOp>(opBase))
+      mmadMxL1SyncArgsMap[mmadMxL1Op].l0WaitL1ScaleBEvent =
+          getEventIdValue(rewriter, waitFlagOp, mmadMxL1Op->getLoc());
+  }
+  return llvm::success();
+}
+
 Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
   if (!checkAllParentLoopsAreForLoops(op)) {
     return nullptr;
@@ -680,13 +735,17 @@ Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
 }
 
 void CodeGenerator::insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter) {
-  auto firstLastMmadlOps = getFirstLastOp<hivm::MmadL1Op>(funcOp);
-  if (llvm::failed(firstLastMmadlOps)) {
+  // Find the first and last Mmad-type op without a full tree traversal.
+  auto firstLastMmadOps =
+      getFirstLastOpOfTypes<hivm::MmadL1Op, hivm::MmadMxL1Op>(funcOp);
+  if (failed(firstLastMmadOps)) {
     return;
   }
+
+  auto [firstOp, lastOp] = firstLastMmadOps.value();
+
   auto loc = funcOp->getLoc();
   auto ctx = funcOp->getContext();
-  auto [firstOp, lastOp] = firstLastMmadlOps.value();
   auto *funcRegion = &funcOp.getFunctionBody();
   rewriter.setInsertionPoint(funcRegion->findAncestorOpInRegion(*firstOp));
   auto eventId0Attr = EventAttr::get(ctx, hivm::EVENT::EVENT_ID0);
@@ -727,6 +786,30 @@ void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
       }
     }
     mmadL1Op.getSyncRelatedArgsMutable().assign(newArgs);
+  }
+}
+
+// Create and propagate sync args into MmadMxL1 op arguments.
+void CodeGenerator::insertMmadMxL1SyncArgs(IRRewriter &rewriter) {
+  for (auto &[mmadMxL1Op, syncArgs] : mmadMxL1SyncArgsMap) {
+    rewriter.setInsertionPoint(mmadMxL1Op);
+    auto defaultValue = rewriter.create<arith::ConstantIntOp>(
+        mmadMxL1Op->getLoc(), rewriter.getI64Type(), -1);
+    SmallVector<Value> newArgs;
+    newArgs.push_back(syncArgs.l0WaitL1AEvent);       // [0]
+    newArgs.push_back(syncArgs.l0WaitL1ScaleAEvent);   // [1]
+    newArgs.push_back(syncArgs.l0WaitL1BEvent);         // [2]
+    newArgs.push_back(syncArgs.l0WaitL1ScaleBEvent);    // [3]
+    newArgs.push_back(syncArgs.l1AWaitL0Event);         // [4]
+    newArgs.push_back(syncArgs.l1ScaleAWaitL0Event);    // [5]
+    newArgs.push_back(syncArgs.l1BWaitL0Event);         // [6]
+    newArgs.push_back(syncArgs.l1ScaleBWaitL0Event);    // [7]
+    for (auto &val : newArgs) {
+      if (!val || val == Value{}) {
+        val = defaultValue;
+      }
+    }
+    mmadMxL1Op.getSyncRelatedArgsMutable().assign(newArgs);
   }
 }
 
@@ -804,6 +887,7 @@ void CodeGenerator::generateResultOps() {
 
   if (options.isIntraCoreMode()) {
     insertMmadL1SyncArgs(rewriter);
+    insertMmadMxL1SyncArgs(rewriter);
     customMacroCodegen.populateSyncRelatedArgs(funcOp, rewriter);
     insertPipeMPipeMte1OuterBwdPairs(rewriter);
     handleUnitFlagEnabledOps(rewriter);

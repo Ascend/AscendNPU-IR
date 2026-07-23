@@ -470,6 +470,22 @@ struct MmadL1SyncArgs {
   Value bwdPipeMPipeMTE1Event1;
 };
 
+struct MmadMxL1SyncArgs {
+  MmadMxL1SyncArgs() = default;
+
+  // Wait side (MTE2→MTE1) — each stream independent
+  Value l0WaitL1AEvent;         // Wait A
+  Value l0WaitL1ScaleAEvent;    // Wait ScaleA
+  Value l0WaitL1BEvent;         // Wait B
+  Value l0WaitL1ScaleBEvent;    // Wait ScaleB
+
+  // Set side (MTE1→MTE2) — each stream independent
+  Value l1AWaitL0Event;         // Set A
+  Value l1ScaleAWaitL0Event;    // Set ScaleA
+  Value l1BWaitL0Event;         // Set B
+  Value l1ScaleBWaitL0Event;    // Set ScaleB
+};
+
 // Check if two integer ranges intersect.
 bool checkRangesIntersect(int l1, int r1, int l2, int r2);
 
@@ -525,6 +541,34 @@ llvm::FailureOr<std::pair<OpTy, OpTy>> getFirstLastOp(Operation *parentOp) {
   parentOp->walk<WalkOrder::PostOrder, ReverseIterator>([&](OpTy op) {
     lastOp = op;
     return WalkResult::interrupt();
+  });
+  assert(lastOp != nullptr);
+  return std::make_pair(firstOp, lastOp);
+}
+
+// Variadic version of getFirstLastOp that matches any of OpTys without a full
+// tree traversal — uses interrupt() to stop at the first/last match.
+template <typename... OpTys>
+llvm::FailureOr<std::pair<Operation *, Operation *>>
+getFirstLastOpOfTypes(Operation *parentOp) {
+  Operation *firstOp = nullptr;
+  Operation *lastOp = nullptr;
+  parentOp->walk<WalkOrder::PreOrder, ForwardIterator>([&](Operation *op) {
+    if (isa<OpTys...>(op)) {
+      firstOp = op;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (firstOp == nullptr) {
+    return llvm::failure();
+  }
+  parentOp->walk<WalkOrder::PostOrder, ReverseIterator>([&](Operation *op) {
+    if (isa<OpTys...>(op)) {
+      lastOp = op;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
   });
   assert(lastOp != nullptr);
   return std::make_pair(firstOp, lastOp);
