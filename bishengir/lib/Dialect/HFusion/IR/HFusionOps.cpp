@@ -3307,13 +3307,67 @@ LogicalResult HistogramOp::verify() {
     auto maskTy = dyn_cast<RankedTensorType>(mask.getType());
     if (!maskTy)
       return emitOpError() << "mask must be a ranked tensor";
-    if (maskTy.getElementType() != IntegerType::get(getContext(), 1))
-      return emitOpError() << "mask element type must be i1";
+    if (maskTy.getElementType() != IntegerType::get(getContext(), 1) &&
+        maskTy.getElementType() != IntegerType::get(getContext(), 8) &&
+        maskTy.getElementType() != IntegerType::get(getContext(), 16))
+      return emitOpError() << "mask element type must be i1, i8, or i16";
     if (maskTy.getShape() != inTy.getShape())
       return emitOpError() << "mask shape must match input shape";
   }
 
   return success();
+}
+
+Value createConstIntZero(OpBuilder &b, Location loc, Value src) {
+  auto ty = cast<IntegerType>(src.getType());
+#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) && \
+    !defined(BSPUB_DAVINCI_BISHENGIR_A5)
+  return b.create<arith::ConstantIntOp>(loc, 0, ty);
+#else
+  return b.create<arith::ConstantIntOp>(loc, ty, static_cast<int64_t>(0));
+#endif
+}
+
+Value buildHistogramWriteMask(OpBuilder &b, Location loc, Value maskI16,
+                              Value i, Value isNeg, Value outRange) {
+  // calc write mask
+  Value maskCond;
+  if (maskI16) {
+    Value maskElem = b.create<tensor::ExtractOp>(loc, maskI16, ValueRange{i});
+    maskCond = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ne, maskElem,
+                                       createConstIntZero(b, loc, maskElem));
+  } else {
+    maskCond = b.create<arith::ConstantIntOp>(loc, 1, 1);
+  }
+  Value skipCond = b.create<arith::OrIOp>(loc, isNeg, outRange);
+  return b.create<arith::AndIOp>(
+             loc, maskCond,
+             b.create<arith::XOrIOp>(
+                 loc, skipCond, b.create<arith::ConstantIntOp>(loc, 1, 1)));
+}
+
+Value buildHistogramConditionalWrite(OpBuilder &b, Location loc, Value hist,
+                                     Value binIdx, Value writeMask,
+                                     Value oneOut) {
+  auto ifOp = b.create<scf::IfOp>(loc, TypeRange{hist.getType()}, writeMask,
+                                  /*withElseRegion=*/true);
+  {
+    // then: extract + addi + insert
+    OpBuilder::InsertionGuard g(b);
+    b.setInsertionPointToStart(ifOp.thenBlock());
+    Value oldVal = b.create<tensor::ExtractOp>(loc, hist, ValueRange{binIdx});
+    Value newVal = b.create<arith::AddIOp>(loc, oldVal, oneOut);
+    Value updatedHist =
+        b.create<tensor::InsertOp>(loc, newVal, hist, ValueRange{binIdx});
+    b.create<scf::YieldOp>(loc, updatedHist);
+  }
+  {
+    // else: yield original hist
+    OpBuilder::InsertionGuard g(b);
+    b.setInsertionPointToStart(ifOp.elseBlock());
+    b.create<scf::YieldOp>(loc, hist);
+  }
+  return ifOp.getResult(0);
 }
 
 FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
@@ -3337,15 +3391,6 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   auto cstOut = [&](int64_t v) -> Value {
     return b.create<arith::ConstantOp>(loc, b.getIntegerAttr(outEltTy, v));
   };
-  auto cstInZero = [&](Value src) -> Value {
-    auto ty = cast<IntegerType>(src.getType());
-#if !defined(__LLVM_MAJOR_VERSION_22_COMPATIBLE__) &&                          \
-    !defined(BSPUB_DAVINCI_BISHENGIR_A5)
-    return b.create<arith::ConstantIntOp>(loc, 0, ty);
-#else
-    return b.create<arith::ConstantIntOp>(loc, ty, static_cast<int64_t>(0));
-#endif
-  };
 
   // Constants
   Value c0 = cstIdx(0);
@@ -3362,6 +3407,15 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   // Upper bound: number of elements in input
   Value ub = inTy.hasStaticShape() ? cstIdx(inTy.getDimSize(0))
                                    : b.create<tensor::DimOp>(loc, input, 0);
+  
+  // If mask is provided and is i1, extend it to i16 for later use in the loop
+  Value maskI16 = mask;
+  if (mask) {
+    auto maskTy = cast<RankedTensorType>(mask.getType());
+    if (maskTy.getElementType().getIntOrFloatBitWidth() == 1) {
+      maskI16 = castTo(b, mask, b.getIntegerType(16));
+    }
+  }
 
   // Single loop over input elements
   auto forOp = b.create<scf::ForOp>(loc, c0, ub, c1, ValueRange{histInit});
@@ -3371,37 +3425,20 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
 
     Value i = forOp.getInductionVar();
     Value hist = forOp.getRegionIterArg(0);
-
+    // calc safe index for histogram
     Value elem = b.create<tensor::ExtractOp>(loc, input, ValueRange{i});
+
     Value isNeg = b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, elem,
-                                          cstInZero(elem));
-    Value elemIdx = b.create<arith::IndexCastUIOp>(loc, idxTy, elem);
+                                          createConstIntZero(b, loc, elem));
+    Value elemIdx = b.create<arith::IndexCastUIOp>(loc, b.getIndexType(), elem);
     Value posIdx = b.create<arith::SelectOp>(loc, isNeg, c0, elemIdx);
     Value outRange =
         b.create<arith::CmpIOp>(loc, arith::CmpIPredicate::uge, posIdx, bins);
     Value safeIdx = b.create<arith::SelectOp>(loc, outRange, c0, posIdx);
-
-    Value maskCond;
-    if (mask) {
-      maskCond = b.create<tensor::ExtractOp>(loc, mask, ValueRange{i});
-    } else {
-      maskCond = b.create<arith::ConstantIntOp>(loc, 1, 1);
-    }
-
-    Value skipCond = b.create<arith::OrIOp>(loc, isNeg, outRange);
-    Value writeMask = b.create<arith::AndIOp>(
-        loc, maskCond,
-        b.create<arith::XOrIOp>(loc, skipCond,
-                                b.create<arith::ConstantIntOp>(loc, 1, 1)));
-
-    Value oldVal = b.create<tensor::ExtractOp>(loc, hist, ValueRange{safeIdx});
-    Value newVal = b.create<arith::AddIOp>(loc, oldVal, oneOut);
-
-    Value updatedHist =
-        b.create<tensor::InsertOp>(loc, newVal, hist, ValueRange{safeIdx});
-    Value resultHist =
-        b.create<arith::SelectOp>(loc, writeMask, updatedHist, hist);
-
+    Value writeMask =
+        buildHistogramWriteMask(b, loc, maskI16, i, isNeg, outRange);
+    Value resultHist = buildHistogramConditionalWrite(b, loc, hist, safeIdx,
+                                                      writeMask, oneOut);
     b.create<scf::YieldOp>(loc, resultHist);
   }
 

@@ -645,7 +645,7 @@ def HistogramOp : HFusion_Op<"histogram", [
   let arguments = (ins
     RankedTensorOf<[I8, UI8, I16, UI16, I32, UI32, I64, UI64]>:$input,
     I64Attr:$num_bins,
-    Optional<RankedTensorOf<[I1]>>:$mask
+    Optional<RankedTensorOf<[I1, I8, I16]>>:$mask
   );
 
   let results = (outs
