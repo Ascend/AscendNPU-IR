@@ -2193,8 +2193,8 @@ LogicalResult CVPipelineImpl::run() {
 }
 
 void CVPipeliningPass::runOnOperation() {
-  auto mod = dyn_cast<ModuleOp>(getOperation());
-  if ((mod && !hacc::utils::isRegBasedArch(mod))) {
+  auto mod = getOperation()->getParentOfType<ModuleOp>();
+  if (!hacc::utils::isRegBasedArch(mod)) {
     func::FuncOp func = getOperation();
     DenseSet<scf::ForOp> pipelinedLoops;
 

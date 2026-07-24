@@ -524,15 +524,8 @@ void SplitMixKernelPass::filterMixFunc(OpBuilder &builder,
   mixedFunc.walk<WalkOrder::PostOrder>([&](Operation *op) {
     LDBG("filterMixFunc visiting: " << *op);
     if (auto forOp = dyn_cast<scf::ForOp>(op)) {
-      if (isLoopOfCoreType(forOp, filterCoreType)) {
-        // Pipelined loops: zero-trip so structure/anchors stay; otherwise skip
-        // the body (preserve loop for multibuffer anchors on RegBase).
-        if (forOp->hasAttr(hivm::kPipelinedLoopCoreTypeAttrName)) {
-          forOp.setUpperBound(forOp.getLowerBound());
-          return WalkResult::advance();
-        }
+      if (isLoopOfCoreType(forOp, filterCoreType))
         return WalkResult::skip();
-      }
     }
 
     // Scope pipelined-loop core type is already honored by getCoreType.
