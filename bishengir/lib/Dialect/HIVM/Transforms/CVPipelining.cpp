@@ -206,8 +206,9 @@ private:
   // Requires `outputMemrefMap` to be populated (call after
   // `populateDependencies` runs for every separator).
   void diagnoseLazyLoadHints();
-  LogicalResult traceNonInitOperands(Operation *op, WorkItem *item,
-                                     SmallVector<Operation *> &workingStack);
+  LogicalResult traceNonMemrefInitOperands(
+      Operation *op, WorkItem *item,
+      SmallVector<Operation *> &workingStack);
 
   void collectAtomicEffects();
 
@@ -1362,20 +1363,32 @@ CVPipelineImpl::traceOperands(Value operand, WorkItem *item,
   return success();
 }
 
-/// Trace producers of every operand of `op` *except* its DPS-init (writeback
+/// Trace producers of every operand of `op` except memref DPS-init (writeback
 /// destination) operands. Used by `traceDependentOps` for memref-subnet
-/// writers (Load / Fixpipe / cross-core Copy / ND2NZ): the init is the `dst`
-/// memref reached separately via `traceMemrefSubnet`, while every other
-/// operand — ins, plus scalar params like LoadOp's init-condition and
-/// padding values — is a real data dependency that must be queued onto
-/// `workingStack`.
-LogicalResult CVPipelineImpl::traceNonInitOperands(
+/// writers (Load / Fixpipe / cross-core Copy / ND2NZ): a memref init is the
+/// `dst` reached separately via `traceMemrefSubnet`, while every other operand
+/// is a real SSA dependency that must be queued onto `workingStack`.
+///
+/// In particular, tensor DPS inits must be traced. InsertLoadStoreForMixCV can
+/// produce tensor-to-tensor LoadOps whose tensor.empty init lives inside the
+/// pipeline loop. If that init is omitted from the work item, cloning the load
+/// leaves a use of the original tensor.empty in the new loop and erasing the
+/// original loop fails with "operation destroyed but still has uses".
+LogicalResult CVPipelineImpl::traceNonMemrefInitOperands(
     Operation *op, WorkItem *item, SmallVector<Operation *> &workingStack) {
   auto dps = dyn_cast<DestinationStyleOpInterface>(op);
-  for (Value operand : op->getOperands()) {
-    if (dps && llvm::is_contained(dps.getDpsInits(), operand))
+  DenseSet<OpOperand *> memrefInitOperands;
+  if (dps) {
+    for (int64_t i = 0, e = dps.getNumDpsInits(); i < e; ++i) {
+      OpOperand *init = dps.getDpsInitOperand(i);
+      if (isa<MemRefType>(init->get().getType()))
+        memrefInitOperands.insert(init);
+    }
+  }
+  for (OpOperand &operand : op->getOpOperands()) {
+    if (memrefInitOperands.contains(&operand))
       continue;
-    if (failed(traceOperands(operand, item, workingStack)))
+    if (failed(traceOperands(operand.get(), item, workingStack)))
       return failure();
   }
   return success();
@@ -1463,7 +1476,7 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
     if (isMemrefSubnetWriter(op)) {
       if (failed(traceMemrefSubnet(op, workingStack)))
         return failure();
-      if (failed(traceNonInitOperands(op, item, workingStack)))
+      if (failed(traceNonMemrefInitOperands(op, item, workingStack)))
         return failure();
       continue;
     }
@@ -1477,7 +1490,8 @@ LogicalResult CVPipelineImpl::traceDependentOps(WorkItem *item) {
       if (nestedOp != op && isMemrefSubnetWriter(nestedOp)) {
         if (failed(traceMemrefSubnet(nestedOp, workingStack)))
           return WalkResult::interrupt();
-        if (failed(traceNonInitOperands(nestedOp, item, workingStack)))
+        if (failed(
+                traceNonMemrefInitOperands(nestedOp, item, workingStack)))
           return WalkResult::interrupt();
         return WalkResult::advance();
       }
