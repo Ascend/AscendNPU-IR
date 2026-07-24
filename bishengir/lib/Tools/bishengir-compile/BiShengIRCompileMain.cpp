@@ -254,6 +254,7 @@ runExternalHIVMC(ModuleOp &module,
                                      "disable-tightly-coupled-buffer-reuse",
                                      "enable-hivm-cross-core-gss",
                                      "vf-fusion-mode",
+                                     "disable-vf-reachable-check",
                                      "enable-sink-dpx-load",
                                      "enable-fast-div"};
   auto skippedArgs = skipOptions(arguments, blacklist);
@@ -393,6 +394,12 @@ bishengir::runBiShengIRPipeline(ModuleOp mod,
                << ", fallback with disabled vffusion");
           clear = true;
           config.setEnableVFFusion(false);
+        } else if (!config.getDisableVFReachableCheck()) {
+          LDBG("ub overflow detected at attempt "
+               << (i + 1) << "/" << tryTimes
+               << ", fallback with disabled VF reachable check");
+          clear = true;
+          config.setDisableVFReachableCheck(true);
         }
         if (clear && i != tryTimes)
           collectedDiagnostics.clear();

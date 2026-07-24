@@ -32,14 +32,11 @@ void OptMemPlanForDma::build(func::FuncOp func) {
         return WalkResult::interrupt();
       }
       if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_MTE2) {
-        Updatepipe2DmaBuffers(hivm::PIPE::PIPE_MTE2,
-                              hivmStructuredOp.getDpsInits());
+        UpdateDmaBuffers(hivmStructuredOp.getDpsInits());
       } else if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_MTE3) {
-        Updatepipe2DmaBuffers(hivm::PIPE::PIPE_MTE3,
-                              hivmStructuredOp.getDpsInputs());
+        UpdateDmaBuffers(hivmStructuredOp.getDpsInputs());
       } else if (hivmPipeOp.getPipe() == hivm::PIPE::PIPE_FIX) {
-        Updatepipe2DmaBuffers(hivm::PIPE::PIPE_FIX,
-                              hivmStructuredOp.getDpsInputs());
+        UpdateDmaBuffers(hivmStructuredOp.getDpsInputs());
       }
     } else if (auto loadOp = dyn_cast<memref::LoadOp>(op)) {
       UpdateScalarBuffers(loadOp);
@@ -64,26 +61,26 @@ OptMemPlanForDma::VerifyExistHivmPipe(hivm::OpPipeInterface hivmPipeOp) const {
   return success();
 }
 
-void OptMemPlanForDma::Updatepipe2DmaBuffers(hivm::PIPE pipe,
-                                             SmallVector<Value> dpsOperand) {
+void OptMemPlanForDma::UpdateDmaBuffers(SmallVector<Value> dpsOperand) {
   for (Value operand : dpsOperand) {
     auto memorySpaceAttr = GetBufferSpaceAttr(operand);
     if (!isLocalBuffer(memorySpaceAttr)) {
       continue;
     }
-    pipe2DmaBuffers[pipe].insert(utils::tracebackMemRef(operand));
+    DmaBuffers.insert(utils::tracebackMemRef(operand));
   }
 }
 
-bool OptMemPlanForDma::IsDmaBuffer(hivm::PIPE pipe, const Value buf) const {
-  auto it = pipe2DmaBuffers.find(pipe);
-  return it != pipe2DmaBuffers.end() && it->second.contains(buf);
-}
-
 bool OptMemPlanForDma::IsDmaBuffer(const Value buf) const {
-  return IsDmaBuffer(hivm::PIPE::PIPE_MTE2, buf) ||
-         IsDmaBuffer(hivm::PIPE::PIPE_MTE3, buf) ||
-         IsDmaBuffer(hivm::PIPE::PIPE_FIX, buf);
+  if (DmaBuffers.empty()) {
+    return false;
+  }
+  for (auto buffer : DmaBuffers) {
+    if (buffer == buf) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool OptMemPlanForDma::BufferPipeConflict(const Value buf1,

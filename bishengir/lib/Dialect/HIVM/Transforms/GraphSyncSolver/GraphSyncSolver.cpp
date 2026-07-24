@@ -76,7 +76,6 @@ void GraphSyncSolverPass::runOnOperation() {
   options.enableUnitFlagFeature = this->enableUnitFlag;
   options.intraCoreIgnoreWorkSpaceFunctionArguments =
       this->ignoreWorkSpaceFunctionArguments;
-  options.enableCVPatterns = true;
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
 

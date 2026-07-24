@@ -852,6 +852,14 @@ def DisableTightlyCoupledBufferReuse : FeatureControlOptions<
   let passGroup = ["HIVM"];
 }
 
+def DisableVFReachableCheck : FeatureControlOptions<
+  "disable VF reachable check",
+  "bool",
+  "false"
+> {
+  let passGroup = ["HIVM"];
+}
+
 def EnableVFOperandSubstitution : FeatureControlOptions<
   "enable VF callsite operand substitution (reuse a VF input buffer for its "
   "output when the input is a dynamic select)",
@@ -971,7 +979,7 @@ def EnableVFStackLimit : FeatureControlOptions<
 }
 
 def VfFusionMode : FeatureControlOptions<
-  "VF fusion mode(max-parallel | all-op | n-most-op |). default is max-parallel",
+  "VF fusion mode(max-parallel | all-op |). default is max-parallel",
   "mlir::analysis::FusionMode",
   "mlir::analysis::FusionMode::MaxParallel"
 > {
@@ -982,8 +990,6 @@ llvm::cl::values(
              "Fuse for max parallel"),
   clEnumValN(mlir::analysis::FusionMode::AllOp, "all-op",
              "Fuse all vector operations"),
-  clEnumValN(mlir::analysis::FusionMode::NMostOp, "n-most-op",
-             "Fuse at most N operations"),
   clEnumValN(mlir::analysis::FusionMode::UBAwareOp, "ub-aware-op",
              "Fuse with UB budget awareness")
 )

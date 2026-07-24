@@ -324,9 +324,6 @@ bool Solver::checkCVPipeliningMemConflict(RWOperation *rwOp1,
   assert(!memConflicts.empty());
   for (auto [memInfo1, memInfo2] : memConflicts) {
     if (memInfo1->value == memInfo2->value) {
-      if (options.isIntraCoreMode()) {
-        continue;
-      }
       if (memInfo1->allocLikeInfo && memInfo2->allocLikeInfo) {
         continue;
       }
@@ -675,7 +672,7 @@ std::optional<EventIdInfo>
 Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
                                      RWOperation *rwOp1, RWOperation *rwOp2) {
   assert(rwOp1 != nullptr && rwOp2 != nullptr);
-  if (!options.enableCVPatterns) {
+  if (!options.isCrossCoreMode() || !options.enableCVPatterns) {
     return {};
   }
   if (!checkCVPreloadingMemConflict(rwOp1, rwOp2)) {
@@ -690,7 +687,7 @@ Solver::checkCVPreloadingEventIdInfo(Occurrence *occ1, Occurrence *occ2,
   while (parentScope2 != nullptr && !parentScope2->preloadNum.has_value()) {
     parentScope2 = parentScope2->getParentOfType<Scope>();
   }
-  if (!parentScope1 || !parentScope2 || parentScope1 == parentScope2) {
+  if (!parentScope1 || !parentScope2) {
     return {};
   }
   if (auto *parCond1 = rwOp1->getParentOfType<Condition>()) {
@@ -1061,8 +1058,15 @@ bool Solver::skipMMad1DecomposedLoopOpt(Occurrence *occ1, Occurrence *occ2) {
   auto *parentLoopOp2 = OperationBase::getParentloop(occ2->op);
   if (parentLoopOp1 != nullptr && parentLoopOp2 != nullptr) {
     if (parentLoopOp1 != parentLoopOp2) {
-      if (isa<MmadL1LoopOp>(parentLoopOp1) &&
-          isa<MmadL1LoopOp>(parentLoopOp2)) {
+      // Skip pairs where both occurrences belong to different decomposed Mmad
+      // inner loops — same type (MmadL1↔MmadL1, MmadMxL1↔MmadMxL1) or
+      // cross-type (MmadL1↔MmadMxL1).  Dependencies between different
+      // MmadL1Op/MmadMxL1Op are already covered by M→MTE1 sync.
+      auto isMmadDecomposedLoop = [](OperationBase *op) -> bool {
+        return isa<MmadL1LoopOp, MmadMxL1LoopOp>(op);
+      };
+      if (isMmadDecomposedLoop(parentLoopOp1) &&
+          isMmadDecomposedLoop(parentLoopOp2)) {
         return true;
       }
     }
@@ -1077,27 +1081,32 @@ Solver::checkAndApplyMmadl0LoopOpt(ConflictPair *conflictPair, Occurrence *occ1,
   if (!options.decomposeMmadl1Op) {
     return {};
   }
+
+  // Check if occ->op is an MTE1 load sub-operation of a decomposed Mmad
+  auto isMmadL0LoadOp = [](OperationBase *op) -> bool {
+    return llvm::isa_and_present<LoadL0AOp, LoadL0BOp,
+                                 LoadL0AMxOp, LoadL0BMxOp>(op);
+  };
+
+  auto isChildOfMmadLoopOp = [](Occurrence *occ) -> bool {
+    return occ->depth >= 2 &&
+           llvm::isa_and_present<MmadL1LoopOp, MmadMxL1LoopOp>(
+               occ->getNthParent(2)->op);
+  };
+
   if (conflictPair->setCorePipeInfo.pipe == PIPE::PIPE_MTE1 &&
       conflictPair->waitCorePipeInfo.pipe == PIPE::PIPE_MTE2) {
-    if (occ1->parentOcc != nullptr && occ1->parentOcc->parentOcc != nullptr &&
-        occ1->parentOcc->parentOcc->parentOcc == parOcc1 &&
-        llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
-            occ1->op) &&
-        llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
-            occ1->parentOcc->parentOcc->op)) {
+    if (occ1->depth >= 3 && occ1->getNthParent(3) == parOcc1 &&
+        isMmadL0LoadOp(occ1->op) && isChildOfMmadLoopOp(occ1)) {
       conflictPair->setOnLastIterOnly = true;
       return std::make_pair(occ1, parOcc2);
     }
   }
   if (conflictPair->setCorePipeInfo.pipe == PIPE::PIPE_MTE2 &&
       conflictPair->waitCorePipeInfo.pipe == PIPE::PIPE_MTE1) {
-    if (!conflictPair->isInnerBackward && occ2->parentOcc != nullptr &&
-        occ2->parentOcc->parentOcc != nullptr &&
-        occ2->parentOcc->parentOcc->parentOcc == parOcc2 &&
-        llvm::isa_and_present<syncsolver::LoadL0AOp, syncsolver::LoadL0BOp>(
-            occ2->op) &&
-        llvm::isa_and_present<syncsolver::MmadL1LoopOp>(
-            occ2->parentOcc->parentOcc->op)) {
+    if (!conflictPair->isInnerBackward && occ2->depth >= 3 &&
+        occ2->getNthParent(3) == parOcc2 &&
+        isMmadL0LoadOp(occ2->op) && isChildOfMmadLoopOp(occ2)) {
       conflictPair->waitOnFirstIterOnly = true;
       return std::make_pair(parOcc1, occ2);
     }
@@ -1372,7 +1381,8 @@ Solver::getFixedSetWaitOcc(Occurrence *occ1, Occurrence *occ2,
   //   waitOcc
   //   op2
   // } {preload=x}
-  if (eventIdInfo.has_value() && eventIdInfo->cvPreloadingInfo.has_value()) {
+  if (options.isCrossCoreMode() && eventIdInfo.has_value() &&
+      eventIdInfo->cvPreloadingInfo.has_value()) {
     assert(setOcc->op != nullptr && waitOcc->op != nullptr);
     auto *scopeOp1 = llvm::dyn_cast_if_present<Scope>(setOcc->op);
     auto *scopeOp2 = llvm::dyn_cast_if_present<Scope>(waitOcc->op);

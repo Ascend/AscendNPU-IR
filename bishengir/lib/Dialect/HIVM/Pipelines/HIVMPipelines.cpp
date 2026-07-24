@@ -280,6 +280,10 @@ hivmWorkspacePipeline(OpPassManager &pm,
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
   if (hivmPipelineOptions.enableTritonKernelCompile)
     // Must place after plan-workspace-memory
@@ -418,6 +422,12 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.enableHIVMGlobalWorkspaceReuse;
   planMemoryOption.enablePrintMemoryAllocatedSize =
       hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.planMemoryStrategy =
+      hivmPipelineOptions.planMemoryStrategy;
   pm.addPass(createPlanMemoryPass(planMemoryOption));
 
   // Tag L1/UB allocs with tightly-coupled-buffer ids on the single MIX
@@ -602,6 +612,8 @@ static void hivmPostBufferizationOptimizationPipeline(
   planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
   planMemoryOption.disableTightlyCoupledBufferReuse =
       hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
   planMemoryOption.planMemoryStrategy =
       hivmPipelineOptions.planMemoryStrategy;
   if (hivmPipelineOptions.enableVFOperandSubstitution) {
@@ -617,15 +629,12 @@ static void hivmPostBufferizationOptimizationPipeline(
   pm.nest<func::FuncOp>().addPass(createHIVMLowerToLoopsPass());
   // TODO: move DecomposeI32ScalarExtOp etc. to interface
   pm.nest<func::FuncOp>().addPass(createHIVMDecomposeOpPass());
-
-  // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
-  hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
-
   // Preload code transformation for CV pipelining
   if (hivmPipelineOptions.enablePreload) {
     pm.addPass(createCreatePreloadPass());
   }
-
+  // Intra-Core Auto-Sync passes (Inject-Sync, GSS)
+  hivmIntraCoreSyncPipeline(pm, hivmPipelineOptions);
   pm.addPass(mlir::createMemrefExtLoweringPass());
   pm.nest<func::FuncOp>().addPass(createEnableMultiBufferPass());
   pm.nest<func::FuncOp>().addPass(createLowerMultiBufferCounterPass());

@@ -51,10 +51,6 @@ __aicore__ inline uint32_t getL1MmadPingPongId() {
   return pingPongId;
 }
 
-CATLASS_DEVICE inline uint32_t pingpongIdToEventId(uint32_t pingPongId) {
-  return 6 + (!pingPongId ? EVENT_ID0 : EVENT_ID1);
-}
-
 enum class HIVMMatmulDataformat : uint32_t {
   FP8E5M2_T = 1,
   FP8E4M3_T = 2,
@@ -198,10 +194,13 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          __cbuf__ ElementMxScaleA *l1MxScaleA,
          __cbuf__ ElementMxScaleB *l1MxScaleB, __cbuf__ ElementBias *l1Bias,
          uint32_t l1M, uint32_t l1K, uint32_t l1N, uint32_t actualM,
-         uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
-         uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
-         uint32_t l1BMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
-         bool enable_unit_flag, bool hasBias = false) {
+         uint32_t actualK, uint32_t actualN,
+         uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,
+         uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,
+         uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,
+         uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId,
+         bool isL1FirstK, bool isL1LastK, bool enable_unit_flag,
+         bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
   }
@@ -302,30 +301,16 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
 
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
-  uint32_t pingPongId = 1;
-  // Wait for mmad finished
-  AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(0));
-  AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(1));
-
   for (int kL0Idx = 0; kL0Idx < kL0Loop; kL0Idx++) {
     uint32_t kL0Actual =
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
-    // Get ping/pong id (0 or 1)
-    uint32_t l0EventId = pingpongIdToEventId(pingPongId);
+    // Get ping/pong id (0 or 1) — unified with L1Mmad using ID0/ID1
+    uint32_t pingPongId = getL1MmadPingPongId();
+    uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
-    // This synchronization can be optimize to use a more fine-grained control
-    // of using 4 event-ids. Each for A, B, ScaleA and ScaleB.
-    // Now it's a temporary solution to move wait of both A and B earlier.
-    if (kL0Idx == 0 && l1AMTE2MTE1EventId != -1) {
-      AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
-          l1AMTE2MTE1EventId);
-    }
-    if (kL0Idx == 0 && l1BMTE2MTE1EventId != -1) {
-      AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
-          l1BMTE2MTE1EventId);
-    }
+    // Wait for mmad finished
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
+
     // Locate the current tile on L0A
     auto l0ATile =
         l0ATensor[pingPongId * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA)];
@@ -340,21 +325,38 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         tensorL1MxScaleA, tla::MakeCoord(0, kL0Idx * l0K / MX_SCALE_GROUP_NUM),
         tla::MakeShape(actualM, CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual)));
 
-    // Wait for mmad finished
-    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
-
     // Load current tile from L1 to L0A.  The transposed A path needs the
     // scale metadata copied with the data copy so the MX scale address follows
-    // the same transpose/tail handling as the data tile.
+    // the same transpose/tail handling as the data tile — Wait for both before
+    // the fused copy.  On the non-transposed path each stream has its own
+    // independent Wait→Copy→Set chain.
     if constexpr (TA) {
+      if (kL0Idx == 0) {
+        if (l1AMTE2MTE1EventId      != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
+        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+      }
       copyL1ToL0A(tensorL0A, tensorTileL1A, tensorTileL1MxScaleA);
+      if (kL0Idx == kL0Loop - 1) {
+        if (l1AMTE1MTE2EventId      != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
+        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+      }
     } else {
+      // --- A: Wait → Copy → Set ---
+      if (kL0Idx == 0) {
+        if (l1AMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
+      }
       copyL1ToL0A(tensorL0A, tensorTileL1A);
+      if (kL0Idx == kL0Loop - 1) {
+        if (l1AMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
+      }
+      // --- ScaleA: Wait → Copy → Set ---
+      if (kL0Idx == 0) {
+        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+      }
       copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
-    }
-    if (kL0Idx == kL0Loop - 1 && l1AMTE1MTE2EventId != -1) {
-      AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
-          l1AMTE1MTE2EventId);
+      if (kL0Idx == kL0Loop - 1) {
+        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+      }
     }
 
     // Locate the current tile on L0B
@@ -368,11 +370,21 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
+    // --- B: Wait → Copy → Set ---
+    if (kL0Idx == 0) {
+      if (l1BMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1BMTE2MTE1EventId);
+    }
     copyL1ToL0B(tensorL0B, tensorTileL1B);
+    if (kL0Idx == kL0Loop - 1) {
+      if (l1BMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1BMTE1MTE2EventId);
+    }
+    // --- ScaleB: Wait → Copy → Set ---
+    if (kL0Idx == 0) {
+      if (l1ScaleBMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleBMTE2MTE1EventId);
+    }
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
-    if (kL0Idx == kL0Loop - 1 && l1BMTE1MTE2EventId != -1) {
-      AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
-          l1BMTE1MTE2EventId);
+    if (kL0Idx == kL0Loop - 1) {
+      if (l1ScaleBMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleBMTE1MTE2EventId);
     }
 
     const bool initC = isL1FirstK && (kL0Idx == 0);
@@ -416,11 +428,6 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Notify to move the next L0B tile
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
   }
-  // Wait for mmad finished
-  AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(0));
-  AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(1));
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
@@ -434,11 +441,14 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
          __cbuf__ ElementMxScaleA *l1MxScaleA,
          __cbuf__ ElementMxScaleB *l1MxScaleB, __cbuf__ ElementBias *l1Bias,
          uint32_t l1M, uint32_t l1K, uint32_t l1N, uint32_t actualM,
-         uint32_t actualK, uint32_t actualN, uint32_t l1AMTE2MTE1EventId,
-         uint32_t l1AMTE1MTE2EventId, uint32_t l1BMTE2MTE1EventId,
-         uint32_t l1BMTE1MTE2EventId, bool isL1FirstK, bool isL1LastK,
-         bool enable_unit_flag, HIVMMatmulDataformat lhsFormat,
-         HIVMMatmulDataformat rhsFormat, bool hasBias = false) {
+         uint32_t actualK, uint32_t actualN,
+         uint32_t l1AMTE2MTE1EventId, uint32_t l1ScaleAMTE2MTE1EventId,
+         uint32_t l1BMTE2MTE1EventId, uint32_t l1ScaleBMTE2MTE1EventId,
+         uint32_t l1AMTE1MTE2EventId, uint32_t l1ScaleAMTE1MTE2EventId,
+         uint32_t l1BMTE1MTE2EventId, uint32_t l1ScaleBMTE1MTE2EventId,
+         bool isL1FirstK, bool isL1LastK, bool enable_unit_flag,
+         HIVMMatmulDataformat lhsFormat, HIVMMatmulDataformat rhsFormat,
+         bool hasBias = false) {
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(true);
   }
@@ -545,30 +555,16 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
   actualK *= getMxFormatKFactor(lhsFormat);
   uint32_t kL0Loop = CeilDiv(actualK, l0K);
 
-  uint32_t pingPongId = 1;
-  // Wait for mmad finished
-  AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(0));
-  AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(1));
-
   for (int kL0Idx = 0; kL0Idx < kL0Loop; kL0Idx++) {
     uint32_t kL0Actual =
         (kL0Idx < kL0Loop - 1) ? l0K : (actualK - kL0Idx * l0K);
-    // Get ping/pong id (0 or 1)
-    uint32_t l0EventId = pingpongIdToEventId(pingPongId);
+    // Get ping/pong id (0 or 1) — unified with L1Mmad using ID0/ID1
+    uint32_t pingPongId = getL1MmadPingPongId();
+    uint32_t l0EventId = !pingPongId ? EVENT_ID0 : EVENT_ID1;
 
-    // This synchronization can be optimize to use a more fine-grained control
-    // of using 4 event-ids. Each for A, B, ScaleA and ScaleB.
-    // Now it's a temporary solution to move wait of both A and B earlier.
-    if (kL0Idx == 0 && l1AMTE2MTE1EventId != -1) {
-      AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
-          l1AMTE2MTE1EventId);
-    }
-    if (kL0Idx == 0 && l1BMTE2MTE1EventId != -1) {
-      AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(
-          l1BMTE2MTE1EventId);
-    }
+    // Wait for mmad finished
+    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
+
     // Locate the current tile on L0A
     auto l0ATile =
         l0ATensor[pingPongId * L0A_PINGPONG_BUF_SIZE / sizeof(ElementA)];
@@ -583,25 +579,40 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
         tensorL1MxScaleA, tla::MakeCoord(0, kL0Idx * l0K / MX_SCALE_GROUP_NUM),
         tla::MakeShape(actualM, CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual)));
 
-    // Wait for mmad finished
-    AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
-
-    // Load current tile from L1 to L0A.  The transposed A path needs the
-    // scale metadata copied with the data copy so the MX scale address follows
-    // the same transpose/tail handling as the data tile.
+    // Load current tile from L1 to L0A — transposed path needs both before
+    // the fused copy; non-transposed path has independent Wait→Copy→Set
+    // for each stream.
     // FIXME: this need to refactor back into one without if branch.
     if constexpr (TA) {
+      if (kL0Idx == 0) {
+        if (l1AMTE2MTE1EventId      != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
+        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+      }
       copyTransposedAByFormat<ArchTag, LayoutTagL1A, LayoutTagL0A>(
           copyL1ToL0A, tensorL0A, tensorTileL1A, tensorTileL1MxScaleA,
           lhsFormat, reinterpret_cast<__cbuf__ int8_t *>(l1A), l1M, l1K,
           actualM, kL0Actual, kL0Idx, l0K, pingPongId);
+      if (kL0Idx == kL0Loop - 1) {
+        if (l1AMTE1MTE2EventId      != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
+        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+      }
     } else {
+      // --- A: Wait → Copy → Set ---
+      if (kL0Idx == 0) {
+        if (l1AMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1AMTE2MTE1EventId);
+      }
       copyL1ToL0A(tensorL0A, tensorTileL1A);
+      if (kL0Idx == kL0Loop - 1) {
+        if (l1AMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1AMTE1MTE2EventId);
+      }
+      // --- ScaleA: Wait → Copy → Set ---
+      if (kL0Idx == 0) {
+        if (l1ScaleAMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleAMTE2MTE1EventId);
+      }
       copyL1ToL0A.copyScaleTensor(tensorL0A, tensorTileL1MxScaleA);
-    }
-    if (kL0Idx == kL0Loop - 1 && l1AMTE1MTE2EventId != -1) {
-      AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
-          l1AMTE1MTE2EventId);
+      if (kL0Idx == kL0Loop - 1) {
+        if (l1ScaleAMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleAMTE1MTE2EventId);
+      }
     }
 
     // Locate the current tile on L0B
@@ -615,11 +626,21 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     auto tensorTileL1MxScaleB = GetTile(
         tensorL1MxScaleB, tla::MakeCoord(kL0Idx * l0K / MX_SCALE_GROUP_NUM, 0),
         tla::MakeShape(CeilDiv<MX_SCALE_GROUP_NUM>(kL0Actual), actualN));
+    // --- B: Wait → Copy → Set ---
+    if (kL0Idx == 0) {
+      if (l1BMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1BMTE2MTE1EventId);
+    }
     copyL1ToL0B(tensorL0B, tensorTileL1B);
+    if (kL0Idx == kL0Loop - 1) {
+      if (l1BMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1BMTE1MTE2EventId);
+    }
+    // --- ScaleB: Wait → Copy → Set ---
+    if (kL0Idx == 0) {
+      if (l1ScaleBMTE2MTE1EventId != -1) AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::MTE2_MTE1>(l1ScaleBMTE2MTE1EventId);
+    }
     copyL1ToL0B.copyScaleTensor(tensorL0B, tensorTileL1MxScaleB);
-    if (kL0Idx == kL0Loop - 1 && l1BMTE1MTE2EventId != -1) {
-      AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(
-          l1BMTE1MTE2EventId);
+    if (kL0Idx == kL0Loop - 1) {
+      if (l1ScaleBMTE1MTE2EventId != -1) AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::MTE1_MTE2>(l1ScaleBMTE1MTE2EventId);
     }
 
     bool initC = isL1FirstK && (kL0Idx == 0);
@@ -671,11 +692,6 @@ L1MxMmad(__cc__ ElementACC *l0C, __cbuf__ ElementA *l1A, __cbuf__ ElementB *l1B,
     // Notify to move the next L0B tile
     AscendCBisheng::SetFlag<AscendCBisheng::HardEvent::M_MTE1>(l0EventId);
   }
-  // Wait for mmad finished
-  AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(0));
-  AscendCBisheng::WaitFlag<AscendCBisheng::HardEvent::M_MTE1>(
-      pingpongIdToEventId(1));
 
   if constexpr (HF32) {
     AscendCBisheng::SetHF32Mode(false);
@@ -690,11 +706,13 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
     memref_t<__cc__ DST_TYPE, 4> *mc, memref_t<__cbuf__ SRC_TYPE, 4> *ma,
     memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
-    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, 
-    bool init,
-    int64_t m, int64_t k, int64_t n, 
-    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
-    int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
+    memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
+    int64_t k, int64_t n,
+    int64_t mmad_l1_wait_l1a_event,
+    int64_t mmad_l1_wait_l1scalea_event,
+    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event, int64_t l1a_wait_mmad_l1_event,
+    int64_t l1scalea_wait_mmad_l1_event,
+    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -704,8 +722,11 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_core(
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
       m, k, n,
-      mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
-      l1b_wait_mmad_l1_event, init, true, false, false);
+      mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
+      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event,
+      init, true, false, false);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
@@ -716,8 +737,10 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
     memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
     memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init, int64_t m,
     int64_t k, int64_t n, memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
-    int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event) {
+    int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
+    int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
+    int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
+    int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
                           false>(
       mc->aligned + mc->offset, ma->aligned + ma->offset,
@@ -726,8 +749,10 @@ __aicore__ __attribute__((always_inline)) void mmamx_tile_bias(
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      m, k, n, mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event,
-      mmad_l1_wait_l1b_event, l1b_wait_mmad_l1_event, init, true, false, true);
+      m, k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
+      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false, true);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
@@ -738,9 +763,11 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ SRC_TYPE, 4> *mb,
                 memref_t<__cbuf__ ElementMxScaleA, 1> *l1MxScaleA,
                 memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
-                int64_t m, int64_t k, int64_t n, int64_t mmad_l1_wait_l1a_event,
-                int64_t mmad_l1_wait_l1b_event, int64_t l1a_wait_mmad_l1_event,
-                int64_t l1b_wait_mmad_l1_event,
+                int64_t m, int64_t k, int64_t n,
+                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
+                int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
+                int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
+                int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event,
                 Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
                 Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
@@ -752,8 +779,11 @@ mmamx_tile_core(memref_t<__cc__ DST_TYPE, 4> *mc,
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
       m, k, n,
-      mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event, mmad_l1_wait_l1b_event,
-      l1b_wait_mmad_l1_event, init, true, false, lhsFormat, rhsFormat, false);
+      mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
+      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event,
+      init, true, false, lhsFormat, rhsFormat, false);
 }
 
 template <typename SRC_TYPE, typename DST_TYPE, typename BIAS_TYPE,
@@ -766,8 +796,10 @@ mmamx_tile_bias(memref_t<__cc__ DST_TYPE, 4> *mc,
                 memref_t<__cbuf__ ElementMxScaleB, 1> *l1MxScaleB, bool init,
                 int64_t m, int64_t k, int64_t n,
                 memref_t<__cbuf__ BIAS_TYPE, 4> *bias,
-                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1b_event,
-                int64_t l1a_wait_mmad_l1_event, int64_t l1b_wait_mmad_l1_event,
+                int64_t mmad_l1_wait_l1a_event, int64_t mmad_l1_wait_l1scalea_event,
+                int64_t mmad_l1_wait_l1b_event, int64_t mmad_l1_wait_l1scaleb_event,
+                int64_t l1a_wait_mmad_l1_event, int64_t l1scalea_wait_mmad_l1_event,
+                int64_t l1b_wait_mmad_l1_event, int64_t l1scaleb_wait_mmad_l1_event,
                 Catlass::Gemm::HIVMMatmulDataformat lhsFormat,
                 Catlass::Gemm::HIVMMatmulDataformat rhsFormat) {
   Catlass::Gemm::L1MxMmad<SRC_TYPE, SRC_TYPE, BIAS_TYPE, DST_TYPE, TA, TB,
@@ -778,8 +810,10 @@ mmamx_tile_bias(memref_t<__cc__ DST_TYPE, 4> *mc,
       (TA ? (ma->sizes[0] * ma->sizes[3]) : (ma->sizes[1] * ma->sizes[2])),
       (TA ? (ma->sizes[1] * ma->sizes[2]) : (ma->sizes[0] * ma->sizes[3])),
       (TB ? (mb->sizes[1] * mb->sizes[2]) : (mb->sizes[0] * mb->sizes[3])),
-      m, k, n, mmad_l1_wait_l1a_event, l1a_wait_mmad_l1_event,
-      mmad_l1_wait_l1b_event, l1b_wait_mmad_l1_event, init, true, false,
+      m, k, n, mmad_l1_wait_l1a_event, mmad_l1_wait_l1scalea_event,
+      mmad_l1_wait_l1b_event, mmad_l1_wait_l1scaleb_event,
+      l1a_wait_mmad_l1_event, l1scalea_wait_mmad_l1_event,
+      l1b_wait_mmad_l1_event, l1scaleb_wait_mmad_l1_event, init, true, false,
       lhsFormat, rhsFormat, true);
 }
 

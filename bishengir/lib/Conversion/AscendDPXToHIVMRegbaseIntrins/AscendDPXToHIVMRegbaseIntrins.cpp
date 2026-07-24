@@ -47,8 +47,7 @@ using namespace mlir::hivm_regbaseintrins;
 
 const int GLOBAL_ADDR_SPACE = 1;
 const int SHARED_ADDR_SPACE = 6;
-const int MAX_LOADSTORE_BITWIDTH =
-    64; // TODO: get this to 128 (stg.b128 doesn't work right now)
+const int MAX_LOADSTORE_BITWIDTH = 128;
 
 static int typeBitWidth(Type t) {
   if (t.isIntOrFloat())
