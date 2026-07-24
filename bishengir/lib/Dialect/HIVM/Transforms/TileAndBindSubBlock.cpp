@@ -20,6 +20,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/Annotation/IR/Annotation.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Transforms/AutoSchedule/AutoScheduleBase.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/Analysis/DimensionAnalyzer.h"
@@ -1318,18 +1319,22 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
 }
 
 static bool shouldLimitAllAivToSubBlock0(ArrayRef<func::FuncOp> aivFunctions,
-                                         ArrayRef<func::FuncOp> aicFunctions) {
+                                         ArrayRef<func::FuncOp> aicFunctions,
+                                         ModuleOp moduleOp) {
   // Custom ops may have side effects and variadic outs/results, and must never
   // be cloned into the 1:2 sub-block loop.
-  // TODO: wait for sych of 
+  // TODO: wait for sych of
   if (llvm::any_of(aivFunctions, [](func::FuncOp aivFunc) {
         return hfusion::util::hasCustomOp(aivFunc);
       }))
     return true;
 
-  // limitUniqueSubBlockToStore vector function and skip this pass if
-  // BatchMatmul is found.
-  if (hasBatchMatmulLoopInAicFuncs(aicFunctions))
+  // On regbase archs, a batch matmul is already expanded to a batch-dim for
+  // loop that must stay synchronized across AIC/AIV; the 1:2 sub-block tiling
+  // that would break that correspondence is skipped when the batch_matmul label
+  // is present. On membase archs tiling stays enabled even with the label.
+  if (hacc::utils::isRegBasedArch(moduleOp) &&
+      hasBatchMatmulLoopInAicFuncs(aicFunctions))
     return true;
 
   // FIXME: Currently, implicit tranpose's load is not tiled. The data is fully
@@ -1380,7 +1385,7 @@ void TileAndBindSubBlockPass::runOnOperation() {
   };
 
   if (!this->enableTile ||
-      shouldLimitAllAivToSubBlock0(aivFunctions, aicFunctions)) {
+      shouldLimitAllAivToSubBlock0(aivFunctions, aicFunctions, moduleOp)) {
     (void)limitAllAivToSubBlock0();
     return;
   }
