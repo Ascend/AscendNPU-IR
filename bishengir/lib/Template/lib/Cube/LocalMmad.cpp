@@ -439,7 +439,12 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
         l0b_base + ping_pong_id * l0ab_pingpong_buffer_len;
 
     // pipe_mte1 wait for previous iteration pipe_m to finish
-    INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
+    if (enable_double_buffer) {
+      INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
+    } else {
+      INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
+      INTRINSIC(wait_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
+    }
 
     // load matrix A from L1 to L0A
     if (is_outer_k_start && mmad_l1_wait_l1a_event != -1) {
@@ -490,8 +495,8 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     }
 
     // pipe_m wait for pipe_mte1 instructions to finish
-    INTRINSIC(set_flag, PIPE_MTE1, PIPE_M, m_mte1_event_id);
-    INTRINSIC(wait_flag, PIPE_MTE1, PIPE_M, m_mte1_event_id);
+    INTRINSIC(set_flag, PIPE_MTE1, PIPE_M, LIB_EVENT_ID0);
+    INTRINSIC(wait_flag, PIPE_MTE1, PIPE_M, LIB_EVENT_ID0);
 
     uint8_t unit_flag_mode =
         unit_flag ? (is_outer_k_end ? unit_flag : (uint8_t)0b10) : (uint8_t)0;
@@ -534,7 +539,12 @@ mma_tile(memref_t<__cbuf__ SRC_TYPE, 4> *ma, memref_t<__cbuf__ SRC_TYPE, 4> *mb,
     }
 
     // pipe_m set next iteration pipe_mte1
-    INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
+    if (enable_double_buffer) {
+      INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, m_mte1_event_id);
+    } else {
+      INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID0);
+      INTRINSIC(set_flag, PIPE_M, PIPE_MTE1, EVENT_ID1);
+    }
 
     if constexpr (HF32) {
       set_hf32_ctrl_none();
