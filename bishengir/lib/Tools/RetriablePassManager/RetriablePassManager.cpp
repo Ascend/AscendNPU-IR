@@ -18,6 +18,7 @@
 #include "bishengir/Tools/RetriablePassManager/RetriablePassManager.h"
 
 #include "bishengir/Pass/PassManager.h"
+#include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/STLExtras.h"
@@ -98,6 +99,13 @@ LogicalResult RetriablePassManager::runOnce(ModuleOp mod,
 
   (void)mlir::applyPassManagerCLOptions(passManager);
   (void)bishengir::applyPassManagerCLOptions(passManager);
+
+  if (config.getPrintPassId() || !config.getInjectIrBefore().empty() ||
+      !config.getInjectIrAfter().empty()) {
+    passManager.addInstrumentation(std::make_unique<InjectIRInstrumentation>(
+        config.getPrintPassId(), config.getInjectIrBefore(),
+        config.getInjectIrAfter()));
+  }
 
   if (failed(passManager.run(mod)))
     return mod->emitError("Failed to run " + pipelineName.str() + " pipeline\n");
