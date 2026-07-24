@@ -399,6 +399,9 @@ std::unique_ptr<Pass> createRemoveCopyOpsPass();
 /// on-the-fly transpose.
 std::unique_ptr<Pass> createFuseTransposeIntoLoadPass();
 
+/// Create a pass to clone scf.if yield operand for PlanMemory.
+std::unique_ptr<Pass> createCloneSCFIfYieldOperandPass();
+
 //===----------------------------------------------------------------------===//
 // Registration
 //===----------------------------------------------------------------------===//
