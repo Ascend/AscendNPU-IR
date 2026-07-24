@@ -39,6 +39,9 @@ public:
   /// Inject PIPE_ALL.
   void InjectSyncAll();
 
+  /// Inject M-to-MTE1 synchronization around MmadL1 operations on RegBase.
+  void InjectSetWaitPipeMPipeMTE1ForAllMmadL1();
+
   /// Inject auto sync.
   void AutoInjectSync(bool enableUnitFlag, bool assumeAliveLoops);
 

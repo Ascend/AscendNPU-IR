@@ -22,6 +22,8 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Transforms/DialectConversion.h"
 
 #define DEBUG_TYPE "hivm-inject-sync"
@@ -45,17 +47,51 @@ public:
 } // namespace mlir
 
 void InjectSyncAnalysis::InjectSyncAll() {
+  auto shouldInsertBarrierBefore = [](Operation *op) {
+    if (op->getDialect()->getNamespace() ==
+        HIVMDialect::getDialectNamespace())
+      return true;
+    if (isa<memref::LoadOp, memref::StoreOp, affine::AffineLoadOp,
+            affine::AffineStoreOp, tensor::ExtractOp, tensor::InsertOp>(op))
+      return true;
+    return isa<func::ReturnOp, func::CallOp>(op);
+  };
+
   MLIRContext *ctx = func_->getContext();
   IRRewriter rewriter(ctx);
   func_->walk<WalkOrder::PreOrder>([&](Operation *op) {
-    if (op->getDialect()->getNamespace() ==
-            HIVMDialect::getDialectNamespace() ||
-        mlir::isa<func::ReturnOp>(op)) {
+    if (shouldInsertBarrierBefore(op)) {
       Location loc = op->getLoc();
       rewriter.setInsertionPoint(op);
       auto pipeAll = PipeAttr::get(ctx, hivm::PIPE::PIPE_ALL);
       rewriter.create<hivm::PipeBarrierOp>(loc, pipeAll);
     }
+  });
+
+  if (hacc::utils::isRegBasedArch(func_->getParentOfType<ModuleOp>()))
+    InjectSetWaitPipeMPipeMTE1ForAllMmadL1();
+}
+
+void InjectSyncAnalysis::InjectSetWaitPipeMPipeMTE1ForAllMmadL1() {
+  MLIRContext *ctx = func_->getContext();
+  IRRewriter rewriter(ctx);
+  func_->walk<WalkOrder::PreOrder>([&](hivm::MmadL1Op op) {
+    Location loc = op.getLoc();
+    auto eventId0 = EventAttr::get(ctx, hivm::EVENT::EVENT_ID0);
+    auto eventId1 = EventAttr::get(ctx, hivm::EVENT::EVENT_ID1);
+    auto setPipe = PipeAttr::get(ctx, hivm::PIPE::PIPE_M);
+    auto waitPipe = PipeAttr::get(ctx, hivm::PIPE::PIPE_MTE1);
+
+    rewriter.setInsertionPoint(op);
+    rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId0,
+                                     Value{});
+    rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId1,
+                                     Value{});
+    rewriter.setInsertionPointAfter(op);
+    rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, eventId0,
+                                      Value{});
+    rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, eventId1,
+                                      Value{});
   });
 }
 
