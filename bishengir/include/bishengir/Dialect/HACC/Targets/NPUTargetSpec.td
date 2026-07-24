@@ -180,7 +180,7 @@ def Ascend910_9362_Spec : Ascend910_93_BaseSpec<"Ascend910_9362"> {
   let VectorCoreCount = 40;
 }
 
-def Ascend910C_9362_Spec : Ascend910_93_BaseSpec<"Ascend910C_9362"> {
+def Ascend910_9363_Spec : Ascend910_93_BaseSpec<"Ascend910_9363"> {
   let AiCoreCount = 20;
   let CubeCoreCount = 20;
   let VectorCoreCount = 40;
