@@ -224,6 +224,8 @@ runExternalHIVMC(ModuleOp &module,
   return success();
 }
 
+using MixedModules = std::pair<ModuleOp, SmallVector<ModuleOp, 2>>;
+
 /// Run a pipeline on a module using the regbase builder and A3's runPipeline utility.
 static LogicalResult
 runPipelineRegBase(ModuleOp mod,
@@ -238,17 +240,26 @@ runPipelineRegBase(ModuleOp mod,
   return bishengir::runPipeline(mod, boundPipeline, config, pipelineName);
 }
 
-// TODO(regbase-migration): getMixedModules not available in A3 Utils.
 //   Scope::ScopeOp SIMT detection logic needed.
-#if 0
 static MixedModules getMixedModules(ModuleOp topMod) {
-  // ... (implementation from A5)
-}
-#endif
+  MixedModules res;
+  res.first = nullptr;
+  for (auto subMod : topMod.getOps<ModuleOp>()) {
+    if (subMod->hasAttr(hacc::SIMTModuleAttr::name)) {
+      res.second.push_back(subMod);
+    } else {
+      assert(!res.first && "only one main module is allowed");
+      res.first = subMod;
+    }
+  };
+  // if no main module, return the top module
+  if (!res.first)
+    res.first = topMod;
 
-// TODO(regbase-migration): SIMT-to-LLVM compile not available.
+  return res;
+}
+
 //   Depends on Triton and DPX lowering passes.
-#if 0
 static bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
                                  BiShengIRCompileMainConfig config) {
   config.setPureSimt(true);
@@ -259,7 +270,6 @@ static bool runSIMTToLLVMCompile(ArrayRef<ModuleOp> modules,
   }
   return result;
 }
-#endif
 
 static bool runSIMDToLLVMCompile(ModuleOp module,
                                  BiShengIRCompileMainConfig &config) {
@@ -335,34 +345,32 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     hasCcOverflow = false;
     hasCbufOverflow = false;
 
-    // TODO(regbase-migration): SIMD/SIMT mix compile not yet available.
     //   Depends on Triton pipeline and SIMT module split.
-    // if (config.getEnableSimdSimtMixCompile()) {
-    //   // Mixed SIMD/SIMT pipeline
-    //   success = success && succeeded(runPipelineRegBase(
-    //                            hirCompileMode,
-    //                            regbase::buildBiShengHIRPipeline, config,
-    //                            "BiShengHIR"));
-    //   auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
-    //   for (auto simtMod : simtMods) {
-    //     success = success && succeeded(runPipelineRegBase(
-    //                              simtMod, regbase::buildBiShengTTIRPipeline,
-    //                              config, "BiShengTTIR"));
-    //   }
-    //   success = success && succeeded(runPipelineRegBase(
-    //                            hirCompileMode,
-    //                            regbase::buildBiShengHIRFinishPipeline,
-    //                            config, "BishengHIR"));
-    //   success = success && succeeded(runPipelineRegBase(
-    //                            mainMod, regbase::buildFinalHIVMPipelines,
-    //                            config, "buildFinalHIVMPipelines"));
+    if (config.getEnableSimdSimtMixCompile()) {
+      // Mixed SIMD/SIMT pipeline
+      success = success && succeeded(runPipelineRegBase(
+                               hirCompileMode,
+                               regbase::buildBiShengHIRPipeline, config,
+                               "BiShengHIR"));
+      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
+      for (auto simtMod : simtMods) {
+        success = success && succeeded(runPipelineRegBase(
+                                 simtMod, regbase::buildBiShengTTIRPipeline,
+                                 config, "BiShengTTIR"));
+      }
+      success = success && succeeded(runPipelineRegBase(
+                               hirCompileMode,
+                               regbase::buildBiShengHIRFinishPipeline,
+                               config, "BishengHIR"));
+      success = success && succeeded(runPipelineRegBase(
+                               mainMod, regbase::buildFinalHIVMPipelines,
+                               config, "buildFinalHIVMPipelines"));
 
-    // TODO(regbase-migration): Triton IR compile not yet available.
-    // } else if (config.getEnableTritonIRCompile()) {
-    //   success = succeeded(runPipelineRegBase(hirCompileMode,
-    //                                          regbase::buildBiShengTTIRPipeline,
-    //                                          config, "BiShengTTIR"));
-    // }
+    } else if (config.getEnableTritonIRCompile()) {
+      success = succeeded(runPipelineRegBase(hirCompileMode,
+                                             regbase::buildBiShengTTIRPipeline,
+                                             config, "BiShengTTIR"));
+    }
 
     // Standard HIR compile path (no SIMD/SIMT split)
     success = succeeded(runPipelineRegBase(hirCompileMode,
@@ -435,18 +443,17 @@ bishengir::regbase::runRegBasePipeline(ModuleOp mod,
     }
 
     // hivmc pipeline
-    // TODO(regbase-migration): SIMD/SIMT split lowering not available.
-    // if (config.getEnableSimdSimtMixCompile()) {
-    //   auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
-    //   if (runSIMTToLLVMCompile(simtMods, config) &&
-    //       runSIMDToLLVMCompile(mainMod, config)) {
-    //     // Once both are lowered, flatten into single module
-    //   }
-    // } else if (config.getPureSimt()) {
-    //   success = success && runSIMTToLLVMCompile(hirCompileMode, config);
-    // } else {
-    success = success && runSIMDToLLVMCompile(hirCompileMode, config);
-    // }
+    if (config.getEnableSimdSimtMixCompile()) {
+      auto [mainMod, simtMods] = getMixedModules(hirCompileMode);
+      if (runSIMTToLLVMCompile(simtMods, config) &&
+          runSIMDToLLVMCompile(mainMod, config)) {
+        // Once both are lowered, flatten into single module
+      }
+    } else if (config.getPureSimt()) {
+      success = success && runSIMTToLLVMCompile(hirCompileMode, config);
+    } else {
+      success = success && runSIMDToLLVMCompile(hirCompileMode, config);
+    }
 
     addBitcodeAttrsToModule(hirCompileMode, config.getExecutablePath(), config);
     if (success && succeeded(runExternalHIVMC(hirCompileMode, config))) {

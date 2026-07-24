@@ -77,7 +77,6 @@ using namespace mlir;
 using namespace mlir::triton;
 
 namespace bishengir {
-namespace regbase {
 
 #if BISHENGIR_ENABLE_TRITON_COMPILE
 /// Defined in BiShengIRCompileConfig.cpp.
@@ -85,6 +84,7 @@ const mlir::triton::proton::ConvertProtonToProtonGPUOptions &
 getProtonGPUCompileConfig();
 #endif
 
+namespace regbase {
 // Helper function to set up HFusionPipelineOptions
 void setupHFusionPipelineOptions(
     hfusion::HFusionPipelineOptions &hfusionPipelineOptions,
@@ -289,26 +289,25 @@ void buildLowerToLLVMPipeline(OpPassManager &pm,
   pm.addPass(createConvertHIVMAVEToAVEIntrinPass());
   pm.addPass(hivmave::createHoistVstasPass());
   if (config.getPureSimt() && config.getUseDPX()) {
-    // TODO(regbase)
-    // auto tritonGridDim = config.getSimtTritonGrid();
-    // bishengir::TritonRemapOptions options;
-    // options.isSimdSimtMixCompile = config.getEnableSimdSimtMixCompile();
-    // if (!tritonGridDim.empty()) {
-    //   options.gridDimX = static_cast<int>(tritonGridDim[0]);
-    //   options.useGridFlag = true;
-    // }
-    // if (tritonGridDim.size() > 1)
-    //   options.gridDimY = static_cast<int>(tritonGridDim[1]);
+    auto tritonGridDim = config.getSimtTritonGrid();
+    bishengir::TritonRemapOptions options;
+    options.isSimdSimtMixCompile = config.getEnableSimdSimtMixCompile();
+    if (!tritonGridDim.empty()) {
+      options.gridDimX = static_cast<int>(tritonGridDim[0]);
+      options.useGridFlag = true;
+    }
+    if (tritonGridDim.size() > 1)
+      options.gridDimY = static_cast<int>(tritonGridDim[1]);
 
-    // if (tritonGridDim.size() > 2)
-    //   options.gridDimZ = static_cast<int>(tritonGridDim[2]);
-    // pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
-    // pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
-    // if (config.getEnableSIMTFastDiv())
-    //   pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
+    if (tritonGridDim.size() > 2)
+      options.gridDimZ = static_cast<int>(tritonGridDim[2]);
+    pm.addPass(bishengir::triton::createAdaptGPUKernelPass(options));
+    pm.addPass(mlir::ascend_dpx::createHoistCallScalarToCallerPass());
+    if (config.getEnableSIMTFastDiv())
+      pm.addPass(mlir::ascend_dpx::createDPXDivOptimizationPass(options));
   }
-  // pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
-  // pm.addPass(bishengir::triton::createDecomposeFRemPass());
+  pm.addPass(createConvertAscendDPXToHIVMRegbaseIntrinPass());
+  pm.addPass(bishengir::triton::createDecomposeFRemPass());
   pm.addPass(createConvertSCFToCFPass());
   pm.addPass(createLowerAffinePass());
   pm.addPass(arith::createArithExpandOpsPass());
