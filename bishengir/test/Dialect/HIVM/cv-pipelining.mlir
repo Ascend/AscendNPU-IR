@@ -618,11 +618,16 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
 // with the other operands. Otherwise the cloned load retains a use of the
 // original tensor.empty and deleting the original loop crashes with
 // "operation destroyed but still has uses".
+// The alloc_workspace metadata must also survive worklist construction so the
+// store is rewritten to a subview of the expanded workspace.
 
 // CHECK-LABEL: func.func @test_pipeline_tensor_load_init
+// CHECK: %[[EXPANDED_WS:.*]] = memref_ext.alloc_workspace() {{.*}} to memref<2x16x16xf16>
 // CHECK: scf.for
 // CHECK: scf.for
-// CHECK: hivm.hir.store
+// CHECK: %[[WS_SUBVIEW:.*]] = memref.subview %[[EXPANDED_WS]]
+// CHECK: %[[WS_SLICE:.*]] = memref.collapse_shape %[[WS_SUBVIEW]]
+// CHECK: hivm.hir.store {{.*}} outs(%[[WS_SLICE]] : memref<16x16xf16>)
 // CHECK: {{.*}}hivm.loop_core_type = #hivm.tcore_type<VECTOR>
 // CHECK: scf.for
 // CHECK: %[[LOAD_INIT:.*]] = tensor.empty() : tensor<16x16xf16>

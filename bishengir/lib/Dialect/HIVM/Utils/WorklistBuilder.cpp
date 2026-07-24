@@ -329,6 +329,7 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
     if (op->getNumResults() == 1 &&
         !isa<MemRefType>(op->getResult(0).getType()))
       continue;
+    traceStack.append(op->user_begin(), op->user_end());
   }
 }
 
@@ -338,7 +339,9 @@ static void memrefDFS(Value memrefVal, SmallVector<Operation *> &users) {
 
 WorklistBuilder::WorklistBuilder(scf::ForOp loop, int numMultibuffer,
                                  bool enableLazyLoading)
-      : enableLazyLoading(enableLazyLoading),
+    : targetBlock(loop.getBody()), scopeOp(loop.getOperation()),
+      pipelineLoop(loop), isLoopMode(true), numMultibuffer(numMultibuffer),
+      enableLazyLoading(enableLazyLoading),
       yieldedVals(loop.getYieldedValues().begin(),
                   loop.getYieldedValues().end()) {}
 

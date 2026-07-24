@@ -86,6 +86,9 @@ struct CVPipelineImpl {
 private:
   void collectAtomicEffects();
 
+  /// Collect the CV-specific workspace metadata needed by expandWorkspace().
+  LogicalResult collectWorkspaceAllocs();
+
   LogicalResult markOutputs();
 
   /// Absorb non-core "merger" ops (e.g. `arith.select`, `arith.cmpi`) that
@@ -858,6 +861,13 @@ markWorkspaceOps(Operation *op,
     else
       allocs[alloc] = {0, nullptr, toTensor};
   }
+  return success();
+}
+
+LogicalResult CVPipelineImpl::collectWorkspaceAllocs() {
+  for (Operation &op : pipelineLoop.getBody()->getOperations())
+    if (failed(markWorkspaceOps(&op, workspaceAllocs_, numMultibuffer)))
+      return failure();
   return success();
 }
 
@@ -1686,6 +1696,14 @@ LogicalResult CVPipelineImpl::run() {
   collectAtomicEffects();
   auto buildResult = wlBuilder.build();
   if (failed(buildResult)) {
+    revert();
+    return failure();
+  }
+  worklist = buildResult->worklist;
+  opToWorkItemMap = buildResult->opToWorkItemMap;
+  outputMemrefMap = buildResult->outputMemrefMap;
+  numMultibuffer = buildResult->resolvedMultibuffer;
+  if (failed(collectWorkspaceAllocs())) {
     revert();
     return failure();
   }
