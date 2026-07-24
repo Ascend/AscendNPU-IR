@@ -868,10 +868,20 @@ MatmulBiasMode getMatmulLikeBiasMode(LocalMmadTy localMatmulOp) {
       }
       return MatmulBiasMode::ElementwiseAdd;
     }
-    if (isPerChannelPattern(matmulOutput))
+    // The mem-based backend (e.g. Ascend910B) only registers the
+    // non-transposed mma_tile BIAS symbol variants; there is no
+    // BIAS_TA/BIAS_TB/BIAS_TA_TB symbol to link against. When A or B is
+    // transposed, keep per-channel bias out of MmadL1Op so it later lowers to
+    // a separate vector add instead of an undefined library call.
+    bool hasTranspose = false;
+    if constexpr (std::is_same_v<LocalMmadTy, hivm::MmadL1Op>) {
+      hasTranspose = localMatmulOp.getATranspose().has_value() ||
+                     localMatmulOp.getBTranspose().has_value();
+    }
+    if (!hasTranspose && isPerChannelPattern(matmulOutput))
       return MatmulBiasMode::PerChannelAdd;
 
-    if (isPerChannelSplitKPattern(matmulOutput))
+    if (!hasTranspose && isPerChannelSplitKPattern(matmulOutput))
       return MatmulBiasMode::PerChannelAddWithSplitK;
 
     auto emptyOp = traceDefOp<tensor::EmptyOp>(matmulOutput.get());
