@@ -703,6 +703,18 @@ llvm::cl::values(
   bit isSharedWithDownstreamToolchain = 1;
 }
 
+def CustomAICNumber : BiShengIRCompileOpt<
+  "Custom amount of aic cores to use (should be lower or equal than targets' real number, default is no override)",
+  "int32_t",
+  "-1"
+>;
+
+def CustomAIVNumber : BiShengIRCompileOpt<
+  "Custom amount of aiv cores to use (should be lower or equal than targets' real number, default is no override)",
+  "int32_t",
+  "-1"
+>;
+
 //===----------------------------------------------------------------------===//
 // Other Options
 //===----------------------------------------------------------------------===//
