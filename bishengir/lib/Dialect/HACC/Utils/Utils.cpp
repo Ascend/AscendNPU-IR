@@ -282,7 +282,7 @@ bool isAscend910B(TargetDevice targetDevice) {
 
 bool isAscend910_93(TargetDevice targetDevice) {
   return targetDevice == TargetDevice::Ascend910_9362 ||
-         targetDevice == TargetDevice::Ascend910C_9362 ||
+         targetDevice == TargetDevice::Ascend910_9363 ||
          targetDevice == TargetDevice::Ascend910_9372 ||
          targetDevice == TargetDevice::Ascend910_9381 ||
          targetDevice == TargetDevice::Ascend910_9382 ||

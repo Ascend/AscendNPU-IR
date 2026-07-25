@@ -626,7 +626,7 @@ llvm::cl::values(
                               "Ascend910B4-1", "Ascend910B4-1"),
                 REGISTER_TARGET(Ascend910B2C),
                 // Ascend910_93 series
-  REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910C_9362),
+  REGISTER_TARGET(Ascend910_9362), REGISTER_TARGET(Ascend910_9363),
   REGISTER_TARGET(Ascend910_9372),
   REGISTER_TARGET(Ascend910_9381), REGISTER_TARGET(Ascend910_9382),
   REGISTER_TARGET(Ascend910_9391), REGISTER_TARGET(Ascend910_9392),
