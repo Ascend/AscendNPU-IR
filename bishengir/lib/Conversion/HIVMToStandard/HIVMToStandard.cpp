@@ -124,7 +124,7 @@ static func::CallOp createLibCall(PatternRewriter &rewriter, Operation *op,
     rewriter.setInsertionPoint(mod.getBody(), std::prev(mod.getBody()->end()));
 
     func::FuncOp funcOp = rewriter.create<func::FuncOp>(
-        mlir::FileLineColLoc::get(ctx, "internal", 0, 0), fnNameAttr.getValue(),
+        mlir::NameLoc::get(fnNameAttr.getAttr(), loc), fnNameAttr.getValue(),
         libFnType);
     funcOp->setAttr(LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                     UnitAttr::get(ctx));

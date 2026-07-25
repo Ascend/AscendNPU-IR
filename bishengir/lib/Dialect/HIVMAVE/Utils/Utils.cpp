@@ -547,8 +547,7 @@ Value hivmave::createMaskByPGE(VectorType vecTy, PatternRewriter &rewriter,
   mask = maskOp->getResult(0);
   if (vecTy.getElementTypeBitWidth() == 1 && vecTy != maskType)
     mask = rewriter
-               .create<UnrealizedConversionCastOp>(rewriter.getUnknownLoc(),
-                                                   vecTy, maskOp.getResult())
+               .create<UnrealizedConversionCastOp>(loc, vecTy, maskOp.getResult())
                ->getResult(0);
   return mask;
 }

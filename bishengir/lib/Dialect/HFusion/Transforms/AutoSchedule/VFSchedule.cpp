@@ -120,7 +120,9 @@ TilingComputeFn VFScheduler::calculateTilingImpl() {
           (dimIdx == dimUpperBound ? lastDimTileSize : nonLastDimTileSize);
       auto tilingDataForDim =
           TilingData(opBuilder->createConstExpr(tileSize), tilingDataType);
-      tilingDataForDim.setHeuristicValueForKey(dimIdx, tileSize);
+      Location heuristicLoc =
+          opBuilder->getInsertionBlock()->getParentOp()->getLoc();
+      tilingDataForDim.setHeuristicValueForKey(dimIdx, tileSize, heuristicLoc);
       LDBG("Setting tiling data heuristic value: dimIdx="
            << dimIdx << " heuristic=" << tileSize);
       s[dimIdx + 1] = std::make_unique<TilingData>(std::move(tilingDataForDim));

@@ -354,7 +354,7 @@ public:
   /// is going to be a constant value. But because the tiling computation
   /// is common for all the tiling cases, we cannot reduce it to a constant
   /// value at compile time, and hinders further optimizations.
-  void setHeuristicValueForKey(TilingKey key, int64_t hint);
+  void setHeuristicValueForKey(TilingKey key, int64_t hint, Location loc);
   std::optional<int64_t> getHeuristicValueForKey(TilingKey key) const;
 
   /// Remove all heuristics.
