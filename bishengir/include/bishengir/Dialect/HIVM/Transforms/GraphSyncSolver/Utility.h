@@ -139,6 +139,9 @@ struct SyncSolverOptions {
   // Reuse existing sync pairs to save event ids.
   bool reuseSyncPairToSaveEventIds{false};
 
+  // TODO: Delete this workaround after the flag ID overflow problem is fixed.
+  bool enableFlagIdOverflowWorkaround{false};
+
   // Use different flag-ids for multibuffer backward sync pairs.
   bool useDifferentMultiBufferFlagIds{false};
 

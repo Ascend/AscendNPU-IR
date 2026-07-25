@@ -25,7 +25,9 @@
 #include "llvm/Support/LogicalResult.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cstdint>
+#include <limits>
 #include <numeric>
+#include <tuple>
 #include <utility>
 
 #define DEBUG_TYPE "hivm-gss-eventidsolver"
@@ -163,7 +165,8 @@ EventIdNode *EventIdSolver::getNode(ConflictPair *conflictPair) {
 }
 
 std::unique_ptr<EventIdSolver> EventIdSolver::clone() {
-  auto clonedEventIdSolver = std::make_unique<EventIdSolver>(eventIdsNumMax);
+  auto clonedEventIdSolver =
+      std::make_unique<EventIdSolver>(eventIdsNumMax, preferNewEventIds);
   llvm::DenseMap<EventIdNode *, EventIdNode *> mp;
   for (auto &node : nodes) {
     auto clonedNode = node->clone();
@@ -240,7 +243,8 @@ EventIdSolver::getAdjNodesUsedEventIds(EventIdNode *node) {
 }
 
 llvm::SmallVector<int64_t>
-EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
+EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax,
+                                 int64_t &reuseCursor) {
   // Honor a user-pinned id carried on the originating conflict pair.
   if (node->initConflictPair && node->initConflictPair->pinnedEventId &&
       node->eventIdNum == 1) {
@@ -254,18 +258,54 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
   usedEventIds.erase(std::unique(usedEventIds.begin(), usedEventIds.end()),
                      usedEventIds.end());
   if (!node->reversePriority) {
-    int64_t curEventId = 0;
-    auto *it = usedEventIds.begin();
-    while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
-      while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
-        it++;
+    if (preferNewEventIds) {
+      llvm::SmallDenseSet<int64_t> usedSet(usedEventIds.begin(),
+                                           usedEventIds.end());
+      int64_t curEventId = eventIdMax + 1;
+      while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum &&
+             curEventId < this->eventIdsNumMax) {
+        if (!usedSet.contains(curEventId)) {
+          chosenEventIds.push_back(curEventId);
+        }
+        curEventId++;
       }
-      if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
-        it++;
-      } else {
-        chosenEventIds.push_back(curEventId);
+      if (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+        int64_t reusableEventIdNum =
+            std::min(eventIdMax + 1, this->eventIdsNumMax);
+        int64_t scanStart = reuseCursor;
+        int64_t scannedEventIdNum = 0;
+        while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum &&
+               scannedEventIdNum < reusableEventIdNum) {
+          int64_t fillId =
+              (scanStart + scannedEventIdNum) % reusableEventIdNum;
+          if (!usedSet.contains(fillId)) {
+            chosenEventIds.push_back(fillId);
+            reuseCursor = (fillId + 1) % reusableEventIdNum;
+          }
+          scannedEventIdNum++;
+        }
+        while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+          if (!usedSet.contains(curEventId)) {
+            chosenEventIds.push_back(curEventId);
+          }
+          curEventId++;
+        }
+        llvm::sort(chosenEventIds);
       }
-      curEventId++;
+    } else {
+      int64_t curEventId = 0;
+      auto *it = usedEventIds.begin();
+      while (static_cast<int64_t>(chosenEventIds.size()) < node->eventIdNum) {
+        while ((it != usedEventIds.end()) && ((*it) < curEventId)) {
+          it++;
+        }
+        if ((it != usedEventIds.end()) && ((*it) == curEventId)) {
+          it++;
+        } else {
+          chosenEventIds.push_back(curEventId);
+        }
+        curEventId++;
+      }
     }
   } else {
     int64_t curEventId = std::max(eventIdMax, this->eventIdsNumMax - 1);
@@ -300,6 +340,84 @@ EventIdSolver::getChosenEventIds(EventIdNode *node, int64_t eventIdMax) {
   assert(node->eventIdNum == static_cast<int64_t>(chosenEventIds.size()));
   assert(llvm::is_sorted(chosenEventIds));
   return chosenEventIds;
+}
+
+void EventIdSolver::optimizeEventIdsForProgramOrder(int64_t eventIdMax) {
+  int64_t reusableEventIdNum =
+      std::min(eventIdMax + 1, this->eventIdsNumMax);
+  if (reusableEventIdNum <= 1) {
+    return;
+  }
+
+  llvm::SmallVector<EventIdNode *> programOrderedNodes;
+  for (auto &node : nodes) {
+    programOrderedNodes.push_back(node.get());
+  }
+  llvm::sort(programOrderedNodes, [](EventIdNode *lhs, EventIdNode *rhs) {
+    auto getProgramOrder = [](EventIdNode *node) {
+      auto *conflictPair = node->initConflictPair;
+      int startIndex =
+          conflictPair && conflictPair->startIndex >= 0
+              ? conflictPair->startIndex
+              : std::numeric_limits<int>::max();
+      int endIndex =
+          conflictPair && conflictPair->endIndex >= 0
+              ? conflictPair->endIndex
+              : std::numeric_limits<int>::max();
+      return std::tuple(startIndex, endIndex, node->id);
+    };
+    return getProgramOrder(lhs) < getProgramOrder(rhs);
+  });
+
+  llvm::SmallVector<int64_t> lastUsedAt(reusableEventIdNum, -1);
+  llvm::SmallDenseSet<int64_t> previousEventIds;
+  for (auto [programIndex, node] : llvm::enumerate(programOrderedNodes)) {
+    auto &currentEventIds = node->getEventIds();
+    bool isPinned = node->initConflictPair &&
+                    node->initConflictPair->pinnedEventId.has_value();
+    if (node->eventIdNum == 1 && !node->reversePriority && !isPinned) {
+      llvm::SmallDenseSet<int64_t> unavailableEventIds;
+      auto adjacentEventIds = getAdjNodesUsedEventIds(node);
+      unavailableEventIds.insert(adjacentEventIds.begin(),
+                                 adjacentEventIds.end());
+      unavailableEventIds.insert(reservedEventIds.begin(),
+                                 reservedEventIds.end());
+
+      int64_t currentEventId = currentEventIds.front();
+      int64_t chosenEventId = currentEventId;
+      auto getScore = [&](int64_t eventId) {
+        return std::tuple(previousEventIds.contains(eventId),
+                          lastUsedAt[eventId], eventId != currentEventId,
+                          eventId);
+      };
+      auto chosenScore =
+          currentEventId >= 0 && currentEventId < reusableEventIdNum
+              ? getScore(currentEventId)
+              : std::tuple(true, std::numeric_limits<int64_t>::max(), true,
+                           currentEventId);
+      for (int64_t eventId = 0; eventId < reusableEventIdNum; ++eventId) {
+        if (unavailableEventIds.contains(eventId)) {
+          continue;
+        }
+        auto score = getScore(eventId);
+        if (score < chosenScore) {
+          chosenEventId = eventId;
+          chosenScore = score;
+        }
+      }
+      if (chosenEventId != currentEventId) {
+        assignEventIds(node, {chosenEventId});
+      }
+    }
+
+    previousEventIds.clear();
+    for (int64_t eventId : node->getEventIds()) {
+      previousEventIds.insert(eventId);
+      if (eventId >= 0 && eventId < reusableEventIdNum) {
+        lastUsedAt[eventId] = static_cast<int64_t>(programIndex);
+      }
+    }
+  }
 }
 
 std::optional<int64_t>
@@ -358,14 +476,18 @@ void EventIdSolver::calcEventIds() {
   }
 
   int64_t eventIdMax = 0;
+  int64_t reuseCursor = 0;
   for (auto *node : llvm::reverse(orderedNodes)) {
-    auto chosenEventIds = getChosenEventIds(node, eventIdMax);
+    auto chosenEventIds = getChosenEventIds(node, eventIdMax, reuseCursor);
     assert(!chosenEventIds.empty());
     assignEventIds(node, chosenEventIds);
     eventIdMax = std::max(eventIdMax, chosenEventIds.back());
     LLVM_DEBUG({ llvm::dbgs() << node->str(false) << '\n'; });
   }
 
+  if (preferNewEventIds) {
+    optimizeEventIdsForProgramOrder(eventIdMax);
+  }
   assignNeedRecalc(false);
 }
 

@@ -811,7 +811,42 @@ bool Solver::checkIntersect(ConflictPair *conflictPair1,
     return false;
   }
   if (options.isCrossCoreMode()) {
-    return checkSyncOpsConflicts(conflictPair1, conflictPair2);
+    if (checkSyncOpsConflicts(conflictPair1, conflictPair2)) {
+      return true;
+    }
+    if (!options.enableFlagIdOverflowWorkaround) {
+      return false;
+    }
+    constexpr int64_t nearbyConflictDistance = 7;
+    auto getConflictScope = [](ConflictPair *conflictPair) -> Occurrence * {
+      if (conflictPair->setOcc == nullptr || conflictPair->waitOcc == nullptr) {
+        return nullptr;
+      }
+      auto [setLCAChild, waitLCAChild] = Occurrence::getLCAPair(
+          conflictPair->setOcc, conflictPair->waitOcc);
+      assert(setLCAChild->parentOcc == waitLCAChild->parentOcc);
+      return setLCAChild->parentOcc;
+    };
+    auto *scope1 = getConflictScope(conflictPair1);
+    auto *scope2 = getConflictScope(conflictPair2);
+    if (scope1 == nullptr || scope1 != scope2) {
+      return false;
+    }
+
+    for (auto [l1, r1] : getRanges(conflictPair1)) {
+      for (auto [l2, r2] : getRanges(conflictPair2)) {
+        if (checkRangesIntersect(l1, r1 + 1, l2, r2 + 1)) {
+          continue;
+        }
+        int64_t distance =
+            r1 < l2 ? static_cast<int64_t>(l2) - r1
+                    : static_cast<int64_t>(l1) - r2;
+        if (distance <= nearbyConflictDistance) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
   if (conflictPair1->setCorePipeInfo != conflictPair2->setCorePipeInfo ||
       conflictPair1->waitCorePipeInfo != conflictPair2->waitCorePipeInfo) {
@@ -1441,6 +1476,13 @@ ConflictPair *Solver::getReusableConflictPair(
     if (curConflictPair->isBarrier() || curConflictPair->dontReuse) {
       continue;
     }
+    if (options.isCrossCoreMode() &&
+        options.enableFlagIdOverflowWorkaround &&
+        !checkRangesIntersect(
+            conflictPair->startIndex, conflictPair->endIndex + 1,
+            curConflictPair->startIndex, curConflictPair->endIndex + 1)) {
+      continue;
+    }
     if (!checkIntersect(conflictPair, curConflictPair)) {
       continue;
     }
@@ -1571,6 +1613,9 @@ bool Solver::reuseConflictPair(ConflictPair *conflictPair,
   reusableConflictPair->setOp = conflictPair->setOp;
   reusableConflictPair->setOcc = conflictPair->setOcc;
   reusableConflictPair->startIndex = conflictPair->startIndex;
+  // The reused pair takes over this conflict pair's set op, which is no longer
+  // the foldable MmadL1 L0 load the last-iteration optimization assumes.
+  reusableConflictPair->setOnLastIterOnly = false;
 
   if (!conflictPair->isUseless) {
     memorizeReusedSyncedPair(conflictPair, reusableConflictPair);
@@ -1605,7 +1650,9 @@ Solver::getEventIdSolverRef(hivm::PIPE pipeSrc, hivm::PIPE pipeDst) {
   if (!eventIdSolver.contains(key)) {
     int64_t eventIdNumMax =
         getHWAvailableEventIdNum(options.syncMode, pipeSrc, pipeDst);
-    eventIdSolver[key] = std::make_unique<EventIdSolver>(eventIdNumMax);
+    eventIdSolver[key] = std::make_unique<EventIdSolver>(
+        eventIdNumMax, options.isCrossCoreMode() &&
+                           options.enableFlagIdOverflowWorkaround);
   }
   return eventIdSolver[key];
 }
