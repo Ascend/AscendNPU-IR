@@ -1583,6 +1583,674 @@ func.func @test_mmadmx_with_scope_matmul_limited_in_cube() {
   return
 }
 
+// -----
+// 4D Fractal A (zN, !a_transpose): shape [K1,M1,16,16] = [20,10,16,16]
+// M = dim1*dim2 = 160, K = dim0*dim3 = 320
+// CHECK-LABEL: func.func @test_fractal_zN_A_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<20x10x16x16xf16>, tensor<320x80xf16>
+module {
+func.func @test_fractal_zN_A_normalize(%arg0: memref<20x10x16x16xf16>, %arg1: memref<320x80xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<20x10x16x16xf16>
+    memref.copy %arg0, %a_mem : memref<20x10x16x16xf16> to memref<20x10x16x16xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<20x10x16x16xf16>
+    %b_mem = memref.alloc() : memref<320x80xf16>
+    memref.copy %arg1, %b_mem : memref<320x80xf16> to memref<320x80xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<320x80xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<320x80xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+}
+}
+
+// -----
+// 4D Fractal A (nZ, a_transpose): shape [M1,K1,16,16] = [10,20,16,16]
+// M = dim0*dim3 = 160, K = dim1*dim2 = 320
+// CHECK-LABEL: func.func @test_fractal_nZ_A_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<10x20x16x16xf16>, tensor<320x80xf16>
+module {
+func.func @test_fractal_nZ_A_normalize(%arg0: memref<10x20x16x16xf16>, %arg1: memref<320x80xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<10x20x16x16xf16>
+    memref.copy %arg0, %a_mem : memref<10x20x16x16xf16> to memref<10x20x16x16xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<10x20x16x16xf16>
+    %b_mem = memref.alloc() : memref<320x80xf16>
+    memref.copy %arg1, %b_mem : memref<320x80xf16> to memref<320x80xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<320x80xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<10x20x16x16xf16>, tensor<320x80xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+}
+}
+
+// -----
+// 4D Fractal B (zN, !b_transpose): shape [N1,K1,16,16] = [5,20,16,16]
+// K = dim1*dim2 = 320, N = dim0*dim3 = 80
+// CHECK-LABEL: func.func @test_fractal_zN_B_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<160x320xf16>, tensor<5x20x16x16xf16>
+module {
+func.func @test_fractal_zN_B_normalize(%arg0: memref<160x320xf16>, %arg1: memref<5x20x16x16xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<160x320xf16>
+    memref.copy %arg0, %a_mem : memref<160x320xf16> to memref<160x320xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<160x320xf16>
+    %b_mem = memref.alloc() : memref<5x20x16x16xf16>
+    memref.copy %arg1, %b_mem : memref<5x20x16x16xf16> to memref<5x20x16x16xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<5x20x16x16xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<160x320xf16>, tensor<5x20x16x16xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+}
+}
+
+// -----
+// 4D Fractal B (nZ, b_transpose): shape [K1,N1,16,16] = [20,5,16,16]
+// K = dim0*dim3 = 320, N = dim1*dim2 = 80
+// CHECK-LABEL: func.func @test_fractal_nZ_B_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<160x320xf16>, tensor<20x5x16x16xf16>
+module {
+func.func @test_fractal_nZ_B_normalize(%arg0: memref<160x320xf16>, %arg1: memref<20x5x16x16xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<160x320xf16>
+    memref.copy %arg0, %a_mem : memref<160x320xf16> to memref<160x320xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<160x320xf16>
+    %b_mem = memref.alloc() : memref<20x5x16x16xf16>
+    memref.copy %arg1, %b_mem : memref<20x5x16x16xf16> to memref<20x5x16x16xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<20x5x16x16xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<160x320xf16>, tensor<20x5x16x16xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+}
+}
+
+// -----
+// Both 4D Fractal: A zN [K1,M1,16,16] + B zN [N1,K1,16,16]
+// M = 160, K = 320, N = 80
+// CHECK-LABEL: func.func @test_fractal_both_zN_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C} ins(%{{.*}}, %{{.*}}, %true, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<5x20x16x16xf16>
+module {
+func.func @test_fractal_both_zN_normalize(%arg0: memref<20x10x16x16xf16>, %arg1: memref<5x20x16x16xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<20x10x16x16xf16>
+    memref.copy %arg0, %a_mem : memref<20x10x16x16xf16> to memref<20x10x16x16xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<20x10x16x16xf16>
+    %b_mem = memref.alloc() : memref<5x20x16x16xf16>
+    memref.copy %arg1, %b_mem : memref<5x20x16x16xf16> to memref<5x20x16x16xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<5x20x16x16xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<5x20x16x16xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+}
+}
+
+// -----
+// f32 Fractal A zN [40,10,16,8] f32: M=160, K=320 (f32 uses block [16,8])
+// CHECK-LABEL: func.func @test_fractal_f32_A_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<40x10x16x8xf32>, tensor<320x80xf32>
+module {
+func.func @test_fractal_f32_A_normalize(%arg0: memref<40x10x16x8xf32>, %arg1: memref<320x80xf32>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<40x10x16x8xf32>
+    memref.copy %arg0, %a_mem : memref<40x10x16x8xf32> to memref<40x10x16x8xf32>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<40x10x16x8xf32>
+    %b_mem = memref.alloc() : memref<320x80xf32>
+    memref.copy %arg1, %b_mem : memref<320x80xf32> to memref<320x80xf32>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<320x80xf32>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<40x10x16x8xf32>, tensor<320x80xf32>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+}
+}
+
+// -----
+// K-padding: Fractal A zN [K1,M1,16,16] with dot_pad_only_k, K_real=310
+// real M = dim1*dim2 = 160, real K = dim0*dim3 = 320 (padded from 310)
+// CHECK-LABEL: func.func @test_fractal_Kpad_dot_pad_only_k
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, dot_pad_only_k, normalized_in_L0C}
+module {
+  func.func @test_fractal_Kpad_dot_pad_only_k(%arg0: memref<20x10x16x16xf16>, %arg1: memref<320x80xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<20x10x16x16xf16>
+    memref.copy %arg0, %a_mem : memref<20x10x16x16xf16> to memref<20x10x16x16xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<20x10x16x16xf16>
+    %b_mem = memref.alloc() : memref<320x80xf16>
+    memref.copy %arg1, %b_mem : memref<320x80xf16> to memref<320x80xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<320x80xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 {dot_pad_only_k} ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<320x80xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// vtranspose feeding into mmadL1 A side — folds to a_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_a
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: a_transpose
+// CHECK-SAME: tensor<128x256xf16>
+module {
+func.func @test_fold_vtranspose_a() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<128x256xf16>
+    %a_src = bufferization.to_tensor %alloc_a restrict writable : memref<128x256xf16>
+    %empty_t = tensor.empty() : tensor<256x128xf16>
+    %a_vtrans = hivm.hir.vtranspose ins(%a_src : tensor<128x256xf16>) outs(%empty_t : tensor<256x128xf16>) permutation = [1, 0] -> tensor<256x128xf16>
+    %alloc_b = memref.alloc() : memref<128x256xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<128x256xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1 ins(%a_vtrans, %b, %true, %c0, %c0, %c0 : tensor<256x128xf16>, tensor<128x256xf16>, i1, index, index, index) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// vtranspose feeding into mmadL1 B side — folds to b_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_b
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: b_transpose
+// CHECK-SAME: tensor<256x128xf16>
+module {
+func.func @test_fold_vtranspose_b() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<256x128xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<256x128xf16>
+    %alloc_b = memref.alloc() : memref<256x128xf16>
+    %b_src = bufferization.to_tensor %alloc_b restrict writable : memref<256x128xf16>
+    %empty_t = tensor.empty() : tensor<128x256xf16>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_src : tensor<256x128xf16>) outs(%empty_t : tensor<128x256xf16>) permutation = [1, 0] -> tensor<128x256xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1 ins(%a, %b_vtrans, %true, %c0, %c0, %c0 : tensor<256x128xf16>, tensor<128x256xf16>, i1, index, index, index) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// zN Fractal B without transpose — convert_layout(Fractal→ND), no modification
+// CHECK-LABEL: func.func @test_zN_fractal_no_transpose_pass_through
+// CHECK-DAG: %[[C16:.*]] = arith.constant 16 : index
+// CHECK-DAG: %[[C32:.*]] = arith.constant 32 : index
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn
+// CHECK-SAME: ins({{.*}}, {{.*}}, {{.*}}, %[[C16]], %[[C32]], %[[C16]]
+// CHECK-SAME: tensor<16x32xf16>, tensor<32x16xf16>
+module {
+func.func @test_zN_fractal_no_transpose_pass_through() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<16x32xf16>
+    %tensor_a = bufferization.to_tensor %alloc_a restrict writable : memref<16x32xf16>
+    %alloc_b = memref.alloc() : memref<1x2x16x16xf16>
+    %tensor_b = bufferization.to_tensor %alloc_b restrict writable : memref<1x2x16x16xf16>
+    %conv = hivm.hir.convert_layout %tensor_b output_shape [32, 16]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x2x16x16xf16>) -> tensor<32x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1
+        ins(%tensor_a, %conv, %false, %c0, %c0, %c0
+            : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// vtranspose in fractal space before convert_layout → fold b_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_before_convert
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: b_transpose
+// CHECK-SAME: tensor<16x32xf16>, tensor<16x32xf16>
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_vtranspose_before_convert() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<16x32xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<16x32xf16>
+    %alloc_b = memref.alloc() : memref<2x1x16x16xf16>
+    %b_nz = bufferization.to_tensor %alloc_b restrict writable : memref<2x1x16x16xf16>
+    %empty_t = tensor.empty() : tensor<1x2x16x16xf16>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_nz : tensor<2x1x16x16xf16>) outs(%empty_t : tensor<1x2x16x16xf16>) permutation = [1, 0, 2, 3] -> tensor<1x2x16x16xf16>
+    %conv = hivm.hir.convert_layout %b_vtrans output_shape [32, 16]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x2x16x16xf16>) -> tensor<32x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1 ins(%a, %conv, %true, %c0, %c0, %c0
+        : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+ }
+ }
+
+// -----
+// vtranspose on both A and B feeding mmadL1
+// CHECK-LABEL: func.func @test_fold_vtranspose_both
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: a_transpose
+// CHECK-SAME: b_transpose
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_vtranspose_both() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<128x256xf16>
+    %a_src = bufferization.to_tensor %alloc_a restrict writable : memref<128x256xf16>
+    %empty_a = tensor.empty() : tensor<256x128xf16>
+    %a_vtrans = hivm.hir.vtranspose ins(%a_src : tensor<128x256xf16>) outs(%empty_a : tensor<256x128xf16>) permutation = [1, 0] -> tensor<256x128xf16>
+    %alloc_b = memref.alloc() : memref<128x256xf16>
+    %b_src = bufferization.to_tensor %alloc_b restrict writable : memref<128x256xf16>
+    %empty_b = tensor.empty() : tensor<256x128xf16>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_src : tensor<128x256xf16>) outs(%empty_b : tensor<256x128xf16>) permutation = [1, 0] -> tensor<256x128xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1 ins(%a_vtrans, %b_vtrans, %true, %c0, %c0, %c0
+        : tensor<256x128xf16>, tensor<256x128xf16>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// BatchMmadL1Op + vtranspose on B — folds to b_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_batch
+// CHECK: hivm.hir.batchMmadL1
+// CHECK-SAME: b_transpose
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_vtranspose_batch() -> tensor<2x16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<2x128x256xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<2x128x256xf16>
+    %alloc_b = memref.alloc() : memref<2x256x128xf16>
+    %b_src = bufferization.to_tensor %alloc_b restrict writable : memref<2x256x128xf16>
+    %empty_b = tensor.empty() : tensor<2x128x256xf16>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_src : tensor<2x256x128xf16>) outs(%empty_b : tensor<2x128x256xf16>) permutation = [0, 2, 1] -> tensor<2x128x256xf16>
+    %empty = tensor.empty() : tensor<2x16x16xf32>
+    %result = hivm.hir.batchMmadL1 ins(%a, %b_vtrans, %true, %c0, %c0, %c0
+        : tensor<2x128x256xf16>, tensor<2x128x256xf16>, i1, index, index, index)
+        outs(%empty : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+    return %result : tensor<2x16x16xf32>
+}
+}
+
+// -----
+// FoldFractalVtransposePattern: Fractal A nZ → vtranspose → convert_layout → mmad
+// CHECK-LABEL: func.func @test_fold_fractal_vtranspose_a
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_fractal_vtranspose_a() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<2x1x16x16xf16>
+    %a_nz = bufferization.to_tensor %alloc_a restrict writable : memref<2x1x16x16xf16>
+    %empty_a_t = tensor.empty() : tensor<1x2x16x16xf16>
+    %a_vtrans = hivm.hir.vtranspose ins(%a_nz : tensor<2x1x16x16xf16>) outs(%empty_a_t : tensor<1x2x16x16xf16>) permutation = [1, 0, 2, 3] -> tensor<1x2x16x16xf16>
+    %conv = hivm.hir.convert_layout %a_vtrans output_shape [16, 32]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x2x16x16xf16>) -> tensor<16x32xf16>
+    %alloc_b = memref.alloc() : memref<32x16xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<32x16xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1 ins(%conv, %b, %false, %c0, %c0, %c0
+        : tensor<16x32xf16>, tensor<32x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// FoldVtransposePattern: Fractal A → convert_layout→ND → vtranspose → mmad
+// CHECK-LABEL: func.func @test_fold_vtranspose_a_fractal_src
+// CHECK: hivm.hir.mmadL1
+// CHECK-SAME: a_transpose
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_vtranspose_a_fractal_src() -> tensor<16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<1x2x16x16xf16>
+    %a_zN = bufferization.to_tensor %alloc_a restrict writable : memref<1x2x16x16xf16>
+    %conv = hivm.hir.convert_layout %a_zN output_shape [16, 32]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<1x2x16x16xf16>) -> tensor<16x32xf16>
+    %empty_t = tensor.empty() : tensor<32x16xf16>
+    %a_vtrans = hivm.hir.vtranspose ins(%conv : tensor<16x32xf16>) outs(%empty_t : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
+    %alloc_b = memref.alloc() : memref<128x256xf16>
+    %b = bufferization.to_tensor %alloc_b restrict writable : memref<128x256xf16>
+    %empty = tensor.empty() : tensor<16x16xf32>
+    %result = hivm.hir.mmadL1 ins(%a_vtrans, %b, %true, %c0, %c0, %c0
+        : tensor<32x16xf16>, tensor<128x256xf16>, i1, index, index, index)
+        outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+    return %result : tensor<16x16xf32>
+}
+}
+
+// -----
+// BatchMmadL1Op + 4D Fractal B + vtranspose after convert_layout → b_transpose
+// CHECK-LABEL: func.func @test_fold_vtranspose_batch_4d_b
+// CHECK: hivm.hir.batchMmadL1
+// CHECK-SAME: b_transpose
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_vtranspose_batch_4d_b() -> tensor<2x16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %true = arith.constant true
+    %alloc_a = memref.alloc() : memref<2x16x32xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<2x16x32xf16>
+    %alloc_b = memref.alloc() : memref<2x2x1x16x16xf16>
+    %b_nz = bufferization.to_tensor %alloc_b restrict writable : memref<2x2x1x16x16xf16>
+    %conv = hivm.hir.convert_layout %b_nz output_shape [2, 16, 32]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<2x2x1x16x16xf16>) -> tensor<2x16x32xf16>
+    %empty_t = tensor.empty() : tensor<2x32x16xf16>
+    %b_vtrans = hivm.hir.vtranspose ins(%conv : tensor<2x16x32xf16>) outs(%empty_t : tensor<2x32x16xf16>) permutation = [0, 2, 1] -> tensor<2x32x16xf16>
+    %empty = tensor.empty() : tensor<2x16x16xf32>
+    %result = hivm.hir.batchMmadL1 ins(%a, %b_vtrans, %true, %c0, %c0, %c0
+        : tensor<2x16x32xf16>, tensor<2x32x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+    return %result : tensor<2x16x16xf32>
+}
+}
+
+// -----
+// FoldFractalVtransposePattern batch: Fractal B + vtranspose before convert_layout
+// CHECK-LABEL: func.func @test_fold_fractal_vtranspose_batch_b
+// CHECK-NOT: hivm.hir.vtranspose
+module {
+func.func @test_fold_fractal_vtranspose_batch_b() -> tensor<2x16x16xf32> {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %alloc_a = memref.alloc() : memref<2x16x32xf16>
+    %a = bufferization.to_tensor %alloc_a restrict writable : memref<2x16x32xf16>
+    %alloc_b = memref.alloc() : memref<2x2x1x16x16xf16>
+    %b_nz = bufferization.to_tensor %alloc_b restrict writable : memref<2x2x1x16x16xf16>
+    %empty_b_t = tensor.empty() : tensor<2x1x2x16x16xf16>
+    %b_vtrans = hivm.hir.vtranspose ins(%b_nz : tensor<2x2x1x16x16xf16>) outs(%empty_b_t : tensor<2x1x2x16x16xf16>) permutation = [0, 2, 1, 3, 4] -> tensor<2x1x2x16x16xf16>
+    %conv = hivm.hir.convert_layout %b_vtrans output_shape [2, 32, 16]
+        {dstLayout = #hivm.data_layout<ND>, srcLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>}
+        : (tensor<2x1x2x16x16xf16>) -> tensor<2x32x16xf16>
+    %empty = tensor.empty() : tensor<2x16x16xf32>
+    %result = hivm.hir.batchMmadL1 ins(%a, %conv, %false, %c0, %c0, %c0
+        : tensor<2x16x32xf16>, tensor<2x32x16xf16>, i1, index, index, index)
+        outs(%empty : tensor<2x16x16xf32>) -> tensor<2x16x16xf32>
+    return %result : tensor<2x16x16xf32>
+}
+}
+
+// -----
+// f32 Fractal B zN [N1,K1,16,8]: N=N1*8=80, K=K1*16=320 (use N1=10 for N=80)
+// CHECK-LABEL: func.func @test_fractal_f32_B_zN_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<160x320xf32>, tensor<10x20x16x8xf32>
+module {
+  func.func @test_fractal_f32_B_zN_normalize(%arg0: memref<160x320xf32>, %arg1: memref<10x20x16x8xf32>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<160x320xf32>
+    memref.copy %arg0, %a_mem : memref<160x320xf32> to memref<160x320xf32>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<160x320xf32>
+    %b_mem = memref.alloc() : memref<10x20x16x8xf32>
+    memref.copy %arg1, %b_mem : memref<10x20x16x8xf32> to memref<10x20x16x8xf32>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<10x20x16x8xf32>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<160x320xf32>, tensor<10x20x16x8xf32>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// Both f32 Fractal: A zN [40,10,16,8] + B zN [10,20,16,8], M=160, K=320, N=80
+// CHECK-LABEL: func.func @test_fractal_both_f32_zN_normalize
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<40x10x16x8xf32>, tensor<10x20x16x8xf32>
+module {
+  func.func @test_fractal_both_f32_zN_normalize(%arg0: memref<40x10x16x8xf32>, %arg1: memref<10x20x16x8xf32>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<40x10x16x8xf32>
+    memref.copy %arg0, %a_mem : memref<40x10x16x8xf32> to memref<40x10x16x8xf32>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<40x10x16x8xf32>
+    %b_mem = memref.alloc() : memref<10x20x16x8xf32>
+    memref.copy %arg1, %b_mem : memref<10x20x16x8xf32> to memref<10x20x16x8xf32>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<10x20x16x8xf32>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<40x10x16x8xf32>, tensor<10x20x16x8xf32>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// fractal_vtranspose_folded + dot_pad_only_k: B has real 2D transpose
+// K extraction must use dim1*dim2 for 2D B with a_transpose (not fractal-space)
+// CHECK-LABEL: func.func @test_fractal_Kpad_with_vtranspose_folded
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, b_transpose, dot_pad_only_k, fractal_vtranspose_folded, normalized_in_L0C}
+module {
+  func.func @test_fractal_Kpad_with_vtranspose_folded(%arg0: memref<20x10x16x16xf16>, %arg1: memref<32x80xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<20x10x16x16xf16>
+    memref.copy %arg0, %a_mem : memref<20x10x16x16xf16> to memref<20x10x16x16xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<20x10x16x16xf16>
+    %b_mem = memref.alloc() : memref<32x80xf16>
+    memref.copy %arg1, %b_mem : memref<32x80xf16> to memref<32x80xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<32x80xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 {dot_pad_only_k, b_transpose, fractal_vtranspose_folded} ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<32x80xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// K-padding on A side (2D ND) with fractal B zN: A real K=310, pad to 320
+// CHECK-LABEL: func.func @test_fractal_Kpad_A_side_ND
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, dot_pad_only_k, normalized_in_L0C}
+// CHECK-SAME: tensor<160x320xf16>, tensor<5x20x16x16xf16>
+module {
+  func.func @test_fractal_Kpad_A_side_ND(%arg0: memref<160x320xf16>, %arg1: memref<5x20x16x16xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<160x320xf16>
+    memref.copy %arg0, %a_mem : memref<160x320xf16> to memref<160x320xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<160x320xf16>
+    %b_mem = memref.alloc() : memref<5x20x16x16xf16>
+    memref.copy %arg1, %b_mem : memref<5x20x16x16xf16> to memref<5x20x16x16xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<5x20x16x16xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 {dot_pad_only_k} ins(%a, %b, %false, %c160, %c320, %c80 : tensor<160x320xf16>, tensor<5x20x16x16xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// s_CVC chain: dot(cube) -> exp(vector) -> dot(cube), C zN feeds as A zN
+// Fractal C output [N1=5, M1=10, 16, 16] reused as fractal A input without conversion
+// CHECK-LABEL: func.func @test_CVC_cube_vector_cube_chain
+// CHECK-DAG: hivm.hir.mmadL1
+// CHECK-DAG: hivm.hir.mmadL1
+module {
+  func.func @test_CVC_cube_vector_cube_chain(%a: tensor<20x10x16x16xf16>, %b: tensor<5x20x16x16xf16>, %f: tensor<4x5x16x16xf16>) -> tensor<4x10x16x16xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %c64 = arith.constant 64 : index
+    %false = arith.constant false
+    %empty1 = tensor.empty() : tensor<160x80xf32>
+    %c = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<5x20x16x16xf16>, i1, index, index, index) outs(%empty1 : tensor<160x80xf32>) -> tensor<160x80xf32>
+    %c_zN = hivm.hir.convert_layout %c output_shape [5, 10, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<160x80xf32>) -> tensor<5x10x16x16xf32>
+    %empty2 = tensor.empty() : tensor<160x64xf32>
+    %e = hivm.hir.mmadL1 ins(%c_zN, %f, %false, %c160, %c80, %c64 : tensor<5x10x16x16xf32>, tensor<4x5x16x16xf16>, i1, index, index, index) outs(%empty2 : tensor<160x64xf32>) -> tensor<160x64xf32>
+    %e_zN = hivm.hir.convert_layout %e output_shape [4, 10, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<160x64xf32>) -> tensor<4x10x16x16xf32>
+    return %e_zN : tensor<4x10x16x16xf32>
+  }
+}
+
+// -----
+// K-pad with fractal A zN + 2D ND B. Covers case7/case8/case10 from 32 dot e2e.
+// A: zN [K1=20,M1=10,16,16] f16 -> M=160, K=320
+// B: ND [320,80] f16 with real K=310 < padded K=320 -> dot_pad_only_k on B
+// CHECK-LABEL: func.func @test_kpad_fractal_a_b_unpadded
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, dot_pad_only_k, normalized_in_L0C}
+module {
+  func.func @test_kpad_fractal_a_b_unpadded(%arg0: memref<20x10x16x16xf16>, %arg1: memref<320x80xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<20x10x16x16xf16>
+    memref.copy %arg0, %a_mem : memref<20x10x16x16xf16> to memref<20x10x16x16xf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<20x10x16x16xf16>
+    %b_mem = memref.alloc() : memref<320x80xf16>
+    memref.copy %arg1, %b_mem : memref<320x80xf16> to memref<320x80xf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<320x80xf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 {dot_pad_only_k} ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<320x80xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// Both A and B are 4D Fractal bf16. Covers s_CV_bf16 from 32 dot e2e.
+// A: zN [K1=20,M1=10,16,16] bf16 -> M=160, K=320
+// B: zN [N1=5,K1=20,16,16] bf16 -> N=80
+// CHECK-LABEL: func.func @test_fractal_ab_bf16
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<20x10x16x16xbf16>, tensor<5x20x16x16xbf16>
+module {
+  func.func @test_fractal_ab_bf16(%arg0: memref<20x10x16x16xbf16>, %arg1: memref<5x20x16x16xbf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<20x10x16x16xbf16>
+    memref.copy %arg0, %a_mem : memref<20x10x16x16xbf16> to memref<20x10x16x16xbf16>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<20x10x16x16xbf16>
+    %b_mem = memref.alloc() : memref<5x20x16x16xbf16>
+    memref.copy %arg1, %b_mem : memref<5x20x16x16xbf16> to memref<5x20x16x16xbf16>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<5x20x16x16xbf16>
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xbf16>, tensor<5x20x16x16xbf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %0 : tensor<160x80xf32>
+  }
+}
+
+// -----
+// int8 A+B+C fractal. int8 uses fractal blocks [16,32] not [16,16].
+// Covers s_C_int8 from 32 dot e2e.
+// A: zN [K1=10,M1=10,16,32] i8 -> M=160, K=320
+// B: zN [N1=2,K1=10,16,32] i8 -> N=64
+// C: zN [N1=2,M1=10,16,32] i32 (fractal output)
+// CHECK-LABEL: func.func @test_fractal_abc_int8
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<10x10x16x32xi8>, tensor<2x10x16x32xi8>
+module {
+  func.func @test_fractal_abc_int8(%arg0: memref<10x10x16x32xi8>, %arg1: memref<2x10x16x32xi8>) -> tensor<2x10x16x32xi32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c64 = arith.constant 64 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<10x10x16x32xi8>
+    memref.copy %arg0, %a_mem : memref<10x10x16x32xi8> to memref<10x10x16x32xi8>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<10x10x16x32xi8>
+    %b_mem = memref.alloc() : memref<2x10x16x32xi8>
+    memref.copy %arg1, %b_mem : memref<2x10x16x32xi8> to memref<2x10x16x32xi8>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<2x10x16x32xi8>
+    %c_fractal = tensor.empty() : tensor<2x10x16x32xi32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c64 : tensor<10x10x16x32xi8>, tensor<2x10x16x32xi8>, i1, index, index, index) outs(%c_fractal : tensor<2x10x16x32xi32>) -> tensor<2x10x16x32xi32>
+    return %0 : tensor<2x10x16x32xi32>
+  }
+}
+
+// -----
+// f32 A+B+C fractal. f32 uses fractal blocks [16,8] not [16,16].
+// Covers s_CV_f32 from 32 dot e2e.
+// A: zN [K1=40,M1=10,16,8] f32 -> M=160, K=320
+// B: zN [N1=5,K1=40,16,8] f32 -> N=40
+// C: zN [N1=5,M1=10,16,8] f32 (fractal output)
+// CHECK-LABEL: func.func @test_fractal_abc_f32
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK-SAME: tensor<40x10x16x8xf32>, tensor<5x40x16x8xf32>
+module {
+  func.func @test_fractal_abc_f32(%arg0: memref<40x10x16x8xf32>, %arg1: memref<5x40x16x8xf32>) -> tensor<5x10x16x8xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c40 = arith.constant 40 : index
+    %false = arith.constant false
+    %a_mem = memref.alloc() : memref<40x10x16x8xf32>
+    memref.copy %arg0, %a_mem : memref<40x10x16x8xf32> to memref<40x10x16x8xf32>
+    %a = bufferization.to_tensor %a_mem restrict writable : memref<40x10x16x8xf32>
+    %b_mem = memref.alloc() : memref<5x40x16x8xf32>
+    memref.copy %arg1, %b_mem : memref<5x40x16x8xf32> to memref<5x40x16x8xf32>
+    %b = bufferization.to_tensor %b_mem restrict writable : memref<5x40x16x8xf32>
+    %c_fractal = tensor.empty() : tensor<5x10x16x8xf32>
+    %0 = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c40 : tensor<40x10x16x8xf32>, tensor<5x40x16x8xf32>, i1, index, index, index) outs(%c_fractal : tensor<5x10x16x8xf32>) -> tensor<5x10x16x8xf32>
+    return %0 : tensor<5x10x16x8xf32>
+  }
+}
+
+// -----
+// CVC cube->vector->cube chain with fractal C output. Covers s_CVC from 32 dot e2e.
+// First mmad: A [20,10,16,16] f16 + B [5,20,16,16] f16 -> C zN [5,10,16,16] f32 (fractal output)
+// Vector: hivm.hir.vabs on fractal C
+// Second mmad: A=first result [5,10,16,16] f32 + B [4,5,16,16] f16 -> result zN [4,10,16,16] f32
+// Both mmadL1 ops normalize to L0C with MKN set.
+// CHECK-LABEL: func.func @test_CVC_cube_vector_cube_fractal_chain
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+// CHECK: hivm.hir.vabs
+// CHECK: hivm.hir.mmadL1 {already_set_real_mkn, normalized_in_L0C}
+module {
+  func.func @test_CVC_cube_vector_cube_fractal_chain(%a: tensor<20x10x16x16xf16>, %b: tensor<5x20x16x16xf16>, %f: tensor<4x5x16x16xf16>) -> tensor<4x10x16x16xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %c64 = arith.constant 64 : index
+    %false = arith.constant false
+    %c_fractal_empty = tensor.empty() : tensor<5x10x16x16xf32>
+    %c = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<5x20x16x16xf16>, i1, index, index, index) outs(%c_fractal_empty : tensor<5x10x16x16xf32>) -> tensor<5x10x16x16xf32>
+    %vec_empty = tensor.empty() : tensor<5x10x16x16xf32>
+    %e = hivm.hir.vabs ins(%c : tensor<5x10x16x16xf32>) outs(%vec_empty : tensor<5x10x16x16xf32>) -> tensor<5x10x16x16xf32>
+    %result_empty = tensor.empty() : tensor<4x10x16x16xf32>
+    %r = hivm.hir.mmadL1 ins(%e, %f, %false, %c160, %c80, %c64 : tensor<5x10x16x16xf32>, tensor<4x5x16x16xf16>, i1, index, index, index) outs(%result_empty : tensor<4x10x16x16xf32>) -> tensor<4x10x16x16xf32>
+    return %r : tensor<4x10x16x16xf32>
+  }
+}
+
+// -----
 // Test: all CCFs are mayNotExec (variable bounds), 2 mmads per for.
 // CCF1 is ZeroInit, CCF2/CCF3 are ReuseL0C. AddIf should create IfOp only at
 // the last CCF (CCF3) for each mmad, providing vbrc(0) fallback when all

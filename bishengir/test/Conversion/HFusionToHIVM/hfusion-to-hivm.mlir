@@ -26,10 +26,9 @@ func.func @test_elemwise_unary_ops(
 // -----
 module {
   // CHECK-LABEL: func.func @test_matmulscale_formatted_i8_transpose
-  // CHECK-NOT: hfusion.bitcast
-  // CHECK-NOT: linalg.transpose
-  // CHECK: hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32} a_transpose
-  // CHECK-SAME: tensor<8x4xi8>, tensor<8x16xi8>
+  // CHECK: hivm.hir.vtranspose
+  // CHECK: hivm.hir.mmadmxL1 {lhsFormat = 1 : i32, rhsFormat = 1 : i32}
+  // CHECK-SAME: tensor<4x8xi8>, tensor<8x16xi8>
   func.func @test_matmulscale_formatted_i8_transpose(
       %arg0: tensor<8x4xi8>, %arg1: tensor<8x16xi8>,
       %arg2: tensor<4x1xi8>, %arg3: tensor<16x1xi8>)
@@ -1309,8 +1308,8 @@ module {
 // -----
 module {
   // CHECK-LABEL: func.func @test_matmulscale_transpose
-  // CHECK-NOT: linalg.transpose
-  // CHECK: hivm.hir.mmadmxL1 {{.*}}a_transpose{{.*}}b_transpose
+  // CHECK: hivm.hir.vtranspose
+  // CHECK: hivm.hir.mmadmxL1
   func.func @test_matmulscale_transpose(%arg0: memref<8x4xf8E5M2>, %arg1: memref<16x8xf8E5M2>, %arg2: memref<1xui8>, %arg3: memref<1xui8>) -> tensor<4x16xf32> {
     %0 = bufferization.to_tensor %arg0 : memref<8x4xf8E5M2>
     %1 = bufferization.to_tensor %arg1 : memref<16x8xf8E5M2>

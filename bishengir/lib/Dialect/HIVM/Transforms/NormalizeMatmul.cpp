@@ -57,6 +57,11 @@ constexpr StringLiteral kDeferredTailFallback = "deferred_tail_fallback";
 /// Hint that we only need to pad the k-dimension for Dot.
 constexpr llvm::StringLiteral kDotPadOnlyK = "dot_pad_only_k";
 
+// Marker set by FoldFractalVtransposePattern to distinguish real 2D transpose
+// from fractal layout indicator (nZ vs zN) in extractRealMKN.
+constexpr llvm::StringLiteral kFractalVtransposeFolded =
+    "fractal_vtranspose_folded";
+
 bool isNotWritten(Operation *val) {
   return llvm::none_of(val->getUses(), [&val](OpOperand &user) {
     Operation *maybeWriter = user.getOwner();
@@ -134,6 +139,152 @@ struct NormalizeMatmulPass
     : public impl::NormalizeMatmulBase<NormalizeMatmulPass> {
   using Base::Base;
   void runOnOperation() override;
+};
+
+// Look through ViewLike ops for a VTransposeOp; stops at ConvertLayoutOp.
+static hivm::VTransposeOp lookThroughViewLikes(Value v) {
+  Value cur = v;
+  while (true) {
+    if (auto vtrans = cur.getDefiningOp<hivm::VTransposeOp>())
+      return vtrans;
+    if (cur.getDefiningOp<ConvertLayoutOp>())
+      return nullptr;
+    auto viewOp = cur.getDefiningOp<ViewLikeOpInterface>();
+    if (!viewOp)
+      return nullptr;
+    cur = viewOp->getOperand(0);
+  }
+}
+
+template <typename T>
+struct FoldVtransposePattern : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    auto aVtrans = lookThroughViewLikes(op.getA());
+    auto bVtrans = lookThroughViewLikes(op.getB());
+    if (!aVtrans && !bVtrans)
+      return rewriter.notifyMatchFailure(op, "no vtranspose found");
+
+    auto newOp = rewriter.clone(*op.getOperation());
+    auto newMmad = cast<T>(newOp);
+    bool setVtransposeFolded = false;
+
+    auto foldSide = [&](hivm::VTransposeOp vtrans, bool isA) {
+      Value src = vtrans.getSrc();
+      if (auto convert = src.getDefiningOp<ConvertLayoutOp>())
+        if (convert.getSrcLayout().getDataLayout() == hivm::DataLayout::Fractal &&
+            convert.getDstLayout().isNDLayout())
+          setVtransposeFolded = true;
+      if (isA) {
+        newMmad.getAMutable().assign(src);
+        newMmad.setATransposeAttr(rewriter.getUnitAttr());
+      } else {
+        newMmad.getBMutable().assign(src);
+        newMmad.setBTransposeAttr(rewriter.getUnitAttr());
+      }
+    };
+
+    if (aVtrans)
+      foldSide(aVtrans, /*isA=*/true);
+    if (bVtrans)
+      foldSide(bVtrans, /*isA=*/false);
+    if (setVtransposeFolded)
+      newMmad->setAttr(kFractalVtransposeFolded, rewriter.getUnitAttr());
+
+    rewriter.replaceOp(op, newOp);
+    return success();
+  }
+};
+
+// Return a ConvertLayoutOp with swapped last-two-dims output_shape.
+static Value createSwappedConvertLayout(PatternRewriter &rewriter,
+                                        ConvertLayoutOp oldConvert,
+                                        Value newSource) {
+  auto mixedShape = oldConvert.getMixedOutputShape();
+  std::swap(mixedShape[mixedShape.size() - 2],
+            mixedShape[mixedShape.size() - 1]);
+
+  auto oldResultType =
+      cast<RankedTensorType>(oldConvert.getResult().getType());
+  auto oldShape = oldResultType.getShape();
+  SmallVector<int64_t> newShape(oldShape);
+  std::swap(newShape[newShape.size() - 2], newShape[newShape.size() - 1]);
+  auto newResultType =
+      RankedTensorType::get(newShape, oldResultType.getElementType());
+
+  rewriter.setInsertionPoint(oldConvert);
+  return rewriter
+      .create<ConvertLayoutOp>(oldConvert.getLoc(), newResultType, newSource,
+                               oldConvert.getSrcLayout(),
+                               oldConvert.getDstLayout(), mixedShape)
+      .getResult();
+}
+
+// Absorb vtranspose ops behind a Fractal→ND convert_layout.
+static std::optional<Value>
+absorbFractalVtransposeChain(PatternRewriter &rewriter,
+                             ConvertLayoutOp oldConvert) {
+  if (oldConvert.getSrcLayout().getDataLayout() != hivm::DataLayout::Fractal ||
+      !oldConvert.getDstLayout().isNDLayout())
+    return std::nullopt;
+
+  Value cur = oldConvert.getSource();
+  bool foundAny = false;
+  while (true) {
+    if (auto vtrans = cur.getDefiningOp<hivm::VTransposeOp>()) {
+      foundAny = true;
+      cur = vtrans.getSrc();
+      continue;
+    }
+    auto viewOp = cur.getDefiningOp<ViewLikeOpInterface>();
+    if (!viewOp)
+      break;
+    cur = viewOp->getOperand(0);
+  }
+
+  if (!foundAny)
+    return std::nullopt;
+
+  return createSwappedConvertLayout(rewriter, oldConvert, cur);
+}
+
+// Absorb vtranspose chains behind Fractal→ND convert_layout into mmad transpose
+// flags, and set kFractalVtransposeFolded so extractRealMKN treats the flags as
+// real 2D transposes.
+template <typename T>
+struct FoldFractalVtransposePattern : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    std::optional<Value> newA, newB;
+    if (auto convert = op.getA().template getDefiningOp<ConvertLayoutOp>())
+      newA = absorbFractalVtransposeChain(rewriter, convert);
+    if (auto convert = op.getB().template getDefiningOp<ConvertLayoutOp>())
+      newB = absorbFractalVtransposeChain(rewriter, convert);
+    if (!newA && !newB)
+      return rewriter.notifyMatchFailure(
+          op, "no Fractal→ND convert_layout with vtranspose on A or B");
+
+    rewriter.modifyOpInPlace(op, [&]() {
+      if (newA) {
+        op.getAMutable().assign(*newA);
+        if (!op.getATranspose().has_value())
+          op.setATransposeAttr(rewriter.getUnitAttr());
+      }
+      if (newB) {
+        op.getBMutable().assign(*newB);
+        if (!op.getBTranspose().has_value())
+          op.setBTransposeAttr(rewriter.getUnitAttr());
+      }
+      op->setAttr(kFractalVtransposeFolded, rewriter.getUnitAttr());
+    });
+
+    return success();
+  }
 };
 
 SmallVector<Value> getShapeFromMixedSizes(ArrayRef<OpFoldResult> mixedSizes,
@@ -225,22 +376,53 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   auto realMK =
       getRealShapeFromMemrefOrTensor(matmulOp.getMatmulA(), loc, rewriter);
   const int matrixSize = 2;
-  if (failed(realMK) || (*realMK).size() != matrixSize + batchIndexBias) {
+  const int matrixFractalSize = 4;
+  if (failed(realMK) ||
+      ((*realMK).size() != matrixSize + batchIndexBias &&
+       (*realMK).size() != matrixFractalSize + batchIndexBias)) {
     return failure();
   }
   auto realKN =
       getRealShapeFromMemrefOrTensor(matmulOp.getMatmulB(), loc, rewriter);
-  if (failed(realKN) || (*realKN).size() != matrixSize + batchIndexBias) {
+  if (failed(realKN) ||
+      ((*realKN).size() != matrixSize + batchIndexBias &&
+       (*realKN).size() != matrixFractalSize + batchIndexBias)) {
     return failure();
   }
   // set m, k, n
   // TODO: m is set to be l1M for group gemm scenario (use kDotPadOnlyK),
   //       which should be enhanced.
   Value realM;
-  if (matmulOp.isMatmulATransposed()) {
-    realM = (*realMK)[1 + batchIndexBias];
+  // When the operand is a Fractal→ND convert_layout, treat a_transpose/b_transpose
+  // as a layout indicator (nZ vs zN), unless kFractalVtransposeFolded is set.
+  auto isFractalSpaceTranspose = [&](Value v) -> bool {
+    if (auto convert = v.getDefiningOp<ConvertLayoutOp>()) {
+      if (convert.getSrcLayout().getDataLayout() != hivm::DataLayout::Fractal ||
+          !convert.getDstLayout().isNDLayout())
+        return false;
+      return !matmulOp->hasAttr(kFractalVtransposeFolded);
+    }
+    return false;
+  };
+  if ((*realMK).size() == matrixFractalSize + batchIndexBias) {
+    // Fractal 4D shape
+    if (matmulOp.isMatmulATransposed()) {
+      realM = rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[0 + batchIndexBias],
+          (*realMK)[3 + batchIndexBias]);
+    } else {
+      realM = rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[1 + batchIndexBias],
+          (*realMK)[2 + batchIndexBias]);
+    }
   } else {
-    realM = (*realMK)[0 + batchIndexBias];
+    // Original 2D shape logic
+    if (matmulOp.isMatmulATransposed() &&
+        !isFractalSpaceTranspose(matmulOp.getMatmulA())) {
+      realM = (*realMK)[1 + batchIndexBias];
+    } else {
+      realM = (*realMK)[0 + batchIndexBias];
+    }
   }
 
   if (utils::getAnnotateOpWithAttr(matmulOp.getMatmulA(), kDotPadOnlyK)
@@ -254,15 +436,41 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   }
 
   mkn.push_back(realM);
-  if (matmulOp.isMatmulATransposed()) {
-    mkn.push_back((*realMK)[0 + batchIndexBias]);
+  if ((*realMK).size() == matrixFractalSize + batchIndexBias) {
+    if (matmulOp.isMatmulATransposed()) {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[1 + batchIndexBias],
+          (*realMK)[2 + batchIndexBias]));
+    } else {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realMK)[0 + batchIndexBias],
+          (*realMK)[3 + batchIndexBias]));
+    }
   } else {
-    mkn.push_back((*realMK)[1 + batchIndexBias]);
+    if (matmulOp.isMatmulATransposed() &&
+        !isFractalSpaceTranspose(matmulOp.getMatmulA())) {
+      mkn.push_back((*realMK)[0 + batchIndexBias]);
+    } else {
+      mkn.push_back((*realMK)[1 + batchIndexBias]);
+    }
   }
-  if (matmulOp.isMatmulBTransposed()) {
-    mkn.push_back((*realKN)[0 + batchIndexBias]);
+  if ((*realKN).size() == matrixFractalSize + batchIndexBias) {
+    if (matmulOp.isMatmulBTransposed()) {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realKN)[1 + batchIndexBias],
+          (*realKN)[2 + batchIndexBias]));
+    } else {
+      mkn.push_back(rewriter.create<arith::MulIOp>(
+          loc, (*realKN)[0 + batchIndexBias],
+          (*realKN)[3 + batchIndexBias]));
+    }
   } else {
-    mkn.push_back((*realKN)[1 + batchIndexBias]);
+    if (matmulOp.isMatmulBTransposed() &&
+        !isFractalSpaceTranspose(matmulOp.getMatmulB())) {
+      mkn.push_back((*realKN)[0 + batchIndexBias]);
+    } else {
+      mkn.push_back((*realKN)[1 + batchIndexBias]);
+    }
   }
   return mkn;
 }
@@ -1498,6 +1706,14 @@ struct DecomposeMatmulWithBiasPattern
   }
 };
 
+void populateFoldVtransposePattern(RewritePatternSet &patterns) {
+  patterns.add<FoldVtransposePattern<hivm::MmadL1Op>,
+               FoldVtransposePattern<hivm::BatchMmadL1Op>,
+               FoldFractalVtransposePattern<hivm::MmadL1Op>,
+               FoldFractalVtransposePattern<hivm::BatchMmadL1Op>>(
+      patterns.getContext());
+}
+
 struct ReuseL0CAddIfPattern : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
 public:
   using OpInterfaceRewritePattern<
@@ -1612,6 +1828,7 @@ public:
   }
 };
 
+
 void populateSetRealMKNPattern(RewritePatternSet &patterns) {
   patterns.add<SetRealMKNPattern>(patterns.getContext());
 }
@@ -1626,6 +1843,14 @@ void NormalizeMatmulPass::runOnOperation() {
   OpBuilder builder(&getContext());
   auto context = &getContext();
   auto funcOp = getOperation();
+  {
+    RewritePatternSet patterns(context);
+    populateFoldVtransposePattern(patterns);
+    GreedyRewriteConfig config = GreedyRewriteConfig();
+    config.strictMode = GreedyRewriteStrictness::ExistingOps;
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config)))
+      signalPassFailure();
+  }
   {
     RewritePatternSet patterns(context);
     populateSetRealMKNPattern(patterns);
