@@ -1195,10 +1195,12 @@ void AdaptTritonKernelPass::runOnOperation() {
     return;
   }
 
-  module.walk([&](Operation *op) {
-    setCustomOpBuiltinGMArgAttrs<hivm::CustomOp>(op);
-    setCustomOpBuiltinGMArgAttrs<hivm::CustomMacroOp>(op);
-  });
+  if (hacc::utils::isRegBasedArch(module)) {
+    module.walk([&](Operation *op) {
+      setCustomOpBuiltinGMArgAttrs<hivm::CustomOp>(op);
+      setCustomOpBuiltinGMArgAttrs<hivm::CustomMacroOp>(op);
+    });
+  }
 
   module.walk([&](func::FuncOp funcOp) {
     std::string globalKernelStr{"global_kernel"};

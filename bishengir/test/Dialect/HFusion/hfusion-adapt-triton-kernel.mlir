@@ -394,3 +394,19 @@ func.func @stride_store_test(%arg0: memref<?xf32>, %arg1: tensor<32xf32>) attrib
   return
 }
 }
+
+// -----
+
+// On membased arch (no target_device attr, default 910B), gm_addr_args_indices on
+// a custom op must NOT propagate to hacc.arg_type<gm_addr>
+// CHECK-LABEL: func.func @test_no_gm_addr_on_membased
+// CHECK-SAME: %[[ARG:.*]]: memref<?xf32>
+// CHECK-NOT: hacc.arg_type = #hacc.arg_type<gm_addr>
+func.func @test_no_gm_addr_on_membased(%arg0 : memref<?xf32>, %out : memref<4xi32>) attributes {global_kernel = ""} {
+  %c4_i64 = arith.constant 4 : i64
+  hivm.hir.custom {gm_addr_args_indices = array<i32: 0>}
+    "__builtin_histogram"
+    ins(%arg0, %c4_i64 : memref<?xf32>, i64)
+    outs(%out : memref<4xi32>)
+  return
+}
