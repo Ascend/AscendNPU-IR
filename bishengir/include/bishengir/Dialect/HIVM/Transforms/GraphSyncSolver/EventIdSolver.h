@@ -161,6 +161,7 @@ class EventIdSolver {
 private:
   int64_t eventIdsNumMax{-1};
   bool needRecalculateEventIds{false};
+  bool preferNewEventIds{false};
   llvm::SmallVector<std::unique_ptr<EventIdNode>> nodes;
   llvm::DenseMap<EventIdNode *, llvm::DenseMap<EventIdNode *, int64_t>> adjList;
   llvm::DenseMap<EventIdNode *, int64_t> sumAdjListSizes;
@@ -169,7 +170,8 @@ private:
   llvm::DenseSet<int64_t> reservedEventIds;
 
 public:
-  EventIdSolver(int64_t eventIdNumMax) : eventIdsNumMax(eventIdNumMax) {}
+  EventIdSolver(int64_t eventIdNumMax, bool preferNewEventIds = false)
+      : eventIdsNumMax(eventIdNumMax), preferNewEventIds(preferNewEventIds) {}
   ~EventIdSolver() = default;
 
   bool isColorable();
@@ -239,7 +241,10 @@ private:
   llvm::SmallVector<int64_t> getAdjNodesUsedEventIds(EventIdNode *node);
 
   llvm::SmallVector<int64_t> getChosenEventIds(EventIdNode *node,
-                                               int64_t eventIdMax);
+                                               int64_t eventIdMax,
+                                               int64_t &reuseCursor);
+
+  void optimizeEventIdsForProgramOrder(int64_t eventIdMax);
 };
 } // namespace mlir::hivm::syncsolver
 

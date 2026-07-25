@@ -19,6 +19,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverCodeGen.h"
 #include "bishengir/Dialect/HIVM/Transforms/GraphSyncSolver/SyncSolverIRTranslator.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -37,6 +38,22 @@ namespace mlir {
 
 using namespace mlir;
 using namespace hivm::syncsolver;
+
+static constexpr llvm::StringLiteral FlagIdOverflowWorkaroundHint =
+    "enable_flag_id_overflow_workaround";
+
+static bool hasFlagIdOverflowWorkaroundHint(func::FuncOp funcOp) {
+  bool enabled = false;
+  funcOp.walk([&](annotation::MarkOp markOp) {
+    auto attr = markOp->getAttr(FlagIdOverflowWorkaroundHint);
+    if (auto boolAttr = dyn_cast_if_present<BoolAttr>(attr)) {
+      enabled |= boolAttr.getValue();
+    } else if (isa_and_nonnull<UnitAttr>(attr)) {
+      enabled = true;
+    }
+  });
+  return enabled;
+}
 
 namespace mlir {
 struct CrossCoreGSSPass : public impl::CrossCoreGSSBase<CrossCoreGSSPass> {
@@ -129,6 +146,11 @@ void CrossCoreGSSPass::runOnOperation() {
   }
   if (this->useDifferentMultiBufferFlagIds) {
     options.useDifferentMultiBufferFlagIds = true;
+  }
+  if (options.isCrossCoreMode() &&
+      (this->enableFlagIdOverflowWorkaround ||
+       hasFlagIdOverflowWorkaroundHint(funcOp))) {
+    options.enableFlagIdOverflowWorkaround = true;
   }
 
   auto irTranslator = std::make_unique<IRTranslator>(funcOp, options);
