@@ -1976,8 +1976,8 @@ void populateHIVMToStandardConversionPatternsRegBase(
 } // namespace
 
 LogicalResult ConvertHIVMToStandardRegBasePass::runOnOperation(
-    ModuleOp module, bool isOpsAligned) {
-  gMarkLibCallNoInline = false;
+    ModuleOp module, bool isOpsAligned, bool markLibCallNoInline) {
+  gMarkLibCallNoInline = markLibCallNoInline;
   ConversionTarget target(*module->getContext());
   target.addLegalDialect<func::FuncDialect, memref::MemRefDialect,
                          arith::ArithDialect, scf::SCFDialect,

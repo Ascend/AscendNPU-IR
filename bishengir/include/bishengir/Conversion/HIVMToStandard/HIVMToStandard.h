@@ -39,7 +39,8 @@ std::unique_ptr<OperationPass<ModuleOp>> createConvertHIVMToStandardPass(
     const ConvertHIVMToStandardOptions &options = {});
 
 struct ConvertHIVMToStandardRegBasePass {
-  static LogicalResult runOnOperation(ModuleOp module, bool isOpsAligned);
+  static LogicalResult runOnOperation(ModuleOp module, bool isOpsAligned,
+                                      bool markLibCallNoInline);
 };
 
 } // namespace mlir

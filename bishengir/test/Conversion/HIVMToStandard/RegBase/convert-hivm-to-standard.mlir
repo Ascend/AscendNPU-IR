@@ -1,4 +1,5 @@
 // RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -convert-hivm-to-std -split-input-file| FileCheck %s
+// RUN: bishengir-opt %s -hacc-append-device-spec=target=Ascend950PR_9589 -convert-hivm-to-std="mark-libcall-noinline=true" -split-input-file | FileCheck %s --check-prefix=NOINLINE
 
 module {
   func.func private @triton_argmax_dim0_3d_outlined_vf_0(%arg0: memref<13x270xi8, #hivm.address_space<ub>>, %arg1: memref<13x270xf16, #hivm.address_space<ub>>)
@@ -20,6 +21,8 @@ module {
     %2 = hivm.hir.pointer_cast(%c10560_i64) : memref<1x270xf16, #hivm.address_space<ub>>
     %3 = hivm.hir.pointer_cast(%c11104_i64) : memref<1x270xi32, #hivm.address_space<ub>>
     // CHECK: call @reduce_max_with_index_left_ra_half(%{{.+}}, %{{.+}}, %{{.+}}, %{{.+}})
+    // NOINLINE: func.func private @reduce_max_with_index_left_ra_half({{.*}}) attributes {
+    // NOINLINE-SAME: hacc.noinline
     hivm.hir.vreduce <max_with_index_left> ins(%1 : memref<13x270xf16, #hivm.address_space<ub>>) outs(%2, %3 : memref<1x270xf16, #hivm.address_space<ub>>, memref<1x270xi32, #hivm.address_space<ub>>) unsigned_src = true tie_break_left = true reduce_dims = [0]
     hivm.hir.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]
     %collapse_shape_0 = memref.collapse_shape %3 [[0, 1]] : memref<1x270xi32, #hivm.address_space<ub>> into memref<270xi32, #hivm.address_space<ub>>
