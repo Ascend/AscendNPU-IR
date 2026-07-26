@@ -375,7 +375,10 @@ module {
   // CHECK-LABEL: func.func @test_loop_core_type_annotation_mix_aiv
   // CHECK-SAME: hivm.func_core_type = #hivm.func_core_type<AIV>
   // CHECK:      %[[C0:.*]] = arith.constant 0 : index
-  // CHECK:      scf.for %{{.*}} = %[[C0]] to %[[C0]] step
+  // CHECK:      %[[C10:.*]] = arith.constant 10 : index
+  // Keep the opposite-core pipelined loop intact so anchors inserted before
+  // the mix split are not removed with a zero-trip loop by later cleanup.
+  // CHECK:      scf.for %{{.*}} = %[[C0]] to %[[C10]] step
   // CHECK-NOT:  hivm.hir.mmadL1
   // CHECK:      hivm.hir.vadd
   func.func @test_loop_core_type_annotation(%arg0: tensor<128x128xf32>,
