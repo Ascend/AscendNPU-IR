@@ -39,52 +39,49 @@ using namespace mlir;
 
 namespace {
 
-// todo: wait define in llvm-project
-// hivmave::VecMemType getVecType(Type vector) {
-  // auto vecType = dyn_cast<VectorType>(vector);
-  // auto layout = dyn_cast<hivmave::VectorLayoutAttr>(vecType.getLayout());
-  // auto memAttr = dyn_cast<hivmave::VecMemTypeAttr>(layout.getMem());
-  // return memAttr.getValue();
-// }
+hivmave::VecMemType getVecType(Type vector) {
+  auto vecType = dyn_cast<VectorType>(vector);
+  auto layout = dyn_cast<hivmave::VectorLayoutAttr>(vecType.getLayout());
+  auto memAttr = dyn_cast<hivmave::VecMemTypeAttr>(layout.getMem());
+  return memAttr.getValue();
+}
 
-// hivmave::VecMemType getVecType(Value vector) {
-//   return getVecType(vector.getType());
-// }
+hivmave::VecMemType getVecType(Value vector) {
+  return getVecType(vector.getType());
+}
 
 LogicalResult setAlignmentBitWidthAttr(Operation *op, RewriterBase &rewriter,
                                        int alignmentBitWidth) {
-  // todo: wait define in llvm-project
-  // if (op->hasAttr(utils::elementAlignmentBitWidth)) {
-  //   return failure();
-  // }
-  // auto bitWidthAttr =
-      // rewriter.getIntegerAttr(rewriter.getIntegerType(32), alignmentBitWidth);
-  // op->setAttr(utils::elementAlignmentBitWidth, bitWidthAttr);
+  if (op->hasAttr(utils::elementAlignmentBitWidth)) {
+    return failure();
+  }
+  auto bitWidthAttr =
+      rewriter.getIntegerAttr(rewriter.getIntegerType(32), alignmentBitWidth);
+  op->setAttr(utils::elementAlignmentBitWidth, bitWidthAttr);
   return success();
 }
 
 template <typename Vector>
 int inferenceAlignmentBitwidthByVectorLayout(Vector vector) {
-  // todo: wait define in llvm-project
-  // auto layoutType = getVecType(vector);
+  auto layoutType = getVecType(vector);
   int alignment = -1;
-  // switch (layoutType) {
-  // case hivmave::VecMemType::B8:
-  //   alignment = 8;
-  //   break;
-  // case hivmave::VecMemType::B16:
-  // case hivmave::VecMemType::B8_2VL:
-  //   alignment = 16;
-  //   break;
-  // case hivmave::VecMemType::B32:
-  // case hivmave::VecMemType::B16_2VL:
-  // case hivmave::VecMemType::B8_4VL:
-  //   alignment = 32;
-  //   break;
-  // default:
-  //   alignment = -1;
-  //   break;
-  // }
+  switch (layoutType) {
+  case hivmave::VecMemType::B8:
+    alignment = 8;
+    break;
+  case hivmave::VecMemType::B16:
+  case hivmave::VecMemType::B8_2VL:
+    alignment = 16;
+    break;
+  case hivmave::VecMemType::B32:
+  case hivmave::VecMemType::B16_2VL:
+  case hivmave::VecMemType::B8_4VL:
+    alignment = 32;
+    break;
+  default:
+    alignment = -1;
+    break;
+  }
   return alignment;
 }
 
