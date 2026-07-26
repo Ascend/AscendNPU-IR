@@ -659,6 +659,31 @@ Value CodeGenerator::getLoopDBCond(IRRewriter &rewriter, Operation *op) {
   return loopDBCondMap[parentLoop] = moduleIdx;
 }
 
+void CodeGenerator::insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter) {
+  auto firstLastMmadlOps = getFirstLastOp<hivm::MmadL1Op>(funcOp);
+  if (llvm::failed(firstLastMmadlOps)) {
+    return;
+  }
+  auto loc = funcOp->getLoc();
+  auto *ctx = funcOp->getContext();
+  auto [firstOp, lastOp] = firstLastMmadlOps.value();
+  auto *funcRegion = &funcOp.getFunctionBody();
+  rewriter.setInsertionPoint(funcRegion->findAncestorOpInRegion(*firstOp));
+  auto eventId0Attr = EventAttr::get(ctx, hivm::EVENT::EVENT_ID0);
+  auto eventId1Attr = EventAttr::get(ctx, hivm::EVENT::EVENT_ID1);
+  auto setPipe = PipeAttr::get(ctx, hivm::PIPE::PIPE_M);
+  auto waitPipe = PipeAttr::get(ctx, hivm::PIPE::PIPE_MTE1);
+  rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId0Attr,
+                                   Value{});
+  rewriter.create<hivm::SetFlagOp>(loc, setPipe, waitPipe, eventId1Attr,
+                                   Value{});
+  rewriter.setInsertionPointAfter(funcRegion->findAncestorOpInRegion(*lastOp));
+  rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, eventId0Attr,
+                                    Value{});
+  rewriter.create<hivm::WaitFlagOp>(loc, setPipe, waitPipe, eventId1Attr,
+                                    Value{});
+}
+
 // Create and propagate sync args into MmadL1 op arguments.
 void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
   for (auto &[mmadL1Op, syncArgs] : mmadl1SyncArgsMap) {
@@ -672,6 +697,12 @@ void CodeGenerator::insertMmadL1SyncArgs(IRRewriter &rewriter) {
 #endif
     if (options.isMemBasedArch) {
       syncArgs.kLoopDBCond = getLoopDBCond(rewriter, mmadL1Op.getOperation());
+      syncArgs.bwdPipeMPipeMTE1Event0 = rewriter.create<arith::ConstantIntOp>(
+          mmadL1Op->getLoc(), static_cast<int64_t>(EVENT::EVENT_ID0),
+          static_cast<unsigned>(64));
+      syncArgs.bwdPipeMPipeMTE1Event1 = rewriter.create<arith::ConstantIntOp>(
+          mmadL1Op->getLoc(), static_cast<int64_t>(EVENT::EVENT_ID1),
+          static_cast<unsigned>(64));
     }
     SmallVector<Value> newArgs;
     newArgs.push_back(syncArgs.l0WaitL1AEvent);
@@ -765,6 +796,7 @@ void CodeGenerator::generateResultOps() {
   if (options.isIntraCoreMode()) {
     insertMmadL1SyncArgs(rewriter);
     customMacroCodegen.populateSyncRelatedArgs(funcOp, rewriter);
+    insertPipeMPipeMte1OuterBwdPairs(rewriter);
     handleUnitFlagEnabledOps(rewriter);
     insertBarrierAllBeforeReturn(rewriter);
   }

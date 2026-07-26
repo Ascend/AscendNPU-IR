@@ -150,6 +150,8 @@ private:
 
   Value getLoopDBCond(IRRewriter &rewriter, Operation *op);
 
+  void insertPipeMPipeMte1OuterBwdPairs(IRRewriter &rewriter);
+
   void insertMmadL1SyncArgs(IRRewriter &rewriter);
 
   void handleUnitFlagEnabledOps(IRRewriter &rewriter);
