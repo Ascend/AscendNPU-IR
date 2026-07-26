@@ -100,7 +100,12 @@ void mlir::arith::populateArithToAffineConversionPatterns(
       BinaryArithOpToAffineApply<arith::MulIOp, AffineExprKind::Mul>,
       BinaryArithOpToAffineApply<arith::CeilDivSIOp, AffineExprKind::CeilDiv>,
       BinaryArithOpToAffineApply<arith::DivSIOp, AffineExprKind::FloorDiv>,
-      BinaryArithOpToAffineApply<arith::RemSIOp, AffineExprKind::Mod>,
+      BinaryArithOpToAffineApply<arith::RemSIOp, AffineExprKind::Mod>>(
+      patterns.getContext());
+}
+
+static void populateArithMinMaxToAffinePatterns(RewritePatternSet &patterns) {
+  patterns.add<
       // For index-typed operands, SI and UI doesn't mean anything. So we can
       // convert them to affine.
       ArithMinMaxToAffine<arith::MaxSIOp, affine::AffineMaxOp>,
@@ -138,14 +143,18 @@ void ArithToAffineConversionPass::runOnOperation() {
                                arith::CeilDivSIOp, arith::DivSIOp,
                                arith::RemSIOp>(isNonIndexTyped);
 
-  // membase-only
+  RewritePatternSet patterns(&getContext());
+  arith::populateArithToAffineConversionPatterns(patterns);
+
+  // membase-only: convert arith min/max to affine min/max for index-typed
+  // operands. Regbase targets skip this to stay consistent with the a5
+  // reference pipeline.
   if (isMembase) {
     target.addDynamicallyLegalOp<arith::MaxSIOp, arith::MinSIOp>(
         isNonIndexTyped);
+    populateArithMinMaxToAffinePatterns(patterns);
   }
 
-  RewritePatternSet patterns(&getContext());
-  arith::populateArithToAffineConversionPatterns(patterns);
   if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
     signalPassFailure();
   }

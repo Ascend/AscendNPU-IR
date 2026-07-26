@@ -1284,4 +1284,14 @@ def FuseTransposeIntoLoad : Pass<"hivm-fuse-transpose-into-load", "func::FuncOp"
   ];
 }
 
+def CloneSCFIfYieldOperand : Pass<"hivm-clone-scf-if-yield-operand", "func::FuncOp"> {
+  let summary = "Clone scf.if.yield operand for PlanMemory.";
+  let description = [{This pass clones scf.if yield operand if yield operands
+    are same or it is used after this scf.if, avoid inplace by PlanMemory}];
+  let constructor = "mlir::hivm::createCloneSCFIfYieldOperandPass()";
+  let dependentDialects =
+    ["hivm::HIVMDialect", "scf::SCFDialect", "tensor::TensorDialect",
+     "bufferization::BufferizationDialect"];
+}
+
 #endif // BISHENGIR_DIALECT_HIVM_TRANSFORMS_PASSES_TD

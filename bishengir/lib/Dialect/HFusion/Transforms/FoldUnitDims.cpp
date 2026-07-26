@@ -1862,8 +1862,8 @@ void HFusionFoldUnitDimsPass::runOnOperation() {
     RewritePatternSet patterns(context);
     linalg::ControlDropUnitDims options;
     options.foldRankReducingSlices = true;
-    // TODO: enableExperimentalDropping and avoidZeroRanks are A5 llvm-project
-    // patch fields, not present on master's ControlDropUnitDims.
+    options.enableExperimentalDropping = true;
+    options.avoidZeroRanks = true;
     patterns.add<DropUnitDimsLinalgOp>(context, shouldSkip, options);
     patterns.add<FilteredPattern<DropUnitDimsPrintOpPattern,
                                  hfusion::PrintOp>>(context, shouldSkip);

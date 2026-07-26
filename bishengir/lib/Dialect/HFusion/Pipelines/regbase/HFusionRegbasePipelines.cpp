@@ -116,17 +116,10 @@ canonicalizationPipeline(OpPassManager &pm,
                          const HFusionPipelineOptions &hfusionOptions,
                          DisableCanonicalizationPhase phase = NoRestriction) {
   pm.addPass(createCSEPass());
-
-  // TODO(regbase)
-  // CanonicalizerOptions options;
-  // options.enableExtendedPattern = true;
-  // options.disabledPatterns = phaseToDisabledMap[phase];
-  // pm.addPass(createCanonicalizerPass(options));
-
   CanonicalizerOptions options;
+  options.enableExtendedPattern = true;
   options.disabledPatterns = phaseToDisabledMap[phase];
-  pm.addPass(bishengir::createExtendedCanonicalizerPass(options));
-
+  pm.addPass(createCanonicalizerPass(options));
   pm.nest<func::FuncOp>().addPass(tensor::createNormalizeTensorOpsPass(
       /*skipAlignedSlice=*/hfusionOptions.enableTritonKernelCompile));
 }
@@ -407,7 +400,7 @@ hfusionAutoVectorizePipeline(OpPassManager &pm,
   pm.nest<func::FuncOp>().addPass(createFoldExtractInsertPairPass());
   pm.nest<func::FuncOp>().addPass(hivm::createSinkOpToConsumerInLoopPass());
   // Deprecated: no longer needed
-  // pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
+  pm.nest<func::FuncOp>().addPass(hivm::createCloneSCFIfYieldOperandPass());
   hfusionVectorizeManualScopePipeline(pm, hfusionOptions);
   // Prepare tree reduce options for RA / AR control.
   TreeReduceEnableFlags treeReduceFlags =
