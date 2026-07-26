@@ -1015,7 +1015,11 @@ def TileAndBindSubBlock : Pass<"hivm-bind-sub-block", "ModuleOp"> {
   let summary = "tile and bind sub block";
   let constructor = "mlir::hivm::createTileAndBindSubBlockPass()";
   let dependentDialects = [
-    "annotation::AnnotationDialect", "func::FuncDialect", "hivm::HIVMDialect"
+    "annotation::AnnotationDialect",
+    "func::FuncDialect",
+    "hivm::HIVMDialect",
+    "bufferization::BufferizationDialect",
+    "scope::ScopeDialect"
   ];
   let options = [Option<
   // TODO: Please remove the strictMode option,

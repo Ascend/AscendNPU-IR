@@ -1753,3 +1753,44 @@ module attributes {hivm.module_core_type = #hivm.module_core_type<MIX>} {
     hivm.hir.store ins(%55#0 : tensor<32x32xf32>) outs(%subview_27 : memref<32x32xf32, strided<[1024, 1], offset: ?>>)
     return
 }
+
+// -----
+
+// CHECK-LABEL: func.func @reduce_dim_subblock_aiv(
+// CHECK: hivm.hir.vreduce {tiled_op} <sum> ins(%{{.*}} : tensor<2048xf32>)
+// CHECK: memref_ext.alloc_workspace() : memref<2xf32>
+// CHECK: hivm.hir.sync_block[<ALL_SUB_VECTOR>] tvector_pipe = <PIPE_ALL>
+// CHECK: %[[FINAL:.*]] = hivm.hir.vreduce <sum> ins(%{{.*}} : tensor<2xf32>)
+// CHECK: scope.return %[[FINAL]] : tensor<1xf32>
+// CHECK: hivm.hir.debug
+module attributes {
+  hacc.target = #hacc.target<"Ascend950PR_9589">,
+  hivm.module_core_type = #hivm.module_core_type<MIX>
+} {
+  func.func @reduce_dim_subblock_aiv(
+      %arg0: tensor<4096xf32>,
+      %arg1: memref<4096xf32>)
+      attributes {
+        hacc.entry,
+        hacc.function_kind = #hacc.function_kind<DEVICE>,
+        hivm.func_core_type = #hivm.func_core_type<AIV>,
+        hivm.part_of_mix,
+        mix_mode = "mix"
+      } {
+    hivm.hir.store ins(%arg0 : tensor<4096xf32>)
+        outs(%arg1 : memref<4096xf32>)
+    %empty = tensor.empty() : tensor<1xf32>
+    %reduced = hivm.hir.vreduce <sum>
+        ins(%arg0 : tensor<4096xf32>)
+        outs(%empty : tensor<1xf32>)
+        reduce_dims = [0] -> tensor<1xf32>
+    hivm.hir.debug {
+      debugtype = "print",
+      hex = false,
+      prefix = "",
+      tcoretype = #hivm.tcore_type<VECTOR>,
+      tiled_op
+    } %reduced : tensor<1xf32>
+    return
+  }
+}
