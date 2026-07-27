@@ -118,7 +118,8 @@ getLastNotUnitDim(const SmallVectorImpl<MemRefType> &memRefTypes,
                   ReassociationIndices reassociations) {
   for (auto index : llvm::reverse(reassociations)) {
     if (llvm::all_of(memRefTypes, [&](MemRefType memRefType) {
-          return memRefType.getShape()[index] == 1;
+          return index < memRefType.getRank() &&
+                 memRefType.getShape()[index] == 1;
         })) {
       continue;
     }

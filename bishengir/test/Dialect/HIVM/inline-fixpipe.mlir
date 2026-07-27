@@ -1555,3 +1555,108 @@ func.func @no_inline_fixpipe_with_store_in_vector_scope(
   return
 }
 
+// -----
+// Fractal mmadL1: all-4D inputs/output, check fixpipe insertion doesn't crash
+// CHECK-LABEL: func.func @test_fractal_mmadL1_fixpipe
+// CHECK: hivm.hir.mmadL1
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @test_fractal_mmadL1_fixpipe(%a: tensor<20x10x16x16xf16>, %b: tensor<5x20x16x16xf16>) -> tensor<160x80xf32> {
+    %c160 = arith.constant 160 : index
+    %c320 = arith.constant 320 : index
+    %c80 = arith.constant 80 : index
+    %false = arith.constant false
+    %empty = tensor.empty() : tensor<160x80xf32>
+    %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c160, %c320, %c80 : tensor<20x10x16x16xf16>, tensor<5x20x16x16xf16>, i1, index, index, index) outs(%empty : tensor<160x80xf32>) -> tensor<160x80xf32>
+    return %mmad : tensor<160x80xf32>
+  }
+}
+
+// -----
+
+// Fractal C output: mmadL1 result feeds convert_layout{ND->Fractal} -> inline fixpipe as NZ2NZ
+// CHECK-LABEL: func.func @test_fractal_c_nz2nz_fixpipe
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe
+func.func @test_fractal_c_nz2nz_fixpipe(%arg0: tensor<16x16xf16>, %arg1: tensor<16x16xf16>, %arg2: memref<1x1x16x16xf32>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %empty = tensor.empty() : tensor<16x16xf32>
+  %mmad = hivm.hir.mmadL1 ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %fractal = hivm.hir.convert_layout %mmad output_shape [1, 1, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<16x16xf32>) -> tensor<1x1x16x16xf32>
+  hivm.hir.store ins(%fractal : tensor<1x1x16x16xf32>) outs(%arg2 : memref<1x1x16x16xf32>)
+  return
+}
+
+// -----
+
+// Batch fractal C output: batchMmadL1 result feeds convert_layout{ND->Fractal} -> inline fixpipe as NZ2NZ
+// CHECK-LABEL: func.func @test_batch_fractal_c_nz2nz_fixpipe
+// CHECK-NOT: hivm.hir.convert_layout
+// CHECK: hivm.hir.fixpipe
+func.func @test_batch_fractal_c_nz2nz_fixpipe(%arg0: tensor<2x32x64xf16>, %arg1: tensor<2x64x32xf16>, %arg2: memref<2x2x2x16x16xf32>) {
+  %true = arith.constant true
+  %c32 = arith.constant 32 : index
+  %c64 = arith.constant 64 : index
+  %empty = tensor.empty() : tensor<2x32x32xf32>
+  %mmad = hivm.hir.batchMmadL1 ins(%arg0, %arg1, %true, %c32, %c64, %c32 : tensor<2x32x64xf16>, tensor<2x64x32xf16>, i1, index, index, index) outs(%empty : tensor<2x32x32xf32>) -> tensor<2x32x32xf32>
+  %fractal = hivm.hir.convert_layout %mmad output_shape [2, 2, 2, 16, 16] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 16]>, srcLayout = #hivm.data_layout<ND>} : (tensor<2x32x32xf32>) -> tensor<2x2x2x16x16xf32>
+  hivm.hir.store ins(%fractal : tensor<2x2x2x16x16xf32>) outs(%arg2 : memref<2x2x2x16x16xf32>)
+  return
+}
+
+// -----
+
+// When NO convert_layout{ND->Fractal} follows mmadL1, fall back to NZ2ND
+// CHECK-LABEL: func.func @test_nd_c_nz2nd_fixpipe_fallback
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+func.func @test_nd_c_nz2nd_fixpipe_fallback(%arg0: tensor<16x16xi8>, %arg1: tensor<16x16xi8>, %arg2: memref<16x16xf32>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %empty = tensor.empty() : tensor<16x16xi32>
+  %mmad = hivm.hir.mmadL1 ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x16xi8>, tensor<16x16xi8>, i1, index, index, index) outs(%empty : tensor<16x16xi32>) -> tensor<16x16xi32>
+  %cast_empty = tensor.empty() : tensor<16x16xf32>
+  %casted = hivm.hir.vcast ins(%mmad : tensor<16x16xi32>) outs(%cast_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  hivm.hir.store ins(%casted : tensor<16x16xf32>) outs(%arg2 : memref<16x16xf32>)
+  return
+}
+
+// -----
+
+// CV scenario: mmadL1 result goes to vector ops (vadd, vcast) -> should NOT get NZ2NZ fixpipe, stays NZ2ND
+// CHECK-LABEL: func.func @test_cv_mmad_vector_consumer_no_nz2nz
+// CHECK: hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+// CHECK: hivm.hir.vadd
+func.func @test_cv_mmad_vector_consumer_no_nz2nz(%arg0: tensor<16x16xf16>, %arg1: tensor<16x16xf16>, %arg2: memref<16x16xf16>) {
+  %true = arith.constant true
+  %c16 = arith.constant 16 : index
+  %cst = arith.constant 1.000000e+00 : f32
+  %empty = tensor.empty() : tensor<16x16xf32>
+  %mmad = hivm.hir.mmadL1 ins(%arg0, %arg1, %true, %c16, %c16, %c16 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %add_empty = tensor.empty() : tensor<16x16xf32>
+  %added = hivm.hir.vadd ins(%mmad, %cst : tensor<16x16xf32>, f32) outs(%add_empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %cast_empty = tensor.empty() : tensor<16x16xf16>
+  %casted = hivm.hir.vcast ins(%added : tensor<16x16xf32>) outs(%cast_empty : tensor<16x16xf16>) round_mode = <rint> -> tensor<16x16xf16>
+  hivm.hir.store ins(%casted : tensor<16x16xf16>) outs(%arg2 : memref<16x16xf16>)
+  return
+}
+
+// -----
+// s_C_int8: int8 fractal C fixpipe with [16,32] block sizes.
+// CHECK-LABEL: func.func @test_int8_fractal_c_nz2nz_fixpipe
+// CHECK: hivm.hir.fixpipe
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
+  func.func @test_int8_fractal_c_nz2nz_fixpipe(%gm: memref<2x10x16x32xi8, #hivm.address_space<gm>>) {
+    %c0 = arith.constant 0 : index
+    %false = arith.constant false
+    %a = arith.constant dense<0> : tensor<10x10x16x32xi8>
+    %b = arith.constant dense<0> : tensor<2x10x32x32xi8>
+    %c = tensor.empty() : tensor<160x64xi32>
+    %mmad = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<10x10x16x32xi8>, tensor<2x10x32x32xi8>, i1, index, index, index) outs(%c : tensor<160x64xi32>) -> tensor<160x64xi32>
+    %fractal = hivm.hir.convert_layout %mmad output_shape [2, 10, 16, 32] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 32]>, srcLayout = #hivm.data_layout<ND>} : (tensor<160x64xi32>) -> tensor<2x10x16x32xi32>
+    %strided = memref.cast %gm : memref<2x10x16x32xi8, #hivm.address_space<gm>> to memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>
+    hivm.hir.fixpipe ins(%fractal : tensor<2x10x16x32xi32>) outs(%strided : memref<2x10x16x32xi8, strided<[?, ?, ?, ?], offset: ?>, #hivm.address_space<gm>>)
+    return
+  }
+}
+
+// -----

@@ -6,17 +6,26 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Replace UnknownLoc on call ops (func::CallOp / LLVM::CallOp) by inheriting
-// location from the call's result users or parent ops. This fixes the LLVM IR
-// verifier error: "inlinable function call in a function with debug info must
-// have a !dbg location".
+// Replace effectively-unknown locations on func::FuncOp declarations and call
+// ops (func::CallOp / LLVM::CallOp) by inheriting a location from callers,
+// result users, or parent ops. This fixes the LLVM IR verifier error:
+// "inlinable function call in a function with debug info must have a !dbg
+// location".
+//
+// A location is "effectively unknown" if it is UnknownLoc, or a wrapper
+// location (NameLoc / CallSiteLoc / FusedLoc) whose nested ocations are all
+// unknown. This mirrors how LLVMDIScope's extractFileLoc unwraps wrapper
+// locations, so a NameLoc wrapping UnknownLoc is treated as unknown and fixed
+// here.
 //
 // The strategy:
-//   1. Check if the function has any non-UnknownLoc op. If not, skip (no debug
-//      info in this function, so no error will occur).
-//   2. For each call op with UnknownLoc:
-//      a. Try to find a non-UnknownLoc from the call's result users.
-//      b. If not found, traverse up parent ops until a non-UnknownLoc is found.
+//   1. Fix the FuncOp's own location first (from callers / body / module).
+//   2. Check if the function has any non-unknown-loc op. If not, skip (no
+//      debug info in this function, so no error will occur).
+//   3. For each call op with an effectively-unknown location:
+//      a. Try to find a non-unknown loc from the call's result users.
+//      b. If not found, traverse up parent ops until a non-unknown loc is
+//         found.
 //      c. If a valid location is found, set it and emit a warning.
 //
 //===----------------------------------------------------------------------===//
@@ -38,30 +47,92 @@ using namespace mlir;
 
 namespace {
 
-/// Find a non-UnknownLoc location for the given operation.
+/// Check whether a location is effectively unknown: UnknownLoc, or a
+/// NameLoc/CallSiteLoc/FusedLoc whose nested locations are all
+/// unknown. This mirrors how LLVMDIScope's extractFileLoc unwraps wrapper
+/// locations, so a NameLoc wrapping UnknownLoc is treated as unknown here.
+static bool isLocUnknown(Location loc) {
+  if (isa<UnknownLoc>(loc))
+    return true;
+  if (auto nl = dyn_cast<NameLoc>(loc))
+    return isLocUnknown(nl.getChildLoc());
+  if (auto cl = dyn_cast<CallSiteLoc>(loc))
+    return isLocUnknown(cl.getCallee()) && isLocUnknown(cl.getCaller());
+  if (auto fl = dyn_cast<FusedLoc>(loc)) {
+    for (Location child : fl.getLocations())
+      if (!isLocUnknown(child))
+        return false;
+    return true;
+  }
+  return false;
+}
+
+/// Find a non-unknown-loc location for the given operation.
 /// Priority 1: from the result users (the ops that consume the call's results).
-/// Priority 2: traverse up parent ops until a non-UnknownLoc is found.
+/// Priority 2: traverse up parent ops until a non-unknown-loc is found.
 static Location findNonUnknownLoc(Operation *op) {
   // Priority 1: from result users.
   for (Value result : op->getResults()) {
     for (OpOperand &use : result.getUses()) {
       Operation *userOp = use.getOwner();
-      Location userLoc = userOp->getLoc();
-      if (!isa<UnknownLoc>(userLoc))
-        return userLoc;
+      if (!isLocUnknown(userOp->getLoc()))
+        return userOp->getLoc();
     }
   }
 
   // Priority 2: traverse parent ops.
   Operation *parent = op->getParentOp();
   while (parent) {
-    Location parentLoc = parent->getLoc();
-    if (!isa<UnknownLoc>(parentLoc))
-      return parentLoc;
+    if (!isLocUnknown(parent->getLoc()))
+      return parent->getLoc();
     parent = parent->getParentOp();
   }
 
   return op->getLoc();
+}
+
+/// Find a non-unknown-loc location for a FuncOp declaration/function.
+/// Priority 1: from its call sites (callers). For each caller, prefer the
+///             call op's own loc, then walk up the caller's parent ops.
+/// Priority 2: from a non-unknown-loc op inside the function body.
+/// Priority 3: from the parent module's loc.
+static Location findNonUnknownLocForFunc(func::FuncOp funcOp) {
+  ModuleOp module = funcOp->getParentOfType<ModuleOp>();
+  if (!module)
+    return funcOp.getLoc();
+
+  // Priority 1: from call sites.
+  std::optional<SymbolTable::UseRange> symbolUses =
+      funcOp.getSymbolUses(module);
+  if (symbolUses) {
+    for (const SymbolTable::SymbolUse &use : *symbolUses) {
+      Operation *user = use.getUser();
+      if (!isa<func::CallOp, LLVM::CallOp>(user))
+        continue;
+      if (!isLocUnknown(user->getLoc()))
+        return user->getLoc();
+      // The call op's loc is also unknown; walk up its parents.
+      Operation *parent = user->getParentOp();
+      while (parent) {
+        if (!isLocUnknown(parent->getLoc()))
+          return parent->getLoc();
+        parent = parent->getParentOp();
+      }
+    }
+  }
+
+  // Priority 2: from a non-unknown-loc op inside the body.
+  if (!funcOp.isExternal()) {
+    Location bodyLoc = findNonUnknownLoc(funcOp);
+    if (!isLocUnknown(bodyLoc))
+      return bodyLoc;
+  }
+
+  // Priority 3: from the parent module.
+  if (!isLocUnknown(module.getLoc()))
+    return module.getLoc();
+
+  return funcOp.getLoc();
 }
 
 struct FixCallUnknownLocPass
@@ -69,14 +140,26 @@ struct FixCallUnknownLocPass
   void runOnOperation() override {
     func::FuncOp funcOp = getOperation();
 
-    // Check if the function has any non-UnknownLoc op (excluding call ops).
-    // If all ops are UnknownLoc, the function won't have a DISubprogram in
-    // LLVM IR, so no verifier error will occur.
+    // Step 1: Fix the function's own location first. This matters for
+    // external library function declarations (func.func private @ciface_...)
+    // whose loc is NameLoc("name", UnknownLoc): they have no body so the
+    // walk below would otherwise skip them, leaving a malformed DISubprogram
+    // that triggers the LLVM IR verifier error.
+    if (isLocUnknown(funcOp.getLoc())) {
+      Location newLoc = findNonUnknownLocForFunc(funcOp);
+      if (!isLocUnknown(newLoc)) {
+        funcOp->setLoc(newLoc);
+      }
+    }
+
+    // Step 2: Check if the function has any non-unknown-loc op (excluding
+    // call ops). If all ops are unknown-loc, the function won't have a
+    // DISubprogram in LLVM IR, so no verifier error will occur.
     bool hasNonUnknownLoc = false;
     funcOp->walk<WalkOrder::PreOrder>([&](Operation *op) {
       if (isa<func::CallOp, LLVM::CallOp>(op))
         return WalkResult::advance();
-      if (!isa<UnknownLoc>(op->getLoc())) {
+      if (!isLocUnknown(op->getLoc())) {
         hasNonUnknownLoc = true;
         return WalkResult::interrupt();
       }
@@ -85,15 +168,15 @@ struct FixCallUnknownLocPass
     if (!hasNonUnknownLoc)
       return;
 
-    // Fix all call ops with UnknownLoc.
+    // Step 3: Fix all call ops with an effectively-unknown location.
     funcOp->walk([&](Operation *op) {
       if (!isa<func::CallOp, LLVM::CallOp>(op))
         return;
-      if (!isa<UnknownLoc>(op->getLoc()))
+      if (!isLocUnknown(op->getLoc()))
         return;
 
       Location loc = findNonUnknownLoc(op);
-      if (isa<UnknownLoc>(loc))
+      if (isLocUnknown(loc))
         return;
 
       op->setLoc(loc);

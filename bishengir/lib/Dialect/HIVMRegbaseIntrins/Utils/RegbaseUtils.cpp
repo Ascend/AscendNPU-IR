@@ -136,7 +136,7 @@ Operation *hivm_regbaseintrins::buildVBrOp(Value broadcastSource,
       elementType.isUnsignedInteger(8) || elementType.isF32() ||
       elementType.isF16() || elementType.isBF16())
     return rewriter.create<hivm_regbaseintrins::VbrInstrOp>(
-        rewriter.getUnknownLoc(), resVecType, broadcastSource);
+        broadcastSource.getLoc(), resVecType, broadcastSource);
   llvm_unreachable("Invalid vbr element type.");
 }
 
@@ -806,7 +806,7 @@ Operation *hivm_regbaseintrins::buildVselOp(Value srcReg1, Value srcReg2,
     VectorType resVecType = VectorType::get({256}, rewriter.getI1Type());
     Operation *castedPredicateVector =
         rewriter.create<UnrealizedConversionCastOp>(
-            rewriter.getUnknownLoc(), resVecType, predicateVector);
+            predicateVector.getLoc(), resVecType, predicateVector);
     predicateVector = castedPredicateVector->getResult(0);
   }
 
@@ -817,7 +817,7 @@ Operation *hivm_regbaseintrins::buildVselOp(Value srcReg1, Value srcReg2,
       elementType.isUnsignedInteger(8) || elementType.isF32() ||
       elementType.isF16() || elementType.isBF16())
     return rewriter.create<hivm_regbaseintrins::VselInstrOp>(
-        rewriter.getUnknownLoc(), srcReg1.getType(), srcReg1, srcReg2,
+        srcReg1.getLoc(), srcReg1.getType(), srcReg1, srcReg2,
         predicateVector);
   llvm_unreachable("Invalid vsel element type.");
 }
