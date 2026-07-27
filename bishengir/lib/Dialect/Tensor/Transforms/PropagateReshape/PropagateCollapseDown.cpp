@@ -1037,6 +1037,11 @@ LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
                                    Operation *userOp) {
   auto reassociation = collapseOp.getReassociationIndices();
   auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(userOp);
+  // The current slice utility does not compute the adjusted reassociation for
+  // rank-reducing slices. Leave these cases unchanged instead of constructing
+  // a reshape with the original reassociation.
+  if (extractSliceOp.getDroppedDims().any())
+    return failure();
   auto srcShape = utils::getShape(collapseOp.getSrc().getType());
   if (llvm::any_of(srcShape, ShapedType::isDynamic))
     return failure();
@@ -1066,10 +1071,20 @@ LogicalResult handleExtractSliceOp(tensor::CollapseShapeOp collapseOp,
 
 LogicalResult handleInsertSliceOp(tensor::CollapseShapeOp collapseOp,
                                   PatternRewriter &rewriter,
-                                  Operation *userOp) {
+                                  Operation *userOp, bool forRegbased) {
   LDBG("Handle dropping insert slice here");
   auto reassociation = collapseOp.getReassociationIndices();
   auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(userOp);
+  auto expandedShape = collapseOp.getSrcType().getShape();
+  // On RegBase, propagating a collapse that only removes unit dimensions can
+  // alternate with expand propagation and fail to reach a fixed point.
+  if (forRegbased && isUnitDimReshape(expandedShape, reassociation))
+    return failure();
+  // See handleExtractSliceOp: adjusted rank-reducing reassociations are not
+  // available in the current slice utility.
+  if (insertSliceOp.getDroppedDims().any())
+    return failure();
+
   SmallVector<OpFoldResult> newMixedOffsets;
   SmallVector<OpFoldResult> newMixedSizes;
   SmallVector<OpFoldResult> newMixedStrides;
@@ -1243,7 +1258,8 @@ PropagateCollapseDown::matchAndRewrite(tensor::CollapseShapeOp collapseOp,
       return handleExtractSliceOp(collapseOp, rewriter, userOp);
     }
     if (!options.forHIVM && isa<tensor::InsertSliceOp>(userOp)) {
-      return handleInsertSliceOp(collapseOp, rewriter, userOp);
+      return handleInsertSliceOp(collapseOp, rewriter, userOp,
+                                 options.forRegbased);
     }
     if (isMarkedAsElementwiseOp(userOp)) {
       LLVM_DEBUG(llvm::dbgs() << "Propagate collapse down - Elemwise\n";);

@@ -822,6 +822,17 @@ void createNewPermutation(size_t rank, ArrayRef<int64_t> permutation,
   }
 }
 
+bool isUnitDimReshape(
+    ArrayRef<int64_t> expandedShape,
+    ArrayRef<ReassociationIndices> reassociation) {
+  return llvm::all_of(
+      reassociation, [&](const ReassociationIndices &group) {
+        return llvm::count_if(group, [&](int64_t dim) {
+                 return expandedShape[dim] != 1;
+               }) <= 1;
+      });
+}
+
 bool isNonUnitExpandOrEmptyReassoc(
     ArrayRef<int64_t> expandedShape,
     ArrayRef<ReassociationIndices> reassociation) {

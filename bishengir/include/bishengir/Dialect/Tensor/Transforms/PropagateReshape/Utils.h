@@ -249,6 +249,9 @@ void createNewPermutation(
 // Get the inverse of this permutation
 SmallVector<int64_t> getInversePermutation(ArrayRef<int64_t> permutation);
 
+bool isUnitDimReshape(ArrayRef<int64_t> expandedShape,
+                      ArrayRef<ReassociationIndices> reassociation);
+
 bool isNonUnitExpandOrEmptyReassoc(ArrayRef<int64_t> expandedShape,
                      ArrayRef<ReassociationIndices> reassociation);
 
