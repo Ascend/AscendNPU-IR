@@ -443,3 +443,215 @@ func.func @no_hoist_yield_extract_no_write(%init: tensor<16xf32>) -> tensor<16xf
   }
   return %r : tensor<16xf32>
 }
+
+// -----
+
+// CHECK-LABEL: func.func @reader_vf
+//  CHECK-SAME:     %[[ARG0:.*]]: tensor<64x16xf32>, %[[INIT:.*]]: tensor<16xf32>
+//   CHECK-NOT:   vector.transfer_read %[[INIT]]
+//       CHECK:   %[[C:.*]] = arith.constant dense<0xFF800000> : vector<16xf32>
+//       CHECK:   scf.for {{.*}} iter_args(%{{.*}} = %[[C]])
+
+func.func @fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0xFF800000> : vector<16xf32>
+  %0 = vector.transfer_write %cst, %out[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+func.func @reader_vf(%arg0: tensor<64x16xf32>, %init: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c64 = arith.constant 64 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %acc0 = vector.transfer_read %init[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %acc = scf.for %i = %c0 to %c64 step %c1 iter_args(%a = %acc0) -> (vector<16xf32>) {
+    %slice = tensor.extract_slice %arg0[%i, 0] [1, 16] [1, 1] : tensor<64x16xf32> to tensor<16xf32>
+    %v = vector.transfer_read %slice[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+    %m = arith.maximumf %a, %v : vector<16xf32>
+    scf.yield %m : vector<16xf32>
+  }
+  %res = vector.transfer_write %acc, %init[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %res : tensor<16xf32>
+}
+
+func.func @forward_constant_fill(%arg0: tensor<64x16xf32>) -> tensor<16xf32> {
+  %e = tensor.empty() : tensor<16xf32>
+  %f = call @fill_vf(%e) : (tensor<16xf32>) -> tensor<16xf32>
+  %r = call @reader_vf(%arg0, %f) : (tensor<64x16xf32>, tensor<16xf32>) -> tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @masked_reader_vf
+//       CHECK:   %[[PAD:.*]] = arith.constant 0.000000e+00 : f32
+//       CHECK:   %[[MASK:.*]] = vector.constant_mask [12] : vector<16xi1>
+//       CHECK:   %[[C:.*]] = arith.constant dense<0xFF800000> : vector<16xf32>
+//       CHECK:   %[[PADV:.*]] = vector.broadcast %[[PAD]] : f32 to vector<16xf32>
+//       CHECK:   arith.select %[[MASK]], %[[C]], %[[PADV]]
+//   CHECK-NOT:   vector.transfer_read
+
+func.func @masked_fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0xFF800000> : vector<16xf32>
+  %mask = vector.constant_mask [12] : vector<16xi1>
+  %0 = vector.transfer_write %cst, %out[%c0], %mask {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+func.func @masked_reader_vf(%init: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %mask = vector.constant_mask [12] : vector<16xi1>
+  %v = vector.transfer_read %init[%c0], %cst, %mask {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %d = arith.mulf %v, %v : vector<16xf32>
+  %res = vector.transfer_write %d, %init[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %res : tensor<16xf32>
+}
+
+func.func @forward_masked_fill() -> tensor<16xf32> {
+  %e = tensor.empty() : tensor<16xf32>
+  %f = call @masked_fill_vf(%e) : (tensor<16xf32>) -> tensor<16xf32>
+  %r = call @masked_reader_vf(%f) : (tensor<16xf32>) -> tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @copy_reader_vf
+//   CHECK-NOT:   vector.transfer_read
+//       CHECK:   arith.constant dense<1.000000e+00> : vector<16xf32>
+
+func.func @copy_fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<1.000000e+00> : vector<16xf32>
+  %0 = vector.transfer_write %cst, %out[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+func.func @copy_reader_vf(%a: tensor<32xf32>, %b: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %slice = tensor.extract_slice %a[0] [16] [1] : tensor<32xf32> to tensor<16xf32>
+  %va = vector.transfer_read %slice[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %vb = vector.transfer_read %b[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %s = arith.addf %va, %vb : vector<16xf32>
+  %r = vector.transfer_write %s, %b[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+func.func @wide_fill_vf(%out: tensor<32xf32>) -> tensor<32xf32>
+    attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<1.000000e+00> : vector<32xf32>
+  %0 = vector.transfer_write %cst, %out[%c0] {in_bounds = [true]} : vector<32xf32>, tensor<32xf32>
+  return %0 : tensor<32xf32>
+}
+
+func.func @forward_fill_through_copy() -> tensor<16xf32> {
+  %e16 = tensor.empty() : tensor<16xf32>
+  %e32 = tensor.empty() : tensor<32xf32>
+  %wide = call @wide_fill_vf(%e32) : (tensor<32xf32>) -> tensor<32xf32>
+  %f = call @copy_fill_vf(%e16) : (tensor<16xf32>) -> tensor<16xf32>
+  %dup = linalg.copy ins(%f : tensor<16xf32>) outs(%e16 : tensor<16xf32>) -> tensor<16xf32>
+  %r = call @copy_reader_vf(%wide, %dup) : (tensor<32xf32>, tensor<16xf32>) -> tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @live_dest_reader_vf
+//       CHECK:   vector.transfer_read
+
+func.func @live_dest_fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0xFF800000> : vector<16xf32>
+  %mask = vector.constant_mask [8] : vector<16xi1>
+  %0 = vector.transfer_write %cst, %out[%c0], %mask {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+func.func @live_dest_reader_vf(%init: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %v = vector.transfer_read %init[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %d = arith.mulf %v, %v : vector<16xf32>
+  %res = vector.transfer_write %d, %init[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %res : tensor<16xf32>
+}
+
+func.func @no_forward_live_dest(%live: tensor<16xf32>) -> tensor<16xf32> {
+  %f = call @live_dest_fill_vf(%live) : (tensor<16xf32>) -> tensor<16xf32>
+  %r = call @live_dest_reader_vf(%f) : (tensor<16xf32>) -> tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @unmarked_reader_vf
+//       CHECK:   vector.transfer_read
+
+func.func @unmarked_fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0xFF800000> : vector<16xf32>
+  %0 = vector.transfer_write %cst, %out[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+func.func @unmarked_reader_vf(%init: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %v = vector.transfer_read %init[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %d = arith.mulf %v, %v : vector<16xf32>
+  %res = vector.transfer_write %d, %init[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %res : tensor<16xf32>
+}
+
+func.func @no_forward_unmarked() -> tensor<16xf32> {
+  %e = tensor.empty() : tensor<16xf32>
+  %f = call @unmarked_fill_vf(%e) : (tensor<16xf32>) -> tensor<16xf32>
+  %r = call @unmarked_reader_vf(%f) : (tensor<16xf32>) -> tensor<16xf32>
+  return %r : tensor<16xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @shared_reader_vf
+//       CHECK:   vector.transfer_read
+
+func.func @shared_fill_vf(%out: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline, hfusion.has_fill} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant dense<0xFF800000> : vector<16xf32>
+  %0 = vector.transfer_write %cst, %out[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %0 : tensor<16xf32>
+}
+
+func.func @shared_reader_vf(%init: tensor<16xf32>) -> tensor<16xf32>
+    attributes {hivm.vector_function, no_inline} {
+  %c0 = arith.constant 0 : index
+  %cst = arith.constant 0.000000e+00 : f32
+  %v = vector.transfer_read %init[%c0], %cst {in_bounds = [true]} : tensor<16xf32>, vector<16xf32>
+  %d = arith.mulf %v, %v : vector<16xf32>
+  %res = vector.transfer_write %d, %init[%c0] {in_bounds = [true]} : vector<16xf32>, tensor<16xf32>
+  return %res : tensor<16xf32>
+}
+
+func.func @no_forward_shared_reader(%other: tensor<16xf32>) -> (tensor<16xf32>, tensor<16xf32>) {
+  %e = tensor.empty() : tensor<16xf32>
+  %f = call @shared_fill_vf(%e) : (tensor<16xf32>) -> tensor<16xf32>
+  %r0 = call @shared_reader_vf(%f) : (tensor<16xf32>) -> tensor<16xf32>
+  %r1 = call @shared_reader_vf(%other) : (tensor<16xf32>) -> tensor<16xf32>
+  return %r0, %r1 : tensor<16xf32>, tensor<16xf32>
+}

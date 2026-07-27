@@ -7,19 +7,24 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Dialect/HFusion/Transforms/Passes.h"
+#include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
 #include "mlir/IR/Visitors.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
@@ -397,6 +402,216 @@ static void hoistLoopInvariant(LoopLikeOpInterface loop) {
 
 } // namespace
 
+//===----------------------------------------------------------------------===//
+// Constant fill forwarding
+//===----------------------------------------------------------------------===//
+//
+// AutoVectorizeV2 never fuses a `linalg.fill` into its consumer (see
+// findBestFusedNodeForProducer), so OutlineVectorFunction gives the fill a
+// vector function of its own, tagged `kFillVFAttrName` when the loop
+// stamps nothing but constants. Its result then has to travel through UB to
+// whoever reads it -- a splat of constants nobody needs to load:
+//
+//   %f = call @fill_vf(%empty)              // stamps `c` over %empty
+//   %r = call @reader_vf(.., %f)
+//   ...
+//   %v = vector.transfer_read %arg[..]      // inside the reader, %arg <- %f
+//
+// A read rooted at a function argument observes exactly what the caller passed
+// in, so `%v` can be built out of `c` instead. That is the whole condition:
+// nothing about the filled tensor changes, so no coverage or use analysis is
+// needed, and a read observing a running accumulator rather than the fill is
+// rooted at the enclosing loop's iter_arg rather than at the argument, so it
+// is left alone by construction.
+
+static TypedAttr getSplatValue(Value v) {
+  DenseElementsAttr attr;
+  if (!matchPattern(v, m_Constant(&attr)) || !attr.isSplat())
+    return {};
+  return dyn_cast<TypedAttr>(attr.getSplatValue<Attribute>());
+}
+
+/// Walks the tensor a fill vector function returns back to the argument it was
+/// stamped into, picking up the constant on the way. The function is known to
+/// be a fill, so this only decodes which argument carries which constant; the
+/// splat check guards against the marker and the body disagreeing.
+static bool traceConstantFill(Value v, TypedAttr &value, BlockArgument &root,
+                              DenseSet<Value> &visited) {
+  if (!visited.insert(v).second)
+    return true;
+  if (auto arg = dyn_cast<BlockArgument>(v)) {
+    Operation *parent = arg.getOwner()->getParentOp();
+    if (auto forOp = dyn_cast<scf::ForOp>(parent)) {
+      OpOperand *init = forOp.getTiedLoopInit(arg);
+      return init && traceConstantFill(init->get(), value, root, visited);
+    }
+    if (!isa<func::FuncOp>(parent) || (root && root != arg))
+      return false;
+    root = arg;
+    return true;
+  }
+
+  Operation *def = v.getDefiningOp();
+  if (isa<tensor::EmptyOp>(def))
+    return true; // Undefined elements may be assumed to hold the constant.
+  if (auto write = dyn_cast<vector::TransferWriteOp>(def)) {
+    TypedAttr splat = getSplatValue(write.getVector());
+    if (!splat || (value && value != splat))
+      return false;
+    value = splat;
+    return traceConstantFill(write.getSource(), value, root, visited);
+  }
+  if (auto insert = dyn_cast<tensor::InsertSliceOp>(def))
+    return traceConstantFill(insert.getSource(), value, root, visited) &&
+           traceConstantFill(insert.getDest(), value, root, visited);
+  if (auto extract = dyn_cast<tensor::ExtractSliceOp>(def))
+    return traceConstantFill(extract.getSource(), value, root, visited);
+  if (auto forOp = dyn_cast<scf::ForOp>(def))
+    return traceConstantFill(
+        forOp.getYieldedValues()[cast<OpResult>(v).getResultNumber()], value,
+        root, visited);
+  return false;
+}
+
+static BlockArgument getPristineArgument(Value v) {
+  while (auto extract = v.getDefiningOp<tensor::ExtractSliceOp>())
+    v = extract.getSource();
+  auto arg = dyn_cast<BlockArgument>(v);
+  if (arg && isa<func::FuncOp>(arg.getOwner()->getParentOp()))
+    return arg;
+  return {};
+}
+
+static TypedAttr getFilledConstant(Value v,
+                                   SymbolTableCollection &symbolTables) {
+  // Consumers beyond the first are fed a copy of the filled tensor -- the copy
+  // that later shows up as a UB-to-UB `hivm.hir.copy`. A copy of a uniform
+  // tensor is just as uniform.
+  while (auto copy = v.getDefiningOp<linalg::CopyOp>()) {
+    if (copy.getInputs().size() != 1)
+      return {};
+    v = copy.getInputs().front();
+  }
+  auto call = v.getDefiningOp<func::CallOp>();
+  if (!call)
+    return {};
+  auto callee = dyn_cast_or_null<func::FuncOp>(
+      symbolTables.lookupNearestSymbolFrom(call, call.getCalleeAttr()));
+  if (!callee || callee.isExternal() ||
+      !callee->hasAttr(kFillVFAttrName))
+    return {};
+  auto retOp = dyn_cast<func::ReturnOp>(callee.getBody().front().getTerminator());
+  if (!retOp)
+    return {};
+
+  TypedAttr value;
+  BlockArgument root;
+  DenseSet<Value> visited;
+  if (!traceConstantFill(retOp.getOperand(cast<OpResult>(v).getResultNumber()),
+                         value, root, visited) ||
+      !value || !root)
+    return {};
+  // We need to start with an empty tensor.
+  if (!call.getOperand(root.getArgNumber()).getDefiningOp<tensor::EmptyOp>())
+    return {};
+  return value;
+}
+
+static bool isFoldableRead(vector::TransferReadOp read) {
+  if (auto inBounds = read.getInBoundsAttr())
+    for (Attribute dim : inBounds)
+      if (!cast<BoolAttr>(dim).getValue())
+        return false;
+  return true;
+}
+
+static Value materializeFilledVector(OpBuilder &builder,
+                                     vector::TransferReadOp read,
+                                     TypedAttr value) {
+  Location loc = read.getLoc();
+  VectorType vecTy = read.getVectorType();
+  Value filled = builder.create<arith::ConstantOp>(
+      loc, vecTy, DenseElementsAttr::get(vecTy, value));
+  Value mask = read.getMask();
+  if (!mask)
+    return filled;
+  Value padding = read.getPadding();
+  Attribute paddingAttr;
+  if (matchPattern(padding, m_Constant(&paddingAttr)) && paddingAttr == value)
+    return filled;
+  Value padded = builder.create<vector::BroadcastOp>(loc, vecTy, padding);
+  return builder.create<arith::SelectOp>(loc, mask, filled, padded);
+}
+
+// The folded case (the reader has exactly one call site):
+//   fill_vf(%empty):
+//     return transfer_write(splat(c), %empty, ...)
+//   reader_vf(..., %input):
+//     vector = transfer_read %input[...]       // all dimensions in bounds
+//   caller:
+//     %filled = call @fill_vf(%empty)
+//     call @reader_vf(..., %filled)
+// becomes:
+//   reader_vf(..., %input):
+//     vector = splat(c)                         // preserve mask padding
+static void foldConstantFills(ModuleOp module, IRRewriter &rewriter) {
+  SymbolTableCollection symbolTables;
+  DenseMap<Operation *, func::CallOp> soleCaller;
+  DenseSet<Operation *> shared;
+  module.walk([&](func::CallOp call) {
+    auto callee = dyn_cast_or_null<func::FuncOp>(
+        symbolTables.lookupNearestSymbolFrom(call, call.getCalleeAttr()));
+    if (callee && !soleCaller.insert({callee, call}).second)
+      shared.insert(callee);  // multi call sites, bail out.
+  });
+
+  SmallVector<std::pair<vector::TransferReadOp, TypedAttr>> folds;
+  module.walk([&](vector::TransferReadOp read) {
+    BlockArgument arg = getPristineArgument(read.getSource());
+    if (!arg || !isFoldableRead(read))
+      return;
+    Operation *func = arg.getOwner()->getParentOp();
+    if (shared.contains(func))
+      return;
+    auto caller = soleCaller.find(func);
+    if (caller == soleCaller.end())
+      return;
+    if (TypedAttr value = getFilledConstant(
+            caller->second.getOperand(arg.getArgNumber()), symbolTables))
+      folds.emplace_back(read, value);
+  });
+
+  for (auto [read, value] : folds) {
+    rewriter.setInsertionPoint(read);
+    rewriter.replaceOp(read, materializeFilledVector(rewriter, read, value));
+  }
+}
+
+/// Promotes a loop-carried tensor subset accessed through vector transfers to
+/// a loop-carried vector value. Unlike MLIR's LoopInvariantSubsetHoisting,
+/// which recognizes and moves matching tensor.extract_slice/insert_slice
+/// pairs, this handles vector.transfer_read/write (and optional surrounding
+/// slice chains) whose accessed subset is invariant. The library pass cannot
+/// prove the accessed subset of the vector transfers, whereas this pass
+/// explicitly requires every transfer in the def-use chain to use the same
+/// invariant subset.
+///
+/// Pseudocode for the read-modify-write case:
+///   before:
+///     for (...; tensor = init) {
+///       vector = transfer_read tensor[invariant_indices]
+///       updated = compute(vector)
+///       tensor = transfer_write updated, tensor[invariant_indices]
+///       yield tensor
+///     }
+///   after:
+///     vector = transfer_read init[invariant_indices]
+///     for (...; tensor = init, vector) {
+///       vector = compute(vector)
+///       yield tensor, vector
+///     }
+///     result = transfer_write vector, init[invariant_indices]
+///
 /// TODO
 /// 1. The current equivalent dependency on multiple extract_Slice/insert_stice
 ///    is that the extract_Slice/insert_stice chains are completely equivalent,
@@ -407,19 +622,24 @@ static void hoistLoopInvariant(LoopLikeOpInterface loop) {
 ///    compilation time is long, consider rewriting scf.for internally in Pass.
 /// 4. There is still room for optimization in scenarios where iter_arg index
 ///    and yield index are different.
-void LoopInvariantPromotion::runOnOperation() {
-  func::FuncOp func = getOperation();
+/// 5. Constant fill forwarding follows a load's source through extract_slice
+///    only, so threading the filled tensor through an scf.for iter_arg stops
+///    it. For an accumulator that is the point -- past the first iteration the
+///    iter_arg holds the running value rather than the fill -- but it also
+///    gives up on an iter_arg the loop merely forwards to its yield. Those are
+///    what canonicalization drops, so the residual case is narrow.
+static void promoteInFunc(func::FuncOp func, MLIRContext *context) {
   // Only optimize the vf function.
-  if (!func->hasAttr("hivm.vector_function"))
+  if (!func->hasAttr(hivm::VectorFunctionAttr::name))
     return;
 
   FrozenRewritePatternSet cleanup = [&] {
-    RewritePatternSet patterns(&getContext());
-    scf::ForOp::getCanonicalizationPatterns(patterns, &getContext());
+    RewritePatternSet patterns(context);
+    scf::ForOp::getCanonicalizationPatterns(patterns, context);
     return FrozenRewritePatternSet(std::move(patterns));
   }();
 
-  IRRewriter rewriter(&getContext());
+  IRRewriter rewriter(context);
   bool changed = true;
   while (changed) {
     func.walk([](LoopLikeOpInterface loop) { hoistLoopInvariant(loop); });
@@ -441,6 +661,16 @@ void LoopInvariantPromotion::runOnOperation() {
     if (changed && nested)
       (void)applyPatternsGreedily(func, cleanup);
   }
+}
+
+void LoopInvariantPromotion::runOnOperation() {
+  ModuleOp module = getOperation();
+  MLIRContext *context = &getContext();
+  for (auto func : module.getOps<func::FuncOp>())
+    promoteInFunc(func, context);
+
+  IRRewriter rewriter(context);
+  foldConstantFills(module, rewriter);
 }
 
 std::unique_ptr<Pass> mlir::hfusion::createLoopInvariantPromotionPass() {

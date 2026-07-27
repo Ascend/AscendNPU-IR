@@ -720,12 +720,19 @@ def RemoveRedundantWriteAndReadPair
 }
 
 def LoopInvariantPromotion
-    : Pass<"loop-invariant-promotion", "func::FuncOp"> {
+    : Pass<"loop-invariant-promotion", "ModuleOp"> {
   let summary = "promote transfer_read/transfer_write in loop";
+  let description = [{
+    Promotes loop-invariant transfer_read/transfer_write subsets of a loop
+    carried tensor into a loop-carried vector, then forwards constant fills:
+    a vector function that only stamps a splat constant into a `tensor.empty`
+    is replaced, in its readers, by the constant itself, so the filled tensor
+    no longer needs a UB buffer of its own.
+  }];
   let constructor = "::mlir::hfusion::createLoopInvariantPromotionPass()";
   let dependentDialects = ["scf::SCFDialect", "vector::VectorDialect",
                            "tensor::TensorDialect", "arith::ArithDialect",
-                           "affine::AffineDialect"];
+                           "affine::AffineDialect", "func::FuncDialect"];
 }
 
 def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
