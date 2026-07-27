@@ -19,6 +19,7 @@ config.enable_bindings_python = @MLIR_ENABLE_BINDINGS_PYTHON@
 config.bishengir_enable_torch_conversions = @BISHENGIR_ENABLE_TORCH_CONVERSIONS@
 config.bisheng_compiler_executable = "@BISHENG_COMPILER_EXECUTABLE@"
 config.bishengir_include_integration_tests = @MLIR_INCLUDE_INTEGRATION_TESTS@
+config.bishengir_enable_triton_compile = @BISHENGIR_ENABLE_TRITON_COMPILE@
 config.bishengir_published = @BISHENGIR_PUBLISH@
 config.shmem_build_template = @SHMEM_BUILD_TEMPLATE@
 

@@ -109,6 +109,9 @@ if ('bisheng' in config.bisheng_compiler_executable and os.path.isfile(config.bi
     llvm_config.with_environment('BISHENG_INSTALL_PATH', os.path.dirname(
         config.bisheng_compiler_executable), append_path=True)
 
+if config.bishengir_enable_triton_compile:
+    config.available_features.add('enable_triton_ir_compiless')
+
 if shutil.which('hivmc'):
     config.available_features.add('hivmc')
 
