@@ -407,6 +407,52 @@ func.func @copy_before_collapse() {
 
 // -----
 
+// CHECK-LABEL: func.func @copy_before_multiple_collapse
+// CHECK-NOT: unrealized_conversion_cast
+// CHECK: %[[ALIGNED:.*]] = memref.alloc() : memref<2x2x2x16x1xbf16, #hivm.address_space<ub>>
+// CHECK: %[[SUBVIEW:.*]] = memref.subview %[[ALIGNED]]
+// CHECK-NOT: unrealized_conversion_cast
+// CHECK: %[[CONTIGUOUS_0:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[CONTIGUOUS_0]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
+// CHECK: memref.collapse_shape %[[CONTIGUOUS_0]] {{.*}} into memref<2x2x8xbf16, #hivm.address_space<ub>>
+// CHECK-NOT: unrealized_conversion_cast
+// CHECK: %[[CONTIGUOUS_1:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[CONTIGUOUS_1]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
+// CHECK: memref.collapse_shape %[[CONTIGUOUS_1]] {{.*}} into memref<2x16xbf16, #hivm.address_space<ub>>
+// CHECK-NOT: unrealized_conversion_cast
+// CHECK: %[[CONTIGUOUS_2:.*]] = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+// CHECK: hivm.hir.copy ins(%[[SUBVIEW]] : memref<2x2x2x4xbf16, strided<[64, 32, 16, 1]>, #hivm.address_space<ub>>) outs(%[[CONTIGUOUS_2]] : memref<2x2x2x4xbf16, #hivm.address_space<ub>>)
+// CHECK: memref.collapse_shape %[[CONTIGUOUS_2]] {{.*}} into memref<4x8xbf16, #hivm.address_space<ub>>
+// CHECK-NOT: unrealized_conversion_cast
+// CHECK: return
+func.func @copy_before_multiple_collapse() {
+  %src = memref.alloc() : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+  annotation.mark %src {hivm.stride_align_dims = array<i32: 2>, hivm.stride_align_value_in_byte = array<i32: 32>} : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+
+  %collapse0 = memref.collapse_shape %src [[0], [1], [2, 3]]
+    : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+    into memref<2x2x8xbf16, #hivm.address_space<ub>>
+  %collapse1 = memref.collapse_shape %src [[0], [1, 2, 3]]
+    : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+    into memref<2x16xbf16, #hivm.address_space<ub>>
+  %collapse2 = memref.collapse_shape %src [[0, 1], [2, 3]]
+    : memref<2x2x2x4xbf16, #hivm.address_space<ub>>
+    into memref<4x8xbf16, #hivm.address_space<ub>>
+
+  %dst0 = memref.alloc() : memref<2x2x8xbf16, #hivm.address_space<ub>>
+  %dst1 = memref.alloc() : memref<2x16xbf16, #hivm.address_space<ub>>
+  %dst2 = memref.alloc() : memref<4x8xbf16, #hivm.address_space<ub>>
+  memref.copy %collapse0, %dst0
+    : memref<2x2x8xbf16, #hivm.address_space<ub>> to memref<2x2x8xbf16, #hivm.address_space<ub>>
+  memref.copy %collapse1, %dst1
+    : memref<2x16xbf16, #hivm.address_space<ub>> to memref<2x16xbf16, #hivm.address_space<ub>>
+  memref.copy %collapse2, %dst2
+    : memref<4x8xbf16, #hivm.address_space<ub>> to memref<4x8xbf16, #hivm.address_space<ub>>
+  return
+}
+
+// -----
+
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
   // CHECK-LABEL: func @test_scale_buffer_size_on_align
   func.func @test_scale_buffer_size_on_align(%n: index) {

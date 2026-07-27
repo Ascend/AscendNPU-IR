@@ -1133,9 +1133,9 @@ FailureOrCastVec propagateYieldOp(RewriterBase &rewriter,
 /// This updates the parent scope::ScopeOp result type and inserts
 /// a conversion cast after the scope result to cast back to original type.
 FailureOrCastVec propagateScopeReturnOp(RewriterBase &rewriter,
-                                         UnrealizedConversionCastOp conversionOp,
-                                         scope::ReturnOp returnOp,
-                                         unsigned int operandIndex) {
+                                        UnrealizedConversionCastOp conversionOp,
+                                        scope::ReturnOp returnOp,
+                                        unsigned int operandIndex) {
   LDBG("propagate unrealized conversion cast down scope.return op : "
        << *returnOp);
   auto scopeOp = cast<scope::ScopeOp>(returnOp->getParentOp());
@@ -1145,9 +1145,8 @@ FailureOrCastVec propagateScopeReturnOp(RewriterBase &rewriter,
   auto alignedType = alignedValue.getType();
   auto origType = conversionOp.getResult(0).getType();
 
-  rewriter.modifyOpInPlace(returnOp, [&]() {
-    returnOp.setOperand(operandIndex, alignedValue);
-  });
+  rewriter.modifyOpInPlace(
+      returnOp, [&]() { returnOp.setOperand(operandIndex, alignedValue); });
 
   // Update scope.scope result type to aligned type
   auto scopeResult = scopeOp.getResult(operandIndex);
@@ -1561,8 +1560,12 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
     auto src = conversion.getInputs()[0];
     SmallVector<Operation *> writeSrc;
     findWriteOp(src, writeSrc);
-    for (OpOperand &use : conversion->getUses()) {
-      Operation *user = use.getOwner();
+    // Snapshot uses before rewriting because use.set() below mutates the
+    // conversion's use-list.
+    SmallVector<OpOperand *> uses = llvm::map_to_vector(
+        conversion->getUses(), [](OpOperand &operand) { return &operand; });
+    for (OpOperand *use : uses) {
+      Operation *user = use->getOwner();
       if (!user->hasAttr(propagateFailureName))
         continue;
       auto loc = conversion.getLoc();
@@ -1571,7 +1574,7 @@ void mlir::hivm::handlePropagateFailure(RewriterBase &rewriter,
       auto newDst = utils::createEmptyOp(rewriter, loc, dst);
       Operation *newCopy =
           rewriter.create<hivm::CopyOp>(loc, TypeRange{}, src, newDst);
-      rewriter.modifyOpInPlace(user, [&] { use.set(newDst); });
+      rewriter.modifyOpInPlace(user, [&] { use->set(newDst); });
 
       SmallVector<Operation *> writeNewDst;
       findWriteOp(newDst, writeNewDst);
@@ -1761,10 +1764,11 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
                 auto res = propagateSubViewOp(rewriter, conversion, subviewOp);
                 return UnrealizedCastOpVec{res};
               })
-              .Case([&rewriter,
-                     &conversion](memref::CollapseShapeOp collapseOp) {
-                return propagateCollapseShapeOp(rewriter, conversion, collapseOp);
-              })
+              .Case(
+                  [&rewriter, &conversion](memref::CollapseShapeOp collapseOp) {
+                    return propagateCollapseShapeOp(rewriter, conversion,
+                                                    collapseOp);
+                  })
               .Case([&rewriter, &conversion](memref::ExpandShapeOp expandOp) {
                 auto res =
                     propagateExpandShapeOp(rewriter, conversion, expandOp);
@@ -1790,7 +1794,7 @@ LogicalResult mlir::hivm::replaceAndPropagateMemRefType(RewriterBase &rewriter,
               })
               .Case([&rewriter, &conversion, &use](scope::ReturnOp returnOp) {
                 return propagateScopeReturnOp(rewriter, conversion, returnOp,
-                                             use->getOperandNumber());
+                                              use->getOperandNumber());
               })
               .Case([&rewriter,
                      &conversion](UnrealizedConversionCastOp conversionOp) {
