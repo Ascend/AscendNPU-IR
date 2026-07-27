@@ -24,6 +24,8 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 
+#include <optional>
+
 using namespace mlir;
 
 namespace {
@@ -33,6 +35,101 @@ constexpr static llvm::StringLiteral kPostVectorFuncTagName =
 
 constexpr static llvm::StringLiteral kPostVectorFuncArgsTagName =
     "post_vector_func_args";
+
+bool isI8LikeTensor(Value value) {
+  auto tensorType = dyn_cast<RankedTensorType>(value.getType());
+  if (!tensorType)
+    return false;
+
+  auto intType = dyn_cast<IntegerType>(tensorType.getElementType());
+  return intType && intType.getWidth() == 8;
+}
+
+bool isFormatMatchedFp8Type(Type elementType, hfusion::Dataformat format) {
+  switch (format) {
+  case hfusion::Dataformat::FP8E5M2_T:
+    return elementType.isFloat8E5M2();
+  case hfusion::Dataformat::FP8E4M3_T:
+    return elementType.isFloat8E4M3FN();
+  case hfusion::Dataformat::FP4E2M1_T:
+    return false;
+  }
+  llvm_unreachable("unsupported matmul_mx data format");
+}
+
+Value getBitcastInput(Value value) {
+  Operation *defOp = value.getDefiningOp();
+  if (!defOp)
+    return {};
+
+  if (auto bitcastOp = dyn_cast<arith::BitcastOp>(defOp))
+    return bitcastOp->getOperand(0);
+
+  if (auto bitcastOp = dyn_cast<hfusion::BitcastOp>(defOp))
+    return bitcastOp.getInputs().front();
+
+  return {};
+}
+
+FailureOr<Value> getFormattedI8Source(Value input,
+                                      std::optional<hfusion::Dataformat> format) {
+  if (!format)
+    return failure();
+
+  Value bitcastInput = getBitcastInput(input);
+  if (!bitcastInput)
+    return failure();
+
+  auto inputType = dyn_cast<RankedTensorType>(input.getType());
+  auto sourceType = dyn_cast<RankedTensorType>(bitcastInput.getType());
+  if (!inputType || !sourceType)
+    return failure();
+
+  if (!isI8LikeTensor(bitcastInput))
+    return failure();
+
+  if (inputType.getShape() != sourceType.getShape())
+    return failure();
+
+  if (!isFormatMatchedFp8Type(inputType.getElementType(), *format))
+    return failure();
+
+  return bitcastInput;
+}
+
+/// Fold formatted i8 storage through an i8->fp8 bitcast before converting
+/// matmul_mx. This keeps the existing transpose handling in MmadL1InfoCollector:
+/// after this rewrite, a transposed formatted input is again a direct
+/// linalg.transpose operand of matmul_mx.
+struct InlineMatmulMxInputBitcastPattern
+    : public OpRewritePattern<hfusion::MatMulMxOp> {
+  using OpRewritePattern<hfusion::MatMulMxOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(hfusion::MatMulMxOp op,
+                                PatternRewriter &rewriter) const override {
+    FailureOr<Value> lhsSource =
+        getFormattedI8Source(op.getInputA(), op.getLhsFormat());
+    if (failed(lhsSource))
+      return rewriter.notifyMatchFailure(
+          op, "lhs is not a matching i8-to-fp8 bitcast");
+
+    FailureOr<Value> rhsSource =
+        getFormattedI8Source(op.getInputB(), op.getRhsFormat());
+    if (failed(rhsSource))
+      return rewriter.notifyMatchFailure(
+          op, "rhs is not a matching i8-to-fp8 bitcast");
+
+    OperationState state(op.getLoc(), op->getName());
+    state.addOperands({*lhsSource, *rhsSource, op.getScaleA(), op.getScaleB(),
+                       op.getAcc()});
+    state.addTypes(op->getResultTypes());
+    state.addAttributes(op->getAttrs());
+
+    Operation *newOp = rewriter.create(state);
+    rewriter.replaceOp(op, newOp->getResults());
+    return success();
+  }
+};
 
 //===----------------------------------------------------------------------===//
 // Conversion to HIVM Local MatmulOp
@@ -550,6 +647,10 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     auto rhsAttr =
         rhsFmt ? rewriter.getI32IntegerAttr(static_cast<int32_t>(*rhsFmt))
                : nullptr;
+    Value inputA = info.getA();
+    Value inputB = info.getB();
+    UnitAttr transposeA = info.getTransposeAFlag(rewriter);
+    UnitAttr transposeB = info.getTransposeBFlag(rewriter);
 
     Value initCondition;
     Value init = info.getC();
@@ -578,11 +679,10 @@ struct MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp> :
     Operation *newResult =
         rewriter
             .create<hivm::MmadMxL1Op>(
-                op->getLoc(), op->getResultTypes(), info.getA(), info.getB(),
+                op->getLoc(), op->getResultTypes(), inputA, inputB,
                 op.getScaleA(), op.getScaleB(), initCondition, zeroCst,
-                zeroCst, zeroCst, init, lhsAttr, rhsAttr,
-                info.getTransposeAFlag(rewriter),
-                info.getTransposeBFlag(rewriter), ValueRange{})
+                zeroCst, zeroCst, init, lhsAttr, rhsAttr, transposeA,
+                transposeB, /*per_channel_bias=*/Value{})
             .getOperation();
 
     rewriter.replaceOp(op, newResult);
@@ -611,6 +711,8 @@ void mlir::populateMatmulPatternsAndLegality(
     patterns.add<MatmulOpToHIVMMatmulOp<hfusion::GroupMatmulOp>>(
         patterns.getContext());
   }
+  patterns.add<InlineMatmulMxInputBitcastPattern>(patterns.getContext(),
+                                                  PatternBenefit(2));
   patterns.add<MatmulOpToHIVMMatmulOp<hfusion::MatMulMxOp>>(
       patterns.getContext());
 }

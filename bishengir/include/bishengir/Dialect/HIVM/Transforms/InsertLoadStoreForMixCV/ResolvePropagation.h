@@ -21,6 +21,7 @@
 #include "bishengir/Dialect/HIVM/Transforms/InsertLoadStoreForMixCV/Utils.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
@@ -73,8 +74,11 @@ class TightCoupledBufferResolvePropagationPattern
 public:
   using OpRewritePattern<UnrealizedConversionCastOp>::OpRewritePattern;
 
-  explicit TightCoupledBufferResolvePropagationPattern(MLIRContext *ctx)
-      : OpRewritePattern(ctx, /*benefit=*/PipePriority::RegbaseResolve) {}
+  TightCoupledBufferResolvePropagationPattern(MLIRContext *ctx,
+                                              bool inferFixpipeDmaMode)
+      : OpRewritePattern<UnrealizedConversionCastOp>(
+            ctx, /*benefit=*/PipePriority::RegbaseResolve),
+        inferFixpipeDmaMode(inferFixpipeDmaMode) {}
 
   LogicalResult matchAndRewrite(UnrealizedConversionCastOp upPropOp,
                                 PatternRewriter &rewriter) const override;
@@ -82,6 +86,13 @@ public:
   LogicalResult resolveUBToL1(UnrealizedConversionCastOp downPropOp,
                                    UnrealizedConversionCastOp upPropOp,
                                    PatternRewriter &rewriter) const;
+
+  LogicalResult resolveL0CToUB(UnrealizedConversionCastOp downPropOp,
+                               UnrealizedConversionCastOp upPropOp,
+                               PatternRewriter &rewriter) const;
+
+private:
+  const bool inferFixpipeDmaMode;
 };
 
 /// Remove redundant propagation.

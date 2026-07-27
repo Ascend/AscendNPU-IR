@@ -130,7 +130,7 @@ func.func @fold_direct_load_annotation_mark(%arg0: memref<16x16xf16, strided<[?,
 // CHECK: %[[RES:.*]] = hivm.hir.nd2nz {dst_continuous} ins(%[[SRC:.*]] : tensor<64x64xf32>) outs(%[[EMPTY]] : tensor<8x4x16x8xf32>) -> tensor<8x4x16x8xf32>
 // CHECK: return %[[RES]] : tensor<8x4x16x8xf32>
 func.func @fold_tensor_load_convert_layout(%src: tensor<64x64xf32>, %l1_init: tensor<64x64xf32>) -> tensor<8x4x16x8xf32> {
-  %load = hivm.hir.load ins(%src : tensor<64x64xf32>) outs(%l1_init : tensor<64x64xf32>) {"inserted-load"} core_type = <CUBE> -> tensor<64x64xf32>
+  %load = hivm.hir.load ins(%src : tensor<64x64xf32>) outs(%l1_init : tensor<64x64xf32>) {"hivm.inserted-load"} core_type = <CUBE> -> tensor<64x64xf32>
   %conv = hivm.hir.convert_layout %load output_shape [8, 4, 16, 8] {dstLayout = #hivm.data_layout<Fractal, fractalSizes = [16, 8]>, srcLayout = #hivm.data_layout<ND>} : (tensor<64x64xf32>) -> tensor<8x4x16x8xf32>
   return %conv : tensor<8x4x16x8xf32>
 }

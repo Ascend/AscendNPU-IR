@@ -5,7 +5,7 @@
 // CHECK-SAME: tensor<16x16xi1>
 // CHECK: hivm.hir.store
 // CHECK-SAME: tensor<1xi8>
-// CHECK-SAME: "inserted-store"
+// CHECK-SAME: "hivm.inserted-store"
 // CHECK: DuplicateTensorExtractForCube::replacementLabel
 // CHECK: hivm.hir.mmadL1
 func.func @extract_i1_for_cube_init(
@@ -81,7 +81,7 @@ func.func @test_extract_cube_tcore(%arg0: memref<?xf32>, %arg1: tensor<128x128xf
 // CHECK-LABEL: @extract_cube_user_via_scf_for_iterarg
 // CHECK: hivm.hir.vsel
 // CHECK: hivm.hir.store
-// CHECK-SAME: "inserted-store"
+// CHECK-SAME: "hivm.inserted-store"
 // CHECK: DuplicateTensorExtractForCube::replacementLabel
 // CHECK: scf.for
 // CHECK: hivm.hir.mmadL1

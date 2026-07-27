@@ -198,18 +198,6 @@ private:
   AllOpKindAnalyzer analyzer;
 };
 
-class NMostOpKind : public FusionKindBase {
-public:
-  FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;
-
-  explicit NMostOpKind(const VFFusionKindOption &option)
-      : FusionKindBase(option), analyzer(option, N) {};
-
-private:
-  const size_t N = 8;
-  NMostOpKindAnalyzer analyzer;
-};
-
 class MaxParallelKind : public FusionKindBase {
 public:
   FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) override;

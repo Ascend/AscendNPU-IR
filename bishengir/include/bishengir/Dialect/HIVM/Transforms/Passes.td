@@ -819,7 +819,10 @@ def InsertLoadStoreForMixCV
     Option<
       "disableTightCoupledBuffer", "disable-tight-coupled-buffer", "bool",
       /*default=*/"false",
-      "Disable Tight Coupled Buffer Allocation">];
+      "Disable Tight Coupled Buffer Allocation">,
+    Option<"inferFixpipeDmaMode", "infer-fixpipe-dma-mode", "bool",
+           /*default=*/"false",
+           "Infer fixpipe dma_mode from source/destination shape compatibility.">];
 }
 
 def InsertCVTightCoupledBuffer
@@ -829,6 +832,10 @@ def InsertCVTightCoupledBuffer
   let dependentDialects = ["hivm::HIVMDialect",
                            "bufferization::BufferizationDialect",
                            "annotation::AnnotationDialect"];
+  let options = [Option<
+    "onlyInsertTightlyCoupledBuffer", "only-insert-tightly-coupled-buffer", "bool",
+    /*default=*/"false",
+    "only insert tightly coupled buffer">];
 }
 
 def InsertLoadStoreForScalar

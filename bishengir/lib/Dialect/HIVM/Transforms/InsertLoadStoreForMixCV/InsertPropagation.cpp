@@ -193,7 +193,7 @@ InsertPropagationPattern::handleSpecialCase(Operation *op,
       return failure();
     }
     if (auto storeOp = extractOp.getTensor().getDefiningOp<hivm::StoreOp>();
-        storeOp && storeOp->hasAttr("inserted-store")) {
+        storeOp && storeOp->hasAttr(hivm::kInsertedStoreAttr::name)) {
       PropagatorUtil::createPropagatorsUp(op, hivm::AddressSpace::GM, rewriter);
       return success();
     }

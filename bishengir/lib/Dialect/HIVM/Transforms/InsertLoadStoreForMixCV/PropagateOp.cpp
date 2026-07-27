@@ -38,6 +38,9 @@ static bool checkPropagate(PropagationStep step,
                            UnrealizedConversionCastOp propagateOp) {
   auto addressSpaces = PropagatorUtil::getAddressSpace(propagateOp);
   switch (step) {
+  case PropagationStep::L0C:
+    return llvm::find(addressSpaces, hivm::AddressSpace::L0C) !=
+           addressSpaces.end();
   case PropagationStep::LOCAL:
     return PropagatorUtil::getCoreType(propagateOp) ==
            TCoreType::CUBE_AND_VECTOR;

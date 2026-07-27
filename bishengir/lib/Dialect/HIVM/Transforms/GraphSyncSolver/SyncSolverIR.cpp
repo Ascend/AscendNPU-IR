@@ -48,8 +48,11 @@ std::string getOpTypeStr(OpType opType) {
       {OpType::WAIT_FLAG_OP, "WaitFlagOp"},
       {OpType::RW_OPERATION, "RWOperation"},
       {OpType::MMAD_OPERATION, "MmadOp"},
+      {OpType::MMAD_MX_SCOPE, "MmadMxLoop"},
       {OpType::MMAD_LOAD_L0A_OPERATION, "LoadMmadL0AOp"},
       {OpType::MMAD_LOAD_L0B_OPERATION, "LoadMmadL0BOp"},
+      {OpType::MMAD_LOAD_L0A_MX_OPERATION, "LoadMmadL0AMxOp"},
+      {OpType::MMAD_LOAD_L0B_MX_OPERATION, "LoadMmadL0BMxOp"},
       {OpType::MMAD_LOAD_BIAS_OPERATION, "LoadMmadBias"},
       {OpType::RW_OPERATION_END, "RW_OPERATION_END"},
   };
@@ -99,6 +102,11 @@ std::string PointerLikeInfo::str() {
     ret += comma.get();
     ret += std::to_string(allocateSize.value());
   }
+  ret += comma.get();
+  ret += std::string("isWorkSpace=") + (isWorkSpace ? "true" : "false");
+  ret += comma.get();
+  ret += std::string("isTightlyCoupledBuffer=") +
+         (isTightlyCoupledBuffer ? "true" : "false");
   ret += ")";
   return ret;
 }

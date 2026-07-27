@@ -362,6 +362,74 @@ IRTranslator::getDecomposedMmadl1(hivm::MmadL1Op mmadl1Op,
   return outerScopeOp;
 }
 
+// Decompose MmadMxL1Ops into a small inline sequence in the IR for
+// easier sync handling with independent ScaleA/ScaleB eventIds.
+std::unique_ptr<OperationBase>
+IRTranslator::getDecomposedMmadMxL1(hivm::MmadMxL1Op mmadMxL1Op,
+                                    OperationBase *parentOp) {
+
+  auto outerScopeOp = std::make_unique<Scope>();
+  outerScopeOp->parentOp = parentOp;
+  outerScopeOp->op = mmadMxL1Op;
+
+  auto mmadMxL1LoopOp =
+      std::make_unique<MmadMxL1LoopOp>(mmadMxL1Op, outerScopeOp.get());
+  auto scopeOp = std::make_unique<Scope>();
+  scopeOp->parentOp = mmadMxL1LoopOp.get();
+  auto coreType = TCoreType::CUBE_OR_VECTOR;
+  if (options.isCrossCoreMode()) {
+    coreType = TCoreType::CUBE;
+  }
+
+  // Sub-op 1: LoadL0A — MTE1, read A
+  auto loadL0aOp = std::make_unique<LoadL0AOp>(
+      nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+      hivm::PIPE::PIPE_MTE1, getMemoryOps({mmadMxL1Op.getA()}),
+      SmallVector<Value>());
+  scopeOp->body.push_back(std::move(loadL0aOp));
+
+  // Sub-op 2: LoadL0AMx — MTE1, read ScaleA (NEW)
+  auto loadL0aMxOp = std::make_unique<LoadL0AMxOp>(
+      nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+      hivm::PIPE::PIPE_MTE1, getMemoryOps({mmadMxL1Op.getScaleA()}),
+      SmallVector<Value>());
+  scopeOp->body.push_back(std::move(loadL0aMxOp));
+
+  // Sub-op 3: LoadL0B — MTE1, read B
+  auto loadL0bOp = std::make_unique<LoadL0BOp>(
+      nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+      hivm::PIPE::PIPE_MTE1, getMemoryOps({mmadMxL1Op.getB()}),
+      SmallVector<Value>());
+  scopeOp->body.push_back(std::move(loadL0bOp));
+
+  // Sub-op 4: LoadL0BMx — MTE1, read ScaleB (NEW)
+  auto loadL0bMxOp = std::make_unique<LoadL0BMxOp>(
+      nullptr, scopeOp.get(), coreType, hivm::PIPE::PIPE_MTE1,
+      hivm::PIPE::PIPE_MTE1, getMemoryOps({mmadMxL1Op.getScaleB()}),
+      SmallVector<Value>());
+  scopeOp->body.push_back(std::move(loadL0bMxOp));
+
+  // Sub-op 5: MmadL0 — M, write C (no UnitFlag for MxL1)
+  auto mmadl0Op = std::make_unique<MmadL0Operation>(
+      mmadMxL1Op, scopeOp.get(), coreType, hivm::PIPE::PIPE_M, hivm::PIPE::PIPE_M,
+      SmallVector<Value>(), getMemoryOps({mmadMxL1Op.getC()}));
+  // MmadMxL1Op does not support UnitFlag
+  mmadMxL1LoopOp->mmadL0Op = mmadl0Op.get();
+  scopeOp->body.push_back(std::move(mmadl0Op));
+  mmadMxL1LoopOp->body.push_back(std::move(scopeOp));
+
+  auto beforePlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, mmadMxL1LoopOp->parentOp);
+  beforePlaceHolderOp->beforeOp = mmadMxL1LoopOp.get();
+  auto afterPlaceHolderOp =
+      std::make_unique<PlaceHolder>(nullptr, mmadMxL1LoopOp->parentOp);
+  afterPlaceHolderOp->afterOp = mmadMxL1LoopOp.get();
+  outerScopeOp->body.push_back(std::move(beforePlaceHolderOp));
+  outerScopeOp->body.push_back(std::move(mmadMxL1LoopOp));
+  outerScopeOp->body.push_back(std::move(afterPlaceHolderOp));
+  return outerScopeOp;
+}
+
 bool IRTranslator::isVectorOpResult(Value value) {
   if (auto resultVal = dyn_cast<OpResult>(value)) {
     if (auto op = dyn_cast<CoreTypeInterface>(resultVal.getDefiningOp())) {
@@ -427,6 +495,9 @@ IRTranslator::getDestinationStyleInterfaceOp(Operation *op,
   if (options.decomposeMmadl1Op) {
     if (auto mmadl1Op = dyn_cast<hivm::MmadL1Op>(op)) {
       return getDecomposedMmadl1(mmadl1Op, parentOp);
+    }
+    if (auto mmadMxL1Op = dyn_cast<hivm::MmadMxL1Op>(op)) {
+      return getDecomposedMmadMxL1(mmadMxL1Op, parentOp);
     }
   }
   auto coreTypeVal = hivm::TCoreType::CUBE_OR_VECTOR;

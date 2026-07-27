@@ -29,6 +29,7 @@ namespace mlir {
 namespace hivm {
 
 enum class PropagationStep {
+  L0C,
   LOCAL,
   GM,
   UB,

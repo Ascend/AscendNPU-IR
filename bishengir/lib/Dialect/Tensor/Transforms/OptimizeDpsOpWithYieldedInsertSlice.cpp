@@ -63,6 +63,15 @@ static bool hasBufferStoreUserInLoop(Value root, scf::ForOp forOp) {
 /// must not redirect uses that are not part of the load/data path.
 static bool hasUnexpectedUserInLoop(Value toTensorMemref, Value allocRoot,
                                     scf::ForOp forOp) {
+  // When the same memref feeds multiple to_tensor ops inside the loop,
+  // replaceAllUsesWith would redirect all to_tensors to the first
+  // matched big-alloc subview. Bail out.
+  int toTensorCount = 0;
+  for (Operation *user : toTensorMemref.getUsers())
+    if (isa<bufferization::ToTensorOp>(user) && forOp->isAncestor(user) &&
+        ++toTensorCount > 1)
+      return true;
+
   SmallVector<Value> workList = {allocRoot};
   llvm::SmallPtrSet<Value, 8> visited;
   while (!workList.empty()) {
@@ -252,15 +261,35 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
                                   allocOp.getResult(), forOp))
         return failure();
 
-      // Check if the iter_arg init is a vbrc (scalar broadcast fill).
-      // If so, record the fill scalar to replicate the init on the big alloc.
+      // When the same memref feeds more than one iter_arg via
+      // different insert_slices, the first info's replaceAllUsesWith
+      // would redirect the to_tensor to the first big-alloc subview,
+      // starving subsequent big allocs of fill data. Reject the entire
+      // forOp for this pattern.
+      if (llvm::any_of(infos, [&](const InsertSliceInfo &existing) {
+            return existing.memcast == toTensorOp.getMemref();
+          }))
+        return failure();
+
+      // Guard: iter_arg init must be a "fresh" buffer (tensor.empty or
+      // scalar vbrc). If the init carries external data (call result,
+      // block arg, another forOp result, etc.), skip this iter_arg.
+      Value initArg = forOp.getInitArgs()[idx];
       Value vbrcScalar = nullptr;
-      if (auto vbrcOp =
-              forOp.getInitArgs()[idx].getDefiningOp<hivm::VBrcOp>()) {
+
+      if (isa_and_nonnull<tensor::EmptyOp>(initArg.getDefiningOp())) {
+        // Fresh empty tensor — will create new big alloc.
+      } else if (auto vbrcOp =
+                     initArg.getDefiningOp<hivm::VBrcOp>()) {
         auto src = vbrcOp.getSrc();
-        // Only track scalar vbrc (fill a scalar value into the entire tensor).
         if (isa<FloatType, IntegerType>(src.getType()))
           vbrcScalar = src;
+        else
+          continue; // Non-scalar vbrc (e.g. tensor broadcast) — cannot replicate
+      } else {
+        // Init carries external data (call result, block arg, etc.).
+        // Cannot safely discard — skip this iter_arg.
+        continue;
       }
 
       infos.push_back(
@@ -409,13 +438,12 @@ struct HoistAllocForInsertSliceLoad : public OpRewritePattern<scf::ForOp> {
     }
 
     // 3. Replace uses of old forOp tensor results with to_tensor results.
-    //    The forOp itself stays in place (with dead tensor results).
-    unsigned toTensorResIdx = 0;
-    for (auto [idx, iterArg] : llvm::enumerate(iterArgs)) {
-      if (isa<RankedTensorType>(iterArg.getType())) {
-        rewriter.replaceAllUsesWith(forOp.getResult(idx),
-                                    toTensorResults[toTensorResIdx++]);
-      }
+    //    Only replace results that were matched (in infos). Iterating over
+    //    infos avoids index misalignment when some tensor iter_args were
+    //    skipped (e.g., init carries external data).
+    for (auto [i, info] : llvm::enumerate(infos)) {
+      rewriter.replaceAllUsesWith(forOp.getResult(info.resultIdx),
+                                  toTensorResults[i]);
     }
 
     // 4. If we created a vbrc on the big alloc, replace the corresponding
