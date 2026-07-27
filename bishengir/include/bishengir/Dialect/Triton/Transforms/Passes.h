@@ -20,6 +20,10 @@ namespace bishengir {
 
 namespace triton {
 
+/// Creates a pass that converts tensors with non power of 2 dimensions
+/// into tensors with power of 2 dimensions
+std::unique_ptr<mlir::Pass> createConvertNonPowerTwoTensorsPass();
+
 /// Creates wrappers and attributes for SIMT functions
 std::unique_ptr<mlir::Pass>
 createAdaptGPUKernelPass(TritonRemapOptions options = {});

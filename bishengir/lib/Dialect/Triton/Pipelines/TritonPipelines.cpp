@@ -101,6 +101,7 @@ void buildLowerTritonPipeline(OpPassManager &pm,
   bishengir::SetBishengirSimtOptAttrOptions optionsSimtOpt;
   optionsSimtOpt.enableBishengirSimtOptimization =
       options.enableBishengirSimtOptimization;
+  pm.addNestedPass<mlir::triton::FuncOp>(createConvertNonPowerTwoTensorsPass());
   pm.addPass(
       bishengir::triton::createSetBishengirSimtOptAttrPass(optionsSimtOpt));
   AdaptTritonIRKernelOptions adaptOpt;

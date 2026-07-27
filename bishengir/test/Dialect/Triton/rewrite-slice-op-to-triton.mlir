@@ -9,9 +9,15 @@
 // CHECK: arith.cmpi sge
 // CHECK: arith.cmpi slt
 // CHECK: arith.andi
+// CHECK: tt.make_range
+// CHECK: arith.subi
+// CHECK: arith.addi
+// CHECK: arith.cmpi sge
+// CHECK: arith.select
 // CHECK: tt.expand_dims
 // CHECK: tt.broadcast
 // CHECK: tt.reshape
+// CHECK: tt.gather
 // CHECK: arith.select
 // CHECK: return
 func.func @insertSlice1D(%src: tensor<2xbf16>, %dst: tensor<8xbf16>, %offset: index) -> tensor<8xbf16> {
@@ -27,9 +33,17 @@ func.func @insertSlice1D(%src: tensor<2xbf16>, %dst: tensor<8xbf16>, %offset: in
 // CHECK: arith.cmpi eq
 // CHECK: tt.expand_dims
 // CHECK: tt.broadcast
+// CHECK: tt.make_range
+// CHECK: arith.subi
+// CHECK: arith.addi
+// CHECK: arith.cmpi sge
+// CHECK: arith.select
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
 // CHECK: tt.expand_dims
 // CHECK: tt.broadcast
 // CHECK: tt.reshape
+// CHECK: tt.gather
 // CHECK: arith.select
 // CHECK: return
 func.func @axis0InsertSlice2D(%src: tensor<1x16xf32>, %dst: tensor<8x16xf32>, %offset: index) -> tensor<8x16xf32> {
@@ -47,9 +61,17 @@ func.func @axis0InsertSlice2D(%src: tensor<1x16xf32>, %dst: tensor<8x16xf32>, %o
 // CHECK: arith.andi
 // CHECK: tt.expand_dims
 // CHECK: tt.broadcast
+// CHECK: tt.make_range
+// CHECK: arith.subi
+// CHECK: arith.addi
+// CHECK: arith.cmpi sge
+// CHECK: arith.select
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
 // CHECK: tt.expand_dims
 // CHECK: tt.broadcast
 // CHECK: tt.reshape
+// CHECK: tt.gather
 // CHECK: arith.select
 // CHECK: return
 func.func @axis1InsertSlice2D(%src: tensor<8x2xf32>, %dst: tensor<8x16xf32>, %offset: index) -> tensor<8x16xf32> {
@@ -433,10 +455,17 @@ func.func @bad_non_pow2_size(%src: tensor<8x16xbf16>) -> tensor<3x16xbf16> {
 
 // -----
 
-// Offset not a multiple of size must error out.  S = 2 but r = 3.
-func.func @bad_unaligned_offset(%src: tensor<8x16xbf16>) -> tensor<2x16xbf16> {
-  // expected-error @+2 {{must be a multiple of size 2}}
-  // expected-error @+1 {{Unsupported tensor slicing operations found in the SIMT kernel}}
+// Offset not a multiple of size must use dynamic extract_slice lowering.  S = 2 but r = 3.
+// CHECK-LABEL: @extract_slice_unaligned_offset
+// CHECK-SAME: (%[[SRC:.*]]: tensor<8x16xbf16>)
+// CHECK: %[[OFF:.*]] = arith.constant dense<3>
+// CHECK-NEXT: %[[RANGE:.*]] = tt.make_range {end = 2 : i32, start = 0 : i32}
+// CHECK-NEXT: %[[IDX1D:.*]] = arith.addi %[[RANGE]], %[[OFF]]
+// CHECK-NEXT: %[[IDX2D:.*]] = tt.reshape %[[IDX1D]] : tensor<2xi32> -> tensor<2x1xi32>
+// CHECK-NEXT: %[[BCAST:.*]] = tt.broadcast %[[IDX2D]] : tensor<2x1xi32> -> tensor<2x16xi32>
+// CHECK-NEXT: %[[G:.*]] = tt.gather %[[SRC]][%[[BCAST]]] {axis = 0 : i32} : (tensor<8x16xbf16>, tensor<2x16xi32>) -> tensor<2x16xbf16>
+// CHECK-NEXT: return %[[G]] : tensor<2x16xbf16>
+func.func @extract_slice_unaligned_offset(%src: tensor<8x16xbf16>) -> tensor<2x16xbf16> {
   %0 = tensor.extract_slice %src[3, 0] [2, 16] [1, 1] : tensor<8x16xbf16> to tensor<2x16xbf16>
   return %0 : tensor<2x16xbf16>
 }
@@ -545,10 +574,29 @@ func.func @insert_bad_multi_axis(%src: tensor<1x1x16xbf16>, %dst: tensor<4x4x16x
 
 // -----
 
-// Unaligned offset must error out.  S = 2 but r = 3.
-func.func @insert_bad_unaligned_offset(%src: tensor<2x16xbf16>, %dst: tensor<8x16xbf16>) -> tensor<8x16xbf16> {
-  // expected-error @+2 {{must be a multiple of size 2}}
-  // expected-error @+1 {{Unsupported tensor slicing operations found in the SIMT kernel}}
+// Unaligned offset must use dynamic insert_slice lowering. S = 2 but r = 3.
+// CHECK-LABEL: @insert_unaligned_offset
+// CHECK-NOT: tensor.insert_slice
+// CHECK-NOT: arith.cmpi eq
+// CHECK: arith.constant dense<3>
+// CHECK: arith.cmpi sge
+// CHECK: arith.cmpi slt
+// CHECK: arith.andi
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.make_range
+// CHECK: arith.subi
+// CHECK: arith.addi
+// CHECK: arith.cmpi sge
+// CHECK: arith.select
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.expand_dims
+// CHECK: tt.broadcast
+// CHECK: tt.reshape
+// CHECK: tt.gather
+// CHECK: arith.select
+func.func @insert_unaligned_offset(%src: tensor<2x16xbf16>, %dst: tensor<8x16xbf16>) -> tensor<8x16xbf16> {
   %0 = tensor.insert_slice %src into %dst[3, 0] [2, 16] [1, 1] : tensor<2x16xbf16> into tensor<8x16xbf16>
   return %0 : tensor<8x16xbf16>
 }
