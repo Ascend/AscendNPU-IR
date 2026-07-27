@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 
 using namespace bishengir;
@@ -49,6 +50,9 @@ DecomposePhase VDeinterleaveOp::getDecomposePhase() {
 //===----------------------------------------------------------------------===//
 
 DecomposePhase LoadOp::getDecomposePhase() {
+  auto moduleOp = getOperation()->getParentOfType<mlir::ModuleOp>();
+  if (moduleOp && mlir::hacc::utils::isRegBasedArch(moduleOp))
+    return DecomposePhase::NO_CONSTRAINT;
   return DecomposePhase::BEFORE_HIVM_STRIDE_ALIGNMENT;
 }
 

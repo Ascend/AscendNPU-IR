@@ -520,10 +520,21 @@ FailureOr<SmallVector<Value>> LoadOp::decomposeOperation(OpBuilder &b) {
   if (!getInitOutBuffer())
     return failure();
 
-  MemRefType dstMemRefTy = cast<MemRefType>(getDst().getType());
-  auto toAddrSpace = cast<hivm::AddressSpaceAttr>(dstMemRefTy.getMemorySpace());
-  if (toAddrSpace.getAddressSpace() != hivm::AddressSpace::UB)
-    return failure();
+  // RegBase vector loads must expose their padding broadcast before delayed
+  // vectorization, when the destination memory space may not be inferred yet.
+  auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
+  std::optional<TFuncCoreType> funcCoreType = queryFuncCoreType(funcOp);
+  FailureOr<TCoreType> coreType = getCoreType(*this);
+  bool isAiv = funcCoreType && funcCoreType.value() == TFuncCoreType::AIV;
+  bool isVector = succeeded(coreType) && coreType.value() == TCoreType::VECTOR;
+
+  if (!isAiv && !isVector) {
+    MemRefType dstMemRefTy = cast<MemRefType>(getDst().getType());
+    auto toAddrSpace =
+        dyn_cast_or_null<hivm::AddressSpaceAttr>(dstMemRefTy.getMemorySpace());
+    if (!toAddrSpace || toAddrSpace.getAddressSpace() != hivm::AddressSpace::UB)
+      return failure();
+  }
 
   FailureOr<Value> padBuffer = getVBrcPadBuffer(getDst(), b);
   if (failed(padBuffer))

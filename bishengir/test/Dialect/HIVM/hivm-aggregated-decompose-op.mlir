@@ -4,6 +4,7 @@
 // RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-hivm-recognize-deinterleave" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERDEINTERLEAVE
 // RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-hivm-recognize-broadcast" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERBROADCAST
 // RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=after-hivm-lift-lowest-stride" -split-input-file -verify-diagnostics | FileCheck %s  --check-prefix=AFTERLIFT
+// RUN: bishengir-opt %s -hivm-aggregated-decompose-op="decompose-phase=no-constraint" -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=NOCONSTRAINT
 
 // AFTERALIGN-LABEL: func @test_static_concat_last_dim
 func.func @test_static_concat_last_dim() -> memref<136x4096xf32> {
@@ -722,6 +723,24 @@ func.func @brc_tensor_aiv(%arg0: memref<16x32xf16, strided<[?, 1], offset: ?>>, 
   %2 = hivm.hir.vtranspose ins(%0 : tensor<16x32xf16>) outs(%1 : tensor<32x16xf16>) permutation = [1, 0] -> tensor<32x16xf16>
   return %0 : tensor<16x32xf16>
 }
+
+// -----
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  // NOCONSTRAINT-LABEL: func.func @brc_tensor_aiv_before_memscope
+  func.func @brc_tensor_aiv_before_memscope(%arg0: memref<16x32xbf16, strided<[?, 1], offset: ?>>, %arg1: index, %arg2: i1) attributes {hivm.func_core_type = #hivm.func_core_type<AIV>} {
+    %c0 = arith.constant 0 : index
+    %cst = arith.constant 0.000000e+00 : bf16
+    %alloc = memref.alloc() : memref<16x32xbf16>
+    %subview = memref.subview %arg0[0, 0] [%arg1, 32] [1, 1] : memref<16x32xbf16, strided<[?, 1], offset: ?>> to memref<?x32xbf16, strided<[?, 1], offset: ?>>
+    %subview_0 = memref.subview %alloc[0, 0] [%arg1, 32] [1, 1] : memref<16x32xbf16> to memref<?x32xbf16, strided<[32, 1]>>
+    // NOCONSTRAINT: scf.if
+    // NOCONSTRAINT-NEXT: hivm.hir.vbrc
+    // NOCONSTRAINT: hivm.hir.load
+    hivm.hir.load ins(%subview : memref<?x32xbf16, strided<[?, 1], offset: ?>>) outs(%subview_0 : memref<?x32xbf16, strided<[32, 1]>>) pad_mode = <PadValue> pad_value = %cst : bf16 left_padding_num = %c0 : index init_out_buffer = true init_condition = %arg2 : i1
+    return
+  }
+}
+
 // -----
 // When the nd2nz dst is a subview of an alloc carrying an
 // `annotation.mark` with the `hivm.cv_pipelined_multi_buffer` attribute
