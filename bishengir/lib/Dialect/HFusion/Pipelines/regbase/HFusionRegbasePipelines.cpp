@@ -195,7 +195,8 @@ static void preProcess(OpPassManager &pm,
   decomposeOptions.hfusionDecomposePhase =
       bishengir::DecomposePhase::NO_CONSTRAINT;
   pm.nest<func::FuncOp>().addPass(createDecomposePass(decomposeOptions));
-  pm.nest<func::FuncOp>().addPass(createHFusionNormalizeSliceOpsPass());
+  pm.nest<func::FuncOp>().addPass(createHFusionNormalizeSliceOpsPass(
+      /*skipAlignedSlice=*/options.enableTritonKernelCompile));
   pm.nest<func::FuncOp>().addPass(createGenericUnrollerPass());
 
   NormalizeOptions normalizeOptions;
