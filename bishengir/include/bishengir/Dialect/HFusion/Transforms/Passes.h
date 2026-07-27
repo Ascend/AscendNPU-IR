@@ -53,6 +53,8 @@ namespace mlir {
 
 namespace hfusion {
 
+constexpr llvm::StringLiteral kFillVFAttrName = "hfusion.has_fill";
+
 class OutlineFuncOptions : public HFusionOpFusionOptions {
 public:
   OutlineFuncOptions(const HFusionOpFusionOptions &options, func::FuncOp funcOp)

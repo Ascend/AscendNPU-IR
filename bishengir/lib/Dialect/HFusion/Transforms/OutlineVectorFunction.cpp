@@ -56,8 +56,13 @@ static bool loopHasOutlinedLoopAttr(Operation *op) {
   return false;
 }
 
+/// `isFill` marks a vector function outlined around a fill, so that a later
+/// pass can look for a constant to forward to its readers without having to
+/// hunt for fills by inspecting every function body. Whether the fill really
+/// does stamp a compile-time constant is for that pass to establish.
 static void outlineLoopsIntoVF(SmallVector<Value> &loopHandles, Location loc,
-                               OpBuilder &builder, std::string vfName) {
+                               OpBuilder &builder, std::string vfName,
+                               bool isFill = false) {
   if (loopHandles.size() == 0)
     return;
   auto outlineOp = builder.create<transform::ExtendedLoopOutlineOp>(
@@ -70,6 +75,9 @@ static void outlineLoopsIntoVF(SmallVector<Value> &loopHandles, Location loc,
                                         nullptr);
   builder.create<transform::AnnotateOp>(loc, outlineOp.getFunction(),
                                         "no_inline", nullptr);
+  if (isFill)
+    builder.create<transform::AnnotateOp>(loc, outlineOp.getFunction(),
+                                          kFillVFAttrName, nullptr);
   builder.create<transform::AnnotateOp>(
       loc, outlineOp.getCall(), mlir::hivm::VectorFunctionAttr::name, nullptr);
   builder.create<transform::AnnotateOp>(loc, outlineOp.getCall(), "no_inline",
@@ -167,7 +175,8 @@ void OutlineVectorFunctionPass::runOnOperation() {
           loopHandles.push_back(
               getOpTransformHandle(loopLabel, builder, seqOp));
           outlineLoopsIntoVF(loopHandles, loc, builder,
-                             vfNamePrefix + std::to_string(vfIdx));
+                             vfNamePrefix + std::to_string(vfIdx),
+                             /*isFill=*/true);
           prevLoop = nullptr;
         } else if (loopHasOutlinedLoopAttr(op)) {
           assert(isa<scf::ForOp>(op));
