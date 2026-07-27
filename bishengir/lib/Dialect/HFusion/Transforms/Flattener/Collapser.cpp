@@ -1541,7 +1541,8 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
     return success();
   }
 
-  if (isa_and_present<hfusion::MulExtOp>(op)) {
+  if (isa_and_present<hfusion::MulExtOp>(op) ||
+      isa_and_present<hfusion::MulExtUiOp>(op)) {
     adjustResultTypeFromOperand(op);
     return success();
   }
