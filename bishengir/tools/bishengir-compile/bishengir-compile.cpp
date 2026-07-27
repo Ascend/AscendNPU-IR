@@ -19,6 +19,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <fstream>
+
 #include "bishengir/Config/bishengir-config.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/InitAllDialects.h"
@@ -67,15 +69,15 @@ static bool hasRegBaseTarget(int argc, char **argv) {
   return false;
 }
 
-static int runBishengirCompile91095(int argc, char **argv) { 
-  llvm::SmallVector<llvm::StringRef> arguments; 
-  arguments.push_back(""); // placeholder, replaced by execute with full path 
-  for (int i = 1; i < argc; ++i) 
-    arguments.push_back(argv[i]); 
-  if (failed(bishengir::execute("bishengir-compile-a5", 
-                                bishengir::getBiShengInstallPath(), arguments))) 
-    return EXIT_FAILURE; 
-  return EXIT_SUCCESS; 
+static int runBishengirCompile91095(int argc, char **argv) {
+  llvm::SmallVector<llvm::StringRef> arguments;
+  arguments.push_back(""); // placeholder, replaced by execute with full path
+  for (int i = 1; i < argc; ++i)
+    arguments.push_back(argv[i]);
+  if (failed(bishengir::execute("bishengir-compile-a5",
+                                bishengir::getBiShengInstallPath(), arguments)))
+    return EXIT_FAILURE;
+  return EXIT_SUCCESS;
 }
 
 static void printVersion(llvm::raw_ostream &os) {
@@ -100,12 +102,17 @@ static void registerAndParseCLIOptions(int argc, char **argv) {
 int main(int argc, char **argv) {
   llvm::InitLLVM y(argc, argv);
 
-  // If --target=Ascend910_95* or --target=Ascend950* is specified, delegate to	 
-  // bishengir-compile-91095.	 
-  // TODO: this will be removed after bihengir-compile and bishengir-compile-a5	 
-  // are merged. 
-  if (hasRegBaseTarget(argc, argv)) 
-    return runBishengirCompile91095(argc, argv);
+  // For regbase targets (Ascend910_95* / Ascend950*):
+  //  - set BISHENGIR_NATIVE_A5_REGBASE=1 to use the native
+  //    A5 regbase pipeline; without it, delegate as a safety fallback.
+  // TODO: delegation will be removed after bishengir-compile and
+  // bishengir-compile-a5 are merged.
+  if (hasRegBaseTarget(argc, argv)) {
+    if (!getenv("BISHENGIR_NATIVE_A5_REGBASE")) {
+      return runBishengirCompile91095(argc, argv);
+    }
+    llvm::errs() << "[INFO] Using merged native A5 regbase pipeline\n";
+  }
 
   std::vector<std::string> originalCLArgs;
   for (int i = 1; i < argc; ++i)
