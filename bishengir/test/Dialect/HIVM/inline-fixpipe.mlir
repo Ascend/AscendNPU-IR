@@ -1701,3 +1701,95 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9599">} {
     return
   }
 }
+
+// -----
+
+// CHECK-LABEL: func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>
+// CHECK: hivm.hir.vcast {enable_overflow = true, enable_saturate = false
+// CHECK: hivm.hir.store
+func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate(
+    %mmad_res: tensor<16x16xi32>,
+    %fixpipe_dst: tensor<16x16xi32>,
+    %cast_dst: tensor<16x16xi8>,
+    %store_dst: memref<16x16xi8, strided<[16, 1]>>) {
+  %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%mmad_res : tensor<16x16xi32>) outs(%fixpipe_dst : tensor<16x16xi32>)
+      -> tensor<16x16xi32>
+  %cast = hivm.hir.vcast {
+      enable_overflow = true, enable_saturate = false,
+      hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+      ins(%fixpipe : tensor<16x16xi32>) outs(%cast_dst : tensor<16x16xi8>)
+      round_mode = <truncwithoverflow> -> tensor<16x16xi8>
+  hivm.hir.store ins(%cast : tensor<16x16xi8>)
+      outs(%store_dst : memref<16x16xi8, strided<[16, 1]>>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @no_inline_fixpipe_with_store_in_vector_scope
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {{.*}} -> tensor
+// CHECK: scope.scope
+// CHECK: hivm.hir.store ins(%[[FIXPIPE]]
+func.func @no_inline_fixpipe_with_store_in_vector_scope(
+    %mmad_res: tensor<4x4xi32>,
+    %fixpipe_dst: tensor<4x4xi32>,
+    %gm: memref<4x4xi32, strided<[4, 1]>>) {
+  %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%mmad_res : tensor<4x4xi32>) outs(%fixpipe_dst : tensor<4x4xi32>)
+      -> tensor<4x4xi32>
+  scope.scope : () -> () {
+    hivm.hir.store ins(%fixpipe : tensor<4x4xi32>)
+        outs(%gm : memref<4x4xi32, strided<[4, 1]>>)
+    scope.return
+  } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate
+// CHECK: hivm.hir.fixpipe
+// CHECK-NOT: pre_quant = #hivm.fixpipe_pre_quant_mode<S322I8>
+// CHECK: hivm.hir.vcast {enable_overflow = true, enable_saturate = false
+// CHECK: hivm.hir.store
+func.func @inline_fixpipe_no_fuse_i32_to_i8_without_saturate(
+    %mmad_res: tensor<16x16xi32>,
+    %fixpipe_dst: tensor<16x16xi32>,
+    %cast_dst: tensor<16x16xi8>,
+    %store_dst: memref<16x16xi8, strided<[16, 1]>>) {
+  %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%mmad_res : tensor<16x16xi32>) outs(%fixpipe_dst : tensor<16x16xi32>)
+      -> tensor<16x16xi32>
+  %cast = hivm.hir.vcast {
+      enable_overflow = true, enable_saturate = false,
+      hivm.unsigned_mode = #hivm.unsigned_mode<si2si>}
+      ins(%fixpipe : tensor<16x16xi32>) outs(%cast_dst : tensor<16x16xi8>)
+      round_mode = <truncwithoverflow> -> tensor<16x16xi8>
+  hivm.hir.store ins(%cast : tensor<16x16xi8>)
+      outs(%store_dst : memref<16x16xi8, strided<[16, 1]>>)
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @no_inline_fixpipe_with_store_in_vector_scope
+// CHECK: %[[FIXPIPE:.*]] = hivm.hir.fixpipe {{.*}} -> tensor
+// CHECK: scope.scope
+// CHECK: hivm.hir.store ins(%[[FIXPIPE]]
+func.func @no_inline_fixpipe_with_store_in_vector_scope(
+    %mmad_res: tensor<4x4xi32>,
+    %fixpipe_dst: tensor<4x4xi32>,
+    %gm: memref<4x4xi32, strided<[4, 1]>>) {
+  %fixpipe = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+      ins(%mmad_res : tensor<4x4xi32>) outs(%fixpipe_dst : tensor<4x4xi32>)
+      -> tensor<4x4xi32>
+  scope.scope : () -> () {
+    hivm.hir.store ins(%fixpipe : tensor<4x4xi32>)
+        outs(%gm : memref<4x4xi32, strided<[4, 1]>>)
+    scope.return
+  } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+  return
+}
