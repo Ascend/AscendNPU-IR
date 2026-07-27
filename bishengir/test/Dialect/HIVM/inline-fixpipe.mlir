@@ -1581,3 +1581,18 @@ func.func @test_conv2d(%arg0: i64 {hacc.arg_type = #hacc.arg_type<ffts_base_addr
   return
 }
 }
+
+// -----
+// With inline-quant-scale=false, a marked vmul is still folded into fixpipe.
+// CHECK-LABEL: func.func @quant_scale_inline_with_mark(
+// CHECK: hivm.hir.fixpipe {{.*inlined_fast_tf32_mul.*quant_scale = .*}}
+// CHECK-NEXT: return
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @quant_scale_inline_with_mark(%arg0: tensor<?x64xf32>, %arg1: tensor<?x64xf32>, %arg2: f32, %arg3: f32, %arg4: tensor<?x64xf32>, %arg5: memref<?x64xf32, strided<[256, 1], offset: ?>>) {
+    %0 = hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>, pre_quant = #hivm.fixpipe_pre_quant_mode<QF322F32_PRE>} ins(%arg0 : tensor<?x64xf32>) outs(%arg1 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    %1 = hivm.hir.vmul ins(%0, %arg3 : tensor<?x64xf32>, f32) outs(%arg4 : tensor<?x64xf32>) -> tensor<?x64xf32>
+    annotation.mark %1 {enable_fast_tf32_mul} : tensor<?x64xf32>
+    hivm.hir.store ins(%1 : tensor<?x64xf32>) outs(%arg5 : memref<?x64xf32, strided<[256, 1], offset: ?>>)
+    return
+  }
+}
