@@ -1117,7 +1117,7 @@ private:
         loc, fixpipeInit.getType(), /*src=*/newFixpipeSrcTensor,
         /*dst=*/fixpipeInit, dmaModeAttr, op.getDualDstModeAttr(),
         op.getSubBlockIdxAttr(), quantModeAttr, reluModeAttr,
-        op.getChannelSplitAttr(), op.getQuantScale());
+        op.getChannelSplitAttr(), op.getC0PadEnAttr(), op.getQuantScale());
     rewriter.replaceAllUsesWith(lastCast.getResult()[0],
                                 newFixpipeOp.getResultTensor());
     for (hivm::VCastOp castOp : llvm::reverse(castChain))
@@ -1224,7 +1224,7 @@ private:
         op.getLoc(), dst.getType(), op.getSource(), dst, op.getDmaModeAttr(),
         op.getDualDstModeAttr(), op.getSubBlockIdxAttr(),
         FixpipePreQuantModeAttr::get(rewriter.getContext(), preQuant),
-        op.getPreReluAttr(), op.getChannelSplitAttr(), quantScale);
+        op.getPreReluAttr(), op.getChannelSplitAttr(), op.getC0PadEnAttr(), quantScale);
     for (Operation *user : llvm::make_early_inc_range(vMulOp->getUsers())) {
       if (isa<annotation::MarkOp>(user)) {
         newFixpipe->setAttr(utils::kInlinedQuantScaleAttr,
@@ -1246,7 +1246,7 @@ private:
         op.getLoc(), transpose.getResult()[0].getType(), op.getSource(),
         transpose.getDst(), dmaMode, op.getDualDstModeAttr(),
         op.getSubBlockIdxAttr(), op.getPreQuantAttr(), op.getPreReluAttr(),
-        op.getChannelSplitAttr(), op.getQuantScale());
+        op.getChannelSplitAttr(), op.getC0PadEnAttr(), op.getQuantScale());
     rewriter.replaceOp(transpose, newFixpipe.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithTranspose");
@@ -1283,7 +1283,7 @@ private:
         extractSliceOp.getLoc(), fixpipeInit.getType(),
         /*src=*/newExtractSliceResult, /*dst=*/fixpipeInit, dmaModeAttr,
         op.getDualDstModeAttr(), op.getSubBlockIdxAttr(), quantModeAttr,
-        reluModeAttr, op.getChannelSplitAttr(), op.getQuantScale());
+        reluModeAttr, op.getChannelSplitAttr(), op.getC0PadEnAttr(), op.getQuantScale());
     rewriter.replaceOp(extractSliceOp, newFixpipeOp.getResultTensor());
     rewriter.eraseOp(op);
     LDBG("InlineFixpipeWithExtractSliceReshape");
@@ -1388,7 +1388,7 @@ public:
         FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2ND);
     auto fixpipeOp = rewriter.create<FixpipeOp>(
         loc, TypeRange{}, maybeMmadRes, workSpaceMemref, dmaModeAttr,
-        FixpipeDualDstModeAttr{}, FixpipeSubBlockAttr{}, nullptr, nullptr);
+        FixpipeDualDstModeAttr{}, FixpipeSubBlockAttr{}, nullptr, nullptr, nullptr, nullptr);
     fixpipeOp->setAttr(usedForDebugOp, rewriter.getBoolAttr(true));
 
     rewriter.modifyOpInPlace(op, [&]() {

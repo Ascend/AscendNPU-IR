@@ -797,7 +797,8 @@ struct FoldFixpipeNz2NzToFractalConvertLayoutPattern
         emptyOp.getResult(), fixpipeOp.getDmaModeAttr(),
         fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
         fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getQuantScale());
+        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getC0PadEnAttr(),
+        fixpipeOp.getQuantScale());
     if (fixpipeOp.getUnitFlagMode())
       newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());
 
@@ -866,7 +867,7 @@ struct FoldFixpipeConvertLayoutPattern
         FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode),
         fixpipeOp.getDualDstModeAttr(), fixpipeOp.getSubBlockIdxAttr(),
         fixpipeOp.getPreQuantAttr(), fixpipeOp.getPreReluAttr(),
-        fixpipeOp.getChannelSplitAttr());
+        fixpipeOp.getChannelSplitAttr(), fixpipeOp.getC0PadEnAttr());
 
     if (fixpipeOp.getUnitFlagMode())
       newFixpipe.setUnitFlagModeAttr(fixpipeOp.getUnitFlagModeAttr());

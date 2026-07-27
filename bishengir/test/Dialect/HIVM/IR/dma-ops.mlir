@@ -61,6 +61,38 @@ func.func @test_fixpipe() {
                                   outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
   return
 }
+// -----
+// CHECK-LABEL: test_fixpipe_A5_features
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe_A5_features() {
+    %gmC = memref.alloc() : memref<1024x2048xf16>
+    %gmCSubview = memref.subview %gmC[0, 0][256, 128][1, 1]
+                        : memref<1024x2048xf16> to
+                          memref<256x128xf16, strided<[2048, 1], offset: 0>>
+    %l0c = memref.alloc() : memref<256x128xf16>
+    // Normal data movement
+    hivm.hir.fixpipe ins(%l0c : memref<256x128xf16>)
+                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    // NZ2ND data movement
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>} ins(%l0c : memref<256x128xf16>)
+                                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    // DUAL DST data movement
+    %l0c1 = memref.alloc() : memref<16x16xf16, #hivm.address_space<cc>>
+    %ub = memref.alloc() : memref<16x16xf16, #hivm.address_space<ub>>
+    hivm.hir.fixpipe ins(%l0c1 : memref<16x16xf16, #hivm.address_space<cc>>)
+                    outs(%ub : memref<16x16xf16, #hivm.address_space<ub>>)
+                    dual_dst_mode = #hivm.fixpipe_dual_dst_mode<NO_DUAL>
+    
+    // NZ2DN data movement
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2dn>} ins(%l0c : memref<256x128xf16>)
+                                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    // C0 padding disabled (default is enabled / omitted)
+    // CHECK: hivm.hir.fixpipe {{{.*}}c0_pad_en = false{{.*}}}
+    hivm.hir.fixpipe {c0_pad_en = false} ins(%l0c : memref<256x128xf16>)
+                    outs(%gmCSubview : memref<256x128xf16, strided<[2048, 1], offset: 0>>)
+    return
+  }
+}
 
 // -----
 // CHECK-LABEL: test_fixpipe_tensor

@@ -79,6 +79,8 @@ REGISTE_FIXPIPE_DUAL(cc, ubuf, 4, 4, int32_t, int32_t, normal, TransformMode::NO
 REGISTE_FIXPIPE(cc, cbuf, 4, 4, float, half, normal, TransformMode::NORMAL);
 REGISTE_FIXPIPE(cc, cbuf, 4, 4, float, bfloat16_t, normal, TransformMode::NORMAL);
 REGISTE_FIXPIPE(cc, cbuf, 4, 4, float, float, normal, TransformMode::NORMAL);
+REGISTE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int32_t, normal, TransformMode::NORMAL);
+REGISTE_FIXPIPE(cc, cbuf, 4, 4, int32_t, int8_t, normal, TransformMode::NORMAL);
 
 //===-------------------------------------------------------------------===//
 // fixpipe, 4 dim to 2 dim, nz2dn

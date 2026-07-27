@@ -135,7 +135,7 @@ retargetFixpipeToFractalType(PatternRewriter &rewriter, FixpipeOp fixpipe,
       fixpipe.getDmaModeAttr(), fixpipe.getDualDstModeAttr(),
       fixpipe.getSubBlockIdxAttr(), fixpipe.getPreQuantAttr(),
       fixpipe.getPreReluAttr(), fixpipe.getChannelSplitAttr(),
-      fixpipe.getQuantScale());
+      fixpipe.getC0PadEnAttr(), fixpipe.getQuantScale());
   if (fixpipe.getUnitFlagMode())
     newFixpipe.setUnitFlagModeAttr(fixpipe.getUnitFlagModeAttr());
 
