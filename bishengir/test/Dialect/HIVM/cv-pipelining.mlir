@@ -1,5 +1,5 @@
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --check-prefixes=CHECK,CHECK-HINT,CHECK-NEG-HINT
-// RUN: bishengir-opt -cv-pipelining="pipeline-depth=2 enable-lazy-loading=true" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --check-prefixes=CHECK,CHECK-LAZY,CHECK-HINT
+// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --check-prefixes=CHECK,CHECK-HINT,CHECK-NEG-HINT
+// RUN: bishengir-opt -cv-pipelining="set-depth-in-unroll-mode=2 enable-lazy-loading=true" -allow-unregistered-dialect -split-input-file -verify-diagnostics %s | FileCheck %s --check-prefixes=CHECK,CHECK-LAZY,CHECK-HINT
 
 // CHECK-LABEL: func.func @test_pipeline
 // CHECK: scf.for
@@ -916,4 +916,3 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
     return
   }
 }
-

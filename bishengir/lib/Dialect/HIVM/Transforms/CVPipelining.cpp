@@ -421,16 +421,6 @@ static AllocWorkspaceOp getAllocWorkspace(Value v) {
   return nullptr;
 }
 
-/// Get the highest level parent op that is not the containing op
-static Operation *getContainedParent(Operation *containing, Operation *inner) {
-  Operation *parent = inner->getParentOp();
-  while (parent && parent != containing && containing->isAncestor(inner)) {
-    inner = parent;
-    parent = inner->getParentOp();
-  }
-  return inner;
-}
-
 // Implementation of slice operations
 static tensor::InsertSliceOp createInsertSlice(OpBuilder &builder, Location loc,
                                                Value src, Value into,
@@ -572,6 +562,52 @@ processWorkspaceOutputs(OpBuilder &builder, WorkItem *item,
       operand->set(sliceOp);
     }
     store->erase();
+  }
+}
+
+static void processWorkspaceOutputUsers(
+    OpBuilder &builder, WorkItem *item,
+    const DenseMap<Operation *, SmallVector<WorkItem *>> &opToWorkItemMap,
+    const DenseMap<Value, Value> &expandedWorkspaceMap,
+    SmallVector<std::pair<OpOperand *, Value>> &replacements,
+    scf::ForOp newLoop, int numMultibuffer) {
+  for (Operation *output : item->workspaceOutputs) {
+    for (OpOperand &operand : output->getUses()) {
+      Operation *owner = operand.getOwner();
+      if (opToWorkItemMap.contains(owner) || !newLoop->isAncestor(owner))
+        continue;
+
+      builder.setInsertionPoint(owner);
+      Value sliceIdx;
+      if (isa<scf::YieldOp>(owner)) {
+        sliceIdx = builder.create<arith::ConstantIndexOp>(
+            owner->getLoc(), numMultibuffer - 1);
+      } else {
+        sliceIdx = owner->getParentOfType<scf::ForOp>().getInductionVar();
+      }
+      Value alloc = getAllocWorkspace(operand.get());
+      Value mappedTensor = expandedWorkspaceMap.lookup(alloc);
+      Value slice = createExtractSlice(builder, owner->getLoc(), mappedTensor,
+                                       operand.get().getType(), sliceIdx);
+      replacements.emplace_back(&operand, slice);
+    }
+  }
+}
+
+static void processWorkspaceOutputUsers(
+    OpBuilder &builder, ArrayRef<std::shared_ptr<WorkItem>> worklist,
+    const DenseMap<Operation *, SmallVector<WorkItem *>> &opToWorkItemMap,
+    const DenseMap<Value, Value> &expandedWorkspaceMap, scf::ForOp newLoop,
+    int numMultibuffer) {
+  SmallVector<std::pair<OpOperand *, Value>> replacements;
+  for (auto &item : worklist) {
+    processWorkspaceOutputUsers(builder, item.get(), opToWorkItemMap,
+                                expandedWorkspaceMap, replacements, newLoop,
+                                numMultibuffer);
+  }
+  for (auto [operand, replacement] : replacements) {
+    if (newLoop->isAncestor(operand->getOwner()))
+      operand->set(replacement);
   }
 }
 
@@ -1509,6 +1545,12 @@ LogicalResult CVPipelineImpl::migrateOps() {
     yieldVals.clear();
   }
 
+  // Workspace consumers cloned into a different work item still refer to the
+  // original loop result. Redirect them to the corresponding expanded slot
+  // after all work-item loops and workspace tensors have been materialized.
+  processWorkspaceOutputUsers(builder, worklist, opToWorkItemMap,
+                              expandedWorkspaceMap_, newLoop, numMultibuffer);
+
   builder.setInsertionPointToEnd(newLoop.getBody());
   if (trailingAtomicEffect) {
     builder.create<SetAtomicOp>(pipelineLoop->getLoc(),
@@ -1855,7 +1897,7 @@ void CVPipeliningPass::runOnOperation() {
   func::FuncOp func = getOperation();
   DenseSet<scf::ForOp> pipelinedLoops;
 
-  if (this->pipelineDepth == 1 || this->pipelineDepth == 0)
+  if (this->setDepthInUnrollMode == 1 || this->setDepthInUnrollMode == 0)
     return;
 
   func->walk<WalkOrder::PreOrder>([&pipelinedLoops, this](scf::ForOp loop) {
@@ -1867,7 +1909,7 @@ void CVPipeliningPass::runOnOperation() {
       parentLoop = parentLoop->getParentOfType<scf::ForOp>();
     }
 
-    CVPipelineImpl impl(loop, this->pipelineDepth, this->pipelineMode,
+    CVPipelineImpl impl(loop, this->setDepthInUnrollMode, this->pipelineMode,
                         this->enableLazyLoading);
     if (impl.run().succeeded())
       pipelinedLoops.insert(loop);
