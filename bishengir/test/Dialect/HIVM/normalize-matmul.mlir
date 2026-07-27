@@ -2322,3 +2322,51 @@ module {
     return %for3#0, %for3#1 : tensor<64x32xf32>, tensor<64x32xf32>
   }
 }
+
+// -----
+
+// Test: NoBias for (var bounds), result goes to return → AddIfPattern creates fallback IfOp.
+// The deferred_tail_fallback tag must survive (set on tmpNewMmad) and AddIfPattern
+// must create scf.if with vbrc(0) when the chain ends at return.
+// CHECK-LABEL: func.func @test_nobias_for_var_fallback
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
+// CHECK: scf.for
+// CHECK: may_not_exec
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc
+// CHECK: return
+func.func @test_nobias_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xf32> {
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %empty = tensor.empty() : tensor<16x16xf32>
+  %for = scf.for %i = %lb to %ub step %c1_i32 iter_args(%acc = %empty) -> tensor<16x16xf32> : i32 {
+    %m = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+    scf.yield %m : tensor<16x16xf32>
+  }
+  return %for : tensor<16x16xf32>
+}
+
+// -----
+
+// Test: ZeroInit for (var bounds), result goes to return → AddIfPattern creates fallback IfOp.
+// CHECK-LABEL: func.func @test_zeroinit_for_var_fallback
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
+// CHECK: scf.for
+// CHECK: may_not_exec
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc
+// CHECK: return
+func.func @test_zeroinit_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xf32> {
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %cst_0 = arith.constant 0.000000e+00 : f32
+  %empty = tensor.empty() : tensor<16x16xf32>
+  %zero = hivm.hir.vbrc ins(%cst_0 : f32) outs(%empty : tensor<16x16xf32>) -> tensor<16x16xf32>
+  %for = scf.for %i = %lb to %ub step %c1_i32 iter_args(%acc = %zero) -> tensor<16x16xf32> : i32 {
+    %m = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%acc : tensor<16x16xf32>) -> tensor<16x16xf32>
+    scf.yield %m : tensor<16x16xf32>
+  }
+  return %for : tensor<16x16xf32>
+}
