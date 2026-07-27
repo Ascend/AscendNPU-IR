@@ -765,7 +765,7 @@ void obtainHIVMUpDimDecReassocs(
 template <typename OpType>
 LogicalResult handleReduceLikeOp(tensor::ExpandShapeOp expandOp,
                                  PatternRewriter &rewriter,
-                                 Operation *definingOp) {
+                                 Operation *definingOp, bool forRegbased) {
   LLVM_DEBUG(llvm::dbgs() << "Ok reduce writing\n";);
   auto reduceOp = cast<OpType>(definingOp);
 
@@ -781,6 +781,13 @@ LogicalResult handleReduceLikeOp(tensor::ExpandShapeOp expandOp,
   SmallVector<ReassociationIndices> newReassociation;
   SmallVector<int64_t> newOutputShape; // output: the expanded input of reduce
   SmallVector<int64_t> newDimensions;
+  // On RegBase this rewrite can alternate with collapse propagation and fail
+  // to reach a fixed point. Other pipelines rely on this propagation.
+  if (forRegbased && expandOp.getSrcType().getRank() == 0 &&
+      isUnitDimReshape(expandOp.getResultType().getShape(),
+                       reassociationIndices))
+    return failure();
+
   // Step 2: obtains dimensions and reassociations
   auto opResult = cast<OpResult>(expandOp.getSrc());
   auto oldReplaceIndex = opResult.getResultNumber();
@@ -1000,9 +1007,17 @@ LogicalResult handlePadOp(tensor::ExpandShapeOp expandOp,
 
 LogicalResult handleExtractSliceOp(tensor::ExpandShapeOp expandOp,
                                    PatternRewriter &rewriter,
-                                   Operation *definingOp) {
+                                   Operation *definingOp, bool forRegbased) {
   auto reassociation = expandOp.getReassociationIndices();
   auto extractSliceOp = dyn_cast<tensor::ExtractSliceOp>(definingOp);
+  // Avoid a RegBase-only rewrite cycle for reshapes that just add unit dims.
+  if (forRegbased &&
+      isUnitDimReshape(expandOp.getResultType().getShape(), reassociation))
+    return failure();
+  // The current slice utility does not compute adjusted reassociations for
+  // rank-reducing slices.
+  if (extractSliceOp.getDroppedDims().any())
+    return failure();
   SmallVector<OpFoldResult> newMixedOffsets;
   SmallVector<OpFoldResult> newMixedSizes;
   SmallVector<OpFoldResult> newMixedStrides;
@@ -1036,6 +1051,8 @@ LogicalResult handleInsertSliceOp(tensor::ExpandShapeOp expandOp,
                                   Operation *definingOp) {
   auto reassociation = expandOp.getReassociationIndices();
   auto insertSliceOp = dyn_cast<tensor::InsertSliceOp>(definingOp);
+  if (insertSliceOp.getDroppedDims().any())
+    return failure();
   SmallVector<OpFoldResult> newMixedOffsets;
   SmallVector<OpFoldResult> newMixedSizes;
   SmallVector<OpFoldResult> newMixedStrides;
@@ -1217,10 +1234,12 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
   }
   if (isa<hfusion::ReduceWithIndexOp>(definingOp)) {
     return handleReduceLikeOp<hfusion::ReduceWithIndexOp>(expandOp, rewriter,
-                                                          definingOp);
+                                                          definingOp,
+                                                          options.forRegbased);
   }
   if (isa<linalg::ReduceOp>(definingOp)) {
-    return handleReduceLikeOp<linalg::ReduceOp>(expandOp, rewriter, definingOp);
+    return handleReduceLikeOp<linalg::ReduceOp>(
+        expandOp, rewriter, definingOp, options.forRegbased);
   }
   if (isa<linalg::TransposeOp>(definingOp)) {
     return handleTransposeOp<linalg::TransposeOp>(expandOp, rewriter,
@@ -1239,7 +1258,8 @@ PropagateExpandUp::matchAndRewrite(tensor::ExpandShapeOp expandOp,
     return handleDeinterleaveOp(expandOp, rewriter, definingOp);
   }
   if (!options.forHIVM && isa<tensor::ExtractSliceOp>(definingOp)) {
-    return handleExtractSliceOp(expandOp, rewriter, definingOp);
+    return handleExtractSliceOp(expandOp, rewriter, definingOp,
+                                options.forRegbased);
   }
   if (!options.forHIVM && isa<tensor::InsertSliceOp>(definingOp)) {
     return handleInsertSliceOp(expandOp, rewriter, definingOp);
