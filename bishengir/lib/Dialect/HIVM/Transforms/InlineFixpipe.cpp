@@ -12,6 +12,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/InlineFixpipe.h"
 #include "bishengir/Conversion/Passes.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
@@ -19,6 +20,7 @@
 #include "bishengir/Dialect/Scope/IR/Scope.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Support/LLVM.h"
@@ -36,12 +38,9 @@ namespace mlir {
 #define DBGS() (llvm::dbgs() << '[' << DEBUG_TYPE << "] ")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
-using namespace mlir;
-using namespace mlir::hivm;
-
 #define DEBUG_TYPE "hivm-inline-fixpipe"
 
-namespace {
+namespace mlir::hivm {
 constexpr llvm::StringLiteral mmadFixpipeForResultAlreadyInserted =
     "fixpipe_for_result_already_inserted";
 
@@ -63,9 +62,7 @@ static bool isInsideVectorScope(Operation *op) {
   return coreTypeAttr &&
          coreTypeAttr.getTcoretype() == hivm::TCoreType::VECTOR;
 }
-} // namespace
 
-namespace {
 struct InsertFixpipe : public impl::InsertFixpipeBase<InsertFixpipe> {
   using Base::Base;
   void runOnOperation() override;
@@ -75,7 +72,6 @@ struct InlineFixpipe : public impl::InlineFixpipeBase<InlineFixpipe> {
   using Base::Base;
   void runOnOperation() override;
 };
-} // namespace
 
 std::optional<bool> isStoreOp(Operation *dstOp) {
   if (isa<hivm::StoreOp>(dstOp)) {
@@ -220,21 +216,83 @@ FixpipeDMAMode getInsertedFixpipeDmaMode(Value src, Value dst,
   return FixpipeDMAMode::NZ2ND;
 }
 
+static FixpipeOp insertFixpipeToL1(PatternRewriter &rewriter,
+                                   InsertFixpipePatternOptions options,
+                                   Operation *&point, Value src) {
+  rewriter.setInsertionPointAfter(point);
+
+  MLIRContext *ctx = rewriter.getContext();
+  auto tensorType = cast<RankedTensorType>(src.getType());
+  int64_t M = tensorType.getDimSize(0);
+  int64_t N = tensorType.getDimSize(1);
+  static constexpr int32_t alignM = 16;
+  auto numElemPerBlock = mlir::utils::getNumPerBlock(tensorType);
+  int64_t M1 = M / alignM;
+  int64_t N1 = N / numElemPerBlock;
+  auto dstTy = RankedTensorType::get({N1, M1, alignM, numElemPerBlock},
+                                     tensorType.getElementType());
+
+  // FixpipeOp with channel_split enabled may split each channel (C0) in two
+  // parts in destination.
+  bool channelSplit = numElemPerBlock == alignM / 2;
+  Value fixpipeInit = rewriter.create<mlir::tensor::EmptyOp>(
+      point->getLoc(), dstTy, mlir::ValueRange{});
+  FixpipeDMAModeAttr dmaModeAttr =
+      FixpipeDMAModeAttr::get(ctx, FixpipeDMAMode::NZ2NZ);
+
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      point->getLoc(), /*result_tensor=*/fixpipeInit.getType(), src,
+      fixpipeInit, dmaModeAttr,
+      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr,
+      /*channel_split=*/rewriter.getBoolAttr(channelSplit));
+  return fixpipe;
+}
+
+static FixpipeOp insertFixpipeToLocal(PatternRewriter &rewriter,
+                                      InsertFixpipePatternOptions options,
+                                      Operation *&point, Value src) {
+  rewriter.setInsertionPointAfter(point);
+
+  Value fixpipeInit = utils::createEmptyOp(rewriter, point->getLoc(), src);
+  FixpipeDMAModeAttr dmaModeAttr = FixpipeDMAModeAttr::get(
+      rewriter.getContext(),
+      getInsertedFixpipeDmaMode(src, fixpipeInit, options.inferFixpipeDmaMode));
+
+  auto fixpipe = rewriter.create<FixpipeOp>(
+      point->getLoc(), /*result_tensor=*/fixpipeInit.getType(), src,
+      fixpipeInit, dmaModeAttr,
+      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
+      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  return fixpipe;
+}
+
+bool isInsertingFixpipeToL1(Value src) {
+  if (src.use_empty())
+    return false;
+  // used by L1 operations, such as hivm::MmadL1Op, hivm::MmadMxL1Op, etc.
+  // TODO: replace to any_of to prioritize fixpipe to L1 (if enhance perf)
+  return llvm::all_of(src.getUsers(), [](auto *user) {
+    return isa<
+#define GET_OP_LIST
+#include "bishengir/Dialect/HIVM/IR/HIVMMacroOps.cpp.inc"
+        >(user);
+  });
+}
+
 static FixpipeOp insertFixpipe(PatternRewriter &rewriter,
                                InsertFixpipePatternOptions options,
                                Operation *point, Value src) {
 
   rewriter.setInsertionPointAfter(point);
 
-  auto dst = utils::createEmptyOp(rewriter, point->getLoc(), src);
-  auto dmaMode =
-      getInsertedFixpipeDmaMode(src, dst, options.inferFixpipeDmaMode);
-  auto dmaModeAttr = FixpipeDMAModeAttr::get(rewriter.getContext(), dmaMode);
+  bool isMovingToL1 =
+      hacc::utils::isRegBasedArch(point->getParentOfType<ModuleOp>())
+          ? isInsertingFixpipeToL1(src)
+          : false;
 
-  auto fixpipe = rewriter.create<FixpipeOp>(
-      point->getLoc(), /*result_tensor=*/dst.getType(), src, dst, dmaModeAttr,
-      /*dual_dst_mode=*/nullptr, /*sub_block_idx=*/nullptr,
-      /*pre_quant=*/nullptr, /*pre_relu=*/nullptr, /*channel_split=*/nullptr);
+  auto fixpipe = (isMovingToL1 ? insertFixpipeToL1 : insertFixpipeToLocal)(
+      rewriter, options, point, src);
 
   SmallPtrSet<Operation *, 4> exceptedOps;
   exceptedOps.insert(fixpipe);
@@ -765,7 +823,7 @@ private:
     auto dst = storeOp.getDst();
     auto storeAttr = storeOp.getAtomicKindAttr();
     auto noneAtomicAttr =
-        AtomicKindAttr::get(op->getContext(), ::mlir::hivm::AtomicKind::NONE);
+        AtomicKindAttr::get(op->getContext(), AtomicKind::NONE);
     SmallVector<Value> oprs({fixpipeSrcTensor, dst});
     if (auto quantScale = op.getQuantScale())
       oprs.push_back(quantScale);
@@ -1001,20 +1059,20 @@ private:
   InlineFixpipePatternOptions options;
 };
 
-void mlir::hivm::populateInsertFixpipeForIterArgMMADPattern(
+void populateInsertFixpipeForIterArgMMADPattern(
     RewritePatternSet &patterns, InsertFixpipePatternOptions options) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeForIterArgMMAD>(ctx, options);
 }
 
-void mlir::hivm::populateInsertFixpipePatterns(
-    RewritePatternSet &patterns, InsertFixpipePatternOptions options) {
+void populateInsertFixpipePatterns(RewritePatternSet &patterns,
+                                   InsertFixpipePatternOptions options) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern>(ctx, options);
 }
 
-void mlir::hivm::populateInlineFixpipePatterns(
-    RewritePatternSet &patterns, InlineFixpipePatternOptions options) {
+void populateInlineFixpipePatterns(RewritePatternSet &patterns,
+                                   InlineFixpipePatternOptions options) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InlineFixpipeOpPattern>(ctx, options);
 }
@@ -1089,7 +1147,7 @@ void InsertFixpipe::runOnOperation() {
   }
 
   RewritePatternSet patterns(&getContext());
-  mlir::hivm::populateInsertFixpipePatterns(patterns, options);
+  populateInsertFixpipePatterns(patterns, options);
 
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
@@ -1109,7 +1167,7 @@ void InlineFixpipe::runOnOperation() {
   RewritePatternSet patterns(&getContext());
   InlineFixpipePatternOptions options;
   options.inlineQuantScale = inlineQuantScale;
-  mlir::hivm::populateInlineFixpipePatterns(patterns, options);
+  populateInlineFixpipePatterns(patterns, options);
   if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
     signalPassFailure();
   }
@@ -1117,12 +1175,14 @@ void InlineFixpipe::runOnOperation() {
   eraseInlinableQuantScaleMarkOps(getOperation());
 }
 
-std::unique_ptr<Pass>
+} // namespace mlir::hivm
+
+std::unique_ptr<mlir::Pass>
 mlir::hivm::createInsertFixpipePass(const InsertFixpipeOptions &options) {
   return std::make_unique<InsertFixpipe>(options);
 }
 
-std::unique_ptr<Pass>
+std::unique_ptr<mlir::Pass>
 mlir::hivm::createInlineFixpipePass(const InlineFixpipeOptions &options) {
   return std::make_unique<InlineFixpipe>(options);
 }
