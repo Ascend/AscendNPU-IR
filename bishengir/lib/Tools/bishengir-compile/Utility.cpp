@@ -7,8 +7,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Tools/bishengir-compile/Utility.h"
-#include "bishengir/Pass/PassManager.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
+#include "bishengir/Pass/PassManager.h"
 #include "bishengir/Transforms/InjectIRInstrumentation.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -29,6 +29,38 @@
 using namespace bishengir;
 using namespace llvm;
 using namespace mlir;
+
+namespace {
+thread_local CompileTiming *currentCompileTiming = nullptr;
+} // namespace
+
+mlir::TimingScope *getCurrentCompileTimingScope() {
+  return currentCompileTiming ? currentCompileTiming->getRootScope() : nullptr;
+}
+
+ScopedCompileTimingContext::ScopedCompileTimingContext(CompileTiming *timing)
+    : previousTiming(currentCompileTiming) {
+  currentCompileTiming = timing;
+}
+
+ScopedCompileTimingContext::~ScopedCompileTimingContext() {
+  currentCompileTiming = previousTiming;
+}
+
+CompileTiming::CompileTiming() {
+  mlir::applyDefaultTimingManagerCLOptions(manager);
+  if (manager.isEnabled())
+    rootScope = std::make_unique<mlir::TimingScope>(manager.getRootScope());
+  context = std::make_unique<ScopedCompileTimingContext>(this);
+}
+
+int ExternalToolProfiler::run(StringRef name, std::function<int()> fn) {
+  std::optional<mlir::TimingScope> toolTimingScope;
+  mlir::TimingScope *timingScope = getCurrentCompileTimingScope();
+  if (timingScope)
+    toolTimingScope.emplace(timingScope->nest(name));
+  return fn();
+}
 
 /// Get the HIVMC binary name.
 StringRef getHIVMCName() {
@@ -76,7 +108,10 @@ LogicalResult execute(StringRef binName, StringRef installPath,
     llvm::dbgs() << "\n";
   });
 
-  if (llvm::sys::ExecuteAndWait(binPath, arguments) != 0) {
+  std::string profilerName = llvm::sys::path::filename(binPath).str();
+  if (ExternalToolProfiler::run(profilerName, [&]() {
+        return llvm::sys::ExecuteAndWait(binPath, arguments);
+      }) != 0) {
     llvm::errs() << "[ERROR] Executing: ";
     llvm::interleave(
         arguments, llvm::errs(),
@@ -141,6 +176,13 @@ runPipeline(ModuleOp mod,
     passManager.addInstrumentation(std::make_unique<InjectIRInstrumentation>(
         config.getPrintPassId(), config.getInjectIrBefore(),
         config.getInjectIrAfter()));
+  }
+
+  std::optional<mlir::TimingScope> pipelineTimingScope;
+  mlir::TimingScope *timingScope = getCurrentCompileTimingScope();
+  if (timingScope) {
+    pipelineTimingScope.emplace(timingScope->nest(pipelineName));
+    passManager.enableTiming(*pipelineTimingScope);
   }
 
   if (failed(passManager.run(mod))) {

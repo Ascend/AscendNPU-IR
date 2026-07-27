@@ -25,6 +25,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Support/FileUtilities.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/SourceMgr.h"
@@ -47,6 +48,7 @@ std::string registerAndParseCLIOptions(int argc, char **argv) {
   // Register any command line options.
   mlir::registerMLIRContextCLOptions();
   mlir::registerAsmPrinterCLOptions();
+  mlir::registerDefaultTimingManagerCLOptions();
   bishengir::BiShengIRCompileMainConfig::registerCLOptions();
   bishengir::registerPassManagerCLOptions();
 #if BISHENGIR_ENABLE_PM_CL_OPTIONS
