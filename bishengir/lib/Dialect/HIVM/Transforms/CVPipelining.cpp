@@ -1786,8 +1786,14 @@ LogicalResult CVPipelineImpl::markScopesForPreload() {
 }
 
 void CVPipelineImpl::revert() {
-  if (newLoop)
+  if (newLoop) {
+    // migrateOps redirects users of the original loop to newLoop before late
+    // verification. Restore those users before destroying the speculative IR.
+    for (auto [newResult, oldResult] :
+         llvm::zip(newLoop.getResults(), pipelineLoop.getResults()))
+      newResult.replaceAllUsesWith(oldResult);
     newLoop->erase();
+  }
   pipelineLoop->replaceAllUsesWith(checkpoint->getResults());
   pipelineLoop->erase();
 }
@@ -1977,6 +1983,8 @@ void CVPipeliningPass::runOnOperation() {
         parentLoop = parentLoop->getParentOfType<scf::ForOp>();
       }
   }
+
+  removeWorkspaceMultiBufferMarks(func);
 }
 
 std::unique_ptr<Pass>
