@@ -1937,7 +1937,7 @@ void ConvertHIVMToStandardPass::runOnOperation() {
   auto module = getOperation();
   if (hacc::utils::isRegBasedArch(module)) {
     if (failed(ConvertHIVMToStandardRegBasePass::runOnOperation(
-            module, isOpsAligned)))
+            module, isOpsAligned, markLibCallNoInline)))
       signalPassFailure();
     return;
   }

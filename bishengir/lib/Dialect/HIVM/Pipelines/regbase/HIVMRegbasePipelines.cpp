@@ -39,13 +39,13 @@ namespace mlir {
 namespace hivm {
 namespace regbase {
 
-// TODO(regbase)
 #define ADD_CANONICALIZER_PASS                                                 \
-  pm.addPass(createCanonicalizerPass())
+  CanonicalizerOptions options;                                                \
+  options.enableExtendedPattern = true;                                        \
+  pm.addPass(createCanonicalizerPass(options))
 
-// TODO(regbase)
 #define ADD_CANONICALIZER_PASS_WITHOUT_OPTION_DEFS                             \
-  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass())
+  pm.nest<func::FuncOp>().addPass(createCanonicalizerPass(options))
 
 void canonicalizationHIVMPipeline(OpPassManager &pm) {
   pm.addPass(createArithToAffineConversionPass());
@@ -64,7 +64,10 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   InsertLoadStoreForMixCVOptions options;
   options.enableLegacy =
       hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
-  // TODO(regbase).
+  // The current regbase option type derives the target from the module and
+  // does not expose enableDotScaledCompile.
+  options.disableTightCoupledBuffer =
+      hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
       mlir::hivm::createInsertLoadStoreForMixCVPass(options));
 }
@@ -80,8 +83,7 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
   } else if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
     // New A5 convert layout pipeline
-    // TODO(regbase)
-    // pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
+    pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
         mlir::hivm::createInsertLoadStoreForScalarPass());
   } else {
@@ -161,26 +163,28 @@ static void hivmDelayedCrossCoreAutoSyncGSSPipeline(
     // longer depends on the presence of sync ops to preserve those boundaries.
     pm.addPass(createMarkRealCoreTypePass());
     pm.nest<func::FuncOp>().addPass(createCrossCoreGSSPass());
-    // TODO(regbase)
-    // pm.addPass(createInsertAnchorsAndBackupPass());
+    InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
+    insertAnchorsAndBackupOptions.insertAnchorOnlyBeforeCubeOps = false;
+    insertAnchorsAndBackupOptions.insertAnchorBeforeCubeAndVectorOps = true;
+    pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
     MarkRealCoreTypeOptions markRealCoreTypeOptions;
     markRealCoreTypeOptions.removeCoreTypeAttrs = true;
     pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
   } else if (mode == CrossCoreAutoSyncMode::CCGSS_STEP_2) {
     canonicalizationHIVMPipeline(pm);
     pm.addPass(createMarkRealCoreTypePass());
-    // TODO(regbase)
-    // DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
-    // delayedcrossCoreGSSOptions.blockAllSync =
-    //     hivmPipelineOptions.enableHIVMInjectBlockAllSync;
-    // pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
+    DelayedCrossCoreGSSOptions delayedcrossCoreGSSOptions;
+    delayedcrossCoreGSSOptions.blockAllSync =
+        hivmPipelineOptions.enableHIVMInjectBlockAllSync;
+    pm.addPass(createDelayedCrossCoreGSSPass(delayedcrossCoreGSSOptions));
     MarkRealCoreTypeOptions markRealCoreTypeOptions;
     markRealCoreTypeOptions.removeCoreTypeAttrs = true;
     pm.addPass(createMarkRealCoreTypePass(markRealCoreTypeOptions));
-    // TODO(regbase)
-    // InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
-    // insertAnchorsAndBackupOptions.cleanup = true;
-    // pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
+    InsertAnchorsAndBackupOptions insertAnchorsAndBackupOptions;
+    insertAnchorsAndBackupOptions.cleanup = true;
+    insertAnchorsAndBackupOptions.insertAnchorOnlyBeforeCubeOps = false;
+    insertAnchorsAndBackupOptions.insertAnchorBeforeCubeAndVectorOps = true;
+    pm.addPass(createInsertAnchorsAndBackupPass(insertAnchorsAndBackupOptions));
   }
 }
 
@@ -299,15 +303,7 @@ static void hivmPreBufferizationOptimizationPipeline(
 
   pm.addPass(mlir::scf::createRemoveRedundantLoopInitPass());
   pm.addPass(mlir::hivm::createNormalizeMatmulPass());
-  // TODO(regbase)
-  // pm.addPass(mlir::hivm::createInsertFixpipePass());
-  {
-    // TODO(regbase)
-    // InlineFixpipeOptions opts;
-    // opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    // pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
-    pm.addPass(mlir::hivm::createInlineFixpipePass());
-  }
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   if (hivmPipelineOptions.enableLayoutOptimization &&
       hivmPipelineOptions.enableMixedCV) {
@@ -326,15 +322,7 @@ static void hivmPreBufferizationOptimizationPipeline(
   } else {
     pm.addPass(createInsertNZ2NDForDebugPass());
   }
-  // TODO(regbase)
-  // pm.addPass(mlir::hivm::createInsertFixpipePass());
-  {
-    // TODO(regbase)
-    // InlineFixpipeOptions opts;
-    // opts.inlineQuantScale = hivmPipelineOptions.inlineQuantScaleInFixpipe;
-    // pm.addPass(mlir::hivm::createInlineFixpipePass(opts));
-    pm.addPass(mlir::hivm::createInlineFixpipePass());
-  }
+  pm.addPass(mlir::hivm::createInlineFixpipePass());
   hivmCVCommunicationPipeline(pm, hivmPipelineOptions);
   // must run CloneTensorEmpty to resotre merged&hoisted tensor.empty caused by
   // CSE
@@ -361,13 +349,6 @@ static void hivmPreBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
   multiBufferOptions.workspaceMultiBufferNum =
       hivmPipelineOptions.setWorkspaceMultibuffer;
-  // TODO(regbase)
-  // multiBufferOptions.disableMultiBufferOnUB =
-  //     hivmPipelineOptions.disableMultiBufferOnUB;
-  // multiBufferOptions.disableMultiBufferOnL0C =
-  //     hivmPipelineOptions.disableMultiBufferOnL0C;
-  // multiBufferOptions.disableMultiBufferOnL1 =
-  //     hivmPipelineOptions.disableMultiBufferOnL1;
   pm.addNestedPass<func::FuncOp>(createMarkMultiBufferPass(multiBufferOptions));
   // Call canonicalize before inline OTF broadcast to optimize redundant 1-to-1
   // broadcasts.
@@ -377,17 +358,15 @@ static void hivmPreBufferizationOptimizationPipeline(
     // Software pipelining Cube and Vector operations
     if (hivmPipelineOptions.setCVPipelineMode != CVPipelineMode::Off) {
       CVPipeliningOptions pipelineOptions;
-      // TODO(regbase)
-      // pipelineOptions.pipelineDepth =
-      //     hivmPipelineOptions.setWorkspaceMultibuffer;
+      pipelineOptions.pipelineDepth =
+          hivmPipelineOptions.setWorkspaceMultibuffer;
       pipelineOptions.enableLazyLoading = hivmPipelineOptions.enableLazyLoading;
-      // pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
+      pipelineOptions.pipelineMode = hivmPipelineOptions.setCVPipelineMode;
       pm.nest<func::FuncOp>().addPass(createCVPipeliningPass(pipelineOptions));
     }
   }
 
-  // TODO(regbase
-  // pm.nest<func::FuncOp>().addPass(createInferVFModePass());
+  pm.nest<func::FuncOp>().addPass(createInferVFModePass());
 
   PlanMemoryRegBaseOptions planMemoryOption;
   planMemoryOption.memMode = MemPlanMode::GLOBAL_WORKSPACE_PLAN;
@@ -562,24 +541,16 @@ static void hivmPostBufferizationOptimizationPipeline(
       hivmPipelineOptions.limitAutoMultiBufferOfLocalBuffer;
   multiBufferOptions.limitMixAutoMultiBufferBuffer =
       hivmPipelineOptions.limitAutoMultiBufferBuffer;
-  // TODO(regbase): maybe deprecated
-  // multiBufferOptions.disableMultiBufferOnUB =
-  //     hivmPipelineOptions.disableMultiBufferOnUB;
-  // multiBufferOptions.disableMultiBufferOnL0C =
-  //     hivmPipelineOptions.disableMultiBufferOnL0C;
-  // multiBufferOptions.disableMultiBufferOnL1 =
-  //     hivmPipelineOptions.disableMultiBufferOnL1;
   pm.nest<func::FuncOp>().addPass(
       createMarkMultiBufferPass(multiBufferOptions));
   PlanMemoryRegBaseOptions planMemoryOption;
-  // TODO(regbase): maybe deprecated
-  // planMemoryOption.enablePrintMemoryAllocatedSize =
-  //     hivmPipelineOptions.enablePrintMemoryAllocatedSize;
-  // planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
-  // planMemoryOption.disableTightlyCoupledBufferReuse =
-  //     hivmPipelineOptions.disableTightlyCoupledBufferReuse;
-  // planMemoryOption.disableVFReachableCheck =
-  //     hivmPipelineOptions.disableVFReachableCheck;
+  planMemoryOption.enablePrintMemoryAllocatedSize =
+      hivmPipelineOptions.enablePrintMemoryAllocatedSize;
+  planMemoryOption.simtVFDynamicSize = hivmPipelineOptions.simtVFDynamicSize;
+  planMemoryOption.disableTightlyCoupledBufferReuse =
+      hivmPipelineOptions.disableTightlyCoupledBufferReuse;
+  planMemoryOption.disableVFReachableCheck =
+      hivmPipelineOptions.disableVFReachableCheck;
   pm.addPass(createPlanMemoryRegBasePass(planMemoryOption));
 
   // Cross-Core Auto-Sync passes STEP=2
