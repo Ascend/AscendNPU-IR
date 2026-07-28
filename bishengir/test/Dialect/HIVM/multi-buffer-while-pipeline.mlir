@@ -5,7 +5,15 @@
 // RUN:     hivm-plan-memory,                                                  \
 // RUN:     func.func(hivm-graph-sync-solver,hivm-enable-multi-buffer,hivm-lower-multi-buffer-counter))" \
 // RUN:   -split-input-file -verify-diagnostics                                \
-// RUN:   | FileCheck %s
+// RUN:   | FileCheck %s --check-prefix=CHECK
+// RUN: bishengir-opt %s                                                       \
+// RUN:   -pass-pipeline="builtin.module(                                      \
+// RUN:     hacc-append-device-spec{target=Ascend950PR_9589},                  \
+// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true}),               \
+// RUN:     hivm-plan-memory,                                                  \
+// RUN:     func.func(hivm-graph-sync-solver,hivm-enable-multi-buffer,hivm-lower-multi-buffer-counter))" \
+// RUN:   -split-input-file -verify-diagnostics                                \
+// RUN:   | FileCheck %s --check-prefix=A5
 
 // -----
 // 4-pass end-to-end pipeline on a vadd-style scf.while body.
@@ -60,6 +68,80 @@ func.func @while_pipeline_vadd(%arg0: memref<8xf32, #hivm.address_space<gm>>,
     // CHECK: memref.store %{{.*}}, %[[CTR]]
     // CHECK: scf.yield
     scf.yield %cin : i1
+  }
+  return
+}
+
+// -----
+// Ascend950 MixCV vector-side multi-buffer + PlanMemory reuse.
+//
+// After SplitMixKernel the vector kernel is AIV + hivm.part_of_mix. With the
+// default mix strategy (no-limit), MarkMultiBuffer marks UB load/store
+// candidates. Two non-overlapping phases of equal size then share the same
+// physical multi-buffer addresses from PlanMemory, while EnableMultiBuffer
+// still emits slot selects on the shared counter.
+// A5-LABEL: func.func @a5_mix_vector_multibuffer_reuse(
+func.func @a5_mix_vector_multibuffer_reuse(
+    %src1: memref<9728xf32, #hivm.address_space<gm>>,
+    %dst1: memref<9728xf32, #hivm.address_space<gm>>,
+    %src2: memref<9728xf32, #hivm.address_space<gm>>,
+    %dst2: memref<9728xf32, #hivm.address_space<gm>>)
+    attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
+                hivm.func_core_type = #hivm.func_core_type<AIV>,
+                hivm.part_of_mix} {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c4 = arith.constant 4 : index
+
+  // Shared counter alloca for slot rotation.
+  // A5-DAG: %[[CTR:.*]] = memref.alloca() : memref<1xi64>
+  // A5-DAG: memref.store %{{.*}}, %[[CTR]]
+
+  // Distinct multi-buffer physical addresses for the two slots of each phase.
+  // Phase-1 and phase-2 reuse the same bases (each address appears twice).
+  // A5-DAG: %[[C77824:.*]] = arith.constant 77824 : i64
+  // A5-DAG: %[[C38912:.*]] = arith.constant 38912 : i64
+  // A5-DAG: %[[C116736:.*]] = arith.constant 116736 : i64
+  // A5: hivm.hir.pointer_cast(%[[C38912]]) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%[[C116736]]) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%[[C38912]]) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%[[C116736]]) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%{{.*}}) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%[[C77824]]) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%{{.*}}) : memref<9728xf32, #hivm.address_space<ub>>
+  // A5: hivm.hir.pointer_cast(%[[C77824]]) : memref<9728xf32, #hivm.address_space<ub>>
+
+  // A5-DAG: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID0>]
+  // A5-DAG: hivm.hir.set_flag[<PIPE_MTE3>, <PIPE_MTE2>, <EVENT_ID1>]
+
+  scf.for %i = %c0 to %c4 step %c1 {
+    // A5: %[[CUR:.*]] = memref.load %[[CTR]]
+    // A5: arith.remui %[[CUR]], %{{.*}} : i64
+    // A5: arith.select {{.*}} : memref<9728xf32, #hivm.address_space<ub>>
+    // A5: hivm.hir.wait_flag[<PIPE_MTE3>, <PIPE_MTE2>, %{{.*}}]
+
+    %src1_ub = memref.alloc() : memref<9728xf32, #hivm.address_space<ub>>
+    %dst1_ub = memref.alloc() : memref<9728xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%src1 : memref<9728xf32, #hivm.address_space<gm>>)
+                  outs(%src1_ub : memref<9728xf32, #hivm.address_space<ub>>)
+    hivm.hir.vadd ins(%src1_ub, %src1_ub : memref<9728xf32, #hivm.address_space<ub>>,
+                                           memref<9728xf32, #hivm.address_space<ub>>)
+                  outs(%dst1_ub : memref<9728xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%dst1_ub : memref<9728xf32, #hivm.address_space<ub>>)
+                   outs(%dst1 : memref<9728xf32, #hivm.address_space<gm>>)
+
+    %src2_ub = memref.alloc() : memref<9728xf32, #hivm.address_space<ub>>
+    %dst2_ub = memref.alloc() : memref<9728xf32, #hivm.address_space<ub>>
+    hivm.hir.load ins(%src2 : memref<9728xf32, #hivm.address_space<gm>>)
+                  outs(%src2_ub : memref<9728xf32, #hivm.address_space<ub>>)
+    hivm.hir.vadd ins(%src2_ub, %src2_ub : memref<9728xf32, #hivm.address_space<ub>>,
+                                           memref<9728xf32, #hivm.address_space<ub>>)
+                  outs(%dst2_ub : memref<9728xf32, #hivm.address_space<ub>>)
+    hivm.hir.store ins(%dst2_ub : memref<9728xf32, #hivm.address_space<ub>>)
+                   outs(%dst2 : memref<9728xf32, #hivm.address_space<gm>>)
+
+    // A5: arith.addi %[[CUR]], %{{.*}} : i64
+    // A5: memref.store %{{.*}}, %[[CTR]]
   }
   return
 }
