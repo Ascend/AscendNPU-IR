@@ -884,6 +884,13 @@ private:
                RankedTensorType accTensorType) const;
 };
 
+static bool hasUseOutsideScope(Value value, Operation *scope) {
+  return llvm::any_of(value.getUses(), [scope](OpOperand &use) {
+    Operation *owner = use.getOwner();
+    return owner != scope && !scope->isAncestor(owner);
+  });
+}
+
 void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc,
                                TreeReductionBuilder &builder,
                                scf::ForOp targetForOp, Value inputTensor,
@@ -901,7 +908,6 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc,
       {rewriter.getAffineConstantExpr(builder.vectorLength),
        rewriter.getAffineSymbolExpr(0) - rewriter.getAffineDimExpr(0)},
       rewriter.getContext());
-  Value workingTensor = builder.promoteToComputeType(inputTensor, dimR, minMap);
 
   int64_t mainR = 1;
   while (mainR > 0 && mainR * 2 <= dimR)
@@ -914,6 +920,18 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc,
   int64_t tailFolds = folds % 4;
   LDBG("mainR=" << mainR << " tailR=" << tailR << " folds=" << folds
                 << " mainTimes=" << mainTimes << " tailFolds=" << tailFolds);
+
+  Value sourceTensor = builder.promoteToComputeType(inputTensor, dimR, minMap);
+  Value workingTensor = sourceTensor;
+  bool preserveInput = sourceTensor == inputTensor &&
+                       hasUseOutsideScope(inputTensor, targetForOp);
+  bool needsPartialTensor = tailR > 0 || mainTimes > 0;
+  bool useSeparateWorkingTensor = preserveInput && needsPartialTensor;
+  if (useSeparateWorkingTensor) {
+    auto inputType = cast<RankedTensorType>(inputTensor.getType());
+    workingTensor = rewriter.create<tensor::EmptyOp>(
+        loc, inputType.getShape(), inputType.getElementType());
+  }
 
   auto read2D = [&rewriter, loc, &builder](Value tensor, Value rIdx, Value cIdx,
                                            Value minA, Value mask) -> Value {
@@ -991,11 +1009,48 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc,
     Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
     Value tailIdx = rewriter.create<arith::AddIOp>(loc, ivR, mainRVal);
 
-    Value vecMain = read2D(loopRAcc, ivR, ivA, minA, currentMask);
-    Value vecTail = read2D(loopRAcc, tailIdx, ivA, minA, currentMask);
+    Value readTensor = useSeparateWorkingTensor ? sourceTensor : loopRAcc;
+    Value vecMain = read2D(readTensor, ivR, ivA, minA, currentMask);
+    Value vecTail = read2D(readTensor, tailIdx, ivA, minA, currentMask);
     Value reducedVec = builder.createAdd(vecMain, vecTail);
     Value insertSliceOp =
         write2D(reducedVec, loopRAcc, ivR, ivA, minA, currentMask);
+
+    rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
+    rewriter.setInsertionPointAfter(loopR);
+    rewriter.create<scf::YieldOp>(loc, ValueRange{loopR.getResult(0)});
+    rewriter.setInsertionPointAfter(loopA);
+    workingTensor = loopA.getResult(0);
+  }
+
+  // A later tree-reduction stage expects every active row in [0, mainR) to
+  // reside in workingTensor. Tail folding above materializes [0, tailR);
+  // forward the remaining rows with legal vector transfers instead of a
+  // whole-tensor linalg.copy. Small reductions without a main stage keep the
+  // rows in sourceTensor and select their source directly in the final fold.
+  if (useSeparateWorkingTensor && mainTimes > 0 && tailR < mainR) {
+    Value tailRVal = rewriter.create<arith::ConstantIndexOp>(loc, tailR);
+    Value mainRVal = rewriter.create<arith::ConstantIndexOp>(loc, mainR);
+    auto loopA =
+        rewriter.create<scf::ForOp>(loc, builder.c0, builder.dimAVal,
+                                    builder.c64, ValueRange{workingTensor});
+    rewriter.setInsertionPointToStart(loopA.getBody());
+    Value loopAAcc = loopA.getRegionIterArg(0), ivA = loopA.getInductionVar();
+    Value minA = rewriter.create<affine::AffineMinOp>(
+        loc, minMap, ValueRange{ivA, builder.dimAVal});
+
+    auto mask2DTy =
+        VectorType::get({1, builder.vectorLength}, rewriter.getI1Type());
+    Value currentMask = rewriter.create<vector::CreateMaskOp>(
+        loc, mask2DTy, ValueRange{builder.c1, minA});
+
+    auto loopR = rewriter.create<scf::ForOp>(loc, tailRVal, mainRVal,
+                                             builder.c1, ValueRange{loopAAcc});
+    rewriter.setInsertionPointToStart(loopR.getBody());
+    Value loopRAcc = loopR.getRegionIterArg(0), ivR = loopR.getInductionVar();
+    Value forwarded = read2D(sourceTensor, ivR, ivA, minA, currentMask);
+    Value insertSliceOp =
+        write2D(forwarded, loopRAcc, ivR, ivA, minA, currentMask);
 
     rewriter.create<scf::YieldOp>(loc, ValueRange{insertSliceOp});
     rewriter.setInsertionPointAfter(loopR);
@@ -1077,7 +1132,10 @@ void TreeReduceV2Pass::buildRA(IRRewriter &rewriter, Location loc,
   tailRegs.reserve(std::min<int64_t>(numLeaves, 64));
   for (int64_t i = 0; i < numLeaves && i < 64; ++i) {
     Value offsetR = rewriter.create<arith::ConstantIndexOp>(loc, i);
-    tailRegs.push_back(read2D(workingTensor, offsetR, ivA, minA, currentMask));
+    Value readTensor = workingTensor;
+    if (useSeparateWorkingTensor && mainTimes == 0 && i >= tailR)
+      readTensor = sourceTensor;
+    tailRegs.push_back(read2D(readTensor, offsetR, ivA, minA, currentMask));
   }
   Value finalOutputVec = builder.buildTreeReduction(tailRegs);
 
