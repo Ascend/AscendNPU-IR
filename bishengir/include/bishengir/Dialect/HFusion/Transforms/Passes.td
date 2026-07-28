@@ -719,6 +719,35 @@ def RemoveRedundantWriteAndReadPair
   let dependentDialects = ["vector::VectorDialect"];
 }
 
+def UnrollAndForward
+    : Pass<"hfusion-unroll-and-forward", "func::FuncOp"> {
+  let summary = "Fully unroll small trip-count scf.for in VF and forward "
+                "transfer_write -> transfer_read so intermediates stay in "
+                "vector registers (no UB round-trip).";
+  let description = [{
+    Two-step pass:
+      (1) fully unroll scf.for with constant lb/ub/step and tripCount in
+          [2, max-unroll], inside a hivm.vector_function;
+      (2) forward vector.transfer_read through the unrolled
+          extract_slice(insert_slice(...transfer_write...)) chain to the
+          source vector, eliminating the UB materialization.
+    Step (2) is stricter than RemoveRedundantWriteAndReadPair: it walks the
+    extract_slice(insert_slice) chain (only straight after unroll) to reach
+    the defining transfer_write at the matching constant offset.
+  }];
+  let constructor = "::mlir::hfusion::createUnrollAndForwardPass()";
+  let dependentDialects = ["scf::SCFDialect", "arith::ArithDialect",
+                            "vector::VectorDialect", "tensor::TensorDialect"];
+  let options = [
+    Option<"maxUnroll", "max-unroll", "unsigned", "4",
+           "Maximum trip count to fully unroll (caps code growth).">,
+    Option<"maxBodyOps", "max-body-ops", "unsigned", "64",
+           "Maximum number of operations in a loop body to allow unrolling. "
+           "Bodies with more ops are not unrolled even if they match the "
+           "chain pattern, to prevent code explosion.">,
+  ];
+}
+
 def HFusionGeneralizePass : Pass<"hfusion-generalize", "func::FuncOp"> {
   let summary = "convert hfusionOp to linalg.generic";
   let constructor = "::mlir::hfusion::createHFusionGeneralizePass()";
