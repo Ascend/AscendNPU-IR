@@ -154,10 +154,21 @@ struct MulExtendedOpLowering : public OpRewritePattern<BinaryOp> {
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
     auto resultType = op.getLow().getType();
-    constexpr bool isUnsigned =
-        std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
-    auto mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType,
-      lhs, rhs, isUnsigned);
+
+    auto module = op->template getParentOfType<ModuleOp>();
+    Operation *mulExtOp = nullptr;
+    if (module && hacc::utils::isRegBasedArch(module)) {
+      // Adapt to reg-based arch, use hfusion.mulext instead of hfusion.mulextui
+      // TODO: can remove this dispatch after fully support MulExtUiOp in
+      // regbase pipeline
+      mulExtOp = rewriter.create<hfusion::MulExtOp>(op->getLoc(), resultType,
+                                                    resultType, lhs, rhs);
+    } else {
+      constexpr bool isUnsigned =
+          std::is_same_v<BinaryOp, arith::MulUIExtendedOp>;
+      mulExtOp = createMulExtOp(rewriter, op->getLoc(), resultType, lhs, rhs,
+                                isUnsigned);
+    }
     rewriter.replaceOp(op, mulExtOp);
     return success();
   }
