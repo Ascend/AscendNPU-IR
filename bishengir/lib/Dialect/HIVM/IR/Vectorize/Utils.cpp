@@ -73,7 +73,7 @@ Value getIdentityElement(OpBuilder &builder, Location loc, Type elemType,
               intType, APInt::getSignedMaxValue(intType.getWidth())));
     }
   }
-  llvm_unreachable("unsupported element type for neutral element");
+  llvm::report_fatal_error("unsupported element type for neutral element");
 }
 
 Value createVectorArithOp(OpBuilder &builder, Location loc,
@@ -112,6 +112,6 @@ Value createVectorArithOp(OpBuilder &builder, Location loc,
     }
   }
 
-  llvm_unreachable("unsupported element type for vector arithmetic");
+  llvm::report_fatal_error("unsupported element type for vector arithmetic");
 }
 }

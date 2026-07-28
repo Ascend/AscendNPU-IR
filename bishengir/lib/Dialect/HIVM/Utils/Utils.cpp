@@ -264,7 +264,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
     return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
                                    targetMemScope);
   }
-  llvm_unreachable("Unexpected BaseMemRefType");
+  llvm::report_fatal_error("Unexpected BaseMemRefType");
   return type;
 }
 
@@ -280,7 +280,7 @@ BaseMemRefType getBaseMemRefTypeWithNewScope(BaseMemRefType type,
     return UnrankedMemRefType::get(unrankedMemRefType.getElementType(),
                                    targetMemScope);
   }
-  llvm_unreachable("Unexpected BaseMemRefType");
+  llvm::report_fatal_error("Unexpected BaseMemRefType");
   return type;
 }
 
@@ -1261,7 +1261,7 @@ uint32_t getHWAlignBytes(Attribute spaceAttr) {
   case hivm::AddressSpace::L1:
     return hivm::util::BL;
   default:
-    llvm_unreachable("Unsupported address space");
+    llvm::report_fatal_error("Unsupported address space");
   }
 }
 

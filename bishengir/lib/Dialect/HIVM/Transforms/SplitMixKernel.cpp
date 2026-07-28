@@ -266,7 +266,7 @@ static SmallVector<Value> getOutOperands(Operation *op) {
 
   LDBG("unsupported op: " << *op);
   // TODO: should we get the last operands as out operands by default?
-  llvm_unreachable("unsupported op to get out operands");
+  llvm::report_fatal_error("unsupported op to get out operands");
 }
 
 LogicalResult replaceResultWithInitOperand(Operation *op) {

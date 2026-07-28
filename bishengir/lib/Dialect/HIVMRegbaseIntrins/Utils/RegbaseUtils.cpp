@@ -137,7 +137,7 @@ Operation *hivm_regbaseintrins::buildVBrOp(Value broadcastSource,
       elementType.isF16() || elementType.isBF16())
     return rewriter.create<hivm_regbaseintrins::VbrInstrOp>(
         rewriter.getUnknownLoc(), resVecType, broadcastSource);
-  llvm_unreachable("Invalid vbr element type.");
+  llvm::report_fatal_error("Invalid vbr element type.");
 }
 
 Operation *hivm_regbaseintrins::buildVldsOp(Value basePtr, Value offset,
@@ -192,7 +192,7 @@ Operation *hivm_regbaseintrins::buildVldsOp(Value basePtr, Value offset,
   if (isa<Float8E5M2Type>(elementType))
     return rewriter.create<hivm_regbaseintrins::Vldsx1V256F8E5InstrOp>(
         basePtr.getLoc(), resVecType, basePtr, offset, distVal, pVal);
-  llvm_unreachable("Invalid vlds element type.");
+  llvm::report_fatal_error("Invalid vlds element type.");
 }
 
 Operation *hivm_regbaseintrins::buildVldusOp(Value basePtr, Value alignData,
@@ -244,7 +244,7 @@ Operation *hivm_regbaseintrins::buildVldusOp(Value basePtr, Value alignData,
   std::string res = "";
   llvm::raw_string_ostream msg(res);
   elementType.print(msg);
-  llvm_unreachable(("Invalid vldus element type: " + msg.str()).c_str());
+  llvm::report_fatal_error(llvm::StringRef("Invalid vldus element type: " + msg.str()));
 }
 
 Operation *hivm_regbaseintrins::buildVldusPostOp(Value basePtr, Value alignData,
@@ -296,7 +296,7 @@ Operation *hivm_regbaseintrins::buildVldusPostOp(Value basePtr, Value alignData,
   std::string res = "";
   llvm::raw_string_ostream msg(res);
   elementType.print(msg);
-  llvm_unreachable(("Invalid vldus post element type: " + msg.str()).c_str());
+  llvm::report_fatal_error(llvm::StringRef("Invalid vldus post element type: " + msg.str()));
 }
 
 Operation *hivm_regbaseintrins::buildVldasOp(Value basePtr,
@@ -369,7 +369,7 @@ Operation *hivm_regbaseintrins::buildVstsOp(Value srcRegister, Value basePtr,
           rewriter.getI32IntegerAttr(numElements == 1 ? 5 : 2));
       break;
     default:
-      llvm_unreachable("unsupported datatypes");
+      llvm::report_fatal_error("unsupported datatypes");
     }
   }
 
@@ -418,7 +418,7 @@ Operation *hivm_regbaseintrins::buildVstsOp(Value srcRegister, Value basePtr,
     return rewriter.create<hivm_regbaseintrins::Vstsx1V256F8E5InstrOp>(
         basePtr.getLoc(), srcRegister, basePtr, offset, distVal, cstZero,
         predicateVector);
-  llvm_unreachable("Invalid vsts element type.");
+  llvm::report_fatal_error("Invalid vsts element type.");
 }
 
 Operation *hivm_regbaseintrins::buildVstusPostOp(Value srcRegister,
@@ -502,7 +502,7 @@ Operation *hivm_regbaseintrins::buildVstusPostOp(Value srcRegister,
   std::string res = "";
   llvm::raw_string_ostream msg(res);
   elementType.print(msg);
-  llvm_unreachable(("Invalid vstus element type: " + msg.str()).c_str());
+  llvm::report_fatal_error(llvm::StringRef("Invalid vstus element type: " + msg.str()));
 }
 
 Operation *hivm_regbaseintrins::buildVstasOp(Value srcRegister, Value basePtr,
@@ -533,7 +533,7 @@ Operation *hivm_regbaseintrins::buildPsetOp(Value pattern,
     return rewriter.create<hivm_regbaseintrins::PgeB32>(
         pattern.getLoc(), resVecType, pattern, pattern);
   }
-  llvm_unreachable("Invalid element bit width for a predicate vector.");
+  llvm::report_fatal_error("Invalid element bit width for a predicate vector.");
 }
 
 Operation *hivm_regbaseintrins::buildMovvpOp(Location loc, Type type,
@@ -550,7 +550,7 @@ Operation *hivm_regbaseintrins::buildMovvpOp(Location loc, Type type,
     result = rewriter.create<MovvpInstrOp>(loc, pregType, extractOp, cstZero);
     break;
   default:
-    llvm_unreachable("elementAlignment is not supported");
+    llvm::report_fatal_error("elementAlignment is not supported");
   }
   return result;
 }
@@ -579,7 +579,7 @@ Operation *hivm_regbaseintrins::buildVpackOp(Location loc, Value part,
     Type elemType = vecType.getElementType();
     unsigned bitWidth = elemType.getIntOrFloatBitWidth();
     if (bitWidth != 16 && bitWidth != 32) {
-      llvm_unreachable("Invalid element type for VpackInstrOp, only b16 and b32 are supported");
+      llvm::report_fatal_error("Invalid element type for VpackInstrOp, only b16 and b32 are supported");
     }
   }
   Operation *result = rewriter.create<VpackInstrOp>(loc, vectorType, src, part);
@@ -594,7 +594,7 @@ Operation *hivm_regbaseintrins::buildVunpackOp(Location loc, Value part,
     Type elemType = vecType.getElementType();
     unsigned bitWidth = elemType.getIntOrFloatBitWidth();
     if (bitWidth != 8 && bitWidth != 16 && bitWidth != 6) {
-      llvm_unreachable("Invalid element type for Vzunpack, only b8, b16, and b6 are supported");
+      llvm::report_fatal_error("Invalid element type for Vzunpack, only b8, b16, and b6 are supported");
     }
   }
   Operation *result = rewriter.create<Vzunpack>(loc, vectorType, src, part);
@@ -623,7 +623,7 @@ Operation *hivm_regbaseintrins::buildPgeOp(Location loc, Value pattern,
                                                           zero);
     break;
   default:
-    llvm_unreachable("Invalid element bit width for a predicate vector.");
+    llvm::report_fatal_error("Invalid element bit width for a predicate vector.");
   }
   return result;
 }
@@ -650,7 +650,7 @@ Operation *hivm_regbaseintrins::buildPltOp(Location loc, Value true_shape,
         rewriter.create<hivm_regbaseintrins::PltB32>(loc, resType, true_shape);
     break;
   default:
-    llvm_unreachable("Invalid element bit width for a predicate vector.");
+    llvm::report_fatal_error("Invalid element bit width for a predicate vector.");
   }
   return result;
 }
@@ -675,7 +675,7 @@ Operation *hivm_regbaseintrins::buildPltMOp(Location loc, Value div, Value ub,
         rewriter.create<hivm_regbaseintrins::PltMB32>(loc, resType, div, ub);
     break;
   default:
-    llvm_unreachable("Invalid element bit width for a predicate vector.");
+    llvm::report_fatal_error("Invalid element bit width for a predicate vector.");
   }
   return result;
 }
@@ -699,7 +699,7 @@ Operation *hivm_regbaseintrins::buildPstuOp(Value data, Value dataPtr,
                                                  dataPtr, alignData);
     break;
   default:
-    llvm_unreachable("Invalid elementAlignment!");
+    llvm::report_fatal_error("Invalid elementAlignment!");
   }
   return result;
 }
@@ -722,7 +722,7 @@ Operation *hivm_regbaseintrins::buildVdupOp(Value srcRegister,
       isa<Float8E5M2Type>(elementType) || isa<Float8E4M3FNType>(elementType))
     return rewriter.create<hivm_regbaseintrins::VdupZInstrOp>(
         srcRegister.getLoc(), resVecType, srcRegister, predicateVector, cstOne);
-  llvm_unreachable("Invalid vsts element type.");
+  llvm::report_fatal_error("Invalid vsts element type.");
 }
 
 // Checks if the type is supported by Regbase
@@ -758,7 +758,7 @@ Operation *buildRegbaseBinaryVectorOp(Value lhs, Value rhs, Value pred,
         elementType.isUnsignedInteger(16) || elementType.isUnsignedInteger(8))
       return rewriter.create<Intr_u>(lhs.getLoc(), resType, lhs, rhs, pred);
   }
-  llvm_unreachable("Invalid david op element type.");
+  llvm::report_fatal_error("Invalid david op element type.");
 }
 
 template <typename Intr_s, typename Intr_u>
@@ -782,7 +782,7 @@ Operation *buildRegbaseUnaryVectorOp(Value lhs, Value pred,
       return rewriter.create<Intr_u>(lhs.getLoc(), resType, lhs, pred);
     }
   }
-  llvm_unreachable("Invalid david op element type.");
+  llvm::report_fatal_error("Invalid david op element type.");
 }
 } // end anonymous namespace
 
@@ -819,7 +819,7 @@ Operation *hivm_regbaseintrins::buildVselOp(Value srcReg1, Value srcReg2,
     return rewriter.create<hivm_regbaseintrins::VselInstrOp>(
         rewriter.getUnknownLoc(), srcReg1.getType(), srcReg1, srcReg2,
         predicateVector);
-  llvm_unreachable("Invalid vsel element type.");
+  llvm::report_fatal_error("Invalid vsel element type.");
 }
 
 Value hivm_regbaseintrins::remove1DVectorHighDims(Location loc, Value value,
@@ -833,7 +833,7 @@ Value hivm_regbaseintrins::remove1DVectorHighDims(Location loc, Value value,
   }
   for (unsigned i = 1, n = shape.size(); i < n; ++i) {
     if (shape[i - 1] != 1) {
-      llvm_unreachable("Expecting 1D vector when reducing high dimensions");
+      llvm::report_fatal_error("Expecting 1D vector when reducing high dimensions");
     }
   }
   auto endType =
@@ -880,7 +880,7 @@ int hivm_regbaseintrins::getVldsBrcDist(const int &dataBitWidth) {
     dist = 3;
     break;
   default:
-    llvm_unreachable("Invalid data bit length!");
+    llvm::report_fatal_error("Invalid data bit length!");
   }
   return dist;
 }
@@ -909,7 +909,7 @@ VectorType hivm_regbaseintrins::createVLVectorType(Type elementType) {
     vectorLength = 32;
     break;
   default:
-    llvm_unreachable("unsupported datatype");
+    llvm::report_fatal_error("unsupported datatype");
   }
   return VectorType::get({vectorLength}, elementType);
 }

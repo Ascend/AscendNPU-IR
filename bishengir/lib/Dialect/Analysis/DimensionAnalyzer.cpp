@@ -75,7 +75,7 @@ DimensionAnalyzerBase::getElementShape(int elemIndex) {
       return tensor::getMixedSize(builder, val.getLoc(), val, i);
     }
   }
-  llvm_unreachable("Element shape found but cannot be inferred");
+  llvm::report_fatal_error("Element shape found but cannot be inferred");
 }
 
 std::optional<SmallVector<int64_t>>
@@ -123,7 +123,7 @@ DimensionAnalyzerBase::getDimension(int64_t parentIndex) {
       return Dimension(value, i);
     }
   }
-  llvm_unreachable("Element shape index cannot be inferred");
+  llvm::report_fatal_error("Element shape index cannot be inferred");
 }
 
 SmallVector<int64_t> DimensionAnalyzerBase::getValueDimIndices(Value v) const {

@@ -261,7 +261,7 @@ struct HIVMMemBarOpLowering
       membar = rewriter.create<MemBarSTSTInstrOp>(loc);
       break;
     default:
-      llvm_unreachable("Invalid membar_type_value!");
+      llvm::report_fatal_error("Invalid membar_type_value!");
     }
     rewriter.replaceOp(op, membar);
     return success();
@@ -921,7 +921,7 @@ struct HIVMLoadOpLowering : public ConvertOpToLLVMPattern<VFLoadOp> {
         assert(elementAlignment != -1);
         auto result = createLoadOpFori1Type(dataPtr, rewriter, elementAlignment);
         if (!result) {
-          llvm_unreachable("unsupported elementAlignment!");
+          llvm::report_fatal_error("unsupported elementAlignment!");
         }
         rewriter.replaceOp(load, result);
         return success();
@@ -1918,7 +1918,7 @@ private:
       return static_cast<Operation *>(
           rewriter.create<OpF>(loc, vType, vector, mask));
     }
-    llvm_unreachable("avoid compilation of create<nulltype>");
+    llvm::report_fatal_error("avoid compilation of create<nulltype>");
   }
 
   template <hivmave::CombiningKind kind, int width, typename OpSMin,
@@ -1940,7 +1940,7 @@ private:
       return buildVcMinMaxOp<umax, width, OpSMax, OpUMax, OpFMax>(
           rewriter, elementType, loc, vType, vector, mask);
     } else {
-      llvm_unreachable("unsupported CombiningKind (should be detected in "
+      llvm::report_fatal_error("unsupported CombiningKind (should be detected in "
                        "compile timeon newer clang)");
     }
   }
@@ -2424,7 +2424,7 @@ struct HIVMTypeConvertionOpLowering
             loc, dstVLVectorTy, srcCasted, mask, cstValue(srcOp.getPart()));
     }
     if (!newOp)
-      llvm_unreachable("Unsupported type conversion op.");
+      llvm::report_fatal_error("Unsupported type conversion op.");
 
     UnrealizedConversionCastOp resultCasted =
         rewriter.create<UnrealizedConversionCastOp>(loc, resType,
@@ -3214,7 +3214,7 @@ struct HIVMPredicateBinaryLogicOpLowering
       else if constexpr (std::is_same_v<OpToBeConverted, PregXorOp>)
         newOp = rewriter.create<PxorB8InstrOp>(loc, newOpResTy, lhs, rhs, mask);
     } else {
-      llvm_unreachable("Unsupported operation type.");
+      llvm::report_fatal_error("Unsupported operation type.");
       return failure();
     }
     if (resType != newOpResTy) {

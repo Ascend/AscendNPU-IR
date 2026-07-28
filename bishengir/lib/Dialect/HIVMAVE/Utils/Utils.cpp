@@ -52,7 +52,7 @@ ValueRange hivmave::getIndices(mlir::Operation *op) {
     return vectorMaskStoreOp.getIndices();
   if (auto vectorMaskLoadOp = dyn_cast<vector::MaskedLoadOp>(op))
     return vectorMaskLoadOp.getIndices();
-  llvm_unreachable("unsupported op type");
+  llvm::report_fatal_error("unsupported op type");
 }
 
 Value hivmave::computeLinearMemRefOffset(OpBuilder &builder, Location loc,

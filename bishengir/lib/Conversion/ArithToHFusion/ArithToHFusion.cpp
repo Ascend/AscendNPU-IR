@@ -218,7 +218,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       if (isRegBasedArch && (inType.isF32() || inType.isF16() || inType.isBF16())
           && (isa<Float8E4M3FNType>(outType) || isa<Float8E5M2Type>(outType)))
         return hfusion::RoundMode::RINT;
-      llvm_unreachable("unsupported datatype for arith::TruncFOp to hfusion");
+      llvm::report_fatal_error("unsupported datatype for arith::TruncFOp to hfusion");
     } else if (isa<arith::ExtFOp>(op)) {
       if (inType.isF16() && outType.isF32())
         return hfusion::RoundMode::RINT;
@@ -227,7 +227,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       if (isRegBasedArch && (isa<Float8E4M3FNType>(inType) || isa<Float8E5M2Type>(inType))
           && (outType.isF32() || outType.isF16() || outType.isBF16()))
         return hfusion::RoundMode::RINT;
-      llvm_unreachable("unsupported datatype for arith::ExtFOp to hfusion");
+      llvm::report_fatal_error("unsupported datatype for arith::ExtFOp to hfusion");
     } else if (isa<arith::TruncIOp>(op)) {
       if (isOverFlowMode(inType, outType)) {
         return hfusion::RoundMode::TRUNCWITHOVERFLOW;
@@ -242,7 +242,7 @@ struct ElementwiseOpToHFusionCast : public OpRewritePattern<CastOp> {
       }
       return hfusion::RoundMode::TRUNC;
     }
-    llvm_unreachable("unsupported arith op to hfusion");
+    llvm::report_fatal_error("unsupported arith op to hfusion");
   }
 
   static hfusion::TypeFn selectCast(CastOp op) {
@@ -336,7 +336,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
     case arith::CmpFPredicate::UGT:
       return CompareFn::vgt;
     default:
-      llvm_unreachable("unsupported arith cmp predicate to hfusion");
+      llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
     }
   }
 
@@ -363,7 +363,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
     case arith::CmpIPredicate::ult:
       return CompareFn::vult;
     }
-    llvm_unreachable("unsupported arith cmp predicate to hfusion");
+    llvm::report_fatal_error("unsupported arith cmp predicate to hfusion");
   }
 
   static hfusion::CompareFn selectI1Predicate(arith::CmpIOp op) {
@@ -377,7 +377,7 @@ struct ElementwiseOpToHFusionCompare : public OpRewritePattern<CompareOp> {
     case arith::CmpIPredicate::uge:
       return CompareFn::vge;
     default:
-      llvm_unreachable("i1 type cannot have signness information");
+      llvm::report_fatal_error("i1 type cannot have signness information");
     }
   }
 

@@ -596,7 +596,7 @@ LogicalResult CVPipelineRegbaseImpl::markOutputs() {
         else if (auto nd2nz = dyn_cast<ND2NZOp>(nested))
           funcArg = traceToFuncArg(nd2nz.getSrc());
         else
-          llvm_unreachable("Replace with LoadLikeOpInterface.getSrc()");
+          llvm::report_fatal_error("Replace with LoadLikeOpInterface.getSrc()");
         if (!funcArg)
           return WalkResult::advance();
         auto it = storedFuncArgs.find(funcArg);

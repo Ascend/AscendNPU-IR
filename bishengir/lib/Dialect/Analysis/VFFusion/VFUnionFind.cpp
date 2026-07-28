@@ -72,7 +72,7 @@ bool VFUnionFind::isConnected(int x, int y) {
 
 void VFUnionFind::allocateMinimum(size_t n) {
   if (n + 1 > parent_.size())
-    llvm_unreachable("shouldn't allocate any new indices.");
+    llvm::report_fatal_error("shouldn't allocate any new indices.");
 }
 
 } // namespace mlir::analysis

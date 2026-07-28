@@ -55,7 +55,7 @@ static LLVM::LLVMStructType getCCEI64VectorStructType(OpBuilder &rewriter,
   llvm::StringRef structName = "vector_2xvl_s64";
   auto identified = LLVM::LLVMStructType::getIdentified(ctx, structName);
   if (mlir::failed(identified.setBody({arrayType}, /*isPacked=*/false)))
-    llvm_unreachable("creating struct failed!");
+    llvm::report_fatal_error("creating struct failed!");
   return identified;
 }
 

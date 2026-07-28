@@ -112,7 +112,7 @@ struct AdaptGPUKernelPass
         gridZ = gridDim;
         break;
       default:
-        llvm_unreachable("Unknown mapping");
+        llvm::report_fatal_error("Unknown mapping");
       }
     }
     if ((!gridX || !gridY || !gridZ) || options.useGridFlag) {

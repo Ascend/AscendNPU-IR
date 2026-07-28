@@ -52,7 +52,7 @@ enum class VectorArithKind {
 ///         - MAX: Returns $-\infty$ for floats, signed minimum for integers
 ///         - MIN: Returns $+\infty$ for floats, signed maximum for integers
 ///
-/// @throws llvm_unreachable if elemType is neither FloatType nor IntegerType
+/// @throws llvm::report_fatal_error if elemType is neither FloatType nor IntegerType
 Value getIdentityElement(OpBuilder &builder, Location loc, Type elemType,
                          VectorArithKind kind);
 

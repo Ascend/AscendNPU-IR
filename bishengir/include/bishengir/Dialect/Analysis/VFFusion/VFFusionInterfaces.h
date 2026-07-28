@@ -27,7 +27,7 @@ using VFFusionBlockList = SmallVector<VFFusionBlock>;
 class FusionKindBase {
 public:
   virtual FailureOr<VFFusionBlockList> analyzeBlockImpl(Block &block) {
-    llvm_unreachable("analyze block is not implemented");
+    llvm::report_fatal_error("analyze block is not implemented");
   }
 
   /// Fuses operations in a block by analyzing, outlining, and creating function

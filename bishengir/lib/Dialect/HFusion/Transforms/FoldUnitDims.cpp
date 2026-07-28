@@ -287,7 +287,7 @@ std::optional<Value> checkValueMatchPattern(Value val,
  * @note Only applies to:
  *       1. ShapedType with rank > 1
  *       2. MemRefType or RankedTensorType (aborts for other types via
- * llvm_unreachable)
+ * llvm::report_fatal_error)
  *       3. Shape containing at least one unit dimension
  *
  * @param[in] oldVal Input MemRef/Tensor value to collapse
@@ -387,7 +387,7 @@ FailureOr<Value> tryCollapseValue(Value oldVal, OpBuilder &builder,
       newVal = builder.create<tensor::CollapseShapeOp>(loc, newTy, oldVal,
                                                        reassocIdxVec);
     } else {
-      llvm_unreachable("[tryCollapseValue] "
+      llvm::report_fatal_error("[tryCollapseValue] "
                        "type must be MemRefType or RankedTensorType");
     }
     isModified = true;
@@ -416,7 +416,7 @@ FailureOr<Value> tryCollapseValue(Value oldVal, OpBuilder &builder,
  * tensor<4x1x5xf32>
  *
  * @note Only supports MemRefType/RankedTensorType (aborts for other types via
- * llvm_unreachable)
+ * llvm::report_fatal_error)
  * @param[in] oldVal Input MemRef/Tensor value to expand
  * @param[in] newTy Target ShapedType (with unit dimensions to expand to)
  * @param[in,out] builder OpBuilder for creating ExpandShapeOp
@@ -486,7 +486,7 @@ tryExpandValueWithUnitDim(Value oldVal, Value refVal,
           loc, refTy, oldVal, reassocIdxVec, outputShape);
     }
   } else {
-    llvm_unreachable("[tryExpandValueWithUnitDim] "
+    llvm::report_fatal_error("[tryExpandValueWithUnitDim] "
                      "type must be MemRefType or RankedTensorType");
   }
   Value newVal = expandOp->getResult(0);
@@ -624,7 +624,7 @@ getSqueezedLayoutReassoc(Operation *op, SmallVectorImpl<int64_t> &fullShape,
  *       2. MemRefType with identity layout
  *       3. Shape containing at least one unit dimension
  *
- * @warning Aborts if tryExpandValueWithUnitDim fails (llvm_unreachable)
+ * @warning Aborts if tryExpandValueWithUnitDim fails (llvm::report_fatal_error)
  */
 struct DropUnitDimsAllocPattern : public OpRewritePattern<memref::AllocOp> {
 public:
@@ -663,8 +663,7 @@ public:
     if (maybeNewDst.has_value()) {
       rewriter.replaceAllUsesWith(dst, maybeNewDst.value());
     } else {
-      llvm_unreachable(
-          "[DropUnitDimsAllocPattern] fails in tryExpandValueWithUnitDim");
+      llvm::report_fatal_error("[DropUnitDimsAllocPattern] fails in tryExpandValueWithUnitDim");
     }
 
     return success();
@@ -760,7 +759,7 @@ public:
  * @note Match/Rewrite Rules:
  *       1. Fails if tryCollapseValue on input memref returns failure (no unit
  * dims)
- *       2. Aborts if tryExpandValueWithUnitDim fails (llvm_unreachable)
+ *       2. Aborts if tryExpandValueWithUnitDim fails (llvm::report_fatal_error)
  *       3. Only applies to RankedTensorType output of ToTensorOp
  *       4. Preserves ToTensorOp attrs (restrict/writable) in new op
  */
@@ -790,8 +789,7 @@ public:
       if (maybeNewDst.has_value()) {
         rewriter.replaceAllUsesWith(dst, maybeNewDst.value());
       } else {
-        llvm_unreachable(
-            "[DropUnitDimsToTensorPattern] fails in tryExpandValueWithUnitDim");
+        llvm::report_fatal_error("[DropUnitDimsToTensorPattern] fails in tryExpandValueWithUnitDim");
       }
     } else {
       return failure();
@@ -1082,7 +1080,7 @@ struct DropUnitDimsReinterpretCastPattern
  *       1. Fails if tryCollapseValue on source / new op result returns failure
  *       2. Fails if getSqueezedLayoutReassoc cannot generate squeezed layout/reassociation
  *       3. Handles rank-reduced ops (droppedDims) via shrinkReassocIdxByDroppedDims (most efficient path)
- *       4. Aborts (llvm_unreachable) if tryExpandValueWithUnitDim fails (invalid unit dim expansion)
+ *       4. Aborts (llvm::report_fatal_error) if tryExpandValueWithUnitDim fails (invalid unit dim expansion)
  *       5. Preserves core semantics (offsets/sizes/strides) for non-unit dims across MemRef/Tensor dialects
  */
 // clang-format on
@@ -1144,8 +1142,7 @@ struct DropUnitDimsSubViewPattern : public OpRewritePattern<SubViewOp> {
     if (maybeNewDst.has_value()) {
       rewriter.replaceAllUsesWith(op.getResult(), maybeNewDst.value());
     } else {
-      llvm_unreachable(
-          "[DropUnitDimsSubViewPattern] fails in tryExpandValueWithUnitDim");
+      llvm::report_fatal_error("[DropUnitDimsSubViewPattern] fails in tryExpandValueWithUnitDim");
     }
 
     return success();
@@ -1236,7 +1233,7 @@ struct DropUnitDimsInsertSlicePattern
     if (maybeNewDst.has_value()) {
       rewriter.replaceAllUsesWith(op.getResult(), maybeNewDst.value());
     } else {
-      llvm_unreachable("[DropUnitDimsInsertSlicePattern] fails in "
+      llvm::report_fatal_error("[DropUnitDimsInsertSlicePattern] fails in "
                        "tryExpandValueWithUnitDim");
     }
 
@@ -1305,8 +1302,7 @@ struct DropUnitDimsSCFForPattern : public OpRewritePattern<scf::ForOp> {
           rewriter.replaceAllUsesExcept(iterArg, expandedIterArg,
                                         expandedIterArg.getDefiningOp());
         } else {
-          llvm_unreachable(
-              "[DropUnitDimsSCFForPattern] fails in tryExpandValueWithUnitDim");
+          llvm::report_fatal_error("[DropUnitDimsSCFForPattern] fails in tryExpandValueWithUnitDim");
         }
         // yield values
         auto origYield = mutableYields[idx].get();

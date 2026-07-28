@@ -78,7 +78,7 @@ SmallVector<NamedAttribute> getOpAttr(OpType op,
     // no extra attrs
     return {};
   } else
-    llvm_unreachable("Unsupport Normalize OpType.");
+    llvm::report_fatal_error("Unsupport Normalize OpType.");
 }
 
 static void replaceI1ResultsWithTargetType(const SmallVector<Value> &oldResults,
@@ -1444,7 +1444,7 @@ struct HFusionNormalizeToTargetTypeTraits<bool, hfusion::SelectOp>
                            Value lhs, Value rhs, CompareKind kind) {
 #ifndef NDEBUG
     if (kind != CompareKind::NE)
-      llvm_unreachable("createCmpOp only supports CompareKind::NE");
+      llvm::report_fatal_error("createCmpOp only supports CompareKind::NE");
 #endif
     MLIRContext *ctx = rewriter.getContext();
     auto resultType = RankedTensorType::get(

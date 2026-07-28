@@ -811,7 +811,7 @@ void Flattener::calculateOffsets(T slicingOp,
     srcMemRefType = dyn_cast<ShapedType>(previousType_[slicingOp.getSource()]);
   }
   if (!srcMemRefType)
-    llvm_unreachable("srcMemRefType is NULL");
+    llvm::report_fatal_error("srcMemRefType is NULL");
   ArrayRef<int64_t> srcShape = srcMemRefType.getShape();
   auto loc = slicingOp.getLoc();
   int64_t groupSize = (int64_t)collapseGroup.size();
@@ -870,7 +870,7 @@ void Flattener::calculateSubviewStrides(
   auto mixedStrides = slicingOp.getMixedStrides();
   auto srcStride = Flattener::getConstantStrides(srcMemRefType);
   if (!srcStride.has_value())
-    llvm_unreachable("srcStride is expected to have a value here");
+    llvm::report_fatal_error("srcStride is expected to have a value here");
   auto contiguousMask =
       mlir::hivm::detail::getContiguousAxesImpl({resMemRefType});
   bool isContinuous = true;
@@ -1800,7 +1800,7 @@ void Flattener::adjustTensorOutOpSource(OpTy tensorOutOp, OpBuilder &builder) {
     tensorOutOp.getSourceMutable().assign(expandOp.value()->getResult(0));
     return;
   }
-  llvm_unreachable("tensor expand op collapse out op source failed");
+  llvm::report_fatal_error("tensor expand op collapse out op source failed");
 }
 
 template <typename OpTy>
@@ -1815,7 +1815,7 @@ void Flattener::adjustTensorOutOpDest(OpTy tensorOutOp, OpBuilder &builder) {
     tensorOutOp.getDestMutable().assign(expandOp.value()->getResult(0));
     return;
   }
-  llvm_unreachable("tensor expand op collapse out op dest failed");
+  llvm::report_fatal_error("tensor expand op collapse out op dest failed");
 }
 
 template <typename OpTy>
@@ -1830,7 +1830,7 @@ void Flattener::adjustTensorOutOpSrc(OpTy tensorOutOp, OpBuilder &builder) {
     tensorOutOp.getSrcMutable().assign(expandOp.value()->getResult(0));
     return;
   }
-  llvm_unreachable("tensor expand op collapse out op src failed");
+  llvm::report_fatal_error("tensor expand op collapse out op src failed");
 }
 
 template <typename OpTy>
@@ -1845,7 +1845,7 @@ void Flattener::adjustMemrefOutOpSrc(OpTy memrefOutOp, OpBuilder &builder) {
     memrefOutOp.getSrcMutable().assign(expandOp.value()->getResult(0));
     return;
   }
-  llvm_unreachable("memref expand op collapse failed");
+  llvm::report_fatal_error("memref expand op collapse failed");
 }
 
 void Flattener::eraseOp(mlir::Operation *op) {

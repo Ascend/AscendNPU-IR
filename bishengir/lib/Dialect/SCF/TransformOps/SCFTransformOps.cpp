@@ -55,7 +55,7 @@ static SmallVector<int64_t> extractFromI64ArrayAttr(Attribute attr) {
   if (DenseI64ArrayAttr array = dyn_cast<DenseI64ArrayAttr>(attr))
     return SmallVector<int64_t>(array.asArrayRef());
 
-  llvm_unreachable("Unsupported type for conversion to an integer array.");
+  llvm::report_fatal_error("Unsupported type for conversion to an integer array.");
 }
 
 DiagnosedSilenceableFailure

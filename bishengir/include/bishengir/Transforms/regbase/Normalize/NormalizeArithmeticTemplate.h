@@ -375,7 +375,7 @@ public:
     } else if (auto floatTy = dyn_cast<FloatType>(scalarType)) {
       negOneAttr = rewriter.getFloatAttr(floatTy, -1.0);
     } else {
-      llvm_unreachable("unsupported scalar type");
+      llvm::report_fatal_error("unsupported scalar type");
     }
     Value negOne = rewriter.create<arith::ConstantOp>(loc, negOneAttr);
 

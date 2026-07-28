@@ -144,7 +144,7 @@ arith::CmpFPredicate getCmpFloatPredicate(arith::CmpIPredicate predicate) {
   case arith::CmpIPredicate::uge:
     return arith::CmpFPredicate::OGE;
   }
-  llvm_unreachable("unexpected arith::CmpIPredicate");
+  llvm::report_fatal_error("unexpected arith::CmpIPredicate");
 }
 
 Operation *cloneArithOp(PatternRewriter &rewriter, Location loc,

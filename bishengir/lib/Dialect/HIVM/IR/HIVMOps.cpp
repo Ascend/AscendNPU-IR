@@ -383,7 +383,7 @@ bool shouldMapToUnsigned(IntegerType::SignednessSemantics val,
   case IntegerType::Unsigned:
     return true;
   }
-  llvm_unreachable("Unexpected IntegerType::SignednessSemantics");
+  llvm::report_fatal_error("Unexpected IntegerType::SignednessSemantics");
 }
 } // namespace
 

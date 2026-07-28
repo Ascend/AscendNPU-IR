@@ -51,8 +51,7 @@ public:
   /// @param block The block containing operations to analyze for fusion.
   /// @return Success if fusion analysis completes, failure otherwise.
   LogicalResult fuseImpl(Block &block) {
-    llvm_unreachable(
-        "missing implementation fuseImpl for the specified FusionKind");
+    llvm::report_fatal_error("missing implementation fuseImpl for the specified FusionKind");
   }
 
   /// Retrieves the fused operation blocks after fusion analysis.

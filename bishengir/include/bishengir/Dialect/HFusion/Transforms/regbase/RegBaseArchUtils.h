@@ -74,7 +74,7 @@ template <typename T> T selectRoundMode(Type inType, Type outType) {
   if (inType.isInteger() && outType.isInteger()) {
     return T::RINT;
   }
-  llvm_unreachable("unsupported type cast.");
+  llvm::report_fatal_error("unsupported type cast.");
 }
 
 } // namespace mlir::hfusion

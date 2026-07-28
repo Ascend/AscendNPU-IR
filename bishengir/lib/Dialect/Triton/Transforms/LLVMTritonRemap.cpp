@@ -199,7 +199,7 @@ const DenseMap<StringRef,
              return builder.create<hivm_regbaseintrins::RintOpBF16>(
                  loc, operands[0].getType(), operands[0]);
            }
-           llvm_unreachable("unsupported type for __hmf_rint");
+           llvm::report_fatal_error("unsupported type for __hmf_rint");
          }},
         {"__nv_rintf",
          [](OpBuilder &builder, Location loc, OperandRange operands) -> Value {
@@ -454,7 +454,7 @@ static Type parseTypeString(OpBuilder &b, StringRef str) {
   if (str.contains("bf16"))
     return b.getBF16Type();
 
-  llvm_unreachable("Unhandled type in inline asm.");
+  llvm::report_fatal_error("Unhandled type in inline asm.");
 }
 
 static Value createAndInitializeVector(OpBuilder &b, Location loc, Type ty,
@@ -1335,7 +1335,7 @@ Value castToRawBits(Value val, OpBuilder &builder) {
     return builder.create<arith::BitcastOp>(loc, newTy, val);
   }
 
-  llvm_unreachable("Unsupported type in castToRawBits");
+  llvm::report_fatal_error("Unsupported type in castToRawBits");
 }
 
 Value castToElementType(OpBuilder &b, Location loc, Value val,
@@ -1407,7 +1407,7 @@ void handleAtom(OpBuilder &builder, Location loc, StringRef instruction,
   SmallVector<StringRef, 8> matches;
   if (!atomMatcher.match(instruction, &matches)) {
     LDBG("ATOM instruction failed to match: " << instruction);
-    llvm_unreachable("Unexpected ATOM instruction");
+    llvm::report_fatal_error("Unexpected ATOM instruction");
   }
 
   // matches:
@@ -1441,7 +1441,7 @@ void handleAtom(OpBuilder &builder, Location loc, StringRef instruction,
 
   if (ascendAtomInfo.kind == "CAS" && ascendAtomInfo.type.ends_with("16")) {
     LDBG("A5 does not support 16 bit CAS atomic" << instruction);
-    llvm_unreachable("A5 does not support 16 bit CAS atomic");
+    llvm::report_fatal_error("A5 does not support 16 bit CAS atomic");
   }
 
   llvm::SmallString<64> IntrinsicName("");
@@ -1454,7 +1454,7 @@ void handleAtom(OpBuilder &builder, Location loc, StringRef instruction,
   Type elementType = parseTypeString(builder, ascendAtomInfo.type);
   if (!elementType) {
     LDBG("Unknown atomic type: " << ascendAtomInfo.type);
-    llvm_unreachable("Unexpected atomic type encountered");
+    llvm::report_fatal_error("Unexpected atomic type encountered");
   }
 
   llvm::Regex maskMatcher(R"(@!?(\$[0-9]+)[[:space:]]+.*)");
@@ -1469,7 +1469,7 @@ void handleAtom(OpBuilder &builder, Location loc, StringRef instruction,
     if (!ptr || !val1 || (!srcReg2.empty() && !val2)) {
       LDBG("Missing pointer or value for atomic: "
            << addrReg << " / " << srcReg1 << " / " << srcReg2);
-      llvm_unreachable("Missing pointer or value for atomic");
+      llvm::report_fatal_error("Missing pointer or value for atomic");
     }
 
     Value l2cache = builder.create<LLVM::ConstantOp>(
@@ -1515,7 +1515,7 @@ void handleAtom(OpBuilder &builder, Location loc, StringRef instruction,
     // Yield previous value if predication fails
     Value oldValue = variableMap[dstReg];
     if (!oldValue)
-      llvm_unreachable("Cannot find previous value");
+      llvm::report_fatal_error("Cannot find previous value");
     oldValue = castToElementType(builder, loc, oldValue, elementType);
     builder.create<scf::YieldOp>(loc, oldValue);
 
@@ -2017,7 +2017,7 @@ private:
         gridZ = gridDim;
         break;
       default:
-        llvm_unreachable("Unknown mapping");
+        llvm::report_fatal_error("Unknown mapping");
       }
     }
     // If the grid dims in the function is invalid, or the user specified that

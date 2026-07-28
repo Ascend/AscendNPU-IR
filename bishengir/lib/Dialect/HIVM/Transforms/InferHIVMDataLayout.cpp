@@ -280,7 +280,7 @@ DataLayoutInferAndPropagateHelper::computeTargetLayoutShape(
                                           kBlockSizes);
   case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
   case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
-    llvm_unreachable("not implemented yet");
+    llvm::report_fatal_error("not implemented yet");
   default:
     return failure();
   }
@@ -326,7 +326,7 @@ DataLayoutInferAndPropagateHelper::computeTargetLayoutOffset(
                                            kBlockSizes);
   case LayoutConversionKind::DOT_SCALE_DN_TO_zZ:
   case LayoutConversionKind::DOT_SCALE_ND_TO_nN:
-    llvm_unreachable("not implemented yet");
+    llvm::report_fatal_error("not implemented yet");
   default:
     return failure();
   }
@@ -951,7 +951,7 @@ Operation *
 DataLayoutInferAndPropagateHelper::rewriteMemrefCastOp(memref::CastOp op) {
   auto srcType = op.getType();
   if (srcType.getRank() != 2 && srcType.getRank() != 3)
-    llvm_unreachable("Unsupported source shape in mad operand memref cast");
+    llvm::report_fatal_error("Unsupported source shape in mad operand memref cast");
   OpBuilder builder(op);
   Location loc = op.getLoc();
   Value src = op.getSource();
@@ -1007,7 +1007,7 @@ DataLayoutInferAndPropagateHelper::rewriteSelectOp(arith::SelectOp op) {
   auto srcType = cast<MemRefType>(op.getType());
 
   if (srcType.getRank() != 2 && srcType.getRank() != 3)
-    llvm_unreachable("Unsupported source shape in mad operand subview");
+    llvm::report_fatal_error("Unsupported source shape in mad operand subview");
   // Extract mix-typed shape from SelectOp.
   auto shape = getValueFromShape(op, builder);
   assert(succeeded(shape));
@@ -1424,7 +1424,7 @@ DataLayoutInferAndPropagateHelper::tryFoldLayoutConversionIntoCopy(
     if (llvm::dyn_cast<ShapedType>(dst.getType()).getRank() -
             llvm::dyn_cast<ShapedType>(src.getType()).getRank() !=
         2)
-      llvm_unreachable("Unsupported operand shape when convert copy to ND2NZ");
+      llvm::report_fatal_error("Unsupported operand shape when convert copy to ND2NZ");
     bool batchFlag = (llvm::dyn_cast<ShapedType>(src.getType()).getRank() == 3);
     if (batchFlag) {
       convertToBatchND2NZOp(src, dst, builder);

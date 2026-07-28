@@ -79,7 +79,7 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
       initVal = llvm::APFloat::getOne(semantics);
       break;
     default:
-      llvm_unreachable("Unsupport reduce kind.");
+      llvm::report_fatal_error("Unsupport reduce kind.");
       break;
     }
     denseAttr =
@@ -112,13 +112,13 @@ getDenseAttrForSelect(VectorType srcType, PatternRewriter &rewriter,
       initVal = llvm::APInt::getMaxValue(width);
       break;
     default:
-      llvm_unreachable("Unsupport reduce kind.");
+      llvm::report_fatal_error("Unsupport reduce kind.");
       break;
     }
     denseAttr = DenseElementsAttr::get(
         srcType, rewriter.getIntegerAttr(elemTy, initVal));
   } else {
-    llvm_unreachable("Unsupport element data type.");
+    llvm::report_fatal_error("Unsupport element data type.");
   }
 
   return denseAttr;
@@ -1106,7 +1106,7 @@ class TransferReadToGatheringLoadPattern
 
       auto composeResult = permMap.compose(composeIndices);
       if (composeResult.size() != strides.size())
-        llvm_unreachable("Unexpected dimension mismatch");
+        llvm::report_fatal_error("Unexpected dimension mismatch");
 
       bool isEnabled = true;
       // check if this index is masked off
@@ -1169,7 +1169,7 @@ class TransferReadToGatheringLoadPattern
       auto values = llvm::to_vector<0>(attr.getValues<APInt>());
       for (unsigned i = 0; i < values.size(); ++i) {
         if (values[i].getSExtValue() != src[i].getSExtValue()) {
-          llvm_unreachable("Sub index value error");
+          llvm::report_fatal_error("Sub index value error");
         }
       }
     };
@@ -1251,7 +1251,7 @@ class TransferReadToGatheringLoadPattern
       padding = rewriter.create<arith::ConstantOp>(padding.getLoc(), resultType,
                                                    passthru);
     } else {
-      llvm_unreachable("TODO support non-constant padding value for "
+      llvm::report_fatal_error("TODO support non-constant padding value for "
                        "vector.transfer_read -> vector.gather transform");
     }
     return padding;

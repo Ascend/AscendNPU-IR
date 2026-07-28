@@ -69,7 +69,7 @@ static FailureOr<Value> buildHIVMVFLdOrSTOp(SourceOp op,
     }
     return storeRes.getVal();
   }
-  llvm_unreachable("unknown SourceOp");
+  llvm::report_fatal_error("unknown SourceOp");
 }
 
 // Convert Vector::LoadOp to hivm::VFLoadOp

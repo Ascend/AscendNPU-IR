@@ -592,7 +592,7 @@ struct AVEPgePattern : public OpRewritePattern<VFPgeOp> {
         normPattern = PgePattern::H;
       break;
     default:
-      llvm_unreachable("Invalid element bit width for a predicate vector.");
+      llvm::report_fatal_error("Invalid element bit width for a predicate vector.");
     }
     if (normPattern == pattern)
       return failure();
