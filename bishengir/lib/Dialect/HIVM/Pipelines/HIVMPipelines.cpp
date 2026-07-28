@@ -139,6 +139,8 @@ bufferizationPipeline(OpPassManager &pm,
         return bufferization::getMemRefTypeWithStaticIdentityLayout(
             tensorType, memorySpace);
       };
+  oneShotOptions.analysisHeuristic =
+      bufferization::OneShotBufferizationOptions::AnalysisHeuristic::TopDown;
   pm.addPass(bufferization::createOneShotBufferizePass(oneShotOptions));
   canonicalizationHIVMPipeline(pm);
   if (hivmPipelineOptions.enableTritonKernelCompile) {
