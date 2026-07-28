@@ -1973,10 +1973,15 @@ LogicalResult CVPipelineImpl::run() {
     }
   });
 
-  // No IR has been mutated yet; reject partitions migrateOps can't realize so
-  // we bail cleanly instead of crashing in pipelineLoop->erase() later.
-  if (failed(checkWorkItemDependencies()))
+  // Reject partitions migrateOps cannot realize before constructing the
+  // replacement loops. Restore the checkpoint on failure so the constructor's
+  // clone and any counter preprocessing do not survive the fallback.
+  if (failed(checkWorkItemDependencies())) {
+    revert();
     return failure();
+  }
+
+  expandWorkspace(builder);
 
   // Preload pipeline reuse workitems with cvpipeline.
   if (pipelineMode == CVPipelineMode::Skew) {
