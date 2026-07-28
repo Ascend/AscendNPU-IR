@@ -16,6 +16,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "bishengir/Config/bishengir-config.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/Tensor/IR/TensorImpl.h"
@@ -313,6 +314,12 @@ struct RedudantVReduceInitOp : public OpRewritePattern<VReduceOp> {
 
   LogicalResult matchAndRewrite(VReduceOp reduceOp,
                                 PatternRewriter &rewriter) const final {
+    // Ascend950 lowering still depends on explicit identity init in the
+    // outs buffer; do not replace it with tensor.empty on this target.
+    auto moduleOp = reduceOp->getParentOfType<ModuleOp>();
+    if (mlir::hacc::utils::isAscend950(moduleOp)) {
+      return failure();
+    }
     bool isValueInitErased = eraseRedundantInitOp(reduceOp, rewriter, 0, true);
     bool isIndexInitErased = false;
     auto arith = reduceOp.getArithAttr().getReduceOp();

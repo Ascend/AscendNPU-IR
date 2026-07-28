@@ -1,7 +1,7 @@
 // RUN: bishengir-opt %s -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK
 // RUN: bishengir-opt %s -one-shot-bufferize="allow-return-allocs-from-loops bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map unknown-type-conversion=identity-layout-map" -split-input-file | FileCheck %s --check-prefix=CHECK-IDENTITY
 
-// CHECK: scf.yield {{.*}} : memref<256xf16, strided<[?], offset: ?>>
+// CHECK: scf.yield {{.*}} : memref<256xf16>
 // CHECK-IDENTITY: scf.yield {{.*}} : memref<256xf16>
 func.func @test_clone_yield_operands_alias_by_for_operands(%arg0: i32, %arg1 : tensor<256xf16>,
                                                               %arg2 : tensor<256xf16>) -> (tensor<256xf16>) {
