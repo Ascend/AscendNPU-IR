@@ -18,6 +18,8 @@ func.func @no_expand_through_fill() {
 
 // -----
 
+// Rank-reducing slices need a reassociation adjusted for dropped dimensions.
+// Even this unit-only expand must therefore remain below the extract.
 // CHECK-LABEL: func.func @no_unit_expand_through_rank_reducing_extract
 func.func @no_unit_expand_through_rank_reducing_extract(
     %src: tensor<2xi32>) -> tensor<1xi32> {
@@ -32,6 +34,8 @@ func.func @no_unit_expand_through_rank_reducing_extract(
 
 // -----
 
+// The insert drops the destination dimension selected by its unit-size slice.
+// Keep the expand below it rather than reusing an invalid reassociation.
 // CHECK-LABEL: func.func @no_expand_through_rank_reducing_insert
 func.func @no_expand_through_rank_reducing_insert(
     %src: tensor<i32>, %dest: tensor<2xi32>) -> tensor<2x1xi32> {

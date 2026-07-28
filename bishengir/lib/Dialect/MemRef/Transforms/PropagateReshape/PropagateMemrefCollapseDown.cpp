@@ -137,6 +137,47 @@ LogicalResult handleSubViewOp(memref::CollapseShapeOp collapseOp,
                                                        reassociation);
   return success();
 }
+
+LogicalResult handleRegBaseSubViewOp(memref::CollapseShapeOp collapseOp,
+                                     PatternRewriter &rewriter,
+                                     Operation *userOp) {
+  auto subviewOp = cast<memref::SubViewOp>(userOp);
+  auto reassociation = collapseOp.getReassociationIndices();
+  SmallVector<OpFoldResult> offsets, sizes, strides, unusedOutputShape;
+  if (failed(tensor::reshape_utils::getSubviewModifyingOp(
+          rewriter, subviewOp, reassociation,
+          tensor::reshape_utils::getMixedSizesOrOutputShape(
+              rewriter, collapseOp.getSrc()),
+          /*isSubview=*/false, offsets, sizes, strides, unusedOutputShape)))
+    return failure();
+
+  auto newSubview = rewriter.create<memref::SubViewOp>(
+      userOp->getLoc(), collapseOp.getSrc(), offsets, sizes, strides);
+  rewriter.replaceOpWithNewOp<memref::CollapseShapeOp>(
+      subviewOp, subviewOp.getResult().getType(), newSubview, reassociation);
+  return success();
+}
+
+LogicalResult handleRegBaseFillOp(memref::CollapseShapeOp collapseOp,
+                                  PatternRewriter &rewriter,
+                                  Operation *userOp) {
+  auto fillOp = cast<linalg::FillOp>(userOp);
+  auto resultRank =
+      cast<ShapedType>(fillOp.getDpsInitOperand(0)->get().getType()).getRank();
+  auto operands = getNewOperands(collapseOp, rewriter, userOp, resultRank);
+  rewriter.modifyOpInPlace(userOp, [&] { userOp->setOperands(operands); });
+  return success();
+}
+
+LogicalResult handleRegBaseMarkOp(memref::CollapseShapeOp collapseOp,
+                                  PatternRewriter &rewriter,
+                                  Operation *userOp) {
+  auto markOp = cast<annotation::MarkOp>(userOp);
+  auto resultRank = cast<ShapedType>(markOp.getSrc().getType()).getRank();
+  auto operands = getNewOperands(collapseOp, rewriter, userOp, resultRank);
+  rewriter.modifyOpInPlace(userOp, [&] { userOp->setOperands(operands); });
+  return success();
+}
 } // namespace
 
 LogicalResult
@@ -152,8 +193,15 @@ PropagateMemrefCollapseDown::matchAndRewrite(memref::CollapseShapeOp collapseOp,
 
   LDBG("Handling CollapseShapeOp: " << collapseOp);
 
+  const bool hasSingleUser = collapseOp->hasOneUse();
   for (Operation *userOp : users) {
-    if (collapseOp->getParentOp() != userOp->getParentOp())
+    const bool userIsInAnotherRegion =
+        collapseOp->getParentOp() != userOp->getParentOp();
+    // RegBase follows A5 by allowing a collapse to cross a region boundary
+    // only when no other user can observe it in the original region.
+    const bool canPropagateAcrossRegion =
+        options.forRegbased && hasSingleUser;
+    if (userIsInAnotherRegion && !canPropagateAcrossRegion)
       continue;
     if (isa<memref::CopyOp>(userOp)) {
       return handleCopyOp(collapseOp, rewriter, userOp);
@@ -162,7 +210,15 @@ PropagateMemrefCollapseDown::matchAndRewrite(memref::CollapseShapeOp collapseOp,
       return handleLoadOp(collapseOp, rewriter, userOp);
     }
     if (isa<memref::SubViewOp>(userOp)) {
-      return handleSubViewOp(collapseOp, rewriter, userOp);
+      return options.forRegbased
+                 ? handleRegBaseSubViewOp(collapseOp, rewriter, userOp)
+                 : handleSubViewOp(collapseOp, rewriter, userOp);
+    }
+    if (options.forRegbased && isa<linalg::FillOp>(userOp)) {
+      return handleRegBaseFillOp(collapseOp, rewriter, userOp);
+    }
+    if (options.forRegbased && isa<annotation::MarkOp>(userOp)) {
+      return handleRegBaseMarkOp(collapseOp, rewriter, userOp);
     }
   }
   return failure();

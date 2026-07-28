@@ -42,6 +42,27 @@ func.func @skip_unit_dim_collapse_insert_slice(
 
 // -----
 
+// This collapse merges two non-unit dimensions. The following insert is still
+// rank-reducing, so propagation must not reuse its unadjusted reassociation.
+// CHECK-LABEL: func.func @skip_non_unit_collapse_rank_reducing_insert
+func.func @skip_non_unit_collapse_rank_reducing_insert(
+    %src: tensor<2x3xi32>, %init: tensor<2x3xi32>,
+    %dest: tensor<2x6xi32>) -> tensor<2x6xi32> {
+  %copied = linalg.copy ins(%src : tensor<2x3xi32>)
+      outs(%init : tensor<2x3xi32>) -> tensor<2x3xi32>
+  // CHECK: %[[COLLAPSED:.*]] = tensor.collapse_shape %{{.*}} {{\[\[}}0, 1]]
+  %collapsed = tensor.collapse_shape %copied [[0, 1]] :
+      tensor<2x3xi32> into tensor<6xi32>
+  // CHECK: tensor.insert_slice %[[COLLAPSED]] into %arg2[0, 0] [1, 6] [1, 1]
+  %inserted = tensor.insert_slice %collapsed into %dest[0, 0] [1, 6] [1, 1] :
+      tensor<6xi32> into tensor<2x6xi32>
+  return %inserted : tensor<2x6xi32>
+}
+
+// -----
+
+// The extract drops its unit-size result dimension. Keep the non-unit collapse
+// above it until dropped-dimension reassociations can be computed safely.
 // CHECK-LABEL: func.func @skip_collapse_through_rank_reducing_extract
 func.func @skip_collapse_through_rank_reducing_extract(
     %src: tensor<2x3xi32>, %init: tensor<2x3xi32>) -> tensor<i32> {

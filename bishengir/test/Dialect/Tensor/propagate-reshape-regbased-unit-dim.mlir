@@ -66,3 +66,73 @@ func.func @collapse_unit_insert_slice(
       tensor<2xi32> into tensor<4xi32>
   return %inserted : tensor<4xi32>
 }
+
+// -----
+
+// DEFAULT-LABEL: func.func @triton_cumprod_4D(
+// DEFAULT: %[[VIEW:.*]] = memref.reinterpret_cast %arg2
+// DEFAULT-SAME: to memref<3x9x8xi8, strided<[72, 8, 1]>>
+// DEFAULT: %[[ALLOC:.*]] = memref.alloc() : memref<3x9x8xi8>
+// DEFAULT: memref.copy %[[VIEW]], %[[ALLOC]]
+// DEFAULT: %[[EXPANDED:.*]] = memref.expand_shape %[[ALLOC]]
+// DEFAULT-SAME: into memref<3x9x8x1xi8>
+// DEFAULT: %[[TENSOR:.*]] = bufferization.to_tensor %[[EXPANDED]]
+// DEFAULT: %[[RESULT:.*]] = hfusion.cumprod %[[TENSOR]]
+// DEFAULT: %[[DEST:.*]] = memref.reinterpret_cast %arg3
+// DEFAULT-SAME: to memref<3x9x8xi8, strided<[72, 8, 1]>>
+// DEFAULT: %[[COLLAPSED:.*]] = tensor.collapse_shape %[[RESULT]]
+// DEFAULT: bufferization.materialize_in_destination %[[COLLAPSED]]
+// DEFAULT-SAME: in writable %[[DEST]]
+// REGBASE-LABEL: func.func @triton_cumprod_4D(
+// REGBASE: %[[VIEW:.*]] = memref.reinterpret_cast %arg2
+// REGBASE-SAME: to memref<3x9x8x1xi8, strided<[72, 8, 1, 1]>>
+// REGBASE: %[[ALLOC:.*]] = memref.alloc() : memref<3x9x8x1xi8>
+// REGBASE: memref.copy %[[VIEW]], %[[ALLOC]]
+// REGBASE-NOT: expand_shape
+// REGBASE: %[[TENSOR:.*]] = bufferization.to_tensor %[[ALLOC]]
+// REGBASE: %[[RESULT:.*]] = hfusion.cumprod %[[TENSOR]]
+// REGBASE: %[[DEST:.*]] = memref.reinterpret_cast %arg3
+// REGBASE-SAME: to memref<3x9x8x1xi8, strided<[72, 8, 1, 1]>>
+// REGBASE-NOT: collapse_shape
+// REGBASE: bufferization.materialize_in_destination %[[RESULT]]
+// REGBASE-SAME: in writable %[[DEST]]
+func.func @triton_cumprod_4D(
+    %arg0: memref<?xi8> {hacc.arg_type = #hacc.arg_type<sync_block_lock>},
+    %arg1: memref<?xi8> {hacc.arg_type = #hacc.arg_type<workspace>},
+    %arg2: memref<?xi8> {tt.divisibility = 16 : i32,
+                         tt.tensor_kind = 0 : i32},
+    %arg3: memref<?xi8> {tt.divisibility = 16 : i32,
+                         tt.tensor_kind = 1 : i32},
+    %arg4: i32, %arg5: i32, %arg6: i32, %arg7: i32, %arg8: i32, %arg9: i32)
+    attributes {
+      SyncBlockLockArgIdx = 0 : i64,
+      WorkspaceArgIdx = 1 : i64,
+      hacc.entry,
+      hacc.function_kind = #hacc.function_kind<DEVICE>,
+      mix_mode = "aiv",
+      parallel_mode = "simd"
+    } {
+  %view = memref.reinterpret_cast %arg2 to offset: [0],
+      sizes: [3, 9, 8], strides: [72, 8, 1] :
+      memref<?xi8> to memref<3x9x8xi8, strided<[72, 8, 1]>>
+  %alloc = memref.alloc() : memref<3x9x8xi8>
+  memref.copy %view, %alloc :
+      memref<3x9x8xi8, strided<[72, 8, 1]>> to memref<3x9x8xi8>
+  %tensor = bufferization.to_tensor %alloc restrict writable :
+      memref<3x9x8xi8>
+  %expanded = tensor.expand_shape %tensor [[0], [1], [2, 3]]
+      output_shape [3, 9, 8, 1] :
+      tensor<3x9x8xi8> into tensor<3x9x8x1xi8>
+  %result = hfusion.cumprod %expanded :
+      tensor<3x9x8x1xi8> cum_dims = [0] reverse = false
+      -> tensor<3x9x8x1xi8>
+  %dest = memref.reinterpret_cast %arg3 to offset: [0],
+      sizes: [3, 9, 8], strides: [72, 8, 1] :
+      memref<?xi8> to memref<3x9x8xi8, strided<[72, 8, 1]>>
+  %collapsed = tensor.collapse_shape %result [[0], [1], [2, 3]] :
+      tensor<3x9x8x1xi8> into tensor<3x9x8xi8>
+  bufferization.materialize_in_destination %collapsed in writable %dest :
+      (tensor<3x9x8xi8>,
+       memref<3x9x8xi8, strided<[72, 8, 1]>>) -> ()
+  return
+}

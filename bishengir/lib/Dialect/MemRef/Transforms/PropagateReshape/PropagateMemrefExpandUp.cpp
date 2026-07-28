@@ -29,6 +29,7 @@
 #define DBGSNL() (llvm::dbgs() << "\n")
 #define LDBG(X) LLVM_DEBUG(DBGS() << X << "\n")
 
+#include "bishengir/Dialect/Tensor/Transforms/PropagateReshape/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Arith/Utils/Utils.h"
 using namespace mlir::utils::debugger;
@@ -39,8 +40,18 @@ using namespace mlir::utils::debugger;
 
 namespace {
 
+bool isExpandShapeAllOne(memref::ExpandShapeOp expandOp);
+
 LogicalResult handleAllocOp(memref::ExpandShapeOp expandOp,
-                            PatternRewriter &rewriter, Operation *definingOp) {
+                            PatternRewriter &rewriter, Operation *definingOp,
+                            const PropagateReshapeOptions &options) {
+  auto dstMemrefType = dyn_cast<MemRefType>(expandOp.getResult().getType());
+  // Keep A3's data-layout workaround outside RegBase; A5 propagates this
+  // unit-dimension expansion into the allocation.
+  if (!options.forRegbased && isExpandShapeAllOne(expandOp) && dstMemrefType &&
+      dstMemrefType.getRank() > 3)
+    return failure();
+
   rewriter.setInsertionPointAfter(definingOp);
   SmallVector<Value, 4> newOperands;
   auto allocOp = cast<memref::AllocOp>(definingOp);
@@ -72,7 +83,8 @@ static OpFoldResult multiplyOFR(PatternRewriter &rewriter, Location loc,
 
 LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
                                     PatternRewriter &rewriter,
-                                    Operation *definingOp) {
+                                    Operation *definingOp,
+                                    const PropagateReshapeOptions &options) {
   auto reinterpretCast = cast<memref::ReinterpretCastOp>(definingOp);
   auto expandResType = cast<MemRefType>(expandOp.getResult().getType());
 
@@ -109,11 +121,24 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
       reinterpretCast->getLoc(), expandResType, reinterpretCast.getSource(),
       offsetOfr, sizesOfr, newStridesOfr);
 
+  auto originalType = reinterpretCast.getResult().getType();
+  auto collapsedType = options.forRegbased
+                           ? memref::CollapseShapeOp::computeCollapsedType(
+                                 cast<MemRefType>(newReinterpret.getType()),
+                                 reassociation)
+                           : cast<MemRefType>(originalType);
   auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
-      reinterpretCast->getLoc(), reinterpretCast.getResult().getType(),
-      newReinterpret, reassociation);
-
-  rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
+      reinterpretCast->getLoc(), collapsedType, newReinterpret, reassociation);
+  if (collapsedType == originalType) {
+    rewriter.replaceAllUsesExcept(reinterpretCast, newCollapse, expandOp);
+  } else {
+    // The expanded layout may collapse to a different strided type; repair the
+    // original ABI-visible type before replacing existing users.
+    auto repairCast = rewriter.create<memref::ReinterpretCastOp>(
+        reinterpretCast.getLoc(), originalType, newCollapse.getResult(),
+        offsetOfr, reinterpretCast.getMixedSizes(), oldStrides);
+    rewriter.replaceAllUsesExcept(reinterpretCast, repairCast, expandOp);
+  }
   rewriter.replaceOp(expandOp, newReinterpret);
 
   LDBG(*definingOp->getParentOp());
@@ -123,8 +148,9 @@ LogicalResult handleReinterpretCast(memref::ExpandShapeOp expandOp,
   return success();
 }
 
-LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
-                            PatternRewriter &rewriter, Operation *definingOp) {
+LogicalResult handleLegacySubView(memref::ExpandShapeOp expandOp,
+                                  PatternRewriter &rewriter,
+                                  Operation *definingOp) {
   auto subviewOp = cast<memref::SubViewOp>(definingOp);
   auto offsets = subviewOp.getMixedOffsets();
   auto sizes = subviewOp.getMixedSizes();
@@ -173,6 +199,59 @@ LogicalResult handleSubView(memref::ExpandShapeOp expandOp,
   return success();
 }
 
+LogicalResult handleRegBaseSubView(memref::ExpandShapeOp expandOp,
+                                   PatternRewriter &rewriter,
+                                   Operation *definingOp) {
+  auto reassociation = expandOp.getReassociationIndices();
+  auto subviewOp = cast<memref::SubViewOp>(definingOp);
+  SmallVector<OpFoldResult> offsets, sizes, strides, outputShape;
+  if (failed(tensor::reshape_utils::getSubviewModifyingOp(
+          rewriter, subviewOp, reassociation,
+          tensor::reshape_utils::getMixedSizesOrOutputShape(
+              rewriter, expandOp.getResult()),
+          /*isSubview=*/true, offsets, sizes, strides, outputShape)))
+    return failure();
+
+  auto staticShape = decomposeMixedValues(outputShape).first;
+  auto expandedSourceType = memref::ExpandShapeOp::computeExpandedType(
+      subviewOp.getSourceType(), staticShape, reassociation);
+  if (failed(expandedSourceType))
+    return failure();
+
+  auto loc = definingOp->getLoc();
+  auto expandedSource = rewriter.create<memref::ExpandShapeOp>(
+      loc, *expandedSourceType, subviewOp.getSource(), reassociation,
+      outputShape);
+  auto newSubview = rewriter.create<memref::SubViewOp>(
+      loc, expandedSource, offsets, sizes, strides);
+  auto newCollapse = rewriter.create<memref::CollapseShapeOp>(
+      loc, subviewOp.getResult().getType(), newSubview, reassociation);
+  rewriter.replaceAllUsesExcept(subviewOp, newCollapse, expandOp);
+
+  Value replacement = newSubview;
+  auto targetType = cast<MemRefType>(expandOp.getResult().getType());
+  rewriter.setInsertionPointAfterValue(expandOp);
+  if (replacement.getType() != targetType) {
+    auto sourceType = cast<MemRefType>(replacement.getType());
+    if (memref::CastOp::areCastCompatible(sourceType, targetType)) {
+      replacement =
+          rewriter.create<memref::CastOp>(loc, targetType, replacement);
+    } else {
+      auto metadata =
+          rewriter.create<memref::ExtractStridedMetadataOp>(loc, expandOp);
+      replacement = rewriter.create<memref::ReinterpretCastOp>(
+          loc, targetType, replacement,
+          getAsOpFoldResult(metadata.getOffset()),
+          getAsOpFoldResult(metadata.getSizes()),
+          getAsOpFoldResult(metadata.getStrides()));
+      rewriter.replaceAllUsesExcept(expandOp, replacement, metadata);
+      return success();
+    }
+  }
+  rewriter.replaceOp(expandOp, replacement);
+  return success();
+}
+
 // whether expand shape dims is all 1
 // eg: expand_shape<2x3> [[0][1, 2, 3]] -> <2, 1, 3, 1> true
 // eg: expand_shape<2x?> [[0][1, 2, 3]] -> <2, 1, ?, 1> true
@@ -207,32 +286,22 @@ PropagateMemrefExpandUp::matchAndRewrite(memref::ExpandShapeOp expandOp,
   Operation *definingOp = source.getDefiningOp();
   if (!definingOp)
     return failure();
-  if (definingOp->getParentOp() != expandOp->getParentOp())
+  if (definingOp->getParentOp() != expandOp->getParentOp() &&
+      (!options.forRegbased || !definingOp->hasOneUse()))
     return failure();
   LLVM_DEBUG(llvm::dbgs() << "-- Found definingOp: " << *definingOp << "\n";);
   LLVM_DEBUG(llvm::dbgs() << "Ok rewriting\n";);
   LLVM_DEBUG(llvm::dbgs() << *definingOp->getParentOp() << "\n";);
   if (isa<memref::AllocOp>(definingOp)) {
-    auto dstType = expandOp.getResult().getType();
-    auto dstMemrefType = dyn_cast<MemRefType>(dstType);
-    // expand shape dims is all 1, not propagate alloc op (only when dst rank >
-    // 3).
-    // TODO: remove this after the logic of HIVMInferDataLayout pass is
-    // refactored.
-    if (isExpandShapeAllOne(expandOp) && dstMemrefType &&
-        dstMemrefType.getRank() > 3) {
-      return failure();
-    }
-    LDBG("Ok in here");
-    return handleAllocOp(expandOp, rewriter, definingOp);
+    return handleAllocOp(expandOp, rewriter, definingOp, options);
   }
   if (isa<memref::ReinterpretCastOp>(definingOp)) {
-    LDBG("Ok in here");
-    return handleReinterpretCast(expandOp, rewriter, definingOp);
+    return handleReinterpretCast(expandOp, rewriter, definingOp, options);
   }
   if (isa<memref::SubViewOp>(definingOp)) {
-    LDBG("Ok in here");
-    return handleSubView(expandOp, rewriter, definingOp);
+    return options.forRegbased
+               ? handleRegBaseSubView(expandOp, rewriter, definingOp)
+               : handleLegacySubView(expandOp, rewriter, definingOp);
   }
   return failure();
 }
