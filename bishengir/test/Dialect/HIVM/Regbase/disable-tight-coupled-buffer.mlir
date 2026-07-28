@@ -1,4 +1,5 @@
 // RUN: bishengir-opt -hivm-insert-load-store-for-mix-cv="disable-tight-coupled-buffer=true" -split-input-file %s | FileCheck %s
+// RUN: bishengir-opt -hivm-insert-load-store-for-mix-cv="enable-dot-scaled-compile=true" -split-input-file %s | FileCheck %s
 
 // CHECK: func.func @test_fixpipe_load_to_vector
 // CHECK: %[[MMAD:.*]] = hivm.hir.mmadL1

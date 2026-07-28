@@ -64,8 +64,10 @@ static void hivmAutoInsertLdStForMixCVPipeline(
   InsertLoadStoreForMixCVOptions options;
   options.enableLegacy =
       hivmPipelineOptions.enableLegacyInsertLoadStoreForMixCV;
-  // The current regbase option type derives the target from the module and
-  // does not expose enableDotScaledCompile.
+  options.target =
+      hacc::stringifyTargetDeviceEnum(hivmPipelineOptions.target.getValue())
+          .str();
+  options.enableDotScaledCompile = hivmPipelineOptions.enableDotScaledCompile;
   options.disableTightCoupledBuffer =
       hivmPipelineOptions.disableTightCoupledBuffer;
   pm.nest<func::FuncOp>().addPass(
@@ -81,7 +83,8 @@ hivmCVCommunicationPipeline(OpPassManager &pm,
 
   if (hivmPipelineOptions.enableTritonKernelCompile) {
     hivmAutoInsertLdStForMixCVPipeline(pm, hivmPipelineOptions);
-  } else if (hacc::utils::isAscend950(hivmPipelineOptions.target)) {
+  } else if (hacc::utils::isAscend950(hivmPipelineOptions.target) &&
+             !hivmPipelineOptions.enableDotScaledCompile) {
     // New A5 convert layout pipeline
     pm.nest<func::FuncOp>().addPass(createInsertCVTightCoupledBufferPass());
     pm.nest<func::FuncOp>().addPass(
@@ -579,7 +582,11 @@ static void hivmPostBufferizationOptimizationPipeline(
     pm.nest<func::FuncOp>().addPass(
         vector::createPeelLoopsContainingTransposePass());
     pm.addPass(createCanonicalizerPass());
-    pm.nest<func::FuncOp>().addPass(vector::createNormalizeVectorPass());
+    NormalizeVectorOptions normalizeVectorOptions;
+    normalizeVectorOptions.enableDotScaledCompile =
+        hivmPipelineOptions.enableDotScaledCompile;
+    pm.nest<func::FuncOp>().addPass(
+        vector::createNormalizeVectorPass(normalizeVectorOptions));
     pm.nest<func::FuncOp>().addPass(createCSEPass());
     pm.nest<func::FuncOp>().addPass(createArithVectorMaskAnalysisPass());
   }

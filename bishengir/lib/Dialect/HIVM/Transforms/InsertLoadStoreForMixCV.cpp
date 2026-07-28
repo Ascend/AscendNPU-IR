@@ -125,11 +125,14 @@ private:
 
 bool InsertLoadStoreForMixCVPass::isA5Target() {
   auto moduleOp = getOperation()->getParentOfType<ModuleOp>();
-  return hacc::utils::isRegBasedArch(moduleOp);
+  auto moduleTarget = hacc::utils::getTargetDevice(moduleOp);
+  if (moduleTarget.has_value())
+    return hacc::utils::isAscend950(moduleTarget.value());
+  return hacc::utils::isAscend950(this->target);
 }
 
 bool InsertLoadStoreForMixCVPass::isEnabledTightCoupledBuffer() {
-  if (disableTightCoupledBuffer)
+  if (disableTightCoupledBuffer || enableDotScaledCompile)
     return false;
   return isA5Target();
 }
