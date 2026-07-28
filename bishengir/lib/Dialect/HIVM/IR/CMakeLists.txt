@@ -54,6 +54,7 @@ add_bishengir_dialect_library(BiShengIRHIVMDialect
 
   DEPENDS
   BiShengIRHIVMIncGen
+  BiShengIRHIVMEnumsIncGen
   BiShengIRHIVMAttributesIncGen
   BiShengIRHIVMDMAOpsIncGen
   BiShengIRHIVMInterfacesIncGen

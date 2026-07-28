@@ -177,7 +177,7 @@ void SyncBlockSetOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           /*tsync_instr_mode=*/{});
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          flag_id.get<Value>(), nullptr, /*tsync_instr_mode=*/{});
+          cast<Value>(flag_id), nullptr, /*tsync_instr_mode=*/{});
   }
 }
 
@@ -191,7 +191,7 @@ void SyncBlockSetOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           cast<IntegerAttr>(attr), nullptr, ffts_base_addr, tsync_instr_mode);
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          flag_id.get<Value>(), ffts_base_addr, tsync_instr_mode);
+          cast<Value>(flag_id), ffts_base_addr, tsync_instr_mode);
   }
 }
 
@@ -227,7 +227,7 @@ void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           cast<IntegerAttr>(attr), nullptr);
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          flag_id.get<Value>());
+          cast<Value>(flag_id));
   }
 }
 
@@ -240,7 +240,7 @@ void SyncBlockWaitOp::build(OpBuilder &odsBuilder, OperationState &odsState,
           cast<IntegerAttr>(attr), nullptr, tsync_instr_mode);
   } else {
     build(odsBuilder, odsState, tcore_type, tpipe, pipe, nullptr,
-          flag_id.get<Value>(), tsync_instr_mode);
+          cast<Value>(flag_id), tsync_instr_mode);
   }
 }
 

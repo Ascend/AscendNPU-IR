@@ -345,12 +345,11 @@ tiling::deviceFuncsMatchTilingFunc(SmallVector<func::FuncOp> &deviceFuncs,
 }
 
 bool hfusion::isFP8(Type type, Builder builder) {
-  return type == builder.getFloat8E5M2Type() ||
-         type == builder.getFloat8E4M3Type() ||
-         type == builder.getFloat8E4M3FNType() ||
-         type == builder.getFloat8E5M2FNUZType() ||
-         type == builder.getFloat8E4M3FNUZType() ||
-         type == builder.getFloat8E4M3B11FNUZType();
+  (void)builder;
+  // Prefer isa<> — Builder::getFloat8E*Type() was removed in newer LLVM.
+  return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
+             Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
+      type);
 }
 
 bool hfusion::isReshapeOp(Operation *op) {

@@ -1521,8 +1521,10 @@ SmallVector<int64_t> getSqueezedShape(SmallVectorImpl<int64_t> &shape) {
 }
 
 std::optional<int64_t> getIntAttr(const OpFoldResult ofr) {
-  if (ofr.is<Attribute>() && isa<IntegerAttr>(ofr.get<Attribute>()))
-    return dyn_cast<IntegerAttr>(ofr.get<Attribute>()).getInt();
+  if (auto attr = dyn_cast_if_present<Attribute>(ofr)) {
+    if (auto intAttr = dyn_cast<IntegerAttr>(attr))
+      return intAttr.getInt();
+  }
   return std::nullopt;
 }
 

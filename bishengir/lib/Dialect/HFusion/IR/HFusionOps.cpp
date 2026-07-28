@@ -3448,6 +3448,24 @@ FailureOr<SmallVector<Value>> HistogramOp::decomposeOperation(OpBuilder &b) {
   return SmallVector<Value>{finalHist};
 }
 
+void MatMulMxOp::build(OpBuilder &builder, OperationState &state, Value inputA,
+                       Value inputB, Value scaleA, Value scaleB, Value acc) {
+  build(builder, state, /*result=*/acc.getType(), inputA, inputB, scaleA,
+        scaleB, acc, /*lhsFormat=*/DataformatAttr{},
+        /*rhsFormat=*/DataformatAttr{});
+}
+
+#if BISHENGIR_BUILD_STANDALONE_IR_ONLY
+// HFusion Utils is not part of the standalone IR build; provide isFP8 here.
+// Prefer isa<> — Builder::getFloat8E*Type() was removed in newer LLVM.
+bool hfusion::isFP8(Type type, Builder builder) {
+  (void)builder;
+  return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
+             Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
+      type);
+}
+#endif
+
 LogicalResult MatMulMxOp::verify() {
   auto inputATy = mlir::cast<ShapedType>(getInputA().getType());
   auto inputBTy = mlir::cast<ShapedType>(getInputB().getType());
