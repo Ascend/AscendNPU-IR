@@ -639,8 +639,9 @@ struct FoldTensorLoadToLoadMXScalePattern
 //
 // fixpipe output is 2D (ND), but src comes from mmad output which is nZ
 // (Fractal). fixpipe always uses dma_mode = NZ2ND to convert nZ→ND inline.
-// The separate convert_layout{nZ→ND} can be eliminated by feeding the
-// fractal tensor directly to fixpipe.
+// The separate convert_layout{nZ→ND} can be bypassed by feeding the fractal
+// tensor directly to each compatible fixpipe. If it has no other users, the
+// convert_layout is eliminated.
 //
 // Matches:
 //   %conv = hivm.hir.convert_layout %mmad_output {Fractal -> ND}
@@ -663,24 +664,29 @@ struct FoldConvertLayoutFixpipePattern
         !dstLayout.isNDLayout())
       return rewriter.notifyMatchFailure(op, "not a Fractal->ND conversion");
 
-    if (!op.getResult().hasOneUse())
-      return rewriter.notifyMatchFailure(op,
-                                         "convert_layout has multiple uses");
+    bool changed = false;
+    for (Operation *user :
+         llvm::make_early_inc_range(op.getResult().getUsers())) {
+      auto fixpipeOp = dyn_cast<FixpipeOp>(user);
+      if (!fixpipeOp)
+        continue;
 
-    auto fixpipeOp = dyn_cast<FixpipeOp>(*op.getResult().user_begin());
-    if (!fixpipeOp)
-      return rewriter.notifyMatchFailure(op, "user is not a fixpipe");
+      if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
+          fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
+          fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
+        continue;
 
-    if (fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2ND &&
-        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2DN &&
-        fixpipeOp.getDmaMode() != FixpipeDMAMode::NZ2NZ)
+      rewriter.modifyOpInPlace(
+          fixpipeOp, [&]() { fixpipeOp.getSrcMutable().assign(op.getSource()); });
+      changed = true;
+    }
+
+    if (!changed)
       return rewriter.notifyMatchFailure(
-          fixpipeOp, "fixpipe dma_mode is not nz2nd, nz2dn, or nz2nz");
+          op, "no compatible fixpipe user to fold");
 
-    rewriter.modifyOpInPlace(
-        fixpipeOp, [&]() { fixpipeOp.getSrcMutable().assign(op.getSource()); });
-
-    rewriter.eraseOp(op);
+    if (op.getResult().use_empty())
+      rewriter.eraseOp(op);
     return success();
   }
 };
