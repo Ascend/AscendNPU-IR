@@ -425,7 +425,7 @@ struct SyncBlockOpLowering : public OpRewritePattern<SyncBlockOp> {
                                       fftsBaseAddr, modeAttr);
     }
     if (insertWaitOp) {
-      rewriter.create<SyncBlockWaitOp>(loc, coreTypeAttr, tpipe, pipe, flagID);
+      rewriter.create<SyncBlockWaitOp>(loc, coreTypeAttr, tpipe, pipe, flagID, modeAttr);
     }
   }
 
