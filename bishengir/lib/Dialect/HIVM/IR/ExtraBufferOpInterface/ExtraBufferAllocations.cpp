@@ -17,10 +17,12 @@
 
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
+#include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/STLExtras.h"
@@ -609,10 +611,13 @@ static LogicalResult allocCumOpExtraBuffersIfPossible(CumOpWithTemp op) {
     op.emitWarning("already has extra temp buffer");
     return success();
   }
+  auto moduleOp = op.getOperation()-> template getParentOfType<mlir::ModuleOp>();
+  if (hacc::utils::isMemBasedArch(moduleOp)) {
   // TODO: no temp buffer needed for cumsum and cumprod in Membase
-  if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp> ||
-                std::is_same_v<CumOpWithTemp, VCumprodOp>) {
-    return success();
+    if constexpr (std::is_same_v<CumOpWithTemp, VCumsumOp> ||
+                  std::is_same_v<CumOpWithTemp, VCumprodOp>) {
+      return success();
+    }
   }
   llvm::ArrayRef<int64_t> cumDims = op.getCumDims();
   int64_t cumDim = cumDims[0];
