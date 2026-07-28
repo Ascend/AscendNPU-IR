@@ -372,8 +372,12 @@ void DimensionAnalyzer::computeTilingDimImpl(
         Dimension dim(src, i);
         if (isParallelDim(dim)) {
           if (!isValidTilingSize(shape[i])) {
-            if (!checkTileableMaskedStore(op, i))
+            if (!checkTileableMaskedStore(op, i)) {
+              // temporarily disable tiling for 1xN VReduce
+              if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>)
+                break;
               continue;
+            }
           }
           if constexpr (std::is_same_v<StoreOpTy, hivm::VReduceOp>) {
             if (shape[i] <= 4)
