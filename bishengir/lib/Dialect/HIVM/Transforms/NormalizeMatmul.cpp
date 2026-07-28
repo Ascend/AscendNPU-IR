@@ -1478,17 +1478,47 @@ struct BrcBiasInfo {
   MatmulBiasMode brcBiasMode = MatmulBiasMode::NoBias;
   Value perChannelValue;
   hivm::VAddOp addOp;
+  Value biasBrcSrc;
 };
 
-// Get the Bias mode
-// PerChannelAdd: Vbrc(x, [0])
-// ZeroInitNoAccumulation: Vbrc(0)
-// ReuseL0C: prev_val (mmadL1) is confrimly executed and current mayNotExec is
-//          false; TODO: mayNotExecWithIf criteria should be removed
-// NoBias: empty ElementwiseAdd: x[n, m]
+// Match PostPerChannelAddWithSplitK: ccfOutVal has one use that is VAddOp
+// with a perChannel VBrcOp source. Covers:
+//   vbrc(x,[0]) + vadd, empty() + vadd, vbrc(0) + vadd
+static std::optional<BrcBiasInfo>
+matchPostPerChannelAddWithSplitK(Value ccfOutVal, Operation *hookOp) {
+  if (!ccfOutVal.hasOneUse())
+    return std::nullopt;
+  auto addOp = dyn_cast<hivm::VAddOp>(*ccfOutVal.getUsers().begin());
+  if (!addOp)
+    return std::nullopt;
+  for (Value src : addOp.getSrc()) {
+    if (auto brcOp = src.getDefiningOp<hivm::VBrcOp>()) {
+      if (isSatisfiedBrcForPerChannel(brcOp, hookOp)) {
+        BrcBiasInfo result;
+        result.perChannelValue = getBiasInputForPerChannelAdd(src);
+        result.addOp = addOp;
+        result.biasBrcSrc = brcOp.getSrc();
+        result.brcBiasMode = MatmulBiasMode::PostPerChannelAddWithSplitK;
+        return result;
+      }
+    }
+  }
+  return std::nullopt;
+}
+
+// Get the Bias mode — rules tried in priority order, first match wins:
+//   1. PerChannelAdd:          ccfInVal = Vbrc(x, [0])
+//   2. PostPerChannel(vbrc0):  ccfInVal = Vbrc(0) with perChannel vadd
+//   3. ZeroInitNoAccumulation: ccfInVal = Vbrc(0) without vadd
+//   4. ReuseL0C:               ccfInVal is reusable L0C from previous mmad
+//                              TODO: mayNotExecWithIf should be removed
+//   5. PostPerChannel(empty):  ccfInVal traces to empty() with perChannel vadd
+//   6. NoBias:                 ccfInVal traces to empty() without vadd
+//   7. ElementwiseAdd:         fallback x[n, m]
 BrcBiasInfo getBrcBiasMode(CCFInfo ccfinfo) {
   // refer to getMatmulLikeBiasMode
   Value ccfInVal = ccfinfo.inVal;
+  Value ccfOutVal = ccfinfo.outVal;
   BrcBiasInfo info;
   if (auto brcOp = ccfInVal.getDefiningOp<hivm::VBrcOp>()) {
     if (isSatisfiedBrcForPerChannel(brcOp)) {
@@ -1691,7 +1721,7 @@ class NoBiasStrategy : public DecomposeStrategyBase {
   }
   void handleTailFallback(PatternRewriter &rewriter,
                           NormalizeCtx &ctx) override {
-    if (ctx.mayNotExec)
+    if (ctx.mayNotExec && !isa<scf::IfOp>(ctx.insertPointOp))
       ctx.tmpNewMmad.getOperation()->setAttr(kDeferredTailFallback,
                                              rewriter.getUnitAttr());
   }
@@ -1704,7 +1734,10 @@ class ZeroInitStrategy : public DecomposeStrategyBase {
       LDBG("decompose matmul with zero init no accumulation");
       return;
     }
-    if (ctx.mayNotExec)
+    // if-only ZeroInit: the else block already yields the zero bias
+    // (vbrc(0)), which is exactly the fallback value AddIfPattern would
+    // create. No deferred tail fallback IfOp needed.
+    if (ctx.mayNotExec && !isa<scf::IfOp>(ctx.insertPointOp))
       ctx.tmpNewMmad.getOperation()->setAttr(kDeferredTailFallback,
                                              rewriter.getUnitAttr());
   }
@@ -1749,12 +1782,71 @@ class PerChannelAddStrategy : public DecomposeStrategyBase {
   }
   void handleTailFallback(PatternRewriter &rewriter,
                           NormalizeCtx &ctx) override {
-    if (ctx.mayNotExec)
+    if (ctx.mayNotExec && !isa<scf::IfOp>(ctx.insertPointOp))
       addTailFallback(rewriter, *ctx.insertPointOp, ctx.tmpNewMmad,
                       ctx.counterBuf, ctx.ccfInVal, ctx.ccfOutVal);
     LDBG("decompose matmul with other cases");
   }
 };
+
+class PostPerChannelAddStrategy : public DecomposeStrategyBase {
+  void mergeBias(PatternRewriter &rewriter,
+                 NormalizeCtx &ctx) override {
+    ctx.tmpNewMmad.setPerChannelBias(
+        ctx.biasInfo.perChannelValue);
+    if (ctx.biasInfo.addOp) {
+      rewriter.replaceAllUsesWith(ctx.biasInfo.addOp->getResults()[0],
+                                  ctx.ccfOutVal);
+    }
+    ctx.tmpNewMmad->setAttr(kNormalizedInitOrBias, rewriter.getUnitAttr());
+
+    // if-only: the else block must yield the perChannel bias (vbrc) so that
+    // when the if-condition is false the result is the bias, not
+    // ccfInVal (empty/zero). No fallback IfOp is needed.
+    if (isa<scf::IfOp>(ctx.insertPointOp)) {
+      Value newVbrc = createPerChannelVbrc(rewriter, ctx);
+      auto ifOp = cast<scf::IfOp>(ctx.insertPointOp);
+      unsigned idx = getResultIndex(*ifOp, ctx.ccfOutVal);
+      auto elseYield = cast<scf::YieldOp>(ifOp.elseBlock()->getTerminator());
+      rewriter.modifyOpInPlace(elseYield,
+          [&]() { elseYield.setOperand(idx, newVbrc); });
+    }
+  }
+  void handleTailFallback(PatternRewriter &rewriter,
+                          NormalizeCtx &ctx) override {
+    // if-only: handled in mergeBias (else yield changed to vbrc).
+    // for-only: create fallback IfOp with perChannel vbrc.
+    if (!ctx.mayNotExec || isa<scf::IfOp>(ctx.insertPointOp))
+      return;
+    Value newVbrc = createPerChannelVbrc(rewriter, ctx);
+    addTailFallback(rewriter, *ctx.insertPointOp, ctx.tmpNewMmad,
+                    ctx.counterBuf, newVbrc, ctx.ccfOutVal);
+    LDBG("decompose matmul with post per channel add");
+  }
+
+private:
+  static Value createPerChannelVbrc(PatternRewriter &rewriter,
+                                    NormalizeCtx &ctx) {
+    rewriter.setInsertionPoint(ctx.insertPointOp);
+    Value vbrcSrc = ctx.biasInfo.perChannelValue;
+    if (vbrcSrc.getType() != ctx.biasInfo.biasBrcSrc.getType()) {
+      if (auto expandOp = ctx.biasInfo.biasBrcSrc
+                              .getDefiningOp<tensor::ExpandShapeOp>()) {
+        vbrcSrc = rewriter.create<tensor::ExpandShapeOp>(
+            ctx.insertPointOp->getLoc(), expandOp.getResultType(),
+            vbrcSrc, expandOp.getReassociationIndices());
+      }
+    }
+    Value emptyOut = mlir::utils::createEmptyOp(
+        rewriter, ctx.insertPointOp->getLoc(), ctx.ccfInVal);
+    auto newVbrc = rewriter.create<hivm::VBrcOp>(
+        ctx.insertPointOp->getLoc(), ctx.ccfInVal.getType(),
+        vbrcSrc, emptyOut,
+        rewriter.getDenseI64ArrayAttr({0}));
+    return newVbrc->getResult(0);
+  }
+};
+
 
 struct NormalizeMmadCCFPattern
     : public OpInterfaceRewritePattern<LocalMatmulLikeOpInterface> {
@@ -1852,6 +1944,7 @@ struct NormalizeMmadCCFPattern
     static ZeroInitStrategy sZeroInit;
     static ElementwiseAddStrategy sElemAdd;
     static PerChannelAddStrategy sPerChannel;
+    static PostPerChannelAddStrategy sPostPerChannel;
 
     BiasModeStrategy *strategy = nullptr;
     switch (biasInfo.brcBiasMode) {
@@ -1868,8 +1961,10 @@ struct NormalizeMmadCCFPattern
       strategy = &sElemAdd;
       break;
     case MatmulBiasMode::PerChannelAdd:
-    case MatmulBiasMode::PostPerChannelAddWithSplitK:
       strategy = &sPerChannel;
+      break;
+    case MatmulBiasMode::PostPerChannelAddWithSplitK:
+      strategy = &sPostPerChannel;
       break;
     default:
       return rewriter.notifyMatchFailure(op, "unknown bias mode");
