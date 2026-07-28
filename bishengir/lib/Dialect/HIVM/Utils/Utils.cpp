@@ -31,7 +31,6 @@
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -176,8 +175,7 @@ LoopLikeOpInterface getParentLoopImpl(Value val,
     // Stop at the current anchor when the yielded value cannot be mapped to a
     // loop result instead of dereferencing std::nullopt.
     auto loopResults = parentLoop.getLoopResults();
-    if (!loopResults ||
-        static_cast<size_t>(*idx) >= loopResults->size())
+    if (!loopResults || static_cast<size_t>(*idx) >= loopResults->size())
       return consumerLoop ? consumerLoop : parentLoop;
     auto result = (*loopResults)[*idx];
     return getParentLoopImpl(result, consumerLoop);
@@ -223,33 +221,38 @@ SmallVector<Value> getMemRefAllocs(Value operand) {
     auto resultNum = cast<OpResult>(operand).getResultNumber(); // which result?
     SmallVector<Value> results;
 
-    for (Region &region : ifOp->getRegions()) {    // then, else
-      if (region.empty()) continue;                 // skip absent else
+    for (Region &region : ifOp->getRegions()) { // then, else
+      if (region.empty())
+        continue; // skip absent else
       auto yieldOp = cast<scf::YieldOp>(
-          region.front().getTerminator());          // branch's exit point
+          region.front().getTerminator()); // branch's exit point
 
       // Recurse through the yield operand (handles nested IfOp→IfOp→alloc)
       SmallVector<Value> branchAllocs =
           getMemRefAllocs(yieldOp.getOperand(resultNum));
-      if (branchAllocs.empty()) return {};          // any branch fails → bail
+      if (branchAllocs.empty())
+        return {}; // any branch fails → bail
       results.append(branchAllocs);
     }
 
     // All branches must contribute exactly one alloc each
-    if (results.size() != ifOp->getRegions().size()) return {};
+    if (results.size() != ifOp->getRegions().size())
+      return {};
 
     // All branches' allocs must have the same type
     Type firstType = results.front().getType();
     for (Value alloc : results)
-      if (alloc.getType() != firstType) return {};
+      if (alloc.getType() != firstType)
+        return {};
 
     return results;
   }
 
   // -- fallback: single user case (alloc, subview, for, etc.) --
   FailureOr<memref::AllocOp> alloc = getMemRefAlloc(operand);
-  if (failed(alloc)) return {};
-  return {Value(*alloc)};                          // wrap in vector
+  if (failed(alloc))
+    return {};
+  return {Value(*alloc)}; // wrap in vector
 }
 
 // New helper function to get the updated BaseMemRefType
@@ -619,8 +622,7 @@ DiagnosedSilenceableFailure mapForallToBlocksImpl(
             [](scf::ForallOp left, scf::ForallOp right) {
               auto getOrder = [](scf::ForallOp op) -> int {
                 for (Attribute mapping : op.getMappingAttr()) {
-                  if (auto blkMapping =
-                          dyn_cast<HIVMBlockMappingAttr>(mapping))
+                  if (auto blkMapping = dyn_cast<HIVMBlockMappingAttr>(mapping))
                     return blkMapping.getOrder().value_or(0);
                 }
                 // Subblock mapping or no block mapping: order is not dictated.
@@ -929,8 +931,8 @@ Value getLocalWorkSpaceTensor(PatternRewriter &rewriter, Location loc,
 #endif
 
   // 1. Get AllocWorkspaceOp of current block
-  Value localWorkSpace = createAllocLocalWorkSpace(
-      rewriter, loc, targetShapes, elementType);
+  Value localWorkSpace =
+      createAllocLocalWorkSpace(rewriter, loc, targetShapes, elementType);
 
   // 2. Use bufferization::ToTensorOp to convert current workspace to tensor
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
@@ -1117,6 +1119,10 @@ AlignKind isBrcOpAligned(VBrcOp vbrcOp, int dim, int rank) {
   // Collect the list of align kind
   std::vector<AlignKind> alignKindList = {};
   dim = axisKind == AxisKind::LAST ? dstType.getRank() - 2 : dim;
+  // Return AlignKind::ALIGN if the rank of dst is 1.
+  if (dim < 0) {
+    return AlignKind::ALIGN;
+  }
   for (auto memrefType : memrefTypeList) {
     auto layout = dyn_cast<StridedLayoutAttr>(memrefType.getLayout());
     // Return unknown if [dim ... end] has any dynamic shape
