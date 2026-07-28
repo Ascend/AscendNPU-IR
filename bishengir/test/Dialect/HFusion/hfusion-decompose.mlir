@@ -115,69 +115,80 @@ func.func @test_decompose_gather_src64(%src: tensor<4x64xi64>, %idx: tensor<4x32
 
 // CHECK-LABEL:   func.func @histogram_nomask(
 // CHECK-SAME:                                %[[VAL_0:.*]]: tensor<8xi32>) -> tensor<4xi32> {
-// CHECK:           %[[VAL_1:.*]] = arith.constant true
-// CHECK:           %[[VAL_2:.*]] = arith.constant 8 : index
-// CHECK:           %[[VAL_3:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_4:.*]] = arith.constant 1 : index
-// CHECK:           %[[VAL_5:.*]] = arith.constant 4 : index
-// CHECK:           %[[VAL_6:.*]] = arith.constant 1 : i32
-// CHECK:           %[[VAL_7:.*]] = arith.constant 0 : i32
-// CHECK:           %[[VAL_8:.*]] = tensor.empty() : tensor<4xi32>
-// CHECK:           %[[VAL_9:.*]] = linalg.fill ins(%[[VAL_7]] : i32) outs(%[[VAL_8]] : tensor<4xi32>) -> tensor<4xi32>
-// CHECK:           %[[VAL_10:.*]] = scf.for %[[VAL_11:.*]] = %[[VAL_3]] to %[[VAL_2]] step %[[VAL_4]] iter_args(%[[VAL_12:.*]] = %[[VAL_9]]) -> (tensor<4xi32>) {
-// CHECK:             %[[VAL_13:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[VAL_11]]] : tensor<8xi32>
-// CHECK:             %[[VAL_14:.*]] = arith.cmpi ult, %[[VAL_13]], %[[VAL_7]] : i32
-// CHECK:             %[[VAL_15:.*]] = arith.index_castui %[[VAL_13]] : i32 to index
-// CHECK:             %[[VAL_16:.*]] = arith.select %[[VAL_14]], %[[VAL_3]], %[[VAL_15]] : index
-// CHECK:             %[[VAL_17:.*]] = arith.cmpi uge, %[[VAL_16]], %[[VAL_5]] : index
-// CHECK:             %[[VAL_18:.*]] = arith.select %[[VAL_17]], %[[VAL_3]], %[[VAL_16]] : index
-// CHECK:             %[[VAL_19:.*]] = arith.ori %[[VAL_14]], %[[VAL_17]] : i1
-// CHECK:             %[[VAL_20:.*]] = arith.xori %[[VAL_19]], %[[VAL_1]] : i1
-// CHECK:             %[[VAL_21:.*]] = tensor.extract %[[VAL_12]]{{\[}}%[[VAL_18]]] : tensor<4xi32>
-// CHECK:             %[[VAL_22:.*]] = arith.addi %[[VAL_21]], %[[VAL_6]] : i32
-// CHECK:             %[[VAL_23:.*]] = tensor.insert %[[VAL_22]] into %[[VAL_12]]{{\[}}%[[VAL_18]]] : tensor<4xi32>
-// CHECK:             %[[VAL_24:.*]] = arith.select %[[VAL_20]], %[[VAL_23]], %[[VAL_12]] : tensor<4xi32>
-// CHECK:             scf.yield %[[VAL_24]] : tensor<4xi32>
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C4:.*]] = arith.constant 4 : index
+// CHECK:           %[[C1_I32:.*]] = arith.constant 1 : i32
+// CHECK:           %[[C0_I32:.*]] = arith.constant 0 : i32
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK:           %[[INIT:.*]] = linalg.fill ins(%[[C0_I32]] : i32) outs(%[[EMPTY]] : tensor<4xi32>) -> tensor<4xi32>
+// CHECK:           %[[RES:.*]] = scf.for %[[IDX:.*]] = %[[C0]] to %[[C8]] step %[[C1]] iter_args(%[[ACC:.*]] = %[[INIT]]) -> (tensor<4xi32>) {
+// CHECK:             %[[EXTRACTED:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[IDX]]] : tensor<8xi32>
+// CHECK:             %[[LT0:.*]] = arith.cmpi ult, %[[EXTRACTED]], %[[C0_I32]] : i32
+// CHECK:             %[[CAST:.*]] = arith.index_castui %[[EXTRACTED]] : i32 to index
+// CHECK:             %[[IDX_CLAMP_LOW:.*]] = arith.select %[[LT0]], %[[C0]], %[[CAST]] : index
+// CHECK:             %[[GE4:.*]] = arith.cmpi uge, %[[IDX_CLAMP_LOW]], %[[C4]] : index
+// CHECK:             %[[IDX_CLAMP_HIGH:.*]] = arith.select %[[GE4]], %[[C0]], %[[IDX_CLAMP_LOW]] : index
+// CHECK:             %[[OR:.*]] = arith.ori %[[LT0]], %[[GE4]] : i1
+// CHECK:             %[[IF_RES:.*]] = scf.if %[[OR]] -> (tensor<4xi32>) {
+// CHECK:               scf.yield %[[ACC]] : tensor<4xi32>
+// CHECK:             } else {
+// CHECK:               %[[OLD_VAL:.*]] = tensor.extract %[[ACC]]{{\[}}%[[IDX_CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               %[[NEW_VAL:.*]] = arith.addi %[[OLD_VAL]], %[[C1_I32]] : i32
+// CHECK:               %[[UPDATED:.*]] = tensor.insert %[[NEW_VAL]] into %[[ACC]]{{\[}}%[[IDX_CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               scf.yield %[[UPDATED]] : tensor<4xi32>
+// CHECK:             }
+// CHECK:             scf.yield %[[IF_RES]] : tensor<4xi32>
 // CHECK:           }
-// CHECK:           return %[[VAL_10]] : tensor<4xi32>
+// CHECK:           return %[[RES]] : tensor<4xi32>
 // CHECK:         }
 func.func @histogram_nomask(%arg0: tensor<8xi32>) -> tensor<4xi32> {
   %res = hfusion.histogram %arg0, 4 : tensor<8xi32> -> tensor<4xi32>
   return %res : tensor<4xi32>
 }
 
+
 // -----
 
 // CHECK-LABEL:   func.func @histogram_mask(
 // CHECK-SAME:                              %[[VAL_0:.*]]: tensor<8xi32>,
 // CHECK-SAME:                              %[[VAL_1:.*]]: tensor<8xi1>) -> tensor<4xi32> {
-// CHECK:           %[[VAL_2:.*]] = arith.constant true
-// CHECK:           %[[VAL_3:.*]] = arith.constant 8 : index
-// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_5:.*]] = arith.constant 1 : index
-// CHECK:           %[[VAL_6:.*]] = arith.constant 4 : index
-// CHECK:           %[[VAL_7:.*]] = arith.constant 1 : i32
-// CHECK:           %[[VAL_8:.*]] = arith.constant 0 : i32
-// CHECK:           %[[VAL_9:.*]] = tensor.empty() : tensor<4xi32>
-// CHECK:           %[[VAL_10:.*]] = linalg.fill ins(%[[VAL_8]] : i32) outs(%[[VAL_9]] : tensor<4xi32>) -> tensor<4xi32>
-// CHECK:           %[[VAL_11:.*]] = scf.for %[[VAL_12:.*]] = %[[VAL_4]] to %[[VAL_3]] step %[[VAL_5]] iter_args(%[[VAL_13:.*]] = %[[VAL_10]]) -> (tensor<4xi32>) {
-// CHECK:             %[[VAL_14:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[VAL_12]]] : tensor<8xi32>
-// CHECK:             %[[VAL_15:.*]] = arith.cmpi ult, %[[VAL_14]], %[[VAL_8]] : i32
-// CHECK:             %[[VAL_16:.*]] = arith.index_castui %[[VAL_14]] : i32 to index
-// CHECK:             %[[VAL_17:.*]] = arith.select %[[VAL_15]], %[[VAL_4]], %[[VAL_16]] : index
-// CHECK:             %[[VAL_18:.*]] = arith.cmpi uge, %[[VAL_17]], %[[VAL_6]] : index
-// CHECK:             %[[VAL_19:.*]] = arith.select %[[VAL_18]], %[[VAL_4]], %[[VAL_17]] : index
-// CHECK:             %[[VAL_20:.*]] = tensor.extract %[[VAL_1]]{{\[}}%[[VAL_12]]] : tensor<8xi1>
-// CHECK:             %[[VAL_21:.*]] = arith.ori %[[VAL_15]], %[[VAL_18]] : i1
-// CHECK:             %[[VAL_22:.*]] = arith.xori %[[VAL_21]], %[[VAL_2]] : i1
-// CHECK:             %[[VAL_23:.*]] = arith.andi %[[VAL_20]], %[[VAL_22]] : i1
-// CHECK:             %[[VAL_24:.*]] = tensor.extract %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<4xi32>
-// CHECK:             %[[VAL_25:.*]] = arith.addi %[[VAL_24]], %[[VAL_7]] : i32
-// CHECK:             %[[VAL_26:.*]] = tensor.insert %[[VAL_25]] into %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<4xi32>
-// CHECK:             %[[VAL_27:.*]] = arith.select %[[VAL_23]], %[[VAL_26]], %[[VAL_13]] : tensor<4xi32>
-// CHECK:             scf.yield %[[VAL_27]] : tensor<4xi32>
+// CHECK:           %[[TRUE:.*]] = arith.constant true
+// CHECK:           %[[C0_I16:.*]] = arith.constant 0 : i16
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C4:.*]] = arith.constant 4 : index
+// CHECK:           %[[C1_I32:.*]] = arith.constant 1 : i32
+// CHECK:           %[[C0_I32:.*]] = arith.constant 0 : i32
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK:           %[[INIT:.*]] = linalg.fill ins(%[[C0_I32]] : i32) outs(%[[EMPTY]] : tensor<4xi32>) -> tensor<4xi32>
+// CHECK:           %[[CAST_DST:.*]] = tensor.empty() : tensor<8xi16>
+// CHECK:           %[[MASK_CAST:.*]] = hfusion.cast {{.*}} ins(%[[VAL_1]] : tensor<8xi1>) outs(%[[CAST_DST]] : tensor<8xi16>) -> tensor<8xi16>
+// CHECK:           %[[RES:.*]] = scf.for %[[IDX:.*]] = %[[C0]] to %[[C8]] step %[[C1]] iter_args(%[[ACC:.*]] = %[[INIT]]) -> (tensor<4xi32>) {
+// CHECK:             %[[X:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[IDX]]] : tensor<8xi32>
+// CHECK:             %[[LT0:.*]] = arith.cmpi ult, %[[X]], %[[C0_I32]] : i32
+// CHECK:             %[[CAST_IDX:.*]] = arith.index_castui %[[X]] : i32 to index
+// CHECK:             %[[CLAMP_LOW:.*]] = arith.select %[[LT0]], %[[C0]], %[[CAST_IDX]] : index
+// CHECK:             %[[GE4:.*]] = arith.cmpi uge, %[[CLAMP_LOW]], %[[C4]] : index
+// CHECK:             %[[CLAMP_HIGH:.*]] = arith.select %[[GE4]], %[[C0]], %[[CLAMP_LOW]] : index
+// CHECK:             %[[MASK_EXTRACT:.*]] = tensor.extract %[[MASK_CAST]]{{\[}}%[[IDX]]] : tensor<8xi16>
+// CHECK:             %[[MASK_COND:.*]] = arith.cmpi ne, %[[MASK_EXTRACT]], %[[C0_I16]] : i16
+// CHECK:             %[[OR_INVALID:.*]] = arith.ori %[[LT0]], %[[GE4]] : i1
+// CHECK:             %[[VALID:.*]] = arith.xori %[[OR_INVALID]], %[[TRUE]] : i1
+// CHECK:             %[[COND:.*]] = arith.andi %[[MASK_COND]], %[[VALID]] : i1
+// CHECK:             %[[IF_RES:.*]] = scf.if %[[COND]] -> (tensor<4xi32>) {
+// CHECK:               %[[OLD:.*]] = tensor.extract %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               %[[ADD:.*]] = arith.addi %[[OLD]], %[[C1_I32]] : i32
+// CHECK:               %[[UPDATED:.*]] = tensor.insert %[[ADD]] into %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               scf.yield %[[UPDATED]] : tensor<4xi32>
+// CHECK:             } else {
+// CHECK:               scf.yield %[[ACC]] : tensor<4xi32>
+// CHECK:             }
+// CHECK:             scf.yield %[[IF_RES]] : tensor<4xi32>
 // CHECK:           }
-// CHECK:           return %[[VAL_11]] : tensor<4xi32>
+// CHECK:           return %[[RES]] : tensor<4xi32>
 // CHECK:         }
 func.func @histogram_mask(%arg0: tensor<8xi32>, %mask: tensor<8xi1>)
     -> tensor<4xi32> {
@@ -185,7 +196,6 @@ func.func @histogram_mask(%arg0: tensor<8xi32>, %mask: tensor<8xi1>)
          : tensor<8xi32>, tensor<8xi1> -> tensor<4xi32>
   return %res : tensor<4xi32>
 }
-
 
 // -----
 // CHECK-LABEL: func.func @test_isinf_decompose
@@ -212,32 +222,34 @@ module {
 
 // CHECK-LABEL:   func.func @histogram_nomask_i16(
 // CHECK-SAME:                                    %[[VAL_0:.*]]: tensor<16xi16>) -> tensor<4xi32> {
-// CHECK:           %[[VAL_1:.*]] = arith.constant true
-// CHECK:           %[[VAL_2:.*]] = arith.constant 0 : i16
-// CHECK:           %[[VAL_3:.*]] = arith.constant 16 : index
-// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_5:.*]] = arith.constant 1 : index
-// CHECK:           %[[VAL_6:.*]] = arith.constant 4 : index
-// CHECK:           %[[VAL_7:.*]] = arith.constant 1 : i32
-// CHECK:           %[[VAL_8:.*]] = arith.constant 0 : i32
-// CHECK:           %[[VAL_9:.*]] = tensor.empty() : tensor<4xi32>
-// CHECK:           %[[VAL_10:.*]] = linalg.fill ins(%[[VAL_8]] : i32) outs(%[[VAL_9]] : tensor<4xi32>) -> tensor<4xi32>
-// CHECK:           %[[VAL_11:.*]] = scf.for %[[VAL_12:.*]] = %[[VAL_4]] to %[[VAL_3]] step %[[VAL_5]] iter_args(%[[VAL_13:.*]] = %[[VAL_10]]) -> (tensor<4xi32>) {
-// CHECK:             %[[VAL_14:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[VAL_12]]] : tensor<16xi16>
-// CHECK:             %[[VAL_15:.*]] = arith.cmpi ult, %[[VAL_14]], %[[VAL_2]] : i16
-// CHECK:             %[[VAL_16:.*]] = arith.index_castui %[[VAL_14]] : i16 to index
-// CHECK:             %[[VAL_17:.*]] = arith.select %[[VAL_15]], %[[VAL_4]], %[[VAL_16]] : index
-// CHECK:             %[[VAL_18:.*]] = arith.cmpi uge, %[[VAL_17]], %[[VAL_6]] : index
-// CHECK:             %[[VAL_19:.*]] = arith.select %[[VAL_18]], %[[VAL_4]], %[[VAL_17]] : index
-// CHECK:             %[[VAL_20:.*]] = arith.ori %[[VAL_15]], %[[VAL_18]] : i1
-// CHECK:             %[[VAL_21:.*]] = arith.xori %[[VAL_20]], %[[VAL_1]] : i1
-// CHECK:             %[[VAL_22:.*]] = tensor.extract %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<4xi32>
-// CHECK:             %[[VAL_23:.*]] = arith.addi %[[VAL_22]], %[[VAL_7]] : i32
-// CHECK:             %[[VAL_24:.*]] = tensor.insert %[[VAL_23]] into %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<4xi32>
-// CHECK:             %[[VAL_25:.*]] = arith.select %[[VAL_21]], %[[VAL_24]], %[[VAL_13]] : tensor<4xi32>
-// CHECK:             scf.yield %[[VAL_25]] : tensor<4xi32>
+// CHECK:           %[[C0_I16:.*]] = arith.constant 0 : i16
+// CHECK:           %[[C16:.*]] = arith.constant 16 : index
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C4:.*]] = arith.constant 4 : index
+// CHECK:           %[[C1_I32:.*]] = arith.constant 1 : i32
+// CHECK:           %[[C0_I32:.*]] = arith.constant 0 : i32
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK:           %[[INIT:.*]] = linalg.fill ins(%[[C0_I32]] : i32) outs(%[[EMPTY]] : tensor<4xi32>) -> tensor<4xi32>
+// CHECK:           %[[RES:.*]] = scf.for %[[IDX:.*]] = %[[C0]] to %[[C16]] step %[[C1]] iter_args(%[[ACC:.*]] = %[[INIT]]) -> (tensor<4xi32>) {
+// CHECK:             %[[X:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[IDX]]] : tensor<16xi16>
+// CHECK:             %[[LT0:.*]] = arith.cmpi ult, %[[X]], %[[C0_I16]] : i16
+// CHECK:             %[[CAST:.*]] = arith.index_castui %[[X]] : i16 to index
+// CHECK:             %[[CLAMP_LOW:.*]] = arith.select %[[LT0]], %[[C0]], %[[CAST]] : index
+// CHECK:             %[[GE4:.*]] = arith.cmpi uge, %[[CLAMP_LOW]], %[[C4]] : index
+// CHECK:             %[[CLAMP_HIGH:.*]] = arith.select %[[GE4]], %[[C0]], %[[CLAMP_LOW]] : index
+// CHECK:             %[[OR_INVALID:.*]] = arith.ori %[[LT0]], %[[GE4]] : i1
+// CHECK:             %[[IF_RES:.*]] = scf.if %[[OR_INVALID]] -> (tensor<4xi32>) {
+// CHECK:               scf.yield %[[ACC]] : tensor<4xi32>
+// CHECK:             } else {
+// CHECK:               %[[OLD:.*]] = tensor.extract %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               %[[ADD:.*]] = arith.addi %[[OLD]], %[[C1_I32]] : i32
+// CHECK:               %[[UPDATED:.*]] = tensor.insert %[[ADD]] into %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               scf.yield %[[UPDATED]] : tensor<4xi32>
+// CHECK:             }
+// CHECK:             scf.yield %[[IF_RES]] : tensor<4xi32>
 // CHECK:           }
-// CHECK:           return %[[VAL_11]] : tensor<4xi32>
+// CHECK:           return %[[RES]] : tensor<4xi32>
 // CHECK:         }
 func.func @histogram_nomask_i16(%arg0: tensor<16xi16>) -> tensor<4xi32> {
   %res = hfusion.histogram %arg0, 4 : tensor<16xi16> -> tensor<4xi32>
@@ -248,68 +260,73 @@ func.func @histogram_nomask_i16(%arg0: tensor<16xi16>) -> tensor<4xi32> {
 
 // CHECK-LABEL:   func.func @histogram_nomask_i8(
 // CHECK-SAME:                                   %[[VAL_0:.*]]: tensor<8xi8>) -> tensor<6xi64> {
-// CHECK:           %[[VAL_1:.*]] = arith.constant true
-// CHECK:           %[[VAL_2:.*]] = arith.constant 0 : i8
-// CHECK:           %[[VAL_3:.*]] = arith.constant 8 : index
-// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_5:.*]] = arith.constant 1 : index
-// CHECK:           %[[VAL_6:.*]] = arith.constant 6 : index
-// CHECK:           %[[VAL_7:.*]] = arith.constant 1 : i64
-// CHECK:           %[[VAL_8:.*]] = arith.constant 0 : i64
-// CHECK:           %[[VAL_9:.*]] = tensor.empty() : tensor<6xi64>
-// CHECK:           %[[VAL_10:.*]] = linalg.fill ins(%[[VAL_8]] : i64) outs(%[[VAL_9]] : tensor<6xi64>) -> tensor<6xi64>
-// CHECK:           %[[VAL_11:.*]] = scf.for %[[VAL_12:.*]] = %[[VAL_4]] to %[[VAL_3]] step %[[VAL_5]] iter_args(%[[VAL_13:.*]] = %[[VAL_10]]) -> (tensor<6xi64>) {
-// CHECK:             %[[VAL_14:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[VAL_12]]] : tensor<8xi8>
-// CHECK:             %[[VAL_15:.*]] = arith.cmpi ult, %[[VAL_14]], %[[VAL_2]] : i8
-// CHECK:             %[[VAL_16:.*]] = arith.index_castui %[[VAL_14]] : i8 to index
-// CHECK:             %[[VAL_17:.*]] = arith.select %[[VAL_15]], %[[VAL_4]], %[[VAL_16]] : index
-// CHECK:             %[[VAL_18:.*]] = arith.cmpi uge, %[[VAL_17]], %[[VAL_6]] : index
-// CHECK:             %[[VAL_19:.*]] = arith.select %[[VAL_18]], %[[VAL_4]], %[[VAL_17]] : index
-// CHECK:             %[[VAL_20:.*]] = arith.ori %[[VAL_15]], %[[VAL_18]] : i1
-// CHECK:             %[[VAL_21:.*]] = arith.xori %[[VAL_20]], %[[VAL_1]] : i1
-// CHECK:             %[[VAL_22:.*]] = tensor.extract %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<6xi64>
-// CHECK:             %[[VAL_23:.*]] = arith.addi %[[VAL_22]], %[[VAL_7]] : i64
-// CHECK:             %[[VAL_24:.*]] = tensor.insert %[[VAL_23]] into %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<6xi64>
-// CHECK:             %[[VAL_25:.*]] = arith.select %[[VAL_21]], %[[VAL_24]], %[[VAL_13]] : tensor<6xi64>
-// CHECK:             scf.yield %[[VAL_25]] : tensor<6xi64>
+// CHECK:           %[[C0_I8:.*]] = arith.constant 0 : i8
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C6:.*]] = arith.constant 6 : index
+// CHECK:           %[[C1_I64:.*]] = arith.constant 1 : i64
+// CHECK:           %[[C0_I64:.*]] = arith.constant 0 : i64
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<6xi64>
+// CHECK:           %[[INIT:.*]] = linalg.fill ins(%[[C0_I64]] : i64) outs(%[[EMPTY]] : tensor<6xi64>) -> tensor<6xi64>
+// CHECK:           %[[RES:.*]] = scf.for %[[IDX:.*]] = %[[C0]] to %[[C8]] step %[[C1]] iter_args(%[[ACC:.*]] = %[[INIT]]) -> (tensor<6xi64>) {
+// CHECK:             %[[X:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[IDX]]] : tensor<8xi8>
+// CHECK:             %[[LT0:.*]] = arith.cmpi ult, %[[X]], %[[C0_I8]] : i8
+// CHECK:             %[[CAST:.*]] = arith.index_castui %[[X]] : i8 to index
+// CHECK:             %[[CLAMP_LOW:.*]] = arith.select %[[LT0]], %[[C0]], %[[CAST]] : index
+// CHECK:             %[[GE6:.*]] = arith.cmpi uge, %[[CLAMP_LOW]], %[[C6]] : index
+// CHECK:             %[[CLAMP_HIGH:.*]] = arith.select %[[GE6]], %[[C0]], %[[CLAMP_LOW]] : index
+// CHECK:             %[[OR_INVALID:.*]] = arith.ori %[[LT0]], %[[GE6]] : i1
+// CHECK:             %[[IF_RES:.*]] = scf.if %[[OR_INVALID]] -> (tensor<6xi64>) {
+// CHECK:               scf.yield %[[ACC]] : tensor<6xi64>
+// CHECK:             } else {
+// CHECK:               %[[OLD:.*]] = tensor.extract %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<6xi64>
+// CHECK:               %[[ADD:.*]] = arith.addi %[[OLD]], %[[C1_I64]] : i64
+// CHECK:               %[[UPDATED:.*]] = tensor.insert %[[ADD]] into %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<6xi64>
+// CHECK:               scf.yield %[[UPDATED]] : tensor<6xi64>
+// CHECK:             }
+// CHECK:             scf.yield %[[IF_RES]] : tensor<6xi64>
 // CHECK:           }
-// CHECK:           return %[[VAL_11]] : tensor<6xi64>
+// CHECK:           return %[[RES]] : tensor<6xi64>
 // CHECK:         }
 func.func @histogram_nomask_i8(%arg0: tensor<8xi8>) -> tensor<6xi64> {
   %res = hfusion.histogram %arg0, 6 : tensor<8xi8> -> tensor<6xi64>
   return %res : tensor<6xi64>
 }
 
+
 // -----
 
 // CHECK-LABEL:   func.func @histogram_nomask_i64(
 // CHECK-SAME:                                    %[[VAL_0:.*]]: tensor<128xi64>) -> tensor<16xi32> {
-// CHECK:           %[[VAL_1:.*]] = arith.constant true
-// CHECK:           %[[VAL_2:.*]] = arith.constant 0 : i64
-// CHECK:           %[[VAL_3:.*]] = arith.constant 128 : index
-// CHECK:           %[[VAL_4:.*]] = arith.constant 0 : index
-// CHECK:           %[[VAL_5:.*]] = arith.constant 1 : index
-// CHECK:           %[[VAL_6:.*]] = arith.constant 16 : index
-// CHECK:           %[[VAL_7:.*]] = arith.constant 1 : i32
-// CHECK:           %[[VAL_8:.*]] = arith.constant 0 : i32
-// CHECK:           %[[VAL_9:.*]] = tensor.empty() : tensor<16xi32>
-// CHECK:           %[[VAL_10:.*]] = linalg.fill ins(%[[VAL_8]] : i32) outs(%[[VAL_9]] : tensor<16xi32>) -> tensor<16xi32>
-// CHECK:           %[[VAL_11:.*]] = scf.for %[[VAL_12:.*]] = %[[VAL_4]] to %[[VAL_3]] step %[[VAL_5]] iter_args(%[[VAL_13:.*]] = %[[VAL_10]]) -> (tensor<16xi32>) {
-// CHECK:             %[[VAL_14:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[VAL_12]]] : tensor<128xi64>
-// CHECK:             %[[VAL_15:.*]] = arith.cmpi ult, %[[VAL_14]], %[[VAL_2]] : i64
-// CHECK:             %[[VAL_16:.*]] = arith.index_castui %[[VAL_14]] : i64 to index
-// CHECK:             %[[VAL_17:.*]] = arith.select %[[VAL_15]], %[[VAL_4]], %[[VAL_16]] : index
-// CHECK:             %[[VAL_18:.*]] = arith.cmpi uge, %[[VAL_17]], %[[VAL_6]] : index
-// CHECK:             %[[VAL_19:.*]] = arith.select %[[VAL_18]], %[[VAL_4]], %[[VAL_17]] : index
-// CHECK:             %[[VAL_20:.*]] = arith.ori %[[VAL_15]], %[[VAL_18]] : i1
-// CHECK:             %[[VAL_21:.*]] = arith.xori %[[VAL_20]], %[[VAL_1]] : i1
-// CHECK:             %[[VAL_22:.*]] = tensor.extract %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<16xi32>
-// CHECK:             %[[VAL_23:.*]] = arith.addi %[[VAL_22]], %[[VAL_7]] : i32
-// CHECK:             %[[VAL_24:.*]] = tensor.insert %[[VAL_23]] into %[[VAL_13]]{{\[}}%[[VAL_19]]] : tensor<16xi32>
-// CHECK:             %[[VAL_25:.*]] = arith.select %[[VAL_21]], %[[VAL_24]], %[[VAL_13]] : tensor<16xi32>
-// CHECK:             scf.yield %[[VAL_25]] : tensor<16xi32>
+// CHECK:           %[[C0_I64:.*]] = arith.constant 0 : i64
+// CHECK:           %[[C128:.*]] = arith.constant 128 : index
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C16:.*]] = arith.constant 16 : index
+// CHECK:           %[[C1_I32:.*]] = arith.constant 1 : i32
+// CHECK:           %[[C0_I32:.*]] = arith.constant 0 : i32
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<16xi32>
+// CHECK:           %[[INIT:.*]] = linalg.fill ins(%[[C0_I32]] : i32) outs(%[[EMPTY]] : tensor<16xi32>) -> tensor<16xi32>
+// CHECK:           %[[RES:.*]] = scf.for %[[IDX:.*]] = %[[C0]] to %[[C128]] step %[[C1]] iter_args(%[[ACC:.*]] = %[[INIT]]) -> (tensor<16xi32>) {
+// CHECK:             %[[X:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[IDX]]] : tensor<128xi64>
+// CHECK:             %[[LT0:.*]] = arith.cmpi ult, %[[X]], %[[C0_I64]] : i64
+// CHECK:             %[[CAST:.*]] = arith.index_castui %[[X]] : i64 to index
+// CHECK:             %[[CLAMP_LOW:.*]] = arith.select %[[LT0]], %[[C0]], %[[CAST]] : index
+// CHECK:             %[[GE16:.*]] = arith.cmpi uge, %[[CLAMP_LOW]], %[[C16]] : index
+// CHECK:             %[[CLAMP_HIGH:.*]] = arith.select %[[GE16]], %[[C0]], %[[CLAMP_LOW]] : index
+// CHECK:             %[[OR_INVALID:.*]] = arith.ori %[[LT0]], %[[GE16]] : i1
+// CHECK:             %[[IF_RES:.*]] = scf.if %[[OR_INVALID]] -> (tensor<16xi32>) {
+// CHECK:               scf.yield %[[ACC]] : tensor<16xi32>
+// CHECK:             } else {
+// CHECK:               %[[OLD:.*]] = tensor.extract %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<16xi32>
+// CHECK:               %[[ADD:.*]] = arith.addi %[[OLD]], %[[C1_I32]] : i32
+// CHECK:               %[[UPDATED:.*]] = tensor.insert %[[ADD]] into %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<16xi32>
+// CHECK:               scf.yield %[[UPDATED]] : tensor<16xi32>
+// CHECK:             }
+// CHECK:             scf.yield %[[IF_RES]] : tensor<16xi32>
 // CHECK:           }
-// CHECK:           return %[[VAL_11]] : tensor<16xi32>
+// CHECK:           return %[[RES]] : tensor<16xi32>
 // CHECK:         }
 func.func @histogram_nomask_i64(%arg0: tensor<128xi64>) -> tensor<16xi32> {
   %res = hfusion.histogram %arg0, 16 : tensor<128xi64> -> tensor<16xi32>
@@ -328,4 +345,52 @@ func.func @histogram_nomask_i64(%arg0: tensor<128xi64>) -> tensor<16xi32> {
 func.func @test_flip_decompose(%arg0: tensor<4x8x8xf32>) -> tensor<4x8x8xf32> {
   %0 = hfusion.flip %arg0 : tensor<4x8x8xf32> flip_axis = 2 -> tensor<4x8x8xf32>
   return %0 : tensor<4x8x8xf32>
+}
+
+// -----
+
+// i8 mask: passthrough (no extsi), extract i8 + cmpi ne 0 in the loop body.
+// CHECK-LABEL:   func.func @histogram_mask_i8(
+// CHECK-SAME:                              %[[VAL_0:.*]]: tensor<8xi32>,
+// CHECK-SAME:                              %[[VAL_1:.*]]: tensor<8xi8>) -> tensor<4xi32> {
+// CHECK:           %[[TRUE:.*]] = arith.constant true
+// CHECK:           %[[C0_I8:.*]] = arith.constant 0 : i8
+// CHECK:           %[[C8:.*]] = arith.constant 8 : index
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[C1:.*]] = arith.constant 1 : index
+// CHECK:           %[[C4:.*]] = arith.constant 4 : index
+// CHECK:           %[[C1_I32:.*]] = arith.constant 1 : i32
+// CHECK:           %[[C0_I32:.*]] = arith.constant 0 : i32
+// CHECK:           %[[EMPTY:.*]] = tensor.empty() : tensor<4xi32>
+// CHECK:           %[[INIT:.*]] = linalg.fill ins(%[[C0_I32]] : i32) outs(%[[EMPTY]] : tensor<4xi32>) -> tensor<4xi32>
+// CHECK-NOT:       hfusion.cast
+// CHECK:           %[[RES:.*]] = scf.for %[[IDX:.*]] = %[[C0]] to %[[C8]] step %[[C1]] iter_args(%[[ACC:.*]] = %[[INIT]]) -> (tensor<4xi32>) {
+// CHECK:             %[[X:.*]] = tensor.extract %[[VAL_0]]{{\[}}%[[IDX]]] : tensor<8xi32>
+// CHECK:             %[[LT0:.*]] = arith.cmpi ult, %[[X]], %[[C0_I32]] : i32
+// CHECK:             %[[CAST:.*]] = arith.index_castui %[[X]] : i32 to index
+// CHECK:             %[[CLAMP_LOW:.*]] = arith.select %[[LT0]], %[[C0]], %[[CAST]] : index
+// CHECK:             %[[GE4:.*]] = arith.cmpi uge, %[[CLAMP_LOW]], %[[C4]] : index
+// CHECK:             %[[CLAMP_HIGH:.*]] = arith.select %[[GE4]], %[[C0]], %[[CLAMP_LOW]] : index
+// CHECK:             %[[MASK_VAL:.*]] = tensor.extract %[[VAL_1]]{{\[}}%[[IDX]]] : tensor<8xi8>
+// CHECK:             %[[MASK_COND:.*]] = arith.cmpi ne, %[[MASK_VAL]], %[[C0_I8]] : i8
+// CHECK:             %[[OR_INVALID:.*]] = arith.ori %[[LT0]], %[[GE4]] : i1
+// CHECK:             %[[VALID:.*]] = arith.xori %[[OR_INVALID]], %[[TRUE]] : i1
+// CHECK:             %[[COND:.*]] = arith.andi %[[MASK_COND]], %[[VALID]] : i1
+// CHECK:             %[[IF_RES:.*]] = scf.if %[[COND]] -> (tensor<4xi32>) {
+// CHECK:               %[[OLD:.*]] = tensor.extract %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               %[[ADD:.*]] = arith.addi %[[OLD]], %[[C1_I32]] : i32
+// CHECK:               %[[UPDATED:.*]] = tensor.insert %[[ADD]] into %[[ACC]]{{\[}}%[[CLAMP_HIGH]]] : tensor<4xi32>
+// CHECK:               scf.yield %[[UPDATED]] : tensor<4xi32>
+// CHECK:             } else {
+// CHECK:               scf.yield %[[ACC]] : tensor<4xi32>
+// CHECK:             }
+// CHECK:             scf.yield %[[IF_RES]] : tensor<4xi32>
+// CHECK:           }
+// CHECK:           return %[[RES]] : tensor<4xi32>
+// CHECK:         }
+func.func @histogram_mask_i8(%arg0: tensor<8xi32>, %mask: tensor<8xi8>)
+    -> tensor<4xi32> {
+  %res = hfusion.histogram %arg0, 4, %mask
+         : tensor<8xi32>, tensor<8xi8> -> tensor<4xi32>
+  return %res : tensor<4xi32>
 }
