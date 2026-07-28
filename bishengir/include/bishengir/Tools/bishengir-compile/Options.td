@@ -575,7 +575,7 @@ def EnableHIVMAutoCVBalance : HIVMOptimizationControlOptions<
 def EnableLazyLoading : HIVMOptimizationControlOptions<
   "Enable lazy loading in CV pipelining to reduce buffer expansion.",
   "bool",
-  "true"
+  "false"
 >;
 
 def SetCVPipelineMode : HIVMOptimizationControlOptions<
