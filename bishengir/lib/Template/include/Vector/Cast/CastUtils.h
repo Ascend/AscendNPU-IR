@@ -126,7 +126,13 @@ vector_cast_with_overflow(memref_t<__ubuf__ SRC_T, 2> *src,
             0);                                  // dstGap
 
   tmp_2d_as_dst_t.sizes[0] = src_as_dst_t_size1 / bits_factor;
-  if (dst->strides[0] != CEIL_FACTOR(dst->sizes[1], num_per_block_dst)) {
+  // vnchwconv_2d pads unaligned dimensions.  Use tmp to avoid writing padding
+  // past the logical dst, then copy only the logical result back.
+  bool needs_padded_transpose_tmp =
+      dst->sizes[0] % num_per_block_dst != 0 ||
+      dst->sizes[1] % num_per_block_dst != 0;
+  if (dst->strides[0] != CEIL_FACTOR(dst->sizes[1], num_per_block_dst) ||
+      needs_padded_transpose_tmp) {
     // step3: Transpose tmp to tmp.
     // The second half of tmp is used to store temporary tranpose results.
     memref_t<__ubuf__ DST_T, 2> tmp_for_transpose{
