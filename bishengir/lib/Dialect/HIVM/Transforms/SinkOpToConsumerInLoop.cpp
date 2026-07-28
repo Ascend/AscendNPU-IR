@@ -48,6 +48,11 @@ public:
     if (op.getOperation()->getNumResults() != 1)
       return rewriter.notifyMatchFailure(op, "doesn't only have one result");
 
+    auto users = op.getOperation()->getResult(0).getUsers();
+    if (hacc::utils::isRegBasedArch(utils::getTopLevelModuleOp(op)) &&
+        !llvm::hasSingleElement(users))
+      return rewriter.notifyMatchFailure(op, "has more than one user");
+
     auto opResult = op.getOperation()->getResult(0);
     SmallVector<OpOperand *> uses;
     uint64_t notFusedCounter = 0;
@@ -75,14 +80,14 @@ public:
         notFusedCounter++;
       }
     }
-    
+
     if (hacc::utils::isAscend910_95(utils::getTopLevelModuleOp(op)) &&
         notFusedCounter > 1) {
       return rewriter.notifyMatchFailure(
           op, "if op is sinked into loop and it's user can't be fused into vf, "
               "this will cause performance regression");
     }
-    
+
     for_each(uses, [&](OpOperand *use) {
       auto *user = use->getOwner();
       rewriter.setInsertionPoint(user);
