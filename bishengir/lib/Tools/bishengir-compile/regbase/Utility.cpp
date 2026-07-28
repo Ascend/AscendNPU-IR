@@ -96,6 +96,13 @@ LogicalResult inferMixedCV(ModuleOp &module,
   return success();
 }
 
+LogicalResult inferDotScale(ModuleOp &module,
+                            BiShengIRCompileMainConfig &config) {
+  if (shouldUseSoftDotScale(module))
+    config.setEnableDotScaledCompile(true);
+  return success();
+}
+
 LogicalResult inferLayoutOptimization(ModuleOp &module,
                                       BiShengIRCompileMainConfig &config) {
   module.walk<WalkOrder::PreOrder>([&](Operation *op) -> WalkResult {

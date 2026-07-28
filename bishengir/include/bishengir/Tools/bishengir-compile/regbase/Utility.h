@@ -37,6 +37,9 @@ llvm::LogicalResult inferLayoutOptimization(
 llvm::LogicalResult inferMixedCV(mlir::ModuleOp &module,
                                  BiShengIRCompileMainConfig &config);
 
+llvm::LogicalResult inferDotScale(mlir::ModuleOp &module,
+                                  BiShengIRCompileMainConfig &config);
+
 std::vector<std::string>
 filterRegBaseForwardedHIVMCOptions(llvm::ArrayRef<std::string> originalCLArgs);
 
