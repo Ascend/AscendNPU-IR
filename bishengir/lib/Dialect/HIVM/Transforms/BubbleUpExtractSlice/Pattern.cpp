@@ -1530,7 +1530,7 @@ bool BufferizationBubbleUpStrategy::isSupportedOperation(
   return true;
 }
 
-// BufferizationBubbleUpStrategy only inserts the propagator before toTensorOp
+// Translate extract_slice(to_tensor) into memref-side propagation links.
 LogicalResult
 BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
                                        PatternRewriter &rewriter) const {
@@ -1556,15 +1556,68 @@ BufferizationBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
   if (extractDims.size() != 1)
     return failure();
   auto tilingDim = *extractDims.begin();
-  UnrealizedConversionCastOp upAtToTensor = createBubblePropagatorUpLink(
-      oldMemrefAtToTensor, slicedMemrefAtToTensor,
-      sliceOp.getMixedOffsets()[tilingDim], sliceOp.getMixedSizes()[tilingDim],
-      tilingDim, rewriter);
+
+  UnrealizedConversionCastOp upAtToTensor =
+      createBubblePropagatorUpLinkBefore(
+          toTensorOp, oldMemrefAtToTensor, slicedMemrefAtToTensor,
+          sliceOp.getMixedOffsets()[tilingDim],
+          sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
 
   rewriter.setInsertionPointAfter(toTensorOp);
   auto newToTensorOp = rewriter.create<bufferization::ToTensorOp>(
       sliceOp.getLoc(), upAtToTensor.getResult(0), true, true);
   rewriter.replaceOp(sliceOp, newToTensorOp.getResult());
+  return success();
+}
+
+bool LocalLoadBubbleUpStrategy::isSupportedOperation(
+    tensor::ExtractSliceOp sliceOp) const {
+  return isa_and_nonnull<hivm::LocalLoadOp>(
+      sliceOp.getSource().getDefiningOp());
+}
+
+// Rewrite extract_slice(local_load(memref)) as local_load(UCC(memref)). The
+// upward UCC carries the tile offset and size into the memref propagation
+// pipeline, which can then shrink an allocation or materialize a subview.
+// This strategy intentionally keeps the default single-user capability:
+// cloning a local_load for a multi-user tensor source is not supported.
+LogicalResult
+LocalLoadBubbleUpStrategy::execute(tensor::ExtractSliceOp sliceOp,
+                                   PatternRewriter &rewriter) const {
+  auto localLoad =
+      dyn_cast<hivm::LocalLoadOp>(sliceOp.getSource().getDefiningOp());
+  if (!localLoad)
+    return failure();
+
+  auto slicedTensorType =
+      dyn_cast<RankedTensorType>(sliceOp.getResult().getType());
+  auto oldMemrefType = dyn_cast<MemRefType>(localLoad.getAddr().getType());
+  if (!slicedTensorType || !oldMemrefType)
+    return failure();
+
+  auto extractDims = getExtractOrInsertDim(sliceOp);
+  if (extractDims.size() != 1)
+    return failure();
+  auto tilingDim = *extractDims.begin();
+  auto slicedMemrefType =
+      getSlicedMemRefType(oldMemrefType, slicedTensorType);
+
+  auto upAtLocalLoad = createBubblePropagatorUpLinkBefore(
+      localLoad, localLoad.getAddr(), slicedMemrefType,
+      sliceOp.getMixedOffsets()[tilingDim],
+      sliceOp.getMixedSizes()[tilingDim], tilingDim, rewriter);
+
+  rewriter.setInsertionPointAfter(localLoad);
+  auto newLocalLoad = rewriter.create<hivm::LocalLoadOp>(
+      localLoad.getLoc(), slicedTensorType, upAtLocalLoad.getResult(0));
+  for (NamedAttribute attr : localLoad->getAttrs()) {
+    if (!newLocalLoad->hasAttr(attr.getName()))
+      newLocalLoad->setAttr(attr.getName(), attr.getValue());
+  }
+
+  rewriter.replaceOp(sliceOp, newLocalLoad.getResult());
+  if (localLoad->use_empty())
+    rewriter.eraseOp(localLoad);
   return success();
 }
 

@@ -72,6 +72,10 @@ createBubblePropagatorUpLink(Value oldValue, Type slicedType,
                              OpFoldResult offset, OpFoldResult size,
                              int64_t tilingDim, PatternRewriter &rewriter);
 
+UnrealizedConversionCastOp createBubblePropagatorUpLinkBefore(
+    Operation *anchor, Value oldValue, Type slicedType, OpFoldResult offset,
+    OpFoldResult size, int64_t tilingDim, PatternRewriter &rewriter);
+
 FailureOr<memref::AllocOp>
 createSlicedAllocLike(UnrealizedConversionCastOp propagateOp,
                       memref::AllocOp allocOp, PatternRewriter &rewriter);
