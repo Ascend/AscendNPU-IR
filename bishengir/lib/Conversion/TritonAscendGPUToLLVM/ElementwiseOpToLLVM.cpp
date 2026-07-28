@@ -149,7 +149,7 @@ struct CmpIOpConversion
 
 #undef __PRED_ENUM
     }
-    llvm_unreachable("Unknown arith::CmpIPredicate");
+    llvm::report_fatal_error("Unknown arith::CmpIPredicate");
   }
 };
 
@@ -195,7 +195,7 @@ struct CmpFOpConversion
 
 #undef __PRED_ENUM
     }
-    llvm_unreachable("Unknown arith::CmpFPredicate");
+    llvm::report_fatal_error("Unknown arith::CmpFPredicate");
   }
 };
 
@@ -221,7 +221,7 @@ struct ExternElementwiseOpConversion
             tryCreateAscendDPXOp(funcName, rewriter, loc, elemTy, operands))
       return {ascendOp};
 
-    llvm_unreachable("Unknown triton::ExternElementwiseOp");
+    llvm::report_fatal_error("Unknown triton::ExternElementwiseOp");
   }
 
 private:

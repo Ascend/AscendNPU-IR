@@ -79,7 +79,7 @@ struct ArithIndexCast : public OpRewritePattern<CastOp> {
     Value rhs = op->getOperand(1);
     Type srcTy = lhs.getType();
     if (rhs.getType() != srcTy) {
-      llvm_unreachable("Binary operation operand type mismatch");
+      llvm::report_fatal_error("Binary operation operand type mismatch");
     }
     auto loc = op.getLoc();
     Value newLhs = rewriter.create<CastOp>(loc, operandTy, lhs).getResult();

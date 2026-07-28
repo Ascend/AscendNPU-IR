@@ -102,7 +102,7 @@ static Value buildSingleLoad(ConversionPatternRewriter &rewriter, Location loc,
 
     return loadResult;
   }
-  llvm_unreachable("ERROR: matchAndRewrite should have given match failure "
+  llvm::report_fatal_error("ERROR: matchAndRewrite should have given match failure "
                    "before reaching this point!");
 }
 
@@ -310,7 +310,7 @@ static void buildSingleStore(ConversionPatternRewriter &rewriter, Location loc,
     rewriter.create<LLVM::CallIntrinsicOp>(
         loc, LLVM::LLVMVoidType(), rewriter.getStringAttr(opName), args);
   } else {
-    llvm_unreachable("ERROR: matchAndRewrite should have given match failure "
+    llvm::report_fatal_error("ERROR: matchAndRewrite should have given match failure "
                      "before reaching this point!");
   }
 }

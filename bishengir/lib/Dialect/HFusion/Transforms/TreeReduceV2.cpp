@@ -73,7 +73,7 @@ TypedAttr createFillAttr(Operation &frontOp, RankedTensorType inputType, Pattern
     if (isa<arith::MaxNumFOp>(frontOp)) return rewriter.getFloatAttr(elemType, llvm::APFloat::getInf(sem, true));
     if (isa<arith::MinNumFOp>(frontOp)) return rewriter.getFloatAttr(elemType, llvm::APFloat::getInf(sem, false));
   }
-  llvm_unreachable("not complete yet");
+  llvm::report_fatal_error("not complete yet");
 }
 
 int calculateCurrentReductionDim(int reductionDim, SmallVector<int> &beenReductionDim) {

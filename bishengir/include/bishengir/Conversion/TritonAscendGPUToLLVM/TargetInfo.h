@@ -36,7 +36,7 @@ public:
   bool supportMaximumMinimum() const override { return false; }
 
   Value ballot(RewriterBase &, Location, Type, Value) const override {
-    llvm_unreachable("not implemented");
+    llvm::report_fatal_error("not implemented");
   }
 
   void barrier(Location, RewriterBase &, bool = false) const override;
@@ -61,12 +61,12 @@ public:
   Value shuffleIdx(RewriterBase &, Location, Value, Value) const override;
 
   Value permute(RewriterBase &, Location, Value, Value, Value) const override {
-    llvm_unreachable("not implemented");
+    llvm::report_fatal_error("not implemented");
   }
 
   Value programId(RewriterBase &, Location, ModuleOp,
                   ProgramIDDim) const override {
-    llvm_unreachable("not implemented");
+    llvm::report_fatal_error("not implemented");
   }
 
   bool warpReduce(RewriterBase &rewriter, Location loc, SmallVector<Value> &acc,
@@ -76,12 +76,12 @@ public:
   }
 
   std::string getMulhiFuncName(Type) const override {
-    llvm_unreachable("not implemented");
+    llvm::report_fatal_error("not implemented");
   }
 
   void printf(RewriterBase &, Value, int, ValueRange,
               ArrayRef<bool> = {}) const override {
-    llvm_unreachable("not implemented");
+    llvm::report_fatal_error("not implemented");
   }
 
   void printf(RewriterBase &, StringRef, ValueRange,

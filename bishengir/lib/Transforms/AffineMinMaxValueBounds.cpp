@@ -160,11 +160,11 @@ evalAffineExprWithDims(AffineExpr expr, ArrayRef<int64_t> dimValues) {
         return std::nullopt;
       return llvm::mod(*lhsV, *rhsV);
     default:
-      llvm_unreachable("unexpected affine binary op kind");
+      llvm::report_fatal_error("unexpected affine binary op kind");
     }
   }
   }
-  llvm_unreachable("unexpected affine expr kind");
+  llvm::report_fatal_error("unexpected affine expr kind");
 }
 
 static std::optional<std::pair<int64_t, int64_t>>

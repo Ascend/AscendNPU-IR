@@ -888,7 +888,7 @@ struct NormalizeSignBitOp : public OpRewritePattern<SignBitOp> {
       intType = rewriter.getI16Type();
       maskVal = 0x8000U;
     } else {
-      llvm_unreachable("unsupported data type");
+      llvm::report_fatal_error("unsupported data type");
     }
 
     auto intTensorType = inputTensorType.clone(intType);

@@ -97,7 +97,7 @@ static StringRef convCostStr(ConvertCost c) {
   case ConvertCost::SharedMemory:
     return "shared-memory (SLOW)";
   }
-  llvm_unreachable("unknown ConvertCost");
+  llvm::report_fatal_error("unknown ConvertCost");
 }
 
 static bool isAtMostWarpShuffle(RankedTensorType srcTy,

@@ -228,7 +228,7 @@ LogicalResult PropagateDownPattern::propagateDownYieldOp(
             propagateOp, rewriter);
       })
       .Default([&](auto *op) {
-        llvm_unreachable("Unhandled YieldOp");
+        llvm::report_fatal_error("Unhandled YieldOp");
         return failure();
       });
 }
@@ -303,8 +303,7 @@ LogicalResult PropagateUpPattern::propagateUpBlockArgument(
           return propagateWhileOpResult(whileOp, blockArgument.getArgNumber(),
                                         propagateOp, rewriter);
         }
-        llvm_unreachable(
-            "WhileOp should have either before body or after body");
+        llvm::report_fatal_error("WhileOp should have either before body or after body");
         return failure();
       })
       .Default([&](auto *parentOp) {

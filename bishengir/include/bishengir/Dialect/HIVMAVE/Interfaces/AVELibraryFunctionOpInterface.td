@@ -27,7 +27,7 @@ def AVELibraryFunctionOpInterface : OpInterface<"AVEOpWithLibraryFunction"> {
       /*args=*/(ins),
       /*methodBody=*/"",
       /*defaultImplementation=*/[{
-        llvm_unreachable("getOpLibraryCallName not implemented");
+        llvm::report_fatal_error("getOpLibraryCallName not implemented");
       }]
     >,
     InterfaceMethod<

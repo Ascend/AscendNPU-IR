@@ -1342,18 +1342,15 @@ void MergeVecScopePass::mergeNoBetween(func::FuncOp root, func::FuncOp vf1,
   auto getFuncCoreType = [](func::FuncOp f) -> hivm::TFuncCoreType {
     auto maybeFuncCoreType = hivm::queryFuncCoreType(f);
     if (!maybeFuncCoreType.has_value()) {
-      llvm_unreachable(
-          (f.getName() + " has no func_core_type\n").str().c_str());
+      llvm::report_fatal_error((f.getName() + " has no func_core_type\n"));
     }
     return maybeFuncCoreType.value();
   };
   auto vf1FuncCoreType = getFuncCoreType(vf1);
   auto vf2FuncCoreType = getFuncCoreType(vf2);
   if (vf1FuncCoreType != vf2FuncCoreType) {
-    llvm_unreachable((vf1.getName() + " must have the same func_core_type as " +
-                      vf2.getName() + "\n")
-                         .str()
-                         .c_str());
+    llvm::report_fatal_error(vf1.getName() + " must have the same func_core_type as " +
+                             vf2.getName() + "\n");
   }
 
   SmallVector<Type> newArgTypes;

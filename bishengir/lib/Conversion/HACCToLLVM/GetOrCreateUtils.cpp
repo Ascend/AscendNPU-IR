@@ -221,7 +221,7 @@ getOrCreatePrepareRTConfigureCall(ModuleOp module,
                                       loc, rewriter.getI32Type(),
                                       rewriter.getI32IntegerAttr(0))});
     if (blockNumSetter.getResults().size() != 1) {
-      llvm_unreachable("blockNumSetter should only result 1");
+      llvm::report_fatal_error("blockNumSetter should only result 1");
     }
 
     auto rt0 = loadFromPtr(loc, rewriter, allocatedArgs[0]);

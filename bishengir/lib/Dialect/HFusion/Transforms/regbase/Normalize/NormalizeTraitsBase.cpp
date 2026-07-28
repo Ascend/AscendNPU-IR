@@ -96,7 +96,7 @@ static typename MapT::mapped_type lookupOrUnreachable(const MapT &map, KeyT key,
                                                       const char *errorMessage) {
   auto it = map.find(key);
   if (it == map.end())
-    llvm_unreachable(errorMessage);
+    llvm::report_fatal_error(errorMessage);
   return it->second;
 }
 
@@ -195,7 +195,7 @@ static bool matchUnaryOp(Operation *op, UnaryKind kind) {
            unaryOp.getFun() == *hfusionFn;
   }
 
-  llvm_unreachable("unsupported unary kind");
+  llvm::report_fatal_error("unsupported unary kind");
 }
 
 static bool matchBinaryOp(Operation *op, BinaryKind kind) {
@@ -210,7 +210,7 @@ static bool matchBinaryOp(Operation *op, BinaryKind kind) {
            binaryOp.getFun() == *hfusionFn;
   }
 
-  llvm_unreachable("unsupported binary kind");
+  llvm::report_fatal_error("unsupported binary kind");
 }
 
 bool mlir::hfusion::NormalizeTraitsBase::matchOp(Operation *op,
@@ -308,7 +308,7 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createUnaryOp(
     return op->getResult(0);
   }
 
-  llvm_unreachable("unsupported unary kind");
+  llvm::report_fatal_error("unsupported unary kind");
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createFloorOp(
@@ -334,7 +334,7 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createBinaryOp(
     return op->getResult(0);
   }
 
-  llvm_unreachable("unsupported binary kind");
+  llvm::report_fatal_error("unsupported binary kind");
 }
 
 mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
@@ -354,7 +354,7 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createShiftOp(
   else
     binaryFn = mapShiftKindToBinaryFn(kind);
   if (!binaryFn)
-    llvm_unreachable("unsupported shift kind");
+    llvm::report_fatal_error("unsupported shift kind");
   auto *op =
       hfusion::createBinaryOp<hfusion::ElemwiseBinaryOp, hfusion::BinaryFn,
                               hfusion::BinaryFnAttr>(
@@ -368,7 +368,7 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createTernaryOp(
     Value dst, TernaryKind kind) {
   auto fn = mapTernaryKindToCreator(kind);
   if (!fn)
-    llvm_unreachable("unsupported ternary kind");
+    llvm::report_fatal_error("unsupported ternary kind");
   return (*fn)(rewriter, loc, lhs, mid, rhs, dst);
 }
 
@@ -500,7 +500,7 @@ mlir::Value mlir::hfusion::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     CastRoundKind kind, Value output, CastSignKind signKind) {
   if (signKind == CastSignKind::Preserve)
-    llvm_unreachable("createCastOp does not support CastSignKind::Preserve");
+    llvm::report_fatal_error("createCastOp does not support CastSignKind::Preserve");
   Type srcElemType = getElementTypeOrSelf(input.getType());
   auto roundMode =
       kind == CastRoundKind::Default

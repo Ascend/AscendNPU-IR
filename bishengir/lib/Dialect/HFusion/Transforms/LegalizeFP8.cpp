@@ -39,7 +39,7 @@ static bool isFP8(Type type) {
   } else if constexpr (std::is_same_v<FP8Type, Float8E5M2Type>) {
     return isa<Float8E5M2Type>(type);
   } else {
-    llvm_unreachable("Unexpected FP8 type");
+    llvm::report_fatal_error("Unexpected FP8 type");
     return false;
   }
 }
@@ -53,7 +53,7 @@ static Type getFP8Ty(PatternRewriter &rewriter) {
   } else if constexpr (std::is_same_v<FP8Type, Float8E5M2Type>) {
     return rewriter.getFloat8E5M2Type();
   } else {
-    llvm_unreachable("Unexpected FP8 type");
+    llvm::report_fatal_error("Unexpected FP8 type");
     return Type();
   }
 }

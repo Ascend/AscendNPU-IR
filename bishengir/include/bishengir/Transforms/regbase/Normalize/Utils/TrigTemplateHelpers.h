@@ -585,7 +585,7 @@ inline double getFloatingPointMinForAtan(FloatType floatType) {
 inline SmallVector<double>
 getTaylorSeriesCoefficients(TaylerMode taylerMode, int termCount) {
   if (termCount <= 0)
-    llvm_unreachable("Taylor expansion term count must be positive");
+    llvm::report_fatal_error("Taylor expansion term count must be positive");
 
   SmallVector<double> coefficients;
   coefficients.reserve(termCount);
@@ -614,7 +614,7 @@ getTaylorSeriesCoefficients(TaylerMode taylerMode, int termCount) {
     return coefficients;
   }
   }
-  llvm_unreachable("unsupported TaylerMode");
+  llvm::report_fatal_error("unsupported TaylerMode");
 }
 
 // Computes k = round(x / pi + offset). For cosine, offset = 0.5 because
@@ -689,7 +689,7 @@ Value buildTaylorApproximation(PatternRewriter &rewriter, Location loc,
                                Value input,
                                llvm::ArrayRef<double> coefficients) {
   if (coefficients.empty())
-    llvm_unreachable("Taylor coefficients must not be empty");
+    llvm::report_fatal_error("Taylor coefficients must not be empty");
 
   Type elementType = getElementTypeOrSelf(input.getType());
   Value empty = utils::createEmptyOp(rewriter, loc, input);
@@ -743,7 +743,7 @@ Value buildPolynomialFromSquaredInput(PatternRewriter &rewriter, Location loc,
                                       llvm::ArrayRef<double> coefficients,
                                       bool multiplyAfterLastAdd = true) {
   if (coefficients.empty())
-    llvm_unreachable("polynomial coefficients must not be empty");
+    llvm::report_fatal_error("polynomial coefficients must not be empty");
 
   Value empty = utils::createEmptyOp(rewriter, loc, input);
   Value result = input;

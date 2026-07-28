@@ -39,7 +39,7 @@ struct HIVMNormalizeHighPrecisionTrigTraitsBase : public hivm::NormalizeTraitsBa
       return rsqrtOp.getSrc()[0];
     if (auto sqrtOp = dyn_cast<hivm::VSqrtOp>(op))
       return sqrtOp.getSrc()[0];
-    llvm_unreachable("unsupported high-precision trig producer");
+    llvm::report_fatal_error("unsupported high-precision trig producer");
   }
 
   static bool hasSupportedHighPrecisionProducerSemantics(Operation *op) {

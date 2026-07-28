@@ -82,7 +82,7 @@ TypedAttr createFillAttr(Operation &frontOp, RankedTensorType inputType,
           llvm::APInt::getSignedMaxValue(
               inputType.getElementType().getIntOrFloatBitWidth()));
     } else {
-      llvm_unreachable("not complete yet");
+      llvm::report_fatal_error("not complete yet");
     }
   } else { // float
     auto &sem = dyn_cast<mlir::FloatType>(inputType.getElementType())
@@ -96,7 +96,7 @@ TypedAttr createFillAttr(Operation &frontOp, RankedTensorType inputType,
       zeroAttr = rewriter.getFloatAttr(inputType.getElementType(),
                                        llvm::APFloat::getInf(sem, false));
     } else {
-      llvm_unreachable("not complete yet");
+      llvm::report_fatal_error("not complete yet");
     }
   }
   return zeroAttr;

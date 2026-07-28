@@ -41,7 +41,7 @@ struct HFusionNormalizeLogLikeTraits : public NormalizeTraitsBase {
       return 2.0f;
     if (op.getFun() == hfusion::UnaryFn::log10)
       return 10.0f;
-    llvm_unreachable("unsupport log op");
+    llvm::report_fatal_error("unsupport log op");
   }
 
   static Value castBackLogLikeF16Result(PatternRewriter &rewriter, Location loc,

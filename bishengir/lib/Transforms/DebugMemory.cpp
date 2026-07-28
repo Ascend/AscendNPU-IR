@@ -1095,7 +1095,7 @@ DebugActionHandler::uptr DebugActionHandler::getHandler(ActionType actT) {
       case ActionType::UBPROBE:
         return std::make_unique<UbProbeActionHandler>();
       default:
-        llvm_unreachable("Unsupported LLVM debug action kind");
+        llvm::report_fatal_error("Unsupported LLVM debug action kind");
     }
 }
 

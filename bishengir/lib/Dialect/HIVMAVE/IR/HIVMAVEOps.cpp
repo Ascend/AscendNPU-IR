@@ -241,7 +241,7 @@ static std::string stringifyCombineKind(CombiningKind kind) {
     return "vcmin";
   default:
     std::string message = "Unhandled CombiningKind::" + mlir::hivmave::stringifyCombiningKind(kind).upper() + " in switch";
-    llvm_unreachable(message.c_str());
+    llvm::report_fatal_error(llvm::StringRef(message));
   }
 }
 

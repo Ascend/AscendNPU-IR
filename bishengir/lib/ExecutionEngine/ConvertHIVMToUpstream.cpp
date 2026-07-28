@@ -892,7 +892,7 @@ static TypedAttr getCumIdentityAttr(Type type, CumIdentityKind kind) {
     return IntegerAttr::get(
         type, APInt::getSignedMaxValue(type.getIntOrFloatBitWidth()));
   }
-  llvm_unreachable("unknown cum identity kind");
+  llvm::report_fatal_error("unknown cum identity kind");
 }
 
 // `ToFOp` is the float combiner for propagate-NaN semantics (Maximum/Minimum);
@@ -1418,7 +1418,7 @@ private:
     case hivm::CompareMode::GT:
       return isSigned ? hfusion::CompareFn::vgt : hfusion::CompareFn::vugt;
     }
-    llvm_unreachable("Unknown hivm::CompareMode in HiVM -> HFusion mapping");
+    llvm::report_fatal_error("Unknown hivm::CompareMode in HiVM -> HFusion mapping");
   }
 };
 
@@ -1492,7 +1492,7 @@ private:
     case (hivm::RoundMode::TRUNCWITHOVERFLOW):
       return hfusion::RoundMode::TRUNCWITHOVERFLOW;
     }
-    llvm_unreachable("unsupported hivm::RoundMode");
+    llvm::report_fatal_error("unsupported hivm::RoundMode");
   }
 
   hfusion::TypeFn
@@ -1505,7 +1505,7 @@ private:
     case (hivm::TypeFn::bitcast):
       return hfusion::TypeFn::bitcast;
     }
-    llvm_unreachable("unsupported hivm::TypeFn");
+    llvm::report_fatal_error("unsupported hivm::TypeFn");
   }
 };
 

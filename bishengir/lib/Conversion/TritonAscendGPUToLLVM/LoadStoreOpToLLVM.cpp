@@ -207,7 +207,7 @@ struct LoadOpConversion : public ConvertOpToLLVMPattern<triton::LoadOp>,
       case EvictionPolicy::EVICT_LAST:
         return ascend_dpx::AscendDPXLoadCachePolicy::L2_CACHE_HINT_NORMAL_LV;
       }
-      llvm_unreachable("switch on EvictionPolicy is not exhaustive");
+      llvm::report_fatal_error("switch on EvictionPolicy is not exhaustive");
     }();
 
     triton::CacheModifier mod = op.getCache();
@@ -345,7 +345,7 @@ struct StoreOpConversion : public ConvertOpToLLVMPattern<triton::StoreOp>,
       case EvictionPolicy::EVICT_LAST:
         return ascend_dpx::AscendDPXStoreCachePolicy::L2_CACHE_HINT_NORMAL_LV;
       }
-      llvm_unreachable("switch on EvictionPolicy is not exhaustive");
+      llvm::report_fatal_error("switch on EvictionPolicy is not exhaustive");
     }();
 
     triton::CacheModifier mod = op.getCache();

@@ -123,7 +123,7 @@ void VFFusionPass::runOnOperation() {
   OpBuilder::InsertionGuard insGuard(builder);
 
   if (enableOutlineCF)
-    llvm_unreachable("unsupported at the moment");
+    llvm::report_fatal_error("unsupported at the moment");
 
   // for CV cases, temporarily bypass vffusion
   if (isCVCases(moduleOp))

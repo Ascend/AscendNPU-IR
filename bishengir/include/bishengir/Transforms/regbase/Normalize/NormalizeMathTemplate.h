@@ -402,7 +402,7 @@ public:
 
     auto ranked = dyn_cast<RankedTensorType>(shapeV.getType());
     if (!ranked)
-      llvm_unreachable("reference tensor is not a ranked tensor");
+      llvm::report_fatal_error("reference tensor is not a ranked tensor");
 
     RankedTensorType resultTy =
         RankedTensorType::get(ranked.getShape(), val.getType());
@@ -792,7 +792,7 @@ private:
       return rewriter.create<arith::ConstantOp>(
           loc, elemType, rewriter.getFloatAttr(elemType, 0x7F800000));
     }
-    llvm_unreachable("powf only supports f16/f32");
+    llvm::report_fatal_error("powf only supports f16/f32");
   }
 
   /// Checks the `abs(base) == 1 && abs(exponent) == inf` boundary that should

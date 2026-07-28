@@ -271,7 +271,7 @@ void MemLivenessAnalysisRegBase::RecursionIR(Region *region, Liveness live) {
     return WalkResult::advance();
   });
   if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PlanMemory Traverse IR Failed! ");
+    llvm::report_fatal_error("PlanMemory Traverse IR Failed! ");
   }
 }
 
@@ -898,7 +898,7 @@ void MemLivenessAnalysisRegBase::UpdateOperandGenInfo(OpInfo *opInfo, Value oper
     buffer2status[iter_buffer->first] = BufferStatus::GENED;
   } else if (iter_buffer->second == BufferStatus::KILLED) {
     llvm::dbgs() << operand << " GetBufferInfo error\n";
-    llvm_unreachable("The buffer memory has been released and cannot be used "
+    llvm::report_fatal_error("The buffer memory has been released and cannot be used "
                      "again! ");
   }
 }
@@ -1065,7 +1065,7 @@ BufferInfo MemLivenessAnalysisRegBase::GenerateBufferInfo(Operation *op,
                  operand.getDefiningOp())) {
     return GetBufferInfo(op, operand, hivm::AddressSpace::GM);
   }
-  llvm_unreachable("buffer must has BufferInfo !");
+  llvm::report_fatal_error("buffer must has BufferInfo !");
 }
 
 BufferInfo MemLivenessAnalysisRegBase::GetBufferInfo(Operation *op, Value operand,
@@ -1081,8 +1081,7 @@ BufferInfo MemLivenessAnalysisRegBase::GetBufferInfo(Operation *op, Value operan
       utils::getStaticTotalSize(memRefType.getShape());
   if (!totalStaticSize.has_value()) {
     llvm::dbgs() << operand << " GetBufferInfo error\n";
-    llvm_unreachable(
-        "Failed to obtain op buffer shape size which should be static.");
+    llvm::report_fatal_error("Failed to obtain op buffer shape size which should be static.");
   }
   bufferInfo.constBits =
       totalStaticSize.value() *
@@ -2066,7 +2065,7 @@ MemPlanRegBase::GetBufferSpaceInfo(hivm::AddressSpace &space) const {
   case hivm::AddressSpace::L0C:
     return std::make_pair(l0cAlignSize, l0cSpaceSize);
   default:
-    llvm_unreachable("Temporarily unsupported memory buffer space !");
+    llvm::report_fatal_error("Temporarily unsupported memory buffer space !");
   }
 }
 

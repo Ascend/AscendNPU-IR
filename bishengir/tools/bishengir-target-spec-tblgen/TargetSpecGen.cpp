@@ -57,7 +57,7 @@ static const char *const endOfNameSpace = R"(
 static const char *const wrapAttrDefs = R"(
 template<typename T>
 Attribute wrap(T rawVal, OpBuilder& builder) {
-  llvm_unreachable("Unimplemented");
+  llvm::report_fatal_error("Unimplemented");
 }
 
 template<>
@@ -316,7 +316,7 @@ static void emitSymToStrFnForDeviceTarget(const std::vector<Record *> &records,
   }
   OS << formatv("    case {0}::Unknown: return \"Unknown\";\n", enumName);
   OS << "  }\n";
-  OS << formatv("  llvm_unreachable(\"Unknown {0} value\");\n", enumName);
+  OS << formatv("  llvm::report_fatal_error(\"Unknown {0} value\");\n", enumName);
   OS << "}\n\n";
 }
 
@@ -340,10 +340,10 @@ static void emitDeviceTargetToArch(const std::vector<Record *> &records,
                   archString.value());
   }
   OS << formatv(
-      "    case {0}::Unknown: llvm_unreachable(\"Unknown {0} value\");\n",
+      "    case {0}::Unknown: llvm::report_fatal_error(\"Unknown {0} value\");\n",
       enumName);
   OS << "  }\n";
-  OS << formatv("  llvm_unreachable(\"Unknown {0} value\");\n", enumName);
+  OS << formatv("  llvm::report_fatal_error(\"Unknown {0} value\");\n", enumName);
   OS << "}\n\n";
 }
 

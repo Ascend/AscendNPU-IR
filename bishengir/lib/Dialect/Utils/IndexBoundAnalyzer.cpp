@@ -127,7 +127,7 @@ toValueBoundsPredicate(BoundComparisonPredicate predicate) {
   case BoundComparisonPredicate::GE:
     return Cmp::GE;
   }
-  llvm_unreachable("unknown bound comparison predicate");
+  llvm::report_fatal_error("unknown bound comparison predicate");
 }
 
 static BoundComparisonPredicate
@@ -138,13 +138,13 @@ getNegatedPredicate(BoundComparisonPredicate predicate) {
   case BoundComparisonPredicate::LE:
     return BoundComparisonPredicate::GT;
   case BoundComparisonPredicate::EQ:
-    llvm_unreachable("equality negation is not representable");
+    llvm::report_fatal_error("equality negation is not representable");
   case BoundComparisonPredicate::GT:
     return BoundComparisonPredicate::LE;
   case BoundComparisonPredicate::GE:
     return BoundComparisonPredicate::LT;
   }
-  llvm_unreachable("unknown bound comparison predicate");
+  llvm::report_fatal_error("unknown bound comparison predicate");
 }
 
 static FailureOr<bool> compareSources(OpFoldResult lhs,
@@ -211,7 +211,7 @@ compareConstantBounds(const IndexBounds &lhs,
       return false;
     return std::nullopt;
   }
-  llvm_unreachable("unknown bound comparison predicate");
+  llvm::report_fatal_error("unknown bound comparison predicate");
 }
 
 void IndexBounds::print(llvm::raw_ostream &os) const {
@@ -238,7 +238,7 @@ llvm::raw_ostream &mlir::utils::operator<<(llvm::raw_ostream &os,
   case BoundCompareResult::Unknown:
     return os << "unknown";
   }
-  llvm_unreachable("unknown bound comparison result");
+  llvm::report_fatal_error("unknown bound comparison result");
 }
 
 static BoundCompareResult compareBounds(const IndexBounds &lhs,

@@ -83,7 +83,7 @@ MultiBufferLoopAdapter::create(LoopLikeOpInterface loop) {
 void MultiBufferLoopAdapter::ensureCounterMaterialized(OpBuilder &builder) {
   Block *body = getLoopBodyBlock(loop_);
   if (!body)
-    llvm_unreachable("ensureCounterMaterialized only valid for scf.for / "
+    llvm::report_fatal_error("ensureCounterMaterialized only valid for scf.for / "
                      "scf.while; adapter::create gates on this invariant.");
   if (cachedCounter_) {
     builder.setInsertionPointAfter(cachedCounter_.getDefiningOp());

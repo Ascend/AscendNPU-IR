@@ -157,8 +157,7 @@ static std::string getWorkspaceShapeFuncName(func::FuncOp funcOp) {
       auto consumeResult = funcName.consume_back("_mix_aiv");
       assert(consumeResult && "Incorrect suffix of AIV kernel");
     } else {
-      llvm_unreachable(
-          "FuncCoreType must be either AIC or AIV for Splitted kernel");
+      llvm::report_fatal_error("FuncCoreType must be either AIC or AIV for Splitted kernel");
     }
   }
   return hacc::constructHostFunctionName(

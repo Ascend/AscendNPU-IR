@@ -254,7 +254,7 @@ public:
       break;
     }
     default:
-      llvm_unreachable("Not implemented!");
+      llvm::report_fatal_error("Not implemented!");
     }
 
     auto cvtOp = builder.create<mlir::triton::gpu::ConvertLayoutOp>(

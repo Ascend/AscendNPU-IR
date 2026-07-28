@@ -129,7 +129,7 @@ SmallVector<double> getTaylerParams(hfusion::TaylerMode taylerMode,
     return taylerParams;
   }
   }
-  llvm_unreachable("unsupported TaylerMode");
+  llvm::report_fatal_error("unsupported TaylerMode");
 }
 
 Value constructTaylerSeries(OpBuilder &b, Location loc, Value lastTaylerTerm,

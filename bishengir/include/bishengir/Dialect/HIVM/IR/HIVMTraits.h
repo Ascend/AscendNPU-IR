@@ -112,10 +112,10 @@ class NoLibraryFunctionTrait
     : public TraitBase<ConcreteType, NoLibraryFunctionTrait> {
 public:
   static int getOpLibraryMaxRankImpl() {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
   static std::string getOpLibraryCallName(std::optional<bool> isOpsAligned) {
-    llvm_unreachable("This op has no library function.");
+    llvm::report_fatal_error("This op has no library function.");
   }
 };
 

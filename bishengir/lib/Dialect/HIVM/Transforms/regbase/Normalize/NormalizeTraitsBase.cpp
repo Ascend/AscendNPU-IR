@@ -35,7 +35,7 @@ static typename MapT::mapped_type lookupOrUnreachable(const MapT &map, KeyT key,
                                                       const char *errorMessage) {
   auto it = map.find(key);
   if (it == map.end())
-    llvm_unreachable(errorMessage);
+    llvm::report_fatal_error(errorMessage);
   return it->second;
 }
 
@@ -371,7 +371,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
   switch (kind) {
   case ShiftKind::Left:
     if (sourceOp && !isa<hivm::VShLOp>(sourceOp))
-      llvm_unreachable("source op shift kind mismatch");
+      llvm::report_fatal_error("source op shift kind mismatch");
     return rewriter
         .create<hivm::VShLOp>(
             loc, TypeRange(dst.getType()), ValueRange({lhs, rhs}),
@@ -393,7 +393,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createShiftOp(
         .getResult()[0];
   }
   }
-  llvm_unreachable("unsupported shift kind");
+  llvm::report_fatal_error("unsupported shift kind");
 }
 
 mlir::Value mlir::hivm::NormalizeTraitsBase::createTernaryOp(
@@ -401,7 +401,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createTernaryOp(
     Value dst, TernaryKind kind) {
   auto fn = mapTernaryKindToCreator(kind);
   if (!fn)
-    llvm_unreachable("unsupported ternary kind");
+    llvm::report_fatal_error("unsupported ternary kind");
   return (*fn)(&rewriter, loc, lhs, mid, rhs, dst);
 }
 
@@ -440,7 +440,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
     PatternRewriter &rewriter, Location loc, Value input, Type targetElemType,
     CastRoundKind kind, Value output, CastSignKind signKind) {
   if (signKind == CastSignKind::Preserve)
-    llvm_unreachable("createCastOp does not support CastSignKind::Preserve");
+    llvm::report_fatal_error("createCastOp does not support CastSignKind::Preserve");
   (void)output;
   if (!isa<ShapedType>(input.getType()))
     return castScalarThroughTensor(rewriter, loc, input, targetElemType);
@@ -466,8 +466,7 @@ mlir::Value mlir::hivm::NormalizeTraitsBase::createCastOp(
 mlir::Value mlir::hivm::NormalizeTraitsBase::createFillOp(
     PatternRewriter &rewriter, Location loc, Value input, Value dst) {
   if (isa<ShapedType>(input.getType()) || !isa<TensorType>(dst.getType()))
-    llvm_unreachable(
-        "NormalizeTraitsBase::createFillOp only supports scalar-to-tensor fills");
+    llvm::report_fatal_error("NormalizeTraitsBase::createFillOp only supports scalar-to-tensor fills");
   return rewriter
       .create<VBrcOp>(loc, TypeRange(dst), input, dst,
                       rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}))

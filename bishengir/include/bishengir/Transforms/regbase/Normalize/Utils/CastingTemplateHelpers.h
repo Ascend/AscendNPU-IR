@@ -136,7 +136,7 @@ bool canNormalizeTruncOverflow(CastOpType op, OverflowCastKind kind) {
     return false;
   }
 
-  llvm_unreachable("unhandled overflow cast kind");
+  llvm::report_fatal_error("unhandled overflow cast kind");
 }
 
 template <typename Traits>
@@ -358,7 +358,7 @@ LogicalResult lowerTruncOverflowMode(CastOpType op,
     return failure();
   }
 
-  llvm_unreachable("unhandled overflow cast kind");
+  llvm::report_fatal_error("unhandled overflow cast kind");
 }
 
 template <typename Traits, typename CastOpType>
@@ -433,7 +433,7 @@ LogicalResult lowerMembaseSaturateOverflowMode(CastOpType op,
     return failure();
   }
 
-  llvm_unreachable("unhandled overflow cast kind");
+  llvm::report_fatal_error("unhandled overflow cast kind");
 }
 
 template <typename Traits, typename CastOpType>
@@ -575,7 +575,7 @@ LogicalResult lowerRegbaseSaturateOverflowMode(
     return failure();
   }
 
-  llvm_unreachable("unhandled overflow cast kind");
+  llvm::report_fatal_error("unhandled overflow cast kind");
 }
 
 template <typename Traits, typename CastOpType>
@@ -684,7 +684,7 @@ Value castSrcTypeToI1ByCmp(CastOpType op, Type srcType,
   } else if (srcType.isF16() || srcType.isF32()) {
     castedValue = input;
   } else {
-    llvm_unreachable("unsupported source type for cast-to-i1 lowering");
+    llvm::report_fatal_error("unsupported source type for cast-to-i1 lowering");
   }
 
   Value zero = Traits::buildZeroForCompare(rewriter, loc, op, castedValue);

@@ -201,7 +201,7 @@ struct RoundOpPattern : public OpConversionPattern<math::RoundOp> {
 
     if (roundingAttr.getValue() == hfusion::RoundMode::TRUNCWITHOVERFLOW ||
         roundingAttr.getValue() == hfusion::RoundMode::ODD) {
-      llvm_unreachable("Cannot support rounding mode");
+      llvm::report_fatal_error("Cannot support rounding mode");
     }
 
     hivmave::VFVtrcOp res =
@@ -1311,7 +1311,7 @@ struct ConstantOpToHivmVCIVCPLowering
       auto resType = cast<VectorType>(constantOp.getResult().getType());
       VectorType resVecType = mlir::dyn_cast<VectorType>(resType);
       if (!resVecType || !isOneDimLikeVecType(resVecType))
-        llvm_unreachable("Not a 1D-like vector");
+        llvm::report_fatal_error("Not a 1D-like vector");
 
       int boundCst = resVecType.getShape().back();
       if (boundCst < 256) {
@@ -1320,8 +1320,7 @@ struct ConstantOpToHivmVCIVCPLowering
             loc, maskType, rewriter.getIndexType(), trueShape);
 
       } else
-        llvm_unreachable(
-            "TODO support irregular length for arith.constant dense values");
+        llvm::report_fatal_error("TODO support irregular length for arith.constant dense values");
 
     } else
       p = rewriter.create<hivmave::VFPgeOp>(loc, maskType,
@@ -1376,7 +1375,7 @@ struct ConstantOpToHivmVCIVCPLowering
           p_vci.createInstr(rewriter, constantOp.getLoc(), denseAttr.getType(),
                             tileElementType, mulValue, addValue);
     else
-      llvm_unreachable("TODO implement arith.constant dense -> VCP lowering");
+      llvm::report_fatal_error("TODO implement arith.constant dense -> VCP lowering");
     if (defineOp == nullptr)
       return failure();
 
@@ -1454,7 +1453,7 @@ static hivmave::CmpType getHIVMCmpType(ArithCmpOp op) {
                pred == arith::CmpFPredicate::UNE) {
       cmpType = CmpType::NE;
     } else {
-      llvm_unreachable("unsupported CmpFPredicate!");
+      llvm::report_fatal_error("unsupported CmpFPredicate!");
     }
   } else if constexpr (std::is_same_v<ArithCmpOp, arith::CmpIOp>) {
     arith::CmpIPredicate pred = op.getPredicate();
@@ -1479,7 +1478,7 @@ static hivmave::CmpType getHIVMCmpType(ArithCmpOp op) {
     } else if (pred == arith::CmpIPredicate::ne) {
       cmpType = CmpType::NE;
     } else {
-      llvm_unreachable("unsupported CmpIPredicate!");
+      llvm::report_fatal_error("unsupported CmpIPredicate!");
     }
   }
   return cmpType;

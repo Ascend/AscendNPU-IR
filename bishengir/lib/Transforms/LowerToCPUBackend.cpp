@@ -286,7 +286,7 @@ public:
       upperBound = rewriter.create<arith::IndexCastOp>(
           loc, rewriter.getIndexType(), intermediate);
     } else {
-      llvm_unreachable("There's no other state to carry block dim info except "
+      llvm::report_fatal_error("There's no other state to carry block dim info except "
                        "block dim attr or triton arguments");
     }
 

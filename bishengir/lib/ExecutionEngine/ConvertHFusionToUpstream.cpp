@@ -373,7 +373,7 @@ static Value createOneConstant(OpBuilder &builder, Location loc,
   if (auto intType = dyn_cast<IntegerType>(elemType))
     return builder.create<arith::ConstantOp>(
         loc, builder.getIntegerAttr(intType, 1));
-  llvm_unreachable("unsupported element type for HFusion cumprod lowering");
+  llvm::report_fatal_error("unsupported element type for HFusion cumprod lowering");
 }
 
 static Value createAccumulatedValue(OpBuilder &builder, Location loc, Value lhs,
@@ -383,7 +383,7 @@ static Value createAccumulatedValue(OpBuilder &builder, Location loc, Value lhs,
     return builder.create<arith::MulFOp>(loc, lhs, rhs);
   if (isa<IntegerType>(elemType))
     return builder.create<arith::MulIOp>(loc, lhs, rhs);
-  llvm_unreachable("unsupported element type for HFusion cumprod lowering");
+  llvm::report_fatal_error("unsupported element type for HFusion cumprod lowering");
 }
 
 static Value buildCumLoop(OpBuilder &builder, Location loc, Value input,
