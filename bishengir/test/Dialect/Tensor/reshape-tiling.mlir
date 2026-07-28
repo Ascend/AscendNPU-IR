@@ -16,21 +16,25 @@ func.func @expand_shape_elementwise_tile_1x1xN(%arg0: tensor<131072xf32>) -> ten
   return %0 : tensor<8x16x1024xf32>
 }
 
-// CHECK-DAG: #[[MAP:.+]] = affine_map<(d0, d1, d2) -> (d0 * 16384 + d1 * 1024 + d2)>
-// CHECK: func.func @expand_shape_elementwise_tile_1x1xN
-//   CHECK-SAME: (%[[ARG0:.+]]: tensor<131072xf32>)
-// CHECK: %[[C0:.+]] = arith.constant 0 : index
-// CHECK: scf.for %[[ARG1:.+]] = %[[C0]]
-// CHECK:   scf.for %[[ARG2:.+]] = %[[C0]]
-// CHECK:     scf.for %[[ARG3:.+]] = %[[C0]]
-// CHECK:       %[[OFFSET:.+]] = affine.apply #[[MAP]](%[[ARG1]], %[[ARG2]], %[[ARG3]])
-// CHECK:       tensor.extract_slice %[[ARG0]][%[[OFFSET]]] [256] [1]
-// CHECK:       tensor.expand_shape
-// CHECK:       linalg.elemwise_unary
-// CHECK:       tensor.insert_slice
-// CHECK:     scf.yield
-// CHECK:   scf.yield
-// CHECK: scf.yield
+// CHECK:        func.func @expand_shape_elementwise_tile_1x1xN
+//   CHECK-SAME:   (%[[ARG0:.+]]: tensor<131072xf32>)
+// CHECK-DAG:      %[[C0:.+]] = arith.constant 0 : index
+// CHECK-DAG:      %[[C16:.+]] = arith.constant 16 : index
+// CHECK-DAG:      %[[C1024:.+]] = arith.constant 1024 : index
+// CHECK:          scf.for %[[ARG1:.+]] = %[[C0]]
+// CHECK:            scf.for %[[ARG2:.+]] = %[[C0]]
+// CHECK:              scf.for %[[ARG3:.+]] = %[[C0]]
+// CHECK:                %[[OFFSET_0:.+]] = arith.muli %[[ARG1]], %[[C16]] : index
+// CHECK:                %[[OFFSET_1:.+]] = arith.addi %[[OFFSET_0]], %[[ARG2]] : index
+// CHECK:                %[[OFFSET_2:.+]] = arith.muli %[[OFFSET_1]], %[[C1024]] : index
+// CHECK:                %[[OFFSET_3:.+]] = arith.addi %[[OFFSET_2]], %[[ARG3]] : index
+// CHECK:                %[[SLICE:.+]] = tensor.extract_slice %[[ARG0]][%[[OFFSET_3]]] [256] [1]
+// CHECK:                tensor.expand_shape %[[SLICE]]
+// CHECK:                linalg.elemwise_unary
+// CHECK:                tensor.insert_slice
+// CHECK:              scf.yield
+// CHECK:            scf.yield
+// CHECK:          scf.yield
 
 // -----
 
