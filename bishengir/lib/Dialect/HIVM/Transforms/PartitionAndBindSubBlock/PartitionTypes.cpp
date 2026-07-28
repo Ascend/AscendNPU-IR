@@ -1,6 +1,7 @@
 //-----------------------------PartitionTypes.cpp-----------------------------//
 //
-// Shared cube/shared-op classifier and the two {sub_block} scope-discovery predicates.
+// Shared cube/shared-op classifier and the two {sub_block} scope-discovery
+// predicates.
 //
 // Copyright (c) Huawei Technologies Co., Ltd. 2025. All rights reserved.
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +20,7 @@
 
 #include "bishengir/Dialect/HIVM/Transforms/PartitionAndBindSubBlock/PartitionTypes.h"
 
+#include "bishengir/Dialect/Annotation/IR/Annotation.h"
 #include "bishengir/Dialect/HIVM/IR/HIVM.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
 #include "bishengir/Dialect/Scope/IR/Scope.h"
@@ -26,8 +28,12 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/IR/LinalgInterfaces.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -50,6 +56,44 @@ bool isCubeOrSharedOp(Operation *op) {
   return false;
 }
 
+bool writesAnyBuffer(Operation *op) {
+  // `annotation.mark` declares a Write effect but it only tags metadata
+  if (isa<annotation::MarkOp>(op))
+    return false;
+  auto effOp = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!effOp)
+    return false;
+  llvm::SmallVector<MemoryEffects::EffectInstance, 4> effects;
+  effOp.getEffects(effects);
+  for (const MemoryEffects::EffectInstance &eff : effects) {
+    if (!isa<MemoryEffects::Write>(eff.getEffect()))
+      continue;
+    Value v = eff.getValue();
+    if (v && isa<ShapedType>(v.getType()))
+      return true;
+  }
+  return false;
+}
+
+Value traceBufferBase(Value v) {
+  for (;;) {
+    if (auto view = v.getDefiningOp<ViewLikeOpInterface>()) {
+      v = view.getViewSource();
+      continue;
+    }
+    if (auto cast = v.getDefiningOp<memref::MemorySpaceCastOp>()) {
+      v = cast.getSource();
+      continue;
+    }
+    break;
+  }
+  return v;
+}
+
+bool isGuardable(Operation *op) {
+  return !op->getResults().empty() || writesAnyBuffer(op);
+}
+
 Core getSubBlockCoreOf(Operation *op) {
   auto scopeOp = dyn_cast_or_null<scope::ScopeOp>(op);
   if (!scopeOp)
@@ -59,7 +103,6 @@ Core getSubBlockCoreOf(Operation *op) {
     return Core::Bottom;
   return coreFromIndex(attr.getInt());
 }
-
 
 static bool tracesToSubBlockIdx(Value v) {
   if (auto cast = v.getDefiningOp<arith::IndexCastOp>())
@@ -80,6 +123,21 @@ bool isOperandParallelSubBlockGuard(Operation *op) {
     return false;
   return (tracesToSubBlockIdx(cmp.getLhs()) && definesConstant(cmp.getRhs())) ||
          (tracesToSubBlockIdx(cmp.getRhs()) && definesConstant(cmp.getLhs()));
+}
+
+bool isAtomicSimtScope(Operation *op) {
+  auto scopeOp = dyn_cast_or_null<scope::ScopeOp>(op);
+  if (!scopeOp)
+    return false;
+  auto attr = scopeOp->getAttrOfType<StringAttr>(kVectorTypeAttrName);
+  return attr && attr.getValue() == kSimtVectorType;
+}
+
+bool isInsideAtomicSimtScope(Operation *op) {
+  for (Operation *p = op->getParentOp(); p; p = p->getParentOp())
+    if (isAtomicSimtScope(p))
+      return true;
+  return false;
 }
 
 } // namespace partition_and_bind

@@ -81,14 +81,13 @@ Core CoreLegalityChecker::originOf(
 }
 
 LegalityResult CoreLegalityChecker::check() {
-  Block &entry = func.getBody().front();
 
   llvm::DenseMap<Operation *, Core> origins;
-  origins.reserve(std::distance(entry.begin(), entry.end()));
+  LegalityResult result = LegalityResult::success();
 
-  for (Operation &opRef : entry) {
-    Operation *op = &opRef;
-
+  func.walk<WalkOrder::PreOrder>([&](Operation *op) {
+    if (isInsideAtomicSimtScope(op))
+      return WalkResult::advance();
     if (Value src = getRelabelSource(op)) {
       Core srcOrigin = Core::Bottom;
       if (Operation *srcDef = src.getDefiningOp()) {
@@ -99,7 +98,7 @@ LegalityResult CoreLegalityChecker::check() {
       origins[op] = srcOrigin;
       LDBG("relabel " << op->getName() << " -> origin "
                       << static_cast<int>(srcOrigin));
-      continue;
+      return WalkResult::advance();
     }
 
     Core computed = originOf(*op, origins);
@@ -117,14 +116,16 @@ LegalityResult CoreLegalityChecker::check() {
       if (succeeded(hook.tryResolve(op))) {
         origins[op] = Core::Bottom;
         LDBG("conflict on " << op->getName() << " resolved by hook");
-        continue;
+        return WalkResult::advance();
       }
 
-      return LegalityResult::failure(op, "legality check failed");
+      result = LegalityResult::failure(op, "legality check failed");
+      return WalkResult::interrupt();
     }
-  }
+    return WalkResult::advance();
+  });
 
-  return LegalityResult::success();
+  return result;
 }
 
 } // namespace partition_and_bind
