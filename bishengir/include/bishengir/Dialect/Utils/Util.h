@@ -76,6 +76,10 @@ static constexpr llvm::StringLiteral elementAlignmentBitWidth =
     "element_alignment_bit_width";
 static const llvm::StringLiteral kMapForToForallAttrName = "map_for_to_forall";
 const llvm::StringLiteral padConst = "pad_const";
+inline constexpr llvm::StringLiteral kInlinableQuantScaleAttr =
+    "enable_fast_tf32_mul";
+inline constexpr llvm::StringLiteral kInlinedQuantScaleAttr =
+    "inlined_fast_tf32_mul";
 
 namespace debugger {
 

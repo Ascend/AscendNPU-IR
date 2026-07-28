@@ -47,7 +47,9 @@ std::optional<int> findIdx(SmallVector<Value> valueVec, Value v) {
   return std::nullopt;
 }
 
-static bool isIgnoredOp(Operation *op) { return isa<tensor::DimOp>(op); }
+static bool isIgnoredOp(Operation *op) {
+  return isa<tensor::DimOp, annotation::MarkOp>(op);
+}
 
 template <typename Container>
 static Container filterNonIgnoredOps(const Container &container) {

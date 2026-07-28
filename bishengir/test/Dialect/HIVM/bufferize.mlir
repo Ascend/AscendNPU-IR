@@ -536,3 +536,18 @@ func.func @test_indirect_load_volatile_bufferize(%src : memref<?xf32>) {
   %res = hivm.hir.indirect_load ins(%src : memref<?xf32>, %offsets : tensor<4x32xi32>, %mask : tensor<4x32xi1>, %other : tensor<4x32xf32>) outs(%dst : tensor<4x32xf32>) -> tensor<4x32xf32>
   return
 }
+
+// -----
+
+// CHECK-LABEL: test_fixpipe_quant_scale_bufferize
+// CHECK: hivm.hir.fixpipe {{.*}} ins(%{{.*}} : memref<64x64xf32>) outs(%{{.*}} : memref<64x64xf32>) quant_scale = %{{.*}} : f32
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9579">} {
+  func.func @test_fixpipe_quant_scale_bufferize(
+      %dst: memref<64x64xf32>, %scale: f32) {
+    %src = tensor.empty() : tensor<64x64xf32>
+    hivm.hir.fixpipe {dma_mode = #hivm.dma_mode<nz2nd>}
+        ins(%src : tensor<64x64xf32>)
+        outs(%dst : memref<64x64xf32>) quant_scale = %scale : f32
+    return
+  }
+}
