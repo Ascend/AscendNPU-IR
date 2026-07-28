@@ -1096,6 +1096,10 @@ FailureOrCastVec propagateYieldOp(RewriterBase &rewriter, scf::YieldOp yieldOp,
   if (auto ifOp = dyn_cast_if_present<scf::IfOp>(yieldParentOp)) {
     return propagateScfIfOp(rewriter, ifOp, yieldIndex);
   }
+  // TODO: need to support whileOp better in strideAlign case
+  if (auto ifOp = dyn_cast_if_present<scf::WhileOp>(yieldParentOp)) {
+    return failure();
+  }
   return UnrealizedCastOpVec{};
 }
 
