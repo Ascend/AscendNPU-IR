@@ -8,6 +8,10 @@
 // RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=LIMIT-LOCAL
 // RUN: bishengir-opt -allow-unregistered-dialect %s             \
 // RUN:   -pass-pipeline="builtin.module(                        \
+// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=no-limit}),cse)" \
+// RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=NO-LIMIT
+// RUN: bishengir-opt -allow-unregistered-dialect %s             \
+// RUN:   -pass-pipeline="builtin.module(                        \
 // RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=only-cube}),cse)" \
 // RUN:   -split-input-file -verify-diagnostics | FileCheck %s --check-prefix=ONLY-CUBE
 
@@ -249,13 +253,13 @@ module attributes {hacc.target = #hacc.target<"Ascend910_9589">} {
 
 // -----
 // Ascend950 MixCV vector-side multi-buffer: after SplitMixKernel the AIV
-// function carries hivm.part_of_mix. The default mix strategy is no-limit, so
-// UB load/store candidates are marked. only-cube keeps the historical cube-only
-// MixCV policy and must leave the vector buffer unmarked.
+// function carries hivm.part_of_mix. Compile default
+// (--limit-auto-multi-buffer-buffer=no-limit from Options.td) enables vector
+// marking; only-cube keeps the historical cube-only MixCV policy.
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
-  // CHECK-LABEL: func.func @test_a5_mix_vector_mark_default_no_limit(
-  // ONLY-CUBE-LABEL: func.func @test_a5_mix_vector_mark_default_no_limit(
-  func.func @test_a5_mix_vector_mark_default_no_limit(
+  // NO-LIMIT-LABEL: func.func @test_a5_mix_vector_mark_no_limit(
+  // ONLY-CUBE-LABEL: func.func @test_a5_mix_vector_mark_no_limit(
+  func.func @test_a5_mix_vector_mark_no_limit(
       %in: memref<8xf32, #hivm.address_space<gm>>,
       %out: memref<8xf32, #hivm.address_space<gm>>)
       attributes {hacc.entry, hacc.function_kind = #hacc.function_kind<DEVICE>,
@@ -265,8 +269,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %c1 = arith.constant 1 : index
     %c4 = arith.constant 4 : index
     scf.for %i = %c0 to %c4 step %c1 {
-      // CHECK: %[[UB:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
-      // CHECK-NEXT: annotation.mark %[[UB]] {hivm.multi_buffer = 2 : i32}
+      // NO-LIMIT: %[[UB:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
+      // NO-LIMIT-NEXT: annotation.mark %[[UB]] {hivm.multi_buffer = 2 : i32}
       // ONLY-CUBE: %[[UB:.*]] = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>
       // ONLY-CUBE-NOT: annotation.mark
       %ub = memref.alloca() : memref<8xf32, #hivm.address_space<ub>>

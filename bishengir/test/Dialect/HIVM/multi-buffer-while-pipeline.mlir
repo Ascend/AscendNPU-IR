@@ -9,7 +9,7 @@
 // RUN: bishengir-opt %s                                                       \
 // RUN:   -pass-pipeline="builtin.module(                                      \
 // RUN:     hacc-append-device-spec{target=Ascend950PR_9589},                  \
-// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true}),               \
+// RUN:     func.func(hivm-mark-multi-buffer{enable-auto=true limit-mix-auto-multi-buffer-buffer=no-limit}), \
 // RUN:     hivm-plan-memory,                                                  \
 // RUN:     func.func(hivm-graph-sync-solver,hivm-enable-multi-buffer,hivm-lower-multi-buffer-counter))" \
 // RUN:   -split-input-file -verify-diagnostics                                \
@@ -75,11 +75,12 @@ func.func @while_pipeline_vadd(%arg0: memref<8xf32, #hivm.address_space<gm>>,
 // -----
 // Ascend950 MixCV vector-side multi-buffer + PlanMemory reuse.
 //
-// After SplitMixKernel the vector kernel is AIV + hivm.part_of_mix. With the
-// default mix strategy (no-limit), MarkMultiBuffer marks UB load/store
-// candidates. Two non-overlapping phases of equal size then share the same
-// physical multi-buffer addresses from PlanMemory, while EnableMultiBuffer
-// still emits slot selects on the shared counter.
+// After SplitMixKernel the vector kernel is AIV + hivm.part_of_mix. The A5 RUN
+// explicitly passes limit-mix-auto-multi-buffer-buffer=no-limit to mirror the
+// bishengir-compile default from Options.td (LimitAutoMultiBufferBuffer).
+// Two non-overlapping phases of equal size then share the same physical
+// multi-buffer addresses from PlanMemory, while EnableMultiBuffer still emits
+// slot selects on the shared counter.
 // A5-LABEL: func.func @a5_mix_vector_multibuffer_reuse(
 func.func @a5_mix_vector_multibuffer_reuse(
     %src1: memref<9728xf32, #hivm.address_space<gm>>,

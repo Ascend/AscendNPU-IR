@@ -71,7 +71,7 @@ struct HIVMAVEPipelineOptions
                                   "limited to cube"),
                        clEnumValN(MultiBufferStrategy::ONLY_VECTOR,
                                   "only-vector", "limited to vector")),
-      llvm::cl::init(MultiBufferStrategy::NO_LIMIT)};
+      llvm::cl::init(MultiBufferStrategy::ONLY_CUBE)};
 
   PassOptions::Option<bool> disableMultiBufferOnUB{
       *this, "disable-multi-buffer-on-ub",
