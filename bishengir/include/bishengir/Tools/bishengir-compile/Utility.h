@@ -35,8 +35,11 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <cassert>
+#include <functional>
+#include <memory>
 #include <numeric>
 #include <regex>
+#include <string>
 
 constexpr static unsigned kTmpMaxPath = 128;
 
@@ -44,10 +47,35 @@ using StringTmpPath = llvm::SmallString<kTmpMaxPath>;
 using MixedModules =
     std::pair<mlir::ModuleOp, llvm::SmallVector<mlir::ModuleOp, 2>>;
 
+struct ScopedCompileTimingContext;
+
+struct CompileTiming {
+  mlir::DefaultTimingManager manager;
+  std::unique_ptr<mlir::TimingScope> rootScope;
+  std::unique_ptr<ScopedCompileTimingContext> context;
+
+  CompileTiming();
+  mlir::TimingScope *getRootScope() const { return rootScope.get(); }
+};
+
+mlir::TimingScope *getCurrentCompileTimingScope();
+
+struct ScopedCompileTimingContext {
+  explicit ScopedCompileTimingContext(CompileTiming *timing);
+  ~ScopedCompileTimingContext();
+
+private:
+  CompileTiming *previousTiming = nullptr;
+};
+
 /// Get the HIVMC binary name.
 llvm::StringRef getHIVMCName();
 
 std::string getBiShengIRHIVMCompileInstallPath();
+
+struct ExternalToolProfiler {
+  static int run(llvm::StringRef name, std::function<int()> fn);
+};
 
 llvm::LogicalResult execute(llvm::StringRef binName,
                             llvm::StringRef installPath,

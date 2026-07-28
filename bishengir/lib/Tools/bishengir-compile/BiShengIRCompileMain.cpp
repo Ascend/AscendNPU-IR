@@ -142,8 +142,9 @@ filterSharedHIVMCOptions(const std::vector<std::string> &options) {
       continue;
     }
     std::string trimArg = parts[0].trim().ltrim('-').str();
-    if (!BiShengIRCompileMainConfig::isSharedWithDownstreamToolchain(
-            trimArg)) {
+    if (trimArg != "mlir-timing" && trimArg != "mlir-timing-display" &&
+        trimArg != "mlir-output-format" &&
+        !BiShengIRCompileMainConfig::isSharedWithDownstreamToolchain(trimArg)) {
       continue;
     }
     result.push_back(arg);
@@ -317,6 +318,8 @@ bool runMixedPipelines(ModuleOp mixedModule,
 LogicalResult
 bishengir::runBiShengIRPipeline(ModuleOp mod,
                                 BiShengIRCompileMainConfig config) {
+  CompileTiming timing;
+
   if (failed(checkOptionValidity(config))) {
     return failure();
   }

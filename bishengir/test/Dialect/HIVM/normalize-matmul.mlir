@@ -2370,3 +2370,28 @@ func.func @test_zeroinit_for_var_fallback(%a: tensor<16x16xf16>, %b: tensor<16x1
   }
   return %for : tensor<16x16xf32>
 }
+
+// -----
+
+// Test: ZeroInit for (var) with i32 element type (int8 matmul). AddIfPattern's
+// fallback then-block must create vbrc(0) with IntegerAttr, not FloatAttr.
+// CHECK-LABEL: func.func @test_zeroinit_for_var_i32_fallback
+// CHECK: memref.alloca() {normalize_matmul_counter = 0 : i32} : memref<i32>
+// CHECK: scf.for
+// CHECK: may_not_exec
+// CHECK: scf.if
+// CHECK: hivm.hir.vbrc ins(%{{.*}} : i32) outs
+// CHECK: return
+func.func @test_zeroinit_for_var_i32_fallback(%a: tensor<16x16xf16>, %b: tensor<16x16xf16>, %lb: i32, %ub: i32) -> tensor<16x16xi32> {
+  %false = arith.constant false
+  %c0 = arith.constant 0 : index
+  %c1_i32 = arith.constant 1 : i32
+  %c0_i32 = arith.constant 0 : i32
+  %empty = tensor.empty() : tensor<16x16xi32>
+  %zero = hivm.hir.vbrc ins(%c0_i32 : i32) outs(%empty : tensor<16x16xi32>) -> tensor<16x16xi32>
+  %for = scf.for %i = %lb to %ub step %c1_i32 iter_args(%acc = %zero) -> tensor<16x16xi32> : i32 {
+    %m = hivm.hir.mmadL1 ins(%a, %b, %false, %c0, %c0, %c0 : tensor<16x16xf16>, tensor<16x16xf16>, i1, index, index, index) outs(%acc : tensor<16x16xi32>) -> tensor<16x16xi32>
+    scf.yield %m : tensor<16x16xi32>
+  }
+  return %for : tensor<16x16xi32>
+}

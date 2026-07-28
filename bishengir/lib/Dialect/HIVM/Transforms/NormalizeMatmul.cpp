@@ -1809,8 +1809,13 @@ public:
       rewriter.setInsertionPointToStart(fallbackIf.thenBlock());
       auto shapedType = cast<ShapedType>(ccfOutVal.getType());
       Type elementType = shapedType.getElementType();
+      Attribute zeroAttr;
+      if (isa<FloatType>(elementType))
+        zeroAttr = rewriter.getFloatAttr(elementType, 0.0);
+      else
+        zeroAttr = rewriter.getIntegerAttr(elementType, 0);
       Value zeroVal = rewriter.create<arith::ConstantOp>(
-          loc, rewriter.getFloatAttr(elementType, 0.0));
+          loc, cast<TypedAttr>(zeroAttr));
       Value emptyTensor = rewriter.create<tensor::EmptyOp>(
           loc, shapedType.getShape(), elementType);
       auto vbrcZero = rewriter.create<hivm::VBrcOp>(
