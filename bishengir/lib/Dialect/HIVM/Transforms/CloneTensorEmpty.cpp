@@ -20,7 +20,6 @@
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h"
 #include "bishengir/Dialect/HIVM/Utils/RegbaseUtils.h"
 #include "bishengir/Dialect/HIVM/Utils/Utils.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -210,9 +209,15 @@ void populateCloneTensorEmptyPattern(RewritePatternSet &patterns,
                CloneTensorEmptyHIVMStructuredOpPattern<hivm::CustomMacroOp>,
                CloneTensorInsert, CloneTensorEmptyLoopPattern<scf::WhileOp>,
                CloneTensorEmptyLoopPattern<scf::ForOp>>(patterns.getContext());
+
+  // only 950 requires empty tensor of these types of op sinking.
   if (isAscend950) {
-    patterns.add<CloneTensorEmptyOperationPattern<func::CallOp>,
-                 CloneTensorEmptyOperationPattern<hivm::IndirectStoreOp>>(
+    patterns.add<CloneTensorEmptyOperationPattern<hivm::EmbeddingGatherOp>,
+                 CloneTensorEmptyOperationPattern<hivm::IndirectLoadOp>,
+                 CloneTensorEmptyOperationPattern<hivm::StrideLoadOp>,
+                 CloneTensorEmptyOperationPattern<hivm::StrideStoreOp>,
+                 CloneTensorEmptyOperationPattern<hivm::IndirectStoreOp>,
+                 CloneTensorEmptyOperationPattern<func::CallOp>>(
         patterns.getContext());
   }
   registerAll<
