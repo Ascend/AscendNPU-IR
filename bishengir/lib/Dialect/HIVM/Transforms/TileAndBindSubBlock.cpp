@@ -235,82 +235,80 @@ static LogicalResult modifyIndirectStoreOp(hivm::IndirectStoreOp op,
   return success();
 }
 
-// /// Tile stride_store on the source tensor tile. The destination GM buffer stays
-// /// intact; the linear GM base offset is advanced by tile_offset * stride[dim].
-// static LogicalResult modifyStrideStoreOp(hivm::StrideStoreOp op,
-//                                          int64_t tilingDim,
-//                                          scf::ForOp containingLoop,
-//                                          PatternRewriter &rewriter) {
-//   Location loc = op.getLoc();
-//   Value srcVal = op.getSrc();
-//   auto srcType = dyn_cast<ShapedType>(srcVal.getType());
-//   if (!srcType || ShapedType::isDynamicShape(srcType.getShape()))
-//     return failure();
+/// Tile stride_store on the source tensor tile. The destination GM buffer stays
+/// intact; the linear GM base offset is advanced by tile_offset * stride[dim].
+static LogicalResult modifyStrideStoreOp(hivm::StrideStoreOp op,
+                                         int64_t tilingDim,
+                                         scf::ForOp containingLoop,
+                                         PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Value srcVal = op.getSrc();
+  auto srcType = dyn_cast<ShapedType>(srcVal.getType());
+  if (!srcType || ShapedType::isDynamicShape(srcType.getShape()))
+    return failure();
 
-//   auto maybeSingleTileSize =
-//       getSingleTileSize(rewriter, loc, srcVal, tilingDim, containingLoop);
-//   if (failed(maybeSingleTileSize))
-//     return failure();
-//   rewriter.setInsertionPointToStart(containingLoop.getBody());
-//   auto offsetAtTileDim = calculateOffsetAtTilingDim(
-//       rewriter, loc, containingLoop, srcVal, tilingDim);
+  auto maybeSingleTileSize =
+      getSingleTileSize(rewriter, loc, srcVal, tilingDim, containingLoop);
+  if (failed(maybeSingleTileSize))
+    return failure();
+  rewriter.setInsertionPointToStart(containingLoop.getBody());
+  auto offsetAtTileDim = calculateOffsetAtTilingDim(
+      rewriter, loc, containingLoop, srcVal, tilingDim);
 
-//   rewriter.setInsertionPoint(op);
+  rewriter.setInsertionPoint(op);
 
-//   SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
-//   SmallVector<int64_t, 4> newShape;
-//   if (failed(findCorrespondingSizesOffsetsStrides(
-//           rewriter, srcType, tilingDim, offsetAtTileDim,
-//           maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
-//           newShape)))
-//     return failure();
+  SmallVector<OpFoldResult, 4> mixedStrides, mixedOffsets, mixedSize;
+  SmallVector<int64_t, 4> newShape;
+  if (failed(findCorrespondingSizesOffsetsStrides(
+          rewriter, srcType, tilingDim, offsetAtTileDim,
+          maybeSingleTileSize.value(), mixedStrides, mixedOffsets, mixedSize,
+          newShape)))
+    return failure();
 
-//   OpOperand *srcOperand = &op.getSrcMutable();
-//   if (containingLoop.getRegion().isAncestor(
-//           srcOperand->get().getParentRegion())) {
-//     rewriter.setInsertionPointAfterValue(srcOperand->get());
-//   } else if (auto offsetValue = offsetAtTileDim.dyn_cast<Value>()) {
-//     rewriter.setInsertionPointAfterValue(offsetValue);
-//   } else {
-//     rewriter.setInsertionPoint(op);
-//   }
-//   modifyOpToSliced(rewriter, srcOperand, mixedOffsets, mixedSize, mixedStrides,
-//                    newShape);
+  OpOperand *srcOperand = &op.getSrcMutable();
+  if (containingLoop.getRegion().isAncestor(
+          srcOperand->get().getParentRegion())) {
+    rewriter.setInsertionPointAfterValue(srcOperand->get());
+  } else if (auto offsetValue = offsetAtTileDim.dyn_cast<Value>()) {
+    rewriter.setInsertionPointAfterValue(offsetValue);
+  } else {
+    rewriter.setInsertionPoint(op);
+  }
+  modifyOpToSliced(rewriter, srcOperand, mixedOffsets, mixedSize, mixedStrides,
+                   newShape);
 
-//   rewriter.setInsertionPoint(op);
-//   Type indexType = op.getOffset().getType();
-//   auto castIndexToOffsetType =
-//       [&rewriter, &loc, &indexType](OpFoldResult ofr) -> Value {
-//     Value indexValue = getValueOrCreateConstantIndexOp(rewriter, loc, ofr);
-//     if (indexValue.getType() == indexType)
-//       return indexValue;
-//     return rewriter.create<arith::IndexCastOp>(loc, indexType, indexValue);
-//   };
+  rewriter.setInsertionPoint(op);
+  Type indexType = op.getOffset().getType();
+  auto castIndexToOffsetType = [&rewriter, &loc,
+                                &indexType](OpFoldResult ofr) -> Value {
+    Value indexValue = getValueOrCreateConstantIndexOp(rewriter, loc, ofr);
+    if (indexValue.getType() == indexType)
+      return indexValue;
+    return rewriter.create<arith::IndexCastOp>(loc, indexType, indexValue);
+  };
 
-//   Value tileOffset = castIndexToOffsetType(offsetAtTileDim);
-//   Value tileSize = castIndexToOffsetType(maybeSingleTileSize.value());
-//   Value offsetDelta =
-//       rewriter.create<arith::MulIOp>(loc, tileOffset,
-//                                      op.getStride()[tilingDim]);
-//   Value newOffset =
-//       rewriter.create<arith::AddIOp>(loc, op.getOffset(), offsetDelta);
+  Value tileOffset = castIndexToOffsetType(offsetAtTileDim);
+  Value tileSize = castIndexToOffsetType(maybeSingleTileSize.value());
+  Value offsetDelta = rewriter.create<arith::MulIOp>(loc, tileOffset,
+                                                     op.getStride()[tilingDim]);
+  Value newOffset =
+      rewriter.create<arith::AddIOp>(loc, op.getOffset(), offsetDelta);
 
-//   Value remainingNumel =
-//       rewriter.create<arith::SubIOp>(loc, op.getNumel()[tilingDim],
-//                                      tileOffset);
-//   Value boundedNumel =
-//       rewriter.create<arith::MinSIOp>(loc, remainingNumel, tileSize);
-//   Value zero = rewriter.create<arith::ConstantOp>(
-//       loc, rewriter.getIntegerAttr(indexType, 0));
-//   Value newNumel = rewriter.create<arith::MaxSIOp>(loc, boundedNumel, zero);
+  Value remainingNumel =
+      rewriter.create<arith::SubIOp>(loc, op.getNumel()[tilingDim], tileOffset);
+  Value boundedNumel =
+      rewriter.create<arith::MinSIOp>(loc, remainingNumel, tileSize);
+  Value zero = rewriter.create<arith::ConstantOp>(
+      loc, rewriter.getIntegerAttr(indexType, 0));
+  Value newNumel = rewriter.create<arith::MaxSIOp>(loc, boundedNumel, zero);
 
-//   rewriter.modifyOpInPlace(op, [&]() {
-//     op.getOffsetMutable().assign(newOffset);
-//     op.getNumelMutable()[tilingDim].set(newNumel);
-//     op->setAttr(tiledOp, rewriter.getUnitAttr());
-//   });
-//   return success();
-// }
+  rewriter.modifyOpInPlace(op, [&]() {
+    op.getOffsetMutable().assign(newOffset);
+    op.getNumelMutable()[tilingDim].set(newNumel);
+    op->setAttr(tiledOp, rewriter.getUnitAttr());
+  });
+  return success();
+}
 
 namespace {
 
@@ -547,41 +545,40 @@ public:
   }
 };
 
-/// TODO: wait for StrideStore support
-// class TileAndSliceStrideStore : public OpRewritePattern<hivm::StrideStoreOp> {
-// public:
-//   hivm::detail::DimensionAnalyzer &analyzer;
+class TileAndSliceStrideStore : public OpRewritePattern<hivm::StrideStoreOp> {
+public:
+  hivm::detail::DimensionAnalyzer &analyzer;
 
-//   TileAndSliceStrideStore(MLIRContext *context,
-//                           hivm::detail::DimensionAnalyzer &analyzer)
-//       : OpRewritePattern<hivm::StrideStoreOp>(context, /*benefit=*/1),
-//         analyzer(analyzer) {}
+  TileAndSliceStrideStore(MLIRContext *context,
+                          hivm::detail::DimensionAnalyzer &analyzer)
+      : OpRewritePattern<hivm::StrideStoreOp>(context, /*benefit=*/1),
+        analyzer(analyzer) {}
 
-//   LogicalResult matchAndRewrite(hivm::StrideStoreOp op,
-//                                 PatternRewriter &rewriter) const override {
-//     if (op->hasAttrOfType<UnitAttr>(tiledOp))
-//       return failure();
+  LogicalResult matchAndRewrite(hivm::StrideStoreOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op->hasAttrOfType<UnitAttr>(tiledOp))
+      return failure();
 
-//     int64_t tilingDim = analyzer.getTilingDim(op.getSrc());
-//     LLVM_DEBUG(DBGS() << "The stride store op tiling dim is: " << tilingDim
-//                       << "\n");
+    int64_t tilingDim = analyzer.getTilingDim(op.getSrc());
+    LLVM_DEBUG(DBGS() << "The stride store op tiling dim is: " << tilingDim
+                      << "\n");
 
-//     auto maybeContainingLoop = findContainingSubblockLoop(op);
-//     if (tilingDim == -1 || failed(maybeContainingLoop)) {
-//       op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-//       return failure();
-//     }
+    auto maybeContainingLoop = findContainingSubblockLoop(op);
+    if (tilingDim == -1 || failed(maybeContainingLoop)) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      return failure();
+    }
 
-//     if (failed(modifyStrideStoreOp(op, tilingDim, maybeContainingLoop.value(),
-//                                    rewriter))) {
-//       op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
-//       return failure();
-//     }
+    if (failed(modifyStrideStoreOp(op, tilingDim, maybeContainingLoop.value(),
+                                   rewriter))) {
+      op->setAttr(tileAndSliceFailure, rewriter.getUnitAttr());
+      return failure();
+    }
 
-//     LDBG("Success");
-//     return success();
-//   }
-// };
+    LDBG("Success");
+    return success();
+  }
+};
 
 class TileAndSliceReduceOp : public OpRewritePattern<hivm::VReduceOp> {
 public:
@@ -987,9 +984,8 @@ LogicalResult mlir::hivm::limitUniqueSubBlockToStore(func::FuncOp funcOp) {
       funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::IndirectStoreOp>>(
       funcOp.getContext());
-  /// TODO: wait for StrideStoreOp support
-  // patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StrideStoreOp>>(
-  //     funcOp.getContext());
+  patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::StrideStoreOp>>(
+      funcOp.getContext());
   patterns.add<LimitUniqueSubBlockIdToStoreCopy<hivm::CustomOp>,
                LimitUniqueSubBlockIdToStoreCopy<hivm::CustomMacroOp>>(
       funcOp.getContext());
@@ -1123,11 +1119,9 @@ tileAndSliceOp(func::FuncOp func,
   RewritePatternSet patterns(func->getContext());
   patterns.add<TileAndSliceStoreCopyOp<hivm::StoreOp>,
                TileAndSliceStoreCopyOp<hivm::CopyOp>, TileAndSliceIndirectStore,
-               // TODO: whenthe other part of code were sych, return to comment out it
-               // TileAndSliceStrideStore,
-               TileAndSliceDebugOp, TileAndSliceLeaf<scf::ForOp>,
-               TileAndSliceLeaf<scf::WhileOp>, TileAndSliceLeaf<scf::IfOp>>(
-      func->getContext(), analyzer);
+               TileAndSliceStrideStore, TileAndSliceDebugOp,
+               TileAndSliceLeaf<scf::ForOp>, TileAndSliceLeaf<scf::WhileOp>,
+               TileAndSliceLeaf<scf::IfOp>>(func->getContext(), analyzer);
   if (hacc::utils::isRegBasedArch(func->getParentOfType<ModuleOp>())) {
     patterns.add<TileAndSliceReduceOp>(func->getContext(), analyzer);
   }
@@ -1242,7 +1236,8 @@ TileAndBindSubBlockPass::attemptBindSubBlock(func::FuncOp func) {
   // walk through the store/copy/indirect_store/stride_store op
   bool isFailed = true;
   newFunc->walk([&isFailed](Operation *op) {
-    if (!isa<hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp>(op)) {      //  TODO: wait for hivm::StrideStoreOp support
+    if (!isa<hivm::StoreOp, hivm::CopyOp, hivm::IndirectStoreOp,
+             hivm::StrideStoreOp>(op)) {
       return WalkResult::advance();
     }
     if (op->hasAttr(tileAndSliceFailure)) {
@@ -1395,7 +1390,8 @@ void TileAndBindSubBlockPass::runOnOperation() {
 
   // If there is a possibility that loadOp and storeOp accessing the same
   // address, skip this pass
-  if (areLoadAndStoreSameAddress(aivFunctions)) {
+  if (!hacc::utils::isRegBasedArch(moduleOp) &&
+      areLoadAndStoreSameAddress(aivFunctions)) {
     (void)limitAllAivToSubBlock0();
     return;
   }
