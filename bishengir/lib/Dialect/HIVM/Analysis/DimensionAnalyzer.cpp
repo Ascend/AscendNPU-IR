@@ -46,24 +46,9 @@ bool DimensionAnalyzer::isParallelDim(Dimension dim) {
                                   << solverShapeIndex << ")");
   auto tilingDimKindVal =
       tilingDimKindMapForCollapser.find(solverCollapserIndex);
-  if (tilingDimKindVal != tilingDimKindMapForCollapser.end()) {
-    if (tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel &&
-        broadcastAxisCaseCandidate.find(solverCollapserIndex) !=
-            broadcastAxisCaseCandidate.end()) {
-      if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
-          it != tilingDimKindMapForShape.end()) {
-        LDBG("Checking parallelDim for broadcast two dims case: "
-             << static_cast<int>(it->getSecond()));
-        // FIXME: Support reduction dim slicing
-        return it->getSecond() == TilingDimensionKind::Parallel ||
-               (isRegbased && it->getSecond() == TilingDimensionKind::Reduce);
-      }
-      return true;
-    }
+  if (tilingDimKindVal != tilingDimKindMapForCollapser.end())
     return tilingDimKindVal->getSecond() == TilingDimensionKind::Parallel ||
-           (isRegbased &&
-            tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce);
-  }
+           tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce;
 
   // By default, assume it's parallel
   return true;
@@ -78,20 +63,8 @@ bool DimensionAnalyzer::isReduceDim(Dimension dim) {
                                 << solverShapeIndex << ")");
   auto tilingDimKindVal =
       tilingDimKindMapForCollapser.find(solverCollapserIndex);
-  if (tilingDimKindVal != tilingDimKindMapForCollapser.end()) {
-    if (tilingDimKindVal->getSecond() != TilingDimensionKind::Parallel &&
-        broadcastAxisCaseCandidate.find(solverCollapserIndex) !=
-            broadcastAxisCaseCandidate.end()) {
-      if (auto it = tilingDimKindMapForShape.find(solverShapeIndex);
-          it != tilingDimKindMapForShape.end()) {
-        LDBG("Checking parallelDim for broadcast two dims case: "
-             << static_cast<int>(it->getSecond()));
-        return it->getSecond() == TilingDimensionKind::Reduce;
-      }
-      return false;
-    }
+  if (tilingDimKindVal != tilingDimKindMapForCollapser.end())
     return tilingDimKindVal->getSecond() == TilingDimensionKind::Reduce;
-  }
 
   return false;
 }
@@ -229,10 +202,8 @@ bool DimensionAnalyzer::computeTilingDim(bool isVectorOp) {
     }
   }
   LDBG("Selected independent tiling dims: " << selectedTilingParIdxMap.size());
-  for (auto [_, parIdx] : selectedTilingParIdxMap) {
+  for (auto [_, parIdx] : selectedTilingParIdxMap)
     selectedTilingParIdx.insert(parIdx);
-    isBroadcastAxisCase |= broadcastAxisCaseCandidate.contains(parIdx);
-  }
   LDBG(utils::debugger::to_string(selectedTilingParIdx));
   return isBroadcastAxisCase;
 }
@@ -259,7 +230,7 @@ int64_t DimensionAnalyzer::getTilingDim(Value v) {
       if (isReduceDim(Dimension(v, i)))
         candOrder += static_cast<int>(rank);
       if (tilingDim == -1 || order > candOrder) {
-        tilingDim = (int64_t)i;
+        tilingDim = static_cast<int64_t>(i);
         order = candOrder;
       }
     }
@@ -393,17 +364,6 @@ void DimensionAnalyzer::computeTilingDimImpl(
       LDBG("Checking operation: " << op << " in group " << groupIndex);
       auto shape = utils::getShape(src.getType());
       DenseSet<int> usedParentIdx;
-      for (size_t i = 0; i < rank; i++) {
-        auto parentIndex = structuralDsu_->find(args[i]);
-        if (!usedParentIdx.insert(parentIndex).second) {
-          op->emitWarning()
-              << "Detected dimensions are in the same group in one "
-                 "storeOp. It is recommended to try with "
-                 "strict-mode=false if TileAndBindSubBlock fails";
-          broadcastAxisCaseCandidate.insert(parentIndex);
-        }
-      }
-      usedParentIdx.clear();
       std::optional<size_t> forcedDim = inferForcedTilingDim<StoreOpTy>(op);
       for (size_t i = 0; i < rank; i++) {
         if (forcedDim.has_value() && i != forcedDim.value()) {
@@ -424,9 +384,7 @@ void DimensionAnalyzer::computeTilingDimImpl(
           if (usedParentIdx.insert(parentIndex).second) {
             parallelDimMap[groupIndex][parentIndex].push_back(dim);
           } else {
-            auto &otherDim = parallelDimMap[groupIndex][parentIndex].back();
-            if (isReduceDim(otherDim) && !isReduceDim(dim))
-              otherDim = dim;
+            llvm_unreachable("Invalid case.");
           }
         }
       }
