@@ -38,11 +38,10 @@ using namespace mlir::tensor::reshape_utils;
 namespace mlir {
 namespace hfusion {
 namespace detail {
-// TODO: Support hfusion::IndirectLoadOp
-// void Flattener::adjustIndirectLoadOp(hfusion::IndirectLoadOp indirectLoadOp,
-//                                      mlir::OpBuilder &builder) {
-//   indirectLoadOp.getResult().setType(indirectLoadOp.getDst().getType());
-// }
+void Flattener::adjustIndirectLoadOp(hfusion::IndirectLoadOp indirectLoadOp,
+                                     mlir::OpBuilder &builder) {
+  indirectLoadOp.getResult().setType(indirectLoadOp.getDst().getType());
+}
 
 template <typename OpTy>
 void Flattener::adjustMemrefAccessOp(

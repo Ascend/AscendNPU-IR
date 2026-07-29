@@ -3291,18 +3291,19 @@ func.func @test_hfusion_erfinv_ops(%arg0 : tensor<5x1xf16>) -> tensor<5x1xf16> {
 // -----
 // CHECK-LABEL: module {
 // CHECK-NEXT:   func.func @test_hfusion_hypot_2_inputs_bf16(%arg0: tensor<1024xbf16>, %arg1: tensor<1024xbf16>) -> tensor<1024xbf16> {
-// CHECK-NEXT:     %c-65536_i32 = arith.constant -65536 : i32
-// CHECK-NEXT:     %c32767_i32 = arith.constant 32767 : i32
-// CHECK-NEXT:     %c1_i32 = arith.constant 1 : i32
-// CHECK-NEXT:     %c16_i32 = arith.constant 16 : i32
-// CHECK-NEXT:     %cst = arith.constant 5.000000e-01 : f32
-// CHECK-NEXT:     %cst_0 = arith.constant 1.30438176E+19 : f32
-// CHECK-NEXT:     %cst_1 = arith.constant 1.08420217E-19 : f32
-// CHECK-NEXT:     %cst_2 = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT:     %cst_3 = arith.constant 1.000000e+00 : f32
-// CHECK-NEXT:     %cst_4 = arith.constant 0x7F800000 : f32
-// CHECK-NEXT:     %cst_5 = arith.constant 0x7FC00000 : f32
-// CHECK-NEXT:     %0 = tensor.empty() : tensor<1024xf32>
+// CHECK-DAG:     %c-65536_i32 = arith.constant -65536 : i32
+// CHECK-DAG:     %c32767_i32 = arith.constant 32767 : i32
+// CHECK-DAG:     %c1_i32 = arith.constant 1 : i32
+// CHECK-DAG:     %c16_i32 = arith.constant 16 : i32
+// CHECK-DAG:     %cst = arith.constant 5.000000e-01 : f32
+// CHECK-DAG:     %cst_0 = arith.constant 1.30438176E+19 : f32
+// CHECK-DAG:     %cst_1 = arith.constant 1.08420217E-19 : f32
+// CHECK-DAG:     %true = arith.constant true
+// CHECK-DAG:     %cst_2 = arith.constant 0.000000e+00 : f32
+// CHECK-DAG:     %cst_3 = arith.constant 1.000000e+00 : f32
+// CHECK-DAG:     %cst_4 = arith.constant 0x7F800000 : f32
+// CHECK-DAG:     %cst_5 = arith.constant 0x7FC00000 : f32
+// CHECK:          %0 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg0 : tensor<1024xbf16>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
 // CHECK-NEXT:     %2 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg1 : tensor<1024xbf16>) outs(%2 : tensor<1024xf32>) -> tensor<1024xf32>
@@ -3376,9 +3377,10 @@ func.func @test_hfusion_hypot_2_inputs_bf16(%arg0: tensor<1024xbf16>, %arg1: ten
 
 // CHECK-LABEL: module {
 // CHECK-NEXT:   func.func @test_hfusion_hypot_2_inputs_f16(%arg0: tensor<1024xf16>, %arg1: tensor<1024xf16>) -> tensor<1024xf16> {
-// CHECK-NEXT:     %cst = arith.constant 0x7F800000 : f32
-// CHECK-NEXT:     %cst_0 = arith.constant 0x7FC00000 : f32
-// CHECK-NEXT:     %0 = tensor.empty() : tensor<1024xf32>
+// CHECK-DAG:     %true = arith.constant true
+// CHECK-DAG:     %cst = arith.constant 0x7F800000 : f32
+// CHECK-DAG:     %cst_0 = arith.constant 0x7FC00000 : f32
+// CHECK:          %0 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
 // CHECK-NEXT:     %2 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg1 : tensor<1024xf16>) outs(%2 : tensor<1024xf32>) -> tensor<1024xf32>
@@ -3416,11 +3418,12 @@ func.func @test_hfusion_hypot_2_inputs_f16(%arg0: tensor<1024xf16>, %arg1: tenso
 
 // CHECK-LABEL: module {
 // CHECK-NEXT:   func.func @test_hfusion_hypot_2_inputs_f32(%arg0: tensor<1024xf32>, %arg1: tensor<1024xf32>) -> tensor<1024xf32> {
-// CHECK-NEXT:     %cst = arith.constant 0x7FC00000 : f32
-// CHECK-NEXT:     %cst_0 = arith.constant 0x7F800000 : f32
-// CHECK-NEXT:     %cst_1 = arith.constant 1.000000e+00 : f32
-// CHECK-NEXT:     %cst_2 = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT:     %0 = tensor.empty() : tensor<1024xf32>
+// CHECK-DAG:     %true = arith.constant true
+// CHECK-DAG:     %cst = arith.constant 0x7FC00000 : f32
+// CHECK-DAG:     %cst_0 = arith.constant 0x7F800000 : f32
+// CHECK-DAG:     %cst_1 = arith.constant 1.000000e+00 : f32
+// CHECK-DAG:     %cst_2 = arith.constant 0.000000e+00 : f32
+// CHECK:          %0 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %1 = tensor.empty() : tensor<1024xi1>
 // CHECK-NEXT:     %2 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
 // CHECK-NEXT:     %3 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%arg1 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
@@ -3465,9 +3468,10 @@ func.func @test_hfusion_hypot_2_inputs_f32(%arg0: tensor<1024xf32>, %arg1: tenso
 
 // CHECK-LABEL: module {
 // CHECK-NEXT:   func.func @test_hfusion_hypot_3_inputs(%arg0: tensor<1024xf16>, %arg1: tensor<1024xf16>, %arg2: tensor<1024xf16>) -> tensor<1024xf16> {
-// CHECK-NEXT:     %cst = arith.constant 0x7F800000 : f32
-// CHECK-NEXT:     %cst_0 = arith.constant 0x7FC00000 : f32
-// CHECK-NEXT:     %0 = tensor.empty() : tensor<1024xf32>
+// CHECK-DAG:     %true = arith.constant true
+// CHECK-DAG:     %cst = arith.constant 0x7F800000 : f32
+// CHECK-DAG:     %cst_0 = arith.constant 0x7FC00000 : f32
+// CHECK:          %0 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %1 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg0 : tensor<1024xf16>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
 // CHECK-NEXT:     %2 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %3 = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, round_mode = #hfusion.round_mode<round>} ins(%arg1 : tensor<1024xf16>) outs(%2 : tensor<1024xf32>) -> tensor<1024xf32>
@@ -3515,11 +3519,12 @@ func.func @test_hfusion_hypot_3_inputs(%arg0: tensor<1024xf16>, %arg1: tensor<10
 
 // CHECK-LABEL: module {
 // CHECK-NEXT:   func.func @test_hfusion_hypot_3_inputs(%arg0: tensor<1024xf32>, %arg1: tensor<1024xf32>, %arg2: tensor<1024xf32>) -> tensor<1024xf32> {
-// CHECK-NEXT:     %cst = arith.constant 0x7FC00000 : f32
-// CHECK-NEXT:     %cst_0 = arith.constant 0x7F800000 : f32
-// CHECK-NEXT:     %cst_1 = arith.constant 1.000000e+00 : f32
-// CHECK-NEXT:     %cst_2 = arith.constant 0.000000e+00 : f32
-// CHECK-NEXT:     %0 = tensor.empty() : tensor<1024xf32>
+// CHECK-DAG:     %true = arith.constant true
+// CHECK-DAG:     %cst = arith.constant 0x7FC00000 : f32
+// CHECK-DAG:     %cst_0 = arith.constant 0x7F800000 : f32
+// CHECK-DAG:     %cst_1 = arith.constant 1.000000e+00 : f32
+// CHECK-DAG:     %cst_2 = arith.constant 0.000000e+00 : f32
+// CHECK:          %0 = tensor.empty() : tensor<1024xf32>
 // CHECK-NEXT:     %1 = tensor.empty() : tensor<1024xi1>
 // CHECK-NEXT:     %2 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%arg0 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
 // CHECK-NEXT:     %3 = linalg.elemwise_unary {fun = #linalg.unary_fn<abs>} ins(%arg1 : tensor<1024xf32>) outs(%0 : tensor<1024xf32>) -> tensor<1024xf32>
@@ -3831,12 +3836,13 @@ func.func @test_hfusion_cyl_bessel_i0_ops(%arg0 : tensor<5x1xf16>) -> tensor<5x1
 
 // CHECK-LABEL: module {
 // CHECK-NEXT:   func.func @test_hfusion_nextafter_ops(%arg0: tensor<5x1xf16>, %arg1: tensor<5x1xf16>) -> tensor<5x1xf16> {
-// CHECK-NEXT:     %c-1_i16 = arith.constant -1 : i16
-// CHECK-NEXT:     %c1_i16 = arith.constant 1 : i16
-// CHECK-NEXT:     %c0_i16 = arith.constant 0 : i16
-// CHECK-NEXT:     %c32767_i16 = arith.constant 32767 : i16
-// CHECK-NEXT:     %c-32768_i16 = arith.constant -32768 : i16
-// CHECK-NEXT:     %0 = tensor.empty() : tensor<5x1xf16>
+// CHECK-DAG:     %true = arith.constant true
+// CHECK-DAG:     %c-1_i16 = arith.constant -1 : i16
+// CHECK-DAG:     %c1_i16 = arith.constant 1 : i16
+// CHECK-DAG:     %c0_i16 = arith.constant 0 : i16
+// CHECK-DAG:     %c32767_i16 = arith.constant 32767 : i16
+// CHECK-DAG:     %c-32768_i16 = arith.constant -32768 : i16
+// CHECK:          %0 = tensor.empty() : tensor<5x1xf16>
 // CHECK-NEXT:     %1 = tensor.empty() : tensor<5x1xi16>
 // CHECK-NEXT:     %2 = tensor.empty() : tensor<5x1xi1>
 // CHECK-NEXT:     %3 = hfusion.bitcast ins(%arg0 : tensor<5x1xf16>) outs(%1 : tensor<5x1xi16>) -> tensor<5x1xi16>

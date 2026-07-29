@@ -1491,10 +1491,12 @@ LogicalResult Flattener::collapser(Operation *op, OpBuilder &builder) {
   //   return success();
   // }
 
-  // if (auto indirectLoadOp = dyn_cast<hfusion::IndirectLoadOp>(op)) {
-  //   adjustIndirectLoadOp(indirectLoadOp, builder);
-  //   return success();
-  // }
+  if (options.registerBased) {
+    if (auto indirectLoadOp = dyn_cast<hfusion::IndirectLoadOp>(op)) {
+      adjustIndirectLoadOp(indirectLoadOp, builder);
+      return success();
+    }
+  }
 
   if (auto memrefLoadOp = dyn_cast<memref::LoadOp>(op)) {
     adjustMemrefLoadOp(memrefLoadOp, builder);

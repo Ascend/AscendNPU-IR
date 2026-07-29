@@ -520,9 +520,9 @@ public:
   Value buildUnaryVNot(OpBuilder &builder, Value arg) {
     if (isInteger(arg)) {
       Type type = arg.getType();
-      Value zero = builder.create<arith::ConstantOp>(
-          arg.getLoc(), type, builder.getIntegerAttr(type, 0));
-      return builder.create<arith::XOrIOp>(arg.getLoc(), zero, arg);
+      Value negOne = builder.create<arith::ConstantOp>(
+          arg.getLoc(), type, builder.getIntegerAttr(type, -1));
+      return builder.create<arith::XOrIOp>(arg.getLoc(), negOne, arg);
     }
     llvm::report_fatal_error("unsupported type for not");
   }
