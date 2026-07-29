@@ -33,6 +33,7 @@
 #include "llvm/Support/Casting.h"
 
 namespace mlir {
+#define GEN_PASS_DEF_INSERTFIXPIPE
 #define GEN_PASS_DEF_INLINEFIXPIPE
 #include "bishengir/Dialect/HIVM/Transforms/Passes.h.inc"
 } // namespace mlir
@@ -58,6 +59,11 @@ static constexpr llvm::StringLiteral scfforFixpipeForMMADResultAlreadyInserted =
 } // namespace
 
 namespace {
+struct InsertFixpipe : public impl::InsertFixpipeBase<InsertFixpipe> {
+  using Base::Base;
+  void runOnOperation() override;
+};
+
 struct InlineFixpipe : public impl::InlineFixpipeBase<InlineFixpipe> {
   using Base::Base;
   void runOnOperation() override;
@@ -166,6 +172,41 @@ static bool needYieldOut(Operation *user, Value val) {
   if (auto ifOp = dyn_cast<scf::IfOp>(user->getParentOp()))
     return !isMixKernel(ifOp, val);
   return false;
+}
+
+/// Push the insert point out of every scf.if that merges the result with a
+/// sibling branch writing the same destination, so that a single fixpipe after
+/// the scf.if serves the merged value. Inserting inside the branches instead
+/// would emit one fixpipe per branch and hand consumers of the merged result
+/// (such as annotation.mark bind_buffer) the fixpipe output rather than the
+/// value still living in L0C.
+Operation *getInsertPointOutOfIf(Operation *op, int &resultIndx) {
+  Value result = op->getResult(resultIndx);
+  // if op has multiple users, don't push the insert point down
+  int32_t count = 0;
+  scf::YieldOp yieldOperand = nullptr;
+  for (Operation *user : result.getUsers()) {
+    if (!isa<hivm::DebugOp>(user))
+      count++;
+    auto yieldOp = dyn_cast<scf::YieldOp>(user);
+    if (!yieldOp)
+      continue;
+    auto ifOp = dyn_cast<scf::IfOp>(yieldOp->getParentOp());
+    if (!ifOp || isMixKernel(ifOp, result))
+      continue;
+    yieldOperand = yieldOp;
+  }
+
+  if (count > 1 || !yieldOperand)
+    return op;
+
+  auto yieldValueIndx =
+      findIdx(llvm::to_vector(yieldOperand->getOperands()), result);
+  if (!yieldValueIndx.has_value())
+    return op;
+
+  resultIndx = yieldValueIndx.value();
+  return getInsertPointOutOfIf(yieldOperand->getParentOp(), resultIndx);
 }
 
 Operation *getInsertPoint(Operation *op, int &resultIndx) {
@@ -466,7 +507,7 @@ public:
       // loop
       insertAfterOp = getInsertPoint(op, resultIndx);
     } else {
-      insertAfterOp = op;
+      insertAfterOp = getInsertPointOutOfIf(op, resultIndx);
     }
     rewriter.setInsertionPointAfter(insertAfterOp);
 
@@ -1158,16 +1199,22 @@ public:
   }
 };
 
-void populateInlineFixpipePatterns(RewritePatternSet &patterns,
-                                   bool inlineQuantScale) {
+void populateInsertFixpipeForIterArgPatterns(RewritePatternSet &patterns) {
+  patterns.add<InsertFixpipeForIterArgMMAD>(patterns.getContext());
+}
+
+void populateInsertFixpipePatterns(RewritePatternSet &patterns) {
   MLIRContext *ctx = patterns.getContext();
   patterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
   patterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
   patterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
-  patterns.add<InlineFixpipeOpPattern>(ctx, inlineQuantScale);
-  patterns.add<InsertFixpipeForIterArgMMAD>(ctx);
+}
+
+void populateInlineFixpipePatterns(RewritePatternSet &patterns,
+                                   bool inlineQuantScale) {
+  patterns.add<InlineFixpipeOpPattern>(patterns.getContext(), inlineQuantScale);
 }
 
 void eraseInlinableQuantScaleMarkOps(Operation *op) {
@@ -1180,85 +1227,47 @@ void eraseInlinableQuantScaleMarkOps(Operation *op) {
     markOp.erase();
 }
 
+void InsertFixpipe::runOnOperation() {
+  RewritePatternSet iterArgPatterns(&getContext());
+  populateInsertFixpipeForIterArgPatterns(iterArgPatterns);
+  if (failed(
+          applyPatternsGreedily(getOperation(), std::move(iterArgPatterns)))) {
+    signalPassFailure();
+    return;
+  }
+
+  RewritePatternSet patterns(&getContext());
+  populateInsertFixpipePatterns(patterns);
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    signalPassFailure();
+    return;
+  }
+
+  RewritePatternSet insertFixpipeForDevicePrintPattern(&getContext());
+  MLIRContext *ctx = insertFixpipeForDevicePrintPattern.getContext();
+  insertFixpipeForDevicePrintPattern.add<InsertFixpipeForDevicePrint>(ctx);
+  if (failed(applyPatternsGreedily(
+          getOperation(), std::move(insertFixpipeForDevicePrintPattern)))) {
+    signalPassFailure();
+  }
+}
+
 void InlineFixpipe::runOnOperation() {
-  MLIRContext *ctx = &getContext();
-
-  if (isRegBasedArch(getOperation())) {
-    // Reg-based (Ascend950) path: run patterns in separate greedy passes.
-    // This matches the original two-pass InsertFixpipe + InlineFixpipe
-    // reference behavior where insertion completes before inlining begins,
-    // preventing inlining patterns from consuming fixpipes that were just
-    // inserted.
-
-    // Step 1: InsertFixpipeForIterArgMMAD runs first to set
-    // fixpipe_for_mmad_result_already_inserted on scf.for before insertion
-    // patterns fire.
-    {
-      RewritePatternSet iterArgMMAPatterns(ctx);
-      iterArgMMAPatterns.add<InsertFixpipeForIterArgMMAD>(ctx);
-      (void)applyPatternsGreedily(getOperation(),
-                                  std::move(iterArgMMAPatterns));
-    }
-
-    // Step 2: Insert fixpipes after mmadL1/batchMmadL1/conv ops.
-    {
-      RewritePatternSet insertPatterns(ctx);
-      insertPatterns.add<InsertFixpipeOpPattern<hivm::MmadL1Op>>(ctx);
-      insertPatterns.add<InsertFixpipeOpPattern<hivm::BatchMmadL1Op>>(ctx);
-      insertPatterns.add<InsertFixpipeForConvOpPattern<hivm::Conv1DL1Op>>(ctx);
-      insertPatterns.add<InsertFixpipeForConvOpPattern<hivm::Conv2DL1Op>>(ctx);
-      insertPatterns.add<InsertFixpipeForConvOpPattern<hivm::Conv3DL1Op>>(ctx);
-      if (failed(applyPatternsGreedily(getOperation(),
-                                       std::move(insertPatterns)))) {
-        signalPassFailure();
-        return;
-      }
-    }
-
-    // Step 3: Inline downstream ops (vcast, vrelu, store, transpose, quant
-    // scale, extract/insert slice swap, yield hoisting) into fixpipes.
-    {
-      RewritePatternSet inlinePatterns(ctx);
-      inlinePatterns.add<InlineFixpipeOpPattern>(ctx, inlineQuantScale);
-      if (failed(applyPatternsGreedily(getOperation(),
-                                       std::move(inlinePatterns)))) {
-        signalPassFailure();
-        return;
-      }
-    }
-
-    // Step 4: Insert fixpipes for device print (debug).
-    {
-      RewritePatternSet devicePrintPatterns(ctx);
-      devicePrintPatterns.add<InsertFixpipeForDevicePrint>(ctx);
-      if (failed(applyPatternsGreedily(
-              getOperation(), std::move(devicePrintPatterns)))) {
-        signalPassFailure();
-        return;
-      }
-    }
-  } else {
-    // Non-reg-based path: original combined greedy run (insertion + inlining
-    // together in one pass).
-    RewritePatternSet patterns(ctx);
-    populateInlineFixpipePatterns(patterns, inlineQuantScale);
-
-    if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
-      signalPassFailure();
-      return;
-    }
-    RewritePatternSet devicePrintPatterns(ctx);
-    devicePrintPatterns.add<InsertFixpipeForDevicePrint>(ctx);
-    if (failed(applyPatternsGreedily(
-            getOperation(), std::move(devicePrintPatterns)))) {
-      signalPassFailure();
-      return;
-    }
+  RewritePatternSet patterns(&getContext());
+  populateInlineFixpipePatterns(patterns, inlineQuantScale);
+  if (failed(applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+    signalPassFailure();
+    return;
   }
 
   eraseInlinableQuantScaleMarkOps(getOperation());
 }
 
-std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass() {
-  return std::make_unique<InlineFixpipe>();
+std::unique_ptr<Pass> mlir::hivm::createInsertFixpipePass() {
+  return std::make_unique<InsertFixpipe>();
+}
+
+std::unique_ptr<Pass> mlir::hivm::createInlineFixpipePass(
+    const InlineFixpipeOptions &options) {
+  return std::make_unique<InlineFixpipe>(options);
 }
