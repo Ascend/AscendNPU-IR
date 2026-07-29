@@ -107,12 +107,12 @@ int main(int argc, char **argv) {
   //    A5 regbase pipeline; without it, delegate as a safety fallback.
   // TODO: delegation will be removed after bishengir-compile and
   // bishengir-compile-a5 are merged.
-  // if (hasRegBaseTarget(argc, argv)) {
-  //   if (!getenv("BISHENGIR_NATIVE_A5_REGBASE")) {
-  //     return runBishengirCompile91095(argc, argv);
-  //   }
-  //   llvm::errs() << "[INFO] Using merged native A5 regbase pipeline\n";
-  // }
+  if (hasRegBaseTarget(argc, argv)) {
+    if (!getenv("BISHENGIR_NATIVE_A5_REGBASE")) {
+      return runBishengirCompile91095(argc, argv);
+    }
+    llvm::errs() << "[INFO] Using merged native A5 regbase pipeline\n";
+  }
 
   std::vector<std::string> originalCLArgs;
   for (int i = 1; i < argc; ++i)

@@ -23,7 +23,6 @@
 #include "bishengir/Tools/bishengir-compile/regbase/Utility.h"
 
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
@@ -59,60 +58,10 @@ int runExternalRegBaseCompile(ArrayRef<std::string> originalCLArgs) {
 
 } // namespace
 
-/// TODO: Refactor Options.td to support target-specific defaults.
-/// Ensures the regbase pipeline uses correct A5 default value even though
-/// Options.td carries A3 defaults.
-static void applyRegBaseOptionDefaults(BiShengIRCompileMainConfig &config) {
-  auto &opts = cl::getRegisteredOptions();
-
-  auto applyIfNotSet = [&](StringRef name, auto setter, auto a5Default,
-                           StringRef a5Desc) {
-    auto it = opts.find(name);
-    if (it != opts.end() && it->second->getNumOccurrences() == 0) {
-      errs() << "[regbase] --" << name << ": applying A5 default (" << a5Desc
-             << "), was not set by user\n";
-      (config.*setter)(a5Default);
-    }
-  };
-
-  // 1. EnableLayoutOptimization: A3=false, A5=true
-  applyIfNotSet("enable-layout-optimization",
-                &BiShengIRCompileMainConfig::setEnableLayoutOptimization, true,
-                "true");
-
-  // 2. LimitAutoMultiBufferOfLocalBuffer: A3=CUBE_NO_L0C, A5=NO_LIMIT
-  applyIfNotSet("limit-auto-multi-buffer-of-local-buffer",
-                &BiShengIRCompileMainConfig::setLimitAutoMultiBufferOfLocalBuffer,
-                MultiBufferStrategy::NO_LIMIT, "NO_LIMIT");
-
-  // 3. SetWorkspaceMultibuffer: A3=4, A5=2
-  applyIfNotSet("set-workspace-multibuffer",
-                &BiShengIRCompileMainConfig::setSetWorkspaceMultibuffer,
-                static_cast<unsigned>(2), "2");
-
-  // 4. EnableHIVMAutoCVBalance: A3=false, A5=true
-  applyIfNotSet("enable-hivm-auto-cv-balance",
-                &BiShengIRCompileMainConfig::setEnableHIVMAutoCVBalance, true,
-                "true");
-
-  // 5. TileMixVectorLoop: A3=2, A5=1
-  applyIfNotSet("tile-mix-vector-loop",
-                &BiShengIRCompileMainConfig::setTileMixVectorLoop,
-                static_cast<unsigned>(1), "1");
-
-  // 6. TileMixCubeLoop: A3=2, A5=1
-  applyIfNotSet("tile-mix-cube-loop",
-                &BiShengIRCompileMainConfig::setTileMixCubeLoop,
-                static_cast<unsigned>(1), "1");
-}
-
 int runRegBaseCompile(ModuleOp module, BiShengIRCompileMainConfig config,
                       ArrayRef<std::string> originalCLArgs) {
-  // Apply A5 defaults for options where A3/A5 defaults differ.
-  applyRegBaseOptionDefaults(config);
-
-  // if (!shouldUseDirectRegBasePipeline(config))
-  //   return runExternalRegBaseCompile(originalCLArgs);
+  if (!shouldUseDirectRegBasePipeline(config))
+    return runExternalRegBaseCompile(originalCLArgs);
 
   if (failed(inferLayoutOptimization(module, config))) {
     llvm::errs() << "[ERROR] Failed to infer layout optimization\n";
