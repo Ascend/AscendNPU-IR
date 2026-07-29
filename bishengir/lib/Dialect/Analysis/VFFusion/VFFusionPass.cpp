@@ -17,6 +17,7 @@
 
 #include "bishengir/Dialect/Analysis/VFFusion/Passes.h"
 #include "bishengir/Dialect/Analysis/VFFusion/Transforms/Transforms.h"
+#include "bishengir/Dialect/Analysis/VFFusion/Utils.h"
 #include "bishengir/Dialect/HACC/Utils/Utils.h"
 #include "bishengir/Dialect/HFusion/Utils/Utils.h"
 #include "bishengir/Dialect/HIVM/IR/HIVMImpl.h"
@@ -168,10 +169,19 @@ void VFFusionPass::runOnOperation() {
                       UnitAttr::get(&getContext()));
   };
 
-  // for CV cases, temporarily bypass vffusion
+  // For CV cases, bypass vffusion entirely when any op should skip fusion
+  // (e.g. RA/AR sum-reductions handled by dedicated downstream passes).
   if (isCVCases(moduleOp)) {
-    freezeRegisterTreeSelection();
-    return;
+    VFFusionKindOption option = getFusionOption();
+    if (moduleOp
+            .walk([&](Operation *op) -> WalkResult {
+              return shouldSkipFusion(op, option) ? WalkResult::interrupt()
+                                                  : WalkResult::advance();
+            })
+            .wasInterrupted()) {
+      freezeRegisterTreeSelection();
+      return;
+    }
   }
 
   if (failed(preProcess())) {
