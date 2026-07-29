@@ -116,7 +116,7 @@ def EnableHfusionCompile : FeatureControlOptions<
 def EnableLayoutOptimization : FeatureControlOptions<
   "Enable layout optimization (insert/propagate convert_layout around cube ops).",
   "bool",
-  "false"
+  "true"
 > {
   let passGroup = ["HFUSION", "HIVM"];
 }
