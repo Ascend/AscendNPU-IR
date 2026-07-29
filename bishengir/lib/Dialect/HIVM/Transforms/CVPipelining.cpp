@@ -1963,6 +1963,23 @@ LogicalResult CVPipelineImpl::preprocessCounterAllocas() {
       }
       cube->erase();
     }
+
+    // Since we only really care about the counter in the loop, the iter args
+    // can be also replaced with empties if they are tensors
+    auto clonedLoop = dyn_cast<scf::ForOp>(clone);
+    if (clonedLoop) {
+      for (OpOperand &iterarg : clonedLoop.getInitArgsMutable()) {
+        auto tensorTy = dyn_cast<TensorType>(iterarg.get().getType());
+        if (!tensorTy)
+            continue;
+        if (tensorTy.getNumDynamicDims() > 0)
+          return clone->emitWarning("Cannot pipeline loop with nested counter "
+                                    "loop with dynamic iter args");
+        builder.setInsertionPoint(clone);
+        iterarg.set(builder.create<tensor::EmptyOp>(clone->getLoc(), tensorTy, ValueRange{}));
+      }
+    }
+
     counterCloneMap[alloca.getResult()] = clone;
   }
   return success();
