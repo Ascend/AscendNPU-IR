@@ -195,10 +195,6 @@ protected:
   /// pre-transpose axis index used when matching tiling dims.
   DenseMap<int64_t, int64_t> transposedDimMap;
 
-  /// \c parentIndex values where one store had two parallel axes mapping to the
-  /// same collapsed parent (possible broadcast / ambiguous tiling).
-  llvm::SmallDenseSet<int64_t> broadcastAxisCaseCandidate;
-
   int64_t tilingSize;
 
   /// \c processOperation transaction information
