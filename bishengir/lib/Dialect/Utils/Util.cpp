@@ -136,7 +136,7 @@ SmallVector<Value> tracebackImpl(Value memrefVal) {
   //  - bufferization.to_tensor
   //  - bufferization.to_memref / bufferization.to_buffer
   if (auto op = dyn_cast<bufferization::ToTensorOp>(def)) {
-    result.emplace_back(op.getMemref());
+    result.emplace_back(op.getOperand());
 #ifndef __LLVM_MAJOR_VERSION_22_COMPATIBLE__
   } else if (auto op = dyn_cast<bufferization::ToMemrefOp>(def)) {
 #else
