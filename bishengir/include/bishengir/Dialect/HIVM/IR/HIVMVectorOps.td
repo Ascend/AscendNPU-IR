@@ -2189,6 +2189,7 @@ def VSortOp : HIVM_VectorOp<"vsort",
   let builders = [
     OpBuilder<(ins "TypeRange":$result, "Value":$src,
                    "ValueRange":$dst, "bool":$descending, "int64_t":$sort_axis)>];
+  let hasCanonicalizer = 1;
   let hasVerifier = 1;
   let extraClassDeclaration = vectorOpBaseDecls # [{
     static StringRef getOpName() { return "sort"; }
