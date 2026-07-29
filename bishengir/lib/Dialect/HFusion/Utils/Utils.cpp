@@ -344,8 +344,7 @@ tiling::deviceFuncsMatchTilingFunc(SmallVector<func::FuncOp> &deviceFuncs,
   return success();
 }
 
-bool hfusion::isFP8(Type type, Builder builder) {
-  (void)builder;
+bool hfusion::isFP8(Type type) {
   // Prefer isa<> — Builder::getFloat8E*Type() was removed in newer LLVM.
   return isa<Float8E5M2Type, Float8E4M3Type, Float8E4M3FNType,
              Float8E5M2FNUZType, Float8E4M3FNUZType, Float8E4M3B11FNUZType>(
