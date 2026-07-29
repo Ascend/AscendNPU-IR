@@ -12,4 +12,5 @@ add_bishengir_library(BiShengIRRetriablePassManager
 
   LINK_LIBS PUBLIC
   BiShengIRPass
+  BiShengIRTransform
 )

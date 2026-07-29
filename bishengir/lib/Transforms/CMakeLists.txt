@@ -5,6 +5,7 @@ add_bishengir_library(BiShengIRTransform
   EliminateSingleIterationScfFor.cpp
   DebugMemory.cpp
   InjectIR.cpp
+  InjectIRInstrumentation.cpp
   ExtendedCanonicalizer.cpp
   FuseReductionIntoLoop.cpp
   LowerToCPUBackend.cpp
