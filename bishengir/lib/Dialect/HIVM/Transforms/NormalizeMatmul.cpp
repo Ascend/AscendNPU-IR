@@ -589,6 +589,19 @@ constexpr StringLiteral kNormalizedInL0C = "normalized_in_L0C";
 constexpr StringLiteral kNormalizedInitOrBias = "normalized_init_or_bias";
 constexpr StringLiteral kMayNotExec = "may_not_exec";
 
+// Set on an mmad whose CCF still owes a tail fallback. Emission is deferred to
+// ReuseL0CAddIfPattern, which can see the CCF's consumer and so can tell
+// whether a fallback is needed at all.
+constexpr StringLiteral kDeferredTailFallback = "deferred_tail_fallback";
+
+// Tags the i1 that records whether the L0C block was left dirty by an earlier
+// CCF, so that a later CCF can reuse it instead of rebuilding the predicate.
+constexpr StringLiteral kCounterPrevious = "counter_previous";
+
+// Marker set by FoldFractalVtransposePattern to distinguish a real 2D transpose
+// from a fractal layout indicator (nZ vs zN) in extractRealMKN.
+constexpr StringLiteral kFractalVtransposeFolded = "fractal_vtranspose_folded";
+
 FailureOr<SmallVector<Value>>
 extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   auto loc = matmulOp.getLoc();
@@ -610,7 +623,24 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   // TODO: m is set to be l1M for group gemm scenario (use kDotPadOnlyK),
   //       which should be enhanced.
   Value realM;
-  if (matmulOp.isMatmulATransposed()) {
+  // On a Fractal->ND convert_layout operand the transpose flag encodes the
+  // fractal layout (nZ vs zN) rather than a 2D transpose, so it must not swap
+  // m and k. Once FoldFractalVtransposePattern has absorbed a real vtranspose
+  // into the flag it also marks the op, and the flag means a 2D transpose again.
+  auto isFractalSpaceTranspose = [&](Value v) -> bool {
+    auto convert = v.getDefiningOp<ConvertLayoutOp>();
+    if (!convert)
+      return false;
+    if (convert.getSrcLayout().getDataLayout() != hivm::DataLayout::Fractal ||
+        !convert.getDstLayout().isNDLayout())
+      return false;
+    return !matmulOp->hasAttr(kFractalVtransposeFolded);
+  };
+  const bool aTransposed = matmulOp.isMatmulATransposed() &&
+                           !isFractalSpaceTranspose(matmulOp.getMatmulA());
+  const bool bTransposed = matmulOp.isMatmulBTransposed() &&
+                           !isFractalSpaceTranspose(matmulOp.getMatmulB());
+  if (aTransposed) {
     realM = (*realMK)[1 + batchIndexBias];
   } else {
     realM = (*realMK)[0 + batchIndexBias];
@@ -628,12 +658,12 @@ extractRealMKN(LocalMatmulLikeOpInterface matmulOp, PatternRewriter &rewriter) {
   }
 
   mkn.push_back(realM);
-  if (matmulOp.isMatmulATransposed()) {
+  if (aTransposed) {
     mkn.push_back((*realMK)[0 + batchIndexBias]);
   } else {
     mkn.push_back((*realMK)[1 + batchIndexBias]);
   }
-  if (matmulOp.isMatmulBTransposed()) {
+  if (bTransposed) {
     mkn.push_back((*realKN)[0 + batchIndexBias]);
   } else {
     mkn.push_back((*realKN)[1 + batchIndexBias]);
@@ -1104,6 +1134,16 @@ hivm::VAddOp createVadd(PatternRewriter &rewriter, Location loc, Type type,
   return addOp;
 }
 
+unsigned getResultIndex(Operation &op, Value val) {
+  unsigned idx = 0;
+  for (Value result : op.getResults()) {
+    if (result == val)
+      break;
+    idx++;
+  }
+  return idx;
+}
+
 // Set kNormalizedInL0C attribute with proper index for scf::ForOp, scf::IfOp,
 // or UnitAttr for other operations. If the attribute already exists, append
 // the new index to the existing list instead of overwriting.
@@ -1152,6 +1192,140 @@ void setRemainInL0CAttr(PatternRewriter &rewriter, Value outerInVal) {
   if (Operation *defOp = outerInVal.getDefiningOp()) {
     defOp->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
   }
+}
+
+// True if `val` is the result of a CCF op that this pass already normalized to
+// accumulate in L0C, i.e. its index is listed in the op's kNormalizedInL0C.
+bool isCCFOpResultInL0C(Operation *defOp, Value val) {
+  if (!defOp || !isa<scf::ForOp, scf::IfOp>(defOp))
+    return false;
+  unsigned resultIdx = getResultIndex(*defOp, val);
+  if (auto attr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
+    for (Attribute a : attr) {
+      if (auto idxAttr = mlir::dyn_cast<IntegerAttr>(a))
+        if (idxAttr.getInt() == static_cast<int64_t>(resultIdx))
+          return true;
+    }
+  }
+  return false;
+}
+
+// Locate the iteration counter that `initCounter` placed in front of `ccfOp`
+// for the CCF result at `idx`. Scanning stops at the previous CCF so that
+// counters belonging to an earlier loop are not picked up by mistake.
+Value findCounterBufFor(Operation *ccfOp, unsigned idx) {
+  for (Operation *prev = ccfOp->getPrevNode(); prev;
+       prev = prev->getPrevNode()) {
+    if (auto allocaOp = dyn_cast<memref::AllocaOp>(prev)) {
+      auto attr =
+          allocaOp->getAttrOfType<IntegerAttr>(kNormalizeMatmulCounterAttr);
+      if (attr && attr.getInt() == static_cast<int64_t>(idx))
+        return allocaOp.getResult();
+    }
+    if (isa<scf::ForOp, scf::IfOp>(prev))
+      break;
+  }
+  return Value();
+}
+
+// A following CCF or bare mmad clears L0C through its own init condition, so
+// whatever this CCF leaves behind is never read and no zero fill is needed. The
+// guard only matters when the chain ends here, e.g. at a store or a return.
+bool needsTailFallback(Value outerOutVal) {
+  if (!outerOutVal.hasOneUse())
+    return true;
+  Operation *user = *outerOutVal.getUsers().begin();
+  return !isa<scf::ForOp, hivm::MmadL1Op, hivm::BatchMmadL1Op,
+              hivm::MmadMxL1Op>(user);
+}
+
+// Build an i1 telling whether the L0C block feeding `ccfInVal` still holds data
+// that has to be cleared: true means dirty, false means a producer definitely
+// wrote it. A constant is returned whenever the answer is known statically,
+// which lets the callers drop the runtime check entirely.
+Value getOrCreateCounterPrevious(PatternRewriter &rewriter, Value ccfInVal,
+                                 Location loc) {
+  Operation *defOp = ccfInVal.getDefiningOp();
+  if (!defOp)
+    return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+
+  if (isa<scf::ForOp, scf::IfOp>(defOp)) {
+    const bool isForOp = isa<scf::ForOp>(defOp);
+
+    // Not normalized: nothing accumulated in L0C, so treat it as dirty.
+    if (!defOp->hasAttr(kNormalizedInL0C))
+      return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+
+    // A for loop without kMayNotExec always ran, so its mmad wrote L0C.
+    if (isForOp && !defOp->hasAttr(kMayNotExec))
+      return rewriter.create<arith::ConstantIntOp>(loc, 0, 1);
+
+    // Otherwise the producer may not have run and we need its counter.
+    unsigned idx = getResultIndex(*defOp, ccfInVal);
+    Value counterBuf = findCounterBufFor(defOp, idx);
+    if (!counterBuf)
+      return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+
+    // Reuse the predicate already built for this counter, if any.
+    for (Operation *next = defOp->getNextNode(); next;
+         next = next->getNextNode()) {
+      if (auto andOp = dyn_cast<arith::AndIOp>(next)) {
+        if (andOp->hasAttr(kCounterPrevious)) {
+          for (Value operand : andOp->getOperands()) {
+            if (auto cmpOp = operand.getDefiningOp<arith::CmpIOp>())
+              if (auto loadOp = cmpOp.getLhs().getDefiningOp<memref::LoadOp>())
+                if (loadOp.getMemRef() == counterBuf)
+                  return andOp.getResult();
+          }
+        }
+      }
+      if (auto cmpOp = dyn_cast<arith::CmpIOp>(next)) {
+        if (cmpOp->hasAttr(kCounterPrevious))
+          if (auto loadOp = cmpOp.getLhs().getDefiningOp<memref::LoadOp>())
+            if (loadOp.getMemRef() == counterBuf)
+              return cmpOp.getResult();
+      }
+      if (isa<scf::ForOp, scf::IfOp>(next))
+        break;
+    }
+
+    // The L0C is dirty only if it was already dirty coming in *and* this
+    // producer did not run. For an scf.if we cannot tell which block yields the
+    // value, so stay conservative.
+    Value counterPrevIn;
+    if (isForOp) {
+      auto forOp = cast<scf::ForOp>(defOp);
+      if (idx < forOp.getInitArgs().size())
+        counterPrevIn =
+            getOrCreateCounterPrevious(rewriter, forOp.getInitArgs()[idx], loc);
+      else
+        counterPrevIn = rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+    } else {
+      counterPrevIn = rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
+    }
+    if (matchPattern(counterPrevIn, m_Zero()))
+      return rewriter.create<arith::ConstantIntOp>(loc, 0, 1);
+
+    rewriter.setInsertionPointAfter(defOp);
+    Value postCount =
+        rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+    Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    auto neverRan = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, postCount, zeroI32);
+    if (matchPattern(counterPrevIn, m_One())) {
+      neverRan->setAttr(kCounterPrevious, rewriter.getUnitAttr());
+      return neverRan.getResult();
+    }
+    auto counterPrevOut =
+        rewriter.create<arith::AndIOp>(loc, counterPrevIn, neverRan);
+    counterPrevOut->setAttr(kCounterPrevious, rewriter.getUnitAttr());
+    return counterPrevOut.getResult();
+  }
+
+  // A bare mmad always writes L0C.
+  if (isa<hivm::MmadL1Op, hivm::BatchMmadL1Op, hivm::MmadMxL1Op>(defOp))
+    return rewriter.create<arith::ConstantIntOp>(loc, 0, 1);
+  return rewriter.create<arith::ConstantIntOp>(loc, 1, 1);
 }
 
 template <typename T>
@@ -1217,34 +1391,13 @@ bool couldReuse(Value outerInVal) {
     return true;
   }
 
-  // check the user of previous L0C is output from mmadL1 in CCF
+  // check the user of previous L0C is output from mmadL1 in CCF. A CCF that may
+  // not have run is still reusable, because the init condition derived from
+  // getOrCreateCounterPrevious clears L0C on the paths where it did not.
   if (Operation *defOp = outerInVal.getDefiningOp()) {
-    if (defOp->hasAttr(kMayNotExec) || !isa<scf::ForOp>(defOp))
+    if (!isa<scf::ForOp, scf::IfOp>(defOp))
       return false;
-    // For scf::ForOp with multiple results, use ArrayAttr to specify indices
-    // Find the corresponding result index
-    unsigned resultIdx = 0;
-    for (Value result : defOp->getResults()) {
-      if (result == outerInVal) {
-        break;
-      }
-      resultIdx++;
-    }
-
-    // Check if this specific result has the L0C normalized attribute
-    if (auto normalizedAttr = defOp->getAttrOfType<ArrayAttr>(kNormalizedInL0C)) {
-      if (normalizedAttr.empty()) {
-        return false;
-      }
-
-      for (Attribute idxAttr : normalizedAttr) {
-        if (auto idxInt = idxAttr.dyn_cast<IntegerAttr>()) {
-          if (idxInt.getInt() == static_cast<int64_t>(resultIdx)) {
-            return true;
-          }
-        }
-      }
-    }
+    return isCCFOpResultInL0C(defOp, outerInVal);
   }
 
   return false;
@@ -1386,23 +1539,35 @@ public:
     LDBG("mayNotExec:" << mayNotExec);
     // create counter buffer
     Value counterBuf;
-    if (!isa<T>(insertPointOp))
+    if (!isa<T>(insertPointOp)) {
       counterBuf = initCounter(rewriter, *insertPointOp);
+      if (isa<scf::ForOp, scf::IfOp>(insertPointOp)) {
+        // Record which CCF result this counter tracks, so a later CCF reading
+        // the same L0C block can find it again.
+        counterBuf.getDefiningOp()->setAttr(
+            kNormalizeMatmulCounterAttr,
+            rewriter.getI32IntegerAttr(
+                getResultIndex(*insertPointOp, outerOutVal)));
+      }
+    }
+    Value counterPrevious =
+        getOrCreateCounterPrevious(rewriter, outerInVal, op->getLoc());
 
     // create new mmad op
     Value newInit = mlir::utils::createEmptyOp(
         rewriter, insertPointOp->getLoc(), outerInVal);
     auto tmpNewMmad = cast<T>(rewriter.clone(*op.getOperation()));
 
+    auto markRemainInL0C = [&]() {
+      if (isa<scf::IfOp>(op->getParentOp()))
+        return;
+      tmpNewMmad->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+      op->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
+    };
+
     // set init condition before mmad op
     Value initCondition;
     if (!isa<T>(insertPointOp)) {
-      initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
-      isUsingCounter = true;
-      if (!isa<scf::IfOp>(op->getParentOp())) {
-        tmpNewMmad->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
-        op->setAttr(hivm::RemainInL0CAttr::name, rewriter.getUnitAttr());
-      }
       if (biasInfo.brcBiasMode == MatmulBiasMode::ReuseL0C) {
         op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
         LDBG("ReuseL0C in for-loop or if: no need to decompose matmul");
@@ -1410,16 +1575,41 @@ public:
         // Set reuse tag for the defining op of outerInVal
         setRemainInL0CAttr(rewriter, outerInVal);
 
+        if (matchPattern(counterPrevious, m_Zero())) {
+          // The producer definitely wrote L0C, so accumulate straight into it
+          // and skip the counter entirely.
+          markRemainInL0C();
+          op.setInitCondition(counterPrevious);
+        } else {
+          // Clear L0C on the first iteration, but only on the paths where the
+          // producer left it dirty.
+          initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
+          isUsingCounter = true;
+          markRemainInL0C();
+          rewriter.setInsertionPoint(op);
+          initCondition = rewriter.create<arith::AndIOp>(
+              op->getLoc(), counterPrevious, initCondition);
+          op.setInitCondition(initCondition);
+          if (mayNotExec) {
+            insertPointOp->setAttr(kMayNotExec, rewriter.getUnitAttr());
+            op->setAttr(kDeferredTailFallback, rewriter.getUnitAttr());
+          }
+        }
+        setNormalizedInL0CWithIndex(rewriter, *insertPointOp, outerOutVal);
         return success();
       }
+      initCondition = updateInitCondition<T>(rewriter, op, counterBuf);
+      isUsingCounter = true;
+      markRemainInL0C();
       LDBG("initCondition using counter");
     } else if (biasInfo.brcBiasMode == MatmulBiasMode::ReuseL0C) {
-      LDBG("initCondition always false");
-      LDBG("ReuseL0C no need to decompose matmul");
+      LDBG("ReuseL0C bare mmad: initCondition = counterPrevious");
       op->setAttr(kNormalizedInL0C, rewriter.getUnitAttr());
 
       // Set reuse tag for the defining op of outerInVal
       setRemainInL0CAttr(rewriter, outerInVal);
+
+      op.setInitCondition(counterPrevious);
 
       return success();
     } else {
@@ -1496,6 +1686,14 @@ public:
                 MatmulBiasMode::ZeroInitNoAccumulation) &&
                (!isUsingCounter)) {
       LDBG("decompose matmul with  zero init no accumlation");
+    } else if (biasInfo.brcBiasMode == MatmulBiasMode::NoBias ||
+               biasInfo.brcBiasMode == MatmulBiasMode::ZeroInitNoAccumulation) {
+      // No zero-fill guard here. The accumulator is a plain tensor.empty, so a
+      // guard would have to yield it unchanged on the else path while the then
+      // path fills a different buffer, and the memory planner rejects that as a
+      // read before first write. A consumer that needs a defined value clears
+      // L0C through its own init condition instead.
+      LDBG("decompose matmul with zero init");
     } else {
       if (mayNotExec) {
         // generate yield
@@ -1521,6 +1719,91 @@ public:
     rewriter.eraseOp(tmpNewMmad);
     rewriter.replaceOp(op, newMmad);
 
+    return success();
+  }
+};
+
+// Emits the tail fallback that NormalizeMmadCCFPattern deferred: when a CCF may
+// not execute, its L0C result has to be zeroed before anyone reads it. Running
+// as a separate pattern means the CCF's consumer is already visible, so the
+// guard can be skipped whenever the consumer clears L0C by itself.
+template <typename T>
+struct ReuseL0CAddIfPattern : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    if (!op->hasAttr(kDeferredTailFallback))
+      return failure();
+
+    auto ccfInfo = getResFromSingleUseChain<T>(op.getOperation());
+    Value outerInVal = ccfInfo.inVal;
+    Value outerOutVal = ccfInfo.outVal;
+    Operation *insertPointOp = ccfInfo.insertPointOp;
+    Location loc = op->getLoc();
+
+    // Drop the marker up front. Everything below only decides whether a guard
+    // is needed, and no path may report failure once ops have been created.
+    rewriter.modifyOpInPlace(op,
+                             [&]() { op->removeAttr(kDeferredTailFallback); });
+
+    if (!needsTailFallback(outerOutVal))
+      return success();
+    if (!isa<scf::ForOp, scf::IfOp>(insertPointOp))
+      return success();
+    Value counterBuf = findCounterBufFor(
+        insertPointOp, getResultIndex(*insertPointOp, outerOutVal));
+    if (!counterBuf)
+      return success();
+
+    // L0C provably holds real data, so there is nothing to clear.
+    Value counterPrevious =
+        getOrCreateCounterPrevious(rewriter, outerInVal, loc);
+    if (matchPattern(counterPrevious, m_Zero()))
+      return success();
+
+    rewriter.setInsertionPointAfter(insertPointOp);
+    Value postCount =
+        rewriter.create<memref::LoadOp>(loc, counterBuf, ValueRange{});
+    Value zeroI32 = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value neverRan = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::eq, postCount, zeroI32);
+    Value ifCond = neverRan;
+    if (!matchPattern(counterPrevious, m_One()))
+      ifCond = rewriter.create<arith::AndIOp>(loc, counterPrevious, neverRan);
+
+    auto fallbackIf = rewriter.create<scf::IfOp>(
+        loc, TypeRange{outerOutVal.getType()}, ifCond, /*withElseRegion=*/true);
+
+    // Then block: the CCF never ran, so materialize an explicit zero.
+    {
+      OpBuilder::InsertionGuard g(rewriter);
+      rewriter.setInsertionPointToStart(fallbackIf.thenBlock());
+      auto shapedType = cast<ShapedType>(outerOutVal.getType());
+      Type elementType = shapedType.getElementType();
+      Value zeroVal = rewriter.create<arith::ConstantOp>(
+          loc, cast<TypedAttr>(rewriter.getZeroAttr(elementType)));
+      Value emptyTensor = rewriter.create<tensor::EmptyOp>(
+          loc, shapedType.getShape(), elementType);
+      auto vbrcZero = rewriter.create<hivm::VBrcOp>(
+          loc, TypeRange{outerOutVal.getType()}, zeroVal, emptyTensor,
+          rewriter.getDenseI64ArrayAttr(ArrayRef<int64_t>{}));
+      rewriter.create<scf::YieldOp>(loc, ValueRange{vbrcZero.getResult()[0]});
+    }
+
+    // Else block: the accumulated result is valid.
+    {
+      OpBuilder::InsertionGuard g(rewriter);
+      rewriter.setInsertionPointToStart(fallbackIf.elseBlock());
+      rewriter.create<scf::YieldOp>(loc, ValueRange{outerOutVal});
+    }
+
+    rewriter.replaceUsesWithIf(outerOutVal, fallbackIf.getResult(0),
+                               [&](OpOperand &operand) {
+                                 Operation *userOp = operand.getOwner();
+                                 return !fallbackIf->isAncestor(userOp);
+                               });
     return success();
   }
 };
@@ -1588,6 +1871,192 @@ public:
   }
 };
 
+/// The a_transpose/b_transpose flags transpose the two innermost axes of the
+/// operand while loading it, so only a vtranspose with that exact permutation
+/// can be folded away. hivm.hir.vtranspose merely requires *some* two axes to
+/// be swapped, so permutations such as [2, 1, 0] on a rank-3 operand are legal
+/// but not representable by the flag.
+bool isInnermostAxisSwap(ArrayRef<int64_t> permutation) {
+  const int64_t rank = static_cast<int64_t>(permutation.size());
+  if (rank < 2)
+    return false;
+  for (int64_t dim = 0; dim < rank - 2; ++dim) {
+    if (permutation[dim] != dim)
+      return false;
+  }
+  return permutation[rank - 2] == rank - 1 && permutation[rank - 1] == rank - 2;
+}
+
+/// True if `src` has the shape `operand` would have before its two innermost
+/// axes were swapped. Folding walks through view-like ops to reach the
+/// vtranspose but then feeds its source straight to the mmad, so this rejects
+/// the cases where an intervening view was silently dropped.
+bool isSwappedInnermostShape(Value src, Value operand) {
+  auto srcType = dyn_cast<ShapedType>(src.getType());
+  auto operandType = dyn_cast<ShapedType>(operand.getType());
+  if (!srcType || !operandType || !srcType.hasRank() || !operandType.hasRank())
+    return false;
+  const int64_t rank = operandType.getRank();
+  if (srcType.getRank() != rank || rank < 2)
+    return false;
+  SmallVector<int64_t> expected(operandType.getShape());
+  std::swap(expected[rank - 2], expected[rank - 1]);
+  return succeeded(verifyCompatibleShape(srcType.getShape(), expected));
+}
+
+/// Look through ViewLike ops for a foldable VTransposeOp; stops at
+/// ConvertLayoutOp, which is handled by FoldFractalVtransposePattern.
+hivm::VTransposeOp lookThroughViewLikes(Value v) {
+  Value cur = v;
+  while (true) {
+    if (auto vtrans = cur.getDefiningOp<hivm::VTransposeOp>())
+      return isInnermostAxisSwap(vtrans.getPermutation()) ? vtrans
+                                                          : hivm::VTransposeOp();
+    if (cur.getDefiningOp<ConvertLayoutOp>())
+      return hivm::VTransposeOp();
+    auto viewOp = cur.getDefiningOp<ViewLikeOpInterface>();
+    if (!viewOp)
+      return hivm::VTransposeOp();
+    cur = viewOp->getOperand(0);
+  }
+}
+
+/// Absorb a vtranspose feeding A or B into the matching transpose flag, so the
+/// transpose happens while loading the operand instead of as a separate op.
+template <typename T>
+struct FoldVtransposePattern : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    auto aVtrans = lookThroughViewLikes(op.getA());
+    auto bVtrans = lookThroughViewLikes(op.getB());
+    if (aVtrans && !isSwappedInnermostShape(aVtrans.getSrc(), op.getA()))
+      aVtrans = hivm::VTransposeOp();
+    if (bVtrans && !isSwappedInnermostShape(bVtrans.getSrc(), op.getB()))
+      bVtrans = hivm::VTransposeOp();
+    if (!aVtrans && !bVtrans)
+      return rewriter.notifyMatchFailure(op, "no foldable vtranspose found");
+
+    auto newOp = rewriter.clone(*op.getOperation());
+    auto newMmad = cast<T>(newOp);
+    bool setVtransposeFolded = false;
+
+    auto foldSide = [&](hivm::VTransposeOp vtrans, bool isA) {
+      Value src = vtrans.getSrc();
+      if (auto convert = src.getDefiningOp<ConvertLayoutOp>())
+        if (convert.getSrcLayout().getDataLayout() ==
+                hivm::DataLayout::Fractal &&
+            convert.getDstLayout().isNDLayout())
+          setVtransposeFolded = true;
+      if (isA) {
+        newMmad.getAMutable().assign(src);
+        newMmad.setATransposeAttr(rewriter.getUnitAttr());
+      } else {
+        newMmad.getBMutable().assign(src);
+        newMmad.setBTransposeAttr(rewriter.getUnitAttr());
+      }
+    };
+
+    if (aVtrans)
+      foldSide(aVtrans, /*isA=*/true);
+    if (bVtrans)
+      foldSide(bVtrans, /*isA=*/false);
+    if (setVtransposeFolded)
+      newMmad->setAttr(kFractalVtransposeFolded, rewriter.getUnitAttr());
+
+    rewriter.replaceOp(op, newOp);
+    return success();
+  }
+};
+
+/// Return a ConvertLayoutOp with swapped innermost output_shape dims.
+Value createSwappedConvertLayout(PatternRewriter &rewriter,
+                                 ConvertLayoutOp oldConvert, Value newSource) {
+  auto mixedShape = oldConvert.getMixedOutputShape();
+  std::swap(mixedShape[mixedShape.size() - 2],
+            mixedShape[mixedShape.size() - 1]);
+
+  auto oldResultType = cast<RankedTensorType>(oldConvert.getResult().getType());
+  SmallVector<int64_t> newShape(oldResultType.getShape());
+  std::swap(newShape[newShape.size() - 2], newShape[newShape.size() - 1]);
+  auto newResultType =
+      RankedTensorType::get(newShape, oldResultType.getElementType());
+
+  rewriter.setInsertionPoint(oldConvert);
+  return rewriter
+      .create<ConvertLayoutOp>(oldConvert.getLoc(), newResultType, newSource,
+                               oldConvert.getSrcLayout(),
+                               oldConvert.getDstLayout(), mixedShape)
+      .getResult();
+}
+
+/// Absorb a vtranspose sitting behind a Fractal->ND convert_layout by swapping
+/// the innermost dims of the convert's output shape instead.
+std::optional<Value> absorbFractalVtranspose(PatternRewriter &rewriter,
+                                             ConvertLayoutOp oldConvert) {
+  if (oldConvert.getSrcLayout().getDataLayout() != hivm::DataLayout::Fractal ||
+      !oldConvert.getDstLayout().isNDLayout())
+    return std::nullopt;
+  if (!isa<RankedTensorType>(oldConvert.getResult().getType()))
+    return std::nullopt;
+
+  auto vtrans = oldConvert.getSource().getDefiningOp<hivm::VTransposeOp>();
+  if (!vtrans || !isInnermostAxisSwap(vtrans.getPermutation()))
+    return std::nullopt;
+  // A second transpose behind this one cancels it out; the single flag cannot
+  // express that, so leave such chains to the canonicalizer.
+  if (vtrans.getSrc().getDefiningOp<hivm::VTransposeOp>())
+    return std::nullopt;
+
+  return createSwappedConvertLayout(rewriter, oldConvert, vtrans.getSrc());
+}
+
+/// Absorb vtranspose ops behind a Fractal->ND convert_layout into the mmad
+/// transpose flags, and set kFractalVtransposeFolded so extractRealMKN treats
+/// those flags as real 2D transposes.
+template <typename T>
+struct FoldFractalVtransposePattern : public OpRewritePattern<T> {
+public:
+  using OpRewritePattern<T>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(T op,
+                                PatternRewriter &rewriter) const override {
+    std::optional<Value> newA, newB;
+    if (auto convert = op.getA().template getDefiningOp<ConvertLayoutOp>())
+      newA = absorbFractalVtranspose(rewriter, convert);
+    if (auto convert = op.getB().template getDefiningOp<ConvertLayoutOp>())
+      newB = absorbFractalVtranspose(rewriter, convert);
+    if (!newA && !newB)
+      return rewriter.notifyMatchFailure(
+          op, "no Fractal->ND convert_layout with vtranspose on A or B");
+
+    rewriter.modifyOpInPlace(op, [&]() {
+      if (newA) {
+        op.getAMutable().assign(*newA);
+        if (!op.getATranspose().has_value())
+          op.setATransposeAttr(rewriter.getUnitAttr());
+      }
+      if (newB) {
+        op.getBMutable().assign(*newB);
+        if (!op.getBTranspose().has_value())
+          op.setBTransposeAttr(rewriter.getUnitAttr());
+      }
+      op->setAttr(kFractalVtransposeFolded, rewriter.getUnitAttr());
+    });
+
+    return success();
+  }
+};
+
+void populateFoldVtransposePattern(RewritePatternSet &patterns) {
+  patterns.add<FoldVtransposePattern<hivm::MmadL1Op>,
+               FoldVtransposePattern<hivm::BatchMmadL1Op>,
+               FoldFractalVtransposePattern<hivm::MmadL1Op>,
+               FoldFractalVtransposePattern<hivm::BatchMmadL1Op>>(
+      patterns.getContext());
+}
+
 void populateSetRealMKNPattern(RewritePatternSet &patterns) {
   patterns.add<SetRealMKNPattern>(patterns.getContext());
 }
@@ -1596,6 +2065,9 @@ void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
   patterns.add<NormalizeMmadCCFPattern<hivm::MmadL1Op>,
                NormalizeMmadCCFPattern<hivm::BatchMmadL1Op>,
                NormalizeMmadCCFPattern<hivm::MmadMxL1Op>,
+               ReuseL0CAddIfPattern<hivm::MmadL1Op>,
+               ReuseL0CAddIfPattern<hivm::BatchMmadL1Op>,
+               ReuseL0CAddIfPattern<hivm::MmadMxL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::MmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::BatchMmadL1Op>,
                DecomposeMatmulWithBiasPattern<hivm::MmadMxL1Op>>(
@@ -1604,6 +2076,16 @@ void populateNormalizeMatmulPattern(RewritePatternSet &patterns) {
 
 LogicalResult runRegBasedNormalizeMatmul(func::FuncOp funcOp,
                                          MLIRContext *context) {
+  // Must run before SetRealMKN: folding a vtranspose into a_transpose/
+  // b_transpose changes which operand dims m, k and n are read from.
+  {
+    RewritePatternSet patterns(context);
+    populateFoldVtransposePattern(patterns);
+    GreedyRewriteConfig config = GreedyRewriteConfig();
+    config.strictMode = GreedyRewriteStrictness::ExistingOps;
+    if (failed(applyPatternsGreedily(funcOp, std::move(patterns), config)))
+      return failure();
+  }
   {
     RewritePatternSet patterns(context);
     populateSetRealMKNPattern(patterns);

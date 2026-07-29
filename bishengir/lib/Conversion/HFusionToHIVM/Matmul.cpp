@@ -70,27 +70,20 @@ public:
       }
     }
 
-    if (isRegBasedArch) {
-      if (auto l1ATransposeOp = mmadL1A_.getDefiningOp<linalg::TransposeOp>()) {
-        transposeA_ = true;
-        mmadL1A_ = l1ATransposeOp.getInput();
-      }
-      if (auto l1BTransposeOp = mmadL1B_.getDefiningOp<linalg::TransposeOp>()) {
-        transposeB_ = true;
-        mmadL1B_ = l1BTransposeOp.getInput();
-      }
-
-    } else {
+    // On reg-based arches the transpose is left in place here and absorbed
+    // later by NormalizeMatmul, which folds the hivm.hir.vtranspose this
+    // conversion emits into a_transpose/b_transpose.
+    if (!isRegBasedArch) {
       mmadL1A_ = stripUnrealizedConversionCast(mmadL1A_);
-      if (isTranposeLastAxis(mmadL1A_).has_value()) {
-          transposeA_ = true;
-          mmadL1A_ = isTranposeLastAxis(mmadL1A_).value();
+      if (auto l1ATransposeInput = isTranposeLastAxis(mmadL1A_)) {
+        transposeA_ = true;
+        mmadL1A_ = *l1ATransposeInput;
       }
 
       mmadL1B_ = stripUnrealizedConversionCast(mmadL1B_);
-      if (isTranposeLastAxis(mmadL1B_).has_value()) {
-          transposeB_ = true;
-          mmadL1B_ = isTranposeLastAxis(mmadL1B_).value();
+      if (auto l1BTransposeInput = isTranposeLastAxis(mmadL1B_)) {
+        transposeB_ = true;
+        mmadL1B_ = *l1BTransposeInput;
       }
 
       std::string wasI4ToI8ConversionStr{"enable_i4"};
@@ -599,8 +592,10 @@ struct MadLikeMapping<linalg::BatchMatmulOp> {
 /// Rewriting rule that combines Linalg Ops to create hivm mmadl1 like op
 ///   - linalg::MatmulOp is mapped to hivm::MmadL1Op while
 ///     linalg::BatchMatmulOp is mapped to hivm::BatchMmadL1Op.
-///   - If linalg::TransposeOp is the producer of L1 Tensors, transpose
-///     attribute will be added to hivm::MmadL1Op.
+///   - On mem-based arches, a linalg::TransposeOp producing an L1 tensor is
+///     absorbed into the transpose attribute of hivm::MmadL1Op. On reg-based
+///     arches that folding is done by NormalizeMatmul instead
+///     (FoldVtransposePattern / FoldFractalVtransposePattern).
 ///   - Init condition is extracted from the IR.
 ///   - A new init tensor is created and inserted before the outermost K loop.
 template <typename T>
