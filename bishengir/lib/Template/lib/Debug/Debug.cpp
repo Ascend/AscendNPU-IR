@@ -107,12 +107,12 @@ print_core_prefix_fmt(char *prefix, const int64_t len, const int8_t hex,
 [aicore] __attribute__((always_inline)) __ubuf__ uint8_t *
 cast_bool_to_uint8_t(__ubuf__ bool *ptr) {
   return reinterpret_cast<__ubuf__ uint8_t*>(ptr);
-} 
+}
 
 [aicore] __attribute__((always_inline)) __gm__ uint8_t *
 cast_bool_to_uint8_t(__gm__ bool *ptr) {
   return reinterpret_cast<__gm__ uint8_t*>(ptr);
-} 
+}
 
 template <typename T>
 [aicore] __attribute__((always_inline)) void
@@ -138,718 +138,106 @@ print_scalar_core(char *prefix, const int64_t len, T arg, const int8_t hex) {
   cce::printf("\n");
 }
 
-template <typename T, typename MEM_T>
+namespace { // anonymous namespace to keep helper functions private in TU
+template <std::size_t RANK>
 [aicore] __attribute__((always_inline)) void
-print_1d_core(char *prefix, const int64_t len, memref_t<MEM_T, 1> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-  // the fmt of nlast elem followed by `,`
-  const __gm__ char *nlast_elem_fmt;
-  // the fmt of last elem followed by `\n`
-  const __gm__ char *last_elem_fmt;
-
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-  cce::printf("[");
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i = 0; i < size0 - 1; i++) {
-      val = cast2f32(arg_ptr[i * stride0]);
-      cce::printf(nlast_elem_fmt, val);
-    }
-    val = cast2f32(arg_ptr[(size0 - 1) * stride0]);
-    cce::printf(last_elem_fmt, val);
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i = 0; i < size0; i++) {
-      int64_t byte_offset = i / 8;
-      int64_t bit_offset = i % 8;
-      char val = ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-      cce::printf(i < size0 - 1 ? nlast_elem_fmt : last_elem_fmt, val);
-    }
-  } else {
-    for (int64_t i = 0; i < size0 - 1; i++) {
-      cce::printf(nlast_elem_fmt, arg_ptr[i * stride0]);
-    }
-    cce::printf(last_elem_fmt, arg_ptr[(size0 - 1) * stride0]);
-  }
-  cce::printf("]\n");
+cce_printf_valid_tensor_type(int* cur_iters) {
+  cce::printf("(");
+  for (int i = 0; i < RANK - 2; ++i) {
+    cce::printf("%d, ", cur_iters[static_cast<std::size_t>(i)]);
+   }
+  cce::printf(":, :):\n");
 }
 
-template <typename T, typename MEM_T>
+// сompile‑time recursion over dimensions. the loop nest is fully unrolled
+// for each 'CUR_DIM' via if constexpr, which results in zero runtime recursion overhead.
+template<typename T, typename MEM_T, std::size_t CUR_DIM, std::size_t RANK>
 [aicore] __attribute__((always_inline)) void
-print_2d_core(char *prefix, const int64_t len, memref_t<MEM_T, 2> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-  const __gm__ char *nlast_elem_fmt;
-  const __gm__ char *last_elem_fmt;
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-  cce::printf("[");
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      cce::printf("[");
-      int64_t base = i0 * stride0;
-      for (int64_t i1 = 0; i1 < size1 - 1; i1++) {
-        int64_t i = base + i1 * stride1;
-        val = cast2f32(arg_ptr[i]);
-        cce::printf(nlast_elem_fmt, val);
-      }
-      int64_t i = base + (size1 - 1) * stride1;
-      val = cast2f32(arg_ptr[i]);
-      cce::printf(last_elem_fmt, val);
-      cce::printf(i0 < size0 - 1 ? "],\n" : "]");
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      cce::printf("[");
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        int64_t i = i0 * stride0 + i1 * stride1;
-        int64_t byte_offset = i / 8;
-        int64_t bit_offset = i % 8;
-        char val = ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-        cce::printf(i1 < size1 - 1 ? nlast_elem_fmt : last_elem_fmt, val);
-      }
-      cce::printf(i0 < size0 - 1 ? "],\n" : "]");
-    }
-  } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      cce::printf("[");
-      int64_t base = i0 * stride0;
-      for (int64_t i1 = 0; i1 < size1 - 1; i1++) {
-        int64_t i = base + i1 * stride1;
-        cce::printf(nlast_elem_fmt, arg_ptr[i]);
-      }
-      int64_t i = base + (size1 - 1) * stride1;
-      cce::printf(last_elem_fmt, arg_ptr[i]);
-      cce::printf(i0 < size0 - 1 ? "],\n" : "]");
-    }
+print_nd_core_recursive(const int64_t len, memref_t<MEM_T, RANK> *arg,
+                        const int8_t hex, int64_t base,
+                        int* cur_iters,
+                        const __gm__ char** last_elem_fmt,
+                        const __gm__ char** nlast_elem_fmt,
+                        MEM_T *arg_ptr) {
+  // if we are on the last recursion step, then CUR_DIM == RANK.
+  // but we can't arg->sizes[RANK] if size(arg->sizes) == RANK
+  // so we need clamped CUR_DIM
+  auto clamped_cur_dim = (CUR_DIM == RANK) ? CUR_DIM - 1 : CUR_DIM;
+  auto size_i = arg->sizes[clamped_cur_dim];
+  auto size_i_dec = arg->sizes[(clamped_cur_dim - 1) >= 0 ? clamped_cur_dim - 1 : 0];
+  auto stride_i = arg->strides[clamped_cur_dim];
+  auto stride_i_dec = arg->strides[(clamped_cur_dim - 1) >= 0 ? clamped_cur_dim - 1 : 0];
+  float val;
+  if constexpr (RANK > 2 && CUR_DIM == RANK - 2) {
+    cce_printf_valid_tensor_type<RANK>(cur_iters);
   }
-  cce::printf("]\n");
-}
-
-template <typename T, typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-print_3d_core(char *prefix, const int64_t len, memref_t<MEM_T, 3> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-  const __gm__ char *nlast_elem_fmt;
-  const __gm__ char *last_elem_fmt;
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      cce::printf("(%d, :, :):\n", i0);
-      cce::printf("[");
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        cce::printf("[");
-        int64_t base = i0 * stride0 + i1 * stride1;
-        for (int64_t i2 = 0; i2 < size2 - 1; i2++) {
-          int64_t i = base + i2 * stride2;
-          val = cast2f32(arg_ptr[i]);
-          cce::printf(nlast_elem_fmt, val);
-        }
-        int64_t i = base + (size2 - 1) * stride2;
-        val = cast2f32(arg_ptr[i]);
-        cce::printf(last_elem_fmt, val);
-        cce::printf(i1 < size1 - 1 ? "],\n" : "]");
-      }
-      cce::printf("]\n");
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      cce::printf("(%d, :, :):\n", i0);
-      cce::printf("[");
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        cce::printf("[");
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          int64_t i = i0 * stride0 + i1 * stride1 + i2 * stride2;
-          int64_t byte_offset = i / 8;
-          int64_t bit_offset = i % 8;
-          char val = ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-          cce::printf(i2 < size2 - 1 ? nlast_elem_fmt : last_elem_fmt, val);
-        }
-        cce::printf(i1 < size1 - 1 ? "],\n" : "]");
-      }
-      cce::printf("]\n");
-    }
-  } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      cce::printf("(%d, :, :):\n", i0);
-      cce::printf("[");
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        cce::printf("[");
-        int64_t base = i0 * stride0 + i1 * stride1;
-        for (int64_t i2 = 0; i2 < size2 - 1; i2++) {
-          int64_t i = base + i2 * stride2;
-          cce::printf(nlast_elem_fmt, arg_ptr[i]);
-        }
-        int64_t i = base + (size2 - 1) * stride2;
-        cce::printf(last_elem_fmt, arg_ptr[i]);
-        cce::printf(i1 < size1 - 1 ? "],\n" : "]");
-      }
-      cce::printf("]\n");
-    }
+  if constexpr (CUR_DIM == RANK - 2 || CUR_DIM == RANK - 1 || RANK == 1) {
+    cce::printf("[");
   }
-}
-
-template <typename T, typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-print_4d_core(char *prefix, const int64_t len, memref_t<MEM_T, 4> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-
-  const __gm__ char *nlast_elem_fmt;
-  const __gm__ char *last_elem_fmt;
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  const int64_t size3 = arg->sizes[3];
-  const int64_t stride3 = arg->strides[3];
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        cce::printf("(%d, %d, :, :):\n", i0, i1);
-        cce::printf("[");
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          cce::printf("[");
-          int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2;
-          for (int64_t i3 = 0; i3 < size3 - 1; i3++) {
-            int64_t i = base + i3 * stride3;
-            val = cast2f32(arg_ptr[i]);
-            cce::printf(nlast_elem_fmt, val);
-          }
-          int64_t i = base + (size3 - 1) * stride3;
-          val = cast2f32(arg_ptr[i]);
-          cce::printf(last_elem_fmt, val);
-          cce::printf(i2 < size2 - 1 ? "],\n" : "]");
-        }
-        cce::printf("]\n");
+  if constexpr (CUR_DIM == RANK - 1) {
+    if constexpr (std::is_same_v<T, half> ||
+                  std::is_same_v<T, bfloat16_t> ||
+                  std::is_same_v<T, float>) {
+      for (int iter = 0; iter < size_i - 1; ++iter) {
+        val = cast2f32(arg_ptr[base + iter * stride_i]);
+        cce::printf(*nlast_elem_fmt, val);
       }
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        cce::printf("(%d, %d, :, :):\n", i0, i1);
-        cce::printf("[");
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          cce::printf("[");
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            int64_t i =
-                i0 * stride0 + i1 * stride1 + i2 * stride2 + i3 * stride3;
-            int64_t byte_offset = i / 8;
-            int64_t bit_offset = i % 8;
-            char val = ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-            cce::printf(i3 < size3 - 1 ? nlast_elem_fmt : last_elem_fmt, val);
-          }
-          cce::printf(i2 < size2 - 1 ? "],\n" : "]");
-        }
-        cce::printf("]\n");
-      }
-    }
-  } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        cce::printf("(%d, %d, :, :):\n", i0, i1);
-        cce::printf("[");
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          cce::printf("[");
-          int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2;
-          for (int64_t i3 = 0; i3 < size3 - 1; i3++) {
-            int64_t i = base + i3 * stride3;
-            cce::printf(nlast_elem_fmt, arg_ptr[i]);
-          }
-          int64_t i = base + (size3 - 1) * stride3;
-          cce::printf(last_elem_fmt, arg_ptr[i]);
-          cce::printf(i2 < size2 - 1 ? "],\n" : "]");
-        }
-        cce::printf("]\n");
-      }
-    }
-  }
-}
-
-template <typename T, typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-print_5d_core(char *prefix, const int64_t len, memref_t<MEM_T, 5> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-
-  const __gm__ char *nlast_elem_fmt;
-  const __gm__ char *last_elem_fmt;
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  const int64_t size3 = arg->sizes[3];
-  const int64_t stride3 = arg->strides[3];
-  const int64_t size4 = arg->sizes[4];
-  const int64_t stride4 = arg->strides[4];
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          cce::printf("(%d, %d, %d, :, :):\n", i0, i1, i2);
-          cce::printf("[");
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            cce::printf("[");
-            int64_t base =
-                i0 * stride0 + i1 * stride1 + i2 * stride2 + i3 * stride3;
-            for (int64_t i4 = 0; i4 < size4 - 1; i4++) {
-              int64_t i = base + i4 * stride4;
-              val = cast2f32(arg_ptr[i]);
-              cce::printf(nlast_elem_fmt, val);
-            }
-            int64_t i = base + (size4 - 1) * stride4;
-            val = cast2f32(arg_ptr[i]);
-            cce::printf(last_elem_fmt, val);
-            cce::printf(i3 < size3 - 1 ? "],\n" : "]");
-          }
-          cce::printf("]\n");
-        }
-      }
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          cce::printf("(%d, %d, %d, :, :):\n", i0, i1, i2);
-          cce::printf("[");
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            cce::printf("[");
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              int64_t i = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                          i3 * stride3 + i4 * stride4;
-              int64_t byte_offset = i / 8;
-              int64_t bit_offset = i % 8;
-              char val =
-                  ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-              cce::printf(i4 < size4 - 1 ? nlast_elem_fmt : last_elem_fmt, val);
-            }
-            cce::printf(i3 < size3 - 1 ? "],\n" : "]");
-          }
-          cce::printf("]\n");
-        }
-      }
-    }
-  } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          cce::printf("(%d, %d, %d, :, :):\n", i0, i1, i2);
-          cce::printf("[");
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            cce::printf("[");
-            int64_t base =
-                i0 * stride0 + i1 * stride1 + i2 * stride2 + i3 * stride3;
-            for (int64_t i4 = 0; i4 < size4 - 1; i4++) {
-              int64_t i = base + i4 * stride4;
-              cce::printf(nlast_elem_fmt, arg_ptr[i]);
-            }
-            int64_t i = base + (size4 - 1) * stride4;
-            cce::printf(last_elem_fmt, arg_ptr[i]);
-            cce::printf(i3 < size3 - 1 ? "],\n" : "]");
-          }
-          cce::printf("]\n");
-        }
-      }
-    }
-  }
-}
-
-template <typename T, typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-print_6d_core(char *prefix, const int64_t len, memref_t<MEM_T, 6> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-  const __gm__ char *nlast_elem_fmt;
-  const __gm__ char *last_elem_fmt;
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  const int64_t size3 = arg->sizes[3];
-  const int64_t stride3 = arg->strides[3];
-  const int64_t size4 = arg->sizes[4];
-  const int64_t stride4 = arg->strides[4];
-  const int64_t size5 = arg->sizes[5];
-  const int64_t stride5 = arg->strides[5];
-
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            cce::printf("(%d, %d, %d, %d, :, :):\n", i0, i1, i2, i3);
-            cce::printf("[");
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              cce::printf("[");
-              int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                             i3 * stride3 + i4 * stride4;
-              for (int64_t i5 = 0; i5 < size5 - 1; i5++) {
-                int64_t i = base + i5 * stride5;
-                val = cast2f32(arg_ptr[i]);
-                cce::printf(nlast_elem_fmt, val);
-              }
-              int64_t i = base + (size5 - 1) * stride5;
-              val = cast2f32(arg_ptr[i]);
-              cce::printf(last_elem_fmt, val);
-              cce::printf(i4 < size4 - 1 ? "],\n" : "]");
-            }
-            cce::printf("]\n");
-          }
-        }
-      }
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            cce::printf("(%d, %d, %d, %d, :, :):\n", i0, i1, i2, i3);
-            cce::printf("[");
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              cce::printf("[");
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                int64_t i = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                            i3 * stride3 + i4 * stride4 + i5 * stride5;
-                int64_t byte_offset = i / 8;
-                int64_t bit_offset = i % 8;
-                char val =
-                    ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-                cce::printf(i5 < size5 - 1 ? nlast_elem_fmt : last_elem_fmt,
-                            val);
-              }
-              cce::printf(i4 < size4 - 1 ? "],\n" : "]");
-            }
-            cce::printf("]\n");
-          }
-        }
-      }
-    }
-  } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            cce::printf("(%d, %d, %d, %d, :, :):\n", i0, i1, i2, i3);
-            cce::printf("[");
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              cce::printf("[");
-              int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                             i3 * stride3 + i4 * stride4;
-              for (int64_t i5 = 0; i5 < size5 - 1; i5++) {
-                int64_t i = base + i5 * stride5;
-                cce::printf(nlast_elem_fmt, arg_ptr[i]);
-              }
-              int64_t i = base + (size5 - 1) * stride5;
-              cce::printf(last_elem_fmt, arg_ptr[i]);
-              cce::printf(i4 < size4 - 1 ? "],\n" : "]");
-            }
-            cce::printf("]\n");
-          }
-        }
-      }
-    }
-  }
-}
-
-template <typename T, typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-print_7d_core(char *prefix, const int64_t len, memref_t<MEM_T, 7> *arg,
-              const int8_t hex) {
-  pipe_barrier(PIPE_ALL);
-
-  const __gm__ char *nlast_elem_fmt;
-  const __gm__ char *last_elem_fmt;
-  print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  const int64_t size3 = arg->sizes[3];
-  const int64_t stride3 = arg->strides[3];
-  const int64_t size4 = arg->sizes[4];
-  const int64_t stride4 = arg->strides[4];
-  const int64_t size5 = arg->sizes[5];
-  const int64_t stride5 = arg->strides[5];
-  const int64_t size6 = arg->sizes[6];
-  const int64_t stride6 = arg->strides[6];
-
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              cce::printf("(%d, %d, %d, %d, %d, :, :):\n", i0, i1, i2, i3, i4);
-              cce::printf("[");
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                cce::printf("[");
-                int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                               i3 * stride3 + i4 * stride4 + i5 * stride5;
-                for (int64_t i6 = 0; i6 < size6 - 1; i6++) {
-                  int64_t i = base + i6 * stride6;
-                  val = cast2f32(arg_ptr[i]);
-                  cce::printf(nlast_elem_fmt, val);
-                }
-                int64_t i = base + (size6 - 1) * stride6;
-                val = cast2f32(arg_ptr[i]);
-                cce::printf(last_elem_fmt, val);
-                cce::printf(i5 < size5 - 1 ? "],\n" : "]");
-              }
-              cce::printf("]\n");
-            }
-          }
-        }
-      }
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              cce::printf("(%d, %d, %d, %d, %d, :, :):\n", i0, i1, i2, i3, i4);
-              cce::printf("[");
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                cce::printf("[");
-                for (int64_t i6 = 0; i6 < size6; i6++) {
-                  int64_t i = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                              i3 * stride3 + i4 * stride4 + i5 * stride5 +
-                              i6 * stride6;
-                  int64_t byte_offset = i / 8;
-                  int64_t bit_offset = i % 8;
-                  char val =
-                      ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-                  cce::printf(i6 < size6 - 1 ? nlast_elem_fmt : last_elem_fmt,
+      int64_t closing_offset = base + (size_i - 1) * stride_i;
+      val = cast2f32(arg_ptr[closing_offset]);
+      cce::printf(*last_elem_fmt, val);
+      cce::printf(cur_iters[CUR_DIM-1] < size_i_dec - 1 ? "],\n" : "]");
+    } else if constexpr (std::is_same_v<T, bool>) {
+      auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
+      for (int iter = 0; iter < size_i; ++iter) {
+        auto offset = base + iter * stride_i;
+        int64_t byte_offset = offset / 8;
+        int64_t bit_offset = offset % 8;
+        char val =  ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
+                  cce::printf(iter < size_i - 1 ? *nlast_elem_fmt : *last_elem_fmt,
                               val);
-                }
-                cce::printf(i5 < size5 - 1 ? "],\n" : "]");
-              }
-              cce::printf("]\n");
-            }
-          }
-        }
       }
+      cce::printf(cur_iters[CUR_DIM-1] < size_i_dec - 1 ? "],\n" : "]");
+    } else {
+      for (int iter = 0; iter < size_i - 1; ++iter) {
+        cce::printf(*nlast_elem_fmt, arg_ptr[base + iter * stride_i]);
+      }
+      int64_t closing_offset = base + (size_i - 1) * stride_i;
+      cce::printf(*last_elem_fmt, arg_ptr[closing_offset]);
+      cce::printf(cur_iters[CUR_DIM-1] < size_i_dec - 1 ? "],\n" : "]");
     }
   } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              cce::printf("(%d, %d, %d, %d, %d, :, :):\n", i0, i1, i2, i3, i4);
-              cce::printf("[");
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                cce::printf("[");
-                int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                               i3 * stride3 + i4 * stride4 + i5 * stride5;
-                for (int64_t i6 = 0; i6 < size6 - 1; i6++) {
-                  int64_t i = base + i6 * stride6;
-                  cce::printf(nlast_elem_fmt, arg_ptr[i]);
-                }
-                int64_t i = base + (size6 - 1) * stride6;
-                cce::printf(last_elem_fmt, arg_ptr[i]);
-                cce::printf(i5 < size5 - 1 ? "],\n" : "]");
-              }
-              cce::printf("]\n");
-            }
-          }
-        }
-      }
+    for (int iter = 0; iter < size_i; ++iter) {
+    // we count base until we finally get to the last recursive layer and the next
+    // call is going to print the contents of array, iterating by base + i * stride_(n-1)
+    auto new_base = base + iter * stride_i;
+    cur_iters[static_cast<std::size_t>(CUR_DIM)] = iter;
+    print_nd_core_recursive<T, MEM_T, CUR_DIM + 1, RANK>(len, arg, hex, new_base, cur_iters,
+                                                                                  last_elem_fmt,
+                                                                                  nlast_elem_fmt,
+                                                                                  arg_ptr);
     }
   }
+  if constexpr (CUR_DIM == RANK - 2 || RANK == 1) {
+    cce::printf("]\n");
+  }
 }
+} // end of anonymous namespace
 
-template <typename T, typename MEM_T>
+template <typename T, typename MEM_T, std::size_t RANK>
 [aicore] __attribute__((always_inline)) void
-print_8d_core(char *prefix, const int64_t len, memref_t<MEM_T, 8> *arg,
-              const int8_t hex) {
+print_nd_core(char *prefix, const int64_t len, memref_t<MEM_T, RANK> *arg,
+               const int8_t hex) {
   pipe_barrier(PIPE_ALL);
-
   const __gm__ char *nlast_elem_fmt;
   const __gm__ char *last_elem_fmt;
   print_core_prefix_fmt<T>(prefix, len, hex, &nlast_elem_fmt, &last_elem_fmt);
-
   auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  const int64_t size3 = arg->sizes[3];
-  const int64_t stride3 = arg->strides[3];
-  const int64_t size4 = arg->sizes[4];
-  const int64_t stride4 = arg->strides[4];
-  const int64_t size5 = arg->sizes[5];
-  const int64_t stride5 = arg->strides[5];
-  const int64_t size6 = arg->sizes[6];
-  const int64_t stride6 = arg->strides[6];
-  const int64_t size7 = arg->sizes[7];
-  const int64_t stride7 = arg->strides[7];
-
-  if constexpr (std::is_same<T, half>::value ||
-                std::is_same<T, bfloat16_t>::value ||
-                std::is_same<T, float>::value) {
-    float val;
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                cce::printf("(%d, %d, %d, %d, %d, %d, :, :):\n", i0, i1, i2, i3,
-                            i4, i5);
-                cce::printf("[");
-                for (int64_t i6 = 0; i6 < size6; i6++) {
-                  cce::printf("[");
-                  int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                                 i3 * stride3 + i4 * stride4 + i5 * stride5 +
-                                 i6 * stride6;
-                  for (int64_t i7 = 0; i7 < size7 - 1; i7++) {
-                    int64_t i = base + i7 * stride7;
-                    val = cast2f32(arg_ptr[i]);
-                    cce::printf(nlast_elem_fmt, val);
-                  }
-                  int64_t i = base + (size7 - 1) * stride7;
-                  val = cast2f32(arg_ptr[i]);
-                  cce::printf(last_elem_fmt, val);
-                  cce::printf(i6 < size6 - 1 ? "],\n" : "]");
-                }
-                cce::printf("]\n");
-              }
-            }
-          }
-        }
-      }
-    }
-  } else if constexpr (std::is_same<T, bool>::value) {
-    auto *byte_ptr = cast_bool_to_uint8_t(arg_ptr);
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                cce::printf("(%d, %d, %d, %d, %d, %d, :, :):\n", i0, i1, i2, i3,
-                            i4, i5);
-                cce::printf("[");
-                for (int64_t i6 = 0; i6 < size6; i6++) {
-                  cce::printf("[");
-                  for (int64_t i7 = 0; i7 < size7; i7++) {
-                    int64_t i = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                                i3 * stride3 + i4 * stride4 + i5 * stride5 +
-                                i6 * stride6 + i7 * stride7;
-                    int64_t byte_offset = i / 8;
-                    int64_t bit_offset = i % 8;
-                    char val =
-                        ((byte_ptr[byte_offset]) >> bit_offset) & 1 ? 'T' : 'F';
-                    cce::printf(i7 < size7 - 1 ? nlast_elem_fmt : last_elem_fmt,
-                                val);
-                  }
-                  cce::printf(i6 < size6 - 1 ? "],\n" : "]");
-                }
-                cce::printf("]\n");
-              }
-            }
-          }
-        }
-      }
-    }
-  } else {
-    for (int64_t i0 = 0; i0 < size0; i0++) {
-      for (int64_t i1 = 0; i1 < size1; i1++) {
-        for (int64_t i2 = 0; i2 < size2; i2++) {
-          for (int64_t i3 = 0; i3 < size3; i3++) {
-            for (int64_t i4 = 0; i4 < size4; i4++) {
-              for (int64_t i5 = 0; i5 < size5; i5++) {
-                cce::printf("(%d, %d, %d, %d, %d, %d, :, :):\n", i0, i1, i2, i3,
-                            i4, i5);
-                cce::printf("[");
-                for (int64_t i6 = 0; i6 < size6; i6++) {
-                  cce::printf("[");
-                  int64_t base = i0 * stride0 + i1 * stride1 + i2 * stride2 +
-                                 i3 * stride3 + i4 * stride4 + i5 * stride5 +
-                                 i6 * stride6;
-                  for (int64_t i7 = 0; i7 < size7 - 1; i7++) {
-                    int64_t i = base + i7 * stride7;
-                    cce::printf(nlast_elem_fmt, arg_ptr[i]);
-                  }
-                  int64_t i = base + (size7 - 1) * stride7;
-                  cce::printf(last_elem_fmt, arg_ptr[i]);
-                  cce::printf(i6 < size6 - 1 ? "],\n" : "]");
-                }
-                cce::printf("]\n");
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+  int curIters[RANK] = {};
+  print_nd_core_recursive<T, MEM_T, 0, RANK>(len, arg, hex, 0,        // base per depth param
+                                                            curIters, // C-array of cycle iters per recursion depth
+                                                            &last_elem_fmt,
+                                                            &nlast_elem_fmt,
+                                                            arg_ptr);
 }
 
 template <typename T>
@@ -899,91 +287,40 @@ assert_scalar_core(char *prefix, const int64_t len, bool arg) {
   npuir_cce_assert(arg, prefix, len);
 }
 
-template <typename MEM_T>
+namespace { // anonymous namespace to keep helper functions private in TU
+template<typename MEM_T, std::size_t CUR_DIM, std::size_t RANK>
 [aicore] __attribute__((always_inline)) void
-assert_1d_core(char *prefix, const int64_t len, memref_t<MEM_T, 1> *arg) {
-  pipe_barrier(PIPE_ALL);
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  for (int64_t i = 0; i < size0; i++) {
-    if (!arg_ptr[i * stride0]) {
-      npuir_cce_assert(false, prefix, len);
-    }
-  }
-}
+assert_nd_core_recursive(char *prefix, const int64_t len, memref_t<MEM_T, RANK> *arg, int64_t base,
+                                                                                      MEM_T *arg_ptr) {
+  auto clamped_cur_dim = (CUR_DIM == RANK) ? CUR_DIM - 1: CUR_DIM;
+  auto size_i = arg->sizes[clamped_cur_dim];
+  auto stride_i = arg->strides[clamped_cur_dim];
 
-template <typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-assert_2d_core(char *prefix, const int64_t len, memref_t<MEM_T, 2> *arg) {
-  pipe_barrier(PIPE_ALL);
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  for (int64_t i0 = 0; i0 < size0; i0++) {
-    int64_t base0 = i0 * stride0;
-    for (int64_t i1 = 0; i1 < size1; i1++) {
-      if (!arg_ptr[base0 + i1 * stride1]) {
-        npuir_cce_assert(false, prefix, len);
-      }
-    }
-  }
-}
+  if constexpr (CUR_DIM == RANK - 1) {
+    for (int iter = 0; iter < size_i; ++iter) {
+      if (!arg_ptr[base + iter * stride_i]) {
+         npuir_cce_assert(false, prefix, len);
+       }
+     }
+       } else {
+    for (int iter = 0; iter < size_i; ++iter) {
+      auto new_base = base + iter * stride_i;
+      assert_nd_core_recursive<MEM_T, CUR_DIM + 1, RANK>(prefix, len, arg, new_base,
+                                                                           arg_ptr);
+     }
+   }
+ }
+} // end of anonymous namespace
 
-template <typename MEM_T>
+template<typename MEM_T, std::size_t RANK>
 [aicore] __attribute__((always_inline)) void
-assert_3d_core(char *prefix, const int64_t len, memref_t<MEM_T, 3> *arg) {
-  pipe_barrier(PIPE_ALL);
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  for (int64_t i0 = 0; i0 < size0; i0++) {
-    int64_t base0 = i0 * stride0;
-    for (int64_t i1 = 0; i1 < size1; i1++) {
-      int64_t base1 = base0 + i1 * stride1;
-      for (int64_t i2 = 0; i2 < size2; i2++) {
-        if (!arg_ptr[base1 + i2 * stride2]) {
-          npuir_cce_assert(false, prefix, len);
-        }
-      }
-    }
-  }
-}
+assert_nd_core(char *prefix, const int64_t len, memref_t<MEM_T, RANK> *arg) {
+   pipe_barrier(PIPE_ALL);
+   auto arg_ptr = arg->aligned + arg->offset;
+   assert_nd_core_recursive<MEM_T, 0, RANK>(prefix, len, arg, 0, // base param
+                                                         arg_ptr);
+ }
 
-template <typename MEM_T>
-[aicore] __attribute__((always_inline)) void
-assert_4d_core(char *prefix, const int64_t len, memref_t<MEM_T, 4> *arg) {
-  pipe_barrier(PIPE_ALL);
-  auto arg_ptr = arg->aligned + arg->offset;
-  const int64_t size0 = arg->sizes[0];
-  const int64_t stride0 = arg->strides[0];
-  const int64_t size1 = arg->sizes[1];
-  const int64_t stride1 = arg->strides[1];
-  const int64_t size2 = arg->sizes[2];
-  const int64_t stride2 = arg->strides[2];
-  const int64_t size3 = arg->sizes[3];
-  const int64_t stride3 = arg->strides[3];
-  for (int64_t i0 = 0; i0 < size0; i0++) {
-    int64_t base0 = i0 * stride0;
-    for (int64_t i1 = 0; i1 < size1; i1++) {
-      int64_t base1 = base0 + i1 * stride1;
-      for (int64_t i2 = 0; i2 < size2; i2++) {
-        int64_t base2 = base1 + i2 * stride2;
-        for (int64_t i3 = 0; i3 < size3; i3++) {
-          if (!arg_ptr[base2 + i3 * stride3]) {
-            npuir_cce_assert(false, prefix, len);
-          }
-        }
-      }
-    }
-  }
-}
 
 extern "C" {
 // register __gm__ versions for both cube core and vector core
