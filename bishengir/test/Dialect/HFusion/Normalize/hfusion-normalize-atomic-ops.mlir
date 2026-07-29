@@ -21,6 +21,7 @@ func.func @test_NormalizeCumOpF16ToF32Type_cumprod_f16(%arg0: tensor<4x64xf16>, 
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_or_i16
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi16>
@@ -28,7 +29,8 @@ func.func @test_NormalizeCumOpF16ToF32Type_cumprod_f16(%arg0: tensor<4x64xf16>, 
 // CHECK: %[[RES:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vor>} ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
-// CHECK-NOT: bufferization.to_memref
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_or_i16(%arg0 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi16>) {
@@ -44,6 +46,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_umax_i16
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi16>
@@ -51,7 +54,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_unsigned>} ins(%[[LHS]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
-// CHECK-NOT: bufferization.to_memref
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_umax_i16(%arg0 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi16>) {
@@ -67,6 +71,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_max_i64
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[LHS:.*]] = bufferization.to_tensor %{{.*}} restrict writable : memref<256xi64>
@@ -74,7 +79,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[RES:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<max_signed>} ins(%[[LHS]], %{{.*}} : tensor<256xi64>, tensor<256xi64>) outs(%[[DST]] : tensor<256xi64>) -> tensor<256xi64>
 // CHECK: bufferization.materialize_in_destination %[[RES]] in writable %{{.*}} : (tensor<256xi64>, memref<256xi64, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
-// CHECK-NOT: bufferization.to_memref
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_max_i64(%arg0 : memref<?xi64> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi64>) {
@@ -106,6 +112,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_and
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_9:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xi16, strided<[1], offset: ?>> to memref<256xi16>
@@ -114,7 +121,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[VAL_11:.*]] = hfusion.elemwise_binary {fun = #hfusion.binary_fn<vand>} ins(%[[VAL_10]], %{{.*}} : tensor<256xi16>, tensor<256xi16>) outs(%[[DST]] : tensor<256xi16>) -> tensor<256xi16>
 // CHECK: bufferization.materialize_in_destination %[[VAL_11]] in writable %[[VAL_4]] : (tensor<256xi16>, memref<256xi16, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
-// CHECK-NOT: bufferization.to_memref
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_and(%arg0 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi16>) {
@@ -130,6 +138,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_add_i64
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_9:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xi64, strided<[1], offset: ?>> to memref<256xi64>
@@ -138,7 +147,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[VAL_11:.*]] = linalg.elemwise_binary {fun = #linalg.binary_fn<add>} ins(%[[VAL_10]], %{{.*}} : tensor<256xi64>, tensor<256xi64>) outs(%[[DST]] : tensor<256xi64>) -> tensor<256xi64>
 // CHECK: bufferization.materialize_in_destination %[[VAL_11]] in writable %[[VAL_4]] : (tensor<256xi64>, memref<256xi64, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
-// CHECK-NOT: bufferization.to_memref
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_add_i64(%arg0 : memref<?xi64> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi64>) {
@@ -154,6 +164,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_add_fp8
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_9:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<256xf8E4M3FN, strided<[1], offset: ?>> to memref<256xf8E4M3FN>
@@ -163,7 +174,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[VAL_13:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[VAL_12]] : tensor<256xf32>) outs(%{{.*}} : tensor<256xf8E4M3FN>) -> tensor<256xf8E4M3FN>
 // CHECK: bufferization.materialize_in_destination %[[VAL_13]] in writable %[[VAL_4]] : (tensor<256xf8E4M3FN>, memref<256xf8E4M3FN, strided<[1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
-// CHECK-NOT: bufferization.to_memref
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 // CHECK-NOT: hfusion.store
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_add_fp8(%arg0 : memref<?xf8E4M3FN> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xf8E4M3FN>) {
@@ -179,6 +191,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_Elemwise_atomic_dyn_and
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_9:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_9]] : memref<1xi64>)
 // CHECK: memref.copy %[[VAL_4:.*]], %[[VAL_6:.*]] : memref<?x?xi16, strided<[512, 1], offset: ?>> to memref<?x?xi16, strided<[256, 1]>>
@@ -187,6 +200,8 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // CHECK: %[[VAL_12:.*]] = tensor.extract_slice %[[VAL_11:.*]][0, 0] [%{{.*}}, %{{.*}}] [1, 1] : tensor<12x256xi16> to tensor<?x?xi16>
 // CHECK: bufferization.materialize_in_destination %[[VAL_12]] in writable %[[VAL_4]] : (tensor<?x?xi16>, memref<?x?xi16, strided<[512, 1], offset: ?>>) -> ()
 // CHECK: hivm.hir.sync_block_unlock lock_var(%[[VAL_9]] : memref<1xi64>)
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
 module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
   func.func @test_NormalizeAtomicOps_Elemwise_atomic_dyn_and(%arg0 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg1 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg2: index, %arg3: index, %arg4: index) {
     %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%arg4], sizes: [12, 256], strides: [512, 1] : memref<?xi16> to memref<12x256xi16, strided<[512, 1], offset: ?>>
@@ -204,6 +219,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_CAS_atomic_cas_i16x4
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
 // CHECK: %[[CMP:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%{{.*}}, %{{.*}} : tensor<4xi16>, tensor<4xi16>) outs(%{{.*}} : tensor<4xi1>) -> tensor<4xi1>
@@ -227,6 +243,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL:   func.func @test_NormalizeAtomicOps_CAS_triton_atomic_cas_1D
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_10:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_10]] : memref<1xi64>)
 // CHECK: %[[VAL_14:.*]] = hfusion.compare {compare_fn = #hfusion.compare_fn<veq>} ins(%[[VAL_12:.*]], %{{.*}} : tensor<1xi64>, tensor<1xi64>) outs(%{{.*}} : tensor<1xi1>) -> tensor<1xi1>
@@ -250,6 +267,7 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
 // -----
 
 // CHECK-LABEL: func.func @test_NormalizeAtomicOps_CAS_triton_atomic_cas_fp8
+// CHECK: scope.scope : () -> () {
 // CHECK: %[[VAL_10:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
 // CHECK: hivm.hir.sync_block_lock lock_var(%[[VAL_10]] : memref<1xi64>)
 // CHECK-DAG: %[[VAL_12:.*]] = hfusion.cast {cast = #hfusion.type_fn<cast_signed>, enable_overflow = true, enable_saturate = false, round_mode = #hfusion.round_mode<rint>, unsigned_mode = #hfusion.unsigned_mode<si2si>} ins(%[[VAL_11:.*]] : tensor<1xf8E4M3FN>) outs(%{{.*}} : tensor<1xf32>) -> tensor<1xf32>
@@ -313,6 +331,41 @@ module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
     %ub_tensor = bufferization.to_tensor %arg3 restrict writable : memref<1xi64>
     %ub = bufferization.to_memref %ub_tensor : memref<1xi64>
     hfusion.atomic_xchg ins(%ub: memref<1xi64>) outs(%arg2 : memref<1xi64>)
+    return
+  }
+}
+
+// -----
+
+// CAS decomposition must wrap the read-modify-write in a VECTOR-tagged scope so
+// SplitMixKernel routes the whole group (copies + scratch + vcmp/vsel) to the
+// vector core. Otherwise the copies/scratch stay in _mix_aic (cbuf) and the
+// value->scratch copy becomes an illegal cbuf->cbuf on Ascend950. The scratch
+// allocs must be INSIDE the scope (not before it) or they leak into _mix_aic.
+// Interior ops are NOT individually tagged; the scope itself carries
+// tcore_type=VECTOR, and CrossCoreGSS resolves interior ops' core type via the
+// tagged scope ancestor (resolveCoreTypeViaScopeAncestor) instead of
+// defaulting memref.copy/alloc to CUBE_OR_VECTOR.
+// CHECK-LABEL: func.func @test_NormalizeAtomicOps_CAS_decomposed_scope
+// CHECK-NOT: memref.alloc
+// CHECK: scope.scope : () -> () {
+// CHECK: memref.alloc() : memref<256xi16>
+// CHECK: memref.alloc() : memref<256xi16>
+// CHECK: memref.alloc() : memref<256xi16>
+// CHECK: %[[LOCK:.*]] = hivm.hir.create_sync_block_lock : memref<1xi64>
+// CHECK: hivm.hir.sync_block_lock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: memref.copy %{{.*}}, %{{.*}} : memref<256xi16, strided<[1], offset: ?>> to memref<256xi16>
+// CHECK: hivm.hir.sync_block_unlock lock_var(%[[LOCK]] : memref<1xi64>)
+// CHECK: scope.return
+// CHECK: } {hivm.tcore_type = #hivm.tcore_type<VECTOR>}
+module attributes {hacc.target = #hacc.target<"Ascend950PR_9589">} {
+  func.func @test_NormalizeAtomicOps_CAS_decomposed_scope(%arg0 : memref<?xi16> {tt.divisibility = 16 : i32}, %arg1 : tensor<256xi16>, %arg2 : tensor<256xi16>) {
+    %c256_i32 = arith.constant 256 : i32
+    %0 = arith.index_cast %c256_i32 : i32 to index
+    %reinterpret_cast = memref.reinterpret_cast %arg0 to offset: [%0], sizes: [256], strides: [1] : memref<?xi16> to memref<256xi16, strided<[1], offset: ?>>
+    %1 = bufferization.to_memref %arg1 : memref<256xi16, strided<[1]>>
+    %2 = bufferization.to_memref %arg2 : memref<256xi16, strided<[1]>>
+    hfusion.atomic_cas ins(%1, %2 : memref<256xi16, strided<[1]>>, memref<256xi16, strided<[1]>>) outs(%reinterpret_cast : memref<256xi16, strided<[1], offset: ?>>)
     return
   }
 }
