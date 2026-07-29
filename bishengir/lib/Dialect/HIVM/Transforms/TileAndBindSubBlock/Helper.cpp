@@ -16,11 +16,9 @@
 //============================================================================//
 
 #include "bishengir/Dialect/HIVM/Transforms/TileAndBindSubBlock/Helper.h"
-#include "bishengir/Dialect/HIVM/Utils/Utils.h"
 #include "bishengir/Dialect/SCF/Utils/Utils.h"
 #include "bishengir/Dialect/Utils/Util.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -42,18 +40,6 @@
 
 namespace mlir {
 namespace hivm {
-
-namespace {
-FailureOr<int64_t> getTilingFactor(scf::ForOp containingLoop) {
-  auto upperBound =
-      containingLoop.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
-  if (!upperBound)
-    return failure();
-  if (upperBound.value() <= 0)
-    return failure();
-  return upperBound.value();
-}
-} // namespace
 
 void markCreatedExtractSliceOp(RewriterBase &rewriter, Operation *op) {
   rewriter.modifyOpInPlace(op, [&]() {
@@ -129,10 +115,6 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
     llvm::report_fatal_error("expected shaped type in calculateOffsetAtTilingDim");
   auto inputType = cast<ShapedType>(toBeTiledVal.getType());
   auto dimSize = inputType.getShape()[tileDimension];
-  auto maybeTilingFactor = getTilingFactor(containingLoop);
-  if (failed(maybeTilingFactor))
-    llvm::report_fatal_error("failed to get tiling factor");
-  int64_t tilingFactor = maybeTilingFactor.value();
 
   OpFoldResult tileStride;
   if (ShapedType::isDynamic(dimSize)) {
@@ -145,12 +127,12 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
     AffineExpr d0;
     bindDims(rewriter.getContext(), d0);
     auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
-                                     d0.ceilDiv(tilingFactor));
+                                     d0.ceilDiv(kSubBlockDim));
     tileStride = affine::makeComposedFoldedAffineApply(
         rewriter, loc, ceilDivMap, {dimVal});
   } else {
     tileStride = getAsIndexOpFoldResult(
-        rewriter.getContext(), llvm::divideCeil(dimSize, tilingFactor));
+        rewriter.getContext(), llvm::divideCeil(dimSize, kSubBlockDim));
   }
 
   AffineExpr mulExpr =
@@ -161,14 +143,14 @@ OpFoldResult calculateOffsetAtTilingDim(RewriterBase &rewriter, Location loc,
 }
 
 /// This function calculates the tile size by dividing the dimension size
-/// by the containing loop's split factor (using ceiling division).
+/// by kSubBlockDim (using ceiling division).
 ///
-/// For static dimensions: tile_size = ceil(dim_size / tiling_factor)
+/// For static dimensions: tile_size = ceil(dim_size / kSubBlockDim)
 /// For dynamic dimensions: creates affine operations to compute at runtime
 ///
 /// @param input The input tensor to be tiled
 /// @return The computed tile size as an OpFoldResult, or failure if the
-///         static dimension size is less than the loop split count
+///         static dimension size is less than kSubBlockDim
 FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
                                           Value input, int64_t tileDimension,
                                           scf::ForOp containingLoop) {
@@ -178,20 +160,21 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
     return failure();
   auto inputShape = inputType.getShape();
 
-  if (tileDimension >= inputType.getRank())
+  if (tileDimension > inputType.getRank())
     return failure();
 
-  auto maybeTilingFactor = getTilingFactor(containingLoop);
-  if (failed(maybeTilingFactor))
+  auto upperBound =
+      containingLoop.getUpperBound().getDefiningOp<arith::ConstantIndexOp>();
+  if (!upperBound)
     return failure();
 
-  if (maybeTilingFactor.value() < 0)
+  size_t dimensionSize = inputShape[tileDimension];
+  if (upperBound.value() < 0)
     return containingLoop.emitError("UpperBound is less than 0");
-  size_t denominator = static_cast<size_t>(maybeTilingFactor.value());
+  size_t denominator = static_cast<size_t>(upperBound.value());
 
   // Case 1: Static dimension - compute tile size at compile time
-  if (!ShapedType::isDynamic(inputShape[tileDimension])) {
-    auto dimensionSize = static_cast<size_t>(inputShape[tileDimension]);
+  if (!ShapedType::isDynamic(dimensionSize)) {
     if (dimensionSize < denominator) {
       return emitError(loc)
              << "dimension size (" << dimensionSize
@@ -223,11 +206,11 @@ FailureOr<OpFoldResult> getSingleTileSize(OpBuilder &builder, Location loc,
   }
 
   // Case 2: Dynamic dimension - generate runtime computation
-  // Create affine expression: ceil(dim0 / tilingFactor)
+  // Create affine expression: ceil(dim0 / kSubBlockDim)
   AffineExpr dim0;
   bindDims(builder.getContext(), dim0);
   auto ceilDivMap = AffineMap::get(/*dimCount=*/1, /*symbolCount=*/0,
-                                   dim0.ceilDiv(maybeTilingFactor.value()));
+                                   dim0.ceilDiv(kSubBlockDim));
   Value dimVal;
   if (isa<TensorType>(inputType)) {
     dimVal = builder.create<tensor::DimOp>(loc, input, tileDimension);
