@@ -502,3 +502,109 @@ func.func @test_remove_spacecast_before_store(%arg0 : memref<32x64xf32, #hivm.ad
                 outs(%alloc : memref<32x64xf32, #hivm.address_space<gm>>)
   return
 }
+
+// -----
+
+// VSort canonicalization: when sort_axis points to a dimension of size 1 and
+// src/dst have identical layouts, the vsort is redundant (sorting 1 element is
+// a no-op). It should be replaced by a CopyOp (buffer) or src (tensor).
+
+// CHECK-LABEL: func.func @test_vsort_sort_axis_1_dim_size_1_memref
+// CHECK: (%[[SRC:.*]]: memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>, %[[DST:.*]]: memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+// CHECK: hivm.hir.copy ins(%[[SRC]] : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>) outs(%[[DST]] : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+// CHECK-NOT: hivm.hir.vsort
+func.func @test_vsort_sort_axis_1_dim_size_1_memref(
+    %arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>,
+    %arg1 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>) {
+  hivm.hir.vsort ins(%arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+                  outs(%arg1 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+                  descending = true sort_axis = 1
+  return
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_vsort_sort_axis_1_dim_size_1_tensor
+// CHECK-NOT: hivm.hir.vsort
+// CHECK: return %[[ARG0:.*]]
+func.func @test_vsort_sort_axis_1_dim_size_1_tensor(
+    %arg0 : tensor<23x1xf32>,
+    %arg1 : tensor<23x1xf32>) -> tensor<23x1xf32> {
+  %0 = hivm.hir.vsort ins(%arg0 : tensor<23x1xf32>)
+                       outs(%arg1 : tensor<23x1xf32>)
+                       descending = true sort_axis = 1 -> tensor<23x1xf32>
+  return %0 : tensor<23x1xf32>
+}
+
+// -----
+
+// CHECK-LABEL: func.func @test_vsort_sort_axis_neg1_dim_size_1_tensor
+// CHECK-NOT: hivm.hir.vsort
+// CHECK: return %[[ARG0:.*]]
+func.func @test_vsort_sort_axis_neg1_dim_size_1_tensor(
+    %arg0 : tensor<1x1xf32>,
+    %arg1 : tensor<1x1xf32>) -> tensor<1x1xf32> {
+  %0 = hivm.hir.vsort ins(%arg0 : tensor<1x1xf32>)
+                       outs(%arg1 : tensor<1x1xf32>)
+                       descending = false sort_axis = -1 -> tensor<1x1xf32>
+  return %0 : tensor<1x1xf32>
+}
+
+// -----
+
+// VSort should NOT be eliminated when sort_axis points to a non-1-sized dimension
+// CHECK-LABEL: func.func @test_vsort_sort_axis_non_one_dim
+// CHECK: hivm.hir.vsort
+func.func @test_vsort_sort_axis_non_one_dim(
+    %arg0 : memref<23x4xf32, #hivm.address_space<ub>>,
+    %arg1 : memref<23x4xf32, #hivm.address_space<ub>>) {
+  hivm.hir.vsort ins(%arg0 : memref<23x4xf32, #hivm.address_space<ub>>)
+                  outs(%arg1 : memref<23x4xf32, #hivm.address_space<ub>>)
+                  descending = true sort_axis = 1
+  return
+}
+
+// -----
+
+// VSort should NOT be eliminated when src and dst have different layouts
+// CHECK-LABEL: func.func @test_vsort_different_layout
+// CHECK: hivm.hir.vsort
+func.func @test_vsort_different_layout(
+    %arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>,
+    %arg1 : memref<23x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>) {
+  hivm.hir.vsort ins(%arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+                  outs(%arg1 : memref<23x1xf32, strided<[1, 1]>, #hivm.address_space<ub>>)
+                  descending = true sort_axis = 1
+  return
+}
+
+// -----
+
+// VSort should NOT be eliminated when dst has an index output (sort with index)
+// CHECK-LABEL: func.func @test_vsort_with_index
+// CHECK: hivm.hir.vsort
+func.func @test_vsort_with_index(
+    %arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>,
+    %arg1 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>,
+    %arg2 : memref<23x1xi32, strided<[32, 1]>, #hivm.address_space<ub>>) {
+  hivm.hir.vsort ins(%arg0 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>)
+                  outs(%arg1, %arg2 : memref<23x1xf32, strided<[32, 1]>, #hivm.address_space<ub>>, memref<23x1xi32, strided<[32, 1]>, #hivm.address_space<ub>>)
+                  descending = true sort_axis = 1
+  return
+}
+
+// -----
+
+// VSort on 1D memref with sort_axis=0, dim size=1
+// CHECK-LABEL: func.func @test_vsort_1d_dim_size_1_memref
+// CHECK: (%[[SRC:.*]]: memref<1xf32, #hivm.address_space<ub>>, %[[DST:.*]]: memref<1xf32, #hivm.address_space<ub>>)
+// CHECK: hivm.hir.copy ins(%[[SRC]] : memref<1xf32, #hivm.address_space<ub>>) outs(%[[DST]] : memref<1xf32, #hivm.address_space<ub>>)
+// CHECK-NOT: hivm.hir.vsort
+func.func @test_vsort_1d_dim_size_1_memref(
+    %arg0 : memref<1xf32, #hivm.address_space<ub>>,
+    %arg1 : memref<1xf32, #hivm.address_space<ub>>) {
+  hivm.hir.vsort ins(%arg0 : memref<1xf32, #hivm.address_space<ub>>)
+                  outs(%arg1 : memref<1xf32, #hivm.address_space<ub>>)
+                  descending = true sort_axis = 0
+  return
+}
