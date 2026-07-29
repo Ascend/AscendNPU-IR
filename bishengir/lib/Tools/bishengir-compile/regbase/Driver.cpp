@@ -111,8 +111,8 @@ int runRegBaseCompile(ModuleOp module, BiShengIRCompileMainConfig config,
   // Apply A5 defaults for options where A3/A5 defaults differ.
   applyRegBaseOptionDefaults(config);
 
-  if (!shouldUseDirectRegBasePipeline(config))
-    return runExternalRegBaseCompile(originalCLArgs);
+  // if (!shouldUseDirectRegBasePipeline(config))
+  //   return runExternalRegBaseCompile(originalCLArgs);
 
   if (failed(inferLayoutOptimization(module, config))) {
     llvm::errs() << "[ERROR] Failed to infer layout optimization\n";

@@ -418,7 +418,7 @@ void buildBiShengTTIRPipeline(OpPassManager &pm,
     // Materialize SIMT mem scopes only after split so the main module can stay
     // free of address-spaced memrefs before delayed reg-based vectorization.
     pm.addPass(hivm::createMaterializeSimtVFMemScopePass());
-    // pm.addPass(createHIVMToTritonGPUConversionPass());
+    pm.addPass(createHIVMToTritonGPUConversionPass());
   }
 
   if (!config.getCompileHost()) {
@@ -489,16 +489,16 @@ void buildBiShengHIRPipeline(OpPassManager &pm,
     }
     if (config.getEnableSimdSimtMixCompile()) {
       // TODO(regbase)
-      // pm.addPass(hivm::createAutoScopePass());
-      // pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
+      pm.addPass(hivm::createAutoScopePass());
+      pm.addPass(hivm::createInsertMemSemanticForSimtVFPass());
       pm.addPass(scope::createOutlineScopePass());
-      // pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
-      // pm.addPass(hivm::createInferSimtVFMemEffectPass());
+      pm.addPass(hivm::createInsertAllocBasePlaceholderPass());
+      pm.addPass(hivm::createInferSimtVFMemEffectPass());
       // Infer per-argument mem scope hints from the mixed call boundary first;
       // actual address space rewrites are deferred until each SIMT module is
       // split out and lowered independently.
-      // pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
-      // pm.addPass(hivm::createSplitSimtModulePass());
+      pm.addPass(hivm::createInferSimtVFMemScopeHintPass());
+      pm.addPass(hivm::createSplitSimtModulePass());
     }
   }
 }
